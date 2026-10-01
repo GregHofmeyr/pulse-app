@@ -27,6 +27,7 @@ tower-http = { version = "0.6", features = ["trace"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+futures = "0.3"
 argon2 = "0.5"
 rand = "0.9"
 sha2 = "0.10"
@@ -36,6 +37,8 @@ reqwest = { version = "0.12", default-features = false, features = ["json"], opt
 tempfile = { version = "3", optional = true }
 
 [dev-dependencies]
+tokio-tungstenite = "0.27"
+futures = "0.3"
 pulse-server = { path = ".", features = ["testing"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tokio.workspace = true

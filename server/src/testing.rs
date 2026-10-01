@@ -14,6 +14,7 @@ pub struct TestApp {
     pub http: reqwest::Client,
     pub db: SqlitePool,
     pub cfg: Arc<Config>,
+    pub hub: Hub,
     _dir: tempfile::TempDir,
 }
 
@@ -49,10 +50,11 @@ pub async fn spawn_with(mut cfg: Config) -> TestApp {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     let cfg = Arc::new(cfg);
+    let hub = Hub::default();
     let state = AppState {
         db: db.clone(),
         cfg: cfg.clone(),
-        hub: Hub::default(),
+        hub: hub.clone(),
     };
     tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
     TestApp {
@@ -60,6 +62,7 @@ pub async fn spawn_with(mut cfg: Config) -> TestApp {
         http: reqwest::Client::new(),
         db,
         cfg,
+        hub,
         _dir: dir,
     }
 }

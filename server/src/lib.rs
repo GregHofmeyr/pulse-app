@@ -20,6 +20,7 @@ pub use crate::state::AppState;
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
+        .route("/gateway", get(gateway::socket::handler))
         .merge(auth::routes::router())
         .merge(servers::routes::router())
         .merge(messages::routes::router())
