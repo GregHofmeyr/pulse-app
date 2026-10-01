@@ -27,6 +27,9 @@ reqwest = { version = "0.12", default-features = false, features = ["json", "rus
 tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
 futures = "0.3"
 rand = "0.9"
+livekit = "0.9.3"
+cpal = "0.15"
+anyhow.workspace = true
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 
 [dev-dependencies]

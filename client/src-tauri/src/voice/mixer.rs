@@ -33,6 +33,8 @@ pub fn soft_limit(x: f32) -> f32 {
 pub struct Mixer {
     cap: usize,
     peers: HashMap<String, Peer>,
+    /// Total samples ever pushed (diagnostics: intake must track real time, see FINDINGS).
+    pushed: u64,
 }
 
 struct Peer {
@@ -45,6 +47,7 @@ impl Mixer {
         Self {
             cap: (sample_rate as usize * cap_ms as usize / 1000).max(1),
             peers: HashMap::new(),
+            pushed: 0,
         }
     }
 
@@ -58,6 +61,7 @@ impl Mixer {
     /// Queue received samples (mono i16). Beyond the cap, the oldest are dropped (bounded latency).
     pub fn push(&mut self, peer: &str, samples: &[i16]) {
         let cap = self.cap;
+        self.pushed += samples.len() as u64;
         let q = &mut self.peer(peer).queue;
         q.extend(samples.iter().copied());
         if q.len() > cap {
@@ -72,6 +76,10 @@ impl Mixer {
 
     pub fn remove(&mut self, peer: &str) {
         self.peers.remove(peer);
+    }
+
+    pub fn pushed_total(&self) -> u64 {
+        self.pushed
     }
 
     pub fn buffered(&self, peer: &str) -> usize {
