@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { api, errorText } from './lib/tauri'
+  import { app, resetState, startListening } from './lib/store.svelte'
   import type { User } from './lib/protocol/User'
   import Login from './routes/Login.svelte'
   import Shell from './routes/Shell.svelte'
@@ -9,13 +10,28 @@
   let booting = $state(true)
   let bootError = $state('')
 
-  onMount(async () => {
-    try {
-      user = await api.restoreSession()
-    } catch (e) {
-      bootError = errorText(e)
-    } finally {
-      booting = false
+  onMount(() => {
+    let off: (() => void) | undefined
+    // Listen before restoring so the first Ready can't slip past us.
+    startListening().then(async (unlisten) => {
+      off = unlisten
+      try {
+        user = await api.restoreSession()
+      } catch (e) {
+        bootError = errorText(e)
+      } finally {
+        booting = false
+      }
+    })
+    return () => off?.()
+  })
+
+  // The server ended our session (logout elsewhere, expiry): back to login.
+  $effect(() => {
+    if (user && app.state.conn === 'logged_out') {
+      user = null
+      resetState()
+      bootError = 'You were signed out. Please log in again.'
     }
   })
 </script>
@@ -23,9 +39,9 @@
 {#if booting}
   <div class="boot" aria-busy="true"></div>
 {:else if user}
-  <Shell {user} onLogout={() => (user = null)} />
+  <Shell {user} onLogout={() => { user = null; resetState() }} />
 {:else}
-  <Login notice={bootError} onAuthed={(u) => (user = u)} />
+  <Login notice={bootError} onAuthed={(u) => { bootError = ''; user = u }} />
 {/if}
 
 <style>
