@@ -113,6 +113,19 @@ impl Api {
         Ok(())
     }
 
+    pub async fn create_server(&self, token: &str, name: &str) -> Result<Server, ApiError> {
+        let body = pulse_protocol::rest::CreateServerRequest { name: name.into() };
+        Self::parse(
+            self.http
+                .post(format!("{}/servers", self.base))
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     pub async fn join_server(&self, token: &str, server: ServerId) -> Result<(), ApiError> {
         Self::ok_empty(
             self.http
@@ -434,5 +447,19 @@ mod tests {
         let err = api.login("a", "b").await.unwrap_err();
         assert!(matches!(err, ApiError::Network(_)), "{err:?}");
         assert!(started.elapsed() < std::time::Duration::from_secs(7));
+    }
+
+    #[tokio::test]
+    async fn create_server_then_listed() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let s = api.create_server(&token, "Game Night").await.unwrap();
+        assert_eq!(s.name, "Game Night");
+        assert_eq!(api.servers(&token).await.unwrap(), vec![s]);
+        assert!(matches!(
+            api.create_server(&token, "   ").await,
+            Err(ApiError::Rejected(_))
+        ));
     }
 }

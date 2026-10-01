@@ -84,6 +84,7 @@ pub fn run() {
             commands::list_servers,
             commands::gateway_reconnect_now,
             commands::send_typing,
+            commands::create_server,
             commands::join_server,
             commands::list_channels,
             commands::list_members,

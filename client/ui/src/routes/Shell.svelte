@@ -19,6 +19,25 @@
   let activeServerId = $state<string | null>(null)
   let activeChannelId = $state<string | null>(null)
   let settingsOpen = $state(false)
+  let menuOpen = $state(false)
+  let creating = $state(false)
+  let newName = $state('')
+  let createError = $state('')
+
+  async function createServer(e: SubmitEvent) {
+    e.preventDefault()
+    createError = ''
+    try {
+      const s = await api.createServer(newName.trim())
+      creating = false
+      newName = ''
+      // the ServerCreated/ChannelCreated events may still be in flight: select once they land
+      const pick = () => (app.state.servers.some((x) => x.id === s.id) ? selectServer(s.id) : setTimeout(pick, 50))
+      pick()
+    } catch (err) {
+      createError = errorText(err)
+    }
+  }
   let error = $state('')
   const voiceChannel = $derived(voice.channelId ? app.state.channels[voice.channelId] : null)
 
@@ -68,6 +87,7 @@
           <span class="chip" style:background={avatarColor(s.id)}>{initial(s.name)}</span>{s.name}
         </button>
       {/each}
+      <button class="add" aria-label="Create a server" title="Create a server" onclick={() => (creating = true)}><Icon name="plus" size={16} /></button>
     </nav>
     <div class="grow" data-tauri-drag-region></div>
     {#if app.state.conn !== 'connected'}
@@ -96,16 +116,25 @@
         </div>
       {/if}
       <div class="me">
-        <span class="avatar" style:background={avatarColor(user.id)}>{initial(user.username)}</span>
-        <span class="who">{user.username}<small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
-        <button class="me-btn" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label="Mute" onclick={() => voiceApi.toggleMute()}>
-          <Icon name={voice.controls.muted ? 'micOff' : 'mic'} />
+        <button class="who-btn" aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
+          <span class="avatar" style:background={avatarColor(user.id)}>{initial(user.username)}</span>
+          <span class="who">{user.username}<small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
         </button>
-        <button class="me-btn" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label="Deafen" onclick={() => voiceApi.toggleDeafen()}>
-          <Icon name={voice.controls.deafened ? 'headphonesOff' : 'headphones'} />
-        </button>
+        {#if voice.channelId}
+          <button class="me-btn" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label="Mute" onclick={() => voiceApi.toggleMute()}>
+            <Icon name={voice.controls.muted ? 'micOff' : 'mic'} />
+          </button>
+          <button class="me-btn" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label="Deafen" onclick={() => voiceApi.toggleDeafen()}>
+            <Icon name={voice.controls.deafened ? 'headphonesOff' : 'headphones'} />
+          </button>
+        {/if}
         <button class="me-btn" aria-label="Settings" onclick={() => (settingsOpen = true)}><Icon name="gear" /></button>
-        <button class="ghost" onclick={logout}>Log out</button>
+        {#if menuOpen}
+          <div class="menu" role="menu">
+            <button role="menuitem" onclick={() => { menuOpen = false; settingsOpen = true }}>Voice &amp; audio settings</button>
+            <button role="menuitem" class="danger" onclick={logout}>Log out</button>
+          </div>
+        {/if}
       </div>
     </aside>
 
@@ -129,6 +158,18 @@
   </div>
 </div>
 {#if settingsOpen}<Settings onClose={() => (settingsOpen = false)} />{/if}
+{#if creating}
+  <div class="backdrop" role="presentation" onclick={() => (creating = false)}></div>
+  <form class="dialog" onsubmit={createServer} aria-label="Create a server">
+    <h2>Create a server</h2>
+    <label>NAME <input bind:value={newName} maxlength="64" required placeholder="Game Night" /></label>
+    {#if createError}<p class="error">{createError}</p>{/if}
+    <div class="dialog-actions">
+      <button type="button" class="ghost" onclick={() => (creating = false)}>Cancel</button>
+      <button class="primary" disabled={!newName.trim()}>Create</button>
+    </div>
+  </form>
+{/if}
 
 <style>
   .app { height: 100%; display: flex; flex-direction: column; background: var(--bg-0); }
@@ -153,6 +194,22 @@
   .avatar { width: 34px; height: 34px; border-radius: 50%; color: #fff; font-weight: 700; display: grid; place-items: center; }
   .who { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
   .who small { font-size: 12px; font-weight: 400; color: var(--text-3); }
+  .add { width: 36px; height: 36px; flex-shrink: 0; border: 1px dashed #3a3c44; border-radius: 10px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .add:hover { color: var(--text); border-color: var(--text-3); }
+  .me { position: relative; }
+  .who-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 4px 6px 4px 0; border: 0; border-radius: 10px; background: transparent; text-align: left; }
+  .who-btn:hover { background: var(--bg-2); }
+  .who-btn .who { overflow: hidden; }
+  .menu { position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 10; min-width: 200px; padding: 6px; background: #2e3037; border: 1px solid #3d4048; border-radius: 12px; box-shadow: 0 18px 48px rgba(8, 9, 12, .5); display: flex; flex-direction: column; }
+  .menu button { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font-size: 13px; }
+  .menu button:hover { background: var(--bg-4); }
+  .menu .danger { color: #f2616b; }
+  .backdrop { position: fixed; inset: 0; background: rgba(10, 11, 13, .6); z-index: 20; }
+  .dialog { position: fixed; z-index: 21; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(420px, calc(100vw - 32px)); padding: 24px; background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .dialog h2 { margin: 0; font-size: 18px; }
+  .dialog label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
+  .dialog input { height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-2); font-size: 14px; font-weight: 400; letter-spacing: 0; }
+  .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
   .me-btn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .me-btn:hover { background: var(--bg-2); }
   .me-btn.on { color: #f2616b; }

@@ -214,6 +214,16 @@ pub async fn list_servers(app: AppHandle, core: State<'_, Core>) -> Result<Vec<S
 }
 
 #[tauri::command]
+pub async fn create_server(
+    app: AppHandle,
+    core: State<'_, Core>,
+    name: String,
+) -> Result<Server, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.create_server(&token, &name).await)
+}
+
+#[tauri::command]
 pub async fn join_server(
     app: AppHandle,
     core: State<'_, Core>,

@@ -15,6 +15,7 @@ export const api = {
   logout: () => invoke<void>('logout'),
   reconnectNow: () => invoke<void>('gateway_reconnect_now'),
   listServers: () => invoke<Server[]>('list_servers'),
+  createServer: (name: string) => invoke<Server>('create_server', { name }),
   joinServer: (serverId: string) => invoke<void>('join_server', { serverId }),
   listChannels: (serverId: string) => invoke<Channel[]>('list_channels', { serverId }),
   listMembers: (serverId: string) => invoke<Member[]>('list_members', { serverId }),
