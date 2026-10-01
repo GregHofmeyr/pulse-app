@@ -7,6 +7,7 @@ pub mod gateway;
 pub mod messages;
 pub mod servers;
 pub mod state;
+pub mod voice;
 
 #[cfg(feature = "testing")]
 pub mod testing;
@@ -24,6 +25,7 @@ pub fn router(state: AppState) -> Router {
         .merge(auth::routes::router())
         .merge(servers::routes::router())
         .merge(messages::routes::router())
+        .merge(voice::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
@@ -38,6 +40,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
         db,
         cfg: std::sync::Arc::new(cfg),
         hub: gateway::Hub::default(),
+        voice: voice::VoiceState::default(),
     };
     axum::serve(listener, router(state)).await?;
     Ok(())

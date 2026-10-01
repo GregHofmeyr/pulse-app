@@ -15,6 +15,7 @@ pub struct TestApp {
     pub db: SqlitePool,
     pub cfg: Arc<Config>,
     pub hub: Hub,
+    pub voice: crate::voice::VoiceState,
     _dir: tempfile::TempDir,
 }
 
@@ -24,6 +25,12 @@ impl TestApp {
     }
     pub fn ws_url(&self, path: &str) -> String {
         format!("ws://{}{}", self.addr, path)
+    }
+    pub fn voice_members(
+        &self,
+        channel: pulse_protocol::ids::ChannelId,
+    ) -> std::collections::HashSet<pulse_protocol::ids::UserId> {
+        self.voice.members(channel)
     }
 }
 
@@ -51,10 +58,12 @@ pub async fn spawn_with(mut cfg: Config) -> TestApp {
     let addr = listener.local_addr().unwrap();
     let cfg = Arc::new(cfg);
     let hub = Hub::default();
+    let voice = crate::voice::VoiceState::default();
     let state = AppState {
         db: db.clone(),
         cfg: cfg.clone(),
         hub: hub.clone(),
+        voice: voice.clone(),
     };
     tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
     TestApp {
@@ -63,6 +72,7 @@ pub async fn spawn_with(mut cfg: Config) -> TestApp {
         db,
         cfg,
         hub,
+        voice,
         _dir: dir,
     }
 }

@@ -35,8 +35,12 @@ hex = "0.4"
 base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json"], optional = true }
 tempfile = { version = "3", optional = true }
+livekit-api = { version = "0.8.1", default-features = false, features = ["access-token", "webhooks"] }
 
 [dev-dependencies]
+livekit-api = { version = "0.8.1", default-features = false, features = ["access-token"] }
+base64 = "0.22"
+sha2 = "0.10"
 tokio-tungstenite = "0.27"
 futures = "0.3"
 pulse-server = { path = ".", features = ["testing"] }
