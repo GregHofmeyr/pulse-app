@@ -108,6 +108,7 @@ async fn webhook(
                     Event::VoiceJoined {
                         channel_id,
                         user_id,
+                        flags: s.voice.declared(user_id),
                     },
                 )
                 .await;

@@ -138,6 +138,7 @@ async fn webhook_join_server_channel_records_session_and_broadcasts() {
         pulse_protocol::gateway::ServerFrame::Event(Event::VoiceJoined {
             channel_id,
             user_id,
+            ..
         }) => {
             assert_eq!((channel_id, user_id), (l.id, a_id));
         }

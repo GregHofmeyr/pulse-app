@@ -77,8 +77,9 @@ describe('applyEvent', () => {
 
   it('tracks voice joins, leaves and flags', () => {
     let s = base()
-    s = applyEvent(s, { t: 'VoiceJoined', d: { channel_id: 'V1', user_id: 'U1' } }, 0)
-    s = applyEvent(s, { t: 'VoiceJoined', d: { channel_id: 'V1', user_id: 'U1' } }, 0)
+    const off = { muted: false, deafened: false }
+    s = applyEvent(s, { t: 'VoiceJoined', d: { channel_id: 'V1', user_id: 'U1', flags: off } }, 0)
+    s = applyEvent(s, { t: 'VoiceJoined', d: { channel_id: 'V1', user_id: 'U1', flags: off } }, 0)
     expect(s.voice['V1']).toHaveLength(2)
     s = applyEvent(s, { t: 'VoiceStateChanged', d: { channel_id: 'V1', user_id: 'U1', flags: { muted: true, deafened: false } } }, 0)
     expect(s.voice['V1'].find((m) => m.user_id === 'U1')?.flags.muted).toBe(true)
@@ -86,6 +87,11 @@ describe('applyEvent', () => {
     expect(s.voice['V1'].map((m) => m.user_id)).toEqual(['U1'])
     s = applyEvent(s, { t: 'VoiceLeft', d: { channel_id: 'V1', user_id: 'U1' } }, 0)
     expect(s.voice['V1']).toBeUndefined()
+  })
+
+  it('joining voice muted shows as muted (flags travel with the join)', () => {
+    const s = applyEvent(base(), { t: 'VoiceJoined', d: { channel_id: 'V9', user_id: 'U1', flags: { muted: true, deafened: false } } }, 0)
+    expect(s.voice['V9'][0].flags.muted).toBe(true)
   })
 
   it('typing expires after 6 s and clears when that user posts', () => {

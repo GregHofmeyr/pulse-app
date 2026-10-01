@@ -235,3 +235,34 @@ async fn flags_declared_before_join_webhook_are_kept() {
     let room = ready.voice.iter().find(|r| r.channel_id == l.id).unwrap();
     assert!(room.members[0].flags.muted, "declared mute was lost");
 }
+
+/// The mute-icon race: "I'm muted" lands before LiveKit's join webhook. The VoiceJoined everyone
+/// receives must carry the remembered flags, or clients show the joiner as unmuted.
+#[tokio::test]
+async fn voice_joined_event_carries_declared_flags() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (_, b) = register(&app, "sam").await;
+    let (_, l) = lounge(&app, &a).await;
+    let (mut wa, _) = hello(&app, &a).await;
+    let (mut wb, _) = hello(&app, &b).await;
+    let muted = VoiceFlags {
+        muted: true,
+        deafened: false,
+    };
+    wa.send(Ws::text(
+        serde_json::to_string(&ClientFrame::VoiceState { flags: muted }).unwrap(),
+    ))
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    joined(&app, l.id, a_id).await;
+    match next_event(&mut wb).await {
+        Event::VoiceJoined {
+            channel_id,
+            user_id,
+            flags,
+        } => assert_eq!((channel_id, user_id, flags), (l.id, a_id, muted)),
+        other => panic!("unexpected {other:?}"),
+    }
+}

@@ -102,6 +102,8 @@ pub enum Event {
     VoiceJoined {
         channel_id: ChannelId,
         user_id: UserId,
+        /// The joiner's current mute/deafen (they may have declared it before the join landed).
+        flags: VoiceFlags,
     },
     VoiceLeft {
         channel_id: ChannelId,

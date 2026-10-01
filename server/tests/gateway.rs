@@ -138,6 +138,7 @@ async fn audience_table() {
             Event::VoiceJoined {
                 channel_id: dm.id,
                 user_id: a_id,
+                flags: Default::default(),
             },
             set(&[a_id, b_id]),
         ),

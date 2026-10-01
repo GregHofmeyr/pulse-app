@@ -48,6 +48,16 @@ impl VoiceState {
         removed
     }
 
+    /// Flags the user last declared (default if never).
+    pub fn declared(&self, user: UserId) -> VoiceFlags {
+        self.declared
+            .lock()
+            .unwrap()
+            .get(&user)
+            .copied()
+            .unwrap_or_default()
+    }
+
     pub fn members(&self, channel: ChannelId) -> HashSet<UserId> {
         self.rooms
             .lock()

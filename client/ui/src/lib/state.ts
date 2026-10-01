@@ -110,10 +110,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, typing: { ...s.typing, [c]: { ...(s.typing[c] ?? {}), [u]: now + TYPING_TTL_MS } } }
     }
     case 'VoiceJoined': {
-      const { channel_id: c, user_id: u } = e.d
-      const list = s.voice[c] ?? []
-      if (list.some((m) => m.user_id === u)) return s
-      return { ...s, voice: { ...s.voice, [c]: [...list, { user_id: u, flags: { muted: false, deafened: false } }] } }
+      const { channel_id: c, user_id: u, flags } = e.d
+      const list = (s.voice[c] ?? []).filter((m) => m.user_id !== u)
+      return { ...s, voice: { ...s.voice, [c]: [...list, { user_id: u, flags }] } }
     }
     case 'VoiceLeft': {
       const { channel_id: c, user_id: u } = e.d
