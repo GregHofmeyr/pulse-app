@@ -419,7 +419,7 @@ impl AudioIo {
                             move |d: &[f32], _| {
                                 sh.on_input(d, in_ch, in_rate, &mut pending, &mic_tx)
                             },
-                            |e| eprintln!("input stream error: {e}"),
+                            |e| tracing::warn!(error = %e, "input stream error"),
                             None,
                         )?,
                         cpal::SampleFormat::I16 => input.build_input_stream(
@@ -429,7 +429,7 @@ impl AudioIo {
                                     d.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
                                 sh.on_input(&f, in_ch, in_rate, &mut pending, &mic_tx)
                             },
-                            |e| eprintln!("input stream error: {e}"),
+                            |e| tracing::warn!(error = %e, "input stream error"),
                             None,
                         )?,
                         other => return Err(anyhow!("unsupported mic sample format {other:?}")),
@@ -443,7 +443,7 @@ impl AudioIo {
                             move |d: &mut [f32], _| {
                                 sh.on_output(d, out_ch, out_rate, &mut reverse, &mut mixbuf)
                             },
-                            |e| eprintln!("output stream error: {e}"),
+                            |e| tracing::warn!(error = %e, "output stream error"),
                             None,
                         )?,
                         cpal::SampleFormat::I16 => {
@@ -463,7 +463,7 @@ impl AudioIo {
                                         *o = to_i16(*v);
                                     }
                                 },
-                                |e| eprintln!("output stream error: {e}"),
+                                |e| tracing::warn!(error = %e, "output stream error"),
                                 None,
                             )?
                         }
@@ -473,7 +473,12 @@ impl AudioIo {
                     };
                     in_stream.play()?;
                     out_stream.play()?;
-                    Ok((in_stream, out_stream, in_rate, out_rate))
+                    tracing::info!(
+                    input = %input.name().unwrap_or_default(), in_rate, in_ch, in_fmt = ?in_cfg.sample_format(),
+                    output = %output.name().unwrap_or_default(), out_rate, out_ch, out_fmt = ?out_cfg.sample_format(),
+                    "audio devices opened"
+                );
+                Ok((in_stream, out_stream, in_rate, out_rate))
                 })();
                 match built {
                     Ok((_in, _out, ir, or)) => {

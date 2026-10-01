@@ -11,17 +11,7 @@
     "beforeBuildCommand": "pnpm --dir ui build"
   },
   "app": {
-    "windows": [
-      {
-        "title": "Pulse",
-        "width": 1280,
-        "height": 800,
-        "minWidth": 900,
-        "minHeight": 560,
-        "decorations": false,
-        "backgroundColor": "#141519"
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src ipc: http://ipc.localhost"
     }

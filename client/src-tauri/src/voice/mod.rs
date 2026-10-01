@@ -298,7 +298,8 @@ impl VoiceManager {
                         RoomEvent::Reconnected => {
                             events(state(Connection::Connected, Some(channel)))
                         }
-                        RoomEvent::Disconnected { .. } => {
+                        RoomEvent::Disconnected { reason } => {
+                            tracing::warn!(?reason, "voice disconnected by LiveKit");
                             // Gone for good: stop the mic/speakers and mark the session dead.
                             alive.store(false, Ordering::SeqCst);
                             io.lock().unwrap().take();
@@ -341,6 +342,7 @@ impl VoiceManager {
                     match restarted_at {
                         // First stall: reopen the devices once.
                         None => {
+                            tracing::warn!("audio device stalled; reopening");
                             restarted_at = Some(now);
                             shared.watchdog.input_tick(now);
                             shared.watchdog.output_tick(now);
@@ -351,6 +353,7 @@ impl VoiceManager {
                         }
                         // Still stalled after a reopen: tell the user.
                         Some(t) if now.duration_since(t) > devices::STALL_AFTER => {
+                            tracing::error!("audio device still stalled after reopening");
                             events(VoiceEvent::DeviceStalled);
                             restarted_at = Some(now);
                         }

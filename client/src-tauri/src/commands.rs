@@ -116,6 +116,7 @@ async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>)
                 let _ = app.emit("pulse://event", &e);
             }
             GatewayUpdate::Connection(state) => {
+                tracing::info!(?state, "gateway");
                 if state == ConnState::LoggedOut {
                     app.state::<Core>().deactivate(&app);
                 }

@@ -40,7 +40,7 @@ impl Store {
             return;
         }
         if let Err(e) = file::save(&self.dir, server_url, token) {
-            eprintln!("could not persist session: {e}");
+            tracing::warn!(error = %e, "could not persist session");
         }
     }
 
