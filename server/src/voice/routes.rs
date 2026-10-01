@@ -89,7 +89,7 @@ async fn webhook(
         "participant_joined" if s.voice.join(channel_id, user_id) => {
             if record {
                 sqlx::query("INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES (?, ?, ?, ?)")
-                        .bind(ulid::Ulid::new().to_string())
+                        .bind(pulse_protocol::ids::next_ulid().to_string())
                         .bind(user_id.to_string())
                         .bind(channel_id.to_string())
                         .bind(now())
