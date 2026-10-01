@@ -252,7 +252,8 @@ Matches the canvas mockups (§ header link).
 ## 11. Security checklist
 
 - argon2id passwords; session tokens are 256-bit random values, only their hashes stored, kept in the OS keychain on
-  the client.
+  the client. If no keychain exists (e.g. a Linux desktop without a Secret Service), the client falls back to an
+  owner-only (0600) `session.json` in its app data dir.
 - Every REST handler and WebSocket subscription checks access; non-members get **404** for private channels.
 - Markdown sanitised with an allow-list; Tauri CSP locked down; the UI has no direct network access.
 - LiveKit webhook signatures verified; LiveKit tokens are short-lived and room-scoped.

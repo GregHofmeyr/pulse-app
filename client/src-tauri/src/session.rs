@@ -1,35 +1,142 @@
-//! Session token storage in the OS keychain (Windows Credential Manager / Secret Service).
-//! The token never crosses into the webview.
+//! Session token storage. Preferred: the OS keychain (Windows Credential Manager / Secret Service).
+//! Fallback when no keychain exists (e.g. Hyprland without a Secret Service): an owner-only
+//! (0600) `session.json` in the app data dir — the same protection Discord gives its token.
+//! The token never crosses into the webview either way.
+
+use std::path::{Path, PathBuf};
 
 use keyring::Entry;
 
 const SERVICE: &str = "pulse-app";
 const LAST_SERVER: &str = "__last_server__";
 
-fn entry(account: &str) -> Option<Entry> {
-    Entry::new(SERVICE, account).ok()
+pub struct Store {
+    dir: PathBuf,
 }
 
-/// Best effort: if the keychain is unavailable the session simply won't survive a restart.
-pub fn save(server_url: &str, token: &str) {
-    for (account, value) in [(server_url, token), (LAST_SERVER, server_url)] {
-        if let Some(e) = entry(account)
-            && let Err(err) = e.set_password(value)
-        {
-            eprintln!("keychain unavailable, session won't persist: {err}");
+impl Store {
+    pub fn new(dir: PathBuf) -> Self {
+        Self { dir }
+    }
+
+    pub fn save(&self, server_url: &str, token: &str) {
+        if keychain::save(server_url, token).is_ok() {
+            file::clear(&self.dir);
+            return;
+        }
+        if let Err(e) = file::save(&self.dir, server_url, token) {
+            eprintln!("could not persist session: {e}");
+        }
+    }
+
+    pub fn load(&self) -> Option<(String, String)> {
+        keychain::load().or_else(|| file::load(&self.dir))
+    }
+
+    pub fn clear(&self, server_url: &str) {
+        keychain::clear(server_url);
+        file::clear(&self.dir);
+    }
+}
+
+mod keychain {
+    use super::*;
+
+    fn entry(account: &str) -> keyring::Result<Entry> {
+        Entry::new(SERVICE, account)
+    }
+
+    pub fn save(server_url: &str, token: &str) -> keyring::Result<()> {
+        entry(server_url)?.set_password(token)?;
+        entry(LAST_SERVER)?.set_password(server_url)
+    }
+
+    pub fn load() -> Option<(String, String)> {
+        let server = entry(LAST_SERVER).ok()?.get_password().ok()?;
+        let token = entry(&server).ok()?.get_password().ok()?;
+        Some((server, token))
+    }
+
+    pub fn clear(server_url: &str) {
+        if let Ok(e) = entry(server_url) {
+            let _ = e.delete_credential();
         }
     }
 }
 
-/// The last server URL and its token, if both are stored.
-pub fn load() -> Option<(String, String)> {
-    let server = entry(LAST_SERVER)?.get_password().ok()?;
-    let token = entry(&server)?.get_password().ok()?;
-    Some((server, token))
+pub(crate) mod file {
+    use super::*;
+
+    pub const NAME: &str = "session.json";
+
+    #[derive(serde::Serialize, serde::Deserialize)]
+    struct Saved {
+        server: String,
+        token: String,
+    }
+
+    pub fn save(dir: &Path, server: &str, token: &str) -> std::io::Result<()> {
+        std::fs::create_dir_all(dir)?;
+        let path = dir.join(NAME);
+        let body = serde_json::to_vec(&Saved {
+            server: server.into(),
+            token: token.into(),
+        })?;
+        let mut opts = std::fs::OpenOptions::new();
+        opts.write(true).create(true).truncate(true);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::OpenOptionsExt;
+            opts.mode(0o600);
+        }
+        use std::io::Write;
+        opts.open(&path)?.write_all(&body)?;
+        // mode() only applies on create; tighten an existing file too.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+        }
+        Ok(())
+    }
+
+    pub fn load(dir: &Path) -> Option<(String, String)> {
+        let s: Saved = serde_json::from_slice(&std::fs::read(dir.join(NAME)).ok()?).ok()?;
+        Some((s.server, s.token))
+    }
+
+    pub fn clear(dir: &Path) {
+        let _ = std::fs::remove_file(dir.join(NAME));
+    }
 }
 
-pub fn clear(server_url: &str) {
-    if let Some(e) = entry(server_url) {
-        let _ = e.delete_credential();
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn file_fallback_roundtrip_and_clear() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(file::load(dir.path()), None);
+        file::save(dir.path(), "http://localhost:7890", "tok").unwrap();
+        assert_eq!(
+            file::load(dir.path()),
+            Some(("http://localhost:7890".into(), "tok".into()))
+        );
+        file::clear(dir.path());
+        assert_eq!(file::load(dir.path()), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn file_fallback_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        file::save(dir.path(), "http://x", "tok").unwrap();
+        let mode = std::fs::metadata(dir.path().join(file::NAME))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 }

@@ -4,7 +4,12 @@ pub mod session;
 
 pub fn run() {
     tauri::Builder::default()
-        .manage(commands::Core::default())
+        .setup(|app| {
+            use tauri::Manager;
+            let dir = app.path().app_data_dir()?;
+            app.manage(commands::Core::new(session::Store::new(dir)));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             commands::login,
             commands::register,

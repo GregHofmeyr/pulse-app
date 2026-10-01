@@ -6,14 +6,21 @@ use pulse_protocol::rest::{Server, User};
 use tauri::State;
 
 use crate::api::{Api, ApiError};
-use crate::session;
+use crate::session::Store;
 
-#[derive(Default)]
 pub struct Core {
     inner: Mutex<Option<(Api, String)>>,
+    store: Store,
 }
 
 impl Core {
+    pub fn new(store: Store) -> Self {
+        Self {
+            inner: Mutex::new(None),
+            store,
+        }
+    }
+
     fn current(&self) -> Result<(Api, String), ApiError> {
         self.inner
             .lock()
@@ -23,7 +30,7 @@ impl Core {
     }
 
     fn set(&self, api: Api, token: String) {
-        session::save(api.base(), &token);
+        self.store.save(api.base(), &token);
         *self.inner.lock().unwrap() = Some((api, token));
     }
 }
@@ -58,7 +65,7 @@ pub async fn register(
 /// Resume the stored session. `Ok(None)` means "show the login screen".
 #[tauri::command]
 pub async fn restore_session(core: State<'_, Core>) -> Result<Option<User>, ApiError> {
-    let Some((server, token)) = session::load() else {
+    let Some((server, token)) = core.store.load() else {
         return Ok(None);
     };
     let api = Api::new(&server);
@@ -68,7 +75,7 @@ pub async fn restore_session(core: State<'_, Core>) -> Result<Option<User>, ApiE
             Ok(Some(user))
         }
         Err(ApiError::Unauthorized) => {
-            session::clear(&server);
+            core.store.clear(&server);
             Ok(None)
         }
         Err(e) => Err(e),
@@ -80,7 +87,7 @@ pub async fn logout(core: State<'_, Core>) -> Result<(), ApiError> {
     let current = core.inner.lock().unwrap().take();
     if let Some((api, token)) = current {
         let _ = api.logout(&token).await;
-        session::clear(api.base());
+        core.store.clear(api.base());
     }
     Ok(())
 }

@@ -98,6 +98,8 @@ async fn main() -> Result<()> {
 }
 
 fn devices() -> Result<()> {
+    let host = cpal::default_host();
+    println!("cpal (manual mode) default in: {:?}, out: {:?}", host.default_input_device().and_then(|d| d.name().ok()), host.default_output_device().and_then(|d| d.name().ok()));
     let audio = PlatformAudio::new()?;
     println!("recording:");
     for d in audio.recording_devices() {
@@ -152,7 +154,11 @@ async fn platform(room_name: String, identity: String, mic: Option<String>, spea
     let mut muted = false;
     loop {
         tokio::select! {
-            ev = events.recv() => match ev { Some(ev) => log_event(&ev), None => break },
+            ev = events.recv() => match ev {
+                Some(RoomEvent::TrackSubscribed { participant, .. }) => println!("[ev] subscribed to {}'s audio (playing via libwebrtc)", participant.identity()),
+                Some(ev) => log_event(&ev),
+                None => break,
+            },
             line = stdin.next_line() => {
                 let Some(line) = line? else { break };
                 let line = line.trim();
@@ -174,6 +180,16 @@ async fn platform(room_name: String, identity: String, mic: Option<String>, spea
 
 type Mixer = Arc<Mutex<HashMap<String, VecDeque<i16>>>>;
 
+/// Running sum-of-squares + count, printed and reset every 2 s.
+#[derive(Default)]
+struct Meter { sq: f64, n: u64 }
+impl Meter {
+    fn add(&mut self, v: f32) { self.sq += (v as f64) * (v as f64); self.n += 1; }
+    fn take(&mut self) -> (f64, u64) { let r = if self.n == 0 { 0.0 } else { (self.sq / self.n as f64).sqrt() }; let n = self.n; *self = Meter::default(); (r, n) }
+}
+type Meters = Arc<Mutex<HashMap<&'static str, Meter>>>;
+
+
 async fn manual(room_name: String, identity: String, gain: f32, peer_volume: f32) -> Result<()> {
     let host = cpal::default_host();
     let input = host.default_input_device().context("no input device")?;
@@ -185,6 +201,10 @@ async fn manual(room_name: String, identity: String, gain: f32, peer_volume: f32
     let out_rate = out_cfg.sample_rate().0;
     let out_ch = out_cfg.channels() as usize;
     println!("input {} @{in_rate}Hz x{in_ch}, output {} @{out_rate}Hz x{out_ch}", input.name()?, output.name()?);
+    let meters: Meters = Arc::default();
+    let m_in = meters.clone();
+    let m_out = meters.clone();
+    let m_rx = meters.clone();
 
     // One APM shared by capture (forward) and playback (reverse/echo reference).
     let apm = Arc::new(Mutex::new(AudioProcessingModule::new(true, true, true, true)));
@@ -199,6 +219,7 @@ async fn manual(room_name: String, identity: String, gain: f32, peer_volume: f32
         move |data: &[f32], _| {
             for frame in data.chunks(in_ch) {
                 let s = frame.iter().sum::<f32>() / in_ch as f32 * gain;
+                m_in.lock().unwrap().entry("mic").or_default().add(s);
                 pending.push((s.clamp(-1.0, 1.0) * i16::MAX as f32) as i16);
                 if pending.len() == chunk {
                     let mut buf = std::mem::replace(&mut pending, Vec::with_capacity(chunk));
@@ -229,6 +250,7 @@ async fn manual(room_name: String, identity: String, gain: f32, peer_volume: f32
                     }
                 }
                 let v = acc.clamp(-1.0, 1.0);
+                m_out.lock().unwrap().entry("speaker").or_default().add(v);
                 frame.fill(v);
                 reverse.push((v * i16::MAX as f32) as i16);
                 if reverse.len() == out_chunk {
@@ -267,17 +289,33 @@ async fn manual(room_name: String, identity: String, gain: f32, peer_volume: f32
 
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin()).lines();
     let mut muted = false;
+    let mut tick = tokio::time::interval(Duration::from_secs(2));
     loop {
         tokio::select! {
+            _ = tick.tick() => {
+                let mut mm = meters.lock().unwrap();
+                let line: Vec<String> = ["mic", "received", "speaker"].iter().map(|k| {
+                    let (rms, n) = mm.entry(k).or_default().take();
+                    format!("{k} {rms:.3} ({n} samples)")
+                }).collect();
+                println!("[level] {}", line.join(" | "));
+            }
             ev = events.recv() => {
                 let Some(ev) = ev else { break };
                 log_event(&ev);
                 if let RoomEvent::TrackSubscribed { track: RemoteTrack::Audio(t), participant, .. } = ev {
                     let id = participant.identity().to_string();
                     let mix = mixer.clone();
+                    let m_rx = m_rx.clone();
+                    println!("[ev] subscribed to {id}'s audio");
                     tokio::spawn(async move {
                         let mut stream = NativeAudioStream::new(t.rtc_track(), out_rate as i32, 1);
                         while let Some(f) = stream.next().await {
+                            {
+                                let mut mm = m_rx.lock().unwrap();
+                                let e = mm.entry("received").or_default();
+                                for v in f.data.iter() { e.add(*v as f32 / i16::MAX as f32); }
+                            }
                             let mut m = mix.lock().unwrap();
                             let q = m.entry(id.clone()).or_default();
                             q.extend(f.data.iter());
