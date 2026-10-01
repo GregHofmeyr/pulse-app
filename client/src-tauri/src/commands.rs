@@ -11,6 +11,8 @@ use tokio::sync::mpsc;
 use crate::api::{Api, ApiError, check_server_url};
 use crate::gateway::{ConnState, GatewayHandle, GatewayUpdate};
 use crate::session::Store;
+use crate::voice::devices::{AudioConfig, DeviceInfo};
+use crate::voice::{AudioMode, VoiceError, VoiceManager, controls::Controls};
 
 pub struct Core {
     inner: Mutex<Option<(Api, String)>>,
@@ -254,4 +256,94 @@ pub async fn delete_message(
 #[tauri::command]
 pub fn send_typing(core: State<'_, Core>, channel_id: pulse_protocol::ids::ChannelId) {
     core.send_frame(ClientFrame::Typing { channel_id });
+}
+
+// ---------- voice ----------
+
+fn flags(c: Controls) -> pulse_protocol::gateway::VoiceFlags {
+    pulse_protocol::gateway::VoiceFlags {
+        muted: c.muted,
+        deafened: c.deafened,
+    }
+}
+
+#[tauri::command]
+pub async fn join_voice(
+    app: AppHandle,
+    core: State<'_, Core>,
+    voice: State<'_, VoiceManager>,
+    channel_id: ChannelId,
+    config: AudioConfig,
+) -> Result<(), VoiceError> {
+    let (api, token) = core.current()?;
+    let r = voice
+        .join(&api, &token, channel_id, config, AudioMode::Real)
+        .await;
+    if let Err(VoiceError::Api(ApiError::Unauthorized)) = &r {
+        let _ = core.check::<()>(&app, Err(ApiError::Unauthorized));
+    }
+    r?;
+    // Tell everyone our current mute/deafen state (it persists across channels).
+    core.send_frame(ClientFrame::VoiceState {
+        flags: flags(voice.controls()),
+    });
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn leave_voice(voice: State<'_, VoiceManager>) -> Result<(), VoiceError> {
+    voice.leave().await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn toggle_mute(
+    core: State<'_, Core>,
+    voice: State<'_, VoiceManager>,
+) -> Result<Controls, VoiceError> {
+    let c = voice.toggle_mute().await;
+    core.send_frame(ClientFrame::VoiceState { flags: flags(c) });
+    Ok(c)
+}
+
+#[tauri::command]
+pub async fn toggle_deafen(
+    core: State<'_, Core>,
+    voice: State<'_, VoiceManager>,
+) -> Result<Controls, VoiceError> {
+    let c = voice.toggle_deafen().await;
+    core.send_frame(ClientFrame::VoiceState { flags: flags(c) });
+    Ok(c)
+}
+
+#[tauri::command]
+pub async fn set_peer_volume(
+    voice: State<'_, VoiceManager>,
+    user_id: String,
+    percent: u16,
+) -> Result<(), VoiceError> {
+    voice.set_peer_volume(user_id, percent).await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_audio_config(
+    voice: State<'_, VoiceManager>,
+    config: AudioConfig,
+) -> Result<(), VoiceError> {
+    voice.set_audio_config(config).await
+}
+
+#[derive(serde::Serialize)]
+pub struct AudioDevices {
+    inputs: Vec<DeviceInfo>,
+    outputs: Vec<DeviceInfo>,
+}
+
+#[tauri::command]
+pub fn list_audio_devices() -> AudioDevices {
+    AudioDevices {
+        inputs: crate::voice::devices::list_inputs(),
+        outputs: crate::voice::devices::list_outputs(),
+    }
 }

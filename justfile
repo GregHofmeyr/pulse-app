@@ -37,3 +37,7 @@ invite:
 # real LiveKit → webhook → voice_sessions, end to end
 voice-smoke:
     ./scripts/voice-smoke.sh
+
+# voice integration test against the dev LiveKit (real WebRTC, fake peer)
+voice-it: dev-livekit
+    cargo test -p pulse-client --test voice_it -- --ignored --nocapture
