@@ -30,6 +30,18 @@ participant's audio too, so each rejoin adds another copy: measured 1×, 2×, 3�
 `TrackUnsubscribed` / `ParticipantDisconnected` (and before re-subscribing). After the fix: steady 1× rate and
 tasks return to 0 after every leave.
 
+## BT earbuds: mSBC headset codec delivers NO mic audio (environment, not Pulse)
+With the earbuds in `headset-head-unit` (mSBC), the source reports RUNNING but even `parec` gets 0 samples.
+`headset-head-unit-cvsd` works (real signal). Also: a profile switch mid-start strands streams opened just before
+it (cpal callbacks never fire: 0 samples).
+**Rules for VoiceManager:** (1) watchdog: no mic samples / no output callbacks for ~2 s → reopen the device and
+tell the user; (2) ship the "Let's check" mic test early, since it would have caught this in seconds.
+
+## Per-user volume (manual pipeline): works
+Levels stable at 1× real time after the leak fix. 0.2× vs 3× was noticeable but not dramatic, because loudness is
+logarithmic and >~1.5× hard-clips.
+**Rule for the app:** the slider maps 0–200% onto a dB curve, with a soft limiter instead of a hard clamp.
+
 ## Pending — human ear test (Greg)
 Two instances, different devices:
 ```
@@ -37,9 +49,9 @@ just dev-livekit
 cargo run -- manual   --room t --identity a --gain 1.5 --peer-volume 1.0
 cargo run -- platform --room t --identity b            # or a second `manual`
 ```
-- [ ] Both directions audible, latency feels live
+- [x] Both directions audible, latency feels live (better than Discord)
 - [ ] Echo: speakers (not headset) on one side — does the other side hear themselves?
-- [ ] `m` mute/unmute works; `--peer-volume 0.3` vs `2.0` clearly different
+- [x] `m` mute/unmute works; per-user volume works (see dB note above)
 - [ ] `r` RSS in-call for each mode
 - [ ] Platform: `s <name>` speaker hot-swap
 
