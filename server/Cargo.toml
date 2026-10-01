@@ -27,6 +27,11 @@ tower-http = { version = "0.6", features = ["trace"] }
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+argon2 = "0.5"
+rand = "0.9"
+sha2 = "0.10"
+hex = "0.4"
+base64 = "0.22"
 reqwest = { version = "0.12", default-features = false, features = ["json"], optional = true }
 tempfile = { version = "3", optional = true }
 
@@ -34,3 +39,4 @@ tempfile = { version = "3", optional = true }
 pulse-server = { path = ".", features = ["testing"] }
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "sqlite"] }
 tokio.workspace = true
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
