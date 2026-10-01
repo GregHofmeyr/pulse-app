@@ -123,7 +123,7 @@ async fn webhook_join_server_channel_records_session_and_broadcasts() {
     let app = spawn().await;
     let (a_id, a) = register(&app, "alex").await;
     let l = lounge(&app, &a).await;
-    let (_conn, mut rx) = app.hub.register(a_id);
+    let mut rx = app.hub.register(a_id, String::new()).rx;
     let body = event_body("participant_joined", l.id, a_id);
     assert_eq!(
         webhook(&app, &body, &signed(&app, &body)).await.status(),
@@ -174,4 +174,28 @@ async fn webhook_join_dm_call_writes_no_voice_session() {
         .await
         .unwrap();
     assert_eq!(n, 0, "DM calls must never count toward voice stats");
+}
+
+// I-6: a participant_left the server never saw join (e.g. after a restart) still closes the open row.
+#[tokio::test]
+async fn webhook_left_without_memory_closes_open_session() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    sqlx::query("INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES ('VS1', ?, ?, '2026-01-01T00:00:00.000Z')")
+        .bind(a_id.to_string())
+        .bind(l.id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let left = event_body("participant_left", l.id, a_id);
+    assert_eq!(
+        webhook(&app, &left, &signed(&app, &left)).await.status(),
+        200
+    );
+    let open: i64 = sqlx::query_scalar("SELECT count(*) FROM voice_sessions WHERE left_at IS NULL")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(open, 0);
 }

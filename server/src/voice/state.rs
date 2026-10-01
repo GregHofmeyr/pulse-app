@@ -1,4 +1,6 @@
-//! Who is in which voice room right now. In memory only: LiveKit re-reports after a restart.
+//! Who is in which voice room right now. In memory only, so it is empty after a restart:
+//! LiveKit does NOT re-report participants who were already connected (rebuilding from
+//! LiveKit's ListParticipants at startup is a follow-up).
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};

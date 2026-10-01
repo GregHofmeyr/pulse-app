@@ -55,7 +55,18 @@ async fn register(
             "password must be at least 8 characters".into(),
         ));
     }
-    let hash = password::hash(&req.password)?;
+    // Check the invite before anything expensive (and before revealing whether a username exists).
+    let used: Option<Option<String>> =
+        sqlx::query_scalar("SELECT used_by FROM invites WHERE code = ?")
+            .bind(&req.invite_code)
+            .fetch_optional(&s.db)
+            .await?;
+    match used {
+        None => return Err(AppError::NotFound),
+        Some(Some(_)) => return Err(AppError::Gone),
+        Some(None) => {}
+    }
+    let hash = password::hash_async(req.password.clone()).await?;
     let id = UserId::new();
     let at = now();
 
@@ -124,10 +135,10 @@ async fn login(
             .fetch_optional(&s.db)
             .await?;
     let Some((id, hash, avatar_hash)) = row else {
-        let _ = password::verify(&req.password, &DUMMY_HASH);
+        let _ = password::verify_async(req.password, DUMMY_HASH.clone()).await;
         return Err(AppError::Unauthorized);
     };
-    if !password::verify(&req.password, &hash) {
+    if !password::verify_async(req.password.clone(), hash).await {
         return Err(AppError::Unauthorized);
     }
     let id: UserId = id.parse().map_err(anyhow::Error::from)?;
@@ -148,6 +159,7 @@ async fn logout(
     BearerToken(t): BearerToken,
 ) -> AppResult<StatusCode> {
     session::revoke(&s.db, &t).await?;
+    s.hub.drop_session(&session::hash_token(&t));
     Ok(StatusCode::NO_CONTENT)
 }
 

@@ -506,3 +506,5 @@ async fn health_ok_and_schema_migrated() {
 
 VoiceManager in the client (after the spike decision), the call UI and ringing, text-channel UI, the remaining text
 features, identity (nicknames, roles, avatars, profiles), badges, settings, mute/DND, hosting.
+
+**Explicitly deferred from this plan (final review):** per-IP rate limits on `/auth/*` and message sends (spec §11). This plan only bounds argon2 concurrency and checks the invite before hashing. Also: rebuilding voice state from LiveKit `ListParticipants` at startup, and server-side typing throttling.

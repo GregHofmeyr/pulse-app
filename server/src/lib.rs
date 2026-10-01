@@ -34,6 +34,7 @@ pub fn router(state: AppState) -> Router {
 /// Bind and serve until the process is stopped.
 pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     let db = db::connect(&cfg.db_url).await?;
+    voice::reconcile_on_startup(&db).await?;
     let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
     tracing::info!(addr = %cfg.bind, "pulse-app-server listening");
     let state = AppState {

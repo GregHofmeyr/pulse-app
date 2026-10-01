@@ -106,24 +106,34 @@ async fn webhook(
                 )
                 .await;
         }
-        "participant_left" if s.voice.leave(channel_id, user_id) => {
-            if record {
-                sqlx::query("UPDATE voice_sessions SET left_at = ? WHERE user_id = ? AND channel_id = ? AND left_at IS NULL")
-                        .bind(now())
-                        .bind(user_id.to_string())
-                        .bind(channel_id.to_string())
-                        .execute(&s.db)
-                        .await?;
-            }
-            s.hub
-                .publish(
-                    &s.db,
-                    Event::VoiceLeft {
-                        channel_id,
-                        user_id,
-                    },
+        "participant_left" => {
+            // Close the open row even if we never saw the join (e.g. we restarted mid-call).
+            let in_memory = s.voice.leave(channel_id, user_id);
+            let closed = if record {
+                sqlx::query(
+                    "UPDATE voice_sessions SET left_at = ? WHERE user_id = ? AND channel_id = ? AND left_at IS NULL",
                 )
-                .await;
+                .bind(now())
+                .bind(user_id.to_string())
+                .bind(channel_id.to_string())
+                .execute(&s.db)
+                .await?
+                .rows_affected()
+                    > 0
+            } else {
+                false
+            };
+            if in_memory || closed {
+                s.hub
+                    .publish(
+                        &s.db,
+                        Event::VoiceLeft {
+                            channel_id,
+                            user_id,
+                        },
+                    )
+                    .await;
+            }
         }
         _ => {}
     }

@@ -21,3 +21,23 @@ pub fn verify(password: &str, stored: &str) -> bool {
         })
         .unwrap_or(false)
 }
+
+/// At most this many argon2 operations at once: bounds the CPU/RAM an attacker can burn.
+static ARGON_SLOTS: std::sync::LazyLock<tokio::sync::Semaphore> =
+    std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(2));
+
+/// `hash` on a blocking thread, behind the concurrency cap.
+pub async fn hash_async(password: String) -> anyhow::Result<String> {
+    let _slot = ARGON_SLOTS.acquire().await?;
+    tokio::task::spawn_blocking(move || hash(&password)).await?
+}
+
+/// `verify` on a blocking thread, behind the concurrency cap.
+pub async fn verify_async(password: String, stored: String) -> bool {
+    let Ok(_slot) = ARGON_SLOTS.acquire().await else {
+        return false;
+    };
+    tokio::task::spawn_blocking(move || verify(&password, &stored))
+        .await
+        .unwrap_or(false)
+}

@@ -8,6 +8,9 @@ importers:
 
   .:
     dependencies:
+      '@fontsource/onest':
+        specifier: ^5.3.1
+        version: 5.3.1
       '@tauri-apps/api':
         specifier: ^2.12.0
         version: 2.12.0
@@ -35,6 +38,9 @@ importers:
         version: 8.3.1(@types/node@24.19.0)
 
 packages:
+
+  '@fontsource/onest@5.3.1':
+    resolution: {integrity: sha512-2uA9HUzQHBB8H7T2R6inmrnqPofB6+svATHM/huIG640duJr4rm+uanmAIheTTlbZvRC0ujMtf2T4U4RX51oEQ==}
 
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
@@ -445,6 +451,8 @@ packages:
     resolution: {integrity: sha512-msJxIvYDYcoNL+PJsu+7qmpDWsYmAxTY+2TNYXXF0hzBzBk0BMecOqDOG/EckUoKCuKwObfbugIl8QpqHDXeFA==}
 
 snapshots:
+
+  '@fontsource/onest@5.3.1': {}
 
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:

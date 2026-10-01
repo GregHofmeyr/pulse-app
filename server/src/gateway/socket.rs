@@ -16,13 +16,17 @@ use crate::auth::session;
 use crate::error::AppResult;
 use crate::servers::routes::{all_servers, dms_of, server_channels, server_members};
 
-pub const CLOSE_UNAUTHORIZED: u16 = 4001;
+pub use super::hub::{CLOSE_TOO_SLOW, CLOSE_UNAUTHORIZED};
 pub const CLOSE_TIMEOUT: u16 = 4002;
+/// Pre- and post-auth client frames are tiny; cap them so nobody can make us buffer megabytes.
+const MAX_CLIENT_FRAME: usize = 64 * 1024;
 /// A socket write that cannot complete in this long belongs to a dead or stalled client.
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn handler(ws: WebSocketUpgrade, State(s): State<AppState>) -> Response {
-    ws.on_upgrade(move |socket| run(socket, s))
+    ws.max_message_size(MAX_CLIENT_FRAME)
+        .max_frame_size(MAX_CLIENT_FRAME)
+        .on_upgrade(move |socket| run(socket, s))
 }
 
 async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
@@ -44,16 +48,29 @@ async fn send(socket: &mut WebSocket, frame: &ServerFrame) -> bool {
     )
 }
 
-async fn authenticate(socket: &mut WebSocket, s: &AppState) -> Option<UserId> {
-    let first = tokio::time::timeout(s.cfg.hello_timeout, socket.recv())
-        .await
-        .ok()??
-        .ok()?;
-    let Ws::Text(text) = first else { return None };
-    let ClientFrame::Hello { token } = serde_json::from_str(&text).ok()? else {
-        return None;
+enum Auth {
+    Ok(UserId, String),
+    Denied,
+    Internal,
+}
+
+async fn authenticate(socket: &mut WebSocket, s: &AppState) -> Auth {
+    let first = match tokio::time::timeout(s.cfg.hello_timeout, socket.recv()).await {
+        Ok(Some(Ok(m))) => m,
+        _ => return Auth::Denied,
     };
-    session::authenticate(&s.db, &token).await.ok()?
+    let Ws::Text(text) = first else {
+        return Auth::Denied;
+    };
+    let Ok(ClientFrame::Hello { token }) = serde_json::from_str(&text) else {
+        return Auth::Denied;
+    };
+    match session::authenticate(&s.db, &token).await {
+        Ok(Some(user)) => Auth::Ok(user, session::hash_token(&token)),
+        Ok(None) => Auth::Denied,
+        // Don't tell the client to re-auth (and wipe its keychain) because our DB hiccuped.
+        Err(_) => Auth::Internal,
+    }
 }
 
 pub async fn build_ready(db: &SqlitePool, me: UserId) -> AppResult<Ready> {
@@ -95,11 +112,14 @@ pub async fn build_ready(db: &SqlitePool, me: UserId) -> AppResult<Ready> {
 }
 
 async fn run(mut socket: WebSocket, s: AppState) {
-    let Some(me) = authenticate(&mut socket, &s).await else {
-        return close(socket, CLOSE_UNAUTHORIZED, "unauthorized").await;
+    let (me, token_hash) = match authenticate(&mut socket, &s).await {
+        Auth::Ok(u, h) => (u, h),
+        Auth::Denied => return close(socket, CLOSE_UNAUTHORIZED, "unauthorized").await,
+        Auth::Internal => return close(socket, 1011, "internal error").await,
     };
     // Register before building Ready so no event between the snapshot and the stream is lost.
-    let (conn, mut rx) = s.hub.register(me);
+    let reg = s.hub.register(me, token_hash);
+    let (conn, mut rx, mut kick) = (reg.id, reg.rx, reg.kick);
     let ready = match build_ready(&s.db, me).await {
         Ok(r) => r,
         Err(e) => {
@@ -113,19 +133,31 @@ async fn run(mut socket: WebSocket, s: AppState) {
         return;
     }
 
+    // Only inbound frames prove the client is alive; outbound traffic must not extend the deadline.
+    let mut deadline = tokio::time::Instant::now() + s.cfg.heartbeat_timeout;
     loop {
         tokio::select! {
+            // A kick closes the queue too; check it first so the client gets the close code.
+            biased;
+            code = &mut kick => {
+                s.hub.unregister(conn);
+                let reason = if code == Ok(CLOSE_TOO_SLOW) { "too slow" } else { "session ended" };
+                return close(socket, code.unwrap_or(CLOSE_UNAUTHORIZED), reason).await;
+            }
             out = rx.recv() => {
-                // None: the hub dropped us (too slow) — just end.
                 let Some(frame) = out else { break };
                 if !send(&mut socket, &frame).await { break }
             }
-            inc = tokio::time::timeout(s.cfg.heartbeat_timeout, socket.recv()) => {
+            _ = tokio::time::sleep_until(deadline) => {
+                s.hub.unregister(conn);
+                return close(socket, CLOSE_TIMEOUT, "heartbeat timeout").await;
+            }
+            inc = socket.recv() => {
                 let msg = match inc {
-                    Err(_) => { s.hub.unregister(conn); return close(socket, CLOSE_TIMEOUT, "heartbeat timeout").await }
-                    Ok(None) | Ok(Some(Err(_))) => break,
-                    Ok(Some(Ok(m))) => m,
+                    None | Some(Err(_)) => break,
+                    Some(Ok(m)) => m,
                 };
+                deadline = tokio::time::Instant::now() + s.cfg.heartbeat_timeout;
                 let Ws::Text(text) = msg else {
                     if matches!(msg, Ws::Close(_)) { break }
                     continue;

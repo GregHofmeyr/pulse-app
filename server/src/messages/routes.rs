@@ -58,7 +58,12 @@ fn from_row(r: Row) -> AppResult<Message> {
         } else {
             MessageKind::Normal
         },
-        content,
+        // Backstop: a deleted message never exposes content, whatever is stored.
+        content: if deleted_at.is_some() {
+            String::new()
+        } else {
+            content
+        },
         reply_to_id: reply_to_id.as_deref().map(parse).transpose()?,
         created_at,
         edited_at,
@@ -200,12 +205,20 @@ async fn edit(
     let mut msg = own_message(&s.db, me, id).await?;
     msg.content = clean(&req.content)?;
     msg.edited_at = Some(now());
-    sqlx::query("UPDATE messages SET content = ?, edited_at = ? WHERE id = ?")
-        .bind(&msg.content)
-        .bind(&msg.edited_at)
-        .bind(id.to_string())
-        .execute(&s.db)
-        .await?;
+    // Guarded: a delete that commits between our read and this write wins.
+    let changed = sqlx::query(
+        "UPDATE messages SET content = ?, edited_at = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
+    )
+    .bind(&msg.content)
+    .bind(&msg.edited_at)
+    .bind(id.to_string())
+    .bind(me.to_string())
+    .execute(&s.db)
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        return Err(AppError::NotFound);
+    }
     s.hub
         .publish(
             &s.db,
@@ -223,11 +236,18 @@ async fn remove(
     Path(id): Path<MessageId>,
 ) -> AppResult<StatusCode> {
     let msg = own_message(&s.db, me, id).await?;
-    sqlx::query("UPDATE messages SET content = '', deleted_at = ? WHERE id = ?")
-        .bind(now())
-        .bind(id.to_string())
-        .execute(&s.db)
-        .await?;
+    let changed = sqlx::query(
+        "UPDATE messages SET content = '', deleted_at = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
+    )
+    .bind(now())
+    .bind(id.to_string())
+    .bind(me.to_string())
+    .execute(&s.db)
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        return Err(AppError::NotFound);
+    }
     s.hub
         .publish(
             &s.db,

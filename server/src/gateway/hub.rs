@@ -8,13 +8,38 @@ use std::sync::{Arc, Mutex};
 use pulse_protocol::gateway::{Event, ServerFrame};
 use pulse_protocol::ids::UserId;
 use sqlx::SqlitePool;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 
 use super::audience::audience_for;
 
 pub const QUEUE: usize = 256;
+/// Close code sent to a client the hub dropped for falling behind (it should resync via Ready).
+pub const CLOSE_TOO_SLOW: u16 = 4003;
+pub const CLOSE_UNAUTHORIZED: u16 = 4001;
 
 pub type ConnId = u64;
+
+pub struct Registration {
+    pub id: ConnId,
+    pub rx: mpsc::Receiver<ServerFrame>,
+    /// Fires with a close code when the hub wants this socket gone.
+    pub kick: oneshot::Receiver<u16>,
+}
+
+struct Conn {
+    user: UserId,
+    token_hash: String,
+    tx: mpsc::Sender<ServerFrame>,
+    kick: Option<oneshot::Sender<u16>>,
+}
+
+impl Conn {
+    fn kick(&mut self, code: u16) {
+        if let Some(k) = self.kick.take() {
+            let _ = k.send(code);
+        }
+    }
+}
 
 #[derive(Clone, Default)]
 pub struct Hub {
@@ -24,15 +49,25 @@ pub struct Hub {
 #[derive(Default)]
 struct Inner {
     next: AtomicU64,
-    conns: Mutex<HashMap<ConnId, (UserId, mpsc::Sender<ServerFrame>)>>,
+    conns: Mutex<HashMap<ConnId, Conn>>,
 }
 
 impl Hub {
-    pub fn register(&self, user: UserId) -> (ConnId, mpsc::Receiver<ServerFrame>) {
+    /// `token_hash` ties the socket to its session so logout can close it.
+    pub fn register(&self, user: UserId, token_hash: String) -> Registration {
         let (tx, rx) = mpsc::channel(QUEUE);
+        let (ktx, krx) = oneshot::channel();
         let id = self.inner.next.fetch_add(1, Ordering::Relaxed);
-        self.inner.conns.lock().unwrap().insert(id, (user, tx));
-        (id, rx)
+        self.inner.conns.lock().unwrap().insert(
+            id,
+            Conn {
+                user,
+                token_hash,
+                tx,
+                kick: Some(ktx),
+            },
+        );
+        Registration { id, rx, kick: krx }
     }
 
     pub fn unregister(&self, id: ConnId) {
@@ -45,8 +80,20 @@ impl Hub {
             .lock()
             .unwrap()
             .values()
-            .filter(|(u, _)| *u == user)
+            .filter(|c| c.user == user)
             .count()
+    }
+
+    /// Close every socket opened with this session (logout / revocation).
+    pub fn drop_session(&self, token_hash: &str) {
+        self.inner.conns.lock().unwrap().retain(|_, c| {
+            if c.token_hash == token_hash {
+                c.kick(CLOSE_UNAUTHORIZED);
+                false
+            } else {
+                true
+            }
+        });
     }
 
     /// Deliver `event` to every connection whose user is in its audience.
@@ -60,14 +107,15 @@ impl Hub {
         };
         let frame = ServerFrame::Event(event);
         let mut conns = self.inner.conns.lock().unwrap();
-        conns.retain(|id, (user, tx)| {
-            if !audience.includes(*user) {
+        conns.retain(|id, c| {
+            if !audience.includes(c.user) {
                 return true;
             }
-            match tx.try_send(frame.clone()) {
+            match c.tx.try_send(frame.clone()) {
                 Ok(()) => true,
                 Err(mpsc::error::TrySendError::Full(_)) => {
-                    tracing::warn!(conn = id, user = %user, "gateway client too slow; dropping");
+                    tracing::warn!(conn = id, user = %c.user, "gateway client too slow; dropping");
+                    c.kick(CLOSE_TOO_SLOW);
                     false
                 }
                 Err(mpsc::error::TrySendError::Closed(_)) => false,
