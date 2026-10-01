@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import Icon from './Icon.svelte'
+  import Select from './Select.svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { loadAudioConfig, saveAudioConfig, type AudioConfig } from '../lib/voiceui'
 
@@ -10,6 +11,17 @@
   let inputs = $state<{ name: string; is_default: boolean }[]>([])
   let outputs = $state<{ name: string; is_default: boolean }[]>([])
   let testing = $state(false)
+  const SENS_MAX = 0.2
+  // how long the mic has been completely silent (drives the "no sound" hint)
+  let lastSound = Date.now()
+  let silentFor = $state(0)
+  $effect(() => {
+    if (voice.levels.mic > 0.0005) lastSound = Date.now()
+    silentFor = Date.now() - lastSound
+  })
+  $effect(() => {
+    if (testing) lastSound = Date.now()
+  })
   let error = $state('')
   const linux = navigator.userAgent.includes('Linux')
 
@@ -57,6 +69,7 @@
   ]
 </script>
 
+<div class="overlay">
 <div class="backdrop" role="presentation" onclick={onClose}></div>
 <div class="modal" role="dialog" aria-label="Voice and audio settings">
   <div class="top">
@@ -65,18 +78,14 @@
   </div>
 
   <div class="two">
-    <label>INPUT DEVICE
-      <select bind:value={cfg.input} onchange={apply}>
-        <option value={null}>System default</option>
-        {#each inputs.filter((d) => d.name !== 'default') as d}<option value={d.name}>{d.name}</option>{/each}
-      </select>
-    </label>
-    <label>OUTPUT DEVICE
-      <select bind:value={cfg.output} onchange={apply}>
-        <option value={null}>System default</option>
-        {#each outputs.filter((d) => d.name !== 'default') as d}<option value={d.name}>{d.name}</option>{/each}
-      </select>
-    </label>
+    <div class="field"><span class="lbl">INPUT DEVICE</span>
+      <Select label="Input device" bind:value={cfg.input} onchange={apply}
+        options={[{ value: null, label: 'System default' }, ...inputs.filter((d) => d.name !== 'default').map((d) => ({ value: d.name, label: d.name }))]} />
+    </div>
+    <div class="field"><span class="lbl">OUTPUT DEVICE</span>
+      <Select label="Output device" bind:value={cfg.output} onchange={apply}
+        options={[{ value: null, label: 'System default' }, ...outputs.filter((d) => d.name !== 'default').map((d) => ({ value: d.name, label: d.name }))]} />
+    </div>
   </div>
   {#if linux}<p class="hint">On Linux, pick your mic and headphones in your system sound settings. Pulse follows the system default.</p>{/if}
 
@@ -85,20 +94,23 @@
       <input type="range" min="50" max="400" step="10" bind:value={cfg.input_gain_pct} onchange={apply} />
       <small>For quiet mics: boosts your voice before it's sent.</small>
     </label>
-    <label>INPUT SENSITIVITY
-      <div class="meter" aria-hidden="true">
-        <div class="fill" style:width="{Math.min(100, voice.levels.mic * 400)}%"></div>
-        <div class="mark" style:left="{Math.min(100, cfg.sensitivity * 400)}%"></div>
+    <div class="field"><span class="lbl">INPUT SENSITIVITY</span>
+      <!-- the slider sits ON the level meter, so its thumb is the threshold marker -->
+      <div class="sens">
+        <div class="meter" aria-hidden="true"><div class="fill" class:over={voice.levels.mic >= cfg.sensitivity} style:width="{Math.min(100, (voice.levels.mic / SENS_MAX) * 100)}%"></div></div>
+        <input type="range" min="0" max={SENS_MAX} step="0.002" bind:value={cfg.sensitivity} onchange={apply} aria-label="Sensitivity threshold" />
       </div>
-      <input type="range" min="0" max="0.2" step="0.002" bind:value={cfg.sensitivity} onchange={apply} aria-label="Sensitivity threshold" />
-      <small>Only sound past the marker is sent. Talk to see the green bar move.</small>
-    </label>
+      <small>Sound to the right of the handle is sent. {testing || voice.channelId ? 'Talk to see the bar move.' : "Start “Let's check” to see your level."}</small>
+    </div>
   </div>
 
   <div class="check">
     <button class="primary" onclick={toggleTest}>{testing ? 'Stop' : "Let's check"}</button>
     <small>{testing ? 'You should hear yourself after a moment. Headphones recommended.' : 'Hear your mic the way others will.'}</small>
   </div>
+  {#if testing && silentFor > 3000}
+    <p class="warn" role="status">No sound from your mic. Check it isn't muted, or pick a different input in your system sound settings. Some Bluetooth headsets need a different headset codec.</p>
+  {/if}
   {#if error}<p class="error" role="alert">{error}</p>{/if}
 
   <div class="toggles">
@@ -111,23 +123,32 @@
     {/each}
   </div>
 </div>
+</div>
 
 <style>
-  .backdrop { position: fixed; inset: 0; background: rgba(10, 11, 13, .6); z-index: 20; }
-  .modal { position: fixed; z-index: 21; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow-y: auto; padding: 28px 32px; background: var(--bg-1); border-radius: 16px; border: 1px solid var(--bg-3); display: flex; flex-direction: column; gap: 20px; }
+  /* flex-centred (not transform): WebKitGTK blurs text on sub-pixel transforms */
+  .overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 32px 16px; }
+  .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
+  .modal { position: relative; width: min(760px, calc(100vw - 32px)); max-height: calc(100vh - 64px); overflow-y: auto; padding: 28px 32px; background: var(--bg-1); border-radius: 16px; border: 1px solid var(--bg-3); display: flex; flex-direction: column; gap: 20px; }
   .top { display: flex; justify-content: space-between; align-items: center; }
   h1 { margin: 0; font-size: 22px; font-weight: 600; }
   .close { width: 36px; height: 36px; border: 1px solid var(--bg-4); border-radius: 50%; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
   label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
   label strong { color: var(--text); letter-spacing: 0; }
-  select { height: 42px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: #26282e; font-size: 14px; letter-spacing: 0; }
   input[type='range'] { accent-color: var(--accent); }
   small { font-size: 12px; font-weight: 400; color: var(--text-3); letter-spacing: 0; }
   .hint { margin: -8px 0 0; font-size: 12px; color: var(--text-3); }
-  .meter { position: relative; height: 12px; border-radius: 6px; background: #2f3138; overflow: hidden; }
-  .fill { height: 100%; background: var(--ok); transition: width .1s linear; }
-  .mark { position: absolute; top: 0; width: 3px; height: 100%; background: #f6f7f9; }
+  .field { display: flex; flex-direction: column; gap: 8px; }
+  .lbl { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
+  .sens { position: relative; height: 22px; display: flex; align-items: center; }
+  .meter { position: absolute; left: 0; right: 0; height: 12px; border-radius: 6px; background: #2f3138; overflow: hidden; }
+  .fill { height: 100%; background: #3a7d5a; transition: width .1s linear; }
+  .fill.over { background: var(--ok); }
+  .sens input[type='range'] { position: relative; width: 100%; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; height: 22px; }
+  .sens input[type='range']::-webkit-slider-runnable-track { background: transparent; height: 22px; }
+  .sens input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 6px; height: 22px; border-radius: 3px; background: #f6f7f9; box-shadow: 0 0 0 2px var(--bg-1); }
+  .warn { margin: -8px 0 0; padding: 10px 12px; border-radius: 10px; background: rgba(232, 176, 74, .12); color: #e8b04a; font-size: 13px; }
   .check { display: flex; align-items: center; gap: 12px; padding: 16px; background: var(--bg-2); border-radius: 14px; }
   .primary { height: 38px; padding: 0 16px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
   .error { margin: 0; color: #f2616b; font-size: 13px; }

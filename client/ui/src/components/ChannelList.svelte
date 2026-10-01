@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
   import { app } from '../lib/store.svelte'
-  import { channelsFor, voiceOccupants } from '../lib/selectors'
+  import { channelsFor, isMember, voiceOccupants } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
 
   let {
@@ -21,6 +21,8 @@
   } = $props()
 
   const lists = $derived(channelsFor(app.state, serverId))
+  // Who's in voice is only shown to people who've joined the server.
+  const member = $derived(isMember(app.state, serverId))
 </script>
 
 <div class="list">
@@ -33,7 +35,7 @@
 
   <div class="label voice">VOICE CHANNELS</div>
   {#each lists.voice as c (c.id)}
-    {@const people = voiceOccupants(app.state, serverId, c.id)}
+    {@const people = member ? voiceOccupants(app.state, serverId, c.id) : []}
     <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId}
       data-tip={c.id === voiceChannelId ? 'You’re here' : `Join ${c.name}`}
       onclick={() => onJoinVoice(c.id)} ondblclick={() => onSelect(c.id)}>

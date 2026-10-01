@@ -1,22 +1,35 @@
+<script lang="ts" module>
+  // Unsent text per channel, kept while the app runs (switching channels doesn't lose it).
+  const drafts = new Map<string, string>()
+</script>
+
 <script lang="ts">
+  import { untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import { typingThrottle } from '../lib/markdown'
 
   let {
     placeholder,
+    draftKey,
     replyingTo,
     onCancelReply,
     onSend,
     onTyping,
   }: {
     placeholder: string
+    draftKey: string
     replyingTo: string | null
     onCancelReply: () => void
     onSend: (text: string) => void
     onTyping: () => void
   } = $props()
 
-  let text = $state('')
+  // The composer remounts per channel ({#key} in Shell), so reading the key once is intended.
+  let text = $state(untrack(() => drafts.get(draftKey) ?? ''))
+  $effect(() => {
+    if (text) drafts.set(draftKey, text)
+    else drafts.delete(draftKey)
+  })
   let lastTyping: number | null = null
   let box: HTMLTextAreaElement
 

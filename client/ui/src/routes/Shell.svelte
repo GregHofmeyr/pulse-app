@@ -156,6 +156,7 @@
 </div>
 {#if settingsOpen}<Settings onClose={() => (settingsOpen = false)} />{/if}
 {#if creating}
+  <div class="overlay">
   <div class="backdrop" role="presentation" onclick={() => (creating = false)}></div>
   <form class="dialog" onsubmit={createServer} aria-label="Create a server">
     <h2>Create a server</h2>
@@ -166,6 +167,7 @@
       <button class="primary" disabled={!newName.trim()}>Create</button>
     </div>
   </form>
+  </div>
 {/if}
 
 <style>
@@ -201,8 +203,9 @@
   .menu button { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font-size: 13px; }
   .menu button:hover { background: var(--bg-4); }
   .menu .danger { color: #f2616b; }
-  .backdrop { position: fixed; inset: 0; background: rgba(10, 11, 13, .6); z-index: 20; }
-  .dialog { position: fixed; z-index: 21; top: 50%; left: 50%; transform: translate(-50%, -50%); width: min(420px, calc(100vw - 32px)); padding: 24px; background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px; }
+  .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
+  .dialog { position: relative; width: min(420px, calc(100vw - 32px)); padding: 24px; background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: 16px; display: flex; flex-direction: column; gap: 14px; }
   .dialog h2 { margin: 0; font-size: 18px; }
   .dialog label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
   .dialog input { height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-2); font-size: 14px; font-weight: 400; letter-spacing: 0; }

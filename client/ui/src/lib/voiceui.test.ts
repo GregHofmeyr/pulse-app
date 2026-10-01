@@ -27,3 +27,27 @@ describe('voice ui helpers', () => {
     expect(soundFor(off, off)).toBeNull()
   })
 })
+
+import { transitionSounds } from './voiceui'
+
+describe('transitionSounds', () => {
+  const off = { muted: false, deafened: false }
+  const at = (channelId: string | null, connection: string, controls = off) => ({ channelId, connection, controls })
+  it('plays join when we become connected (after a connecting step)', () => {
+    expect(transitionSounds(at(null, 'disconnected'), at('V1', 'connecting'))).toEqual([])
+    expect(transitionSounds(at('V1', 'connecting'), at('V1', 'connected'))).toEqual(['join'])
+  })
+  it('plays leave only when we were connected', () => {
+    expect(transitionSounds(at('V1', 'connected'), at(null, 'disconnected'))).toEqual(['leave'])
+    expect(transitionSounds(at('V1', 'connecting'), at(null, 'disconnected'))).toEqual([])
+  })
+  it('reconnecting back to connected is not a join', () => {
+    expect(transitionSounds(at('V1', 'reconnecting'), at('V1', 'connected'))).toEqual([])
+  })
+  it('switching channels plays join for the new one', () => {
+    expect(transitionSounds(at('V1', 'connected'), at('V2', 'connected'))).toEqual(['join'])
+  })
+  it('mute toggles still sound', () => {
+    expect(transitionSounds(at('V1', 'connected'), at('V1', 'connected', { muted: true, deafened: false }))).toEqual(['mute'])
+  })
+})

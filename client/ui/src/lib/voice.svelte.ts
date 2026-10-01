@@ -1,7 +1,7 @@
 // Voice state from the Rust VoiceManager (voice://event).
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { loadAudioConfig, loadVolumes, playSound, saveVolumes, soundFor, type AudioConfig, type Flags } from './voiceui'
+import { loadAudioConfig, loadVolumes, playSound, saveVolumes, transitionSounds, type AudioConfig, type Flags } from './voiceui'
 
 type Connection = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 type VoiceEvent =
@@ -27,10 +27,8 @@ export async function startVoiceListening() {
   return listen<VoiceEvent>('voice://event', ({ payload: e }) => {
     switch (e.kind) {
       case 'state': {
-        const s = soundFor(voice.controls, e.controls)
-        if (s) playSound(s)
-        if (!voice.channelId && e.channel_id && e.connection === 'connected') playSound('join')
-        if (voice.channelId && !e.channel_id) playSound('leave')
+        const prev = { channelId: voice.channelId, connection: voice.connection, controls: voice.controls }
+        for (const snd of transitionSounds(prev, { channelId: e.channel_id, connection: e.connection, controls: e.controls })) playSound(snd)
         voice.channelId = e.channel_id
         voice.connection = e.connection
         voice.controls = e.controls

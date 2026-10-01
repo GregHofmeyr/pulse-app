@@ -131,7 +131,7 @@
     {#if typers.length}<strong>{typers.join(', ')}</strong> {typers.length > 1 ? 'are' : 'is'} typing…{/if}
   </div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  <Composer placeholder="Message #{channel?.name ?? ''}" replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
+  <Composer draftKey={channelId} placeholder="Message #{channel?.name ?? ''}" replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
     onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} />
 </div>
 

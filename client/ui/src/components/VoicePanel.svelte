@@ -98,7 +98,7 @@
   .bar { width: 3px; border-radius: 1px; background: var(--bg-4); }
   .bar.on { background: var(--ok); }
   .vol { position: absolute; top: 10px; right: 12px; font-size: 11px; color: var(--text-3); }
-  .pop { position: absolute; top: calc(100% - 30px); left: 50%; transform: translateX(-50%); z-index: 5; width: 240px; padding: 14px; background: #2e3037; border: 1px solid #3d4048; border-radius: 14px; box-shadow: 0 18px 48px rgba(8, 9, 12, .5); display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+  .pop { position: absolute; top: calc(100% - 30px); left: calc(50% - 120px); z-index: 5; width: 240px; padding: 14px; background: #2e3037; border: 1px solid #3d4048; border-radius: 14px; box-shadow: 0 18px 48px rgba(8, 9, 12, .5); display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
   .pop label { display: flex; justify-content: space-between; color: var(--text-2); }
   .pop input { accent-color: var(--accent); }
   .pop small { color: var(--text-3); }

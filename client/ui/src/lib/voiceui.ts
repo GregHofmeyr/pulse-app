@@ -18,6 +18,19 @@ export function soundFor(prev: Flags, next: Flags): SoundName | null {
   return null
 }
 
+type VoiceSnap = { channelId: string | null; connection: string; controls: Flags }
+
+/** Sounds for a voice state change. "Joined" = became connected to a channel we weren't already connected to. */
+export function transitionSounds(prev: VoiceSnap, next: VoiceSnap): SoundName[] {
+  const out: SoundName[] = []
+  const wasIn = prev.connection === 'connected' || prev.connection === 'reconnecting'
+  if (next.connection === 'connected' && next.channelId && (!wasIn || prev.channelId !== next.channelId)) out.push('join')
+  if (prev.connection === 'connected' && !next.channelId) out.push('leave')
+  const c = soundFor(prev.controls, next.controls)
+  if (c) out.push(c)
+  return out
+}
+
 /** Played by the Rust core (never an <audio> element: WebKitGTK + missing GStreamer sink aborts the renderer). */
 export function playSound(name: SoundName) {
   void invoke('play_sound', { name }).catch(() => {})
