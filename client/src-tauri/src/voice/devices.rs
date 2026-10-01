@@ -45,7 +45,7 @@ impl Default for AudioConfig {
             input: None,
             output: None,
             input_gain_pct: 100,
-            sensitivity: 0.01,
+            sensitivity: 0.02,
             echo_cancel: true,
             noise_suppress: true,
             auto_gain: false,
@@ -206,6 +206,8 @@ pub struct Shared {
     pub watchdog: Watchdog,
     mic_meter: Mutex<Meter>,
     spk_meter: Mutex<Meter>,
+    /// Level of what we actually send (after mute + gate): your own speaking ring.
+    sent_meter: Mutex<Meter>,
 }
 
 impl Shared {
@@ -229,10 +231,15 @@ impl Shared {
             watchdog: Watchdog::new(Instant::now()),
             mic_meter: Mutex::new(Meter::default()),
             spk_meter: Mutex::new(Meter::default()),
+            sent_meter: Mutex::new(Meter::default()),
         })
     }
 
     /// (mic rms, speaker rms) since the last call.
+    pub fn take_sent_level(&self) -> f32 {
+        self.sent_meter.lock().unwrap().take().0
+    }
+
     pub fn take_levels(&self) -> (f32, f32) {
         (
             self.mic_meter.lock().unwrap().take().0,
@@ -275,6 +282,10 @@ impl Shared {
                     // Send silence rather than nothing: the source expects a steady stream (DTX makes it ~free).
                     buf.iter_mut().for_each(|s| *s = 0);
                 }
+                self.sent_meter
+                    .lock()
+                    .unwrap()
+                    .add(if open && speaking { rms } else { 0.0 });
                 let _ = mic_tx.send((rate, buf));
             }
         }

@@ -40,6 +40,8 @@ pub struct Mixer {
 struct Peer {
     queue: VecDeque<i16>,
     gain: f32,
+    /// Level of what we received (drives the speaking ring: lit = audible).
+    meter: super::meter::Meter,
 }
 
 impl Mixer {
@@ -55,6 +57,7 @@ impl Mixer {
         self.peers.entry(id.to_string()).or_insert_with(|| Peer {
             queue: VecDeque::new(),
             gain: 1.0,
+            meter: Default::default(),
         })
     }
 
@@ -62,7 +65,11 @@ impl Mixer {
     pub fn push(&mut self, peer: &str, samples: &[i16]) {
         let cap = self.cap;
         self.pushed += samples.len() as u64;
-        let q = &mut self.peer(peer).queue;
+        let p = self.peer(peer);
+        for s in samples {
+            p.meter.add(*s as f32 / i16::MAX as f32 * p.gain);
+        }
+        let q = &mut p.queue;
         q.extend(samples.iter().copied());
         if q.len() > cap {
             let excess = q.len() - cap;
@@ -76,6 +83,14 @@ impl Mixer {
 
     pub fn remove(&mut self, peer: &str) {
         self.peers.remove(peer);
+    }
+
+    /// (peer, rms since the last call) — what each person sounded like, after their volume.
+    pub fn take_peer_levels(&mut self) -> Vec<(String, f32)> {
+        self.peers
+            .iter_mut()
+            .map(|(id, p)| (id.clone(), p.meter.take().0))
+            .collect()
     }
 
     pub fn pushed_total(&self) -> u64 {
@@ -173,5 +188,21 @@ mod tests {
         m.push("a", &[1; 10]);
         m.remove("a");
         assert_eq!(m.buffered("a"), 0);
+    }
+
+    #[test]
+    fn per_peer_levels_reflect_pushed_audio() {
+        let mut m = Mixer::new(48_000, 200);
+        m.push("loud", &[16384; 480]);
+        m.push("quiet", &[0; 480]);
+        let mut levels = m.take_peer_levels();
+        levels.sort_by(|a, b| a.0.cmp(&b.0));
+        assert_eq!(levels[0].0, "loud");
+        assert!((levels[0].1 - 0.5).abs() < 0.01);
+        assert_eq!(levels[1].1, 0.0);
+        assert!(
+            m.take_peer_levels().iter().all(|(_, v)| *v == 0.0),
+            "reset after take"
+        );
     }
 }

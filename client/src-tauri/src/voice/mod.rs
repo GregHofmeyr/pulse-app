@@ -6,6 +6,7 @@ pub mod meter;
 pub mod mictest;
 pub mod mixer;
 pub mod rx;
+pub mod speaking;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -275,14 +276,6 @@ impl VoiceManager {
                             rx.lock().unwrap().drop_for(&id);
                             mixer.lock().unwrap().remove(&id);
                         }
-                        RoomEvent::ActiveSpeakersChanged { speakers } => {
-                            events(VoiceEvent::Speaking {
-                                user_ids: speakers
-                                    .iter()
-                                    .map(|p| p.identity().to_string())
-                                    .collect(),
-                            });
-                        }
                         RoomEvent::ConnectionQualityChanged {
                             quality,
                             participant,
@@ -313,7 +306,8 @@ impl VoiceManager {
             }));
         }
 
-        // levels for the UI meter + device watchdog (FINDINGS rule 2)
+        // levels for the UI meter + speaking ring + device watchdog (FINDINGS rule 2)
+        let me_id = room.local_participant().identity().to_string();
         let cfg = Arc::new(Mutex::new(cfg));
         let real = matches!(mode, AudioMode::Real);
         {
@@ -322,6 +316,7 @@ impl VoiceManager {
             tasks.push(tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_millis(100));
                 let mut restarted_at: Option<Instant> = None;
+                let mut speaking = speaking::SpeakingTracker::default();
                 let mut n = 0u32;
                 loop {
                     tick.tick().await;
@@ -330,6 +325,12 @@ impl VoiceManager {
                     }
                     let (mic, speaker) = shared.take_levels();
                     events(VoiceEvent::Levels { mic, speaker });
+                    // Ring = actually audible: received levels per peer + what we really send.
+                    let mut levels = shared.mixer.lock().unwrap().take_peer_levels();
+                    levels.push((me_id.clone(), shared.take_sent_level()));
+                    if let Some(user_ids) = speaking.update(&levels, Instant::now()) {
+                        events(VoiceEvent::Speaking { user_ids });
+                    }
                     n += 1;
                     if !real || !n.is_multiple_of(5) {
                         continue;

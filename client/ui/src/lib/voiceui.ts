@@ -63,7 +63,7 @@ export type AudioConfig = {
   auto_gain: boolean
 }
 export const defaultAudioConfig: AudioConfig = {
-  input: null, output: null, input_gain_pct: 100, sensitivity: 0.01, echo_cancel: true, noise_suppress: true, auto_gain: false,
+  input: null, output: null, input_gain_pct: 100, sensitivity: 0.02, echo_cancel: true, noise_suppress: true, auto_gain: false,
 }
 export const loadAudioConfig = () => load('pulse.audio', defaultAudioConfig)
 export const saveAudioConfig = (c: AudioConfig) => save('pulse.audio', c)
