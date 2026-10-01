@@ -180,6 +180,27 @@ async fn platform(room_name: String, identity: String, mic: Option<String>, spea
 
 type Mixer = Arc<Mutex<HashMap<String, VecDeque<i16>>>>;
 
+/// One receive task per remote participant. A NativeAudioStream does NOT end when its participant
+/// leaves (it stays attached and keeps receiving later audio), so the task must be aborted
+/// explicitly — otherwise every rejoin adds another copy of the audio (the "robot voice" bug).
+#[derive(Default)]
+struct RxTasks(HashMap<String, tokio::task::JoinHandle<()>>);
+impl RxTasks {
+    fn replace(&mut self, id: String, h: tokio::task::JoinHandle<()>) {
+        if let Some(old) = self.0.insert(id, h) { old.abort(); }
+    }
+    fn drop_for(&mut self, id: &str) {
+        if let Some(h) = self.0.remove(id) { h.abort(); }
+    }
+    fn on_event(&mut self, ev: &RoomEvent) {
+        match ev {
+            RoomEvent::TrackUnsubscribed { participant, .. } => self.drop_for(participant.identity().as_str()),
+            RoomEvent::ParticipantDisconnected(p) => self.drop_for(p.identity().as_str()),
+            _ => {}
+        }
+    }
+}
+
 /// Running sum-of-squares + count, printed and reset every 2 s.
 #[derive(Default)]
 struct Meter { sq: f64, n: u64 }
@@ -290,6 +311,7 @@ async fn manual(room_name: String, identity: String, gain: f32, peer_volume: f32
     let mut stdin = tokio::io::BufReader::new(tokio::io::stdin()).lines();
     let mut muted = false;
     let mut tick = tokio::time::interval(Duration::from_secs(2));
+    let mut rx_tasks = RxTasks::default();
     loop {
         tokio::select! {
             _ = tick.tick() => {
@@ -303,12 +325,15 @@ async fn manual(room_name: String, identity: String, gain: f32, peer_volume: f32
             ev = events.recv() => {
                 let Some(ev) = ev else { break };
                 log_event(&ev);
+                rx_tasks.on_event(&ev);
                 if let RoomEvent::TrackSubscribed { track: RemoteTrack::Audio(t), participant, .. } = ev {
                     let id = participant.identity().to_string();
                     let mix = mixer.clone();
                     let m_rx = m_rx.clone();
                     println!("[ev] subscribed to {id}'s audio");
-                    tokio::spawn(async move {
+                    let task_id = id.clone();
+                    let mixer_for_cleanup = mixer.clone();
+                    let h = tokio::spawn(async move {
                         let mut stream = NativeAudioStream::new(t.rtc_track(), out_rate as i32, 1);
                         while let Some(f) = stream.next().await {
                             {
@@ -325,6 +350,8 @@ async fn manual(room_name: String, identity: String, gain: f32, peer_volume: f32
                         }
                         mix.lock().unwrap().remove(&id);
                     });
+                    mixer_for_cleanup.lock().unwrap().remove(&task_id);
+                    rx_tasks.replace(task_id, h);
                 }
             }
             line = stdin.next_line() => {
@@ -346,19 +373,41 @@ async fn sink(room_name: String, seconds: u64, out: String) -> Result<()> {
     let (room, mut events) = Room::connect(URL, &token(&room_name, "sink")?, RoomOptions::default()).await?;
     let spec = hound::WavSpec { channels: 1, sample_rate: 48000, bits_per_sample: 16, sample_format: hound::SampleFormat::Int };
     let samples: Arc<Mutex<Vec<i16>>> = Arc::default();
+    let alive = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     let deadline = Instant::now() + Duration::from_secs(seconds);
+    let mut tick = tokio::time::interval(Duration::from_secs(2));
+    let mut last = 0usize;
+    let mut rx_tasks = RxTasks::default();
     while Instant::now() < deadline {
-        let left = deadline.saturating_duration_since(Instant::now());
-        let Ok(Some(ev)) = tokio::time::timeout(left, events.recv()).await else { break };
-        log_event(&ev);
-        if let RoomEvent::TrackSubscribed { track: RemoteTrack::Audio(t), .. } = ev {
-            let s = samples.clone();
-            tokio::spawn(async move {
-                let mut stream = NativeAudioStream::new(t.rtc_track(), 48000, 1);
-                while let Some(f) = stream.next().await {
-                    s.lock().unwrap().extend(f.data.iter());
+        tokio::select! {
+            _ = tick.tick() => {
+                let n = samples.lock().unwrap().len();
+                println!("[sink] +{} samples in 2s (real time = 96000), stream tasks alive: {}", n - last, alive.load(std::sync::atomic::Ordering::SeqCst));
+                last = n;
+            }
+            ev = events.recv() => {
+                let Some(ev) = ev else { break };
+                log_event(&ev);
+                rx_tasks.on_event(&ev);
+                if let RoomEvent::TrackSubscribed { track: RemoteTrack::Audio(t), participant, .. } = ev {
+                    let s = samples.clone();
+                    let alive = alive.clone();
+                    let guard = alive.clone();
+                    let h = tokio::spawn(async move {
+                        // decrement on abort too
+                        struct Live(Arc<std::sync::atomic::AtomicUsize>);
+                        impl Drop for Live { fn drop(&mut self) { self.0.fetch_sub(1, std::sync::atomic::Ordering::SeqCst); } }
+                        guard.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                        let _live = Live(guard);
+                        let mut stream = NativeAudioStream::new(t.rtc_track(), 48000, 1);
+                        while let Some(f) = stream.next().await {
+                            s.lock().unwrap().extend(f.data.iter());
+                        }
+                        let _ = alive;
+                    });
+                    rx_tasks.replace(participant.identity().to_string(), h);
                 }
-            });
+            }
         }
     }
     room.close().await?;

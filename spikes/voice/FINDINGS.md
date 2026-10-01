@@ -16,6 +16,20 @@
 **Provisional decision: manual pipeline** (per-user volume is a must-have for the group). PlatformAudio stays a
 reference for AEC quality comparison.
 
+## Ear test (Greg, 2026-10-01) — manual ↔ manual on one machine, BT earbuds
+- **Latency: as good as or better than Discord.** Clarity: fine ("cheap earbud", not robotic).
+- In-call footprint per instance: **~28 MB PSS**, ~25% CPU (debug build; release TBD).
+- `platform` ↔ `manual` produced **no audio** on this machine (no speaking events at all). PlatformAudio is
+  unreliable here, so the manual pipeline is confirmed.
+
+## BUG found + fixed: "robot voice that gets worse every rejoin"
+A `NativeAudioStream` **does not end when its participant leaves**. It stays attached and receives the *next*
+participant's audio too, so each rejoin adds another copy: measured 1×, 2×, 3× real-time input
+(`sink`, bot joining 3×). Our 200 ms cap then discards most of it → choppy, robotic audio.
+**Rule for VoiceManager:** keep a handle per remote participant and abort/drop its stream on
+`TrackUnsubscribed` / `ParticipantDisconnected` (and before re-subscribing). After the fix: steady 1× rate and
+tasks return to 0 after every leave.
+
 ## Pending — human ear test (Greg)
 Two instances, different devices:
 ```
