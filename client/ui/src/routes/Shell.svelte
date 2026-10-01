@@ -46,10 +46,7 @@
   const member = $derived(activeServerId ? isMember(app.state, activeServerId) : false)
   const activeChannel = $derived(activeChannelId ? app.state.channels[activeChannelId] : null)
 
-  // Default to the first server's #general once Ready arrives.
-  $effect(() => {
-    if (!activeServerId && servers.length) selectServer(servers[0].id)
-  })
+  // Launch lands on Home (a clean slate); only the person who creates a server is moved into it.
 
   function selectServer(id: string) {
     activeServerId = id

@@ -67,3 +67,11 @@ MSVC Build Tools; `.cargo/config.toml` crt-static; same commands on the Windows 
 ## Linux device picking
 cpal's ALSA backend lists plumbing names (`jack`, `pipewire`, `hdmi:CARD=…`), not real devices. On Linux, Pulse
 follows the system default; pick devices in the OS sound settings. A PipeWire-native picker is a follow-up.
+
+## BUG: WebKitGTK renderer abort on UI sounds (2026-10-01, Greg's first hands-on run)
+Leaving voice froze user1's window: the `WebKitWebProcess` died with SIGABRT (coredump at the moment of the
+"leave" sound). UI sounds were `<audio>` elements; WebKitGTK plays them through GStreamer, and without
+`gst-plugins-good` (`autoaudiosink not found`) WebKit aborted instead of failing gracefully. The Rust core was
+idle and healthy (main thread in its GTK loop, tokio idle, audio thread exited).
+**Rule:** never play audio through the webview. UI sounds are decoded/played by the Rust core via cpal
+(`client/src-tauri/src/sounds.rs`, `play_sound` command). Follow-up: reload the webview if its process dies.

@@ -1,3 +1,4 @@
+import { invoke } from '@tauri-apps/api/core'
 // Pure helpers for the voice UI (tested in voiceui.test.ts).
 
 export type Flags = { muted: boolean; deafened: boolean }
@@ -17,21 +18,9 @@ export function soundFor(prev: Flags, next: Flags): SoundName | null {
   return null
 }
 
-const cache = new Map<SoundName, HTMLAudioElement>()
-
+/** Played by the Rust core (never an <audio> element: WebKitGTK + missing GStreamer sink aborts the renderer). */
 export function playSound(name: SoundName) {
-  try {
-    let a = cache.get(name)
-    if (!a) {
-      a = new Audio(`/sounds/${name}.wav`)
-      a.volume = 0.6
-      cache.set(name, a)
-    }
-    a.currentTime = 0
-    void a.play()
-  } catch {
-    // sounds are a nicety; never break the UI over them
-  }
+  void invoke('play_sound', { name }).catch(() => {})
 }
 
 // Per-machine preferences (not shared state): safe in localStorage, guarded for private modes.

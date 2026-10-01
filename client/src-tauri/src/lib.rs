@@ -5,6 +5,7 @@ pub mod gateway;
 pub mod ipc;
 pub mod outbox;
 pub mod session;
+pub mod sounds;
 pub mod voice;
 
 pub fn run() {
@@ -101,6 +102,7 @@ pub fn run() {
             commands::list_audio_devices,
             commands::start_mic_test,
             commands::stop_mic_test,
+            commands::play_sound,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pulse");
