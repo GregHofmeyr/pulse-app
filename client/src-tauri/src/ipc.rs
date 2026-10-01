@@ -1,7 +1,9 @@
 //! Linux hotkeys: Wayland apps can't grab global keys, so a Hyprland bind runs
 //! `pulse-app --toggle-mute`, which pokes the running app over an owner-only Unix socket.
 
-use std::path::{Path, PathBuf};
+#[cfg(unix)]
+use std::path::Path;
+use std::path::PathBuf;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
@@ -24,6 +26,7 @@ impl Command {
             .find_map(|a| Self::parse(a.trim_start_matches("--")))
     }
 
+    #[cfg(unix)]
     fn wire(self) -> &'static str {
         match self {
             Self::ToggleMute => "toggle-mute\n",

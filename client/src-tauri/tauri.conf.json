@@ -8,7 +8,10 @@
     "frontendDist": "../ui/dist",
     "devUrl": "http://localhost:1420",
     "beforeDevCommand": "pnpm --dir ui dev",
-    "beforeBuildCommand": "pnpm --dir ui build"
+    "beforeBuildCommand": "pnpm --dir ui build",
+    "windows": {
+      "staticVCRuntime": false
+    }
   },
   "app": {
     "windows": [],
