@@ -367,3 +367,18 @@ pub fn start_mic_test(
 pub fn stop_mic_test(mic: State<'_, crate::voice::mictest::MicTest>) {
     mic.stop();
 }
+
+/// Hotkey path (IPC on Linux, global shortcut on Windows): toggle + broadcast, same as the buttons.
+pub fn hotkey(app: &AppHandle, c: crate::ipc::Command) {
+    let app = app.clone();
+    tauri::async_runtime::spawn(async move {
+        let voice = app.state::<VoiceManager>();
+        let controls = match c {
+            crate::ipc::Command::ToggleMute => voice.toggle_mute().await,
+            crate::ipc::Command::ToggleDeafen => voice.toggle_deafen().await,
+        };
+        app.state::<Core>().send_frame(ClientFrame::VoiceState {
+            flags: flags(controls),
+        });
+    });
+}

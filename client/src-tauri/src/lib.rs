@@ -2,6 +2,7 @@ pub mod api;
 pub mod backoff;
 pub mod commands;
 pub mod gateway;
+pub mod ipc;
 pub mod session;
 pub mod voice;
 
@@ -12,6 +13,40 @@ pub fn run() {
             let dir = app.path().app_data_dir()?;
             app.manage(commands::Core::new(session::Store::new(dir)));
             app.manage(voice::mictest::MicTest::default());
+            #[cfg(unix)]
+            {
+                let h = app.handle().clone();
+                let path = ipc::socket_path();
+                // Needs a runtime: run the listener on Tauri's.
+                tauri::async_runtime::spawn(async move {
+                    if let Err(e) = ipc::serve(&path, move |c| commands::hotkey(&h, c)) {
+                        eprintln!("hotkey socket unavailable ({}): {e}", path.display());
+                    }
+                });
+            }
+            #[cfg(windows)]
+            {
+                use tauri_plugin_global_shortcut::{
+                    Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
+                };
+                let mute = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyM);
+                let deafen = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD);
+                app.handle().plugin(
+                    tauri_plugin_global_shortcut::Builder::new()
+                        .with_handler(move |app, sc, ev| {
+                            if ev.state() == ShortcutState::Pressed {
+                                if sc == &mute {
+                                    commands::hotkey(app, ipc::Command::ToggleMute);
+                                } else if sc == &deafen {
+                                    commands::hotkey(app, ipc::Command::ToggleDeafen);
+                                }
+                            }
+                        })
+                        .build(),
+                )?;
+                app.global_shortcut().register(mute)?;
+                app.global_shortcut().register(deafen)?;
+            }
             let handle = app.handle().clone();
             app.manage(voice::VoiceManager::new(std::sync::Arc::new(
                 move |e: voice::VoiceEvent| {
