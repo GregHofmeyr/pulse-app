@@ -1,0 +1,6 @@
+# LF everywhere: a Windows checkout must not change file bytes (sqlx migration checksums).
+* text=auto eol=lf
+*.wav binary
+*.png binary
+*.ico binary
+*.icns binary

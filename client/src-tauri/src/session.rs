@@ -25,17 +25,36 @@ pub fn profile_dir(base: &Path, profile: Option<&str>) -> PathBuf {
     }
 }
 
+/// Keychain service name, per profile (Windows always has a keychain, so without this a second
+/// profile would overwrite the first one's login).
+pub fn keychain_service(profile: Option<&str>) -> String {
+    let clean: String = profile
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if clean.is_empty() {
+        SERVICE.to_string()
+    } else {
+        format!("{SERVICE}-{clean}")
+    }
+}
+
 pub struct Store {
     dir: PathBuf,
+    service: String,
 }
 
 impl Store {
-    pub fn new(dir: PathBuf) -> Self {
-        Self { dir }
+    pub fn new(dir: PathBuf, profile: Option<&str>) -> Self {
+        Self {
+            dir,
+            service: keychain_service(profile),
+        }
     }
 
     pub fn save(&self, server_url: &str, token: &str) {
-        if keychain::save(server_url, token).is_ok() {
+        if keychain::save(&self.service, server_url, token).is_ok() {
             file::clear(&self.dir);
             return;
         }
@@ -45,11 +64,11 @@ impl Store {
     }
 
     pub fn load(&self) -> Option<(String, String)> {
-        keychain::load().or_else(|| file::load(&self.dir))
+        keychain::load(&self.service).or_else(|| file::load(&self.dir))
     }
 
     pub fn clear(&self, server_url: &str) {
-        keychain::clear(server_url);
+        keychain::clear(&self.service, server_url);
         file::clear(&self.dir);
     }
 }
@@ -57,23 +76,23 @@ impl Store {
 mod keychain {
     use super::*;
 
-    fn entry(account: &str) -> keyring::Result<Entry> {
-        Entry::new(SERVICE, account)
+    fn entry(service: &str, account: &str) -> keyring::Result<Entry> {
+        Entry::new(service, account)
     }
 
-    pub fn save(server_url: &str, token: &str) -> keyring::Result<()> {
-        entry(server_url)?.set_password(token)?;
-        entry(LAST_SERVER)?.set_password(server_url)
+    pub fn save(service: &str, server_url: &str, token: &str) -> keyring::Result<()> {
+        entry(service, server_url)?.set_password(token)?;
+        entry(service, LAST_SERVER)?.set_password(server_url)
     }
 
-    pub fn load() -> Option<(String, String)> {
-        let server = entry(LAST_SERVER).ok()?.get_password().ok()?;
-        let token = entry(&server).ok()?.get_password().ok()?;
+    pub fn load(service: &str) -> Option<(String, String)> {
+        let server = entry(service, LAST_SERVER).ok()?.get_password().ok()?;
+        let token = entry(service, &server).ok()?.get_password().ok()?;
         Some((server, token))
     }
 
-    pub fn clear(server_url: &str) {
-        if let Ok(e) = entry(server_url) {
+    pub fn clear(service: &str, server_url: &str) {
+        if let Ok(e) = entry(service, server_url) {
             let _ = e.delete_credential();
         }
     }
@@ -174,5 +193,15 @@ mod profile_tests {
             base.join("profiles").join("etc")
         );
         assert_eq!(profile_dir(base, Some("")), base.to_path_buf());
+    }
+
+    /// Windows always has a keychain, so the profile must be part of the keychain entry or a
+    /// second profile overwrites the first one's login.
+    #[test]
+    fn keychain_service_is_per_profile() {
+        assert_eq!(keychain_service(None), "pulse-app");
+        assert_eq!(keychain_service(Some("b")), "pulse-app-b");
+        assert_eq!(keychain_service(Some("")), "pulse-app");
+        assert_eq!(keychain_service(Some("../x")), "pulse-app-x");
     }
 }

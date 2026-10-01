@@ -5,7 +5,7 @@
   let { notice = '', onAuthed }: { notice?: string; onAuthed: (u: User) => void } = $props()
 
   let mode = $state<'login' | 'register'>('login')
-  let serverUrl = $state('http://localhost:7890')
+  let serverUrl = $state('http://127.0.0.1:7890')
   let inviteCode = $state('')
   let username = $state('')
   let password = $state('')

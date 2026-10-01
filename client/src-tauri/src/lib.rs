@@ -54,7 +54,8 @@ pub fn run() {
                 Err(e) => eprintln!("logging unavailable ({}): {e}", log_dir.display()),
             }
             tracing::info!(profile = ?profile, data = %dir.display(), "profile");
-            create_main_window(app, &dir)?;
+            let webview_dir = session::profile_dir(&app.path().app_local_data_dir()?, profile.as_deref());
+            create_main_window(app, &webview_dir)?;
             let emitter = app.handle().clone();
             let outbox = outbox::Outbox::new(std::sync::Arc::new(
                 move |nonce: &str,
@@ -67,7 +68,7 @@ pub fn run() {
                     );
                 },
             ));
-            app.manage(commands::Core::new(session::Store::new(dir), outbox));
+            app.manage(commands::Core::new(session::Store::new(dir.clone(), profile.as_deref()), outbox));
             app.manage(voice::mictest::MicTest::default());
             #[cfg(unix)]
             {
