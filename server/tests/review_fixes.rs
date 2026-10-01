@@ -206,3 +206,16 @@ async fn dangling_voice_sessions_closed_on_startup() {
         .unwrap();
     assert_eq!(open, 0);
 }
+
+#[tokio::test]
+async fn close_all_closes_every_socket_with_code() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let mut ws = hello(&app, &a).await;
+    app.hub.close_all(1012);
+    assert_eq!(
+        close_code(&mut ws, Duration::from_secs(2)).await,
+        Some(CloseCode::Restart)
+    );
+    assert_eq!(app.hub.connections_for(a_id), 0);
+}

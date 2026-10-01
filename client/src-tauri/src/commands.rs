@@ -2,14 +2,18 @@
 
 use std::sync::Mutex;
 
+use pulse_protocol::gateway::ClientFrame;
 use pulse_protocol::rest::{Server, User};
-use tauri::State;
+use tauri::{AppHandle, Emitter, Manager, State};
+use tokio::sync::mpsc;
 
 use crate::api::{Api, ApiError};
+use crate::gateway::{ConnState, GatewayHandle, GatewayUpdate};
 use crate::session::Store;
 
 pub struct Core {
     inner: Mutex<Option<(Api, String)>>,
+    gateway: Mutex<Option<GatewayHandle>>,
     store: Store,
 }
 
@@ -17,11 +21,12 @@ impl Core {
     pub fn new(store: Store) -> Self {
         Self {
             inner: Mutex::new(None),
+            gateway: Mutex::new(None),
             store,
         }
     }
 
-    fn current(&self) -> Result<(Api, String), ApiError> {
+    pub(crate) fn current(&self) -> Result<(Api, String), ApiError> {
         self.inner
             .lock()
             .unwrap()
@@ -29,14 +34,57 @@ impl Core {
             .ok_or(ApiError::Unauthorized)
     }
 
-    fn set(&self, api: Api, token: String) {
-        self.store.save(api.base(), &token);
-        *self.inner.lock().unwrap() = Some((api, token));
+    /// Remember the session and (re)start the live connection.
+    fn activate(&self, app: &AppHandle, api: Api, token: String, persist: bool) {
+        if persist {
+            self.store.save(api.base(), &token);
+        }
+        *self.inner.lock().unwrap() = Some((api.clone(), token.clone()));
+        let (tx, rx) = mpsc::unbounded_channel();
+        let handle = GatewayHandle::spawn(api.base().to_string(), token, tx);
+        // Replacing an old handle drops (and stops) it.
+        *self.gateway.lock().unwrap() = Some(handle);
+        tauri::async_runtime::spawn(forward(app.clone(), rx));
+    }
+
+    /// Forget the session locally (logout, or the server said our token is dead).
+    fn deactivate(&self) {
+        self.gateway.lock().unwrap().take();
+        if let Some((api, _)) = self.inner.lock().unwrap().take() {
+            self.store.clear(api.base());
+        }
+    }
+
+    pub(crate) fn send_frame(&self, f: ClientFrame) {
+        if let Some(g) = self.gateway.lock().unwrap().as_ref() {
+            g.send(f);
+        }
+    }
+}
+
+/// Gateway updates → Tauri events for the UI.
+async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>) {
+    while let Some(u) = rx.recv().await {
+        match u {
+            GatewayUpdate::Ready(r) => {
+                let _ = app.emit("pulse://ready", &*r);
+            }
+            GatewayUpdate::Event(e) => {
+                let _ = app.emit("pulse://event", &e);
+            }
+            GatewayUpdate::Connection(state) => {
+                if state == ConnState::LoggedOut {
+                    app.state::<Core>().deactivate();
+                }
+                let _ = app.emit("pulse://conn", state);
+            }
+        }
     }
 }
 
 #[tauri::command]
 pub async fn login(
+    app: AppHandle,
     core: State<'_, Core>,
     server_url: String,
     username: String,
@@ -44,12 +92,13 @@ pub async fn login(
 ) -> Result<User, ApiError> {
     let api = Api::new(&server_url);
     let s = api.login(&username, &password).await?;
-    core.set(api, s.token);
+    core.activate(&app, api, s.token, true);
     Ok(s.user)
 }
 
 #[tauri::command]
 pub async fn register(
+    app: AppHandle,
     core: State<'_, Core>,
     server_url: String,
     invite_code: String,
@@ -58,20 +107,23 @@ pub async fn register(
 ) -> Result<User, ApiError> {
     let api = Api::new(&server_url);
     let s = api.register(&invite_code, &username, &password).await?;
-    core.set(api, s.token);
+    core.activate(&app, api, s.token, true);
     Ok(s.user)
 }
 
 /// Resume the stored session. `Ok(None)` means "show the login screen".
 #[tauri::command]
-pub async fn restore_session(core: State<'_, Core>) -> Result<Option<User>, ApiError> {
+pub async fn restore_session(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<Option<User>, ApiError> {
     let Some((server, token)) = core.store.load() else {
         return Ok(None);
     };
     let api = Api::new(&server);
     match api.me(&token).await {
         Ok(user) => {
-            *core.inner.lock().unwrap() = Some((api, token));
+            core.activate(&app, api, token, false);
             Ok(Some(user))
         }
         Err(ApiError::Unauthorized) => {
@@ -84,16 +136,30 @@ pub async fn restore_session(core: State<'_, Core>) -> Result<Option<User>, ApiE
 
 #[tauri::command]
 pub async fn logout(core: State<'_, Core>) -> Result<(), ApiError> {
-    let current = core.inner.lock().unwrap().take();
+    let current = core.inner.lock().unwrap().clone();
     if let Some((api, token)) = current {
         let _ = api.logout(&token).await;
-        core.store.clear(api.base());
     }
+    core.deactivate();
     Ok(())
+}
+
+/// The UI calls this on window focus / `online`: skip the backoff wait.
+#[tauri::command]
+pub fn gateway_reconnect_now(core: State<'_, Core>) {
+    if let Some(g) = core.gateway.lock().unwrap().as_ref() {
+        g.reconnect_now();
+    }
 }
 
 #[tauri::command]
 pub async fn list_servers(core: State<'_, Core>) -> Result<Vec<Server>, ApiError> {
     let (api, token) = core.current()?;
     api.servers(&token).await
+}
+
+/// Tell others you're typing (the UI throttles to 1 per 3 s).
+#[tauri::command]
+pub fn send_typing(core: State<'_, Core>, channel_id: pulse_protocol::ids::ChannelId) {
+    core.send_frame(ClientFrame::Typing { channel_id });
 }

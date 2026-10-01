@@ -162,7 +162,7 @@ async fn run(mut socket: WebSocket, s: AppState) {
             biased;
             code = &mut kick => {
                 s.hub.unregister(conn);
-                let reason = if code == Ok(CLOSE_TOO_SLOW) { "too slow" } else { "session ended" };
+                let reason = match code { Ok(CLOSE_TOO_SLOW) => "too slow", Ok(1012) => "server restarting", _ => "session ended" };
                 return close(socket, code.unwrap_or(CLOSE_UNAUTHORIZED), reason).await;
             }
             out = rx.recv() => {

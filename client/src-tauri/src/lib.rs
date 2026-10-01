@@ -1,5 +1,7 @@
 pub mod api;
+pub mod backoff;
 pub mod commands;
+pub mod gateway;
 pub mod session;
 
 pub fn run() {
@@ -16,6 +18,8 @@ pub fn run() {
             commands::restore_session,
             commands::logout,
             commands::list_servers,
+            commands::gateway_reconnect_now,
+            commands::send_typing,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pulse");

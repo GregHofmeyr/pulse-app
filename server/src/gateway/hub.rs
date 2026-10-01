@@ -96,6 +96,13 @@ impl Hub {
         });
     }
 
+    /// Close every socket with `code` (1012 = server restarting; clients reconnect).
+    pub fn close_all(&self, code: u16) {
+        for (_, mut c) in self.inner.conns.lock().unwrap().drain() {
+            c.kick(code);
+        }
+    }
+
     /// Deliver `event` to every connection whose user is in its audience.
     pub async fn publish(&self, db: &SqlitePool, event: Event) {
         let audience = match audience_for(db, &event).await {

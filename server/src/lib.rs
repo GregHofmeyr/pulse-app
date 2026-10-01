@@ -37,12 +37,20 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     voice::reconcile_on_startup(&db).await?;
     let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
     tracing::info!(addr = %cfg.bind, "pulse-app-server listening");
+    let hub = gateway::Hub::default();
     let state = AppState {
         db,
         cfg: std::sync::Arc::new(cfg),
-        hub: gateway::Hub::default(),
+        hub: hub.clone(),
         voice: voice::VoiceState::default(),
     };
-    axum::serve(listener, router(state)).await?;
+    axum::serve(listener, router(state))
+        .with_graceful_shutdown(async move {
+            let _ = tokio::signal::ctrl_c().await;
+            // Upgraded sockets aren't covered by graceful shutdown: tell clients to reconnect.
+            hub.close_all(1012);
+            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        })
+        .await?;
     Ok(())
 }
