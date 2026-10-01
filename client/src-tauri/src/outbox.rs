@@ -1,10 +1,10 @@
-//! Offline outbox: messages are queued with a nonce, sent when possible, retried on reconnect,
-//! and marked failed after 3 attempts. Never lost silently (spec §6.6).
+//! Offline outbox: messages are queued with a nonce, sent when possible, retried on reconnect and
+//! on a timer, and marked failed after 3 counted attempts. Never lost silently (spec §6.6).
 
 use std::sync::{Arc, Mutex};
 
 use pulse_protocol::ids::{ChannelId, MessageId};
-use pulse_protocol::rest::SendMessageRequest;
+use pulse_protocol::rest::{Message, SendMessageRequest};
 use serde::Serialize;
 
 use crate::api::{Api, ApiError};
@@ -18,7 +18,13 @@ pub enum Status {
     Failed,
 }
 
-pub type StatusSink = Arc<dyn Fn(&str, Status) + Send + Sync>;
+/// (nonce, status, the confirmed message when sent)
+pub type StatusSink = Arc<dyn Fn(&str, Status, Option<&Message>) + Send + Sync>;
+
+/// Worth trying again later: we couldn't reach the server, or it was overloaded/restarting.
+pub fn retryable(e: &ApiError) -> bool {
+    matches!(e, ApiError::Network(_) | ApiError::Server(_))
+}
 
 #[derive(Clone)]
 struct Item {
@@ -65,7 +71,7 @@ impl Outbox {
     pub fn clear(&self) {
         let dropped: Vec<Item> = std::mem::take(&mut *self.items.lock().unwrap());
         for i in dropped {
-            (self.status)(&i.nonce, Status::Failed);
+            (self.status)(&i.nonce, Status::Failed, None);
         }
     }
 
@@ -73,9 +79,10 @@ impl Outbox {
         self.items.lock().unwrap().len()
     }
 
-    /// Try to send everything queued, in order. Network errors keep the item (up to 3 attempts);
-    /// a server rejection (bad channel, too long…) fails it at once since retrying can't help.
-    pub async fn flush(&self, api: &Api, token: &str) {
+    /// Try to send everything queued, in order, stopping at the first retryable failure (keeps order).
+    /// `count_attempts`: only reconnect/timer flushes count towards the 3 attempts — a burst of sends
+    /// while offline must not fail the first queued message. Rejections fail at once.
+    pub async fn flush(&self, api: &Api, token: &str, count_attempts: bool) {
         let _one = self.flushing.lock().await;
         let queued: Vec<Item> = self.items.lock().unwrap().clone();
         for item in queued {
@@ -84,24 +91,34 @@ impl Outbox {
                 reply_to_id: item.reply_to,
                 nonce: Some(item.nonce.clone()),
             };
-            let outcome = match api.send_message(token, item.channel, &body).await {
-                Ok(_) => Some(Status::Sent),
-                Err(ApiError::Network(_)) if item.attempts + 1 < MAX_ATTEMPTS => None,
-                Err(_) => Some(Status::Failed),
-            };
-            let mut items = self.items.lock().unwrap();
-            match outcome {
-                Some(st) => {
-                    items.retain(|i| i.nonce != item.nonce);
-                    drop(items);
-                    (self.status)(&item.nonce, st);
+            match api.send_message(token, item.channel, &body).await {
+                Ok(m) => {
+                    self.items.lock().unwrap().retain(|i| i.nonce != item.nonce);
+                    (self.status)(&item.nonce, Status::Sent, Some(&m));
                 }
-                None => {
-                    if let Some(i) = items.iter_mut().find(|i| i.nonce == item.nonce) {
-                        i.attempts += 1;
+                Err(e) if retryable(&e) => {
+                    let failed_now = {
+                        let mut items = self.items.lock().unwrap();
+                        let gave_up = match items.iter_mut().find(|i| i.nonce == item.nonce) {
+                            Some(i) if count_attempts => {
+                                i.attempts += 1;
+                                i.attempts >= MAX_ATTEMPTS
+                            }
+                            _ => false,
+                        };
+                        if gave_up {
+                            items.retain(|i| i.nonce != item.nonce);
+                        }
+                        gave_up
+                    };
+                    if failed_now {
+                        (self.status)(&item.nonce, Status::Failed, None);
                     }
-                    // Still offline: keep order, don't hammer the rest.
-                    break;
+                    break; // still offline: don't hammer the rest
+                }
+                Err(_) => {
+                    self.items.lock().unwrap().retain(|i| i.nonce != item.nonce);
+                    (self.status)(&item.nonce, Status::Failed, None);
                 }
             }
         }
@@ -120,7 +137,7 @@ mod tests {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let s = seen.clone();
         (
-            Arc::new(move |nonce: &str, st: Status| {
+            Arc::new(move |nonce: &str, st: Status, _m: Option<&Message>| {
                 s.lock().unwrap().push((nonce.to_string(), st))
             }),
             seen,
@@ -138,13 +155,14 @@ mod tests {
         ob.enqueue("n1".into(), g.id, "queued while offline".into(), None);
 
         // "offline": nothing is listening here
-        ob.flush(&Api::new("http://127.0.0.1:9"), &token).await;
+        ob.flush(&Api::new("http://127.0.0.1:9"), &token, true)
+            .await;
         assert_eq!(ob.pending_len(), 1);
 
         // back online
         let api = Api::new(&format!("http://{}", app.addr));
-        ob.flush(&api, &token).await;
-        ob.flush(&api, &token).await; // a second flush must not resend
+        ob.flush(&api, &token, true).await;
+        ob.flush(&api, &token, true).await; // a second flush must not resend
         assert_eq!(ob.pending_len(), 0);
         let msgs = api.messages(&token, g.id, None).await.unwrap();
         assert_eq!(
@@ -167,7 +185,7 @@ mod tests {
         );
         let dead = Api::new("http://127.0.0.1:9");
         for _ in 0..3 {
-            ob.flush(&dead, "t").await;
+            ob.flush(&dead, "t", true).await;
         }
         assert!(
             seen.lock()
@@ -194,7 +212,7 @@ mod tests {
             "x".into(),
             None,
         );
-        ob.flush(&Api::new(&format!("http://{}", app.addr)), &token)
+        ob.flush(&Api::new(&format!("http://{}", app.addr)), &token, true)
             .await;
         assert_eq!(
             seen.lock().unwrap().as_slice(),
@@ -218,7 +236,7 @@ mod tests {
         let (status, _) = sink();
         let ob = Outbox::new(status);
         ob.enqueue("my-nonce".into(), g.id, "hello".into(), None);
-        ob.flush(&Api::new(&format!("http://{}", app.addr)), &token)
+        ob.flush(&Api::new(&format!("http://{}", app.addr)), &token, true)
             .await;
         loop {
             if let Some(crate::gateway::GatewayUpdate::Event(
@@ -254,5 +272,57 @@ mod tests {
             seen.contains(&("a".to_string(), Status::Failed))
                 && seen.contains(&("b".to_string(), Status::Failed))
         );
+    }
+
+    /// I4: sends while offline must not burn the first message's attempts.
+    #[tokio::test]
+    async fn sends_while_offline_do_not_fail_queued_messages() {
+        let (status, seen) = sink();
+        let ob = Outbox::new(status);
+        ob.enqueue(
+            "n1".into(),
+            pulse_protocol::ids::ChannelId::new(),
+            "x".into(),
+            None,
+        );
+        let dead = Api::new("http://127.0.0.1:9");
+        for _ in 0..5 {
+            ob.flush(&dead, "t", false).await;
+        }
+        assert_eq!(ob.pending_len(), 1);
+        assert!(seen.lock().unwrap().is_empty());
+    }
+
+    /// I3: the confirmed Message travels with "sent", so the UI can show it without the gateway.
+    #[tokio::test]
+    async fn sent_status_carries_the_message() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let g = testing::general(&app, &token, s.id).await;
+        let got: Arc<Mutex<Option<Message>>> = Arc::default();
+        let g2 = got.clone();
+        let ob = Outbox::new(Arc::new(
+            move |_n: &str, st: Status, m: Option<&Message>| {
+                if st == Status::Sent {
+                    *g2.lock().unwrap() = m.cloned();
+                }
+            },
+        ));
+        ob.enqueue("n1".into(), g.id, "hello".into(), None);
+        ob.flush(&Api::new(&format!("http://{}", app.addr)), &token, false)
+            .await;
+        assert_eq!(
+            got.lock().unwrap().as_ref().map(|m| m.content.as_str()),
+            Some("hello")
+        );
+    }
+
+    #[test]
+    fn server_trouble_is_retryable_rejections_are_not() {
+        assert!(retryable(&ApiError::Network("x".into())));
+        assert!(retryable(&ApiError::Server("502".into())));
+        assert!(!retryable(&ApiError::Rejected("too long".into())));
+        assert!(!retryable(&ApiError::Unauthorized));
     }
 }

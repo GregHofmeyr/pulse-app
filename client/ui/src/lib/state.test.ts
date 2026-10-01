@@ -111,3 +111,16 @@ describe('applyEvent', () => {
     expect(s.servers.map((x) => x.id)).toEqual(['S1', 'S2'])
   })
 })
+
+describe('history markers (I2)', () => {
+  it('start empty, are set on load, and a new Ready clears them so the open channel refetches', async () => {
+    const { markHistory } = await import('./state')
+    let s = applyReady(emptyState(), ready())
+    expect(s.history['C1']).toBeUndefined()
+    s = markHistory(s, 'C1', true)
+    expect(s.history['C1']).toEqual({ loaded: true, start: true })
+    s = applyReady(s, ready())
+    expect(s.history['C1']).toBeUndefined()
+    expect(emptyState().history).toEqual({})
+  })
+})

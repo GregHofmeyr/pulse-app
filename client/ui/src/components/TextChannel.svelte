@@ -1,16 +1,10 @@
-<script lang="ts" module>
-  // Channels whose history has been fetched, and those where we've reached the very first message.
-  const loaded = new Set<string>()
-  const reachedStart = new Set<string>()
-</script>
-
 <script lang="ts">
   import { tick } from 'svelte'
   import Icon from './Icon.svelte'
   import MessageItem from './MessageItem.svelte'
   import Composer from './Composer.svelte'
   import { app } from '../lib/store.svelte'
-  import { addHistory, addPending } from '../lib/state'
+  import { addHistory, addPending, markHistory } from '../lib/state'
   import { displayName, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
@@ -27,6 +21,9 @@
   let error = $state('')
   let list: HTMLDivElement
   let loadingOlder = false
+  let fetching: string | null = null
+  const history = $derived(app.state.history[channelId])
+  const reachedStart = $derived(!!history?.start)
 
   // fade typing indicators on time, not just on events
   $effect(() => {
@@ -35,16 +32,28 @@
   })
 
   $effect(() => {
-    const c = channelId
+    void channelId
     replyTo = null
-    if (loaded.has(c)) return
-    loaded.add(c)
-    api.listMessages(c).then(async (page) => {
-      if (page.length < 50) reachedStart.add(c)
-      app.state = addHistory(app.state, c, page)
-      await tick()
-      list?.scrollTo({ top: list.scrollHeight })
-    }, (e) => (error = errorText(e)))
+  })
+
+  // Fetch the latest page whenever this channel isn't marked loaded (first view, or after a
+  // reconnect cleared the markers). Marked only on success, so an offline failure retries later.
+  $effect(() => {
+    const c = channelId
+    if (history?.loaded || fetching === c) return
+    fetching = c
+    api.listMessages(c).then(
+      async (page) => {
+        app.state = markHistory(addHistory(app.state, c, page), c, page.length < 50)
+        fetching = null
+        await tick()
+        list?.scrollTo({ top: list.scrollHeight })
+      },
+      (e) => {
+        fetching = null
+        error = errorText(e)
+      },
+    )
   })
 
   // stick to the bottom when new messages arrive and we were already near it
@@ -57,13 +66,12 @@
   })
 
   async function maybeLoadOlder() {
-    if (loadingOlder || reachedStart.has(channelId) || list.scrollTop > 60 || !messages.length) return
+    if (loadingOlder || reachedStart || list.scrollTop > 60 || !messages.length) return
     loadingOlder = true
     const before = list.scrollHeight
     try {
       const page = await api.listMessages(channelId, messages[0].id)
-      if (page.length < 50) reachedStart.add(channelId)
-      app.state = addHistory(app.state, channelId, page)
+      app.state = markHistory(addHistory(app.state, channelId, page), channelId, page.length < 50)
       await tick()
       list.scrollTop = list.scrollHeight - before // keep the view where it was
     } catch (e) {
@@ -102,7 +110,7 @@
 <div class="chan">
   <div class="head"><Icon name="hash" /> <span>{channel?.name}</span></div>
   <div class="list" bind:this={list} onscroll={maybeLoadOlder}>
-    {#if reachedStart.has(channelId)}<div class="start">This is the start of #{channel?.name}.</div>{/if}
+    {#if reachedStart}<div class="start">This is the start of #{channel?.name}.</div>{/if}
     {#each messages as m, i (m.id)}
       <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={grouped(i)}
         replyTo={m.reply_to_id ? (byId.get(m.reply_to_id) ?? null) : null}

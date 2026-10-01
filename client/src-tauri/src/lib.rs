@@ -17,11 +17,13 @@ pub fn run() {
             );
             let emitter = app.handle().clone();
             let outbox = outbox::Outbox::new(std::sync::Arc::new(
-                move |nonce: &str, status: outbox::Status| {
+                move |nonce: &str,
+                      status: outbox::Status,
+                      message: Option<&pulse_protocol::rest::Message>| {
                     use tauri::Emitter;
                     let _ = emitter.emit(
                         "pulse://outbox",
-                        serde_json::json!({ "nonce": nonce, "status": status }),
+                        serde_json::json!({ "nonce": nonce, "status": status, "message": message }),
                     );
                 },
             ));

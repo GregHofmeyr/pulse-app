@@ -24,13 +24,15 @@ export type AppState = {
   messages: Record<string, Message[]> // channelId -> oldest..newest
   pending: Record<string, Pending[]> // channelId -> unsent
   typing: Record<string, Record<string, number>> // channelId -> userId -> expiresAt (ms)
+  /** Which channels have had their latest page fetched (cleared on every Ready so we backfill). */
+  history: Record<string, { loaded: boolean; start: boolean }>
   conn: ConnState
 }
 
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, conn: 'connecting' }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting' }
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -49,6 +51,8 @@ export function applyReady(s: AppState, r: Ready): AppState {
     messages,
     pending,
     typing: {},
+    // Anything may have happened while we were away: refetch the latest page when a channel is viewed.
+    history: {},
     conn: 'connected',
   }
 }
@@ -139,4 +143,9 @@ export function addHistory(s: AppState, channel: string, older: Message[]): AppS
   let list = s.messages[channel] ?? []
   for (const m of older) list = upsertMessage(list, m)
   return { ...s, messages: { ...s.messages, [channel]: list } }
+}
+
+export function markHistory(s: AppState, channel: string, reachedStart: boolean): AppState {
+  const prev = s.history[channel]
+  return { ...s, history: { ...s.history, [channel]: { loaded: true, start: reachedStart || !!prev?.start } } }
 }

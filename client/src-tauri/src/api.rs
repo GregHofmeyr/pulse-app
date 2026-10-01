@@ -15,6 +15,9 @@ pub enum ApiError {
     Unauthorized,
     #[error("{0}")]
     Rejected(String),
+    /// 5xx / 429: the server (or a proxy in front of it) is having trouble; worth retrying.
+    #[error("the server is having trouble ({0})")]
+    Server(String),
     #[error("can't reach the server: {0}")]
     Network(String),
 }
@@ -76,6 +79,9 @@ impl Api {
         if r.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ApiError::Unauthorized);
         }
+        if r.status().is_server_error() || r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(ApiError::Server(r.status().to_string()));
+        }
         if !r.status().is_success() {
             let msg = r
                 .json::<pulse_protocol::rest::ApiError>()
@@ -92,6 +98,9 @@ impl Api {
         let r = r.map_err(|e| ApiError::Network(e.to_string()))?;
         if r.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ApiError::Unauthorized);
+        }
+        if r.status().is_server_error() || r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(ApiError::Server(r.status().to_string()));
         }
         if !r.status().is_success() {
             let msg = r

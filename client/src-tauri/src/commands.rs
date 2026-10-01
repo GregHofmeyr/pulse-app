@@ -17,6 +17,9 @@ use crate::voice::{AudioMode, VoiceError, VoiceManager, controls::Controls};
 pub struct Core {
     pub outbox: std::sync::Arc<crate::outbox::Outbox>,
     inner: Mutex<Option<(Api, String)>>,
+    /// Retries queued messages every 15 s while signed in (a failed send isn't left waiting for
+    /// the next send or reconnect).
+    retry: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     gateway: Mutex<Option<GatewayHandle>>,
     store: Store,
 }
@@ -26,6 +29,7 @@ impl Core {
         Self {
             outbox: std::sync::Arc::new(outbox),
             inner: Mutex::new(None),
+            retry: Mutex::new(None),
             gateway: Mutex::new(None),
             store,
         }
@@ -50,11 +54,31 @@ impl Core {
         // Replacing an old handle drops (and stops) it.
         *self.gateway.lock().unwrap() = Some(handle);
         tauri::async_runtime::spawn(forward(app.clone(), rx));
+        let app2 = app.clone();
+        let timer = tauri::async_runtime::spawn(async move {
+            let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
+            loop {
+                tick.tick().await;
+                let core = app2.state::<Core>();
+                if core.outbox.pending_len() == 0 {
+                    continue;
+                }
+                if let Ok((api, token)) = core.current() {
+                    core.outbox.flush(&api, &token, true).await;
+                }
+            }
+        });
+        if let Some(old) = self.retry.lock().unwrap().replace(timer) {
+            old.abort();
+        }
     }
 
     /// Forget the session locally (logout, or the server said our token is dead).
     fn deactivate(&self, app: &AppHandle) {
         self.gateway.lock().unwrap().take();
+        if let Some(t) = self.retry.lock().unwrap().take() {
+            t.abort();
+        }
         // Signed out: nothing from this session may keep running or be sent under the next account.
         self.outbox.clear();
         app.state::<crate::voice::mictest::MicTest>().stop();
@@ -100,9 +124,9 @@ async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>)
                     let core = app.state::<Core>();
                     if let Ok((api, token)) = core.current() {
                         let outbox = core.outbox.clone();
-                        tauri::async_runtime::spawn(
-                            async move { outbox.flush(&api, &token).await },
-                        );
+                        tauri::async_runtime::spawn(async move {
+                            outbox.flush(&api, &token, true).await
+                        });
                     }
                 }
                 let _ = app.emit("pulse://conn", state);
@@ -241,7 +265,7 @@ pub async fn send_message(
     // Queue first, then try: offline sends survive until the connection is back (or fail visibly).
     core.outbox.enqueue(nonce, channel_id, content, reply_to_id);
     if let Ok((api, token)) = core.current() {
-        core.outbox.flush(&api, &token).await;
+        core.outbox.flush(&api, &token, false).await;
     }
     Ok(())
 }
