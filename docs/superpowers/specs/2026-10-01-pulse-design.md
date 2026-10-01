@@ -282,6 +282,8 @@ Matches the canvas mockups (§ header link).
    on Greg's Windows partition before each release.
 6. **Footprint budget:** measure RSS idle and in a 4-person call on Linux and Windows for each release. **Target:
    under 150 MB in a call.** Investigate any regression before shipping.
+   *Measured 2026-10-01 (Linux, release):* idle ≈ 277 MB PSS, ~230 MB of it WebKitGTK; the 150 MB target is
+   not met on Linux. Windows (WebView2) numbers pending. See `spikes/voice/FINDINGS.md`.
 
 **CI (GitHub Actions):**
 - `just check` runs the same checks locally (optional pre-push hook).

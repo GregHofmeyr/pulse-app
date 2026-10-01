@@ -57,3 +57,13 @@ cargo run -- platform --room t --identity b            # or a second `manual`
 
 ## Pending — Windows leg
 MSVC Build Tools; `.cargo/config.toml` crt-static; same commands on the Windows partition.
+
+## Footprint after the real client (plan 2, release build, 2026-10-01)
+- Client idle + logged in: **277 MB PSS** total = pulse-app core 98 MB + WebKit web 131 MB + WebKit network 47 MB.
+  The voice engine adds ~12 MB to the core; the WebKitGTK webview is the dominant cost on Linux (see spec §12 budget).
+- Binary: 50 MB (libwebrtc statically linked).
+- In-call numbers: measured during Greg's two-instance session.
+
+## Linux device picking
+cpal's ALSA backend lists plumbing names (`jack`, `pipewire`, `hdmi:CARD=…`), not real devices. On Linux, Pulse
+follows the system default; pick devices in the OS sound settings. A PipeWire-native picker is a follow-up.
