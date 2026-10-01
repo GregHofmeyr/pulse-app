@@ -1,0 +1,17 @@
+[package]
+name = "voice-spike"
+version = "0.0.0"
+edition = "2024"
+publish = false
+
+[workspace]
+
+[dependencies]
+livekit = "0.9.3"
+livekit-api = "0.8.1"
+tokio = { version = "1", features = ["full"] }
+futures = "0.3"
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+cpal = "0.15"
+hound = "3"
