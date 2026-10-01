@@ -63,3 +63,23 @@ pub async fn spawn_with(mut cfg: Config) -> TestApp {
         _dir: dir,
     }
 }
+
+/// Mint an invite straight into the DB.
+pub async fn invite(app: &TestApp) -> String {
+    crate::auth::invites::create(&app.db, None).await.unwrap()
+}
+
+/// Register a user via the API; returns (id, token).
+pub async fn register(app: &TestApp, username: &str) -> (pulse_protocol::ids::UserId, String) {
+    let code = invite(app).await;
+    let r = app
+        .http
+        .post(app.url("/auth/register"))
+        .json(&serde_json::json!({"invite_code": code, "username": username, "password": "hunter2hunter2"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "register {username}");
+    let s: pulse_protocol::rest::SessionResponse = r.json().await.unwrap();
+    (s.user.id, s.token)
+}

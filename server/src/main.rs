@@ -11,6 +11,8 @@ struct Cli {
 enum Cmd {
     /// Run the HTTP + gateway server
     Serve,
+    /// Print a fresh single-use invite code (bootstraps the first account)
+    CreateInvite,
 }
 
 #[tokio::main]
@@ -24,5 +26,10 @@ async fn main() -> anyhow::Result<()> {
     let cfg = pulse_server::config::Config::from_env()?;
     match Cli::parse().cmd {
         Cmd::Serve => pulse_server::serve(cfg).await,
+        Cmd::CreateInvite => {
+            let db = pulse_server::db::connect(&cfg.db_url).await?;
+            println!("{}", pulse_server::auth::invites::create(&db, None).await?);
+            Ok(())
+        }
     }
 }
