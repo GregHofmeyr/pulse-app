@@ -3,6 +3,7 @@ pub mod backoff;
 pub mod commands;
 pub mod gateway;
 pub mod session;
+pub mod voice;
 
 pub fn run() {
     tauri::Builder::default()
