@@ -61,6 +61,14 @@ impl Outbox {
         });
     }
 
+    /// Drop everything queued (logout / signed out): it must not be sent under the next account.
+    pub fn clear(&self) {
+        let dropped: Vec<Item> = std::mem::take(&mut *self.items.lock().unwrap());
+        for i in dropped {
+            (self.status)(&i.nonce, Status::Failed);
+        }
+    }
+
     pub fn pending_len(&self) -> usize {
         self.items.lock().unwrap().len()
     }
@@ -221,5 +229,30 @@ mod tests {
                 break;
             }
         }
+    }
+
+    #[tokio::test]
+    async fn clear_fails_everything_queued() {
+        let (status, seen) = sink();
+        let ob = Outbox::new(status);
+        ob.enqueue(
+            "a".into(),
+            pulse_protocol::ids::ChannelId::new(),
+            "x".into(),
+            None,
+        );
+        ob.enqueue(
+            "b".into(),
+            pulse_protocol::ids::ChannelId::new(),
+            "y".into(),
+            None,
+        );
+        ob.clear();
+        assert_eq!(ob.pending_len(), 0);
+        let seen = seen.lock().unwrap();
+        assert!(
+            seen.contains(&("a".to_string(), Status::Failed))
+                && seen.contains(&("b".to_string(), Status::Failed))
+        );
     }
 }

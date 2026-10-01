@@ -53,8 +53,13 @@ impl Core {
     }
 
     /// Forget the session locally (logout, or the server said our token is dead).
-    fn deactivate(&self) {
+    fn deactivate(&self, app: &AppHandle) {
         self.gateway.lock().unwrap().take();
+        // Signed out: nothing from this session may keep running or be sent under the next account.
+        self.outbox.clear();
+        app.state::<crate::voice::mictest::MicTest>().stop();
+        let app = app.clone();
+        tauri::async_runtime::spawn(async move { app.state::<VoiceManager>().leave().await });
         if let Some((api, _)) = self.inner.lock().unwrap().take() {
             self.store.clear(api.base());
         }
@@ -63,7 +68,7 @@ impl Core {
     /// A 401 outside login means the session died server-side: drop it and tell the UI.
     pub(crate) fn check<T>(&self, app: &AppHandle, r: Result<T, ApiError>) -> Result<T, ApiError> {
         if let Err(ApiError::Unauthorized) = &r {
-            self.deactivate();
+            self.deactivate(app);
             let _ = app.emit("pulse://conn", ConnState::LoggedOut);
         }
         r
@@ -88,7 +93,7 @@ async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>)
             }
             GatewayUpdate::Connection(state) => {
                 if state == ConnState::LoggedOut {
-                    app.state::<Core>().deactivate();
+                    app.state::<Core>().deactivate(&app);
                 }
                 if state == ConnState::Connected {
                     // Back online: send anything queued while we were away.
@@ -161,12 +166,12 @@ pub async fn restore_session(
 }
 
 #[tauri::command]
-pub async fn logout(core: State<'_, Core>) -> Result<(), ApiError> {
+pub async fn logout(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiError> {
     let current = core.inner.lock().unwrap().clone();
     if let Some((api, token)) = current {
         let _ = api.logout(&token).await;
     }
-    core.deactivate();
+    core.deactivate(&app);
     Ok(())
 }
 
@@ -350,16 +355,18 @@ pub struct AudioDevices {
     outputs: Vec<DeviceInfo>,
 }
 
+/// async: runs on the runtime, not the UI thread (device enumeration can block).
 #[tauri::command]
-pub fn list_audio_devices() -> AudioDevices {
+pub async fn list_audio_devices() -> AudioDevices {
     AudioDevices {
         inputs: crate::voice::devices::list_inputs(),
         outputs: crate::voice::devices::list_outputs(),
     }
 }
 
+/// async: MicTest spawns tokio tasks, which need a runtime (sync commands run on the UI thread).
 #[tauri::command]
-pub fn start_mic_test(
+pub async fn start_mic_test(
     app: AppHandle,
     mic: State<'_, crate::voice::mictest::MicTest>,
     config: AudioConfig,
@@ -374,8 +381,11 @@ pub fn start_mic_test(
 }
 
 #[tauri::command]
-pub fn stop_mic_test(mic: State<'_, crate::voice::mictest::MicTest>) {
+pub async fn stop_mic_test(
+    mic: State<'_, crate::voice::mictest::MicTest>,
+) -> Result<(), VoiceError> {
     mic.stop();
+    Ok(())
 }
 
 /// Hotkey path (IPC on Linux, global shortcut on Windows): toggle + broadcast, same as the buttons.

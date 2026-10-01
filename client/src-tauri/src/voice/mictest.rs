@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::controls::Controls;
-use super::devices::{AudioConfig, AudioIo, Shared};
+use super::devices::{AudioConfig, AudioIo, INTERNAL_RATE, MicChunk, Shared, resample};
 use super::mixer::Mixer;
 use super::{EventSink, VoiceError, VoiceEvent};
 
@@ -32,23 +32,6 @@ impl DelayLine {
     }
 }
 
-/// Linear resample of one chunk (rates usually match; this only covers odd mic/speaker pairs).
-fn resample(input: &[i16], from: u32, to: u32) -> Vec<i16> {
-    if from == to || input.is_empty() {
-        return input.to_vec();
-    }
-    let out_len = (input.len() as u64 * to as u64 / from as u64) as usize;
-    (0..out_len)
-        .map(|i| {
-            let pos = i as f64 * from as f64 / to as f64;
-            let (j, frac) = (pos.floor() as usize, pos.fract());
-            let a = input[j.min(input.len() - 1)] as f64;
-            let b = input[(j + 1).min(input.len() - 1)] as f64;
-            (a + (b - a) * frac) as i16
-        })
-        .collect()
-}
-
 pub struct MicTest {
     running: Mutex<Option<(AudioIo, Vec<JoinHandle<()>>)>>,
 }
@@ -64,16 +47,20 @@ impl Default for MicTest {
 impl MicTest {
     pub fn start(&self, cfg: &AudioConfig, events: EventSink) -> Result<(), VoiceError> {
         self.stop();
-        let mixer = Arc::new(Mutex::new(Mixer::new(48_000, 1000)));
-        let shared = Shared::new(cfg, Controls::default(), mixer.clone());
-        let (tx, mut rx) = mpsc::unbounded_channel::<Vec<i16>>();
+        let mixer = Arc::new(Mutex::new(Mixer::new(INTERNAL_RATE, 1000)));
+        let shared = Shared::new(
+            cfg,
+            Arc::new(Mutex::new(Controls::default())),
+            mixer.clone(),
+        );
+        let (tx, mut rx) = mpsc::unbounded_channel::<MicChunk>();
         let io = AudioIo::start(cfg, shared.clone(), tx)
             .map_err(|e| VoiceError::Device(e.to_string()))?;
-        let (in_rate, out_rate) = (io.input_rate(), io.output_rate());
-        let mut delay = DelayLine::new((out_rate * DELAY_MS / 1000) as usize);
+        // The mixer runs at 48 kHz; the output edge resamples to the device.
+        let mut delay = DelayLine::new((INTERNAL_RATE * DELAY_MS / 1000) as usize);
         let loopback = tokio::spawn(async move {
-            while let Some(chunk) = rx.recv().await {
-                let out = delay.process(&resample(&chunk, in_rate, out_rate));
+            while let Some((rate, chunk)) = rx.recv().await {
+                let out = delay.process(&resample(&chunk, rate, INTERNAL_RATE));
                 mixer.lock().unwrap().push("self", &out);
             }
         });

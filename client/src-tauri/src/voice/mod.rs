@@ -8,6 +8,7 @@ pub mod mixer;
 pub mod rx;
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -25,13 +26,12 @@ use tokio::task::JoinHandle;
 
 use crate::api::{Api, ApiError};
 use controls::Controls;
-use devices::{AudioConfig, AudioIo, Shared};
+use devices::{AudioConfig, AudioIo, INTERNAL_RATE, MicChunk, Shared, resample};
 use mixer::{Mixer, percent_to_gain};
 use rx::RxTasks;
 
 /// Max audio buffered per peer before the oldest is dropped (bounds latency).
 const PEER_BUFFER_MS: u32 = 200;
-const MIXER_RATE_FOR_CAP: u32 = 48_000;
 
 #[derive(Debug, thiserror::Error)]
 pub enum VoiceError {
@@ -95,9 +95,11 @@ struct Session {
     shared: Arc<Shared>,
     io: Arc<Mutex<Option<AudioIo>>>,
     cfg: Arc<Mutex<AudioConfig>>,
-    mic_tx: mpsc::UnboundedSender<Vec<i16>>,
+    mic_tx: mpsc::UnboundedSender<MicChunk>,
     real: bool,
     rx: Arc<Mutex<RxTasks>>,
+    /// Cleared when LiveKit disconnects us for good: the session is then torn down.
+    alive: Arc<AtomicBool>,
     tasks: Vec<JoinHandle<()>>,
 }
 
@@ -110,9 +112,12 @@ impl Drop for Session {
 }
 
 pub struct VoiceManager {
+    /// Serialises join/leave: two fast clicks can't leave a ghost connection behind.
+    op: tokio::sync::Mutex<()>,
     session: tokio::sync::Mutex<Option<Session>>,
-    /// Survives across sessions, like Discord (you stay muted when switching channels).
-    controls: Mutex<Controls>,
+    /// One source of truth, shared with the audio callbacks. Survives across sessions (stay muted
+    /// when switching channels, like Discord).
+    controls: Arc<Mutex<Controls>>,
     /// Per-user volume (0..=200 %), keyed by user id.
     volumes: Arc<Mutex<HashMap<String, u16>>>,
     events: EventSink,
@@ -121,8 +126,9 @@ pub struct VoiceManager {
 impl VoiceManager {
     pub fn new(events: EventSink) -> Self {
         Self {
+            op: tokio::sync::Mutex::new(()),
             session: tokio::sync::Mutex::new(None),
-            controls: Mutex::new(Controls::default()),
+            controls: Arc::new(Mutex::new(Controls::default())),
             volumes: Arc::new(Mutex::new(HashMap::new())),
             events,
         }
@@ -145,27 +151,50 @@ impl VoiceManager {
         cfg: AudioConfig,
         mode: AudioMode,
     ) -> Result<(), VoiceError> {
-        self.leave().await;
+        let _op = self.op.lock().await;
+        self.leave_locked().await;
         self.emit_state(Some(channel), Connection::Connecting);
+        match self.connect(api, token, channel, cfg, mode).await {
+            Ok(session) => {
+                *self.session.lock().await = Some(session);
+                self.emit_state(Some(channel), Connection::Connected);
+                Ok(())
+            }
+            Err(e) => {
+                self.emit_state(None, Connection::Disconnected);
+                Err(e)
+            }
+        }
+    }
+
+    async fn connect(
+        &self,
+        api: &Api,
+        token: &str,
+        channel: ChannelId,
+        cfg: AudioConfig,
+        mode: AudioMode,
+    ) -> Result<Session, VoiceError> {
         let vt = api.voice_token(token, channel).await?;
 
-        let mixer = Arc::new(Mutex::new(Mixer::new(MIXER_RATE_FOR_CAP, PEER_BUFFER_MS)));
-        let shared = Shared::new(&cfg, *self.controls.lock().unwrap(), mixer.clone());
-        let (mic_tx, mut mic_rx) = mpsc::unbounded_channel::<Vec<i16>>();
+        let mixer = Arc::new(Mutex::new(Mixer::new(INTERNAL_RATE, PEER_BUFFER_MS)));
+        let shared = Shared::new(&cfg, self.controls.clone(), mixer.clone());
+        let (mic_tx, mut mic_rx) = mpsc::unbounded_channel::<MicChunk>();
         let io = match mode {
             AudioMode::Real => AudioIo::start(&cfg, shared.clone(), mic_tx.clone())
                 .map_err(|e| VoiceError::Device(e.to_string()))?,
             AudioMode::Null(rate) => AudioIo::start_null(rate, shared.clone(), mic_tx.clone()),
         };
-        let (in_rate, out_rate) = (io.input_rate(), io.output_rate());
 
         let (room, mut room_events) = Room::connect(&vt.url, &vt.token, RoomOptions::default())
             .await
             .map_err(|e| VoiceError::Connect(e.to_string()))?;
-        let source = NativeAudioSource::new(AudioSourceOptions::default(), in_rate, 1, 100);
+        // Fixed 48 kHz towards LiveKit, whatever the device does.
+        let source = NativeAudioSource::new(AudioSourceOptions::default(), INTERNAL_RATE, 1, 100);
         let track =
             LocalAudioTrack::create_audio_track("mic", RtcAudioSource::Native(source.clone()));
-        room.local_participant()
+        let published = room
+            .local_participant()
             .publish_track(
                 LocalTrack::Audio(track),
                 TrackPublishOptions {
@@ -175,17 +204,21 @@ impl VoiceManager {
                     ..Default::default()
                 },
             )
-            .await
-            .map_err(|e| VoiceError::Connect(e.to_string()))?;
+            .await;
+        if let Err(e) = published {
+            let _ = room.close().await; // dropping a Room does not disconnect it
+            return Err(VoiceError::Connect(e.to_string()));
+        }
 
         let mut tasks = Vec::new();
-        // mic → LiveKit
+        // mic → LiveKit (resampled to 48 kHz)
         tasks.push(tokio::spawn(async move {
-            while let Some(buf) = mic_rx.recv().await {
+            while let Some((rate, buf)) = mic_rx.recv().await {
+                let buf = resample(&buf, rate, INTERNAL_RATE);
                 let n = buf.len() as u32;
                 let frame = AudioFrame {
                     data: buf.into(),
-                    sample_rate: in_rate,
+                    sample_rate: INTERNAL_RATE,
                     num_channels: 1,
                     samples_per_channel: n,
                 };
@@ -193,8 +226,11 @@ impl VoiceManager {
             }
         }));
 
-        // room events: subscriptions (FINDINGS rule 1), speaking, quality, connection state
         let rx = Arc::new(Mutex::new(RxTasks::default()));
+        let io = Arc::new(Mutex::new(Some(io)));
+        let alive = Arc::new(AtomicBool::new(true));
+
+        // room events: subscriptions (FINDINGS rule 1), speaking, quality, connection state
         {
             let (rx, mixer, volumes, events) = (
                 rx.clone(),
@@ -202,8 +238,13 @@ impl VoiceManager {
                 self.volumes.clone(),
                 self.events.clone(),
             );
-            let controls_snapshot = shared.clone();
+            let (controls, io, alive) = (self.controls.clone(), io.clone(), alive.clone());
             tasks.push(tokio::spawn(async move {
+                let state = |connection, channel_id| VoiceEvent::State {
+                    channel_id,
+                    connection,
+                    controls: *controls.lock().unwrap(),
+                };
                 while let Some(ev) = room_events.recv().await {
                     match ev {
                         RoomEvent::TrackSubscribed {
@@ -217,7 +258,7 @@ impl VoiceManager {
                             let (m, peer) = (mixer.clone(), id.clone());
                             let task = tokio::spawn(async move {
                                 let mut stream =
-                                    NativeAudioStream::new(t.rtc_track(), out_rate as i32, 1);
+                                    NativeAudioStream::new(t.rtc_track(), INTERNAL_RATE as i32, 1);
                                 while let Some(f) = stream.next().await {
                                     m.lock().unwrap().push(&peer, &f.data);
                                 }
@@ -251,22 +292,18 @@ impl VoiceManager {
                                 quality: format!("{quality:?}").to_lowercase(),
                             });
                         }
-                        RoomEvent::Reconnecting => events(VoiceEvent::State {
-                            channel_id: Some(channel),
-                            connection: Connection::Reconnecting,
-                            controls: *controls_snapshot.controls.lock().unwrap(),
-                        }),
-                        RoomEvent::Reconnected => events(VoiceEvent::State {
-                            channel_id: Some(channel),
-                            connection: Connection::Connected,
-                            controls: *controls_snapshot.controls.lock().unwrap(),
-                        }),
+                        RoomEvent::Reconnecting => {
+                            events(state(Connection::Reconnecting, Some(channel)))
+                        }
+                        RoomEvent::Reconnected => {
+                            events(state(Connection::Connected, Some(channel)))
+                        }
                         RoomEvent::Disconnected { .. } => {
-                            events(VoiceEvent::State {
-                                channel_id: None,
-                                connection: Connection::Disconnected,
-                                controls: *controls_snapshot.controls.lock().unwrap(),
-                            });
+                            // Gone for good: stop the mic/speakers and mark the session dead.
+                            alive.store(false, Ordering::SeqCst);
+                            io.lock().unwrap().take();
+                            rx.lock().unwrap().clear();
+                            events(state(Connection::Disconnected, None));
                             break;
                         }
                         _ => {}
@@ -276,18 +313,20 @@ impl VoiceManager {
         }
 
         // levels for the UI meter + device watchdog (FINDINGS rule 2)
-        let io = Arc::new(Mutex::new(Some(io)));
         let cfg = Arc::new(Mutex::new(cfg));
+        let real = matches!(mode, AudioMode::Real);
         {
             let (shared, io, events) = (shared.clone(), io.clone(), self.events.clone());
-            let (cfg, mic_tx) = (cfg.clone(), mic_tx.clone());
-            let real = matches!(mode, AudioMode::Real);
+            let (cfg, mic_tx, alive) = (cfg.clone(), mic_tx.clone(), alive.clone());
             tasks.push(tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_millis(100));
                 let mut restarted_at: Option<Instant> = None;
                 let mut n = 0u32;
                 loop {
                     tick.tick().await;
+                    if !alive.load(Ordering::SeqCst) {
+                        break;
+                    }
                     let (mic, speaker) = shared.take_levels();
                     events(VoiceEvent::Levels { mic, speaker });
                     n += 1;
@@ -305,9 +344,9 @@ impl VoiceManager {
                             restarted_at = Some(now);
                             shared.watchdog.input_tick(now);
                             shared.watchdog.output_tick(now);
+                            let cfg = cfg.lock().unwrap().clone();
                             let mut slot = io.lock().unwrap();
                             slot.take(); // stop the old streams first
-                            let cfg = cfg.lock().unwrap().clone();
                             *slot = AudioIo::start(&cfg, shared.clone(), mic_tx.clone()).ok();
                         }
                         // Still stalled after a reopen: tell the user.
@@ -321,8 +360,7 @@ impl VoiceManager {
             }));
         }
 
-        let real = matches!(mode, AudioMode::Real);
-        *self.session.lock().await = Some(Session {
+        Ok(Session {
             channel,
             room,
             shared,
@@ -331,13 +369,17 @@ impl VoiceManager {
             mic_tx,
             real,
             rx,
+            alive,
             tasks,
-        });
-        self.emit_state(Some(channel), Connection::Connected);
-        Ok(())
+        })
     }
 
     pub async fn leave(&self) {
+        let _op = self.op.lock().await;
+        self.leave_locked().await;
+    }
+
+    async fn leave_locked(&self) {
         let s = self.session.lock().await.take();
         if let Some(s) = s {
             let _ = s.room.close().await;
@@ -348,24 +390,24 @@ impl VoiceManager {
         }
     }
 
+    /// The live session's channel (a session LiveKit already dropped doesn't count).
     pub async fn current_channel(&self) -> Option<ChannelId> {
-        self.session.lock().await.as_ref().map(|s| s.channel)
+        self.session
+            .lock()
+            .await
+            .as_ref()
+            .filter(|s| s.alive.load(Ordering::SeqCst))
+            .map(|s| s.channel)
     }
 
-    fn update_controls(&self, f: impl FnOnce(&mut Controls)) -> Controls {
-        let mut c = self.controls.lock().unwrap();
-        f(&mut c);
-        *c
-    }
-
-    async fn push_controls(&self, c: Controls) {
-        let channel = match self.session.lock().await.as_ref() {
-            Some(s) => {
-                *s.shared.controls.lock().unwrap() = c;
-                Some(s.channel)
-            }
-            None => None,
+    async fn toggled(&self, f: impl FnOnce(&mut Controls)) -> Controls {
+        let c = {
+            let mut c = self.controls.lock().unwrap();
+            f(&mut c);
+            *c
         };
+        // The audio callbacks share `controls`, so this already took effect; just tell the UI.
+        let channel = self.current_channel().await;
         let connection = if channel.is_some() {
             Connection::Connected
         } else {
@@ -376,18 +418,15 @@ impl VoiceManager {
             connection,
             controls: c,
         });
+        c
     }
 
     pub async fn toggle_mute(&self) -> Controls {
-        let c = self.update_controls(Controls::toggle_mute);
-        self.push_controls(c).await;
-        c
+        self.toggled(Controls::toggle_mute).await
     }
 
     pub async fn toggle_deafen(&self) -> Controls {
-        let c = self.update_controls(Controls::toggle_deafen);
-        self.push_controls(c).await;
-        c
+        self.toggled(Controls::toggle_deafen).await
     }
 
     pub fn controls(&self) -> Controls {
@@ -421,7 +460,7 @@ impl VoiceManager {
         s.shared.apply_config(&cfg);
         *s.cfg.lock().unwrap() = cfg.clone();
         if devices_changed && s.real {
-            // Hot-swap: reopen the streams, stay in the room.
+            // Hot-swap: reopen the streams, stay in the room (rates may differ; the 48 kHz edge absorbs it).
             let mut slot = s.io.lock().unwrap();
             slot.take();
             *slot = Some(
@@ -445,5 +484,45 @@ impl VoiceManager {
             Some(s) => s.rx.lock().unwrap().len(),
             None => 0,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pulse_server::testing;
+
+    /// I7: a join that fails (here: text channel → 400, before any LiveKit work) must leave the UI
+    /// in "disconnected", not stuck on "connecting".
+    #[tokio::test]
+    async fn failed_join_reports_disconnected() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let general = testing::general(&app, &token, s.id).await;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let vm = VoiceManager::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
+        let api = Api::new(&format!("http://{}", app.addr));
+        let r = vm
+            .join(
+                &api,
+                &token,
+                general.id,
+                AudioConfig::default(),
+                AudioMode::Null(48_000),
+            )
+            .await;
+        assert!(r.is_err());
+        let last = seen.lock().unwrap().iter().rev().find_map(|e| match e {
+            VoiceEvent::State {
+                channel_id,
+                connection,
+                ..
+            } => Some((*channel_id, *connection)),
+            _ => None,
+        });
+        assert_eq!(last, Some((None, Connection::Disconnected)));
+        assert_eq!(vm.current_channel().await, None);
     }
 }

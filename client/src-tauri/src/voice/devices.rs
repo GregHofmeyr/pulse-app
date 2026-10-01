@@ -1,6 +1,8 @@
 //! Audio devices: cpal capture/playback, APM (echo cancel / noise / AGC), sensitivity gate, watchdog.
 //!
 //! cpal streams are !Send, so they live on a dedicated audio thread; `AudioIo` is a handle to it.
+//! Everything between the devices and LiveKit runs at `INTERNAL_RATE`; devices are resampled at the
+//! edge, so a device switching rate mid-call (BT headset mode = 16 kHz) can't break pitch or speed.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -18,6 +20,10 @@ use super::mixer::Mixer;
 
 const GATE_HOLD: Duration = Duration::from_millis(300);
 pub const STALL_AFTER: Duration = Duration::from_secs(2);
+pub const INTERNAL_RATE: u32 = 48_000;
+
+/// Mic chunks carry the device rate they were captured at.
+pub type MicChunk = (u32, Vec<i16>);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioConfig {
@@ -49,6 +55,23 @@ impl Default for AudioConfig {
 
 pub fn input_gain(pct: u16) -> f32 {
     pct.clamp(50, 400) as f32 / 100.0
+}
+
+/// Linear resample of one block (good enough for speech at these ratios).
+pub fn resample(input: &[i16], from: u32, to: u32) -> Vec<i16> {
+    if from == to || input.is_empty() {
+        return input.to_vec();
+    }
+    let out_len = (input.len() as u64 * to as u64 / from as u64) as usize;
+    (0..out_len)
+        .map(|i| {
+            let pos = i as f64 * from as f64 / to as f64;
+            let (j, frac) = (pos.floor() as usize, pos.fract());
+            let a = input[j.min(input.len() - 1)] as f64;
+            let b = input[(j + 1).min(input.len() - 1)] as f64;
+            (a + (b - a) * frac) as i16
+        })
+        .collect()
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -172,20 +195,27 @@ pub fn list_outputs() -> Vec<DeviceInfo> {
 
 /// State shared between the audio callbacks and the rest of the app.
 pub struct Shared {
-    pub controls: Mutex<Controls>,
+    /// The same Arc the VoiceManager holds: one source of truth for mute/deafen (no stale copies).
+    pub controls: Arc<Mutex<Controls>>,
     pub mixer: Arc<Mutex<Mixer>>,
     gate: Mutex<Gate>,
     gain: Mutex<f32>,
     apm: Mutex<AudioProcessingModule>,
+    /// (echo, agc, ns) the APM was built with — rebuilt only when these change (rebuilding resets AEC).
+    apm_cfg: Mutex<(bool, bool, bool)>,
     pub watchdog: Watchdog,
     mic_meter: Mutex<Meter>,
     spk_meter: Mutex<Meter>,
 }
 
 impl Shared {
-    pub fn new(cfg: &AudioConfig, controls: Controls, mixer: Arc<Mutex<Mixer>>) -> Arc<Self> {
+    pub fn new(
+        cfg: &AudioConfig,
+        controls: Arc<Mutex<Controls>>,
+        mixer: Arc<Mutex<Mixer>>,
+    ) -> Arc<Self> {
         Arc::new(Self {
-            controls: Mutex::new(controls),
+            controls,
             mixer,
             gate: Mutex::new(Gate::new(cfg.sensitivity)),
             gain: Mutex::new(input_gain(cfg.input_gain_pct)),
@@ -195,6 +225,7 @@ impl Shared {
                 true,
                 cfg.noise_suppress,
             )),
+            apm_cfg: Mutex::new((cfg.echo_cancel, cfg.auto_gain, cfg.noise_suppress)),
             watchdog: Watchdog::new(Instant::now()),
             mic_meter: Mutex::new(Meter::default()),
             spk_meter: Mutex::new(Meter::default()),
@@ -209,14 +240,14 @@ impl Shared {
         )
     }
 
-    /// Capture path for one block of interleaved f32 samples. Emits 10 ms mono i16 chunks.
+    /// Capture path for one block of interleaved f32 samples. Emits 10 ms mono i16 chunks at `rate`.
     fn on_input(
         &self,
         data: &[f32],
         channels: usize,
         rate: u32,
         pending: &mut Vec<i16>,
-        mic_tx: &mpsc::UnboundedSender<Vec<i16>>,
+        mic_tx: &mpsc::UnboundedSender<MicChunk>,
     ) {
         let now = Instant::now();
         self.watchdog.input_tick(now);
@@ -244,20 +275,45 @@ impl Shared {
                     // Send silence rather than nothing: the source expects a steady stream (DTX makes it ~free).
                     buf.iter_mut().for_each(|s| *s = 0);
                 }
-                let _ = mic_tx.send(buf);
+                let _ = mic_tx.send((rate, buf));
             }
         }
     }
 
-    /// Playback path: mix peers into `out`, feed the result to the echo canceller.
-    fn on_output(&self, out: &mut [f32], channels: usize, rate: u32, reverse: &mut Vec<i16>) {
+    /// Playback path: mix peers (48 kHz) into `out` at the device rate, feed the echo canceller.
+    fn on_output(
+        &self,
+        out: &mut [f32],
+        channels: usize,
+        rate: u32,
+        reverse: &mut Vec<i16>,
+        scratch: &mut Vec<f32>,
+    ) {
         self.watchdog.output_tick(Instant::now());
         let master = if self.controls.lock().unwrap().playout_on() {
             1.0
         } else {
             0.0
         };
-        self.mixer.lock().unwrap().mix_into(out, channels, master);
+        let ch = channels.max(1);
+        let frames = out.len() / ch;
+        if rate == INTERNAL_RATE || frames == 0 {
+            self.mixer.lock().unwrap().mix_into(out, channels, master);
+        } else {
+            // Pull the matching amount of 48 kHz audio, then stretch it to the device rate.
+            let need = (frames as u64 * INTERNAL_RATE as u64)
+                .div_ceil(rate as u64)
+                .max(1) as usize;
+            scratch.resize(need, 0.0);
+            self.mixer.lock().unwrap().mix_into(scratch, 1, master);
+            for (i, frame) in out.chunks_mut(ch).enumerate() {
+                let pos = i as f64 * need as f64 / frames as f64;
+                let (j, frac) = (pos.floor() as usize, pos.fract() as f32);
+                let a = scratch[j.min(need - 1)];
+                let b = scratch[(j + 1).min(need - 1)];
+                frame.fill(a + (b - a) * frac);
+            }
+        }
         let chunk = (rate / 100) as usize;
         let mut meter = self.spk_meter.lock().unwrap();
         for v in downmix(out, channels) {
@@ -277,8 +333,17 @@ impl Shared {
     pub fn apply_config(&self, cfg: &AudioConfig) {
         *self.gain.lock().unwrap() = input_gain(cfg.input_gain_pct);
         self.gate.lock().unwrap().set_threshold(cfg.sensitivity);
-        *self.apm.lock().unwrap() =
-            AudioProcessingModule::new(cfg.echo_cancel, cfg.auto_gain, true, cfg.noise_suppress);
+        let wanted = (cfg.echo_cancel, cfg.auto_gain, cfg.noise_suppress);
+        let mut current = self.apm_cfg.lock().unwrap();
+        if *current != wanted {
+            *self.apm.lock().unwrap() = AudioProcessingModule::new(
+                cfg.echo_cancel,
+                cfg.auto_gain,
+                true,
+                cfg.noise_suppress,
+            );
+            *current = wanted;
+        }
     }
 }
 
@@ -330,7 +395,7 @@ impl AudioIo {
     pub fn start(
         cfg: &AudioConfig,
         shared: Arc<Shared>,
-        mic_tx: mpsc::UnboundedSender<Vec<i16>>,
+        mic_tx: mpsc::UnboundedSender<MicChunk>,
     ) -> anyhow::Result<Self> {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<(u32, u32)>>();
         let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
@@ -371,10 +436,13 @@ impl AudioIo {
                     };
                     let sh = shared.clone();
                     let mut reverse = Vec::new();
+                    let mut mixbuf = Vec::new();
                     let out_stream = match out_cfg.sample_format() {
                         cpal::SampleFormat::F32 => output.build_output_stream(
                             &out_cfg.config(),
-                            move |d: &mut [f32], _| sh.on_output(d, out_ch, out_rate, &mut reverse),
+                            move |d: &mut [f32], _| {
+                                sh.on_output(d, out_ch, out_rate, &mut reverse, &mut mixbuf)
+                            },
                             |e| eprintln!("output stream error: {e}"),
                             None,
                         )?,
@@ -384,7 +452,13 @@ impl AudioIo {
                                 &out_cfg.config(),
                                 move |d: &mut [i16], _| {
                                     scratch.resize(d.len(), 0.0);
-                                    sh.on_output(&mut scratch, out_ch, out_rate, &mut reverse);
+                                    sh.on_output(
+                                        &mut scratch,
+                                        out_ch,
+                                        out_rate,
+                                        &mut reverse,
+                                        &mut mixbuf,
+                                    );
                                     for (o, v) in d.iter_mut().zip(&scratch) {
                                         *o = to_i16(*v);
                                     }
@@ -424,18 +498,19 @@ impl AudioIo {
     pub fn start_null(
         rate: u32,
         shared: Arc<Shared>,
-        mic_tx: mpsc::UnboundedSender<Vec<i16>>,
+        mic_tx: mpsc::UnboundedSender<MicChunk>,
     ) -> Self {
         let h = tokio::spawn(async move {
             let chunk = (rate / 100) as usize;
             let mut out = vec![0f32; chunk];
             let mut reverse = Vec::new();
+            let mut mixbuf = Vec::new();
             let mut tick = tokio::time::interval(Duration::from_millis(10));
             loop {
                 tick.tick().await;
                 shared.watchdog.input_tick(Instant::now());
-                shared.on_output(&mut out, 1, rate, &mut reverse);
-                let _ = mic_tx.send(vec![0i16; chunk]);
+                shared.on_output(&mut out, 1, rate, &mut reverse, &mut mixbuf);
+                let _ = mic_tx.send((rate, vec![0i16; chunk]));
             }
         });
         Self {
@@ -504,6 +579,17 @@ mod tests {
         assert!((mono[0] - 0.3).abs() < 1e-6 && mono[1].abs() < 1e-6);
         let same: Vec<f32> = downmix(&[0.5, 0.25], 1).collect();
         assert_eq!(same, vec![0.5, 0.25]);
+    }
+
+    #[test]
+    fn resample_lengths_and_endpoints() {
+        let x: Vec<i16> = (0..441).map(|i| i as i16).collect(); // 10 ms @ 44.1 kHz
+        let y = resample(&x, 44_100, 48_000);
+        assert_eq!(y.len(), 480);
+        assert_eq!(y[0], 0);
+        assert!(*y.last().unwrap() >= 438);
+        assert_eq!(resample(&x, 48_000, 48_000), x);
+        assert_eq!(resample(&[1000; 160], 16_000, 48_000).len(), 480);
     }
 
     #[test]

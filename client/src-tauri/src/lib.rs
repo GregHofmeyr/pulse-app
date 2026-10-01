@@ -58,8 +58,12 @@ pub fn run() {
                         })
                         .build(),
                 )?;
-                app.global_shortcut().register(mute)?;
-                app.global_shortcut().register(deafen)?;
+                // Another app may already own these: log and carry on rather than refusing to start.
+                for sc in [mute, deafen] {
+                    if let Err(e) = app.global_shortcut().register(sc) {
+                        eprintln!("couldn't register hotkey {sc:?}: {e}");
+                    }
+                }
             }
             let handle = app.handle().clone();
             app.manage(voice::VoiceManager::new(std::sync::Arc::new(
