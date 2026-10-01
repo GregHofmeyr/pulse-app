@@ -112,23 +112,23 @@
         <div class="vc">
           <span class="vc-bars" class:warn={voice.connection !== 'connected'}><span></span><span></span><span></span></span>
           <span class="vc-text"><strong class:warn={voice.connection !== 'connected'}>{voice.connection === 'connected' ? 'Voice connected' : 'Reconnecting…'}</strong><small>{voiceChannel.name}</small></span>
-          <button class="vc-leave" aria-label="Disconnect" onclick={() => voiceApi.leave()}><Icon name="hangup" size={17} /></button>
+          <button class="vc-leave" aria-label="Leave voice" onclick={() => voiceApi.leave()}><Icon name="hangup" size={17} /></button>
         </div>
       {/if}
       <div class="me">
-        <button class="who-btn" aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
+        <button class="who-btn" data-tip="Account" aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
           <span class="avatar" style:background={avatarColor(user.id)}>{initial(user.username)}</span>
           <span class="who">{user.username}<small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
         </button>
         {#if voice.channelId}
-          <button class="me-btn" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label="Mute" onclick={() => voiceApi.toggleMute()}>
+          <button class="me-btn" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label={voice.controls.muted ? "Unmute" : "Mute"} onclick={() => voiceApi.toggleMute()}>
             <Icon name={voice.controls.muted ? 'micOff' : 'mic'} />
           </button>
-          <button class="me-btn" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label="Deafen" onclick={() => voiceApi.toggleDeafen()}>
+          <button class="me-btn" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label={voice.controls.deafened ? "Undeafen" : "Deafen"} onclick={() => voiceApi.toggleDeafen()}>
             <Icon name={voice.controls.deafened ? 'headphonesOff' : 'headphones'} />
           </button>
         {/if}
-        <button class="me-btn" aria-label="Settings" onclick={() => (settingsOpen = true)}><Icon name="gear" /></button>
+        <button class="me-btn" aria-label="Voice & audio settings" onclick={() => (settingsOpen = true)}><Icon name="gear" /></button>
         {#if menuOpen}
           <div class="menu" role="menu">
             <button role="menuitem" onclick={() => { menuOpen = false; settingsOpen = true }}>Voice &amp; audio settings</button>

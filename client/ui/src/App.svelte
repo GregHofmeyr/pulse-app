@@ -3,6 +3,7 @@
   import { api, errorText } from './lib/tauri'
   import { app, resetState, startListening } from './lib/store.svelte'
   import { startVoiceListening } from './lib/voice.svelte'
+  import { installTooltips } from './lib/tooltip'
   import type { User } from './lib/protocol/User'
   import Login from './routes/Login.svelte'
   import Shell from './routes/Shell.svelte'
@@ -10,6 +11,8 @@
   let user = $state<User | null>(null)
   let booting = $state(true)
   let bootError = $state('')
+
+  onMount(() => installTooltips())
 
   onMount(() => {
     let off: (() => void) | undefined

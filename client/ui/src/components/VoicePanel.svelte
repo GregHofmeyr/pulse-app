@@ -33,7 +33,7 @@
     {#each people as p (p.userId)}
       {@const isMe = p.userId === app.state.me?.id}
       <div class="tile" class:speaking={voice.speaking.has(p.userId)}>
-        <button class="avatar-btn" disabled={isMe} aria-label={isMe ? p.name : `Volume for ${p.name}`}
+        <button class="avatar-btn" disabled={isMe} aria-label={isMe ? p.name : `Volume for ${p.name}`} data-tip={isMe ? undefined : `Adjust ${p.name}'s volume`}
           onclick={() => (popoverFor = popoverFor === p.userId ? null : p.userId)}>
           <span class="av" style:background={avatarColor(p.userId)}>{initial(p.name)}</span>
           {#if p.deafened}<span class="badge"><Icon name="headphonesOff" size={14} label="Deafened" /></span>
@@ -64,13 +64,13 @@
   <div class="bar-wrap">
     {#if inHere}
       <div class="controls">
-        <button class="ctl" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label="Mute" onclick={() => voiceApi.toggleMute()}>
+        <button class="ctl" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label={voice.controls.muted ? "Unmute" : "Mute"} onclick={() => voiceApi.toggleMute()}>
           <Icon name={voice.controls.muted ? 'micOff' : 'mic'} size={20} />
         </button>
-        <button class="ctl" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label="Deafen" onclick={() => voiceApi.toggleDeafen()}>
+        <button class="ctl" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label={voice.controls.deafened ? "Undeafen" : "Deafen"} onclick={() => voiceApi.toggleDeafen()}>
           <Icon name={voice.controls.deafened ? 'headphonesOff' : 'headphones'} size={20} />
         </button>
-        <button class="leave" aria-label="Disconnect" onclick={() => voiceApi.leave()}><Icon name="hangup" size={22} /></button>
+        <button class="leave" aria-label="Leave voice" onclick={() => voiceApi.leave()}><Icon name="hangup" size={22} /></button>
       </div>
     {:else}
       <button class="primary" onclick={() => voiceApi.join(channelId)}>Join voice</button>

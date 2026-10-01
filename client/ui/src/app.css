@@ -25,3 +25,11 @@ html, body, #app { margin: 0; height: 100%; overflow: hidden; }
 button, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.pulse-tooltip {
+  position: fixed; z-index: 100; pointer-events: none; max-width: 260px;
+  padding: 6px 10px; border-radius: 8px; background: #0f1013; color: #f1f2f5;
+  font-size: 12px; font-weight: 600; line-height: 1.3; box-shadow: 0 8px 24px rgba(0, 0, 0, .4);
+  opacity: 0; transition: opacity .12s; left: -9999px; top: -9999px;
+}
+.pulse-tooltip.show { opacity: 1; }
