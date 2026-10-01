@@ -20,6 +20,13 @@ pub fn run() {
             commands::list_servers,
             commands::gateway_reconnect_now,
             commands::send_typing,
+            commands::join_server,
+            commands::list_channels,
+            commands::list_members,
+            commands::list_messages,
+            commands::send_message,
+            commands::edit_message,
+            commands::delete_message,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pulse");

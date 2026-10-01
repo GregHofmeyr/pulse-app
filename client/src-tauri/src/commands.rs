@@ -3,11 +3,12 @@
 use std::sync::Mutex;
 
 use pulse_protocol::gateway::ClientFrame;
-use pulse_protocol::rest::{Server, User};
+use pulse_protocol::ids::{ChannelId, MessageId, ServerId};
+use pulse_protocol::rest::{Channel, Member, Message, SendMessageRequest, Server, User};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc;
 
-use crate::api::{Api, ApiError};
+use crate::api::{Api, ApiError, check_server_url};
 use crate::gateway::{ConnState, GatewayHandle, GatewayUpdate};
 use crate::session::Store;
 
@@ -55,6 +56,15 @@ impl Core {
         }
     }
 
+    /// A 401 outside login means the session died server-side: drop it and tell the UI.
+    pub(crate) fn check<T>(&self, app: &AppHandle, r: Result<T, ApiError>) -> Result<T, ApiError> {
+        if let Err(ApiError::Unauthorized) = &r {
+            self.deactivate();
+            let _ = app.emit("pulse://conn", ConnState::LoggedOut);
+        }
+        r
+    }
+
     pub(crate) fn send_frame(&self, f: ClientFrame) {
         if let Some(g) = self.gateway.lock().unwrap().as_ref() {
             g.send(f);
@@ -90,6 +100,7 @@ pub async fn login(
     username: String,
     password: String,
 ) -> Result<User, ApiError> {
+    check_server_url(&server_url)?;
     let api = Api::new(&server_url);
     let s = api.login(&username, &password).await?;
     core.activate(&app, api, s.token, true);
@@ -105,6 +116,7 @@ pub async fn register(
     username: String,
     password: String,
 ) -> Result<User, ApiError> {
+    check_server_url(&server_url)?;
     let api = Api::new(&server_url);
     let s = api.register(&invite_code, &username, &password).await?;
     core.activate(&app, api, s.token, true);
@@ -153,9 +165,89 @@ pub fn gateway_reconnect_now(core: State<'_, Core>) {
 }
 
 #[tauri::command]
-pub async fn list_servers(core: State<'_, Core>) -> Result<Vec<Server>, ApiError> {
+pub async fn list_servers(app: AppHandle, core: State<'_, Core>) -> Result<Vec<Server>, ApiError> {
     let (api, token) = core.current()?;
-    api.servers(&token).await
+    core.check(&app, api.servers(&token).await)
+}
+
+#[tauri::command]
+pub async fn join_server(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.join_server(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn list_channels(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<Vec<Channel>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.channels(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn list_members(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<Vec<Member>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.members(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn list_messages(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    before: Option<MessageId>,
+) -> Result<Vec<Message>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.messages(&token, channel_id, before).await)
+}
+
+#[tauri::command]
+pub async fn send_message(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    content: String,
+    reply_to_id: Option<MessageId>,
+    nonce: Option<String>,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    let body = SendMessageRequest {
+        content,
+        reply_to_id,
+        nonce,
+    };
+    core.check(&app, api.send_message(&token, channel_id, &body).await)
+}
+
+#[tauri::command]
+pub async fn edit_message(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    content: String,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.edit_message(&token, message_id, &content).await)
+}
+
+#[tauri::command]
+pub async fn delete_message(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_message(&token, message_id).await)
 }
 
 /// Tell others you're typing (the UI throttles to 1 per 3 s).

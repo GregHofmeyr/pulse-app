@@ -1,6 +1,12 @@
 //! HTTP client for the Pulse server. Only the Rust core talks to the network.
 
-use pulse_protocol::rest::{LoginRequest, RegisterRequest, Server, SessionResponse, User};
+use std::time::Duration;
+
+use pulse_protocol::ids::{ChannelId, MessageId, ServerId};
+use pulse_protocol::rest::{
+    Channel, EditMessageRequest, LoginRequest, Member, Message, RegisterRequest,
+    SendMessageRequest, Server, SessionResponse, User, VoiceTokenResponse,
+};
 use serde::de::DeserializeOwned;
 
 #[derive(Debug, thiserror::Error)]
@@ -19,6 +25,27 @@ impl serde::Serialize for ApiError {
     }
 }
 
+/// Plain http:// only for this machine; anything remote must be https (passwords + tokens).
+pub fn check_server_url(url: &str) -> Result<(), ApiError> {
+    let reject = |m: &str| Err(ApiError::Rejected(m.into()));
+    if url.starts_with("https://") {
+        return Ok(());
+    }
+    let Some(rest) = url.strip_prefix("http://") else {
+        return reject("server address must start with https://");
+    };
+    let authority = rest.split('/').next().unwrap_or_default();
+    let host = match authority.strip_prefix('[') {
+        Some(v6) => v6.split(']').next().unwrap_or_default(),
+        None => authority.split(':').next().unwrap_or_default(),
+    };
+    if matches!(host, "localhost" | "127.0.0.1" | "::1") {
+        Ok(())
+    } else {
+        reject("use https:// for remote servers")
+    }
+}
+
 #[derive(Clone)]
 pub struct Api {
     base: String,
@@ -27,9 +54,14 @@ pub struct Api {
 
 impl Api {
     pub fn new(base: &str) -> Self {
+        let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(5))
+            .timeout(Duration::from_secs(15))
+            .build()
+            .expect("http client");
         Self {
             base: base.trim_end_matches('/').to_string(),
-            http: reqwest::Client::new(),
+            http,
         }
     }
 
@@ -53,6 +85,135 @@ impl Api {
             return Err(ApiError::Rejected(msg));
         }
         r.json().await.map_err(|e| ApiError::Network(e.to_string()))
+    }
+
+    /// For endpoints that answer 204.
+    async fn ok_empty(r: Result<reqwest::Response, reqwest::Error>) -> Result<(), ApiError> {
+        let r = r.map_err(|e| ApiError::Network(e.to_string()))?;
+        if r.status() == reqwest::StatusCode::UNAUTHORIZED {
+            return Err(ApiError::Unauthorized);
+        }
+        if !r.status().is_success() {
+            let msg = r
+                .json::<pulse_protocol::rest::ApiError>()
+                .await
+                .map(|e| e.message)
+                .unwrap_or_else(|_| "unexpected server error".into());
+            return Err(ApiError::Rejected(msg));
+        }
+        Ok(())
+    }
+
+    pub async fn join_server(&self, token: &str, server: ServerId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(format!("{}/servers/{server}/join", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn channels(&self, token: &str, server: ServerId) -> Result<Vec<Channel>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/servers/{server}/channels", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn members(&self, token: &str, server: ServerId) -> Result<Vec<Member>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/servers/{server}/members", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn messages(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        before: Option<MessageId>,
+    ) -> Result<Vec<Message>, ApiError> {
+        let mut req = self
+            .http
+            .get(format!("{}/channels/{channel}/messages", self.base))
+            .bearer_auth(token);
+        if let Some(b) = before {
+            req = req.query(&[("before", b.to_string())]);
+        }
+        Self::parse(req.send().await).await
+    }
+
+    pub async fn send_message(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &SendMessageRequest,
+    ) -> Result<Message, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/channels/{channel}/messages", self.base))
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn edit_message(
+        &self,
+        token: &str,
+        id: MessageId,
+        content: &str,
+    ) -> Result<Message, ApiError> {
+        let body = EditMessageRequest {
+            content: content.into(),
+        };
+        Self::parse(
+            self.http
+                .patch(format!("{}/messages/{id}", self.base))
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn delete_message(&self, token: &str, id: MessageId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/messages/{id}", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn voice_token(
+        &self,
+        token: &str,
+        channel: ChannelId,
+    ) -> Result<VoiceTokenResponse, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/voice/{channel}/token", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
     }
 
     pub async fn register(
@@ -161,5 +322,108 @@ mod tests {
         let servers = api.servers(&token).await.unwrap();
         assert_eq!(servers.len(), 1);
         assert_eq!(servers[0].name, "Main Hangout");
+    }
+
+    #[tokio::test]
+    async fn join_then_post_and_page_messages() {
+        let app = testing::spawn().await;
+        let (_, owner) = testing::register(&app, "alex").await;
+        let (_, token) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &owner, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        api.join_server(&token, s.id).await.unwrap();
+        let chans = api.channels(&token, s.id).await.unwrap();
+        let general = chans
+            .iter()
+            .find(|c| c.name.as_deref() == Some("general"))
+            .unwrap();
+        for i in 0..55 {
+            let req = SendMessageRequest {
+                content: format!("m{i}"),
+                reply_to_id: None,
+                nonce: Some(format!("n{i}")),
+            };
+            api.send_message(&token, general.id, &req).await.unwrap();
+        }
+        let page1 = api.messages(&token, general.id, None).await.unwrap();
+        assert_eq!(page1.len(), 50);
+        let page2 = api
+            .messages(&token, general.id, Some(page1[49].id))
+            .await
+            .unwrap();
+        assert_eq!(page2.len(), 5);
+        assert_eq!(api.members(&token, s.id).await.unwrap().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn edit_and_delete_roundtrip() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let g = testing::general(&app, &token, s.id).await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let m = api
+            .send_message(
+                &token,
+                g.id,
+                &SendMessageRequest {
+                    content: "tpyo".into(),
+                    reply_to_id: None,
+                    nonce: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            api.edit_message(&token, m.id, "typo")
+                .await
+                .unwrap()
+                .content,
+            "typo"
+        );
+        api.delete_message(&token, m.id).await.unwrap();
+        assert!(api.messages(&token, g.id, None).await.unwrap()[0].deleted);
+    }
+
+    #[tokio::test]
+    async fn voice_token_after_join() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let lounge = api
+            .channels(&token, s.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name.as_deref() == Some("Lounge"))
+            .unwrap();
+        let t = api.voice_token(&token, lounge.id).await.unwrap();
+        assert!(!t.token.is_empty());
+    }
+
+    #[test]
+    fn remote_http_refused() {
+        assert!(check_server_url("http://localhost:7890").is_ok());
+        assert!(check_server_url("http://127.0.0.1:7890").is_ok());
+        assert!(check_server_url("http://[::1]:7890").is_ok());
+        assert!(check_server_url("https://pulse.example.com").is_ok());
+        assert!(matches!(
+            check_server_url("http://pulse.example.com"),
+            Err(ApiError::Rejected(_))
+        ));
+        assert!(matches!(
+            check_server_url("ftp://x"),
+            Err(ApiError::Rejected(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn timeout_on_unroutable_host() {
+        let api = Api::new("http://10.255.255.1:9");
+        let started = std::time::Instant::now();
+        let err = api.login("a", "b").await.unwrap_err();
+        assert!(matches!(err, ApiError::Network(_)), "{err:?}");
+        assert!(started.elapsed() < std::time::Duration::from_secs(7));
     }
 }
