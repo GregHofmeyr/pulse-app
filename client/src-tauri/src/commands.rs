@@ -347,3 +347,23 @@ pub fn list_audio_devices() -> AudioDevices {
         outputs: crate::voice::devices::list_outputs(),
     }
 }
+
+#[tauri::command]
+pub fn start_mic_test(
+    app: AppHandle,
+    mic: State<'_, crate::voice::mictest::MicTest>,
+    config: AudioConfig,
+) -> Result<(), VoiceError> {
+    let handle = app.clone();
+    mic.start(
+        &config,
+        std::sync::Arc::new(move |e| {
+            let _ = handle.emit("voice://event", &e);
+        }),
+    )
+}
+
+#[tauri::command]
+pub fn stop_mic_test(mic: State<'_, crate::voice::mictest::MicTest>) {
+    mic.stop();
+}

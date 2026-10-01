@@ -11,6 +11,7 @@ pub fn run() {
             use tauri::Manager;
             let dir = app.path().app_data_dir()?;
             app.manage(commands::Core::new(session::Store::new(dir)));
+            app.manage(voice::mictest::MicTest::default());
             let handle = app.handle().clone();
             app.manage(voice::VoiceManager::new(std::sync::Arc::new(
                 move |e: voice::VoiceEvent| {
@@ -42,6 +43,8 @@ pub fn run() {
             commands::set_peer_volume,
             commands::set_audio_config,
             commands::list_audio_devices,
+            commands::start_mic_test,
+            commands::stop_mic_test,
         ])
         .run(tauri::generate_context!())
         .expect("error while running Pulse");

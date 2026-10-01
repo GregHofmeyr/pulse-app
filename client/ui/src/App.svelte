@@ -2,6 +2,7 @@
   import { onMount } from 'svelte'
   import { api, errorText } from './lib/tauri'
   import { app, resetState, startListening } from './lib/store.svelte'
+  import { startVoiceListening } from './lib/voice.svelte'
   import type { User } from './lib/protocol/User'
   import Login from './routes/Login.svelte'
   import Shell from './routes/Shell.svelte'
@@ -13,8 +14,11 @@
   onMount(() => {
     let off: (() => void) | undefined
     // Listen before restoring so the first Ready can't slip past us.
-    startListening().then(async (unlisten) => {
-      off = unlisten
+    Promise.all([startListening(), startVoiceListening()]).then(async ([unlisten, unlistenVoice]) => {
+      off = () => {
+        unlisten()
+        unlistenVoice()
+      }
       try {
         user = await api.restoreSession()
       } catch (e) {

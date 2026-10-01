@@ -3,6 +3,7 @@
 pub mod controls;
 pub mod devices;
 pub mod meter;
+pub mod mictest;
 pub mod mixer;
 pub mod rx;
 

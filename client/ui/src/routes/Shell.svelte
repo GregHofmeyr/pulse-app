@@ -3,6 +3,9 @@
   import Icon from '../components/Icon.svelte'
   import ChannelList from '../components/ChannelList.svelte'
   import MemberList from '../components/MemberList.svelte'
+  import VoicePanel from '../components/VoicePanel.svelte'
+  import Settings from '../components/Settings.svelte'
+  import { voice, voiceApi } from '../lib/voice.svelte'
   import { api, errorText } from '../lib/tauri'
   import { app } from '../lib/store.svelte'
   import { isMember } from '../lib/selectors'
@@ -14,9 +17,9 @@
   const win = getCurrentWindow()
   let activeServerId = $state<string | null>(null)
   let activeChannelId = $state<string | null>(null)
-  let voiceChannelId = $state<string | null>(null) // set by the voice panel (Task 10)
-  let speaking = $state(new Set<string>())
+  let settingsOpen = $state(false)
   let error = $state('')
+  const voiceChannel = $derived(voice.channelId ? app.state.channels[voice.channelId] : null)
 
   const servers = $derived(app.state.servers)
   const activeServer = $derived(servers.find((s) => s.id === activeServerId) ?? null)
@@ -78,14 +81,29 @@
     <aside class="panel side">
       <div class="panel-head">{activeServer ? activeServer.name : 'Direct messages'}</div>
       {#if activeServerId}
-        <ChannelList serverId={activeServerId} {activeChannelId} {voiceChannelId} {speaking}
-          onSelect={(id) => (activeChannelId = id)} onJoinVoice={(id) => (activeChannelId = id)} />
+        <ChannelList serverId={activeServerId} {activeChannelId} voiceChannelId={voice.channelId} speaking={voice.speaking}
+          onSelect={(id) => (activeChannelId = id)}
+          onJoinVoice={(id) => { activeChannelId = id; if (voice.channelId !== id && member) void voiceApi.join(id) }} />
       {:else}
         <div class="side-empty">DMs arrive in the next milestone.</div>
+      {/if}
+      {#if voiceChannel}
+        <div class="vc">
+          <span class="vc-bars" class:warn={voice.connection !== 'connected'}><span></span><span></span><span></span></span>
+          <span class="vc-text"><strong class:warn={voice.connection !== 'connected'}>{voice.connection === 'connected' ? 'Voice connected' : 'Reconnecting…'}</strong><small>{voiceChannel.name}</small></span>
+          <button class="vc-leave" aria-label="Disconnect" onclick={() => voiceApi.leave()}><Icon name="hangup" size={17} /></button>
+        </div>
       {/if}
       <div class="me">
         <span class="avatar" style:background={avatarColor(user.id)}>{initial(user.username)}</span>
         <span class="who">{user.username}<small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
+        <button class="me-btn" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label="Mute" onclick={() => voiceApi.toggleMute()}>
+          <Icon name={voice.controls.muted ? 'micOff' : 'mic'} />
+        </button>
+        <button class="me-btn" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label="Deafen" onclick={() => voiceApi.toggleDeafen()}>
+          <Icon name={voice.controls.deafened ? 'headphonesOff' : 'headphones'} />
+        </button>
+        <button class="me-btn" aria-label="Settings" onclick={() => (settingsOpen = true)}><Icon name="gear" /></button>
         <button class="ghost" onclick={logout}>Log out</button>
       </div>
     </aside>
@@ -97,9 +115,11 @@
           <button class="primary" onclick={join}>Join server</button>
           {#if error}<p class="error">{error}</p>{/if}
         </div>
+      {:else if activeChannel?.kind === 'voice'}
+        <VoicePanel channelId={activeChannel.id} serverId={activeServerId} />
       {:else if activeChannel}
-        <div class="chan-head"><Icon name={activeChannel.kind === 'voice' ? 'speaker' : 'hash'} /> {activeChannel.name}</div>
-        <p class="empty">{activeChannel.kind === 'voice' ? 'Voice arrives in milestone 2.' : 'Chat arrives in milestone 3.'}</p>
+        <div class="chan-head"><Icon name="hash" /> {activeChannel.name}</div>
+        <p class="empty">Chat arrives in milestone 3.</p>
       {:else}
         <p class="empty">Pick a channel.</p>
       {/if}
@@ -108,6 +128,7 @@
     {#if activeServerId}<MemberList serverId={activeServerId} />{/if}
   </div>
 </div>
+{#if settingsOpen}<Settings onClose={() => (settingsOpen = false)} />{/if}
 
 <style>
   .app { height: 100%; display: flex; flex-direction: column; background: var(--bg-0); }
@@ -132,6 +153,19 @@
   .avatar { width: 34px; height: 34px; border-radius: 50%; color: #fff; font-weight: 700; display: grid; place-items: center; }
   .who { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
   .who small { font-size: 12px; font-weight: 400; color: var(--text-3); }
+  .me-btn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); display: grid; place-items: center; }
+  .me-btn:hover { background: var(--bg-2); }
+  .me-btn.on { color: #f2616b; }
+  .vc { margin: 0 8px 8px; padding: 10px 10px 10px 14px; background: #232429; border-radius: 12px; display: flex; align-items: center; gap: 10px; }
+  .vc-bars { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
+  .vc-bars span { width: 3px; border-radius: 1px; background: var(--ok); }
+  .vc-bars span:nth-child(1) { height: 5px; } .vc-bars span:nth-child(2) { height: 9px; } .vc-bars span:nth-child(3) { height: 14px; }
+  .vc-bars.warn span { background: #e8b04a; }
+  .vc-text { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .vc-text strong { font-size: 13px; color: var(--ok); }
+  .vc-text strong.warn { color: #e8b04a; }
+  .vc-text small { font-size: 12px; color: var(--text-3); }
+  .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 9px; background: #2e3037; color: #f2616b; display: grid; place-items: center; }
   .ghost { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
   .content { flex: 1; min-width: 0; background: var(--bg-2); display: flex; flex-direction: column; }
   .chan-head { height: 52px; flex-shrink: 0; padding: 0 18px; display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; border-bottom: 1px solid var(--bg-3); color: var(--text); }
