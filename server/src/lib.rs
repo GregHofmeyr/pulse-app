@@ -1,8 +1,10 @@
+pub mod access;
 pub mod auth;
 pub mod config;
 pub mod db;
 pub mod error;
 pub mod gateway;
+pub mod servers;
 pub mod state;
 
 #[cfg(feature = "testing")]
@@ -18,6 +20,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/health", get(|| async { "ok" }))
         .merge(auth::routes::router())
+        .merge(servers::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)

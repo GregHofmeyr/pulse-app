@@ -83,3 +83,56 @@ pub async fn register(app: &TestApp, username: &str) -> (pulse_protocol::ids::Us
     let s: pulse_protocol::rest::SessionResponse = r.json().await.unwrap();
     (s.user.id, s.token)
 }
+
+/// Authed JSON POST.
+pub async fn post_json(
+    app: &TestApp,
+    token: &str,
+    path: &str,
+    body: serde_json::Value,
+) -> reqwest::Response {
+    app.http
+        .post(app.url(path))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
+/// Authed GET returning parsed JSON (asserts 200).
+pub async fn get_json<T: serde::de::DeserializeOwned>(app: &TestApp, token: &str, path: &str) -> T {
+    let r = app
+        .http
+        .get(app.url(path))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "GET {path}");
+    r.json().await.unwrap()
+}
+
+/// Create a server via the API.
+pub async fn create_server(app: &TestApp, token: &str, name: &str) -> pulse_protocol::rest::Server {
+    let r = post_json(app, token, "/servers", serde_json::json!({ "name": name })).await;
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
+
+/// Create (or reuse) a DM/group with the given other users.
+pub async fn create_dm(
+    app: &TestApp,
+    token: &str,
+    others: &[pulse_protocol::ids::UserId],
+) -> pulse_protocol::rest::Channel {
+    let r = post_json(
+        app,
+        token,
+        "/dms",
+        serde_json::json!({ "user_ids": others }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
