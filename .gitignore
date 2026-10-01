@@ -1,2 +1,9 @@
-.superpowers/
+target/
+node_modules/
+.env
+*.db
+*.db-*
+client/ui/dist/
+spikes/**/*.wav
 *.ogg
+.superpowers/

@@ -1,0 +1,13 @@
+[package]
+name = "pulse-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "pulse-app-server"
+path = "src/main.rs"
+
+[dependencies]
+pulse-protocol.workspace = true
