@@ -25,7 +25,7 @@ dev-server:
     cargo run -p pulse-server --bin pulse-app-server -- serve
 
 ui-check:
-    cd client/ui && pnpm install --frozen-lockfile && pnpm check
+    cd client/ui && pnpm install --frozen-lockfile && pnpm check && pnpm test
 
 dev-client:
     cd client/src-tauri && cargo tauri dev
