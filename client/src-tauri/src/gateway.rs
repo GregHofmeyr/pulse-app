@@ -13,6 +13,9 @@ use crate::backoff::backoff_delay;
 
 const HEARTBEAT: Duration = Duration::from_secs(30);
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
+/// No frame at all for this long (the server acks every 30 s heartbeat) = half-open socket: reconnect.
+const DEAD_AFTER: Duration = Duration::from_secs(75);
 
 #[derive(Debug, Clone)]
 pub enum GatewayUpdate {
@@ -84,13 +87,24 @@ impl GatewayHandle {
         tx: mpsc::UnboundedSender<GatewayUpdate>,
         unit: Duration,
     ) -> Self {
+        Self::spawn_tuned(base_url, token, tx, unit, DEAD_AFTER)
+    }
+
+    /// `dead_after`: silence after which the connection is presumed dead (tests shorten it).
+    pub fn spawn_tuned(
+        base_url: String,
+        token: String,
+        tx: mpsc::UnboundedSender<GatewayUpdate>,
+        unit: Duration,
+        dead_after: Duration,
+    ) -> Self {
         let (cmd, mut cmd_rx) = mpsc::unbounded_channel();
         tokio::spawn(async move {
             let url = ws_url(&base_url);
             let mut attempt: u32 = 0;
             let _ = tx.send(GatewayUpdate::Connection(ConnState::Connecting));
             loop {
-                match session(&url, &token, &tx, &mut cmd_rx).await {
+                match session(&url, &token, &tx, &mut cmd_rx, dead_after).await {
                     End::Stop => return,
                     End::LoggedOut => {
                         let _ = tx.send(GatewayUpdate::Connection(ConnState::LoggedOut));
@@ -142,8 +156,11 @@ async fn session(
     token: &str,
     tx: &mpsc::UnboundedSender<GatewayUpdate>,
     cmd_rx: &mut mpsc::UnboundedReceiver<Cmd>,
+    dead_after: Duration,
 ) -> End {
-    let Ok((mut ws, _)) = tokio_tungstenite::connect_async(url).await else {
+    let Ok(Ok((mut ws, _))) =
+        tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(url)).await
+    else {
         return End::Retry(false);
     };
     let hello = serde_json::to_string(&ClientFrame::Hello {
@@ -166,19 +183,22 @@ async fn session(
 
     let mut beat = tokio::time::interval(HEARTBEAT);
     beat.tick().await; // first tick is immediate
+    // Only frames *from* the server prove the connection is alive (writes succeed into a dead socket).
+    let mut deadline = tokio::time::Instant::now() + dead_after;
     loop {
         tokio::select! {
+            _ = tokio::time::sleep_until(deadline) => return End::Retry(true),
             _ = beat.tick() => {
                 let f = serde_json::to_string(&ClientFrame::Heartbeat).expect("serialize");
                 if ws.send(Ws::text(f)).await.is_err() { return End::Retry(true) }
             }
-            frame = next_frame(&mut ws) => match frame {
+            frame = next_frame(&mut ws) => { deadline = tokio::time::Instant::now() + dead_after; match frame {
                 Frame::Server(ServerFrame::Event(e)) => { let _ = tx.send(GatewayUpdate::Event(e)); }
                 Frame::Server(ServerFrame::Ready(r)) => { let _ = tx.send(GatewayUpdate::Ready(Box::new(r))); }
                 Frame::Server(ServerFrame::HeartbeatAck) => {}
                 Frame::Closed(Some(CloseCode::Library(4001))) => return End::LoggedOut,
                 Frame::Closed(_) => return End::Retry(true),
-            },
+            }},
             c = cmd_rx.recv() => match c {
                 None | Some(Cmd::Stop) => { let _ = ws.close(None).await; return End::Stop }
                 Some(Cmd::ReconnectNow) => return End::Retry(true),
@@ -323,5 +343,62 @@ mod tests {
             ws_url("https://pulse.example.com/"),
             "wss://pulse.example.com/gateway"
         );
+    }
+
+    /// I1: a half-open connection (Wi-Fi drop, suspend) must be noticed: no frames for the
+    /// deadline → reconnect, even though writes still "succeed".
+    #[tokio::test]
+    async fn silent_server_is_detected_as_dead() {
+        use futures::{SinkExt, StreamExt};
+        use pulse_protocol::gateway::{Ready, ServerFrame};
+        use pulse_protocol::rest::User;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+                    let _hello = ws.next().await;
+                    let ready = ServerFrame::Ready(Ready {
+                        me: User {
+                            id: pulse_protocol::ids::UserId::new(),
+                            username: "alex".into(),
+                            avatar_hash: None,
+                        },
+                        servers: vec![],
+                        channels: vec![],
+                        members: vec![],
+                        dm_members: vec![],
+                        voice: vec![],
+                    });
+                    ws.send(tokio_tungstenite::tungstenite::Message::text(
+                        serde_json::to_string(&ready).unwrap(),
+                    ))
+                    .await
+                    .unwrap();
+                    // …then silence forever (never acks heartbeats, never closes)
+                    std::future::pending::<()>().await;
+                    drop(ws);
+                });
+            }
+        });
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _gw = GatewayHandle::spawn_tuned(
+            format!("http://{addr}"),
+            "t".into(),
+            tx,
+            Duration::from_millis(50),
+            Duration::from_millis(400),
+        );
+        next_ready(&mut rx).await;
+        let saw = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if let Some(GatewayUpdate::Connection(ConnState::Reconnecting)) = rx.recv().await {
+                    return true;
+                }
+            }
+        })
+        .await;
+        assert_eq!(saw, Ok(true), "dead connection not detected");
     }
 }

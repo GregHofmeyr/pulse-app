@@ -208,3 +208,30 @@ async fn ready_hides_private_voice_rooms_from_outsiders() {
         "member should see DM call"
     );
 }
+
+/// I5: the client announces its flags right after joining, but LiveKit's join webhook may land
+/// later. The flags must stick.
+#[tokio::test]
+async fn flags_declared_before_join_webhook_are_kept() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (_, b) = register(&app, "sam").await;
+    let (_, l) = lounge(&app, &a).await;
+    let (mut wa, _) = hello(&app, &a).await;
+    wa.send(Ws::text(
+        serde_json::to_string(&ClientFrame::VoiceState {
+            flags: VoiceFlags {
+                muted: true,
+                deafened: false,
+            },
+        })
+        .unwrap(),
+    ))
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    joined(&app, l.id, a_id).await; // webhook arrives after
+    let (_w, ready) = hello(&app, &b).await;
+    let room = ready.voice.iter().find(|r| r.channel_id == l.id).unwrap();
+    assert!(room.members[0].flags.muted, "declared mute was lost");
+}

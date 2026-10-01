@@ -13,6 +13,9 @@ type Rooms = HashMap<ChannelId, HashMap<UserId, VoiceFlags>>;
 #[derive(Clone, Default)]
 pub struct VoiceState {
     rooms: Arc<Mutex<Rooms>>,
+    /// Last flags each user declared, in a room or not: the client announces them right after
+    /// joining, which can beat LiveKit's join webhook.
+    declared: Arc<Mutex<HashMap<UserId, VoiceFlags>>>,
 }
 
 impl VoiceState {
@@ -22,7 +25,15 @@ impl VoiceState {
             .unwrap()
             .entry(channel)
             .or_default()
-            .insert(user, VoiceFlags::default())
+            .insert(
+                user,
+                self.declared
+                    .lock()
+                    .unwrap()
+                    .get(&user)
+                    .copied()
+                    .unwrap_or_default(),
+            )
             .is_none()
     }
 
@@ -48,6 +59,7 @@ impl VoiceState {
 
     /// Update a user's flags; returns the room they are in (None if not in voice).
     pub fn set_flags(&self, user: UserId, flags: VoiceFlags) -> Option<ChannelId> {
+        self.declared.lock().unwrap().insert(user, flags);
         let mut rooms = self.rooms.lock().unwrap();
         for (channel, members) in rooms.iter_mut() {
             if let Some(f) = members.get_mut(&user) {
