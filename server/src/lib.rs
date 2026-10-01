@@ -4,6 +4,7 @@ pub mod config;
 pub mod db;
 pub mod error;
 pub mod gateway;
+pub mod messages;
 pub mod servers;
 pub mod state;
 
@@ -21,6 +22,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(|| async { "ok" }))
         .merge(auth::routes::router())
         .merge(servers::routes::router())
+        .merge(messages::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)

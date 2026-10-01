@@ -136,3 +136,35 @@ pub async fn create_dm(
     assert_eq!(r.status(), 200);
     r.json().await.unwrap()
 }
+
+/// Send a message via the API (asserts 200).
+pub async fn send(
+    app: &TestApp,
+    token: &str,
+    channel: pulse_protocol::ids::ChannelId,
+    content: &str,
+) -> pulse_protocol::rest::Message {
+    let r = post_json(
+        app,
+        token,
+        &format!("/channels/{channel}/messages"),
+        serde_json::json!({ "content": content }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "send to {channel}");
+    r.json().await.unwrap()
+}
+
+/// The `#general` text channel of a server.
+pub async fn general(
+    app: &TestApp,
+    token: &str,
+    server: pulse_protocol::ids::ServerId,
+) -> pulse_protocol::rest::Channel {
+    let chans: Vec<pulse_protocol::rest::Channel> =
+        get_json(app, token, &format!("/servers/{server}/channels")).await;
+    chans
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("general"))
+        .unwrap()
+}
