@@ -3,6 +3,7 @@ pub mod backoff;
 pub mod commands;
 pub mod gateway;
 pub mod ipc;
+pub mod outbox;
 pub mod session;
 pub mod voice;
 
@@ -11,7 +12,17 @@ pub fn run() {
         .setup(|app| {
             use tauri::Manager;
             let dir = app.path().app_data_dir()?;
-            app.manage(commands::Core::new(session::Store::new(dir)));
+            let emitter = app.handle().clone();
+            let outbox = outbox::Outbox::new(std::sync::Arc::new(
+                move |nonce: &str, status: outbox::Status| {
+                    use tauri::Emitter;
+                    let _ = emitter.emit(
+                        "pulse://outbox",
+                        serde_json::json!({ "nonce": nonce, "status": status }),
+                    );
+                },
+            ));
+            app.manage(commands::Core::new(session::Store::new(dir), outbox));
             app.manage(voice::mictest::MicTest::default());
             #[cfg(unix)]
             {

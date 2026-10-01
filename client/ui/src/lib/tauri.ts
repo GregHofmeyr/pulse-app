@@ -20,8 +20,9 @@ export const api = {
   listMembers: (serverId: string) => invoke<Member[]>('list_members', { serverId }),
   listMessages: (channelId: string, before?: string) =>
     invoke<Message[]>('list_messages', { channelId, before: before ?? null }),
-  sendMessage: (channelId: string, content: string, replyToId?: string, nonce?: string) =>
-    invoke<Message>('send_message', { channelId, content, replyToId: replyToId ?? null, nonce: nonce ?? null }),
+  /** Queued in the Rust outbox; the confirmed message arrives as a MessageCreated event with this nonce. */
+  sendMessage: (channelId: string, content: string, replyToId: string | null, nonce: string) =>
+    invoke<void>('send_message', { channelId, content, replyToId, nonce }),
   editMessage: (messageId: string, content: string) => invoke<Message>('edit_message', { messageId, content }),
   deleteMessage: (messageId: string) => invoke<void>('delete_message', { messageId }),
   sendTyping: (channelId: string) => invoke<void>('send_typing', { channelId }),

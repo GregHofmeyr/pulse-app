@@ -2,7 +2,7 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { Event } from './protocol/Event'
 import type { Ready } from './protocol/Ready'
-import { applyEvent, applyReady, emptyState, type AppState, type ConnState } from './state'
+import { applyEvent, applyReady, emptyState, setPendingStatus, type AppState, type ConnState } from './state'
 import { api } from './tauri'
 
 export const app = $state<{ state: AppState }>({ state: emptyState() })
@@ -13,6 +13,12 @@ export async function startListening(): Promise<UnlistenFn> {
     listen<Ready>('pulse://ready', (e) => (app.state = applyReady(app.state, e.payload))),
     listen<Event>('pulse://event', (e) => (app.state = applyEvent(app.state, e.payload, Date.now()))),
     listen<ConnState>('pulse://conn', (e) => (app.state = { ...app.state, conn: e.payload })),
+    listen<{ nonce: string; status: 'sent' | 'failed' }>('pulse://outbox', (e) => {
+      if (e.payload.status !== 'failed') return // 'sent' is confirmed by the MessageCreated event
+      for (const channel of Object.keys(app.state.pending)) {
+        app.state = setPendingStatus(app.state, channel, e.payload.nonce, 'failed')
+      }
+    }),
   ])
   // Skip the backoff wait when the network comes back or the user looks at the app.
   const kick = () => {

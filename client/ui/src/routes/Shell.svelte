@@ -4,6 +4,7 @@
   import ChannelList from '../components/ChannelList.svelte'
   import MemberList from '../components/MemberList.svelte'
   import VoicePanel from '../components/VoicePanel.svelte'
+  import TextChannel from '../components/TextChannel.svelte'
   import Settings from '../components/Settings.svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { api, errorText } from '../lib/tauri'
@@ -118,8 +119,7 @@
       {:else if activeChannel?.kind === 'voice'}
         <VoicePanel channelId={activeChannel.id} serverId={activeServerId} />
       {:else if activeChannel}
-        <div class="chan-head"><Icon name="hash" /> {activeChannel.name}</div>
-        <p class="empty">Chat arrives in milestone 3.</p>
+        {#key activeChannel.id}<TextChannel channelId={activeChannel.id} serverId={activeServerId} />{/key}
       {:else}
         <p class="empty">Pick a channel.</p>
       {/if}
@@ -168,7 +168,6 @@
   .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 9px; background: #2e3037; color: #f2616b; display: grid; place-items: center; }
   .ghost { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
   .content { flex: 1; min-width: 0; background: var(--bg-2); display: flex; flex-direction: column; }
-  .chan-head { height: 52px; flex-shrink: 0; padding: 0 18px; display: flex; align-items: center; gap: 10px; font-size: 15px; font-weight: 600; border-bottom: 1px solid var(--bg-3); color: var(--text); }
   .empty { margin: auto; color: var(--text-3); }
   .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .primary { height: 40px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }

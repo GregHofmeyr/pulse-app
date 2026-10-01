@@ -4,7 +4,7 @@ use std::sync::Mutex;
 
 use pulse_protocol::gateway::ClientFrame;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId};
-use pulse_protocol::rest::{Channel, Member, Message, SendMessageRequest, Server, User};
+use pulse_protocol::rest::{Channel, Member, Message, Server, User};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc;
 
@@ -15,14 +15,16 @@ use crate::voice::devices::{AudioConfig, DeviceInfo};
 use crate::voice::{AudioMode, VoiceError, VoiceManager, controls::Controls};
 
 pub struct Core {
+    pub outbox: std::sync::Arc<crate::outbox::Outbox>,
     inner: Mutex<Option<(Api, String)>>,
     gateway: Mutex<Option<GatewayHandle>>,
     store: Store,
 }
 
 impl Core {
-    pub fn new(store: Store) -> Self {
+    pub fn new(store: Store, outbox: crate::outbox::Outbox) -> Self {
         Self {
+            outbox: std::sync::Arc::new(outbox),
             inner: Mutex::new(None),
             gateway: Mutex::new(None),
             store,
@@ -87,6 +89,16 @@ async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>)
             GatewayUpdate::Connection(state) => {
                 if state == ConnState::LoggedOut {
                     app.state::<Core>().deactivate();
+                }
+                if state == ConnState::Connected {
+                    // Back online: send anything queued while we were away.
+                    let core = app.state::<Core>();
+                    if let Ok((api, token)) = core.current() {
+                        let outbox = core.outbox.clone();
+                        tauri::async_runtime::spawn(
+                            async move { outbox.flush(&api, &token).await },
+                        );
+                    }
                 }
                 let _ = app.emit("pulse://conn", state);
             }
@@ -215,20 +227,18 @@ pub async fn list_messages(
 
 #[tauri::command]
 pub async fn send_message(
-    app: AppHandle,
     core: State<'_, Core>,
     channel_id: ChannelId,
     content: String,
     reply_to_id: Option<MessageId>,
-    nonce: Option<String>,
-) -> Result<Message, ApiError> {
-    let (api, token) = core.current()?;
-    let body = SendMessageRequest {
-        content,
-        reply_to_id,
-        nonce,
-    };
-    core.check(&app, api.send_message(&token, channel_id, &body).await)
+    nonce: String,
+) -> Result<(), ApiError> {
+    // Queue first, then try: offline sends survive until the connection is back (or fail visibly).
+    core.outbox.enqueue(nonce, channel_id, content, reply_to_id);
+    if let Ok((api, token)) = core.current() {
+        core.outbox.flush(&api, &token).await;
+    }
+    Ok(())
 }
 
 #[tauri::command]
