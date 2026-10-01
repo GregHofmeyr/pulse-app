@@ -9,9 +9,35 @@ use crate::rest::{Channel, Member, Message, Server, User};
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "op", content = "d")]
 pub enum ClientFrame {
-    Hello { token: String },
+    Hello {
+        token: String,
+    },
     Heartbeat,
-    Typing { channel_id: ChannelId },
+    Typing {
+        channel_id: ChannelId,
+    },
+    /// Your own mute/deafen state while in a voice room.
+    VoiceState {
+        flags: VoiceFlags,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct VoiceFlags {
+    pub muted: bool,
+    pub deafened: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct VoiceMember {
+    pub user_id: UserId,
+    pub flags: VoiceFlags,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct VoiceRoom {
+    pub channel_id: ChannelId,
+    pub members: Vec<VoiceMember>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -21,6 +47,8 @@ pub struct Ready {
     pub channels: Vec<Channel>,
     pub members: Vec<ServerMembers>,
     pub dm_members: Vec<DmMembers>,
+    /// Who is in which voice room right now (only rooms you may see).
+    pub voice: Vec<VoiceRoom>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -79,6 +107,11 @@ pub enum Event {
         channel_id: ChannelId,
         user_id: UserId,
     },
+    VoiceStateChanged {
+        channel_id: ChannelId,
+        user_id: UserId,
+        flags: VoiceFlags,
+    },
 }
 
 impl Event {
@@ -91,7 +124,8 @@ impl Event {
             Self::MessageDeleted { channel_id, .. }
             | Self::Typing { channel_id, .. }
             | Self::VoiceJoined { channel_id, .. }
-            | Self::VoiceLeft { channel_id, .. } => Some(*channel_id),
+            | Self::VoiceLeft { channel_id, .. }
+            | Self::VoiceStateChanged { channel_id, .. } => Some(*channel_id),
             Self::ChannelCreated { channel } => Some(channel.id),
             Self::ServerCreated { .. } | Self::MemberJoined { .. } => None,
         }

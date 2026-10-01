@@ -4,5 +4,10 @@ import type { DmMembers } from "./DmMembers";
 import type { Server } from "./Server";
 import type { ServerMembers } from "./ServerMembers";
 import type { User } from "./User";
+import type { VoiceRoom } from "./VoiceRoom";
 
-export type Ready = { me: User, servers: Array<Server>, channels: Array<Channel>, members: Array<ServerMembers>, dm_members: Array<DmMembers>, };
+export type Ready = { me: User, servers: Array<Server>, channels: Array<Channel>, members: Array<ServerMembers>, dm_members: Array<DmMembers>, 
+/**
+ * Who is in which voice room right now (only rooms you may see).
+ */
+voice: Array<VoiceRoom>, };

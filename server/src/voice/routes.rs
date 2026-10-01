@@ -33,6 +33,12 @@ async fn token(
     if ch.kind == ChannelKind::Text {
         return Err(AppError::BadRequest("text channels have no voice".into()));
     }
+    // Server voice: join the server first (same rule as posting).
+    if let Some(server) = ch.server_id
+        && !crate::servers::routes::is_server_member(&s.db, server, me).await?
+    {
+        return Err(AppError::Forbidden);
+    }
     let jwt = AccessToken::with_api_key(&s.cfg.livekit_key, &s.cfg.livekit_secret)
         .with_identity(&me.to_string())
         .with_ttl(TOKEN_TTL)

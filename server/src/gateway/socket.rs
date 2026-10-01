@@ -5,7 +5,9 @@ use std::time::Duration;
 use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message as Ws, WebSocket, WebSocketUpgrade};
 use axum::response::Response;
-use pulse_protocol::gateway::{ClientFrame, DmMembers, Event, Ready, ServerFrame, ServerMembers};
+use pulse_protocol::gateway::{
+    ClientFrame, DmMembers, Event, Ready, ServerFrame, ServerMembers, VoiceMember, VoiceRoom,
+};
 use pulse_protocol::ids::UserId;
 use sqlx::SqlitePool;
 
@@ -15,6 +17,7 @@ use crate::auth::routes::load_user;
 use crate::auth::session;
 use crate::error::AppResult;
 use crate::servers::routes::{all_servers, dms_of, server_channels, server_members};
+use crate::voice::VoiceState;
 
 pub use super::hub::{CLOSE_TOO_SLOW, CLOSE_UNAUTHORIZED};
 pub const CLOSE_TIMEOUT: u16 = 4002;
@@ -73,7 +76,11 @@ async fn authenticate(socket: &mut WebSocket, s: &AppState) -> Auth {
     }
 }
 
-pub async fn build_ready(db: &SqlitePool, me: UserId) -> AppResult<Ready> {
+pub async fn build_ready(
+    db: &SqlitePool,
+    voice_state: &VoiceState,
+    me: UserId,
+) -> AppResult<Ready> {
     let servers = all_servers(db).await?;
     let mut channels = vec![];
     let mut members = vec![];
@@ -102,12 +109,26 @@ pub async fn build_ready(db: &SqlitePool, me: UserId) -> AppResult<Ready> {
         });
         channels.push(dm);
     }
+    let mut voice = vec![];
+    for (channel_id, members) in voice_state.rooms() {
+        // Same rule as everything else: private rooms only for their members.
+        if channel_for(db, me, channel_id).await.is_ok() {
+            voice.push(VoiceRoom {
+                channel_id,
+                members: members
+                    .into_iter()
+                    .map(|(user_id, flags)| VoiceMember { user_id, flags })
+                    .collect(),
+            });
+        }
+    }
     Ok(Ready {
         me: load_user(db, me).await?,
         servers,
         channels,
         members,
         dm_members,
+        voice,
     })
 }
 
@@ -120,7 +141,7 @@ async fn run(mut socket: WebSocket, s: AppState) {
     // Register before building Ready so no event between the snapshot and the stream is lost.
     let reg = s.hub.register(me, token_hash);
     let (conn, mut rx, mut kick) = (reg.id, reg.rx, reg.kick);
-    let ready = match build_ready(&s.db, me).await {
+    let ready = match build_ready(&s.db, &s.voice, me).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = ?e, "build_ready failed");
@@ -170,6 +191,12 @@ async fn run(mut socket: WebSocket, s: AppState) {
                         // Typing into a channel you cannot see is silently ignored.
                         if channel_for(&s.db, me, channel_id).await.is_ok() {
                             s.hub.publish(&s.db, Event::Typing { channel_id, user_id: me }).await;
+                        }
+                    }
+                    Ok(ClientFrame::VoiceState { flags }) => {
+                        // Only meaningful while in a room; otherwise ignored.
+                        if let Some(channel_id) = s.voice.set_flags(me, flags) {
+                            s.hub.publish(&s.db, Event::VoiceStateChanged { channel_id, user_id: me, flags }).await;
                         }
                     }
                     Ok(ClientFrame::Hello { .. }) | Err(_) => {}
