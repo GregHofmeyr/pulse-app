@@ -1,0 +1,16 @@
+# Local dev LiveKit. Loopback only (never reachable from the LAN) and it sends webhooks to the
+# local pulse-app-server. The key/secret pair is a dev-only value, also in .env.example.
+port: 7880
+bind_addresses: ["127.0.0.1"]
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false
+  node_ip: 127.0.0.1
+keys:
+  devkey: pulse-dev-secret-0123456789abcdefghij
+webhook:
+  api_key: devkey
+  urls: ["http://127.0.0.1:7890/livekit/webhook"]
+logging:
+  level: info

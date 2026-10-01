@@ -1,8 +1,8 @@
 services:
   livekit:
     image: livekit/livekit-server:v1.13
-    command: --dev --bind 0.0.0.0 --node-ip 127.0.0.1
-    ports:
-      - "7880:7880"
-      - "7881:7881"
-      - "7882:7882/udp"
+    # host networking so LiveKit can reach the server on 127.0.0.1:7890; bound to loopback in the config
+    network_mode: host
+    volumes:
+      - ./docker/livekit.yaml:/livekit.yaml:ro
+    command: --config /livekit.yaml

@@ -66,7 +66,7 @@ enum Cmd {
 }
 
 fn token(room: &str, identity: &str) -> Result<String> {
-    Ok(AccessToken::with_api_key("devkey", "secret")
+    Ok(AccessToken::with_api_key("devkey", &std::env::var("PULSE_LIVEKIT_SECRET").unwrap_or_else(|_| "pulse-dev-secret-0123456789abcdefghij".into()))
         .with_identity(identity)
         .with_grants(VideoGrants {
             room_join: true,

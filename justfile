@@ -33,3 +33,7 @@ dev-client:
 # print a single-use invite for the local dev server
 invite:
     cargo run -q -p pulse-server --bin pulse-app-server -- create-invite
+
+# real LiveKit → webhook → voice_sessions, end to end
+voice-smoke:
+    ./scripts/voice-smoke.sh
