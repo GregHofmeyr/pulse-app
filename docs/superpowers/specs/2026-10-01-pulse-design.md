@@ -324,6 +324,11 @@ login · real permissions · private servers · **E2EE** (voice via LiveKit E2EE
 sounds · RNNoise / stronger AI noise suppression · light theme / full theming · idle presence · message search (SQLite
 FTS5) · more badges and easter eggs · a Zig CLI bot (the coworker challenge) · mobile clients · multi-region hosting.
 
+**Added during hands-on testing (2026-10-01):** keybind settings page (rebind mute/deafen) · alternative sound sets for
+mute/unmute/deafen/undeafen (pick by ear) · **private channels inside a server** (member-scoped, managed neatly) ·
+Linux device picker via PipeWire (cpal/ALSA only exposes plumbing names) · reload the webview if its process dies ·
+"no audio from your mic" detection during calls (mic test already has it).
+
 ## 15. Open questions
 
 - Capture pipeline ownership (decided by the spike, §6.3).
