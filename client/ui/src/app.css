@@ -1,0 +1,27 @@
+/* Tokens from the v1 mockups: layered greys, no true black, rounded frames. */
+:root {
+  --bg-0: #141519;
+  --bg-1: #1b1c21;
+  --bg-2: #212228;
+  --bg-3: #2a2c33;
+  --bg-4: #34363d;
+  --line: #2f3138;
+  --text: #e8e9ed;
+  --text-2: #b9bcc6;
+  --text-3: #8e92a0;
+  --accent: #8b9cff;
+  --on-accent: #141519;
+  --danger: #d93a42;
+  --ok: #4fd18b;
+  --radius: 14px;
+  color-scheme: dark;
+  font-family: 'Onest', system-ui, sans-serif;
+  font-size: 14px;
+  color: var(--text);
+  background: var(--bg-0);
+}
+* { box-sizing: border-box; }
+html, body, #app { margin: 0; height: 100%; overflow: hidden; }
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }

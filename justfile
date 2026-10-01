@@ -1,7 +1,7 @@
 set dotenv-load := true
 
 # everything CI runs
-check: fmt-check clippy test types-check
+check: fmt-check clippy test types-check ui-check
 
 fmt-check:
     cargo fmt --all -- --check
@@ -23,3 +23,13 @@ dev-livekit:
 
 dev-server:
     cargo run -p pulse-server --bin pulse-app-server -- serve
+
+ui-check:
+    cd client/ui && pnpm install --frozen-lockfile && pnpm check
+
+dev-client:
+    cd client/src-tauri && cargo tauri dev
+
+# print a single-use invite for the local dev server
+invite:
+    cargo run -q -p pulse-server --bin pulse-app-server -- create-invite
