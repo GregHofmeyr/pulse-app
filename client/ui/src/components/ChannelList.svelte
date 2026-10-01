@@ -3,6 +3,7 @@
   import { app } from '../lib/store.svelte'
   import { channelsFor, isMember, voiceOccupants } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
+  import { api, errorText } from '../lib/tauri'
 
   let {
     serverId,
@@ -23,17 +24,56 @@
   const lists = $derived(channelsFor(app.state, serverId))
   // Who's in voice is only shown to people who've joined the server.
   const member = $derived(isMember(app.state, serverId))
+
+  // inline "new channel" field
+  let adding = $state<'text' | 'voice' | null>(null)
+  let draft = $state('')
+  let addError = $state('')
+
+  function startAdd(kind: 'text' | 'voice') {
+    adding = kind
+    draft = ''
+    addError = ''
+  }
+  async function submitAdd(e: KeyboardEvent) {
+    if (e.key === 'Escape') adding = null
+    if (e.key !== 'Enter' || !adding) return
+    const kind = adding
+    // text channels read nicer as lower-case-with-dashes, like Discord
+    const name = kind === 'text' ? draft.trim().toLowerCase().replace(/\s+/g, '-') : draft.trim()
+    if (!name) return
+    try {
+      const c = await api.createChannel(serverId, kind, name)
+      adding = null
+      if (kind === 'text') onSelect(c.id)
+    } catch (err) {
+      addError = errorText(err)
+    }
+  }
+  const focus = (el: HTMLInputElement) => el.focus()
 </script>
 
 <div class="list">
-  <div class="label">TEXT CHANNELS</div>
+  <div class="label">TEXT CHANNELS
+    {#if member}<button class="add" aria-label="Create text channel" onclick={() => startAdd('text')}><Icon name="plus" size={14} /></button>{/if}
+  </div>
+  {#if adding === 'text'}
+    <input class="new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-channel" maxlength="64" aria-label="New text channel name" />
+    {#if addError}<small class="err">{addError}</small>{/if}
+  {/if}
   {#each lists.text as c (c.id)}
     <button class="row" class:active={c.id === activeChannelId} onclick={() => onSelect(c.id)}>
       <span class="ico"><Icon name="hash" size={17} /></span>{c.name}
     </button>
   {/each}
 
-  <div class="label voice">VOICE CHANNELS</div>
+  <div class="label voice">VOICE CHANNELS
+    {#if member}<button class="add" aria-label="Create voice channel" onclick={() => startAdd('voice')}><Icon name="plus" size={14} /></button>{/if}
+  </div>
+  {#if adding === 'voice'}
+    <input class="new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="Channel name" maxlength="64" aria-label="New voice channel name" />
+    {#if addError}<small class="err">{addError}</small>{/if}
+  {/if}
   {#each lists.voice as c (c.id)}
     {@const people = member ? voiceOccupants(app.state, serverId, c.id) : []}
     <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId}
@@ -56,7 +96,12 @@
 <style>
   .list { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
   .label { padding: 12px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); }
+  .label { display: flex; align-items: center; justify-content: space-between; }
   .label.voice { padding-top: 16px; }
+  .add { width: 20px; height: 20px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; padding: 0; }
+  .add:hover { color: var(--text); background: var(--bg-2); }
+  .new { height: 32px; margin: 2px 4px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg-2); font-size: 14px; }
+  .err { padding: 0 10px; color: #f2616b; font-size: 12px; }
   .row { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: #9a9eab; display: flex; align-items: center; gap: 8px; text-align: left; font-size: 14px; }
   .row:hover { background: var(--bg-2); color: var(--text); }
   .row.active { background: var(--bg-3); color: #f1f2f5; font-weight: 500; }

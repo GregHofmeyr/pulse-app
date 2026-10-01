@@ -125,6 +125,7 @@ pub fn run() {
             commands::gateway_reconnect_now,
             commands::send_typing,
             commands::create_server,
+            commands::create_channel,
             commands::join_server,
             commands::list_channels,
             commands::list_members,

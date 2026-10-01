@@ -225,6 +225,21 @@ pub async fn create_server(
 }
 
 #[tauri::command]
+pub async fn create_channel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    kind: pulse_protocol::rest::ChannelKind,
+    name: String,
+) -> Result<Channel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.create_channel(&token, server_id, kind, &name).await,
+    )
+}
+
+#[tauri::command]
 pub async fn join_server(
     app: AppHandle,
     core: State<'_, Core>,

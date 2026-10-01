@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId};
 use pulse_protocol::rest::{
-    Channel, EditMessageRequest, LoginRequest, Member, Message, RegisterRequest,
+    Channel, ChannelKind, EditMessageRequest, LoginRequest, Member, Message, RegisterRequest,
     SendMessageRequest, Server, SessionResponse, User, VoiceTokenResponse,
 };
 use serde::de::DeserializeOwned;
@@ -118,6 +118,28 @@ impl Api {
         Self::parse(
             self.http
                 .post(format!("{}/servers", self.base))
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn create_channel(
+        &self,
+        token: &str,
+        server: ServerId,
+        kind: ChannelKind,
+        name: &str,
+    ) -> Result<Channel, ApiError> {
+        let body = pulse_protocol::rest::CreateChannelRequest {
+            kind,
+            name: name.into(),
+        };
+        Self::parse(
+            self.http
+                .post(format!("{}/servers/{server}/channels", self.base))
                 .bearer_auth(token)
                 .json(&body)
                 .send()
@@ -461,5 +483,30 @@ mod tests {
             api.create_server(&token, "   ").await,
             Err(ApiError::Rejected(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn create_text_and_voice_channels() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let s = api.create_server(&token, "Main").await.unwrap();
+        let t = api
+            .create_channel(&token, s.id, ChannelKind::Text, "memes")
+            .await
+            .unwrap();
+        let v = api
+            .create_channel(&token, s.id, ChannelKind::Voice, "Gaming")
+            .await
+            .unwrap();
+        assert_eq!(
+            (t.kind, t.name.as_deref()),
+            (ChannelKind::Text, Some("memes"))
+        );
+        assert_eq!(
+            (v.kind, v.name.as_deref()),
+            (ChannelKind::Voice, Some("Gaming"))
+        );
+        assert_eq!(api.channels(&token, s.id).await.unwrap().len(), 4);
     }
 }
