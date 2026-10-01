@@ -10,6 +10,21 @@ use keyring::Entry;
 const SERVICE: &str = "pulse-app";
 const LAST_SERVER: &str = "__last_server__";
 
+/// Where this instance keeps its session. `PULSE_PROFILE=b` gives a second, separate login on the
+/// same machine (testing with two accounts). Only the profile's alphanumerics are used.
+pub fn profile_dir(base: &Path, profile: Option<&str>) -> PathBuf {
+    let clean: String = profile
+        .unwrap_or_default()
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
+        .collect();
+    if clean.is_empty() {
+        base.to_path_buf()
+    } else {
+        base.join("profiles").join(clean)
+    }
+}
+
 pub struct Store {
     dir: PathBuf,
 }
@@ -138,5 +153,26 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+}
+
+#[cfg(test)]
+mod profile_tests {
+    use super::*;
+
+    #[test]
+    fn profile_dir_separates_sessions() {
+        let base = std::path::Path::new("/data/app.pulse.client");
+        assert_eq!(profile_dir(base, None), base.to_path_buf());
+        assert_eq!(
+            profile_dir(base, Some("b")),
+            base.join("profiles").join("b")
+        );
+        // nothing path-like escapes the data dir
+        assert_eq!(
+            profile_dir(base, Some("../../etc")),
+            base.join("profiles").join("etc")
+        );
+        assert_eq!(profile_dir(base, Some("")), base.to_path_buf());
     }
 }

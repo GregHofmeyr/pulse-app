@@ -11,7 +11,10 @@ pub fn run() {
     tauri::Builder::default()
         .setup(|app| {
             use tauri::Manager;
-            let dir = app.path().app_data_dir()?;
+            let dir = session::profile_dir(
+                &app.path().app_data_dir()?,
+                std::env::var("PULSE_PROFILE").ok().as_deref(),
+            );
             let emitter = app.handle().clone();
             let outbox = outbox::Outbox::new(std::sync::Arc::new(
                 move |nonce: &str, status: outbox::Status| {
