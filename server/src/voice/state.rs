@@ -8,7 +8,22 @@ use std::sync::{Arc, Mutex};
 use pulse_protocol::gateway::VoiceFlags;
 use pulse_protocol::ids::{ChannelId, UserId};
 
-type Rooms = HashMap<ChannelId, HashMap<UserId, VoiceFlags>>;
+/// One user's live LiveKit connection in a room. `sid` changes on every (re)join.
+struct Member {
+    flags: VoiceFlags,
+    sid: String,
+}
+
+type Rooms = HashMap<ChannelId, HashMap<UserId, Member>>;
+
+/// What a `participant_left` meant.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Left {
+    Removed,
+    NotPresent,
+    /// That connection was already replaced by a rejoin (LiveKit kicks the old one): ignore it.
+    Stale,
+}
 
 #[derive(Clone, Default)]
 pub struct VoiceState {
@@ -19,7 +34,9 @@ pub struct VoiceState {
 }
 
 impl VoiceState {
-    pub fn join(&self, channel: ChannelId, user: UserId) -> bool {
+    /// Record `user`'s connection `sid`; true if they weren't already in the room.
+    pub fn join(&self, channel: ChannelId, user: UserId, sid: &str) -> bool {
+        let flags = self.declared(user);
         self.rooms
             .lock()
             .unwrap()
@@ -27,25 +44,32 @@ impl VoiceState {
             .or_default()
             .insert(
                 user,
-                self.declared
-                    .lock()
-                    .unwrap()
-                    .get(&user)
-                    .copied()
-                    .unwrap_or_default(),
+                Member {
+                    flags,
+                    sid: sid.to_owned(),
+                },
             )
             .is_none()
     }
 
-    pub fn leave(&self, channel: ChannelId, user: UserId) -> bool {
+    /// Remove `user` if `sid` is their current connection (an empty `sid` matches any).
+    pub fn leave(&self, channel: ChannelId, user: UserId, sid: &str) -> Left {
         let mut rooms = self.rooms.lock().unwrap();
-        let removed = rooms
-            .get_mut(&channel)
-            .is_some_and(|r| r.remove(&user).is_some());
-        if rooms.get(&channel).is_some_and(|r| r.is_empty()) {
+        let Some(room) = rooms.get_mut(&channel) else {
+            return Left::NotPresent;
+        };
+        let left = match room.get(&user) {
+            None => Left::NotPresent,
+            Some(m) if !sid.is_empty() && !m.sid.is_empty() && m.sid != sid => Left::Stale,
+            Some(_) => {
+                room.remove(&user);
+                Left::Removed
+            }
+        };
+        if room.is_empty() {
             rooms.remove(&channel);
         }
-        removed
+        left
     }
 
     /// Flags the user last declared (default if never).
@@ -72,8 +96,8 @@ impl VoiceState {
         self.declared.lock().unwrap().insert(user, flags);
         let mut rooms = self.rooms.lock().unwrap();
         for (channel, members) in rooms.iter_mut() {
-            if let Some(f) = members.get_mut(&user) {
-                *f = flags;
+            if let Some(m) = members.get_mut(&user) {
+                m.flags = flags;
                 return Some(*channel);
             }
         }
@@ -85,7 +109,7 @@ impl VoiceState {
             .lock()
             .unwrap()
             .iter()
-            .map(|(c, m)| (*c, m.iter().map(|(u, f)| (*u, *f)).collect()))
+            .map(|(c, m)| (*c, m.iter().map(|(u, m)| (*u, m.flags)).collect()))
             .collect()
     }
 }

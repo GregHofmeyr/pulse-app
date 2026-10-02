@@ -145,6 +145,23 @@ pub fn run() {
             commands::stop_mic_test,
             commands::play_sound,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running Pulse");
+        .build(tauri::generate_context!())
+        .expect("error while building Pulse")
+        .run(|app, event| {
+            // Quitting leaves voice properly, so others don't see a ghost until LiveKit times it
+            // out. (Minimising/hiding isn't an exit: you stay in voice.)
+            if let tauri::RunEvent::Exit = event {
+                use tauri::Manager;
+                let voice = app.state::<voice::VoiceManager>();
+                tauri::async_runtime::block_on(async {
+                    let leave = voice.leave();
+                    if tokio::time::timeout(std::time::Duration::from_secs(2), leave)
+                        .await
+                        .is_err()
+                    {
+                        tracing::warn!("voice: leave on exit timed out");
+                    }
+                });
+            }
+        });
 }

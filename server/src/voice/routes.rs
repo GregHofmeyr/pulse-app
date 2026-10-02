@@ -15,6 +15,7 @@ use crate::access::{channel_for, load_channel};
 use crate::auth::AuthUser;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
+use crate::voice::state::Left;
 
 const TOKEN_TTL: Duration = Duration::from_secs(10 * 60);
 
@@ -92,7 +93,7 @@ async fn webhook(
     let record = ch.server_id.is_some();
 
     match ev.event.as_str() {
-        "participant_joined" if s.voice.join(channel_id, user_id) => {
+        "participant_joined" if s.voice.join(channel_id, user_id, &p.sid) => {
             if record {
                 sqlx::query("INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES (?, ?, ?, ?)")
                         .bind(pulse_protocol::ids::next_ulid().to_string())
@@ -114,8 +115,12 @@ async fn webhook(
                 .await;
         }
         "participant_left" => {
-            // Close the open row even if we never saw the join (e.g. we restarted mid-call).
-            let in_memory = s.voice.leave(channel_id, user_id);
+            let in_memory = match s.voice.leave(channel_id, user_id, &p.sid) {
+                Left::Stale => return Ok(StatusCode::OK),
+                Left::Removed => true,
+                // Still close the open row (e.g. we restarted mid-call).
+                Left::NotPresent => false,
+            };
             let closed = if record {
                 sqlx::query(
                     "UPDATE voice_sessions SET left_at = ? WHERE user_id = ? AND channel_id = ? AND left_at IS NULL",

@@ -80,6 +80,52 @@ async fn joined(app: &TestApp, room: ChannelId, user: UserId) {
     assert_eq!(r.status(), 200);
 }
 
+/// A participant webhook with LiveKit's per-connection `sid` (a rejoin gets a new one).
+async fn lk_event(app: &TestApp, event: &str, room: ChannelId, user: UserId, sid: &str) {
+    let body = json!({"event": event, "id": "EV", "room": {"name": room.to_string()}, "participant": {"identity": user.to_string(), "sid": sid}}).to_string();
+    let r = app
+        .http
+        .post(app.url("/livekit/webhook"))
+        .header("Authorization", signed(app, &body))
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+}
+
+async fn voice_members(app: &TestApp, token: &str, room: ChannelId) -> Vec<UserId> {
+    let (_ws, ready) = hello(app, token).await;
+    ready
+        .voice
+        .iter()
+        .find(|r| r.channel_id == room)
+        .map(|r| r.members.iter().map(|m| m.user_id).collect())
+        .unwrap_or_default()
+}
+
+/// Rejoining with the same identity makes LiveKit kick the old connection, firing its `left`
+/// right next to the new `joined`, in either order. A stale `left` must not remove the new one.
+#[tokio::test]
+async fn stale_left_from_replaced_connection_keeps_user_in_voice() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (_, l) = lounge(&app, &a).await;
+    lk_event(&app, "participant_joined", l.id, a_id, "PA_old").await;
+    lk_event(&app, "participant_joined", l.id, a_id, "PA_new").await;
+    lk_event(&app, "participant_left", l.id, a_id, "PA_old").await;
+    assert_eq!(
+        voice_members(&app, &a, l.id).await,
+        vec![a_id],
+        "still in voice"
+    );
+    lk_event(&app, "participant_left", l.id, a_id, "PA_new").await;
+    assert!(
+        voice_members(&app, &a, l.id).await.is_empty(),
+        "gone once the live one leaves"
+    );
+}
+
 async fn lounge(app: &TestApp, token: &str) -> (pulse_protocol::rest::Server, Channel) {
     let s = create_server(app, token, "Main").await;
     let chans: Vec<Channel> = get_json(app, token, &format!("/servers/{}/channels", s.id)).await;
