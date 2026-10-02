@@ -34,6 +34,8 @@ tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 tracing-appender = "0.2"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+rubato = "5"
+audioadapter-buffers = "5.2.0"
 
 [dev-dependencies]
 tempfile = "3"

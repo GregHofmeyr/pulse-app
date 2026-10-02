@@ -57,23 +57,6 @@ pub fn input_gain(pct: u16) -> f32 {
     pct.clamp(50, 400) as f32 / 100.0
 }
 
-/// Linear resample of one block (good enough for speech at these ratios).
-pub fn resample(input: &[i16], from: u32, to: u32) -> Vec<i16> {
-    if from == to || input.is_empty() {
-        return input.to_vec();
-    }
-    let out_len = (input.len() as u64 * to as u64 / from as u64) as usize;
-    (0..out_len)
-        .map(|i| {
-            let pos = i as f64 * from as f64 / to as f64;
-            let (j, frac) = (pos.floor() as usize, pos.fract());
-            let a = input[j.min(input.len() - 1)] as f64;
-            let b = input[(j + 1).min(input.len() - 1)] as f64;
-            (a + (b - a) * frac) as i16
-        })
-        .collect()
-}
-
 #[derive(Clone, Debug, Serialize)]
 pub struct DeviceInfo {
     pub name: String,
@@ -260,6 +243,8 @@ pub struct Shared {
     /// (echo, agc, ns) the APM was built with — rebuilt only when these change (rebuilding resets AEC).
     apm_cfg: Mutex<(bool, bool, bool)>,
     pub watchdog: Watchdog,
+    /// Audio processing errors are logged once per device session, not per 10 ms chunk.
+    apm_warned: std::sync::atomic::AtomicBool,
     mic_meter: Mutex<Meter>,
     spk_meter: Mutex<Meter>,
     /// Level of what we actually send (after mute + gate): your own speaking ring.
@@ -285,6 +270,7 @@ impl Shared {
             )),
             apm_cfg: Mutex::new((cfg.echo_cancel, cfg.auto_gain, cfg.noise_suppress)),
             watchdog: Watchdog::new(Instant::now()),
+            apm_warned: Default::default(),
             mic_meter: Mutex::new(Meter::default()),
             spk_meter: Mutex::new(Meter::default()),
             sent_meter: Mutex::new(Meter::default()),
@@ -320,11 +306,12 @@ impl Shared {
             pending.push(to_i16(v * gain));
             if pending.len() == chunk {
                 let mut buf = std::mem::replace(pending, Vec::with_capacity(chunk));
-                let _ = self
+                let r = self
                     .apm
                     .lock()
                     .unwrap()
                     .process_stream(&mut buf, rate as i32, 1);
+                self.warn_apm_once(r, "capture");
                 let rms = (buf
                     .iter()
                     .map(|s| (*s as f32 / i16::MAX as f32).powi(2))
@@ -355,6 +342,7 @@ impl Shared {
         rate: u32,
         reverse: &mut Vec<i16>,
         scratch: &mut Vec<f32>,
+        playout: &mut super::playout::Playout,
     ) {
         self.watchdog.output_tick(Instant::now());
         let master = if self.controls.lock().unwrap().playout_on() {
@@ -367,18 +355,12 @@ impl Shared {
         if rate == INTERNAL_RATE || frames == 0 {
             self.mixer.lock().unwrap().mix_into(out, channels, master);
         } else {
-            // Pull the matching amount of 48 kHz audio, then stretch it to the device rate.
-            let need = (frames as u64 * INTERNAL_RATE as u64)
-                .div_ceil(rate as u64)
-                .max(1) as usize;
-            scratch.resize(need, 0.0);
-            self.mixer.lock().unwrap().mix_into(scratch, 1, master);
-            for (i, frame) in out.chunks_mut(ch).enumerate() {
-                let pos = i as f64 * need as f64 / frames as f64;
-                let (j, frac) = (pos.floor() as usize, pos.fract() as f32);
-                let a = scratch[j.min(need - 1)];
-                let b = scratch[(j + 1).min(need - 1)];
-                frame.fill(a + (b - a) * frac);
+            scratch.resize(frames, 0.0);
+            playout.fill(scratch, |buf| {
+                self.mixer.lock().unwrap().mix_into(buf, 1, master)
+            });
+            for (frame, v) in out.chunks_mut(ch).zip(scratch.iter()) {
+                frame.fill(*v);
             }
         }
         let chunk = (rate / 100) as usize;
@@ -387,13 +369,22 @@ impl Shared {
             meter.add(v);
             reverse.push(to_i16(v));
             if reverse.len() == chunk {
-                let _ = self
+                let r = self
                     .apm
                     .lock()
                     .unwrap()
                     .process_reverse_stream(reverse, rate as i32, 1);
+                self.warn_apm_once(r, "playback");
                 reverse.clear();
             }
+        }
+    }
+
+    fn warn_apm_once<E: std::fmt::Display>(&self, r: Result<(), E>, path: &str) {
+        if let Err(e) = r
+            && !self.apm_warned.swap(true, Ordering::Relaxed)
+        {
+            tracing::warn!(error = %e, path, "audio processing failed (echo/noise/gain not applied)");
         }
     }
 
@@ -431,6 +422,22 @@ impl Drop for AudioIo {
             h.abort();
         }
     }
+}
+
+/// The device's default config, but at `INTERNAL_RATE` when it supports that with the same channel
+/// count and sample format: no resampling at all is the best quality there is.
+pub fn prefer_internal_rate(
+    default: cpal::SupportedStreamConfig,
+    ranges: impl IntoIterator<Item = cpal::SupportedStreamConfigRange>,
+) -> cpal::SupportedStreamConfig {
+    let want = cpal::SampleRate(INTERNAL_RATE);
+    ranges
+        .into_iter()
+        .filter(|r| {
+            r.channels() == default.channels() && r.sample_format() == default.sample_format()
+        })
+        .find_map(|r| r.try_with_sample_rate(want))
+        .unwrap_or(default)
 }
 
 fn find_device(input: bool, name: Option<&str>) -> anyhow::Result<cpal::Device> {
@@ -473,8 +480,14 @@ impl AudioIo {
                 let built = (|| -> anyhow::Result<(cpal::Stream, cpal::Stream, u32, u32)> {
                     let input = find_device(true, cfg.input.as_deref())?;
                     let output = find_device(false, cfg.output.as_deref())?;
-                    let in_cfg = input.default_input_config()?;
-                    let out_cfg = output.default_output_config()?;
+                    let in_cfg = prefer_internal_rate(
+                        input.default_input_config()?,
+                        input.supported_input_configs()?,
+                    );
+                    let out_cfg = prefer_internal_rate(
+                        output.default_output_config()?,
+                        output.supported_output_configs()?,
+                    );
                     let (in_rate, in_ch) = (in_cfg.sample_rate().0, in_cfg.channels() as usize);
                     let (out_rate, out_ch) = (out_cfg.sample_rate().0, out_cfg.channels() as usize);
 
@@ -504,11 +517,12 @@ impl AudioIo {
                     let sh = shared.clone();
                     let mut reverse = Vec::new();
                     let mut mixbuf = Vec::new();
+                    let mut playout = super::playout::Playout::new(out_rate);
                     let out_stream = match out_cfg.sample_format() {
                         cpal::SampleFormat::F32 => output.build_output_stream(
                             &out_cfg.config(),
                             move |d: &mut [f32], _| {
-                                sh.on_output(d, out_ch, out_rate, &mut reverse, &mut mixbuf)
+                                sh.on_output(d, out_ch, out_rate, &mut reverse, &mut mixbuf, &mut playout)
                             },
                             |e| tracing::warn!(error = %e, "output stream error"),
                             None,
@@ -525,6 +539,7 @@ impl AudioIo {
                                         out_rate,
                                         &mut reverse,
                                         &mut mixbuf,
+                                        &mut playout,
                                     );
                                     for (o, v) in d.iter_mut().zip(&scratch) {
                                         *o = to_i16(*v);
@@ -585,11 +600,12 @@ impl AudioIo {
             let mut out = vec![0f32; chunk];
             let mut reverse = Vec::new();
             let mut mixbuf = Vec::new();
+            let mut playout = super::playout::Playout::new(rate);
             let mut tick = tokio::time::interval(Duration::from_millis(10));
             loop {
                 tick.tick().await;
                 shared.watchdog.input_tick(Instant::now());
-                shared.on_output(&mut out, 1, rate, &mut reverse, &mut mixbuf);
+                shared.on_output(&mut out, 1, rate, &mut reverse, &mut mixbuf, &mut playout);
                 let _ = mic_tx.send((rate, vec![0i16; chunk]));
             }
         });
@@ -651,6 +667,29 @@ mod tests {
         assert!(!w.stalled(t0 + Duration::from_millis(2100)));
     }
 
+    /// Opening at 48 kHz when the device can avoids resampling entirely (best quality, no work).
+    #[test]
+    fn prefers_internal_rate_when_supported() {
+        use cpal::{SampleFormat::F32, SampleRate, SupportedBufferSize::Unknown};
+        let default = cpal::SupportedStreamConfig::new(2, SampleRate(44_100), Unknown, F32);
+        let range = |ch, lo, hi| {
+            cpal::SupportedStreamConfigRange::new(ch, SampleRate(lo), SampleRate(hi), Unknown, F32)
+        };
+
+        let picked = prefer_internal_rate(default.clone(), vec![range(2, 8_000, 192_000)]);
+        assert_eq!(picked.sample_rate().0, INTERNAL_RATE);
+        assert_eq!(picked.channels(), 2, "keeps the default's channel count");
+
+        let only_44k = prefer_internal_rate(default.clone(), vec![range(2, 44_100, 44_100)]);
+        assert_eq!(only_44k, default, "can't do 48 kHz: keep the default");
+
+        let other_channels = prefer_internal_rate(default.clone(), vec![range(6, 8_000, 192_000)]);
+        assert_eq!(
+            other_channels, default,
+            "never trade channel layout for the rate"
+        );
+    }
+
     #[test]
     fn stall_policy_reopens_reports_backs_off_and_recovers() {
         use StallAction::*;
@@ -709,17 +748,6 @@ mod tests {
         assert!((mono[0] - 0.3).abs() < 1e-6 && mono[1].abs() < 1e-6);
         let same: Vec<f32> = downmix(&[0.5, 0.25], 1).collect();
         assert_eq!(same, vec![0.5, 0.25]);
-    }
-
-    #[test]
-    fn resample_lengths_and_endpoints() {
-        let x: Vec<i16> = (0..441).map(|i| i as i16).collect(); // 10 ms @ 44.1 kHz
-        let y = resample(&x, 44_100, 48_000);
-        assert_eq!(y.len(), 480);
-        assert_eq!(y[0], 0);
-        assert!(*y.last().unwrap() >= 438);
-        assert_eq!(resample(&x, 48_000, 48_000), x);
-        assert_eq!(resample(&[1000; 160], 16_000, 48_000).len(), 480);
     }
 
     #[test]

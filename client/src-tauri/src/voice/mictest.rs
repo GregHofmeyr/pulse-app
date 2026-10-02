@@ -8,7 +8,7 @@ use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::controls::Controls;
-use super::devices::{AudioConfig, AudioIo, INTERNAL_RATE, MicChunk, Shared, resample};
+use super::devices::{AudioConfig, AudioIo, INTERNAL_RATE, MicChunk, Shared};
 use super::mixer::Mixer;
 use super::{EventSink, VoiceError, VoiceEvent};
 
@@ -59,8 +59,9 @@ impl MicTest {
         // The mixer runs at 48 kHz; the output edge resamples to the device.
         let mut delay = DelayLine::new((INTERNAL_RATE * DELAY_MS / 1000) as usize);
         let loopback = tokio::spawn(async move {
+            let mut to_internal = super::resampler::ToInternal::default();
             while let Some((rate, chunk)) = rx.recv().await {
-                let out = delay.process(&resample(&chunk, rate, INTERNAL_RATE));
+                let out = delay.process(&to_internal.process(rate, &chunk));
                 mixer.lock().unwrap().push("self", &out);
             }
         });

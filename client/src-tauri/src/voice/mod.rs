@@ -5,6 +5,8 @@ pub mod devices;
 pub mod meter;
 pub mod mictest;
 pub mod mixer;
+pub mod playout;
+pub mod resampler;
 pub mod rx;
 pub mod speaking;
 
@@ -27,7 +29,7 @@ use tokio::task::JoinHandle;
 
 use crate::api::{Api, ApiError};
 use controls::Controls;
-use devices::{AudioConfig, AudioIo, INTERNAL_RATE, MicChunk, Shared, resample};
+use devices::{AudioConfig, AudioIo, INTERNAL_RATE, MicChunk, Shared};
 use mixer::{Mixer, percent_to_gain};
 use rx::RxTasks;
 
@@ -242,15 +244,8 @@ impl VoiceManager {
             LocalAudioTrack::create_audio_track("mic", RtcAudioSource::Native(source.clone()));
         let published = tokio::time::timeout(
             PUBLISH_TIMEOUT,
-            room.local_participant().publish_track(
-                LocalTrack::Audio(track),
-                TrackPublishOptions {
-                    source: TrackSource::Microphone,
-                    dtx: true,
-                    red: true,
-                    ..Default::default()
-                },
-            ),
+            room.local_participant()
+                .publish_track(LocalTrack::Audio(track), mic_publish_options()),
         )
         .await;
         let failure = match published {
@@ -265,18 +260,22 @@ impl VoiceManager {
         tracing::info!("voice: mic published");
 
         let mut tasks = Vec::new();
-        // mic → LiveKit (resampled to 48 kHz)
+        // mic → LiveKit, resampled to 48 kHz and sent in exact 10 ms frames
         tasks.push(tokio::spawn(async move {
+            let frame_len = (INTERNAL_RATE / 100) as usize;
+            let mut to_internal = resampler::ToInternal::default();
+            let mut ready: Vec<i16> = Vec::with_capacity(2 * frame_len);
             while let Some((rate, buf)) = mic_rx.recv().await {
-                let buf = resample(&buf, rate, INTERNAL_RATE);
-                let n = buf.len() as u32;
-                let frame = AudioFrame {
-                    data: buf.into(),
-                    sample_rate: INTERNAL_RATE,
-                    num_channels: 1,
-                    samples_per_channel: n,
-                };
-                let _ = source.capture_frame(&frame).await;
+                ready.extend(to_internal.process(rate, &buf));
+                while ready.len() >= frame_len {
+                    let frame = AudioFrame {
+                        data: ready.drain(..frame_len).collect::<Vec<_>>().into(),
+                        sample_rate: INTERNAL_RATE,
+                        num_channels: 1,
+                        samples_per_channel: frame_len as u32,
+                    };
+                    let _ = source.capture_frame(&frame).await;
+                }
             }
         }));
 
@@ -556,9 +555,31 @@ impl VoiceManager {
     }
 }
 
+/// How the mic is sent. The SDK's default (`None`) is 48 kbps; Discord defaults to 64 kbps.
+/// DTX makes silence ~free and RED (redundant audio) hides packet loss.
+fn mic_publish_options() -> TrackPublishOptions {
+    TrackPublishOptions {
+        source: TrackSource::Microphone,
+        audio_encoding: Some(livekit::options::AudioEncoding {
+            max_bitrate: 64_000,
+        }),
+        dtx: true,
+        red: true,
+        ..Default::default()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mic_is_published_at_64_kbps_with_dtx_and_red() {
+        let o = mic_publish_options();
+        assert_eq!(o.audio_encoding.map(|e| e.max_bitrate), Some(64_000));
+        assert!(o.dtx && o.red);
+        assert_eq!(o.source, TrackSource::Microphone);
+    }
     use pulse_server::testing;
 
     /// I7: a join that fails (here: text channel → 400, before any LiveKit work) must leave the UI
