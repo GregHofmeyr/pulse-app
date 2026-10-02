@@ -10,6 +10,7 @@ type VoiceEvent =
   | { kind: 'quality'; user_id: string; quality: string }
   | { kind: 'levels'; mic: number; speaker: number }
   | { kind: 'device_stalled' }
+  | { kind: 'device_recovered' }
 
 export const voice = $state({
   channelId: null as string | null,
@@ -46,6 +47,9 @@ export async function startVoiceListening() {
         break
       case 'device_stalled':
         voice.stalled = true
+        break
+      case 'device_recovered':
+        voice.stalled = false
         break
     }
   })

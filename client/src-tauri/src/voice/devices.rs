@@ -144,6 +144,62 @@ impl Watchdog {
     }
 }
 
+/// What to do about a stalled device. Pure, so the escalation is testable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StallAction {
+    Reopen,
+    /// Tell the user (once per stall episode).
+    Report,
+    /// Healthy again after a reported stall.
+    Recovered,
+}
+
+/// Reopen once right away; if still dead, report and keep retrying with backoff. Reopening tears
+/// down and re-acquires the device (a BT transport, say), so hammering it can keep it broken.
+#[derive(Default)]
+pub struct StallPolicy {
+    reopens: usize,
+    last_reopen: Option<Instant>,
+    reported: bool,
+}
+
+impl StallPolicy {
+    /// After a reopen, give the new streams this long to start calling back before judging them.
+    pub const GRACE: Duration = Duration::from_secs(3);
+    const BACKOFF: [Duration; 3] = [
+        Duration::from_secs(5),
+        Duration::from_secs(10),
+        Duration::from_secs(30),
+    ];
+
+    pub fn check(&mut self, stalled: bool, now: Instant) -> Option<StallAction> {
+        let Some(last) = self.last_reopen else {
+            return stalled.then(|| self.reopen(now));
+        };
+        let since = now.saturating_duration_since(last);
+        if since < Self::GRACE {
+            return None;
+        }
+        if !stalled {
+            let was_reported = self.reported;
+            *self = Self::default();
+            return was_reported.then_some(StallAction::Recovered);
+        }
+        if !self.reported {
+            self.reported = true;
+            return Some(StallAction::Report);
+        }
+        let wait = Self::BACKOFF[(self.reopens - 1).min(Self::BACKOFF.len() - 1)];
+        (since >= wait).then(|| self.reopen(now))
+    }
+
+    fn reopen(&mut self, now: Instant) -> StallAction {
+        self.reopens += 1;
+        self.last_reopen = Some(now);
+        StallAction::Reopen
+    }
+}
+
 pub fn downmix(data: &[f32], channels: usize) -> impl Iterator<Item = f32> + '_ {
     let ch = channels.max(1);
     data.chunks(ch)
@@ -593,6 +649,56 @@ mod tests {
         );
         w.output_tick(t0 + Duration::from_millis(2050));
         assert!(!w.stalled(t0 + Duration::from_millis(2100)));
+    }
+
+    #[test]
+    fn stall_policy_reopens_reports_backs_off_and_recovers() {
+        use StallAction::*;
+        let t0 = Instant::now();
+        let at = |ms: u64| t0 + Duration::from_millis(ms);
+        let mut p = StallPolicy::default();
+        assert_eq!(p.check(false, at(0)), None);
+        assert_eq!(
+            p.check(true, at(500)),
+            Some(Reopen),
+            "first stall: reopen at once"
+        );
+        assert_eq!(p.check(true, at(1500)), None, "grace for the new streams");
+        assert_eq!(
+            p.check(true, at(4000)),
+            Some(Report),
+            "still dead after a reopen: tell the user"
+        );
+        assert_eq!(p.check(true, at(4500)), None, "reported once only");
+        assert_eq!(
+            p.check(true, at(5000)),
+            None,
+            "no hammering: waits out the backoff"
+        );
+        assert_eq!(
+            p.check(true, at(5500)),
+            Some(Reopen),
+            "retry 5 s after the last reopen"
+        );
+        assert_eq!(p.check(true, at(9000)), None);
+        assert_eq!(p.check(true, at(15500)), Some(Reopen), "then 10 s");
+        assert_eq!(p.check(true, at(40000)), None);
+        assert_eq!(p.check(true, at(45500)), Some(Reopen), "then every 30 s");
+        assert_eq!(
+            p.check(false, at(49000)),
+            Some(Recovered),
+            "healthy again clears the warning"
+        );
+        assert_eq!(
+            p.check(true, at(50000)),
+            Some(Reopen),
+            "a new episode starts fresh"
+        );
+        assert_eq!(
+            p.check(false, at(54000)),
+            None,
+            "recovered without ever reporting: silent"
+        );
     }
 
     #[test]

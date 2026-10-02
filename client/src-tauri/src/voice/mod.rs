@@ -107,6 +107,7 @@ pub enum VoiceEvent {
         speaker: f32,
     },
     DeviceStalled,
+    DeviceRecovered,
 }
 
 pub type EventSink = Arc<dyn Fn(VoiceEvent) + Send + Sync>;
@@ -369,7 +370,7 @@ impl VoiceManager {
             let (cfg, mic_tx, alive) = (cfg.clone(), mic_tx.clone(), alive.clone());
             tasks.push(tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_millis(100));
-                let mut restarted_at: Option<Instant> = None;
+                let mut stall = devices::StallPolicy::default();
                 let mut speaking = speaking::SpeakingTracker::default();
                 let mut n = 0u32;
                 loop {
@@ -390,17 +391,18 @@ impl VoiceManager {
                         continue;
                     }
                     let now = Instant::now();
-                    if !shared.watchdog.stalled(now) {
-                        restarted_at = None;
-                        continue;
-                    }
-                    match restarted_at {
-                        // First stall: reopen the devices once.
-                        None => {
+                    match stall.check(shared.watchdog.stalled(now), now) {
+                        None => {}
+                        Some(devices::StallAction::Report) => {
+                            tracing::error!("audio device still stalled after reopening");
+                            events(VoiceEvent::DeviceStalled);
+                        }
+                        Some(devices::StallAction::Recovered) => {
+                            tracing::info!("voice: audio device recovered");
+                            events(VoiceEvent::DeviceRecovered);
+                        }
+                        Some(devices::StallAction::Reopen) => {
                             tracing::warn!("audio device stalled; reopening");
-                            restarted_at = Some(now);
-                            shared.watchdog.input_tick(now);
-                            shared.watchdog.output_tick(now);
                             let cfg = cfg.lock().unwrap().clone();
                             io.lock().unwrap().take(); // stop the old streams (lock released right away)
                             match start_audio(&cfg, shared.clone(), mic_tx.clone()).await {
@@ -414,13 +416,6 @@ impl VoiceManager {
                                 }
                             }
                         }
-                        // Still stalled after a reopen: tell the user.
-                        Some(t) if now.duration_since(t) > devices::STALL_AFTER => {
-                            tracing::error!("audio device still stalled after reopening");
-                            events(VoiceEvent::DeviceStalled);
-                            restarted_at = Some(now);
-                        }
-                        Some(_) => {}
                     }
                 }
             }));
