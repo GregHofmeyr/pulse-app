@@ -1,6 +1,7 @@
 name: release-windows
 
-# Windows runners bill 2x on private repos: build only on release tags or by hand.
+# Builds the NSIS installer + a self-contained local test kit (app, server, LiveKit, scripts).
+# Public repo = free minutes, but a Windows build is ~10 min: run on release tags or by hand.
 on:
   push:
     tags: ['v*']
@@ -8,6 +9,9 @@ on:
 
 permissions:
   contents: read
+
+env:
+  LIVEKIT_VERSION: 1.13.7
 
 jobs:
   build:
@@ -26,12 +30,25 @@ jobs:
           cache-dependency-path: client/ui/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
         working-directory: client/ui
-      - run: cargo install tauri-cli --version "^2" --locked
-      - run: cargo tauri build
+      # Prebuilt CLI from npm: no ~5 min `cargo install tauri-cli` on every run.
+      - run: pnpm dlx @tauri-apps/cli@^2 build
         working-directory: client/src-tauri
+      - run: cargo build --release -p pulse-server --bin pulse-app-server
+      - name: Assemble test kit
+        shell: pwsh
+        run: |
+          $kit = 'pulse-windows-kit'
+          New-Item -ItemType Directory $kit | Out-Null
+          Copy-Item kit/windows/* $kit
+          Copy-Item target/release/pulse-app.exe, target/release/pulse-app-server.exe $kit
+          Copy-Item target/release/bundle/nsis/*.exe $kit
+          $zip = "livekit_${env:LIVEKIT_VERSION}_windows_amd64.zip"
+          Invoke-WebRequest "https://github.com/livekit/livekit/releases/download/v${env:LIVEKIT_VERSION}/$zip" -OutFile $zip
+          Expand-Archive $zip lk
+          Copy-Item lk/livekit-server.exe $kit
+          Copy-Item lk/LICENSE "$kit/LICENSE-livekit.txt"
+          Get-ChildItem $kit | Format-Table Name, Length
       - uses: actions/upload-artifact@v5
         with:
-          name: pulse-windows
-          path: |
-            target/release/bundle/msi/*.msi
-            target/release/bundle/nsis/*.exe
+          name: pulse-windows-kit
+          path: pulse-windows-kit
