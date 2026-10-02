@@ -501,7 +501,15 @@ impl AudioIo {
                     }
                 }
             })?;
-        let (input_rate, output_rate) = ready_rx.recv().context("audio thread died")??;
+        // A flapping Bluetooth device can block cpal for a long time: give up rather than hang the call.
+        let (input_rate, output_rate) = match ready_rx.recv_timeout(Duration::from_secs(5)) {
+            Ok(r) => r?,
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let _ = stop_tx.send(()); // if it ever finishes opening, close straight away
+                return Err(anyhow!("audio device didn't open within 5 s"));
+            }
+            Err(_) => return Err(anyhow!("audio thread died")),
+        };
         Ok(Self {
             stop: Some(stop_tx),
             input_rate,

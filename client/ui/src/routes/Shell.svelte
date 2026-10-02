@@ -108,7 +108,7 @@
       {#if voiceChannel}
         <div class="vc">
           <span class="vc-bars" class:warn={voice.connection !== 'connected'}><span></span><span></span><span></span></span>
-          <span class="vc-text"><strong class:warn={voice.connection !== 'connected'}>{voice.connection === 'connected' ? 'Voice connected' : 'Reconnecting…'}</strong><small>{voiceChannel.name}</small></span>
+          <span class="vc-text"><strong class:warn={voice.connection !== 'connected'}>{voice.connection === 'connected' ? 'Voice connected' : voice.connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</strong><small>{voiceChannel.name}</small></span>
           <button class="vc-leave" aria-label="Leave voice" onclick={() => voiceApi.leave()}><Icon name="hangup" size={17} /></button>
         </div>
       {/if}

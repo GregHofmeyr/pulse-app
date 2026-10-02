@@ -99,3 +99,71 @@ async fn receives_peer_audio_at_real_time_across_rejoins() {
     }
     vm.leave().await;
 }
+
+/// Field bug (2026-10-02): rapid leave/rejoin left the client stuck "connecting" and Leave hung behind it.
+/// Every join and leave must finish (or fail) within a bounded time, whatever the timing.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn rapid_join_leave_never_hangs() {
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, token) = testing::register(&app, "alex").await;
+    let s = testing::create_server(&app, &token, "Main").await;
+    let api = Api::new(&format!("http://{}", app.addr));
+    let lounge = api
+        .channels(&token, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+    let vm = std::sync::Arc::new(VoiceManager::new(std::sync::Arc::new(|_| {})));
+    for i in 0..12u64 {
+        let pause = Duration::from_millis([0, 50, 300, 1500, 2000][i as usize % 5]);
+        let joined = tokio::time::timeout(
+            Duration::from_secs(20),
+            vm.join(
+                &api,
+                &token,
+                lounge.id,
+                AudioConfig::default(),
+                AudioMode::Null(48_000),
+            ),
+        )
+        .await;
+        assert!(joined.is_ok(), "join #{i} hung");
+        tokio::time::sleep(pause).await;
+        let left = tokio::time::timeout(Duration::from_secs(10), vm.leave()).await;
+        assert!(left.is_ok(), "leave #{i} hung (pause {pause:?})");
+    }
+    // a leave issued while a join is still in flight must not wait forever either
+    let vm2 = vm.clone();
+    let (api2, token2, ch) = (api.clone(), token.clone(), lounge.id);
+    let joining = tokio::spawn(async move {
+        vm2.join(
+            &api2,
+            &token2,
+            ch,
+            AudioConfig::default(),
+            AudioMode::Null(48_000),
+        )
+        .await
+    });
+    tokio::time::sleep(Duration::from_millis(20)).await;
+    assert!(
+        tokio::time::timeout(Duration::from_secs(10), vm.leave())
+            .await
+            .is_ok(),
+        "leave during join hung"
+    );
+    let _ = tokio::time::timeout(Duration::from_secs(20), joining)
+        .await
+        .expect("join never finished");
+    assert_eq!(
+        vm.current_channel().await,
+        None,
+        "leave during join must win"
+    );
+}

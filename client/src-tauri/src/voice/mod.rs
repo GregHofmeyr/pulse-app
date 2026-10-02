@@ -42,6 +42,27 @@ pub enum VoiceError {
     Connect(String),
     #[error("audio device problem: {0}")]
     Device(String),
+    #[error("cancelled")]
+    Cancelled,
+    #[error("timed out {0}")]
+    Timeout(&'static str),
+}
+
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
+const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Opening devices blocks (cpal + a possibly-flapping Bluetooth headset): never on an async worker.
+async fn start_audio(
+    cfg: &AudioConfig,
+    shared: Arc<Shared>,
+    mic_tx: mpsc::UnboundedSender<MicChunk>,
+) -> Result<AudioIo, VoiceError> {
+    let cfg = cfg.clone();
+    tokio::task::spawn_blocking(move || AudioIo::start(&cfg, shared, mic_tx))
+        .await
+        .map_err(|e| VoiceError::Device(e.to_string()))?
+        .map_err(|e| VoiceError::Device(e.to_string()))
 }
 
 impl Serialize for VoiceError {
@@ -115,6 +136,8 @@ impl Drop for Session {
 pub struct VoiceManager {
     /// Serialises join/leave: two fast clicks can't leave a ghost connection behind.
     op: tokio::sync::Mutex<()>,
+    /// Cancels an in-flight join (Leave must never queue behind a stuck connect).
+    pending_join: Mutex<Option<tokio::sync::oneshot::Sender<()>>>,
     session: tokio::sync::Mutex<Option<Session>>,
     /// One source of truth, shared with the audio callbacks. Survives across sessions (stay muted
     /// when switching channels, like Discord).
@@ -128,6 +151,7 @@ impl VoiceManager {
     pub fn new(events: EventSink) -> Self {
         Self {
             op: tokio::sync::Mutex::new(()),
+            pending_join: Mutex::new(None),
             session: tokio::sync::Mutex::new(None),
             controls: Arc::new(Mutex::new(Controls::default())),
             volumes: Arc::new(Mutex::new(HashMap::new())),
@@ -152,10 +176,27 @@ impl VoiceManager {
         cfg: AudioConfig,
         mode: AudioMode,
     ) -> Result<(), VoiceError> {
+        let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
+        // a newer join supersedes an older pending one
+        if let Some(old) = self.pending_join.lock().unwrap().replace(cancel_tx) {
+            let _ = old.send(());
+        }
         let _op = self.op.lock().await;
         self.leave_locked().await;
+        tracing::info!(%channel, "voice: joining");
         self.emit_state(Some(channel), Connection::Connecting);
-        match self.connect(api, token, channel, cfg, mode).await {
+        let started = Instant::now();
+        let outcome = tokio::select! {
+            r = self.connect(api, token, channel, cfg, mode) => r,
+            _ = cancel_rx => Err(VoiceError::Cancelled),
+        };
+        self.pending_join.lock().unwrap().take();
+        let elapsed_ms = started.elapsed().as_millis() as u64;
+        match &outcome {
+            Ok(_) => tracing::info!(elapsed_ms, "voice: joined"),
+            Err(e) => tracing::warn!(error = %e, elapsed_ms, "voice: join failed"),
+        }
+        match outcome {
             Ok(session) => {
                 *self.session.lock().await = Some(session);
                 self.emit_state(Some(channel), Connection::Connected);
@@ -182,21 +223,25 @@ impl VoiceManager {
         let shared = Shared::new(&cfg, self.controls.clone(), mixer.clone());
         let (mic_tx, mut mic_rx) = mpsc::unbounded_channel::<MicChunk>();
         let io = match mode {
-            AudioMode::Real => AudioIo::start(&cfg, shared.clone(), mic_tx.clone())
-                .map_err(|e| VoiceError::Device(e.to_string()))?,
+            AudioMode::Real => start_audio(&cfg, shared.clone(), mic_tx.clone()).await?,
             AudioMode::Null(rate) => AudioIo::start_null(rate, shared.clone(), mic_tx.clone()),
         };
 
-        let (room, mut room_events) = Room::connect(&vt.url, &vt.token, RoomOptions::default())
-            .await
-            .map_err(|e| VoiceError::Connect(e.to_string()))?;
+        let (room, mut room_events) = tokio::time::timeout(
+            CONNECT_TIMEOUT,
+            Room::connect(&vt.url, &vt.token, RoomOptions::default()),
+        )
+        .await
+        .map_err(|_| VoiceError::Timeout("connecting to voice"))?
+        .map_err(|e| VoiceError::Connect(e.to_string()))?;
+        tracing::info!("voice: room connected");
         // Fixed 48 kHz towards LiveKit, whatever the device does.
         let source = NativeAudioSource::new(AudioSourceOptions::default(), INTERNAL_RATE, 1, 100);
         let track =
             LocalAudioTrack::create_audio_track("mic", RtcAudioSource::Native(source.clone()));
-        let published = room
-            .local_participant()
-            .publish_track(
+        let published = tokio::time::timeout(
+            PUBLISH_TIMEOUT,
+            room.local_participant().publish_track(
                 LocalTrack::Audio(track),
                 TrackPublishOptions {
                     source: TrackSource::Microphone,
@@ -204,12 +249,19 @@ impl VoiceManager {
                     red: true,
                     ..Default::default()
                 },
-            )
-            .await;
-        if let Err(e) = published {
-            let _ = room.close().await; // dropping a Room does not disconnect it
-            return Err(VoiceError::Connect(e.to_string()));
+            ),
+        )
+        .await;
+        let failure = match published {
+            Ok(Ok(_)) => None,
+            Ok(Err(e)) => Some(VoiceError::Connect(e.to_string())),
+            Err(_) => Some(VoiceError::Timeout("publishing the mic")),
+        };
+        if let Some(e) = failure {
+            let _ = tokio::time::timeout(CLOSE_TIMEOUT, room.close()).await; // dropping a Room does not disconnect it
+            return Err(e);
         }
+        tracing::info!("voice: mic published");
 
         let mut tasks = Vec::new();
         // mic → LiveKit (resampled to 48 kHz)
@@ -286,9 +338,11 @@ impl VoiceManager {
                             });
                         }
                         RoomEvent::Reconnecting => {
+                            tracing::warn!("voice: reconnecting");
                             events(state(Connection::Reconnecting, Some(channel)))
                         }
                         RoomEvent::Reconnected => {
+                            tracing::info!("voice: reconnected");
                             events(state(Connection::Connected, Some(channel)))
                         }
                         RoomEvent::Disconnected { reason } => {
@@ -348,9 +402,17 @@ impl VoiceManager {
                             shared.watchdog.input_tick(now);
                             shared.watchdog.output_tick(now);
                             let cfg = cfg.lock().unwrap().clone();
-                            let mut slot = io.lock().unwrap();
-                            slot.take(); // stop the old streams first
-                            *slot = AudioIo::start(&cfg, shared.clone(), mic_tx.clone()).ok();
+                            io.lock().unwrap().take(); // stop the old streams (lock released right away)
+                            match start_audio(&cfg, shared.clone(), mic_tx.clone()).await {
+                                Ok(new_io) if alive.load(Ordering::SeqCst) => {
+                                    tracing::info!("voice: devices reopened");
+                                    *io.lock().unwrap() = Some(new_io);
+                                }
+                                Ok(_) => {} // session ended meanwhile
+                                Err(e) => {
+                                    tracing::error!(error = %e, "voice: reopening devices failed")
+                                }
+                            }
                         }
                         // Still stalled after a reopen: tell the user.
                         Some(t) if now.duration_since(t) > devices::STALL_AFTER => {
@@ -379,6 +441,11 @@ impl VoiceManager {
     }
 
     pub async fn leave(&self) {
+        // Cancel a join that's still connecting first, so we never queue behind it.
+        if let Some(cancel) = self.pending_join.lock().unwrap().take() {
+            tracing::info!("voice: leave cancels an in-flight join");
+            let _ = cancel.send(());
+        }
         let _op = self.op.lock().await;
         self.leave_locked().await;
     }
@@ -386,7 +453,13 @@ impl VoiceManager {
     async fn leave_locked(&self) {
         let s = self.session.lock().await.take();
         if let Some(s) = s {
-            let _ = s.room.close().await;
+            tracing::info!("voice: leaving");
+            if tokio::time::timeout(CLOSE_TIMEOUT, s.room.close())
+                .await
+                .is_err()
+            {
+                tracing::warn!("voice: room close timed out; dropping it");
+            }
             s.rx.lock().unwrap().clear();
             s.io.lock().unwrap().take();
             drop(s);
@@ -465,12 +538,9 @@ impl VoiceManager {
         *s.cfg.lock().unwrap() = cfg.clone();
         if devices_changed && s.real {
             // Hot-swap: reopen the streams, stay in the room (rates may differ; the 48 kHz edge absorbs it).
-            let mut slot = s.io.lock().unwrap();
-            slot.take();
-            *slot = Some(
-                AudioIo::start(&cfg, s.shared.clone(), s.mic_tx.clone())
-                    .map_err(|e| VoiceError::Device(e.to_string()))?,
-            );
+            s.io.lock().unwrap().take();
+            let new_io = start_audio(&cfg, s.shared.clone(), s.mic_tx.clone()).await?;
+            *s.io.lock().unwrap() = Some(new_io);
         }
         Ok(())
     }
@@ -528,5 +598,57 @@ mod tests {
         });
         assert_eq!(last, Some((None, Connection::Disconnected)));
         assert_eq!(vm.current_channel().await, None);
+    }
+
+    /// Field bug 2026-10-02: a join stuck connecting held the op lock and Leave waited forever.
+    /// Leave must cancel an in-flight join promptly, and the join must report Disconnected.
+    #[tokio::test]
+    async fn leave_cancels_a_stuck_join() {
+        let mut cfg = testing::test_config();
+        cfg.livekit_url = "ws://10.255.255.1:7880".into(); // never answers
+        let app = testing::spawn_with(cfg).await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let lounge = api
+            .channels(&token, s.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.kind == pulse_protocol::rest::ChannelKind::Voice)
+            .unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let vm = Arc::new(VoiceManager::new(Arc::new(move |e| {
+            sink.lock().unwrap().push(e)
+        })));
+        let (vm2, api2, token2) = (vm.clone(), api.clone(), token.clone());
+        let joining = tokio::spawn(async move {
+            vm2.join(
+                &api2,
+                &token2,
+                lounge.id,
+                AudioConfig::default(),
+                AudioMode::Null(48_000),
+            )
+            .await
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        let started = std::time::Instant::now();
+        tokio::time::timeout(std::time::Duration::from_secs(2), vm.leave())
+            .await
+            .expect("leave waited behind a stuck join");
+        assert!(started.elapsed() < std::time::Duration::from_secs(2));
+        let r = tokio::time::timeout(std::time::Duration::from_secs(2), joining)
+            .await
+            .expect("join didn't stop")
+            .unwrap();
+        assert!(r.is_err(), "cancelled join must fail");
+        assert_eq!(vm.current_channel().await, None);
+        let last = seen.lock().unwrap().iter().rev().find_map(|e| match e {
+            VoiceEvent::State { connection, .. } => Some(*connection),
+            _ => None,
+        });
+        assert_eq!(last, Some(Connection::Disconnected));
     }
 }

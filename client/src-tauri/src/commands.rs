@@ -341,6 +341,7 @@ pub async fn join_voice(
     config: AudioConfig,
 ) -> Result<(), VoiceError> {
     let (api, token) = core.current()?;
+    tracing::info!(%channel_id, input = ?config.input, output = ?config.output, gain = config.input_gain_pct, "join_voice");
     let r = voice
         .join(&api, &token, channel_id, config, AudioMode::Real)
         .await;
