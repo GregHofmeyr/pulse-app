@@ -75,3 +75,21 @@ Leaving voice froze user1's window: the `WebKitWebProcess` died with SIGABRT (co
 idle and healthy (main thread in its GTK loop, tokio idle, audio thread exited).
 **Rule:** never play audio through the webview. UI sounds are decoded/played by the Rust core via cpal
 (`client/src-tauri/src/sounds.rs`, `play_sound` command). Follow-up: reload the webview if its process dies.
+
+## Noise suppression measurements (2026-10-06, this laptop, release build)
+
+60 s workload: looped speech fixture + noise + a click every 150 ms. `cargo test --release --test denoise_bench -- --include-ignored --nocapture` (and `--features dfn-ll`).
+
+| Engine | mean / p99 / max per 10 ms | % of budget | load | RSS added | delay |
+|---|---|---|---|---|---|
+| RNNoise (`nnnoiseless` 0.5) | 37 µs / 46 µs / 347 µs | 0.4% | — | — | 10 ms |
+| DeepFilterNet3 normal (8 MB model) | 459 µs / 768 µs / 1.29 ms | 4.6% | 235 ms | 33.6 MB | 30 ms |
+| DeepFilterNet3 low-latency (36 MB model) | 1.59 ms / 3.05 ms / 4.90 ms | 15.9% | 423 ms | 121 MB | 10 ms |
+
+Windows cross-check with libDF (`cargo xwin check`): **pass** (deep_filter, tract, nnnoiseless compiled for msvc).
+
+Gotchas:
+- libDF (git `d375b2d`) needs **tract `=0.21.4`**: 0.21.7+ moved to ndarray 0.16, 0.21.6 renamed a field libDF uses. Pinned in `client/src-tauri/Cargo.toml`.
+- `DfTract` is **not `Send`** (`Rc<Tensor>`, `dyn OpState`): it must be created and used on one thread → Strong runs on its own worker thread.
+
+**Decisions:** Strong = **normal model** — low-latency saves 20 ms but costs 3.5× CPU and +87 MB RSS (rule: ≤ 1.5× CPU). Default level = **Strong** — mean 4.6% (≤ 20%) and p99 7.7% (≤ 50%) of the budget.

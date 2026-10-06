@@ -36,6 +36,19 @@ tracing-appender = "0.2"
 keyring = { version = "3", features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
 rubato = "5"
 audioadapter-buffers = "5.2.0"
+nnnoiseless = { version = "0.5", default-features = false }
+deep_filter = { git = "https://github.com/Rikorose/DeepFilterNet", rev = "d375b2d8309e0935d165700c91da9de862a99c31", default-features = false, features = ["tract", "default-model"] }
+ndarray = "0.15"
+# libDF needs tract on ndarray 0.15; tract 0.21.7+ moved to ndarray 0.16 (semver-compatible bump
+# that breaks libDF's types). Pinned to 0.21.4, the version libDF's own Cargo.lock uses (0.21.6 already renamed a field it needs).
+tract-core = "=0.21.4"
+tract-onnx = "=0.21.4"
+tract-pulse = "=0.21.4"
+tract-hir = "=0.21.4"
+
+[features]
+# Strong uses DeepFilterNet3's low-latency model (36 MB) instead of the normal one (8 MB).
+dfn-ll = ["deep_filter/default-model-ll"]
 
 [dev-dependencies]
 tempfile = "3"
