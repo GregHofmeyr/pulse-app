@@ -3,6 +3,7 @@
 pub mod controls;
 pub mod denoise;
 pub mod devices;
+pub mod gate;
 pub mod meter;
 pub mod mictest;
 pub mod mixer;
