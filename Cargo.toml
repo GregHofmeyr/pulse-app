@@ -19,3 +19,39 @@ thiserror = "2"
 anyhow = "1"
 tracing = "0.1"
 pulse-protocol = { path = "protocol" }
+
+# Noise suppression in dev/test builds: tract's debug-only graph check rejects DeepFilterNet's
+# model (a harmless duplicate node name, tract-core graph.rs `compact`), and unoptimised tract is
+# far too slow for real time. Build these crates like release, even in dev.
+[profile.dev.package.deep_filter]
+opt-level = 3
+debug-assertions = false
+[profile.dev.package.tract-core]
+opt-level = 3
+debug-assertions = false
+[profile.dev.package.tract-hir]
+opt-level = 3
+debug-assertions = false
+[profile.dev.package.tract-onnx]
+opt-level = 3
+debug-assertions = false
+[profile.dev.package.tract-pulse]
+opt-level = 3
+debug-assertions = false
+[profile.dev.package.tract-data]
+opt-level = 3
+debug-assertions = false
+[profile.dev.package.tract-linalg]
+opt-level = 3
+debug-assertions = false
+[profile.dev.package.tract-nnef]
+opt-level = 3
+debug-assertions = false
+[profile.dev.package.tract-onnx-opl]
+opt-level = 3
+debug-assertions = false
+[profile.dev.package.tract-pulse-opl]
+opt-level = 3
+debug-assertions = false
+[profile.dev.package.nnnoiseless]
+opt-level = 3
