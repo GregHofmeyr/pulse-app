@@ -8,6 +8,7 @@ pub mod meter;
 pub mod mictest;
 pub mod mixer;
 pub mod playout;
+pub mod processor;
 pub mod resampler;
 pub mod rx;
 pub mod speaking;
