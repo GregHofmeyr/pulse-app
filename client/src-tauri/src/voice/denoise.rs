@@ -22,6 +22,11 @@ pub enum NsLevel {
 pub trait Denoiser {
     /// Clean `block` in place; speech probability, or `None` without a model (Off).
     fn process(&mut self, block: &mut [f32]) -> Option<f32>;
+
+    /// The engine has stopped working (e.g. its worker thread died); the caller should replace it.
+    fn failed(&self) -> bool {
+        false
+    }
 }
 
 /// Off: no suppression at all.

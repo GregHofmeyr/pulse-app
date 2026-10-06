@@ -85,6 +85,10 @@ impl MicChain {
         self.denoiser = d;
     }
 
+    pub fn denoiser_failed(&self) -> bool {
+        self.denoiser.failed()
+    }
+
     pub fn configure(&mut self, auto: bool, threshold: f32, gain: f32) {
         self.gate.configure(auto, threshold);
         self.gain = gain;
@@ -106,16 +110,21 @@ impl MicChain {
     }
 }
 
-pub type RawBlock = (u32, Vec<f32>);
+/// (device rate, 10 ms of mono samples, when the device handed it over).
+pub type RawBlock = (u32, Vec<f32>, Instant);
 pub type RawTx = std_mpsc::Sender<RawBlock>;
 
-/// At most 60 ms of raw audio may wait; older blocks are dropped so latency never grows.
-const MAX_BACKLOG: usize = 6;
+/// Audio that has waited longer than this is dropped so latency never grows. Measured by age, not
+/// count: a device with big buffers hands over many blocks at once, which isn't lag.
+const MAX_LAG: Duration = Duration::from_millis(60);
 
-pub fn trim_backlog<T>(q: &mut VecDeque<T>) -> usize {
-    let excess = q.len().saturating_sub(MAX_BACKLOG);
-    q.drain(..excess);
-    excess
+pub fn trim_backlog(q: &mut VecDeque<RawBlock>, now: Instant) -> usize {
+    let stale = q
+        .iter()
+        .take_while(|(_, _, at)| now.saturating_duration_since(*at) > MAX_LAG)
+        .count();
+    q.drain(..stale);
+    stale
 }
 
 /// Tracks which level is wanted, so a slow model load can't overwrite a newer choice.
@@ -165,16 +174,30 @@ pub fn report_load_failure(shared: &Shared, err: &str) {
 pub struct StrongWorker {
     tx: std_mpsc::Sender<Vec<f32>>,
     rx: std_mpsc::Receiver<(Vec<f32>, Option<f32>)>,
+    /// The worker thread is gone (it panicked or was killed): audio passes through until replaced.
+    dead: bool,
 }
 
 impl Denoiser for StrongWorker {
     fn process(&mut self, block: &mut [f32]) -> Option<f32> {
-        if self.tx.send(block.to_vec()).is_err() {
-            return None; // worker gone: pass audio through
+        if self.dead || self.tx.send(block.to_vec()).is_err() {
+            self.dead = true;
+            return None;
         }
-        let (out, p) = self.rx.recv().ok()?;
-        block.copy_from_slice(&out);
-        p
+        match self.rx.recv() {
+            Ok((out, p)) => {
+                block.copy_from_slice(&out);
+                p
+            }
+            Err(_) => {
+                self.dead = true;
+                None
+            }
+        }
+    }
+
+    fn failed(&self) -> bool {
+        self.dead
     }
 }
 
@@ -194,6 +217,7 @@ pub fn start_strong(generation: u64, done: std_mpsc::Sender<LoadResult>) {
                 let handle = StrongWorker {
                     tx: in_tx,
                     rx: out_rx,
+                    dead: false,
                 };
                 if done.send((generation, Ok(handle))).is_err() {
                     return;
@@ -209,6 +233,20 @@ pub fn start_strong(generation: u64, done: std_mpsc::Sender<LoadResult>) {
     if let Err(e) = spawned {
         tracing::warn!(error = %e, "noise suppression: couldn't start the Strong worker");
     }
+}
+
+/// Replace a denoiser that has stopped working with Standard and say so. True if it replaced one.
+pub fn recover_failed(chain: &mut MicChain, shared: &Shared) -> bool {
+    if !chain.denoiser_failed() {
+        return false;
+    }
+    tracing::warn!("noise suppression: Strong stopped working, using Standard");
+    chain.set_denoiser(NsLevel::Standard, make_fast(NsLevel::Standard));
+    shared.set_ns_status(NsStatus {
+        active: NsLevel::Standard,
+        note: Some("Strong stopped working, using Standard".into()),
+    });
+    true
 }
 
 /// Start the mic processor. It runs until every returned sender is dropped.
@@ -264,7 +302,7 @@ fn run(
     while let Ok(first) = rx.recv() {
         queue.push_back(first);
         queue.extend(rx.try_iter());
-        trim_backlog(&mut queue);
+        trim_backlog(&mut queue, Instant::now());
 
         // live config
         let cfg = shared.proc_cfg.lock().unwrap().clone();
@@ -301,7 +339,7 @@ fn run(
             }
         }
 
-        for (rate, samples) in queue.drain(..) {
+        for (rate, samples, _) in queue.drain(..) {
             if rate == INTERNAL_RATE {
                 resampler = None;
                 pending.extend_from_slice(&samples);
@@ -347,6 +385,9 @@ fn run(
                     active: NsLevel::Standard,
                     note: Some("Strong was too heavy for this PC, using Standard".into()),
                 });
+            }
+            if recover_failed(&mut chain, &shared) {
+                overload.reset();
             }
             shared.add_mic_level(out.level, out.sent);
             let chunk: Vec<i16> = block.iter().map(|v| to_i16(*v)).collect();
@@ -477,7 +518,9 @@ mod tests {
             mic_tx,
         );
         for _ in 0..10 {
-            raw_tx.send((48_000, vec![0.0; 480])).unwrap();
+            raw_tx
+                .send((48_000, vec![0.0; 480], Instant::now()))
+                .unwrap();
             std::thread::sleep(Duration::from_millis(5)); // devices deliver over time, not in a burst
         }
         assert_eq!(recv_n(&mut mic_rx, 10), vec![(48_000, 480); 10]);
@@ -494,11 +537,15 @@ mod tests {
             mic_tx,
         );
         for _ in 0..50 {
-            raw_tx.send((16_000, vec![0.0; 160])).unwrap(); // BT call mode
+            raw_tx
+                .send((16_000, vec![0.0; 160], Instant::now()))
+                .unwrap(); // BT call mode
             std::thread::sleep(Duration::from_millis(2));
         }
         for _ in 0..50 {
-            raw_tx.send((48_000, vec![0.0; 480])).unwrap();
+            raw_tx
+                .send((48_000, vec![0.0; 480], Instant::now()))
+                .unwrap();
             std::thread::sleep(Duration::from_millis(2));
         }
         let got = recv_n(&mut mic_rx, 90);
@@ -521,12 +568,83 @@ mod tests {
         assert!(h.is_finished(), "processor thread outlived its senders");
     }
 
+    /// Devices with big buffers deliver 100 ms of audio per callback: a burst of 10 blocks at once.
+    /// That's not lag, so nothing may be dropped (review I1).
     #[test]
-    fn backlog_is_trimmed_to_60ms() {
-        let mut q: VecDeque<u32> = (0..20).collect();
-        let dropped = trim_backlog(&mut q);
-        assert_eq!(dropped, 14);
-        assert_eq!(q, (14..20).collect::<VecDeque<_>>(), "keeps the newest");
+    fn bursty_device_callbacks_lose_nothing() {
+        let (mic_tx, mut mic_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (raw_tx, _h) = spawn(
+            shared_with(AudioConfig {
+                noise_suppression: NsLevel::Off,
+                ..Default::default()
+            }),
+            mic_tx,
+        );
+        for _ in 0..3 {
+            for _ in 0..10 {
+                raw_tx
+                    .send((48_000, vec![0.0; 480], Instant::now()))
+                    .unwrap();
+            }
+            std::thread::sleep(Duration::from_millis(100));
+        }
+        assert_eq!(
+            recv_n(&mut mic_rx, 30).len(),
+            30,
+            "a burst is not a backlog"
+        );
+    }
+
+    #[test]
+    fn dead_strong_worker_reports_failure_and_passes_audio() {
+        let (tx, worker_in) = std::sync::mpsc::channel::<Vec<f32>>();
+        drop(worker_in); // the worker thread is gone
+        let (_out_tx, rx) = std::sync::mpsc::channel();
+        let mut w = StrongWorker {
+            tx,
+            rx,
+            dead: false,
+        };
+        let mut b = vec![0.3f32; FRAME];
+        w.process(&mut b);
+        assert!(w.failed());
+        assert_eq!(b, vec![0.3f32; FRAME], "audio passes through untouched");
+    }
+
+    struct Dead;
+    impl Denoiser for Dead {
+        fn process(&mut self, _block: &mut [f32]) -> Option<f32> {
+            None
+        }
+        fn failed(&self) -> bool {
+            true
+        }
+    }
+
+    /// Review I2: a crashed Strong must not silently mean "no suppression" while settings say Strong.
+    #[test]
+    fn failed_denoiser_falls_back_to_standard_with_a_note() {
+        let sh = shared_with(AudioConfig::default());
+        let mut c = MicChain::new(NsLevel::Off, true, 0.02, 1.0);
+        c.set_denoiser(NsLevel::Strong, Box::new(Dead));
+        assert!(recover_failed(&mut c, &sh));
+        assert_eq!(c.level(), NsLevel::Standard);
+        let st = sh.take_ns_status_change().unwrap();
+        assert_eq!(st.active, NsLevel::Standard);
+        assert!(st.note.unwrap().contains("stopped working"));
+        assert!(!recover_failed(&mut c, &sh), "Standard is healthy");
+    }
+
+    #[test]
+    fn backlog_drops_only_audio_older_than_60ms() {
+        let now = Instant::now();
+        let at = |ms: u64| now - Duration::from_millis(ms);
+        let mut q: VecDeque<RawBlock> = [200, 120, 61, 59, 10, 0]
+            .into_iter()
+            .map(|ms| (48_000, vec![0.0; 480], at(ms)))
+            .collect();
+        assert_eq!(trim_backlog(&mut q, now), 3);
+        assert_eq!(q.len(), 3, "keeps everything within 60 ms");
     }
 
     #[test]

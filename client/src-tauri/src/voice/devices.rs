@@ -327,7 +327,7 @@ impl Shared {
             pending.push(v);
             if pending.len() == chunk {
                 let block = std::mem::replace(pending, Vec::with_capacity(chunk));
-                let _ = raw_tx.send((rate, block));
+                let _ = raw_tx.send((rate, block, Instant::now()));
             }
         }
     }
@@ -627,7 +627,7 @@ impl AudioIo {
                 tick.tick().await;
                 shared.watchdog.input_tick(Instant::now());
                 shared.on_output(&mut out, 1, rate, &mut reverse, &mut mixbuf, &mut playout);
-                let _ = raw_tx.send((rate, vec![0f32; chunk]));
+                let _ = raw_tx.send((rate, vec![0f32; chunk], Instant::now()));
             }
         });
         Self {
