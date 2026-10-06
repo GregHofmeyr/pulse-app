@@ -1,6 +1,7 @@
 //! "Let's check": hear your own processed mic after a short delay, locally (no server needed).
 
 use std::collections::VecDeque;
+use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -73,7 +74,18 @@ impl MicTest {
             loop {
                 tick.tick().await;
                 let (mic, speaker) = shared.take_levels();
-                events(VoiceEvent::Levels { mic, speaker });
+                let gate_open = shared.gate_open.load(Ordering::Relaxed);
+                events(VoiceEvent::Levels {
+                    mic,
+                    speaker,
+                    gate_open,
+                });
+                if let Some(st) = shared.take_ns_status_change() {
+                    events(VoiceEvent::NoiseSuppression {
+                        active: st.active,
+                        note: st.note,
+                    });
+                }
             }
         });
         *self.running.lock().unwrap() = Some((io, vec![loopback, levels]));

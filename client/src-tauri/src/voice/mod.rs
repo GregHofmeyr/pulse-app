@@ -110,6 +110,13 @@ pub enum VoiceEvent {
     Levels {
         mic: f32,
         speaker: f32,
+        /// Whether the voice gate is letting your mic through right now.
+        gate_open: bool,
+    },
+    /// Which noise suppression is actually running (Strong may be loading or have fallen back).
+    NoiseSuppression {
+        active: denoise::NsLevel,
+        note: Option<String>,
     },
     DeviceStalled,
     DeviceRecovered,
@@ -384,7 +391,18 @@ impl VoiceManager {
                         break;
                     }
                     let (mic, speaker) = shared.take_levels();
-                    events(VoiceEvent::Levels { mic, speaker });
+                    let gate_open = shared.gate_open.load(Ordering::Relaxed);
+                    events(VoiceEvent::Levels {
+                        mic,
+                        speaker,
+                        gate_open,
+                    });
+                    if let Some(st) = shared.take_ns_status_change() {
+                        events(VoiceEvent::NoiseSuppression {
+                            active: st.active,
+                            note: st.note,
+                        });
+                    }
                     // Ring = actually audible: received levels per peer + what we really send.
                     let mut levels = shared.mixer.lock().unwrap().take_peer_levels();
                     levels.push((me_id.clone(), shared.take_sent_level()));
@@ -578,6 +596,24 @@ fn mic_publish_options() -> TrackPublishOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn noise_suppression_event_serialises_for_the_ui() {
+        let e = VoiceEvent::NoiseSuppression {
+            active: crate::voice::denoise::NsLevel::Standard,
+            note: Some("Strong unavailable, using Standard".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&e).unwrap(),
+            serde_json::json!({"kind":"noise_suppression","active":"standard","note":"Strong unavailable, using Standard"})
+        );
+        let l = VoiceEvent::Levels {
+            mic: 0.0,
+            speaker: 0.0,
+            gate_open: true,
+        };
+        assert_eq!(serde_json::to_value(&l).unwrap()["gate_open"], true);
+    }
 
     #[test]
     fn mic_is_published_at_64_kbps_with_dtx_and_red() {
