@@ -93,3 +93,12 @@ Gotchas:
 - `DfTract` is **not `Send`** (`Rc<Tensor>`, `dyn OpState`): it must be created and used on one thread → Strong runs on its own worker thread.
 
 **Decisions:** Strong = **normal model** — low-latency saves 20 ms but costs 3.5× CPU and +87 MB RSS (rule: ≤ 1.5× CPU). Default level = **Strong** — mean 4.6% (≤ 20%) and p99 7.7% (≤ 50%) of the budget.
+
+### Footprint after noise suppression (2026-10-06)
+
+- Windows `pulse-app.exe` (release, `cargo xwin build --release`): **42.6 MB → 67.2 MB** (+24.6 MB: the 8 MB DFN3
+  model plus tract/ONNX inference code). Linux release binary 67 MB stripped. Possible later trim: a release profile
+  with LTO / `codegen-units = 1` / `strip = true` (not done: whole-app change, outside this feature).
+- RAM: Strong adds ~34 MB while selected (benchmark RSS delta; freed when switching to Standard/Off). Standard/Off
+  add ~nothing. In-app RSS (Off vs Strong while in voice) still to read during the ear test.
+- Voice integration (`just voice-it`, Strong default): 1.00× real time on all three rejoin rounds.
