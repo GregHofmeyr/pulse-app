@@ -61,10 +61,10 @@ const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 async fn start_audio(
     cfg: &AudioConfig,
     shared: Arc<Shared>,
-    mic_tx: mpsc::UnboundedSender<MicChunk>,
+    raw_tx: processor::RawTx,
 ) -> Result<AudioIo, VoiceError> {
     let cfg = cfg.clone();
-    tokio::task::spawn_blocking(move || AudioIo::start(&cfg, shared, mic_tx))
+    tokio::task::spawn_blocking(move || AudioIo::start(&cfg, shared, raw_tx))
         .await
         .map_err(|e| VoiceError::Device(e.to_string()))?
         .map_err(|e| VoiceError::Device(e.to_string()))
@@ -123,7 +123,8 @@ struct Session {
     shared: Arc<Shared>,
     io: Arc<Mutex<Option<AudioIo>>>,
     cfg: Arc<Mutex<AudioConfig>>,
-    mic_tx: mpsc::UnboundedSender<MicChunk>,
+    /// Into the mic processor; device (re)opens feed it. Dropping the last one ends the processor.
+    raw_tx: processor::RawTx,
     real: bool,
     rx: Arc<Mutex<RxTasks>>,
     /// Cleared when LiveKit disconnects us for good: the session is then torn down.
@@ -228,9 +229,11 @@ impl VoiceManager {
         let mixer = Arc::new(Mutex::new(Mixer::new(INTERNAL_RATE, PEER_BUFFER_MS)));
         let shared = Shared::new(&cfg, self.controls.clone(), mixer.clone());
         let (mic_tx, mut mic_rx) = mpsc::unbounded_channel::<MicChunk>();
+        // devices → processor (denoise, gate) → mic_tx → LiveKit
+        let (raw_tx, _processor) = processor::spawn(shared.clone(), mic_tx);
         let io = match mode {
-            AudioMode::Real => start_audio(&cfg, shared.clone(), mic_tx.clone()).await?,
-            AudioMode::Null(rate) => AudioIo::start_null(rate, shared.clone(), mic_tx.clone()),
+            AudioMode::Real => start_audio(&cfg, shared.clone(), raw_tx.clone()).await?,
+            AudioMode::Null(rate) => AudioIo::start_null(rate, shared.clone(), raw_tx.clone()),
         };
 
         let (room, mut room_events) = tokio::time::timeout(
@@ -369,7 +372,7 @@ impl VoiceManager {
         let real = matches!(mode, AudioMode::Real);
         {
             let (shared, io, events) = (shared.clone(), io.clone(), self.events.clone());
-            let (cfg, mic_tx, alive) = (cfg.clone(), mic_tx.clone(), alive.clone());
+            let (cfg, raw_tx, alive) = (cfg.clone(), raw_tx.clone(), alive.clone());
             tasks.push(tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_millis(100));
                 let mut stall = devices::StallPolicy::default();
@@ -407,7 +410,7 @@ impl VoiceManager {
                             tracing::warn!("audio device stalled; reopening");
                             let cfg = cfg.lock().unwrap().clone();
                             io.lock().unwrap().take(); // stop the old streams (lock released right away)
-                            match start_audio(&cfg, shared.clone(), mic_tx.clone()).await {
+                            match start_audio(&cfg, shared.clone(), raw_tx.clone()).await {
                                 Ok(new_io) if alive.load(Ordering::SeqCst) => {
                                     tracing::info!("voice: devices reopened");
                                     *io.lock().unwrap() = Some(new_io);
@@ -429,7 +432,7 @@ impl VoiceManager {
             shared,
             io,
             cfg,
-            mic_tx,
+            raw_tx,
             real,
             rx,
             alive,
@@ -536,7 +539,7 @@ impl VoiceManager {
         if devices_changed && s.real {
             // Hot-swap: reopen the streams, stay in the room (rates may differ; the 48 kHz edge absorbs it).
             s.io.lock().unwrap().take();
-            let new_io = start_audio(&cfg, s.shared.clone(), s.mic_tx.clone()).await?;
+            let new_io = start_audio(&cfg, s.shared.clone(), s.raw_tx.clone()).await?;
             *s.io.lock().unwrap() = Some(new_io);
         }
         Ok(())

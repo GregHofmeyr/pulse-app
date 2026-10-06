@@ -12,13 +12,13 @@ use anyhow::{Context, anyhow};
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use livekit::webrtc::native::apm::AudioProcessingModule;
 use serde::{Deserialize, Serialize};
-use tokio::sync::mpsc;
 
 use super::controls::Controls;
+use super::denoise::NsLevel;
 use super::meter::Meter;
 use super::mixer::Mixer;
+use super::processor::RawTx;
 
-const GATE_HOLD: Duration = Duration::from_millis(300);
 pub const STALL_AFTER: Duration = Duration::from_secs(2);
 pub const INTERNAL_RATE: u32 = 48_000;
 
@@ -30,13 +30,34 @@ pub struct AudioConfig {
     /// Device names; `None` = system default.
     pub input: Option<String>,
     pub output: Option<String>,
-    /// 50..=400 (%), applied before processing — for quiet mics.
+    /// 50..=400 (%), applied after noise suppression, soft-limited — for quiet mics.
     pub input_gain_pct: u16,
-    /// RMS threshold below which the mic is gated (0 = always open).
+    /// Manual mode: RMS threshold below which the mic is gated (0 = always open).
     pub sensitivity: f32,
     pub echo_cancel: bool,
-    pub noise_suppress: bool,
+    #[serde(default)]
+    pub noise_suppression: NsLevel,
+    /// Gate on detected speech above the room's noise floor (else on `sensitivity`).
+    #[serde(default = "default_true")]
+    pub auto_sensitivity: bool,
     pub auto_gain: bool,
+    /// Pre-2026-10 on/off noise toggle: only read, to migrate old settings (see `normalized`).
+    #[serde(default, skip_serializing)]
+    pub noise_suppress: Option<bool>,
+}
+
+fn default_true() -> bool {
+    true
+}
+
+impl AudioConfig {
+    /// Fold legacy fields into the current ones.
+    pub fn normalized(mut self) -> Self {
+        if self.noise_suppress.take() == Some(false) {
+            self.noise_suppression = NsLevel::Off;
+        }
+        self
+    }
 }
 
 impl Default for AudioConfig {
@@ -47,10 +68,29 @@ impl Default for AudioConfig {
             input_gain_pct: 100,
             sensitivity: 0.02,
             echo_cancel: true,
-            noise_suppress: true,
+            noise_suppression: NsLevel::default(),
+            auto_sensitivity: true,
             auto_gain: false,
+            noise_suppress: None,
         }
     }
+}
+
+/// What the mic processor should run; `version` bumps on every change.
+#[derive(Clone, Debug)]
+pub struct ProcCfg {
+    pub level: NsLevel,
+    pub auto: bool,
+    pub threshold: f32,
+    pub gain: f32,
+    pub version: u64,
+}
+
+/// Which suppression is actually running (it can differ from the chosen level), and why.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct NsStatus {
+    pub active: NsLevel,
+    pub note: Option<String>,
 }
 
 pub fn input_gain(pct: u16) -> f32 {
@@ -61,34 +101,6 @@ pub fn input_gain(pct: u16) -> f32 {
 pub struct DeviceInfo {
     pub name: String,
     pub is_default: bool,
-}
-
-/// Voice-activity gate with a hold so word endings aren't chopped.
-pub struct Gate {
-    threshold: f32,
-    open_until: Option<Instant>,
-}
-
-impl Gate {
-    pub fn new(threshold: f32) -> Self {
-        Self {
-            threshold,
-            open_until: None,
-        }
-    }
-
-    pub fn set_threshold(&mut self, t: f32) {
-        self.threshold = t;
-    }
-
-    /// Feed one chunk's RMS; returns whether audio should be sent.
-    pub fn process(&mut self, rms: f32, now: Instant) -> bool {
-        if self.threshold <= 0.0 || rms >= self.threshold {
-            self.open_until = Some(now + GATE_HOLD);
-            return true;
-        }
-        self.open_until.is_some_and(|t| now < t)
-    }
 }
 
 /// FINDINGS rule 2: a device that stops calling back (BT profile switch, unplug) must be noticed.
@@ -237,11 +249,14 @@ pub struct Shared {
     /// The same Arc the VoiceManager holds: one source of truth for mute/deafen (no stale copies).
     pub controls: Arc<Mutex<Controls>>,
     pub mixer: Arc<Mutex<Mixer>>,
-    gate: Mutex<Gate>,
-    gain: Mutex<f32>,
-    apm: Mutex<AudioProcessingModule>,
-    /// (echo, agc, ns) the APM was built with — rebuilt only when these change (rebuilding resets AEC).
-    apm_cfg: Mutex<(bool, bool, bool)>,
+    pub(crate) apm: Mutex<AudioProcessingModule>,
+    /// (echo, agc) the APM was built with — rebuilt only when these change (rebuilding resets AEC).
+    apm_cfg: Mutex<(bool, bool)>,
+    /// What the mic processor should run (it polls `version`).
+    pub proc_cfg: Mutex<ProcCfg>,
+    ns_status: Mutex<(Option<NsStatus>, bool)>, // (current, changed since last take)
+    /// Whether the last processed block was sent (the gate indicator in Settings).
+    pub gate_open: std::sync::atomic::AtomicBool,
     pub watchdog: Watchdog,
     /// Audio processing errors are logged once per device session, not per 10 ms chunk.
     apm_warned: std::sync::atomic::AtomicBool,
@@ -260,15 +275,22 @@ impl Shared {
         Arc::new(Self {
             controls,
             mixer,
-            gate: Mutex::new(Gate::new(cfg.sensitivity)),
-            gain: Mutex::new(input_gain(cfg.input_gain_pct)),
             apm: Mutex::new(AudioProcessingModule::new(
                 cfg.echo_cancel,
                 cfg.auto_gain,
                 true,
-                cfg.noise_suppress,
+                false,
             )),
-            apm_cfg: Mutex::new((cfg.echo_cancel, cfg.auto_gain, cfg.noise_suppress)),
+            apm_cfg: Mutex::new((cfg.echo_cancel, cfg.auto_gain)),
+            proc_cfg: Mutex::new(ProcCfg {
+                level: cfg.noise_suppression,
+                auto: cfg.auto_sensitivity,
+                threshold: cfg.sensitivity,
+                gain: input_gain(cfg.input_gain_pct),
+                version: 0,
+            }),
+            ns_status: Mutex::new((None, false)),
+            gate_open: Default::default(),
             watchdog: Watchdog::new(Instant::now()),
             apm_warned: Default::default(),
             mic_meter: Mutex::new(Meter::default()),
@@ -289,47 +311,23 @@ impl Shared {
         )
     }
 
-    /// Capture path for one block of interleaved f32 samples. Emits 10 ms mono i16 chunks at `rate`.
+    /// Capture path: downmix and hand 10 ms blocks to the mic processor. Nothing heavy here —
+    /// a slow callback is an audible glitch.
     fn on_input(
         &self,
         data: &[f32],
         channels: usize,
         rate: u32,
-        pending: &mut Vec<i16>,
-        mic_tx: &mpsc::UnboundedSender<MicChunk>,
+        pending: &mut Vec<f32>,
+        raw_tx: &RawTx,
     ) {
-        let now = Instant::now();
-        self.watchdog.input_tick(now);
-        let gain = *self.gain.lock().unwrap();
+        self.watchdog.input_tick(Instant::now());
         let chunk = (rate / 100) as usize;
         for v in downmix(data, channels) {
-            pending.push(to_i16(v * gain));
+            pending.push(v);
             if pending.len() == chunk {
-                let mut buf = std::mem::replace(pending, Vec::with_capacity(chunk));
-                let r = self
-                    .apm
-                    .lock()
-                    .unwrap()
-                    .process_stream(&mut buf, rate as i32, 1);
-                self.warn_apm_once(r, "capture");
-                let rms = (buf
-                    .iter()
-                    .map(|s| (*s as f32 / i16::MAX as f32).powi(2))
-                    .sum::<f32>()
-                    / chunk as f32)
-                    .sqrt();
-                self.mic_meter.lock().unwrap().add(rms);
-                let open = self.controls.lock().unwrap().mic_open();
-                let speaking = self.gate.lock().unwrap().process(rms, now);
-                if !(open && speaking) {
-                    // Send silence rather than nothing: the source expects a steady stream (DTX makes it ~free).
-                    buf.iter_mut().for_each(|s| *s = 0);
-                }
-                self.sent_meter
-                    .lock()
-                    .unwrap()
-                    .add(if open && speaking { rms } else { 0.0 });
-                let _ = mic_tx.send((rate, buf));
+                let block = std::mem::replace(pending, Vec::with_capacity(chunk));
+                let _ = raw_tx.send((rate, block));
             }
         }
     }
@@ -380,7 +378,7 @@ impl Shared {
         }
     }
 
-    fn warn_apm_once<E: std::fmt::Display>(&self, r: Result<(), E>, path: &str) {
+    pub(crate) fn warn_apm_once<E: std::fmt::Display>(&self, r: Result<(), E>, path: &str) {
         if let Err(e) = r
             && !self.apm_warned.swap(true, Ordering::Relaxed)
         {
@@ -388,18 +386,49 @@ impl Shared {
         }
     }
 
+    pub fn set_ns_status(&self, s: NsStatus) {
+        let mut st = self.ns_status.lock().unwrap();
+        if st.0.as_ref() != Some(&s) {
+            *st = (Some(s), true);
+        }
+    }
+
+    pub fn take_ns_status_change(&self) -> Option<NsStatus> {
+        let mut st = self.ns_status.lock().unwrap();
+        if !st.1 {
+            return None;
+        }
+        st.1 = false;
+        st.0.clone()
+    }
+
+    /// The processor's per-block report: mic meter, own speaking ring, gate indicator.
+    pub fn add_mic_level(&self, level: f32, sent: bool) {
+        self.mic_meter.lock().unwrap().add(level);
+        self.sent_meter
+            .lock()
+            .unwrap()
+            .add(if sent { level } else { 0.0 });
+        self.gate_open.store(sent, Ordering::Relaxed);
+    }
+
     pub fn apply_config(&self, cfg: &AudioConfig) {
-        *self.gain.lock().unwrap() = input_gain(cfg.input_gain_pct);
-        self.gate.lock().unwrap().set_threshold(cfg.sensitivity);
-        let wanted = (cfg.echo_cancel, cfg.auto_gain, cfg.noise_suppress);
+        {
+            let mut p = self.proc_cfg.lock().unwrap();
+            *p = ProcCfg {
+                level: cfg.noise_suppression,
+                auto: cfg.auto_sensitivity,
+                threshold: cfg.sensitivity,
+                gain: input_gain(cfg.input_gain_pct),
+                version: p.version + 1,
+            };
+        }
+        let wanted = (cfg.echo_cancel, cfg.auto_gain);
         let mut current = self.apm_cfg.lock().unwrap();
         if *current != wanted {
-            *self.apm.lock().unwrap() = AudioProcessingModule::new(
-                cfg.echo_cancel,
-                cfg.auto_gain,
-                true,
-                cfg.noise_suppress,
-            );
+            // WebRTC's own noise suppression stays off: Off means none, and suppressors never stack.
+            *self.apm.lock().unwrap() =
+                AudioProcessingModule::new(cfg.echo_cancel, cfg.auto_gain, true, false);
             *current = wanted;
         }
     }
@@ -466,11 +495,7 @@ fn find_device(input: bool, name: Option<&str>) -> anyhow::Result<cpal::Device> 
 }
 
 impl AudioIo {
-    pub fn start(
-        cfg: &AudioConfig,
-        shared: Arc<Shared>,
-        mic_tx: mpsc::UnboundedSender<MicChunk>,
-    ) -> anyhow::Result<Self> {
+    pub fn start(cfg: &AudioConfig, shared: Arc<Shared>, raw_tx: RawTx) -> anyhow::Result<Self> {
         let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<(u32, u32)>>();
         let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
         let cfg = cfg.clone();
@@ -492,12 +517,12 @@ impl AudioIo {
                     let (out_rate, out_ch) = (out_cfg.sample_rate().0, out_cfg.channels() as usize);
 
                     let sh = shared.clone();
-                    let mut pending = Vec::new();
+                    let mut pending: Vec<f32> = Vec::new();
                     let in_stream = match in_cfg.sample_format() {
                         cpal::SampleFormat::F32 => input.build_input_stream(
                             &in_cfg.config(),
                             move |d: &[f32], _| {
-                                sh.on_input(d, in_ch, in_rate, &mut pending, &mic_tx)
+                                sh.on_input(d, in_ch, in_rate, &mut pending, &raw_tx)
                             },
                             |e| tracing::warn!(error = %e, "input stream error"),
                             None,
@@ -507,7 +532,7 @@ impl AudioIo {
                             move |d: &[i16], _| {
                                 let f: Vec<f32> =
                                     d.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
-                                sh.on_input(&f, in_ch, in_rate, &mut pending, &mic_tx)
+                                sh.on_input(&f, in_ch, in_rate, &mut pending, &raw_tx)
                             },
                             |e| tracing::warn!(error = %e, "input stream error"),
                             None,
@@ -590,11 +615,7 @@ impl AudioIo {
     }
 
     /// Test/headless constructor: no devices. Pulls the mixer every 10 ms and sends 10 ms of silence.
-    pub fn start_null(
-        rate: u32,
-        shared: Arc<Shared>,
-        mic_tx: mpsc::UnboundedSender<MicChunk>,
-    ) -> Self {
+    pub fn start_null(rate: u32, shared: Arc<Shared>, raw_tx: RawTx) -> Self {
         let h = tokio::spawn(async move {
             let chunk = (rate / 100) as usize;
             let mut out = vec![0f32; chunk];
@@ -606,7 +627,7 @@ impl AudioIo {
                 tick.tick().await;
                 shared.watchdog.input_tick(Instant::now());
                 shared.on_output(&mut out, 1, rate, &mut reverse, &mut mixbuf, &mut playout);
-                let _ = mic_tx.send((rate, vec![0i16; chunk]));
+                let _ = raw_tx.send((rate, vec![0f32; chunk]));
             }
         });
         Self {
@@ -629,28 +650,69 @@ impl AudioIo {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::time::{Duration, Instant};
+    use crate::voice::denoise::NsLevel;
 
     #[test]
-    fn gate_opens_on_speech_and_holds_300ms() {
-        let t0 = Instant::now();
-        let mut g = Gate::new(0.02);
-        assert!(!g.process(0.001, t0));
-        assert!(g.process(0.05, t0 + Duration::from_millis(10)));
-        assert!(
-            g.process(0.001, t0 + Duration::from_millis(200)),
-            "held open"
+    fn legacy_noise_toggle_off_migrates_to_off() {
+        let old = r#"{"input":null,"output":null,"input_gain_pct":100,"sensitivity":0.02,
+                      "echo_cancel":true,"noise_suppress":false,"auto_gain":false}"#;
+        let cfg: AudioConfig = serde_json::from_str::<AudioConfig>(old)
+            .unwrap()
+            .normalized();
+        assert_eq!(cfg.noise_suppression, NsLevel::Off);
+        assert!(cfg.auto_sensitivity, "new field defaults on");
+    }
+
+    #[test]
+    fn legacy_noise_toggle_on_gets_the_default_level() {
+        let old = r#"{"input":null,"output":null,"input_gain_pct":100,"sensitivity":0.02,
+                      "echo_cancel":true,"noise_suppress":true,"auto_gain":false}"#;
+        let cfg: AudioConfig = serde_json::from_str::<AudioConfig>(old)
+            .unwrap()
+            .normalized();
+        assert_eq!(cfg.noise_suppression, NsLevel::default());
+    }
+
+    #[test]
+    fn ns_status_change_is_reported_once() {
+        let s = Shared::new(
+            &AudioConfig::default(),
+            Default::default(),
+            Arc::new(Mutex::new(Mixer::new(48_000, 200))),
         );
-        assert!(
-            !g.process(0.001, t0 + Duration::from_millis(400)),
-            "closed after hold"
-        );
-        g.set_threshold(0.0);
-        assert!(
-            g.process(0.0, t0 + Duration::from_millis(500)),
-            "threshold 0 = always open"
+        let st = NsStatus {
+            active: NsLevel::Standard,
+            note: Some("Strong unavailable".into()),
+        };
+        s.set_ns_status(st.clone());
+        assert_eq!(s.take_ns_status_change(), Some(st.clone()));
+        assert_eq!(s.take_ns_status_change(), None);
+        s.set_ns_status(st);
+        assert_eq!(
+            s.take_ns_status_change(),
+            None,
+            "same status again is not a change"
         );
     }
+
+    #[test]
+    fn apply_config_bumps_processor_version() {
+        let s = Shared::new(
+            &AudioConfig::default(),
+            Default::default(),
+            Arc::new(Mutex::new(Mixer::new(48_000, 200))),
+        );
+        let v0 = s.proc_cfg.lock().unwrap().version;
+        s.apply_config(&AudioConfig {
+            noise_suppression: NsLevel::Off,
+            ..Default::default()
+        });
+        let p = s.proc_cfg.lock().unwrap();
+        assert!(p.version > v0);
+        assert_eq!(p.level, NsLevel::Off);
+    }
+
+    use std::time::{Duration, Instant};
 
     #[test]
     fn stalled_after_2s_without_callbacks() {

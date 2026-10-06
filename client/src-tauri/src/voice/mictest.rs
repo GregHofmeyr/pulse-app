@@ -54,7 +54,10 @@ impl MicTest {
             mixer.clone(),
         );
         let (tx, mut rx) = mpsc::unbounded_channel::<MicChunk>();
-        let io = AudioIo::start(cfg, shared.clone(), tx)
+        // Same pipeline as a call: devices → processor (denoise, gate) → loopback. The AudioIo holds
+        // the only sender into the processor, so stopping the test ends it.
+        let (raw_tx, _processor) = super::processor::spawn(shared.clone(), tx);
+        let io = AudioIo::start(cfg, shared.clone(), raw_tx)
             .map_err(|e| VoiceError::Device(e.to_string()))?;
         // The mixer runs at 48 kHz; the output edge resamples to the device.
         let mut delay = DelayLine::new((INTERNAL_RATE * DELAY_MS / 1000) as usize);

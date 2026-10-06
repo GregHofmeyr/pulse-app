@@ -343,7 +343,13 @@ pub async fn join_voice(
     let (api, token) = core.current()?;
     tracing::info!(%channel_id, input = ?config.input, output = ?config.output, gain = config.input_gain_pct, "join_voice");
     let r = voice
-        .join(&api, &token, channel_id, config, AudioMode::Real)
+        .join(
+            &api,
+            &token,
+            channel_id,
+            config.normalized(),
+            AudioMode::Real,
+        )
         .await;
     if let Err(VoiceError::Api(ApiError::Unauthorized)) = &r {
         let _ = core.check::<()>(&app, Err(ApiError::Unauthorized));
@@ -397,7 +403,7 @@ pub async fn set_audio_config(
     voice: State<'_, VoiceManager>,
     config: AudioConfig,
 ) -> Result<(), VoiceError> {
-    voice.set_audio_config(config).await
+    voice.set_audio_config(config.normalized()).await
 }
 
 #[derive(serde::Serialize)]
@@ -424,7 +430,7 @@ pub async fn start_mic_test(
 ) -> Result<(), VoiceError> {
     let handle = app.clone();
     mic.start(
-        &config,
+        &config.normalized(),
         std::sync::Arc::new(move |e| {
             let _ = handle.emit("voice://event", &e);
         }),
