@@ -1,14 +1,15 @@
 // Voice state from the Rust VoiceManager (voice://event).
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
-import { loadAudioConfig, loadVolumes, playSound, saveVolumes, transitionSounds, type AudioConfig, type Flags } from './voiceui'
+import { loadAudioConfig, loadVolumes, playSound, saveVolumes, transitionSounds, type AudioConfig, type Flags, type NsLevel } from './voiceui'
 
 type Connection = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 type VoiceEvent =
   | { kind: 'state'; channel_id: string | null; connection: Connection; controls: Flags }
   | { kind: 'speaking'; user_ids: string[] }
   | { kind: 'quality'; user_id: string; quality: string }
-  | { kind: 'levels'; mic: number; speaker: number }
+  | { kind: 'levels'; mic: number; speaker: number; gate_open: boolean }
+  | { kind: 'noise_suppression'; active: NsLevel; note: string | null }
   | { kind: 'device_stalled' }
   | { kind: 'device_recovered' }
 
@@ -19,6 +20,10 @@ export const voice = $state({
   speaking: new Set<string>(),
   quality: {} as Record<string, string>,
   levels: { mic: 0, speaker: 0 },
+  /** Whether the voice gate is letting the mic through. */
+  gateOpen: false,
+  /** Suppression actually running (Strong can be loading or have fallen back) and why. */
+  ns: { active: null as NsLevel | null, note: null as string | null },
   stalled: false,
   error: '',
   volumes: loadVolumes() as Record<string, number>,
@@ -44,6 +49,10 @@ export async function startVoiceListening() {
         break
       case 'levels':
         voice.levels = { mic: e.mic, speaker: e.speaker }
+        voice.gateOpen = e.gate_open
+        break
+      case 'noise_suppression':
+        voice.ns = { active: e.active, note: e.note }
         break
       case 'device_stalled':
         voice.stalled = true

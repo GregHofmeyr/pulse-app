@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { soundFor, volumeLabel, clampVolume } from './voiceui'
+import { soundFor, volumeLabel, clampVolume, migrateAudioConfig, defaultAudioConfig } from './voiceui'
 
 describe('voice ui helpers', () => {
   it('volumeLabel', () => {
@@ -49,5 +49,22 @@ describe('transitionSounds', () => {
   })
   it('mute toggles still sound', () => {
     expect(transitionSounds(at('V1', 'connected'), at('V1', 'connected', { muted: true, deafened: false }))).toEqual(['mute'])
+  })
+})
+
+describe('migrateAudioConfig', () => {
+  it('maps the old noise toggle off to level off', () => {
+    const c = migrateAudioConfig({ noise_suppress: false, sensitivity: 0.05 })
+    expect(c.noise_suppression).toBe('off')
+    expect(c.sensitivity).toBe(0.05)
+    expect('noise_suppress' in c).toBe(false)
+  })
+  it('gives old toggle-on users the default level and auto sensitivity', () => {
+    const c = migrateAudioConfig({ noise_suppress: true })
+    expect(c.noise_suppression).toBe(defaultAudioConfig.noise_suppression)
+    expect(c.auto_sensitivity).toBe(true)
+  })
+  it('keeps an explicit new level', () => {
+    expect(migrateAudioConfig({ noise_suppression: 'standard', noise_suppress: false }).noise_suppression).toBe('standard')
   })
 })

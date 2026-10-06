@@ -53,19 +53,29 @@ function save(key: string, value: unknown) {
   }
 }
 
+export type NsLevel = 'off' | 'standard' | 'strong'
 export type AudioConfig = {
   input: string | null
   output: string | null
   input_gain_pct: number
   sensitivity: number
   echo_cancel: boolean
-  noise_suppress: boolean
+  noise_suppression: NsLevel
+  auto_sensitivity: boolean
   auto_gain: boolean
 }
 export const defaultAudioConfig: AudioConfig = {
-  input: null, output: null, input_gain_pct: 100, sensitivity: 0.02, echo_cancel: true, noise_suppress: true, auto_gain: false,
+  input: null, output: null, input_gain_pct: 100, sensitivity: 0.02, echo_cancel: true,
+  noise_suppression: 'strong', auto_sensitivity: true, auto_gain: false,
 }
-export const loadAudioConfig = () => load('pulse.audio', defaultAudioConfig)
+/** Settings saved before levels existed carried `noise_suppress: boolean`. */
+export function migrateAudioConfig(raw: Record<string, unknown>): AudioConfig {
+  const { noise_suppress, ...rest } = raw
+  const c = { ...defaultAudioConfig, ...rest } as AudioConfig
+  if (raw.noise_suppression === undefined && noise_suppress === false) c.noise_suppression = 'off'
+  return c
+}
+export const loadAudioConfig = () => migrateAudioConfig(load<Record<string, unknown>>('pulse.audio', {}))
 export const saveAudioConfig = (c: AudioConfig) => save('pulse.audio', c)
 
 export const loadVolumes = () => load<Record<string, number>>('pulse.volumes', {})

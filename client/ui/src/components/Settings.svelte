@@ -3,7 +3,7 @@
   import Icon from './Icon.svelte'
   import Select from './Select.svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
-  import { loadAudioConfig, saveAudioConfig, type AudioConfig } from '../lib/voiceui'
+  import { loadAudioConfig, saveAudioConfig, type AudioConfig, type NsLevel } from '../lib/voiceui'
 
   let { onClose }: { onClose: () => void } = $props()
 
@@ -62,10 +62,14 @@
     }
   }
 
-  const toggles: { key: 'echo_cancel' | 'noise_suppress' | 'auto_gain'; label: string; help: string }[] = [
+  const toggles: { key: 'echo_cancel' | 'auto_gain'; label: string; help: string }[] = [
     { key: 'echo_cancel', label: 'Echo cancellation', help: 'Stops your speakers leaking back into your mic.' },
-    { key: 'noise_suppress', label: 'Noise suppression', help: 'Removes fans, hum and background noise.' },
     { key: 'auto_gain', label: 'Automatic gain control', help: 'Evens out your volume. Leave off if you use input gain.' },
+  ]
+  const levels: { value: NsLevel; label: string; help: string }[] = [
+    { value: 'off', label: 'Off', help: 'No noise suppression: your mic as it is.' },
+    { value: 'standard', label: 'Standard', help: 'Light: removes fans and hum, softens clicks. Easy on older PCs.' },
+    { value: 'strong', label: 'Strong', help: 'Removes keyboard clicks and most background noise. Uses more CPU.' },
   ]
 </script>
 
@@ -96,12 +100,31 @@
     </label>
     <div class="field"><span class="lbl">INPUT SENSITIVITY</span>
       <!-- the slider sits ON the level meter, so its thumb is the threshold marker -->
-      <div class="sens">
-        <div class="meter" aria-hidden="true"><div class="fill" class:over={voice.levels.mic >= cfg.sensitivity} style:width="{Math.min(100, (voice.levels.mic / SENS_MAX) * 100)}%"></div></div>
-        <input type="range" min="0" max={SENS_MAX} step="0.002" bind:value={cfg.sensitivity} onchange={apply} aria-label="Sensitivity threshold" />
+      <div class="row auto">
+        <div><strong>Automatically determine sensitivity</strong></div>
+        <button class="switch" aria-label="Automatically determine sensitivity" aria-pressed={cfg.auto_sensitivity} class:on={cfg.auto_sensitivity}
+          onclick={() => { cfg.auto_sensitivity = !cfg.auto_sensitivity; apply() }}><span></span></button>
       </div>
-      <small>Sound to the right of the handle is sent. {testing || voice.channelId ? 'Talk to see the bar move.' : "Start “Let's check” to see your level."}</small>
+      <!-- the slider sits ON the level meter, so its thumb is the threshold marker -->
+      <div class="sens">
+        <div class="meter" aria-hidden="true"><div class="fill" class:over={cfg.auto_sensitivity ? voice.gateOpen : voice.levels.mic >= cfg.sensitivity} style:width="{Math.min(100, (voice.levels.mic / SENS_MAX) * 100)}%"></div></div>
+        {#if !cfg.auto_sensitivity}
+          <input type="range" min="0" max={SENS_MAX} step="0.002" bind:value={cfg.sensitivity} onchange={apply} aria-label="Sensitivity threshold" />
+        {/if}
+      </div>
+      <small>{cfg.auto_sensitivity ? 'Pulse sends your voice when it hears you speaking.' : 'Sound to the right of the handle is sent.'} {testing || voice.channelId ? 'Talk to see the bar move.' : "Start “Let's check” to see your level."}</small>
     </div>
+  </div>
+
+  <div class="field"><span class="lbl">NOISE SUPPRESSION</span>
+    <div class="seg" role="radiogroup" aria-label="Noise suppression">
+      {#each levels as l}
+        <button role="radio" aria-checked={cfg.noise_suppression === l.value} class:on={cfg.noise_suppression === l.value}
+          onclick={() => { cfg.noise_suppression = l.value; apply() }}>{l.label}</button>
+      {/each}
+    </div>
+    <small>{levels.find((l) => l.value === cfg.noise_suppression)?.help}</small>
+    {#if voice.ns.note}<p class="warn" role="status">{voice.ns.note}</p>{/if}
   </div>
 
   <div class="check">
@@ -159,4 +182,8 @@
   .switch span { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #b9bcc6; transition: left .12s; }
   .switch.on { background: var(--accent); }
   .switch.on span { left: 23px; background: var(--on-accent); }
+  .row.auto { padding: 0; border: 0; }
+  .seg { display: inline-flex; align-self: flex-start; border: 1px solid var(--bg-4); border-radius: 10px; overflow: hidden; }
+  .seg button { padding: 8px 14px; border: 0; background: transparent; color: var(--text-2); font-weight: 600; }
+  .seg button.on { background: var(--accent); color: var(--on-accent); }
 </style>
