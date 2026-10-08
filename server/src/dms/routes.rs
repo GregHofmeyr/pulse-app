@@ -4,12 +4,13 @@ use std::collections::BTreeSet;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, patch, post};
+use axum::routing::{delete, patch, post, put};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::{
-    AddMembersRequest, Channel, ChannelKind, MarkReadRequest, RenameChannelRequest,
+    AddMembersRequest, Channel, ChannelKind, MarkReadRequest, Mute, MuteTarget,
+    RenameChannelRequest, SetMuteRequest,
 };
 use sqlx::SqlitePool;
 
@@ -26,6 +27,9 @@ pub fn router() -> Router<AppState> {
         .route("/channels/{id}/members", post(add_members))
         .route("/channels/{id}/members/{user_id}", delete(remove_member))
         .route("/channels/{id}", patch(rename))
+        .route("/mutes", put(set_mute))
+        .route("/mutes/{kind}/{id}", delete(clear_mute))
+        .route("/channels/{id}/close", post(close))
 }
 
 async fn mark_read(
@@ -271,4 +275,136 @@ async fn rename(
     )
     .await?;
     Ok(Json(channel))
+}
+
+pub async fn mutes_of(db: &SqlitePool, me: UserId) -> AppResult<Vec<Mute>> {
+    let rows: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT target_kind, target_id, muted_until FROM notification_prefs
+         WHERE user_id = ? AND muted = 1 AND (muted_until IS NULL OR muted_until > ?)",
+    )
+    .bind(me.to_string())
+    .bind(now())
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(k, id, until)| {
+            Some(Mute {
+                target_kind: MuteTarget::parse(&k)?,
+                target_id: id,
+                until,
+            })
+        })
+        .collect())
+}
+
+pub async fn hidden_of(db: &SqlitePool, me: UserId) -> AppResult<Vec<ChannelId>> {
+    let ids: Vec<String> = sqlx::query_scalar("SELECT channel_id FROM dm_hidden WHERE user_id = ?")
+        .bind(me.to_string())
+        .fetch_all(db)
+        .await?;
+    Ok(ids
+        .iter()
+        .map(|i| i.parse())
+        .collect::<Result<_, _>>()
+        .map_err(anyhow::Error::from)?)
+}
+
+/// 404 unless `me` can see the target (servers are public; channels via channel_for).
+async fn check_target(s: &AppState, me: UserId, kind: MuteTarget, id: &str) -> AppResult<()> {
+    match kind {
+        MuteTarget::Server => {
+            let hit: Option<i64> = sqlx::query_scalar("SELECT 1 FROM servers WHERE id = ?")
+                .bind(id)
+                .fetch_optional(&s.db)
+                .await?;
+            hit.map(|_| ()).ok_or(AppError::NotFound)
+        }
+        MuteTarget::Channel => {
+            let ch: ChannelId = id.parse().map_err(|_| AppError::NotFound)?;
+            channel_for(&s.db, me, ch).await.map(|_| ())
+        }
+    }
+}
+
+async fn set_mute(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Json(req): Json<SetMuteRequest>,
+) -> AppResult<StatusCode> {
+    check_target(&s, me, req.target_kind, &req.target_id).await?;
+    sqlx::query(
+        "INSERT INTO notification_prefs (user_id, target_kind, target_id, muted, muted_until) VALUES (?, ?, ?, 1, ?)
+         ON CONFLICT (user_id, target_kind, target_id) DO UPDATE SET muted = 1, muted_until = excluded.muted_until",
+    )
+    .bind(me.to_string()).bind(req.target_kind.as_str()).bind(&req.target_id).bind(&req.until)
+    .execute(&s.db).await?;
+    s.hub
+        .publish(
+            &s.db,
+            Event::MutesChanged {
+                user_id: me,
+                mutes: mutes_of(&s.db, me).await?,
+            },
+        )
+        .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn clear_mute(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path((kind, id)): Path<(String, String)>,
+) -> AppResult<StatusCode> {
+    let kind = MuteTarget::parse(&kind).ok_or(AppError::NotFound)?;
+    sqlx::query(
+        "DELETE FROM notification_prefs WHERE user_id = ? AND target_kind = ? AND target_id = ?",
+    )
+    .bind(me.to_string())
+    .bind(kind.as_str())
+    .bind(&id)
+    .execute(&s.db)
+    .await?;
+    s.hub
+        .publish(
+            &s.db,
+            Event::MutesChanged {
+                user_id: me,
+                mutes: mutes_of(&s.db, me).await?,
+            },
+        )
+        .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn close(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ChannelId>,
+) -> AppResult<StatusCode> {
+    let ch = channel_for(&s.db, me, id).await?;
+    if !ch.kind.is_private() {
+        return Err(AppError::BadRequest(
+            "only DMs and groups can be closed".into(),
+        ));
+    }
+    sqlx::query(
+        "INSERT OR REPLACE INTO dm_hidden (user_id, channel_id, hidden_at) VALUES (?, ?, ?)",
+    )
+    .bind(me.to_string())
+    .bind(id.to_string())
+    .bind(now())
+    .execute(&s.db)
+    .await?;
+    s.hub
+        .publish(
+            &s.db,
+            Event::ConversationVisibility {
+                user_id: me,
+                channel_id: id,
+                hidden: true,
+            },
+        )
+        .await;
+    Ok(StatusCode::NO_CONTENT)
 }

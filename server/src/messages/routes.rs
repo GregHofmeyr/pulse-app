@@ -188,6 +188,11 @@ async fn send(
         .execute(&s.db)
         .await?;
     mentions::store(&s.db, msg.id, &mentioned).await?;
+    // A new message reopens closed conversations (clients un-hide on MessageCreated).
+    sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ?")
+        .bind(id.to_string())
+        .execute(&s.db)
+        .await?;
     // Sending marks your own read point (you've obviously seen everything up to here).
     let moved = crate::reads::advance(&s.db, me, id, msg.id).await?;
     s.hub

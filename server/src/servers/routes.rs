@@ -369,8 +369,28 @@ async fn create_dm(
         .await?;
         if let Some(id) = existing {
             tx.rollback().await?;
-            let ch = crate::access::load_channel(&s.db, id.parse().map_err(anyhow::Error::from)?)
-                .await?;
+            let channel_id: ChannelId = id.parse().map_err(anyhow::Error::from)?;
+            // Starting a DM you had closed reopens it.
+            let reopened =
+                sqlx::query("DELETE FROM dm_hidden WHERE user_id = ? AND channel_id = ?")
+                    .bind(me.to_string())
+                    .bind(&id)
+                    .execute(&s.db)
+                    .await?
+                    .rows_affected();
+            if reopened > 0 {
+                s.hub
+                    .publish(
+                        &s.db,
+                        Event::ConversationVisibility {
+                            user_id: me,
+                            channel_id,
+                            hidden: false,
+                        },
+                    )
+                    .await;
+            }
+            let ch = crate::access::load_channel(&s.db, channel_id).await?;
             return ch.map(Json).ok_or(AppError::NotFound);
         }
     }

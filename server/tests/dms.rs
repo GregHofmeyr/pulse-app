@@ -518,3 +518,74 @@ async fn group_cap_dm_rename_and_last_leave() {
         .unwrap();
     assert!(left.is_none(), "last person out deletes the group");
 }
+
+async fn put(app: &TestApp, token: &str, path: &str, body: serde_json::Value) -> u16 {
+    app.http
+        .put(app.url(path))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+#[tokio::test]
+async fn mutes_are_private_and_expire() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let dm = create_dm(&app, &a, &[b_id]).await;
+    assert_eq!(
+        put(
+            &app,
+            &b,
+            "/mutes",
+            serde_json::json!({"target_kind":"channel","target_id": dm.id,"until": null})
+        )
+        .await,
+        204
+    );
+    assert_eq!(put(&app, &b, "/mutes", serde_json::json!({"target_kind":"server","target_id":"01J00000000000000000000000","until": "2000-01-01T00:00:00Z"})).await, 404, "unknown target");
+    let (_ws, ready) = hello(&app, &b).await;
+    assert_eq!(ready.mutes.len(), 1);
+    let (_ws2, ready_a) = hello(&app, &a).await;
+    assert!(ready_a.mutes.is_empty(), "alex never sees sam's mutes");
+    assert_eq!(
+        app.http
+            .delete(app.url(&format!("/mutes/channel/{}", dm.id)))
+            .bearer_auth(&b)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        204
+    );
+    let (_ws3, ready) = hello(&app, &b).await;
+    assert!(ready.mutes.is_empty());
+}
+
+#[tokio::test]
+async fn closed_conversation_reappears_on_new_message() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let dm = create_dm(&app, &a, &[b_id]).await;
+    assert_eq!(
+        post_json(
+            &app,
+            &b,
+            &format!("/channels/{}/close", dm.id),
+            serde_json::json!({})
+        )
+        .await
+        .status(),
+        204
+    );
+    let (_ws, ready) = hello(&app, &b).await;
+    assert_eq!(ready.hidden, vec![dm.id]);
+    send(&app, &a, dm.id, "you there?").await;
+    let (_ws2, ready) = hello(&app, &b).await;
+    assert!(ready.hidden.is_empty());
+}
