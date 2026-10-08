@@ -76,6 +76,13 @@ impl Default for AudioConfig {
     }
 }
 
+/// Played audio (mono i16 at the output device rate) on its way to the echo canceller.
+#[derive(Default)]
+struct EchoRef {
+    rate: u32,
+    samples: std::collections::VecDeque<i16>,
+}
+
 /// What the mic processor should run; `version` bumps on every change.
 #[derive(Clone, Debug)]
 pub struct ProcCfg {
@@ -254,6 +261,8 @@ pub struct Shared {
     apm_cfg: Mutex<(bool, bool)>,
     /// What the mic processor should run (it polls `version`).
     pub proc_cfg: Mutex<ProcCfg>,
+    /// What the speakers played, waiting for the processor to feed the echo canceller.
+    echo_ref: Mutex<EchoRef>,
     ns_status: Mutex<(Option<NsStatus>, bool)>, // (current, changed since last take)
     /// Whether the last processed block was sent (the gate indicator in Settings).
     pub gate_open: std::sync::atomic::AtomicBool,
@@ -290,6 +299,7 @@ impl Shared {
                 version: 0,
             }),
             ns_status: Mutex::new((None, false)),
+            echo_ref: Mutex::new(EchoRef::default()),
             gate_open: Default::default(),
             watchdog: Watchdog::new(Instant::now()),
             apm_warned: Default::default(),
@@ -338,7 +348,6 @@ impl Shared {
         out: &mut [f32],
         channels: usize,
         rate: u32,
-        reverse: &mut Vec<i16>,
         scratch: &mut Vec<f32>,
         playout: &mut super::playout::Playout,
     ) {
@@ -361,20 +370,40 @@ impl Shared {
                 frame.fill(*v);
             }
         }
-        let chunk = (rate / 100) as usize;
+        // Hand what we played to the echo canceller via a queue the mic processor drains: never
+        // take the APM lock here (this callback is real-time; the processor can hold it for ms).
         let mut meter = self.spk_meter.lock().unwrap();
+        let mut echo = self.echo_ref.lock().unwrap();
+        if echo.rate != rate {
+            echo.rate = rate;
+            echo.samples.clear();
+        }
         for v in downmix(out, channels) {
             meter.add(v);
-            reverse.push(to_i16(v));
-            if reverse.len() == chunk {
-                let r = self
-                    .apm
-                    .lock()
-                    .unwrap()
-                    .process_reverse_stream(reverse, rate as i32, 1);
-                self.warn_apm_once(r, "playback");
-                reverse.clear();
-            }
+            echo.samples.push_back(to_i16(v));
+        }
+        let cap = (rate / 5) as usize; // 200 ms: bounded even if nothing drains it
+        let excess = echo.samples.len().saturating_sub(cap);
+        echo.samples.drain(..excess);
+    }
+
+    /// Feed the echo canceller everything played since the last call (whole 10 ms chunks). Called
+    /// by the mic processor before each capture block, so render and capture stay in order.
+    pub(crate) fn feed_echo_reference(&self) {
+        let (rate, mut played) = {
+            let mut echo = self.echo_ref.lock().unwrap();
+            let chunk = (echo.rate / 100).max(1) as usize;
+            let whole = echo.samples.len() / chunk * chunk;
+            (echo.rate, echo.samples.drain(..whole).collect::<Vec<i16>>())
+        };
+        if played.is_empty() {
+            return;
+        }
+        let chunk = (rate / 100) as usize;
+        let mut apm = self.apm.lock().unwrap();
+        for c in played.chunks_mut(chunk) {
+            let r = apm.process_reverse_stream(c, rate as i32, 1);
+            self.warn_apm_once(r, "playback");
         }
     }
 
@@ -540,14 +569,13 @@ impl AudioIo {
                         other => return Err(anyhow!("unsupported mic sample format {other:?}")),
                     };
                     let sh = shared.clone();
-                    let mut reverse = Vec::new();
                     let mut mixbuf = Vec::new();
                     let mut playout = super::playout::Playout::new(out_rate);
                     let out_stream = match out_cfg.sample_format() {
                         cpal::SampleFormat::F32 => output.build_output_stream(
                             &out_cfg.config(),
                             move |d: &mut [f32], _| {
-                                sh.on_output(d, out_ch, out_rate, &mut reverse, &mut mixbuf, &mut playout)
+                                sh.on_output(d, out_ch, out_rate, &mut mixbuf, &mut playout)
                             },
                             |e| tracing::warn!(error = %e, "output stream error"),
                             None,
@@ -562,7 +590,6 @@ impl AudioIo {
                                         &mut scratch,
                                         out_ch,
                                         out_rate,
-                                        &mut reverse,
                                         &mut mixbuf,
                                         &mut playout,
                                     );
@@ -619,14 +646,13 @@ impl AudioIo {
         let h = tokio::spawn(async move {
             let chunk = (rate / 100) as usize;
             let mut out = vec![0f32; chunk];
-            let mut reverse = Vec::new();
             let mut mixbuf = Vec::new();
             let mut playout = super::playout::Playout::new(rate);
             let mut tick = tokio::time::interval(Duration::from_millis(10));
             loop {
                 tick.tick().await;
                 shared.watchdog.input_tick(Instant::now());
-                shared.on_output(&mut out, 1, rate, &mut reverse, &mut mixbuf, &mut playout);
+                shared.on_output(&mut out, 1, rate, &mut mixbuf, &mut playout);
                 let _ = raw_tx.send((rate, vec![0f32; chunk], Instant::now()));
             }
         });
@@ -651,6 +677,70 @@ impl AudioIo {
 mod tests {
     use super::*;
     use crate::voice::denoise::NsLevel;
+
+    /// The speaker callback is real-time: it must never wait while the mic processor holds the
+    /// echo canceller (a preempted processor would otherwise stutter playback).
+    #[test]
+    fn playback_never_waits_for_the_echo_canceller() {
+        let s = Shared::new(
+            &AudioConfig::default(),
+            Default::default(),
+            Arc::new(Mutex::new(Mixer::new(48_000, 200))),
+        );
+        let held = s.apm.lock().unwrap(); // the processor is busy with it
+        let s2 = s.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut out = vec![0f32; 960]; // 10 ms stereo at 48 kHz
+            let mut scratch = Vec::new();
+            let mut playout = super::super::playout::Playout::new(48_000);
+            s2.on_output(&mut out, 2, 48_000, &mut scratch, &mut playout);
+            let _ = tx.send(());
+        });
+        let done = rx.recv_timeout(Duration::from_millis(500)).is_ok();
+        drop(held);
+        assert!(
+            done,
+            "the speaker callback blocked on the echo canceller's lock"
+        );
+    }
+
+    fn play(s: &Shared, ms: usize) {
+        let mut playout = super::super::playout::Playout::new(48_000);
+        for _ in 0..ms / 10 {
+            let mut out = vec![0.1f32; 480];
+            s.on_output(&mut out, 1, 48_000, &mut Vec::new(), &mut playout);
+        }
+    }
+
+    #[test]
+    fn echo_reference_is_fed_in_whole_10ms_chunks() {
+        let s = Shared::new(
+            &AudioConfig::default(),
+            Default::default(),
+            Arc::new(Mutex::new(Mixer::new(48_000, 200))),
+        );
+        let mut playout = super::super::playout::Playout::new(48_000);
+        let mut out = vec![0.1f32; 1200]; // 25 ms
+        s.on_output(&mut out, 1, 48_000, &mut Vec::new(), &mut playout);
+        s.feed_echo_reference();
+        assert_eq!(
+            s.echo_ref.lock().unwrap().samples.len(),
+            240,
+            "2 chunks fed, 5 ms waits for more"
+        );
+    }
+
+    #[test]
+    fn echo_reference_queue_is_capped_at_200ms() {
+        let s = Shared::new(
+            &AudioConfig::default(),
+            Default::default(),
+            Arc::new(Mutex::new(Mixer::new(48_000, 200))),
+        );
+        play(&s, 1000); // nothing drains it (processor stopped)
+        assert_eq!(s.echo_ref.lock().unwrap().samples.len(), 9600);
+    }
 
     #[test]
     fn legacy_noise_toggle_off_migrates_to_off() {

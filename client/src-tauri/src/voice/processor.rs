@@ -355,6 +355,8 @@ fn run(
 
         while pending.len() >= FRAME {
             let mut block: Vec<f32> = pending.drain(..FRAME).collect();
+            // render before capture: what the speakers played up to now is the echo reference
+            shared.feed_echo_reference();
             // WebRTC APM (HPF, AEC, AGC) works on i16
             for (d, v) in i16buf.iter_mut().zip(&block) {
                 *d = to_i16(*v);
