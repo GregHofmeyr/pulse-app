@@ -93,6 +93,10 @@ pub enum Event {
     MessageDeleted {
         channel_id: ChannelId,
         message_id: MessageId,
+        /// Who wrote it and whom it mentioned, so clients can take it back out of their
+        /// unread and mention counts.
+        author_id: Option<UserId>,
+        mentions: Vec<UserId>,
     },
     ChannelCreated {
         channel: Channel,

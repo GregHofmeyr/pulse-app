@@ -87,22 +87,22 @@ pub async fn for_messages(
     ids: &[MessageId],
 ) -> AppResult<HashMap<MessageId, Vec<UserId>>> {
     let mut out: HashMap<MessageId, Vec<UserId>> = HashMap::new();
+    if ids.is_empty() {
+        return Ok(out);
+    }
+    // One round trip for the whole page (history loads up to 100 at a time).
+    let mut q =
+        sqlx::QueryBuilder::new("SELECT message_id, user_id FROM mentions WHERE message_id IN (");
+    let mut list = q.separated(", ");
     for id in ids {
-        let users: Vec<String> =
-            sqlx::query_scalar("SELECT user_id FROM mentions WHERE message_id = ?")
-                .bind(id.to_string())
-                .fetch_all(db)
-                .await?;
-        if !users.is_empty() {
-            out.insert(
-                *id,
-                users
-                    .iter()
-                    .map(|u| u.parse())
-                    .collect::<Result<_, _>>()
-                    .map_err(anyhow::Error::from)?,
-            );
-        }
+        list.push_bind(id.to_string());
+    }
+    q.push(") ORDER BY rowid");
+    let rows: Vec<(String, String)> = q.build_query_as().fetch_all(db).await?;
+    for (m, u) in rows {
+        out.entry(m.parse().map_err(anyhow::Error::from)?)
+            .or_default()
+            .push(u.parse().map_err(anyhow::Error::from)?);
     }
     Ok(out)
 }

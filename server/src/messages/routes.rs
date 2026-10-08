@@ -290,6 +290,11 @@ async fn remove(
             Event::MessageDeleted {
                 channel_id: msg.channel_id,
                 message_id: id,
+                author_id: Some(me),
+                mentions: crate::messages::mentions::for_messages(&s.db, &[id])
+                    .await?
+                    .remove(&id)
+                    .unwrap_or_default(),
             },
         )
         .await;

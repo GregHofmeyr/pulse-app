@@ -127,6 +127,8 @@ async fn audience_table() {
             Event::MessageDeleted {
                 channel_id: dm.id,
                 message_id: MessageId::new(),
+                author_id: Some(a_id),
+                mentions: vec![],
             },
             set(&[a_id, b_id]),
         ),

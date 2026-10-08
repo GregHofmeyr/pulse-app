@@ -75,7 +75,7 @@ describe('applyEvent', () => {
     let s = applyEvent(base(), { t: 'MessageCreated', d: { message: msg('M1'), nonce: null } }, 0)
     s = applyEvent(s, { t: 'MessageUpdated', d: { message: { ...msg('M1'), content: 'edited', edited_at: 'x' } } }, 0)
     expect(s.messages['C1'][0].content).toBe('edited')
-    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M1' } }, 0)
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M1', author_id: 'U2', mentions: [] } }, 0)
     expect(s.messages['C1'][0].deleted).toBe(true)
     expect(s.messages['C1'][0].content).toBe('')
   })
@@ -134,4 +134,43 @@ describe('history markers (I2)', () => {
     expect(s.history['C1']).toBeUndefined()
     expect(emptyState().history).toEqual({})
   })
+})
+
+describe('deleting an unread message', () => {
+  const dmReady = () =>
+    applyReady(emptyState(), ready({
+      channels: [ch('C1'), ch('D1', 'dm', null)],
+      dm_members: [{ channel_id: 'D1', user_ids: ['U1', 'U2'] }],
+      read_states: [{ channel_id: 'D1', last_read_message_id: 'M1', unread: 2, mentions: 1 }],
+    }))
+  const del = (id: string, author: string | null, mentions: string[] = []) =>
+    ({ t: 'MessageDeleted', d: { channel_id: 'D1', message_id: id, author_id: author, mentions } }) as const
+
+  it('takes it back out of the unread and mention counts', () => {
+    let s = applyEvent(dmReady(), del('M3', 'U2', ['U1']), 0)
+    expect(s.reads['D1']).toMatchObject({ unread: 1, mentions: 0 })
+    s = applyEvent(s, del('M2', 'U2'), 0)
+    expect(s.reads['D1']).toMatchObject({ unread: 0, mentions: 0 })
+    s = applyEvent(s, del('M4', 'U2', ['U1']), 0) // counts never go negative
+    expect(s.reads['D1']).toMatchObject({ unread: 0, mentions: 0 })
+  })
+
+  it('leaves the counts alone for read messages and your own', () => {
+    expect(applyEvent(dmReady(), del('M0', 'U2', ['U1']), 0).reads['D1']).toMatchObject({ unread: 2, mentions: 1 })
+    expect(applyEvent(dmReady(), del('M5', 'U1'), 0).reads['D1']).toMatchObject({ unread: 2, mentions: 1 })
+  })
+
+  it('updates the conversation list preview', () => {
+    let s = applyEvent(dmReady(), { t: 'MessageCreated', d: { message: msg('M9', 'D1', 'secret'), nonce: null } }, 0)
+    s = applyEvent(s, del('M9', 'U2'), 0)
+    expect(s.latest['D1']).toMatchObject({ id: 'M9', deleted: true, content: '' })
+  })
+})
+
+it('an edit to the latest message updates the preview', () => {
+  let s = applyReady(emptyState(), ready({ channels: [ch('D1', 'dm', null)], dm_members: [{ channel_id: 'D1', user_ids: ['U1', 'U2'] }] }))
+  s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M1', 'D1', 'typo'), nonce: null } }, 0)
+  s = { ...s, messages: {} } // history not loaded (e.g. never opened)
+  s = applyEvent(s, { t: 'MessageUpdated', d: { message: { ...msg('M1', 'D1', 'fixed'), edited_at: 'x' } } }, 0)
+  expect(s.latest['D1'].content).toBe('fixed')
 })

@@ -122,14 +122,29 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     }
     case 'MessageUpdated': {
       const m = e.d.message
-      if (!s.messages[m.channel_id]) return s // never loaded: nothing to update
-      return { ...s, messages: { ...s.messages, [m.channel_id]: upsertMessage(s.messages[m.channel_id], m) } }
+      const c = m.channel_id
+      const latest = s.latest[c]?.id === m.id ? { ...s.latest, [c]: m } : s.latest
+      if (!s.messages[c]) return latest === s.latest ? s : { ...s, latest } // history never loaded
+      return { ...s, latest, messages: { ...s.messages, [c]: upsertMessage(s.messages[c], m) } }
     }
     case 'MessageDeleted': {
-      const { channel_id: c, message_id: id } = e.d
-      const list = s.messages[c]
-      if (!list) return s
-      return { ...s, messages: { ...s.messages, [c]: list.map((m) => (m.id === id ? { ...m, deleted: true, content: '' } : m)) } }
+      const { channel_id: c, message_id: id, author_id, mentions } = e.d
+      const gone = (m: Message): Message => (m.id === id ? { ...m, deleted: true, content: '' } : m)
+      // An unread message from someone else comes back out of the counts (mirrors MessageCreated).
+      const read = s.reads[c]
+      const wasUnread = read && author_id !== s.me?.id && id > (read.last_read_message_id ?? '')
+      const mentioned = !!s.me && mentions.includes(s.me.id)
+      return {
+        ...s,
+        messages: s.messages[c] ? { ...s.messages, [c]: s.messages[c].map(gone) } : s.messages,
+        latest: s.latest[c] ? { ...s.latest, [c]: gone(s.latest[c]) } : s.latest,
+        reads: wasUnread
+          ? {
+              ...s.reads,
+              [c]: { ...read, unread: Math.max(0, read.unread - 1), mentions: Math.max(0, read.mentions - (mentioned ? 1 : 0)) },
+            }
+          : s.reads,
+      }
     }
     case 'ChannelCreated':
       return { ...s, channels: { ...s.channels, [e.d.channel.id]: e.d.channel } }

@@ -11,7 +11,12 @@ import type { User } from "./User";
 import type { UserId } from "./UserId";
 import type { VoiceFlags } from "./VoiceFlags";
 
-export type Event = { "t": "MessageCreated", "d": { message: Message, nonce: string | null, } } | { "t": "MessageUpdated", "d": { message: Message, } } | { "t": "MessageDeleted", "d": { channel_id: ChannelId, message_id: MessageId, } } | { "t": "ChannelCreated", "d": { channel: Channel, } } | { "t": "ServerCreated", "d": { server: Server, } } | { "t": "MemberJoined", "d": { server_id: ServerId, member: Member, } } | { "t": "Typing", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceJoined", "d": { channel_id: ChannelId, user_id: UserId, 
+export type Event = { "t": "MessageCreated", "d": { message: Message, nonce: string | null, } } | { "t": "MessageUpdated", "d": { message: Message, } } | { "t": "MessageDeleted", "d": { channel_id: ChannelId, message_id: MessageId, 
+/**
+ * Who wrote it and whom it mentioned, so clients can take it back out of their
+ * unread and mention counts.
+ */
+author_id: UserId | null, mentions: Array<UserId>, } } | { "t": "ChannelCreated", "d": { channel: Channel, } } | { "t": "ServerCreated", "d": { server: Server, } } | { "t": "MemberJoined", "d": { server_id: ServerId, member: Member, } } | { "t": "Typing", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceJoined", "d": { channel_id: ChannelId, user_id: UserId, 
 /**
  * The joiner's current mute/deafen (they may have declared it before the join landed).
  */
