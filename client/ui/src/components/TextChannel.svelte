@@ -1,15 +1,25 @@
 <script lang="ts">
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import MessageItem from './MessageItem.svelte'
   import Composer from './Composer.svelte'
-  import { app } from '../lib/store.svelte'
+  import Avatar from './Avatar.svelte'
+  import ConversationMenu from './ConversationMenu.svelte'
+  import { app, ui } from '../lib/store.svelte'
+  import { conversationName, firstUnreadIndex, isMuted, shouldMarkRead } from '../lib/conversations'
   import { addHistory, addPending, markHistory } from '../lib/state'
   import { displayName, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
-  let { channelId, serverId }: { channelId: string; serverId: string | null } = $props()
+  let { channelId, serverId, onAddPeople = () => {}, onLeft = () => {} }: {
+    channelId: string
+    serverId: string | null
+    /** DMs/groups: open the people picker. */
+    onAddPeople?: () => void
+    /** After leaving/closing this conversation. */
+    onLeft?: () => void
+  } = $props()
 
   const channel = $derived(app.state.channels[channelId])
   const messages = $derived(app.state.messages[channelId] ?? [])
@@ -91,6 +101,62 @@
   })
   const mentionNames = $derived(mentionables.map((p) => p.name))
 
+  // --- DM/group header ---
+  const isPrivate = $derived(channel?.server_id === null)
+  const title = $derived(isPrivate ? conversationName(app.state, channelId) : (channel?.name ?? ''))
+  const others = $derived((app.state.dmMembers[channelId] ?? []).filter((u) => u !== app.state.me?.id))
+  let nowIso = $state(new Date().toISOString())
+  $effect(() => {
+    const t = setInterval(() => (nowIso = new Date().toISOString()), 30_000)
+    return () => clearInterval(t)
+  })
+  const muted = $derived(channel ? isMuted(app.state, channel, nowIso) : false)
+  let menuOpen = $state(false)
+  let renaming = $state(false)
+  let renameValue = $state('')
+  function startRename() {
+    renameValue = channel?.name ?? ''
+    renaming = true
+  }
+  async function saveRename() {
+    if (!renaming) return
+    renaming = false
+    const v = renameValue.trim()
+    if (v === (channel?.name ?? '')) return
+    try {
+      await api.renameChannel(channelId, v || null)
+    } catch (e) {
+      error = errorText(e)
+    }
+  }
+
+  // --- unread: the NEW line is fixed at the read point as it was when you opened the conversation ---
+  // (the view remounts per channel, so a one-time snapshot is intended)
+  const openedAt = untrack(() => app.state.reads[channelId]?.last_read_message_id ?? null)
+  const hadReadState = untrack(() => channelId in app.state.reads)
+  const newIndex = $derived(hadReadState ? firstUnreadIndex(messages, openedAt, app.state.me?.id ?? '') : -1)
+  let atBottom = $state(true)
+  const unreadBelow = $derived(atBottom ? 0 : (app.state.reads[channelId]?.unread ?? 0))
+  let markTimer: ReturnType<typeof setTimeout> | null = null
+  $effect(() => {
+    const newest = messages.at(-1)?.id
+    const read = app.state.reads[channelId]?.last_read_message_id ?? null
+    const want = shouldMarkRead({ open: true, focused: ui.focused, atBottom })
+    if (!newest || !want || (read !== null && newest <= read)) return
+    if (markTimer) clearTimeout(markTimer)
+    markTimer = setTimeout(() => void api.markRead(channelId, newest).catch(() => {}), 300)
+    return () => {
+      if (markTimer) clearTimeout(markTimer)
+    }
+  })
+  function onScroll() {
+    atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40
+    void maybeLoadOlder()
+  }
+  function jump() {
+    list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' })
+  }
+
   const nameOf = (userId: string | null) => (userId ? displayName(app.state, serverId, userId) : 'Pulse')
 
   function send(text: string) {
@@ -118,10 +184,44 @@
 </script>
 
 <div class="chan">
-  <div class="head"><Icon name="hash" /> <span>{channel?.name}</span></div>
-  <div class="list" bind:this={list} onscroll={maybeLoadOlder}>
-    {#if reachedStart}<div class="start">This is the start of #{channel?.name}.</div>{/if}
+  <div class="head">
+    {#if isPrivate && channel?.kind === 'dm' && others[0]}
+      <Avatar id={others[0]} name={title} size={26} online={app.state.people[others[0]]?.online ?? false} />
+      <span class="title">{title}</span>
+    {:else if isPrivate}
+      <span class="pile">
+        {#each others.slice(0, 3) as u (u)}<Avatar id={u} name={app.state.people[u]?.user.username ?? '?'} size={22} />{/each}
+      </span>
+      {#if renaming}
+        <!-- svelte-ignore a11y_autofocus -->
+        <input class="rename" maxlength="64" placeholder={conversationName({ ...app.state, channels: { ...app.state.channels, [channelId]: { ...channel!, name: null } } }, channelId)}
+          bind:value={renameValue} autofocus onblur={saveRename}
+          onkeydown={(e) => { if (e.key === 'Enter') void saveRename(); if (e.key === 'Escape') renaming = false }} />
+      {:else}
+        <button class="title editable" data-tip="Rename group" onclick={startRename}>{title}</button>
+      {/if}
+    {:else}
+      <Icon name="hash" /> <span class="title">{title}</span>
+    {/if}
+    <span class="grow"></span>
+    {#if isPrivate}
+      <button class="hbtn" aria-label="Add people" data-tip="Add people" onclick={onAddPeople}><Icon name="userPlus" size={17} /></button>
+    {/if}
+    <button class="hbtn" class:on={muted} aria-label={muted ? 'Unmute' : 'Mute'} data-tip={muted ? 'Muted' : 'Mute'}
+      onclick={() => (muted ? void api.clearMute('channel', channelId) : (menuOpen = !menuOpen))}><Icon name={muted ? 'bellOff' : 'bell'} size={17} /></button>
+    <button class="hbtn" aria-label="More" aria-haspopup="menu" aria-expanded={menuOpen} data-tip="More" onclick={() => (menuOpen = !menuOpen)}><Icon name="dots" size={17} /></button>
+    {#if menuOpen && channel}
+      <ConversationMenu {channel} {muted} onClose={() => (menuOpen = false)} onRename={startRename} {onLeft} />
+    {/if}
+  </div>
+  <div class="list" bind:this={list} onscroll={onScroll}>
+    {#if reachedStart}<div class="start">
+      {#if channel?.kind === 'dm'}This is the start of your conversation with {title}.
+      {:else if channel?.kind === 'group'}This is the start of {title}.
+      {:else}This is the start of #{title}.{/if}
+    </div>{/if}
     {#each messages as m, i (m.id)}
+      {#if i === newIndex}<div class="newline" role="separator" aria-label="New messages">NEW</div>{/if}
       <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={grouped(i)}
         replyTo={m.reply_to_id ? (byId.get(m.reply_to_id) ?? null) : null}
         mine={m.author_id === app.state.me?.id}
@@ -138,18 +238,32 @@
       </div>
     {/each}
   </div>
+  {#if unreadBelow > 0}<button class="jump" onclick={jump}>{unreadBelow} new · Jump</button>{/if}
   <div class="typing" aria-live="polite">
     {#if typers.length}<strong>{typers.join(', ')}</strong> {typers.length > 1 ? 'are' : 'is'} typing…{/if}
   </div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  <Composer draftKey={channelId} placeholder="Message #{channel?.name ?? ''}" replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
+  <Composer draftKey={channelId} placeholder={isPrivate ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
     onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} />
 </div>
 
 <style>
   .chan { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   .head { height: 52px; flex-shrink: 0; padding: 0 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--text-3); }
-  .head span { color: var(--text); font-size: 15px; font-weight: 600; }
+  .head { position: relative; }
+  .title { color: var(--text); font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .editable { border: 0; background: none; padding: 2px 4px; margin-left: -4px; border-radius: 6px; font: inherit; font-size: 15px; font-weight: 600; color: var(--text); }
+  .editable:hover { background: var(--bg-3); }
+  .rename { height: 30px; min-width: 220px; padding: 0 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--bg-2); color: var(--text); font: inherit; font-weight: 600; outline: none; }
+  .pile { display: flex; }
+  .pile :global(.av) { box-shadow: 0 0 0 2px var(--bg-1); }
+  .pile :global(.av + .av) { margin-left: -7px; }
+  .grow { flex: 1; }
+  .hbtn { width: 32px; height: 32px; border: 0; border-radius: 9px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .hbtn:hover, .hbtn.on { background: var(--bg-3); color: var(--text); }
+  .newline { display: flex; align-items: center; gap: 8px; margin: 6px 18px; color: var(--danger); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
+  .newline::before, .newline::after { content: ''; flex: 1; height: 1px; background: var(--danger); opacity: .6; }
+  .jump { align-self: center; margin-top: -40px; position: relative; z-index: 2; padding: 6px 12px; border: 0; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; box-shadow: 0 4px 14px rgba(0, 0, 0, .35); }
   .list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 0 8px; display: flex; flex-direction: column; }
   .start { padding: 16px 18px; color: var(--text-3); font-size: 13px; }
   .pending { padding: 4px 18px 4px 72px; color: var(--text-3); display: flex; gap: 10px; align-items: baseline; }

@@ -9,11 +9,12 @@
   import ConversationList from '../components/ConversationList.svelte'
   import PeopleBoard from '../components/PeopleBoard.svelte'
   import PeoplePicker from '../components/PeoplePicker.svelte'
+  import GroupMembers from '../components/GroupMembers.svelte'
   import { onMount } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { api, errorText } from '../lib/tauri'
   import { app, openDm, ui } from '../lib/store.svelte'
-  import { homeBadge, serverBadge } from '../lib/conversations'
+  import { conversationName, homeBadge, serverBadge } from '../lib/conversations'
   import { isMember } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import type { User } from '../lib/protocol/User'
@@ -50,6 +51,27 @@
   })
   const home = $derived(homeBadge(app.state, nowIso))
 
+  // Removed from (or left) the open conversation: step back to Home and say why.
+  let notice = $state('')
+  let lastTitle = ''
+  $effect(() => {
+    const id = activeChannelId
+    if (!id || activeServerId !== null) return
+    const ch = app.state.channels[id]
+    if (ch) {
+      lastTitle = conversationName(app.state, id)
+      return
+    }
+    if (app.state.conn !== 'connected') return
+    activeChannelId = null
+    notice = lastTitle ? `You're no longer in ${lastTitle}.` : ''
+    setTimeout(() => (notice = ''), 4000)
+  })
+  const pickerTarget = $derived(picker?.mode === 'add' ? app.state.channels[picker.channelId] : null)
+  const pickerOthers = $derived(
+    picker?.mode === 'add' ? (app.state.dmMembers[picker.channelId] ?? []).filter((u) => u !== app.state.me?.id) : [],
+  )
+
   async function openConversation(id: string) {
     activeServerId = null
     activeChannelId = id
@@ -70,6 +92,15 @@
     try {
       if (p.mode === 'new') {
         await openConversation(ids.length === 1 ? await openDm(ids[0]) : (await api.createDm(ids)).id)
+      } else {
+        const ch = app.state.channels[p.channelId]
+        const members = (app.state.dmMembers[p.channelId] ?? []).filter((u) => u !== app.state.me?.id)
+        if (ch?.kind === 'dm') {
+          // Discord-style: adding people to a DM starts a new group; the DM stays as it is.
+          await openConversation((await api.createDm([...members, ...ids])).id)
+        } else {
+          await api.addMembers(p.channelId, ids)
+        }
       }
     } catch (e) {
       error = errorText(e)
@@ -199,7 +230,9 @@
       {:else if activeChannel?.kind === 'voice'}
         <VoicePanel channelId={activeChannel.id} serverId={activeServerId} />
       {:else if activeChannel}
-        {#key activeChannel.id}<TextChannel channelId={activeChannel.id} serverId={activeServerId} />{/key}
+        {#key activeChannel.id}<TextChannel channelId={activeChannel.id} serverId={activeServerId}
+          onAddPeople={() => (picker = { mode: 'add', channelId: activeChannel.id })}
+          onLeft={() => (activeChannelId = null)} />{/key}
       {:else if activeServerId === null}
         <PeopleBoard onOpen={openConversation} onJoinVoice={(ch, srv) => { selectServer(srv); activeChannelId = ch; if (voice.channelId !== ch) void voiceApi.join(ch) }} />
       {:else}
@@ -207,7 +240,8 @@
       {/if}
     </main>
 
-    {#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{/if}
+    {#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />
+    {:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}
   </div>
 </div>
 {#if settingsOpen}<Settings onClose={() => (settingsOpen = false)} />{/if}
@@ -228,7 +262,16 @@
 
 {#if picker?.mode === 'new'}
   <PeoplePicker title="New message" hint="Pick one person for a DM, or several for a group." action="Start" onDone={pickerDone} onClose={() => (picker = null)} />
+{:else if picker?.mode === 'add' && pickerTarget?.kind === 'dm'}
+  {@const other = app.state.people[pickerOthers[0]]?.user.username ?? 'them'}
+  <PeoplePicker title="Add people" fixed={pickerOthers} action="Create group"
+    hint="This starts a new group with you, {other} and the people you pick. Your DM with {other} stays as it is."
+    onDone={pickerDone} onClose={() => (picker = null)} />
+{:else if picker?.mode === 'add'}
+  <PeoplePicker title="Add people" fixed={pickerOthers} hint="They'll see the group's history." action="Add"
+    onDone={pickerDone} onClose={() => (picker = null)} />
 {/if}
+{#if notice}<div class="notice" role="status">{notice}</div>{/if}
 
 <style>
   .app { height: 100%; display: flex; flex-direction: column; background: var(--bg-0); }
@@ -290,4 +333,5 @@
   .error { color: #f2616b; }
   .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; display: inline-grid; place-items: center; }
   .tab .dot { margin-left: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); display: inline-block; }
+  .notice { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 40; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); }
 </style>

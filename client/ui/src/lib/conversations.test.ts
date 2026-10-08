@@ -148,3 +148,15 @@ describe('home helpers', () => {
     expect(previewText(s, msg('A', 'DM1', 'U1', { deleted: true, content: '' }))).toEqual({ text: 'message deleted', system: true })
   })
 })
+
+import { firstUnreadIndex } from './conversations'
+
+describe('NEW divider', () => {
+  const list = [msg('M1', 'DM1', 'U1'), msg('M2', 'DM1', 'ME'), msg('M3', 'DM1', 'U1'), msg('M4', 'DM1', 'U1')]
+  it('marks the first message after the read point written by someone else', () => {
+    expect(firstUnreadIndex(list, 'M1', 'ME')).toBe(2) // M2 is mine
+    expect(firstUnreadIndex(list, 'M4', 'ME')).toBe(-1)
+    expect(firstUnreadIndex(list, null, 'ME')).toBe(0) // never read anything
+    expect(firstUnreadIndex([msg('S', 'DM1', null, { kind: 'system' }), ...list], null, 'ME')).toBe(1)
+  })
+})

@@ -93,3 +93,8 @@ export function previewText(s: AppState, m: Message): { text: string; system: bo
   }
   return { text: line, system: false }
 }
+
+/** Where the red NEW line goes: the first normal message after the read point that someone else wrote (-1 = none). */
+export function firstUnreadIndex(messages: Message[], lastRead: string | null, me: string): number {
+  return messages.findIndex((m) => (lastRead === null || m.id > lastRead) && m.kind === 'normal' && m.author_id !== me)
+}
