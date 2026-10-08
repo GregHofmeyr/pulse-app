@@ -3,8 +3,8 @@
 use std::sync::Mutex;
 
 use pulse_protocol::gateway::ClientFrame;
-use pulse_protocol::ids::{ChannelId, MessageId, ServerId};
-use pulse_protocol::rest::{Channel, Member, Message, Server, User};
+use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
+use pulse_protocol::rest::{Channel, Member, Message, MuteTarget, Server, SetMuteRequest, User};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::mpsc;
 
@@ -464,4 +464,96 @@ pub fn hotkey(app: &AppHandle, c: crate::ipc::Command) {
 #[tauri::command]
 pub async fn play_sound(name: String) {
     crate::sounds::play(&name);
+}
+
+#[tauri::command]
+pub async fn create_dm(
+    app: AppHandle,
+    core: State<'_, Core>,
+    user_ids: Vec<UserId>,
+) -> Result<Channel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.create_dm(&token, user_ids).await)
+}
+
+#[tauri::command]
+pub async fn add_members(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    user_ids: Vec<UserId>,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.add_members(&token, channel_id, user_ids).await)
+}
+
+#[tauri::command]
+pub async fn remove_member(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    user_id: UserId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.remove_member(&token, channel_id, user_id).await)
+}
+
+#[tauri::command]
+pub async fn rename_channel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    name: Option<String>,
+) -> Result<Channel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.rename_channel(&token, channel_id, name).await)
+}
+
+#[tauri::command]
+pub async fn mark_read(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    message_id: MessageId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.mark_read(&token, channel_id, message_id).await)
+}
+
+#[tauri::command]
+pub async fn set_mute(
+    app: AppHandle,
+    core: State<'_, Core>,
+    target_kind: MuteTarget,
+    target_id: String,
+    until: Option<String>,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    let req = SetMuteRequest {
+        target_kind,
+        target_id,
+        until,
+    };
+    core.check(&app, api.set_mute(&token, &req).await)
+}
+
+#[tauri::command]
+pub async fn clear_mute(
+    app: AppHandle,
+    core: State<'_, Core>,
+    target_kind: MuteTarget,
+    target_id: String,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.clear_mute(&token, target_kind, &target_id).await)
+}
+
+#[tauri::command]
+pub async fn close_conversation(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.close_conversation(&token, channel_id).await)
 }

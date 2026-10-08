@@ -144,6 +144,14 @@ pub fn run() {
             commands::start_mic_test,
             commands::stop_mic_test,
             commands::play_sound,
+            commands::create_dm,
+            commands::add_members,
+            commands::remove_member,
+            commands::rename_channel,
+            commands::mark_read,
+            commands::set_mute,
+            commands::clear_mute,
+            commands::close_conversation,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Pulse")

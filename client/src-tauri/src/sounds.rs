@@ -16,6 +16,7 @@ fn bytes(name: &str) -> Option<&'static [u8]> {
         "unmute" => include_bytes!("../../ui/public/sounds/unmute.wav"),
         "deafen" => include_bytes!("../../ui/public/sounds/deafen.wav"),
         "undeafen" => include_bytes!("../../ui/public/sounds/undeafen.wav"),
+        "message" => include_bytes!("../../ui/public/sounds/message.wav"),
         _ => return None,
     })
 }
@@ -134,7 +135,9 @@ mod tests {
 
     #[test]
     fn every_bundled_sound_decodes() {
-        for name in ["join", "leave", "mute", "unmute", "deafen", "undeafen"] {
+        for name in [
+            "join", "leave", "mute", "unmute", "deafen", "undeafen", "message",
+        ] {
             let s = load(name).unwrap_or_else(|| panic!("{name} missing"));
             assert_eq!(s.rate, 22_050);
             assert!(s.samples.len() > 1000, "{name} too short");

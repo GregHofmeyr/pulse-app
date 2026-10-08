@@ -2,10 +2,11 @@
 
 use std::time::Duration;
 
-use pulse_protocol::ids::{ChannelId, MessageId, ServerId};
+use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
-    Channel, ChannelKind, EditMessageRequest, LoginRequest, Member, Message, RegisterRequest,
-    SendMessageRequest, Server, SessionResponse, User, VoiceTokenResponse,
+    AddMembersRequest, Channel, ChannelKind, CreateDmRequest, EditMessageRequest, LoginRequest,
+    MarkReadRequest, Member, Message, MuteTarget, RegisterRequest, RenameChannelRequest,
+    SendMessageRequest, Server, SessionResponse, SetMuteRequest, User, VoiceTokenResponse,
 };
 use serde::de::DeserializeOwned;
 
@@ -142,6 +143,124 @@ impl Api {
                 .post(format!("{}/servers/{server}/channels", self.base))
                 .bearer_auth(token)
                 .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn create_dm(&self, token: &str, user_ids: Vec<UserId>) -> Result<Channel, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/dms", self.base))
+                .bearer_auth(token)
+                .json(&CreateDmRequest { user_ids })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn add_members(
+        &self,
+        token: &str,
+        ch: ChannelId,
+        user_ids: Vec<UserId>,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(format!("{}/channels/{ch}/members", self.base))
+                .bearer_auth(token)
+                .json(&AddMembersRequest { user_ids })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn remove_member(
+        &self,
+        token: &str,
+        ch: ChannelId,
+        user: UserId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/channels/{ch}/members/{user}", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn rename_channel(
+        &self,
+        token: &str,
+        ch: ChannelId,
+        name: Option<String>,
+    ) -> Result<Channel, ApiError> {
+        Self::parse(
+            self.http
+                .patch(format!("{}/channels/{ch}", self.base))
+                .bearer_auth(token)
+                .json(&RenameChannelRequest { name })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn mark_read(
+        &self,
+        token: &str,
+        ch: ChannelId,
+        message_id: MessageId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(format!("{}/channels/{ch}/read", self.base))
+                .bearer_auth(token)
+                .json(&MarkReadRequest { message_id })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn set_mute(&self, token: &str, req: &SetMuteRequest) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .put(format!("{}/mutes", self.base))
+                .bearer_auth(token)
+                .json(req)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn clear_mute(
+        &self,
+        token: &str,
+        kind: MuteTarget,
+        id: &str,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/mutes/{}/{id}", self.base, kind.as_str()))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn close_conversation(&self, token: &str, ch: ChannelId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(format!("{}/channels/{ch}/close", self.base))
+                .bearer_auth(token)
                 .send()
                 .await,
         )
