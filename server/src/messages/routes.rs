@@ -17,6 +17,8 @@ use crate::db::now;
 use crate::error::{AppError, AppResult};
 use crate::servers::routes::is_server_member;
 
+use super::mentions;
+
 const MAX_LEN: usize = 4000;
 
 pub fn router() -> Router<AppState> {
@@ -77,7 +79,14 @@ pub(crate) async fn load(db: &SqlitePool, id: MessageId) -> AppResult<Option<Mes
         .bind(id.to_string())
         .fetch_optional(db)
         .await?;
-    row.map(from_row).transpose()
+    let Some(mut m) = row.map(from_row).transpose()? else {
+        return Ok(None);
+    };
+    m.mentions = mentions::for_messages(db, &[m.id])
+        .await?
+        .remove(&m.id)
+        .unwrap_or_default();
+    Ok(Some(m))
 }
 
 fn clean(content: &str) -> AppResult<String> {
@@ -117,9 +126,13 @@ async fn list(
     .bind(limit)
     .fetch_all(&s.db)
     .await?;
-    Ok(Json(
-        rows.into_iter().map(from_row).collect::<AppResult<_>>()?,
-    ))
+    let mut page: Vec<Message> = rows.into_iter().map(from_row).collect::<AppResult<_>>()?;
+    let ids: Vec<MessageId> = page.iter().map(|m| m.id).collect();
+    let mut map = mentions::for_messages(&s.db, &ids).await?;
+    for m in &mut page {
+        m.mentions = map.remove(&m.id).unwrap_or_default();
+    }
+    Ok(Json(page))
 }
 
 async fn send(
@@ -141,6 +154,7 @@ async fn send(
         _ => {}
     }
     let content = clean(&req.content)?;
+    let mentioned = mentions::resolve(&s.db, &ch, me, &mentions::parse(&content)).await?;
     if let Some(r) = req.reply_to_id {
         // Same-channel only; a reply target elsewhere (including private) is indistinguishable from missing.
         match load(&s.db, r).await? {
@@ -162,7 +176,7 @@ async fn send(
         created_at: now(),
         edited_at: None,
         deleted: false,
-        mentions: vec![],
+        mentions: mentioned.clone(),
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at) VALUES (?, ?, ?, 'normal', ?, ?, ?)")
         .bind(msg.id.to_string())
@@ -173,6 +187,7 @@ async fn send(
         .bind(&msg.created_at)
         .execute(&s.db)
         .await?;
+    mentions::store(&s.db, msg.id, &mentioned).await?;
     // Sending marks your own read point (you've obviously seen everything up to here).
     let moved = crate::reads::advance(&s.db, me, id, msg.id).await?;
     s.hub

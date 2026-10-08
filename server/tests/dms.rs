@@ -265,3 +265,44 @@ async fn ready_has_latest_message_per_conversation() {
         Some(last.id)
     );
 }
+
+#[tokio::test]
+async fn mentions_only_people_who_can_see_the_channel() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let (c_id, _) = register(&app, "jo").await;
+    let dm = create_dm(&app, &a, &[b_id]).await;
+    let m = send(&app, &a, dm.id, "hey @Sam and @jo and @alex and @nobody").await;
+    assert_eq!(
+        m.mentions,
+        vec![b_id],
+        "jo can't see the DM; self and unknown don't count"
+    );
+    let (_ws, ready) = hello(&app, &b).await;
+    assert_eq!(
+        ready
+            .read_states
+            .iter()
+            .find(|r| r.channel_id == dm.id)
+            .unwrap()
+            .mentions,
+        1
+    );
+    let s = create_server(&app, &a, "Main").await;
+    let g = general(&app, &a, s.id).await;
+    let m2 = send(&app, &a, g.id, "@jo @jo look").await;
+    assert_eq!(m2.mentions, vec![c_id], "server channels: anyone; deduped");
+}
+
+#[tokio::test]
+async fn history_carries_mentions() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let dm = create_dm(&app, &a, &[b_id]).await;
+    send(&app, &a, dm.id, "@sam yo").await;
+    let page: Vec<pulse_protocol::rest::Message> =
+        get_json(&app, &b, &format!("/channels/{}/messages", dm.id)).await;
+    assert_eq!(page[0].mentions, vec![b_id]);
+}
