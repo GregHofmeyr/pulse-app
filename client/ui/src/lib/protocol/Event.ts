@@ -4,8 +4,10 @@ import type { ChannelId } from "./ChannelId";
 import type { Member } from "./Member";
 import type { Message } from "./Message";
 import type { MessageId } from "./MessageId";
+import type { Mute } from "./Mute";
 import type { Server } from "./Server";
 import type { ServerId } from "./ServerId";
+import type { User } from "./User";
 import type { UserId } from "./UserId";
 import type { VoiceFlags } from "./VoiceFlags";
 
@@ -13,4 +15,4 @@ export type Event = { "t": "MessageCreated", "d": { message: Message, nonce: str
 /**
  * The joiner's current mute/deafen (they may have declared it before the join landed).
  */
-flags: VoiceFlags, } } | { "t": "VoiceLeft", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceStateChanged", "d": { channel_id: ChannelId, user_id: UserId, flags: VoiceFlags, } };
+flags: VoiceFlags, } } | { "t": "VoiceLeft", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceStateChanged", "d": { channel_id: ChannelId, user_id: UserId, flags: VoiceFlags, } } | { "t": "UserCreated", "d": { user: User, } } | { "t": "PresenceChanged", "d": { user_id: UserId, online: boolean, last_seen_at: string | null, } } | { "t": "GroupMembersChanged", "d": { channel_id: ChannelId, user_ids: Array<UserId>, } } | { "t": "ChannelUpdated", "d": { channel: Channel, } } | { "t": "ChannelRemoved", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "ReadStateUpdated", "d": { user_id: UserId, channel_id: ChannelId, last_read_message_id: MessageId | null, } } | { "t": "MutesChanged", "d": { user_id: UserId, mutes: Array<Mute>, } } | { "t": "ConversationVisibility", "d": { user_id: UserId, channel_id: ChannelId, hidden: boolean, } };

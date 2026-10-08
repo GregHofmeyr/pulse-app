@@ -18,6 +18,11 @@ const r: Ready = {
   members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: 'Big Dog' }] }, { server_id: 'S2', members: [{ user: sam, nickname: null }] }],
   dm_members: [],
   voice: [{ channel_id: 'V1', members: [{ user_id: 'U2', flags: { muted: true, deafened: false } }] }],
+  people: [],
+  read_states: [],
+  mutes: [],
+  hidden: [],
+  latest: [],
 }
 const s = applyReady(emptyState(), r)
 

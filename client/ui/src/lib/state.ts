@@ -126,6 +126,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       if (!list) return s
       return { ...s, voice: { ...s.voice, [c]: list.map((m) => (m.user_id === u ? { ...m, flags } : m)) } }
     }
+    default:
+      return s // events handled in later tasks
   }
 }
 

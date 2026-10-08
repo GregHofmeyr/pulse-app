@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
-use crate::rest::{Channel, Member, Message, Server, User};
+use crate::rest::{Channel, Member, Message, Mute, Person, ReadState, Server, User};
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "op", content = "d")]
@@ -49,6 +49,15 @@ pub struct Ready {
     pub dm_members: Vec<DmMembers>,
     /// Who is in which voice room right now (only rooms you may see).
     pub voice: Vec<VoiceRoom>,
+    /// Everyone with an account, with presence.
+    pub people: Vec<Person>,
+    /// Your private read points with unread/mention counts.
+    pub read_states: Vec<ReadState>,
+    pub mutes: Vec<Mute>,
+    /// Conversations you closed (hidden from your list until a new message).
+    pub hidden: Vec<ChannelId>,
+    /// Latest message of each of your DMs/groups (list previews + sorting).
+    pub latest: Vec<Message>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -114,6 +123,41 @@ pub enum Event {
         user_id: UserId,
         flags: VoiceFlags,
     },
+    UserCreated {
+        user: User,
+    },
+    PresenceChanged {
+        user_id: UserId,
+        online: bool,
+        last_seen_at: Option<String>,
+    },
+    GroupMembersChanged {
+        channel_id: ChannelId,
+        user_ids: Vec<UserId>,
+    },
+    ChannelUpdated {
+        channel: Channel,
+    },
+    /// Only to the removed/leaving user.
+    ChannelRemoved {
+        channel_id: ChannelId,
+        user_id: UserId,
+    },
+    /// Only to the owner's own sessions (multi-device sync; no read receipts).
+    ReadStateUpdated {
+        user_id: UserId,
+        channel_id: ChannelId,
+        last_read_message_id: Option<MessageId>,
+    },
+    MutesChanged {
+        user_id: UserId,
+        mutes: Vec<Mute>,
+    },
+    ConversationVisibility {
+        user_id: UserId,
+        channel_id: ChannelId,
+        hidden: bool,
+    },
 }
 
 impl Event {
@@ -129,7 +173,27 @@ impl Event {
             | Self::VoiceLeft { channel_id, .. }
             | Self::VoiceStateChanged { channel_id, .. } => Some(*channel_id),
             Self::ChannelCreated { channel } => Some(channel.id),
-            Self::ServerCreated { .. } | Self::MemberJoined { .. } => None,
+            Self::GroupMembersChanged { channel_id, .. }
+            | Self::ChannelRemoved { channel_id, .. }
+            | Self::ReadStateUpdated { channel_id, .. }
+            | Self::ConversationVisibility { channel_id, .. } => Some(*channel_id),
+            Self::ChannelUpdated { channel } => Some(channel.id),
+            Self::ServerCreated { .. }
+            | Self::MemberJoined { .. }
+            | Self::UserCreated { .. }
+            | Self::PresenceChanged { .. }
+            | Self::MutesChanged { .. } => None,
+        }
+    }
+
+    /// Per-user events go to that user's own sessions only (checked before channel audience).
+    pub fn only_for(&self) -> Option<UserId> {
+        match self {
+            Self::ChannelRemoved { user_id, .. }
+            | Self::ReadStateUpdated { user_id, .. }
+            | Self::MutesChanged { user_id, .. }
+            | Self::ConversationVisibility { user_id, .. } => Some(*user_id),
+            _ => None,
         }
     }
 }

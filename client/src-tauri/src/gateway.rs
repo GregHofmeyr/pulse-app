@@ -20,7 +20,7 @@ const DEAD_AFTER: Duration = Duration::from_secs(75);
 #[derive(Debug, Clone)]
 pub enum GatewayUpdate {
     Ready(Box<Ready>),
-    Event(Event),
+    Event(Box<Event>),
     Connection(ConnState),
 }
 
@@ -193,7 +193,7 @@ async fn session(
                 if ws.send(Ws::text(f)).await.is_err() { return End::Retry(true) }
             }
             frame = next_frame(&mut ws) => { deadline = tokio::time::Instant::now() + dead_after; match frame {
-                Frame::Server(ServerFrame::Event(e)) => { let _ = tx.send(GatewayUpdate::Event(e)); }
+                Frame::Server(ServerFrame::Event(e)) => { let _ = tx.send(GatewayUpdate::Event(Box::new(e))); }
                 Frame::Server(ServerFrame::Ready(r)) => { let _ = tx.send(GatewayUpdate::Ready(Box::new(r))); }
                 Frame::Server(ServerFrame::HeartbeatAck) => {}
                 Frame::Closed(Some(CloseCode::Library(4001))) => return End::LoggedOut,
@@ -276,7 +276,8 @@ mod tests {
         assert_eq!(ready.servers.len(), 1);
         let sent = testing::send(&app, &token, g.id, "hi").await;
         loop {
-            if let GatewayUpdate::Event(Event::MessageCreated { message, .. }) = next(&mut rx).await
+            if let GatewayUpdate::Event(e) = next(&mut rx).await
+                && let Event::MessageCreated { message, .. } = *e
             {
                 assert_eq!(message.id, sent.id);
                 break;
@@ -370,6 +371,11 @@ mod tests {
                         members: vec![],
                         dm_members: vec![],
                         voice: vec![],
+                        people: vec![],
+                        read_states: vec![],
+                        mutes: vec![],
+                        hidden: vec![],
+                        latest: vec![],
                     });
                     ws.send(tokio_tungstenite::tungstenite::Message::text(
                         serde_json::to_string(&ready).unwrap(),

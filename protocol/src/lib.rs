@@ -24,5 +24,13 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::EditMessageRequest::export_all(&cfg)?;
     rest::VoiceTokenResponse::export_all(&cfg)?;
     rest::ApiError::export_all(&cfg)?;
+    rest::Person::export_all(&cfg)?;
+    rest::ReadState::export_all(&cfg)?;
+    rest::Mute::export_all(&cfg)?;
+    rest::MuteTarget::export_all(&cfg)?;
+    rest::AddMembersRequest::export_all(&cfg)?;
+    rest::RenameChannelRequest::export_all(&cfg)?;
+    rest::MarkReadRequest::export_all(&cfg)?;
+    rest::SetMuteRequest::export_all(&cfg)?;
     Ok(())
 }

@@ -239,9 +239,8 @@ mod tests {
         ob.flush(&Api::new(&format!("http://{}", app.addr)), &token, true)
             .await;
         loop {
-            if let Some(crate::gateway::GatewayUpdate::Event(
-                pulse_protocol::gateway::Event::MessageCreated { nonce, .. },
-            )) = rx.recv().await
+            if let Some(crate::gateway::GatewayUpdate::Event(e)) = rx.recv().await
+                && let pulse_protocol::gateway::Event::MessageCreated { nonce, .. } = *e
             {
                 assert_eq!(nonce.as_deref(), Some("my-nonce"));
                 break;

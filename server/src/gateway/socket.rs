@@ -129,6 +129,11 @@ pub async fn build_ready(
         members,
         dm_members,
         voice,
+        people: vec![],
+        read_states: vec![],
+        mutes: vec![],
+        hidden: vec![],
+        latest: vec![],
     })
 }
 

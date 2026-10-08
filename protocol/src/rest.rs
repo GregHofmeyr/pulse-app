@@ -129,6 +129,78 @@ pub struct Message {
     pub created_at: String,
     pub edited_at: Option<String>,
     pub deleted: bool,
+    /// Users this message @mentions (only people who can see the channel).
+    #[serde(default)]
+    pub mentions: Vec<UserId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Person {
+    pub user: User,
+    pub online: bool,
+    pub last_seen_at: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ReadState {
+    pub channel_id: ChannelId,
+    pub last_read_message_id: Option<MessageId>,
+    pub unread: u32,
+    pub mentions: u32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum MuteTarget {
+    Server,
+    Channel,
+}
+
+impl MuteTarget {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Server => "server",
+            Self::Channel => "channel",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "server" => Some(Self::Server),
+            "channel" => Some(Self::Channel),
+            _ => None,
+        }
+    }
+}
+
+/// `until: None` = muted until unmuted.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Mute {
+    pub target_kind: MuteTarget,
+    pub target_id: String,
+    pub until: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct AddMembersRequest {
+    pub user_ids: Vec<UserId>,
+}
+
+/// `None` or blank → back to the default name (the members' names).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct RenameChannelRequest {
+    pub name: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct MarkReadRequest {
+    pub message_id: MessageId,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SetMuteRequest {
+    pub target_kind: MuteTarget,
+    pub target_id: String,
+    pub until: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

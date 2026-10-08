@@ -4,4 +4,8 @@ import type { MessageId } from "./MessageId";
 import type { MessageKind } from "./MessageKind";
 import type { UserId } from "./UserId";
 
-export type Message = { id: MessageId, channel_id: ChannelId, author_id: UserId | null, kind: MessageKind, content: string, reply_to_id: MessageId | null, created_at: string, edited_at: string | null, deleted: boolean, };
+export type Message = { id: MessageId, channel_id: ChannelId, author_id: UserId | null, kind: MessageKind, content: string, reply_to_id: MessageId | null, created_at: string, edited_at: string | null, deleted: boolean, 
+/**
+ * Users this message @mentions (only people who can see the channel).
+ */
+mentions: Array<UserId>, };

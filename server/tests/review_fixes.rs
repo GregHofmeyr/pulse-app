@@ -161,6 +161,7 @@ async fn silent_client_times_out_despite_outbound_traffic() {
                 created_at: "2026-10-01T00:00:00.000Z".into(),
                 edited_at: None,
                 deleted: false,
+                mentions: vec![],
             };
             hub.publish(
                 &db,

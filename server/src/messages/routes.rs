@@ -68,6 +68,7 @@ fn from_row(r: Row) -> AppResult<Message> {
         created_at,
         edited_at,
         deleted: deleted_at.is_some(),
+        mentions: vec![],
     })
 }
 
@@ -161,6 +162,7 @@ async fn send(
         created_at: now(),
         edited_at: None,
         deleted: false,
+        mentions: vec![],
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at) VALUES (?, ?, ?, 'normal', ?, ?, ?)")
         .bind(msg.id.to_string())
