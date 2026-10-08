@@ -589,3 +589,33 @@ async fn closed_conversation_reappears_on_new_message() {
     let (_ws2, ready) = hello(&app, &b).await;
     assert!(ready.hidden.is_empty());
 }
+
+#[tokio::test]
+async fn last_leave_deletes_a_group_with_replies() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let (c_id, c) = register(&app, "jo").await;
+    let g = create_dm(&app, &a, &[b_id, c_id]).await;
+    let first = send(&app, &a, g.id, "first").await;
+    let r = post_json(
+        &app,
+        &b,
+        &format!("/channels/{}/messages", g.id),
+        serde_json::json!({"content": "reply", "reply_to_id": first.id, "nonce": null}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    for (id, tok) in [(b_id, &b), (c_id, &c), (a_id, &a)] {
+        assert_eq!(
+            delete(&app, tok, &format!("/channels/{}/members/{}", g.id, id)).await,
+            204
+        );
+    }
+    let left: Option<String> = sqlx::query_scalar("SELECT id FROM channels WHERE id = ?")
+        .bind(g.id.to_string())
+        .fetch_optional(&app.db)
+        .await
+        .unwrap();
+    assert!(left.is_none());
+}
