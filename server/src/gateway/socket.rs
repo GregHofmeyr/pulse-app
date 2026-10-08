@@ -9,17 +9,20 @@ use pulse_protocol::gateway::{
     ClientFrame, DmMembers, Event, Ready, ServerFrame, ServerMembers, VoiceMember, VoiceRoom,
 };
 use pulse_protocol::ids::UserId;
+use pulse_protocol::rest::{Person, User};
 use sqlx::SqlitePool;
 
 use crate::AppState;
 use crate::access::channel_for;
 use crate::auth::routes::load_user;
 use crate::auth::session;
+use crate::db::now;
 use crate::error::AppResult;
 use crate::servers::routes::{all_servers, dms_of, server_channels, server_members};
 use crate::voice::VoiceState;
 
 pub use super::hub::{CLOSE_TOO_SLOW, CLOSE_UNAUTHORIZED};
+use super::hub::{ConnId, Hub};
 pub const CLOSE_TIMEOUT: u16 = 4002;
 /// Pre- and post-auth client frames are tiny; cap them so nobody can make us buffer megabytes.
 const MAX_CLIENT_FRAME: usize = 64 * 1024;
@@ -76,9 +79,61 @@ async fn authenticate(socket: &mut WebSocket, s: &AppState) -> Auth {
     }
 }
 
+/// Every exit path of a connection ends here: unregister and, if it was the user's last
+/// connection, record last-seen and announce they went offline.
+async fn disconnected(s: &AppState, conn: ConnId, me: UserId) {
+    let last = match s.hub.unregister(conn) {
+        Some((_, last)) => last,
+        None => !s.hub.is_online(me), // the hub already dropped it (logout, too slow, shutdown)
+    };
+    if !last {
+        return;
+    }
+    let at = now();
+    let _ = sqlx::query("UPDATE users SET last_seen_at = ? WHERE id = ?")
+        .bind(&at)
+        .bind(me.to_string())
+        .execute(&s.db)
+        .await;
+    s.hub
+        .publish(
+            &s.db,
+            Event::PresenceChanged {
+                user_id: me,
+                online: false,
+                last_seen_at: Some(at),
+            },
+        )
+        .await;
+}
+
+/// Everyone with an account, online if they have any live connection.
+pub async fn people(db: &SqlitePool, hub: &Hub) -> AppResult<Vec<Person>> {
+    let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT id, username, avatar_hash, last_seen_at FROM users ORDER BY username",
+    )
+    .fetch_all(db)
+    .await?;
+    rows.into_iter()
+        .map(|(id, username, avatar_hash, last_seen_at)| {
+            let id: UserId = id.parse().map_err(anyhow::Error::from)?;
+            Ok(Person {
+                online: hub.is_online(id),
+                user: User {
+                    id,
+                    username,
+                    avatar_hash,
+                },
+                last_seen_at,
+            })
+        })
+        .collect()
+}
+
 pub async fn build_ready(
     db: &SqlitePool,
     voice_state: &VoiceState,
+    hub: &Hub,
     me: UserId,
 ) -> AppResult<Ready> {
     let servers = all_servers(db).await?;
@@ -129,7 +184,7 @@ pub async fn build_ready(
         members,
         dm_members,
         voice,
-        people: vec![],
+        people: people(db, hub).await?,
         read_states: vec![],
         mutes: vec![],
         hidden: vec![],
@@ -145,18 +200,30 @@ async fn run(mut socket: WebSocket, s: AppState) {
     };
     // Register before building Ready so no event between the snapshot and the stream is lost.
     let reg = s.hub.register(me, token_hash);
-    let (conn, mut rx, mut kick) = (reg.id, reg.rx, reg.kick);
-    let ready = match build_ready(&s.db, &s.voice, me).await {
+    let (conn, mut rx, mut kick, first) = (reg.id, reg.rx, reg.kick, reg.first);
+    let ready = match build_ready(&s.db, &s.voice, &s.hub, me).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = ?e, "build_ready failed");
-            s.hub.unregister(conn);
+            disconnected(&s, conn, me).await;
             return;
         }
     };
     if !send(&mut socket, &ServerFrame::Ready(ready)).await {
-        s.hub.unregister(conn);
+        disconnected(&s, conn, me).await;
         return;
+    }
+    if first {
+        s.hub
+            .publish(
+                &s.db,
+                Event::PresenceChanged {
+                    user_id: me,
+                    online: true,
+                    last_seen_at: None,
+                },
+            )
+            .await;
     }
 
     // Only inbound frames prove the client is alive; outbound traffic must not extend the deadline.
@@ -166,7 +233,7 @@ async fn run(mut socket: WebSocket, s: AppState) {
             // A kick closes the queue too; check it first so the client gets the close code.
             biased;
             code = &mut kick => {
-                s.hub.unregister(conn);
+                disconnected(&s, conn, me).await;
                 let reason = match code { Ok(CLOSE_TOO_SLOW) => "too slow", Ok(1012) => "server restarting", _ => "session ended" };
                 return close(socket, code.unwrap_or(CLOSE_UNAUTHORIZED), reason).await;
             }
@@ -175,7 +242,7 @@ async fn run(mut socket: WebSocket, s: AppState) {
                 if !send(&mut socket, &frame).await { break }
             }
             _ = tokio::time::sleep_until(deadline) => {
-                s.hub.unregister(conn);
+                disconnected(&s, conn, me).await;
                 return close(socket, CLOSE_TIMEOUT, "heartbeat timeout").await;
             }
             inc = socket.recv() => {
@@ -209,5 +276,5 @@ async fn run(mut socket: WebSocket, s: AppState) {
             }
         }
     }
-    s.hub.unregister(conn);
+    disconnected(&s, conn, me).await;
 }

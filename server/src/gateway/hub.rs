@@ -24,6 +24,8 @@ pub struct Registration {
     pub rx: mpsc::Receiver<ServerFrame>,
     /// Fires with a close code when the hub wants this socket gone.
     pub kick: oneshot::Receiver<u16>,
+    /// The user had no other connection: they just came online.
+    pub first: bool,
 }
 
 struct Conn {
@@ -58,7 +60,9 @@ impl Hub {
         let (tx, rx) = mpsc::channel(QUEUE);
         let (ktx, krx) = oneshot::channel();
         let id = self.inner.next.fetch_add(1, Ordering::Relaxed);
-        self.inner.conns.lock().unwrap().insert(
+        let mut conns = self.inner.conns.lock().unwrap();
+        let first = !conns.values().any(|c| c.user == user);
+        conns.insert(
             id,
             Conn {
                 user,
@@ -67,11 +71,30 @@ impl Hub {
                 kick: Some(ktx),
             },
         );
-        Registration { id, rx, kick: krx }
+        Registration {
+            id,
+            rx,
+            kick: krx,
+            first,
+        }
     }
 
-    pub fn unregister(&self, id: ConnId) {
-        self.inner.conns.lock().unwrap().remove(&id);
+    /// Remove a connection; returns (user, whether it was their last connection). `None` if the
+    /// hub already dropped it (logout, too slow, shutdown).
+    pub fn unregister(&self, id: ConnId) -> Option<(UserId, bool)> {
+        let mut conns = self.inner.conns.lock().unwrap();
+        let c = conns.remove(&id)?;
+        let last = !conns.values().any(|o| o.user == c.user);
+        Some((c.user, last))
+    }
+
+    pub fn is_online(&self, user: UserId) -> bool {
+        self.inner
+            .conns
+            .lock()
+            .unwrap()
+            .values()
+            .any(|c| c.user == user)
     }
 
     pub fn connections_for(&self, user: UserId) -> usize {

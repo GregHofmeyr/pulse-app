@@ -46,7 +46,15 @@ async fn next(ws: &mut Socket) -> ServerFrame {
             .unwrap()
             .unwrap();
         if let Ws::Text(t) = m {
-            return serde_json::from_str(&t).unwrap();
+            let f: ServerFrame = serde_json::from_str(&t).unwrap();
+            // Presence/new-user events are background noise for these tests.
+            if matches!(
+                f,
+                ServerFrame::Event(Event::PresenceChanged { .. } | Event::UserCreated { .. })
+            ) {
+                continue;
+            }
+            return f;
         }
     }
 }

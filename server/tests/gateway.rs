@@ -42,7 +42,17 @@ async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
             .ok()??
             .ok()?;
         match m {
-            Ws::Text(t) => return Some(serde_json::from_str(&t).unwrap()),
+            Ws::Text(t) => {
+                let f: ServerFrame = serde_json::from_str(&t).unwrap();
+                // Presence/new-user events are background noise for these tests.
+                if matches!(
+                    f,
+                    ServerFrame::Event(Event::PresenceChanged { .. } | Event::UserCreated { .. })
+                ) {
+                    continue;
+                }
+                return Some(f);
+            }
             Ws::Close(_) => return None,
             _ => continue,
         }

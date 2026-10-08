@@ -2,6 +2,7 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::UserId;
 use pulse_protocol::rest::{InviteResponse, LoginRequest, RegisterRequest, SessionResponse, User};
 use sqlx::SqlitePool;
@@ -111,14 +112,15 @@ async fn register(
     tx.commit().await?;
 
     let token = session::create(&s.db, id).await?;
-    Ok(Json(SessionResponse {
-        token,
-        user: User {
-            id,
-            username: req.username,
-            avatar_hash: None,
-        },
-    }))
+    let user = User {
+        id,
+        username: req.username,
+        avatar_hash: None,
+    };
+    s.hub
+        .publish(&s.db, Event::UserCreated { user: user.clone() })
+        .await;
+    Ok(Json(SessionResponse { token, user }))
 }
 
 /// Real hash of a throwaway password so unknown usernames cost the same as wrong passwords.

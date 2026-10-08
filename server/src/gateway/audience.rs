@@ -26,6 +26,10 @@ impl Audience {
 }
 
 pub async fn audience_for(db: &SqlitePool, event: &Event) -> anyhow::Result<Audience> {
+    // Per-user events (read points, mutes, closing, removal) reach that user's own sessions only.
+    if let Some(owner) = event.only_for() {
+        return Ok(Audience::Users([owner].into_iter().collect()));
+    }
     let Some(channel_id) = event.channel_id() else {
         // ServerCreated / MemberJoined: server-level, public.
         return Ok(Audience::Everyone);
