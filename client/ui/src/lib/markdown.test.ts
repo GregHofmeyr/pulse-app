@@ -56,3 +56,16 @@ describe('typingThrottle', () => {
     expect(typingThrottle(1000, 4000)).toBe(true)
   })
 })
+
+describe('mentions', () => {
+  it('wraps known @mentions in a pill, not in code, not unknown names', () => {
+    const html = renderMarkdown('hi @Sam and @nobody `@sam`', ['sam'])
+    expect(html).toContain('<span class="mention">@Sam</span>')
+    expect(html).not.toContain('<span class="mention">@nobody')
+    expect(html).toContain('<code>@sam</code>')
+  })
+  it('mention markup cannot be injected by content', () => {
+    const html = renderMarkdown('<span class="mention">fake</span>', [])
+    expect(html).not.toContain('<span class="mention">')
+  })
+})

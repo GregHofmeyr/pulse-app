@@ -81,6 +81,16 @@
     }
   }
 
+  // Who can be @mentioned here: a DM/group's members, or everyone for server channels.
+  const mentionables = $derived.by(() => {
+    const ids = channel?.server_id === null ? (app.state.dmMembers[channelId] ?? []) : Object.keys(app.state.people)
+    return ids
+      .filter((id) => id !== app.state.me?.id)
+      .map((id) => ({ id, name: app.state.people[id]?.user.username ?? '' }))
+      .filter((p) => p.name)
+  })
+  const mentionNames = $derived(mentionables.map((p) => p.name))
+
   const nameOf = (userId: string | null) => (userId ? displayName(app.state, serverId, userId) : 'Pulse')
 
   function send(text: string) {
@@ -115,6 +125,7 @@
       <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={grouped(i)}
         replyTo={m.reply_to_id ? (byId.get(m.reply_to_id) ?? null) : null}
         mine={m.author_id === app.state.me?.id}
+        {mentionNames} meId={app.state.me?.id ?? ''}
         onReply={() => (replyTo = m)}
         onEdit={async (c) => { try { await api.editMessage(m.id, c) } catch (e) { error = errorText(e) } }}
         onDelete={async () => { try { await api.deleteMessage(m.id) } catch (e) { error = errorText(e) } }} />
@@ -132,7 +143,7 @@
   </div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   <Composer draftKey={channelId} placeholder="Message #{channel?.name ?? ''}" replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
-    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} />
+    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} />
 </div>
 
 <style>

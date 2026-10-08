@@ -14,6 +14,8 @@
     onReply,
     onEdit,
     onDelete,
+    mentionNames = [],
+    meId = '',
   }: {
     message: Message
     name: string
@@ -24,6 +26,9 @@
     onReply: () => void
     onEdit: (content: string) => Promise<void>
     onDelete: () => void
+    /** Usernames that may be mentioned here (rendered as pills). */
+    mentionNames?: string[]
+    meId?: string
   } = $props()
 
   let editing = $state(false)
@@ -50,7 +55,7 @@
 {#if message.kind === 'system'}
   <div class="system">{message.content} <span class="time">{time}</span></div>
 {:else}
-  <div class="msg" class:grouped>
+  <div class="msg" class:grouped class:mentioned={!!meId && message.mentions.includes(meId)}>
     {#if replyTo}
       <div class="reply"><span class="hook"></span><strong>{nameOf(replyTo.author_id)}</strong>
         <span class="snippet">{replyTo.deleted ? 'original message deleted' : replyTo.content.slice(0, 120)}</span></div>
@@ -72,7 +77,7 @@
           <small class="hint">Enter to save · Esc to cancel</small>
         {:else}
           <!-- renderMarkdown output is DOMPurify-sanitised (allow-list); the only {@html} in the app. -->
-          <div class="content">{@html renderMarkdown(message.content)}</div>
+          <div class="content">{@html renderMarkdown(message.content, mentionNames)}</div>
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
       </div>
@@ -120,4 +125,6 @@
   textarea { width: 100%; resize: vertical; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; font: inherit; }
   .hint { font-size: 11px; color: var(--text-3); }
   .system { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }
+  .msg.mentioned { background: rgba(139, 156, 255, .08); box-shadow: inset 2px 0 0 var(--accent); }
+  .content :global(.mention) { color: var(--accent); background: rgba(139, 156, 255, .15); border-radius: 4px; padding: 0 3px; font-weight: 600; }
 </style>
