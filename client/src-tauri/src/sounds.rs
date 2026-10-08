@@ -62,8 +62,17 @@ pub fn decode_wav(b: &[u8]) -> Option<Sound> {
     None
 }
 
+/// Silence before the message ping: an idle (suspended) output, typically Bluetooth, needs a few
+/// hundred ms to wake, and would swallow the short ping otherwise.
+pub const LEAD_IN_MS: u32 = 450;
+
 pub fn load(name: &str) -> Option<Sound> {
-    bytes(name).and_then(decode_wav)
+    let mut s = bytes(name).and_then(decode_wav)?;
+    if name == "message" {
+        let lead = (s.rate as usize * LEAD_IN_MS as usize) / 1000;
+        s.samples.splice(0..0, std::iter::repeat_n(0.0, lead));
+    }
+    Some(s)
 }
 
 const VOLUME: f32 = 0.6;
@@ -144,6 +153,28 @@ mod tests {
             assert!(s.samples.iter().any(|v| v.abs() > 0.1), "{name} silent");
         }
         assert!(load("nope").is_none());
+    }
+
+    /// The message ping often plays to an idle output: a sleeping Bluetooth device takes a few hundred
+    /// ms to wake and swallows anything shorter, so it starts with silence (other sounds play while
+    /// voice keeps the device awake).
+    #[test]
+    fn message_sound_starts_with_wake_up_silence() {
+        let m = load("message").unwrap();
+        let lead = (m.rate as usize * LEAD_IN_MS as usize) / 1000;
+        assert!(
+            m.samples[..lead].iter().all(|v| *v == 0.0),
+            "lead-in must be silent"
+        );
+        assert!(
+            m.samples[lead..].iter().any(|v| v.abs() > 0.1),
+            "the ping follows"
+        );
+        let j = load("join").unwrap();
+        assert!(
+            j.samples[..200].iter().any(|v| v.abs() > 0.0001) || j.samples.len() < lead,
+            "join has no lead-in"
+        );
     }
 
     #[test]

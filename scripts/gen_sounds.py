@@ -28,7 +28,7 @@ SOUNDS = {
     "deafen": tone([(392, 294), (330, 247)], 0.07, gap=0.02),
     "undeafen": tone([(247, 330), (294, 392)], 0.07, gap=0.02),
     # a soft, bright two-note pop for new DMs/mentions (distinct from join/leave)
-    "message": tone([(880, 880), (1320, 1320)], 0.06, gap=0.02, vol=0.3),
+    "message": tone([(880, 880), (1320, 1320)], 0.08, gap=0.02, vol=0.42),
 }
 
 for name, samples in SOUNDS.items():
