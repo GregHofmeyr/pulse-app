@@ -24,8 +24,6 @@ pub struct Registration {
     pub rx: mpsc::Receiver<ServerFrame>,
     /// Fires with a close code when the hub wants this socket gone.
     pub kick: oneshot::Receiver<u16>,
-    /// The user had no other connection: they just came online.
-    pub first: bool,
 }
 
 struct Conn {
@@ -52,6 +50,8 @@ pub struct Hub {
 struct Inner {
     next: AtomicU64,
     conns: Mutex<HashMap<ConnId, Conn>>,
+    /// What everyone was last told about each user's presence. Locked only while `conns` is held.
+    announced: Mutex<HashMap<UserId, bool>>,
 }
 
 impl Hub {
@@ -60,9 +60,7 @@ impl Hub {
         let (tx, rx) = mpsc::channel(QUEUE);
         let (ktx, krx) = oneshot::channel();
         let id = self.inner.next.fetch_add(1, Ordering::Relaxed);
-        let mut conns = self.inner.conns.lock().unwrap();
-        let first = !conns.values().any(|c| c.user == user);
-        conns.insert(
+        self.inner.conns.lock().unwrap().insert(
             id,
             Conn {
                 user,
@@ -71,21 +69,13 @@ impl Hub {
                 kick: Some(ktx),
             },
         );
-        Registration {
-            id,
-            rx,
-            kick: krx,
-            first,
-        }
+        Registration { id, rx, kick: krx }
     }
 
     /// Remove a connection; returns (user, whether it was their last connection). `None` if the
     /// hub already dropped it (logout, too slow, shutdown).
-    pub fn unregister(&self, id: ConnId) -> Option<(UserId, bool)> {
-        let mut conns = self.inner.conns.lock().unwrap();
-        let c = conns.remove(&id)?;
-        let last = !conns.values().any(|o| o.user == c.user);
-        Some((c.user, last))
+    pub fn unregister(&self, id: ConnId) {
+        self.inner.conns.lock().unwrap().remove(&id);
     }
 
     pub fn is_online(&self, user: UserId) -> bool {
@@ -136,20 +126,65 @@ impl Hub {
             }
         };
         let frame = ServerFrame::Event(event);
-        let mut conns = self.inner.conns.lock().unwrap();
-        conns.retain(|id, c| {
-            if !audience.includes(c.user) {
-                return true;
-            }
-            match c.tx.try_send(frame.clone()) {
-                Ok(()) => true,
-                Err(mpsc::error::TrySendError::Full(_)) => {
-                    tracing::warn!(conn = id, user = %c.user, "gateway client too slow; dropping");
-                    c.kick(CLOSE_TOO_SLOW);
-                    false
-                }
-                Err(mpsc::error::TrySendError::Closed(_)) => false,
-            }
-        });
+        deliver(&mut self.inner.conns.lock().unwrap(), &audience, &frame);
     }
+
+    /// Tell everyone whether `user` is online, but only if that changed since the last time.
+    /// The truth is read under the same lock that sends, so racing connects and disconnects
+    /// can neither repeat an announcement nor reorder two of them. `last_seen_at` goes out with
+    /// an "offline". Returns what was announced, if anything.
+    pub async fn sync_presence(
+        &self,
+        db: &SqlitePool,
+        user: UserId,
+        last_seen_at: String,
+    ) -> Option<bool> {
+        let probe = Event::PresenceChanged {
+            user_id: user,
+            online: true,
+            last_seen_at: None,
+        };
+        let audience = match audience_for(db, &probe).await {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::error!(error = ?e, "audience_for failed; presence not announced");
+                return None;
+            }
+        };
+        let mut conns = self.inner.conns.lock().unwrap();
+        let online = conns.values().any(|c| c.user == user);
+        let before = self.inner.announced.lock().unwrap().insert(user, online);
+        if before.unwrap_or(false) == online {
+            return None;
+        }
+        let frame = ServerFrame::Event(Event::PresenceChanged {
+            user_id: user,
+            online,
+            last_seen_at: (!online).then_some(last_seen_at),
+        });
+        deliver(&mut conns, &audience, &frame);
+        Some(online)
+    }
+}
+
+/// Queue `frame` for every connection in `audience`; drop connections that can't keep up.
+fn deliver(
+    conns: &mut HashMap<ConnId, Conn>,
+    audience: &super::audience::Audience,
+    frame: &ServerFrame,
+) {
+    conns.retain(|id, c| {
+        if !audience.includes(c.user) {
+            return true;
+        }
+        match c.tx.try_send(frame.clone()) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::warn!(conn = id, user = %c.user, "gateway client too slow; dropping");
+                c.kick(CLOSE_TOO_SLOW);
+                false
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+        }
+    });
 }

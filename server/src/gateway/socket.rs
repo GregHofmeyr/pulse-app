@@ -79,15 +79,12 @@ async fn authenticate(socket: &mut WebSocket, s: &AppState) -> Auth {
     }
 }
 
-/// Every exit path of a connection ends here: unregister and, if it was the user's last
+/// Every exit path of a connection ends here: unregister and, if that was the user's last
 /// connection, record last-seen and announce they went offline.
 async fn disconnected(s: &AppState, conn: ConnId, me: UserId) {
-    let last = match s.hub.unregister(conn) {
-        Some((_, last)) => last,
-        None => !s.hub.is_online(me), // the hub already dropped it (logout, too slow, shutdown)
-    };
-    if !last {
-        return;
+    s.hub.unregister(conn);
+    if s.hub.is_online(me) {
+        return; // still connected elsewhere
     }
     let at = now();
     let _ = sqlx::query("UPDATE users SET last_seen_at = ? WHERE id = ?")
@@ -95,16 +92,7 @@ async fn disconnected(s: &AppState, conn: ConnId, me: UserId) {
         .bind(me.to_string())
         .execute(&s.db)
         .await;
-    s.hub
-        .publish(
-            &s.db,
-            Event::PresenceChanged {
-                user_id: me,
-                online: false,
-                last_seen_at: Some(at),
-            },
-        )
-        .await;
+    s.hub.sync_presence(&s.db, me, at).await;
 }
 
 /// Everyone with an account, online if they have any live connection.
@@ -200,7 +188,7 @@ async fn run(mut socket: WebSocket, s: AppState) {
     };
     // Register before building Ready so no event between the snapshot and the stream is lost.
     let reg = s.hub.register(me, token_hash);
-    let (conn, mut rx, mut kick, first) = (reg.id, reg.rx, reg.kick, reg.first);
+    let (conn, mut rx, mut kick) = (reg.id, reg.rx, reg.kick);
     let ready = match build_ready(&s.db, &s.voice, &s.hub, me).await {
         Ok(r) => r,
         Err(e) => {
@@ -213,18 +201,7 @@ async fn run(mut socket: WebSocket, s: AppState) {
         disconnected(&s, conn, me).await;
         return;
     }
-    if first {
-        s.hub
-            .publish(
-                &s.db,
-                Event::PresenceChanged {
-                    user_id: me,
-                    online: true,
-                    last_seen_at: None,
-                },
-            )
-            .await;
-    }
+    s.hub.sync_presence(&s.db, me, now()).await;
 
     // Only inbound frames prove the client is alive; outbound traffic must not extend the deadline.
     let mut deadline = tokio::time::Instant::now() + s.cfg.heartbeat_timeout;

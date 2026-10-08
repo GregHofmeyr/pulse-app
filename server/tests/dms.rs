@@ -619,3 +619,67 @@ async fn last_leave_deletes_a_group_with_replies() {
         .unwrap();
     assert!(left.is_none());
 }
+
+#[tokio::test]
+async fn logout_with_two_sockets_announces_offline_once() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (_, b) = register(&app, "sam").await;
+    let (mut watcher, _) = hello(&app, &b).await;
+    let (_ws1, _) = hello(&app, &a).await;
+    let (_ws2, _) = hello(&app, &a).await;
+    wait_for(
+        &mut watcher,
+        |e| matches!(e, Event::PresenceChanged { user_id, online: true, .. } if *user_id == a_id),
+    )
+    .await;
+    let r = app
+        .http
+        .post(app.url("/auth/logout"))
+        .bearer_auth(&a)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    // Collect alex's presence events for a while: exactly one "offline", nothing after it.
+    let mut seen = Vec::new();
+    while let Ok(Some(f)) =
+        tokio::time::timeout(Duration::from_millis(600), next_frame(&mut watcher)).await
+    {
+        if let ServerFrame::Event(Event::PresenceChanged {
+            user_id, online, ..
+        }) = f
+            && user_id == a_id
+        {
+            seen.push(online);
+        }
+    }
+    assert_eq!(seen, vec![false]);
+}
+
+#[tokio::test]
+async fn late_offline_after_a_reconnect_is_not_announced() {
+    use pulse_server::gateway::hub::Hub;
+    let app = spawn().await;
+    let (a_id, _) = register(&app, "alex").await;
+    let (b_id, _) = register(&app, "sam").await;
+    let hub = Hub::default();
+    let mut watcher = hub.register(b_id, "w".into());
+    let old = hub.register(a_id, "t".into());
+    assert_eq!(hub.sync_presence(&app.db, a_id, "x".into()).await, Some(true));
+    // The old socket drops, the client reconnects, and only then does the old socket's
+    // disconnect handler get to announce: it must see the new connection and stay quiet.
+    hub.unregister(old.id);
+    let _new = hub.register(a_id, "t".into());
+    assert_eq!(hub.sync_presence(&app.db, a_id, "x".into()).await, None);
+    assert_eq!(hub.sync_presence(&app.db, a_id, "x".into()).await, None);
+    let mut got = Vec::new();
+    while let Ok(ServerFrame::Event(Event::PresenceChanged { user_id, online, .. })) =
+        watcher.rx.try_recv()
+    {
+        if user_id == a_id {
+            got.push(online);
+        }
+    }
+    assert_eq!(got, vec![true], "sam still sees alex online");
+}
