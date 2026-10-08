@@ -2,9 +2,19 @@
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
   import { app } from '../lib/store.svelte'
+  import ConversationMenu from './ConversationMenu.svelte'
   import { conversations, previewText } from '../lib/conversations'
 
-  let { activeId, onOpen, onNew }: { activeId: string | null; onOpen: (id: string) => void; onNew: () => void } = $props()
+  let { activeId, onOpen, onNew, onLeft }: {
+    activeId: string | null
+    onOpen: (id: string) => void
+    onNew: () => void
+    /** A conversation was closed or left from its right-click menu. */
+    onLeft: (id: string) => void
+  } = $props()
+
+  // Right-click a conversation: mute, close, leave.
+  let ctx = $state<null | { id: string; x: number; y: number }>(null)
 
   const list = $derived(conversations(app.state))
   const me = $derived(app.state.me?.id)
@@ -19,7 +29,8 @@
     {@const people = others(c.members)}
     {@const badge = c.muted ? c.mentions : c.unread}
     <button class="row" class:active={c.channel.id === activeId} class:unread={c.unread > 0 && !c.muted} class:muted={c.muted}
-      onclick={() => onOpen(c.channel.id)}>
+      onclick={() => onOpen(c.channel.id)}
+      oncontextmenu={(e) => { e.preventDefault(); ctx = { id: c.channel.id, x: e.clientX, y: Math.min(e.clientY, innerHeight - 250) } }}>
       {#if c.channel.kind === 'dm' && people[0]}
         <Avatar id={people[0]} name={nameOf(people[0])} size={32} online={app.state.people[people[0]]?.online ?? false} />
       {:else}
@@ -43,6 +54,16 @@
     <p class="empty">No conversations yet. Say hi to someone from Your people.</p>
   {/each}
 </div>
+
+{#if ctx}
+  {@const c = list.find((x) => x.channel.id === ctx!.id)}
+  {#if c}
+    {#key ctx}
+      <ConversationMenu channel={c.channel} muted={c.muted} show="all" at={ctx}
+        onClose={() => (ctx = null)} onLeft={() => onLeft(c.channel.id)} />
+    {/key}
+  {/if}
+{/if}
 
 <style>
   .new { margin: 4px 8px 8px; height: 36px; border: 0; border-radius: 10px; background: var(--bg-3); color: var(--text-2); font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 6px; }

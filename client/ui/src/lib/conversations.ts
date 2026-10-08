@@ -107,3 +107,12 @@ export function watchOpen(prev: OpenWatch | null, id: string, exists: boolean): 
   if (exists) return { state: { id, seen: true }, removed: false }
   return { state: { id, seen: false }, removed: seen }
 }
+
+/** How many people are in any of a server's voice channels (for the tab's speaker icon). */
+export function inVoice(s: AppState, serverId: string): number {
+  let n = 0
+  for (const [id, members] of Object.entries(s.voice)) {
+    if (s.channels[id]?.server_id === serverId) n += members.length
+  }
+  return n
+}

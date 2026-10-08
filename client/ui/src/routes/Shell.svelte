@@ -15,7 +15,7 @@
   import { api, errorText } from '../lib/tauri'
   import { app, openDm, ui } from '../lib/store.svelte'
   import { applyEvent } from '../lib/state'
-  import { conversationName, homeBadge, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
+  import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { isMember } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import type { User } from '../lib/protocol/User'
@@ -189,9 +189,11 @@
       <span class="sep"></span>
       {#each servers as s (s.id)}
         {@const badge = serverBadge(app.state, s.id, nowIso)}
+        {@const talking = inVoice(app.state, s.id)}
         <button class="tab" class:active={activeServerId === s.id} onclick={() => selectServer(s.id)}
           oncontextmenu={(e) => { e.preventDefault(); serverMenu = { id: s.id, x: e.clientX, y: e.clientY } }}>
           <span class="chip" style:background={avatarColor(s.id)}>{initial(s.name)}</span>{s.name}
+          {#if talking > 0}<span class="invc" aria-label="{talking} in voice" data-tip="{talking} in voice"><Icon name="speaker" size={13} /></span>{/if}
           {#if badge.mentions > 0}<span class="pill">{badge.mentions}</span>{:else if badge.dot}<span class="dot" aria-label="new messages"></span>{/if}
         </button>
       {/each}
@@ -214,7 +216,8 @@
           onSelect={(id) => (activeChannelId = id)}
           onJoinVoice={(id) => { activeChannelId = id; if (voice.channelId !== id && member) void voiceApi.join(id) }} />
       {:else}
-        <ConversationList activeId={activeChannelId} onOpen={openConversation} onNew={() => (picker = { mode: 'new' })} />
+        <ConversationList activeId={activeChannelId} onOpen={openConversation} onNew={() => (picker = { mode: 'new' })}
+          onLeft={(id) => { if (activeChannelId === id) activeChannelId = null }} />
       {/if}
       {#if voiceChannel}
         <div class="vc">
@@ -372,6 +375,7 @@
   .primary { height: 40px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
   .error { color: #f2616b; }
   .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; display: inline-grid; place-items: center; }
+  .tab .invc { color: var(--accent); display: grid; margin-left: -2px; }
   .tab .dot { margin-left: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); display: inline-block; }
   .notice { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 40; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); }
   .ctx-backdrop { position: fixed; inset: 0; z-index: 44; }

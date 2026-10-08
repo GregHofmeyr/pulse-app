@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState } from './state'
-import { conversationName, conversations, homeBadge, isMuted, messageSound, serverBadge, shouldMarkRead } from './conversations'
+import { conversationName, conversations, homeBadge, inVoice, isMuted, messageSound, serverBadge, shouldMarkRead } from './conversations'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 
@@ -209,5 +209,30 @@ describe('I3: removal detection', () => {
     expect(w.removed).toBe(true)
     w = watchOpen(w.state, 'OTHER', false) // switching to another not-yet-arrived channel
     expect(w.removed).toBe(false)
+  })
+})
+
+describe('inVoice', () => {
+  it('counts people across a server’s voice channels only', () => {
+    const base = ready({
+      servers: [{ id: 'S1', name: 'Main', icon_hash: null }, { id: 'S2', name: 'Other', icon_hash: null }],
+      channels: [
+        { id: 'V1', server_id: 'S1', kind: 'voice', name: 'a', position: 0 },
+        { id: 'V2', server_id: 'S1', kind: 'voice', name: 'b', position: 1 },
+        { id: 'V3', server_id: 'S2', kind: 'voice', name: 'c', position: 0 },
+      ],
+    })
+    const s = applyReady(emptyState(), base)
+    expect(inVoice(s, 'S1')).toBe(0)
+    const flags = { muted: false, deafened: false }
+    const busy = applyReady(emptyState(), {
+      ...base,
+      voice: [
+        { channel_id: 'V1', members: [{ user_id: 'U1', flags }] },
+        { channel_id: 'V2', members: [{ user_id: 'U2', flags }, { user_id: 'ME', flags }] },
+      ],
+    } as Ready)
+    expect(inVoice(busy, 'S1')).toBe(3)
+    expect(inVoice(busy, 'S2')).toBe(0)
   })
 })

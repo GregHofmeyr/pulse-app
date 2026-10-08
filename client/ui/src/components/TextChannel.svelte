@@ -111,7 +111,7 @@
     return () => clearInterval(t)
   })
   const muted = $derived(channel ? isMuted(app.state, channel, nowIso) : false)
-  let menuOpen = $state(false)
+  let menu = $state<null | 'mute' | 'manage'>(null)
   let renaming = $state(false)
   let renameValue = $state('')
   function startRename() {
@@ -207,11 +207,15 @@
     {#if isPrivate}
       <button class="hbtn" aria-label="Add people" data-tip="Add people" onclick={onAddPeople}><Icon name="userPlus" size={17} /></button>
     {/if}
-    <button class="hbtn" class:on={muted} aria-label={muted ? 'Unmute' : 'Mute'} data-tip={muted ? 'Muted' : 'Mute'}
-      onclick={() => (muted ? void api.clearMute('channel', channelId) : (menuOpen = !menuOpen))}><Icon name={muted ? 'bellOff' : 'bell'} size={17} /></button>
-    <button class="hbtn" aria-label="More" aria-haspopup="menu" aria-expanded={menuOpen} data-tip="More" onclick={() => (menuOpen = !menuOpen)}><Icon name="dots" size={17} /></button>
-    {#if menuOpen && channel}
-      <ConversationMenu {channel} {muted} onClose={() => (menuOpen = false)} onRename={startRename} {onLeft} />
+    <button class="hbtn" class:on={muted} aria-label={muted ? 'Unmute' : 'Mute'} data-tip={muted ? 'Muted — click to unmute' : 'Mute'} data-menu-toggle
+      aria-haspopup={muted ? undefined : 'menu'} aria-expanded={menu === 'mute'}
+      onclick={() => (muted ? void api.clearMute('channel', channelId) : (menu = menu === 'mute' ? null : 'mute'))}><Icon name={muted ? 'bellOff' : 'bell'} size={17} /></button>
+    {#if isPrivate}
+      <button class="hbtn" aria-label="More" aria-haspopup="menu" aria-expanded={menu === 'manage'} data-tip="More" data-menu-toggle
+        onclick={() => (menu = menu === 'manage' ? null : 'manage')}><Icon name="dots" size={17} /></button>
+    {/if}
+    {#if menu && channel}
+      <ConversationMenu {channel} {muted} show={menu} onClose={() => (menu = null)} onRename={startRename} {onLeft} />
     {/if}
   </div>
   <div class="list" bind:this={list} onscroll={onScroll}>
