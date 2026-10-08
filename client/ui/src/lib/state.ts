@@ -70,6 +70,14 @@ export function applyReady(s: AppState, r: Ready): AppState {
   }
 }
 
+/** Whether `channel` should have a read point for you: your DMs/groups, and text channels of servers you're in. */
+function tracksUnread(s: AppState, channel: string): boolean {
+  const ch = s.channels[channel]
+  if (!ch || !s.me) return false
+  if (ch.server_id === null) return true
+  return ch.kind === 'text' && (s.members[ch.server_id] ?? []).some((m) => m.user.id === s.me!.id)
+}
+
 function upsertMessage(list: Message[] | undefined, m: Message): Message[] {
   const cur = list ?? []
   const i = cur.findIndex((x) => x.id === m.id)
@@ -91,7 +99,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'MessageCreated': {
       const { message: m, nonce } = e.d
       const c = m.channel_id
-      const read = s.reads[c]
+      // Conversations/servers you're in but have no read point for yet (created or joined since
+      // Ready) start at zero, so their first messages count right away.
+      const read = s.reads[c] ?? (tracksUnread(s, c) ? { channel_id: c, last_read_message_id: null, unread: 0, mentions: 0 } : undefined)
       // Others' normal messages count as unread (yours and system lines never do).
       const counts = read && m.kind === 'normal' && m.author_id !== s.me?.id
       const { [c]: _h, ...hidden } = s.hidden
@@ -180,7 +190,19 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     }
     case 'ReadStateUpdated': {
       const c = e.d.channel_id
-      return { ...s, reads: { ...s.reads, [c]: { channel_id: c, last_read_message_id: e.d.last_read_message_id, unread: 0, mentions: 0 } } }
+      const point = e.d.last_read_message_id
+      // Messages newer than the point (they can race the event) stay unread.
+      const after = (s.messages[c] ?? []).filter(
+        (m) => (point === null || m.id > point) && m.kind === 'normal' && !m.deleted && m.author_id !== s.me?.id,
+      )
+      const me = s.me?.id ?? ''
+      return {
+        ...s,
+        reads: {
+          ...s.reads,
+          [c]: { channel_id: c, last_read_message_id: point, unread: after.length, mentions: after.filter((m) => m.mentions.includes(me)).length },
+        },
+      }
     }
     case 'MutesChanged':
       return { ...s, mutes: e.d.mutes }

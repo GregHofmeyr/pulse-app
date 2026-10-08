@@ -17,7 +17,7 @@
 <div class="list">
   {#each list as c (c.channel.id)}
     {@const people = others(c.members)}
-    {@const badge = c.muted ? c.mentions : c.unread + c.mentions}
+    {@const badge = c.muted ? c.mentions : c.unread}
     <button class="row" class:active={c.channel.id === activeId} class:unread={c.unread > 0 && !c.muted} class:muted={c.muted}
       onclick={() => onOpen(c.channel.id)}>
       {#if c.channel.kind === 'dm' && people[0]}

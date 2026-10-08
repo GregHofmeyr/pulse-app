@@ -14,7 +14,8 @@
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { api, errorText } from '../lib/tauri'
   import { app, openDm, ui } from '../lib/store.svelte'
-  import { conversationName, homeBadge, serverBadge } from '../lib/conversations'
+  import { applyEvent } from '../lib/state'
+  import { conversationName, homeBadge, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { isMember } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import type { User } from '../lib/protocol/User'
@@ -65,20 +66,24 @@
     }
   }
 
-  // Removed from (or left) the open conversation: step back to Home and say why.
+  // Removed from (or left) the open conversation: step back to Home and say why. Only fires when a
+  // channel we had actually seen disappears (a just-created one may not have arrived yet).
   let notice = $state('')
+  let watch: OpenWatch | null = null
   let lastTitle = ''
   $effect(() => {
     const id = activeChannelId
-    if (!id || activeServerId !== null) return
-    const ch = app.state.channels[id]
-    if (ch) {
-      lastTitle = conversationName(app.state, id)
+    if (!id || activeServerId !== null) {
+      watch = null
       return
     }
-    if (app.state.conn !== 'connected') return
+    const exists = !!app.state.channels[id]
+    if (exists) lastTitle = conversationName(app.state, id)
+    const w = watchOpen(watch, id, exists)
+    watch = w.state
+    if (!w.removed) return
     activeChannelId = null
-    notice = lastTitle ? `You're no longer in ${lastTitle}.` : ''
+    notice = `You're no longer in ${lastTitle}.`
     setTimeout(() => (notice = ''), 4000)
   })
   const pickerTarget = $derived(picker?.mode === 'add' ? app.state.channels[picker.channelId] : null)
@@ -89,6 +94,12 @@
   async function openConversation(id: string) {
     activeServerId = null
     activeChannelId = id
+  }
+
+  /** Put a just-created conversation into state before showing it (its gateway event may lag). */
+  function adopt(ch: import('../lib/protocol/Channel').Channel): string {
+    if (!app.state.channels[ch.id]) app.state = applyEvent(app.state, { t: 'ChannelCreated', d: { channel: ch } }, Date.now())
+    return ch.id
   }
 
   async function messageUser(userId: string) {
@@ -105,13 +116,13 @@
     if (!p) return
     try {
       if (p.mode === 'new') {
-        await openConversation(ids.length === 1 ? await openDm(ids[0]) : (await api.createDm(ids)).id)
+        await openConversation(adopt(await api.createDm(ids)))
       } else {
         const ch = app.state.channels[p.channelId]
         const members = (app.state.dmMembers[p.channelId] ?? []).filter((u) => u !== app.state.me?.id)
         if (ch?.kind === 'dm') {
           // Discord-style: adding people to a DM starts a new group; the DM stays as it is.
-          await openConversation((await api.createDm([...members, ...ids])).id)
+          await openConversation(adopt(await api.createDm([...members, ...ids])))
         } else {
           await api.addMembers(p.channelId, ids)
         }

@@ -76,10 +76,10 @@ describe('conversations', () => {
 
   it('badges: home sums unmuted DM unread + all mentions; servers show a dot and mentions', () => {
     const s = applyReady(emptyState(), ready())
-    expect(homeBadge(s, NOW)).toBe(2 + 1 + 1)
+    expect(homeBadge(s, NOW)).toBe(2 + 1) // DM1 2 unread + G1 1 unread (its mention is that same message)
     expect(serverBadge(s, 'S1', NOW)).toEqual({ dot: true, mentions: 0 })
     const muted = applyReady(emptyState(), ready({ mutes: [{ target_kind: 'channel', target_id: 'DM1', until: null }] }))
-    expect(homeBadge(muted, NOW)).toBe(1 + 1)
+    expect(homeBadge(muted, NOW)).toBe(1) // DM1 muted (no mentions) + G1 1 unread
   })
 
   it('mute_with_past_until_is_not_muted', () => {
@@ -158,5 +158,56 @@ describe('NEW divider', () => {
     expect(firstUnreadIndex(list, 'M4', 'ME')).toBe(-1)
     expect(firstUnreadIndex(list, null, 'ME')).toBe(0) // never read anything
     expect(firstUnreadIndex([msg('S', 'DM1', null, { kind: 'system' }), ...list], null, 'ME')).toBe(1)
+  })
+})
+
+describe('review fixes', () => {
+  it('I1: a brand-new DM counts unread before any reconnect', () => {
+    let s = applyReady(emptyState(), ready())
+    s = applyEvent(s, { t: 'ChannelCreated', d: { channel: { id: 'DM9', server_id: null, kind: 'dm', name: null, position: 0 } } }, 0)
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M50', 'DM9', 'U1', { mentions: ['ME'] }), nonce: null } }, 0)
+    expect(s.reads['DM9']).toMatchObject({ unread: 1, mentions: 1 })
+  })
+
+  it('I1: a server channel counts only if you are a member of that server', () => {
+    let s = applyReady(emptyState(), ready({
+      servers: [{ id: 'S1', name: 'Main', icon_hash: null }, { id: 'S2', name: 'Other', icon_hash: null }],
+      channels: [{ id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }, { id: 'X1', server_id: 'S2', kind: 'text', name: 'general', position: 0 }],
+      read_states: [],
+    }))
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M60', 'T1', 'U1'), nonce: null } }, 0)
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M61', 'X1', 'U1'), nonce: null } }, 0)
+    expect(s.reads['T1']?.unread).toBe(1)
+    expect(s.reads['X1']).toBeUndefined()
+  })
+
+  it('I2: a read point older than newer messages keeps counting them', () => {
+    let s = applyReady(emptyState(), ready())
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M70', 'DM1', 'ME'), nonce: null } }, 0)
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M71', 'DM1', 'U1', { mentions: ['ME'] }), nonce: null } }, 0)
+    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'ME', channel_id: 'DM1', last_read_message_id: 'M70' } }, 0)
+    expect(s.reads['DM1']).toMatchObject({ unread: 1, mentions: 1, last_read_message_id: 'M70' })
+  })
+
+  it('badge: one DM message that mentions you counts once', () => {
+    const s = applyReady(emptyState(), ready({
+      read_states: [{ channel_id: 'DM1', last_read_message_id: null, unread: 1, mentions: 1 }],
+    }))
+    expect(homeBadge(s, NOW)).toBe(1)
+  })
+})
+
+import { watchOpen } from './conversations'
+
+describe('I3: removal detection', () => {
+  it('only fires when a channel you were seeing disappears, never for one not yet arrived', () => {
+    let w = watchOpen(null, 'NEW', false) // opened before ChannelCreated landed
+    expect(w.removed).toBe(false)
+    w = watchOpen(w.state, 'NEW', true) // it arrives
+    expect(w.removed).toBe(false)
+    w = watchOpen(w.state, 'NEW', false) // then it's taken away
+    expect(w.removed).toBe(true)
+    w = watchOpen(w.state, 'OTHER', false) // switching to another not-yet-arrived channel
+    expect(w.removed).toBe(false)
   })
 })

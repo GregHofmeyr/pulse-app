@@ -38,7 +38,8 @@ export function homeBadge(s: AppState, nowIso: string): number {
   for (const [id, r] of Object.entries(s.reads)) {
     const ch = s.channels[id]
     if (ch?.server_id !== null || !ch) continue
-    n += isMuted(s, ch, nowIso) ? r.mentions : r.unread + r.mentions
+    // A mention is also an unread message: count messages, not both (muted → only mentions).
+    n += isMuted(s, ch, nowIso) ? r.mentions : r.unread
   }
   return n
 }
@@ -97,4 +98,12 @@ export function previewText(s: AppState, m: Message): { text: string; system: bo
 /** Where the red NEW line goes: the first normal message after the read point that someone else wrote (-1 = none). */
 export function firstUnreadIndex(messages: Message[], lastRead: string | null, me: string): number {
   return messages.findIndex((m) => (lastRead === null || m.id > lastRead) && m.kind === 'normal' && m.author_id !== me)
+}
+
+/** Tracks the open conversation; `removed` is true only when a channel we had seen disappears. */
+export type OpenWatch = { id: string; seen: boolean }
+export function watchOpen(prev: OpenWatch | null, id: string, exists: boolean): { state: OpenWatch; removed: boolean } {
+  const seen = prev?.id === id ? prev.seen : false
+  if (exists) return { state: { id, seen: true }, removed: false }
+  return { state: { id, seen: false }, removed: seen }
 }

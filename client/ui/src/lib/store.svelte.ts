@@ -40,6 +40,8 @@ function maybeSound(e: Event) {
 /** Open (or reuse) your DM with `userId`; resolves to its channel id. */
 export async function openDm(userId: string): Promise<string> {
   const ch = await api.createDm([userId])
+  // Show it straight away: the ChannelCreated gateway event may arrive after this response.
+  if (!app.state.channels[ch.id]) app.state = applyEvent(app.state, { t: 'ChannelCreated', d: { channel: ch } }, Date.now())
   return ch.id
 }
 
