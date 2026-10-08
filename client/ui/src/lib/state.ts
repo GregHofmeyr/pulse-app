@@ -4,6 +4,9 @@ import type { Channel } from './protocol/Channel'
 import type { Event } from './protocol/Event'
 import type { Member } from './protocol/Member'
 import type { Message } from './protocol/Message'
+import type { Mute } from './protocol/Mute'
+import type { Person } from './protocol/Person'
+import type { ReadState } from './protocol/ReadState'
 import type { Ready } from './protocol/Ready'
 import type { Server } from './protocol/Server'
 import type { User } from './protocol/User'
@@ -27,12 +30,17 @@ export type AppState = {
   /** Which channels have had their latest page fetched (cleared on every Ready so we backfill). */
   history: Record<string, { loaded: boolean; start: boolean }>
   conn: ConnState
+  people: Record<string, Person> // userId -> person (presence)
+  reads: Record<string, ReadState> // channelId -> your private read point + counts
+  mutes: Mute[]
+  hidden: Record<string, true> // closed conversations
+  latest: Record<string, Message> // DM/group channelId -> newest message
 }
 
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting' }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {} }
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -54,6 +62,11 @@ export function applyReady(s: AppState, r: Ready): AppState {
     // Anything may have happened while we were away: refetch the latest page when a channel is viewed.
     history: {},
     conn: 'connected',
+    people: Object.fromEntries(r.people.map((p) => [p.user.id, p])),
+    reads: Object.fromEntries(r.read_states.map((x) => [x.channel_id, x])),
+    mutes: r.mutes,
+    hidden: Object.fromEntries(r.hidden.map((id) => [id, true as const])),
+    latest: Object.fromEntries(r.latest.map((m) => [m.channel_id, m])),
   }
 }
 
@@ -78,11 +91,23 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'MessageCreated': {
       const { message: m, nonce } = e.d
       const c = m.channel_id
+      const read = s.reads[c]
+      // Others' normal messages count as unread (yours and system lines never do).
+      const counts = read && m.kind === 'normal' && m.author_id !== s.me?.id
+      const { [c]: _h, ...hidden } = s.hidden
       return {
         ...s,
         messages: { ...s.messages, [c]: upsertMessage(s.messages[c], m) },
         pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
         typing: withoutTyping(s, c, m.author_id),
+        latest: s.channels[c]?.server_id === null ? { ...s.latest, [c]: m } : s.latest,
+        hidden,
+        reads: counts
+          ? {
+              ...s.reads,
+              [c]: { ...read, unread: read.unread + 1, mentions: read.mentions + (s.me && m.mentions.includes(s.me.id) ? 1 : 0) },
+            }
+          : s.reads,
       }
     }
     case 'MessageUpdated': {
@@ -126,8 +151,43 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       if (!list) return s
       return { ...s, voice: { ...s.voice, [c]: list.map((m) => (m.user_id === u ? { ...m, flags } : m)) } }
     }
-    default:
-      return s // events handled in later tasks
+    case 'UserCreated':
+      return s.people[e.d.user.id] ? s : { ...s, people: { ...s.people, [e.d.user.id]: { user: e.d.user, online: false, last_seen_at: null } } }
+    case 'PresenceChanged': {
+      const p = s.people[e.d.user_id]
+      if (!p) return s
+      return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, online: e.d.online, last_seen_at: e.d.last_seen_at ?? p.last_seen_at } } }
+    }
+    case 'GroupMembersChanged':
+      return { ...s, dmMembers: { ...s.dmMembers, [e.d.channel_id]: e.d.user_ids } }
+    case 'ChannelUpdated':
+      return { ...s, channels: { ...s.channels, [e.d.channel.id]: e.d.channel } }
+    case 'ChannelRemoved': {
+      const c = e.d.channel_id
+      const drop = <T,>(r: Record<string, T>): Record<string, T> => {
+        const { [c]: _x, ...rest } = r
+        return rest
+      }
+      return {
+        ...s,
+        channels: drop(s.channels),
+        messages: drop(s.messages),
+        dmMembers: drop(s.dmMembers),
+        reads: drop(s.reads),
+        latest: drop(s.latest),
+        hidden: drop(s.hidden),
+      }
+    }
+    case 'ReadStateUpdated': {
+      const c = e.d.channel_id
+      return { ...s, reads: { ...s.reads, [c]: { channel_id: c, last_read_message_id: e.d.last_read_message_id, unread: 0, mentions: 0 } } }
+    }
+    case 'MutesChanged':
+      return { ...s, mutes: e.d.mutes }
+    case 'ConversationVisibility': {
+      const { [e.d.channel_id]: _x, ...rest } = s.hidden
+      return { ...s, hidden: e.d.hidden ? { ...rest, [e.d.channel_id]: true } : rest }
+    }
   }
 }
 

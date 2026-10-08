@@ -7,6 +7,14 @@ import type { Member } from './protocol/Member'
 import type { Message } from './protocol/Message'
 
 export const api = {
+  createDm: (userIds: string[]) => invoke<Channel>('create_dm', { userIds }),
+  addMembers: (channelId: string, userIds: string[]) => invoke<void>('add_members', { channelId, userIds }),
+  removeMember: (channelId: string, userId: string) => invoke<void>('remove_member', { channelId, userId }),
+  renameChannel: (channelId: string, name: string | null) => invoke<Channel>('rename_channel', { channelId, name }),
+  markRead: (channelId: string, messageId: string) => invoke<void>('mark_read', { channelId, messageId }),
+  setMute: (targetKind: 'server' | 'channel', targetId: string, until: string | null) => invoke<void>('set_mute', { targetKind, targetId, until }),
+  clearMute: (targetKind: 'server' | 'channel', targetId: string) => invoke<void>('clear_mute', { targetKind, targetId }),
+  closeConversation: (channelId: string) => invoke<void>('close_conversation', { channelId }),
   login: (serverUrl: string, username: string, password: string) =>
     invoke<User>('login', { serverUrl, username, password }),
   register: (serverUrl: string, inviteCode: string, username: string, password: string) =>
