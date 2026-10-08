@@ -201,6 +201,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         reads: drop(s.reads),
         latest: drop(s.latest),
         hidden: drop(s.hidden),
+        pending: drop(s.pending),
+        typing: drop(s.typing),
+        history: drop(s.history),
       }
     }
     case 'ReadStateUpdated': {

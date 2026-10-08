@@ -17,7 +17,7 @@ export function conversationName(s: AppState, channelId: string): string {
   return names.join(', ') || 'Just you'
 }
 
-export function conversations(s: AppState, nowIso = new Date().toISOString()) {
+export function conversations(s: AppState, nowIso: string) {
   return Object.values(s.channels)
     .filter((c) => c.server_id === null && !s.hidden[c.id])
     .map((channel) => ({
@@ -37,7 +37,7 @@ export function homeBadge(s: AppState, nowIso: string): number {
   let n = 0
   for (const [id, r] of Object.entries(s.reads)) {
     const ch = s.channels[id]
-    if (ch?.server_id !== null || !ch) continue
+    if (ch?.server_id !== null || !ch || s.hidden[id]) continue // closed: out of sight until a new message
     // A mention is also an unread message: count messages, not both (muted → only mentions).
     n += isMuted(s, ch, nowIso) ? r.mentions : r.unread
   }

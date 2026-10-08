@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
-  import { app, openDm } from '../lib/store.svelte'
+  import { app, clock, openDm } from '../lib/store.svelte'
   import { relativeTime } from '../lib/conversations'
   import { errorText } from '../lib/tauri'
 
@@ -10,11 +10,6 @@
     onJoinVoice: (channelId: string, serverId: string) => void
   } = $props()
 
-  let now = $state(Date.now())
-  $effect(() => {
-    const t = setInterval(() => (now = Date.now()), 30_000)
-    return () => clearInterval(t)
-  })
   let error = $state('')
 
   const people = $derived(
@@ -75,7 +70,7 @@
                   {#if voice}<Icon name="speaker" size={12} /> {voice.label}
                   {:else if unread > 0}{unread} new message{unread === 1 ? '' : 's'}
                   {:else if p.online}online
-                  {:else if p.last_seen_at}last seen {relativeTime(p.last_seen_at, now)}
+                  {:else if p.last_seen_at}last seen {relativeTime(p.last_seen_at, Date.parse(clock.nowIso))}
                   {:else}offline{/if}
                 </span>
               </div>

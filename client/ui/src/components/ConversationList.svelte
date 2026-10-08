@@ -1,7 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
-  import { app } from '../lib/store.svelte'
+  import { app, clock } from '../lib/store.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
   import { conversations, previewText } from '../lib/conversations'
 
@@ -16,7 +16,7 @@
   // Right-click a conversation: mute, close, leave.
   let ctx = $state<null | { id: string; x: number; y: number }>(null)
 
-  const list = $derived(conversations(app.state))
+  const list = $derived(conversations(app.state, clock.nowIso))
   const me = $derived(app.state.me?.id)
   const others = (members: string[]) => members.filter((u) => u !== me)
   const nameOf = (id: string) => app.state.people[id]?.user.username ?? '?'

@@ -13,7 +13,7 @@
   import { onMount } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { api, errorText } from '../lib/tauri'
-  import { app, openDm, ui } from '../lib/store.svelte'
+  import { app, clock, openDm, ui } from '../lib/store.svelte'
   import { applyEvent } from '../lib/state'
   import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { isMember } from '../lib/selectors'
@@ -32,17 +32,15 @@
   let createError = $state('')
   /** People picker: a new DM/group from Home, or Add people in a conversation. */
   let picker = $state<null | { mode: 'new' } | { mode: 'add'; channelId: string }>(null)
-  // Badges depend on mute expiry: re-evaluate every 30 s.
-  let nowIso = $state(new Date().toISOString())
+  // Badges depend on mute expiry: they re-evaluate on the shared clock.
+  const nowIso = $derived(clock.nowIso)
   onMount(() => {
-    const t = setInterval(() => (nowIso = new Date().toISOString()), 30_000)
     const focus = () => (ui.focused = true)
     const blur = () => (ui.focused = false)
     window.addEventListener('focus', focus)
     window.addEventListener('blur', blur)
     ui.focused = document.hasFocus()
     return () => {
-      clearInterval(t)
       window.removeEventListener('focus', focus)
       window.removeEventListener('blur', blur)
     }

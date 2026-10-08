@@ -12,6 +12,10 @@ export const app = $state<{ state: AppState }>({ state: emptyState() })
 
 /** What the user is looking at: drives the message sound and read marking. */
 export const ui = $state({ openChannelId: null as string | null, focused: true })
+
+/** One shared clock for time-dependent UI (mute expiry, "5m ago"). Ticks every 30 s. */
+export const clock = $state({ nowIso: new Date().toISOString() })
+setInterval(() => (clock.nowIso = new Date().toISOString()), 30_000)
 let lastPlayedAt = 0
 
 function maybeSound(e: Event) {

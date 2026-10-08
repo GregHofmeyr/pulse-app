@@ -174,3 +174,13 @@ it('an edit to the latest message updates the preview', () => {
   s = applyEvent(s, { t: 'MessageUpdated', d: { message: { ...msg('M1', 'D1', 'fixed'), edited_at: 'x' } } }, 0)
   expect(s.latest['D1'].content).toBe('fixed')
 })
+
+it('removal from a conversation forgets everything about it, unsent messages included', () => {
+  let s = applyReady(emptyState(), ready({ channels: [ch('G1', 'group', null)], dm_members: [{ channel_id: 'G1', user_ids: ['U1', 'U2', 'U3'] }] }))
+  s = addPending(s, 'G1', { nonce: 'n1', content: 'are you there?', reply_to_id: null, status: 'failed' })
+  s = applyEvent(s, { t: 'Typing', d: { channel_id: 'G1', user_id: 'U2' } }, 0)
+  s = applyEvent(s, { t: 'ChannelRemoved', d: { channel_id: 'G1', user_id: 'U1' } }, 0)
+  expect(s.pending['G1']).toBeUndefined()
+  expect(s.typing['G1']).toBeUndefined()
+  expect(s.history['G1']).toBeUndefined()
+})

@@ -50,9 +50,9 @@ describe('conversations', () => {
 
   it('lists newest activity first and hides closed ones', () => {
     const s = applyReady(emptyState(), ready())
-    expect(conversations(s).map((c) => c.channel.id)).toEqual(['G1', 'DM1'])
+    expect(conversations(s, NOW).map((c) => c.channel.id)).toEqual(['G1', 'DM1'])
     const closed = applyReady(emptyState(), ready({ hidden: ['G1'] }))
-    expect(conversations(closed).map((c) => c.channel.id)).toEqual(['DM1'])
+    expect(conversations(closed, NOW).map((c) => c.channel.id)).toEqual(['DM1'])
   })
 
   it('a new message reopens a closed conversation and counts as unread (not your own)', () => {
@@ -93,7 +93,7 @@ describe('conversations', () => {
     s = applyEvent(s, { t: 'ChannelRemoved', d: { channel_id: 'G1', user_id: 'ME' } }, 0)
     expect(s.channels['G1']).toBeUndefined()
     expect(s.reads['G1']).toBeUndefined()
-    expect(conversations(s).map((c) => c.channel.id)).toEqual(['DM1'])
+    expect(conversations(s, NOW).map((c) => c.channel.id)).toEqual(['DM1'])
   })
 
   it('read rule needs open + focused + at bottom', () => {
@@ -234,5 +234,14 @@ describe('inVoice', () => {
     } as Ready)
     expect(inVoice(busy, 'S1')).toBe(3)
     expect(inVoice(busy, 'S2')).toBe(0)
+  })
+})
+
+describe('closed conversations', () => {
+  it('do not count towards the Home badge until a new message reopens them', () => {
+    let s = applyReady(emptyState(), ready({ hidden: ['DM1'] }))
+    expect(homeBadge(s, NOW)).toBe(1) // only G1; closed DM1's 2 unread are out of sight
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M9', 'DM1', 'U1'), nonce: null } }, 0)
+    expect(homeBadge(s, NOW)).toBe(3 + 1)
   })
 })

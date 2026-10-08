@@ -5,7 +5,7 @@
   import Composer from './Composer.svelte'
   import Avatar from './Avatar.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
-  import { app, ui } from '../lib/store.svelte'
+  import { app, clock, ui } from '../lib/store.svelte'
   import { conversationName, firstUnreadIndex, isMuted, shouldMarkRead } from '../lib/conversations'
   import { addHistory, addPending, markHistory } from '../lib/state'
   import { displayName, typingNames } from '../lib/selectors'
@@ -105,12 +105,7 @@
   const isPrivate = $derived(channel?.server_id === null)
   const title = $derived(isPrivate ? conversationName(app.state, channelId) : (channel?.name ?? ''))
   const others = $derived((app.state.dmMembers[channelId] ?? []).filter((u) => u !== app.state.me?.id))
-  let nowIso = $state(new Date().toISOString())
-  $effect(() => {
-    const t = setInterval(() => (nowIso = new Date().toISOString()), 30_000)
-    return () => clearInterval(t)
-  })
-  const muted = $derived(channel ? isMuted(app.state, channel, nowIso) : false)
+  const muted = $derived(channel ? isMuted(app.state, channel, clock.nowIso) : false)
   let menu = $state<null | 'mute' | 'manage'>(null)
   let renaming = $state(false)
   let renameValue = $state('')

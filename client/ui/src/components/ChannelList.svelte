@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
-  import { app } from '../lib/store.svelte'
+  import { app, clock } from '../lib/store.svelte'
   import { channelsFor, isMember, voiceOccupants } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import { api, errorText } from '../lib/tauri'
@@ -64,7 +64,7 @@
   {/if}
   {#each lists.text as c (c.id)}
     {@const read = app.state.reads[c.id]}
-    {@const muted = isMuted(app.state, c, new Date().toISOString())}
+    {@const muted = isMuted(app.state, c, clock.nowIso)}
     <button class="row" class:active={c.id === activeChannelId} class:unread={(read?.unread ?? 0) > 0 && !muted} class:muted
       onclick={() => onSelect(c.id)}>
       <span class="ico"><Icon name="hash" size={17} /></span><span class="grow">{c.name}</span>
