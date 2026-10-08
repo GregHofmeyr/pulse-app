@@ -6,9 +6,14 @@
   import VoicePanel from '../components/VoicePanel.svelte'
   import TextChannel from '../components/TextChannel.svelte'
   import Settings from '../components/Settings.svelte'
+  import ConversationList from '../components/ConversationList.svelte'
+  import PeopleBoard from '../components/PeopleBoard.svelte'
+  import PeoplePicker from '../components/PeoplePicker.svelte'
+  import { onMount } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { api, errorText } from '../lib/tauri'
-  import { app } from '../lib/store.svelte'
+  import { app, openDm, ui } from '../lib/store.svelte'
+  import { homeBadge, serverBadge } from '../lib/conversations'
   import { isMember } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import type { User } from '../lib/protocol/User'
@@ -23,6 +28,53 @@
   let creating = $state(false)
   let newName = $state('')
   let createError = $state('')
+  /** People picker: a new DM/group from Home, or Add people in a conversation. */
+  let picker = $state<null | { mode: 'new' } | { mode: 'add'; channelId: string }>(null)
+  // Badges depend on mute expiry: re-evaluate every 30 s.
+  let nowIso = $state(new Date().toISOString())
+  onMount(() => {
+    const t = setInterval(() => (nowIso = new Date().toISOString()), 30_000)
+    const focus = () => (ui.focused = true)
+    const blur = () => (ui.focused = false)
+    window.addEventListener('focus', focus)
+    window.addEventListener('blur', blur)
+    ui.focused = document.hasFocus()
+    return () => {
+      clearInterval(t)
+      window.removeEventListener('focus', focus)
+      window.removeEventListener('blur', blur)
+    }
+  })
+  $effect(() => {
+    ui.openChannelId = activeChannelId
+  })
+  const home = $derived(homeBadge(app.state, nowIso))
+
+  async function openConversation(id: string) {
+    activeServerId = null
+    activeChannelId = id
+  }
+
+  async function messageUser(userId: string) {
+    try {
+      await openConversation(await openDm(userId))
+    } catch (e) {
+      error = errorText(e)
+    }
+  }
+
+  async function pickerDone(ids: string[]) {
+    const p = picker
+    picker = null
+    if (!p) return
+    try {
+      if (p.mode === 'new') {
+        await openConversation(ids.length === 1 ? await openDm(ids[0]) : (await api.createDm(ids)).id)
+      }
+    } catch (e) {
+      error = errorText(e)
+    }
+  }
 
   async function createServer(e: SubmitEvent) {
     e.preventDefault()
@@ -76,12 +128,14 @@
     </span>
     <nav aria-label="Servers">
       <button class="tab" class:active={activeServerId === null} onclick={() => { activeServerId = null; activeChannelId = null }}>
-        <Icon name="home" size={16} /> Home
+        <Icon name="home" size={16} /> Home{#if home > 0}<span class="pill">{home > 99 ? '99+' : home}</span>{/if}
       </button>
       <span class="sep"></span>
       {#each servers as s (s.id)}
+        {@const badge = serverBadge(app.state, s.id, nowIso)}
         <button class="tab" class:active={activeServerId === s.id} onclick={() => selectServer(s.id)}>
           <span class="chip" style:background={avatarColor(s.id)}>{initial(s.name)}</span>{s.name}
+          {#if badge.mentions > 0}<span class="pill">{badge.mentions}</span>{:else if badge.dot}<span class="dot" aria-label="new messages"></span>{/if}
         </button>
       {/each}
       <button class="add" aria-label="Create a server" title="Create a server" onclick={() => (creating = true)}><Icon name="plus" size={16} /></button>
@@ -103,7 +157,7 @@
           onSelect={(id) => (activeChannelId = id)}
           onJoinVoice={(id) => { activeChannelId = id; if (voice.channelId !== id && member) void voiceApi.join(id) }} />
       {:else}
-        <div class="side-empty">DMs arrive in the next milestone.</div>
+        <ConversationList activeId={activeChannelId} onOpen={openConversation} onNew={() => (picker = { mode: 'new' })} />
       {/if}
       {#if voiceChannel}
         <div class="vc">
@@ -146,12 +200,14 @@
         <VoicePanel channelId={activeChannel.id} serverId={activeServerId} />
       {:else if activeChannel}
         {#key activeChannel.id}<TextChannel channelId={activeChannel.id} serverId={activeServerId} />{/key}
+      {:else if activeServerId === null}
+        <PeopleBoard onOpen={openConversation} onJoinVoice={(ch, srv) => { selectServer(srv); activeChannelId = ch; if (voice.channelId !== ch) void voiceApi.join(ch) }} />
       {:else}
         <p class="empty">Pick a channel.</p>
       {/if}
     </main>
 
-    {#if activeServerId}<MemberList serverId={activeServerId} />{/if}
+    {#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{/if}
   </div>
 </div>
 {#if settingsOpen}<Settings onClose={() => (settingsOpen = false)} />{/if}
@@ -168,6 +224,10 @@
     </div>
   </form>
   </div>
+{/if}
+
+{#if picker?.mode === 'new'}
+  <PeoplePicker title="New message" hint="Pick one person for a DM, or several for a group." action="Start" onDone={pickerDone} onClose={() => (picker = null)} />
 {/if}
 
 <style>
@@ -188,7 +248,6 @@
   .panel { border-radius: var(--radius); overflow: hidden; }
   .side { width: 264px; flex-shrink: 0; background: var(--bg-1); display: flex; flex-direction: column; }
   .panel-head { height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid #26282e; }
-  .side-empty { flex: 1; padding: 16px; color: var(--text-3); font-size: 13px; }
   .me { padding: 10px 10px 10px 12px; background: #17181c; display: flex; align-items: center; gap: 10px; }
   .avatar { width: 34px; height: 34px; border-radius: 50%; color: #fff; font-weight: 700; display: grid; place-items: center; }
   .who { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
@@ -229,4 +288,6 @@
   .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .primary { height: 40px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
   .error { color: #f2616b; }
+  .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; display: inline-grid; place-items: center; }
+  .tab .dot { margin-left: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); display: inline-block; }
 </style>

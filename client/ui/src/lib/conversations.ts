@@ -71,3 +71,25 @@ export function messageSound(v: {
   if (v.muted && !mentioned) return false
   return v.now - v.lastPlayedAt >= SOUND_GAP_MS
 }
+
+/** "just now", "15m ago", "3h ago", "3d ago". */
+export function relativeTime(iso: string, nowMs: number): string {
+  const s = Math.max(0, (nowMs - Date.parse(iso)) / 1000)
+  if (s < 60) return 'just now'
+  if (s < 3600) return `${Math.floor(s / 60)}m ago`
+  if (s < 86400) return `${Math.floor(s / 3600)}h ago`
+  return `${Math.floor(s / 86400)}d ago`
+}
+
+/** One-line preview for the conversation list; `system` renders it muted/italic. */
+export function previewText(s: AppState, m: Message): { text: string; system: boolean } {
+  if (m.deleted) return { text: 'message deleted', system: true }
+  if (m.kind === 'system') return { text: m.content, system: true }
+  const line = m.content.replace(/\s+/g, ' ').trim()
+  if (m.author_id === s.me?.id) return { text: `You: ${line}`, system: false }
+  if (s.channels[m.channel_id]?.kind === 'group') {
+    const who = (m.author_id && s.people[m.author_id]?.user.username) || 'someone'
+    return { text: `${who}: ${line}`, system: false }
+  }
+  return { text: line, system: false }
+}

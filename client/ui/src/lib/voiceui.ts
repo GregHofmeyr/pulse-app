@@ -2,7 +2,7 @@ import { invoke } from '@tauri-apps/api/core'
 // Pure helpers for the voice UI (tested in voiceui.test.ts).
 
 export type Flags = { muted: boolean; deafened: boolean }
-export type SoundName = 'join' | 'leave' | 'mute' | 'unmute' | 'deafen' | 'undeafen'
+export type SoundName = 'join' | 'leave' | 'mute' | 'unmute' | 'deafen' | 'undeafen' | 'message'
 
 export const clampVolume = (pct: number) => Math.round(Math.min(200, Math.max(0, pct)))
 

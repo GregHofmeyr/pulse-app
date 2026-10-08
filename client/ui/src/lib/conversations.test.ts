@@ -127,3 +127,24 @@ describe('conversations', () => {
     expect(s.dmMembers['G1']).toEqual(['ME', 'U1', 'U3'])
   })
 })
+
+import { previewText, relativeTime } from './conversations'
+
+describe('home helpers', () => {
+  const now = Date.parse('2026-10-08T12:00:00Z')
+  it('relative time: just now, minutes, hours, days', () => {
+    expect(relativeTime('2026-10-08T11:59:40Z', now)).toBe('just now')
+    expect(relativeTime('2026-10-08T11:45:00Z', now)).toBe('15m ago')
+    expect(relativeTime('2026-10-08T09:00:00Z', now)).toBe('3h ago')
+    expect(relativeTime('2026-10-05T12:00:00Z', now)).toBe('3d ago')
+  })
+
+  it('preview: you/others prefixes, system italics flag, deleted', () => {
+    const s = applyReady(emptyState(), ready())
+    expect(previewText(s, msg('A', 'DM1', 'ME', { content: 'yo' }))).toEqual({ text: 'You: yo', system: false })
+    expect(previewText(s, msg('A', 'DM1', 'U1', { content: 'hi' }))).toEqual({ text: 'hi', system: false })
+    expect(previewText(s, msg('A', 'G1', 'U1', { content: 'hi' }))).toEqual({ text: 'sam: hi', system: false })
+    expect(previewText(s, msg('A', 'G1', null, { kind: 'system', content: 'sam added jo' }))).toEqual({ text: 'sam added jo', system: true })
+    expect(previewText(s, msg('A', 'DM1', 'U1', { deleted: true, content: '' }))).toEqual({ text: 'message deleted', system: true })
+  })
+})

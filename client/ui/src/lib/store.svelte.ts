@@ -5,14 +5,52 @@ import type { Message } from './protocol/Message'
 import type { Ready } from './protocol/Ready'
 import { applyEvent, applyReady, emptyState, setPendingStatus, type AppState, type ConnState } from './state'
 import { api } from './tauri'
+import { isMuted, messageSound } from './conversations'
+import { playSound } from './voiceui'
 
 export const app = $state<{ state: AppState }>({ state: emptyState() })
+
+/** What the user is looking at: drives the message sound and read marking. */
+export const ui = $state({ openChannelId: null as string | null, focused: true })
+let lastPlayedAt = 0
+
+function maybeSound(e: Event) {
+  if (e.t !== 'MessageCreated') return
+  const m = e.d.message
+  const ch = app.state.channels[m.channel_id]
+  const me = app.state.me
+  if (!ch || !me) return
+  const now = Date.now()
+  const play = messageSound({
+    message: m,
+    me: me.id,
+    channel: ch,
+    open: ui.openChannelId === m.channel_id,
+    focused: ui.focused,
+    muted: isMuted(app.state, ch, new Date(now).toISOString()),
+    lastPlayedAt,
+    now,
+  })
+  if (play) {
+    lastPlayedAt = now
+    playSound('message')
+  }
+}
+
+/** Open (or reuse) your DM with `userId`; resolves to its channel id. */
+export async function openDm(userId: string): Promise<string> {
+  const ch = await api.createDm([userId])
+  return ch.id
+}
 
 /** Subscribe to the live connection. Returns an unsubscribe function. */
 export async function startListening(): Promise<UnlistenFn> {
   const offs: UnlistenFn[] = await Promise.all([
     listen<Ready>('pulse://ready', (e) => (app.state = applyReady(app.state, e.payload))),
-    listen<Event>('pulse://event', (e) => (app.state = applyEvent(app.state, e.payload, Date.now()))),
+    listen<Event>('pulse://event', (e) => {
+      maybeSound(e.payload)
+      app.state = applyEvent(app.state, e.payload, Date.now())
+    }),
     listen<ConnState>('pulse://conn', (e) => (app.state = { ...app.state, conn: e.payload })),
     listen<{ nonce: string; status: 'sent' | 'failed'; message: Message | null }>('pulse://outbox', (e) => {
       const { nonce, status, message } = e.payload
