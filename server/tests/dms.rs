@@ -666,7 +666,10 @@ async fn late_offline_after_a_reconnect_is_not_announced() {
     let hub = Hub::default();
     let mut watcher = hub.register(b_id, "w".into());
     let old = hub.register(a_id, "t".into());
-    assert_eq!(hub.sync_presence(&app.db, a_id, "x".into()).await, Some(true));
+    assert_eq!(
+        hub.sync_presence(&app.db, a_id, "x".into()).await,
+        Some(true)
+    );
     // The old socket drops, the client reconnects, and only then does the old socket's
     // disconnect handler get to announce: it must see the new connection and stay quiet.
     hub.unregister(old.id);
@@ -674,12 +677,96 @@ async fn late_offline_after_a_reconnect_is_not_announced() {
     assert_eq!(hub.sync_presence(&app.db, a_id, "x".into()).await, None);
     assert_eq!(hub.sync_presence(&app.db, a_id, "x".into()).await, None);
     let mut got = Vec::new();
-    while let Ok(ServerFrame::Event(Event::PresenceChanged { user_id, online, .. })) =
-        watcher.rx.try_recv()
+    while let Ok(ServerFrame::Event(Event::PresenceChanged {
+        user_id, online, ..
+    })) = watcher.rx.try_recv()
     {
         if user_id == a_id {
             got.push(online);
         }
     }
     assert_eq!(got, vec![true], "sam still sees alex online");
+}
+
+#[tokio::test]
+async fn concurrent_adds_never_exceed_the_group_cap() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let mut ids = Vec::new();
+    for i in 0..12 {
+        ids.push(register(&app, &format!("u{i}")).await.0);
+    }
+    let g = create_dm(&app, &a, &ids[0..2]).await; // 3 people
+    let path = format!("/channels/{}/members", g.id);
+    // Each add fits on its own (3 + 5 = 8); together they would make 13.
+    for _ in 0..5 {
+        let (r1, r2) = tokio::join!(
+            post_json(
+                &app,
+                &a,
+                &path,
+                serde_json::json!({ "user_ids": &ids[2..7] })
+            ),
+            post_json(
+                &app,
+                &a,
+                &path,
+                serde_json::json!({ "user_ids": &ids[7..12] })
+            ),
+        );
+        let n: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM channel_members WHERE channel_id = ?")
+                .bind(g.id.to_string())
+                .fetch_one(&app.db)
+                .await
+                .unwrap();
+        assert!(
+            n <= 10,
+            "group grew to {n} ({} / {})",
+            r1.status(),
+            r2.status()
+        );
+        assert!(
+            r1.status() == 204 || r2.status() == 204,
+            "one of them still succeeds"
+        );
+        // reset to 3 for the next round
+        sqlx::query("DELETE FROM channel_members WHERE channel_id = ? AND user_id NOT IN (SELECT id FROM users WHERE username IN ('alex','u0','u1'))")
+            .bind(g.id.to_string())
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+}
+
+#[tokio::test]
+async fn removal_forgets_the_removed_members_mute() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let (c_id, _) = register(&app, "jo").await;
+    let g = create_dm(&app, &a, &[b_id, c_id]).await;
+    let mute = serde_json::json!({"target_kind":"channel","target_id": g.id,"until": null});
+    assert_eq!(put(&app, &b, "/mutes", mute).await, 204);
+    let (mut ws, _) = hello(&app, &b).await;
+    assert_eq!(
+        delete(&app, &a, &format!("/channels/{}/members/{}", g.id, b_id)).await,
+        204
+    );
+    // sam's client is told the mute is gone, not just the channel
+    wait_for(
+        &mut ws,
+        |e| matches!(e, Event::MutesChanged { mutes, .. } if mutes.is_empty()),
+    )
+    .await;
+    let r = post_json(
+        &app,
+        &a,
+        &format!("/channels/{}/members", g.id),
+        serde_json::json!({ "user_ids": [b_id] }),
+    )
+    .await;
+    assert_eq!(r.status(), 204);
+    let (_, ready) = hello(&app, &b).await;
+    assert!(ready.mutes.is_empty(), "re-added sam starts unmuted");
 }

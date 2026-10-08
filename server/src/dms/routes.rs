@@ -116,18 +116,34 @@ async fn add_members(
             "groups can have up to {MAX_GROUP} people"
         )));
     }
-    let mut tx = s.db.begin().await?;
     for u in &new {
         let hit: Option<i64> = sqlx::query_scalar("SELECT 1 FROM users WHERE id = ?")
             .bind(u.to_string())
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&s.db)
             .await?;
         if hit.is_none() {
             return Err(AppError::BadRequest("unknown user".into()));
         }
+    }
+    // Write first, then count: the first INSERT takes SQLite's write lock, so the count below
+    // sees every committed add, and two adds racing past the check above can't overfill the group.
+    let mut tx = s.db.begin().await?;
+    for u in &new {
         sqlx::query("INSERT INTO channel_members (channel_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)")
             .bind(id.to_string()).bind(u.to_string()).bind(me.to_string()).bind(now())
             .execute(&mut *tx).await?;
+    }
+    let count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM channel_members WHERE channel_id = ?")
+            .bind(id.to_string())
+            .fetch_one(&mut *tx)
+            .await?;
+    if count as usize > MAX_GROUP {
+        return Err(AppError::BadRequest(format!(
+            "groups can have up to {MAX_GROUP} people"
+        ))); // dropping `tx` rolls the inserts back
+    }
+    for u in &new {
         crate::reads::init_point(&mut tx, *u, id).await?;
     }
     tx.commit().await?;
@@ -186,6 +202,25 @@ async fn remove_member(
         .bind(user.to_string())
         .execute(&s.db)
         .await?;
+    }
+    let unmuted = sqlx::query(
+        "DELETE FROM notification_prefs WHERE user_id = ? AND target_kind = 'channel' AND target_id = ?",
+    )
+    .bind(user.to_string())
+    .bind(id.to_string())
+    .execute(&s.db)
+    .await?
+    .rows_affected();
+    if unmuted > 0 {
+        s.hub
+            .publish(
+                &s.db,
+                Event::MutesChanged {
+                    user_id: user,
+                    mutes: mutes_of(&s.db, user).await?,
+                },
+            )
+            .await;
     }
     s.hub
         .publish(
