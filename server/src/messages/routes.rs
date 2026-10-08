@@ -72,7 +72,7 @@ fn from_row(r: Row) -> AppResult<Message> {
     })
 }
 
-async fn load(db: &SqlitePool, id: MessageId) -> AppResult<Option<Message>> {
+pub(crate) async fn load(db: &SqlitePool, id: MessageId) -> AppResult<Option<Message>> {
     let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLS} FROM messages WHERE id = ?"))
         .bind(id.to_string())
         .fetch_optional(db)
@@ -173,6 +173,8 @@ async fn send(
         .bind(&msg.created_at)
         .execute(&s.db)
         .await?;
+    // Sending marks your own read point (you've obviously seen everything up to here).
+    let moved = crate::reads::advance(&s.db, me, id, msg.id).await?;
     s.hub
         .publish(
             &s.db,
@@ -182,6 +184,18 @@ async fn send(
             },
         )
         .await;
+    if moved {
+        s.hub
+            .publish(
+                &s.db,
+                Event::ReadStateUpdated {
+                    user_id: me,
+                    channel_id: id,
+                    last_read_message_id: Some(msg.id),
+                },
+            )
+            .await;
+    }
     Ok(Json(msg))
 }
 

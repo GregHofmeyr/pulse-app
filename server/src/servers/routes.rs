@@ -123,6 +123,7 @@ async fn create_server(
         .await?;
     let general = insert_channel(&mut tx, Some(id), ChannelKind::Text, Some("general"), 0).await?;
     let lounge = insert_channel(&mut tx, Some(id), ChannelKind::Voice, Some("Lounge"), 0).await?;
+    crate::reads::init_point(&mut tx, me, general.id).await?;
     tx.commit().await?;
 
     let server = Server {
@@ -192,6 +193,16 @@ async fn join(
     .await?
     .rows_affected();
     if added > 0 {
+        // Start at "all read": no wall of old unreads in a server you just joined.
+        let text: Vec<String> =
+            sqlx::query_scalar("SELECT id FROM channels WHERE server_id = ? AND kind = 'text'")
+                .bind(id.to_string())
+                .fetch_all(&s.db)
+                .await?;
+        let mut c = s.db.acquire().await?;
+        for ch in text {
+            crate::reads::init_point(&mut c, me, ch.parse().map_err(anyhow::Error::from)?).await?;
+        }
         s.hub
             .publish(
                 &s.db,
@@ -249,6 +260,18 @@ async fn create_channel(
     .fetch_one(&mut *tx)
     .await?;
     let ch = insert_channel(&mut tx, Some(id), req.kind, Some(&name), pos).await?;
+    if req.kind == ChannelKind::Text {
+        // Everyone in the server starts at "all read" (the channel is empty).
+        let members: Vec<String> =
+            sqlx::query_scalar("SELECT user_id FROM server_members WHERE server_id = ?")
+                .bind(id.to_string())
+                .fetch_all(&mut *tx)
+                .await?;
+        for m in members {
+            crate::reads::init_point(&mut tx, m.parse().map_err(anyhow::Error::from)?, ch.id)
+                .await?;
+        }
+    }
     tx.commit().await?;
     s.hub
         .publish(
@@ -366,6 +389,7 @@ async fn create_dm(
             .bind(&at)
             .execute(&mut *tx)
             .await?;
+        crate::reads::init_point(&mut tx, u, ch.id).await?;
     }
     tx.commit().await?;
     s.hub

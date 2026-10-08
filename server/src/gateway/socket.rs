@@ -185,10 +185,10 @@ pub async fn build_ready(
         dm_members,
         voice,
         people: people(db, hub).await?,
-        read_states: vec![],
+        read_states: crate::reads::states_for(db, me).await?,
         mutes: vec![],
         hidden: vec![],
-        latest: vec![],
+        latest: crate::reads::latest_for(db, me).await?,
     })
 }
 

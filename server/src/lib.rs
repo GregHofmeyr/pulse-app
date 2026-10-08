@@ -2,9 +2,11 @@ pub mod access;
 pub mod auth;
 pub mod config;
 pub mod db;
+pub mod dms;
 pub mod error;
 pub mod gateway;
 pub mod messages;
+pub mod reads;
 pub mod servers;
 pub mod state;
 pub mod voice;
@@ -25,6 +27,7 @@ pub fn router(state: AppState) -> Router {
         .merge(auth::routes::router())
         .merge(servers::routes::router())
         .merge(messages::routes::router())
+        .merge(dms::routes::router())
         .merge(voice::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
