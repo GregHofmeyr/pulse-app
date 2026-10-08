@@ -4,6 +4,7 @@
   import { channelsFor, isMember, voiceOccupants } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import { api, errorText } from '../lib/tauri'
+  import { isMuted } from '../lib/conversations'
 
   let {
     serverId,
@@ -62,8 +63,13 @@
     {#if addError}<small class="err">{addError}</small>{/if}
   {/if}
   {#each lists.text as c (c.id)}
-    <button class="row" class:active={c.id === activeChannelId} onclick={() => onSelect(c.id)}>
-      <span class="ico"><Icon name="hash" size={17} /></span>{c.name}
+    {@const read = app.state.reads[c.id]}
+    {@const muted = isMuted(app.state, c, new Date().toISOString())}
+    <button class="row" class:active={c.id === activeChannelId} class:unread={(read?.unread ?? 0) > 0 && !muted} class:muted
+      onclick={() => onSelect(c.id)}>
+      <span class="ico"><Icon name="hash" size={17} /></span><span class="grow">{c.name}</span>
+      {#if muted}<span class="mic"><Icon name="bellOff" size={13} /></span>{/if}
+      {#if read?.mentions}<span class="pill">{read.mentions}</span>{/if}
     </button>
   {/each}
 
@@ -113,4 +119,8 @@
   .av { width: 22px; height: 22px; border-radius: 50%; color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; flex-shrink: 0; transition: box-shadow .12s; }
   .av.speaking { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--ok); }
   .flag { color: #f2616b; display: flex; }
+  .row.unread { color: var(--text); font-weight: 600; }
+  .row.muted { opacity: .5; }
+  .mic { color: var(--text-3); display: grid; }
+  .pill { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; }
 </style>

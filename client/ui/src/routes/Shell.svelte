@@ -51,6 +51,20 @@
   })
   const home = $derived(homeBadge(app.state, nowIso))
 
+  // Right-click a server tab: mute/unmute the whole server.
+  let serverMenu = $state<null | { id: string; x: number; y: number }>(null)
+  const serverMuted = (id: string) =>
+    app.state.mutes.some((m) => m.target_kind === 'server' && m.target_id === id && (m.until === null || m.until > nowIso))
+  async function muteServer(id: string, hours: number | null | 'off') {
+    serverMenu = null
+    try {
+      if (hours === 'off') await api.clearMute('server', id)
+      else await api.setMute('server', id, hours === null ? null : new Date(Date.now() + hours * 3_600_000).toISOString())
+    } catch (e) {
+      error = errorText(e)
+    }
+  }
+
   // Removed from (or left) the open conversation: step back to Home and say why.
   let notice = $state('')
   let lastTitle = ''
@@ -164,7 +178,8 @@
       <span class="sep"></span>
       {#each servers as s (s.id)}
         {@const badge = serverBadge(app.state, s.id, nowIso)}
-        <button class="tab" class:active={activeServerId === s.id} onclick={() => selectServer(s.id)}>
+        <button class="tab" class:active={activeServerId === s.id} onclick={() => selectServer(s.id)}
+          oncontextmenu={(e) => { e.preventDefault(); serverMenu = { id: s.id, x: e.clientX, y: e.clientY } }}>
           <span class="chip" style:background={avatarColor(s.id)}>{initial(s.name)}</span>{s.name}
           {#if badge.mentions > 0}<span class="pill">{badge.mentions}</span>{:else if badge.dot}<span class="dot" aria-label="new messages"></span>{/if}
         </button>
@@ -272,6 +287,20 @@
     onDone={pickerDone} onClose={() => (picker = null)} />
 {/if}
 {#if notice}<div class="notice" role="status">{notice}</div>{/if}
+{#if serverMenu}
+  {@const id = serverMenu.id}
+  <div class="ctx-backdrop" role="presentation" onclick={() => (serverMenu = null)}></div>
+  <div class="ctx" role="menu" style:left="{serverMenu.x}px" style:top="{serverMenu.y}px">
+    {#if serverMuted(id)}
+      <button role="menuitem" onclick={() => muteServer(id, 'off')}>Unmute server</button>
+    {:else}
+      <span class="ctx-lbl">Mute server</span>
+      <button role="menuitem" onclick={() => muteServer(id, 1)}>For 1 hour</button>
+      <button role="menuitem" onclick={() => muteServer(id, 8)}>For 8 hours</button>
+      <button role="menuitem" onclick={() => muteServer(id, null)}>Until I turn it back on</button>
+    {/if}
+  </div>
+{/if}
 
 <style>
   .app { height: 100%; display: flex; flex-direction: column; background: var(--bg-0); }
@@ -334,4 +363,9 @@
   .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; display: inline-grid; place-items: center; }
   .tab .dot { margin-left: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); display: inline-block; }
   .notice { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 40; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); }
+  .ctx-backdrop { position: fixed; inset: 0; z-index: 44; }
+  .ctx { position: fixed; z-index: 45; width: 210px; padding: 6px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--bg-3); border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, .4); }
+  .ctx button { text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font: inherit; font-size: 13px; }
+  .ctx button:hover { background: var(--bg-3); color: var(--text); }
+  .ctx-lbl { padding: 6px 10px 2px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); text-transform: uppercase; }
 </style>
