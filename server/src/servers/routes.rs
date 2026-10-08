@@ -400,5 +400,32 @@ async fn create_dm(
             },
         )
         .await;
+    let members: Vec<UserId> = std::iter::once(me).chain(others.iter().copied()).collect();
+    s.hub
+        .publish(
+            &s.db,
+            Event::GroupMembersChanged {
+                channel_id: ch.id,
+                user_ids: members,
+            },
+        )
+        .await;
+    if kind == ChannelKind::Group {
+        let me_name = crate::auth::routes::load_user(&s.db, me).await?.username;
+        let mut names = Vec::new();
+        for u in &others {
+            names.push(crate::auth::routes::load_user(&s.db, *u).await?.username);
+        }
+        crate::messages::system::post(
+            &s,
+            ch.id,
+            format!(
+                "{me_name} created the group with {}",
+                crate::messages::system::join_names(&names)
+            ),
+            serde_json::json!({"type": "group_created", "by": me, "with": others}),
+        )
+        .await?;
+    }
     Ok(Json(ch))
 }

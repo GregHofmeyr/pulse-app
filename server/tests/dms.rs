@@ -306,3 +306,215 @@ async fn history_carries_mentions() {
         get_json(&app, &b, &format!("/channels/{}/messages", dm.id)).await;
     assert_eq!(page[0].mentions, vec![b_id]);
 }
+
+async fn delete(app: &TestApp, token: &str, path: &str) -> u16 {
+    app.http
+        .delete(app.url(path))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+async fn patch(
+    app: &TestApp,
+    token: &str,
+    path: &str,
+    body: serde_json::Value,
+) -> reqwest::Response {
+    app.http
+        .patch(app.url(path))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+async fn history(
+    app: &TestApp,
+    token: &str,
+    ch: pulse_protocol::ids::ChannelId,
+) -> Vec<pulse_protocol::rest::Message> {
+    get_json(app, token, &format!("/channels/{ch}/messages")).await
+}
+
+#[tokio::test]
+async fn add_people_from_a_dm_makes_a_new_group_and_keeps_the_dm() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, _) = register(&app, "sam").await;
+    let (c_id, _) = register(&app, "jo").await;
+    let dm = create_dm(&app, &a, &[b_id]).await;
+    let group = create_dm(&app, &a, &[b_id, c_id]).await;
+    assert_ne!(dm.id, group.id);
+    assert_eq!(
+        create_dm(&app, &a, &[b_id]).await.id,
+        dm.id,
+        "the DM still exists"
+    );
+    let h = history(&app, &a, group.id).await;
+    assert!(
+        h.iter()
+            .any(|m| m.kind == pulse_protocol::rest::MessageKind::System
+                && m.content.contains("created the group"))
+    );
+}
+
+#[tokio::test]
+async fn flat_group_management_with_system_lines() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let (c_id, _) = register(&app, "jo").await;
+    let (d_id, _) = register(&app, "riley").await;
+    let g = create_dm(&app, &a, &[b_id, c_id]).await;
+    // sam (not the creator) adds riley, removes jo, renames
+    assert_eq!(
+        post_json(
+            &app,
+            &b,
+            &format!("/channels/{}/members", g.id),
+            serde_json::json!({"user_ids": [d_id]})
+        )
+        .await
+        .status(),
+        204
+    );
+    assert_eq!(
+        delete(&app, &b, &format!("/channels/{}/members/{}", g.id, c_id)).await,
+        204
+    );
+    let r = patch(
+        &app,
+        &b,
+        &format!("/channels/{}", g.id),
+        serde_json::json!({"name": "  raid squad  "}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(
+        r.json::<pulse_protocol::rest::Channel>()
+            .await
+            .unwrap()
+            .name
+            .as_deref(),
+        Some("raid squad")
+    );
+    let lines: Vec<String> = history(&app, &a, g.id)
+        .await
+        .into_iter()
+        .filter(|m| m.kind == pulse_protocol::rest::MessageKind::System)
+        .map(|m| m.content)
+        .collect();
+    assert!(lines.iter().any(|l| l == "sam added riley"), "{lines:?}");
+    assert!(lines.iter().any(|l| l == "sam removed jo"), "{lines:?}");
+    assert!(
+        lines
+            .iter()
+            .any(|l| l == "sam renamed the group to raid squad"),
+        "{lines:?}"
+    );
+}
+
+#[tokio::test]
+async fn removed_member_cannot_post_or_read() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let (c_id, c) = register(&app, "jo").await;
+    let g = create_dm(&app, &a, &[b_id, c_id]).await;
+    let (mut jo_ws, _) = hello(&app, &c).await;
+    assert_eq!(
+        delete(&app, &a, &format!("/channels/{}/members/{}", g.id, c_id)).await,
+        204
+    );
+    let e = wait_for(&mut jo_ws, |e| matches!(e, Event::ChannelRemoved { .. })).await;
+    assert!(matches!(e, Event::ChannelRemoved { channel_id, .. } if channel_id == g.id));
+    let r = post_json(
+        &app,
+        &c,
+        &format!("/channels/{}/messages", g.id),
+        serde_json::json!({"content": "late", "reply_to_id": null, "nonce": null}),
+    )
+    .await;
+    assert_eq!(r.status(), 404);
+    let r = app
+        .http
+        .get(app.url(&format!("/channels/{}/messages", g.id)))
+        .bearer_auth(&c)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+    let _ = b;
+}
+
+#[tokio::test]
+async fn group_cap_dm_rename_and_last_leave() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let mut others = vec![b_id];
+    for i in 0..8 {
+        others.push(register(&app, &format!("u{i}")).await.0);
+    }
+    let g = create_dm(&app, &a, &others).await; // 10 people
+    let (extra, eleven_tok) = register(&app, "eleven").await;
+    assert_eq!(
+        post_json(
+            &app,
+            &a,
+            &format!("/channels/{}/members", g.id),
+            serde_json::json!({"user_ids": [extra]})
+        )
+        .await
+        .status(),
+        400
+    );
+    let dm = create_dm(&app, &a, &[b_id]).await;
+    assert_eq!(
+        patch(
+            &app,
+            &a,
+            &format!("/channels/{}", dm.id),
+            serde_json::json!({"name": "x"})
+        )
+        .await
+        .status(),
+        400
+    );
+    let small = create_dm(&app, &a, &[b_id, extra]).await;
+    for (id, tok) in [(b_id, &b)] {
+        assert_eq!(
+            delete(&app, tok, &format!("/channels/{}/members/{}", small.id, id)).await,
+            204
+        );
+    }
+    // eleven and alex leave → empty → deleted
+    assert_eq!(
+        delete(
+            &app,
+            &eleven_tok,
+            &format!("/channels/{}/members/{}", small.id, extra)
+        )
+        .await,
+        204
+    );
+    let me: pulse_protocol::rest::User = get_json(&app, &a, "/me").await;
+    assert_eq!(
+        delete(
+            &app,
+            &a,
+            &format!("/channels/{}/members/{}", small.id, me.id)
+        )
+        .await,
+        204
+    );
+    let left: Option<String> = sqlx::query_scalar("SELECT id FROM channels WHERE id = ?")
+        .bind(small.id.to_string())
+        .fetch_optional(&app.db)
+        .await
+        .unwrap();
+    assert!(left.is_none(), "last person out deletes the group");
+}
