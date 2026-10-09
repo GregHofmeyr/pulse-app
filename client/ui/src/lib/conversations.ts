@@ -117,8 +117,10 @@ export function watchOpen(prev: OpenWatch | null, id: string, exists: boolean): 
   return { state: { id, seen: false }, removed: seen }
 }
 
-/** How many people are in any of a server's voice channels (for the tab's speaker icon). */
+/** How many people are in any of a server's voice channels (for the tab's speaker icon).
+ *  Only for servers you've joined; elsewhere it's 0. */
 export function inVoice(s: AppState, serverId: string): number {
+  if (!(s.members[serverId] ?? []).some((m) => m.user.id === s.me?.id)) return 0
   let n = 0
   for (const [id, members] of Object.entries(s.voice)) {
     if (s.channels[id]?.server_id === serverId) n += members.length

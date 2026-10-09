@@ -71,6 +71,20 @@ pub async fn resolve(
     Ok(out)
 }
 
+/// Whether `user` can see `channel` (the same rule `resolve` applies to typed names).
+pub async fn can_see(db: &SqlitePool, channel: &Channel, user: UserId) -> AppResult<bool> {
+    if !channel.kind.is_private() {
+        return Ok(true);
+    }
+    let hit: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM channel_members WHERE channel_id = ? AND user_id = ?")
+            .bind(channel.id.to_string())
+            .bind(user.to_string())
+            .fetch_optional(db)
+            .await?;
+    Ok(hit.is_some())
+}
+
 pub async fn store(db: &SqlitePool, message: MessageId, users: &[UserId]) -> AppResult<()> {
     for u in users {
         sqlx::query("INSERT OR IGNORE INTO mentions (message_id, user_id) VALUES (?, ?)")

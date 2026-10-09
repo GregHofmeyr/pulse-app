@@ -154,11 +154,20 @@ async fn send(
         _ => {}
     }
     let content = clean(&req.content)?;
-    let mentioned = mentions::resolve(&s.db, &ch, me, &mentions::parse(&content)).await?;
+    let mut mentioned = mentions::resolve(&s.db, &ch, me, &mentions::parse(&content)).await?;
     if let Some(r) = req.reply_to_id {
         // Same-channel only; a reply target elsewhere (including private) is indistinguishable from missing.
         match load(&s.db, r).await? {
-            Some(target) if target.channel_id == id => {}
+            Some(target) if target.channel_id == id => {
+                // A reply pings whoever it replies to, as long as they can still see the chat.
+                if let Some(author) = target.author_id
+                    && author != me
+                    && !mentioned.contains(&author)
+                    && mentions::can_see(&s.db, &ch, author).await?
+                {
+                    mentioned.push(author);
+                }
+            }
             _ => {
                 return Err(AppError::BadRequest(
                     "reply target not in this channel".into(),

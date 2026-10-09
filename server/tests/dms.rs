@@ -770,3 +770,43 @@ async fn removal_forgets_the_removed_members_mute() {
     let (_, ready) = hello(&app, &b).await;
     assert!(ready.mutes.is_empty(), "re-added sam starts unmuted");
 }
+
+#[tokio::test]
+async fn a_reply_mentions_the_author_it_replies_to() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let (c_id, c) = register(&app, "jo").await;
+    let g = create_dm(&app, &a, &[b_id, c_id]).await;
+    let reply = |token: &str, to: pulse_protocol::ids::MessageId, text: &str| {
+        let (token, text) = (token.to_string(), text.to_string());
+        let path = format!("/channels/{}/messages", g.id);
+        let app = &app;
+        async move {
+            let r = post_json(
+                app,
+                &token,
+                &path,
+                serde_json::json!({ "content": text, "reply_to_id": to }),
+            )
+            .await;
+            assert_eq!(r.status(), 200);
+            r.json::<pulse_protocol::rest::Message>().await.unwrap()
+        }
+    };
+    let from_sam = send(&app, &b, g.id, "hi").await;
+    assert_eq!(reply(&a, from_sam.id, "yo").await.mentions, vec![b_id]);
+    // also @jo in the text: both, sam once
+    let both = reply(&a, from_sam.id, "@jo @sam look").await;
+    assert_eq!(both.mentions.len(), 2);
+    assert!(both.mentions.contains(&b_id) && both.mentions.contains(&c_id));
+    // replying to yourself pings nobody
+    assert!(reply(&b, from_sam.id, "me again").await.mentions.is_empty());
+    // jo was removed: a reply to her old message doesn't ping her
+    let from_jo = send(&app, &c, g.id, "bye").await;
+    assert_eq!(
+        delete(&app, &a, &format!("/channels/{}/members/{}", g.id, c_id)).await,
+        204
+    );
+    assert!(reply(&a, from_jo.id, "she left").await.mentions.is_empty());
+}

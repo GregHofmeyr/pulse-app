@@ -241,6 +241,20 @@ describe('inVoice', () => {
     expect(inVoice(busy, 'S1')).toBe(3)
     expect(inVoice(busy, 'S2')).toBe(0)
   })
+
+  it('stays hidden on servers you have not joined', () => {
+    const flags = { muted: false, deafened: false }
+    const s = applyReady(emptyState(), ready({
+      servers: [{ id: 'S1', name: 'Main', icon_hash: null }, { id: 'S2', name: 'Other', icon_hash: null }],
+      channels: [{ id: 'V3', server_id: 'S2', kind: 'voice', name: 'c', position: 0 }],
+      members: [
+        { server_id: 'S1', members: [{ user: user('ME', 'greg'), nickname: null }] },
+        { server_id: 'S2', members: [{ user: user('U1', 'sam'), nickname: null }] },
+      ],
+      voice: [{ channel_id: 'V3', members: [{ user_id: 'U1', flags }] }],
+    }))
+    expect(inVoice(s, 'S2')).toBe(0)
+  })
 })
 
 describe('closed conversations', () => {
