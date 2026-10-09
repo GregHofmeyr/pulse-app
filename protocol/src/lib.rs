@@ -34,3 +34,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::SetMuteRequest::export_all(&cfg)?;
     Ok(())
 }
+
+/// Gateway protocol version this build speaks. Bump when an old client would misbehave
+/// against a new server; the server tells older clients to update (close 4005).
+pub const PROTOCOL_VERSION: u32 = 1;

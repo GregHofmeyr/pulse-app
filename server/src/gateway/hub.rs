@@ -16,6 +16,8 @@ pub const QUEUE: usize = 256;
 /// Close code sent to a client the hub dropped for falling behind (it should resync via Ready).
 pub const CLOSE_TOO_SLOW: u16 = 4003;
 pub const CLOSE_UNAUTHORIZED: u16 = 4001;
+/// Close code for a client too old for this server ("plz update :)").
+pub const CLOSE_UPDATE_REQUIRED: u16 = 4005;
 
 pub type ConnId = u64;
 

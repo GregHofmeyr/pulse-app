@@ -11,6 +11,9 @@ use crate::rest::{Channel, Member, Message, Mute, Person, ReadState, Server, Use
 pub enum ClientFrame {
     Hello {
         token: String,
+        /// [`crate::PROTOCOL_VERSION`] of the client; absent (0) from pre-versioning clients.
+        #[serde(default)]
+        client_version: u32,
     },
     Heartbeat,
     Typing {
@@ -199,5 +202,38 @@ impl Event {
             | Self::ConversationVisibility { user_id, .. } => Some(*user_id),
             _ => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn hello_without_a_version_is_version_zero() {
+        let f: ClientFrame = serde_json::from_str(r#"{"op":"Hello","d":{"token":"t"}}"#).unwrap();
+        assert!(matches!(
+            f,
+            ClientFrame::Hello {
+                client_version: 0,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn hello_ignores_unknown_fields() {
+        // a newer client talking to this server still gets in
+        let f: ClientFrame = serde_json::from_str(
+            r#"{"op":"Hello","d":{"token":"t","client_version":9,"shiny":true}}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            f,
+            ClientFrame::Hello {
+                client_version: 9,
+                ..
+            }
+        ));
     }
 }

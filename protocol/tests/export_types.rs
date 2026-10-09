@@ -25,7 +25,9 @@ fn event_wire_format_is_stable() {
 fn client_hello_parses() {
     let f: pulse_protocol::gateway::ClientFrame =
         serde_json::from_str(r#"{"op":"Hello","d":{"token":"abc"}}"#).unwrap();
-    assert!(matches!(f, pulse_protocol::gateway::ClientFrame::Hello { token } if token == "abc"));
+    assert!(
+        matches!(f, pulse_protocol::gateway::ClientFrame::Hello { token, .. } if token == "abc")
+    );
 }
 
 #[test]

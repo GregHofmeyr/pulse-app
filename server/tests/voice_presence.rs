@@ -26,6 +26,7 @@ async fn hello(app: &TestApp, token: &str) -> (Socket, Ready) {
     ws.send(Ws::text(
         serde_json::to_string(&ClientFrame::Hello {
             token: token.into(),
+            client_version: pulse_protocol::PROTOCOL_VERSION,
         })
         .unwrap(),
     ))

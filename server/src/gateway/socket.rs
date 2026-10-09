@@ -21,7 +21,7 @@ use crate::error::AppResult;
 use crate::servers::routes::{all_servers, dms_of, server_channels, server_members};
 use crate::voice::VoiceState;
 
-pub use super::hub::{CLOSE_TOO_SLOW, CLOSE_UNAUTHORIZED};
+pub use super::hub::{CLOSE_TOO_SLOW, CLOSE_UNAUTHORIZED, CLOSE_UPDATE_REQUIRED};
 use super::hub::{ConnId, Hub};
 pub const CLOSE_TIMEOUT: u16 = 4002;
 /// Pre- and post-auth client frames are tiny; cap them so nobody can make us buffer megabytes.
@@ -54,9 +54,14 @@ async fn send(socket: &mut WebSocket, frame: &ServerFrame) -> bool {
     )
 }
 
+/// Oldest client protocol this server accepts.
+pub const MIN_CLIENT_VERSION: u32 = 1;
+
 enum Auth {
     Ok(UserId, String),
     Denied,
+    /// The client is older than [`MIN_CLIENT_VERSION`].
+    Outdated,
     Internal,
 }
 
@@ -68,9 +73,16 @@ async fn authenticate(socket: &mut WebSocket, s: &AppState) -> Auth {
     let Ws::Text(text) = first else {
         return Auth::Denied;
     };
-    let Ok(ClientFrame::Hello { token }) = serde_json::from_str(&text) else {
+    let Ok(ClientFrame::Hello {
+        token,
+        client_version,
+    }) = serde_json::from_str(&text)
+    else {
         return Auth::Denied;
     };
+    if client_version < MIN_CLIENT_VERSION {
+        return Auth::Outdated;
+    }
     match session::authenticate(&s.db, &token).await {
         Ok(Some(user)) => Auth::Ok(user, session::hash_token(&token)),
         Ok(None) => Auth::Denied,
@@ -184,6 +196,9 @@ async fn run(mut socket: WebSocket, s: AppState) {
     let (me, token_hash) = match authenticate(&mut socket, &s).await {
         Auth::Ok(u, h) => (u, h),
         Auth::Denied => return close(socket, CLOSE_UNAUTHORIZED, "unauthorized").await,
+        Auth::Outdated => {
+            return close(socket, CLOSE_UPDATE_REQUIRED, "update required").await;
+        }
         Auth::Internal => return close(socket, 1011, "internal error").await,
     };
     // Register before building Ready so no event between the snapshot and the stream is lost.

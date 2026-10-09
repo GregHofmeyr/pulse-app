@@ -165,6 +165,7 @@ async fn session(
     };
     let hello = serde_json::to_string(&ClientFrame::Hello {
         token: token.into(),
+        client_version: pulse_protocol::PROTOCOL_VERSION,
     })
     .expect("serialize");
     if ws.send(Ws::text(hello)).await.is_err() {

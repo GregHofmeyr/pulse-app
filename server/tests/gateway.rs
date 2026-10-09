@@ -26,6 +26,7 @@ async fn hello(app: &TestApp, token: &str) -> (Socket, pulse_protocol::gateway::
     let mut ws = connect(app).await;
     let f = serde_json::to_string(&ClientFrame::Hello {
         token: token.into(),
+        client_version: pulse_protocol::PROTOCOL_VERSION,
     })
     .unwrap();
     ws.send(Ws::text(f)).await.unwrap();
@@ -217,9 +218,11 @@ async fn hello_then_ready_contains_my_servers_and_dms() {
 async fn bad_token_closed_4001() {
     let app = spawn().await;
     let mut ws = connect(&app).await;
-    ws.send(Ws::text(r#"{"op":"Hello","d":{"token":"garbage"}}"#))
-        .await
-        .unwrap();
+    ws.send(Ws::text(
+        r#"{"op":"Hello","d":{"token":"garbage","client_version":1}}"#,
+    ))
+    .await
+    .unwrap();
     let close = tokio::time::timeout(Duration::from_secs(2), ws.next())
         .await
         .unwrap()
@@ -392,4 +395,28 @@ async fn slow_client_does_not_block_others() {
         0,
         "slow client should have been dropped"
     );
+}
+
+#[tokio::test]
+async fn outdated_client_is_told_to_update() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
+        .await
+        .unwrap()
+        .0;
+    // a client from before versioning: no client_version at all
+    let hello = json!({ "op": "Hello", "d": { "token": token } }).to_string();
+    ws.send(Ws::text(hello)).await.unwrap();
+    let code = loop {
+        match tokio::time::timeout(Duration::from_secs(3), ws.next())
+            .await
+            .unwrap()
+        {
+            Some(Ok(Ws::Close(Some(f)))) => break u16::from(f.code),
+            Some(Ok(_)) => continue,
+            other => panic!("expected a close frame, got {other:?}"),
+        }
+    };
+    assert_eq!(code, 4005);
 }

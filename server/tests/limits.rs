@@ -140,9 +140,9 @@ async fn hello(app: &TestApp, token: &str) -> Socket {
         .await
         .unwrap()
         .0;
-    // Task 5 adds `client_version: pulse_protocol::PROTOCOL_VERSION` here.
     let f = serde_json::to_string(&ClientFrame::Hello {
         token: token.into(),
+        client_version: pulse_protocol::PROTOCOL_VERSION,
     })
     .unwrap();
     ws.send(Ws::text(f)).await.unwrap();
