@@ -5,6 +5,7 @@ pub mod db;
 pub mod dms;
 pub mod error;
 pub mod gateway;
+pub mod limits;
 pub mod messages;
 pub mod reads;
 pub mod servers;
