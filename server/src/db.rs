@@ -1,5 +1,7 @@
 use std::str::FromStr;
 
+use anyhow::Context;
+
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
 
 /// Open (creating if needed) the database in WAL mode with FKs on, and run migrations.
@@ -15,6 +17,15 @@ pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
         .await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
     Ok(pool)
+}
+
+/// Consistent snapshot of the live database into a new file at `path` (`VACUUM INTO`:
+/// safe while the server is running). Fails if `path` already exists.
+pub async fn backup(db: &SqlitePool, path: &std::path::Path) -> anyhow::Result<()> {
+    anyhow::ensure!(!path.exists(), "{} already exists", path.display());
+    let p = path.to_str().context("backup path must be UTF-8")?;
+    sqlx::query("VACUUM INTO ?").bind(p).execute(db).await?;
+    Ok(())
 }
 
 /// Current time as RFC 3339 UTC with millisecond precision (sorts lexically).
