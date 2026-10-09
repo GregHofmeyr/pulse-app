@@ -58,23 +58,19 @@ prod := "pulse@pulse"
 # set up / re-run setup on a server. First time: `just provision ubuntu@<public-ip> ~/.ssh/pulse-oracle.key`
 provision host="ubuntu@pulse" key="":
     ssh {{ if key != "" { "-i " + key } else { "" } }} {{host}} 'rm -rf /tmp/pulse-deploy && mkdir -p /tmp/pulse-deploy'
-    scp {{ if key != "" { "-i " + key } else { "" } }} deploy/setup.sh deploy/backup.sh deploy/compose.yml deploy/Caddyfile deploy/livekit.yaml deploy/env.example deploy/pulse-backup.service deploy/pulse-backup.timer {{host}}:/tmp/pulse-deploy/
+    scp {{ if key != "" { "-i " + key } else { "" } }} deploy/setup.sh deploy/backup.sh deploy/deploy.sh deploy/compose.yml deploy/Caddyfile deploy/livekit.yaml deploy/env.example deploy/pulse-backup.service deploy/pulse-backup.timer {{host}}:/tmp/pulse-deploy/
     ssh -t {{ if key != "" { "-i " + key } else { "" } }} {{host}} 'sudo bash /tmp/pulse-deploy/setup.sh'
 
-# close public SSH (only works over Tailscale, which is the point)
+# close public SSH (only works over Tailscale, which is the point). First disable key expiry for
+# `pulse` in the Tailscale admin console, or the server drops off the tailnet after 180 days.
 close-public-ssh:
     just provision ubuntu@pulse
     ssh ubuntu@pulse 'sudo bash /tmp/pulse-deploy/setup.sh --close-ssh'
 
-# back up, then run image TAG (a 7-char commit or `latest`) and wait for it to be healthy
+# back up, then run image TAG (a 7-char commit or `latest`); prints the commit that's live
 deploy tag="latest":
-    scp deploy/compose.yml deploy/Caddyfile deploy/livekit.yaml deploy/backup.sh {{prod}}:/srv/pulse/
-    ssh {{prod}} 'set -e; cd /srv/pulse; ./backup.sh run; \
-        sed -i "s/^PULSE_TAG=.*/PULSE_TAG={{tag}}/" .env; \
-        docker compose pull -q; docker compose up -d --remove-orphans; \
-        docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true; \
-        for i in $(seq 1 30); do curl -fsS http://127.0.0.1:7890/health >/dev/null && echo "healthy: {{tag}}" && exit 0; sleep 1; done; \
-        echo "server not healthy after 30 s" >&2; docker compose logs --tail 50 pulse-server; exit 1'
+    scp deploy/compose.yml deploy/Caddyfile deploy/livekit.yaml deploy/backup.sh deploy/deploy.sh {{prod}}:/srv/pulse/
+    ssh {{prod}} '/srv/pulse/deploy.sh {{tag}}'
 
 # outside-in checks of the live server
 smoke:

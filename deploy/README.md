@@ -53,7 +53,10 @@ GitHub, Oracle Cloud (or xneelo), Cloudflare (DNS + R2), Tailscale, UptimeRobot.
    `/srv/pulse` with a fresh LiveKit secret, the nightly backup timer, and Tailscale.
 4. When it prints a Tailscale login URL, open it and approve the machine.
 5. Check: `ssh ubuntu@pulse hostname` prints `pulse`.
-6. `just close-public-ssh` closes port 22 on the server itself; then delete the TCP 22 rule from the cloud
+6. **Turn off key expiry for the server**: Tailscale admin console → Machines → `pulse` → ⋯ → *Disable key
+   expiry*. Tailscale keys expire after 180 days by default; once public SSH is closed, an expired key
+   would lock you out (the only way back in is the cloud provider's serial console).
+7. `just close-public-ssh` closes port 22 on the server itself; then delete the TCP 22 rule from the cloud
    firewall too. From now on the server is only reachable for SSH over Tailscale.
 
 ## 5. DNS (Cloudflare)
@@ -75,7 +78,9 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
 - Every push to `main` that passes CI builds `ghcr.io/greghofmeyr/pulse-server:<7-char commit>` and `:latest`
   (`.github/workflows/release-server.yml`, about ten minutes).
 - `just deploy` runs `latest`; `just deploy <sha7>` runs a specific build. Each deploy takes a backup first,
-  then restarts in a few seconds. Clients reconnect on their own and voice keeps going.
+  pulls (a mistyped sha fails here and changes nothing), restarts in a few seconds, and prints the commit
+  that's now live. Right after a merge, `latest` is still the previous build until the image workflow
+  finishes (about ten minutes): check the printed commit. Clients reconnect on their own and voice keeps going.
 - Order for a release: deploy the server first, then send friends the new installer. Clients older than the
   server see "plz update :)".
 - Roll back: `just deploy <previous sha7>`. If a database migration went wrong, also `just restore <backup>`

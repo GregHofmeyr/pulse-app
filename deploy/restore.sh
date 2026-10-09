@@ -5,9 +5,13 @@
 set -euo pipefail
 PROD=${PULSE_PROD:-pulse@pulse}
 KEY=${PULSE_BACKUP_KEY:-$HOME/.config/pulse/backup-age.key}
-mode=${1:?usage: restore.sh drill|apply [OBJ]}
+mode=${1:-}
 name=${2:-}
-[[ $mode == drill || -n $name ]] || { echo "apply needs an explicit backup name" >&2; exit 2; }
+case $mode in
+  drill) ;;
+  apply) [[ -n $name ]] || { echo "apply needs an explicit backup name" >&2; exit 2; } ;;
+  *) echo "usage: restore.sh drill [OBJ] | restore.sh apply OBJ" >&2; exit 2 ;;
+esac
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 

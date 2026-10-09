@@ -35,7 +35,7 @@ id pulse >/dev/null 2>&1 || useradd --create-home --shell /bin/bash pulse
 usermod -aG docker pulse
 install -d -o pulse -g pulse -m 750 "$APP" "$APP/data" "$APP/caddy" "$APP/caddy/data" "$APP/caddy/config"
 for f in compose.yml Caddyfile livekit.yaml; do install -o pulse -g pulse -m 640 "$HERE/$f" "$APP/$f"; done
-install -o pulse -g pulse -m 750 "$HERE/backup.sh" "$APP/backup.sh"
+for f in backup.sh deploy.sh; do install -o pulse -g pulse -m 750 "$HERE/$f" "$APP/$f"; done
 
 say "secrets (.env)"
 if [[ ! -f $APP/.env ]]; then
@@ -100,6 +100,7 @@ if $CLOSE_SSH; then
     ufw delete allow 22/tcp >/dev/null || true
   fi
   echo "Public port 22 closed. Also remove the port-22 rule from the cloud firewall (README)."
+  echo "Tailscale is now the only way in: make sure key expiry is disabled for 'pulse' (README section 4)."
 fi
 
 say "done"
