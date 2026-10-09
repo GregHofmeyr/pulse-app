@@ -12,7 +12,7 @@ import type { Server } from './protocol/Server'
 import type { User } from './protocol/User'
 import type { VoiceMember } from './protocol/VoiceMember'
 
-export type ConnState = 'connecting' | 'connected' | 'reconnecting' | 'logged_out'
+export type ConnState = 'connecting' | 'connected' | 'reconnecting' | 'logged_out' | 'update_required'
 
 /** A message we've sent but the server hasn't confirmed yet (optimistic UI / offline outbox). */
 export type Pending = { nonce: string; content: string; reply_to_id: string | null; status: 'pending' | 'failed' }

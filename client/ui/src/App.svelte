@@ -7,10 +7,13 @@
   import type { User } from './lib/protocol/User'
   import Login from './routes/Login.svelte'
   import Shell from './routes/Shell.svelte'
+  import UpdateRequired from './routes/UpdateRequired.svelte'
+  import { screenFor } from './lib/screen'
 
   let user = $state<User | null>(null)
   let booting = $state(true)
   let bootError = $state('')
+  const screen = $derived(screenFor({ booting, signedIn: !!user, conn: app.state.conn }))
 
   onMount(() => installTooltips())
 
@@ -43,9 +46,11 @@
   })
 </script>
 
-{#if booting}
+{#if screen === 'boot'}
   <div class="boot" aria-busy="true"></div>
-{:else if user}
+{:else if screen === 'update'}
+  <UpdateRequired />
+{:else if screen === 'shell' && user}
   <Shell {user} onLogout={() => { user = null; resetState() }} />
 {:else}
   <Login notice={bootError} onAuthed={(u) => { bootError = ''; user = u }} />

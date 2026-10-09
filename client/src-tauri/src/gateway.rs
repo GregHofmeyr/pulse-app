@@ -31,6 +31,8 @@ pub enum ConnState {
     Connected,
     Reconnecting,
     LoggedOut,
+    /// The server is newer than this app: stopped until it's updated.
+    UpdateRequired,
 }
 
 enum Cmd {
@@ -66,6 +68,8 @@ pub fn ws_url(base: &str) -> String {
 enum End {
     /// Server rejected our token: stop for good.
     LoggedOut,
+    /// The server is newer than us: stop until the app is updated.
+    UpdateRequired,
     /// Anything else: retry. `true` if we got as far as Ready (resets backoff).
     Retry(bool),
     Stop,
@@ -108,6 +112,10 @@ impl GatewayHandle {
                     End::Stop => return,
                     End::LoggedOut => {
                         let _ = tx.send(GatewayUpdate::Connection(ConnState::LoggedOut));
+                        return;
+                    }
+                    End::UpdateRequired => {
+                        let _ = tx.send(GatewayUpdate::Connection(ConnState::UpdateRequired));
                         return;
                     }
                     End::Retry(was_ready) => {
@@ -179,6 +187,7 @@ async fn session(
             let _ = tx.send(GatewayUpdate::Connection(ConnState::Connected));
         }
         Ok(Frame::Closed(Some(CloseCode::Library(4001)))) => return End::LoggedOut,
+        Ok(Frame::Closed(Some(CloseCode::Library(4005)))) => return End::UpdateRequired,
         _ => return End::Retry(false),
     }
 
@@ -198,6 +207,7 @@ async fn session(
                 Frame::Server(ServerFrame::Ready(r)) => { let _ = tx.send(GatewayUpdate::Ready(Box::new(r))); }
                 Frame::Server(ServerFrame::HeartbeatAck) => {}
                 Frame::Closed(Some(CloseCode::Library(4001))) => return End::LoggedOut,
+                Frame::Closed(Some(CloseCode::Library(4005))) => return End::UpdateRequired,
                 Frame::Closed(_) => return End::Retry(true),
             }},
             c = cmd_rx.recv() => match c {
@@ -407,5 +417,44 @@ mod tests {
         })
         .await;
         assert_eq!(saw, Ok(true), "dead connection not detected");
+    }
+
+    #[tokio::test]
+    async fn update_required_stops_reconnecting() {
+        use futures::StreamExt;
+        use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+                    let _hello = ws.next().await;
+                    let _ = ws
+                        .close(Some(CloseFrame {
+                            code: CloseCode::Library(4005),
+                            reason: "update required".into(),
+                        }))
+                        .await;
+                });
+            }
+        });
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _gw = GatewayHandle::spawn_with(
+            format!("http://{addr}"),
+            "t".into(),
+            tx,
+            Duration::from_millis(20),
+        );
+        let mut states = vec![];
+        while let Ok(Some(GatewayUpdate::Connection(s))) =
+            tokio::time::timeout(Duration::from_millis(500), rx.recv()).await
+        {
+            states.push(s);
+        }
+        assert_eq!(
+            states,
+            vec![ConnState::Connecting, ConnState::UpdateRequired]
+        );
     }
 }
