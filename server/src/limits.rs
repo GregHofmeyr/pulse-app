@@ -131,8 +131,20 @@ impl Limiter {
         f(&mut b.tokens)
     }
 
-    #[cfg(test)]
-    fn len(&self) -> usize {
+    /// Give back a token spent by [`Limiter::hit`] (never above the burst; unknown keys are ignored).
+    pub fn refund(&self, key: &str) {
+        if let Some(b) = self.buckets.lock().unwrap().get_mut(key) {
+            b.tokens = (b.tokens + 1.0).min(self.rate.burst as f64);
+        }
+    }
+
+    /// Whether no keys are tracked.
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// How many keys are tracked (tests, and a future metrics page).
+    pub fn len(&self) -> usize {
         self.buckets.lock().unwrap().len()
     }
 }
@@ -220,6 +232,26 @@ mod tests {
             !l.hit_at("a", later),
             "never more than the burst, however long it idled"
         );
+    }
+
+    #[test]
+    fn refund_gives_a_token_back_but_never_above_the_burst() {
+        let l = Limiter::new(Rate::new(2, 0.0));
+        let t0 = Instant::now();
+        assert!(l.hit_at("a", t0));
+        assert!(l.hit_at("a", t0));
+        assert!(!l.hit_at("a", t0));
+        l.refund("a");
+        assert!(l.hit_at("a", t0), "the refunded token is spendable");
+        l.refund("a");
+        l.refund("a");
+        l.refund("a");
+        assert!(
+            l.hit_at("a", t0) && l.hit_at("a", t0) && !l.hit_at("a", t0),
+            "capped at the burst"
+        );
+        l.refund("never-seen");
+        assert_eq!(l.len(), 1, "refunding an unknown key creates nothing");
     }
 
     #[test]

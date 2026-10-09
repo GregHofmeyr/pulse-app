@@ -48,15 +48,20 @@ async fn register(
     ClientIp(ip): ClientIp,
     Json(req): Json<RegisterRequest>,
 ) -> AppResult<Json<SessionResponse>> {
+    // Spend up front so parallel guesses can't all slip past before any pays. Only a wrong,
+    // used or expired invite code (guessing) keeps the spend; every other outcome is refunded.
     let ip_key = ip.to_string();
-    if !s.limits.register_ip.allowed(&ip_key) {
+    if !s.limits.register_ip.hit(&ip_key) {
         return Err(AppError::TooManyRequests);
     }
-    // Wrong/used invite codes spend a token (guessing); good registrations don't.
-    let bad_invite = |e: AppError| {
-        s.limits.register_ip.hit(&ip_key);
-        e
-    };
+    let res = register_with(&s, req).await;
+    if !matches!(res, Err(AppError::NotFound | AppError::Gone)) {
+        s.limits.register_ip.refund(&ip_key);
+    }
+    res
+}
+
+async fn register_with(s: &AppState, req: RegisterRequest) -> AppResult<Json<SessionResponse>> {
     if !valid_username(&req.username) {
         return Err(AppError::BadRequest(
             "username must be 2-32 chars of a-z 0-9 _ .".into(),
@@ -75,10 +80,10 @@ async fn register(
             .fetch_optional(&s.db)
             .await?;
     match found {
-        None => return Err(bad_invite(AppError::NotFound)),
+        None => return Err(AppError::NotFound),
         // Expired looks exactly like unknown.
-        Some((_, created)) if created <= cutoff => return Err(bad_invite(AppError::NotFound)),
-        Some((Some(_), _)) => return Err(bad_invite(AppError::Gone)),
+        Some((_, created)) if created <= cutoff => return Err(AppError::NotFound),
+        Some((Some(_), _)) => return Err(AppError::Gone),
         Some((None, _)) => {}
     }
     let hash = password::hash_async(req.password.clone()).await?;
@@ -118,11 +123,11 @@ async fn register(
             .bind(&req.invite_code)
             .fetch_optional(&s.db)
             .await?;
-        return Err(bad_invite(if exists.is_some() {
+        return Err(if exists.is_some() {
             AppError::Gone
         } else {
             AppError::NotFound
-        }));
+        });
     }
     tx.commit().await?;
 
@@ -147,16 +152,37 @@ async fn login(
     ClientIp(ip): ClientIp,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<Json<SessionResponse>> {
-    let (ip_key, user_key) = (ip.to_string(), req.username.to_lowercase());
-    if !s.limits.login_ip.allowed(&ip_key) || !s.limits.login_user.allowed(&user_key) {
+    let ip_key = ip.to_string();
+    // A name that can't exist gets no bucket of its own (keys stay small); the address still pays.
+    let user_key = (req.username.len() <= 32)
+        .then(|| req.username.to_lowercase())
+        .filter(|u| valid_username(u));
+    // Spend up front so parallel guesses can't all slip past before any pays. Only a failed
+    // login keeps the spend: friends logging in together from one network are fine.
+    let ip_ok = s.limits.login_ip.hit(&ip_key);
+    let user_ok = user_key
+        .as_deref()
+        .is_none_or(|u| s.limits.login_user.hit(u));
+    let refund = |ip: bool, user: bool| {
+        if ip {
+            s.limits.login_ip.refund(&ip_key);
+        }
+        if let Some(u) = user_key.as_deref().filter(|_| user) {
+            s.limits.login_user.refund(u);
+        }
+    };
+    if !ip_ok || !user_ok {
+        refund(ip_ok, user_ok); // a refused attempt costs nothing
         return Err(AppError::TooManyRequests);
     }
-    // Only failures spend tokens: friends logging in together from one network are fine.
-    let failed = || {
-        s.limits.login_ip.hit(&ip_key);
-        s.limits.login_user.hit(&user_key);
-        AppError::Unauthorized
-    };
+    let res = check_login(&s, req).await;
+    if !matches!(res, Err(AppError::Unauthorized)) {
+        refund(true, true);
+    }
+    res
+}
+
+async fn check_login(s: &AppState, req: LoginRequest) -> AppResult<Json<SessionResponse>> {
     let row: Option<(String, String, Option<String>)> =
         sqlx::query_as("SELECT id, password_hash, avatar_hash FROM users WHERE username = ?")
             .bind(&req.username)
@@ -164,10 +190,10 @@ async fn login(
             .await?;
     let Some((id, hash, avatar_hash)) = row else {
         let _ = password::verify_async(req.password, DUMMY_HASH.clone()).await;
-        return Err(failed());
+        return Err(AppError::Unauthorized);
     };
     if !password::verify_async(req.password.clone(), hash).await {
-        return Err(failed());
+        return Err(AppError::Unauthorized);
     }
     let id: UserId = id.parse().map_err(anyhow::Error::from)?;
     let token = session::create(&s.db, id).await?;

@@ -131,6 +131,37 @@ async fn extra_typing_frames_are_dropped() {
     assert_eq!(typings, 1);
 }
 
+#[tokio::test]
+async fn concurrent_bad_logins_cannot_outrun_the_limit() {
+    let app = spawn_limited(|_| {}).await;
+    register(&app, "alex").await;
+    let attempts = (0..20).map(|_| login(&app, "alex", "wrong-password", "10.3.0.1"));
+    let codes = futures::future::join_all(attempts).await;
+    let through = codes.iter().filter(|c| **c == 401).count();
+    assert!(
+        through <= 5,
+        "{through} guesses got through at once: {codes:?}"
+    );
+    assert!(codes.iter().all(|c| *c == 401 || *c == 429), "{codes:?}");
+}
+
+#[tokio::test]
+async fn oversized_usernames_never_become_limiter_keys() {
+    let app = spawn_limited(|_| {}).await;
+    let huge = "a".repeat(5000);
+    assert_eq!(login(&app, &huge, "wrong-password", "10.4.0.1").await, 401);
+    assert_eq!(
+        app.limits.login_user.len(),
+        0,
+        "no key for a name that can't exist"
+    );
+    assert_eq!(
+        app.limits.login_ip.len(),
+        1,
+        "the address still pays for the attempt"
+    );
+}
+
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 

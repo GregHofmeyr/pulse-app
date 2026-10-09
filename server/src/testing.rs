@@ -16,6 +16,7 @@ pub struct TestApp {
     pub cfg: Arc<Config>,
     pub hub: Hub,
     pub voice: crate::voice::VoiceState,
+    pub limits: Arc<crate::limits::Limits>,
     _dir: tempfile::TempDir,
 }
 
@@ -60,12 +61,13 @@ pub async fn spawn_with(mut cfg: Config) -> TestApp {
     let cfg = Arc::new(cfg);
     let hub = Hub::default();
     let voice = crate::voice::VoiceState::default();
+    let limits = Arc::new(crate::limits::Limits::new(&cfg.limits));
     let state = AppState {
         db: db.clone(),
         cfg: cfg.clone(),
         hub: hub.clone(),
         voice: voice.clone(),
-        limits: Arc::new(crate::limits::Limits::new(&cfg.limits)),
+        limits: limits.clone(),
     };
     tokio::spawn(async move {
         axum::serve(
@@ -82,6 +84,7 @@ pub async fn spawn_with(mut cfg: Config) -> TestApp {
         cfg,
         hub,
         voice,
+        limits,
         _dir: dir,
     }
 }
