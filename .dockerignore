@@ -1,0 +1,12 @@
+target
+client
+spikes
+kit
+docs
+.git
+.superpowers
+**/node_modules
+*.db
+*.db-shm
+*.db-wal
+.env
