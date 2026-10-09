@@ -1,0 +1,16 @@
+# Production LiveKit. Clients reach signalling (7880) only through Caddy at voice.<domain>;
+# the firewall keeps 7880 closed. The API key "pulse" and its secret come from LIVEKIT_KEYS
+# (compose.yml); the Pulse server uses the same pair.
+port: 7880
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: true
+turn:
+  enabled: true
+  udp_port: 3478
+webhook:
+  api_key: pulse
+  urls: ["http://127.0.0.1:7890/livekit/webhook"]
+logging:
+  level: info

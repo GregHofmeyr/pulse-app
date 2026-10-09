@@ -1,0 +1,13 @@
+{
+	email {$ACME_EMAIL}
+}
+
+{$PULSE_DOMAIN} {
+	# LiveKit posts its webhooks over loopback; nobody on the internet needs this path.
+	respond /livekit/webhook* 404
+	reverse_proxy 127.0.0.1:7890
+}
+
+voice.{$PULSE_DOMAIN} {
+	reverse_proxy 127.0.0.1:7880
+}

@@ -21,6 +21,7 @@ jobs:
     outputs:
       rust: ${{ steps.filter.outputs.rust }}
       ui: ${{ steps.filter.outputs.ui }}
+      deploy: ${{ steps.filter.outputs.deploy }}
     steps:
       - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
@@ -37,6 +38,9 @@ jobs:
               - '.github/workflows/ci.yml'
             ui:
               - 'client/ui/**'
+              - '.github/workflows/ci.yml'
+            deploy:
+              - 'deploy/**'
               - '.github/workflows/ci.yml'
 
   rust:
@@ -88,3 +92,22 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm test
+
+  deploy:
+    needs: changes
+    if: needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: compose file
+        run: |
+          sed -e 's/^PULSE_UID=$/PULSE_UID=1000/' -e 's/^PULSE_GID=$/PULSE_GID=1000/' \
+              -e 's/^ACME_EMAIL=$/ACME_EMAIL=ci@example.com/' -e 's/^LIVEKIT_SECRET=$/LIVEKIT_SECRET=x/' \
+              deploy/env.example > /tmp/pulse-ci.env
+          docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config -q
+      - name: Caddyfile
+        run: >
+          docker run --rm -e PULSE_DOMAIN=example.com -e ACME_EMAIL=ci@example.com
+          -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10 caddy validate --config /etc/caddy/Caddyfile
+      - name: shell scripts
+        run: shellcheck deploy/*.sh

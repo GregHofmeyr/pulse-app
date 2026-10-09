@@ -1,0 +1,56 @@
+# Pulse production stack. Lives at /srv/pulse/compose.yml; values come from /srv/pulse/.env.
+name: pulse
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  pulse-server:
+    image: ghcr.io/greghofmeyr/pulse-server:${PULSE_TAG:-latest}
+    network_mode: host
+    restart: unless-stopped
+    user: "${PULSE_UID:?}:${PULSE_GID:?}"
+    environment:
+      PULSE_DB_URL: sqlite:///data/pulse.db
+      PULSE_BIND: 127.0.0.1:7890
+      PULSE_LIVEKIT_URL: wss://voice.${PULSE_DOMAIN:?}
+      PULSE_LIVEKIT_KEY: pulse
+      PULSE_LIVEKIT_SECRET: ${LIVEKIT_SECRET:?}
+      RUST_LOG: info,sqlx=warn
+    volumes:
+      - ./data:/data
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/7890 && printf 'GET /health HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q ok <&3"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    logging: *logging
+
+  livekit:
+    image: livekit/livekit-server:v1.13.7
+    network_mode: host
+    restart: unless-stopped
+    user: "${PULSE_UID:?}:${PULSE_GID:?}"
+    command: --config /etc/livekit.yaml
+    environment:
+      LIVEKIT_KEYS: "pulse: ${LIVEKIT_SECRET:?}"
+    volumes:
+      - ./livekit.yaml:/etc/livekit.yaml:ro
+    logging: *logging
+
+  caddy:
+    image: caddy:2.10
+    network_mode: host
+    restart: unless-stopped
+    user: "${PULSE_UID:?}:${PULSE_GID:?}"
+    environment:
+      PULSE_DOMAIN: ${PULSE_DOMAIN:?}
+      ACME_EMAIL: ${ACME_EMAIL:?}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - ./caddy/data:/data
+      - ./caddy/config:/config
+    logging: *logging
