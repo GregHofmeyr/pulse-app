@@ -104,7 +104,9 @@ iptables (Oracle's Ubuntu image blocks almost everything by default). xneelo: se
   → `up -d` → wait for `/health`. Migrations run at server start. Restart = a few seconds; clients reconnect;
   voice continues (media goes to LiveKit).
 - **Rollback:** `just deploy <previous-sha>`; if a migration broke data, `restore.sh` the pre-deploy backup.
-- **Optional:** a free external uptime check on `https://pulsechat.co.za/health` that emails Greg.
+- **Uptime monitor:** a free external HTTP check (UptimeRobot free tier, 5-minute interval) on
+  `https://pulsechat.co.za/health`, expecting body `ok`; emails Greg on down and on recovery. Set up in step 3
+  of the build order, documented in the runbook.
 
 ## 7. Secrets
 
@@ -124,7 +126,7 @@ No secrets in GitHub (deploys run from Greg's machine; image pushes use `GITHUB_
    subcommand, default server URL, log audit, Dockerfile, `release-server` workflow, `deploy/` files, runbook.
 2. **Server:** Oracle instance (fallback xneelo) → `setup.sh` → Tailscale → firewalls.
 3. **First deploy:** DNS A records (`pulsechat.co.za`, `voice.pulsechat.co.za`, proxy off) → `compose up` →
-   certificates → smoke test: two local profiles chatting + voice through the real server.
+   certificates → smoke test: two local profiles chatting + voice through the real server → uptime monitor.
 4. **Backups:** R2 bucket, age key, timer, **one real restore**.
 5. **Windows test** with friends on the deployed server.
 6. **Optimisation pass** with real traffic: data per message/minute of voice, latency, audio quality.
