@@ -16,9 +16,12 @@ pub enum ApiError {
     Unauthorized,
     #[error("{0}")]
     Rejected(String),
-    /// 5xx / 429: the server (or a proxy in front of it) is having trouble; worth retrying.
+    /// 5xx: the server (or a proxy in front of it) is having trouble; worth retrying.
     #[error("the server is having trouble ({0})")]
     Server(String),
+    /// 429: we're going too fast; worth retrying a little later.
+    #[error("slow down a little, then try again")]
+    RateLimited,
     #[error("can't reach the server: {0}")]
     Network(String),
 }
@@ -80,7 +83,10 @@ impl Api {
         if r.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ApiError::Unauthorized);
         }
-        if r.status().is_server_error() || r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        if r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(ApiError::RateLimited);
+        }
+        if r.status().is_server_error() {
             return Err(ApiError::Server(r.status().to_string()));
         }
         if !r.status().is_success() {
@@ -100,7 +106,10 @@ impl Api {
         if r.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ApiError::Unauthorized);
         }
-        if r.status().is_server_error() || r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        if r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            return Err(ApiError::RateLimited);
+        }
+        if r.status().is_server_error() {
             return Err(ApiError::Server(r.status().to_string()));
         }
         if !r.status().is_success() {
@@ -465,6 +474,25 @@ mod tests {
         let login = api.login("alex", "hunter2hunter2").await.unwrap();
         assert_eq!(login.user.id, reg.user.id);
         assert_eq!(api.me(&login.token).await.unwrap().username, "alex");
+    }
+
+    #[tokio::test]
+    async fn too_many_failed_logins_says_slow_down() {
+        let mut cfg = testing::test_config();
+        cfg.limits = pulse_server::limits::LimitsConfig::default();
+        let app = testing::spawn_with(cfg).await;
+        testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        for _ in 0..5 {
+            let _ = api.login("alex", "nopenopenope").await;
+        }
+        let err = api.login("alex", "nopenopenope").await.unwrap_err();
+        assert!(matches!(err, ApiError::RateLimited), "{err:?}");
+        assert_eq!(err.to_string(), "slow down a little, then try again");
+        assert!(
+            crate::outbox::retryable(&err),
+            "a rate-limited send is retried later"
+        );
     }
 
     #[tokio::test]

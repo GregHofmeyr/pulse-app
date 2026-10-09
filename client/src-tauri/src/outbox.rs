@@ -23,7 +23,10 @@ pub type StatusSink = Arc<dyn Fn(&str, Status, Option<&Message>) + Send + Sync>;
 
 /// Worth trying again later: we couldn't reach the server, or it was overloaded/restarting.
 pub fn retryable(e: &ApiError) -> bool {
-    matches!(e, ApiError::Network(_) | ApiError::Server(_))
+    matches!(
+        e,
+        ApiError::Network(_) | ApiError::Server(_) | ApiError::RateLimited
+    )
 }
 
 #[derive(Clone)]
