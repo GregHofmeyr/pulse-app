@@ -1,11 +1,12 @@
 <script lang="ts">
   import { api, errorText } from '../lib/tauri'
+  import { defaultServer } from '../lib/config'
   import type { User } from '../lib/protocol/User'
 
   let { notice = '', onAuthed }: { notice?: string; onAuthed: (u: User) => void } = $props()
 
   let mode = $state<'login' | 'register'>('login')
-  let serverUrl = $state('http://127.0.0.1:7890')
+  let serverUrl = $state(defaultServer(import.meta.env))
   let inviteCode = $state('')
   let username = $state('')
   let password = $state('')

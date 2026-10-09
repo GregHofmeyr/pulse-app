@@ -12,6 +12,8 @@ permissions:
 
 env:
   LIVEKIT_VERSION: 1.13.7
+  # Release builds start the login screen on the real server.
+  VITE_DEFAULT_SERVER: https://pulsechat.co.za
 
 jobs:
   build:
