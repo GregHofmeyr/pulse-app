@@ -14,6 +14,8 @@ pub struct Config {
     pub hello_timeout: Duration,
     /// Silence after which a gateway socket is considered dead.
     pub heartbeat_timeout: Duration,
+    /// Rate limits (spec §3.1).
+    pub limits: crate::limits::LimitsConfig,
 }
 
 impl Config {
@@ -30,6 +32,7 @@ impl Config {
                 .context("PULSE_LIVEKIT_SECRET")?,
             hello_timeout: Duration::from_secs(10),
             heartbeat_timeout: Duration::from_secs(60),
+            limits: crate::limits::LimitsConfig::default(),
         })
     }
 }

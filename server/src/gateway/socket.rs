@@ -237,8 +237,10 @@ async fn run(mut socket: WebSocket, s: AppState) {
                         if !send(&mut socket, &ServerFrame::HeartbeatAck).await { break }
                     }
                     Ok(ClientFrame::Typing { channel_id }) => {
-                        // Typing into a channel you cannot see is silently ignored.
-                        if channel_for(&s.db, me, channel_id).await.is_ok() {
+                        // Over the limit or into a channel you cannot see: silently ignored.
+                        if s.limits.typing_user.hit(&me.to_string())
+                            && channel_for(&s.db, me, channel_id).await.is_ok()
+                        {
                             s.hub.publish(&s.db, Event::Typing { channel_id, user_id: me }).await;
                         }
                     }

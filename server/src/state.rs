@@ -12,4 +12,5 @@ pub struct AppState {
     pub cfg: Arc<Config>,
     pub hub: Hub,
     pub voice: VoiceState,
+    pub limits: Arc<crate::limits::Limits>,
 }

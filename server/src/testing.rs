@@ -43,6 +43,7 @@ pub fn test_config() -> Config {
         livekit_secret: "secret-secret-secret-secret-secret".into(),
         hello_timeout: Duration::from_millis(300),
         heartbeat_timeout: Duration::from_secs(5),
+        limits: crate::limits::LimitsConfig::unlimited(),
     }
 }
 
@@ -64,8 +65,16 @@ pub async fn spawn_with(mut cfg: Config) -> TestApp {
         cfg: cfg.clone(),
         hub: hub.clone(),
         voice: voice.clone(),
+        limits: Arc::new(crate::limits::Limits::new(&cfg.limits)),
     };
-    tokio::spawn(async move { axum::serve(listener, router(state)).await.unwrap() });
+    tokio::spawn(async move {
+        axum::serve(
+            listener,
+            router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap()
+    });
     TestApp {
         addr,
         http: reqwest::Client::new(),

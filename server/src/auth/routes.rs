@@ -12,6 +12,7 @@ use super::{invites, password, session};
 use crate::AppState;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
+use crate::limits::ClientIp;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -44,8 +45,18 @@ pub async fn load_user(db: &SqlitePool, id: UserId) -> AppResult<User> {
 
 async fn register(
     State(s): State<AppState>,
+    ClientIp(ip): ClientIp,
     Json(req): Json<RegisterRequest>,
 ) -> AppResult<Json<SessionResponse>> {
+    let ip_key = ip.to_string();
+    if !s.limits.register_ip.allowed(&ip_key) {
+        return Err(AppError::TooManyRequests);
+    }
+    // Wrong/used invite codes spend a token (guessing); good registrations don't.
+    let bad_invite = |e: AppError| {
+        s.limits.register_ip.hit(&ip_key);
+        e
+    };
     if !valid_username(&req.username) {
         return Err(AppError::BadRequest(
             "username must be 2-32 chars of a-z 0-9 _ .".into(),
@@ -63,8 +74,8 @@ async fn register(
             .fetch_optional(&s.db)
             .await?;
     match used {
-        None => return Err(AppError::NotFound),
-        Some(Some(_)) => return Err(AppError::Gone),
+        None => return Err(bad_invite(AppError::NotFound)),
+        Some(Some(_)) => return Err(bad_invite(AppError::Gone)),
         Some(None) => {}
     }
     let hash = password::hash_async(req.password.clone()).await?;
@@ -103,11 +114,11 @@ async fn register(
             .bind(&req.invite_code)
             .fetch_optional(&s.db)
             .await?;
-        return Err(if exists.is_some() {
+        return Err(bad_invite(if exists.is_some() {
             AppError::Gone
         } else {
             AppError::NotFound
-        });
+        }));
     }
     tx.commit().await?;
 
@@ -129,8 +140,19 @@ static DUMMY_HASH: std::sync::LazyLock<String> =
 
 async fn login(
     State(s): State<AppState>,
+    ClientIp(ip): ClientIp,
     Json(req): Json<LoginRequest>,
 ) -> AppResult<Json<SessionResponse>> {
+    let (ip_key, user_key) = (ip.to_string(), req.username.to_lowercase());
+    if !s.limits.login_ip.allowed(&ip_key) || !s.limits.login_user.allowed(&user_key) {
+        return Err(AppError::TooManyRequests);
+    }
+    // Only failures spend tokens: friends logging in together from one network are fine.
+    let failed = || {
+        s.limits.login_ip.hit(&ip_key);
+        s.limits.login_user.hit(&user_key);
+        AppError::Unauthorized
+    };
     let row: Option<(String, String, Option<String>)> =
         sqlx::query_as("SELECT id, password_hash, avatar_hash FROM users WHERE username = ?")
             .bind(&req.username)
@@ -138,10 +160,10 @@ async fn login(
             .await?;
     let Some((id, hash, avatar_hash)) = row else {
         let _ = password::verify_async(req.password, DUMMY_HASH.clone()).await;
-        return Err(AppError::Unauthorized);
+        return Err(failed());
     };
     if !password::verify_async(req.password.clone(), hash).await {
-        return Err(AppError::Unauthorized);
+        return Err(failed());
     }
     let id: UserId = id.parse().map_err(anyhow::Error::from)?;
     let token = session::create(&s.db, id).await?;

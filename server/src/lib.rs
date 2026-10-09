@@ -44,17 +44,21 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     let hub = gateway::Hub::default();
     let state = AppState {
         db,
+        limits: std::sync::Arc::new(limits::Limits::new(&cfg.limits)),
         cfg: std::sync::Arc::new(cfg),
         hub: hub.clone(),
         voice: voice::VoiceState::default(),
     };
-    axum::serve(listener, router(state))
-        .with_graceful_shutdown(async move {
-            let _ = tokio::signal::ctrl_c().await;
-            // Upgraded sockets aren't covered by graceful shutdown: tell clients to reconnect.
-            hub.close_all(1012);
-            tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        })
-        .await?;
+    axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        let _ = tokio::signal::ctrl_c().await;
+        // Upgraded sockets aren't covered by graceful shutdown: tell clients to reconnect.
+        hub.close_all(1012);
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    })
+    .await?;
     Ok(())
 }

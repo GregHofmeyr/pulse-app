@@ -141,6 +141,9 @@ async fn send(
     Path(id): Path<ChannelId>,
     Json(req): Json<SendMessageRequest>,
 ) -> AppResult<Json<Message>> {
+    if !s.limits.send_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     let ch = channel_for(&s.db, me, id).await?;
     match (ch.kind, ch.server_id) {
         (ChannelKind::Voice, _) => {
