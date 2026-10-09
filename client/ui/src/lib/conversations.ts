@@ -97,7 +97,9 @@ export function previewText(s: AppState, m: Message): { text: string; system: bo
 
 /** Where the red NEW line goes: the first normal message after the read point that someone else wrote (-1 = none). */
 export function firstUnreadIndex(messages: Message[], lastRead: string | null, me: string): number {
-  return messages.findIndex((m) => (lastRead === null || m.id > lastRead) && m.kind === 'normal' && m.author_id !== me)
+  const i = messages.findIndex((m) => (lastRead === null || m.id > lastRead) && m.kind === 'normal' && m.author_id !== me)
+  // Replying means you've caught up: no divider once one of your messages sits below it.
+  return i >= 0 && messages.slice(i).some((m) => m.author_id === me) ? -1 : i
 }
 
 /** Tracks the open conversation; `removed` is true only when a channel we had seen disappears. */

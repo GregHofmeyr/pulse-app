@@ -156,8 +156,14 @@ describe('NEW divider', () => {
   it('marks the first message after the read point written by someone else', () => {
     expect(firstUnreadIndex(list, 'M1', 'ME')).toBe(2) // M2 is mine
     expect(firstUnreadIndex(list, 'M4', 'ME')).toBe(-1)
-    expect(firstUnreadIndex(list, null, 'ME')).toBe(0) // never read anything
-    expect(firstUnreadIndex([msg('S', 'DM1', null, { kind: 'system' }), ...list], null, 'ME')).toBe(1)
+    const theirs = list.filter((m) => m.author_id !== 'ME')
+    expect(firstUnreadIndex(theirs, null, 'ME')).toBe(0) // never read anything
+    expect(firstUnreadIndex([msg('S', 'DM1', null, { kind: 'system' }), ...theirs], null, 'ME')).toBe(1)
+  })
+
+  it('goes away once you reply below it', () => {
+    expect(firstUnreadIndex([...list, msg('M5', 'DM1', 'ME')], 'M1', 'ME')).toBe(-1)
+    expect(firstUnreadIndex([...list, msg('M5', 'DM1', 'ME'), msg('M6', 'DM1', 'U1')], 'M1', 'ME')).toBe(-1)
   })
 })
 
