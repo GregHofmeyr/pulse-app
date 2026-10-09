@@ -102,6 +102,13 @@ export function firstUnreadIndex(messages: Message[], lastRead: string | null, m
   return i >= 0 && messages.slice(i).some((m) => m.author_id === me) ? -1 : i
 }
 
+/** Where the NEW line is measured from. When you stop watching an open chat (window loses focus
+ *  or you scroll up) you've seen everything up to the newest message, so it moves there and
+ *  whatever arrives while you're away gets the line. */
+export function reanchor(anchor: string | null, v: { was: boolean; now: boolean; newest: string | null }): string | null {
+  return v.was && !v.now && v.newest ? v.newest : anchor
+}
+
 /** Tracks the open conversation; `removed` is true only when a channel we had seen disappears. */
 export type OpenWatch = { id: string; seen: boolean }
 export function watchOpen(prev: OpenWatch | null, id: string, exists: boolean): { state: OpenWatch; removed: boolean } {

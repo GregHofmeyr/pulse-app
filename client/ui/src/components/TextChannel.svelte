@@ -6,7 +6,7 @@
   import Avatar from './Avatar.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
   import { app, clock, ui } from '../lib/store.svelte'
-  import { conversationName, firstUnreadIndex, isMuted, shouldMarkRead } from '../lib/conversations'
+  import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
   import { addHistory, addPending, markHistory } from '../lib/state'
   import { displayName, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
@@ -125,12 +125,23 @@
     }
   }
 
-  // --- unread: the NEW line is fixed at the read point as it was when you opened the conversation ---
-  // (the view remounts per channel, so a one-time snapshot is intended)
-  const openedAt = untrack(() => app.state.reads[channelId]?.last_read_message_id ?? null)
-  const hadReadState = untrack(() => channelId in app.state.reads)
-  const newIndex = $derived(hadReadState ? firstUnreadIndex(messages, openedAt, app.state.me?.id ?? '') : -1)
+  // --- unread: the NEW line starts at the read point you opened with, then moves to the newest
+  // message each time you stop watching (unfocus / scroll up), so every away stretch gets one ---
+  let anchor = $state(untrack(() => app.state.reads[channelId]?.last_read_message_id ?? null))
+  let anchored = $state(untrack(() => channelId in app.state.reads)) // brand-new chats start without a line
+  const newIndex = $derived(anchored ? firstUnreadIndex(messages, anchor, app.state.me?.id ?? '') : -1)
   let atBottom = $state(true)
+  let wasWatching = false
+  $effect(() => {
+    const now = ui.focused && atBottom
+    const newest = untrack(() => messages.at(-1)?.id ?? null)
+    const next = reanchor(untrack(() => anchor), { was: wasWatching, now, newest })
+    if (next !== untrack(() => anchor)) {
+      anchor = next
+      anchored = true
+    }
+    wasWatching = now
+  })
   const unreadBelow = $derived(atBottom ? 0 : (app.state.reads[channelId]?.unread ?? 0))
   let markTimer: ReturnType<typeof setTimeout> | null = null
   $effect(() => {

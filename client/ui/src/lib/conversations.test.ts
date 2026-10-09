@@ -149,7 +149,7 @@ describe('home helpers', () => {
   })
 })
 
-import { firstUnreadIndex } from './conversations'
+import { firstUnreadIndex, reanchor } from './conversations'
 
 describe('NEW divider', () => {
   const list = [msg('M1', 'DM1', 'U1'), msg('M2', 'DM1', 'ME'), msg('M3', 'DM1', 'U1'), msg('M4', 'DM1', 'U1')]
@@ -249,5 +249,26 @@ describe('closed conversations', () => {
     expect(homeBadge(s, NOW)).toBe(1) // only G1; closed DM1's 2 unread are out of sight
     s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M9', 'DM1', 'U1'), nonce: null } }, 0)
     expect(homeBadge(s, NOW)).toBe(3 + 1)
+  })
+})
+
+describe('NEW divider anchor', () => {
+  it('moves to the newest message when you stop watching, and only then', () => {
+    expect(reanchor('M1', { was: true, now: false, newest: 'M7' })).toBe('M7') // looked away
+    expect(reanchor('M1', { was: true, now: true, newest: 'M7' })).toBe('M1') // still watching
+    expect(reanchor('M1', { was: false, now: true, newest: 'M7' })).toBe('M1') // came back: keep it so the line shows
+    expect(reanchor('M1', { was: true, now: false, newest: null })).toBe('M1') // empty chat
+  })
+
+  it('three-person round: each away stretch gets its own line', () => {
+    // greg watched up to M2, then switched windows; sam and jo wrote M3, M4
+    const msgs = [msg('M1', 'G1', 'U1'), msg('M2', 'G1', 'ME'), msg('M3', 'G1', 'U1'), msg('M4', 'G1', 'U2')]
+    let anchor = reanchor('M1', { was: true, now: false, newest: 'M2' })
+    expect(firstUnreadIndex(msgs, anchor, 'ME')).toBe(2)
+    // greg replies (M5): line goes; looks away again, U1 writes M6
+    const more = [...msgs, msg('M5', 'G1', 'ME'), msg('M6', 'G1', 'U1')]
+    expect(firstUnreadIndex(more.slice(0, 5), anchor, 'ME')).toBe(-1)
+    anchor = reanchor(anchor, { was: true, now: false, newest: 'M5' })
+    expect(firstUnreadIndex(more, anchor, 'ME')).toBe(5)
   })
 })
