@@ -171,6 +171,8 @@
     const r = replyTo?.id ?? null
     replyTo = null
     void api.sendMessage(channelId, text, r, nonce)
+    // Sending from higher up takes you to the latest (your message lands there).
+    void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   }
 
   function retry(nonce: string) {
