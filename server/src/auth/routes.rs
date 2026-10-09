@@ -68,15 +68,18 @@ async fn register(
         ));
     }
     // Check the invite before anything expensive (and before revealing whether a username exists).
-    let used: Option<Option<String>> =
-        sqlx::query_scalar("SELECT used_by FROM invites WHERE code = ?")
+    let cutoff = invites::cutoff(chrono::Utc::now());
+    let found: Option<(Option<String>, String)> =
+        sqlx::query_as("SELECT used_by, created_at FROM invites WHERE code = ?")
             .bind(&req.invite_code)
             .fetch_optional(&s.db)
             .await?;
-    match used {
+    match found {
         None => return Err(bad_invite(AppError::NotFound)),
-        Some(Some(_)) => return Err(bad_invite(AppError::Gone)),
-        Some(None) => {}
+        // Expired looks exactly like unknown.
+        Some((_, created)) if created <= cutoff => return Err(bad_invite(AppError::NotFound)),
+        Some((Some(_), _)) => return Err(bad_invite(AppError::Gone)),
+        Some((None, _)) => {}
     }
     let hash = password::hash_async(req.password.clone()).await?;
     let id = UserId::new();
@@ -100,11 +103,12 @@ async fn register(
     inserted?;
     // Atomic single-use redemption: only the transaction that flips used_by wins.
     let claimed = sqlx::query(
-        "UPDATE invites SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL",
+        "UPDATE invites SET used_by = ?, used_at = ? WHERE code = ? AND used_by IS NULL AND created_at > ?",
     )
     .bind(id.to_string())
     .bind(&at)
     .bind(&req.invite_code)
+    .bind(&cutoff)
     .execute(&mut *tx)
     .await?
     .rows_affected();

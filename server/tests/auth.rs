@@ -256,3 +256,42 @@ async fn members_can_create_invites() {
         200
     );
 }
+
+#[tokio::test]
+async fn invites_expire_after_24_hours() {
+    let app = spawn().await;
+    let age = |hours: i64| {
+        (chrono::Utc::now() - chrono::TimeDelta::hours(hours))
+            .to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    };
+    let try_register = |code: String, name: &'static str| {
+        app.http
+            .post(app.url("/auth/register"))
+            .json(&json!({ "invite_code": code, "username": name, "password": "hunter2hunter2" }))
+            .send()
+    };
+    let fresh = invite(&app).await;
+    sqlx::query("UPDATE invites SET created_at = ? WHERE code = ?")
+        .bind(age(23))
+        .bind(&fresh)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        try_register(fresh, "alex").await.unwrap().status(),
+        200,
+        "23 h old still works"
+    );
+
+    let stale = invite(&app).await;
+    sqlx::query("UPDATE invites SET created_at = ? WHERE code = ?")
+        .bind(age(25))
+        .bind(&stale)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let expired = try_register(stale, "sam").await.unwrap();
+    let unknown = try_register("never-existed".into(), "jo").await.unwrap();
+    assert_eq!(expired.status(), 404);
+    assert_eq!(unknown.status(), 404, "expired looks exactly like a typo");
+}

@@ -4,7 +4,15 @@ use sqlx::SqlitePool;
 
 const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyz23456789";
 
-/// Create a single-use invite code (10 chars, unambiguous alphabet).
+/// How long an unused invite stays valid.
+pub const TTL_HOURS: i64 = 24;
+
+/// Invites created at or before this instant have expired.
+pub fn cutoff(now: chrono::DateTime<chrono::Utc>) -> String {
+    (now - chrono::TimeDelta::hours(TTL_HOURS)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+}
+
+/// Create a single-use invite code (10 chars, unambiguous alphabet), valid for 24 hours.
 pub async fn create(db: &SqlitePool, by: Option<UserId>) -> anyhow::Result<String> {
     // ThreadRng is !Send: keep it out of the async state machine.
     let code: String = {
