@@ -8,6 +8,7 @@ pub mod gateway;
 pub mod limits;
 pub mod messages;
 pub mod reads;
+pub mod reports;
 pub mod servers;
 pub mod state;
 pub mod voice;
@@ -30,6 +31,7 @@ pub fn router(state: AppState) -> Router {
         .merge(messages::routes::router())
         .merge(dms::routes::router())
         .merge(voice::routes::router())
+        .merge(reports::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)

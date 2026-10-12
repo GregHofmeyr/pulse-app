@@ -226,3 +226,36 @@ pub struct ApiError {
     pub code: String,
     pub message: String,
 }
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "kebab-case")]
+pub enum ReportKind {
+    Bug,
+    Crash,
+    UnexpectedExit,
+}
+
+impl ReportKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Bug => "bug",
+            Self::Crash => "crash",
+            Self::UnexpectedExit => "unexpected-exit",
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CreateReportRequest {
+    pub kind: ReportKind,
+    pub text: String,
+    /// App version, OS, connection and voice state, crash details: free-form so new fields need no migration.
+    #[ts(type = "Record<string, unknown>")]
+    pub meta: serde_json::Value,
+    pub log: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CreateReportResponse {
+    pub id: String,
+}

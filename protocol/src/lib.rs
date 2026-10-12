@@ -32,6 +32,9 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::RenameChannelRequest::export_all(&cfg)?;
     rest::MarkReadRequest::export_all(&cfg)?;
     rest::SetMuteRequest::export_all(&cfg)?;
+    rest::ReportKind::export_all(&cfg)?;
+    rest::CreateReportRequest::export_all(&cfg)?;
+    rest::CreateReportResponse::export_all(&cfg)?;
     Ok(())
 }
 

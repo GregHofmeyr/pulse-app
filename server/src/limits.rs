@@ -42,6 +42,8 @@ pub struct LimitsConfig {
     pub send_user: Rate,
     /// Typing frames per user (extra ones are dropped).
     pub typing_user: Rate,
+    /// Bug/crash reports per user.
+    pub report_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -52,6 +54,7 @@ impl Default for LimitsConfig {
             register_ip: Rate::per_hour(5),
             send_user: Rate::new(20, 5.0),
             typing_user: Rate::new(1, 1.0),
+            report_user: Rate::per_hour(5),
         }
     }
 }
@@ -66,6 +69,7 @@ impl LimitsConfig {
             register_ip: r,
             send_user: r,
             typing_user: r,
+            report_user: r,
         }
     }
 }
@@ -160,6 +164,7 @@ pub struct Limits {
     pub register_ip: Limiter,
     pub send_user: Limiter,
     pub typing_user: Limiter,
+    pub report_user: Limiter,
 }
 
 impl Limits {
@@ -170,6 +175,7 @@ impl Limits {
             register_ip: Limiter::new(c.register_ip),
             send_user: Limiter::new(c.send_user),
             typing_user: Limiter::new(c.typing_user),
+            report_user: Limiter::new(c.report_user),
         }
     }
 }
