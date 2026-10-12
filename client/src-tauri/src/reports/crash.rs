@@ -18,6 +18,8 @@ use crate::api::ApiError;
 const RUNNING: &str = "running";
 const CRASH: &str = "crash.json";
 const PENDING: &str = "pending-report.json";
+/// Panic messages can be huge (`assert_eq!` on a big value); the report keeps the start.
+pub const MAX_MESSAGE_BYTES: usize = 2048;
 pub const MAX_AGE_SECS: u64 = 7 * 86_400;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -40,6 +42,15 @@ pub fn write_panic_marker(dir: &Path, message: &str, location: &str) {
     if path.exists() {
         return; // the first panic of a session is the interesting one
     }
+    let message = if message.len() > MAX_MESSAGE_BYTES {
+        let mut cut = MAX_MESSAGE_BYTES;
+        while !message.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        format!("{}…", &message[..cut])
+    } else {
+        message.to_string()
+    };
     let body = serde_json::json!({
         "at": super::unix_now(),
         "message": message,
@@ -235,6 +246,19 @@ mod tests {
         let c = p.crash.unwrap();
         assert_eq!(c["message"], "index out of bounds");
         assert_eq!(c["location"], "src/voice/mixer.rs:88");
+    }
+
+    #[test]
+    fn a_huge_panic_message_is_cut_to_fit_the_report() {
+        // e.g. assert_eq! on a big Vec: the report's meta must stay under the server's 16 KB
+        let d = tempfile::tempdir().unwrap();
+        let msg = "é".repeat(10_000); // 20 KB, multi-byte chars
+        write_panic_marker(d.path(), &msg, "x.rs:1");
+        detect(d.path(), 1000);
+        let p = load_pending(d.path(), 1000).unwrap();
+        let kept = p.crash.unwrap()["message"].as_str().unwrap().to_string();
+        assert!(kept.len() <= MAX_MESSAGE_BYTES + 4, "{} bytes", kept.len());
+        assert!(kept.ends_with('…'));
     }
 
     #[test]

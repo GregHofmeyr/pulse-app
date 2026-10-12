@@ -58,6 +58,11 @@ pub fn path_only(url: &reqwest::Url) -> String {
     url.path().to_string()
 }
 
+/// A reqwest error for a log line: its Display would include the full URL (host + query).
+fn failure_text(e: reqwest::Error) -> String {
+    e.without_url().to_string()
+}
+
 fn log_failure(path: Option<String>, what: &str) {
     tracing::warn!(
         path = path.as_deref().unwrap_or("?"),
@@ -93,8 +98,10 @@ impl Api {
         r: Result<reqwest::Response, reqwest::Error>,
     ) -> Result<T, ApiError> {
         let r = r.map_err(|e| {
-            log_failure(e.url().map(path_only), &e.to_string());
-            ApiError::Network(e.to_string())
+            let path = e.url().map(path_only);
+            let text = failure_text(e);
+            log_failure(path, &text);
+            ApiError::Network(text)
         })?;
         if !r.status().is_success() {
             log_failure(Some(path_only(r.url())), r.status().as_str());
@@ -122,8 +129,10 @@ impl Api {
     /// For endpoints that answer 204.
     async fn ok_empty(r: Result<reqwest::Response, reqwest::Error>) -> Result<(), ApiError> {
         let r = r.map_err(|e| {
-            log_failure(e.url().map(path_only), &e.to_string());
-            ApiError::Network(e.to_string())
+            let path = e.url().map(path_only);
+            let text = failure_text(e);
+            log_failure(path, &text);
+            ApiError::Network(text)
         })?;
         if !r.status().is_success() {
             log_failure(Some(path_only(r.url())), r.status().as_str());
@@ -517,6 +526,15 @@ mod tests {
             log: String::new(),
         };
         assert_eq!(api.create_report(&token, &req).await.unwrap().id.len(), 26);
+    }
+
+    #[tokio::test]
+    async fn failure_text_leaves_out_the_url() {
+        let e = reqwest::get("http://127.0.0.1:9/x?token=secret")
+            .await
+            .unwrap_err();
+        let t = failure_text(e);
+        assert!(!t.contains("secret") && !t.contains("127.0.0.1"), "{t}");
     }
 
     #[test]

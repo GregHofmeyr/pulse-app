@@ -39,6 +39,8 @@ use rx::RxTasks;
 
 /// Max audio buffered per peer before the oldest is dropped (bounds latency).
 const PEER_BUFFER_MS: u32 = 200;
+/// How long a bug report waits for the voice session before reporting it as busy.
+const DIAGNOSTICS_WAIT: Duration = Duration::from_secs(1);
 /// How often the voice path's round trip / jitter / buffer delay is logged while in a call.
 const NET_STATS_EVERY: Duration = Duration::from_secs(5);
 
@@ -508,7 +510,11 @@ impl VoiceManager {
 
     /// For bug reports: where voice is and which devices it was told to use.
     pub async fn diagnostics(&self) -> serde_json::Value {
-        let s = self.session.lock().await;
+        // A device reopen can hang holding the session lock — exactly when someone reports a voice
+        // problem. Don't let the report wait on it.
+        let Ok(s) = tokio::time::timeout(DIAGNOSTICS_WAIT, self.session.lock()).await else {
+            return serde_json::json!({ "state": "busy", "controls": self.controls() });
+        };
         let (channel, cfg) = match s.as_ref() {
             Some(s) if s.alive.load(Ordering::SeqCst) => (
                 Some(s.channel.to_string()),
@@ -635,6 +641,17 @@ fn mic_publish_options() -> TrackPublishOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn diagnostics_dont_wait_on_a_stuck_voice_session() {
+        // a hung device reopen holds the session lock; the bug report must still go out
+        let vm = VoiceManager::new(Arc::new(|_| {}));
+        let _held = vm.session.lock().await;
+        let d = tokio::time::timeout(Duration::from_secs(3), vm.diagnostics())
+            .await
+            .expect("diagnostics waited on the lock");
+        assert_eq!(d["state"], "busy");
+    }
 
     #[test]
     fn noise_suppression_event_serialises_for_the_ui() {
