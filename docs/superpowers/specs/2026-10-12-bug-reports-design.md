@@ -51,15 +51,39 @@ request-failure lines arrive via the log tail.
 
 No Tauri dialog/fs plugin needed: Rust picks the path itself.
 
+## Automatic crash reports
+
+Two cases, both sent as reports without text, through the same endpoint:
+
+1. **Panic** (`kind = "crash"`). The existing panic hook (logging.rs) also writes `crash.json` to the
+   profile's log dir: time, panic message, location (`file:line`), thread name. The first panic of a
+   session wins; later ones only log. The app may keep running (a panicked background task doesn't
+   exit it); the report still goes out on the next launch.
+2. **Unexpected exit** (`kind = "unexpected-exit"`). At startup the client writes `running` in the
+   profile's log dir; the existing `RunEvent::Exit` handler deletes it. If it is still there at the next
+   startup, the last session ended without a clean exit: a native crash (libwebrtc, WebView2, an audio
+   driver), a force-close, or power loss. Reports say exactly that; they don't claim a crash. If a
+   `crash.json` is also present, only the crash report is sent.
+
+At startup, **before** the new session logs anything, the client reads the log tail (the crashed
+session's last lines) and keeps the pending report in memory. It is sent once the user is signed in
+(restore or login), with the same retry-once rule. On success the markers are deleted; on failure they
+stay for the next launch. A pending report older than 7 days is dropped. After a successful send, the
+app shows a small notice once: "Pulse closed unexpectedly last time, so we sent Greg a report."
+
+Native stack traces (minidumps via Crashpad/Sentry, symbol upload) are deferred. If native crashes turn
+out to be common, Windows' own crash dumps can be turned on and sent by hand.
+
 ## Server
 
 - Migration `0003_bug_reports.sql`:
   `bug_reports(id TEXT PK, user_id TEXT NOT NULL REFERENCES users, created_at TEXT NOT NULL,
+  kind TEXT NOT NULL CHECK (kind IN ('bug','crash','unexpected-exit')),
   text TEXT NOT NULL, meta TEXT NOT NULL, log TEXT NOT NULL, seen_at TEXT NULL)`.
-- `POST /reports` (AuthUser): validates text 1–4000 chars, meta ≤ 16 KB, log ≤ 512 KB; returns
+- `POST /reports` (AuthUser): validates kind; text 1–4000 chars for `bug`, 0–4000 for the automatic kinds; meta ≤ 16 KB, log ≤ 512 KB; returns
   `{ id }`. Rate limit `report_user = Rate::per_hour(5)` (new `LimitsConfig` field). The route gets
   `DefaultBodyLimit::max(1 MB)`; everything else keeps axum's 2 MB default.
-- Protocol: `CreateReportRequest { text, meta: serde_json::Value, log }` and `CreateReportResponse { id }`
+- Protocol: `CreateReportRequest { kind: ReportKind, text, meta: serde_json::Value, log }` and `CreateReportResponse { id }`
   in `protocol/src/rest.rs`, exported to TS like the others.
 - Reports are write-only over HTTP. Nobody, Greg included, reads them through the API.
 
@@ -68,7 +92,7 @@ No Tauri dialog/fs plugin needed: Rust picks the path itself.
 New server subcommands, wrapped by `just` recipes over Tailscale SSH (same pattern as `invite-prod`):
 
 - `just reports` → `pulse-app-server reports`: newest 20, one line each — short id, time, username,
-  `new` if unseen, first 60 chars of the text.
+  kind, `new` if unseen, first 60 chars of the text (or the panic message for crashes).
 - `just report <id>` → `pulse-app-server report <id>`: everything except the log, pretty-printed meta;
   marks it seen.
 - `just report <id> --log` → also prints the log tail.
@@ -91,7 +115,7 @@ in a morning. On a friend's PC that fills their disk, and it would make the log 
 ## Out of scope
 
 Screenshots, attaching files, a reply channel to the friend, reading reports anywhere but the CLI, any
-notification when a report arrives, crash auto-reporting.
+notification when a report arrives, native crash dumps / stack traces.
 
 ## Testing
 
@@ -102,5 +126,9 @@ notification when a report arrives, crash auto-reporting.
   text formatting for the saved file; retry-once policy (network error → one retry → give up; 4xx → no
   retry); throttle (first logs, repeats counted, summary once per window); size-capped writer stops at
   the cap and writes the notice once; request-failure log line contains no token.
+- Crash reports: panic hook writes `crash.json` once per session; startup with `running` present →
+  unexpected-exit pending; with both → crash only; clean exit removes `running`; markers kept on send
+  failure and removed on success; pending older than 7 days dropped; log tail captured before the new
+  session writes.
 - UI: the modal's states (idle → sending → sent / failed → saved) with the Tauri calls mocked, as the
   existing UI tests do.
