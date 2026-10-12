@@ -37,6 +37,10 @@ export const api = {
   editMessage: (messageId: string, content: string) => invoke<Message>('edit_message', { messageId, content }),
   deleteMessage: (messageId: string) => invoke<void>('delete_message', { messageId }),
   sendTyping: (channelId: string) => invoke<void>('send_typing', { channelId }),
+  /** Returns the report's short id. */
+  submitReport: (text: string) => invoke<string>('submit_report', { text }),
+  /** Writes a .txt to Downloads; returns its path. `serverUrl` when not signed in. */
+  saveReport: (text: string, serverUrl: string | null) => invoke<string>('save_report', { text, serverUrl }),
 }
 
 /** Tauri rejects with the command's error string. */

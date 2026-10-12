@@ -11,7 +11,7 @@ import { playSound } from './voiceui'
 export const app = $state<{ state: AppState }>({ state: emptyState() })
 
 /** What the user is looking at: drives the message sound and read marking. */
-export const ui = $state({ openChannelId: null as string | null, focused: true })
+export const ui = $state({ openChannelId: null as string | null, focused: true, autoReported: false })
 
 /** One shared clock for time-dependent UI (mute expiry, "5m ago"). Ticks every 30 s. */
 export const clock = $state({ nowIso: new Date().toISOString() })
@@ -58,6 +58,8 @@ export async function startListening(): Promise<UnlistenFn> {
       app.state = applyEvent(app.state, e.payload, Date.now())
     }),
     listen<ConnState>('pulse://conn', (e) => (app.state = { ...app.state, conn: e.payload })),
+    // Last session crashed or quit unexpectedly and its report just went out: tell the user once.
+    listen('pulse://auto-report-sent', () => (ui.autoReported = true)),
     listen<{ nonce: string; status: 'sent' | 'failed'; message: Message | null }>('pulse://outbox', (e) => {
       const { nonce, status, message } = e.payload
       if (status === 'sent' && message) {

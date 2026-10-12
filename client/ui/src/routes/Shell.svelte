@@ -6,6 +6,7 @@
   import VoicePanel from '../components/VoicePanel.svelte'
   import TextChannel from '../components/TextChannel.svelte'
   import Settings from '../components/Settings.svelte'
+  import ReportBug from '../components/ReportBug.svelte'
   import ConversationList from '../components/ConversationList.svelte'
   import PeopleBoard from '../components/PeopleBoard.svelte'
   import PeoplePicker from '../components/PeoplePicker.svelte'
@@ -26,6 +27,7 @@
   let activeServerId = $state<string | null>(null)
   let activeChannelId = $state<string | null>(null)
   let settingsOpen = $state(false)
+  let reportOpen = $state(false)
   let menuOpen = $state(false)
   let creating = $state(false)
   let newName = $state('')
@@ -201,6 +203,9 @@
     {#if app.state.conn !== 'connected'}
       <span class="conn" role="status">{app.state.conn === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span>
     {/if}
+    {#if ui.autoReported}
+      <span class="conn auto-report" role="status">Pulse closed unexpectedly last time, so we sent Greg a report. <button aria-label="Dismiss" onclick={() => (ui.autoReported = false)}>×</button></span>
+    {/if}
     <button class="win" aria-label="Minimise" onclick={() => win.minimize()}><Icon name="min" size={14} /></button>
     <button class="win" aria-label="Maximise" onclick={() => win.toggleMaximize()}><Icon name="square" size={13} /></button>
     <button class="win" aria-label="Close" onclick={() => win.close()}><Icon name="x" size={14} /></button>
@@ -241,6 +246,7 @@
         {#if menuOpen}
           <div class="menu" role="menu">
             <button role="menuitem" onclick={() => { menuOpen = false; settingsOpen = true }}>Voice &amp; audio settings</button>
+            <button role="menuitem" class="warn" onclick={() => { menuOpen = false; reportOpen = true }}>Report a bug</button>
             <button role="menuitem" class="danger" onclick={logout}>Log out</button>
           </div>
         {/if}
@@ -272,6 +278,7 @@
   </div>
 </div>
 {#if settingsOpen}<Settings onClose={() => (settingsOpen = false)} />{/if}
+{#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
 {#if creating}
   <div class="overlay">
   <div class="backdrop" role="presentation" onclick={() => (creating = false)}></div>
@@ -346,6 +353,8 @@
   .menu button { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font-size: 13px; }
   .menu button:hover { background: var(--bg-4); }
   .menu .danger { color: #f2616b; }
+  .menu .warn { color: var(--warn); }
+  .auto-report button { border: 0; background: none; color: inherit; font-size: 15px; line-height: 1; padding: 0 0 0 6px; }
   .overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px; }
   .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
   .dialog { position: relative; width: min(420px, calc(100vw - 32px)); padding: 24px; background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: 16px; display: flex; flex-direction: column; gap: 14px; }

@@ -2,6 +2,7 @@
   import { api, errorText } from '../lib/tauri'
   import { defaultServer } from '../lib/config'
   import type { User } from '../lib/protocol/User'
+  import ReportBug from '../components/ReportBug.svelte'
 
   let { notice = '', onAuthed }: { notice?: string; onAuthed: (u: User) => void } = $props()
 
@@ -12,6 +13,7 @@
   let password = $state('')
   let busy = $state(false)
   let error = $state('')
+  let reportOpen = $state(false)
 
   async function submit(e: SubmitEvent) {
     e.preventDefault()
@@ -57,10 +59,12 @@
       {mode === 'login' ? 'Got an invite? Create an account' : 'Already have an account? Log in'}
     </button>
   </form>
+  <button type="button" class="report" onclick={() => (reportOpen = true)}>Report a bug</button>
+  {#if reportOpen}<ReportBug saveOnly {serverUrl} onClose={() => (reportOpen = false)} />{/if}
 </main>
 
 <style>
-  main { height: 100%; display: grid; place-items: center; background: var(--bg-0); }
+  main { height: 100%; display: grid; place-items: center; align-content: center; gap: 14px; background: var(--bg-0); }
   .card {
     width: 360px; padding: 28px; border-radius: 18px; background: var(--bg-2);
     border: 1px solid var(--line); display: flex; flex-direction: column; gap: 14px;
@@ -76,4 +80,6 @@
   .link:hover { color: var(--text); }
   .error { margin: 0; color: #f2616b; font-size: 13px; }
   .notice { margin: 0; color: #e8b04a; font-size: 13px; }
+  .report { background: none; border: 0; color: var(--warn); font-size: 13px; opacity: .8; }
+  .report:hover { opacity: 1; }
 </style>
