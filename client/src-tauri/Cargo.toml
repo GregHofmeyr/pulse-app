@@ -29,6 +29,7 @@ futures = "0.3"
 rand = "0.9"
 livekit = { version = "0.9.3", features = ["rustls-tls-native-roots"] }
 cpal = "0.15"
+os_info = "3"
 anyhow.workspace = true
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }

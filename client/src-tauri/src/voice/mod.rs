@@ -506,6 +506,24 @@ impl VoiceManager {
         }
     }
 
+    /// For bug reports: where voice is and which devices it was told to use.
+    pub async fn diagnostics(&self) -> serde_json::Value {
+        let s = self.session.lock().await;
+        let (channel, cfg) = match s.as_ref() {
+            Some(s) if s.alive.load(Ordering::SeqCst) => (
+                Some(s.channel.to_string()),
+                Some(s.cfg.lock().unwrap().clone()),
+            ),
+            _ => (None, None),
+        };
+        serde_json::json!({
+            "channel": channel,
+            "controls": self.controls(),
+            "input": cfg.as_ref().and_then(|c| c.input.clone()).unwrap_or_else(|| "default".into()),
+            "output": cfg.as_ref().and_then(|c| c.output.clone()).unwrap_or_else(|| "default".into()),
+        })
+    }
+
     /// The live session's channel (a session LiveKit already dropped doesn't count).
     pub async fn current_channel(&self) -> Option<ChannelId> {
         self.session

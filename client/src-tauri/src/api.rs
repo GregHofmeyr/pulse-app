@@ -459,6 +459,24 @@ impl Api {
         Ok(())
     }
 
+    /// Reports carry up to 256 KB of log: allow longer than the usual 15 s on a slow line.
+    pub async fn create_report(
+        &self,
+        token: &str,
+        req: &pulse_protocol::rest::CreateReportRequest,
+    ) -> Result<pulse_protocol::rest::CreateReportResponse, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/reports", self.base))
+                .bearer_auth(token)
+                .timeout(Duration::from_secs(45))
+                .json(req)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     pub async fn me(&self, token: &str) -> Result<User, ApiError> {
         Self::parse(
             self.http
@@ -486,6 +504,20 @@ impl Api {
 mod tests {
     use super::*;
     use pulse_server::testing;
+
+    #[tokio::test]
+    async fn a_report_reaches_the_server() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let req = pulse_protocol::rest::CreateReportRequest {
+            kind: pulse_protocol::rest::ReportKind::Bug,
+            text: "voice cut out".into(),
+            meta: serde_json::json!({}),
+            log: String::new(),
+        };
+        assert_eq!(api.create_report(&token, &req).await.unwrap().id.len(), 26);
+    }
 
     #[test]
     fn failed_request_lines_keep_only_the_path() {

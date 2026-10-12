@@ -21,6 +21,8 @@ pub struct Core {
     /// the next send or reconnect).
     retry: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
     gateway: Mutex<Option<GatewayHandle>>,
+    /// Last gateway state (bug reports include it).
+    conn: Mutex<ConnState>,
     store: Store,
 }
 
@@ -31,6 +33,7 @@ impl Core {
             inner: Mutex::new(None),
             retry: Mutex::new(None),
             gateway: Mutex::new(None),
+            conn: Mutex::new(ConnState::Connecting),
             store,
         }
     }
@@ -98,6 +101,10 @@ impl Core {
         r
     }
 
+    pub(crate) fn conn(&self) -> ConnState {
+        *self.conn.lock().unwrap()
+    }
+
     pub(crate) fn send_frame(&self, f: ClientFrame) {
         if let Some(g) = self.gateway.lock().unwrap().as_ref() {
             g.send(f);
@@ -116,6 +123,7 @@ async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>)
                 let _ = app.emit("pulse://event", &e);
             }
             GatewayUpdate::Connection(state) => {
+                *app.state::<Core>().conn.lock().unwrap() = state;
                 tracing::info!(?state, "gateway");
                 if state == ConnState::LoggedOut {
                     app.state::<Core>().deactivate(&app);

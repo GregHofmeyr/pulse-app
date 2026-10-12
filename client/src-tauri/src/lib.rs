@@ -5,6 +5,7 @@ pub mod gateway;
 pub mod ipc;
 pub mod logging;
 pub mod outbox;
+pub mod reports;
 pub mod session;
 pub mod sounds;
 pub mod throttle;
@@ -48,6 +49,7 @@ pub fn run() {
             let dir = session::profile_dir(&app.path().app_data_dir()?, profile.as_deref());
             // Log file per profile; the guard must live as long as the app.
             let log_dir = session::profile_dir(&app.path().app_log_dir()?, profile.as_deref());
+            app.manage(reports::LogDir(log_dir.clone()));
             match logging::init(&log_dir) {
                 Ok(guard) => {
                     app.manage(LogGuard(std::sync::Mutex::new(Some(guard))));
@@ -153,6 +155,8 @@ pub fn run() {
             commands::set_mute,
             commands::clear_mute,
             commands::close_conversation,
+            reports::submit_report,
+            reports::save_report,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Pulse")

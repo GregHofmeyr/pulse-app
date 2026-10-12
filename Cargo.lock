@@ -4675,6 +4675,7 @@ dependencies = [
  "livekit",
  "ndarray",
  "nnnoiseless",
+ "os_info",
  "pulse-protocol",
  "pulse-server",
  "rand 0.9.5",
