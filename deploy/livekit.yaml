@@ -6,6 +6,10 @@ rtc:
   tcp_port: 7881
   udp_port: 7882
   use_external_ip: true
+  # Only the public path: without this, clients that are also on the tailnet (or the host itself)
+  # get offered the Tailscale/Docker addresses, and their audio skips the route everyone else uses.
+  interfaces:
+    excludes: [docker0, tailscale0]
 turn:
   enabled: true
   udp_port: 3478
