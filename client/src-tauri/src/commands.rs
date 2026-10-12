@@ -53,6 +53,11 @@ impl Core {
         }
         *self.inner.lock().unwrap() = Some((api.clone(), token.clone()));
         let (tx, rx) = mpsc::unbounded_channel();
+        tauri::async_runtime::spawn(crate::reports::crash::send_pending(
+            app.clone(),
+            api.clone(),
+            token.clone(),
+        ));
         let handle = GatewayHandle::spawn(api.base().to_string(), token, tx);
         // Replacing an old handle drops (and stops) it.
         *self.gateway.lock().unwrap() = Some(handle);

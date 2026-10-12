@@ -27,8 +27,20 @@ pub fn init(dir: &Path) -> anyhow::Result<WorkerGuard> {
         .with_env_filter(filter)
         .try_init();
 
-    std::panic::set_hook(Box::new(|info| {
+    let marker_dir = dir.to_path_buf();
+    std::panic::set_hook(Box::new(move |info| {
         tracing::error!(panic = %info, "PANIC");
+        let message = info
+            .payload()
+            .downcast_ref::<&str>()
+            .map(|s| s.to_string())
+            .or_else(|| info.payload().downcast_ref::<String>().cloned())
+            .unwrap_or_else(|| "panic".into());
+        let location = info
+            .location()
+            .map(|l| format!("{}:{}", l.file(), l.line()))
+            .unwrap_or_default();
+        crate::reports::crash::write_panic_marker(&marker_dir, &message, &location);
     }));
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),

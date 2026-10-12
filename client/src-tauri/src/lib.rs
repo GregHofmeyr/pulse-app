@@ -49,6 +49,9 @@ pub fn run() {
             let dir = session::profile_dir(&app.path().app_data_dir()?, profile.as_deref());
             // Log file per profile; the guard must live as long as the app.
             let log_dir = session::profile_dir(&app.path().app_log_dir()?, profile.as_deref());
+            // Last session's crash / unexpected exit, captured before this session writes to the log.
+            reports::crash::detect(&log_dir, reports::unix_now());
+            reports::crash::mark_running(&log_dir);
             app.manage(reports::LogDir(log_dir.clone()));
             match logging::init(&log_dir) {
                 Ok(guard) => {
@@ -175,6 +178,7 @@ pub fn run() {
                         tracing::warn!("voice: leave on exit timed out");
                     }
                 });
+                reports::crash::clear_running(&app.state::<reports::LogDir>().0);
             }
         });
 }
