@@ -16,7 +16,8 @@ pub fn init(dir: &Path) -> anyhow::Result<WorkerGuard> {
         .filename_suffix("log")
         .max_log_files(7)
         .build(dir)?;
-    let (writer, guard) = tracing_appender::non_blocking(appender);
+    let (writer, guard) =
+        tracing_appender::non_blocking(Capped::new(appender, LOG_CAP_BYTES, utc_day));
     let filter = EnvFilter::try_from_env("PULSE_LOG")
         .unwrap_or_else(|_| EnvFilter::new("info,livekit=warn,libwebrtc=warn"));
     // try_init: tests / a second call must not panic on an already-set global subscriber
@@ -37,9 +38,92 @@ pub fn init(dir: &Path) -> anyhow::Result<WorkerGuard> {
     Ok(guard)
 }
 
+/// Stops writing after `cap` bytes per UTC day (one notice line marks the cut), so a log flood
+/// can't fill the disk. `day` returns the current UTC day number; injectable for tests.
+pub struct Capped<W> {
+    inner: W,
+    cap: u64,
+    day: fn() -> u64,
+    today: u64,
+    written: u64,
+}
+
+pub const LOG_CAP_BYTES: u64 = 50 * 1024 * 1024;
+
+pub fn utc_day() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() / 86_400)
+        .unwrap_or(0)
+}
+
+impl<W: std::io::Write> Capped<W> {
+    pub fn new(inner: W, cap: u64, day: fn() -> u64) -> Self {
+        Self {
+            inner,
+            cap,
+            day,
+            today: day(),
+            written: 0,
+        }
+    }
+}
+
+impl<W: std::io::Write> std::io::Write for Capped<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let day = (self.day)();
+        if day != self.today {
+            self.today = day;
+            self.written = 0;
+        }
+        if self.written >= self.cap {
+            return Ok(buf.len()); // already cut today: swallow
+        }
+        if self.written + buf.len() as u64 > self.cap {
+            self.written = self.cap;
+            self.inner
+                .write_all(b"WARN pulse: log size cap reached; nothing more is logged today\n")?;
+            return Ok(buf.len());
+        }
+        self.written += buf.len() as u64;
+        self.inner.write_all(buf)?;
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Write;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    static DAY: AtomicU64 = AtomicU64::new(1);
+    fn fake_day() -> u64 {
+        DAY.load(Ordering::SeqCst)
+    }
+
+    #[test]
+    fn capped_writer_stops_at_the_cap_with_one_notice_and_resets_next_day() {
+        DAY.store(1, Ordering::SeqCst);
+        let mut w = Capped::new(Vec::new(), 10, fake_day);
+        w.write_all(b"12345\n").unwrap();
+        w.write_all(b"67890\n").unwrap(); // crosses the cap: dropped, notice written
+        w.write_all(b"more\n").unwrap(); // dropped silently
+        let text = String::from_utf8(w.inner.clone()).unwrap();
+        assert_eq!(text.matches("log size cap reached").count(), 1, "{text}");
+        assert!(text.starts_with("12345\n"));
+        assert!(!text.contains("67890") && !text.contains("\nmore\n"));
+        DAY.store(2, Ordering::SeqCst);
+        w.write_all(b"fresh\n").unwrap();
+        assert!(
+            String::from_utf8(w.inner.clone())
+                .unwrap()
+                .ends_with("fresh\n")
+        );
+    }
 
     #[test]
     fn writes_messages_to_a_file_in_the_dir() {

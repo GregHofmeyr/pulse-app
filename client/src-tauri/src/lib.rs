@@ -7,6 +7,7 @@ pub mod logging;
 pub mod outbox;
 pub mod session;
 pub mod sounds;
+pub mod throttle;
 pub mod voice;
 
 /// Keeps the log writer alive (dropping it flushes and stops logging).

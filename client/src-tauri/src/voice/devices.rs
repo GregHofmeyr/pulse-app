@@ -23,6 +23,9 @@ pub const STALL_AFTER: Duration = Duration::from_secs(2);
 pub const INTERNAL_RATE: u32 = 48_000;
 
 /// Mic chunks carry the device rate they were captured at.
+/// A broken device can fail every callback; log its error at most this often.
+const STREAM_ERROR_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
+
 pub type MicChunk = (u32, Vec<i16>);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -553,7 +556,14 @@ impl AudioIo {
                             move |d: &[f32], _| {
                                 sh.on_input(d, in_ch, in_rate, &mut pending, &raw_tx)
                             },
-                            |e| tracing::warn!(error = %e, "input stream error"),
+                            {
+                                let mut t = crate::throttle::Throttle::new(STREAM_ERROR_EVERY);
+                                move |e| {
+                                    if let Some(repeated) = t.hit(std::time::Instant::now()) {
+                                        tracing::warn!(error = %e, repeated, "input stream error");
+                                    }
+                                }
+                            },
                             None,
                         )?,
                         cpal::SampleFormat::I16 => input.build_input_stream(
@@ -563,7 +573,14 @@ impl AudioIo {
                                     d.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
                                 sh.on_input(&f, in_ch, in_rate, &mut pending, &raw_tx)
                             },
-                            |e| tracing::warn!(error = %e, "input stream error"),
+                            {
+                                let mut t = crate::throttle::Throttle::new(STREAM_ERROR_EVERY);
+                                move |e| {
+                                    if let Some(repeated) = t.hit(std::time::Instant::now()) {
+                                        tracing::warn!(error = %e, repeated, "input stream error");
+                                    }
+                                }
+                            },
                             None,
                         )?,
                         other => return Err(anyhow!("unsupported mic sample format {other:?}")),
@@ -577,7 +594,14 @@ impl AudioIo {
                             move |d: &mut [f32], _| {
                                 sh.on_output(d, out_ch, out_rate, &mut mixbuf, &mut playout)
                             },
-                            |e| tracing::warn!(error = %e, "output stream error"),
+                            {
+                                let mut t = crate::throttle::Throttle::new(STREAM_ERROR_EVERY);
+                                move |e| {
+                                    if let Some(repeated) = t.hit(std::time::Instant::now()) {
+                                        tracing::warn!(error = %e, repeated, "output stream error");
+                                    }
+                                }
+                            },
                             None,
                         )?,
                         cpal::SampleFormat::I16 => {
@@ -597,7 +621,14 @@ impl AudioIo {
                                         *o = to_i16(*v);
                                     }
                                 },
-                                |e| tracing::warn!(error = %e, "output stream error"),
+                                {
+                                let mut t = crate::throttle::Throttle::new(STREAM_ERROR_EVERY);
+                                move |e| {
+                                    if let Some(repeated) = t.hit(std::time::Instant::now()) {
+                                        tracing::warn!(error = %e, repeated, "output stream error");
+                                    }
+                                }
+                            },
                                 None,
                             )?
                         }

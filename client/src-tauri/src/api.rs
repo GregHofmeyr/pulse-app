@@ -53,6 +53,19 @@ pub fn check_server_url(url: &str) -> Result<(), ApiError> {
     }
 }
 
+/// What a failed-request log line may show: the path only (no host, no query, never the token).
+pub fn path_only(url: &reqwest::Url) -> String {
+    url.path().to_string()
+}
+
+fn log_failure(path: Option<String>, what: &str) {
+    tracing::warn!(
+        path = path.as_deref().unwrap_or("?"),
+        error = what,
+        "request failed"
+    );
+}
+
 #[derive(Clone)]
 pub struct Api {
     base: String,
@@ -79,7 +92,13 @@ impl Api {
     async fn parse<T: DeserializeOwned>(
         r: Result<reqwest::Response, reqwest::Error>,
     ) -> Result<T, ApiError> {
-        let r = r.map_err(|e| ApiError::Network(e.to_string()))?;
+        let r = r.map_err(|e| {
+            log_failure(e.url().map(path_only), &e.to_string());
+            ApiError::Network(e.to_string())
+        })?;
+        if !r.status().is_success() {
+            log_failure(Some(path_only(r.url())), r.status().as_str());
+        }
         if r.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ApiError::Unauthorized);
         }
@@ -102,7 +121,13 @@ impl Api {
 
     /// For endpoints that answer 204.
     async fn ok_empty(r: Result<reqwest::Response, reqwest::Error>) -> Result<(), ApiError> {
-        let r = r.map_err(|e| ApiError::Network(e.to_string()))?;
+        let r = r.map_err(|e| {
+            log_failure(e.url().map(path_only), &e.to_string());
+            ApiError::Network(e.to_string())
+        })?;
+        if !r.status().is_success() {
+            log_failure(Some(path_only(r.url())), r.status().as_str());
+        }
         if r.status() == reqwest::StatusCode::UNAUTHORIZED {
             return Err(ApiError::Unauthorized);
         }
@@ -461,6 +486,15 @@ impl Api {
 mod tests {
     use super::*;
     use pulse_server::testing;
+
+    #[test]
+    fn failed_request_lines_keep_only_the_path() {
+        let u = reqwest::Url::parse(
+            "https://pulsechat.co.za/channels/X/messages?before=Y&token=secret",
+        )
+        .unwrap();
+        assert_eq!(path_only(&u), "/channels/X/messages");
+    }
 
     #[tokio::test]
     async fn register_then_login_against_test_server_returns_user() {
