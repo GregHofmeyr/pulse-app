@@ -50,8 +50,52 @@ pub fn write_panic_marker(dir: &Path, message: &str, location: &str) {
 }
 
 pub fn mark_running(dir: &Path) {
+    write_running(dir, super::unix_now(), env!("CARGO_PKG_VERSION"));
+}
+
+fn write_running(dir: &Path, at: u64, version: &str) {
     let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(dir.join(RUNNING), super::unix_now().to_string());
+    let body = serde_json::json!({ "at": at, "version": version });
+    let _ = std::fs::write(dir.join(RUNNING), body.to_string());
+}
+
+/// When the machine last booted (unix seconds), if we can tell.
+pub fn boot_time() -> Option<u64> {
+    #[cfg(target_os = "linux")]
+    {
+        let stat = std::fs::read_to_string("/proc/stat").ok()?;
+        stat.lines()
+            .find_map(|l| l.strip_prefix("btime "))
+            .and_then(|v| v.trim().parse().ok())
+    }
+    #[cfg(windows)]
+    {
+        #[link(name = "kernel32")]
+        unsafe extern "system" {
+            fn GetTickCount64() -> u64;
+        }
+        // SAFETY: no arguments, no preconditions; milliseconds since boot.
+        let up_ms = unsafe { GetTickCount64() };
+        Some(super::unix_now().saturating_sub(up_ms / 1000))
+    }
+    #[cfg(not(any(target_os = "linux", windows)))]
+    {
+        None
+    }
+}
+
+/// A `running` marker left by a session that ended without a clean exit, unless the cause is
+/// innocent: a different app version (the installer closed the old one) or a reboot since (Windows
+/// shutdown / logoff kills apps without an exit event). Unreadable markers count as innocent.
+fn ended_unexpectedly(dir: &Path, version: &str, booted_at: Option<u64>) -> bool {
+    let Ok(raw) = std::fs::read_to_string(dir.join(RUNNING)) else {
+        return false;
+    };
+    let Ok(m) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    let at = m["at"].as_u64().unwrap_or(0);
+    m["version"].as_str() == Some(version) && booted_at.is_none_or(|b| at >= b)
 }
 
 pub fn clear_running(dir: &Path) {
@@ -61,14 +105,22 @@ pub fn clear_running(dir: &Path) {
 /// At startup, before this session logs anything: turn last session's markers into a pending
 /// report carrying its log tail. A newer one replaces an older unsent one.
 pub fn detect(dir: &Path, now: u64) {
+    detect_with(dir, now, env!("CARGO_PKG_VERSION"), boot_time());
+}
+
+/// `detect` with the running version and boot time passed in (tests).
+pub fn detect_with(dir: &Path, now: u64, version: &str, booted_at: Option<u64>) {
     let crash: Option<serde_json::Value> = std::fs::read_to_string(dir.join(CRASH))
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok());
-    let ran = dir.join(RUNNING).exists();
+    let ran = ended_unexpectedly(dir, version, booted_at);
     let kind = match (&crash, ran) {
         (Some(_), _) => ReportKind::Crash,
         (None, true) => ReportKind::UnexpectedExit,
-        (None, false) => return,
+        (None, false) => {
+            clear_running(dir); // a stale marker from an upgrade or reboot
+            return;
+        }
     };
     let pending = PendingFile {
         at: now,
@@ -199,6 +251,47 @@ mod tests {
         assert!(d.path().join(PENDING).exists());
         assert_eq!(load_pending(d.path(), 1000 + MAX_AGE_SECS + 1), None);
         assert!(!d.path().join(PENDING).exists());
+    }
+
+    #[test]
+    fn an_upgrade_is_not_an_unexpected_exit() {
+        // the installer closes the old version without a clean exit
+        let d = tempfile::tempdir().unwrap();
+        write_running(d.path(), 1000, "0.0.9");
+        detect_with(d.path(), 2000, "0.1.0", None);
+        assert_eq!(load_pending(d.path(), 2000), None);
+        assert!(
+            !d.path().join(RUNNING).exists(),
+            "the stale marker is cleared"
+        );
+    }
+
+    #[test]
+    fn a_reboot_since_is_not_an_unexpected_exit() {
+        // Windows shutdown / logoff with Pulse open kills it without a clean exit
+        let d = tempfile::tempdir().unwrap();
+        write_running(d.path(), 1000, "0.1.0");
+        detect_with(d.path(), 3000, "0.1.0", Some(2000));
+        assert_eq!(load_pending(d.path(), 3000), None);
+
+        write_running(d.path(), 2500, "0.1.0");
+        detect_with(d.path(), 3000, "0.1.0", Some(2000));
+        assert_eq!(
+            load_pending(d.path(), 3000).map(|p| p.kind),
+            Some(ReportKind::UnexpectedExit)
+        );
+    }
+
+    #[test]
+    fn a_crash_is_reported_even_across_an_upgrade() {
+        let d = tempfile::tempdir().unwrap();
+        write_running(d.path(), 1000, "0.0.9");
+        write_panic_marker(d.path(), "boom", "x.rs:1");
+        detect_with(d.path(), 2000, "0.1.0", Some(1500));
+        assert_eq!(
+            load_pending(d.path(), 2000).map(|p| p.kind),
+            Some(ReportKind::Crash)
+        );
     }
 
     #[test]
