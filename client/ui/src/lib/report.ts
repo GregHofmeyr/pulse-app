@@ -22,7 +22,7 @@ export async function submitFlow(
 export async function saveFlow(text: string, deps: { save: (t: string) => Promise<string> }): Promise<ReportState> {
   try {
     const path = await deps.save(text)
-    return { step: 'saved', message: `Saved to ${path} — send it to Greg on WhatsApp.` }
+    return { step: 'saved', message: `Saved to ${path} — send it to Greg.` }
   } catch (e) {
     return { step: 'failed', message: `Couldn't save the report: ${errorText(e)}` }
   }

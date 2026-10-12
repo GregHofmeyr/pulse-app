@@ -22,7 +22,7 @@ describe('report flow', () => {
   it('saved: says where and what to do', async () => {
     const s = await saveFlow('x', { save: async () => 'C:\\Users\\sam\\Downloads\\pulse-report-20261012-132507.txt' })
     expect(s.step).toBe('saved')
-    expect(s.message).toBe('Saved to C:\\Users\\sam\\Downloads\\pulse-report-20261012-132507.txt — send it to Greg on WhatsApp.')
+    expect(s.message).toBe('Saved to C:\\Users\\sam\\Downloads\\pulse-report-20261012-132507.txt — send it to Greg.')
   })
 
   it('save failure is reported, not swallowed', async () => {

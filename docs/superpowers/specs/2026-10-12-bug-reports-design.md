@@ -47,7 +47,7 @@ request-failure lines arrive via the log tail.
 2. If that still fails, or on the login screen: the modal shows "Couldn't reach the server." and a
    **Save report** button. Rust writes `pulse-report-<YYYYMMDD-HHMMSS>.txt` (human-readable: the
    fields, then the log) to the user's Downloads folder (fallback: Desktop, then the app data dir) and
-   the modal shows the full path: "Saved to … — send it to Greg on WhatsApp."
+   the modal shows the full path: "Saved to … — send it to Greg."
 
 No Tauri dialog/fs plugin needed: Rust picks the path itself.
 
