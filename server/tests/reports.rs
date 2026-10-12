@@ -134,3 +134,89 @@ async fn reports_cannot_be_read_over_http() {
         .unwrap();
     assert!(r.status() == 404 || r.status() == 405, "{}", r.status());
 }
+
+use pulse_server::reports::store;
+
+async fn file(
+    app: &TestApp,
+    token: &str,
+    kind: &str,
+    text: &str,
+    meta: serde_json::Value,
+) -> String {
+    let body = json!({ "kind": kind, "text": text, "meta": meta, "log": "the log\n" });
+    let r = post_json(app, token, "/reports", body).await;
+    r.json::<serde_json::Value>().await.unwrap()["id"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
+#[tokio::test]
+async fn list_is_newest_first_with_unseen_marked() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let first = file(&app, &token, "bug", "first one", json!({})).await;
+    let second = file(
+        &app,
+        &token,
+        "crash",
+        "",
+        json!({ "crash": { "message": "index out of bounds" } }),
+    )
+    .await;
+    let list = store::list(&app.db, 20).await.unwrap();
+    assert_eq!(
+        list.iter().map(|r| r.id.as_str()).collect::<Vec<_>>(),
+        [second.as_str(), first.as_str()]
+    );
+    assert_eq!(list[0].username, "alex");
+    assert_eq!(list[0].kind, "crash");
+    assert_eq!(
+        list[0].headline, "index out of bounds",
+        "crashes headline the panic message"
+    );
+    assert_eq!(list[1].headline, "first one");
+    assert!(list.iter().all(|r| !r.seen));
+    assert_eq!(list[0].short, store::short(&second));
+}
+
+#[tokio::test]
+async fn find_by_short_id_and_mark_seen() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let id = file(
+        &app,
+        &token,
+        "bug",
+        "voice cut out",
+        json!({ "os": "Windows 11" }),
+    )
+    .await;
+    let full = store::find(&app.db, &store::short(&id).to_lowercase())
+        .await
+        .unwrap();
+    assert_eq!(full.listed.id, id);
+    assert_eq!(full.text, "voice cut out");
+    assert_eq!(full.meta["os"], "Windows 11");
+    assert_eq!(full.log, "the log\n");
+    store::mark_seen(&app.db, &id).await.unwrap();
+    assert!(store::list(&app.db, 20).await.unwrap()[0].seen);
+    assert!(matches!(
+        store::find(&app.db, "ZZZZZZ").await,
+        Err(pulse_server::error::AppError::NotFound)
+    ));
+}
+
+#[tokio::test]
+async fn ambiguous_suffix_is_an_error() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    file(&app, &token, "bug", "a", json!({})).await;
+    file(&app, &token, "bug", "b", json!({})).await;
+    // "" matches every report
+    assert!(matches!(
+        store::find(&app.db, "").await,
+        Err(pulse_server::error::AppError::Conflict(_))
+    ));
+}

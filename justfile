@@ -80,6 +80,14 @@ smoke:
 invite-prod:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server create-invite'
 
+# newest bug/crash reports on the live server (`new` = not looked at yet)
+reports:
+    ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server reports'
+
+# one report in full; add --log for the attached app log
+report id *flags:
+    ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server report {{id}} {{flags}}'
+
 # run a backup right now
 backup-now:
     ssh {{prod}} '/srv/pulse/backup.sh run'
