@@ -50,7 +50,7 @@ deploy-check:
     docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config -q
     docker run --rm -e PULSE_DOMAIN=example.com -e ACME_EMAIL=ci@example.com \
         -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10 caddy validate --config /etc/caddy/Caddyfile
-    docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:stable deploy/*.sh
+    docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh
 
 # --- production (pulsechat.co.za); see deploy/README.md ---
 prod := "pulse@pulse"
