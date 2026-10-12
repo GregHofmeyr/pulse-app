@@ -97,7 +97,7 @@ New server subcommands, wrapped by `just` recipes over Tailscale SSH (same patte
   marks it seen.
 - `just report <id> --log` → also prints the log tail.
 
-`<id>` accepts a unique prefix (the short id shown in lists).
+`<id>` is the short id shown in lists: the last 6 characters of the ULID, matched as a suffix (ULID prefixes are timestamps, so reports sent close together share them). An ambiguous id is an error.
 
 ## Log hygiene (part of this work)
 
@@ -109,8 +109,8 @@ in a morning. On a friend's PC that fills their disk, and it would make the log 
    "…repeated N times" line is written per 10 s.
 2. **Daily size cap.** The log writer stops at 50 MB per file and writes one "log size cap reached"
    line. (Rolling stays daily, 7 files kept.)
-3. **Failed requests are logged.** `Api` logs one line per failed request: method, path (no query, no
-   body), error kind, elapsed ms. Successful requests stay silent. Never the token or body.
+3. **Failed requests are logged.** `Api` logs one line per failed request: path (no host, no query, no
+   body) and the error. Successful requests stay silent. Never the token or body.
 
 ## Out of scope
 
