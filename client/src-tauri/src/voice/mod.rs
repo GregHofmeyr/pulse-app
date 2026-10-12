@@ -7,6 +7,7 @@ pub mod gate;
 pub mod meter;
 pub mod mictest;
 pub mod mixer;
+pub mod netstats;
 pub mod playout;
 pub mod processor;
 pub mod resampler;
@@ -38,6 +39,8 @@ use rx::RxTasks;
 
 /// Max audio buffered per peer before the oldest is dropped (bounds latency).
 const PEER_BUFFER_MS: u32 = 200;
+/// How often the voice path's round trip / jitter / buffer delay is logged while in a call.
+const NET_STATS_EVERY: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
 pub enum VoiceError {
@@ -126,7 +129,7 @@ pub type EventSink = Arc<dyn Fn(VoiceEvent) + Send + Sync>;
 
 struct Session {
     channel: ChannelId,
-    room: Room,
+    room: Arc<Room>,
     shared: Arc<Shared>,
     io: Arc<Mutex<Option<AudioIo>>>,
     cfg: Arc<Mutex<AudioConfig>>,
@@ -271,8 +274,26 @@ impl VoiceManager {
             return Err(e);
         }
         tracing::info!("voice: mic published");
+        let room = Arc::new(room);
 
         let mut tasks = Vec::new();
+        // what WebRTC measures about the path, for telling network lag from local lag
+        {
+            let room = room.clone();
+            tasks.push(tokio::spawn(async move {
+                let mut totals = netstats::Totals::default();
+                let mut tick = tokio::time::interval(NET_STATS_EVERY);
+                loop {
+                    tick.tick().await;
+                    if let Ok(s) = room.get_stats().await {
+                        let (line, t) =
+                            netstats::summarize(&s.publisher_stats, &s.subscriber_stats, totals);
+                        totals = t;
+                        tracing::info!(%line, "voice: path");
+                    }
+                }
+            }));
+        }
         // mic → LiveKit, resampled to 48 kHz and sent in exact 10 ms frames
         tasks.push(tokio::spawn(async move {
             let frame_len = (INTERNAL_RATE / 100) as usize;
