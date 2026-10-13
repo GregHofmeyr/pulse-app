@@ -97,6 +97,15 @@ impl Mixer {
         self.pushed
     }
 
+    /// Samples queued for the fullest peer.
+    pub fn max_buffered(&self) -> usize {
+        self.peers
+            .values()
+            .map(|p| p.queue.len())
+            .max()
+            .unwrap_or(0)
+    }
+
     pub fn buffered(&self, peer: &str) -> usize {
         self.peers.get(peer).map_or(0, |p| p.queue.len())
     }

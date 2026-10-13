@@ -167,3 +167,62 @@ async fn rapid_join_leave_never_hangs() {
         "leave during join must win"
     );
 }
+
+/// Field bug (2026-10-12): ~2 s mouth-to-ear on a clean network. The mic runs from the moment a
+/// join starts, but audio only goes to LiveKit once the room is connected; whatever piled up in
+/// between must not be sent late for the rest of the call.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn mic_audio_is_not_sent_late_after_joining() {
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, token) = testing::register(&app, "alex").await;
+    let s = testing::create_server(&app, &token, "Main").await;
+    let api = Api::new(&format!("http://{}", app.addr));
+    let lounge = api
+        .channels(&token, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+
+    let vm = VoiceManager::new(std::sync::Arc::new(|_| {}));
+    vm.join(
+        &api,
+        &token,
+        lounge.id,
+        AudioConfig::default(),
+        AudioMode::Null(48_000),
+    )
+    .await
+    .unwrap();
+    let mut worst = 0;
+    for _ in 0..20 {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        worst = worst.max(vm.send_queue_ms().await);
+    }
+    let now = vm.send_queue_ms().await;
+    println!("send queue after joining: now {now} ms, worst over 2 s {worst} ms");
+    assert!(now <= 50, "mic audio waits {now} ms before it is sent");
+    vm.leave().await;
+}
+
+/// Probe on this machine's real default devices: how much audio piles up in the mic test's playback
+/// queue, beyond its deliberate 300 ms delay. Run: `cargo test -p pulse-client --test voice_it mic_test -- --ignored --nocapture`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn mic_test_queue_on_real_devices() {
+    let t = pulse_client::voice::mictest::MicTest::default();
+    t.start(&AudioConfig::default(), std::sync::Arc::new(|_| {}))
+        .unwrap();
+    let mut samples = Vec::new();
+    for _ in 0..30 {
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        samples.push(t.queue_ms());
+    }
+    t.stop();
+    println!("mic test playback queue (ms, every 200 ms): {samples:?}");
+}

@@ -1,5 +1,6 @@
 //! Voice: our own capture/playback pipeline over LiveKit (rules: spikes/voice/FINDINGS.md).
 
+pub mod backlog;
 pub mod controls;
 pub mod denoise;
 pub mod devices;
@@ -39,6 +40,9 @@ use rx::RxTasks;
 
 /// Max audio buffered per peer before the oldest is dropped (bounds latency).
 const PEER_BUFFER_MS: u32 = 200;
+/// Mic audio allowed to wait for LiveKit (10 ms chunks): one burst from a big-buffer device.
+/// Anything beyond is stale and dropped, so a stall (or the join itself) can't add lasting delay.
+const SEND_SLACK_CHUNKS: usize = 10;
 /// How long a bug report waits for the voice session before reporting it as busy.
 const DIAGNOSTICS_WAIT: Duration = Duration::from_secs(1);
 /// How often the voice path's round trip / jitter / buffer delay is logged while in a call.
@@ -141,6 +145,8 @@ struct Session {
     rx: Arc<Mutex<RxTasks>>,
     /// Cleared when LiveKit disconnects us for good: the session is then torn down.
     alive: Arc<AtomicBool>,
+    /// Mic audio processed but not yet handed to LiveKit.
+    send_queue: Arc<backlog::QueueGauge>,
     tasks: Vec<JoinHandle<()>>,
 }
 
@@ -279,9 +285,10 @@ impl VoiceManager {
         let room = Arc::new(room);
 
         let mut tasks = Vec::new();
+        let send_queue = Arc::new(backlog::QueueGauge::default());
         // what WebRTC measures about the path, for telling network lag from local lag
         {
-            let room = room.clone();
+            let (room, send_queue, mixer) = (room.clone(), send_queue.clone(), mixer.clone());
             tasks.push(tokio::spawn(async move {
                 let mut totals = netstats::Totals::default();
                 let mut tick = tokio::time::interval(NET_STATS_EVERY);
@@ -291,18 +298,39 @@ impl VoiceManager {
                         let (line, t) =
                             netstats::summarize(&s.publisher_stats, &s.subscriber_stats, totals);
                         totals = t;
-                        tracing::info!(%line, "voice: path");
+                        // ours: worst send backlog this window, receive queue now (fullest peer)
+                        let send_ms = send_queue.take_worst();
+                        let recv_ms =
+                            mixer.lock().unwrap().max_buffered() as u32 * 1000 / INTERNAL_RATE;
+                        tracing::info!(%line, send_ms, recv_ms, "voice: path");
                     }
                 }
             }));
         }
         // mic → LiveKit, resampled to 48 kHz and sent in exact 10 ms frames
+        let gauge = send_queue.clone();
         tasks.push(tokio::spawn(async move {
             let frame_len = (INTERNAL_RATE / 100) as usize;
             let mut to_internal = resampler::ToInternal::default();
             let mut ready: Vec<i16> = Vec::with_capacity(2 * frame_len);
+            // the mic started with the join; what it captured while we connected is old by now
+            let joined = backlog::drop_stale(&mut mic_rx, 0);
+            tracing::info!(
+                dropped_ms = joined * 10,
+                "voice: mic audio from before joining dropped"
+            );
             while let Some((rate, buf)) = mic_rx.recv().await {
+                let stale = backlog::drop_stale(&mut mic_rx, SEND_SLACK_CHUNKS);
+                if stale > 0 {
+                    tracing::warn!(
+                        dropped_ms = stale * 10,
+                        "voice: mic audio backed up, dropped"
+                    );
+                }
                 ready.extend(to_internal.process(rate, &buf));
+                // the processor emits 10 ms chunks: what's still queued behind this one, plus `ready`
+                let waiting = mic_rx.len() * frame_len + ready.len();
+                gauge.record((waiting * 1000 / INTERNAL_RATE as usize) as u32);
                 while ready.len() >= frame_len {
                     let frame = AudioFrame {
                         data: ready.drain(..frame_len).collect::<Vec<_>>().into(),
@@ -477,6 +505,7 @@ impl VoiceManager {
             real,
             rx,
             alive,
+            send_queue,
             tasks,
         })
     }
@@ -612,6 +641,14 @@ impl VoiceManager {
     pub async fn mixer_pushed(&self) -> u64 {
         match self.session.lock().await.as_ref() {
             Some(s) => s.shared.mixer.lock().unwrap().pushed_total(),
+            None => 0,
+        }
+    }
+
+    /// Mic audio waiting to go to LiveKit right now, in ms (tests; the log has the worst per window).
+    pub async fn send_queue_ms(&self) -> u32 {
+        match self.session.lock().await.as_ref() {
+            Some(s) => s.send_queue.current(),
             None => 0,
         }
     }

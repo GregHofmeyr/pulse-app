@@ -8,6 +8,7 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
+use super::backlog::QueueGauge;
 use super::controls::Controls;
 use super::devices::{AudioConfig, AudioIo, INTERNAL_RATE, MicChunk, Shared};
 use super::mixer::Mixer;
@@ -35,12 +36,15 @@ impl DelayLine {
 
 pub struct MicTest {
     running: Mutex<Option<(AudioIo, Vec<JoinHandle<()>>)>>,
+    /// Audio waiting to be played (after the deliberate delay): any of it is extra delay.
+    queue: Arc<QueueGauge>,
 }
 
 impl Default for MicTest {
     fn default() -> Self {
         Self {
             running: Mutex::new(None),
+            queue: Arc::new(QueueGauge::default()),
         }
     }
 }
@@ -69,10 +73,14 @@ impl MicTest {
                 mixer.lock().unwrap().push("self", &out);
             }
         });
+        let queue = self.queue.clone();
+        queue.take_worst();
         let levels = tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_millis(100));
             loop {
                 tick.tick().await;
+                let queued = shared.mixer.lock().unwrap().max_buffered();
+                queue.record((queued * 1000 / INTERNAL_RATE as usize) as u32);
                 let (mic, speaker) = shared.take_levels();
                 let gate_open = shared.gate_open.load(Ordering::Relaxed);
                 events(VoiceEvent::Levels {
@@ -92,8 +100,17 @@ impl MicTest {
         Ok(())
     }
 
+    /// Audio queued for playback right now, in ms (on top of the deliberate delay).
+    pub fn queue_ms(&self) -> u32 {
+        self.queue.current()
+    }
+
     pub fn stop(&self) {
         if let Some((io, tasks)) = self.running.lock().unwrap().take() {
+            tracing::info!(
+                worst_queue_ms = self.queue.take_worst(),
+                "mic test: stopped"
+            );
             for t in tasks {
                 t.abort();
             }
