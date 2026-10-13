@@ -26,6 +26,41 @@ impl QueueGauge {
     }
 }
 
+/// A gap in what we send longer than this is a stalled mic, not a burst: it's filled with silence.
+const GAP_LIMIT: std::time::Duration = std::time::Duration::from_millis(50);
+const FRAME: std::time::Duration = std::time::Duration::from_millis(10);
+
+/// The send path hands each frame straight to WebRTC, so if the mic stops (a stall, a device
+/// reopen) nothing goes out at all, and listeners' jitter buffers grow to cover the hole. Keep the
+/// stream continuous: a gap past `GAP_LIMIT` is covered with silent 10 ms frames.
+pub struct GapFill {
+    last: std::time::Instant,
+}
+
+impl GapFill {
+    pub fn new(now: std::time::Instant) -> Self {
+        Self { last: now }
+    }
+
+    /// A real frame went out.
+    pub fn sent(&mut self, now: std::time::Instant) {
+        self.last = now;
+    }
+
+    /// How many silent frames to send now (0 unless the gap is past the limit).
+    pub fn silence_due(&self, now: std::time::Instant) -> usize {
+        let gap = now.saturating_duration_since(self.last);
+        if gap <= GAP_LIMIT {
+            return 0;
+        }
+        (gap.as_millis() / FRAME.as_millis()) as usize
+    }
+
+    pub fn silence_sent(&mut self, frames: usize) {
+        self.last += FRAME * frames as u32;
+    }
+}
+
 /// Crossfade length when skipping audio: 5 ms at 48 kHz, long enough not to click.
 pub const FADE: usize = 240;
 
@@ -64,6 +99,21 @@ mod tests {
             .map(|w| (w[1] as i32 - w[0] as i32).abs())
             .max()
             .unwrap_or(0)
+    }
+
+    #[test]
+    fn a_stalled_mic_is_bridged_with_silence() {
+        let t0 = std::time::Instant::now();
+        let ms = |n| t0 + std::time::Duration::from_millis(n);
+        let mut g = GapFill::new(t0);
+        // mic bursts (a BT device delivers 30 ms at a time) are normal: nothing to fill
+        g.sent(ms(30));
+        assert_eq!(g.silence_due(ms(60)), 0);
+        // the mic stopped: once the gap passes the limit, cover all of it in 10 ms frames
+        assert_eq!(g.silence_due(ms(130)), 10, "100 ms since the last frame");
+        g.silence_sent(10);
+        assert_eq!(g.silence_due(ms(140)), 0, "caught up");
+        assert_eq!(g.silence_due(ms(190)), 6, "60 ms since the silence ended");
     }
 
     #[test]

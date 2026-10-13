@@ -438,7 +438,34 @@ impl VoiceManager {
             // after a drop: the first dropped chunk, faded into the next one we send (no click)
             let mut fade_from: Option<Vec<i16>> = None;
             let mut drops = crate::throttle::Throttle::new(Duration::from_secs(10));
-            while let Some((rate, mut buf)) = mic_rx.recv().await {
+            let send = |samples: Vec<i16>| AudioFrame {
+                data: samples.into(),
+                sample_rate: INTERNAL_RATE,
+                num_channels: 1,
+                samples_per_channel: frame_len as u32,
+            };
+            // keep the stream continuous when the mic stops (stall, device reopen)
+            let mut gap = backlog::GapFill::new(Instant::now());
+            let mut tick = tokio::time::interval(Duration::from_millis(10));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            loop {
+                let (rate, mut buf) = tokio::select! {
+                    chunk = mic_rx.recv() => match chunk {
+                        Some(c) => c,
+                        None => break, // session gone
+                    },
+                    _ = tick.tick() => {
+                        let due = gap.silence_due(Instant::now());
+                        if due > 0 {
+                            ready.clear(); // a partial frame from before the gap would be out of place
+                            for _ in 0..due {
+                                let _ = source.capture_frame(&send(vec![0; frame_len])).await;
+                            }
+                            gap.silence_sent(due);
+                        }
+                        continue;
+                    }
+                };
                 if let Some(old) = fade_from.take() {
                     backlog::crossfade(&old, &mut buf);
                 }
@@ -458,13 +485,9 @@ impl VoiceManager {
                 let waiting = mic_rx.len() * frame_len + ready.len();
                 gauge.record((waiting * 1000 / INTERNAL_RATE as usize) as u32);
                 while ready.len() >= frame_len {
-                    let frame = AudioFrame {
-                        data: ready.drain(..frame_len).collect::<Vec<_>>().into(),
-                        sample_rate: INTERNAL_RATE,
-                        num_channels: 1,
-                        samples_per_channel: frame_len as u32,
-                    };
+                    let frame = send(ready.drain(..frame_len).collect());
                     let _ = source.capture_frame(&frame).await;
+                    gap.sent(Instant::now());
                 }
             }
         }));
