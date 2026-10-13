@@ -207,6 +207,7 @@ async fn mic_audio_is_not_sent_late_after_joining() {
     let now = vm.send_queue_ms().await;
     println!("send queue after joining: now {now} ms, worst over 2 s {worst} ms");
     assert!(now <= 50, "mic audio waits {now} ms before it is sent");
+    assert!(worst <= 50, "mic audio waited up to {worst} ms");
     vm.leave().await;
 }
 
@@ -225,4 +226,56 @@ async fn mic_test_queue_on_real_devices() {
     }
     t.stop();
     println!("mic test playback queue (ms, every 200 ms): {samples:?}");
+}
+
+/// Our own mic path end to end: what one Pulse client sends, another receives at real time
+/// (the send side uses WebRTC's unbuffered fast path, paced by our 10 ms frames).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn one_client_hears_another_at_real_time() {
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, alex) = testing::register(&app, "alex").await;
+    let s = testing::create_server(&app, &alex, "Main").await;
+    let (_, sam) = testing::register(&app, "sam").await;
+    let r = testing::post_json(
+        &app,
+        &sam,
+        &format!("/servers/{}/join", s.id),
+        serde_json::json!({}),
+    )
+    .await;
+    assert!(r.status().is_success(), "join server: {}", r.status());
+    let api = Api::new(&format!("http://{}", app.addr));
+    let lounge = api
+        .channels(&alex, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+
+    let a = VoiceManager::new(std::sync::Arc::new(|_| {}));
+    let b = VoiceManager::new(std::sync::Arc::new(|_| {}));
+    for (vm, token) in [(&a, &alex), (&b, &sam)] {
+        vm.join(
+            &api,
+            token,
+            lounge.id,
+            AudioConfig::default(),
+            AudioMode::Null(48_000),
+        )
+        .await
+        .unwrap();
+    }
+    tokio::time::sleep(Duration::from_secs(2)).await; // subscription start-up
+    let before = b.mixer_pushed().await;
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let ratio = (b.mixer_pushed().await - before) as f64 / (4.0 * 48_000.0);
+    println!("sam receives alex at {ratio:.2}x real time");
+    assert!((0.9..1.1).contains(&ratio), "{ratio:.2}x real time");
+    a.leave().await;
+    b.leave().await;
 }

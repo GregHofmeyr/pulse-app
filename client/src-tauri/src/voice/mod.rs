@@ -40,9 +40,10 @@ use rx::RxTasks;
 
 /// Max audio buffered per peer before the oldest is dropped (bounds latency).
 const PEER_BUFFER_MS: u32 = 200;
-/// Mic audio allowed to wait for LiveKit (10 ms chunks): one burst from a big-buffer device.
-/// Anything beyond is stale and dropped, so a stall (or the join itself) can't add lasting delay.
-const SEND_SLACK_CHUNKS: usize = 10;
+/// Mic audio allowed to wait behind the chunk being sent (10 ms chunks): with that chunk, 100 ms,
+/// one burst from a big-buffer device. Anything beyond is stale and dropped, so a stall (or the
+/// join itself) can't add lasting delay.
+const SEND_SLACK_CHUNKS: usize = 9;
 /// How long a bug report waits for the voice session before reporting it as busy.
 const DIAGNOSTICS_WAIT: Duration = Duration::from_secs(1);
 /// How often the voice path's round trip / jitter / buffer delay is logged while in a call.
@@ -285,7 +286,10 @@ impl VoiceManager {
         .map_err(|e| VoiceError::Connect(e.to_string()))?;
         tracing::info!("voice: room connected");
         // Fixed 48 kHz towards LiveKit, whatever the device does.
-        let source = NativeAudioSource::new(AudioSourceOptions::default(), INTERNAL_RATE, 1, 100);
+        // queue 0 = WebRTC's fast path: each 10 ms frame goes straight out. A queue there drains on
+        // the system clock and is never trimmed, so any backlog in it (a burst, a mic clock running
+        // fast) stays as delay; our own queue (`mic_rx`) is bounded and measured instead.
+        let source = NativeAudioSource::new(AudioSourceOptions::default(), INTERNAL_RATE, 1, 0);
         let track =
             LocalAudioTrack::create_audio_track("mic", RtcAudioSource::Native(source.clone()));
         let published = tokio::time::timeout(
