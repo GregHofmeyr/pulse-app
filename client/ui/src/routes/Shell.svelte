@@ -204,7 +204,7 @@
       <span class="conn" role="status">{app.state.conn === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span>
     {/if}
     {#if ui.autoReported}
-      <span class="conn auto-report" role="status">Pulse closed unexpectedly last time, so we sent Greg a report. <button aria-label="Dismiss" onclick={() => (ui.autoReported = false)}>×</button></span>
+      <span class="conn auto-report" role="status">Something went wrong in Pulse last time, so we sent Greg a report. <button aria-label="Dismiss" onclick={() => (ui.autoReported = false)}>×</button></span>
     {/if}
     <button class="win" aria-label="Minimise" onclick={() => win.minimize()}><Icon name="min" size={14} /></button>
     <button class="win" aria-label="Maximise" onclick={() => win.toggleMaximize()}><Icon name="square" size={13} /></button>
