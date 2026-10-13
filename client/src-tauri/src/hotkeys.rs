@@ -56,11 +56,16 @@ mod platform {
         Ok(())
     }
 
-    /// Applied on the main thread (where registering happens anyway): a caller never waits on
-    /// it, so no thread can hold the flag while waiting for the main thread to register.
-    pub fn in_voice(app: &AppHandle, on: bool) {
+    /// A voice state change happened: re-check on the main thread (where registering happens
+    /// anyway, so no caller waits on it). It reads whether we're in voice *then*, rather than
+    /// trusting the event: events from different threads can arrive out of order (a mute
+    /// hotkey's state racing a leave), and the last check must see the final state.
+    pub fn in_voice(app: &AppHandle, _hint: bool) {
         let handle = app.clone();
-        let _ = app.run_on_main_thread(move || in_voice_now(&handle, on));
+        let _ = app.run_on_main_thread(move || {
+            let on = handle.state::<crate::voice::VoiceManager>().in_voice();
+            in_voice_now(&handle, on)
+        });
     }
 
     fn in_voice_now(app: &AppHandle, on: bool) {

@@ -204,11 +204,13 @@ async fn mic_audio_is_not_sent_late_after_joining() {
         tokio::time::sleep(Duration::from_millis(100)).await;
         worst = worst.max(vm.send_queue_ms().await);
     }
+    assert!(vm.in_voice());
     let now = vm.send_queue_ms().await;
     println!("send queue after joining: now {now} ms, worst over 2 s {worst} ms");
     assert!(now <= 50, "mic audio waits {now} ms before it is sent");
     assert!(worst <= 50, "mic audio waited up to {worst} ms");
     vm.leave().await;
+    assert!(!vm.in_voice(), "left");
 }
 
 /// Probe on this machine's real default devices: how much audio piles up in the mic test's playback

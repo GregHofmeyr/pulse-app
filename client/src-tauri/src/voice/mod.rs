@@ -157,13 +157,16 @@ impl Reopener {
             .as_ref()
             .map(|io| io.opened().clone())?;
         let cfg = self.cfg.lock().unwrap().clone();
-        // a probe still stuck from last time: don't pile up blocked threads
         let handle = match probe.take() {
+            // still stuck from last time: don't pile up blocked threads
             Some(h) if !h.is_finished() => {
                 *probe = Some(h);
                 return None;
             }
-            _ => {
+            // finished late: use it (a couple of seconds old at most), or a slow machine
+            // (lots of Sonar endpoints) would never get to act
+            Some(h) => h,
+            None => {
                 let fallback = devices::on_fallback(&cfg, &opened);
                 tokio::task::spawn_blocking(move || {
                     (
@@ -297,6 +300,9 @@ pub struct VoiceManager {
     /// Per-user volume (0..=200 %), keyed by user id.
     volumes: Arc<Mutex<HashMap<String, u16>>>,
     events: EventSink,
+    /// The current session's `alive` (cleared on leave or when LiveKit drops us): the truth for
+    /// "in voice", readable without the session lock.
+    live: Mutex<Option<Arc<AtomicBool>>>,
 }
 
 impl VoiceManager {
@@ -308,6 +314,7 @@ impl VoiceManager {
             controls: Arc::new(Mutex::new(Controls::default())),
             volumes: Arc::new(Mutex::new(HashMap::new())),
             events,
+            live: Mutex::new(None),
         }
     }
 
@@ -350,6 +357,7 @@ impl VoiceManager {
         }
         match outcome {
             Ok(session) => {
+                *self.live.lock().unwrap() = Some(session.alive.clone());
                 *self.session.lock().await = Some(session);
                 self.emit_state(Some(channel), Connection::Connected);
                 Ok(())
@@ -729,6 +737,15 @@ impl VoiceManager {
             drop(s);
             self.emit_state(None, Connection::Disconnected);
         }
+    }
+
+    /// Whether we're in a voice channel right now (no lock waits: safe from any thread).
+    pub fn in_voice(&self) -> bool {
+        self.live
+            .lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|a| a.load(Ordering::SeqCst))
     }
 
     /// For bug reports: where voice is and which devices it was told to use.

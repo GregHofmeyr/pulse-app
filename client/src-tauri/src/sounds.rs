@@ -125,48 +125,59 @@ pub fn play(name: &str, output: Option<String>) {
                     .ok()
                     .filter(|d| n.is_none() || d.name().ok().as_deref() == n)
             };
-            let Some(dev) = DEVICES
+            let chosen = DEVICES
                 .get(output.as_deref(), exact)
-                .or_else(|| find_device(false, None).ok())
-            else {
+                .or_else(|| find_device(false, None).ok());
+            if let Some(dev) = chosen
+                && play_on(&dev, &sound)
+            {
                 return;
-            };
-            let Ok(cfg) = dev.default_output_config() else {
-                DEVICES.forget();
-                return;
-            };
-            let (rate, ch) = (cfg.sample_rate().0, cfg.channels() as usize);
-            let step = sound.rate as f64 / rate as f64;
-            let total = (sound.samples.len() as f64 / step) as usize;
-            let mut pos = 0usize;
-            let next = move || -> Option<f32> {
-                if pos >= total {
-                    return None;
-                }
-                let src = pos as f64 * step;
-                let (j, frac) = (src.floor() as usize, src.fract() as f32);
-                let a = sound.samples[j.min(sound.samples.len() - 1)];
-                let b = sound.samples[(j + 1).min(sound.samples.len() - 1)];
-                pos += 1;
-                Some((a + (b - a) * frac) * VOLUME)
-            };
-            let mut next = next;
-            let stream = crate::voice::devices::build_output(&dev, &cfg, move |d: &mut [f32]| {
-                for f in d.chunks_mut(ch) {
-                    f.fill(next().unwrap_or(0.0));
-                }
-            });
-            let Ok(stream) = stream else {
-                DEVICES.forget();
-                return;
-            };
-            if stream.play().is_ok() {
-                // sound length + a little tail for the device buffer
-                std::thread::sleep(std::time::Duration::from_millis(
-                    (total as u64 * 1000 / rate as u64) + 150,
-                ));
+            }
+            // the cached device failed (unplugged): forget it, and play on the default instead
+            DEVICES.forget();
+            if output.is_some()
+                && let Ok(dev) = find_device(false, None)
+            {
+                play_on(&dev, &sound);
             }
         });
+}
+
+/// Play `sound` on `dev` to the end (blocking). False if the device wouldn't open.
+fn play_on(dev: &cpal::Device, sound: &Sound) -> bool {
+    let Ok(cfg) = dev.default_output_config() else {
+        return false;
+    };
+    let (rate, ch) = (cfg.sample_rate().0, cfg.channels() as usize);
+    let step = sound.rate as f64 / rate as f64;
+    let total = (sound.samples.len() as f64 / step) as usize;
+    let samples = sound.samples.clone();
+    let mut pos = 0usize;
+    let mut next = move || -> Option<f32> {
+        if pos >= total {
+            return None;
+        }
+        let src = pos as f64 * step;
+        let (j, frac) = (src.floor() as usize, src.fract() as f32);
+        let a = samples[j.min(samples.len() - 1)];
+        let b = samples[(j + 1).min(samples.len() - 1)];
+        pos += 1;
+        Some((a + (b - a) * frac) * VOLUME)
+    };
+    let stream = crate::voice::devices::build_output(dev, &cfg, move |d: &mut [f32]| {
+        for f in d.chunks_mut(ch) {
+            f.fill(next().unwrap_or(0.0));
+        }
+    });
+    let Ok(stream) = stream else { return false };
+    if stream.play().is_err() {
+        return false;
+    }
+    // sound length + a little tail for the device buffer
+    std::thread::sleep(std::time::Duration::from_millis(
+        (total as u64 * 1000 / rate as u64) + 150,
+    ));
+    true
 }
 
 #[cfg(test)]

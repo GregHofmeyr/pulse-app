@@ -442,12 +442,16 @@ pub async fn start_mic_test(
     config: AudioConfig,
 ) -> Result<(), VoiceError> {
     let handle = app.clone();
-    mic.start(
-        &config.normalized(),
-        std::sync::Arc::new(move |e| {
-            let _ = handle.emit("voice://event", &e);
-        }),
-    )
+    // opening devices can block for seconds (a Bluetooth headset): let the runtime move other
+    // work off this worker meanwhile
+    tokio::task::block_in_place(|| {
+        mic.start(
+            &config.normalized(),
+            std::sync::Arc::new(move |e| {
+                let _ = handle.emit("voice://event", &e);
+            }),
+        )
+    })
 }
 
 #[tauri::command]
