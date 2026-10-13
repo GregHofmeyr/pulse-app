@@ -34,6 +34,22 @@ pub fn soft_limit(x: f32) -> f32 {
 /// pulls run at the same rate, so a backlog never drains by itself): the excess is dropped.
 const TARGET_MS: usize = 40;
 
+/// Drop the oldest `n` samples, crossfading what would have played into what plays instead
+/// (a hard cut clicks).
+fn skip(q: &mut VecDeque<i16>, n: usize) {
+    let n = n.min(q.len());
+    let fade = super::backlog::FADE.min(q.len() - n).min(n);
+    if fade > 0 {
+        let old: Vec<i16> = q.range(..fade).copied().collect();
+        let mut new: Vec<i16> = q.range(n..n + fade).copied().collect();
+        super::backlog::crossfade(&old, &mut new);
+        for (k, v) in new.into_iter().enumerate() {
+            q[n + k] = v;
+        }
+    }
+    q.drain(..n);
+}
+
 pub struct Mixer {
     cap: usize,
     target: usize,
@@ -87,7 +103,7 @@ impl Mixer {
         q.extend(samples.iter().copied());
         if q.len() > cap {
             let excess = q.len() - cap;
-            q.drain(..excess);
+            skip(q, excess);
         }
     }
 
@@ -143,7 +159,7 @@ impl Mixer {
             self.pulled = 0;
             for p in self.peers.values_mut() {
                 if p.low != usize::MAX && p.low > self.target {
-                    p.queue.drain(..p.low - self.target);
+                    skip(&mut p.queue, p.low - self.target);
                 }
                 p.low = usize::MAX;
             }
@@ -175,6 +191,37 @@ mod tests {
             "{} queued",
             m.buffered("a")
         );
+    }
+
+    #[test]
+    fn trimming_a_backlog_does_not_click() {
+        // a 437 Hz tone (not a whole number of cycles in the cut, so the cut lands out of phase):
+        // neighbouring samples differ by at most ~600; a hard cut jumps up to ~20000
+        let tone = |i: usize| {
+            (10_000.0 * (i as f64 * 437.0 * std::f64::consts::TAU / 48_000.0).sin()) as i16
+        };
+        let mut m = Mixer::new(48_000, 200);
+        let mut next = 0;
+        let mut feed = |m: &mut Mixer, n: usize| {
+            let chunk: Vec<i16> = (next..next + n).map(tone).collect();
+            next += n;
+            m.push("a", &chunk);
+        };
+        feed(&mut m, 9600); // a 200 ms standing backlog
+        let mut played = Vec::new();
+        let mut out = vec![0.0; 480];
+        for _ in 0..250 {
+            feed(&mut m, 480);
+            m.mix_into(&mut out, 1, 1.0);
+            played.extend(out.iter().map(|v| (v * i16::MAX as f32) as i32));
+        }
+        assert!(m.buffered("a") < 9600, "the backlog was trimmed");
+        let step = played
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .max()
+            .unwrap();
+        assert!(step < 1500, "a click: step of {step}");
     }
 
     #[test]
@@ -242,10 +289,13 @@ mod tests {
         let samples: Vec<i16> = (0..25).collect();
         m.push("a", &samples);
         assert_eq!(m.buffered("a"), 10);
-        let mut out = [0.0f32; 1];
+        let mut out = [0.0f32; 10];
         m.mix_into(&mut out, 1, 1.0);
-        // the oldest 15 samples were dropped, so the first one played is sample value 15
-        assert!((out[0] - 15.0 / i16::MAX as f32).abs() < 1e-7, "{}", out[0]);
+        // the oldest 15 were dropped: playback fades from where they were (0) into the newest
+        // (10 samples here, the whole queue: 0.1 x 9 + 0.9 x 24 = 22.5 at the end)
+        let at = |i: usize| out[i] * i16::MAX as f32;
+        assert!(at(0).abs() < 0.5, "{}", at(0));
+        assert!((at(9) - 22.5).abs() < 1.0, "{}", at(9));
     }
 
     #[test]

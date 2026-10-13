@@ -426,18 +426,28 @@ impl VoiceManager {
             let mut to_internal = resampler::ToInternal::default();
             let mut ready: Vec<i16> = Vec::with_capacity(2 * frame_len);
             // the mic started with the join; what it captured while we connected is old by now
-            let joined = backlog::drop_stale(&mut mic_rx, 0);
+            let (joined, _) = backlog::drop_stale(&mut mic_rx, 0); // nothing sent yet: no fade
             tracing::info!(
                 dropped_ms = joined * 10,
                 "voice: mic audio from before joining dropped"
             );
-            while let Some((rate, buf)) = mic_rx.recv().await {
-                let stale = backlog::drop_stale(&mut mic_rx, SEND_SLACK_CHUNKS);
+            // after a drop: the first dropped chunk, faded into the next one we send (no click)
+            let mut fade_from: Option<Vec<i16>> = None;
+            let mut drops = crate::throttle::Throttle::new(Duration::from_secs(10));
+            while let Some((rate, mut buf)) = mic_rx.recv().await {
+                if let Some(old) = fade_from.take() {
+                    backlog::crossfade(&old, &mut buf);
+                }
+                let (stale, first) = backlog::drop_stale(&mut mic_rx, SEND_SLACK_CHUNKS);
                 if stale > 0 {
-                    tracing::warn!(
-                        dropped_ms = stale * 10,
-                        "voice: mic audio backed up, dropped"
-                    );
+                    fade_from = first.map(|(_, b)| b);
+                    if let Some(repeated) = drops.hit(Instant::now()) {
+                        tracing::warn!(
+                            dropped_ms = stale * 10,
+                            repeated,
+                            "voice: mic audio backed up, dropped"
+                        );
+                    }
                 }
                 ready.extend(to_internal.process(rate, &buf));
                 // the processor emits 10 ms chunks: what's still queued behind this one, plus `ready`
