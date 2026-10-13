@@ -33,18 +33,27 @@ pub fn soft_limit(x: f32) -> f32 {
 /// A peer's queue that never drops below this for a whole second is standing delay (pushes and
 /// pulls run at the same rate, so a backlog never drains by itself): the excess is dropped.
 const TARGET_MS: usize = 40;
+/// Only trim when the standing excess is past this too: a few ms from clock drift isn't worth a
+/// cut every second.
+const SLACK_MS: usize = 15;
 
 /// Drop the oldest `n` samples, crossfading what would have played into what plays instead
 /// (a hard cut clicks).
 fn skip(q: &mut VecDeque<i16>, n: usize) {
+    use super::backlog::FADE;
     let n = n.min(q.len());
-    let fade = super::backlog::FADE.min(q.len() - n).min(n);
+    // full-length fade even for a small skip (both ends are copied first); stack only: this runs
+    // in the audio callback
+    let fade = FADE.min(q.len() - n);
     if fade > 0 {
-        let old: Vec<i16> = q.range(..fade).copied().collect();
-        let mut new: Vec<i16> = q.range(n..n + fade).copied().collect();
-        super::backlog::crossfade(&old, &mut new);
-        for (k, v) in new.into_iter().enumerate() {
-            q[n + k] = v;
+        let (mut old, mut new) = ([0i16; FADE], [0i16; FADE]);
+        for k in 0..fade {
+            old[k] = q[k];
+            new[k] = q[n + k];
+        }
+        super::backlog::crossfade(&old[..fade], &mut new[..fade]);
+        for (k, v) in new[..fade].iter().enumerate() {
+            q[n + k] = *v;
         }
     }
     q.drain(..n);
@@ -53,6 +62,7 @@ fn skip(q: &mut VecDeque<i16>, n: usize) {
 pub struct Mixer {
     cap: usize,
     target: usize,
+    slack: usize,
     /// Samples pulled since the last backlog check (one check per second of playback).
     pulled: usize,
     rate: usize,
@@ -75,6 +85,7 @@ impl Mixer {
         Self {
             cap: (sample_rate as usize * cap_ms as usize / 1000).max(1),
             target: sample_rate as usize * TARGET_MS / 1000,
+            slack: sample_rate as usize * SLACK_MS / 1000,
             pulled: 0,
             rate: sample_rate as usize,
             peers: HashMap::new(),
@@ -158,7 +169,7 @@ impl Mixer {
         if self.pulled >= self.rate {
             self.pulled = 0;
             for p in self.peers.values_mut() {
-                if p.low != usize::MAX && p.low > self.target {
+                if p.low != usize::MAX && p.low > self.target + self.slack {
                     skip(&mut p.queue, p.low - self.target);
                 }
                 p.low = usize::MAX;
@@ -222,6 +233,15 @@ mod tests {
             .max()
             .unwrap();
         assert!(step < 1500, "a click: step of {step}");
+    }
+
+    #[test]
+    fn a_small_excess_from_clock_drift_is_left_alone() {
+        // a few ms over the target (devices' clocks differ slightly): not worth a cut every second
+        let mut m = Mixer::new(48_000, 200);
+        m.push("a", &[100; 48 * 45]); // 45 ms
+        steady(&mut m, 3000);
+        assert_eq!(m.buffered("a"), 48 * 45);
     }
 
     #[test]
