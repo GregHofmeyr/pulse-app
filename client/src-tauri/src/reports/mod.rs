@@ -30,8 +30,9 @@ where
     F: FnMut() -> Fut,
     Fut: Future<Output = Result<CreateReportResponse, ApiError>>,
 {
+    // Only when it certainly didn't arrive: a retry after a timeout could file the report twice.
     match attempt().await {
-        Err(ApiError::Network(_) | ApiError::Server(_)) => {
+        Err(e) if e.never_arrived() => {
             tokio::time::sleep(delay).await;
             attempt().await
         }
@@ -230,14 +231,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_network_error_is_retried_once() {
+    async fn a_connection_failure_is_retried_once() {
         let calls = AtomicU32::new(0);
         let r = send_with_retry(
             || {
                 let n = calls.fetch_add(1, Ordering::SeqCst);
                 async move {
                     if n == 0 {
-                        Err(ApiError::Network("blip".into()))
+                        Err(ApiError::Network(crate::api::CONNECT_FAILED.into()))
                     } else {
                         ok()
                     }
@@ -256,13 +257,41 @@ mod tests {
         let r = send_with_retry(
             || {
                 calls.fetch_add(1, Ordering::SeqCst);
-                async { Err(ApiError::Server("502".into())) }
+                async { Err(ApiError::Server("502 Bad Gateway".into())) }
             },
             Duration::from_millis(1),
         )
         .await;
         assert!(matches!(r, Err(ApiError::Server(_))));
         assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    /// A timeout or a 500 may come after the server stored the report: retrying would file it twice.
+    #[tokio::test]
+    async fn failures_that_may_have_arrived_are_not_retried() {
+        for e in [
+            ApiError::Network("it took too long to answer".into()),
+            ApiError::Server("500 Internal Server Error".into()),
+            ApiError::Server("504 Gateway Timeout".into()),
+        ] {
+            let calls = AtomicU32::new(0);
+            let e2 = e.to_string();
+            let r = send_with_retry(
+                || {
+                    calls.fetch_add(1, Ordering::SeqCst);
+                    let e = match &e {
+                        ApiError::Network(t) => ApiError::Network(t.clone()),
+                        ApiError::Server(t) => ApiError::Server(t.clone()),
+                        _ => unreachable!(),
+                    };
+                    async { Err(e) }
+                },
+                Duration::from_millis(1),
+            )
+            .await;
+            assert!(r.is_err());
+            assert_eq!(calls.load(Ordering::SeqCst), 1, "{e2}");
+        }
     }
 
     #[tokio::test]

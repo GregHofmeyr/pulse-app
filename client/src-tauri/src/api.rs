@@ -27,6 +27,16 @@ pub enum ApiError {
 }
 
 impl ApiError {
+    /// The request certainly never reached Pulse (no connection, or the proxy found it down), so
+    /// sending it again can't do it twice.
+    pub fn never_arrived(&self) -> bool {
+        match self {
+            Self::Network(t) => t == CONNECT_FAILED,
+            Self::Server(s) => s.starts_with("502") || s.starts_with("503"),
+            _ => false,
+        }
+    }
+
     /// Startup restores the last session; if its server doesn't answer, say which one (it may be
     /// an old dev server) rather than a bare network error.
     pub fn while_restoring(self, server: &str) -> Self {
@@ -77,12 +87,15 @@ pub fn path_only(url: &reqwest::Url) -> String {
     url.path().to_string()
 }
 
+/// The connection was never made: a request with this error certainly didn't arrive.
+pub const CONNECT_FAILED: &str = "couldn't connect";
+
 /// A reqwest error in plain words, without the URL (its Display would include host + query).
 fn failure_text(e: reqwest::Error) -> String {
     if e.is_timeout() {
         "it took too long to answer".into()
     } else if e.is_connect() {
-        "couldn't connect".into()
+        CONNECT_FAILED.into()
     } else {
         e.without_url().to_string()
     }
