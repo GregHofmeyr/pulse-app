@@ -199,7 +199,7 @@ pub async fn restore_session(
             core.store.clear(&server);
             Ok(None)
         }
-        Err(e) => Err(e),
+        Err(e) => Err(e.while_restoring(&server)),
     }
 }
 

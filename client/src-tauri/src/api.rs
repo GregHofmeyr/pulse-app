@@ -26,6 +26,25 @@ pub enum ApiError {
     Network(String),
 }
 
+impl ApiError {
+    /// Startup restores the last session; if its server doesn't answer, say which one (it may be
+    /// an old dev server) rather than a bare network error.
+    pub fn while_restoring(self, server: &str) -> Self {
+        match self {
+            Self::Network(_) | Self::Server(_) => {
+                let host = server
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://")
+                    .trim_end_matches('/');
+                Self::Rejected(format!(
+                    "Couldn't restore your last session on {host}: it didn't answer. Log in below, or restart Pulse to try again."
+                ))
+            }
+            other => other,
+        }
+    }
+}
+
 impl serde::Serialize for ApiError {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_str(&self.to_string())
@@ -58,9 +77,15 @@ pub fn path_only(url: &reqwest::Url) -> String {
     url.path().to_string()
 }
 
-/// A reqwest error for a log line: its Display would include the full URL (host + query).
+/// A reqwest error in plain words, without the URL (its Display would include host + query).
 fn failure_text(e: reqwest::Error) -> String {
-    e.without_url().to_string()
+    if e.is_timeout() {
+        "it took too long to answer".into()
+    } else if e.is_connect() {
+        "couldn't connect".into()
+    } else {
+        e.without_url().to_string()
+    }
 }
 
 fn log_failure(path: Option<String>, what: &str) {
@@ -123,7 +148,9 @@ impl Api {
                 .unwrap_or_else(|_| "unexpected server error".into());
             return Err(ApiError::Rejected(msg));
         }
-        r.json().await.map_err(|e| ApiError::Network(e.to_string()))
+        r.json()
+            .await
+            .map_err(|e| ApiError::Network(failure_text(e)))
     }
 
     /// For endpoints that answer 204.
@@ -464,7 +491,7 @@ impl Api {
             .bearer_auth(token)
             .send()
             .await
-            .map_err(|e| ApiError::Network(e.to_string()))?;
+            .map_err(|e| ApiError::Network(failure_text(e)))?;
         Ok(())
     }
 
@@ -526,6 +553,26 @@ mod tests {
             log: String::new(),
         };
         assert_eq!(api.create_report(&token, &req).await.unwrap().id.len(), 26);
+    }
+
+    #[test]
+    fn a_failed_restore_says_which_server_and_what_to_do() {
+        let e =
+            ApiError::Network("couldn't connect".into()).while_restoring("http://localhost:7890");
+        let t = e.to_string();
+        assert!(t.contains("localhost:7890") && t.contains("restore"), "{t}");
+        assert!(!t.contains("http://") && !t.contains("/me"), "{t}");
+        // anything that isn't about reaching the server is passed through as is
+        assert!(matches!(
+            ApiError::RateLimited.while_restoring("https://pulsechat.co.za"),
+            ApiError::RateLimited
+        ));
+    }
+
+    #[tokio::test]
+    async fn connection_failures_read_plainly() {
+        let e = reqwest::get("http://127.0.0.1:9/x").await.unwrap_err();
+        assert_eq!(failure_text(e), "couldn't connect");
     }
 
     #[tokio::test]
