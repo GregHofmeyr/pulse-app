@@ -112,6 +112,18 @@ pub fn save_dir(app: &AppHandle) -> PathBuf {
         .unwrap_or_else(|_| app.state::<LogDir>().0.clone())
 }
 
+/// A 401 here means the session expired. Say that (not "wrong password"), and don't sign out yet:
+/// that would close the report and lose the text before it can be saved.
+fn expired_or(e: ApiError) -> ApiError {
+    match e {
+        ApiError::Unauthorized => ApiError::Rejected(
+            "Your session has expired, so this can't be sent. Save the report instead, then log in again."
+                .into(),
+        ),
+        other => other,
+    }
+}
+
 #[tauri::command]
 pub async fn submit_report(app: AppHandle, text: String) -> Result<String, ApiError> {
     let (api, token) = app.state::<Core>().current()?;
@@ -121,8 +133,11 @@ pub async fn submit_report(app: AppHandle, text: String) -> Result<String, ApiEr
         meta: meta(&app, api.base()).await,
         log: tail::log_tail(&app.state::<LogDir>().0, TAIL_BYTES),
     };
-    let r = send_with_retry(|| api.create_report(&token, &req), Duration::from_secs(2)).await;
-    let r = app.state::<Core>().check(&app, r)?;
+    let r = match send_with_retry(|| api.create_report(&token, &req), Duration::from_secs(2)).await
+    {
+        Err(ApiError::Unauthorized) => return Err(expired_or(ApiError::Unauthorized)),
+        r => app.state::<Core>().check(&app, r)?,
+    };
     tracing::info!(id = %r.id, "bug report sent");
     Ok(short(&r.id))
 }
@@ -153,6 +168,18 @@ pub async fn save_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_expired_session_says_so_and_points_at_saving() {
+        let e = expired_or(ApiError::Unauthorized);
+        let t = e.to_string();
+        assert!(t.contains("expired") && t.contains("Save"), "{t}");
+        assert!(!t.contains("password"), "{t}");
+        assert!(matches!(
+            expired_or(ApiError::RateLimited),
+            ApiError::RateLimited
+        ));
+    }
     use std::sync::atomic::{AtomicU32, Ordering};
 
     fn ok() -> Result<CreateReportResponse, ApiError> {
