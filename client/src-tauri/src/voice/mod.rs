@@ -94,6 +94,8 @@ struct Reopener {
     raw_tx: processor::RawTx,
     alive: Arc<AtomicBool>,
     one_at_a_time: tokio::sync::Mutex<()>,
+    /// Devices a switch couldn't open lately: following leaves them alone for a while.
+    failed: Mutex<devices::FailedTargets>,
     /// How many reopens so far (diagnostics: following mustn't churn).
     count: std::sync::atomic::AtomicU32,
 }
@@ -102,7 +104,8 @@ impl Reopener {
     /// Reopen `sides` (stays in the room). A side that fails goes back to the device it had, so
     /// the call keeps working audio; the error is still returned (a device picked in settings that
     /// won't open should say so).
-    async fn reopen(&self, sides: Sides) -> Result<(), VoiceError> {
+    /// `targets`: the devices each side is meant to end up on, if known (a miss is remembered).
+    async fn reopen(&self, sides: Sides, targets: devices::Targets) -> Result<(), VoiceError> {
         let _turn = self.one_at_a_time.lock().await;
         if !self.alive.load(Ordering::SeqCst) {
             return Ok(()); // left (or LiveKit dropped us) while waiting: nothing to open for
@@ -132,6 +135,10 @@ impl Reopener {
         {
             tracing::info!(?sides, "voice: devices reopened");
             self.shared.watchdog.rearm(Instant::now());
+            self.failed
+                .lock()
+                .unwrap()
+                .record(sides, &targets, &io.opened(), Instant::now());
             *self.io.lock().unwrap() = Some(io);
         }
         result.map_err(|e| VoiceError::Device(e.to_string()))
@@ -142,7 +149,7 @@ impl Reopener {
     async fn wants_switch(
         &self,
         probe: &mut Option<JoinHandle<DeviceProbe>>,
-    ) -> Option<(&'static str, Sides)> {
+    ) -> Option<(&'static str, Sides, devices::Targets)> {
         let opened = self
             .io
             .lock()
@@ -176,16 +183,21 @@ impl Reopener {
                 return None;
             }
         };
+        let failed = self.failed.lock().unwrap();
+        let now = Instant::now();
         if let Some((ins, outs)) = available {
+            let targets = (cfg.input.clone(), cfg.output.clone());
             let back = devices::back_sides(&cfg, &opened, &ins, &outs);
+            let back = failed.filter(back, &targets, now);
             if back.any() {
-                return Some(("chosen device is back", back));
+                return Some(("chosen device is back", back, targets));
             }
         }
-        let moved = devices::moved_sides(&cfg, &opened, defaults);
+        let moved = devices::moved_sides(&cfg, &opened, defaults.clone());
+        let moved = failed.filter(moved, &defaults, now);
         moved
             .any()
-            .then_some(("system default device changed", moved))
+            .then_some(("system default device changed", moved, defaults))
     }
 }
 
@@ -586,6 +598,7 @@ impl VoiceManager {
             raw_tx: raw_tx.clone(),
             alive: alive.clone(),
             one_at_a_time: tokio::sync::Mutex::new(()),
+            failed: Default::default(),
             count: Default::default(),
         });
         {
@@ -644,7 +657,7 @@ impl VoiceManager {
                                 sides = Sides::BOTH; // recovered meanwhile: be thorough anyway
                             }
                             tracing::warn!(?sides, "audio device stalled; reopening");
-                            let _ = reopener.reopen(sides).await;
+                            let _ = reopener.reopen(sides, (None, None)).await;
                         }
                     }
                 }
@@ -664,11 +677,11 @@ impl VoiceManager {
                         break;
                     }
                     let switch = reopener.wants_switch(&mut probe).await;
-                    if debounce.confirm(switch.is_some())
-                        && let Some((reason, sides)) = switch
+                    if debounce.confirm(switch.as_ref().map(|(_, sides, _)| *sides))
+                        && let Some((reason, sides, targets)) = switch
                     {
                         tracing::info!(reason, ?sides, "voice: switching devices");
-                        let _ = reopener.reopen(sides).await;
+                        let _ = reopener.reopen(sides, targets).await;
                     }
                 }
             }));
@@ -812,7 +825,8 @@ impl VoiceManager {
             // and volume must not wait on it (the reopener takes turns and checks `alive`).
             let reopener = s.reopener.clone();
             drop(guard);
-            reopener.reopen(changed).await?;
+            let targets = (cfg.input.clone(), cfg.output.clone());
+            reopener.reopen(changed, targets).await?;
         }
         Ok(())
     }

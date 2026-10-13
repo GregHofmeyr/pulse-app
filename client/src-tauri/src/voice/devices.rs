@@ -711,20 +711,68 @@ pub fn on_fallback(cfg: &AudioConfig, opened: &OpenedDevices) -> bool {
     off(&cfg.input, &opened.input) || off(&cfg.output, &opened.output)
 }
 
+/// How long a device that wouldn't open is left alone before trying it again.
+pub const RETRY_FAILED: Duration = Duration::from_secs(60);
+
+/// Device names per side that a switch was aimed at (`None` = no particular one).
+pub type Targets = (Option<String>, Option<String>);
+
+/// Devices a switch was aimed at but didn't end up on (it wouldn't open; we fell back). Without
+/// this, following would see "the default moved" / "your device is back" on every check and tear
+/// the working stream down again and again.
+#[derive(Default)]
+pub struct FailedTargets {
+    input: Option<(String, Instant)>,
+    output: Option<(String, Instant)>,
+}
+
+impl FailedTargets {
+    /// After reopening `sides` aiming at `targets`: remember the misses, forget the hits.
+    pub fn record(
+        &mut self,
+        sides: Sides,
+        targets: &Targets,
+        opened: &OpenedDevices,
+        now: Instant,
+    ) {
+        let note =
+            |slot: &mut Option<(String, Instant)>, wanted: bool, t: &Option<String>, got: &str| {
+                if let (true, Some(t)) = (wanted, t) {
+                    *slot = (t != got).then(|| (t.clone(), now));
+                }
+            };
+        note(&mut self.input, sides.input, &targets.0, &opened.input);
+        note(&mut self.output, sides.output, &targets.1, &opened.output);
+    }
+
+    /// `sides` without those aimed at a device that failed recently.
+    pub fn filter(&self, sides: Sides, targets: &Targets, now: Instant) -> Sides {
+        let blocked = |slot: &Option<(String, Instant)>, t: &Option<String>| {
+            matches!((slot, t), (Some((name, at)), Some(t))
+                if name == t && now.saturating_duration_since(*at) < RETRY_FAILED)
+        };
+        Sides {
+            input: sides.input && !blocked(&self.input, &targets.0),
+            output: sides.output && !blocked(&self.output, &targets.1),
+        }
+    }
+}
+
 /// Act only on a condition seen on two checks in a row: a Bluetooth device that flaps in and out
 /// for a moment shouldn't tear the call's audio down.
 #[derive(Default)]
 pub struct Debounce {
-    streak: u8,
+    last: Option<Sides>,
 }
 
 impl Debounce {
-    pub fn confirm(&mut self, seen: bool) -> bool {
-        self.streak = if seen { self.streak + 1 } else { 0 };
-        if self.streak >= 2 {
-            self.streak = 0;
+    /// `seen`: the switch this check asks for. True when the previous check asked for the same.
+    pub fn confirm(&mut self, seen: Option<Sides>) -> bool {
+        if seen.is_some() && seen == self.last {
+            self.last = None;
             return true;
         }
+        self.last = seen;
         false
     }
 }
@@ -1269,6 +1317,38 @@ mod tests {
     }
 
     #[test]
+    fn a_device_that_wont_open_isnt_retried_every_check() {
+        let t0 = Instant::now();
+        let mut f = FailedTargets::default();
+        let speakers_to_arctis = (None, Some("Arctis".to_string()));
+        let out = Sides {
+            input: false,
+            output: true,
+        };
+        // tried the Arctis, ended up back on the speakers
+        f.record(out, &speakers_to_arctis, &opened("Mic", "Speakers"), t0);
+        assert!(
+            !f.filter(out, &speakers_to_arctis, t0 + Duration::from_secs(4))
+                .any()
+        );
+        // a different target is fine at once
+        let to_sonar = (None, Some("Sonar".to_string()));
+        assert_eq!(f.filter(out, &to_sonar, t0 + Duration::from_secs(4)), out);
+        // and the Arctis gets another go after a while
+        assert_eq!(
+            f.filter(
+                out,
+                &speakers_to_arctis,
+                t0 + RETRY_FAILED + Duration::from_secs(1)
+            ),
+            out
+        );
+        // a switch that worked clears it
+        f.record(out, &speakers_to_arctis, &opened("Mic", "Arctis"), t0);
+        assert_eq!(f.filter(out, &speakers_to_arctis, t0), out);
+    }
+
+    #[test]
     fn only_the_side_that_changed_is_reopened() {
         let now = opened("Arctis Mic", "Speakers");
         // only the output default moved: the mic (maybe a BT headset) is left alone
@@ -1358,12 +1438,25 @@ mod tests {
     #[test]
     fn a_switch_must_be_seen_twice_in_a_row() {
         // a flapping Bluetooth device appears for one check, then vanishes: no reopen
+        let out = Sides {
+            input: false,
+            output: true,
+        };
+        let inp = Sides {
+            input: true,
+            output: false,
+        };
         let mut d = Debounce::default();
-        assert!(!d.confirm(true));
-        assert!(!d.confirm(false));
-        assert!(!d.confirm(true));
-        assert!(d.confirm(true));
-        assert!(!d.confirm(true), "after acting, start counting again");
+        assert!(!d.confirm(Some(out)));
+        assert!(!d.confirm(None));
+        assert!(!d.confirm(Some(out)));
+        assert!(d.confirm(Some(out)));
+        assert!(!d.confirm(Some(out)), "after acting, start counting again");
+        // an input flap then an output flap is two different things, not one seen twice
+        let mut d = Debounce::default();
+        assert!(!d.confirm(Some(inp)));
+        assert!(!d.confirm(Some(out)));
+        assert!(d.confirm(Some(out)));
     }
 
     #[test]
