@@ -1,5 +1,7 @@
-import { describe, expect, it } from 'vitest'
-import { soundFor, volumeLabel, clampVolume, migrateAudioConfig, defaultAudioConfig } from './voiceui'
+import { describe, expect, it, vi } from 'vitest'
+import { soundFor, volumeLabel, clampVolume, migrateAudioConfig, defaultAudioConfig, playSound } from './voiceui'
+
+vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => {}) }))
 
 describe('voice ui helpers', () => {
   it('volumeLabel', () => {
@@ -66,5 +68,18 @@ describe('migrateAudioConfig', () => {
   })
   it('keeps an explicit new level', () => {
     expect(migrateAudioConfig({ noise_suppression: 'standard', noise_suppress: false }).noise_suppression).toBe('standard')
+  })
+})
+
+describe('playSound', () => {
+  it('plays on the output device chosen in settings', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const calls: unknown[] = []
+    vi.mocked(invoke).mockImplementation(async (cmd, args) => { calls.push([cmd, args]) })
+    const saved = JSON.stringify({ output: 'Headphones (Arctis Nova 7P)' })
+    vi.stubGlobal('localStorage', { getItem: (k: string) => (k === 'pulse.audio' ? saved : null) })
+    playSound('join')
+    expect(calls).toEqual([['play_sound', { name: 'join', output: 'Headphones (Arctis Nova 7P)' }]])
+    vi.unstubAllGlobals()
   })
 })

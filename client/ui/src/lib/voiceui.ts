@@ -33,7 +33,8 @@ export function transitionSounds(prev: VoiceSnap, next: VoiceSnap): SoundName[] 
 
 /** Played by the Rust core (never an <audio> element: WebKitGTK + missing GStreamer sink aborts the renderer). */
 export function playSound(name: SoundName) {
-  void invoke('play_sound', { name }).catch(() => {})
+  // on the output chosen in settings, like voice (null = system default)
+  void invoke('play_sound', { name, output: loadAudioConfig().output }).catch(() => {})
 }
 
 // Per-machine preferences (not shared state): safe in localStorage, guarded for private modes.

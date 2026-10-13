@@ -1,7 +1,7 @@
 //! UI sounds (join/leave/mute…), played by the Rust core through cpal — NOT through the webview:
 //! WebKitGTK plays <audio> via GStreamer, and without its audio-sink plugin the web process aborts.
 
-use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use cpal::traits::{DeviceTrait, StreamTrait};
 
 pub struct Sound {
     pub rate: u32,
@@ -78,12 +78,13 @@ pub fn load(name: &str) -> Option<Sound> {
 const VOLUME: f32 = 0.6;
 
 /// Fire-and-forget on a short-lived thread (cpal streams are !Send). Failures are silent: sounds are a nicety.
-pub fn play(name: &str) {
+/// On `output` (a device name from settings; missing or unplugged = the system default).
+pub fn play(name: &str, output: Option<String>) {
     let Some(sound) = load(name) else { return };
     let _ = std::thread::Builder::new()
         .name("pulse-sound".into())
         .spawn(move || {
-            let Some(dev) = cpal::default_host().default_output_device() else {
+            let Ok(dev) = crate::voice::devices::find_device(false, output.as_deref()) else {
                 return;
             };
             let Ok(cfg) = dev.default_output_config() else {

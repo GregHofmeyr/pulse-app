@@ -563,7 +563,7 @@ pub fn prefer_internal_rate(
         .unwrap_or(default)
 }
 
-fn find_device(input: bool, name: Option<&str>) -> anyhow::Result<cpal::Device> {
+pub fn find_device(input: bool, name: Option<&str>) -> anyhow::Result<cpal::Device> {
     let host = cpal::default_host();
     if let Some(name) = name {
         let mut devs = if input {
