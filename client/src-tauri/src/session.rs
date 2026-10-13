@@ -20,6 +20,11 @@ fn clean_profile(profile: Option<&str>) -> String {
         .collect()
 }
 
+/// The profile's name as used in paths, or `None` for the default profile.
+pub fn profile_name(profile: Option<&str>) -> Option<String> {
+    Some(clean_profile(profile)).filter(|p| !p.is_empty())
+}
+
 /// A second launch of the default profile focuses the running window instead of starting another
 /// copy. Named profiles (testing several users on one machine) may run side by side.
 pub fn single_instance(profile: Option<&str>) -> bool {

@@ -35,15 +35,28 @@ impl Command {
     }
 }
 
-/// `$XDG_RUNTIME_DIR/pulse-app.sock` (per-user, tmpfs), else a uid-scoped temp path.
+/// `$XDG_RUNTIME_DIR/pulse-app[-<profile>].sock` (per-user tmpfs), else a uid-scoped temp path.
+/// Per profile: a second profile must not take over the first one's hotkeys.
 pub fn socket_path() -> PathBuf {
-    match std::env::var_os("XDG_RUNTIME_DIR") {
-        Some(dir) => PathBuf::from(dir).join("pulse-app.sock"),
+    socket_path_for(
+        std::env::var_os("XDG_RUNTIME_DIR"),
+        &std::env::var("USER").unwrap_or_else(|_| "user".into()),
+        std::env::var("PULSE_PROFILE").ok().as_deref(),
+    )
+}
+
+fn socket_path_for(
+    runtime_dir: Option<std::ffi::OsString>,
+    user: &str,
+    profile: Option<&str>,
+) -> PathBuf {
+    let suffix = crate::session::profile_name(profile)
+        .map(|p| format!("-{p}"))
+        .unwrap_or_default();
+    match runtime_dir {
+        Some(dir) => PathBuf::from(dir).join(format!("pulse-app{suffix}.sock")),
         // Must be the same for the app and the CLI, so per-user, not per-process.
-        None => std::env::temp_dir().join(format!(
-            "pulse-app-{}.sock",
-            std::env::var("USER").unwrap_or_else(|_| "user".into())
-        )),
+        None => std::env::temp_dir().join(format!("pulse-app-{user}{suffix}.sock")),
     }
 }
 
@@ -87,6 +100,24 @@ mod tests {
     use super::*;
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
+
+    #[test]
+    fn each_profile_has_its_own_socket() {
+        let run = Some(std::ffi::OsString::from("/run/user/1000"));
+        assert_eq!(
+            socket_path_for(run.clone(), "greg", None),
+            PathBuf::from("/run/user/1000/pulse-app.sock")
+        );
+        assert_eq!(
+            socket_path_for(run, "greg", Some("b")),
+            PathBuf::from("/run/user/1000/pulse-app-b.sock")
+        );
+        assert_eq!(
+            socket_path_for(None, "greg", Some("../x")),
+            std::env::temp_dir().join("pulse-app-greg-x.sock"),
+            "cleaned like the profile dirs"
+        );
+    }
 
     #[tokio::test]
     async fn socket_roundtrip_dispatches_command() {
