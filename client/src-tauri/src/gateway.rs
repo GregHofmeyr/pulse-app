@@ -171,6 +171,7 @@ async fn session(
     else {
         return End::Retry(false);
     };
+    crate::startup::mark("gateway_open");
     let hello = serde_json::to_string(&ClientFrame::Hello {
         token: token.into(),
         client_version: pulse_protocol::PROTOCOL_VERSION,
@@ -183,6 +184,11 @@ async fn session(
     // First frame must be Ready (or a close).
     match tokio::time::timeout(READY_TIMEOUT, next_frame(&mut ws)).await {
         Ok(Frame::Server(ServerFrame::Ready(r))) => {
+            if let Some(ms) = crate::startup::first("ready") {
+                // Ready's size decides whether it's worth compressing (slow-start round trips)
+                let bytes = serde_json::to_string(&r).map_or(0, |s| s.len());
+                tracing::info!(phase = "ready", since_start_ms = ms, bytes, "startup");
+            }
             let _ = tx.send(GatewayUpdate::Ready(Box::new(r)));
             let _ = tx.send(GatewayUpdate::Connection(ConnState::Connected));
         }

@@ -14,6 +14,7 @@ pub mod processor;
 pub mod resampler;
 pub mod rx;
 pub mod speaking;
+pub mod stats;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -46,8 +47,6 @@ const PEER_BUFFER_MS: u32 = 200;
 const SEND_SLACK_CHUNKS: usize = 9;
 /// How long a bug report waits for the voice session before reporting it as busy.
 const DIAGNOSTICS_WAIT: Duration = Duration::from_secs(1);
-/// How often the voice path's round trip / jitter / buffer delay is logged while in a call.
-const NET_STATS_EVERY: Duration = Duration::from_secs(5);
 
 #[derive(Debug, thiserror::Error)]
 pub enum VoiceError {
@@ -377,7 +376,12 @@ impl VoiceManager {
         cfg: AudioConfig,
         mode: AudioMode,
     ) -> Result<Session, VoiceError> {
+        // join phases, for finding where a slow join's time goes (bug reports carry the log)
+        let started = Instant::now();
+        let ms = |t: Instant| t.elapsed().as_millis() as u64;
         let vt = api.voice_token(token, channel).await?;
+        let token_ms = ms(started);
+        let t = Instant::now();
 
         let mixer = Arc::new(Mutex::new(Mixer::new(INTERNAL_RATE, PEER_BUFFER_MS)));
         let shared = Shared::new(&cfg, self.controls.clone(), mixer.clone());
@@ -388,6 +392,8 @@ impl VoiceManager {
             AudioMode::Real => start_audio(&cfg, shared.clone(), raw_tx.clone()).await?,
             AudioMode::Null(rate) => AudioIo::start_null(rate, shared.clone(), raw_tx.clone()),
         };
+        let devices_ms = ms(t);
+        let t = Instant::now();
 
         let (room, mut room_events) = tokio::time::timeout(
             CONNECT_TIMEOUT,
@@ -396,6 +402,8 @@ impl VoiceManager {
         .await
         .map_err(|_| VoiceError::Timeout("connecting to voice"))?
         .map_err(|e| VoiceError::Connect(e.to_string()))?;
+        let room_connect_ms = ms(t);
+        let t = Instant::now();
         tracing::info!("voice: room connected");
         // Fixed 48 kHz towards LiveKit, whatever the device does.
         // queue 0 = WebRTC's fast path: each 10 ms frame goes straight out. A queue there drains on
@@ -419,7 +427,13 @@ impl VoiceManager {
             let _ = tokio::time::timeout(CLOSE_TIMEOUT, room.close()).await; // dropping a Room does not disconnect it
             return Err(e);
         }
-        tracing::info!("voice: mic published");
+        tracing::info!(
+            token_ms,
+            devices_ms,
+            room_connect_ms,
+            publish_ms = ms(t),
+            "voice: mic published"
+        );
         let room = Arc::new(room);
 
         let mut tasks = Vec::new();
@@ -427,26 +441,35 @@ impl VoiceManager {
         // what WebRTC measures about the path, for telling network lag from local lag
         {
             let (room, send_queue, mixer) = (room.clone(), send_queue.clone(), mixer.clone());
+            let shared = shared.clone();
             tasks.push(tokio::spawn(async move {
                 let mut totals = netstats::Totals::default();
-                let mut tick = tokio::time::interval(NET_STATS_EVERY);
+                let mut last_codec = None;
+                let mut tick = tokio::time::interval(netstats::WINDOW);
                 loop {
                     tick.tick().await;
                     if let Ok(s) = room.get_stats().await {
+                        // which codec our mic is sent with (stereo? FEC/DTX?), once per change
+                        if let Some(c) = netstats::send_codec(&s.publisher_stats)
+                            && last_codec.as_ref() != Some(&c)
+                        {
+                            tracing::info!(codec = %c, "voice: send codec");
+                            last_codec = Some(c);
+                        }
                         let (line, t) =
                             netstats::summarize(&s.publisher_stats, &s.subscriber_stats, totals);
                         totals = t;
-                        // ours: worst send backlog this window, receive queue now (fullest peer)
+                        // ours: worst send backlog this window, and the pipeline's counters
                         let send_ms = send_queue.take_worst();
-                        let recv_ms =
-                            mixer.lock().unwrap().max_buffered() as u32 * 1000 / INTERNAL_RATE;
-                        tracing::info!(%line, send_ms, recv_ms, "voice: path");
+                        let underrun = mixer.lock().unwrap().take_underrun_samples();
+                        let ours = shared.stats.take(underrun * 1000 / INTERNAL_RATE as u64);
+                        tracing::info!(%line, send_ms, %ours, "voice: path");
                     }
                 }
             }));
         }
         // mic → LiveKit, resampled to 48 kHz and sent in exact 10 ms frames
-        let gauge = send_queue.clone();
+        let (gauge, counters) = (send_queue.clone(), shared.clone());
         tasks.push(tokio::spawn(async move {
             let frame_len = (INTERNAL_RATE / 100) as usize;
             let mut to_internal = resampler::ToInternal::default();
@@ -484,6 +507,7 @@ impl VoiceManager {
                                 let _ = source.capture_frame(&send(vec![0; frame_len])).await;
                             }
                             gap.silence_sent(due);
+                            counters.stats.silence_fill.fetch_add(due as u64, Ordering::Relaxed);
                         }
                         continue;
                     }
@@ -493,6 +517,10 @@ impl VoiceManager {
                 }
                 let (stale, first) = backlog::drop_stale(&mut mic_rx, SEND_SLACK_CHUNKS);
                 if stale > 0 {
+                    counters
+                        .stats
+                        .send_drops
+                        .fetch_add(stale as u64, Ordering::Relaxed);
                     fade_from = first.map(|(_, b)| b);
                     if let Some(repeated) = drops.hit(Instant::now()) {
                         tracing::warn!(
@@ -544,10 +572,28 @@ impl VoiceManager {
                             let pct = volumes.lock().unwrap().get(&id).copied().unwrap_or(100);
                             mixer.lock().unwrap().set_gain(&id, percent_to_gain(pct));
                             let (m, peer) = (mixer.clone(), id.clone());
+                            let subscribed = Instant::now();
+                            tracing::info!(
+                                peer = %id,
+                                since_join_ms = started.elapsed().as_millis() as u64,
+                                "voice: subscribed"
+                            );
                             let task = tokio::spawn(async move {
                                 let mut stream =
                                     NativeAudioStream::new(t.rtc_track(), INTERNAL_RATE as i32, 1);
+                                let mut heard = false;
                                 while let Some(f) = stream.next().await {
+                                    // WebRTC hands over (silent) frames before any packet arrives:
+                                    // the first one with sound is when they're really audible
+                                    if !heard && f.data.iter().any(|s| *s != 0) {
+                                        heard = true;
+                                        tracing::info!(
+                                            %peer,
+                                            since_subscribed_ms =
+                                                subscribed.elapsed().as_millis() as u64,
+                                            "voice: first sound"
+                                        );
+                                    }
                                     m.lock().unwrap().push(&peer, &f.data);
                                 }
                             });
@@ -626,6 +672,10 @@ impl VoiceManager {
                         break;
                     }
                     let (mic, speaker) = shared.take_levels();
+                    let queued = shared.mixer.lock().unwrap().max_buffered();
+                    shared
+                        .stats
+                        .sample_recv_queue((queued * 1000 / INTERNAL_RATE as usize) as u32);
                     let gate_open = shared.gate_open.load(Ordering::Relaxed);
                     events(VoiceEvent::Levels {
                         mic,

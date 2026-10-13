@@ -287,6 +287,10 @@ async fn one_client_hears_another_at_real_time() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn real_devices_are_not_reopened_without_a_reason() {
+    // also shows the voice log lines (join phases, path stats) on a real machine
+    let _ = tracing_subscriber::fmt()
+        .with_env_filter("info,libwebrtc=warn")
+        .try_init();
     let mut cfg = testing::test_config();
     cfg.livekit_url = "ws://127.0.0.1:7880".into();
     cfg.livekit_secret = DEV_SECRET.into();

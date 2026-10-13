@@ -10,6 +10,7 @@ pub mod outbox;
 pub mod reports;
 pub mod session;
 pub mod sounds;
+pub mod startup;
 pub mod throttle;
 pub mod voice;
 
@@ -44,6 +45,7 @@ fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri:
 }
 
 pub fn run() {
+    startup::begin();
     let mut builder = tauri::Builder::default();
     // Must be the first plugin: a second launch exits before anything else starts.
     if session::single_instance(std::env::var("PULSE_PROFILE").ok().as_deref()) {
@@ -74,8 +76,10 @@ pub fn run() {
                 Err(e) => eprintln!("logging unavailable ({}): {e}", log_dir.display()),
             }
             tracing::info!(profile = ?profile, data = %dir.display(), "profile");
+            startup::mark("logging_ready"); // (since process start: covers crash checks + log setup)
             let webview_dir = session::profile_dir(&app.path().app_local_data_dir()?, profile.as_deref());
             create_main_window(app, &webview_dir)?;
+            startup::mark("window_built");
             let emitter = app.handle().clone();
             let outbox = outbox::Outbox::new(std::sync::Arc::new(
                 move |nonce: &str,
@@ -148,6 +152,7 @@ pub fn run() {
             commands::set_mute,
             commands::clear_mute,
             commands::close_conversation,
+            startup::ui_painted,
             keybinds::get_keybinds,
             keybinds::set_keybinds,
             keybinds::pause_keybinds,

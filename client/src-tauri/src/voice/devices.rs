@@ -290,6 +290,8 @@ pub struct Shared {
     spk_meter: Mutex<Meter>,
     /// Level of what we actually send (after mute + gate): your own speaking ring.
     sent_meter: Mutex<Meter>,
+    /// Counters for the `voice: path` line (atomics: safe in the audio callbacks).
+    pub stats: super::stats::Pipeline,
 }
 
 impl Shared {
@@ -323,6 +325,7 @@ impl Shared {
             mic_meter: Mutex::new(Meter::default()),
             spk_meter: Mutex::new(Meter::default()),
             sent_meter: Mutex::new(Meter::default()),
+            stats: Default::default(),
         })
     }
 
@@ -349,6 +352,9 @@ impl Shared {
         raw_tx: &RawTx,
     ) {
         self.watchdog.input_tick(Instant::now());
+        self.stats
+            .in_frames
+            .record((data.len() / channels.max(1)) as u64);
         let chunk = (rate / 100) as usize;
         for v in downmix(data, channels) {
             pending.push(v);
@@ -369,6 +375,9 @@ impl Shared {
         playout: &mut super::playout::Playout,
     ) {
         self.watchdog.output_tick(Instant::now());
+        self.stats
+            .out_frames
+            .record((out.len() / channels.max(1)) as u64);
         let master = if self.controls.lock().unwrap().playout_on() {
             1.0
         } else {
@@ -587,12 +596,18 @@ fn open_half(
             let (rate, ch) = (cfg.sample_rate().0, cfg.channels() as usize);
             let stream = if input {
                 let mut pending: Vec<f32> = Vec::new();
-                build_input(&dev, &cfg, move |d: &[f32]| {
+                build_input(&dev, &cfg, move |d: &[f32], latency| {
+                    if let Some(l) = latency {
+                        shared.stats.in_latency_ms.record(l.as_millis() as u64);
+                    }
                     shared.on_input(d, ch, rate, &mut pending, &raw_tx)
                 })?
             } else {
                 let (mut mixbuf, mut playout) = (Vec::new(), super::playout::Playout::new(rate));
-                build_output(&dev, &cfg, move |d: &mut [f32]| {
+                build_output(&dev, &cfg, move |d: &mut [f32], latency| {
+                    if let Some(l) = latency {
+                        shared.stats.out_latency_ms.record(l.as_millis() as u64);
+                    }
                     shared.on_output(d, ch, rate, &mut mixbuf, &mut playout)
                 })?
             };
@@ -877,15 +892,27 @@ fn stream_errors(what: &'static str) -> impl FnMut(cpal::StreamError) + Send + '
 }
 
 /// The pipeline works in f32; the device may want anything cpal supports.
+/// How long captured audio waited before reaching us (device + driver buffering), if the backend says.
+fn capture_latency(info: &cpal::InputCallbackInfo) -> Option<Duration> {
+    let t = info.timestamp();
+    t.callback.duration_since(&t.capture)
+}
+
+/// How long until what we write is heard (device + driver buffering), if the backend says.
+fn playback_latency(info: &cpal::OutputCallbackInfo) -> Option<Duration> {
+    let t = info.timestamp();
+    t.playback.duration_since(&t.callback)
+}
+
 fn build_input(
     dev: &cpal::Device,
     cfg: &cpal::SupportedStreamConfig,
-    mut on_data: impl FnMut(&[f32]) + Send + 'static,
+    mut on_data: impl FnMut(&[f32], Option<Duration>) + Send + 'static,
 ) -> anyhow::Result<cpal::Stream> {
     fn typed<T: cpal::SizedSample>(
         dev: &cpal::Device,
         cfg: &cpal::StreamConfig,
-        mut on_data: impl FnMut(&[f32]) + Send + 'static,
+        mut on_data: impl FnMut(&[f32], Option<Duration>) + Send + 'static,
     ) -> anyhow::Result<cpal::Stream>
     where
         f32: cpal::FromSample<T>,
@@ -893,9 +920,9 @@ fn build_input(
         let mut buf = Vec::new();
         Ok(dev.build_input_stream(
             cfg,
-            move |d: &[T], _| {
+            move |d: &[T], info: &cpal::InputCallbackInfo| {
                 to_f32(d, &mut buf);
-                on_data(&buf)
+                on_data(&buf, capture_latency(info))
             },
             stream_errors("input"),
             None,
@@ -907,7 +934,7 @@ fn build_input(
         // f32 straight through (the common case: no copy)
         F::F32 => Ok(dev.build_input_stream(
             &c,
-            move |d: &[f32], _| on_data(d),
+            move |d: &[f32], info: &cpal::InputCallbackInfo| on_data(d, capture_latency(info)),
             stream_errors("input"),
             None,
         )?),
@@ -927,19 +954,19 @@ fn build_input(
 pub fn build_output(
     dev: &cpal::Device,
     cfg: &cpal::SupportedStreamConfig,
-    mut fill: impl FnMut(&mut [f32]) + Send + 'static,
+    mut fill: impl FnMut(&mut [f32], Option<Duration>) + Send + 'static,
 ) -> anyhow::Result<cpal::Stream> {
     fn typed<T: cpal::SizedSample + cpal::FromSample<f32>>(
         dev: &cpal::Device,
         cfg: &cpal::StreamConfig,
-        mut fill: impl FnMut(&mut [f32]) + Send + 'static,
+        mut fill: impl FnMut(&mut [f32], Option<Duration>) + Send + 'static,
     ) -> anyhow::Result<cpal::Stream> {
         let mut buf = Vec::new();
         Ok(dev.build_output_stream(
             cfg,
-            move |d: &mut [T], _| {
+            move |d: &mut [T], info: &cpal::OutputCallbackInfo| {
                 buf.resize(d.len(), 0.0);
-                fill(&mut buf);
+                fill(&mut buf, playback_latency(info));
                 from_f32(&buf, d);
             },
             stream_errors("output"),
@@ -951,7 +978,7 @@ pub fn build_output(
     match cfg.sample_format() {
         F::F32 => Ok(dev.build_output_stream(
             &c,
-            move |d: &mut [f32], _| fill(d),
+            move |d: &mut [f32], info: &cpal::OutputCallbackInfo| fill(d, playback_latency(info)),
             stream_errors("output"),
             None,
         )?),

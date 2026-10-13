@@ -164,7 +164,7 @@ fn play_on(dev: &cpal::Device, sound: &Sound) -> bool {
         pos += 1;
         Some((a + (b - a) * frac) * VOLUME)
     };
-    let stream = crate::voice::devices::build_output(dev, &cfg, move |d: &mut [f32]| {
+    let stream = crate::voice::devices::build_output(dev, &cfg, move |d: &mut [f32], _| {
         for f in d.chunks_mut(ch) {
             f.fill(next().unwrap_or(0.0));
         }

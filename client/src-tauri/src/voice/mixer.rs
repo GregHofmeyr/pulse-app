@@ -69,6 +69,8 @@ pub struct Mixer {
     peers: HashMap<String, Peer>,
     /// Total samples ever pushed (diagnostics: intake must track real time, see FINDINGS).
     pushed: u64,
+    /// Samples a peer didn't have when the speakers asked (diagnostics: gaps / clicks).
+    underrun: u64,
 }
 
 struct Peer {
@@ -90,6 +92,7 @@ impl Mixer {
             rate: sample_rate as usize,
             peers: HashMap::new(),
             pushed: 0,
+            underrun: 0,
         }
     }
 
@@ -134,6 +137,11 @@ impl Mixer {
             .collect()
     }
 
+    /// Underrun samples since the last call.
+    pub fn take_underrun_samples(&mut self) -> u64 {
+        std::mem::take(&mut self.underrun)
+    }
+
     pub fn pushed_total(&self) -> u64 {
         self.pushed
     }
@@ -156,8 +164,9 @@ impl Mixer {
         for frame in out.chunks_mut(channels.max(1)) {
             let mut acc = 0.0f32;
             for p in self.peers.values_mut() {
-                if let Some(s) = p.queue.pop_front() {
-                    acc += s as f32 / i16::MAX as f32 * p.gain;
+                match p.queue.pop_front() {
+                    Some(s) => acc += s as f32 / i16::MAX as f32 * p.gain,
+                    None => self.underrun += 1,
                 }
             }
             frame.fill(soft_limit(acc * master));
@@ -242,6 +251,17 @@ mod tests {
         m.push("a", &[100; 48 * 45]); // 45 ms
         steady(&mut m, 3000);
         assert_eq!(m.buffered("a"), 48 * 45);
+    }
+
+    /// The speakers asked for audio a peer didn't have (yet): heard as a gap or a click.
+    #[test]
+    fn underruns_are_counted_per_peer_sample_missed() {
+        let mut m = Mixer::new(48_000, 200);
+        m.push("a", &[1; 240]);
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        assert_eq!(m.take_underrun_samples(), 240);
+        assert_eq!(m.take_underrun_samples(), 0, "restarts after a take");
     }
 
     #[test]

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte'
+  import { invoke } from '@tauri-apps/api/core'
   import { api, errorText } from './lib/tauri'
   import { app, resetState, startListening } from './lib/store.svelte'
   import { startVoiceListening } from './lib/voice.svelte'
@@ -16,6 +17,15 @@
   const screen = $derived(screenFor({ booting, signedIn: !!user, conn: app.state.conn }))
 
   onMount(() => installTooltips())
+
+  // Startup timeline: tell the core when the first real screen has painted (once).
+  let painted = false
+  $effect(() => {
+    if (painted || screen === 'boot') return
+    painted = true
+    const shown = screen
+    requestAnimationFrame(() => void invoke('ui_painted', { screen: shown }).catch(() => {}))
+  })
 
   onMount(() => {
     let off: (() => void) | undefined

@@ -302,7 +302,11 @@ fn run(
     while let Ok(first) = rx.recv() {
         queue.push_back(first);
         queue.extend(rx.try_iter());
-        trim_backlog(&mut queue, Instant::now());
+        let late = trim_backlog(&mut queue, Instant::now());
+        shared
+            .stats
+            .lag_drops
+            .fetch_add(late as u64, std::sync::atomic::Ordering::Relaxed);
 
         // live config
         let cfg = shared.proc_cfg.lock().unwrap().clone();
@@ -361,11 +365,13 @@ fn run(
             for (d, v) in i16buf.iter_mut().zip(&block) {
                 *d = to_i16(*v);
             }
+            let apm_started = Instant::now();
             let r = shared
                 .apm
                 .lock()
                 .unwrap()
                 .process_stream(&mut i16buf, INTERNAL_RATE as i32, 1);
+            shared.stats.apm.record(apm_started.elapsed());
             shared.warn_apm_once(r, "capture");
             for (d, v) in block.iter_mut().zip(&i16buf) {
                 *d = *v as f32 / 32767.0;
@@ -374,6 +380,7 @@ fn run(
             let mic_open = shared.controls.lock().unwrap().mic_open();
             let t = Instant::now();
             let out = chain.process(&mut block, mic_open, t);
+            shared.stats.chain.record(t.elapsed());
             if chain.level() == NsLevel::Strong
                 && switcher.wanted() == NsLevel::Strong
                 && overload.record(t.elapsed())

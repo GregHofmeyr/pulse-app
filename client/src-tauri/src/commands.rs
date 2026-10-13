@@ -186,11 +186,14 @@ pub async fn restore_session(
     app: AppHandle,
     core: State<'_, Core>,
 ) -> Result<Option<User>, ApiError> {
+    crate::startup::mark("restore_begin");
     let Some((server, token)) = core.store.load() else {
         return Ok(None);
     };
     let api = Api::new(&server);
-    match api.me(&token).await {
+    let me = api.me(&token).await;
+    crate::startup::mark("restore_end");
+    match me {
         Ok(user) => {
             core.activate(&app, api, token, false);
             Ok(Some(user))
