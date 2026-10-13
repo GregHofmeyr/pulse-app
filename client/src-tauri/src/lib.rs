@@ -2,6 +2,7 @@ pub mod api;
 pub mod backoff;
 pub mod commands;
 pub mod gateway;
+pub mod hotkeys;
 pub mod ipc;
 pub mod logging;
 pub mod outbox;
@@ -99,37 +100,14 @@ pub fn run() {
                     }
                 });
             }
-            #[cfg(windows)]
-            {
-                use tauri_plugin_global_shortcut::{
-                    Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
-                };
-                let mute = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyM);
-                let deafen = Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD);
-                app.handle().plugin(
-                    tauri_plugin_global_shortcut::Builder::new()
-                        .with_handler(move |app, sc, ev| {
-                            if ev.state() == ShortcutState::Pressed {
-                                if sc == &mute {
-                                    commands::hotkey(app, ipc::Command::ToggleMute);
-                                } else if sc == &deafen {
-                                    commands::hotkey(app, ipc::Command::ToggleDeafen);
-                                }
-                            }
-                        })
-                        .build(),
-                )?;
-                // Another app may already own these: log and carry on rather than refusing to start.
-                for sc in [mute, deafen] {
-                    if let Err(e) = app.global_shortcut().register(sc) {
-                        tracing::warn!(shortcut = ?sc, error = %e, "couldn't register hotkey");
-                    }
-                }
-            }
+            hotkeys::install(app)?;
             let handle = app.handle().clone();
             app.manage(voice::VoiceManager::new(std::sync::Arc::new(
                 move |e: voice::VoiceEvent| {
                     use tauri::Emitter;
+                    if let voice::VoiceEvent::State { channel_id, .. } = &e {
+                        hotkeys::in_voice(&handle, channel_id.is_some());
+                    }
                     let _ = handle.emit("voice://event", &e);
                 },
             )));
