@@ -209,14 +209,40 @@ async fn find_by_short_id_and_mark_seen() {
 }
 
 #[tokio::test]
-async fn ambiguous_suffix_is_an_error() {
+async fn ambiguous_suffix_lists_the_candidates() {
     let app = spawn().await;
     let (_, token) = register(&app, "alex").await;
     file(&app, &token, "bug", "a", json!({})).await;
     file(&app, &token, "bug", "b", json!({})).await;
-    // "" matches every report
-    assert!(matches!(
-        store::find(&app.db, "").await,
-        Err(pulse_server::error::AppError::Conflict(_))
-    ));
+    // two ids that end alike (ULIDs are random at the end, so set them by hand)
+    for id in ["01M4QWAAAAAAAAAAAAAAXYZ123", "01M4QWBBBBBBBBBBBBBBXYZ123"] {
+        sqlx::query("UPDATE bug_reports SET id = ? WHERE id = (SELECT id FROM bug_reports WHERE id NOT LIKE '%XYZ123' LIMIT 1)")
+            .bind(id)
+            .execute(&app.db)
+            .await
+            .unwrap();
+    }
+    match store::find(&app.db, "xyz123").await {
+        Err(pulse_server::error::AppError::Conflict(m)) => {
+            assert!(m.contains("AAAAXYZ123") && m.contains("BBBBXYZ123"), "{m}")
+        }
+        other => panic!("expected a conflict, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn short_ids_are_plain_letters_and_digits() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    file(&app, &token, "bug", "a", json!({})).await;
+    // "" or a LIKE wildcard would otherwise match every report
+    for bad in ["", "%", "_A", "AB CD"] {
+        assert!(
+            matches!(
+                store::find(&app.db, bad).await,
+                Err(pulse_server::error::AppError::BadRequest(_))
+            ),
+            "{bad:?}"
+        );
+    }
 }

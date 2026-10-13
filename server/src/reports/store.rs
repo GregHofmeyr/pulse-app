@@ -117,6 +117,12 @@ pub async fn list(db: &SqlitePool, limit: i64) -> AppResult<Vec<Listed>> {
 }
 
 pub async fn find(db: &SqlitePool, short_id: &str) -> AppResult<Full> {
+    // Plain letters and digits only: "" or a LIKE wildcard would match every report.
+    if short_id.is_empty() || !short_id.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return Err(AppError::BadRequest(format!(
+            "'{short_id}' isn't a report id (letters and digits, e.g. QXRAZJ)"
+        )));
+    }
     let rows: Vec<Row> = sqlx::query_as(&format!(
         "{SELECT} WHERE r.id LIKE '%' || ? ORDER BY r.id DESC"
     ))
@@ -134,9 +140,17 @@ pub async fn find(db: &SqlitePool, short_id: &str) -> AppResult<Full> {
                 log: r.7.clone(),
             })
         }
-        n => Err(AppError::Conflict(format!(
-            "'{short_id}' matches {n} reports; use more characters"
-        ))),
+        n => {
+            // enough of each id to tell them apart
+            let ids: Vec<&str> = rows
+                .iter()
+                .map(|r| &r.0[r.0.len().saturating_sub(10)..])
+                .collect();
+            Err(AppError::Conflict(format!(
+                "'{short_id}' matches {n} reports: {}; use more characters",
+                ids.join(", ")
+            )))
+        }
     }
 }
 
