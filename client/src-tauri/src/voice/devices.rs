@@ -489,23 +489,82 @@ pub struct AudioIo {
     raw_tx: RawTx,
 }
 
-/// One direction's stream, alive on its own thread until dropped: each side can be reopened
-/// without touching the other.
-struct Half {
+/// Something that must live and die on its own thread (cpal streams are !Send), plus a value
+/// describing it. `close` waits until the thread has really dropped it; dropping a `Parked`
+/// only asks.
+pub struct Parked<R> {
+    pub value: R,
     stop: std::sync::mpsc::Sender<()>,
+    done: std::sync::mpsc::Receiver<()>,
+}
+
+impl<R: Send + 'static> Parked<R> {
+    /// Run `build` on a new thread; give up after `open_timeout` (a flapping Bluetooth device
+    /// can block cpal for a long time; if it ever finishes, it's closed straight away).
+    pub fn spawn<T: 'static>(
+        name: &str,
+        open_timeout: Duration,
+        build: impl FnOnce() -> anyhow::Result<(T, R)> + Send + 'static,
+    ) -> anyhow::Result<Self> {
+        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<R>>();
+        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+        let (done_tx, done_rx) = std::sync::mpsc::channel::<()>();
+        std::thread::Builder::new()
+            .name(name.into())
+            .spawn(move || {
+                match build() {
+                    Ok((resource, value)) => {
+                        let _ = ready_tx.send(Ok(value));
+                        let _ = stop_rx.recv(); // park until told to stop (or the handle is dropped)
+                        drop(resource);
+                    }
+                    Err(e) => {
+                        let _ = ready_tx.send(Err(e));
+                    }
+                }
+                let _ = done_tx.send(());
+            })?;
+        match ready_rx.recv_timeout(open_timeout) {
+            Ok(r) => Ok(Self {
+                value: r?,
+                stop: stop_tx,
+                done: done_rx,
+            }),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+                let _ = stop_tx.send(());
+                Err(anyhow!("didn't open within {} s", open_timeout.as_secs()))
+            }
+            Err(_) => Err(anyhow!("audio thread died")),
+        }
+    }
+}
+
+impl<R> Parked<R> {
+    /// Stop it and wait (up to 1 s) until it's really gone: reopening the same device (or a
+    /// Bluetooth headset, which can't be open twice) must not race the old stream's close.
+    pub fn close(self) {
+        let _ = self.stop.send(());
+        let _ = self.done.recv_timeout(Duration::from_secs(1));
+    }
+}
+
+impl<R> Drop for Parked<R> {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+    }
+}
+
+/// One direction's stream: each side can be reopened without touching the other.
+struct HalfInfo {
     rate: u32,
     name: String,
     /// Which open this is (diagnostics: a side that wasn't reopened keeps its number).
     generation: u64,
 }
 
-static OPENS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+type Half = Parked<HalfInfo>;
 
-impl Drop for Half {
-    fn drop(&mut self) {
-        let _ = self.stop.send(());
-    }
-}
+static OPENS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Open one direction on its own thread (cpal streams are !Send: built, played and dropped there).
 fn open_half(
@@ -514,82 +573,37 @@ fn open_half(
     shared: Arc<Shared>,
     raw_tx: RawTx,
 ) -> anyhow::Result<Half> {
-    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<(u32, String)>>();
-    let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
-    std::thread::Builder::new()
-        .name(
-            if input {
-                "pulse-audio-in"
+    let side = if input { "input" } else { "output" };
+    Parked::spawn(
+        if input { "pulse-audio-in" } else { "pulse-audio-out" },
+        Duration::from_secs(5),
+        move || {
+            let dev = find_device(input, name.as_deref())?;
+            let cfg = if input {
+                prefer_internal_rate(dev.default_input_config()?, dev.supported_input_configs()?)
             } else {
-                "pulse-audio-out"
-            }
-            .into(),
-        )
-        .spawn(move || {
-            let built = (|| -> anyhow::Result<(cpal::Stream, u32, String)> {
-                let dev = find_device(input, name.as_deref())?;
-                let cfg = if input {
-                    prefer_internal_rate(
-                        dev.default_input_config()?,
-                        dev.supported_input_configs()?,
-                    )
-                } else {
-                    prefer_internal_rate(
-                        dev.default_output_config()?,
-                        dev.supported_output_configs()?,
-                    )
-                };
-                let (rate, ch) = (cfg.sample_rate().0, cfg.channels() as usize);
-                let stream = if input {
-                    let mut pending: Vec<f32> = Vec::new();
-                    build_input(&dev, &cfg, move |d: &[f32]| {
-                        shared.on_input(d, ch, rate, &mut pending, &raw_tx)
-                    })?
-                } else {
-                    let (mut mixbuf, mut playout) =
-                        (Vec::new(), super::playout::Playout::new(rate));
-                    build_output(&dev, &cfg, move |d: &mut [f32]| {
-                        shared.on_output(d, ch, rate, &mut mixbuf, &mut playout)
-                    })?
-                };
-                stream.play()?;
-                let name = dev.name().unwrap_or_default();
-                tracing::info!(
-                    device = %name, rate, ch, fmt = ?cfg.sample_format(),
-                    "audio {} opened", if input { "input" } else { "output" }
-                );
-                Ok((stream, rate, name))
-            })();
-            match built {
-                Ok((_stream, rate, name)) => {
-                    let _ = ready_tx.send(Ok((rate, name)));
-                    let _ = stop_rx.recv(); // park until told to stop (or the handle is dropped)
-                }
-                Err(e) => {
-                    let _ = ready_tx.send(Err(e));
-                }
-            }
-        })?;
-    // A flapping Bluetooth device can block cpal for a long time: give up rather than hang the call.
-    match ready_rx.recv_timeout(Duration::from_secs(5)) {
-        Ok(r) => {
-            let (rate, name) = r?;
-            Ok(Half {
-                stop: stop_tx,
-                rate,
-                name,
-                generation: OPENS.fetch_add(1, Ordering::Relaxed) + 1,
-            })
-        }
-        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-            let _ = stop_tx.send(()); // if it ever finishes opening, close straight away
-            Err(anyhow!(
-                "audio {} didn't open within 5 s",
-                if input { "input" } else { "output" }
-            ))
-        }
-        Err(_) => Err(anyhow!("audio thread died")),
-    }
+                prefer_internal_rate(dev.default_output_config()?, dev.supported_output_configs()?)
+            };
+            let (rate, ch) = (cfg.sample_rate().0, cfg.channels() as usize);
+            let stream = if input {
+                let mut pending: Vec<f32> = Vec::new();
+                build_input(&dev, &cfg, move |d: &[f32]| {
+                    shared.on_input(d, ch, rate, &mut pending, &raw_tx)
+                })?
+            } else {
+                let (mut mixbuf, mut playout) = (Vec::new(), super::playout::Playout::new(rate));
+                build_output(&dev, &cfg, move |d: &mut [f32]| {
+                    shared.on_output(d, ch, rate, &mut mixbuf, &mut playout)
+                })?
+            };
+            stream.play()?;
+            let name = dev.name().unwrap_or_default();
+            tracing::info!(device = %name, rate, ch, fmt = ?cfg.sample_format(), "audio {side} opened");
+            let generation = OPENS.fetch_add(1, Ordering::Relaxed) + 1;
+            Ok((stream, HalfInfo { rate, name, generation }))
+        },
+    )
+    .map_err(|e| anyhow!("audio {side}: {e}"))
 }
 
 /// The devices actually opened (names as the system reports them).
@@ -936,7 +950,11 @@ impl AudioIo {
                 &mut self.output
             };
             // stop the old stream first (a Bluetooth headset can't be open twice)
-            let previous = slot.take().map(|h| h.name.clone());
+            let previous = slot.take().map(|h| {
+                let name = h.value.name.clone();
+                h.close();
+                name
+            });
             let name = if input {
                 cfg.input.clone()
             } else {
@@ -949,7 +967,7 @@ impl AudioIo {
                     let back = previous.filter(|n| !n.is_empty());
                     if let Ok(h) = open_half(input, back, self.shared.clone(), self.raw_tx.clone())
                     {
-                        tracing::warn!(device = %h.name, "voice: back on the previous device");
+                        tracing::warn!(device = %h.value.name, "voice: back on the previous device");
                         *slot = Some(h);
                     }
                     first_err.get_or_insert(e);
@@ -986,7 +1004,7 @@ impl AudioIo {
 
     /// The devices open now ("" for a side that isn't).
     pub fn opened(&self) -> OpenedDevices {
-        let name = |h: &Option<Half>| h.as_ref().map(|h| h.name.clone()).unwrap_or_default();
+        let name = |h: &Option<Half>| h.as_ref().map(|h| h.value.name.clone()).unwrap_or_default();
         OpenedDevices {
             input: name(&self.input),
             output: name(&self.output),
@@ -996,17 +1014,17 @@ impl AudioIo {
     /// (input, output) open generations: changes only for a side that was reopened.
     pub fn generations(&self) -> (Option<u64>, Option<u64>) {
         (
-            self.input.as_ref().map(|h| h.generation),
-            self.output.as_ref().map(|h| h.generation),
+            self.input.as_ref().map(|h| h.value.generation),
+            self.output.as_ref().map(|h| h.value.generation),
         )
     }
 
     pub fn input_rate(&self) -> Option<u32> {
-        self.input.as_ref().map(|h| h.rate)
+        self.input.as_ref().map(|h| h.value.rate)
     }
 
     pub fn output_rate(&self) -> Option<u32> {
-        self.output.as_ref().map(|h| h.rate)
+        self.output.as_ref().map(|h| h.value.rate)
     }
 }
 
@@ -1196,6 +1214,41 @@ mod tests {
             &now,
             (Some("Arctis Mic".into()), Some("Arctis".into()))
         ));
+    }
+
+    /// Reopening a Bluetooth headset (or falling back to the same device) needs the old stream
+    /// really closed first: close() returns only once the thread has dropped it.
+    #[test]
+    fn closing_waits_for_the_old_stream_to_be_dropped() {
+        use std::sync::atomic::AtomicBool;
+        struct SlowClose(Arc<AtomicBool>);
+        impl Drop for SlowClose {
+            fn drop(&mut self) {
+                std::thread::sleep(Duration::from_millis(150)); // e.g. WASAPI joining its thread
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let closed = Arc::new(AtomicBool::new(false));
+        let c = closed.clone();
+        let p = Parked::spawn("test", Duration::from_secs(1), move || {
+            Ok((SlowClose(c), 7u32))
+        })
+        .unwrap();
+        assert_eq!(p.value, 7);
+        p.close();
+        assert!(
+            closed.load(Ordering::SeqCst),
+            "close returned before the resource was dropped"
+        );
+    }
+
+    #[test]
+    fn a_resource_that_never_opens_times_out() {
+        let r = Parked::<u32>::spawn("test", Duration::from_millis(50), || {
+            std::thread::sleep(Duration::from_millis(300));
+            Ok(((), 1))
+        });
+        assert!(r.is_err());
     }
 
     #[test]
