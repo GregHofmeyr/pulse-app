@@ -106,29 +106,11 @@ pub fn play(name: &str, output: Option<String>) {
                 Some((a + (b - a) * frac) * VOLUME)
             };
             let mut next = next;
-            let stream = match cfg.sample_format() {
-                cpal::SampleFormat::F32 => dev.build_output_stream(
-                    &cfg.config(),
-                    move |d: &mut [f32], _| {
-                        for f in d.chunks_mut(ch) {
-                            f.fill(next().unwrap_or(0.0));
-                        }
-                    },
-                    |_| {},
-                    None,
-                ),
-                cpal::SampleFormat::I16 => dev.build_output_stream(
-                    &cfg.config(),
-                    move |d: &mut [i16], _| {
-                        for f in d.chunks_mut(ch) {
-                            f.fill((next().unwrap_or(0.0) * i16::MAX as f32) as i16);
-                        }
-                    },
-                    |_| {},
-                    None,
-                ),
-                _ => return,
-            };
+            let stream = crate::voice::devices::build_output(&dev, &cfg, move |d: &mut [f32]| {
+                for f in d.chunks_mut(ch) {
+                    f.fill(next().unwrap_or(0.0));
+                }
+            });
             let Ok(stream) = stream else { return };
             if stream.play().is_ok() {
                 // sound length + a little tail for the device buffer

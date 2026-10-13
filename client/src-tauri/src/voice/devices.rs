@@ -588,6 +588,128 @@ pub fn find_device(input: bool, name: Option<&str>) -> anyhow::Result<cpal::Devi
     })
 }
 
+/// Device samples (any format) → f32 in `dst`.
+pub fn to_f32<T: cpal::Sample>(src: &[T], dst: &mut Vec<f32>)
+where
+    f32: cpal::FromSample<T>,
+{
+    dst.clear();
+    dst.extend(
+        src.iter()
+            .map(|s| <f32 as cpal::FromSample<T>>::from_sample_(*s)),
+    );
+}
+
+/// f32 → device samples (any format).
+pub fn from_f32<T: cpal::Sample + cpal::FromSample<f32>>(src: &[f32], dst: &mut [T]) {
+    for (o, v) in dst.iter_mut().zip(src) {
+        *o = <T as cpal::FromSample<f32>>::from_sample_(v.clamp(-1.0, 1.0));
+    }
+}
+
+/// A stream-error callback that logs at most once per `STREAM_ERROR_EVERY` (a broken device can
+/// fire thousands per second).
+fn stream_errors(what: &'static str) -> impl FnMut(cpal::StreamError) + Send + 'static {
+    let mut t = crate::throttle::Throttle::new(STREAM_ERROR_EVERY);
+    move |e| {
+        if let Some(repeated) = t.hit(std::time::Instant::now()) {
+            tracing::warn!(error = %e, repeated, "{what} stream error");
+        }
+    }
+}
+
+/// The pipeline works in f32; the device may want anything cpal supports.
+fn build_input(
+    dev: &cpal::Device,
+    cfg: &cpal::SupportedStreamConfig,
+    mut on_data: impl FnMut(&[f32]) + Send + 'static,
+) -> anyhow::Result<cpal::Stream> {
+    fn typed<T: cpal::SizedSample>(
+        dev: &cpal::Device,
+        cfg: &cpal::StreamConfig,
+        mut on_data: impl FnMut(&[f32]) + Send + 'static,
+    ) -> anyhow::Result<cpal::Stream>
+    where
+        f32: cpal::FromSample<T>,
+    {
+        let mut buf = Vec::new();
+        Ok(dev.build_input_stream(
+            cfg,
+            move |d: &[T], _| {
+                to_f32(d, &mut buf);
+                on_data(&buf)
+            },
+            stream_errors("input"),
+            None,
+        )?)
+    }
+    let c = cfg.config();
+    use cpal::SampleFormat as F;
+    match cfg.sample_format() {
+        // f32 straight through (the common case: no copy)
+        F::F32 => Ok(dev.build_input_stream(
+            &c,
+            move |d: &[f32], _| on_data(d),
+            stream_errors("input"),
+            None,
+        )?),
+        F::F64 => typed::<f64>(dev, &c, on_data),
+        F::I8 => typed::<i8>(dev, &c, on_data),
+        F::I16 => typed::<i16>(dev, &c, on_data),
+        F::I32 => typed::<i32>(dev, &c, on_data),
+        F::I64 => typed::<i64>(dev, &c, on_data),
+        F::U8 => typed::<u8>(dev, &c, on_data),
+        F::U16 => typed::<u16>(dev, &c, on_data),
+        F::U32 => typed::<u32>(dev, &c, on_data),
+        F::U64 => typed::<u64>(dev, &c, on_data),
+        other => Err(anyhow!("unsupported mic sample format {other:?}")),
+    }
+}
+
+pub fn build_output(
+    dev: &cpal::Device,
+    cfg: &cpal::SupportedStreamConfig,
+    mut fill: impl FnMut(&mut [f32]) + Send + 'static,
+) -> anyhow::Result<cpal::Stream> {
+    fn typed<T: cpal::SizedSample + cpal::FromSample<f32>>(
+        dev: &cpal::Device,
+        cfg: &cpal::StreamConfig,
+        mut fill: impl FnMut(&mut [f32]) + Send + 'static,
+    ) -> anyhow::Result<cpal::Stream> {
+        let mut buf = Vec::new();
+        Ok(dev.build_output_stream(
+            cfg,
+            move |d: &mut [T], _| {
+                buf.resize(d.len(), 0.0);
+                fill(&mut buf);
+                from_f32(&buf, d);
+            },
+            stream_errors("output"),
+            None,
+        )?)
+    }
+    let c = cfg.config();
+    use cpal::SampleFormat as F;
+    match cfg.sample_format() {
+        F::F32 => Ok(dev.build_output_stream(
+            &c,
+            move |d: &mut [f32], _| fill(d),
+            stream_errors("output"),
+            None,
+        )?),
+        F::F64 => typed::<f64>(dev, &c, fill),
+        F::I8 => typed::<i8>(dev, &c, fill),
+        F::I16 => typed::<i16>(dev, &c, fill),
+        F::I32 => typed::<i32>(dev, &c, fill),
+        F::I64 => typed::<i64>(dev, &c, fill),
+        F::U8 => typed::<u8>(dev, &c, fill),
+        F::U16 => typed::<u16>(dev, &c, fill),
+        F::U32 => typed::<u32>(dev, &c, fill),
+        F::U64 => typed::<u64>(dev, &c, fill),
+        other => Err(anyhow!("unsupported speaker sample format {other:?}")),
+    }
+}
+
 impl AudioIo {
     pub fn start(cfg: &AudioConfig, shared: Arc<Shared>, raw_tx: RawTx) -> anyhow::Result<Self> {
         let (ready_tx, ready_rx) =
@@ -613,92 +735,15 @@ impl AudioIo {
 
                     let sh = shared.clone();
                     let mut pending: Vec<f32> = Vec::new();
-                    let in_stream = match in_cfg.sample_format() {
-                        cpal::SampleFormat::F32 => input.build_input_stream(
-                            &in_cfg.config(),
-                            move |d: &[f32], _| {
-                                sh.on_input(d, in_ch, in_rate, &mut pending, &raw_tx)
-                            },
-                            {
-                                let mut t = crate::throttle::Throttle::new(STREAM_ERROR_EVERY);
-                                move |e| {
-                                    if let Some(repeated) = t.hit(std::time::Instant::now()) {
-                                        tracing::warn!(error = %e, repeated, "input stream error");
-                                    }
-                                }
-                            },
-                            None,
-                        )?,
-                        cpal::SampleFormat::I16 => input.build_input_stream(
-                            &in_cfg.config(),
-                            move |d: &[i16], _| {
-                                let f: Vec<f32> =
-                                    d.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
-                                sh.on_input(&f, in_ch, in_rate, &mut pending, &raw_tx)
-                            },
-                            {
-                                let mut t = crate::throttle::Throttle::new(STREAM_ERROR_EVERY);
-                                move |e| {
-                                    if let Some(repeated) = t.hit(std::time::Instant::now()) {
-                                        tracing::warn!(error = %e, repeated, "input stream error");
-                                    }
-                                }
-                            },
-                            None,
-                        )?,
-                        other => return Err(anyhow!("unsupported mic sample format {other:?}")),
-                    };
+                    let in_stream = build_input(&input, &in_cfg, move |d: &[f32]| {
+                        sh.on_input(d, in_ch, in_rate, &mut pending, &raw_tx)
+                    })?;
                     let sh = shared.clone();
                     let mut mixbuf = Vec::new();
                     let mut playout = super::playout::Playout::new(out_rate);
-                    let out_stream = match out_cfg.sample_format() {
-                        cpal::SampleFormat::F32 => output.build_output_stream(
-                            &out_cfg.config(),
-                            move |d: &mut [f32], _| {
-                                sh.on_output(d, out_ch, out_rate, &mut mixbuf, &mut playout)
-                            },
-                            {
-                                let mut t = crate::throttle::Throttle::new(STREAM_ERROR_EVERY);
-                                move |e| {
-                                    if let Some(repeated) = t.hit(std::time::Instant::now()) {
-                                        tracing::warn!(error = %e, repeated, "output stream error");
-                                    }
-                                }
-                            },
-                            None,
-                        )?,
-                        cpal::SampleFormat::I16 => {
-                            let mut scratch = Vec::new();
-                            output.build_output_stream(
-                                &out_cfg.config(),
-                                move |d: &mut [i16], _| {
-                                    scratch.resize(d.len(), 0.0);
-                                    sh.on_output(
-                                        &mut scratch,
-                                        out_ch,
-                                        out_rate,
-                                        &mut mixbuf,
-                                        &mut playout,
-                                    );
-                                    for (o, v) in d.iter_mut().zip(&scratch) {
-                                        *o = to_i16(*v);
-                                    }
-                                },
-                                {
-                                let mut t = crate::throttle::Throttle::new(STREAM_ERROR_EVERY);
-                                move |e| {
-                                    if let Some(repeated) = t.hit(std::time::Instant::now()) {
-                                        tracing::warn!(error = %e, repeated, "output stream error");
-                                    }
-                                }
-                            },
-                                None,
-                            )?
-                        }
-                        other => {
-                            return Err(anyhow!("unsupported speaker sample format {other:?}"));
-                        }
-                    };
+                    let out_stream = build_output(&output, &out_cfg, move |d: &mut [f32]| {
+                        sh.on_output(d, out_ch, out_rate, &mut mixbuf, &mut playout)
+                    })?;
                     in_stream.play()?;
                     out_stream.play()?;
                     tracing::info!(
@@ -914,6 +959,21 @@ mod tests {
             input: i.into(),
             output: o.into(),
         }
+    }
+
+    #[test]
+    fn every_sample_format_converts_to_and_from_f32() {
+        let mut f = Vec::new();
+        to_f32(&[128u8, 255, 0], &mut f); // u8 is offset binary: 128 = silence
+        assert!(f[0].abs() < 0.01 && f[1] > 0.99 && f[2] < -0.99, "{f:?}");
+        to_f32(&[i32::MAX, 0, i32::MIN], &mut f);
+        assert!(f[0] > 0.99 && f[1] == 0.0 && f[2] <= -0.99, "{f:?}");
+        let mut out = [0u8; 2];
+        from_f32(&[0.0, 1.0], &mut out);
+        assert_eq!(out, [128, 255]);
+        let mut out = [0i32; 2];
+        from_f32(&[0.0, -1.0], &mut out);
+        assert_eq!(out, [0, i32::MIN]);
     }
 
     #[test]
