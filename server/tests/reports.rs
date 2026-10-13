@@ -231,6 +231,30 @@ async fn ambiguous_suffix_lists_the_candidates() {
 }
 
 #[tokio::test]
+async fn a_very_ambiguous_id_lists_only_a_few() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    for i in 0..15 {
+        file(&app, &token, "bug", &format!("r{i}"), json!({})).await;
+    }
+    sqlx::query(
+        "UPDATE bug_reports SET id = substr(id, 1, 10) || printf('%011d', rowid) || 'QQQQQ'",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    match store::find(&app.db, "q").await {
+        Err(pulse_server::error::AppError::Conflict(m)) => {
+            assert!(
+                m.contains("15 reports") && m.matches(", ").count() <= 10,
+                "{m}"
+            )
+        }
+        other => panic!("expected a conflict, got {other:?}"),
+    }
+}
+
+#[tokio::test]
 async fn short_ids_are_plain_letters_and_digits() {
     let app = spawn().await;
     let (_, token) = register(&app, "alex").await;

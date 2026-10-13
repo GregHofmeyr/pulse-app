@@ -142,12 +142,15 @@ pub async fn find(db: &SqlitePool, short_id: &str) -> AppResult<Full> {
         }
         n => {
             // enough of each id to tell them apart
+            // (the newest 10: a one-letter id could match hundreds)
             let ids: Vec<&str> = rows
                 .iter()
+                .take(10)
                 .map(|r| &r.0[r.0.len().saturating_sub(10)..])
                 .collect();
+            let more = if n > ids.len() { ", …" } else { "" };
             Err(AppError::Conflict(format!(
-                "'{short_id}' matches {n} reports: {}; use more characters",
+                "'{short_id}' matches {n} reports: {}{more}; use more characters",
                 ids.join(", ")
             )))
         }
