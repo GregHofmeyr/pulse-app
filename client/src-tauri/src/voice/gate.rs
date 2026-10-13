@@ -1,6 +1,6 @@
 //! Voice gate: decides when the mic is "on". Automatic mode opens on speech (model probability with
 //! hysteresis) that is also clearly above the room's noise floor; manual mode on an RMS threshold.
-//! Both hold 300 ms, fade out over 100 ms, and keep 20 ms of pre-roll so first syllables survive.
+//! Both hold 450 ms, fade out over 100 ms, and keep 20 ms of pre-roll so first syllables survive.
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -15,7 +15,7 @@ const FLOOR_MIN_DB: f32 = -80.0;
 /// model says "not speech", ~1 dB/s at level Off (no model to ask). Never above the current level.
 const FLOOR_RISE_QUIET_DB: f32 = 0.1;
 const FLOOR_RISE_UNKNOWN_DB: f32 = 0.01;
-const HOLD: Duration = Duration::from_millis(300);
+const HOLD: Duration = Duration::from_millis(450);
 const FADE_BLOCKS: f32 = 10.0;
 const PREROLL_BLOCKS: usize = 2;
 
@@ -190,17 +190,17 @@ mod tests {
     }
 
     #[test]
-    fn holds_300ms_then_fades_over_100ms() {
+    fn holds_450ms_then_fades_over_100ms() {
         let (t0, mut k) = (Instant::now(), 0);
         let mut g = VoiceGate::new(true, 0.02);
         feed(&mut g, t0, &mut k, 100, 0.001, Some(0.0));
         feed(&mut g, t0, &mut k, 10, 0.1, Some(0.9));
-        let out = feed(&mut g, t0, &mut k, 50, 0.1, Some(0.0)); // speech prob drops
-        // 2 blocks of pre-roll delay + 30 blocks hold: still full level
-        assert!((rms(&out[25]) - 0.1).abs() < 1e-3, "inside hold");
-        let fading = rms(&out[37]);
+        let out = feed(&mut g, t0, &mut k, 70, 0.1, Some(0.0)); // speech prob drops
+        // 2 blocks of pre-roll delay + 45 blocks hold: still full level (word endings survive)
+        assert!((rms(&out[40]) - 0.1).abs() < 1e-3, "inside hold");
+        let fading = rms(&out[52]);
         assert!(fading > 0.0 && fading < 0.09, "fading: {fading}");
-        assert_eq!(rms(&out[45]), 0.0, "closed after 100 ms fade");
+        assert_eq!(rms(&out[60]), 0.0, "closed after 100 ms fade");
     }
 
     #[test]
