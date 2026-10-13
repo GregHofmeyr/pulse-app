@@ -12,12 +12,22 @@ const LAST_SERVER: &str = "__last_server__";
 
 /// Where this instance keeps its session. `PULSE_PROFILE=b` gives a second, separate login on the
 /// same machine (testing with two accounts). Only the profile's alphanumerics are used.
-pub fn profile_dir(base: &Path, profile: Option<&str>) -> PathBuf {
-    let clean: String = profile
+fn clean_profile(profile: Option<&str>) -> String {
+    profile
         .unwrap_or_default()
         .chars()
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
-        .collect();
+        .collect()
+}
+
+/// A second launch of the default profile focuses the running window instead of starting another
+/// copy. Named profiles (testing several users on one machine) may run side by side.
+pub fn single_instance(profile: Option<&str>) -> bool {
+    clean_profile(profile).is_empty()
+}
+
+pub fn profile_dir(base: &Path, profile: Option<&str>) -> PathBuf {
+    let clean = clean_profile(profile);
     if clean.is_empty() {
         base.to_path_buf()
     } else {
@@ -178,6 +188,18 @@ mod tests {
 #[cfg(test)]
 mod profile_tests {
     use super::*;
+
+    #[test]
+    fn only_the_default_profile_is_single_instance() {
+        // friends run one Pulse; extra profiles are for testing several users on one machine
+        assert!(single_instance(None));
+        assert!(single_instance(Some("")));
+        assert!(
+            single_instance(Some("../")),
+            "nothing left after cleaning = the default"
+        );
+        assert!(!single_instance(Some("b")));
+    }
 
     #[test]
     fn profile_dir_separates_sessions() {

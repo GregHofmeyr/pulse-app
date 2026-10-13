@@ -42,7 +42,19 @@ fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri:
 }
 
 pub fn run() {
-    tauri::Builder::default()
+    let mut builder = tauri::Builder::default();
+    // Must be the first plugin: a second launch exits before anything else starts.
+    if session::single_instance(std::env::var("PULSE_PROFILE").ok().as_deref()) {
+        builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            use tauri::Manager;
+            if let Some(win) = app.get_webview_window("main") {
+                let _ = win.unminimize();
+                let _ = win.show();
+                let _ = win.set_focus();
+            }
+        }));
+    }
+    builder
         .setup(|app| {
             use tauri::Manager;
             let profile = std::env::var("PULSE_PROFILE").ok();
