@@ -4,7 +4,7 @@ pub mod crash;
 pub mod tail;
 
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use pulse_protocol::rest::{CreateReportRequest, CreateReportResponse, ReportKind};
@@ -62,6 +62,33 @@ pub fn file_text(kind: ReportKind, text: &str, meta: &serde_json::Value, log: &s
 }
 
 /// `pulse-report-YYYYMMDD-HHMMSS.txt` in UTC, from the unix time (no date crate in the client).
+/// Write to `dir/name`, or `name-2`, `-3`… if taken: two saves in the same second keep both.
+pub fn write_new(dir: &Path, name: &str, contents: &str) -> std::io::Result<PathBuf> {
+    use std::io::Write;
+    let (stem, ext) = name.rsplit_once('.').unwrap_or((name, ""));
+    for n in 1..100 {
+        let candidate = match n {
+            1 => name.to_string(),
+            n if ext.is_empty() => format!("{stem}-{n}"),
+            n => format!("{stem}-{n}.{ext}"),
+        };
+        let path = dir.join(candidate);
+        match std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)
+        {
+            Ok(mut f) => {
+                f.write_all(contents.as_bytes())?;
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::other("too many reports saved this second"))
+}
+
 pub fn file_name(unix_secs: u64) -> String {
     let (days, secs) = (unix_secs / 86_400, unix_secs % 86_400);
     // civil-from-days (Howard Hinnant), valid for 1970+
@@ -158,9 +185,12 @@ pub async fn save_report(
     };
     let meta = meta(&app, &server).await;
     let log = tail::log_tail(&app.state::<LogDir>().0, TAIL_BYTES);
-    let path = save_dir(&app).join(file_name(unix_now()));
-    std::fs::write(&path, file_text(ReportKind::Bug, &text, &meta, &log))
-        .map_err(|e| e.to_string())?;
+    let path = write_new(
+        &save_dir(&app),
+        &file_name(unix_now()),
+        &file_text(ReportKind::Bug, &text, &meta, &log),
+    )
+    .map_err(|e| e.to_string())?;
     tracing::info!(path = %path.display(), "bug report saved");
     Ok(path.display().to_string())
 }
@@ -168,6 +198,17 @@ pub async fn save_report(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn saving_twice_in_a_second_keeps_both() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = write_new(dir.path(), "pulse-report-x.txt", "first").unwrap();
+        let b = write_new(dir.path(), "pulse-report-x.txt", "second").unwrap();
+        assert_ne!(a, b);
+        assert_eq!(b.file_name().unwrap(), "pulse-report-x-2.txt");
+        assert_eq!(std::fs::read_to_string(a).unwrap(), "first");
+        assert_eq!(std::fs::read_to_string(b).unwrap(), "second");
+    }
 
     #[test]
     fn an_expired_session_says_so_and_points_at_saving() {
