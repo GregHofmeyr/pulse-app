@@ -83,3 +83,13 @@ describe('playSound', () => {
     vi.unstubAllGlobals()
   })
 })
+
+describe('sounds outside a call', () => {
+  it('the mute hotkey still plays its sound when not in voice (a quick "is my audio working?")', async () => {
+    const { transitionSounds } = await import('./voiceui')
+    const idle = { channelId: null, connection: 'disconnected' as const, controls: { muted: false, deafened: false } }
+    const muted = { ...idle, controls: { muted: true, deafened: false } }
+    expect(transitionSounds(idle, muted)).toEqual(['mute'])
+    expect(transitionSounds(muted, idle)).toEqual(['unmute'])
+  })
+})

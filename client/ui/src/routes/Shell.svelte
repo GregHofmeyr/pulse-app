@@ -242,10 +242,10 @@
             <Icon name={voice.controls.deafened ? 'headphonesOff' : 'headphones'} />
           </button>
         {/if}
-        <button class="me-btn" aria-label="Voice & audio settings" onclick={() => (settingsOpen = true)}><Icon name="gear" /></button>
+        <button class="me-btn" aria-label="Settings" onclick={() => (settingsOpen = true)}><Icon name="gear" /></button>
         {#if menuOpen}
           <div class="menu" role="menu">
-            <button role="menuitem" onclick={() => { menuOpen = false; settingsOpen = true }}>Voice &amp; audio settings</button>
+            <button role="menuitem" onclick={() => { menuOpen = false; settingsOpen = true }}>Settings</button>
             <button role="menuitem" class="warn" onclick={() => { menuOpen = false; reportOpen = true }}>Report a bug</button>
             <button role="menuitem" class="danger" onclick={logout}>Log out</button>
           </div>

@@ -4,6 +4,7 @@ pub mod commands;
 pub mod gateway;
 pub mod hotkeys;
 pub mod ipc;
+pub mod keybinds;
 pub mod logging;
 pub mod outbox;
 pub mod reports;
@@ -100,14 +101,13 @@ pub fn run() {
                     }
                 });
             }
-            hotkeys::install(app)?;
+            let binds = keybinds::Store::load(&dir);
+            hotkeys::install(app, &binds.get())?;
+            app.manage(binds);
             let handle = app.handle().clone();
             app.manage(voice::VoiceManager::new(std::sync::Arc::new(
                 move |e: voice::VoiceEvent| {
                     use tauri::Emitter;
-                    if let voice::VoiceEvent::State { channel_id, .. } = &e {
-                        hotkeys::in_voice(&handle, channel_id.is_some());
-                    }
                     let _ = handle.emit("voice://event", &e);
                 },
             )));
@@ -148,6 +148,9 @@ pub fn run() {
             commands::set_mute,
             commands::clear_mute,
             commands::close_conversation,
+            keybinds::get_keybinds,
+            keybinds::set_keybinds,
+            keybinds::pause_keybinds,
             reports::submit_report,
             reports::save_report,
         ])

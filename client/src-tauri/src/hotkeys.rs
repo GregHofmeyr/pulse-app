@@ -1,143 +1,143 @@
-//! Windows global hotkeys (Ctrl+Shift+M / Ctrl+Shift+D). A global hotkey takes the combo away from
-//! every other app, so they're only held while in a voice channel. (Linux uses `ipc` instead.)
-
-use std::sync::Mutex;
-
-/// Whether the hotkeys are held. Only real changes register/unregister (voice state events
-/// repeat), and the flag is locked across the change, so events racing in from several threads
-/// can't leave the keys registered while the flag says released.
-#[derive(Default)]
-pub struct Held(Mutex<bool>);
-
-impl Held {
-    pub fn apply(&self, on: bool, change: impl FnOnce(bool)) {
-        let mut held = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if *held != on {
-            change(on);
-            *held = on;
-        }
-    }
-
-    pub fn is_held(&self) -> bool {
-        *self.0.lock().unwrap_or_else(|e| e.into_inner())
-    }
-}
+//! Global hotkeys from the keybinds (Windows; on Linux the compositor binds the CLI, see ipc.rs).
+//! Always on, like Discord: people mute before joining, or tap mute to hear that their sound
+//! works. Paused while a bind is being recorded, or Windows would swallow the keys being recorded.
 
 #[cfg(windows)]
 mod platform {
+    use std::sync::Mutex;
+
     use tauri::{AppHandle, Manager};
     use tauri_plugin_global_shortcut::{
         Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
     };
 
-    fn mute() -> Shortcut {
-        Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyM)
+    use crate::keybinds::{Action, Bind, Keybinds, label};
+
+    /// What's registered now. The shortcut handler runs on the main thread and reads this, and
+    /// registering hops to the main thread too: so this is never held while (un)registering.
+    #[derive(Default)]
+    struct Active(Mutex<Vec<(Shortcut, Action)>>);
+
+    /// Serialises changes (apply / pause), so two can't interleave their (un)registering.
+    #[derive(Default)]
+    struct Changing(Mutex<Option<Keybinds>>);
+
+    fn shortcut(b: &Bind) -> Option<Shortcut> {
+        let code: Code = b.code.parse().ok()?;
+        let mut mods = Modifiers::empty();
+        mods.set(Modifiers::CONTROL, b.ctrl);
+        mods.set(Modifiers::SHIFT, b.shift);
+        mods.set(Modifiers::ALT, b.alt);
+        mods.set(Modifiers::SUPER, b.meta);
+        Some(Shortcut::new(Some(mods), code))
     }
 
-    fn deafen() -> Shortcut {
-        Shortcut::new(Some(Modifiers::CONTROL | Modifiers::SHIFT), Code::KeyD)
-    }
-
-    pub fn install(app: &tauri::App) -> tauri::Result<()> {
+    pub fn install(app: &tauri::App, binds: &Keybinds) -> tauri::Result<()> {
         app.handle().plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, sc, ev| {
-                    if ev.state() == ShortcutState::Pressed {
-                        if sc == &mute() {
-                            crate::commands::hotkey(app, crate::ipc::Command::ToggleMute);
-                        } else if sc == &deafen() {
-                            crate::commands::hotkey(app, crate::ipc::Command::ToggleDeafen);
-                        }
+                    if ev.state() != ShortcutState::Pressed {
+                        return;
+                    }
+                    let action = app
+                        .state::<Active>()
+                        .0
+                        .lock()
+                        .unwrap_or_else(|e| e.into_inner())
+                        .iter()
+                        .find(|(s, _)| s == sc)
+                        .map(|(_, a)| *a);
+                    if let Some(a) = action {
+                        crate::commands::hotkey(app, a.command());
                     }
                 })
                 .build(),
         )?;
-        app.manage(super::Held::default());
+        app.manage(Active::default());
+        app.manage(Changing::default());
+        for problem in apply(app.handle(), binds) {
+            tracing::warn!(%problem, "hotkey");
+        }
         Ok(())
     }
 
-    /// A voice state change happened: re-check on the main thread (where registering happens
-    /// anyway, so no caller waits on it). It reads whether we're in voice *then*, rather than
-    /// trusting the event: events from different threads can arrive out of order (a mute
-    /// hotkey's state racing a leave), and the last check must see the final state.
-    pub fn in_voice(app: &AppHandle, _hint: bool) {
-        let handle = app.clone();
-        let _ = app.run_on_main_thread(move || {
-            let on = handle.state::<crate::voice::VoiceManager>().in_voice();
-            in_voice_now(&handle, on)
-        });
+    fn unregister_all(app: &AppHandle) {
+        let old: Vec<_> = std::mem::take(
+            &mut *app
+                .state::<Active>()
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner()),
+        );
+        let gs = app.global_shortcut();
+        for (sc, _) in old {
+            let _ = gs.unregister(sc);
+        }
     }
 
-    fn in_voice_now(app: &AppHandle, on: bool) {
-        app.state::<super::Held>().apply(on, |on| {
-            let gs = app.global_shortcut();
-            for sc in [mute(), deafen()] {
-                // Another app may already own these: log and carry on.
-                let r = if on {
-                    gs.register(sc)
-                } else {
-                    gs.unregister(sc)
-                };
-                if let Err(e) = r {
-                    tracing::warn!(shortcut = ?sc, on, error = %e, "hotkey change failed");
-                }
+    fn register_all(app: &AppHandle, binds: &Keybinds) -> Vec<String> {
+        let gs = app.global_shortcut();
+        let (mut ok, mut problems) = (Vec::new(), Vec::new());
+        for (action, b) in binds.bound() {
+            match shortcut(b) {
+                None => problems.push(format!(
+                    "{}: {} can't be a global key",
+                    action.label(),
+                    label(b)
+                )),
+                Some(sc) => match gs.register(sc) {
+                    Ok(()) => ok.push((sc, action)),
+                    // another app (or Windows) already owns it
+                    Err(_) => problems.push(format!(
+                        "{}: {} is taken by another app",
+                        action.label(),
+                        label(b)
+                    )),
+                },
             }
-        });
+        }
+        *app.state::<Active>()
+            .0
+            .lock()
+            .unwrap_or_else(|e| e.into_inner()) = ok;
+        problems
+    }
+
+    /// Replace the registered binds; one message per bind that couldn't be registered.
+    pub fn apply(app: &AppHandle, binds: &Keybinds) -> Vec<String> {
+        let changing = app.state::<Changing>();
+        let mut current = changing.0.lock().unwrap_or_else(|e| e.into_inner());
+        unregister_all(app);
+        *current = Some(binds.clone());
+        register_all(app, binds)
+    }
+
+    /// While a bind is being recorded, release them all (Windows would swallow the keypress).
+    pub fn pause(app: &AppHandle, paused: bool) {
+        let changing = app.state::<Changing>();
+        let current = changing.0.lock().unwrap_or_else(|e| e.into_inner());
+        unregister_all(app);
+        if !paused && let Some(binds) = current.as_ref() {
+            for problem in register_all(app, binds) {
+                tracing::warn!(%problem, "hotkey");
+            }
+        }
     }
 }
 
 #[cfg(not(windows))]
 mod platform {
-    pub fn install(_app: &tauri::App) -> tauri::Result<()> {
+    use crate::keybinds::Keybinds;
+
+    pub fn install(_app: &tauri::App, _binds: &Keybinds) -> tauri::Result<()> {
         Ok(())
     }
 
-    pub fn in_voice(_app: &tauri::AppHandle, _on: bool) {}
-}
-
-pub use platform::{in_voice, install};
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn only_changes_count() {
-        let h = Held::default();
-        let calls = std::sync::Mutex::new(Vec::new());
-        let rec = |on| calls.lock().unwrap().push(on);
-        h.apply(false, rec);
-        h.apply(true, rec);
-        h.apply(true, rec); // repeated voice state: no re-register
-        h.apply(false, rec);
-        assert_eq!(*calls.lock().unwrap(), vec![true, false]);
+    pub fn apply(_app: &tauri::AppHandle, _binds: &Keybinds) -> Vec<String> {
+        Vec::new()
     }
 
-    /// Voice state events come from several threads: the keys actually registered must always end
-    /// up matching the flag (keys held while out of voice is exactly what this module prevents).
-    #[test]
-    fn registration_never_drifts_from_the_flag() {
-        let h = std::sync::Arc::new(Held::default());
-        let registered = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        let threads: Vec<_> = (0..8)
-            .map(|t| {
-                let (h, registered) = (h.clone(), registered.clone());
-                std::thread::spawn(move || {
-                    for i in 0..500 {
-                        h.apply((i + t) % 2 == 0, |on| {
-                            std::thread::yield_now(); // registering is slow (main thread hop)
-                            registered.store(on, std::sync::atomic::Ordering::SeqCst);
-                        });
-                    }
-                })
-            })
-            .collect();
-        for t in threads {
-            t.join().unwrap();
-        }
-        assert_eq!(
-            registered.load(std::sync::atomic::Ordering::SeqCst),
-            h.is_held()
-        );
-    }
+    pub fn pause(_app: &tauri::AppHandle, _paused: bool) {}
 }
+
+pub use platform::{apply, install, pause};
