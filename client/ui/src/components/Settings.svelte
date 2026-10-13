@@ -1,12 +1,14 @@
 <script lang="ts">
+  import { onMount } from 'svelte'
   import Icon from './Icon.svelte'
   import VoiceSettings from './VoiceSettings.svelte'
   import KeybindSettings from './KeybindSettings.svelte'
 
   type Section = 'voice' | 'keybinds'
-  let { onClose }: { onClose: () => void } = $props()
+  let { onClose, section = 'voice' }: { onClose: () => void; section?: Section } = $props()
 
   let current = $state<Section>('voice')
+  onMount(() => (current = section))
   const sections: { key: Section; label: string }[] = [
     { key: 'voice', label: 'Voice & Audio' },
     { key: 'keybinds', label: 'Keybinds' },

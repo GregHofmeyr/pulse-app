@@ -208,6 +208,20 @@ mod tests {
         }
     }
 
+    fn ctrl_shift_m_d() -> Keybinds {
+        let cs = |code: &str| Bind {
+            code: code.into(),
+            ctrl: true,
+            shift: true,
+            alt: false,
+            meta: false,
+        };
+        Keybinds {
+            toggle_mute: Some(cs("KeyM")),
+            toggle_deafen: Some(cs("KeyD")),
+        }
+    }
+
     fn f13() -> Keybinds {
         Keybinds {
             toggle_mute: Some(Bind {
@@ -224,7 +238,7 @@ mod tests {
     #[test]
     fn applying_replaces_the_registered_binds() {
         let (h, r) = (Hotkeys::default(), Fake::default());
-        h.apply(&r, &Keybinds::default());
+        h.apply(&r, &ctrl_shift_m_d());
         assert_eq!(*r.registered.borrow(), ["Ctrl+Shift+M", "Ctrl+Shift+D"]);
         h.apply(&r, &f13());
         assert_eq!(*r.registered.borrow(), ["F13"]);
@@ -239,7 +253,7 @@ mod tests {
             taken: vec!["Ctrl+Shift+M".into()],
             ..Default::default()
         };
-        let problems = h.apply(&r, &Keybinds::default());
+        let problems = h.apply(&r, &ctrl_shift_m_d());
         assert_eq!(
             problems,
             ["Toggle mute: Ctrl+Shift+M is taken by another app"]
@@ -252,7 +266,7 @@ mod tests {
     #[test]
     fn while_paused_nothing_is_registered_and_unpause_brings_the_latest_back() {
         let (h, r) = (Hotkeys::default(), Fake::default());
-        h.apply(&r, &Keybinds::default());
+        h.apply(&r, &ctrl_shift_m_d());
         h.pause(&r, true);
         assert!(r.registered.borrow().is_empty());
         h.apply(&r, &f13());

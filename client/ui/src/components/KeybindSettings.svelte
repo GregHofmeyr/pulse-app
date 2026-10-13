@@ -6,7 +6,6 @@
   const linux = navigator.userAgent.includes('Linux')
 
   let binds = $state<Keybinds | null>(null)
-  let defaults = $state<Keybinds | null>(null)
   let recording = $state<Action | null>(null)
   let held = $state('')
   let error = $state('')
@@ -16,7 +15,6 @@
     try {
       const r = await keybindsApi.get()
       binds = r.binds
-      defaults = r.defaults
       problems = r.problems
     } catch (e) {
       error = typeof e === 'string' ? e : "Couldn't load keybinds"
@@ -98,7 +96,6 @@
     {#if recording}<small>Press the combination. Esc cancels.</small>{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     {#each problems as p}<p class="warn" role="status">{p}</p>{/each}
-    <div><button class="reset" disabled={!!recording || !defaults} onclick={() => defaults && save(defaults)}>Reset to defaults</button></div>
   {/if}
 </section>
 
@@ -117,6 +114,4 @@
   small { font-size: 12px; color: var(--text-3); }
   .error { margin: 0; color: #f2616b; font-size: 13px; }
   .warn { margin: 0; padding: 10px 12px; border-radius: 10px; background: rgba(232, 176, 74, .12); color: #e8b04a; font-size: 13px; }
-  .reset { height: 34px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-weight: 600; }
-  .reset:disabled { opacity: .5; }
 </style>

@@ -19,27 +19,12 @@ pub struct Bind {
     pub meta: bool,
 }
 
-/// What can be bound. `None` binds are unbound (cleared by the user).
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// What can be bound; `None` = unbound. Nothing is bound by default (Greg 2026-10-13): a global
+/// bind takes its keys away from every app, so everyone picks their own.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Keybinds {
     pub toggle_mute: Option<Bind>,
     pub toggle_deafen: Option<Bind>,
-}
-
-impl Default for Keybinds {
-    fn default() -> Self {
-        let ctrl_shift = |code: &str| Bind {
-            code: code.into(),
-            ctrl: true,
-            shift: true,
-            alt: false,
-            meta: false,
-        };
-        Self {
-            toggle_mute: Some(ctrl_shift("KeyM")),
-            toggle_deafen: Some(ctrl_shift("KeyD")),
-        }
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -274,7 +259,7 @@ pub fn validate(binds: &Keybinds) -> Result<(), String> {
 
 const FILE: &str = "keybinds.json";
 
-/// The profile's binds; the defaults if none are saved yet (or the file is unreadable).
+/// The profile's binds; none if nothing is saved yet (or the file is unusable).
 pub fn load(dir: &Path) -> Keybinds {
     let Ok(text) = std::fs::read_to_string(dir.join(FILE)) else {
         return Keybinds::default();
@@ -285,7 +270,7 @@ pub fn load(dir: &Path) -> Keybinds {
     {
         Ok(k) => k,
         Err(e) => {
-            tracing::warn!(error = %e, "keybinds file unusable; using the defaults");
+            tracing::warn!(error = %e, "keybinds file unusable; nothing bound");
             Keybinds::default()
         }
     }
@@ -321,7 +306,8 @@ impl Store {
         *self.problems.lock().unwrap_or_else(|e| e.into_inner()) = problems;
     }
 
-    /// What the settings pane shows: the binds, what's wrong with them, and the defaults.
+    /// What the settings pane shows: the binds, what's wrong with them, and whether the user has
+    /// ever chosen (if not, the app nudges them to).
     pub fn applied(&self) -> Applied {
         Applied {
             binds: self.get(),
@@ -330,7 +316,7 @@ impl Store {
                 .lock()
                 .unwrap_or_else(|e| e.into_inner())
                 .clone(),
-            defaults: Keybinds::default(),
+            chosen: self.dir.join(FILE).exists(),
         }
     }
 
@@ -344,7 +330,7 @@ impl Store {
 pub struct Applied {
     pub binds: Keybinds,
     pub problems: Vec<String>,
-    pub defaults: Keybinds,
+    pub chosen: bool,
 }
 
 #[tauri::command]
@@ -399,12 +385,16 @@ mod tests {
         })
     }
 
+    /// Greg 2026-10-13: no defaults (a global bind takes its keys from every app); everyone
+    /// picks their own, nudged on first run until they've chosen.
     #[test]
-    fn the_defaults_are_ctrl_shift_m_and_d() {
-        let k = Keybinds::default();
-        assert_eq!(label(k.toggle_mute.as_ref().unwrap()), "Ctrl+Shift+M");
-        assert_eq!(label(k.toggle_deafen.as_ref().unwrap()), "Ctrl+Shift+D");
-        assert!(validate(&k).is_ok());
+    fn nothing_is_bound_until_the_user_chooses() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::load(dir.path());
+        assert!(store.get().bound().is_empty());
+        assert!(!store.applied().chosen, "first run: nudge");
+        save(dir.path(), &Keybinds::default()).unwrap(); // dismissing the nudge saves 'none'
+        assert!(Store::load(dir.path()).applied().chosen);
     }
 
     #[test]
@@ -528,11 +518,6 @@ mod tests {
         let shown = store.applied();
         assert_eq!(shown.problems.len(), 1);
         assert_eq!(shown.binds, Keybinds::default());
-        assert_eq!(
-            shown.defaults,
-            Keybinds::default(),
-            "Reset uses the core's defaults"
-        );
     }
 
     #[test]
@@ -555,7 +540,7 @@ mod tests {
         };
         save(dir.path(), &mine).unwrap();
         assert_eq!(load(dir.path()), mine);
-        // a broken file falls back to the defaults instead of leaving nothing bound
+        // a broken file means nothing bound (and a warning in the log)
         std::fs::write(dir.path().join(FILE), "{nope").unwrap();
         assert_eq!(load(dir.path()), Keybinds::default());
         // so does one that parses but can't be used

@@ -50,8 +50,9 @@ export function bindLabel(b: Bind | null): string {
   return [...modLabels(b), keyLabel(b.code)].join(' + ')
 }
 
-/** The binds in use, any that couldn't be registered (another app owns them), and the defaults. */
-export type Applied = { binds: Keybinds; problems: string[]; defaults: Keybinds }
+/** The binds in use, any that couldn't be registered (another app owns them), and whether the
+ *  user has ever chosen (nothing is bound by default: first run nudges them to pick). */
+export type Applied = { binds: Keybinds; problems: string[]; chosen: boolean }
 
 export const keybindsApi = {
   get: () => invoke<Applied>('get_keybinds'),

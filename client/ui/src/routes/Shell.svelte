@@ -19,6 +19,7 @@
   import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { isMember } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
+  import { keybindsApi } from '../lib/keybinds'
   import type { User } from '../lib/protocol/User'
 
   let { user, onLogout }: { user: User; onLogout: () => void } = $props()
@@ -27,6 +28,31 @@
   let activeServerId = $state<string | null>(null)
   let activeChannelId = $state<string | null>(null)
   let settingsOpen = $state(false)
+  let settingsSection = $state<'voice' | 'keybinds'>('voice')
+  // Nothing is bound by default: until they've chosen, nudge people to pick their keys (Windows;
+  // on Linux the compositor binds them).
+  let pickKeys = $state(false)
+  const windows = !navigator.userAgent.includes('Linux')
+  async function checkKeybinds() {
+    if (!windows) return
+    try {
+      pickKeys = !(await keybindsApi.get()).chosen
+    } catch {
+      /* the nudge is optional */
+    }
+  }
+  function openSettings(section: 'voice' | 'keybinds' = 'voice') {
+    settingsSection = section
+    settingsOpen = true
+  }
+  async function dismissPickKeys() {
+    pickKeys = false
+    try {
+      await keybindsApi.set((await keybindsApi.get()).binds) // saving 'none' counts as a choice
+    } catch {
+      /* shown again next launch */
+    }
+  }
   let reportOpen = $state(false)
   let menuOpen = $state(false)
   let creating = $state(false)
@@ -36,6 +62,7 @@
   let picker = $state<null | { mode: 'new' } | { mode: 'add'; channelId: string }>(null)
   // Badges depend on mute expiry: they re-evaluate on the shared clock.
   const nowIso = $derived(clock.nowIso)
+  onMount(() => void checkKeybinds())
   onMount(() => {
     const focus = () => (ui.focused = true)
     const blur = () => (ui.focused = false)
@@ -203,6 +230,9 @@
     {#if app.state.conn !== 'connected'}
       <span class="conn" role="status">{app.state.conn === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</span>
     {/if}
+    {#if pickKeys}
+      <span class="conn auto-report" role="status">Pick your mute and deafen keys. <button class="link" onclick={() => openSettings('keybinds')}>Choose</button> <button aria-label="Dismiss" onclick={dismissPickKeys}>×</button></span>
+    {/if}
     {#if ui.autoReported}
       <span class="conn auto-report" role="status">Something went wrong in Pulse last time, so we sent Greg a report. <button aria-label="Dismiss" onclick={() => (ui.autoReported = false)}>×</button></span>
     {/if}
@@ -242,10 +272,10 @@
             <Icon name={voice.controls.deafened ? 'headphonesOff' : 'headphones'} />
           </button>
         {/if}
-        <button class="me-btn" aria-label="Settings" onclick={() => (settingsOpen = true)}><Icon name="gear" /></button>
+        <button class="me-btn" aria-label="Settings" onclick={() => openSettings()}><Icon name="gear" /></button>
         {#if menuOpen}
           <div class="menu" role="menu">
-            <button role="menuitem" onclick={() => { menuOpen = false; settingsOpen = true }}>Settings</button>
+            <button role="menuitem" onclick={() => { menuOpen = false; openSettings() }}>Settings</button>
             <button role="menuitem" class="warn" onclick={() => { menuOpen = false; reportOpen = true }}>Report a bug</button>
             <button role="menuitem" class="danger" onclick={logout}>Log out</button>
           </div>
@@ -277,7 +307,7 @@
     {:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}
   </div>
 </div>
-{#if settingsOpen}<Settings onClose={() => (settingsOpen = false)} />{/if}
+{#if settingsOpen}<Settings section={settingsSection} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
 {#if creating}
   <div class="overlay">
@@ -355,6 +385,7 @@
   .menu .danger { color: #f2616b; }
   .menu .warn { color: var(--warn); }
   .auto-report button { border: 0; background: none; color: inherit; font-size: 15px; line-height: 1; padding: 0 0 0 6px; }
+  .auto-report button.link { font-size: inherit; font-weight: 600; text-decoration: underline; padding: 0 2px; }
   .overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px; }
   .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
   .dialog { position: relative; width: min(420px, calc(100vw - 32px)); padding: 24px; background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: 16px; display: flex; flex-direction: column; gap: 14px; }
