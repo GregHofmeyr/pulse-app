@@ -107,9 +107,13 @@ fn listed(r: &Row) -> Listed {
 const SELECT: &str =
     "SELECT r.id, r.created_at, u.username, r.kind, r.seen_at, r.text, r.meta, r.log
      FROM bug_reports r JOIN users u ON u.id = r.user_id";
+/// For one-line listings: everything but the log (up to 512 KB each).
+const SELECT_NO_LOG: &str =
+    "SELECT r.id, r.created_at, u.username, r.kind, r.seen_at, r.text, r.meta, '' AS log
+     FROM bug_reports r JOIN users u ON u.id = r.user_id";
 
 pub async fn list(db: &SqlitePool, limit: i64) -> AppResult<Vec<Listed>> {
-    let rows: Vec<Row> = sqlx::query_as(&format!("{SELECT} ORDER BY r.id DESC LIMIT ?"))
+    let rows: Vec<Row> = sqlx::query_as(&format!("{SELECT_NO_LOG} ORDER BY r.id DESC LIMIT ?"))
         .bind(limit)
         .fetch_all(db)
         .await?;
@@ -123,35 +127,38 @@ pub async fn find(db: &SqlitePool, short_id: &str) -> AppResult<Full> {
             "'{short_id}' isn't a report id (letters and digits, e.g. QXRAZJ)"
         )));
     }
-    let rows: Vec<Row> = sqlx::query_as(&format!(
-        "{SELECT} WHERE r.id LIKE '%' || ? ORDER BY r.id DESC"
-    ))
-    .bind(short_id.to_uppercase())
-    .fetch_all(db)
-    .await?;
-    match rows.len() {
-        0 => Err(AppError::NotFound),
-        1 => {
-            let r = &rows[0];
+    // ids first (cheap); the full row, log included, only for a single match
+    let ids: Vec<String> =
+        sqlx::query_scalar("SELECT id FROM bug_reports WHERE id LIKE '%' || ? ORDER BY id DESC")
+            .bind(short_id.to_uppercase())
+            .fetch_all(db)
+            .await?;
+    match ids.as_slice() {
+        [] => Err(AppError::NotFound),
+        [id] => {
+            let r: Row = sqlx::query_as(&format!("{SELECT} WHERE r.id = ?"))
+                .bind(id)
+                .fetch_one(db)
+                .await?;
             Ok(Full {
-                listed: listed(r),
+                listed: listed(&r),
                 text: r.5.clone(),
                 meta: serde_json::from_str(&r.6).unwrap_or_default(),
                 log: r.7.clone(),
             })
         }
-        n => {
-            // enough of each id to tell them apart
-            // (the newest 10: a one-letter id could match hundreds)
-            let ids: Vec<&str> = rows
+        all => {
+            // enough of each id to tell them apart; the newest 10 (a one-letter id could match hundreds)
+            let shown: Vec<&str> = all
                 .iter()
                 .take(10)
-                .map(|r| &r.0[r.0.len().saturating_sub(10)..])
+                .map(|id| &id[id.len().saturating_sub(10)..])
                 .collect();
-            let more = if n > ids.len() { ", …" } else { "" };
+            let more = if all.len() > shown.len() { ", …" } else { "" };
             Err(AppError::Conflict(format!(
-                "'{short_id}' matches {n} reports: {}{more}; use more characters",
-                ids.join(", ")
+                "'{short_id}' matches {} reports: {}{more}; use more characters",
+                all.len(),
+                shown.join(", ")
             )))
         }
     }
