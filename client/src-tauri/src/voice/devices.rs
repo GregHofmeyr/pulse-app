@@ -141,6 +141,13 @@ impl Watchdog {
         self.last_out_ms.store(self.ms(now), Ordering::Relaxed);
     }
 
+    /// Streams were just reopened: judge them from now, not from the old device's last callback
+    /// (a slow open would otherwise look stalled at once and be torn down again).
+    pub fn rearm(&self, now: Instant) {
+        self.input_tick(now);
+        self.output_tick(now);
+    }
+
     pub fn stalled(&self, now: Instant) -> bool {
         let now = self.ms(now);
         let limit = STALL_AFTER.as_millis() as u64;
@@ -489,8 +496,9 @@ pub fn default_moved(
     opened: &OpenedDevices,
     defaults: (Option<String>, Option<String>),
 ) -> bool {
+    // an empty name couldn't be read: unknown, never "different"
     let moved = |chosen: &Option<String>, now: Option<String>, open: &str| {
-        chosen.is_none() && now.is_some_and(|n| n != open)
+        chosen.is_none() && !open.is_empty() && now.is_some_and(|n| n != open)
     };
     moved(&cfg.input, defaults.0, &opened.input) || moved(&cfg.output, defaults.1, &opened.output)
 }
@@ -504,17 +512,55 @@ pub fn wanted_back(
     outputs: &[String],
 ) -> bool {
     let back = |chosen: &Option<String>, open: &str, available: &[String]| {
-        chosen
-            .as_deref()
-            .is_some_and(|c| c != open && available.iter().any(|a| a == c))
+        !open.is_empty()
+            && chosen
+                .as_deref()
+                .is_some_and(|c| c != open && available.iter().any(|a| a == c))
     };
     back(&cfg.input, &opened.input, inputs) || back(&cfg.output, &opened.output, outputs)
 }
 
 /// Whether a chosen device is not the one open (only then is enumerating worth it).
 pub fn on_fallback(cfg: &AudioConfig, opened: &OpenedDevices) -> bool {
-    cfg.input.as_deref().is_some_and(|c| c != opened.input)
-        || cfg.output.as_deref().is_some_and(|c| c != opened.output)
+    let off = |chosen: &Option<String>, open: &str| {
+        !open.is_empty() && chosen.as_deref().is_some_and(|c| c != open)
+    };
+    off(&cfg.input, &opened.input) || off(&cfg.output, &opened.output)
+}
+
+/// `cfg`, but on the devices that are open now: where to go back to when a switch fails, so the
+/// call keeps working audio instead of none. Unknown (empty) names keep the configured choice.
+pub fn fallback_config(cfg: &AudioConfig, opened: &OpenedDevices) -> AudioConfig {
+    let pick = |open: &str, chosen: &Option<String>| {
+        if open.is_empty() {
+            chosen.clone()
+        } else {
+            Some(open.to_string())
+        }
+    };
+    AudioConfig {
+        input: pick(&opened.input, &cfg.input),
+        output: pick(&opened.output, &cfg.output),
+        ..cfg.clone()
+    }
+}
+
+/// Act only on a condition seen on two checks in a row: a Bluetooth device that flaps in and out
+/// for a moment shouldn't tear the call's audio down.
+#[derive(Default)]
+pub struct Debounce {
+    streak: u8,
+}
+
+impl Debounce {
+    pub fn confirm(&mut self, seen: bool) -> bool {
+        self.streak = if seen { self.streak + 1 } else { 0 };
+        if self.streak >= 2 {
+            self.streak = 0;
+            return true;
+        }
+        false
+    }
 }
 
 /// Names of all input and output devices (blocking: device enumeration).
@@ -1009,6 +1055,80 @@ mod tests {
             &now,
             (Some("Arctis Mic".into()), Some("Arctis".into()))
         ));
+    }
+
+    #[test]
+    fn an_unknown_device_name_never_triggers_a_switch() {
+        // a device whose name couldn't be read: "" mustn't look like "a different device"
+        let unknown = opened("", "");
+        assert!(!default_moved(
+            &AudioConfig::default(),
+            &unknown,
+            (Some("Arctis Mic".into()), Some("Arctis".into()))
+        ));
+        let picked = AudioConfig {
+            output: Some("Arctis".into()),
+            ..Default::default()
+        };
+        assert!(!on_fallback(&picked, &unknown));
+        assert!(!wanted_back(&picked, &unknown, &[], &["Arctis".into()]));
+    }
+
+    #[test]
+    fn on_fallback_only_when_a_chosen_device_isnt_the_open_one() {
+        let picked = AudioConfig {
+            input: Some("Arctis Mic".into()),
+            ..Default::default()
+        };
+        assert!(on_fallback(&picked, &opened("Laptop Mic", "Speakers")));
+        assert!(!on_fallback(&picked, &opened("Arctis Mic", "Speakers")));
+        assert!(!on_fallback(
+            &AudioConfig::default(),
+            &opened("Laptop Mic", "Speakers")
+        ));
+    }
+
+    #[test]
+    fn a_switch_must_be_seen_twice_in_a_row() {
+        // a flapping Bluetooth device appears for one check, then vanishes: no reopen
+        let mut d = Debounce::default();
+        assert!(!d.confirm(true));
+        assert!(!d.confirm(false));
+        assert!(!d.confirm(true));
+        assert!(d.confirm(true));
+        assert!(!d.confirm(true), "after acting, start counting again");
+    }
+
+    #[test]
+    fn a_failed_switch_falls_back_to_the_devices_that_worked() {
+        let cfg = AudioConfig {
+            output: Some("Arctis".into()),
+            ..Default::default()
+        };
+        let back = fallback_config(&cfg, &opened("Laptop Mic", "Speakers"));
+        assert_eq!(back.input.as_deref(), Some("Laptop Mic"));
+        assert_eq!(back.output.as_deref(), Some("Speakers"));
+        assert_eq!(
+            back.input_gain_pct, cfg.input_gain_pct,
+            "only the devices change"
+        );
+        // unknown names: keep the configured choice
+        let back = fallback_config(&cfg, &opened("", ""));
+        assert_eq!((back.input, back.output), (None, Some("Arctis".into())));
+    }
+
+    #[test]
+    fn rearming_gives_new_streams_time_to_start() {
+        let t0 = Instant::now();
+        let w = Watchdog::new(t0);
+        let reopened = t0 + Duration::from_secs(3); // a slow Bluetooth open
+        assert!(w.stalled(reopened));
+        w.rearm(reopened);
+        assert!(!w.stalled(reopened + Duration::from_millis(1500)));
+        assert!(
+            w.stalled(reopened + Duration::from_millis(2500)),
+            "still judged, just later"
+        );
     }
 
     #[test]

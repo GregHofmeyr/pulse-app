@@ -279,3 +279,38 @@ async fn one_client_hears_another_at_real_time() {
     a.leave().await;
     b.leave().await;
 }
+
+/// On this machine's real devices: a call that nobody touches never reopens them (device
+/// following must not churn, e.g. on ALSA's "default" or a name that differs between lists).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn real_devices_are_not_reopened_without_a_reason() {
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, token) = testing::register(&app, "alex").await;
+    let s = testing::create_server(&app, &token, "Main").await;
+    let api = Api::new(&format!("http://{}", app.addr));
+    let lounge = api
+        .channels(&token, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+    let vm = VoiceManager::new(std::sync::Arc::new(|_| {}));
+    vm.join(
+        &api,
+        &token,
+        lounge.id,
+        AudioConfig::default(),
+        AudioMode::Real,
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_secs(9)).await; // four device checks
+    let n = vm.reopens().await;
+    vm.leave().await;
+    assert_eq!(n, 0, "reopened {n} times with nothing changed");
+}

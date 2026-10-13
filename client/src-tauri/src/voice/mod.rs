@@ -63,8 +63,10 @@ pub enum VoiceError {
     Timeout(&'static str),
 }
 
-/// How often (in 100 ms ticks) to check whether the system's default device changed.
-const DEFAULT_CHECK_TICKS: u32 = 20;
+/// How often to check whether the devices should follow the system default (or a returning one).
+const FOLLOW_EVERY: Duration = Duration::from_secs(2);
+/// Device enumeration can block on a Bluetooth device mid-switch: skip the check rather than wait.
+const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -82,25 +84,110 @@ async fn start_audio(
         .map_err(|e| VoiceError::Device(e.to_string()))
 }
 
-/// Stop the current streams and open the configured devices again (stays in the room).
-async fn reopen_devices(
-    cfg: &Mutex<AudioConfig>,
-    io: &Mutex<Option<AudioIo>>,
-    shared: &Arc<Shared>,
-    raw_tx: &processor::RawTx,
-    alive: &AtomicBool,
-) {
-    let cfg = cfg.lock().unwrap().clone();
-    io.lock().unwrap().take(); // stop the old streams (lock released right away)
-    match start_audio(&cfg, shared.clone(), raw_tx.clone()).await {
-        Ok(new_io) if alive.load(Ordering::SeqCst) => {
+/// Reopens the session's devices (stays in the room). Stall recovery, device following and
+/// settings changes can all want one: they take turns, and each reads the newest settings.
+struct Reopener {
+    cfg: Arc<Mutex<AudioConfig>>,
+    io: Arc<Mutex<Option<AudioIo>>>,
+    shared: Arc<Shared>,
+    /// Into the mic processor; device (re)opens feed it. Dropping the last one ends the processor.
+    raw_tx: processor::RawTx,
+    alive: Arc<AtomicBool>,
+    one_at_a_time: tokio::sync::Mutex<()>,
+    /// How many reopens so far (diagnostics: following mustn't churn).
+    count: std::sync::atomic::AtomicU32,
+}
+
+impl Reopener {
+    /// On failure, goes back to the devices that were open, so the call keeps working audio (the
+    /// error is still returned: a device picked in settings that won't open should say so).
+    async fn reopen(&self) -> Result<(), VoiceError> {
+        let _turn = self.one_at_a_time.lock().await;
+        self.count.fetch_add(1, Ordering::Relaxed);
+        let cfg = self.cfg.lock().unwrap().clone();
+        // stop the old streams first (a Bluetooth headset can't be open twice)
+        let previous = self.io.lock().unwrap().take().map(|io| io.opened().clone());
+        let (new_io, result) =
+            match start_audio(&cfg, self.shared.clone(), self.raw_tx.clone()).await {
+                Ok(io) => (Some(io), Ok(())),
+                Err(e) => {
+                    tracing::error!(error = %e, "voice: reopening devices failed");
+                    let back = match &previous {
+                        Some(p) => {
+                            let cfg = devices::fallback_config(&cfg, p);
+                            start_audio(&cfg, self.shared.clone(), self.raw_tx.clone())
+                                .await
+                                .ok()
+                        }
+                        None => None,
+                    };
+                    if back.is_some() {
+                        tracing::warn!("voice: back on the previous devices");
+                    }
+                    (back, Err(e))
+                }
+            };
+        if let Some(io) = new_io
+            && self.alive.load(Ordering::SeqCst)
+        {
             tracing::info!("voice: devices reopened");
-            *io.lock().unwrap() = Some(new_io);
+            self.shared.watchdog.rearm(Instant::now());
+            *self.io.lock().unwrap() = Some(io);
         }
-        Ok(_) => {} // session ended meanwhile
-        Err(e) => tracing::error!(error = %e, "voice: reopening devices failed"),
+        result
+    }
+
+    /// Whether the devices should change (and why): the system default moved, or a chosen device
+    /// is back. `None` also when the system was too slow to answer (a BT device mid-switch).
+    async fn wants_switch(
+        &self,
+        probe: &mut Option<JoinHandle<DeviceProbe>>,
+    ) -> Option<&'static str> {
+        let opened = self
+            .io
+            .lock()
+            .unwrap()
+            .as_ref()
+            .map(|io| io.opened().clone())?;
+        let cfg = self.cfg.lock().unwrap().clone();
+        // a probe still stuck from last time: don't pile up blocked threads
+        let handle = match probe.take() {
+            Some(h) if !h.is_finished() => {
+                *probe = Some(h);
+                return None;
+            }
+            _ => {
+                let fallback = devices::on_fallback(&cfg, &opened);
+                tokio::task::spawn_blocking(move || {
+                    (
+                        devices::default_device_names(),
+                        fallback.then(devices::device_names),
+                    )
+                })
+            }
+        };
+        let mut handle = handle;
+        let (defaults, available) = match tokio::time::timeout(PROBE_TIMEOUT, &mut handle).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(_)) => return None,
+            Err(_) => {
+                tracing::debug!("voice: device check skipped (the system was slow to answer)");
+                *probe = Some(handle);
+                return None;
+            }
+        };
+        if available.is_some_and(|(ins, outs)| devices::wanted_back(&cfg, &opened, &ins, &outs)) {
+            return Some("chosen device is back");
+        }
+        devices::default_moved(&cfg, &opened, defaults).then_some("system default device changed")
     }
 }
+
+/// (system defaults, all device names if needed)
+type DeviceProbe = (
+    (Option<String>, Option<String>),
+    Option<(Vec<String>, Vec<String>)>,
+);
 
 impl Serialize for VoiceError {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
@@ -162,14 +249,13 @@ struct Session {
     shared: Arc<Shared>,
     io: Arc<Mutex<Option<AudioIo>>>,
     cfg: Arc<Mutex<AudioConfig>>,
-    /// Into the mic processor; device (re)opens feed it. Dropping the last one ends the processor.
-    raw_tx: processor::RawTx,
     real: bool,
     rx: Arc<Mutex<RxTasks>>,
     /// Cleared when LiveKit disconnects us for good: the session is then torn down.
     alive: Arc<AtomicBool>,
     /// Mic audio processed but not yet handed to LiveKit.
     send_queue: Arc<backlog::QueueGauge>,
+    reopener: Arc<Reopener>,
     tasks: Vec<JoinHandle<()>>,
 }
 
@@ -454,11 +540,23 @@ impl VoiceManager {
         let me_id = room.local_participant().identity().to_string();
         let cfg = Arc::new(Mutex::new(cfg));
         let real = matches!(mode, AudioMode::Real);
+        let reopener = Arc::new(Reopener {
+            cfg: cfg.clone(),
+            io: io.clone(),
+            shared: shared.clone(),
+            raw_tx: raw_tx.clone(),
+            alive: alive.clone(),
+            one_at_a_time: tokio::sync::Mutex::new(()),
+            count: Default::default(),
+        });
         {
-            let (shared, io, events) = (shared.clone(), io.clone(), self.events.clone());
-            let (cfg, raw_tx, alive) = (cfg.clone(), raw_tx.clone(), alive.clone());
+            let (shared, events, alive) = (shared.clone(), self.events.clone(), alive.clone());
+            let reopener = reopener.clone();
             tasks.push(tokio::spawn(async move {
                 let mut tick = tokio::time::interval(Duration::from_millis(100));
+                // after a slow reopen, carry on from now (a burst of catch-up ticks would judge
+                // the new streams at once)
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
                 let mut stall = devices::StallPolicy::default();
                 let mut speaking = speaking::SpeakingTracker::default();
                 let mut n = 0u32;
@@ -503,37 +601,32 @@ impl VoiceManager {
                         }
                         Some(devices::StallAction::Reopen) => {
                             tracing::warn!("audio device stalled; reopening");
-                            reopen_devices(&cfg, &io, &shared, &raw_tx, &alive).await;
-                            continue;
+                            let _ = reopener.reopen().await;
                         }
                     }
-                    if n.is_multiple_of(DEFAULT_CHECK_TICKS) {
-                        let opened = io.lock().unwrap().as_ref().map(|io| io.opened().clone());
-                        let Some(opened) = opened else { continue };
-                        let current = cfg.lock().unwrap().clone();
-                        let fallback = devices::on_fallback(&current, &opened);
-                        let Ok((defaults, available)) = tokio::task::spawn_blocking(move || {
-                            let available = fallback.then(devices::device_names);
-                            (devices::default_device_names(), available)
-                        })
-                        .await
-                        else {
-                            continue;
-                        };
-                        let back = available.is_some_and(|(ins, outs)| {
-                            devices::wanted_back(&current, &opened, &ins, &outs)
-                        });
-                        if back {
-                            tracing::info!("voice: chosen device is back; switching to it");
-                        } else if devices::default_moved(&current, &opened, defaults.clone()) {
-                            tracing::info!(
-                                input = ?defaults.0, output = ?defaults.1,
-                                "voice: system default device changed; switching"
-                            );
-                        } else {
-                            continue;
-                        }
-                        reopen_devices(&cfg, &io, &shared, &raw_tx, &alive).await;
+                }
+            }));
+        }
+        // follow the system default device / a returning chosen device (own task: enumeration
+        // can block, and must not stall the levels and watchdog above)
+        if real {
+            let reopener = reopener.clone();
+            tasks.push(tokio::spawn(async move {
+                let mut tick = tokio::time::interval(FOLLOW_EVERY);
+                tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+                let (mut debounce, mut probe) = (devices::Debounce::default(), None);
+                loop {
+                    tick.tick().await;
+                    if !reopener.alive.load(Ordering::SeqCst) {
+                        break;
+                    }
+                    let reason = reopener.wants_switch(&mut probe).await;
+                    if debounce.confirm(reason.is_some()) {
+                        tracing::info!(
+                            reason = reason.unwrap_or_default(),
+                            "voice: switching devices"
+                        );
+                        let _ = reopener.reopen().await;
                     }
                 }
             }));
@@ -545,11 +638,11 @@ impl VoiceManager {
             shared,
             io,
             cfg,
-            raw_tx,
             real,
             rx,
             alive,
             send_queue,
+            reopener,
             tasks,
         })
     }
@@ -674,9 +767,7 @@ impl VoiceManager {
         *s.cfg.lock().unwrap() = cfg.clone();
         if devices_changed && s.real {
             // Hot-swap: reopen the streams, stay in the room (rates may differ; the 48 kHz edge absorbs it).
-            s.io.lock().unwrap().take();
-            let new_io = start_audio(&cfg, s.shared.clone(), s.raw_tx.clone()).await?;
-            *s.io.lock().unwrap() = Some(new_io);
+            s.reopener.reopen().await?;
         }
         Ok(())
     }
@@ -693,6 +784,14 @@ impl VoiceManager {
     pub async fn send_queue_ms(&self) -> u32 {
         match self.session.lock().await.as_ref() {
             Some(s) => s.send_queue.current(),
+            None => 0,
+        }
+    }
+
+    /// Device reopens in this session so far.
+    pub async fn reopens(&self) -> u32 {
+        match self.session.lock().await.as_ref() {
+            Some(s) => s.reopener.count.load(Ordering::Relaxed),
             None => 0,
         }
     }
