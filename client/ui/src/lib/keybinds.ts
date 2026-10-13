@@ -50,9 +50,12 @@ export function bindLabel(b: Bind | null): string {
   return [...modLabels(b), keyLabel(b.code)].join(' + ')
 }
 
+/** The binds in use, any that couldn't be registered (another app owns them), and the defaults. */
+export type Applied = { binds: Keybinds; problems: string[]; defaults: Keybinds }
+
 export const keybindsApi = {
-  get: () => invoke<Keybinds>('get_keybinds'),
-  /** Rejects with a message if the set isn't usable (nothing changes); `problems` lists binds another app owns. */
-  set: (binds: Keybinds) => invoke<{ binds: Keybinds; problems: string[] }>('set_keybinds', { binds }),
+  get: () => invoke<Applied>('get_keybinds'),
+  /** Rejects with a message if the set isn't usable (nothing changes). */
+  set: (binds: Keybinds) => invoke<Applied>('set_keybinds', { binds }),
   pause: (paused: boolean) => invoke<void>('pause_keybinds', { paused }),
 }

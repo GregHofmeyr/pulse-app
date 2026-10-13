@@ -88,16 +88,78 @@ const MODIFIER_CODES: [&str; 8] = [
     "MetaRight",
 ];
 
-/// Keys that type something: bound globally on their own, they'd stop working in every other app.
+/// Keys Windows global hotkeys can register (global-hotkey 0.8's `key_to_vk`), minus the ones it
+/// maps to a different key (NumpadEqual → E, MediaPause → Pause).
+fn registrable(code: &str) -> bool {
+    let named = [
+        "Backquote",
+        "Backslash",
+        "BracketLeft",
+        "BracketRight",
+        "Comma",
+        "Equal",
+        "Minus",
+        "Period",
+        "Quote",
+        "Semicolon",
+        "Slash",
+        "Space",
+        "Tab",
+        "Enter",
+        "Backspace",
+        "Escape",
+        "CapsLock",
+        "NumLock",
+        "ScrollLock",
+        "PrintScreen",
+        "Pause",
+        "Insert",
+        "Delete",
+        "Home",
+        "End",
+        "PageUp",
+        "PageDown",
+        "ArrowUp",
+        "ArrowDown",
+        "ArrowLeft",
+        "ArrowRight",
+        "NumpadAdd",
+        "NumpadSubtract",
+        "NumpadMultiply",
+        "NumpadDivide",
+        "NumpadDecimal",
+        "NumpadEnter",
+        "MediaPlay",
+        "MediaPlayPause",
+        "MediaStop",
+        "MediaTrackNext",
+        "MediaTrackPrevious",
+        "AudioVolumeUp",
+        "AudioVolumeDown",
+        "AudioVolumeMute",
+    ];
+    let one_char = |prefix: &str, ok: fn(char) -> bool| {
+        code.strip_prefix(prefix)
+            .is_some_and(|r| r.len() == 1 && r.chars().all(ok))
+    };
+    let f_key = code
+        .strip_prefix('F')
+        .and_then(|n| n.parse::<u8>().ok())
+        .is_some_and(|n| (1..=24).contains(&n));
+    named.contains(&code)
+        || one_char("Key", |c| c.is_ascii_uppercase())
+        || one_char("Digit", |c| c.is_ascii_digit())
+        || one_char("Numpad", |c| c.is_ascii_digit())
+        || f_key
+}
+
+/// Letters, digits and punctuation: these type text.
 fn types_text(code: &str) -> bool {
     code.starts_with("Key")
         || code.starts_with("Digit")
         || matches!(
             code,
             "Space"
-                | "Enter"
-                | "Tab"
-                | "Backspace"
                 | "Minus"
                 | "Equal"
                 | "BracketLeft"
@@ -109,6 +171,28 @@ fn types_text(code: &str) -> bool {
                 | "Comma"
                 | "Period"
                 | "Slash"
+        )
+}
+
+/// Keys every app relies on beyond typing: editing, moving around, the numpad, the locks.
+fn everyday(code: &str) -> bool {
+    code.starts_with("Numpad")
+        || code.starts_with("Arrow")
+        || matches!(
+            code,
+            "Enter"
+                | "Tab"
+                | "Backspace"
+                | "Escape"
+                | "Insert"
+                | "Delete"
+                | "Home"
+                | "End"
+                | "PageUp"
+                | "PageDown"
+                | "CapsLock"
+                | "NumLock"
+                | "ScrollLock"
         )
 }
 
@@ -136,28 +220,52 @@ pub fn label(b: &Bind) -> String {
     parts.join("+")
 }
 
-/// Why `binds` can't be used, if anything.
+/// Why `binds` can't be used, if anything. A global hotkey takes its combination away from every
+/// other app, so the rules keep binds off anything people type or rely on elsewhere.
 pub fn validate(binds: &Keybinds) -> Result<(), String> {
     let bound = binds.bound();
     for (action, b) in &bound {
+        let (name, key) = (action.label(), label(b));
         if b.code.is_empty() || MODIFIER_CODES.contains(&b.code.as_str()) {
-            return Err(format!("{}: add a key, not just modifiers", action.label()));
+            return Err(format!("{name}: add a key, not just modifiers"));
         }
-        let modified = b.ctrl || b.alt || b.meta;
-        if types_text(&b.code) && !modified {
+        if !registrable(&b.code) || (b.code == "Pause" && b.ctrl) {
             return Err(format!(
-                "{}: {} on its own would stop that key typing in other apps; add Ctrl or Alt",
-                action.label(),
-                label(b)
+                "{name}: {key} can't be used as a global key; try another"
             ));
         }
-    }
-    for (i, (_, b)) in bound.iter().enumerate() {
-        if let Some((other, _)) = bound[..i].iter().find(|(_, o)| o == b) {
+        if b.meta {
             return Err(format!(
-                "{} is already used for {}",
-                label(b),
-                other.label().to_lowercase()
+                "{name}: Windows keeps most Win-key shortcuts for itself; use Ctrl, Alt or Shift"
+            ));
+        }
+        if types_text(&b.code) || everyday(&b.code) {
+            if !(b.ctrl || b.alt) {
+                return Err(format!(
+                    "{name}: {key} would stop working in every other app; add Ctrl or Alt"
+                ));
+            }
+            // AltGr is Ctrl+Alt to Windows: AltGr+Q types @ on German keyboards
+            if b.ctrl && b.alt && !b.shift && types_text(&b.code) {
+                return Err(format!(
+                    "{name}: Ctrl+Alt is AltGr on many keyboards (AltGr+Q types @); add Shift"
+                ));
+            }
+            // Ctrl+C, Ctrl+V, Ctrl+1…: shortcuts every app uses
+            if b.ctrl && !b.alt && !b.shift && types_text(&b.code) {
+                return Err(format!(
+                    "{name}: {key} is a shortcut other apps use; add Shift or Alt"
+                ));
+            }
+        }
+    }
+    for (i, (a, x)) in bound.iter().enumerate() {
+        if let Some((b, _)) = bound[i + 1..].iter().find(|(_, y)| y == x) {
+            return Err(format!(
+                "{} can't be both {} and {}",
+                label(x),
+                a.label().to_lowercase(),
+                b.label().to_lowercase()
             ));
         }
     }
@@ -168,23 +276,36 @@ const FILE: &str = "keybinds.json";
 
 /// The profile's binds; the defaults if none are saved yet (or the file is unreadable).
 pub fn load(dir: &Path) -> Keybinds {
-    std::fs::read_to_string(dir.join(FILE))
-        .ok()
-        .and_then(|s| serde_json::from_str::<Keybinds>(&s).ok())
-        .filter(|k| validate(k).is_ok())
-        .unwrap_or_default()
+    let Ok(text) = std::fs::read_to_string(dir.join(FILE)) else {
+        return Keybinds::default();
+    };
+    match serde_json::from_str::<Keybinds>(&text)
+        .map_err(|e| e.to_string())
+        .and_then(|k| validate(&k).map(|_| k))
+    {
+        Ok(k) => k,
+        Err(e) => {
+            tracing::warn!(error = %e, "keybinds file unusable; using the defaults");
+            Keybinds::default()
+        }
+    }
 }
 
 pub fn save(dir: &Path, binds: &Keybinds) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let json = serde_json::to_string_pretty(binds).map_err(std::io::Error::other)?;
-    std::fs::write(dir.join(FILE), json)
+    // write then rename: a crash mid-write can't leave a half file (which would reset the binds)
+    let tmp = dir.join(format!("{FILE}.tmp"));
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(tmp, dir.join(FILE))
 }
 
 /// The profile's binds, as the app is using them.
 pub struct Store {
     dir: std::path::PathBuf,
     binds: std::sync::Mutex<Keybinds>,
+    /// Binds that couldn't be registered (another app owns them), from the last apply.
+    problems: std::sync::Mutex<Vec<String>>,
 }
 
 impl Store {
@@ -192,6 +313,24 @@ impl Store {
         Self {
             dir: dir.to_path_buf(),
             binds: std::sync::Mutex::new(load(dir)),
+            problems: Default::default(),
+        }
+    }
+
+    pub fn set_problems(&self, problems: Vec<String>) {
+        *self.problems.lock().unwrap_or_else(|e| e.into_inner()) = problems;
+    }
+
+    /// What the settings pane shows: the binds, what's wrong with them, and the defaults.
+    pub fn applied(&self) -> Applied {
+        Applied {
+            binds: self.get(),
+            problems: self
+                .problems
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .clone(),
+            defaults: Keybinds::default(),
         }
     }
 
@@ -205,11 +344,12 @@ impl Store {
 pub struct Applied {
     pub binds: Keybinds,
     pub problems: Vec<String>,
+    pub defaults: Keybinds,
 }
 
 #[tauri::command]
-pub fn get_keybinds(store: tauri::State<'_, Store>) -> Keybinds {
-    store.get()
+pub fn get_keybinds(store: tauri::State<'_, Store>) -> Applied {
+    store.applied()
 }
 
 /// Validate, save and register `binds`. An invalid set is refused (nothing changes); a bind
@@ -225,26 +365,37 @@ pub fn set_keybinds(
     *store.binds.lock().unwrap_or_else(|e| e.into_inner()) = binds.clone();
     let problems = crate::hotkeys::apply(&app, &binds);
     tracing::info!(?problems, "keybinds changed");
-    Ok(Applied { binds, problems })
+    store.set_problems(problems);
+    Ok(store.applied())
 }
 
 /// Recording a bind: release the global hotkeys meanwhile (Windows would swallow the keypress).
 #[tauri::command]
 pub fn pause_keybinds(app: tauri::AppHandle, paused: bool) {
-    crate::hotkeys::pause(&app, paused);
+    for problem in crate::hotkeys::pause(&app, paused) {
+        tracing::warn!(%problem, "hotkey");
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn bind(code: &str, ctrl: bool, shift: bool) -> Option<Bind> {
-        Some(Bind {
+    /// `mods`: c = Ctrl, s = Shift, a = Alt, w = Win.
+    fn b(code: &str, mods: &str) -> Bind {
+        Bind {
             code: code.into(),
-            ctrl,
-            shift,
-            alt: false,
-            meta: false,
+            ctrl: mods.contains('c'),
+            shift: mods.contains('s'),
+            alt: mods.contains('a'),
+            meta: mods.contains('w'),
+        }
+    }
+
+    fn check(bind: Bind) -> Result<(), String> {
+        validate(&Keybinds {
+            toggle_mute: Some(bind),
+            toggle_deafen: None,
         })
     }
 
@@ -257,44 +408,130 @@ mod tests {
     }
 
     #[test]
-    fn function_keys_may_stand_alone_but_typing_keys_may_not() {
-        let k = Keybinds {
-            toggle_mute: bind("F13", false, false),
-            toggle_deafen: bind("Pause", false, false),
-        };
-        assert!(validate(&k).is_ok());
-        let k = Keybinds {
-            toggle_mute: bind("KeyM", false, false),
-            toggle_deafen: None,
-        };
-        let e = validate(&k).unwrap_err();
-        assert!(e.contains("Toggle mute") && e.contains("M"), "{e}");
-        // Shift alone still types (a capital): not enough
-        let k = Keybinds {
-            toggle_mute: bind("KeyM", false, true),
-            toggle_deafen: None,
-        };
-        assert!(validate(&k).is_err());
+    fn keys_that_dont_type_may_stand_alone() {
+        for code in ["F13", "F1", "Pause", "MediaPlayPause", "AudioVolumeMute"] {
+            assert!(check(b(code, "")).is_ok(), "{code}");
+        }
+    }
+
+    /// A global hotkey takes its key away from every app: anything that types or moves the
+    /// cursor needs a modifier (NumpadEnter is Enter to Windows; the numpad types digits).
+    #[test]
+    fn keys_that_type_or_navigate_need_a_modifier() {
+        for code in [
+            "KeyM",
+            "Digit1",
+            "Space",
+            "Enter",
+            "NumpadEnter",
+            "Numpad5",
+            "NumpadAdd",
+            "ArrowUp",
+            "Home",
+            "Delete",
+            "Insert",
+            "Backquote",
+            "Escape",
+            "CapsLock",
+        ] {
+            let e = check(b(code, "")).unwrap_err();
+            assert!(
+                e.contains("Toggle mute") && e.contains("add"),
+                "{code}: {e}"
+            );
+        }
+        assert!(
+            check(b("KeyM", "s")).is_err(),
+            "Shift+M still types a capital"
+        );
+        assert!(check(b("Numpad5", "a")).is_ok());
+    }
+
+    #[test]
+    fn ctrl_letter_alone_is_refused_but_with_shift_is_fine() {
+        // Ctrl+C / Ctrl+V… would stop working in every app
+        assert!(check(b("KeyC", "c")).is_err());
+        assert!(check(b("KeyC", "cs")).is_ok());
+        assert!(check(b("KeyM", "a")).is_ok(), "Alt+M");
+    }
+
+    /// AltGr is Ctrl+Alt to Windows: AltGr+Q types @ on German layouts.
+    #[test]
+    fn ctrl_alt_with_a_typing_key_is_refused() {
+        let e = check(b("KeyQ", "ca")).unwrap_err();
+        assert!(e.contains("AltGr"), "{e}");
+        assert!(
+            check(b("KeyQ", "cas")).is_ok(),
+            "Ctrl+Alt+Shift+Q types nothing"
+        );
+    }
+
+    #[test]
+    fn the_windows_key_is_refused() {
+        assert!(check(b("KeyM", "w")).unwrap_err().contains("Windows"));
+        assert!(check(b("KeyM", "cw")).is_err());
+    }
+
+    /// Keys Windows hotkeys can't register (or that act as another key) are refused up front,
+    /// not saved and then reported as "taken" on every launch.
+    #[test]
+    fn keys_windows_hotkeys_cant_use_are_refused() {
+        for code in [
+            "IntlBackslash",
+            "IntlRo",
+            "ContextMenu",
+            "BrowserBack",
+            "F25",
+            "NumpadEqual",
+            "MediaPause",
+        ] {
+            let e = check(b(code, "c")).unwrap_err();
+            assert!(e.contains("can't be used"), "{code}: {e}");
+        }
+        assert!(
+            check(b("Pause", "c")).is_err(),
+            "Ctrl+Pause is a different key (Break) to Windows"
+        );
     }
 
     #[test]
     fn a_bind_needs_a_real_key() {
-        let k = Keybinds {
-            toggle_mute: bind("ControlLeft", true, false),
-            toggle_deafen: None,
-        };
-        assert!(validate(&k).unwrap_err().contains("not just modifiers"));
+        assert!(
+            check(b("ControlLeft", "c"))
+                .unwrap_err()
+                .contains("not just modifiers")
+        );
     }
 
     #[test]
     fn two_actions_cant_share_a_bind() {
+        // whichever was changed, the message names both
         let k = Keybinds {
-            toggle_mute: bind("KeyM", true, true),
-            toggle_deafen: bind("KeyM", true, true),
+            toggle_mute: Some(b("KeyD", "cs")),
+            toggle_deafen: Some(b("KeyD", "cs")),
         };
         assert_eq!(
             validate(&k).unwrap_err(),
-            "Ctrl+Shift+M is already used for toggle mute"
+            "Ctrl+Shift+D can't be both toggle mute and toggle deafen"
+        );
+    }
+
+    /// Teams owns Ctrl+Shift+M: the settings pane must say so after a restart too, not show the
+    /// bind as if it worked.
+    #[test]
+    fn registration_problems_are_kept_for_the_settings_pane() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::load(dir.path());
+        store.set_problems(vec![
+            "Toggle mute: Ctrl+Shift+M is taken by another app".into(),
+        ]);
+        let shown = store.applied();
+        assert_eq!(shown.problems.len(), 1);
+        assert_eq!(shown.binds, Keybinds::default());
+        assert_eq!(
+            shown.defaults,
+            Keybinds::default(),
+            "Reset uses the core's defaults"
         );
     }
 
@@ -313,7 +550,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         assert_eq!(load(dir.path()), Keybinds::default(), "nothing saved yet");
         let mine = Keybinds {
-            toggle_mute: bind("F13", false, false),
+            toggle_mute: Some(b("F13", "")),
             toggle_deafen: None,
         };
         save(dir.path(), &mine).unwrap();
@@ -321,5 +558,15 @@ mod tests {
         // a broken file falls back to the defaults instead of leaving nothing bound
         std::fs::write(dir.path().join(FILE), "{nope").unwrap();
         assert_eq!(load(dir.path()), Keybinds::default());
+        // so does one that parses but can't be used
+        std::fs::write(
+            dir.path().join(FILE),
+            r#"{"toggle_mute":{"code":"KeyM"},"toggle_deafen":null}"#,
+        )
+        .unwrap();
+        assert_eq!(load(dir.path()), Keybinds::default());
+        // a missing action reads as unbound (an older file)
+        std::fs::write(dir.path().join(FILE), r#"{"toggle_mute":{"code":"F13"}}"#).unwrap();
+        assert_eq!(load(dir.path()).toggle_deafen, None);
     }
 }

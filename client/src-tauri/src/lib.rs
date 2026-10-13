@@ -102,7 +102,7 @@ pub fn run() {
                 });
             }
             let binds = keybinds::Store::load(&dir);
-            hotkeys::install(app, &binds.get())?;
+            binds.set_problems(hotkeys::install(app, &binds.get())?);
             app.manage(binds);
             let handle = app.handle().clone();
             app.manage(voice::VoiceManager::new(std::sync::Arc::new(

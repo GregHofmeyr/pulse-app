@@ -4,12 +4,9 @@
   import { actions, bindLabel, fromKeyEvent, keybindsApi, type Action, type Keybinds } from '../lib/keybinds'
 
   const linux = navigator.userAgent.includes('Linux')
-  const defaults: Keybinds = {
-    toggle_mute: { code: 'KeyM', ctrl: true, shift: true, alt: false, meta: false },
-    toggle_deafen: { code: 'KeyD', ctrl: true, shift: true, alt: false, meta: false },
-  }
 
   let binds = $state<Keybinds | null>(null)
+  let defaults = $state<Keybinds | null>(null)
   let recording = $state<Action | null>(null)
   let held = $state('')
   let error = $state('')
@@ -17,7 +14,10 @@
 
   onMount(async () => {
     try {
-      binds = await keybindsApi.get()
+      const r = await keybindsApi.get()
+      binds = r.binds
+      defaults = r.defaults
+      problems = r.problems
     } catch (e) {
       error = typeof e === 'string' ? e : "Couldn't load keybinds"
     }
@@ -55,9 +55,12 @@
     e.stopPropagation()
     const r = fromKeyEvent(e)
     if (r.kind === 'held') return void (held = r.label)
+    // stop first: a second keydown (or auto-repeat) during the save mustn't save again
     const action = recording
+    recording = null
+    held = ''
     if (r.kind === 'bind') await save({ ...binds, [action]: r.bind })
-    await stop()
+    await keybindsApi.pause(false).catch(() => {})
   }
 
   onDestroy(() => {
@@ -65,7 +68,8 @@
   })
 </script>
 
-<svelte:window onkeydowncapture={onKey} />
+<!-- leaving the window mid-recording ends it, or the hotkeys would stay released -->
+<svelte:window onkeydowncapture={onKey} onblur={() => recording && stop()} />
 
 <section class="pane">
   <h2>Keybinds</h2>
@@ -94,7 +98,7 @@
     {#if recording}<small>Press the combination. Esc cancels.</small>{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     {#each problems as p}<p class="warn" role="status">{p}</p>{/each}
-    <div><button class="reset" disabled={!!recording} onclick={() => save(defaults)}>Reset to defaults</button></div>
+    <div><button class="reset" disabled={!!recording || !defaults} onclick={() => defaults && save(defaults)}>Reset to defaults</button></div>
   {/if}
 </section>
 
