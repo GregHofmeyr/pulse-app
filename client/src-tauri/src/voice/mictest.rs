@@ -74,6 +74,7 @@ impl MicTest {
             }
         });
         let queue = self.queue.clone();
+        queue.record(0); // this run's worst starts from nothing, not the last run's queue
         queue.take_worst();
         let levels = tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_millis(100));

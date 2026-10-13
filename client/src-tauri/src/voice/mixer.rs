@@ -30,8 +30,16 @@ pub fn soft_limit(x: f32) -> f32 {
     y.min(1.0).copysign(x)
 }
 
+/// A peer's queue that never drops below this for a whole second is standing delay (pushes and
+/// pulls run at the same rate, so a backlog never drains by itself): the excess is dropped.
+const TARGET_MS: usize = 40;
+
 pub struct Mixer {
     cap: usize,
+    target: usize,
+    /// Samples pulled since the last backlog check (one check per second of playback).
+    pulled: usize,
+    rate: usize,
     peers: HashMap<String, Peer>,
     /// Total samples ever pushed (diagnostics: intake must track real time, see FINDINGS).
     pushed: u64,
@@ -39,6 +47,8 @@ pub struct Mixer {
 
 struct Peer {
     queue: VecDeque<i16>,
+    /// Shortest the queue has been (right after a pull) since the last backlog check.
+    low: usize,
     gain: f32,
     /// Level of what we received (drives the speaking ring: lit = audible).
     meter: super::meter::Meter,
@@ -48,6 +58,9 @@ impl Mixer {
     pub fn new(sample_rate: u32, cap_ms: u32) -> Self {
         Self {
             cap: (sample_rate as usize * cap_ms as usize / 1000).max(1),
+            target: sample_rate as usize * TARGET_MS / 1000,
+            pulled: 0,
+            rate: sample_rate as usize,
             peers: HashMap::new(),
             pushed: 0,
         }
@@ -56,6 +69,7 @@ impl Mixer {
     fn peer(&mut self, id: &str) -> &mut Peer {
         self.peers.entry(id.to_string()).or_insert_with(|| Peer {
             queue: VecDeque::new(),
+            low: usize::MAX,
             gain: 1.0,
             meter: Default::default(),
         })
@@ -121,12 +135,55 @@ impl Mixer {
             }
             frame.fill(soft_limit(acc * master));
         }
+        for p in self.peers.values_mut() {
+            p.low = p.low.min(p.queue.len());
+        }
+        self.pulled += out.len() / channels.max(1);
+        if self.pulled >= self.rate {
+            self.pulled = 0;
+            for p in self.peers.values_mut() {
+                if p.low != usize::MAX && p.low > self.target {
+                    p.queue.drain(..p.low - self.target);
+                }
+                p.low = usize::MAX;
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Push and pull at the same rate, as a call does once running.
+    fn steady(m: &mut Mixer, ms: usize) {
+        let mut out = vec![0.0; 480];
+        for _ in 0..ms / 10 {
+            m.push("a", &[100; 480]);
+            m.mix_into(&mut out, 1, 1.0);
+        }
+    }
+
+    #[test]
+    fn a_standing_backlog_drains_to_the_target() {
+        // e.g. the output was reopened while audio kept arriving: the queue sits at the cap
+        let mut m = Mixer::new(48_000, 200);
+        m.push("a", &[100; 9600]);
+        steady(&mut m, 2500);
+        assert!(
+            m.buffered("a") <= 40 * 48 + 480,
+            "{} queued",
+            m.buffered("a")
+        );
+    }
+
+    #[test]
+    fn a_short_queue_is_left_alone() {
+        let mut m = Mixer::new(48_000, 200);
+        m.push("a", &[100; 960]); // 20 ms: within the target, nothing to drop
+        steady(&mut m, 3000);
+        assert_eq!(m.buffered("a"), 960);
+    }
 
     #[test]
     fn gain_curve_anchors_and_monotonic() {
