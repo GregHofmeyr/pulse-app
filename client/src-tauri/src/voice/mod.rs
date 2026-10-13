@@ -62,6 +62,8 @@ pub enum VoiceError {
     Timeout(&'static str),
 }
 
+/// How often (in 100 ms ticks) to check whether the system's default device changed.
+const DEFAULT_CHECK_TICKS: u32 = 20;
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
@@ -77,6 +79,26 @@ async fn start_audio(
         .await
         .map_err(|e| VoiceError::Device(e.to_string()))?
         .map_err(|e| VoiceError::Device(e.to_string()))
+}
+
+/// Stop the current streams and open the configured devices again (stays in the room).
+async fn reopen_devices(
+    cfg: &Mutex<AudioConfig>,
+    io: &Mutex<Option<AudioIo>>,
+    shared: &Arc<Shared>,
+    raw_tx: &processor::RawTx,
+    alive: &AtomicBool,
+) {
+    let cfg = cfg.lock().unwrap().clone();
+    io.lock().unwrap().take(); // stop the old streams (lock released right away)
+    match start_audio(&cfg, shared.clone(), raw_tx.clone()).await {
+        Ok(new_io) if alive.load(Ordering::SeqCst) => {
+            tracing::info!("voice: devices reopened");
+            *io.lock().unwrap() = Some(new_io);
+        }
+        Ok(_) => {} // session ended meanwhile
+        Err(e) => tracing::error!(error = %e, "voice: reopening devices failed"),
+    }
 }
 
 impl Serialize for VoiceError {
@@ -477,19 +499,37 @@ impl VoiceManager {
                         }
                         Some(devices::StallAction::Reopen) => {
                             tracing::warn!("audio device stalled; reopening");
-                            let cfg = cfg.lock().unwrap().clone();
-                            io.lock().unwrap().take(); // stop the old streams (lock released right away)
-                            match start_audio(&cfg, shared.clone(), raw_tx.clone()).await {
-                                Ok(new_io) if alive.load(Ordering::SeqCst) => {
-                                    tracing::info!("voice: devices reopened");
-                                    *io.lock().unwrap() = Some(new_io);
-                                }
-                                Ok(_) => {} // session ended meanwhile
-                                Err(e) => {
-                                    tracing::error!(error = %e, "voice: reopening devices failed")
-                                }
-                            }
+                            reopen_devices(&cfg, &io, &shared, &raw_tx, &alive).await;
+                            continue;
                         }
+                    }
+                    if n.is_multiple_of(DEFAULT_CHECK_TICKS) {
+                        let opened = io.lock().unwrap().as_ref().map(|io| io.opened().clone());
+                        let Some(opened) = opened else { continue };
+                        let current = cfg.lock().unwrap().clone();
+                        let fallback = devices::on_fallback(&current, &opened);
+                        let Ok((defaults, available)) = tokio::task::spawn_blocking(move || {
+                            let available = fallback.then(devices::device_names);
+                            (devices::default_device_names(), available)
+                        })
+                        .await
+                        else {
+                            continue;
+                        };
+                        let back = available.is_some_and(|(ins, outs)| {
+                            devices::wanted_back(&current, &opened, &ins, &outs)
+                        });
+                        if back {
+                            tracing::info!("voice: chosen device is back; switching to it");
+                        } else if devices::default_moved(&current, &opened, defaults.clone()) {
+                            tracing::info!(
+                                input = ?defaults.0, output = ?defaults.1,
+                                "voice: system default device changed; switching"
+                            );
+                        } else {
+                            continue;
+                        }
+                        reopen_devices(&cfg, &io, &shared, &raw_tx, &alive).await;
                     }
                 }
             }));

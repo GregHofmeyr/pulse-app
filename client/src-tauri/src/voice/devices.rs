@@ -472,6 +472,68 @@ pub struct AudioIo {
     input_rate: u32,
     output_rate: u32,
     null: Option<tokio::task::JoinHandle<()>>,
+    opened: OpenedDevices,
+}
+
+/// The devices actually opened (names as the system reports them).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OpenedDevices {
+    pub input: String,
+    pub output: String,
+}
+
+/// Where the user chose "default", follow the system: when Windows' default device changes
+/// (headset plugged in, switched in Sonar), the streams must move with it, like Discord does.
+pub fn default_moved(
+    cfg: &AudioConfig,
+    opened: &OpenedDevices,
+    defaults: (Option<String>, Option<String>),
+) -> bool {
+    let moved = |chosen: &Option<String>, now: Option<String>, open: &str| {
+        chosen.is_none() && now.is_some_and(|n| n != open)
+    };
+    moved(&cfg.input, defaults.0, &opened.input) || moved(&cfg.output, defaults.1, &opened.output)
+}
+
+/// A device the user picked was missing at the last open (we fell back to the default) and is
+/// available again: switch back to it.
+pub fn wanted_back(
+    cfg: &AudioConfig,
+    opened: &OpenedDevices,
+    inputs: &[String],
+    outputs: &[String],
+) -> bool {
+    let back = |chosen: &Option<String>, open: &str, available: &[String]| {
+        chosen
+            .as_deref()
+            .is_some_and(|c| c != open && available.iter().any(|a| a == c))
+    };
+    back(&cfg.input, &opened.input, inputs) || back(&cfg.output, &opened.output, outputs)
+}
+
+/// Whether a chosen device is not the one open (only then is enumerating worth it).
+pub fn on_fallback(cfg: &AudioConfig, opened: &OpenedDevices) -> bool {
+    cfg.input.as_deref().is_some_and(|c| c != opened.input)
+        || cfg.output.as_deref().is_some_and(|c| c != opened.output)
+}
+
+/// Names of all input and output devices (blocking: device enumeration).
+pub fn device_names() -> (Vec<String>, Vec<String>) {
+    fn names(devs: Result<impl Iterator<Item = cpal::Device>, cpal::DevicesError>) -> Vec<String> {
+        devs.map(|d| d.filter_map(|d| d.name().ok()).collect())
+            .unwrap_or_default()
+    }
+    let host = cpal::default_host();
+    (names(host.input_devices()), names(host.output_devices()))
+}
+
+/// The system's current default devices' names (blocking: device enumeration).
+pub fn default_device_names() -> (Option<String>, Option<String>) {
+    let host = cpal::default_host();
+    (
+        host.default_input_device().and_then(|d| d.name().ok()),
+        host.default_output_device().and_then(|d| d.name().ok()),
+    )
 }
 
 impl Drop for AudioIo {
@@ -528,13 +590,14 @@ fn find_device(input: bool, name: Option<&str>) -> anyhow::Result<cpal::Device> 
 
 impl AudioIo {
     pub fn start(cfg: &AudioConfig, shared: Arc<Shared>, raw_tx: RawTx) -> anyhow::Result<Self> {
-        let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<(u32, u32)>>();
+        let (ready_tx, ready_rx) =
+            std::sync::mpsc::channel::<anyhow::Result<(u32, u32, OpenedDevices)>>();
         let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
         let cfg = cfg.clone();
         std::thread::Builder::new()
             .name("pulse-audio".into())
             .spawn(move || {
-                let built = (|| -> anyhow::Result<(cpal::Stream, cpal::Stream, u32, u32)> {
+                let built = (|| -> anyhow::Result<(cpal::Stream, cpal::Stream, u32, u32, OpenedDevices)> {
                     let input = find_device(true, cfg.input.as_deref())?;
                     let output = find_device(false, cfg.output.as_deref())?;
                     let in_cfg = prefer_internal_rate(
@@ -643,11 +706,15 @@ impl AudioIo {
                     output = %output.name().unwrap_or_default(), out_rate, out_ch, out_fmt = ?out_cfg.sample_format(),
                     "audio devices opened"
                 );
-                Ok((in_stream, out_stream, in_rate, out_rate))
+                let opened = OpenedDevices {
+                    input: input.name().unwrap_or_default(),
+                    output: output.name().unwrap_or_default(),
+                };
+                Ok((in_stream, out_stream, in_rate, out_rate, opened))
                 })();
                 match built {
-                    Ok((_in, _out, ir, or)) => {
-                        let _ = ready_tx.send(Ok((ir, or)));
+                    Ok((_in, _out, ir, or, opened)) => {
+                        let _ = ready_tx.send(Ok((ir, or, opened)));
                         let _ = stop_rx.recv(); // park until told to stop (or the handle is dropped)
                     }
                     Err(e) => {
@@ -656,7 +723,8 @@ impl AudioIo {
                 }
             })?;
         // A flapping Bluetooth device can block cpal for a long time: give up rather than hang the call.
-        let (input_rate, output_rate) = match ready_rx.recv_timeout(Duration::from_secs(5)) {
+        let (input_rate, output_rate, opened) = match ready_rx.recv_timeout(Duration::from_secs(5))
+        {
             Ok(r) => r?,
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 let _ = stop_tx.send(()); // if it ever finishes opening, close straight away
@@ -669,6 +737,7 @@ impl AudioIo {
             input_rate,
             output_rate,
             null: None,
+            opened,
         })
     }
 
@@ -692,7 +761,12 @@ impl AudioIo {
             input_rate: rate,
             output_rate: rate,
             null: Some(h),
+            opened: OpenedDevices::default(),
         }
+    }
+
+    pub fn opened(&self) -> &OpenedDevices {
+        &self.opened
     }
 
     pub fn input_rate(&self) -> u32 {
@@ -834,6 +908,78 @@ mod tests {
     }
 
     use std::time::{Duration, Instant};
+
+    fn opened(i: &str, o: &str) -> OpenedDevices {
+        OpenedDevices {
+            input: i.into(),
+            output: o.into(),
+        }
+    }
+
+    #[test]
+    fn follows_the_system_default_only_where_no_device_was_chosen() {
+        let on_default = AudioConfig::default();
+        let now = opened("Sonar Mic", "Sonar Chat");
+        // Windows' default moved to the Arctis: switch
+        assert!(default_moved(
+            &on_default,
+            &now,
+            (Some("Sonar Mic".into()), Some("Arctis".into()))
+        ));
+        assert!(default_moved(
+            &on_default,
+            &now,
+            (Some("Arctis Mic".into()), Some("Sonar Chat".into()))
+        ));
+        // unchanged, or nothing to switch to: stay
+        assert!(!default_moved(
+            &on_default,
+            &now,
+            (Some("Sonar Mic".into()), Some("Sonar Chat".into()))
+        ));
+        assert!(!default_moved(&on_default, &now, (None, None)));
+        // a device the user picked stays picked, wherever the default goes
+        let picked = AudioConfig {
+            input: Some("Sonar Mic".into()),
+            output: Some("Sonar Chat".into()),
+            ..Default::default()
+        };
+        assert!(!default_moved(
+            &picked,
+            &now,
+            (Some("Arctis Mic".into()), Some("Arctis".into()))
+        ));
+    }
+
+    #[test]
+    fn a_chosen_device_is_taken_back_when_it_returns() {
+        let picked = AudioConfig {
+            output: Some("Arctis".into()),
+            ..Default::default()
+        };
+        // the Arctis was unplugged, so we fell back to the speakers
+        let fallen_back = opened("Mic", "Speakers");
+        assert!(wanted_back(
+            &picked,
+            &fallen_back,
+            &[],
+            &["Speakers".into(), "Arctis".into()]
+        ));
+        assert!(
+            !wanted_back(&picked, &fallen_back, &[], &["Speakers".into()]),
+            "still gone"
+        );
+        assert!(
+            !wanted_back(&picked, &opened("Mic", "Arctis"), &[], &["Arctis".into()]),
+            "already on it"
+        );
+        assert!(!wanted_back(
+            &AudioConfig::default(),
+            &fallen_back,
+            &["Arctis".into()],
+            &["Arctis".into()]
+        ));
+    }
 
     #[test]
     fn stalled_after_2s_without_callbacks() {
