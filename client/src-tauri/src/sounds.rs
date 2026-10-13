@@ -77,6 +77,39 @@ pub fn load(name: &str) -> Option<Sound> {
 
 const VOLUME: f32 = 0.6;
 
+/// The last device looked up by name: finding one by name enumerates every device (~20 ms on
+/// ALSA), per sound. The system default isn't cached: it can change under us.
+pub struct NameCache<D>(std::sync::Mutex<Option<(String, D)>>);
+
+impl<D> Default for NameCache<D> {
+    fn default() -> Self {
+        Self(std::sync::Mutex::new(None))
+    }
+}
+
+impl<D: Clone> NameCache<D> {
+    pub fn get(&self, name: Option<&str>, find: impl Fn(Option<&str>) -> Option<D>) -> Option<D> {
+        let Some(name) = name else { return find(None) };
+        let mut c = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((n, d)) = c.as_ref()
+            && n == name
+        {
+            return Some(d.clone());
+        }
+        let d = find(Some(name))?;
+        *c = Some((name.to_string(), d.clone()));
+        Some(d)
+    }
+
+    /// The cached device failed (unplugged): look it up again next time.
+    pub fn forget(&self) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
+static DEVICES: std::sync::LazyLock<NameCache<cpal::Device>> =
+    std::sync::LazyLock::new(NameCache::default);
+
 /// Fire-and-forget on a short-lived thread (cpal streams are !Send). Failures are silent: sounds are a nicety.
 /// On `output` (a device name from settings; missing or unplugged = the system default).
 pub fn play(name: &str, output: Option<String>) {
@@ -84,10 +117,22 @@ pub fn play(name: &str, output: Option<String>) {
     let _ = std::thread::Builder::new()
         .name("pulse-sound".into())
         .spawn(move || {
-            let Ok(dev) = crate::voice::devices::find_device(false, output.as_deref()) else {
+            use crate::voice::devices::find_device;
+            // cache only the device actually asked for: a missing one falls back to the default
+            // (uncached), so it's picked up again once it's back
+            let exact = |n: Option<&str>| {
+                find_device(false, n)
+                    .ok()
+                    .filter(|d| n.is_none() || d.name().ok().as_deref() == n)
+            };
+            let Some(dev) = DEVICES
+                .get(output.as_deref(), exact)
+                .or_else(|| find_device(false, None).ok())
+            else {
                 return;
             };
             let Ok(cfg) = dev.default_output_config() else {
+                DEVICES.forget();
                 return;
             };
             let (rate, ch) = (cfg.sample_rate().0, cfg.channels() as usize);
@@ -111,7 +156,10 @@ pub fn play(name: &str, output: Option<String>) {
                     f.fill(next().unwrap_or(0.0));
                 }
             });
-            let Ok(stream) = stream else { return };
+            let Ok(stream) = stream else {
+                DEVICES.forget();
+                return;
+            };
             if stream.play().is_ok() {
                 // sound length + a little tail for the device buffer
                 std::thread::sleep(std::time::Duration::from_millis(
@@ -124,6 +172,31 @@ pub fn play(name: &str, output: Option<String>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_named_device_is_looked_up_once_until_forgotten() {
+        let c: NameCache<u32> = NameCache::default();
+        let lookups = std::cell::Cell::new(0);
+        let find = |_: Option<&str>| {
+            lookups.set(lookups.get() + 1);
+            Some(7)
+        };
+        assert_eq!(c.get(Some("Arctis"), find), Some(7));
+        assert_eq!(c.get(Some("Arctis"), find), Some(7));
+        assert_eq!(lookups.get(), 1, "cached");
+        assert_eq!(c.get(Some("Speakers"), find), Some(7));
+        assert_eq!(lookups.get(), 2, "another device: looked up");
+        c.forget();
+        c.get(Some("Speakers"), find);
+        assert_eq!(
+            lookups.get(),
+            3,
+            "forgotten after a failure: looked up again"
+        );
+        c.get(None, find);
+        c.get(None, find);
+        assert_eq!(lookups.get(), 5, "the default can move: never cached");
+    }
 
     #[test]
     fn every_bundled_sound_decodes() {

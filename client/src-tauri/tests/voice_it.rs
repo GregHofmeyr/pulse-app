@@ -314,3 +314,20 @@ async fn real_devices_are_not_reopened_without_a_reason() {
     vm.leave().await;
     assert_eq!(n, 0, "reopened {n} times with nothing changed");
 }
+
+/// Probe: what looking up a device by name costs on this machine (UI sounds do it per sound).
+#[test]
+#[ignore]
+fn device_lookup_cost() {
+    use pulse_client::voice::devices::{device_names, find_device};
+    let (_, outs) = device_names();
+    let name = outs.last().cloned();
+    for _ in 0..3 {
+        let t = std::time::Instant::now();
+        let _ = find_device(false, name.as_deref());
+        println!("find_device({name:?}): {:?}", t.elapsed());
+    }
+    let t = std::time::Instant::now();
+    let _ = find_device(false, None);
+    println!("find_device(default): {:?}", t.elapsed());
+}
