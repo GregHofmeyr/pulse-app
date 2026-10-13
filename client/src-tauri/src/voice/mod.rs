@@ -104,21 +104,23 @@ impl Reopener {
     /// won't open should say so).
     async fn reopen(&self, sides: Sides) -> Result<(), VoiceError> {
         let _turn = self.one_at_a_time.lock().await;
+        if !self.alive.load(Ordering::SeqCst) {
+            return Ok(()); // left (or LiveKit dropped us) while waiting: nothing to open for
+        }
         self.count.fetch_add(1, Ordering::Relaxed);
         let cfg = self.cfg.lock().unwrap().clone();
         let current = self.io.lock().unwrap().take();
-        let (shared, raw_tx) = (self.shared.clone(), self.raw_tx.clone());
+        let (shared, raw_tx, alive) =
+            (self.shared.clone(), self.raw_tx.clone(), self.alive.clone());
         // opening blocks (cpal, a flapping Bluetooth device): never on an async worker
-        let reopened = tokio::task::spawn_blocking(move || match current {
-            Some(mut io) => {
-                let r = io.reopen(&cfg, sides);
-                (Some(io), r)
-            }
-            // nothing open (an earlier open failed outright): start both sides afresh
-            None => match AudioIo::start(&cfg, shared, raw_tx) {
-                Ok(io) => (Some(io), Ok(())),
-                Err(e) => (None, Err(e)),
-            },
+        let reopened = tokio::task::spawn_blocking(move || {
+            // nothing open (an earlier open failed outright): open both sides, keeping whichever works
+            let (mut io, sides) = match current {
+                Some(io) => (io, sides),
+                None => (AudioIo::empty(shared, raw_tx), Sides::BOTH),
+            };
+            let r = io.reopen(&cfg, sides, || alive.load(Ordering::SeqCst));
+            (Some(io), r)
         })
         .await;
         let (io, result) = match reopened {
@@ -701,6 +703,8 @@ impl VoiceManager {
         let s = self.session.lock().await.take();
         if let Some(s) = s {
             tracing::info!("voice: leaving");
+            // first: a reopen in flight must not open devices for a session that's gone
+            s.alive.store(false, Ordering::SeqCst);
             if tokio::time::timeout(CLOSE_TIMEOUT, s.room.close())
                 .await
                 .is_err()
@@ -803,8 +807,12 @@ impl VoiceManager {
         s.shared.apply_config(&cfg);
         *s.cfg.lock().unwrap() = cfg.clone();
         if changed.any() && s.real {
-            // Hot-swap the side that changed, stay in the room (rates may differ; the 48 kHz edge absorbs it).
-            s.reopener.reopen(changed).await?;
+            // Hot-swap the side that changed, stay in the room (rates may differ; the 48 kHz edge
+            // absorbs it). Not under the session lock: opening can take seconds, and Leave, mute
+            // and volume must not wait on it (the reopener takes turns and checks `alive`).
+            let reopener = s.reopener.clone();
+            drop(guard);
+            reopener.reopen(changed).await?;
         }
         Ok(())
     }

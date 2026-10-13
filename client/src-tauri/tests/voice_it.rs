@@ -351,6 +351,7 @@ async fn reopening_one_side_leaves_the_other_alone() {
             input: false,
             output: true,
         },
+        || true,
     )
     .unwrap();
     let (mic2, spk2) = io.generations();

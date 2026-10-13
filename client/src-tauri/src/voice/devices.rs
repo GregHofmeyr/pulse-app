@@ -935,13 +935,19 @@ impl AudioIo {
 
     /// Reopen just `sides` on the devices `cfg` names (blocking). A side that fails goes back to
     /// the device it had, so the call keeps working audio; the first error is still returned.
-    pub fn reopen(&mut self, cfg: &AudioConfig, sides: Sides) -> anyhow::Result<()> {
+    /// `keep_going` is asked before each side: the session may have ended meanwhile.
+    pub fn reopen(
+        &mut self,
+        cfg: &AudioConfig,
+        sides: Sides,
+        keep_going: impl Fn() -> bool,
+    ) -> anyhow::Result<()> {
         if self.null.is_some() {
             return Ok(());
         }
         let mut first_err = None;
         for (input, wanted) in [(true, sides.input), (false, sides.output)] {
-            if !wanted {
+            if !wanted || !keep_going() {
                 continue;
             }
             let slot = if input {
@@ -975,6 +981,17 @@ impl AudioIo {
             }
         }
         first_err.map_or(Ok(()), Err)
+    }
+
+    /// Nothing open yet (`reopen` fills in the sides).
+    pub fn empty(shared: Arc<Shared>, raw_tx: RawTx) -> Self {
+        Self {
+            input: None,
+            output: None,
+            null: None,
+            shared,
+            raw_tx,
+        }
     }
 
     /// Test/headless constructor: no devices. Pulls the mixer every 10 ms and sends 10 ms of silence.
