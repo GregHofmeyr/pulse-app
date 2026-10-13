@@ -27,8 +27,9 @@ pub enum ApiError {
 }
 
 impl ApiError {
-    /// The request certainly never reached Pulse (no connection, or the proxy found it down), so
-    /// sending it again can't do it twice.
+    /// The request (almost) certainly never reached Pulse: no connection, or the proxy found it
+    /// down (502/503; a proxy can also say 502 after a reset mid-response, so a duplicate is
+    /// possible but rare). Safe enough to send again.
     pub fn never_arrived(&self) -> bool {
         match self {
             Self::Network(t) => t == CONNECT_FAILED,
@@ -40,18 +41,18 @@ impl ApiError {
     /// Startup restores the last session; if its server doesn't answer, say which one (it may be
     /// an old dev server) rather than a bare network error.
     pub fn while_restoring(self, server: &str) -> Self {
-        match self {
-            Self::Network(_) | Self::Server(_) => {
-                let host = server
-                    .trim_start_matches("https://")
-                    .trim_start_matches("http://")
-                    .trim_end_matches('/');
-                Self::Rejected(format!(
-                    "Couldn't restore your last session on {host}: it didn't answer. Log in below, or restart Pulse to try again."
-                ))
-            }
-            other => other,
-        }
+        let host = server
+            .trim_start_matches("https://")
+            .trim_start_matches("http://")
+            .trim_end_matches('/');
+        let why = match self {
+            Self::Network(_) => "it didn't answer",
+            Self::Server(_) => "it's having trouble",
+            other => return other,
+        };
+        Self::Rejected(format!(
+            "Couldn't restore your last session on {host}: {why}. Log in below, or restart Pulse to try again."
+        ))
     }
 }
 
@@ -92,10 +93,11 @@ pub const CONNECT_FAILED: &str = "couldn't connect";
 
 /// A reqwest error in plain words, without the URL (its Display would include host + query).
 fn failure_text(e: reqwest::Error) -> String {
-    if e.is_timeout() {
-        "it took too long to answer".into()
-    } else if e.is_connect() {
+    // connect first: a connect timeout is both, and it certainly never arrived
+    if e.is_connect() {
         CONNECT_FAILED.into()
+    } else if e.is_timeout() {
+        "it took too long to answer".into()
     } else {
         e.without_url().to_string()
     }
@@ -580,6 +582,19 @@ mod tests {
             ApiError::RateLimited.while_restoring("https://pulsechat.co.za"),
             ApiError::RateLimited
         ));
+    }
+
+    /// A server that never answers the connection (dropped SYNs) times out while connecting:
+    /// that request certainly never arrived, so it must read (and retry) as a connect failure.
+    #[tokio::test]
+    async fn a_connect_timeout_is_a_connect_failure() {
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_millis(200))
+            .build()
+            .unwrap();
+        // TEST-NET-1: routable nowhere, so the connection hangs (or fails at once offline)
+        let e = client.get("http://192.0.2.1:9/").send().await.unwrap_err();
+        assert_eq!(failure_text(e), CONNECT_FAILED);
     }
 
     #[tokio::test]
