@@ -29,7 +29,7 @@ pub fn init(dir: &Path) -> anyhow::Result<WorkerGuard> {
 
     let marker_dir = dir.to_path_buf();
     std::panic::set_hook(Box::new(move |info| {
-        tracing::error!(panic = %info, "PANIC");
+        // marker first: it's what reports the crash, and logging could itself fail mid-panic
         let message = info
             .payload()
             .downcast_ref::<&str>()
@@ -41,6 +41,7 @@ pub fn init(dir: &Path) -> anyhow::Result<WorkerGuard> {
             .map(|l| format!("{}:{}", l.file(), l.line()))
             .unwrap_or_default();
         crate::reports::crash::write_panic_marker(&marker_dir, &message, &location);
+        tracing::error!(panic = %info, "PANIC");
     }));
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
