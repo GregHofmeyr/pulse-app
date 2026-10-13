@@ -137,7 +137,8 @@ async fn duplicate_username_409() {
 async fn bad_username_or_short_password_400() {
     let app = spawn().await;
     for (u, p) in [
-        ("A", "hunter2hunter2"),
+        ("a", "hunter2hunter2"),
+        ("émile", "hunter2hunter2"),
         ("Has Space", "hunter2hunter2"),
         ("alex", "short"),
     ] {
@@ -294,4 +295,40 @@ async fn invites_expire_after_24_hours() {
     let unknown = try_register("never-existed".into(), "jo").await.unwrap();
     assert_eq!(expired.status(), 404);
     assert_eq!(unknown.status(), 404, "expired looks exactly like a typo");
+}
+
+/// Field (2026-10-12): "Moony42" was refused with an a-z rule nobody reads. Names are stored
+/// lowercase; register and login accept any case (and stray spaces around it).
+#[tokio::test]
+async fn usernames_are_case_insensitive() {
+    let app = spawn().await;
+    let code = invite(&app).await;
+    let r = post(
+        &app,
+        "/auth/register",
+        json!({"invite_code": code, "username": " Moony42 ", "password": "hunter2hunter2"}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let s: SessionResponse = r.json().await.unwrap();
+    assert_eq!(s.user.username, "moony42");
+
+    let r = post(
+        &app,
+        "/auth/login",
+        json!({"username": "MOONY42", "password": "hunter2hunter2"}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let s: SessionResponse = r.json().await.unwrap();
+    assert_eq!(s.user.username, "moony42");
+
+    let code = invite(&app).await;
+    let r = post(
+        &app,
+        "/auth/register",
+        json!({"invite_code": code, "username": "moony42", "password": "hunter2hunter2"}),
+    )
+    .await;
+    assert_eq!(r.status(), 409, "same name, different case = taken");
 }

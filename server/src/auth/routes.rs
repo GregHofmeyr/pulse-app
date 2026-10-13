@@ -23,6 +23,11 @@ pub fn router() -> Router<AppState> {
         .route("/invites", post(create_invite))
 }
 
+/// Names are stored lowercase; any case (and stray spaces) typed at register or login maps to it.
+fn normalize_username(u: &str) -> String {
+    u.trim().to_ascii_lowercase()
+}
+
 fn valid_username(u: &str) -> bool {
     (2..=32).contains(&u.len())
         && u.bytes()
@@ -61,10 +66,11 @@ async fn register(
     res
 }
 
-async fn register_with(s: &AppState, req: RegisterRequest) -> AppResult<Json<SessionResponse>> {
+async fn register_with(s: &AppState, mut req: RegisterRequest) -> AppResult<Json<SessionResponse>> {
+    req.username = normalize_username(&req.username);
     if !valid_username(&req.username) {
         return Err(AppError::BadRequest(
-            "username must be 2-32 chars of a-z 0-9 _ .".into(),
+            "username must be 2-32 letters, numbers, _ or .".into(),
         ));
     }
     if !(8..=256).contains(&req.password.len()) {
@@ -150,13 +156,12 @@ static DUMMY_HASH: std::sync::LazyLock<String> =
 async fn login(
     State(s): State<AppState>,
     ClientIp(ip): ClientIp,
-    Json(req): Json<LoginRequest>,
+    Json(mut req): Json<LoginRequest>,
 ) -> AppResult<Json<SessionResponse>> {
     let ip_key = ip.to_string();
+    req.username = normalize_username(&req.username);
     // A name that can't exist gets no bucket of its own (keys stay small); the address still pays.
-    let user_key = (req.username.len() <= 32)
-        .then(|| req.username.to_lowercase())
-        .filter(|u| valid_username(u));
+    let user_key = Some(req.username.clone()).filter(|u| valid_username(u));
     // Spend up front so parallel guesses can't all slip past before any pays. Only a failed
     // login keeps the spend: friends logging in together from one network are fine.
     let ip_ok = s.limits.login_ip.hit(&ip_key);

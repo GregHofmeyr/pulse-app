@@ -47,7 +47,7 @@
     {#if mode === 'register'}
       <label>Invite code <input bind:value={inviteCode} required autocomplete="off" /></label>
     {/if}
-    <label>Username <input bind:value={username} required autocomplete="username" /></label>
+    <label>Username <input bind:value={username} required autocomplete="username" autocapitalize="off" spellcheck="false" /></label>
     <label>Password
       <input type="password" bind:value={password} required minlength={mode === 'register' ? 8 : undefined}
         autocomplete={mode === 'login' ? 'current-password' : 'new-password'} />
