@@ -34,7 +34,7 @@ use tokio::task::JoinHandle;
 
 use crate::api::{Api, ApiError};
 use controls::Controls;
-use devices::{AudioConfig, AudioIo, INTERNAL_RATE, MicChunk, Shared};
+use devices::{AudioConfig, AudioIo, INTERNAL_RATE, MicChunk, Shared, Sides};
 use mixer::{Mixer, percent_to_gain};
 use rx::RxTasks;
 
@@ -99,42 +99,40 @@ struct Reopener {
 }
 
 impl Reopener {
-    /// On failure, goes back to the devices that were open, so the call keeps working audio (the
-    /// error is still returned: a device picked in settings that won't open should say so).
-    async fn reopen(&self) -> Result<(), VoiceError> {
+    /// Reopen `sides` (stays in the room). A side that fails goes back to the device it had, so
+    /// the call keeps working audio; the error is still returned (a device picked in settings that
+    /// won't open should say so).
+    async fn reopen(&self, sides: Sides) -> Result<(), VoiceError> {
         let _turn = self.one_at_a_time.lock().await;
         self.count.fetch_add(1, Ordering::Relaxed);
         let cfg = self.cfg.lock().unwrap().clone();
-        // stop the old streams first (a Bluetooth headset can't be open twice)
-        let previous = self.io.lock().unwrap().take().map(|io| io.opened().clone());
-        let (new_io, result) =
-            match start_audio(&cfg, self.shared.clone(), self.raw_tx.clone()).await {
+        let current = self.io.lock().unwrap().take();
+        let (shared, raw_tx) = (self.shared.clone(), self.raw_tx.clone());
+        // opening blocks (cpal, a flapping Bluetooth device): never on an async worker
+        let reopened = tokio::task::spawn_blocking(move || match current {
+            Some(mut io) => {
+                let r = io.reopen(&cfg, sides);
+                (Some(io), r)
+            }
+            // nothing open (an earlier open failed outright): start both sides afresh
+            None => match AudioIo::start(&cfg, shared, raw_tx) {
                 Ok(io) => (Some(io), Ok(())),
-                Err(e) => {
-                    tracing::error!(error = %e, "voice: reopening devices failed");
-                    let back = match &previous {
-                        Some(p) => {
-                            let cfg = devices::fallback_config(&cfg, p);
-                            start_audio(&cfg, self.shared.clone(), self.raw_tx.clone())
-                                .await
-                                .ok()
-                        }
-                        None => None,
-                    };
-                    if back.is_some() {
-                        tracing::warn!("voice: back on the previous devices");
-                    }
-                    (back, Err(e))
-                }
-            };
-        if let Some(io) = new_io
+                Err(e) => (None, Err(e)),
+            },
+        })
+        .await;
+        let (io, result) = match reopened {
+            Ok(r) => r,
+            Err(e) => (None, Err(anyhow::anyhow!("audio thread: {e}"))),
+        };
+        if let Some(io) = io
             && self.alive.load(Ordering::SeqCst)
         {
-            tracing::info!("voice: devices reopened");
+            tracing::info!(?sides, "voice: devices reopened");
             self.shared.watchdog.rearm(Instant::now());
             *self.io.lock().unwrap() = Some(io);
         }
-        result
+        result.map_err(|e| VoiceError::Device(e.to_string()))
     }
 
     /// Whether the devices should change (and why): the system default moved, or a chosen device
@@ -142,7 +140,7 @@ impl Reopener {
     async fn wants_switch(
         &self,
         probe: &mut Option<JoinHandle<DeviceProbe>>,
-    ) -> Option<&'static str> {
+    ) -> Option<(&'static str, Sides)> {
         let opened = self
             .io
             .lock()
@@ -176,10 +174,16 @@ impl Reopener {
                 return None;
             }
         };
-        if available.is_some_and(|(ins, outs)| devices::wanted_back(&cfg, &opened, &ins, &outs)) {
-            return Some("chosen device is back");
+        if let Some((ins, outs)) = available {
+            let back = devices::back_sides(&cfg, &opened, &ins, &outs);
+            if back.any() {
+                return Some(("chosen device is back", back));
+            }
         }
-        devices::default_moved(&cfg, &opened, defaults).then_some("system default device changed")
+        let moved = devices::moved_sides(&cfg, &opened, defaults);
+        moved
+            .any()
+            .then_some(("system default device changed", moved))
     }
 }
 
@@ -610,8 +614,12 @@ impl VoiceManager {
                             events(VoiceEvent::DeviceRecovered);
                         }
                         Some(devices::StallAction::Reopen) => {
-                            tracing::warn!("audio device stalled; reopening");
-                            let _ = reopener.reopen().await;
+                            let mut sides = shared.watchdog.stalled_sides(Instant::now());
+                            if !sides.any() {
+                                sides = Sides::BOTH; // recovered meanwhile: be thorough anyway
+                            }
+                            tracing::warn!(?sides, "audio device stalled; reopening");
+                            let _ = reopener.reopen(sides).await;
                         }
                     }
                 }
@@ -630,13 +638,12 @@ impl VoiceManager {
                     if !reopener.alive.load(Ordering::SeqCst) {
                         break;
                     }
-                    let reason = reopener.wants_switch(&mut probe).await;
-                    if debounce.confirm(reason.is_some()) {
-                        tracing::info!(
-                            reason = reason.unwrap_or_default(),
-                            "voice: switching devices"
-                        );
-                        let _ = reopener.reopen().await;
+                    let switch = reopener.wants_switch(&mut probe).await;
+                    if debounce.confirm(switch.is_some())
+                        && let Some((reason, sides)) = switch
+                    {
+                        tracing::info!(reason, ?sides, "voice: switching devices");
+                        let _ = reopener.reopen(sides).await;
                     }
                 }
             }));
@@ -769,15 +776,12 @@ impl VoiceManager {
         let Some(s) = guard.as_ref() else {
             return Ok(());
         };
-        let devices_changed = {
-            let old = s.cfg.lock().unwrap();
-            old.input != cfg.input || old.output != cfg.output
-        };
+        let changed = devices::Sides::changed(&s.cfg.lock().unwrap(), &cfg);
         s.shared.apply_config(&cfg);
         *s.cfg.lock().unwrap() = cfg.clone();
-        if devices_changed && s.real {
-            // Hot-swap: reopen the streams, stay in the room (rates may differ; the 48 kHz edge absorbs it).
-            s.reopener.reopen().await?;
+        if changed.any() && s.real {
+            // Hot-swap the side that changed, stay in the room (rates may differ; the 48 kHz edge absorbs it).
+            s.reopener.reopen(changed).await?;
         }
         Ok(())
     }

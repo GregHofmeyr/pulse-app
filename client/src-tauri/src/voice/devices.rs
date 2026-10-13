@@ -149,10 +149,17 @@ impl Watchdog {
     }
 
     pub fn stalled(&self, now: Instant) -> bool {
+        self.stalled_sides(now).any()
+    }
+
+    /// Which side has gone quiet (no callbacks for `STALL_AFTER`).
+    pub fn stalled_sides(&self, now: Instant) -> Sides {
         let now = self.ms(now);
         let limit = STALL_AFTER.as_millis() as u64;
-        now.saturating_sub(self.last_in_ms.load(Ordering::Relaxed)) > limit
-            || now.saturating_sub(self.last_out_ms.load(Ordering::Relaxed)) > limit
+        Sides {
+            input: now.saturating_sub(self.last_in_ms.load(Ordering::Relaxed)) > limit,
+            output: now.saturating_sub(self.last_out_ms.load(Ordering::Relaxed)) > limit,
+        }
     }
 }
 
@@ -475,11 +482,114 @@ impl Shared {
 
 /// Handle to the audio thread. Dropping it stops capture and playback.
 pub struct AudioIo {
-    stop: Option<std::sync::mpsc::Sender<()>>,
-    input_rate: u32,
-    output_rate: u32,
+    input: Option<Half>,
+    output: Option<Half>,
     null: Option<tokio::task::JoinHandle<()>>,
-    opened: OpenedDevices,
+    shared: Arc<Shared>,
+    raw_tx: RawTx,
+}
+
+/// One direction's stream, alive on its own thread until dropped: each side can be reopened
+/// without touching the other.
+struct Half {
+    stop: std::sync::mpsc::Sender<()>,
+    rate: u32,
+    name: String,
+    /// Which open this is (diagnostics: a side that wasn't reopened keeps its number).
+    generation: u64,
+}
+
+static OPENS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+impl Drop for Half {
+    fn drop(&mut self) {
+        let _ = self.stop.send(());
+    }
+}
+
+/// Open one direction on its own thread (cpal streams are !Send: built, played and dropped there).
+fn open_half(
+    input: bool,
+    name: Option<String>,
+    shared: Arc<Shared>,
+    raw_tx: RawTx,
+) -> anyhow::Result<Half> {
+    let (ready_tx, ready_rx) = std::sync::mpsc::channel::<anyhow::Result<(u32, String)>>();
+    let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
+    std::thread::Builder::new()
+        .name(
+            if input {
+                "pulse-audio-in"
+            } else {
+                "pulse-audio-out"
+            }
+            .into(),
+        )
+        .spawn(move || {
+            let built = (|| -> anyhow::Result<(cpal::Stream, u32, String)> {
+                let dev = find_device(input, name.as_deref())?;
+                let cfg = if input {
+                    prefer_internal_rate(
+                        dev.default_input_config()?,
+                        dev.supported_input_configs()?,
+                    )
+                } else {
+                    prefer_internal_rate(
+                        dev.default_output_config()?,
+                        dev.supported_output_configs()?,
+                    )
+                };
+                let (rate, ch) = (cfg.sample_rate().0, cfg.channels() as usize);
+                let stream = if input {
+                    let mut pending: Vec<f32> = Vec::new();
+                    build_input(&dev, &cfg, move |d: &[f32]| {
+                        shared.on_input(d, ch, rate, &mut pending, &raw_tx)
+                    })?
+                } else {
+                    let (mut mixbuf, mut playout) =
+                        (Vec::new(), super::playout::Playout::new(rate));
+                    build_output(&dev, &cfg, move |d: &mut [f32]| {
+                        shared.on_output(d, ch, rate, &mut mixbuf, &mut playout)
+                    })?
+                };
+                stream.play()?;
+                let name = dev.name().unwrap_or_default();
+                tracing::info!(
+                    device = %name, rate, ch, fmt = ?cfg.sample_format(),
+                    "audio {} opened", if input { "input" } else { "output" }
+                );
+                Ok((stream, rate, name))
+            })();
+            match built {
+                Ok((_stream, rate, name)) => {
+                    let _ = ready_tx.send(Ok((rate, name)));
+                    let _ = stop_rx.recv(); // park until told to stop (or the handle is dropped)
+                }
+                Err(e) => {
+                    let _ = ready_tx.send(Err(e));
+                }
+            }
+        })?;
+    // A flapping Bluetooth device can block cpal for a long time: give up rather than hang the call.
+    match ready_rx.recv_timeout(Duration::from_secs(5)) {
+        Ok(r) => {
+            let (rate, name) = r?;
+            Ok(Half {
+                stop: stop_tx,
+                rate,
+                name,
+                generation: OPENS.fetch_add(1, Ordering::Relaxed) + 1,
+            })
+        }
+        Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+            let _ = stop_tx.send(()); // if it ever finishes opening, close straight away
+            Err(anyhow!(
+                "audio {} didn't open within 5 s",
+                if input { "input" } else { "output" }
+            ))
+        }
+        Err(_) => Err(anyhow!("audio thread died")),
+    }
 }
 
 /// The devices actually opened (names as the system reports them).
@@ -496,11 +606,23 @@ pub fn default_moved(
     opened: &OpenedDevices,
     defaults: (Option<String>, Option<String>),
 ) -> bool {
+    moved_sides(cfg, opened, defaults).any()
+}
+
+/// Which sides `default_moved` applies to.
+pub fn moved_sides(
+    cfg: &AudioConfig,
+    opened: &OpenedDevices,
+    defaults: (Option<String>, Option<String>),
+) -> Sides {
     // an empty name couldn't be read: unknown, never "different"
     let moved = |chosen: &Option<String>, now: Option<String>, open: &str| {
         chosen.is_none() && !open.is_empty() && now.is_some_and(|n| n != open)
     };
-    moved(&cfg.input, defaults.0, &opened.input) || moved(&cfg.output, defaults.1, &opened.output)
+    Sides {
+        input: moved(&cfg.input, defaults.0, &opened.input),
+        output: moved(&cfg.output, defaults.1, &opened.output),
+    }
 }
 
 /// A device the user picked was missing at the last open (we fell back to the default) and is
@@ -511,13 +633,60 @@ pub fn wanted_back(
     inputs: &[String],
     outputs: &[String],
 ) -> bool {
+    back_sides(cfg, opened, inputs, outputs).any()
+}
+
+/// Which sides `wanted_back` applies to.
+pub fn back_sides(
+    cfg: &AudioConfig,
+    opened: &OpenedDevices,
+    inputs: &[String],
+    outputs: &[String],
+) -> Sides {
     let back = |chosen: &Option<String>, open: &str, available: &[String]| {
         !open.is_empty()
             && chosen
                 .as_deref()
                 .is_some_and(|c| c != open && available.iter().any(|a| a == c))
     };
-    back(&cfg.input, &opened.input, inputs) || back(&cfg.output, &opened.output, outputs)
+    Sides {
+        input: back(&cfg.input, &opened.input, inputs),
+        output: back(&cfg.output, &opened.output, outputs),
+    }
+}
+
+/// Which directions to (re)open. Reopening only the one that changed matters: tearing down a
+/// Bluetooth headset's mic for a speaker change makes it renegotiate (a gap, maybe a profile flip).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Sides {
+    pub input: bool,
+    pub output: bool,
+}
+
+impl Sides {
+    pub const BOTH: Self = Self {
+        input: true,
+        output: true,
+    };
+
+    pub fn any(self) -> bool {
+        self.input || self.output
+    }
+
+    pub fn or(self, o: Self) -> Self {
+        Self {
+            input: self.input || o.input,
+            output: self.output || o.output,
+        }
+    }
+
+    /// The device choices that differ between two settings.
+    pub fn changed(old: &AudioConfig, new: &AudioConfig) -> Self {
+        Self {
+            input: old.input != new.input,
+            output: old.output != new.output,
+        }
+    }
 }
 
 /// Whether a chosen device is not the one open (only then is enumerating worth it).
@@ -526,23 +695,6 @@ pub fn on_fallback(cfg: &AudioConfig, opened: &OpenedDevices) -> bool {
         !open.is_empty() && chosen.as_deref().is_some_and(|c| c != open)
     };
     off(&cfg.input, &opened.input) || off(&cfg.output, &opened.output)
-}
-
-/// `cfg`, but on the devices that are open now: where to go back to when a switch fails, so the
-/// call keeps working audio instead of none. Unknown (empty) names keep the configured choice.
-pub fn fallback_config(cfg: &AudioConfig, opened: &OpenedDevices) -> AudioConfig {
-    let pick = |open: &str, chosen: &Option<String>| {
-        if open.is_empty() {
-            chosen.clone()
-        } else {
-            Some(open.to_string())
-        }
-    };
-    AudioConfig {
-        input: pick(&opened.input, &cfg.input),
-        output: pick(&opened.output, &cfg.output),
-        ..cfg.clone()
-    }
 }
 
 /// Act only on a condition seen on two checks in a row: a Bluetooth device that flaps in and out
@@ -584,9 +736,7 @@ pub fn default_device_names() -> (Option<String>, Option<String>) {
 
 impl Drop for AudioIo {
     fn drop(&mut self) {
-        if let Some(s) = self.stop.take() {
-            let _ = s.send(());
-        }
+        // the halves stop themselves when dropped
         if let Some(h) = self.null.take() {
             h.abort();
         }
@@ -758,82 +908,60 @@ pub fn build_output(
 
 impl AudioIo {
     pub fn start(cfg: &AudioConfig, shared: Arc<Shared>, raw_tx: RawTx) -> anyhow::Result<Self> {
-        let (ready_tx, ready_rx) =
-            std::sync::mpsc::channel::<anyhow::Result<(u32, u32, OpenedDevices)>>();
-        let (stop_tx, stop_rx) = std::sync::mpsc::channel::<()>();
-        let cfg = cfg.clone();
-        std::thread::Builder::new()
-            .name("pulse-audio".into())
-            .spawn(move || {
-                let built = (|| -> anyhow::Result<(cpal::Stream, cpal::Stream, u32, u32, OpenedDevices)> {
-                    let input = find_device(true, cfg.input.as_deref())?;
-                    let output = find_device(false, cfg.output.as_deref())?;
-                    let in_cfg = prefer_internal_rate(
-                        input.default_input_config()?,
-                        input.supported_input_configs()?,
-                    );
-                    let out_cfg = prefer_internal_rate(
-                        output.default_output_config()?,
-                        output.supported_output_configs()?,
-                    );
-                    let (in_rate, in_ch) = (in_cfg.sample_rate().0, in_cfg.channels() as usize);
-                    let (out_rate, out_ch) = (out_cfg.sample_rate().0, out_cfg.channels() as usize);
-
-                    let sh = shared.clone();
-                    let mut pending: Vec<f32> = Vec::new();
-                    let in_stream = build_input(&input, &in_cfg, move |d: &[f32]| {
-                        sh.on_input(d, in_ch, in_rate, &mut pending, &raw_tx)
-                    })?;
-                    let sh = shared.clone();
-                    let mut mixbuf = Vec::new();
-                    let mut playout = super::playout::Playout::new(out_rate);
-                    let out_stream = build_output(&output, &out_cfg, move |d: &mut [f32]| {
-                        sh.on_output(d, out_ch, out_rate, &mut mixbuf, &mut playout)
-                    })?;
-                    in_stream.play()?;
-                    out_stream.play()?;
-                    tracing::info!(
-                    input = %input.name().unwrap_or_default(), in_rate, in_ch, in_fmt = ?in_cfg.sample_format(),
-                    output = %output.name().unwrap_or_default(), out_rate, out_ch, out_fmt = ?out_cfg.sample_format(),
-                    "audio devices opened"
-                );
-                let opened = OpenedDevices {
-                    input: input.name().unwrap_or_default(),
-                    output: output.name().unwrap_or_default(),
-                };
-                Ok((in_stream, out_stream, in_rate, out_rate, opened))
-                })();
-                match built {
-                    Ok((_in, _out, ir, or, opened)) => {
-                        let _ = ready_tx.send(Ok((ir, or, opened)));
-                        let _ = stop_rx.recv(); // park until told to stop (or the handle is dropped)
-                    }
-                    Err(e) => {
-                        let _ = ready_tx.send(Err(e));
-                    }
-                }
-            })?;
-        // A flapping Bluetooth device can block cpal for a long time: give up rather than hang the call.
-        let (input_rate, output_rate, opened) = match ready_rx.recv_timeout(Duration::from_secs(5))
-        {
-            Ok(r) => r?,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                let _ = stop_tx.send(()); // if it ever finishes opening, close straight away
-                return Err(anyhow!("audio device didn't open within 5 s"));
-            }
-            Err(_) => return Err(anyhow!("audio thread died")),
-        };
+        let input = open_half(true, cfg.input.clone(), shared.clone(), raw_tx.clone())?;
+        let output = open_half(false, cfg.output.clone(), shared.clone(), raw_tx.clone())?;
         Ok(Self {
-            stop: Some(stop_tx),
-            input_rate,
-            output_rate,
+            input: Some(input),
+            output: Some(output),
             null: None,
-            opened,
+            shared,
+            raw_tx,
         })
+    }
+
+    /// Reopen just `sides` on the devices `cfg` names (blocking). A side that fails goes back to
+    /// the device it had, so the call keeps working audio; the first error is still returned.
+    pub fn reopen(&mut self, cfg: &AudioConfig, sides: Sides) -> anyhow::Result<()> {
+        if self.null.is_some() {
+            return Ok(());
+        }
+        let mut first_err = None;
+        for (input, wanted) in [(true, sides.input), (false, sides.output)] {
+            if !wanted {
+                continue;
+            }
+            let slot = if input {
+                &mut self.input
+            } else {
+                &mut self.output
+            };
+            // stop the old stream first (a Bluetooth headset can't be open twice)
+            let previous = slot.take().map(|h| h.name.clone());
+            let name = if input {
+                cfg.input.clone()
+            } else {
+                cfg.output.clone()
+            };
+            match open_half(input, name, self.shared.clone(), self.raw_tx.clone()) {
+                Ok(h) => *slot = Some(h),
+                Err(e) => {
+                    tracing::error!(error = %e, input, "voice: reopening a device failed");
+                    let back = previous.filter(|n| !n.is_empty());
+                    if let Ok(h) = open_half(input, back, self.shared.clone(), self.raw_tx.clone())
+                    {
+                        tracing::warn!(device = %h.name, "voice: back on the previous device");
+                        *slot = Some(h);
+                    }
+                    first_err.get_or_insert(e);
+                }
+            }
+        }
+        first_err.map_or(Ok(()), Err)
     }
 
     /// Test/headless constructor: no devices. Pulls the mixer every 10 ms and sends 10 ms of silence.
     pub fn start_null(rate: u32, shared: Arc<Shared>, raw_tx: RawTx) -> Self {
+        let (sh, tx) = (shared.clone(), raw_tx.clone());
         let h = tokio::spawn(async move {
             let chunk = (rate / 100) as usize;
             let mut out = vec![0f32; chunk];
@@ -842,30 +970,43 @@ impl AudioIo {
             let mut tick = tokio::time::interval(Duration::from_millis(10));
             loop {
                 tick.tick().await;
-                shared.watchdog.input_tick(Instant::now());
-                shared.on_output(&mut out, 1, rate, &mut mixbuf, &mut playout);
-                let _ = raw_tx.send((rate, vec![0f32; chunk], Instant::now()));
+                sh.watchdog.input_tick(Instant::now());
+                sh.on_output(&mut out, 1, rate, &mut mixbuf, &mut playout);
+                let _ = tx.send((rate, vec![0f32; chunk], Instant::now()));
             }
         });
         Self {
-            stop: None,
-            input_rate: rate,
-            output_rate: rate,
+            input: None,
+            output: None,
             null: Some(h),
-            opened: OpenedDevices::default(),
+            shared,
+            raw_tx,
         }
     }
 
-    pub fn opened(&self) -> &OpenedDevices {
-        &self.opened
+    /// The devices open now ("" for a side that isn't).
+    pub fn opened(&self) -> OpenedDevices {
+        let name = |h: &Option<Half>| h.as_ref().map(|h| h.name.clone()).unwrap_or_default();
+        OpenedDevices {
+            input: name(&self.input),
+            output: name(&self.output),
+        }
     }
 
-    pub fn input_rate(&self) -> u32 {
-        self.input_rate
+    /// (input, output) open generations: changes only for a side that was reopened.
+    pub fn generations(&self) -> (Option<u64>, Option<u64>) {
+        (
+            self.input.as_ref().map(|h| h.generation),
+            self.output.as_ref().map(|h| h.generation),
+        )
     }
 
-    pub fn output_rate(&self) -> u32 {
-        self.output_rate
+    pub fn input_rate(&self) -> Option<u32> {
+        self.input.as_ref().map(|h| h.rate)
+    }
+
+    pub fn output_rate(&self) -> Option<u32> {
+        self.output.as_ref().map(|h| h.rate)
     }
 }
 
@@ -1058,6 +1199,62 @@ mod tests {
     }
 
     #[test]
+    fn only_the_side_that_changed_is_reopened() {
+        let now = opened("Arctis Mic", "Speakers");
+        // only the output default moved: the mic (maybe a BT headset) is left alone
+        assert_eq!(
+            moved_sides(
+                &AudioConfig::default(),
+                &now,
+                (Some("Arctis Mic".into()), Some("Arctis".into()))
+            ),
+            Sides {
+                input: false,
+                output: true
+            }
+        );
+        let picked = AudioConfig {
+            input: Some("USB Mic".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            back_sides(&picked, &now, &["USB Mic".into()], &[]),
+            Sides {
+                input: true,
+                output: false
+            }
+        );
+        // the settings: what changed between two configs
+        let old = AudioConfig::default();
+        let new = AudioConfig {
+            output: Some("Arctis".into()),
+            ..Default::default()
+        };
+        assert_eq!(
+            Sides::changed(&old, &new),
+            Sides {
+                input: false,
+                output: true
+            }
+        );
+        assert!(!Sides::changed(&old, &old).any());
+    }
+
+    #[test]
+    fn the_watchdog_says_which_side_stalled() {
+        let t0 = Instant::now();
+        let w = Watchdog::new(t0);
+        w.output_tick(t0 + Duration::from_millis(2000)); // speakers alive, mic silent
+        assert_eq!(
+            w.stalled_sides(t0 + Duration::from_millis(2500)),
+            Sides {
+                input: true,
+                output: false
+            }
+        );
+    }
+
+    #[test]
     fn an_unknown_device_name_never_triggers_a_switch() {
         // a device whose name couldn't be read: "" mustn't look like "a different device"
         let unknown = opened("", "");
@@ -1097,24 +1294,6 @@ mod tests {
         assert!(!d.confirm(true));
         assert!(d.confirm(true));
         assert!(!d.confirm(true), "after acting, start counting again");
-    }
-
-    #[test]
-    fn a_failed_switch_falls_back_to_the_devices_that_worked() {
-        let cfg = AudioConfig {
-            output: Some("Arctis".into()),
-            ..Default::default()
-        };
-        let back = fallback_config(&cfg, &opened("Laptop Mic", "Speakers"));
-        assert_eq!(back.input.as_deref(), Some("Laptop Mic"));
-        assert_eq!(back.output.as_deref(), Some("Speakers"));
-        assert_eq!(
-            back.input_gain_pct, cfg.input_gain_pct,
-            "only the devices change"
-        );
-        // unknown names: keep the configured choice
-        let back = fallback_config(&cfg, &opened("", ""));
-        assert_eq!((back.input, back.output), (None, Some("Arctis".into())));
     }
 
     #[test]

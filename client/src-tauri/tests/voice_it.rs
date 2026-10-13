@@ -331,3 +331,30 @@ fn device_lookup_cost() {
     let _ = find_device(false, None);
     println!("find_device(default): {:?}", t.elapsed());
 }
+
+/// On this machine's real devices: reopening the output leaves the mic stream running.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn reopening_one_side_leaves_the_other_alone() {
+    use pulse_client::voice::devices::{AudioIo, Shared, Sides};
+    let cfg = AudioConfig::default();
+    let mixer = std::sync::Arc::new(std::sync::Mutex::new(
+        pulse_client::voice::mixer::Mixer::new(48_000, 200),
+    ));
+    let shared = Shared::new(&cfg, Default::default(), mixer);
+    let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
+    let mut io = AudioIo::start(&cfg, shared, raw_tx).unwrap();
+    let (mic, spk) = io.generations();
+    io.reopen(
+        &cfg,
+        Sides {
+            input: false,
+            output: true,
+        },
+    )
+    .unwrap();
+    let (mic2, spk2) = io.generations();
+    assert_eq!(mic, mic2, "the mic was not touched");
+    assert_ne!(spk, spk2, "the speakers were reopened");
+    assert!(io.output_rate().is_some());
+}
