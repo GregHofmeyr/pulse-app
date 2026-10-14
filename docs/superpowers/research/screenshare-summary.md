@@ -1,5 +1,7 @@
 # Screen share: research summary
 
+> **Superseded by `screenshare-deep-summary.md` (2026-10-14).** Kept for history.
+
 Date: 2026-10-13. Input for the screen-share brainstorm and spec. These are not decisions yet. Details and sources
 are in the three reports next to this file: capture-encode, render, and server-quality.
 
