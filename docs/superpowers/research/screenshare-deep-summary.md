@@ -148,7 +148,7 @@ would silence them. Key it by track before any stream audio lands.
   - **AV1:** only the Ada and Blackwell cards encode it. The 2080 Ti can't hardware-decode it either. AV1 stays off
     while any viewer lacks AV1 decode, which in practice means H.264 for v1.
   - The 2080 Ti is the oldest encoder and gets its own S1/S2 run. Turing NVENC is still good for H.264.
-  - Unknown: whether any of these PCs also has an iGPU.
+  - iGPU: the owner's and their partner's PCs have none. The others are unknown, and there may be an AMD GPU and an AMD CPU in the group.
 - **Upload:** roughly 50 Mbps and up. The 70% cap leaves 35 Mbps or more, far above every preset, so upload isn't the
   limit. 1080p60 at about 8 Mbps is affordable for everyone. The limits are viewers' downloads and the route to JHB.
 - **Games:** competitive FPS (Overwatch, Apex Legends, CS2), story games (Final Fantasy, Expedition 33, Persona) and
