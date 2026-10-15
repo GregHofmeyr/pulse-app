@@ -142,8 +142,8 @@ would silence them. Key it by track before any stream audio lands.
 
 - **Windows:** everyone is on Windows 11. That makes Chromium's `windowAudio` (Windows 11 only) usable for window
   shares, so the stream-audio ruling should be re-weighed. A screen share still needs Rust loopback to exclude Pulse.
-- **GPUs, all NVIDIA:** RTX 2080 Ti (Turing), 4070 Ti Super (Ada), RTX 5050 (Blackwell), and probably a 3060
-  (Ampere).
+- **GPUs, all NVIDIA:** RTX 2080 Ti (Turing), 4070 Ti Super (Ada), RTX 5050 (Blackwell), RTX 3050 8 GB (Ampere), and
+  probably a 3060 (Ampere).
   - The constrained-baseline NVIDIA skip hits every streamer, so the server `enabled_codecs` fix is mandatory.
   - **AV1:** only the Ada and Blackwell cards encode it. The 2080 Ti can't hardware-decode it either. AV1 stays off
     while any viewer lacks AV1 decode, which in practice means H.264 for v1.
@@ -154,7 +154,11 @@ would silence them. Key it by track before any stream audio lands.
 - **Games:** competitive FPS (Overwatch, Apex Legends, CS2), story games (Final Fantasy, Expedition 33, Persona) and
   co-op party games. The competitive titles make game-FPS cost (S2) the deciding test. Anti-cheat: Easy Anti-Cheat
   (Apex), VAC (CS2), Overwatch's own. Spike S2 runs inside at least one of them.
-- **Audio software:** SteelSeries Sonar and Turtle Beach software so far. Others not yet known.
+- **Audio software:** SteelSeries Sonar / SteelSeries GG (two PCs) and Turtle Beach software. Others not yet known.
+- **The weakest PC so far:** RTX 3050 8 GB (Ampere) with a Ryzen 5 1600 (Zen 1, 6 cores / 12 threads, 2017, no
+  iGPU). It's the worst case for the CPU side of Chromium's capture (GPU readback plus CPU conversion every frame) and
+  for a software-encode fallback, which would be crippling here. It's the most valuable third machine for S2 and S3
+  if its owner is willing.
 
 ## Before the spike (no code)
 
