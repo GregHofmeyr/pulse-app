@@ -138,9 +138,27 @@ would silence them. Key it by track before any stream audio lands.
   login is needed.
 - **Server resources:** 2 OCPU and 16 MiB UDP buffers (above).
 
+## Friend inventory (first pass, 2026-10-15)
+
+- **Windows:** everyone is on Windows 11. That makes Chromium's `windowAudio` (Windows 11 only) usable for window
+  shares, so the stream-audio ruling should be re-weighed. A screen share still needs Rust loopback to exclude Pulse.
+- **GPUs, all NVIDIA:** RTX 2080 Ti (Turing), 4070 Ti Super (Ada), RTX 5050 (Blackwell), and probably a 3060
+  (Ampere).
+  - The constrained-baseline NVIDIA skip hits every streamer, so the server `enabled_codecs` fix is mandatory.
+  - **AV1:** only the Ada and Blackwell cards encode it. The 2080 Ti can't hardware-decode it either. AV1 stays off
+    while any viewer lacks AV1 decode, which in practice means H.264 for v1.
+  - The 2080 Ti is the oldest encoder and gets its own S1/S2 run. Turing NVENC is still good for H.264.
+  - Unknown: whether any of these PCs also has an iGPU.
+- **Upload:** roughly 50 Mbps and up. The 70% cap leaves 35 Mbps or more, far above every preset, so upload isn't the
+  limit. 1080p60 at about 8 Mbps is affordable for everyone. The limits are viewers' downloads and the route to JHB.
+- **Games:** competitive FPS (Overwatch, Apex Legends, CS2), story games (Final Fantasy, Expedition 33, Persona) and
+  co-op party games. The competitive titles make game-FPS cost (S2) the deciding test. Anti-cheat: Easy Anti-Cheat
+  (Apex), VAC (CS2), Overwatch's own. Spike S2 runs inside at least one of them.
+- **Audio software:** SteelSeries Sonar and Turtle Beach software so far. Others not yet known.
+
 ## Before the spike (no code)
 
-1. **Friend inventory:**
+1. **Friend inventory** (still to fill in: iGPU, the other friends' audio software, exact upload speeds):
    - Windows version and build;
    - GPU, and whether the PC also has an iGPU;
    - HDR monitor;
