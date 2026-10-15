@@ -30,7 +30,7 @@ services:
     logging: *logging
 
   livekit:
-    image: livekit/livekit-server:v1.13.7
+    image: livekit/livekit-server:v1.13.10
     network_mode: host
     restart: unless-stopped
     user: "${PULSE_UID:?}:${PULSE_GID:?}"
