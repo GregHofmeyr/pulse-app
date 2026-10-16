@@ -411,6 +411,8 @@ struct Pipeline {
     alive: Arc<AtomicBool>,
     /// Device watchdog and following: they outlive any one room.
     tasks: Vec<JoinHandle<()>>,
+    /// A device stall was reported and hasn't recovered (the next room shows it again).
+    stalled: Arc<AtomicBool>,
 }
 
 impl Drop for Pipeline {
@@ -457,8 +459,10 @@ impl Pipeline {
             count: Default::default(),
         });
         let mut tasks = Vec::new();
+        let stalled = Arc::new(AtomicBool::new(false));
         if real {
-            tasks.push(spawn_watchdog(shared.clone(), reopener.clone(), events));
+            let watch = (shared.clone(), reopener.clone(), stalled.clone());
+            tasks.push(spawn_watchdog(watch, events));
             tasks.push(spawn_follow(reopener.clone()));
         }
         Ok(Self {
@@ -469,6 +473,7 @@ impl Pipeline {
             real,
             alive,
             tasks,
+            stalled,
         })
     }
 
@@ -493,10 +498,38 @@ impl Pipeline {
     }
 }
 
+/// The kept pipeline a join can go on with. A reopen in flight (devices taken out, so not
+/// usable mid-way) is waited out first: it takes turns with this check (Settings' `adopt` too).
+/// One that can't be used is let go before the join builds another: no reopen of it still
+/// running, its devices closed (waited for: the new pipeline opens the same ones).
+async fn keep_if_usable(kept: Option<Arc<Pipeline>>, mode: AudioMode) -> Option<Arc<Pipeline>> {
+    let p = kept?;
+    let turn = tokio::time::timeout(SETTLE_WAIT, p.reopener.one_at_a_time.lock()).await;
+    let waited_out = turn.is_ok();
+    if turn.is_ok_and(|_turn| p.usable_for(mode)) {
+        return Some(p);
+    }
+    // its watchdog and following stop on `alive` too (Settings may still hold a handle on it)
+    p.alive.store(false, Ordering::SeqCst);
+    if waited_out {
+        // a reopen that started since (the watchdog's, Settings') ends now: it closes what it opened
+        p.reopener.settle().await;
+    } else {
+        // already waited SETTLE_WAIT: it closes what it opens once it's done
+        tracing::warn!("voice: a device reopen is still running; not keeping its devices");
+    }
+    p.shared.set_mic_sink(None);
+    let io = p.io.lock().unwrap().take();
+    if let Some(io) = io {
+        let _ = tokio::task::spawn_blocking(move || io.close()).await;
+    }
+    None
+}
+
 /// Reopen stalled devices (and say so if that doesn't help). Lives as long as the pipeline.
+/// `stalled`: set while a reported stall lasts.
 fn spawn_watchdog(
-    shared: Arc<Shared>,
-    reopener: Arc<Reopener>,
+    (shared, reopener, stalled): (Arc<Shared>, Arc<Reopener>, Arc<AtomicBool>),
     events: EventSink,
 ) -> JoinHandle<()> {
     tokio::spawn(async move {
@@ -515,10 +548,12 @@ fn spawn_watchdog(
                 None => {}
                 Some(devices::StallAction::Report) => {
                     tracing::error!("audio device still stalled after reopening");
+                    stalled.store(true, Ordering::SeqCst);
                     events(VoiceEvent::DeviceStalled);
                 }
                 Some(devices::StallAction::Recovered) => {
                     tracing::info!("voice: audio device recovered");
+                    stalled.store(false, Ordering::SeqCst);
                     events(VoiceEvent::DeviceRecovered);
                 }
                 Some(devices::StallAction::Reopen) => {
@@ -881,10 +916,15 @@ impl VoiceManager {
         }
         match outcome {
             Ok((session, open_room, connected)) => {
+                // a stall that outlived the last room: the UI cleared its banner on joining
+                let stalled = session.pipeline.stalled.load(Ordering::SeqCst);
                 *self.live.lock().unwrap() = Some(session.alive.clone());
                 *self.session.lock().await = Some(session);
                 open_room.disarm();
                 self.emit_state(Some(channel), Connection::Connected);
+                if stalled {
+                    (self.events)(VoiceEvent::DeviceStalled);
+                }
                 // the mic publish reports from here on, so never before "connected"
                 let _ = connected.send(());
                 Ok(())
@@ -1024,25 +1064,24 @@ impl VoiceManager {
         let token_ms = ms(started);
 
         self.keep_runtime();
-        // a switch keeps the last room's pipeline (devices, processor, noise model); a pipeline
-        // whose call ended under it isn't reused (it's dropped here)
-        let reuse = kept.filter(|p| p.usable_for(mode));
-        let pipeline_reused = reuse.is_some();
-        if !pipeline_reused {
-            self.built.fetch_add(1, Ordering::Relaxed);
-        }
         let (controls, events) = (self.controls.clone(), self.events.clone());
         // each phase logs its own time; they overlap, so `joined elapsed_ms` is the end-to-end one
         let pipeline = async {
             let t = Instant::now();
-            let p = match reuse {
+            // a switch keeps the last room's pipeline (devices, processor, noise model); one
+            // whose call ended under it is let go and a fresh one built
+            let p = match keep_if_usable(kept, mode).await {
                 Some(p) => {
                     if let Err(e) = p.adopt(&cfg).await {
                         tracing::warn!(error = %e, "voice: the join's devices didn't open; kept the current ones");
                     }
-                    p
+                    (p, true)
                 }
-                None => Arc::new(Pipeline::build(&cfg, mode, controls, events).await?),
+                None => {
+                    self.built.fetch_add(1, Ordering::Relaxed);
+                    let p = Pipeline::build(&cfg, mode, controls, events).await?;
+                    (Arc::new(p), false)
+                }
             };
             Ok::<_, VoiceError>((p, ms(t)))
         };
@@ -1058,8 +1097,10 @@ impl VoiceManager {
             // guarded from here: a cancelled join closes it
             Ok::<_, VoiceError>((OpenRoom::new(room), events, ms(t)))
         };
-        let ((pipeline, devices_ms), (open_room, mut room_events, room_connect_ms)) =
-            side_by_side(pipeline, room, |(room, _, _)| room.close()).await?;
+        let (
+            ((pipeline, pipeline_reused), devices_ms),
+            (open_room, mut room_events, room_connect_ms),
+        ) = side_by_side(pipeline, room, |(room, _, _)| room.close()).await?;
         let room = open_room.room().clone();
         let shared = pipeline.shared.clone();
         shared.mix_in.clear(); // the last room's people
@@ -1737,6 +1778,7 @@ mod tests {
             real: false,
             alive,
             tasks: Vec::new(),
+            stalled: Default::default(),
         };
         (Arc::new(p), raw_tx)
     }
@@ -1796,6 +1838,79 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("the old room was never closed");
+    }
+
+    async fn null_pipeline() -> Arc<Pipeline> {
+        let p = Pipeline::build(
+            &AudioConfig::default(),
+            AudioMode::Null(48_000),
+            Default::default(),
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+        Arc::new(p)
+    }
+
+    /// A device reopen in flight (it holds the reopener's turn, the devices taken out): `run`
+    /// goes once it has the turn; the turn is released when it returns.
+    async fn reopen_in_flight(
+        p: &Arc<Pipeline>,
+        run: impl FnOnce(&Pipeline) + Send + 'static,
+    ) -> JoinHandle<()> {
+        let (locked_tx, locked_rx) = tokio::sync::oneshot::channel();
+        let p = p.clone();
+        let h = tokio::spawn(async move {
+            let _turn = p.reopener.one_at_a_time.lock().await;
+            let _ = locked_tx.send(());
+            run(&p);
+        });
+        locked_rx.await.unwrap();
+        h
+    }
+
+    /// A switch that lands while the pipeline is mid-reopen (devices taken out) waits for the
+    /// reopen and carries on with that pipeline, rather than throwing it away and opening the
+    /// same devices next to it.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_switch_waits_out_a_reopen_in_flight_and_keeps_the_pipeline() {
+        let p = null_pipeline().await;
+        let io = p.io.lock().unwrap().take();
+        let reopen = reopen_in_flight(&p, move |p| {
+            std::thread::sleep(Duration::from_millis(300));
+            *p.io.lock().unwrap() = io;
+        })
+        .await;
+        let t = Instant::now();
+        let kept = keep_if_usable(Some(p.clone()), AudioMode::Null(48_000)).await;
+        assert!(
+            t.elapsed() >= Duration::from_millis(250),
+            "{:?}",
+            t.elapsed()
+        );
+        assert!(kept.is_some(), "a pipeline mid-reopen was thrown away");
+        assert!(p.alive.load(Ordering::SeqCst));
+        reopen.await.unwrap();
+    }
+
+    /// A kept pipeline that can't be used is let go before the next one is built: its reopen
+    /// in flight has finished and its devices are closed (no two opens of one device at once).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_discarded_pipeline_is_settled_before_a_new_build() {
+        let p = null_pipeline().await;
+        let done = Arc::new(AtomicBool::new(false));
+        let d = done.clone();
+        let reopen = reopen_in_flight(&p, move |_| {
+            std::thread::sleep(Duration::from_millis(300));
+            d.store(true, Ordering::SeqCst);
+        })
+        .await;
+        let kept = keep_if_usable(Some(p.clone()), AudioMode::Real).await; // other mode: not usable
+        assert!(kept.is_none());
+        assert!(done.load(Ordering::SeqCst), "the reopen was still running");
+        assert!(!p.alive.load(Ordering::SeqCst));
+        assert!(p.io.lock().unwrap().is_none(), "its devices are still open");
+        reopen.await.unwrap();
     }
 
     /// LiveKit holds its runtime weakly: without our handle it dies with each call's last Room
