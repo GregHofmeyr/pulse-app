@@ -112,7 +112,8 @@ pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
         cap,
         peers: HashMap::with_capacity(32), // no growth in the callback for a normal call
         target: rate * TARGET_MS / 1000,
-        refill: rate * TARGET_MS / 1000 + rate / 100,
+        min_pull: rate / 100,
+        pulls: [0; 2],
         window: rate * WINDOW_MS / 1000,
         budget: rate * WINDOW_MS / 1000 * MAX_ADJUST_PER_MILLE / 1000,
         deadband: rate * DEADBAND_MS / 1000,
@@ -252,9 +253,14 @@ pub struct Mixer {
     cmds: Arc<Mutex<Vec<Cmd>>>,
     cap: usize,
     peers: HashMap<String, Peer>,
-    /// Lowest fill wanted (samples), and what a dry peer refills to before playing on.
+    /// Lowest fill wanted (samples). A dry peer refills to this plus one pull before playing on
+    /// (`refill`): a big device pull must not run it dry again half-way (two gaps for one).
     target: usize,
-    refill: usize,
+    /// The least pull `refill` assumes: one 10 ms frame.
+    min_pull: usize,
+    /// Largest pull (frames) this window and the last: "recent", so a smaller device later
+    /// stops paying for a bigger one's cushion.
+    pulls: [usize; 2],
     window: usize,
     /// Samples a peer may drop or repeat per window.
     budget: usize,
@@ -335,12 +341,20 @@ impl Mixer {
         self.peers.get(peer).map_or(0, |p| p.queue.len())
     }
 
+    /// What a dry peer refills to before playing on: the target plus the largest recent pull.
+    fn refill(&self) -> usize {
+        self.target + self.pulls[0].max(self.pulls[1]).max(self.min_pull)
+    }
+
     /// Fill interleaved `out` (`channels` per frame), one sample per peer per frame.
     pub fn mix_into(&mut self, out: &mut [f32], channels: usize, master: f32) {
         self.intake();
+        let frames = out.len() / channels.max(1);
+        self.pulls[0] = self.pulls[0].max(frames);
+        let refill = self.refill();
         let (mut underrun, mut adjusted) = (0u64, 0u64);
         for p in self.peers.values_mut() {
-            if p.rebuffering && p.queue.len() >= self.refill {
+            if p.rebuffering && p.queue.len() >= refill {
                 p.rebuffering = false;
             }
         }
@@ -368,9 +382,10 @@ impl Mixer {
         for p in self.peers.values_mut() {
             p.low = p.low.min(p.queue.len());
         }
-        self.pulled += out.len() / channels.max(1);
+        self.pulled += frames;
         if self.pulled >= self.window {
             self.pulled = 0;
+            self.pulls = [0, self.pulls[0]];
             for p in self.peers.values_mut() {
                 p.judge(self.target, self.budget, self.deadband, self.cut_above);
             }
@@ -757,6 +772,40 @@ mod tests {
                 "ran dry again at {ppm} ppm"
             );
             assert!(m.buffered("a") <= 4096, "{} queued", m.buffered("a"));
+        }
+    }
+
+    /// A sender stall with big device callbacks (2048 frames): the refill must cover a whole
+    /// pull, or the first pull after it runs dry again mid-way (two gaps for one stall).
+    #[test]
+    fn a_stall_with_big_callbacks_is_one_gap() {
+        for pull in [1024, 2048] {
+            let (input, mut m) = mixer(48_000, 200);
+            let mut out = vec![0.0f32; pull];
+            let (mut next_push, mut next_pull) = (0, 0);
+            let stall = 48_000 * 5..48_000 * 5 + 4_800; // 100 ms with nothing arriving
+            let mut played = Vec::new();
+            for t in 0..48_000 * 8 {
+                while next_push <= t {
+                    if !stall.contains(&next_push) {
+                        input.push("a", &[8192; 480]);
+                    }
+                    next_push += 480;
+                }
+                if t == next_pull {
+                    m.mix_into(&mut out, 1, 1.0);
+                    next_pull += out.len();
+                    if t >= stall.start - 48_000 {
+                        played.extend_from_slice(&out);
+                    }
+                }
+            }
+            // gaps = runs of silence in a constant signal
+            let gaps = played
+                .windows(2)
+                .filter(|w| w[0] != 0.0 && w[1] == 0.0)
+                .count();
+            assert_eq!(gaps, 1, "{pull}-frame pulls: {gaps} gaps for one stall");
         }
     }
 
