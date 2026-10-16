@@ -631,3 +631,55 @@ async fn a_failed_switch_ends_disconnected_and_the_old_room_stays_left() {
     assert_eq!(vm.rejoins(), 0, "the old room's close started a rejoin");
     rejoins.abort();
 }
+
+/// A switch keeps the devices, the processor and Strong's model; Leave lets them go.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn switching_keeps_the_audio_pipeline_and_leave_drops_it() {
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, token) = testing::register(&app, "alex").await;
+    let s = testing::create_server(&app, &token, "Main").await;
+    let api = Api::new(&format!("http://{}", app.addr));
+    let lounge = api
+        .channels(&token, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+    let den = api
+        .create_channel(&token, s.id, ChannelKind::Voice, "Den")
+        .await
+        .unwrap();
+    let vm = VoiceManager::new(Arc::new(|_| {}));
+    let join = |id| {
+        vm.join(
+            &api,
+            &token,
+            id,
+            AudioConfig::default(),
+            AudioMode::Null(48_000),
+        )
+    };
+    join(lounge.id).await.unwrap();
+    assert_eq!(vm.pipelines_built(), 1);
+    join(den.id).await.unwrap();
+    assert_eq!(vm.pipelines_built(), 1, "the switch rebuilt the pipeline");
+    // the kept mixer plays the new room's people
+    let before = vm.mixer_pushed().await;
+    let room = den.id.to_string();
+    tokio::task::spawn_blocking(move || bot_publishes_tone(&room))
+        .await
+        .unwrap();
+    assert!(
+        vm.mixer_pushed().await > before,
+        "not mixing in the new room"
+    );
+    vm.leave().await;
+    join(lounge.id).await.unwrap();
+    assert_eq!(vm.pipelines_built(), 2, "after Leave a join starts fresh");
+    vm.leave().await;
+}
