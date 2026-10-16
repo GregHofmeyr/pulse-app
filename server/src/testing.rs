@@ -33,6 +33,16 @@ impl TestApp {
     ) -> std::collections::HashSet<pulse_protocol::ids::UserId> {
         self.voice.members(channel)
     }
+    /// The shared state the test server runs on, for calling startup tasks directly.
+    pub fn state(&self) -> AppState {
+        AppState {
+            db: self.db.clone(),
+            cfg: self.cfg.clone(),
+            hub: self.hub.clone(),
+            voice: self.voice.clone(),
+            limits: self.limits.clone(),
+        }
+    }
 }
 
 pub fn test_config() -> Config {
@@ -40,6 +50,7 @@ pub fn test_config() -> Config {
         db_url: String::new(),
         bind: "127.0.0.1:0".parse().unwrap(),
         livekit_url: "ws://localhost:7880".into(),
+        livekit_api_url: "http://127.0.0.1:1".into(), // LiveKit "down" unless a test overrides it
         livekit_key: "devkey".into(),
         livekit_secret: "secret-secret-secret-secret-secret".into(),
         hello_timeout: Duration::from_millis(300),

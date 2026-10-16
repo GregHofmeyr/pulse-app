@@ -40,7 +40,7 @@ pub fn router(state: AppState) -> Router {
 /// Bind and serve until the process is stopped.
 pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     let db = db::connect(&cfg.db_url).await?;
-    voice::reconcile_on_startup(&db).await?;
+    let started_at = db::now();
     let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
     tracing::info!(addr = %cfg.bind, "pulse-app-server listening");
     let hub = gateway::Hub::default();
@@ -51,6 +51,8 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
         hub: hub.clone(),
         voice: voice::VoiceState::default(),
     };
+    // Before serving (connections queue in the listen backlog), so the first Ready is right.
+    voice::restore::on_startup(&state, &started_at).await?;
     axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),

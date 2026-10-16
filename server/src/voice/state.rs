@@ -1,6 +1,6 @@
-//! Who is in which voice room right now, with their mute/deafen flags. In memory only, so it is
-//! empty after a restart: LiveKit does NOT re-report participants who were already connected
-//! (rebuilding from LiveKit's ListParticipants at startup is a follow-up).
+//! Who is in which voice room right now, with their mute/deafen flags. In memory; after a
+//! restart it is rebuilt from LiveKit's room list (`voice::restore`), because LiveKit does NOT
+//! re-report participants who were already connected.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
@@ -50,6 +50,24 @@ impl VoiceState {
                 },
             )
             .is_none()
+    }
+
+    /// Add `user` from LiveKit's room list unless a webhook already placed them (its `sid` is
+    /// newer than our snapshot). True if added.
+    pub fn restore(&self, channel: ChannelId, user: UserId, sid: &str) -> bool {
+        let flags = self.declared(user);
+        let mut rooms = self.rooms.lock().unwrap();
+        if rooms.values().any(|r| r.contains_key(&user)) {
+            return false;
+        }
+        rooms.entry(channel).or_default().insert(
+            user,
+            Member {
+                flags,
+                sid: sid.to_owned(),
+            },
+        );
+        true
     }
 
     /// Remove `user` if `sid` is their current connection (an empty `sid` matches any).

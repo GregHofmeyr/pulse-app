@@ -21,6 +21,8 @@ services:
       PULSE_DB_URL: sqlite:///data/pulse.db
       PULSE_BIND: 127.0.0.1:7890
       PULSE_LIVEKIT_URL: wss://voice.${PULSE_DOMAIN:?}
+      # Server-to-LiveKit API (voice presence after a restart): loopback, plain HTTP.
+      PULSE_LIVEKIT_API_URL: http://127.0.0.1:7880
       PULSE_LIVEKIT_KEY: pulse
       PULSE_LIVEKIT_SECRET: ${LIVEKIT_SECRET:?}
       RUST_LOG: info,sqlx=warn
