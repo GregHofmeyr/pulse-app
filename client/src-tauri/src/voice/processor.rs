@@ -5,10 +5,12 @@ use std::sync::Arc;
 use std::sync::mpsc as std_mpsc;
 use std::time::{Duration, Instant};
 
-use tokio::sync::mpsc;
+use livekit::webrtc::audio_frame::AudioFrame;
+use livekit::webrtc::audio_source::native::NativeAudioSource;
 
+use super::backlog::GapFill;
 use super::denoise::{DeepFilter, Denoiser, FRAME, NsLevel, make_fast};
-use super::devices::{INTERNAL_RATE, MicChunk, NsStatus, Shared};
+use super::devices::{INTERNAL_RATE, NsStatus, Shared};
 use super::gate::{PREROLL_BLOCKS, VoiceGate};
 use super::mixer::soft_limit;
 use super::resampler::StreamResampler;
@@ -302,17 +304,91 @@ pub fn recover_failed(chain: &mut MicChain, shared: &Shared) -> bool {
     true
 }
 
-/// Start the mic processor. It runs until every returned sender is dropped.
-pub fn spawn(
-    shared: Arc<Shared>,
-    mic_tx: mpsc::UnboundedSender<MicChunk>,
-) -> (RawTx, std::thread::JoinHandle<()>) {
+/// Where finished 10 ms mic frames (48 kHz mono i16) go, called on the processor thread.
+pub trait FrameSink: Send {
+    /// Hand over one frame; false if it was refused (counted as a send drop).
+    fn send(&mut self, frame: &[i16]) -> bool;
+}
+
+/// The room's mic track. The fast path (queue 0) is synchronous: each frame goes straight to
+/// WebRTC's encoder from here, with no runtime hop and no copy beyond the i16 conversion.
+pub struct LiveKitSink(NativeAudioSource);
+
+impl LiveKitSink {
+    pub fn new(source: NativeAudioSource) -> Self {
+        Self(source)
+    }
+}
+
+impl FrameSink for LiveKitSink {
+    fn send(&mut self, frame: &[i16]) -> bool {
+        use futures::FutureExt;
+        let f = AudioFrame {
+            data: std::borrow::Cow::Borrowed(frame),
+            sample_rate: INTERNAL_RATE,
+            num_channels: 1,
+            samples_per_channel: frame.len() as u32,
+        };
+        // queue 0 never awaits: `None` would mean a buffered source, which we never build
+        matches!(self.0.capture_frame(&f).now_or_never(), Some(Ok(())))
+    }
+}
+
+/// How often the processor looks for a stalled mic when no block arrives.
+const GAP_CHECK: Duration = Duration::from_millis(10);
+
+/// Hand `frame` to the room, if there is one. Between rooms there's nowhere to send: the frame
+/// is dropped, and the gap clock restarts so a new room doesn't get a burst of "missed" silence.
+fn deliver(shared: &Shared, gap: &mut GapFill, frame: &[i16]) {
+    let now = Instant::now();
+    let sent = shared
+        .mic_sink
+        .lock()
+        .unwrap()
+        .as_mut()
+        .map(|s| s.send(frame));
+    match sent {
+        Some(false) => {
+            shared
+                .stats
+                .send_drops
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        Some(true) | None => gap.sent(now),
+    }
+}
+
+/// The mic delivered nothing for a while (stall, device reopen): keep the room's stream
+/// continuous with silent frames, or listeners' jitter buffers grow to cover the hole.
+fn fill_gap(shared: &Shared, gap: &mut GapFill, silence: &[i16]) {
+    let now = Instant::now();
+    let mut sink = shared.mic_sink.lock().unwrap();
+    let Some(s) = sink.as_mut() else {
+        gap.sent(now);
+        return;
+    };
+    let due = gap.silence_due(now);
+    for _ in 0..due {
+        s.send(silence);
+    }
+    if due > 0 {
+        gap.silence_sent(due);
+        shared
+            .stats
+            .silence_fill
+            .fetch_add(due as u64, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+/// Start the mic processor. It runs until every returned sender is dropped; its frames go to
+/// `shared`'s mic sink (set per room).
+pub fn spawn(shared: Arc<Shared>) -> (RawTx, std::thread::JoinHandle<()>) {
     let (tx, rx) = std_mpsc::channel::<RawBlock>();
     let h = std::thread::Builder::new()
         .name("pulse-mic".into())
         .spawn(move || {
             let _rt = super::rtprio::promote("pulse-mic");
-            run(shared, rx, mic_tx)
+            run(shared, rx)
         })
         .expect("spawn mic processor");
     (tx, h)
@@ -331,11 +407,7 @@ fn shown(level: NsLevel) -> NsLevel {
     }
 }
 
-fn run(
-    shared: Arc<Shared>,
-    rx: std_mpsc::Receiver<RawBlock>,
-    mic_tx: mpsc::UnboundedSender<MicChunk>,
-) {
+fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
     let cfg = shared.proc_cfg.lock().unwrap().clone();
     let mut version = cfg.version;
     let mut chain = MicChain::new(cfg.level, cfg.auto, cfg.threshold, cfg.gain);
@@ -354,8 +426,17 @@ fn run(
     let mut pending: Vec<f32> = Vec::with_capacity(2 * FRAME);
     let mut queue: VecDeque<RawBlock> = VecDeque::new();
     let mut i16buf = vec![0i16; FRAME];
+    let (mut gap, silence) = (GapFill::new(Instant::now()), vec![0i16; FRAME]);
 
-    while let Ok(first) = rx.recv() {
+    loop {
+        let first = match rx.recv_timeout(GAP_CHECK) {
+            Ok(b) => b,
+            Err(std_mpsc::RecvTimeoutError::Timeout) => {
+                fill_gap(&shared, &mut gap, &silence);
+                continue;
+            }
+            Err(std_mpsc::RecvTimeoutError::Disconnected) => return, // devices closed for good
+        };
         queue.push_back(first);
         queue.extend(rx.try_iter());
         let late = trim_backlog(&mut queue, Instant::now());
@@ -363,6 +444,8 @@ fn run(
             .stats
             .lag_drops
             .fetch_add(late as u64, std::sync::atomic::Ordering::Relaxed);
+        // blocks waiting = ms behind
+        shared.mic_queue.record(queue.len() as u32 * 10);
 
         // live config
         let cfg = shared.proc_cfg.lock().unwrap().clone();
@@ -458,10 +541,10 @@ fn run(
                 overload.reset();
             }
             shared.add_mic_level(out.level, out.sent);
-            let chunk: Vec<i16> = block.iter().map(|v| to_i16(*v)).collect();
-            if mic_tx.send((INTERNAL_RATE, chunk)).is_err() {
-                return; // session gone
+            for (d, v) in i16buf.iter_mut().zip(block.iter()) {
+                *d = to_i16(*v);
             }
+            deliver(&shared, &mut gap, &i16buf);
         }
     }
 }
@@ -532,14 +615,14 @@ mod tests {
             sensitivity: 0.0, // manual, threshold 0 = always open
             ..Default::default()
         });
-        let (mic_tx, mut mic_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (raw_tx, _h) = spawn(shared.clone(), mic_tx);
+        let seen = collecting(&shared);
+        let (raw_tx, _h) = spawn(shared.clone());
         let tone: Vec<f32> = (0..480).map(|i| 0.1 * (i as f32 * 0.0576).sin()).collect();
         for _ in 0..10 {
             raw_tx.send((48_000, tone.clone(), Instant::now())).unwrap();
             std::thread::sleep(Duration::from_millis(5));
         }
-        assert_eq!(recv_n(&mut mic_rx, 10).len(), 10);
+        assert!(wait_frames(&seen, 10) >= 10);
         let s = shared.stats.take(0);
         assert_eq!(
             s.ns_atten_db.map(f64::round),
@@ -735,50 +818,135 @@ mod tests {
         )
     }
 
-    fn recv_n(
-        rx: &mut tokio::sync::mpsc::UnboundedReceiver<crate::voice::devices::MicChunk>,
-        n: usize,
-    ) -> Vec<(u32, usize)> {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        let mut got = Vec::new();
-        while got.len() < n && Instant::now() < deadline {
-            match rx.try_recv() {
-                Ok((rate, buf)) => got.push((rate, buf.len())),
-                Err(_) => std::thread::sleep(Duration::from_millis(2)),
-            }
+    type Seen = Arc<Mutex<Vec<(usize, Option<String>)>>>;
+
+    /// Records each frame's length and the thread it arrived on.
+    struct Collect(Seen);
+
+    impl FrameSink for Collect {
+        fn send(&mut self, frame: &[i16]) -> bool {
+            let thread = std::thread::current().name().map(String::from);
+            self.0.lock().unwrap().push((frame.len(), thread));
+            true
         }
-        got
+    }
+
+    fn collecting(sh: &Arc<Shared>) -> Seen {
+        let seen: Seen = Default::default();
+        sh.set_mic_sink(Some(Box::new(Collect(seen.clone()))));
+        seen
+    }
+
+    fn wait_frames(seen: &Seen, n: usize) -> usize {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while seen.lock().unwrap().len() < n && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        seen.lock().unwrap().len()
+    }
+
+    fn off() -> Arc<Shared> {
+        shared_with(AudioConfig {
+            noise_suppression: NsLevel::Off,
+            ..Default::default()
+        })
+    }
+
+    #[test]
+    fn frames_go_straight_to_the_sink_on_the_processor_thread() {
+        let sh = off();
+        let seen = collecting(&sh);
+        let (raw_tx, _h) = spawn(sh.clone());
+        for _ in 0..10 {
+            raw_tx
+                .send((48_000, vec![0.0; 480], Instant::now()))
+                .unwrap();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(wait_frames(&seen, 10) >= 10);
+        let seen = seen.lock().unwrap();
+        assert!(
+            seen.iter()
+                .all(|(n, t)| *n == 480 && t.as_deref() == Some("pulse-mic")),
+            "{seen:?}"
+        );
+    }
+
+    /// Before the room is connected there's nowhere to send: frames are dropped, never queued
+    /// (whatever piled up would be sent late for the rest of the call).
+    #[test]
+    fn without_a_room_frames_are_dropped_not_queued() {
+        let sh = off();
+        let (raw_tx, _h) = spawn(sh.clone());
+        for _ in 0..30 {
+            raw_tx
+                .send((48_000, vec![0.0; 480], Instant::now()))
+                .unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(100));
+        let seen = collecting(&sh);
+        raw_tx
+            .send((48_000, vec![0.0; 480], Instant::now()))
+            .unwrap();
+        wait_frames(&seen, 1);
+        std::thread::sleep(Duration::from_millis(30));
+        assert_eq!(
+            seen.lock().unwrap().len(),
+            1,
+            "only the frame after the room connected"
+        );
+    }
+
+    /// The mic stalls (a device reopen): the stream to WebRTC stays continuous with silence.
+    #[test]
+    fn a_stalled_mic_is_covered_with_silence() {
+        let sh = off();
+        let seen = collecting(&sh);
+        let (raw_tx, _h) = spawn(sh.clone());
+        for _ in 0..5 {
+            raw_tx
+                .send((48_000, vec![0.0; 480], Instant::now()))
+                .unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(250));
+        assert!(
+            wait_frames(&seen, 5 + 10) >= 15,
+            "{} frames",
+            seen.lock().unwrap().len()
+        );
+        assert!(
+            sh.stats
+                .silence_fill
+                .load(std::sync::atomic::Ordering::Relaxed)
+                >= 10
+        );
+        drop(raw_tx);
+    }
+
+    fn all_480(seen: &Seen) -> bool {
+        seen.lock().unwrap().iter().all(|(n, _)| *n == 480)
     }
 
     #[test]
     fn processor_emits_exact_48k_frames() {
-        let (mic_tx, mut mic_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (raw_tx, _h) = spawn(
-            shared_with(AudioConfig {
-                noise_suppression: NsLevel::Off,
-                ..Default::default()
-            }),
-            mic_tx,
-        );
+        let sh = off();
+        let seen = collecting(&sh);
+        let (raw_tx, _h) = spawn(sh.clone());
         for _ in 0..10 {
             raw_tx
                 .send((48_000, vec![0.0; 480], Instant::now()))
                 .unwrap();
             std::thread::sleep(Duration::from_millis(5)); // devices deliver over time, not in a burst
         }
-        assert_eq!(recv_n(&mut mic_rx, 10), vec![(48_000, 480); 10]);
+        assert!(wait_frames(&seen, 10) >= 10);
+        assert!(all_480(&seen), "{:?}", seen.lock().unwrap());
     }
 
     #[test]
     fn processor_handles_rate_change() {
-        let (mic_tx, mut mic_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (raw_tx, _h) = spawn(
-            shared_with(AudioConfig {
-                noise_suppression: NsLevel::Off,
-                ..Default::default()
-            }),
-            mic_tx,
-        );
+        let sh = off();
+        let seen = collecting(&sh);
+        let (raw_tx, _h) = spawn(sh.clone());
         for _ in 0..50 {
             raw_tx
                 .send((16_000, vec![0.0; 160], Instant::now()))
@@ -791,18 +959,13 @@ mod tests {
                 .unwrap();
             std::thread::sleep(Duration::from_millis(2));
         }
-        let got = recv_n(&mut mic_rx, 90);
-        assert!(
-            got.len() >= 90 && got.iter().all(|c| *c == (48_000, 480)),
-            "{:?}",
-            got.len()
-        );
+        let got = wait_frames(&seen, 90);
+        assert!(got >= 90 && all_480(&seen), "{got}");
     }
 
     #[test]
     fn processor_exits_when_senders_drop() {
-        let (mic_tx, _mic_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (raw_tx, h) = spawn(shared_with(AudioConfig::default()), mic_tx);
+        let (raw_tx, h) = spawn(shared_with(AudioConfig::default()));
         drop(raw_tx);
         let deadline = Instant::now() + Duration::from_secs(2);
         while !h.is_finished() && Instant::now() < deadline {
@@ -812,17 +975,12 @@ mod tests {
     }
 
     /// Devices with big buffers deliver 100 ms of audio per callback: a burst of 10 blocks at once.
-    /// That's not lag, so nothing may be dropped (review I1).
+    /// That's not lag, so nothing may be dropped (review I1). Silence fills the gaps between bursts.
     #[test]
     fn bursty_device_callbacks_lose_nothing() {
-        let (mic_tx, mut mic_rx) = tokio::sync::mpsc::unbounded_channel();
-        let (raw_tx, _h) = spawn(
-            shared_with(AudioConfig {
-                noise_suppression: NsLevel::Off,
-                ..Default::default()
-            }),
-            mic_tx,
-        );
+        let sh = off();
+        let seen = collecting(&sh);
+        let (raw_tx, _h) = spawn(sh.clone());
         for _ in 0..3 {
             for _ in 0..10 {
                 raw_tx
@@ -831,9 +989,12 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(100));
         }
+        assert!(wait_frames(&seen, 30) >= 30);
         assert_eq!(
-            recv_n(&mut mic_rx, 30).len(),
-            30,
+            sh.stats
+                .lag_drops
+                .load(std::sync::atomic::Ordering::Relaxed),
+            0,
             "a burst is not a backlog"
         );
     }

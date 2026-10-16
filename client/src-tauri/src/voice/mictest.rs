@@ -5,16 +5,29 @@ use std::sync::atomic::Ordering;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use super::backlog::QueueGauge;
 use super::controls::Controls;
-use super::devices::{AudioConfig, AudioIo, INTERNAL_RATE, MicChunk, Shared};
+use super::devices::{AudioConfig, AudioIo, INTERNAL_RATE, Shared};
 use super::mixer::Mixer;
 use super::{EventSink, VoiceError, VoiceEvent};
 
 const DELAY_MS: u32 = 300;
+
+/// The mic test's "speaker": your processed mic, delayed, into the local mixer.
+struct Loopback {
+    delay: DelayLine,
+    mixer: Arc<Mutex<Mixer>>,
+}
+
+impl super::processor::FrameSink for Loopback {
+    fn send(&mut self, frame: &[i16]) -> bool {
+        let out = self.delay.process(frame);
+        self.mixer.lock().unwrap().push("self", &out);
+        true
+    }
+}
 
 /// Fixed delay: output = input delayed by `n` samples (silence first).
 pub struct DelayLine {
@@ -58,21 +71,16 @@ impl MicTest {
             Arc::new(Mutex::new(Controls::default())),
             mixer.clone(),
         );
-        let (tx, mut rx) = mpsc::unbounded_channel::<MicChunk>();
         // Same pipeline as a call: devices → processor (denoise, gate) → loopback. The AudioIo holds
         // the only sender into the processor, so stopping the test ends it.
-        let (raw_tx, _processor) = super::processor::spawn(shared.clone(), tx);
+        // The mixer runs at 48 kHz; the output edge resamples to the device.
+        shared.set_mic_sink(Some(Box::new(Loopback {
+            delay: DelayLine::new((INTERNAL_RATE * DELAY_MS / 1000) as usize),
+            mixer: mixer.clone(),
+        })));
+        let (raw_tx, _processor) = super::processor::spawn(shared.clone());
         let io = AudioIo::start(cfg, shared.clone(), raw_tx)
             .map_err(|e| VoiceError::Device(e.to_string()))?;
-        // The mixer runs at 48 kHz; the output edge resamples to the device.
-        let mut delay = DelayLine::new((INTERNAL_RATE * DELAY_MS / 1000) as usize);
-        let loopback = tokio::spawn(async move {
-            let mut to_internal = super::resampler::ToInternal::default();
-            while let Some((rate, chunk)) = rx.recv().await {
-                let out = delay.process(&to_internal.process(rate, &chunk));
-                mixer.lock().unwrap().push("self", &out);
-            }
-        });
         let queue = self.queue.clone();
         queue.record(0); // this run's worst starts from nothing, not the last run's queue
         queue.take_worst();
@@ -97,7 +105,7 @@ impl MicTest {
                 }
             }
         });
-        *self.running.lock().unwrap() = Some((io, vec![loopback, levels]));
+        *self.running.lock().unwrap() = Some((io, vec![levels]));
         Ok(())
     }
 

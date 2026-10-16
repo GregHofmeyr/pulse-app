@@ -306,6 +306,10 @@ pub struct Shared {
     sent_meter: Mutex<Meter>,
     /// Counters for the `voice: path` line (atomics: safe in the audio callbacks).
     pub stats: super::stats::Pipeline,
+    /// Where the processor's frames go: the current room's mic track (`None` between rooms).
+    pub(crate) mic_sink: Mutex<Option<Box<dyn super::processor::FrameSink>>>,
+    /// Mic audio waiting to be processed (ms), worst per stats window: the send-side delay we own.
+    pub mic_queue: super::backlog::QueueGauge,
 }
 
 impl Shared {
@@ -340,7 +344,13 @@ impl Shared {
             spk_meter: Mutex::new(Meter::default()),
             sent_meter: Mutex::new(Meter::default()),
             stats: Default::default(),
+            mic_sink: Mutex::new(None),
+            mic_queue: Default::default(),
         })
+    }
+
+    pub fn set_mic_sink(&self, sink: Option<Box<dyn super::processor::FrameSink>>) {
+        *self.mic_sink.lock().unwrap() = sink;
     }
 
     /// (mic rms, speaker rms) since the last call.

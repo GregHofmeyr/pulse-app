@@ -25,27 +25,21 @@ use std::time::{Duration, Instant};
 use futures::StreamExt;
 use livekit::options::TrackPublishOptions;
 use livekit::prelude::*;
-use livekit::webrtc::audio_frame::AudioFrame;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
 use pulse_protocol::ids::ChannelId;
 use serde::Serialize;
-use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::api::{Api, ApiError};
 use controls::Controls;
-use devices::{AudioConfig, AudioIo, INTERNAL_RATE, MicChunk, Shared, Sides};
+use devices::{AudioConfig, AudioIo, INTERNAL_RATE, Shared, Sides};
 use mixer::{Mixer, percent_to_gain};
 use rx::RxTasks;
 
 /// Max audio buffered per peer before the oldest is dropped (bounds latency).
 const PEER_BUFFER_MS: u32 = 200;
-/// Mic audio allowed to wait behind the chunk being sent (10 ms chunks): with that chunk, 100 ms,
-/// one burst from a big-buffer device. Anything beyond is stale and dropped, so a stall (or the
-/// join itself) can't add lasting delay.
-const SEND_SLACK_CHUNKS: usize = 9;
 /// How long a bug report waits for the voice session before reporting it as busy.
 const DIAGNOSTICS_WAIT: Duration = Duration::from_secs(1);
 
@@ -274,8 +268,6 @@ struct Session {
     rx: Arc<Mutex<RxTasks>>,
     /// Cleared when LiveKit disconnects us for good: the session is then torn down.
     alive: Arc<AtomicBool>,
-    /// Mic audio processed but not yet handed to LiveKit.
-    send_queue: Arc<backlog::QueueGauge>,
     reopener: Arc<Reopener>,
     tasks: Vec<JoinHandle<()>>,
 }
@@ -386,9 +378,8 @@ impl VoiceManager {
 
         let mixer = Arc::new(Mutex::new(Mixer::new(INTERNAL_RATE, PEER_BUFFER_MS)));
         let shared = Shared::new(&cfg, self.controls.clone(), mixer.clone());
-        let (mic_tx, mut mic_rx) = mpsc::unbounded_channel::<MicChunk>();
-        // devices → processor (denoise, gate) → mic_tx → LiveKit
-        let (raw_tx, _processor) = processor::spawn(shared.clone(), mic_tx);
+        // devices → processor (denoise, gate) → the room's mic track, once there is one
+        let (raw_tx, _processor) = processor::spawn(shared.clone());
         let io = match mode {
             AudioMode::Real => start_audio(&cfg, shared.clone(), raw_tx.clone()).await?,
             AudioMode::Null(rate) => AudioIo::start_null(rate, shared.clone(), raw_tx.clone()),
@@ -409,10 +400,12 @@ impl VoiceManager {
         // Fixed 48 kHz towards LiveKit, whatever the device does.
         // queue 0 = WebRTC's fast path: each 10 ms frame goes straight out. A queue there drains on
         // the system clock and is never trimmed, so any backlog in it (a burst, a mic clock running
-        // fast) stays as delay; our own queue (`mic_rx`) is bounded and measured instead.
+        // fast) stays as delay; our own queue (the processor's, by age) is bounded and measured instead.
         let source = NativeAudioSource::new(AudioSourceOptions::default(), INTERNAL_RATE, 1, 0);
         let track =
             LocalAudioTrack::create_audio_track("mic", RtcAudioSource::Native(source.clone()));
+        // from now on the mic processor hands each 10 ms frame straight to WebRTC
+        shared.set_mic_sink(Some(Box::new(processor::LiveKitSink::new(source.clone()))));
         let published = tokio::time::timeout(
             PUBLISH_TIMEOUT,
             room.local_participant()
@@ -438,10 +431,9 @@ impl VoiceManager {
         let room = Arc::new(room);
 
         let mut tasks = Vec::new();
-        let send_queue = Arc::new(backlog::QueueGauge::default());
         // what WebRTC measures about the path, for telling network lag from local lag
         {
-            let (room, send_queue, mixer) = (room.clone(), send_queue.clone(), mixer.clone());
+            let (room, mixer) = (room.clone(), mixer.clone());
             let shared = shared.clone();
             tasks.push(tokio::spawn(async move {
                 let mut totals = netstats::Totals::default();
@@ -461,7 +453,7 @@ impl VoiceManager {
                             netstats::summarize(&s.publisher_stats, &s.subscriber_stats, &totals);
                         totals = t;
                         // ours: worst send backlog this window, and the pipeline's counters
-                        let send_ms = send_queue.take_worst();
+                        let send_ms = shared.mic_queue.take_worst();
                         let (underrun, adjust) = {
                             let mut m = mixer.lock().unwrap();
                             (m.take_underrun_samples(), m.take_adjusted_samples())
@@ -472,80 +464,6 @@ impl VoiceManager {
                 }
             }));
         }
-        // mic → LiveKit, resampled to 48 kHz and sent in exact 10 ms frames
-        let (gauge, counters) = (send_queue.clone(), shared.clone());
-        tasks.push(tokio::spawn(async move {
-            let frame_len = (INTERNAL_RATE / 100) as usize;
-            let mut to_internal = resampler::ToInternal::default();
-            let mut ready: Vec<i16> = Vec::with_capacity(2 * frame_len);
-            // the mic started with the join; what it captured while we connected is old by now
-            let (joined, _) = backlog::drop_stale(&mut mic_rx, 0); // nothing sent yet: no fade
-            tracing::info!(
-                dropped_ms = joined * 10,
-                "voice: mic audio from before joining dropped"
-            );
-            // after a drop: the first dropped chunk, faded into the next one we send (no click)
-            let mut fade_from: Option<Vec<i16>> = None;
-            let mut drops = crate::throttle::Throttle::new(Duration::from_secs(10));
-            let send = |samples: Vec<i16>| AudioFrame {
-                data: samples.into(),
-                sample_rate: INTERNAL_RATE,
-                num_channels: 1,
-                samples_per_channel: frame_len as u32,
-            };
-            // keep the stream continuous when the mic stops (stall, device reopen)
-            let mut gap = backlog::GapFill::new(Instant::now());
-            let mut tick = tokio::time::interval(Duration::from_millis(10));
-            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            loop {
-                let (rate, mut buf) = tokio::select! {
-                    chunk = mic_rx.recv() => match chunk {
-                        Some(c) => c,
-                        None => break, // session gone
-                    },
-                    _ = tick.tick() => {
-                        let due = gap.silence_due(Instant::now());
-                        if due > 0 {
-                            ready.clear(); // a partial frame from before the gap would be out of place
-                            for _ in 0..due {
-                                let _ = source.capture_frame(&send(vec![0; frame_len])).await;
-                            }
-                            gap.silence_sent(due);
-                            counters.stats.silence_fill.fetch_add(due as u64, Ordering::Relaxed);
-                        }
-                        continue;
-                    }
-                };
-                if let Some(old) = fade_from.take() {
-                    backlog::crossfade(&old, &mut buf);
-                }
-                let (stale, first) = backlog::drop_stale(&mut mic_rx, SEND_SLACK_CHUNKS);
-                if stale > 0 {
-                    counters
-                        .stats
-                        .send_drops
-                        .fetch_add(stale as u64, Ordering::Relaxed);
-                    fade_from = first.map(|(_, b)| b);
-                    if let Some(repeated) = drops.hit(Instant::now()) {
-                        tracing::warn!(
-                            dropped_ms = stale * 10,
-                            repeated,
-                            "voice: mic audio backed up, dropped"
-                        );
-                    }
-                }
-                ready.extend(to_internal.process(rate, &buf));
-                // the processor emits 10 ms chunks: what's still queued behind this one, plus `ready`
-                let waiting = mic_rx.len() * frame_len + ready.len();
-                gauge.record((waiting * 1000 / INTERNAL_RATE as usize) as u32);
-                while ready.len() >= frame_len {
-                    let frame = send(ready.drain(..frame_len).collect());
-                    let _ = source.capture_frame(&frame).await;
-                    gap.sent(Instant::now());
-                }
-            }
-        }));
-
         let rx = Arc::new(Mutex::new(RxTasks::default()));
         let io = Arc::new(Mutex::new(Some(io)));
         let alive = Arc::new(AtomicBool::new(true));
@@ -559,6 +477,7 @@ impl VoiceManager {
                 self.events.clone(),
             );
             let (controls, io, alive) = (self.controls.clone(), io.clone(), alive.clone());
+            let shared = shared.clone();
             tasks.push(tokio::spawn(async move {
                 let state = |connection, channel_id| VoiceEvent::State {
                     channel_id,
@@ -634,6 +553,7 @@ impl VoiceManager {
                             tracing::warn!(?reason, "voice disconnected by LiveKit");
                             // Gone for good: stop the mic/speakers and mark the session dead.
                             alive.store(false, Ordering::SeqCst);
+                            shared.set_mic_sink(None);
                             io.lock().unwrap().take();
                             rx.lock().unwrap().clear();
                             events(state(Connection::Disconnected, None));
@@ -758,7 +678,6 @@ impl VoiceManager {
             real,
             rx,
             alive,
-            send_queue,
             reopener,
             tasks,
         })
@@ -780,6 +699,7 @@ impl VoiceManager {
             tracing::info!("voice: leaving");
             // first: a reopen in flight must not open devices for a session that's gone
             s.alive.store(false, Ordering::SeqCst);
+            s.shared.set_mic_sink(None);
             if tokio::time::timeout(CLOSE_TIMEOUT, s.room.close())
                 .await
                 .is_err()
@@ -913,7 +833,7 @@ impl VoiceManager {
     /// Mic audio waiting to go to LiveKit right now, in ms (tests; the log has the worst per window).
     pub async fn send_queue_ms(&self) -> u32 {
         match self.session.lock().await.as_ref() {
-            Some(s) => s.send_queue.current(),
+            Some(s) => s.shared.mic_queue.current(),
             None => 0,
         }
     }
