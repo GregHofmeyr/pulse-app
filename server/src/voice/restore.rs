@@ -54,7 +54,10 @@ pub async fn fetch(
                 if p.state == State::Disconnected as i32 {
                     continue;
                 }
-                let joined_at = chrono::DateTime::from_timestamp(p.joined_at, 0)
+                // 0 (or negative) means LiveKit didn't set it: treat as now, not 1970.
+                let joined_at = (p.joined_at > 0)
+                    .then(|| chrono::DateTime::from_timestamp(p.joined_at, 0))
+                    .flatten()
                     .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
                     .unwrap_or_else(crate::db::now);
                 out.push(LiveParticipant {
@@ -81,10 +84,18 @@ pub async fn apply(
     live: &[LiveParticipant],
     started_at: &str,
 ) -> anyhow::Result<Vec<LiveParticipant>> {
-    // Only rooms that are still channels; only server voice feeds stats (spec §8).
+    // Only rooms that are still channels and identities that are still users (a row for anyone
+    // else would fail the whole transaction on the FK); only server voice feeds stats (spec §8).
     let mut known = Vec::new();
     for p in live {
-        if let Some(ch) = load_channel(db, p.channel).await? {
+        let Some(ch) = load_channel(db, p.channel).await? else {
+            continue;
+        };
+        let user: Option<i64> = sqlx::query_scalar("SELECT 1 FROM users WHERE id = ?")
+            .bind(p.user.to_string())
+            .fetch_optional(db)
+            .await?;
+        if user.is_some() {
             known.push((p, ch.server_id.is_some()));
         }
     }

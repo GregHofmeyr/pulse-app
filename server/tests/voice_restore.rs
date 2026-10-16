@@ -353,3 +353,52 @@ async fn server_boots_and_serves_when_livekit_is_down() {
     let r = reqwest::get(p.url("/health")).await.unwrap();
     assert_eq!(r.status(), 200);
 }
+
+/// Some LiveKit builds report `joined_at` 0 (unset): that's "now", not 1970.
+#[tokio::test]
+async fn an_unset_livekit_join_time_is_treated_as_now() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    let mut p = participant(a_id, "PA_1");
+    p.joined_at = 0;
+    let lk = fake_livekit(vec![(l.id.to_string(), vec![p])]).await;
+    let before = pulse_server::db::now();
+
+    restore::sync(&state_with(&app, lk), &before, BUDGET)
+        .await
+        .unwrap();
+
+    let rows = session(&app, a_id).await;
+    assert_eq!(rows.len(), 1);
+    assert!(
+        rows[0].1 >= before,
+        "joined_at {} should be now-ish (>= {before})",
+        rows[0].1
+    );
+}
+
+/// A LiveKit identity that parses as a user id but has no `users` row (deleted account, other
+/// deployment's token) is skipped; everyone else is still restored.
+#[tokio::test]
+async fn an_unknown_user_is_skipped_without_failing_the_restore() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    let ghost = UserId::new();
+    let lk = fake_livekit(vec![(
+        l.id.to_string(),
+        vec![participant(ghost, "PA_ghost"), participant(a_id, "PA_1")],
+    )])
+    .await;
+
+    let n = restore::sync(&state_with(&app, lk), &pulse_server::db::now(), BUDGET)
+        .await
+        .unwrap();
+
+    assert_eq!(n, 1);
+    assert!(app.voice_members(l.id).contains(&a_id));
+    assert!(!app.voice_members(l.id).contains(&ghost));
+    assert_eq!(session(&app, a_id).await.len(), 1);
+    assert!(session(&app, ghost).await.is_empty());
+}
