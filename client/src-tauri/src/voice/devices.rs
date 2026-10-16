@@ -887,10 +887,15 @@ where
     );
 }
 
+/// Largest sample we hand to a device: one 24-bit step below +1.0. dasp's conversions assume
+/// `-1.0 <= s < 1.0`; at exactly +1.0 they give I24(8_388_608) / U24(16_777_216), one past the top,
+/// which cpal's WASAPI path wraps into a full-scale negative spike. Other formats lose < 1 LSB.
+const MAX_OUT: f32 = 8_388_607.0 / 8_388_608.0;
+
 /// f32 → device samples (any format).
 pub fn from_f32<T: cpal::Sample + cpal::FromSample<f32>>(src: &[f32], dst: &mut [T]) {
     for (o, v) in dst.iter_mut().zip(src) {
-        *o = <T as cpal::FromSample<f32>>::from_sample_(v.clamp(-1.0, 1.0));
+        *o = <T as cpal::FromSample<f32>>::from_sample_(v.clamp(-1.0, MAX_OUT));
     }
 }
 
@@ -1615,6 +1620,34 @@ mod tests {
         let mut back = Vec::new();
         to_f32(&dev, &mut back);
         back
+    }
+
+    /// A clipped +1.0 must land on the format's top code, not one past it: dasp maps +1.0 to
+    /// I24(8_388_608) / U24(16_777_216), which cpal's WASAPI path wraps into a full-scale negative
+    /// spike. Other formats keep their existing full-scale values.
+    #[test]
+    fn full_scale_never_overflows_the_device_format() {
+        let mut i24 = [<cpal::I24 as cpal::Sample>::EQUILIBRIUM; 2];
+        from_f32(&[1.0, -1.0], &mut i24);
+        assert_eq!(i24[0].inner(), 8_388_607);
+        assert_eq!(i24[1].inner(), -8_388_608);
+        let mut u24 = [<cpal::U24 as cpal::Sample>::EQUILIBRIUM; 2];
+        from_f32(&[1.0, -1.0], &mut u24);
+        assert_eq!(u24[0].inner(), 16_777_215);
+        assert_eq!(u24[1].inner(), 0);
+
+        let mut i16s = [0i16; 2];
+        from_f32(&[1.0, -1.0], &mut i16s);
+        assert_eq!(i16s, [i16::MAX, i16::MIN]);
+        let mut i32s = [0i32; 2];
+        from_f32(&[1.0, -1.0], &mut i32s);
+        assert!(i32s[0] > i32::MAX - 512 && i32s[1] == i32::MIN, "{i32s:?}");
+        let mut i8s = [0i8; 2];
+        from_f32(&[1.0, -1.0], &mut i8s);
+        assert_eq!(i8s, [i8::MAX, i8::MIN]);
+        let mut f = [0f32; 1];
+        from_f32(&[1.0], &mut f);
+        assert!(f[0] > 0.99999 && f[0] < 1.0, "{f:?}");
     }
 
     /// cpal 0.18 ranks 24-bit formats above I16: a headset whose shared-mode format is 24-bit
