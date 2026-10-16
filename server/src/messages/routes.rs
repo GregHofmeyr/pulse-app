@@ -20,6 +20,8 @@ use crate::servers::routes::is_server_member;
 use super::mentions;
 
 const MAX_LEN: usize = 4000;
+/// Client nonces are UUIDs (36 bytes); anything much longer isn't one of ours.
+const MAX_NONCE: usize = 64;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -157,6 +159,15 @@ async fn send(
         _ => {}
     }
     let content = clean(&req.content)?;
+    if req
+        .nonce
+        .as_ref()
+        .is_some_and(|n| n.is_empty() || n.len() > MAX_NONCE)
+    {
+        return Err(AppError::BadRequest(format!(
+            "nonce must be 1-{MAX_NONCE} bytes"
+        )));
+    }
     let mut mentioned = mentions::resolve(&s.db, &ch, me, &mentions::parse(&content)).await?;
     if let Some(r) = req.reply_to_id {
         // Same-channel only; a reply target elsewhere (including private) is indistinguishable from missing.
@@ -192,13 +203,34 @@ async fn send(
     };
     // One transaction: the message, its mentions and your read point land together or not at all.
     let mut tx = crate::db::begin_write(&s.db).await?;
-    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at) VALUES (?, ?, ?, 'normal', ?, ?, ?)")
+    // An outbox retry of a send that already landed (e.g. the proxy said 502 after we committed):
+    // hand back the original instead of posting twice. Under the write lock, check-then-insert is
+    // atomic; the unique index is the backstop.
+    if let Some(nonce) = &req.nonce
+        && let Some(existing) = sqlx::query_scalar::<_, String>(
+            "SELECT id FROM messages WHERE author_id = ? AND nonce = ?",
+        )
+        .bind(me.to_string())
+        .bind(nonce)
+        .fetch_optional(&mut *tx)
+        .await?
+    {
+        tx.rollback().await?;
+        // Not re-published: the first send already fanned it out, and a second MessageCreated
+        // would double-count unreads on other clients.
+        return load(&s.db, parse(&existing)?)
+            .await?
+            .map(Json)
+            .ok_or(AppError::NotFound);
+    }
+    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at, nonce) VALUES (?, ?, ?, 'normal', ?, ?, ?, ?)")
         .bind(msg.id.to_string())
         .bind(id.to_string())
         .bind(me.to_string())
         .bind(&msg.content)
         .bind(msg.reply_to_id.map(|r| r.to_string()))
         .bind(&msg.created_at)
+        .bind(&req.nonce)
         .execute(&mut *tx)
         .await?;
     mentions::store(&mut tx, msg.id, &mentioned).await?;
