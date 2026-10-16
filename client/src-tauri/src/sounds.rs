@@ -10,13 +10,13 @@ pub struct Sound {
 
 fn bytes(name: &str) -> Option<&'static [u8]> {
     Some(match name {
-        "join" => include_bytes!("../../ui/public/sounds/join.wav"),
-        "leave" => include_bytes!("../../ui/public/sounds/leave.wav"),
-        "mute" => include_bytes!("../../ui/public/sounds/mute.wav"),
-        "unmute" => include_bytes!("../../ui/public/sounds/unmute.wav"),
-        "deafen" => include_bytes!("../../ui/public/sounds/deafen.wav"),
-        "undeafen" => include_bytes!("../../ui/public/sounds/undeafen.wav"),
-        "message" => include_bytes!("../../ui/public/sounds/message.wav"),
+        "join" => include_bytes!("../sounds/join.wav"),
+        "leave" => include_bytes!("../sounds/leave.wav"),
+        "mute" => include_bytes!("../sounds/mute.wav"),
+        "unmute" => include_bytes!("../sounds/unmute.wav"),
+        "deafen" => include_bytes!("../sounds/deafen.wav"),
+        "undeafen" => include_bytes!("../sounds/undeafen.wav"),
+        "message" => include_bytes!("../sounds/message.wav"),
         _ => return None,
     })
 }
@@ -220,6 +220,16 @@ mod tests {
             assert!(s.samples.iter().any(|v| v.abs() > 0.1), "{name} silent");
         }
         assert!(load("nope").is_none());
+    }
+
+    #[test]
+    fn sounds_ship_once_in_the_binary_not_again_as_webview_assets() {
+        // Played by the core (cpal), never by the page: a copy under ui/public would be bundled twice.
+        let public = concat!(env!("CARGO_MANIFEST_DIR"), "/../ui/public/sounds");
+        assert!(
+            !std::path::Path::new(public).exists(),
+            "{public} is bundled into the webview assets too"
+        );
     }
 
     /// The message ping often plays to an idle output: a sleeping Bluetooth device takes a few hundred
