@@ -262,8 +262,11 @@ const BOOT_WAIT: std::time::Duration = std::time::Duration::from_secs(25);
 pub async fn restore_session(
     app: AppHandle,
     core: State<'_, Core>,
+    voice: State<'_, VoiceManager>,
 ) -> Result<Option<User>, ApiError> {
     crate::startup::mark("restore_begin");
+    // Runs once per page load: a reload (renderer crash) can't leave the old page's meters counted.
+    voice.reset_meters();
     // The UI listens before it calls this. Already attached = the webview reloaded.
     let reload = core.ui_attached.send_replace(true);
     let Some(server) = core.start_stored(&app, reload) else {
@@ -590,6 +593,12 @@ pub async fn stop_mic_test(
 ) -> Result<(), VoiceError> {
     mic.stop();
     Ok(())
+}
+
+/// A voice meter appeared in (`on`) or left the UI: in a call, levels are sent only while one shows.
+#[tauri::command]
+pub fn watch_voice_meters(voice: State<'_, VoiceManager>, on: bool) {
+    voice.watch_meters(on);
 }
 
 /// Hotkey path (IPC on Linux, global shortcut on Windows): toggle + broadcast, same as the buttons.

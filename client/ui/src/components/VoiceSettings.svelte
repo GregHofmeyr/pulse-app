@@ -22,6 +22,11 @@
   let error = $state('')
   const linux = navigator.userAgent.includes('Linux')
 
+  // The in-call meter: the core only sends levels while this page is open.
+  onMount(() => {
+    void voiceApi.watchMeters(true).catch(() => {})
+    return () => void voiceApi.watchMeters(false).catch(() => {})
+  })
   onMount(async () => {
     try {
       const d = await voiceApi.listDevices()

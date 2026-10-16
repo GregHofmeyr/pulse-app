@@ -654,6 +654,19 @@ pub enum VoiceEvent {
 
 pub type EventSink = Arc<dyn Fn(VoiceEvent) + Send + Sync>;
 
+/// This tick's meter update, if a meter is on screen (each one is a JSON eval in the webview: 10 a
+/// second for a whole call otherwise). The levels are taken either way, so a meter that opens
+/// mid-call starts from the last 100 ms, not an average over the call so far.
+fn meter_update(shared: &Shared) -> Option<VoiceEvent> {
+    let (mic, speaker) = shared.take_levels();
+    let shown = shared.controls.lock().unwrap().meters_shown();
+    shown.then(|| VoiceEvent::Levels {
+        mic,
+        speaker,
+        gate_open: shared.gate_open.load(Ordering::Relaxed),
+    })
+}
+
 /// `R`: the room (a stand-in in tests).
 struct Session<R: CloseRoom = Room> {
     channel: ChannelId,
@@ -1352,17 +1365,13 @@ impl VoiceManager {
                     if !alive.load(Ordering::SeqCst) {
                         break;
                     }
-                    let (mic, speaker) = shared.take_levels();
                     let queued = shared.mix_in.max_buffered();
                     shared
                         .stats
                         .sample_recv_queue((queued * 1000 / INTERNAL_RATE as usize) as u32);
-                    let gate_open = shared.gate_open.load(Ordering::Relaxed);
-                    events(VoiceEvent::Levels {
-                        mic,
-                        speaker,
-                        gate_open,
-                    });
+                    if let Some(levels) = meter_update(&shared) {
+                        events(levels);
+                    }
                     if let Some(st) = shared.take_ns_status_change() {
                         events(VoiceEvent::NoiseSuppression {
                             active: st.active,
@@ -1524,6 +1533,16 @@ impl VoiceManager {
 
     pub fn controls(&self) -> Controls {
         *self.controls.lock().unwrap()
+    }
+
+    /// A voice meter appeared in (`true`) or left (`false`) the UI. Survives sessions, like mute.
+    pub fn watch_meters(&self, on: bool) {
+        self.controls.lock().unwrap().watch_meters(on);
+    }
+
+    /// A fresh page: meters shown by the previous one are gone.
+    pub fn reset_meters(&self) {
+        self.controls.lock().unwrap().reset_meters();
     }
 
     pub async fn set_peer_volume(&self, user_id: String, pct: u16) {
@@ -2180,6 +2199,29 @@ mod tests {
             gate_open: true,
         };
         assert_eq!(serde_json::to_value(&l).unwrap()["gate_open"], true);
+    }
+
+    #[test]
+    fn levels_go_to_the_ui_only_while_a_meter_is_shown() {
+        let controls = Arc::new(Mutex::new(Controls::default()));
+        let shared = Shared::new(&AudioConfig::default(), controls.clone(), PEER_BUFFER_MS);
+        shared.add_mic_level(0.3, true);
+        assert!(meter_update(&shared).is_none(), "nobody is looking");
+        controls.lock().unwrap().watch_meters(true);
+        shared.add_mic_level(0.3, true);
+        match meter_update(&shared) {
+            Some(VoiceEvent::Levels { mic, gate_open, .. }) => {
+                assert!(
+                    (mic - 0.3).abs() < 1e-3,
+                    "only this tick's level, got {mic}"
+                );
+                assert!(gate_open);
+            }
+            other => panic!("expected levels, got {other:?}"),
+        }
+        controls.lock().unwrap().watch_meters(false);
+        shared.add_mic_level(0.3, true);
+        assert!(meter_update(&shared).is_none(), "meter closed");
     }
 
     #[test]

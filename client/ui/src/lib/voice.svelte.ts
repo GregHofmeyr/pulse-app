@@ -100,4 +100,6 @@ export const voiceApi = {
   listDevices: () => invoke<{ inputs: { name: string; is_default: boolean }[]; outputs: { name: string; is_default: boolean }[] }>('list_audio_devices'),
   startMicTest: (config: AudioConfig) => invoke('start_mic_test', { config }),
   stopMicTest: () => invoke('stop_mic_test'),
+  /** Levels are only sent while something shows them: call with true when a meter appears, false when it goes. */
+  watchMeters: (on: boolean) => invoke('watch_voice_meters', { on }),
 }
