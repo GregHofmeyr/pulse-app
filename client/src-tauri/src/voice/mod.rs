@@ -20,7 +20,7 @@ pub mod stats;
 pub mod tokens;
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -158,27 +158,56 @@ impl<R: CloseRoom> Drop for OpenRoom<R> {
     }
 }
 
+/// How many failed publishes in a row a rejoin may hand back to the rejoin loop before the call
+/// ends (each hand-back restarts the loop's attempts: unbounded, it could cycle forever).
+const PUBLISH_RETRIES: u32 = 2;
+
+/// The call is over for this session: no more mic into the room, devices closed, receivers stopped.
+fn stop_audio(shared: &Shared, io: &Mutex<Option<AudioIo>>, rx: &Mutex<RxTasks>) {
+    shared.set_mic_sink(None);
+    io.lock().unwrap().take();
+    rx.lock().unwrap().clear();
+}
+
+/// What the background mic publish needs to report how it went.
+struct PublishWatch<R: CloseRoom> {
+    alive: Arc<AtomicBool>,
+    room: Arc<R>,
+    events: EventSink,
+    controls: Arc<Mutex<Controls>>,
+    channel: ChannelId,
+    /// A rejoin's session: (its epoch, the rejoin loop). A failed publish goes back there.
+    rejoin: Option<(u64, Option<mpsc::UnboundedSender<u64>>)>,
+    /// Failed rejoin publishes handed back in a row (the manager's `publish_retries`).
+    retries: Arc<AtomicU32>,
+}
+
 /// Tell the UI how the background mic publish went, once its join has shown "connected"
 /// (`connected` fires; dropped = the join never got there: say nothing, its room guard closes the
 /// room). A session already torn down (`alive` cleared by a leave, a drop, or a rejoin replacing
-/// it) says nothing either. A failed publish ends the call: `teardown` stops the session's audio,
-/// the room is closed, and the UI is told why.
+/// it) says nothing either. A failed publish ends the session: `teardown` stops its audio and the
+/// room is closed. A rejoin's goes back to the rejoin loop (still "reconnecting": right after a
+/// drop is when a publish most likely times out), at most `PUBLISH_RETRIES` times in a row;
+/// otherwise the call ends and the UI is told why.
 async fn report_publish<R: CloseRoom>(
     published: Result<(), String>,
     connected: tokio::sync::oneshot::Receiver<()>,
-    alive: &AtomicBool,
-    room: &R,
+    w: &PublishWatch<R>,
     teardown: impl FnOnce(),
-    events: &EventSink,
-    controls: &Mutex<Controls>,
 ) {
     if connected.await.is_err() {
         return;
     }
+    let state = |connection, channel_id| VoiceEvent::State {
+        channel_id,
+        connection,
+        controls: *w.controls.lock().unwrap(),
+    };
     let e = match published {
         Ok(()) => {
-            if alive.load(Ordering::SeqCst) {
-                events(VoiceEvent::Mic {
+            w.retries.store(0, Ordering::SeqCst);
+            if w.alive.load(Ordering::SeqCst) {
+                (w.events)(VoiceEvent::Mic {
                     live: true,
                     error: None,
                 });
@@ -187,22 +216,27 @@ async fn report_publish<R: CloseRoom>(
         }
         Err(e) => e,
     };
-    if !alive.swap(false, Ordering::SeqCst) {
+    if !w.alive.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    teardown();
+    let _ = tokio::time::timeout(CLOSE_TIMEOUT, w.room.close_room()).await;
+    if let Some((epoch, dropped)) = &w.rejoin
+        && w.retries.load(Ordering::SeqCst) < PUBLISH_RETRIES
+        && dropped.as_ref().is_some_and(|d| d.send(*epoch).is_ok())
+    {
+        w.retries.fetch_add(1, Ordering::SeqCst);
+        tracing::warn!(error = %e, "voice: publishing the mic failed; rejoining again");
+        (w.events)(state(Connection::Reconnecting, Some(w.channel)));
         return;
     }
     // a call nobody can hear us in isn't a call: end it, and say why
     tracing::warn!(error = %e, "voice: publishing the mic failed; leaving");
-    teardown();
-    let _ = tokio::time::timeout(CLOSE_TIMEOUT, room.close_room()).await;
-    events(VoiceEvent::Mic {
+    (w.events)(VoiceEvent::Mic {
         live: false,
         error: Some(format!("Couldn't send your mic: {e}")),
     });
-    events(VoiceEvent::State {
-        channel_id: None,
-        connection: Connection::Disconnected,
-        controls: *controls.lock().unwrap(),
-    });
+    (w.events)(state(Connection::Disconnected, None));
 }
 
 /// Reopens the session's devices (stays in the room). Stall recovery, device following and
@@ -486,6 +520,9 @@ pub struct VoiceManager {
     /// The channel being rejoined right now (the UI shows "reconnecting" for it).
     rejoining: Mutex<Option<ChannelId>>,
     rejoin_count: std::sync::atomic::AtomicU32,
+    /// Failed mic publishes a rejoin handed back to the rejoin loop in a row (capped by
+    /// `PUBLISH_RETRIES`); reset by a published mic and by the user's own join.
+    publish_retries: Arc<AtomicU32>,
     /// Scales the rejoin backoff (1 s in production; small in tests).
     rejoin_unit: Duration,
     /// How long LiveKit may stay "reconnecting" before we rejoin ourselves (a field so tests can
@@ -511,6 +548,7 @@ impl VoiceManager {
             dropped_tx: Mutex::new(None),
             rejoining: Mutex::new(None),
             rejoin_count: Default::default(),
+            publish_retries: Default::default(),
             rejoin_unit: Duration::from_secs(1),
             reconnect_give_up: rejoin::RECONNECT_GIVE_UP,
         }
@@ -563,6 +601,7 @@ impl VoiceManager {
             // the user's choice: supersedes any rejoin in progress
             let _pending = self.pending_join.lock().unwrap();
             self.epoch.fetch_add(1, Ordering::SeqCst);
+            self.publish_retries.store(0, Ordering::SeqCst);
             *self.last_join.lock().unwrap() = Some(JoinArgs {
                 api: api.clone(),
                 token: token.to_string(),
@@ -617,7 +656,7 @@ impl VoiceManager {
         let started = Instant::now();
         // the room stays guarded until the session holding it is stored
         let outcome = tokio::select! {
-            r = self.connect(api, token, channel, cfg, mode) => r,
+            r = self.connect(api, token, channel, cfg, mode, rejoin_of.is_some()) => r,
             _ = cancel_rx => Err(VoiceError::Cancelled),
         };
         self.clear_pending_join(id);
@@ -755,6 +794,7 @@ impl VoiceManager {
         channel: ChannelId,
         cfg: AudioConfig,
         mode: AudioMode,
+        rejoin: bool,
     ) -> Result<Connected, VoiceError> {
         // join phases, for finding where a slow join's time goes (bug reports carry the log)
         let started = Instant::now();
@@ -822,17 +862,31 @@ impl VoiceManager {
         let alive = Arc::new(AtomicBool::new(true));
         // fires once the join has shown "connected" (dropped if it never does)
         let (connected_tx, connected_rx) = tokio::sync::oneshot::channel();
+        // a drop LiveKit gives up on is handed to the rejoin loop (if it runs) under this join's epoch
+        let (epoch, dropped) = (
+            self.epoch.load(Ordering::SeqCst),
+            self.dropped_tx.lock().unwrap().clone(),
+        );
         // publish in the background: "connected" doesn't wait the round trip for it. The task is
         // the session's (aborted with it); the room is closed by its guard or the session's leave.
         {
-            let (room, events, controls) =
-                (room.clone(), self.events.clone(), self.controls.clone());
-            let (alive, io, rx, shared) = (alive.clone(), io.clone(), rx.clone(), shared.clone());
+            let watch = PublishWatch {
+                alive: alive.clone(),
+                room: room.clone(),
+                events: self.events.clone(),
+                controls: self.controls.clone(),
+                channel,
+                rejoin: rejoin.then(|| (epoch, dropped.clone())),
+                retries: self.publish_retries.clone(),
+            };
+            let (io, rx, shared) = (io.clone(), rx.clone(), shared.clone());
             tasks.push(tokio::spawn(async move {
                 let t = Instant::now();
                 let published = tokio::time::timeout(
                     PUBLISH_TIMEOUT,
-                    room.local_participant()
+                    watch
+                        .room
+                        .local_participant()
                         .publish_track(LocalTrack::Audio(track), mic_publish_options()),
                 )
                 .await;
@@ -845,20 +899,9 @@ impl VoiceManager {
                     Ok(Err(e)) => Err(e.to_string()),
                     Err(_) => Err("timed out".to_string()),
                 };
-                let teardown = || {
-                    shared.set_mic_sink(None);
-                    io.lock().unwrap().take();
-                    rx.lock().unwrap().clear();
-                };
-                report_publish(
-                    published,
-                    connected_rx,
-                    &alive,
-                    &*room,
-                    teardown,
-                    &events,
-                    &controls,
-                )
+                report_publish(published, connected_rx, &watch, || {
+                    stop_audio(&shared, &io, &rx)
+                })
                 .await;
             }));
         }
@@ -895,11 +938,6 @@ impl VoiceManager {
             }));
         }
 
-        // a drop LiveKit gives up on is handed to the rejoin loop (if it runs) under this join's epoch
-        let (epoch, dropped) = (
-            self.epoch.load(Ordering::SeqCst),
-            self.dropped_tx.lock().unwrap().clone(),
-        );
         // room events: subscriptions (FINDINGS rule 1), speaking, quality, connection state
         {
             let (rx, mix_in, volumes, events) = (
@@ -921,9 +959,7 @@ impl VoiceManager {
                 // the rejoin loop if `rejoin` (and that loop runs).
                 let lost = |rejoin: bool| {
                     let was_alive = alive.swap(false, Ordering::SeqCst);
-                    shared.set_mic_sink(None);
-                    io.lock().unwrap().take();
-                    rx.lock().unwrap().clear();
+                    stop_audio(&shared, &io, &rx);
                     let handed_over = was_alive
                         && rejoin
                         && dropped.as_ref().is_some_and(|d| d.send(epoch).is_ok());
@@ -1526,13 +1562,25 @@ mod tests {
         );
     }
 
-    /// Runs `report_publish` with fakes; returns the events it emitted, whether the room was
-    /// closed and whether the session was torn down.
-    async fn reported(
+    /// What `report_publish` did, run with fakes.
+    struct Reported {
+        events: Vec<VoiceEvent>,
+        closed: bool,
+        torn_down: bool,
+        /// Epochs handed to the rejoin loop.
+        handed_back: Vec<u64>,
+        /// `publish_retries` afterwards.
+        retries: u32,
+    }
+
+    /// `rejoin`: Some(epoch) for a rejoin's session. `retries`: `publish_retries` before.
+    async fn reported_as(
         published: Result<(), String>,
         connected: bool,
         alive: bool,
-    ) -> (Vec<VoiceEvent>, bool, bool) {
+        rejoin: Option<u64>,
+        retries: u32,
+    ) -> Reported {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let sink = seen.clone();
         let events: EventSink = Arc::new(move |e| sink.lock().unwrap().push(e));
@@ -1542,20 +1590,44 @@ mod tests {
         } else {
             drop(tx);
         }
-        let (closed, alive) = (Arc::new(AtomicBool::new(false)), AtomicBool::new(alive));
+        let closed = Arc::new(AtomicBool::new(false));
+        let (dropped_tx, mut dropped_rx) = mpsc::unbounded_channel();
+        let watch = PublishWatch {
+            alive: Arc::new(AtomicBool::new(alive)),
+            room: Arc::new(FakeRoom(closed.clone())),
+            events,
+            controls: Arc::new(Mutex::new(Controls::default())),
+            channel: ChannelId::new(),
+            rejoin: rejoin.map(|e| (e, Some(dropped_tx))),
+            retries: Arc::new(AtomicU32::new(retries)),
+        };
         let torn_down = AtomicBool::new(false);
-        report_publish(
-            published,
-            rx,
-            &alive,
-            &FakeRoom(closed.clone()),
-            || torn_down.store(true, Ordering::SeqCst),
-            &events,
-            &Mutex::new(Controls::default()),
-        )
+        report_publish(published, rx, &watch, || {
+            torn_down.store(true, Ordering::SeqCst)
+        })
         .await;
-        let seen = seen.lock().unwrap().clone();
-        (seen, closed.load(Ordering::SeqCst), torn_down.into_inner())
+        let mut handed_back = Vec::new();
+        while let Ok(e) = dropped_rx.try_recv() {
+            handed_back.push(e);
+        }
+        let events = seen.lock().unwrap().clone();
+        Reported {
+            events,
+            closed: closed.load(Ordering::SeqCst),
+            torn_down: torn_down.into_inner(),
+            handed_back,
+            retries: watch.retries.load(Ordering::SeqCst),
+        }
+    }
+
+    /// A user's own join.
+    async fn reported(
+        published: Result<(), String>,
+        connected: bool,
+        alive: bool,
+    ) -> (Vec<VoiceEvent>, bool, bool) {
+        let r = reported_as(published, connected, alive, None, 0).await;
+        (r.events, r.closed, r.torn_down)
     }
 
     #[tokio::test]
@@ -1574,11 +1646,21 @@ mod tests {
         assert!(!closed && !torn_down);
     }
 
+    /// A mic that made it in ends a streak of failed rejoin publishes.
+    #[tokio::test]
+    async fn a_published_mic_resets_the_publish_retries() {
+        let r = reported_as(Ok(()), true, true, Some(3), 1).await;
+        assert_eq!(r.retries, 0);
+        assert!(r.handed_back.is_empty());
+    }
+
     /// "Connected" was already shown: a mic that never made it in ends the call, and says why.
     #[tokio::test]
     async fn a_failed_publish_ends_the_call_with_an_error() {
-        let (seen, closed, torn_down) = reported(Err("timed out".into()), true, true).await;
-        assert!(closed && torn_down);
+        let r = reported_as(Err("timed out".into()), true, true, None, 0).await;
+        assert!(r.closed && r.torn_down);
+        assert!(r.handed_back.is_empty(), "a user's join isn't retried");
+        let seen = r.events;
         assert!(
             matches!(
                 &seen[..],
@@ -1586,6 +1668,61 @@ mod tests {
                     VoiceEvent::Mic { live: false, error: Some(e) },
                     VoiceEvent::State { channel_id: None, connection: Connection::Disconnected, .. },
                 ] if e == "Couldn't send your mic: timed out"
+            ),
+            "{seen:?}"
+        );
+    }
+
+    /// Right after a drop is when a publish most likely times out: a rejoin's failed publish goes
+    /// back to the rejoin loop (still "reconnecting"), not to "disconnected".
+    #[tokio::test]
+    async fn a_rejoins_failed_publish_is_rejoined_again() {
+        let r = reported_as(Err("timed out".into()), true, true, Some(7), 0).await;
+        assert!(r.closed && r.torn_down);
+        assert_eq!(r.handed_back, vec![7]);
+        assert_eq!(r.retries, 1);
+        let seen = r.events;
+        assert!(
+            matches!(
+                &seen[..],
+                [VoiceEvent::State {
+                    channel_id: Some(_),
+                    connection: Connection::Reconnecting,
+                    ..
+                }]
+            ),
+            "{seen:?}"
+        );
+    }
+
+    /// Bounded: a rejoin whose publish keeps failing ends the call once the retries are used up.
+    #[tokio::test]
+    async fn a_rejoins_publish_failing_past_the_cap_ends_the_call() {
+        let r = reported_as(
+            Err("timed out".into()),
+            true,
+            true,
+            Some(7),
+            PUBLISH_RETRIES,
+        )
+        .await;
+        assert!(r.closed && r.torn_down);
+        assert!(r.handed_back.is_empty());
+        let seen = r.events;
+        assert!(
+            matches!(
+                &seen[..],
+                [
+                    VoiceEvent::Mic {
+                        live: false,
+                        error: Some(_)
+                    },
+                    VoiceEvent::State {
+                        channel_id: None,
+                        connection: Connection::Disconnected,
+                        ..
+                    },
+                ]
             ),
             "{seen:?}"
         );
@@ -1600,6 +1737,8 @@ mod tests {
         assert!(!closed && !torn_down);
         let (seen, ..) = reported(Ok(()), true, false).await;
         assert!(seen.is_empty(), "{seen:?}");
+        let r = reported_as(Err("closed".into()), true, false, Some(7), 0).await;
+        assert!(r.events.is_empty() && r.handed_back.is_empty());
     }
 
     /// The join never got to "connected" (cancelled): its room guard closes the room; the
