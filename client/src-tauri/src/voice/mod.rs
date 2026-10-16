@@ -1117,6 +1117,8 @@ impl VoiceManager {
         let room = open_room.room().clone();
         let shared = pipeline.shared.clone();
         shared.mix_in.clear(); // the last room's people
+        // this room's receive tasks push under it: one of the last room's still mid-push is dropped
+        let mix_gen = shared.mix_in.generation();
         tracing::info!(
             token_ms,
             token_prefetched,
@@ -1306,7 +1308,7 @@ impl VoiceManager {
                                             "voice: first sound"
                                         );
                                     }
-                                    m.push(&peer, &f.data);
+                                    m.push_in(mix_gen, &peer, &f.data);
                                 }
                             });
                             rx.lock().unwrap().replace(id, task);

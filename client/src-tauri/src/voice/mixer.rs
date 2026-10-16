@@ -102,6 +102,7 @@ pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
     let input = MixerInput {
         cmds: cmds.clone(),
         peers: Mutex::new(HashMap::new()),
+        generation: AtomicU64::new(0),
         cap,
         pushed: AtomicU64::new(0),
         underrun: underrun.clone(),
@@ -130,6 +131,8 @@ pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
 pub struct MixerInput {
     cmds: Arc<Mutex<Vec<Cmd>>>,
     pub(crate) peers: Mutex<HashMap<String, PeerIn>>,
+    /// Bumped by `clear` (under the peers lock): pushes for an older room are dropped.
+    generation: AtomicU64,
     cap: usize,
     /// Total samples ever pushed (diagnostics: intake must track real time, see FINDINGS).
     pushed: AtomicU64,
@@ -172,10 +175,26 @@ impl MixerInput {
         peers.get_mut(id).expect("just added")
     }
 
-    /// Queue received samples (mono i16).
+    /// Which room's peers the mixer holds now: bumped by every `clear`.
+    pub fn generation(&self) -> u64 {
+        self.generation.load(Relaxed)
+    }
+
+    /// Queue received samples (mono i16) for the current room.
     pub fn push(&self, peer: &str, samples: &[i16]) {
-        self.pushed.fetch_add(samples.len() as u64, Relaxed);
+        self.push_in(self.generation(), peer, samples);
+    }
+
+    /// Queue received samples (mono i16) from a receive task of room `generation`. One of an
+    /// older room (still mid-push when a switch cleared the mixer) is dropped: it would bring
+    /// back a peer nobody feeds any more.
+    pub fn push_in(&self, generation: u64, peer: &str, samples: &[i16]) {
         let mut peers = self.peers.lock().unwrap();
+        // under the peers lock, as `clear` bumps it: no push lands after a clear it predates
+        if generation != self.generation.load(Relaxed) {
+            return;
+        }
+        self.pushed.fetch_add(samples.len() as u64, Relaxed);
         let p = self.peer(&mut peers, peer);
         for s in samples {
             p.meter.add(*s as f32 / i16::MAX as f32 * p.gain);
@@ -209,6 +228,7 @@ impl MixerInput {
     /// Forget every peer (a channel switch keeps the mixer, not the last room's people).
     pub fn clear(&self) {
         let mut peers = self.peers.lock().unwrap();
+        self.generation.fetch_add(1, Relaxed);
         peers.clear();
         self.cmds.lock().unwrap().push(Cmd::Clear);
     }
@@ -612,6 +632,26 @@ mod tests {
         input.push("a", &[100; 960]);
         input.clear();
         assert_eq!(m.buffered("a"), 0);
+    }
+
+    /// A receive task of the last room still mid-push when a switch clears the mixer must not
+    /// bring its peer back: one nobody feeds would count underrun for the rest of the call.
+    #[test]
+    fn a_push_from_before_a_clear_is_ignored() {
+        let (input, mut m) = mixer(48_000, 200);
+        let old = input.generation();
+        input.push_in(old, "a", &[100; 480]);
+        input.clear();
+        input.push_in(old, "a", &[100; 480]); // in flight across the clear
+        assert!(
+            input.take_peer_levels().is_empty(),
+            "the old room's peer is back"
+        );
+        let mut out = vec![0.0f32; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        assert_eq!(input.take_underrun_samples(), 0);
+        input.push_in(input.generation(), "b", &[100; 480]); // the new room's
+        assert_eq!(m.buffered("b"), 480);
     }
 
     #[test]
