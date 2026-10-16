@@ -417,6 +417,9 @@ pub struct VoiceManager {
     live: Mutex<Option<Arc<AtomicBool>>>,
     /// The join token fetched while hovering a voice channel.
     tokens: tokens::TokenCache,
+    /// WebRTC's runtime (peer-connection factory and its threads), kept for the app's life:
+    /// LiveKit only holds it weakly, so it was rebuilt on every join after a leave.
+    lk: Arc<std::sync::OnceLock<Arc<livekit::rtc_engine::lk_runtime::LkRuntime>>>,
     /// Bumped by every user join/leave: a rejoin for an older one stands down.
     epoch: std::sync::atomic::AtomicU64,
     /// What the user last joined (the rejoin target); cleared on Leave.
@@ -445,6 +448,7 @@ impl VoiceManager {
             events,
             live: Mutex::new(None),
             tokens: Default::default(),
+            lk: Default::default(),
             epoch: Default::default(),
             last_join: Mutex::new(None),
             dropped_tx: Mutex::new(None),
@@ -459,6 +463,21 @@ impl VoiceManager {
     /// a round trip for it.
     pub fn prefetch(&self, api: &Api, token: &str, channel: ChannelId) {
         self.tokens.prefetch(api, token, channel, Instant::now());
+        self.warm_runtime();
+    }
+
+    /// Build WebRTC's runtime if needed, and keep it.
+    pub fn keep_runtime(&self) {
+        self.lk
+            .get_or_init(livekit::rtc_engine::lk_runtime::LkRuntime::instance);
+    }
+
+    /// Same, on the blocking pool (it takes tens of ms): for a hover, ahead of the click.
+    pub fn warm_runtime(&self) {
+        let lk = self.lk.clone();
+        tokio::task::spawn_blocking(move || {
+            lk.get_or_init(livekit::rtc_engine::lk_runtime::LkRuntime::instance);
+        });
     }
 
     /// Signed out: no token of this session may be used by the next.
@@ -705,6 +724,7 @@ impl VoiceManager {
             };
             Ok::<_, VoiceError>((io, ms(t)))
         };
+        self.keep_runtime();
         let room = async {
             let t = Instant::now();
             let (room, events) = tokio::time::timeout(
@@ -1359,6 +1379,20 @@ mod tests {
         assert!(
             !closed.load(Ordering::SeqCst),
             "a session's room was closed"
+        );
+    }
+
+    /// LiveKit holds its runtime weakly: without our handle it dies with each call's last Room
+    /// and the next join rebuilds it (threads, factory: hundreds of ms on the first join).
+    #[test]
+    fn the_webrtc_runtime_outlives_its_rooms() {
+        use livekit::rtc_engine::lk_runtime::LkRuntime;
+        let vm = VoiceManager::new(Arc::new(|_| {}));
+        vm.keep_runtime();
+        let weak = Arc::downgrade(&LkRuntime::instance());
+        assert!(
+            weak.upgrade().is_some(),
+            "torn down when its last user went"
         );
     }
 
