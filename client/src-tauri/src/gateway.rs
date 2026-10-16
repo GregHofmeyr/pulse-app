@@ -24,33 +24,62 @@ pub enum GatewayUpdate {
     Connection(ConnState),
 }
 
+/// How long startup keeps retrying a stored session before saying the server is unreachable
+/// (the network can come up a few seconds after an autostarted app).
+pub const BOOT_GRACE: Duration = Duration::from_secs(10);
+
 /// What the first gateway session says about a stored login. Startup no longer asks `/me`
 /// first: Ready carries the user, a 4001 close means the token is dead.
 #[derive(Debug, Clone)]
 pub enum Boot {
-    Waiting,
+    /// No verdict yet. `failing_since`: when the first attempt before Ready failed.
+    Waiting {
+        failing_since: Option<std::time::Instant>,
+        grace: Duration,
+    },
     Ready(pulse_protocol::rest::User),
     LoggedOut,
     UpdateRequired,
-    /// The first attempt failed before Ready (no network, server down).
+    /// Attempts before Ready kept failing for the whole grace period.
     Unreachable,
 }
 
 impl Boot {
+    pub fn starting() -> Self {
+        Self::starting_with(BOOT_GRACE)
+    }
+
+    pub fn starting_with(grace: Duration) -> Self {
+        Boot::Waiting {
+            failing_since: None,
+            grace,
+        }
+    }
+
     pub fn is_waiting(&self) -> bool {
-        matches!(self, Boot::Waiting)
+        matches!(self, Boot::Waiting { .. })
     }
 
     /// Fold in one update; once decided it stays (later reconnects aren't startup).
-    pub fn observe(&mut self, u: &GatewayUpdate) {
-        if !self.is_waiting() {
+    pub fn observe(&mut self, u: &GatewayUpdate, now: std::time::Instant) {
+        let Boot::Waiting {
+            failing_since,
+            grace,
+        } = self
+        else {
             return;
-        }
+        };
         *self = match u {
             GatewayUpdate::Ready(r) => Boot::Ready(r.me.clone()),
             GatewayUpdate::Connection(ConnState::LoggedOut) => Boot::LoggedOut,
             GatewayUpdate::Connection(ConnState::UpdateRequired) => Boot::UpdateRequired,
-            GatewayUpdate::Connection(ConnState::Reconnecting) => Boot::Unreachable,
+            GatewayUpdate::Connection(ConnState::Reconnecting) => {
+                let since = *failing_since.get_or_insert(now);
+                if now.saturating_duration_since(since) < *grace {
+                    return; // keep retrying (the gateway's own backoff paces it)
+                }
+                Boot::Unreachable
+            }
             _ => return,
         };
     }
@@ -496,12 +525,13 @@ mod tests {
         );
     }
 
-    async fn boot_outcome(base: String, token: &str) -> Boot {
+    async fn boot_outcome(base: String, token: &str, grace: Duration) -> Boot {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let _gw = GatewayHandle::spawn_with(base, token.into(), tx, Duration::from_millis(50));
-        let mut boot = Boot::Waiting;
+        let mut boot = Boot::starting_with(grace);
         while boot.is_waiting() {
-            boot.observe(&next(&mut rx).await);
+            let u = next(&mut rx).await;
+            boot.observe(&u, std::time::Instant::now());
         }
         boot
     }
@@ -511,7 +541,13 @@ mod tests {
     async fn startup_learns_who_we_are_from_ready() {
         let app = testing::spawn().await;
         let (_, token) = testing::register(&app, "alex").await;
-        match boot_outcome(format!("http://{}", app.addr), &token).await {
+        match boot_outcome(
+            format!("http://{}", app.addr),
+            &token,
+            Duration::from_secs(10),
+        )
+        .await
+        {
             Boot::Ready(me) => assert_eq!(me.username, "alex"),
             other => panic!("expected Ready, got {other:?}"),
         }
@@ -521,24 +557,77 @@ mod tests {
     #[tokio::test]
     async fn startup_with_a_dead_token_ends_logged_out() {
         let app = testing::spawn().await;
-        let b = boot_outcome(format!("http://{}", app.addr), "garbage").await;
+        let b = boot_outcome(
+            format!("http://{}", app.addr),
+            "garbage",
+            Duration::from_secs(10),
+        )
+        .await;
         assert!(matches!(b, Boot::LoggedOut), "{b:?}");
     }
 
     /// Nothing answers: say so (the UI shows "couldn't restore your last session").
     #[tokio::test]
     async fn startup_with_no_server_is_unreachable() {
-        let b = boot_outcome("http://localhost:9".into(), "t").await;
+        let b = boot_outcome("http://localhost:9".into(), "t", Duration::from_millis(300)).await;
         assert!(matches!(b, Boot::Unreachable), "{b:?}");
     }
 
     #[test]
     fn a_decided_boot_stays_decided() {
         let mut b = Boot::LoggedOut;
-        b.observe(&GatewayUpdate::Connection(ConnState::Reconnecting));
+        b.observe(
+            &GatewayUpdate::Connection(ConnState::Reconnecting),
+            std::time::Instant::now(),
+        );
         assert!(
             matches!(b, Boot::LoggedOut),
             "a later reconnect isn't startup"
         );
+    }
+
+    /// A TCP front that refuses (accepts and drops) for `down`, then forwards to `upstream`:
+    /// the network coming up a moment after the app started.
+    async fn late_network(upstream: std::net::SocketAddr, down: Duration) -> String {
+        let l = tokio::net::TcpListener::bind("localhost:0").await.unwrap();
+        let base = format!("http://localhost:{}", l.local_addr().unwrap().port());
+        let up_at = tokio::time::Instant::now() + down;
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = l.accept().await {
+                if tokio::time::Instant::now() < up_at {
+                    drop(s); // no network yet
+                    continue;
+                }
+                tokio::spawn(async move {
+                    if let Ok(mut u) = tokio::net::TcpStream::connect(upstream).await {
+                        let _ = tokio::io::copy_bidirectional(&mut s, &mut u).await;
+                    }
+                });
+            }
+        });
+        base
+    }
+
+    #[tokio::test]
+    async fn startup_survives_a_late_network() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let base = late_network(app.addr, Duration::from_secs(1)).await;
+        match boot_outcome(base, &token, Duration::from_secs(5)).await {
+            Boot::Ready(me) => assert_eq!(me.username, "alex"),
+            other => panic!("gave up on a network that came back after 1 s: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn failures_within_the_grace_keep_waiting_then_give_up() {
+        let t0 = std::time::Instant::now();
+        let failed = GatewayUpdate::Connection(ConnState::Reconnecting);
+        let mut b = Boot::starting_with(Duration::from_secs(10));
+        b.observe(&failed, t0);
+        b.observe(&failed, t0 + Duration::from_secs(9));
+        assert!(b.is_waiting(), "{b:?}");
+        b.observe(&failed, t0 + Duration::from_secs(10));
+        assert!(matches!(b, Boot::Unreachable), "{b:?}");
     }
 }

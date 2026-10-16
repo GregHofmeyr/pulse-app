@@ -42,7 +42,7 @@ impl Core {
             gateway: Mutex::new(None),
             conn: Mutex::new(ConnState::Connecting),
             store,
-            boot: watch::channel(Boot::Waiting).0,
+            boot: watch::channel(Boot::starting()).0,
             ui_attached: watch::channel(false).0,
             starting: Mutex::new(()),
         }
@@ -58,7 +58,7 @@ impl Core {
 
     /// Remember the session and (re)start the live connection.
     fn activate(&self, app: &AppHandle, api: Api, token: String, persist: bool) {
-        self.boot.send_replace(Boot::Waiting);
+        self.boot.send_replace(Boot::starting());
         if persist {
             self.store.save(api.base(), &token);
         }
@@ -114,7 +114,7 @@ impl Core {
         self.inner.lock().unwrap().take();
     }
 
-    /// Resolves once the UI listens for `pulse://…` events (anything emitted earlier is lost).
+    /// Turns true once the UI listens for `pulse://…` events (anything emitted earlier is lost).
     pub(crate) fn ui_listening(&self) -> watch::Receiver<bool> {
         self.ui_attached.subscribe()
     }
@@ -188,7 +188,9 @@ async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>)
             }
         }
         // after the emit: restore_session returns only once the UI has the Ready
-        app.state::<Core>().boot.send_modify(|b| b.observe(&u));
+        app.state::<Core>()
+            .boot
+            .send_modify(|b| b.observe(&u, std::time::Instant::now()));
     }
 }
 
