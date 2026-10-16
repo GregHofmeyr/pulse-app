@@ -32,32 +32,43 @@ const FRAME: std::time::Duration = std::time::Duration::from_millis(10);
 
 /// The send path hands each frame straight to WebRTC, so if the mic stops (a stall, a device
 /// reopen) nothing goes out at all, and listeners' jitter buffers grow to cover the hole. Keep the
-/// stream continuous: a gap past `GAP_LIMIT` is covered with silent 10 ms frames.
+/// stream continuous: a gap past `GAP_LIMIT` is covered with silent 10 ms frames, then (until the
+/// mic is back) one frame per 10 ms, so the stream keeps real-time cadence instead of bursts.
 pub struct GapFill {
     last: std::time::Instant,
+    /// A gap was declared and is being bridged: every whole frame of gap is due at once.
+    filling: bool,
 }
 
 impl GapFill {
     pub fn new(now: std::time::Instant) -> Self {
-        Self { last: now }
+        Self {
+            last: now,
+            filling: false,
+        }
     }
 
     /// A real frame went out.
     pub fn sent(&mut self, now: std::time::Instant) {
         self.last = now;
+        self.filling = false;
     }
 
-    /// How many silent frames to send now (0 unless the gap is past the limit).
+    /// How many silent frames to send now (0 unless the gap is past the limit, or a frame long
+    /// while already filling).
     pub fn silence_due(&self, now: std::time::Instant) -> usize {
         let gap = now.saturating_duration_since(self.last);
-        if gap <= GAP_LIMIT {
+        if !self.filling && gap <= GAP_LIMIT {
             return 0;
         }
         (gap.as_millis() / FRAME.as_millis()) as usize
     }
 
     pub fn silence_sent(&mut self, frames: usize) {
-        self.last += FRAME * frames as u32;
+        if frames > 0 {
+            self.last += FRAME * frames as u32;
+            self.filling = true;
+        }
     }
 }
 
@@ -112,8 +123,38 @@ mod tests {
         // the mic stopped: once the gap passes the limit, cover all of it in 10 ms frames
         assert_eq!(g.silence_due(ms(130)), 10, "100 ms since the last frame");
         g.silence_sent(10);
-        assert_eq!(g.silence_due(ms(140)), 0, "caught up");
-        assert_eq!(g.silence_due(ms(190)), 6, "60 ms since the silence ended");
+        assert_eq!(g.silence_due(ms(135)), 0, "caught up");
+        assert_eq!(
+            g.silence_due(ms(140)),
+            1,
+            "still filling: each frame's worth is due"
+        );
+    }
+
+    /// Once a stall has been declared and bridged, the stream continues at real-time cadence
+    /// (one frame per 10 ms check), not in bursts of 5-6 every time the gap passes the limit again.
+    #[test]
+    fn a_long_stall_is_bridged_one_frame_per_tick_after_the_first_fill() {
+        let t0 = std::time::Instant::now();
+        let ms = |n| t0 + std::time::Duration::from_millis(n);
+        let mut g = GapFill::new(t0);
+        let mut per_tick = Vec::new();
+        for tick in 1..=30 {
+            let due = g.silence_due(ms(tick * 10));
+            g.silence_sent(due);
+            per_tick.push(due);
+        }
+        let first = per_tick.iter().position(|&n| n > 0).unwrap();
+        assert_eq!(first, 5, "declared once the gap passes 50 ms: {per_tick:?}");
+        assert_eq!(per_tick[first], 6, "the first fill covers the whole gap");
+        assert!(
+            per_tick[first + 1..].iter().all(|&n| n == 1),
+            "then one frame per tick: {per_tick:?}"
+        );
+        assert_eq!(per_tick.iter().sum::<usize>(), 30, "all 300 ms covered");
+        // a real frame ends the fill: the next gap must pass the limit again
+        g.sent(ms(300));
+        assert_eq!(g.silence_due(ms(320)), 0);
     }
 
     #[test]
