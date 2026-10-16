@@ -1063,11 +1063,19 @@ pub fn build_output(
 
 impl AudioIo {
     pub fn start(cfg: &AudioConfig, shared: Arc<Shared>, raw_tx: RawTx) -> anyhow::Result<Self> {
-        let input = open_half(true, cfg.input.clone(), shared.clone(), raw_tx.clone())?;
-        let output = open_half(false, cfg.output.clone(), shared.clone(), raw_tx.clone())?;
+        // both directions at once: each waits on its own device thread anyway
+        let (input, output) = std::thread::scope(|s| {
+            let (sh, tx, name) = (shared.clone(), raw_tx.clone(), cfg.input.clone());
+            let input = s.spawn(move || open_half(true, name, sh, tx));
+            let output = open_half(false, cfg.output.clone(), shared.clone(), raw_tx.clone());
+            let input = input
+                .join()
+                .unwrap_or_else(|_| Err(anyhow!("audio input: opening thread panicked")));
+            (input, output)
+        });
         Ok(Self {
-            input: Some(input),
-            output: Some(output),
+            input: Some(input?),
+            output: Some(output?),
             null: None,
             shared,
             raw_tx,

@@ -83,6 +83,28 @@ async fn start_audio(
         .map_err(|e| VoiceError::Device(e.to_string()))
 }
 
+/// Open the devices while the room connects (neither needs the other): a join costs the slower
+/// of the two, not their sum. If one fails, the other is undone: opened devices are dropped
+/// (closing them), a connected room is closed (dropping a Room doesn't disconnect it). Both run
+/// to the end: abandoning `Room::connect` midway could leave a half-joined participant.
+async fn side_by_side<D, R, F>(
+    devices: impl Future<Output = Result<D, VoiceError>>,
+    room: impl Future<Output = Result<R, VoiceError>>,
+    undo_room: impl FnOnce(R) -> F,
+) -> Result<(D, R), VoiceError>
+where
+    F: Future<Output = ()>,
+{
+    match tokio::join!(devices, room) {
+        (Ok(d), Ok(r)) => Ok((d, r)),
+        (Err(e), Ok(r)) => {
+            undo_room(r).await;
+            Err(e)
+        }
+        (_, Err(e)) => Err(e), // opened devices (if any) drop here
+    }
+}
+
 /// Reopens the session's devices (stays in the room). Stall recovery, device following and
 /// settings changes can all want one: they take turns, and each reads the newest settings.
 struct Reopener {
@@ -609,26 +631,35 @@ impl VoiceManager {
             None => api.voice_token(token, channel).await?,
         };
         let token_ms = ms(started);
-        let t = Instant::now();
 
         let shared = Shared::new(&cfg, self.controls.clone(), PEER_BUFFER_MS);
         // devices → processor (denoise, gate) → the room's mic track, once there is one
         let (raw_tx, _processor) = processor::spawn(shared.clone());
-        let io = match mode {
-            AudioMode::Real => start_audio(&cfg, shared.clone(), raw_tx.clone()).await?,
-            AudioMode::Null(rate) => AudioIo::start_null(rate, shared.clone(), raw_tx.clone()),
+        // each phase logs its own time; they overlap, so `joined elapsed_ms` is the end-to-end one
+        let devices = async {
+            let t = Instant::now();
+            let io = match mode {
+                AudioMode::Real => start_audio(&cfg, shared.clone(), raw_tx.clone()).await?,
+                AudioMode::Null(rate) => AudioIo::start_null(rate, shared.clone(), raw_tx.clone()),
+            };
+            Ok::<_, VoiceError>((io, ms(t)))
         };
-        let devices_ms = ms(t);
-        let t = Instant::now();
-
-        let (room, mut room_events) = tokio::time::timeout(
-            CONNECT_TIMEOUT,
-            Room::connect(&vt.url, &vt.token, RoomOptions::default()),
-        )
-        .await
-        .map_err(|_| VoiceError::Timeout("connecting to voice"))?
-        .map_err(|e| VoiceError::Connect(e.to_string()))?;
-        let room_connect_ms = ms(t);
+        let room = async {
+            let t = Instant::now();
+            let (room, events) = tokio::time::timeout(
+                CONNECT_TIMEOUT,
+                Room::connect(&vt.url, &vt.token, RoomOptions::default()),
+            )
+            .await
+            .map_err(|_| VoiceError::Timeout("connecting to voice"))?
+            .map_err(|e| VoiceError::Connect(e.to_string()))?;
+            Ok::<_, VoiceError>((room, events, ms(t)))
+        };
+        let ((io, devices_ms), (room, mut room_events, room_connect_ms)) =
+            side_by_side(devices, room, |(room, _, _)| async move {
+                let _ = tokio::time::timeout(CLOSE_TIMEOUT, room.close()).await;
+            })
+            .await?;
         let t = Instant::now();
         tracing::info!("voice: room connected");
         // Fixed 48 kHz towards LiveKit, whatever the device does.
@@ -1163,6 +1194,68 @@ pub fn mic_publish_options() -> TrackPublishOptions {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn devices_open_while_the_room_connects() {
+        let started = tokio::time::Instant::now();
+        let r = side_by_side(
+            async {
+                tokio::time::sleep(Duration::from_millis(200)).await;
+                Ok::<_, VoiceError>("devices")
+            },
+            async {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                Ok::<_, VoiceError>("room")
+            },
+            |_| async {},
+        )
+        .await;
+        assert!(matches!(r, Ok(("devices", "room"))));
+        assert_eq!(
+            started.elapsed(),
+            Duration::from_millis(300),
+            "one after the other"
+        );
+    }
+
+    /// Devices that won't open after the room connected: the room must be closed (dropping a
+    /// Room doesn't disconnect it; others would see a ghost).
+    #[tokio::test(start_paused = true)]
+    async fn a_device_failure_closes_the_connected_room() {
+        let closed = Arc::new(AtomicBool::new(false));
+        let c = closed.clone();
+        let r = side_by_side(
+            async { Err::<(), _>(VoiceError::Device("no mic".into())) },
+            async { Ok::<_, VoiceError>("room") },
+            move |room| async move {
+                assert_eq!(room, "room");
+                c.store(true, Ordering::SeqCst);
+            },
+        )
+        .await;
+        assert!(matches!(r, Err(VoiceError::Device(_))));
+        assert!(closed.load(Ordering::SeqCst));
+    }
+
+    /// The room fails: the devices opened meanwhile are closed (dropped), not left running.
+    #[tokio::test(start_paused = true)]
+    async fn a_room_failure_drops_the_opened_devices() {
+        struct Io(Arc<AtomicBool>);
+        impl Drop for Io {
+            fn drop(&mut self) {
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let dropped = Arc::new(AtomicBool::new(false));
+        let r = side_by_side(
+            async { Ok::<_, VoiceError>(Io(dropped.clone())) },
+            async { Err::<(), _>(VoiceError::Connect("refused".into())) },
+            |_| async {},
+        )
+        .await;
+        assert!(matches!(r, Err(VoiceError::Connect(_))));
+        assert!(dropped.load(Ordering::SeqCst));
+    }
 
     #[tokio::test]
     async fn signing_out_forgets_prefetched_tokens() {
