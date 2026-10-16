@@ -11,11 +11,11 @@
   import PeopleBoard from '../components/PeopleBoard.svelte'
   import PeoplePicker from '../components/PeoplePicker.svelte'
   import GroupMembers from '../components/GroupMembers.svelte'
-  import { onMount } from 'svelte'
+  import { onMount, untrack } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { api, errorText } from '../lib/tauri'
   import { app, clock, openDm, ui } from '../lib/store.svelte'
-  import { applyEvent } from '../lib/state'
+  import { applyEvent, trimHistory } from '../lib/state'
   import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { isMember } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
@@ -76,6 +76,13 @@
   })
   $effect(() => {
     ui.openChannelId = activeChannelId
+  })
+  // Leaving a channel trims it to its newest messages (scrolling up there fetches older ones again).
+  $effect(() => {
+    const left = activeChannelId
+    return () => {
+      if (left) untrack(() => (app.state = trimHistory(app.state, left)))
+    }
   })
   const home = $derived(homeBadge(app.state, nowIso))
 

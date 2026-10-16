@@ -184,3 +184,69 @@ it('removal from a conversation forgets everything about it, unsent messages inc
   expect(s.typing['G1']).toBeUndefined()
   expect(s.history['G1']).toBeUndefined()
 })
+
+describe('trimming history on leave', () => {
+  const page = (from: number, n: number) =>
+    Array.from({ length: n }, (_, i) => msg(`M${String(from + i).padStart(4, '0')}`))
+
+  it('keeps the newest KEEP_ON_LEAVE messages and makes older ones fetchable again', async () => {
+    const { addHistory, markHistory, trimHistory, KEEP_ON_LEAVE } = await import('./state')
+    let s = applyReady(emptyState(), ready())
+    s = markHistory(addHistory(s, 'C1', page(0, 300)), 'C1', true)
+    const t = trimHistory(s, 'C1')
+    expect(t.messages['C1']).toHaveLength(KEEP_ON_LEAVE)
+    expect(t.messages['C1'][0].id).toBe('M0200')
+    expect(t.messages['C1'].at(-1)!.id).toBe('M0299')
+    expect(t.history['C1']).toEqual({ loaded: true, start: false })
+  })
+
+  it('leaves short channels (and the state object) alone', async () => {
+    const { addHistory, trimHistory } = await import('./state')
+    const s = addHistory(applyReady(emptyState(), ready()), 'C1', page(0, 40))
+    expect(trimHistory(s, 'C1')).toBe(s)
+    expect(trimHistory(s, 'nope')).toBe(s)
+  })
+
+  it('an older page that lands after a trim is dropped instead of leaving a hole', async () => {
+    const { addHistory, addOlder, trimHistory } = await import('./state')
+    let s = addHistory(applyReady(emptyState(), ready()), 'C1', page(100, 200)) // M0100..M0299
+    const before = s.messages['C1'][0].id // scroll-up asks for messages before M0100
+    s = trimHistory(s, 'C1') // you switched away meanwhile: M0200..M0299 remain
+    const late = addOlder(s, 'C1', before, page(50, 50)) // M0050..M0099 arrives
+    expect(late).toBe(s)
+    const fresh = addOlder(s, 'C1', 'M0200', page(150, 50)) // a page for the current head is added
+    expect(fresh.messages['C1'][0].id).toBe('M0150')
+    expect(fresh.messages['C1']).toHaveLength(150)
+  })
+})
+
+describe('trimming keeps unread messages', () => {
+  const page = (from: number, n: number) =>
+    Array.from({ length: n }, (_, i) => msg(`M${String(from + i).padStart(4, '0')}`))
+  const readAt = (point: string | null) =>
+    ({ t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: point } }) as const
+
+  it('never trims past your read point, so unread counts survive a trim', async () => {
+    const { addHistory, trimHistory } = await import('./state')
+    let s = addHistory(applyReady(emptyState(), ready()), 'C1', page(0, 300)) // M0000..M0299
+    s = applyEvent(s, readAt('M0049'), 0) // 250 unread
+    expect(s.reads['C1'].unread).toBe(250)
+    const t = trimHistory(s, 'C1')
+    expect(t.messages['C1'][0].id).toBe('M0050') // the oldest unread is kept
+    expect(applyEvent(t, readAt('M0049'), 0).reads['C1'].unread).toBe(250)
+  })
+
+  it('a channel you have never read is not trimmed at all', async () => {
+    const { addHistory, trimHistory } = await import('./state')
+    let s = addHistory(applyReady(emptyState(), ready()), 'C1', page(0, 300))
+    s = applyEvent(s, readAt(null), 0)
+    expect(trimHistory(s, 'C1')).toBe(s)
+  })
+
+  it('a read channel still trims to KEEP_ON_LEAVE', async () => {
+    const { addHistory, trimHistory, KEEP_ON_LEAVE } = await import('./state')
+    let s = addHistory(applyReady(emptyState(), ready()), 'C1', page(0, 300))
+    s = applyEvent(s, readAt('M0299'), 0)
+    expect(trimHistory(s, 'C1').messages['C1']).toHaveLength(KEEP_ON_LEAVE)
+  })
+})

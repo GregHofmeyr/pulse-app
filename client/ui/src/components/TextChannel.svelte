@@ -7,7 +7,7 @@
   import ConversationMenu from './ConversationMenu.svelte'
   import { app, clock, ui } from '../lib/store.svelte'
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
-  import { addHistory, addPending, markHistory } from '../lib/state'
+  import { addHistory, addOlder, addPending, markHistory } from '../lib/state'
   import { displayName, stableList, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
@@ -72,7 +72,7 @@
     void pending.length
     if (!list) return
     const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 120
-    if (nearBottom) tick().then(() => list.scrollTo({ top: list.scrollHeight }))
+    if (nearBottom) tick().then(() => list?.scrollTo({ top: list.scrollHeight })) // gone if we unmounted meanwhile
   })
 
   async function maybeLoadOlder() {
@@ -80,10 +80,11 @@
     loadingOlder = true
     const before = list.scrollHeight
     try {
-      const page = await api.listMessages(channelId, messages[0].id)
-      app.state = markHistory(addHistory(app.state, channelId, page), channelId, page.length < 50)
+      const oldest = messages[0].id
+      const page = await api.listMessages(channelId, oldest)
+      app.state = markHistory(addOlder(app.state, channelId, oldest, page), channelId, page.length < 50)
       await tick()
-      list.scrollTop = list.scrollHeight - before // keep the view where it was
+      if (list) list.scrollTop = list.scrollHeight - before // keep the view where it was (unless we left)
     } catch (e) {
       error = errorText(e)
     } finally {

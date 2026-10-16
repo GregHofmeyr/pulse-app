@@ -239,6 +239,39 @@ export function setPendingStatus(s: AppState, channel: string, nonce: string, st
   return { ...s, pending: { ...s.pending, [channel]: (s.pending[channel] ?? []).map((p) => (p.nonce === nonce ? { ...p, status } : p)) } }
 }
 
+/** Messages kept for a channel when you leave it: its two newest pages. */
+export const KEEP_ON_LEAVE = 100
+
+/** Keep only the newest `keep` messages of `channel` (on leaving it), so a long session doesn't
+ * hold every message ever scrolled through. Older ones become fetchable again on scroll-up. */
+export function trimHistory(s: AppState, channel: string, keep = KEEP_ON_LEAVE): AppState {
+  const list = s.messages[channel]
+  if (!list || list.length <= keep) return s
+  // Never drop unread messages: ReadStateUpdated recounts unread from what's loaded, and the NEW
+  // line needs them. A channel with a read state but no read point is all unread: keep it whole.
+  const read = s.reads[channel]
+  const firstUnread = !read
+    ? -1
+    : read.last_read_message_id === null
+      ? 0
+      : list.findIndex((m) => m.id > read.last_read_message_id!)
+  const cut = firstUnread >= 0 ? Math.min(list.length - keep, firstUnread) : list.length - keep
+  if (cut <= 0) return s
+  const h = s.history[channel]
+  return {
+    ...s,
+    messages: { ...s.messages, [channel]: list.slice(cut) },
+    history: h ? { ...s.history, [channel]: { ...h, start: false } } : s.history,
+  }
+}
+
+/** Add an older page fetched with `before` = the channel's oldest message at the time. Dropped if
+ * the list was trimmed meanwhile: adding it would leave a hole that scroll-up never fills. */
+export function addOlder(s: AppState, channel: string, before: string, older: Message[]): AppState {
+  if (s.messages[channel]?.[0]?.id !== before) return s
+  return addHistory(s, channel, older)
+}
+
 /** Prepend an older page of history (from scroll-up). */
 export function addHistory(s: AppState, channel: string, older: Message[]): AppState {
   let list = s.messages[channel] ?? []
