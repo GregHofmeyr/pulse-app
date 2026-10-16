@@ -17,7 +17,9 @@ const FLOOR_RISE_QUIET_DB: f32 = 0.1;
 const FLOOR_RISE_UNKNOWN_DB: f32 = 0.01;
 const HOLD: Duration = Duration::from_millis(450);
 const FADE_BLOCKS: f32 = 10.0;
-const PREROLL_BLOCKS: usize = 2;
+/// Pre-roll in front of the audio the gate opens on: 20 ms, so first syllables survive. Part or all
+/// of it can come from the denoiser's own delay.
+pub const PREROLL_BLOCKS: usize = 2;
 
 pub struct VoiceGate {
     auto: bool,
@@ -29,10 +31,6 @@ pub struct VoiceGate {
     /// Gain applied at the start of the next emitted block (fades towards 0 when closed).
     gain: f32,
     delay: VecDeque<Vec<f32>>,
-}
-
-fn rms(b: &[f32]) -> f32 {
-    (b.iter().map(|v| v * v).sum::<f32>() / b.len().max(1) as f32).sqrt()
 }
 
 fn db(x: f32) -> f32 {
@@ -91,9 +89,26 @@ impl VoiceGate {
         self.speech && above_floor
     }
 
-    /// Gate one block in place (input in, the block from 20 ms ago out). Returns whether audio is sent.
-    pub fn process(&mut self, block: &mut [f32], prob: Option<f32>, now: Instant) -> bool {
-        if self.qualifies(rms(block), prob) {
+    /// How many blocks of delay the gate itself adds (the rest of the pre-roll is the denoiser's).
+    pub fn set_preroll(&mut self, blocks: usize) {
+        while self.delay.len() > blocks {
+            self.delay.pop_front();
+        }
+        while self.delay.len() < blocks {
+            self.delay.push_front(vec![0.0; FRAME]);
+        }
+    }
+
+    /// Gate one block in place (input in, the block from `preroll` blocks ago out), deciding on
+    /// `level`: the newest audio's, which may run ahead of `block`. Returns whether audio is sent.
+    pub fn process(
+        &mut self,
+        block: &mut [f32],
+        level: f32,
+        prob: Option<f32>,
+        now: Instant,
+    ) -> bool {
+        if self.qualifies(level, prob) {
             self.open_until = Some(now + HOLD);
         }
         let open = self.open_until.is_some_and(|t| now < t);
@@ -139,7 +154,8 @@ mod tests {
         (0..n)
             .map(|_| {
                 let mut b = block(amp);
-                g.process(&mut b, prob, t0 + Duration::from_millis(*k * 10));
+                let level = rms(&b);
+                g.process(&mut b, level, prob, t0 + Duration::from_millis(*k * 10));
                 *k += 1;
                 b
             })

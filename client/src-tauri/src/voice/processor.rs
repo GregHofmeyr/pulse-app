@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 
 use super::denoise::{DeepFilter, Denoiser, FRAME, NsLevel, make_fast};
 use super::devices::{INTERNAL_RATE, MicChunk, NsStatus, Shared};
-use super::gate::VoiceGate;
+use super::gate::{PREROLL_BLOCKS, VoiceGate};
 use super::mixer::soft_limit;
 use super::resampler::StreamResampler;
 
@@ -61,6 +61,12 @@ pub struct BlockOut {
     pub ns_out: f32,
     /// Whether the gate judged this block (false while muted).
     pub judged: bool,
+    /// RMS of the block as it came in (before cleaning and gain): with `level`, what suppression removed.
+    pub in_level: f32,
+}
+
+fn rms(b: &[f32]) -> f32 {
+    (b.iter().map(|v| v * v).sum::<f32>() / b.len().max(1) as f32).sqrt()
 }
 
 /// One block's journey after APM: denoise → gain (soft-limited) → gate → mute.
@@ -102,12 +108,16 @@ impl MicChain {
     pub fn process(&mut self, block: &mut [f32], mic_open: bool, now: Instant) -> BlockOut {
         let energy = |b: &[f32]| b.iter().map(|v| v * v).sum::<f32>();
         let ns_in = energy(block);
+        let in_level = (ns_in / block.len().max(1) as f32).sqrt();
         let prob = self.denoiser.process(block);
         let ns_out = energy(block);
+        // Decide on the newest audio, not the cleaned block (which lags it): the engine's delay
+        // then doubles as the gate's pre-roll instead of adding to it.
+        let decide = self.denoiser.decision_level().unwrap_or(in_level) * self.gain;
         for v in block.iter_mut() {
             *v = soft_limit(*v * self.gain);
         }
-        let level = (block.iter().map(|v| v * v).sum::<f32>() / block.len() as f32).sqrt();
+        let level = rms(block);
         if !mic_open {
             self.gate.reset();
             block.fill(0.0);
@@ -117,15 +127,19 @@ impl MicChain {
                 ns_in,
                 ns_out,
                 judged: false,
+                in_level,
             };
         }
-        let sent = self.gate.process(block, prob, now);
+        self.gate
+            .set_preroll(PREROLL_BLOCKS.saturating_sub(self.denoiser.gate_lead_blocks()));
+        let sent = self.gate.process(block, decide, prob, now);
         BlockOut {
             level,
             sent,
             ns_in,
             ns_out,
             judged: true,
+            in_level,
         }
     }
 }
@@ -193,9 +207,11 @@ pub fn report_load_failure(shared: &Shared, err: &str) {
 /// block; dropping it ends the worker and frees the model.
 pub struct StrongWorker {
     tx: std_mpsc::Sender<Vec<f32>>,
-    rx: std_mpsc::Receiver<(Vec<f32>, Option<f32>)>,
+    rx: std_mpsc::Receiver<(Vec<f32>, Option<f32>, Option<f32>)>,
     /// The worker thread is gone (it panicked or was killed): audio passes through until replaced.
     dead: bool,
+    /// The worker's last decision level (see `Denoiser::decision_level`).
+    level: Option<f32>,
 }
 
 impl Denoiser for StrongWorker {
@@ -205,8 +221,9 @@ impl Denoiser for StrongWorker {
             return None;
         }
         match self.rx.recv() {
-            Ok((out, p)) => {
+            Ok((out, p, level)) => {
                 block.copy_from_slice(&out);
+                self.level = level;
                 p
             }
             Err(_) => {
@@ -218,6 +235,14 @@ impl Denoiser for StrongWorker {
 
     fn failed(&self) -> bool {
         self.dead
+    }
+
+    fn gate_lead_blocks(&self) -> usize {
+        2 // DeepFilter's, on its own thread
+    }
+
+    fn decision_level(&self) -> Option<f32> {
+        self.level
     }
 }
 
@@ -239,13 +264,14 @@ pub fn start_strong(generation: u64, done: std_mpsc::Sender<LoadResult>) {
                     tx: in_tx,
                     rx: out_rx,
                     dead: false,
+                    level: None,
                 };
                 if done.send((generation, Ok(handle))).is_err() {
                     return;
                 }
                 while let Ok(mut block) = in_rx.recv() {
                     let p = df.process(&mut block);
-                    if out_tx.send((block, p)).is_err() {
+                    if out_tx.send((block, p, df.decision_level())).is_err() {
                         return;
                     }
                 }
@@ -565,6 +591,88 @@ mod tests {
         let out = c.process(&mut b, true, Instant::now());
         assert!((out.level - 0.2).abs() < 1e-3, "{}", out.level);
     }
+
+    /// Stands in for an engine whose cleaned output lags its input by `delay` blocks and whose
+    /// decision level runs `lead` blocks ahead of that output (Strong: 3 and 2; Standard: 1 and 1).
+    struct Lagging {
+        history: VecDeque<Vec<f32>>,
+        delay: usize,
+        lead: usize,
+        decision: f32,
+    }
+
+    impl Lagging {
+        fn new(delay: usize, lead: usize) -> Self {
+            Self {
+                history: (0..delay).map(|_| vec![0.0; FRAME]).collect(),
+                delay,
+                lead,
+                decision: 0.0,
+            }
+        }
+    }
+
+    impl Denoiser for Lagging {
+        fn process(&mut self, block: &mut [f32]) -> Option<f32> {
+            self.history.push_back(block.to_vec()); // delay + 1 blocks, newest last
+            let lag = self.delay - self.lead;
+            self.decision = rms(&self.history[self.history.len() - 1 - lag]);
+            let out = self.history.pop_front().expect("delay line");
+            block.copy_from_slice(&out);
+            Some(if self.decision > 0.05 { 0.95 } else { 0.0 })
+        }
+        fn gate_lead_blocks(&self) -> usize {
+            self.lead
+        }
+        fn decision_level(&self) -> Option<f32> {
+            // no lag: that's the raw input, which the chain measures itself
+            (self.delay > self.lead).then_some(self.decision)
+        }
+    }
+
+    /// How many blocks after a loud onset enters does it leave the chain at full level?
+    fn onset_lag(delay: usize, lead: usize) -> usize {
+        let mut c = MicChain::new(NsLevel::Off, true, 0.02, 1.0);
+        c.set_denoiser(NsLevel::Standard, Box::new(Lagging::new(delay, lead)));
+        let t0 = Instant::now();
+        let mut k = 0u64;
+        let mut step = |amp: f32| {
+            let mut b = vec![amp; FRAME];
+            c.process(&mut b, true, t0 + Duration::from_millis(k * 10));
+            k += 1;
+            rms(&b)
+        };
+        for _ in 0..100 {
+            step(0.001); // learn the room
+        }
+        (0..20)
+            .position(|_| step(0.1) > 0.09)
+            .expect("the onset never got through")
+    }
+
+    /// The engine's lookahead is the gate's pre-roll: Strong's 30 ms, not 30 + 20.
+    #[test]
+    fn strong_onset_leaves_after_the_engine_delay_only() {
+        assert_eq!(onset_lag(3, 2), 3, "Strong");
+    }
+
+    #[test]
+    fn standard_onset_leaves_after_20ms_not_30() {
+        assert_eq!(onset_lag(1, 1), 2, "Standard");
+    }
+
+    #[test]
+    fn off_keeps_its_20ms_preroll() {
+        assert_eq!(onset_lag(0, 0), 2, "Off");
+    }
+
+    #[test]
+    fn block_out_reports_the_level_before_cleaning() {
+        let mut c = MicChain::new(NsLevel::Off, false, 0.0, 2.0);
+        let mut b = vec![0.1f32; FRAME];
+        let out = c.process(&mut b, true, Instant::now());
+        assert!((out.in_level - 0.1).abs() < 1e-3 && (out.level - 0.2).abs() < 1e-3);
+    }
     use crate::voice::devices::{AudioConfig, Shared};
     use crate::voice::mixer::Mixer;
     use std::sync::{Arc, Mutex};
@@ -689,6 +797,7 @@ mod tests {
             tx,
             rx,
             dead: false,
+            level: None,
         };
         let mut b = vec![0.3f32; FRAME];
         w.process(&mut b);

@@ -27,6 +27,18 @@ pub trait Denoiser {
     fn failed(&self) -> bool {
         false
     }
+
+    /// How many 10 ms blocks `decision_level` runs ahead of the cleaned audio `process` returns.
+    /// The gate decides on that level, so the engine's own delay becomes the gate's pre-roll.
+    fn gate_lead_blocks(&self) -> usize {
+        0
+    }
+
+    /// Level (RMS, unscaled) for the gate to decide on, from the newest input; `None` = the raw
+    /// input's (the chain measures it).
+    fn decision_level(&self) -> Option<f32> {
+        None
+    }
 }
 
 /// Off: no suppression at all.
@@ -43,6 +55,8 @@ pub struct Rnnoise {
     st: Box<nnnoiseless::DenoiseState<'static>>,
     inb: Vec<f32>,
     outb: Vec<f32>,
+    /// RMS of the last cleaned block (unscaled).
+    level: f32,
 }
 
 impl Rnnoise {
@@ -51,6 +65,7 @@ impl Rnnoise {
             st: nnnoiseless::DenoiseState::new(),
             inb: vec![0.0; FRAME],
             outb: vec![0.0; FRAME],
+            level: 0.0,
         }
     }
 
@@ -60,7 +75,11 @@ impl Rnnoise {
             .iter_mut()
             .zip(block)
             .for_each(|(d, s)| *d = s * I16_SCALE);
-        self.st.process_frame(&mut self.outb, &self.inb)
+        let p = self.st.process_frame(&mut self.outb, &self.inb);
+        // what RNNoise left of this input: 1 block behind it, 2 ahead of DeepFilterNet's output
+        self.level =
+            (self.outb.iter().map(|v| v * v).sum::<f32>() / FRAME as f32).sqrt() / I16_SCALE;
+        p
     }
 }
 
@@ -78,6 +97,11 @@ impl Denoiser for Rnnoise {
             .zip(&self.outb)
             .for_each(|(o, v)| *o = v / I16_SCALE);
         Some(p)
+    }
+
+    /// Its output lags its input by one block; the raw input decides.
+    fn gate_lead_blocks(&self) -> usize {
+        1
     }
 }
 
@@ -135,6 +159,15 @@ impl Denoiser for DeepFilter {
                 .for_each(|(o, v)| *o = *v);
         }
         Some(p)
+    }
+
+    /// DeepFilterNet lags its input by 3 blocks; RNNoise's cleaned level only by 1.
+    fn gate_lead_blocks(&self) -> usize {
+        2
+    }
+
+    fn decision_level(&self) -> Option<f32> {
+        Some(self.vad.level)
     }
 }
 
@@ -288,6 +321,36 @@ mod tests {
                 mean(&np)
             );
         }
+    }
+
+    /// Output-vs-input offset (in whole blocks) where the cleaned speech matches the input best.
+    fn lag_blocks(d: &mut dyn Denoiser) -> usize {
+        let input = speech();
+        let (out, _) = run(d, &input);
+        let n = out.len() - 5 * FRAME;
+        let score = |lag: usize| {
+            let (a, b) = (&input[..n], &out[lag..lag + n]);
+            let dot: f32 = a.iter().zip(b).map(|(x, y)| x * y).sum();
+            let norm = |x: &[f32]| x.iter().map(|v| v * v).sum::<f32>().sqrt();
+            dot / (norm(a) * norm(b)).max(1e-9)
+        };
+        (0..=4)
+            .max_by(|&x, &y| score(x * FRAME).total_cmp(&score(y * FRAME)))
+            .unwrap()
+    }
+
+    /// The gate's pre-roll now comes from these delays (`gate_lead_blocks`): they must be real.
+    #[test]
+    fn engine_delays_match_what_the_gate_assumes() {
+        assert_eq!(lag_blocks(&mut Rnnoise::new()), 1, "Standard: 10 ms");
+        assert_eq!(
+            lag_blocks(&mut DeepFilter::new().unwrap()),
+            3,
+            "Strong: 30 ms"
+        );
+        assert_eq!(Rnnoise::new().gate_lead_blocks(), 1);
+        assert_eq!(DeepFilter::new().unwrap().gate_lead_blocks(), 2);
+        assert_eq!(Passthrough.gate_lead_blocks(), 0);
     }
 
     #[test]
