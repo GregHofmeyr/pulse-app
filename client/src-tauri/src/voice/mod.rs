@@ -180,10 +180,40 @@ fn stop_audio(
     io: &Mutex<Option<AudioIo>>,
     rx: &Mutex<RxTasks>,
 ) {
+    stop_audio_keep_devices(pipeline_alive, shared, rx);
+    io.lock().unwrap().take();
+}
+
+/// `stop_audio`, but the devices stay open in the pipeline: for whoever takes the dead session
+/// over (a rejoin's `leave_locked(false)`, a join's `keep_if_usable`) to close with a wait, since
+/// it opens the same (Bluetooth) devices next. Nothing is fed or played meanwhile.
+fn stop_audio_keep_devices(pipeline_alive: &AtomicBool, shared: &Shared, rx: &Mutex<RxTasks>) {
     pipeline_alive.store(false, Ordering::SeqCst);
     shared.set_mic_sink(None);
-    io.lock().unwrap().take();
     rx.lock().unwrap().clear();
+}
+
+/// LiveKit dropped the call (or we gave up on its reconnect): mark the session dead, stop its
+/// audio (the next join builds a fresh pipeline), then `hand_over` it to the rejoin loop (true if
+/// taken). Handed over, its devices are left for the rejoin to close with a wait; otherwise they
+/// close now. A session already ended (left, or switched away from: its pipeline went on to the
+/// next room) keeps its hands off the pipeline. Returns whether it was handed over.
+fn drop_call(
+    alive: &AtomicBool,
+    (pipeline_alive, shared): (&AtomicBool, &Shared),
+    io: &Mutex<Option<AudioIo>>,
+    rx: &Mutex<RxTasks>,
+    hand_over: impl FnOnce() -> bool,
+) -> bool {
+    if !alive.swap(false, Ordering::SeqCst) {
+        return false;
+    }
+    stop_audio_keep_devices(pipeline_alive, shared, rx);
+    let handed_over = hand_over();
+    if !handed_over {
+        io.lock().unwrap().take();
+    }
+    handed_over
 }
 
 /// What the background mic publish needs to report how it went.
@@ -709,6 +739,43 @@ impl<R: CloseRoom> Session<R> {
         drop(self);
         close_in_background(room);
         pipeline
+    }
+}
+
+impl<R: CloseRoom> Session<R> {
+    /// Tear this session down for good: out of its room, devices closed, the pipeline with it.
+    /// `announce` (the user's Leave): out of the room first, then wait out a reopen in flight
+    /// (up to `SETTLE_WAIT`), and don't wait on the devices. Otherwise (a rejoin, which opens the
+    /// same devices next) wait out the reopen first and for the devices to really close.
+    async fn end(self, announce: bool) {
+        // first: a reopen in flight must not open devices for a session that's gone
+        self.alive.store(false, Ordering::SeqCst);
+        let p = self.pipeline.clone();
+        p.alive.store(false, Ordering::SeqCst);
+        p.shared.set_mic_sink(None);
+        if !announce {
+            p.reopener.settle().await;
+        }
+        if tokio::time::timeout(CLOSE_TIMEOUT, self.room.close_room())
+            .await
+            .is_err()
+        {
+            tracing::warn!("voice: room close timed out; dropping it");
+        }
+        if announce {
+            p.reopener.settle().await;
+        }
+        self.rx.lock().unwrap().clear();
+        let io = p.io.lock().unwrap().take();
+        if let Some(io) = io {
+            if announce {
+                drop(io); // the user's Leave: don't wait on the devices
+            } else {
+                // a rejoin opens the same devices next: wait until these are really closed
+                let _ = tokio::task::spawn_blocking(move || io.close()).await;
+            }
+        }
+        drop((self, p)); // the pipeline goes with the session: the processor ends
     }
 }
 
@@ -1241,18 +1308,12 @@ impl VoiceManager {
                     connection,
                     controls: *controls.lock().unwrap(),
                 };
-                // The call is gone: stop the mic/speakers (the next join builds a fresh pipeline),
-                // mark the session dead, and hand it to the rejoin loop if `rejoin` (and that
-                // loop runs). A session already ended (left, or switched away from: its pipeline
-                // went on to the next room) keeps its hands off the pipeline.
+                // The call is gone: handed to the rejoin loop if `rejoin` (and that loop runs).
                 let lost = |rejoin: bool| {
-                    let was_alive = alive.swap(false, Ordering::SeqCst);
-                    if was_alive {
-                        stop_audio(&pipeline_alive, &shared, &io, &rx);
-                    }
-                    let handed_over = was_alive
-                        && rejoin
-                        && dropped.as_ref().is_some_and(|d| d.send(epoch).is_ok());
+                    let handed_over =
+                        drop_call(&alive, (&pipeline_alive, &shared), &io, &rx, || {
+                            rejoin && dropped.as_ref().is_some_and(|d| d.send(epoch).is_ok())
+                        });
                     if handed_over {
                         events(state(Connection::Reconnecting, Some(channel)));
                     } else {
@@ -1435,29 +1496,7 @@ impl VoiceManager {
             return false;
         };
         tracing::info!("voice: leaving");
-        // first: a reopen in flight must not open devices for a session that's gone
-        s.alive.store(false, Ordering::SeqCst);
-        let p = s.pipeline.clone();
-        p.alive.store(false, Ordering::SeqCst);
-        p.shared.set_mic_sink(None);
-        p.reopener.settle().await;
-        if tokio::time::timeout(CLOSE_TIMEOUT, s.room.close())
-            .await
-            .is_err()
-        {
-            tracing::warn!("voice: room close timed out; dropping it");
-        }
-        s.rx.lock().unwrap().clear();
-        let io = p.io.lock().unwrap().take();
-        if let Some(io) = io {
-            if announce {
-                drop(io); // the user's Leave: don't wait on the devices
-            } else {
-                // a rejoin opens the same devices next: wait until these are really closed
-                let _ = tokio::task::spawn_blocking(move || io.close()).await;
-            }
-        }
-        drop((s, p)); // the pipeline goes with the session: the processor ends
+        s.end(announce).await;
         if announce {
             self.emit_state(None, Connection::Disconnected);
         }
@@ -1932,6 +1971,113 @@ mod tests {
         assert!(!p.alive.load(Ordering::SeqCst));
         assert!(p.io.lock().unwrap().is_none(), "its devices are still open");
         reopen.await.unwrap();
+    }
+
+    /// A room that closes at once, noting when its close started.
+    struct TimedRoom(Mutex<Option<Instant>>);
+    impl CloseRoom for TimedRoom {
+        async fn close_room(&self) {
+            self.0.lock().unwrap().get_or_insert_with(Instant::now);
+        }
+    }
+
+    fn session_on(pipeline: Arc<Pipeline>) -> (Session<TimedRoom>, Arc<TimedRoom>) {
+        let room = Arc::new(TimedRoom(Mutex::new(None)));
+        let session = Session {
+            channel: ChannelId::new(),
+            room: room.clone(),
+            pipeline,
+            rx: Default::default(),
+            alive: Arc::new(AtomicBool::new(true)),
+            tasks: Vec::new(),
+        };
+        (session, room)
+    }
+
+    /// LiveKit dropped the call and it went to the rejoin loop: the devices stay open for the
+    /// rejoin's teardown, which closes them with a wait. The rejoin's own open (right after that
+    /// teardown) must not start while the old device is still closing (a Bluetooth headset can't
+    /// be open twice).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_rejoin_opens_devices_only_after_the_dropped_calls_have_closed() {
+        let (p, raw_tx) = deviceless_pipeline();
+        let closed = Arc::new(AtomicBool::new(false));
+        *p.io.lock().unwrap() = Some(AudioIo::slow_to_close(
+            p.shared.clone(),
+            raw_tx,
+            Duration::from_millis(300),
+            closed.clone(),
+        ));
+        let (session, _room) = session_on(p.clone());
+        let handed = drop_call(
+            &session.alive,
+            (&p.alive, &p.shared),
+            &p.io,
+            &session.rx,
+            || true,
+        );
+        assert!(handed);
+        assert!(!p.alive.load(Ordering::SeqCst), "the pipeline is done for");
+        assert!(
+            p.io.lock().unwrap().is_some(),
+            "devices dropped without a wait"
+        );
+        session.end(false).await; // the rejoin's `leave_locked(false)`; it opens devices next
+        assert!(
+            closed.load(Ordering::SeqCst),
+            "the rejoin's open started before the old device had closed"
+        );
+    }
+
+    /// Not handed over (the rejoin loop isn't running, or LiveKit said not to): nothing is coming
+    /// to close the devices, so they close now.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_dropped_call_not_rejoined_closes_its_devices_at_once() {
+        let (p, raw_tx) = deviceless_pipeline();
+        let closed = Arc::new(AtomicBool::new(false));
+        *p.io.lock().unwrap() = Some(AudioIo::slow_to_close(
+            p.shared.clone(),
+            raw_tx,
+            Duration::from_millis(10),
+            closed,
+        ));
+        let (session, _room) = session_on(p.clone());
+        let rx = session.rx.clone();
+        assert!(!drop_call(
+            &session.alive,
+            (&p.alive, &p.shared),
+            &p.io,
+            &rx,
+            || false
+        ));
+        assert!(p.io.lock().unwrap().is_none(), "devices left open");
+    }
+
+    /// The user's Leave during a device reopen (up to SETTLE_WAIT): out of the room at once, not
+    /// after the reopen; a rejoin's teardown still waits the reopen out first.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn leave_closes_the_room_before_waiting_out_a_reopen() {
+        for announce in [true, false] {
+            let (p, _raw_tx) = deviceless_pipeline();
+            let reopen =
+                reopen_in_flight(&p, |_| std::thread::sleep(Duration::from_millis(300))).await;
+            let (session, room) = session_on(p.clone());
+            let t = Instant::now();
+            session.end(announce).await;
+            let close_after = room.0.lock().unwrap().expect("room never closed") - t;
+            if announce {
+                assert!(
+                    close_after < Duration::from_millis(100),
+                    "Leave stayed in the room {close_after:?}"
+                );
+            } else {
+                assert!(
+                    close_after >= Duration::from_millis(250),
+                    "a rejoin's teardown closed before the reopen finished: {close_after:?}"
+                );
+            }
+            reopen.await.unwrap();
+        }
     }
 
     /// LiveKit holds its runtime weakly: without our handle it dies with each call's last Room

@@ -1179,6 +1179,42 @@ impl AudioIo {
         }
     }
 
+    /// Tests: an input whose close takes `delay` (a driver taking its time); `closed` is set once
+    /// it's really gone.
+    #[cfg(test)]
+    pub(crate) fn slow_to_close(
+        shared: Arc<Shared>,
+        raw_tx: RawTx,
+        delay: Duration,
+        closed: Arc<std::sync::atomic::AtomicBool>,
+    ) -> Self {
+        struct SlowStream(Duration, Arc<std::sync::atomic::AtomicBool>);
+        impl Drop for SlowStream {
+            fn drop(&mut self) {
+                std::thread::sleep(self.0);
+                self.1.store(true, Ordering::SeqCst);
+            }
+        }
+        let half = Parked::spawn("test-half", Duration::from_secs(1), move || {
+            Ok((
+                SlowStream(delay, closed),
+                HalfInfo {
+                    rate: 48_000,
+                    name: "test".into(),
+                    generation: 0,
+                },
+            ))
+        })
+        .expect("a test half opens");
+        Self {
+            input: Some(half),
+            output: None,
+            null: None,
+            shared,
+            raw_tx,
+        }
+    }
+
     /// The devices open now ("" for a side that isn't).
     pub fn opened(&self) -> OpenedDevices {
         let name = |h: &Option<Half>| h.as_ref().map(|h| h.value.name.clone()).unwrap_or_default();
@@ -1805,36 +1841,10 @@ mod tests {
     /// the old streams are really gone (a Bluetooth headset can't be open twice).
     #[test]
     fn close_waits_until_the_streams_are_really_gone() {
-        use std::sync::atomic::AtomicBool;
-        struct SlowStream(Arc<AtomicBool>);
-        impl Drop for SlowStream {
-            fn drop(&mut self) {
-                std::thread::sleep(Duration::from_millis(200)); // a driver taking its time
-                self.0.store(true, Ordering::SeqCst);
-            }
-        }
-        let gone = Arc::new(AtomicBool::new(false));
-        let g = gone.clone();
-        let half = Parked::spawn("test-half", Duration::from_secs(1), move || {
-            Ok((
-                SlowStream(g),
-                HalfInfo {
-                    rate: 48_000,
-                    name: "test".into(),
-                    generation: 0,
-                },
-            ))
-        })
-        .unwrap();
+        let gone = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
         let shared = Shared::new(&AudioConfig::default(), Default::default(), 200);
-        let io = AudioIo {
-            input: Some(half),
-            output: None,
-            null: None,
-            shared,
-            raw_tx,
-        };
+        let io = AudioIo::slow_to_close(shared, raw_tx, Duration::from_millis(200), gone.clone());
         io.close();
         assert!(
             gone.load(Ordering::SeqCst),
