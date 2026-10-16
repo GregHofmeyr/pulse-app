@@ -1,4 +1,4 @@
-//! Live connection to the server: Hello → Ready → events, heartbeat, reconnect with backoff.
+//! Live connection to the server: Hello → Ready → events, heartbeats that must be answered in time, reconnect with backoff.
 
 use std::time::Duration;
 
@@ -9,13 +9,99 @@ use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::Message as Ws;
 use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
 
-use crate::backoff::backoff_delay;
+use tokio::time::Instant;
 
-const HEARTBEAT: Duration = Duration::from_secs(30);
+use crate::backoff::reconnect_delay;
+
+const HEARTBEAT: Duration = Duration::from_secs(15);
 const READY_TIMEOUT: Duration = Duration::from_secs(10);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// No frame at all for this long (the server acks every 30 s heartbeat) = half-open socket: reconnect.
+/// Backstop: no frame at all for this long = dead, whatever the ack bookkeeping says.
 const DEAD_AFTER: Duration = Duration::from_secs(75);
+/// Least time a heartbeat gets for its ack; a slow link gets 3× its measured round trip.
+const ACK_MIN: Duration = Duration::from_secs(5);
+/// A probe (window focused, network back) must be answered within this.
+const PROBE_ACK: Duration = Duration::from_secs(3);
+/// Up at least this long after Ready = a healthy session: if it drops, retry at once.
+const HEALTHY_AFTER: Duration = Duration::from_secs(10);
+
+/// Timings (production by default; tests shrink them).
+#[derive(Debug, Clone, Copy)]
+pub struct Tuning {
+    /// Scales the backoff schedule (1 s in production).
+    pub unit: Duration,
+    pub heartbeat: Duration,
+    pub dead_after: Duration,
+    pub ack_min: Duration,
+    pub probe_ack: Duration,
+    pub healthy_after: Duration,
+}
+
+impl Default for Tuning {
+    fn default() -> Self {
+        Self {
+            unit: Duration::from_secs(1),
+            heartbeat: HEARTBEAT,
+            dead_after: DEAD_AFTER,
+            ack_min: ACK_MIN,
+            probe_ack: PROBE_ACK,
+            healthy_after: HEALTHY_AFTER,
+        }
+    }
+}
+
+/// Whether the server still answers: every heartbeat (or probe) must be answered in time. Any
+/// frame from the server counts as an answer; an ack also measures the round trip.
+#[derive(Debug)]
+struct Liveness {
+    ack_min: Duration,
+    /// When the oldest unanswered heartbeat went out.
+    sent_at: Option<Instant>,
+    /// Dead unless the server says something by then.
+    due: Option<Instant>,
+    rtt: Option<Duration>,
+}
+
+impl Liveness {
+    fn new(ack_min: Duration) -> Self {
+        Self {
+            ack_min,
+            sent_at: None,
+            due: None,
+            rtt: None,
+        }
+    }
+
+    /// How long a regular heartbeat may wait for its ack.
+    fn ack_wait(&self) -> Duration {
+        self.rtt.map_or(self.ack_min, |r| (r * 3).max(self.ack_min))
+    }
+
+    /// A heartbeat went out at `now`; it must be answered within `wait` (a probe can only shorten
+    /// an outstanding deadline, never extend it).
+    fn sent(&mut self, now: Instant, wait: Duration) {
+        if self.due.is_none() {
+            self.sent_at = Some(now);
+        }
+        let due = now + wait;
+        self.due = Some(self.due.map_or(due, |d| d.min(due)));
+    }
+
+    fn heard(&mut self, now: Instant, ack: bool) {
+        self.due = None;
+        if ack && let Some(at) = self.sent_at.take() {
+            self.rtt = Some(now - at);
+        }
+    }
+}
+
+/// Sleeps until `at`, or forever when there's nothing to wait for.
+async fn until(at: Option<Instant>) {
+    match at {
+        Some(t) => tokio::time::sleep_until(t).await,
+        None => std::future::pending().await,
+    }
+}
 
 #[derive(Debug, Clone)]
 pub enum GatewayUpdate {
@@ -99,6 +185,8 @@ pub enum ConnState {
 enum Cmd {
     Send(ClientFrame),
     ReconnectNow,
+    /// Window focused / network back: prove the connection now (or stop waiting out a backoff).
+    Probe,
     Stop,
 }
 
@@ -131,9 +219,20 @@ enum End {
     LoggedOut,
     /// The server is newer than us: stop until the app is updated.
     UpdateRequired,
-    /// Anything else: retry. `true` if we got as far as Ready (resets backoff).
-    Retry(bool),
+    /// Anything else: retry.
+    Retry(Went),
     Stop,
+}
+
+/// How far a session that's to be retried got.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Went {
+    /// Never reached Ready.
+    Failed,
+    /// Reached Ready but dropped within `healthy_after`.
+    Brief,
+    /// Was up for a while: the first retry is immediate.
+    Healthy,
 }
 
 impl GatewayHandle {
@@ -152,7 +251,15 @@ impl GatewayHandle {
         tx: mpsc::UnboundedSender<GatewayUpdate>,
         unit: Duration,
     ) -> Self {
-        Self::spawn_tuned(base_url, token, tx, unit, DEAD_AFTER)
+        Self::spawn_tuning(
+            base_url,
+            token,
+            tx,
+            Tuning {
+                unit,
+                ..Tuning::default()
+            },
+        )
     }
 
     /// `dead_after`: silence after which the connection is presumed dead (tests shorten it).
@@ -163,13 +270,32 @@ impl GatewayHandle {
         unit: Duration,
         dead_after: Duration,
     ) -> Self {
+        Self::spawn_tuning(
+            base_url,
+            token,
+            tx,
+            Tuning {
+                unit,
+                dead_after,
+                ..Tuning::default()
+            },
+        )
+    }
+
+    pub fn spawn_tuning(
+        base_url: String,
+        token: String,
+        tx: mpsc::UnboundedSender<GatewayUpdate>,
+        t: Tuning,
+    ) -> Self {
         let (cmd, mut cmd_rx) = mpsc::unbounded_channel();
         tokio::spawn(async move {
             let url = ws_url(&base_url);
-            let mut attempt: u32 = 0;
+            // attempts since the last session that reached Ready; whether that one was healthy
+            let (mut n, mut after_healthy) = (0u32, false);
             let _ = tx.send(GatewayUpdate::Connection(ConnState::Connecting));
             loop {
-                match session(&url, &token, &tx, &mut cmd_rx, dead_after).await {
+                match session(&url, &token, &tx, &mut cmd_rx, &t).await {
                     End::Stop => return,
                     End::LoggedOut => {
                         let _ = tx.send(GatewayUpdate::Connection(ConnState::LoggedOut));
@@ -179,15 +305,16 @@ impl GatewayHandle {
                         let _ = tx.send(GatewayUpdate::Connection(ConnState::UpdateRequired));
                         return;
                     }
-                    End::Retry(was_ready) => {
-                        if was_ready {
-                            attempt = 0;
+                    End::Retry(went) => {
+                        if went != Went::Failed {
+                            n = 0;
+                            after_healthy = went == Went::Healthy;
                         }
                         let _ = tx.send(GatewayUpdate::Connection(ConnState::Reconnecting));
-                        let delay = backoff_delay(attempt, rand::random::<f64>())
-                            .mul_f64(unit.as_secs_f64());
-                        attempt = attempt.saturating_add(1);
-                        // Wait out the backoff, unless told to reconnect now or stop.
+                        let delay = reconnect_delay(n, after_healthy, rand::random::<f64>())
+                            .mul_f64(t.unit.as_secs_f64());
+                        n = n.saturating_add(1);
+                        // Wait out the backoff, unless told to reconnect now / probe, or stop.
                         let sleep = tokio::time::sleep(delay);
                         tokio::pin!(sleep);
                         loop {
@@ -195,7 +322,7 @@ impl GatewayHandle {
                                 _ = &mut sleep => break,
                                 c = cmd_rx.recv() => match c {
                                     None | Some(Cmd::Stop) => return,
-                                    Some(Cmd::ReconnectNow) => break,
+                                    Some(Cmd::ReconnectNow | Cmd::Probe) => break,
                                     Some(Cmd::Send(_)) => {} // dropped while offline
                                 },
                             }
@@ -215,6 +342,12 @@ impl GatewayHandle {
         let _ = self.cmd.send(Cmd::ReconnectNow);
     }
 
+    /// Check the connection now (window focused, network back): a dead one is noticed within
+    /// seconds; while offline, retry at once.
+    pub fn probe(&self) {
+        let _ = self.cmd.send(Cmd::Probe);
+    }
+
     pub fn stop(&self) {
         let _ = self.cmd.send(Cmd::Stop);
     }
@@ -225,12 +358,12 @@ async fn session(
     token: &str,
     tx: &mpsc::UnboundedSender<GatewayUpdate>,
     cmd_rx: &mut mpsc::UnboundedReceiver<Cmd>,
-    dead_after: Duration,
+    t: &Tuning,
 ) -> End {
     let Ok(Ok((mut ws, _))) =
         tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(url)).await
     else {
-        return End::Retry(false);
+        return End::Retry(Went::Failed);
     };
     crate::startup::mark("gateway_open");
     let hello = serde_json::to_string(&ClientFrame::Hello {
@@ -239,7 +372,7 @@ async fn session(
     })
     .expect("serialize");
     if ws.send(Ws::text(hello)).await.is_err() {
-        return End::Retry(false);
+        return End::Retry(Went::Failed);
     }
 
     // First frame must be Ready (or a close).
@@ -255,34 +388,58 @@ async fn session(
         }
         Ok(Frame::Closed(Some(CloseCode::Library(4001)))) => return End::LoggedOut,
         Ok(Frame::Closed(Some(CloseCode::Library(4005)))) => return End::UpdateRequired,
-        _ => return End::Retry(false),
+        _ => return End::Retry(Went::Failed),
     }
 
-    let mut beat = tokio::time::interval(HEARTBEAT);
+    let ready_at = Instant::now();
+    // lost after Ready: a healthy session (retry at once) or a brief one (back off)
+    let lost = || {
+        End::Retry(if ready_at.elapsed() >= t.healthy_after {
+            Went::Healthy
+        } else {
+            Went::Brief
+        })
+    };
+    let heartbeat = serde_json::to_string(&ClientFrame::Heartbeat).expect("serialize");
+    let mut beat = tokio::time::interval(t.heartbeat);
     beat.tick().await; // first tick is immediate
     // Only frames *from* the server prove the connection is alive (writes succeed into a dead socket).
-    let mut deadline = tokio::time::Instant::now() + dead_after;
+    let mut deadline = Instant::now() + t.dead_after;
+    let mut live = Liveness::new(t.ack_min);
     loop {
         tokio::select! {
-            _ = tokio::time::sleep_until(deadline) => return End::Retry(true),
-            _ = beat.tick() => {
-                let f = serde_json::to_string(&ClientFrame::Heartbeat).expect("serialize");
-                if ws.send(Ws::text(f)).await.is_err() { return End::Retry(true) }
+            _ = tokio::time::sleep_until(deadline) => return lost(),
+            _ = until(live.due) => {
+                tracing::info!(rtt = ?live.rtt, "gateway: no answer in time; reconnecting");
+                return lost();
             }
-            frame = next_frame(&mut ws) => { deadline = tokio::time::Instant::now() + dead_after; match frame {
-                Frame::Server(ServerFrame::Event(e)) => { let _ = tx.send(GatewayUpdate::Event(Box::new(e))); }
-                Frame::Server(ServerFrame::Ready(r)) => { let _ = tx.send(GatewayUpdate::Ready(Box::new(r))); }
-                Frame::Server(ServerFrame::HeartbeatAck) => {}
-                Frame::Closed(Some(CloseCode::Library(4001))) => return End::LoggedOut,
-                Frame::Closed(Some(CloseCode::Library(4005))) => return End::UpdateRequired,
-                Frame::Closed(_) => return End::Retry(true),
-            }},
+            _ = beat.tick() => {
+                if ws.send(Ws::text(heartbeat.clone())).await.is_err() { return lost() }
+                live.sent(Instant::now(), live.ack_wait());
+            }
+            frame = next_frame(&mut ws) => {
+                let now = Instant::now();
+                deadline = now + t.dead_after;
+                live.heard(now, matches!(frame, Frame::Server(ServerFrame::HeartbeatAck)));
+                match frame {
+                    Frame::Server(ServerFrame::Event(e)) => { let _ = tx.send(GatewayUpdate::Event(Box::new(e))); }
+                    Frame::Server(ServerFrame::Ready(r)) => { let _ = tx.send(GatewayUpdate::Ready(Box::new(r))); }
+                    Frame::Server(ServerFrame::HeartbeatAck) => {}
+                    Frame::Closed(Some(CloseCode::Library(4001))) => return End::LoggedOut,
+                    Frame::Closed(Some(CloseCode::Library(4005))) => return End::UpdateRequired,
+                    Frame::Closed(_) => return lost(),
+                }
+            }
             c = cmd_rx.recv() => match c {
                 None | Some(Cmd::Stop) => { let _ = ws.close(None).await; return End::Stop }
-                Some(Cmd::ReconnectNow) => return End::Retry(true),
+                Some(Cmd::ReconnectNow) => return lost(),
+                Some(Cmd::Probe) => {
+                    if ws.send(Ws::text(heartbeat.clone())).await.is_err() { return lost() }
+                    live.sent(Instant::now(), t.probe_ack);
+                }
                 Some(Cmd::Send(f)) => {
                     let f = serde_json::to_string(&f).expect("serialize");
-                    if ws.send(Ws::text(f)).await.is_err() { return End::Retry(true) }
+                    if ws.send(Ws::text(f)).await.is_err() { return lost() }
                 }
             },
         }
@@ -428,44 +585,7 @@ mod tests {
     /// deadline → reconnect, even though writes still "succeed".
     #[tokio::test]
     async fn silent_server_is_detected_as_dead() {
-        use futures::{SinkExt, StreamExt};
-        use pulse_protocol::gateway::{Ready, ServerFrame};
-        use pulse_protocol::rest::User;
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            while let Ok((tcp, _)) = listener.accept().await {
-                tokio::spawn(async move {
-                    let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
-                    let _hello = ws.next().await;
-                    let ready = ServerFrame::Ready(Ready {
-                        me: User {
-                            id: pulse_protocol::ids::UserId::new(),
-                            username: "alex".into(),
-                            avatar_hash: None,
-                        },
-                        servers: vec![],
-                        channels: vec![],
-                        members: vec![],
-                        dm_members: vec![],
-                        voice: vec![],
-                        people: vec![],
-                        read_states: vec![],
-                        mutes: vec![],
-                        hidden: vec![],
-                        latest: vec![],
-                    });
-                    ws.send(tokio_tungstenite::tungstenite::Message::text(
-                        serde_json::to_string(&ready).unwrap(),
-                    ))
-                    .await
-                    .unwrap();
-                    // …then silence forever (never acks heartbeats, never closes)
-                    std::future::pending::<()>().await;
-                    drop(ws);
-                });
-            }
-        });
+        let addr = silent_server().await;
         let (tx, mut rx) = mpsc::unbounded_channel();
         let _gw = GatewayHandle::spawn_tuned(
             format!("http://{addr}"),
@@ -629,5 +749,227 @@ mod tests {
         assert!(b.is_waiting(), "{b:?}");
         b.observe(&failed, t0 + Duration::from_secs(10));
         assert!(matches!(b, Boot::Unreachable), "{b:?}");
+    }
+
+    /// Serves Ready on `listener`, then never says anything again (never acks, never closes): a
+    /// half-open socket.
+    fn silent_server_on(listener: tokio::net::TcpListener) {
+        use futures::{SinkExt, StreamExt};
+        use pulse_protocol::gateway::{Ready, ServerFrame};
+        use pulse_protocol::rest::User;
+        tokio::spawn(async move {
+            while let Ok((tcp, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut ws = tokio_tungstenite::accept_async(tcp).await.unwrap();
+                    let _hello = ws.next().await;
+                    let ready = ServerFrame::Ready(Ready {
+                        me: User {
+                            id: pulse_protocol::ids::UserId::new(),
+                            username: "alex".into(),
+                            avatar_hash: None,
+                        },
+                        servers: vec![],
+                        channels: vec![],
+                        members: vec![],
+                        dm_members: vec![],
+                        voice: vec![],
+                        people: vec![],
+                        read_states: vec![],
+                        mutes: vec![],
+                        hidden: vec![],
+                        latest: vec![],
+                    });
+                    ws.send(tokio_tungstenite::tungstenite::Message::text(
+                        serde_json::to_string(&ready).unwrap(),
+                    ))
+                    .await
+                    .unwrap();
+                    // keep reading (so writes succeed) but never answer
+                    while ws.next().await.is_some() {}
+                });
+            }
+        });
+    }
+
+    async fn silent_server() -> std::net::SocketAddr {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        silent_server_on(listener);
+        addr
+    }
+
+    fn quick(heartbeat: Duration) -> Tuning {
+        Tuning {
+            unit: Duration::from_millis(50),
+            heartbeat,
+            dead_after: Duration::from_secs(60), // the old backstop: far beyond these tests
+            ack_min: Duration::from_millis(200),
+            probe_ack: Duration::from_millis(200),
+            healthy_after: Duration::from_secs(10),
+        }
+    }
+
+    async fn reconnecting_within(
+        rx: &mut mpsc::UnboundedReceiver<GatewayUpdate>,
+        limit: Duration,
+    ) -> bool {
+        tokio::time::timeout(limit, async {
+            loop {
+                match rx.recv().await {
+                    Some(GatewayUpdate::Connection(ConnState::Reconnecting)) => return,
+                    None => std::future::pending::<()>().await,
+                    _ => {}
+                }
+            }
+        })
+        .await
+        .is_ok()
+    }
+
+    /// A3: an unanswered heartbeat ends the session within its ack deadline, long before the
+    /// no-frames backstop (60 s here).
+    #[tokio::test]
+    async fn unanswered_heartbeat_is_noticed_within_the_ack_deadline() {
+        let addr = silent_server().await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _gw = GatewayHandle::spawn_tuning(
+            format!("http://{addr}"),
+            "t".into(),
+            tx,
+            quick(Duration::from_millis(100)),
+        );
+        next_ready(&mut rx).await;
+        let started = std::time::Instant::now();
+        assert!(
+            reconnecting_within(&mut rx, Duration::from_secs(2)).await,
+            "dead connection not noticed"
+        );
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    /// A3: window focus / network back probes a connection that still *looks* fine. A dead one is
+    /// noticed within the probe's deadline, even with heartbeats a minute apart.
+    #[tokio::test]
+    async fn a_probe_notices_a_dead_connection_at_once() {
+        let addr = silent_server().await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let gw = GatewayHandle::spawn_tuning(
+            format!("http://{addr}"),
+            "t".into(),
+            tx,
+            quick(Duration::from_secs(60)),
+        );
+        next_ready(&mut rx).await;
+        gw.probe();
+        assert!(reconnecting_within(&mut rx, Duration::from_secs(1)).await);
+    }
+
+    #[tokio::test]
+    async fn a_probe_leaves_a_live_connection_alone() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let gw = GatewayHandle::spawn_tuning(
+            format!("http://{}", app.addr),
+            token,
+            tx,
+            quick(Duration::from_secs(60)),
+        );
+        next_ready(&mut rx).await;
+        gw.probe();
+        assert!(
+            !reconnecting_within(&mut rx, Duration::from_millis(800)).await,
+            "a healthy connection was dropped by a probe"
+        );
+    }
+
+    /// A3: a session that was fine reconnects straight away after a blip; the backoff (1 s here,
+    /// as in production) only starts if that first try fails.
+    #[tokio::test]
+    async fn first_retry_after_a_healthy_session_is_immediate() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let t = Tuning {
+            healthy_after: Duration::ZERO, // any session counts as healthy
+            ..Tuning::default()
+        };
+        let _gw = GatewayHandle::spawn_tuning(format!("http://{}", app.addr), token, tx, t);
+        next_ready(&mut rx).await;
+        app.hub.close_all(1012);
+        loop {
+            if let GatewayUpdate::Connection(ConnState::Reconnecting) = next(&mut rx).await {
+                break;
+            }
+        }
+        let lost = std::time::Instant::now();
+        next_ready(&mut rx).await;
+        assert!(
+            lost.elapsed() < Duration::from_millis(500),
+            "waited {:?} before reconnecting",
+            lost.elapsed()
+        );
+    }
+
+    /// Resume from sleep: the network isn't back yet, so the first tries fail and the backoff
+    /// grows (1 s, then 2 s: production schedule). When the network returns, the `online` / focus
+    /// probe reconnects at once instead of waiting the backoff out.
+    #[tokio::test]
+    async fn a_probe_cuts_a_grown_backoff_short() {
+        // a free port with nobody listening yet: connects are refused
+        let addr = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap()
+        };
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let gw = GatewayHandle::spawn_tuning(
+            format!("http://{addr}"),
+            "t".into(),
+            tx,
+            Tuning::default(),
+        );
+        // two failed tries: now waiting out the 2 s step
+        let mut failures = 0;
+        while failures < 2 {
+            if let GatewayUpdate::Connection(ConnState::Reconnecting) = next(&mut rx).await {
+                failures += 1;
+            }
+        }
+        silent_server_on(tokio::net::TcpListener::bind(addr).await.unwrap()); // network back
+        let t = std::time::Instant::now();
+        gw.probe();
+        next_ready(&mut rx).await;
+        assert!(
+            t.elapsed() < Duration::from_millis(500),
+            "waited {:?}",
+            t.elapsed()
+        );
+    }
+
+    #[test]
+    fn ack_wait_is_three_round_trips_but_never_under_the_floor() {
+        let mut l = Liveness::new(Duration::from_secs(5));
+        assert_eq!(l.ack_wait(), Duration::from_secs(5));
+        let t0 = Instant::now();
+        l.sent(t0, l.ack_wait());
+        l.heard(t0 + Duration::from_secs(2), true); // a 2 s round trip (a very slow link)
+        assert_eq!(l.ack_wait(), Duration::from_secs(6));
+        assert_eq!(l.due, None);
+    }
+
+    #[test]
+    fn a_probe_shortens_the_wait_and_any_frame_answers_it() {
+        let mut l = Liveness::new(Duration::from_secs(5));
+        let t0 = Instant::now();
+        l.sent(t0, Duration::from_secs(5));
+        l.sent(t0 + Duration::from_secs(1), Duration::from_secs(3)); // probe 1 s later
+        assert_eq!(l.due, Some(t0 + Duration::from_secs(4)));
+        l.heard(t0 + Duration::from_millis(1500), false); // an event: alive
+        assert_eq!(l.due, None);
+        assert_eq!(l.rtt, None, "only an ack measures the round trip");
     }
 }

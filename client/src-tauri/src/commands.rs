@@ -159,6 +159,13 @@ impl Core {
             g.send(f);
         }
     }
+
+    /// Check the live connection now (window focused, network back).
+    pub(crate) fn probe_gateway(&self) {
+        if let Some(g) = self.gateway.lock().unwrap().as_ref() {
+            g.probe();
+        }
+    }
 }
 
 /// Gateway updates → Tauri events for the UI.
@@ -303,12 +310,10 @@ pub async fn logout(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiErro
     Ok(())
 }
 
-/// The UI calls this on window focus / `online`: skip the backoff wait.
+/// The UI calls this when the network comes back (`online`); window focus probes from Rust.
 #[tauri::command]
-pub fn gateway_reconnect_now(core: State<'_, Core>) {
-    if let Some(g) = core.gateway.lock().unwrap().as_ref() {
-        g.reconnect_now();
-    }
+pub fn gateway_probe(core: State<'_, Core>) {
+    core.probe_gateway();
 }
 
 #[tauri::command]

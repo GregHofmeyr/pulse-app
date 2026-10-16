@@ -123,13 +123,23 @@ pub fn run() {
             });
             Ok(())
         })
+        .on_window_event(|window, event| {
+            // Back at the app (or woken from sleep): a dead connection should show now, not at the
+            // next heartbeat.
+            if let tauri::WindowEvent::Focused(true) = event {
+                use tauri::Manager;
+                if let Some(core) = window.try_state::<commands::Core>() {
+                    core.probe_gateway();
+                }
+            }
+        })
         .invoke_handler(tauri::generate_handler![
             commands::login,
             commands::register,
             commands::restore_session,
             commands::logout,
             commands::list_servers,
-            commands::gateway_reconnect_now,
+            commands::gateway_probe,
             commands::send_typing,
             commands::create_server,
             commands::create_channel,

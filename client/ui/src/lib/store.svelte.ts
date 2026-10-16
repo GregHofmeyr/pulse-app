@@ -74,16 +74,13 @@ export async function startListening(): Promise<UnlistenFn> {
       }
     }),
   ])
-  // Skip the backoff wait when the network comes back or the user looks at the app.
-  const kick = () => {
-    if (app.state.conn === 'reconnecting') void api.reconnectNow()
-  }
-  window.addEventListener('online', kick)
-  window.addEventListener('focus', kick)
+  // The network is back: check the connection now, whatever state it's in (a half-open socket
+  // still reads "connected"). Window focus is probed from Rust.
+  const probe = () => void api.probe()
+  window.addEventListener('online', probe)
   return () => {
     offs.forEach((off) => off())
-    window.removeEventListener('online', kick)
-    window.removeEventListener('focus', kick)
+    window.removeEventListener('online', probe)
   }
 }
 

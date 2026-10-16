@@ -21,7 +21,7 @@ export const api = {
     invoke<User>('register', { serverUrl, inviteCode, username, password }),
   restoreSession: () => invoke<User | null>('restore_session'),
   logout: () => invoke<void>('logout'),
-  reconnectNow: () => invoke<void>('gateway_reconnect_now'),
+  probe: () => invoke<void>('gateway_probe'),
   listServers: () => invoke<Server[]>('list_servers'),
   createServer: (name: string) => invoke<Server>('create_server', { name }),
   createChannel: (serverId: string, kind: 'text' | 'voice', name: string) =>
