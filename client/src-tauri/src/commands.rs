@@ -6,10 +6,10 @@ use pulse_protocol::gateway::ClientFrame;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{Channel, Member, Message, MuteTarget, Server, SetMuteRequest, User};
 use tauri::{AppHandle, Emitter, Manager, State};
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, watch};
 
 use crate::api::{Api, ApiError, check_server_url};
-use crate::gateway::{ConnState, GatewayHandle, GatewayUpdate};
+use crate::gateway::{Boot, ConnState, GatewayHandle, GatewayUpdate};
 use crate::session::Store;
 use crate::voice::devices::{AudioConfig, DeviceInfo};
 use crate::voice::{AudioMode, VoiceError, VoiceManager, controls::Controls};
@@ -24,6 +24,13 @@ pub struct Core {
     /// Last gateway state (bug reports include it).
     conn: Mutex<ConnState>,
     store: Store,
+    /// The first gateway session's verdict on the stored login (restore_session waits on it).
+    boot: watch::Sender<Boot>,
+    /// The UI is listening for `pulse://…` events: the gateway may start before it is, so
+    /// `forward` holds everything until then (the first Ready must not be emitted into the void).
+    ui_attached: watch::Sender<bool>,
+    /// setup and restore_session may both try to start the stored session: one at a time.
+    starting: Mutex<()>,
 }
 
 impl Core {
@@ -35,6 +42,9 @@ impl Core {
             gateway: Mutex::new(None),
             conn: Mutex::new(ConnState::Connecting),
             store,
+            boot: watch::channel(Boot::Waiting).0,
+            ui_attached: watch::channel(false).0,
+            starting: Mutex::new(()),
         }
     }
 
@@ -48,6 +58,7 @@ impl Core {
 
     /// Remember the session and (re)start the live connection.
     fn activate(&self, app: &AppHandle, api: Api, token: String, persist: bool) {
+        self.boot.send_replace(Boot::Waiting);
         if persist {
             self.store.save(api.base(), &token);
         }
@@ -79,6 +90,33 @@ impl Core {
         if let Some(old) = self.retry.lock().unwrap().replace(timer) {
             old.abort();
         }
+    }
+
+    /// Start the stored session's live connection, once (setup and restore_session both ask; the
+    /// first wins). The stored server, or `None` when nobody is signed in.
+    pub(crate) fn start_stored(&self, app: &AppHandle) -> Option<String> {
+        let _one = self.starting.lock().unwrap();
+        if let Some((api, _)) = self.inner.lock().unwrap().clone() {
+            return Some(api.base().to_string());
+        }
+        let (server, token) = self.store.load()?;
+        self.activate(app, Api::new(&server), token, false);
+        Some(server)
+    }
+
+    /// The stored session's server didn't answer at startup: stop trying, but keep it stored
+    /// (the next launch tries again, as before).
+    fn suspend(&self) {
+        self.gateway.lock().unwrap().take();
+        if let Some(t) = self.retry.lock().unwrap().take() {
+            t.abort();
+        }
+        self.inner.lock().unwrap().take();
+    }
+
+    /// Resolves once the UI listens for `pulse://…` events (anything emitted earlier is lost).
+    pub(crate) fn ui_listening(&self) -> watch::Receiver<bool> {
+        self.ui_attached.subscribe()
     }
 
     /// Forget the session locally (logout, or the server said our token is dead).
@@ -119,15 +157,18 @@ impl Core {
 
 /// Gateway updates → Tauri events for the UI.
 async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>) {
+    let mut attached = app.state::<Core>().ui_listening();
+    let _ = attached.wait_for(|a| *a).await;
     while let Some(u) = rx.recv().await {
-        match u {
+        match &u {
             GatewayUpdate::Ready(r) => {
-                let _ = app.emit("pulse://ready", &*r);
+                let _ = app.emit("pulse://ready", &**r);
             }
             GatewayUpdate::Event(e) => {
-                let _ = app.emit("pulse://event", &e);
+                let _ = app.emit("pulse://event", e);
             }
             GatewayUpdate::Connection(state) => {
+                let state = *state;
                 *app.state::<Core>().conn.lock().unwrap() = state;
                 tracing::info!(?state, "gateway");
                 if state == ConnState::LoggedOut {
@@ -146,6 +187,8 @@ async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>)
                 let _ = app.emit("pulse://conn", state);
             }
         }
+        // after the emit: restore_session returns only once the UI has the Ready
+        app.state::<Core>().boot.send_modify(|b| b.observe(&u));
     }
 }
 
@@ -180,6 +223,9 @@ pub async fn register(
     Ok(s.user)
 }
 
+/// Longest startup waits for the first gateway session to decide (connect 10 s + Ready 10 s).
+const BOOT_WAIT: std::time::Duration = std::time::Duration::from_secs(25);
+
 /// Resume the stored session. `Ok(None)` means "show the login screen".
 #[tauri::command]
 pub async fn restore_session(
@@ -187,22 +233,31 @@ pub async fn restore_session(
     core: State<'_, Core>,
 ) -> Result<Option<User>, ApiError> {
     crate::startup::mark("restore_begin");
-    let Some((server, token)) = core.store.load() else {
+    core.ui_attached.send_replace(true); // the UI listens before it calls this
+    let Some(server) = core.start_stored(&app) else {
         return Ok(None);
     };
-    let api = Api::new(&server);
-    let me = api.me(&token).await;
+    let mut boot = core.boot.subscribe();
+    let decided = tokio::time::timeout(BOOT_WAIT, boot.wait_for(|b| !b.is_waiting()))
+        .await
+        .ok()
+        .and_then(|r| r.ok().map(|b| b.clone()));
     crate::startup::mark("restore_end");
-    match me {
-        Ok(user) => {
-            core.activate(&app, api, token, false);
-            Ok(Some(user))
+    match decided {
+        Some(Boot::Ready(user)) => Ok(Some(user)),
+        Some(Boot::LoggedOut) => Ok(None), // forward() already cleared the stored session
+        Some(Boot::UpdateRequired) => {
+            // the update screen sits inside the signed-in shell: it needs the user (rare path)
+            let (api, token) = core.current()?;
+            api.me(&token)
+                .await
+                .map(Some)
+                .map_err(|e| e.while_restoring(&server))
         }
-        Err(ApiError::Unauthorized) => {
-            core.store.clear(&server);
-            Ok(None)
+        _ => {
+            core.suspend();
+            Err(ApiError::Network(crate::api::CONNECT_FAILED.into()).while_restoring(&server))
         }
-        Err(e) => Err(e.while_restoring(&server)),
     }
 }
 

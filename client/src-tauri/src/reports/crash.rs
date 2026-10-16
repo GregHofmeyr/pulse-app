@@ -193,6 +193,9 @@ pub async fn send_pending(app: AppHandle, api: crate::api::Api, token: String) {
         Outcome::Sent => {
             clear_pending(&dir);
             tracing::info!(kind = req.kind.as_str(), "automatic report sent");
+            // Sign-in can now start before the UI listens: hold the notice until it does.
+            let mut listening = app.state::<crate::commands::Core>().ui_listening();
+            let _ = listening.wait_for(|l| *l).await;
             let _ = app.emit("pulse://auto-report-sent", ());
         }
         Outcome::Drop => {

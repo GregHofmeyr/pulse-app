@@ -115,6 +115,12 @@ pub fn run() {
                     let _ = handle.emit("voice://event", &e);
                 },
             )));
+            // A stored login connects now, while the webview boots: Ready no longer waits for
+            // the UI and a separate /me round trip. (Keychain reads block: not on the UI thread.)
+            let h = app.handle().clone();
+            tauri::async_runtime::spawn_blocking(move || {
+                h.state::<commands::Core>().start_stored(&h);
+            });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

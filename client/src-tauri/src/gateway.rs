@@ -24,6 +24,38 @@ pub enum GatewayUpdate {
     Connection(ConnState),
 }
 
+/// What the first gateway session says about a stored login. Startup no longer asks `/me`
+/// first: Ready carries the user, a 4001 close means the token is dead.
+#[derive(Debug, Clone)]
+pub enum Boot {
+    Waiting,
+    Ready(pulse_protocol::rest::User),
+    LoggedOut,
+    UpdateRequired,
+    /// The first attempt failed before Ready (no network, server down).
+    Unreachable,
+}
+
+impl Boot {
+    pub fn is_waiting(&self) -> bool {
+        matches!(self, Boot::Waiting)
+    }
+
+    /// Fold in one update; once decided it stays (later reconnects aren't startup).
+    pub fn observe(&mut self, u: &GatewayUpdate) {
+        if !self.is_waiting() {
+            return;
+        }
+        *self = match u {
+            GatewayUpdate::Ready(r) => Boot::Ready(r.me.clone()),
+            GatewayUpdate::Connection(ConnState::LoggedOut) => Boot::LoggedOut,
+            GatewayUpdate::Connection(ConnState::UpdateRequired) => Boot::UpdateRequired,
+            GatewayUpdate::Connection(ConnState::Reconnecting) => Boot::Unreachable,
+            _ => return,
+        };
+    }
+}
+
 #[derive(Serialize, Clone, Copy, PartialEq, Eq, Debug)]
 #[serde(rename_all = "snake_case")]
 pub enum ConnState {
@@ -461,6 +493,52 @@ mod tests {
         assert_eq!(
             states,
             vec![ConnState::Connecting, ConnState::UpdateRequired]
+        );
+    }
+
+    async fn boot_outcome(base: String, token: &str) -> Boot {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _gw = GatewayHandle::spawn_with(base, token.into(), tx, Duration::from_millis(50));
+        let mut boot = Boot::Waiting;
+        while boot.is_waiting() {
+            boot.observe(&next(&mut rx).await);
+        }
+        boot
+    }
+
+    /// Startup no longer asks `/me`: Ready says who we are.
+    #[tokio::test]
+    async fn startup_learns_who_we_are_from_ready() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        match boot_outcome(format!("http://{}", app.addr), &token).await {
+            Boot::Ready(me) => assert_eq!(me.username, "alex"),
+            other => panic!("expected Ready, got {other:?}"),
+        }
+    }
+
+    /// A stored token the server no longer accepts → the login screen, as with `/me`'s 401.
+    #[tokio::test]
+    async fn startup_with_a_dead_token_ends_logged_out() {
+        let app = testing::spawn().await;
+        let b = boot_outcome(format!("http://{}", app.addr), "garbage").await;
+        assert!(matches!(b, Boot::LoggedOut), "{b:?}");
+    }
+
+    /// Nothing answers: say so (the UI shows "couldn't restore your last session").
+    #[tokio::test]
+    async fn startup_with_no_server_is_unreachable() {
+        let b = boot_outcome("http://localhost:9".into(), "t").await;
+        assert!(matches!(b, Boot::Unreachable), "{b:?}");
+    }
+
+    #[test]
+    fn a_decided_boot_stays_decided() {
+        let mut b = Boot::LoggedOut;
+        b.observe(&GatewayUpdate::Connection(ConnState::Reconnecting));
+        assert!(
+            matches!(b, Boot::LoggedOut),
+            "a later reconnect isn't startup"
         );
     }
 }
