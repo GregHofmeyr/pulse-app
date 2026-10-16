@@ -362,3 +362,67 @@ async fn reopening_one_side_leaves_the_other_alone() {
     assert_ne!(spk, spk2, "the speakers were reopened");
     assert!(io.output_rate().is_some());
 }
+
+/// Leave while the devices are still opening, after the room already connected: the room must
+/// be closed, not dropped (a dropped livekit Room stays connected: a ghost others still see).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn leaving_while_devices_open_leaves_no_ghost() {
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, alex) = testing::register(&app, "alex").await;
+    let s = testing::create_server(&app, &alex, "Main").await;
+    let (_, sam) = testing::register(&app, "sam").await;
+    let r = testing::post_json(
+        &app,
+        &sam,
+        &format!("/servers/{}/join", s.id),
+        serde_json::json!({}),
+    )
+    .await;
+    assert!(r.status().is_success(), "join server: {}", r.status());
+    let api = Api::new(&format!("http://{}", app.addr));
+    let lounge = api
+        .channels(&alex, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+
+    // sam watches the room directly
+    let vt = api.voice_token(&sam, lounge.id).await.unwrap();
+    let (watcher, _events) = livekit::Room::connect(&vt.url, &vt.token, Default::default())
+        .await
+        .unwrap();
+    let others = || watcher.remote_participants().len();
+    let wait_for = |want: usize| async move {
+        for _ in 0..50 {
+            if others() == want {
+                return true;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        false
+    };
+
+    let vm = std::sync::Arc::new(VoiceManager::new(std::sync::Arc::new(|_| {})));
+    let (vm2, api2, lounge_id) = (vm.clone(), api.clone(), lounge.id);
+    let joining = tokio::spawn(async move {
+        vm2.join(
+            &api2,
+            &alex,
+            lounge_id,
+            AudioConfig::default(),
+            AudioMode::SlowNull(48_000, Duration::from_secs(5)),
+        )
+        .await
+    });
+    assert!(wait_for(1).await, "alex's room never connected");
+    vm.leave().await;
+    assert!(joining.await.unwrap().is_err(), "the join was cancelled");
+    assert!(wait_for(0).await, "alex is still in the room: a ghost");
+    watcher.close().await.unwrap();
+}

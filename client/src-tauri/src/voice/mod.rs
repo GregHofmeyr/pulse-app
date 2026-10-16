@@ -85,8 +85,9 @@ async fn start_audio(
 
 /// Open the devices while the room connects (neither needs the other): a join costs the slower
 /// of the two, not their sum. If one fails, the other is undone: opened devices are dropped
-/// (closing them), a connected room is closed (dropping a Room doesn't disconnect it). Both run
-/// to the end: abandoning `Room::connect` midway could leave a half-joined participant.
+/// (closing them), a connected room is closed (dropping a Room doesn't disconnect it). One
+/// failing doesn't abandon the other midway (a half-done `Room::connect`); a cancelled join
+/// drops both, so a connected room must be guarded on its own (`OpenRoom`).
 async fn side_by_side<D, R, F>(
     devices: impl Future<Output = Result<D, VoiceError>>,
     room: impl Future<Output = Result<R, VoiceError>>,
@@ -102,6 +103,58 @@ where
             Err(e)
         }
         (_, Err(e)) => Err(e), // opened devices (if any) drop here
+    }
+}
+
+/// Closing a room (a trait so tests can stand in for a livekit `Room`).
+trait CloseRoom: Send + Sync + 'static {
+    fn close_room(&self) -> impl Future<Output = ()> + Send;
+}
+
+impl CloseRoom for Room {
+    async fn close_room(&self) {
+        let _ = self.close().await;
+    }
+}
+
+/// A connected room that no session owns yet. A dropped livekit `Room` stays connected (its task
+/// only ends on `close()`): others would see a ghost. So a guard dropped with its room still in
+/// it (a cancelled join) closes the room in the background; `disarm` once a session owns it.
+struct OpenRoom<R: CloseRoom>(Option<Arc<R>>);
+
+impl<R: CloseRoom> OpenRoom<R> {
+    fn new(room: R) -> Self {
+        Self(Some(Arc::new(room)))
+    }
+
+    fn room(&self) -> &Arc<R> {
+        self.0
+            .as_ref()
+            .expect("an OpenRoom holds its room until closed or disarmed")
+    }
+
+    /// Close it now (bounded wait).
+    async fn close(mut self) {
+        if let Some(room) = self.0.take() {
+            let _ = tokio::time::timeout(CLOSE_TIMEOUT, room.close_room()).await;
+        }
+    }
+
+    /// A session owns the room now (and closes it on leave): stop guarding it.
+    fn disarm(mut self) {
+        self.0.take();
+    }
+}
+
+impl<R: CloseRoom> Drop for OpenRoom<R> {
+    fn drop(&mut self) {
+        if let Some(room) = self.0.take()
+            && let Ok(rt) = tokio::runtime::Handle::try_current()
+        {
+            rt.spawn(async move {
+                let _ = tokio::time::timeout(CLOSE_TIMEOUT, room.close_room()).await;
+            });
+        }
     }
 }
 
@@ -258,6 +311,8 @@ pub enum AudioMode {
     Real,
     /// No devices (tests / headless): mixer pulled on a timer at this rate.
     Null(u32),
+    /// `Null` that takes this long to open (tests: a slow device open during a join).
+    SlowNull(u32, Duration),
 }
 
 #[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
@@ -484,6 +539,7 @@ impl VoiceManager {
         };
         self.emit_state(Some(channel), trying);
         let started = Instant::now();
+        // the room stays guarded until the session holding it is stored
         let outcome = tokio::select! {
             r = self.connect(api, token, channel, cfg, mode) => r,
             _ = cancel_rx => Err(VoiceError::Cancelled),
@@ -495,9 +551,10 @@ impl VoiceManager {
             Err(e) => tracing::warn!(error = %e, elapsed_ms, "voice: join failed"),
         }
         match outcome {
-            Ok(session) => {
+            Ok((session, open_room)) => {
                 *self.live.lock().unwrap() = Some(session.alive.clone());
                 *self.session.lock().await = Some(session);
+                open_room.disarm();
                 self.emit_state(Some(channel), Connection::Connected);
                 Ok(())
             }
@@ -620,7 +677,7 @@ impl VoiceManager {
         channel: ChannelId,
         cfg: AudioConfig,
         mode: AudioMode,
-    ) -> Result<Session, VoiceError> {
+    ) -> Result<(Session, OpenRoom<Room>), VoiceError> {
         // join phases, for finding where a slow join's time goes (bug reports carry the log)
         let started = Instant::now();
         let ms = |t: Instant| t.elapsed().as_millis() as u64;
@@ -641,6 +698,10 @@ impl VoiceManager {
             let io = match mode {
                 AudioMode::Real => start_audio(&cfg, shared.clone(), raw_tx.clone()).await?,
                 AudioMode::Null(rate) => AudioIo::start_null(rate, shared.clone(), raw_tx.clone()),
+                AudioMode::SlowNull(rate, open) => {
+                    tokio::time::sleep(open).await;
+                    AudioIo::start_null(rate, shared.clone(), raw_tx.clone())
+                }
             };
             Ok::<_, VoiceError>((io, ms(t)))
         };
@@ -653,13 +714,12 @@ impl VoiceManager {
             .await
             .map_err(|_| VoiceError::Timeout("connecting to voice"))?
             .map_err(|e| VoiceError::Connect(e.to_string()))?;
-            Ok::<_, VoiceError>((room, events, ms(t)))
+            // guarded from here: a cancelled join closes it
+            Ok::<_, VoiceError>((OpenRoom::new(room), events, ms(t)))
         };
-        let ((io, devices_ms), (room, mut room_events, room_connect_ms)) =
-            side_by_side(devices, room, |(room, _, _)| async move {
-                let _ = tokio::time::timeout(CLOSE_TIMEOUT, room.close()).await;
-            })
-            .await?;
+        let ((io, devices_ms), (open_room, mut room_events, room_connect_ms)) =
+            side_by_side(devices, room, |(room, _, _)| room.close()).await?;
+        let room = open_room.room().clone();
         let t = Instant::now();
         tracing::info!("voice: room connected");
         // Fixed 48 kHz towards LiveKit, whatever the device does.
@@ -683,7 +743,7 @@ impl VoiceManager {
             Err(_) => Some(VoiceError::Timeout("publishing the mic")),
         };
         if let Some(e) = failure {
-            let _ = tokio::time::timeout(CLOSE_TIMEOUT, room.close()).await; // dropping a Room does not disconnect it
+            open_room.close().await;
             return Err(e);
         }
         tracing::info!(
@@ -694,7 +754,6 @@ impl VoiceManager {
             publish_ms = ms(t),
             "voice: mic published"
         );
-        let room = Arc::new(room);
 
         let mut tasks = Vec::new();
         // what WebRTC measures about the path, for telling network lag from local lag
@@ -969,7 +1028,7 @@ impl VoiceManager {
             }));
         }
 
-        Ok(Session {
+        let session = Session {
             channel,
             room,
             shared,
@@ -980,7 +1039,8 @@ impl VoiceManager {
             alive,
             reopener,
             tasks,
-        })
+        };
+        Ok((session, open_room))
     }
 
     pub async fn leave(&self) {
@@ -1255,6 +1315,51 @@ mod tests {
         .await;
         assert!(matches!(r, Err(VoiceError::Connect(_))));
         assert!(dropped.load(Ordering::SeqCst));
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn both_failing_reports_the_room_error() {
+        let r = side_by_side(
+            async { Err::<(), _>(VoiceError::Device("no mic".into())) },
+            async { Err::<(), _>(VoiceError::Connect("refused".into())) },
+            |_| async { unreachable!("no room to undo") },
+        )
+        .await;
+        assert!(matches!(r, Err(VoiceError::Connect(_))));
+    }
+
+    struct FakeRoom(Arc<AtomicBool>);
+    impl CloseRoom for FakeRoom {
+        async fn close_room(&self) {
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// A cancelled join drops its guarded room: it must be closed, not left connected (a ghost).
+    #[tokio::test]
+    async fn a_dropped_open_room_is_closed() {
+        let closed = Arc::new(AtomicBool::new(false));
+        drop(OpenRoom::new(FakeRoom(closed.clone())));
+        for _ in 0..100 {
+            if closed.load(Ordering::SeqCst) {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+        panic!("the dropped room was never closed");
+    }
+
+    #[tokio::test]
+    async fn a_disarmed_open_room_stays_open() {
+        let closed = Arc::new(AtomicBool::new(false));
+        OpenRoom::new(FakeRoom(closed.clone())).disarm();
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !closed.load(Ordering::SeqCst),
+            "a session's room was closed"
+        );
     }
 
     #[tokio::test]
