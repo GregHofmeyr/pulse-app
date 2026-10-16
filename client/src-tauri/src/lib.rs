@@ -119,7 +119,7 @@ pub fn run() {
             // the UI and a separate /me round trip. (Keychain reads block: not on the UI thread.)
             let h = app.handle().clone();
             tauri::async_runtime::spawn_blocking(move || {
-                h.state::<commands::Core>().start_stored(&h);
+                h.state::<commands::Core>().start_stored(&h, false);
             });
             Ok(())
         })

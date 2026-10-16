@@ -93,11 +93,17 @@ impl Core {
     }
 
     /// Start the stored session's live connection, once (setup and restore_session both ask; the
-    /// first wins). The stored server, or `None` when nobody is signed in.
-    pub(crate) fn start_stored(&self, app: &AppHandle) -> Option<String> {
+    /// first wins). `restart`: the webview reloaded, so a running session starts a fresh gateway
+    /// (the new page needs its own Ready). The stored server, or `None` when nobody is signed in.
+    pub(crate) fn start_stored(&self, app: &AppHandle, restart: bool) -> Option<String> {
         let _one = self.starting.lock().unwrap();
-        if let Some((api, _)) = self.inner.lock().unwrap().clone() {
-            return Some(api.base().to_string());
+        let running = self.inner.lock().unwrap().clone();
+        if let Some((api, token)) = running {
+            let server = api.base().to_string();
+            if restart {
+                self.activate(app, api, token, false);
+            }
+            return Some(server);
         }
         let (server, token) = self.store.load()?;
         self.activate(app, Api::new(&server), token, false);
@@ -235,8 +241,9 @@ pub async fn restore_session(
     core: State<'_, Core>,
 ) -> Result<Option<User>, ApiError> {
     crate::startup::mark("restore_begin");
-    core.ui_attached.send_replace(true); // the UI listens before it calls this
-    let Some(server) = core.start_stored(&app) else {
+    // The UI listens before it calls this. Already attached = the webview reloaded.
+    let reload = core.ui_attached.send_replace(true);
+    let Some(server) = core.start_stored(&app, reload) else {
         return Ok(None);
     };
     let mut boot = core.boot.subscribe();
@@ -257,9 +264,32 @@ pub async fn restore_session(
                 .map_err(|e| e.while_restoring(&server))
         }
         _ => {
+            let why = match core.current() {
+                Ok((api, token)) => unrestored_reason(&api, &token).await,
+                Err(_) => ApiError::Network(crate::api::CONNECT_FAILED.into()),
+            };
             core.suspend();
-            Err(ApiError::Network(crate::api::CONNECT_FAILED.into()).while_restoring(&server))
+            match why {
+                ApiError::Unauthorized => {
+                    core.store.clear(&server);
+                    Ok(None)
+                }
+                e => Err(e.while_restoring(&server)),
+            }
         }
+    }
+}
+
+/// Longest startup asks `/me` why a stored session never reached Ready.
+const PROBE_WAIT: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Startup's stored session never reached Ready: ask `/me` once why (off the happy path), so a
+/// reachable server that's struggling says so instead of "didn't answer". Unauthorized = the
+/// token is dead; Server = it's having trouble; anything else stays "couldn't connect".
+async fn unrestored_reason(api: &Api, token: &str) -> ApiError {
+    match tokio::time::timeout(PROBE_WAIT, api.me(token)).await {
+        Ok(Err(e @ (ApiError::Unauthorized | ApiError::Server(_)))) => e,
+        _ => ApiError::Network(crate::api::CONNECT_FAILED.into()),
     }
 }
 
@@ -633,4 +663,70 @@ pub async fn close_conversation(
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.close_conversation(&token, channel_id).await)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pulse_server::testing;
+
+    /// A server that answers every request with 503 (a proxy in front of a Pulse that's down).
+    async fn always_503() -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("localhost:0").await.unwrap();
+        let base = format!("http://localhost:{}", l.local_addr().unwrap().port());
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = l.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let _ = s.read(&mut buf).await;
+                    let _ = s
+                        .write_all(b"HTTP/1.1 503 Service Unavailable\r\ncontent-length: 0\r\n\r\n")
+                        .await;
+                });
+            }
+        });
+        base
+    }
+
+    #[tokio::test]
+    async fn unrestored_with_a_refused_token_is_unauthorized() {
+        let app = testing::spawn().await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let why = unrestored_reason(&api, "garbage").await;
+        assert!(matches!(why, ApiError::Unauthorized), "{why:?}");
+    }
+
+    #[tokio::test]
+    async fn unrestored_with_a_struggling_server_says_so() {
+        let api = Api::new(&always_503().await);
+        let why = unrestored_reason(&api, "t").await;
+        assert!(
+            matches!(&why, ApiError::Server(s) if s.starts_with("503")),
+            "{why:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn unrestored_with_no_server_is_connect_failed() {
+        let api = Api::new("http://localhost:9");
+        let why = unrestored_reason(&api, "t").await;
+        assert!(
+            matches!(&why, ApiError::Network(t) if t == crate::api::CONNECT_FAILED),
+            "{why:?}"
+        );
+    }
+
+    /// `/me` works but the gateway never got to Ready: still "couldn't connect" (controller ruling).
+    #[tokio::test]
+    async fn unrestored_with_a_working_rest_api_is_connect_failed() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let why = unrestored_reason(&api, &token).await;
+        assert!(
+            matches!(&why, ApiError::Network(t) if t == crate::api::CONNECT_FAILED),
+            "{why:?}"
+        );
+    }
 }
