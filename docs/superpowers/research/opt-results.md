@@ -21,6 +21,11 @@ Before = `main` (de4b2ea). After = `optimisation-run` (c81e41c). Both built `--r
 
 NetEq verdict (R5): see opt-neteq-buffer.md.
 
+Not like-for-like: recv p50, underrun windows and the NetEq target changed meaning between before and after (after
+counts per-SSRC windows, including join/leave windows and up to MAX_ABSENT_WINDOWS after a stream vanishes; underrun
+now counts rebuffer frames; recv is sampled at the post-pull low point, which is the 10 ms target), so read those rows
+as indicative only, and read underrun together with `adjust`/`mix_busy` and the count of underrun events.
+
 ## How the Linux numbers were measured
 
 - Startup → Ready: the real binary, a throwaway profile with a stored session for a local dev server, five

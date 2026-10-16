@@ -49,8 +49,9 @@ GitHub, Oracle Cloud (or xneelo), Cloudflare (DNS + R2), Tailscale, UptimeRobot.
 2. Cloud firewall: allow inbound from `0.0.0.0/0` on TCP 80, 443, 7881 and UDP 7882, 3478, 41641 (plus TCP 22
    for now). Oracle: VCN → public subnet → Default Security List → Add Ingress Rules. xneelo: security groups.
 3. From the repo: `just provision ubuntu@<public-ip> <path to the VM's ssh key>`. It installs Docker, automatic
-   security updates, the firewall (Oracle's built-in iptables rules included), the `pulse` user,
-   `/srv/pulse` with a fresh LiveKit secret, the nightly backup timer, and Tailscale.
+   security updates, the firewall (Oracle's built-in iptables rules included), the UDP buffer sysctl
+   LiveKit wants (`/etc/sysctl.d/60-pulse-udp.conf`), the `pulse` user, `/srv/pulse` with a fresh LiveKit
+   secret, the nightly backup timer, and Tailscale.
 4. When it prints a Tailscale login URL, open it and approve the machine.
 5. Check: `ssh ubuntu@pulse hostname` prints `pulse`.
 6. **Turn off key expiry for the server**: Tailscale admin console → Machines → `pulse` → ⋯ → *Disable key
@@ -83,8 +84,15 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
   finishes (about ten minutes): check the printed commit. Clients reconnect on their own and voice keeps going.
 - Order for a release: deploy the server first, then send friends the new installer. Clients older than the
   server see "plz update :)".
+- Building a branch: running `release-server` by hand (workflow dispatch) also tags it `:latest`, as every
+  CI run on `main` does. Deploy a branch build only as `just deploy <sha7>`, never `just deploy`, and merge
+  that branch before anything else lands on `main`: the next `main` build moves `latest` back to code
+  without it.
 - Roll back: `just deploy <previous sha7>`. If a database migration went wrong, also `just restore <backup>`
   (section 8) with the backup the deploy made.
+- A deploy that ran a new migration can't be rolled back by image alone: an older image refuses to start
+  against a database migrated past what it knows (e.g. `0004_message_nonce`). Roll back with
+  `just restore <the backup that deploy made>` and then `just deploy <previous sha7>`.
 - `just logs` (or `just logs caddy` / `just logs livekit`) follows the live logs.
 - After changing `livekit.yaml`: `just deploy`, then `ssh pulse@pulse 'cd /srv/pulse && docker compose restart livekit'`.
 
