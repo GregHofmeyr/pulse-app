@@ -4,7 +4,14 @@
 //! Needs the dev LiveKit (`just dev-livekit`, host networking on lo).
 //! Run: `cargo test -p pulse-client --test neteq_probe -- --ignored --nocapture`
 //! With delay: `sudo tc qdisc add dev lo root netem delay 40ms 1ms` first and
-//! `NETEM_ONEWAY_MS=40` in the environment; `sudo tc qdisc del dev lo root` after.
+//! `NETEM_ONEWAY_MS=40` (the qdisc's delay) in the environment; `sudo tc qdisc del dev lo root` after.
+//! Both participants reach the SFU over lo, so the audio crosses the qdisc twice: the probe
+//! subtracts 2 × NETEM_ONEWAY_MS from the measured lag.
+//! `PROBE_PATTERNS=bursts,continuous` picks the patterns and their order (default
+//! `continuous,bursts`; also `gated` and `noise`). Each test run is a fresh room and stream; the
+//! patterns follow each other on it with no break in the frames.
+//! `PROBE_STALL_MS=500` stops sending frames for that long before every pattern after the first:
+//! a send stall with no silence fill (what `GapFill` prevents in the app).
 
 use std::time::{Duration, Instant};
 
@@ -35,48 +42,131 @@ enum Pattern {
     Continuous,
     /// 1 s loud tone, 1 s exact zeros: DTX engages in every gap, like our gate.
     Bursts,
+    /// Like the real gate on real speech: talk 1-2 s and gaps 0.3-2 s (seeded, irregular), each
+    /// talk spurt fading out over the gate's 100 ms before exact zeros.
+    Gated,
+    /// Bursts with −60 dBFS white noise in the gaps instead of exact zeros: does DTX still engage?
+    Noise,
+}
+
+/// What frame `k` (10 ms) carries: tone amplitude and white-noise amplitude.
+#[derive(Clone, Copy)]
+struct Frame {
+    tone: f32,
+    noise: f32,
+}
+
+/// The gate's fade-out (`voice/gate.rs` FADE_BLOCKS: 10 blocks of 10 ms).
+const GATE_FADE_FRAMES: u64 = 10;
+/// −60 dBFS.
+const NOISE_AMP: f32 = 0.001;
+
+/// Small deterministic generator (the probe must be reproducible run to run).
+struct Lcg(u64);
+
+impl Lcg {
+    fn next(&mut self) -> u64 {
+        self.0 = self
+            .0
+            .wrapping_mul(6_364_136_223_846_793_005)
+            .wrapping_add(1_442_695_040_888_963_407);
+        self.0 >> 33
+    }
+
+    /// Uniform in `lo..=hi`.
+    fn range(&mut self, lo: u64, hi: u64) -> u64 {
+        lo + self.next() % (hi - lo + 1)
+    }
+
+    /// Uniform in −1..1.
+    fn unit(&mut self) -> f32 {
+        (self.next() % 65_536) as f32 / 32_768.0 - 1.0
+    }
 }
 
 impl Pattern {
-    /// Tone amplitude for 10 ms frame `k`.
-    fn amp(self, k: u64) -> f32 {
-        match self {
-            Pattern::Continuous => {
-                if k % 100 < 20 {
-                    0.03
-                } else {
-                    0.3
-                }
-            }
-            Pattern::Bursts => {
-                if k % 200 < 100 {
-                    0.3
-                } else {
-                    0.0
-                }
-            }
+    fn parse(name: &str) -> Self {
+        match name.trim() {
+            "continuous" => Pattern::Continuous,
+            "bursts" => Pattern::Bursts,
+            "gated" => Pattern::Gated,
+            "noise" => Pattern::Noise,
+            other => panic!("unknown pattern {other:?}"),
         }
     }
 
-    fn onset(self, k: u64) -> bool {
-        k > 0 && self.amp(k) > 0.1 && self.amp(k - 1) < 0.1
+    /// Every 10 ms frame of the run.
+    fn schedule(self) -> Vec<Frame> {
+        let n = (SECONDS * 100) as usize;
+        let tone = |tone| Frame { tone, noise: 0.0 };
+        match self {
+            Pattern::Continuous => (0..n)
+                .map(|k| tone(if k % 100 < 20 { 0.03 } else { 0.3 }))
+                .collect(),
+            Pattern::Bursts => (0..n)
+                .map(|k| tone(if k % 200 < 100 { 0.3 } else { 0.0 }))
+                .collect(),
+            Pattern::Noise => (0..n)
+                .map(|k| {
+                    if k % 200 < 100 {
+                        tone(0.3)
+                    } else {
+                        Frame {
+                            tone: 0.0,
+                            noise: NOISE_AMP,
+                        }
+                    }
+                })
+                .collect(),
+            Pattern::Gated => {
+                // talk spurts ≥ 1 s and gaps ≥ 0.3 s keep onsets ≥ 1.3 s apart, so an arrival
+                // still pairs with its own onset at lags up to that
+                let mut rng = Lcg(0x5EED);
+                let mut out = Vec::with_capacity(n);
+                while out.len() < n {
+                    out.extend((0..rng.range(100, 200)).map(|_| tone(0.3)));
+                    out.extend(
+                        (0..GATE_FADE_FRAMES)
+                            .map(|i| tone(0.3 * (1.0 - (i + 1) as f32 / GATE_FADE_FRAMES as f32))),
+                    );
+                    out.extend((0..rng.range(30, 200)).map(|_| tone(0.0)));
+                }
+                out.truncate(n);
+                out
+            }
+        }
     }
 }
 
+fn onset(schedule: &[Frame], k: usize) -> bool {
+    k > 0 && schedule[k].tone > 0.1 && schedule[k - 1].tone < 0.1
+}
+
+/// Exact zeros after each pattern while its last arrivals are in flight. The frames must not stop:
+/// RTP timestamps count samples, so a gap with no frames makes every later packet look that much
+/// late to NetEq, which raises its target by the gap (520 ms after the 500 ms wait this replaced).
+const TAIL_FRAMES: usize = 50;
+
 async fn send(source: NativeAudioSource, pattern: Pattern, onsets: mpsc::UnboundedSender<Instant>) {
+    let mut schedule = pattern.schedule();
+    schedule.extend((0..TAIL_FRAMES).map(|_| Frame {
+        tone: 0.0,
+        noise: 0.0,
+    }));
+    let mut rng = Lcg(1);
     let mut tick = tokio::time::interval(Duration::from_millis(10));
     let step = 2.0 * std::f32::consts::PI * 440.0 / RATE as f32;
     let mut phase = 0f32;
-    for k in 0..SECONDS * 100 {
+    for (k, f) in schedule.iter().enumerate() {
         tick.tick().await;
-        let a = pattern.amp(k);
         let data: Vec<i16> = (0..FRAME)
             .map(|_| {
                 phase = (phase + step) % (2.0 * std::f32::consts::PI);
-                (phase.sin() * a * 32767.0) as i16
+                let v = phase.sin() * f.tone + rng.unit() * f.noise;
+                (v * 32767.0) as i16
             })
             .collect();
-        if pattern.onset(k) {
+        if onset(&schedule, k) {
             let _ = onsets.send(Instant::now());
         }
         let frame = AudioFrame {
@@ -101,14 +191,19 @@ fn median(mut v: Vec<f64>) -> Option<f64> {
 async fn run(
     pattern: Pattern,
     source: &NativeAudioSource,
+    sender: &Room,
     receiver: &Room,
     arrivals: &mut mpsc::UnboundedReceiver<Instant>,
+    stall: Duration,
 ) {
+    tokio::time::sleep(stall).await; // no frames at all (PROBE_STALL_MS)
     while arrivals.try_recv().is_ok() {} // leftovers from the previous pattern
     let (sent_tx, mut sent_rx) = mpsc::unbounded_channel();
     let sending = tokio::spawn(send(source.clone(), pattern, sent_tx));
     let mut totals = netstats::Totals::default();
+    let mut sent_totals = netstats::Totals::default();
     let mut windows = Vec::new();
+    let mut send_pps = Vec::new();
     let mut tick = tokio::time::interval(netstats::WINDOW);
     tick.tick().await;
     for _ in 0..SECONDS / 5 {
@@ -118,9 +213,14 @@ async fn run(
             totals = t;
             windows.push(p);
         }
+        // the sender's packets/s: ~50 while sending, far fewer once DTX engages
+        if let Ok(s) = sender.get_stats().await {
+            let (p, t) = netstats::summarize(&s.publisher_stats, &[], &sent_totals);
+            sent_totals = t;
+            send_pps.extend(p.send_pps);
+        }
     }
-    sending.await.unwrap();
-    tokio::time::sleep(Duration::from_millis(500)).await; // last arrivals in flight
+    sending.await.unwrap(); // its tail covered the last arrivals in flight
     let sent: Vec<Instant> = std::iter::from_fn(|| sent_rx.try_recv().ok()).collect();
     let got: Vec<Instant> = std::iter::from_fn(|| arrivals.try_recv().ok()).collect();
     let mut lags: Vec<f64> = got
@@ -145,14 +245,18 @@ async fn run(
     };
     let lag50 = percentile(&lags, 0.5);
     println!(
-        "| {pattern:?} | {netem:.0} | {} | {} | {} | {} | {} | {} | {} | {} |",
+        "| {pattern:?} | {netem:.0} | {} | {} | {} | {} | {} | {} | {} | {} | {} |",
         lag50.map_or("-".into(), |v| format!("{v:.0}")),
         percentile(&lags, 0.9).map_or("-".into(), |v| format!("{v:.0}")),
-        lag50.map_or("-".into(), |v| format!("{:.0}", v - netem - PATH_FIXED_MS)),
+        lag50.map_or("-".into(), |v| format!(
+            "{:.0}",
+            v - 2.0 * netem - PATH_FIXED_MS
+        )),
         col(|p| p.buffer_ms),
         col(|p| p.target_ms),
         col(|p| p.accel_ms),
         col(|p| p.silent_pct),
+        median(send_pps).map_or("-".into(), |v| format!("{v:.0}")),
         lags.len(),
     );
 }
@@ -234,11 +338,19 @@ async fn neteq_buffer_vs_measured_lag() {
     tokio::time::sleep(Duration::from_secs(2)).await; // subscription start-up
 
     println!(
-        "| pattern | netem one-way ms | lag p50 | lag p90 | jb from lag | buffer | target | accel ms/5s | silent % | onsets |"
+        "| pattern | netem qdisc ms | lag p50 | lag p90 | jb from lag | buffer | target | accel ms/5s | silent % | send pkt/s | onsets |"
     );
-    println!("|---|---|---|---|---|---|---|---|---|---|");
-    for pattern in [Pattern::Continuous, Pattern::Bursts] {
-        run(pattern, &source, &receiver, &mut arrivals).await;
+    println!("|---|---|---|---|---|---|---|---|---|---|---|");
+    let patterns = std::env::var("PROBE_PATTERNS").unwrap_or("continuous,bursts".into());
+    let stall = Duration::from_millis(
+        std::env::var("PROBE_STALL_MS")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0),
+    );
+    for (i, pattern) in patterns.split(',').map(Pattern::parse).enumerate() {
+        let stall = if i == 0 { Duration::ZERO } else { stall };
+        run(pattern, &source, &sender, &receiver, &mut arrivals, stall).await;
     }
     let _ = sender.close().await;
     let _ = receiver.close().await;
