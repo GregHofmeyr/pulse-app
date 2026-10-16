@@ -85,6 +85,14 @@ else
   tailscale up --ssh --hostname=pulse
 fi
 
+say "UDP buffers for LiveKit media"
+cat >/etc/sysctl.d/60-pulse-udp.conf <<'EOF'
+# Pulse: bigger UDP buffers for LiveKit media (the default 4 MiB cap drops packets under load)
+net.core.rmem_max = 16777216
+net.core.wmem_max = 16777216
+EOF
+sysctl -q -p /etc/sysctl.d/60-pulse-udp.conf
+
 say "nightly backup timer"
 install -m 644 "$HERE/pulse-backup.service" "$HERE/pulse-backup.timer" /etc/systemd/system/
 systemctl daemon-reload
