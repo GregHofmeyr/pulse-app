@@ -212,6 +212,7 @@ pub fn start_strong(generation: u64, done: std_mpsc::Sender<LoadResult>) {
                 let _ = done.send((generation, Err(e)));
             }
             Ok(mut df) => {
+                let _rt = super::rtprio::promote("pulse-strong");
                 let (in_tx, in_rx) = std_mpsc::channel::<Vec<f32>>();
                 let (out_tx, out_rx) = std_mpsc::channel();
                 let handle = StrongWorker {
@@ -257,7 +258,10 @@ pub fn spawn(
     let (tx, rx) = std_mpsc::channel::<RawBlock>();
     let h = std::thread::Builder::new()
         .name("pulse-mic".into())
-        .spawn(move || run(shared, rx, mic_tx))
+        .spawn(move || {
+            let _rt = super::rtprio::promote("pulse-mic");
+            run(shared, rx, mic_tx)
+        })
         .expect("spawn mic processor");
     (tx, h)
 }

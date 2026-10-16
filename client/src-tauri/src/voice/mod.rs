@@ -12,6 +12,7 @@ pub mod netstats;
 pub mod playout;
 pub mod processor;
 pub mod resampler;
+pub mod rtprio;
 pub mod rx;
 pub mod speaking;
 pub mod stats;

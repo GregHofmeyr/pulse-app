@@ -229,6 +229,20 @@ fn to_i16(v: f32) -> i16 {
     (v.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
 }
 
+/// A device's name as settings and lists use it. cpal 0.18 dropped `name()`: on Linux (ALSA) the
+/// stable name is the PCM id ("default", what 0.15 returned and `usable` filters on); elsewhere the
+/// friendly name (`description().name()`, the same property 0.15 read on Windows).
+pub fn device_name(d: &cpal::Device) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        d.id().ok().map(|id| id.id().to_string())
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        d.description().ok().map(|desc| desc.name().to_string())
+    }
+}
+
 /// cpal's Linux (ALSA) backend lists plumbing names (jack, pipewire, hdmi:CARD=…), not real devices —
 /// on Linux we offer the system default only and the OS picks the device. Windows lists friendly names.
 fn usable(name: &str) -> bool {
@@ -241,7 +255,7 @@ fn list(
 ) -> Vec<DeviceInfo> {
     names
         .map(|it| {
-            it.filter_map(|d| d.name().ok())
+            it.filter_map(|d| device_name(&d))
                 .filter(|n| usable(n))
                 .map(|name| DeviceInfo {
                     is_default: Some(&name) == default.as_ref(),
@@ -256,7 +270,7 @@ pub fn list_inputs() -> Vec<DeviceInfo> {
     let host = cpal::default_host();
     list(
         host.input_devices().ok(),
-        host.default_input_device().and_then(|d| d.name().ok()),
+        host.default_input_device().and_then(|d| device_name(&d)),
     )
 }
 
@@ -264,7 +278,7 @@ pub fn list_outputs() -> Vec<DeviceInfo> {
     let host = cpal::default_host();
     list(
         host.output_devices().ok(),
-        host.default_output_device().and_then(|d| d.name().ok()),
+        host.default_output_device().and_then(|d| device_name(&d)),
     )
 }
 
@@ -593,7 +607,7 @@ fn open_half(
             } else {
                 prefer_internal_rate(dev.default_output_config()?, dev.supported_output_configs()?)
             };
-            let (rate, ch) = (cfg.sample_rate().0, cfg.channels() as usize);
+            let (rate, ch) = (cfg.sample_rate(), cfg.channels() as usize);
             let stream = if input {
                 let mut pending: Vec<f32> = Vec::new();
                 build_input(&dev, &cfg, move |d: &[f32], latency| {
@@ -612,7 +626,7 @@ fn open_half(
                 })?
             };
             stream.play()?;
-            let name = dev.name().unwrap_or_default();
+            let name = device_name(&dev).unwrap_or_default();
             tracing::info!(device = %name, rate, ch, fmt = ?cfg.sample_format(), "audio {side} opened");
             let generation = OPENS.fetch_add(1, Ordering::Relaxed) + 1;
             Ok((stream, HalfInfo { rate, name, generation }))
@@ -794,8 +808,8 @@ impl Debounce {
 
 /// Names of all input and output devices (blocking: device enumeration).
 pub fn device_names() -> (Vec<String>, Vec<String>) {
-    fn names(devs: Result<impl Iterator<Item = cpal::Device>, cpal::DevicesError>) -> Vec<String> {
-        devs.map(|d| d.filter_map(|d| d.name().ok()).collect())
+    fn names(devs: Result<impl Iterator<Item = cpal::Device>, cpal::Error>) -> Vec<String> {
+        devs.map(|d| d.filter_map(|d| device_name(&d)).collect())
             .unwrap_or_default()
     }
     let host = cpal::default_host();
@@ -806,8 +820,8 @@ pub fn device_names() -> (Vec<String>, Vec<String>) {
 pub fn default_device_names() -> (Option<String>, Option<String>) {
     let host = cpal::default_host();
     (
-        host.default_input_device().and_then(|d| d.name().ok()),
-        host.default_output_device().and_then(|d| d.name().ok()),
+        host.default_input_device().and_then(|d| device_name(&d)),
+        host.default_output_device().and_then(|d| device_name(&d)),
     )
 }
 
@@ -826,7 +840,7 @@ pub fn prefer_internal_rate(
     default: cpal::SupportedStreamConfig,
     ranges: impl IntoIterator<Item = cpal::SupportedStreamConfigRange>,
 ) -> cpal::SupportedStreamConfig {
-    let want = cpal::SampleRate(INTERNAL_RATE);
+    let want = INTERNAL_RATE;
     ranges
         .into_iter()
         .filter(|r| {
@@ -844,7 +858,7 @@ pub fn find_device(input: bool, name: Option<&str>) -> anyhow::Result<cpal::Devi
         } else {
             host.output_devices()?
         };
-        if let Some(d) = devs.find(|d| d.name().ok().as_deref() == Some(name)) {
+        if let Some(d) = devs.find(|d| device_name(d).as_deref() == Some(name)) {
             return Ok(d);
         }
         // Remembered device is gone (unplugged): fall back to the default.
@@ -882,7 +896,7 @@ pub fn from_f32<T: cpal::Sample + cpal::FromSample<f32>>(src: &[f32], dst: &mut 
 
 /// A stream-error callback that logs at most once per `STREAM_ERROR_EVERY` (a broken device can
 /// fire thousands per second).
-fn stream_errors(what: &'static str) -> impl FnMut(cpal::StreamError) + Send + 'static {
+fn stream_errors(what: &'static str) -> impl FnMut(cpal::Error) + Send + 'static {
     let mut t = crate::throttle::Throttle::new(STREAM_ERROR_EVERY);
     move |e| {
         if let Some(repeated) = t.hit(std::time::Instant::now()) {
@@ -895,13 +909,13 @@ fn stream_errors(what: &'static str) -> impl FnMut(cpal::StreamError) + Send + '
 /// How long captured audio waited before reaching us (device + driver buffering), if the backend says.
 fn capture_latency(info: &cpal::InputCallbackInfo) -> Option<Duration> {
     let t = info.timestamp();
-    t.callback.duration_since(&t.capture)
+    t.callback.checked_duration_since(t.capture)
 }
 
 /// How long until what we write is heard (device + driver buffering), if the backend says.
 fn playback_latency(info: &cpal::OutputCallbackInfo) -> Option<Duration> {
     let t = info.timestamp();
-    t.playback.duration_since(&t.callback)
+    t.playback.checked_duration_since(t.callback)
 }
 
 fn build_input(
@@ -919,7 +933,7 @@ fn build_input(
     {
         let mut buf = Vec::new();
         Ok(dev.build_input_stream(
-            cfg,
+            *cfg,
             move |d: &[T], info: &cpal::InputCallbackInfo| {
                 to_f32(d, &mut buf);
                 on_data(&buf, capture_latency(info))
@@ -933,7 +947,7 @@ fn build_input(
     match cfg.sample_format() {
         // f32 straight through (the common case: no copy)
         F::F32 => Ok(dev.build_input_stream(
-            &c,
+            c,
             move |d: &[f32], info: &cpal::InputCallbackInfo| on_data(d, capture_latency(info)),
             stream_errors("input"),
             None,
@@ -941,6 +955,8 @@ fn build_input(
         F::F64 => typed::<f64>(dev, &c, on_data),
         F::I8 => typed::<i8>(dev, &c, on_data),
         F::I16 => typed::<i16>(dev, &c, on_data),
+        F::I24 => typed::<cpal::I24>(dev, &c, on_data),
+        F::U24 => typed::<cpal::U24>(dev, &c, on_data),
         F::I32 => typed::<i32>(dev, &c, on_data),
         F::I64 => typed::<i64>(dev, &c, on_data),
         F::U8 => typed::<u8>(dev, &c, on_data),
@@ -963,7 +979,7 @@ pub fn build_output(
     ) -> anyhow::Result<cpal::Stream> {
         let mut buf = Vec::new();
         Ok(dev.build_output_stream(
-            cfg,
+            *cfg,
             move |d: &mut [T], info: &cpal::OutputCallbackInfo| {
                 buf.resize(d.len(), 0.0);
                 fill(&mut buf, playback_latency(info));
@@ -977,7 +993,7 @@ pub fn build_output(
     use cpal::SampleFormat as F;
     match cfg.sample_format() {
         F::F32 => Ok(dev.build_output_stream(
-            &c,
+            c,
             move |d: &mut [f32], info: &cpal::OutputCallbackInfo| fill(d, playback_latency(info)),
             stream_errors("output"),
             None,
@@ -985,6 +1001,8 @@ pub fn build_output(
         F::F64 => typed::<f64>(dev, &c, fill),
         F::I8 => typed::<i8>(dev, &c, fill),
         F::I16 => typed::<i16>(dev, &c, fill),
+        F::I24 => typed::<cpal::I24>(dev, &c, fill),
+        F::U24 => typed::<cpal::U24>(dev, &c, fill),
         F::I32 => typed::<i32>(dev, &c, fill),
         F::I64 => typed::<i64>(dev, &c, fill),
         F::U8 => typed::<u8>(dev, &c, fill),
@@ -1548,24 +1566,71 @@ mod tests {
     /// Opening at 48 kHz when the device can avoids resampling entirely (best quality, no work).
     #[test]
     fn prefers_internal_rate_when_supported() {
-        use cpal::{SampleFormat::F32, SampleRate, SupportedBufferSize::Unknown};
-        let default = cpal::SupportedStreamConfig::new(2, SampleRate(44_100), Unknown, F32);
-        let range = |ch, lo, hi| {
-            cpal::SupportedStreamConfigRange::new(ch, SampleRate(lo), SampleRate(hi), Unknown, F32)
-        };
+        use cpal::{SampleFormat::F32, SupportedBufferSize::Unknown};
+        let default = cpal::SupportedStreamConfig::new(2, 44_100, Unknown, F32);
+        let range = |ch, lo, hi| cpal::SupportedStreamConfigRange::new(ch, lo, hi, Unknown, F32);
 
-        let picked = prefer_internal_rate(default.clone(), vec![range(2, 8_000, 192_000)]);
-        assert_eq!(picked.sample_rate().0, INTERNAL_RATE);
+        let picked = prefer_internal_rate(default, vec![range(2, 8_000, 192_000)]);
+        assert_eq!(picked.sample_rate(), INTERNAL_RATE);
         assert_eq!(picked.channels(), 2, "keeps the default's channel count");
 
-        let only_44k = prefer_internal_rate(default.clone(), vec![range(2, 44_100, 44_100)]);
+        let only_44k = prefer_internal_rate(default, vec![range(2, 44_100, 44_100)]);
         assert_eq!(only_44k, default, "can't do 48 kHz: keep the default");
 
-        let other_channels = prefer_internal_rate(default.clone(), vec![range(6, 8_000, 192_000)]);
+        let other_channels = prefer_internal_rate(default, vec![range(6, 8_000, 192_000)]);
         assert_eq!(
             other_channels, default,
             "never trade channel layout for the rate"
         );
+    }
+
+    /// cpal 0.18 dropped `Device::name()`. Settings store names, so a device must keep the name
+    /// 0.15 gave it: on Linux the ALSA PCM id (what `usable` filters on), not the description.
+    /// Real devices: run explicitly (`--ignored`).
+    #[cfg(target_os = "linux")]
+    #[test]
+    #[ignore]
+    fn linux_device_names_stay_alsa_pcm_ids() {
+        use cpal::traits::HostTrait;
+        let host = cpal::default_host();
+        let names: Vec<String> = host
+            .output_devices()
+            .into_iter()
+            .flatten()
+            .filter_map(|d| device_name(&d))
+            .collect();
+        assert!(!names.is_empty(), "no ALSA devices listed");
+        for n in &names {
+            assert!(!n.contains(' '), "a description, not a PCM id: {n:?}");
+        }
+        assert!(names.iter().any(|n| n == "default"), "{names:?}");
+    }
+
+    fn round_trip<T: cpal::SizedSample + cpal::FromSample<f32>>(src: &[f32]) -> Vec<f32>
+    where
+        f32: cpal::FromSample<T>,
+    {
+        let mut dev = vec![<T as cpal::Sample>::EQUILIBRIUM; src.len()];
+        from_f32(src, &mut dev);
+        let mut back = Vec::new();
+        to_f32(&dev, &mut back);
+        back
+    }
+
+    /// cpal 0.18 ranks 24-bit formats above I16: a headset whose shared-mode format is 24-bit
+    /// integer now goes through these conversions, which must be exact to 24-bit precision.
+    #[test]
+    fn twenty_four_bit_samples_round_trip() {
+        let src = [-1.0f32, -0.5, 0.0, 0.5, 0.999];
+        for (name, back) in [
+            ("i24", round_trip::<cpal::I24>(&src)),
+            ("u24", round_trip::<cpal::U24>(&src)),
+        ] {
+            assert_eq!(back.len(), src.len(), "{name}");
+            for (a, b) in src.iter().zip(&back) {
+                assert!((a - b).abs() < 1e-5, "{name}: {a} came back as {b}");
+            }
+        }
     }
 
     #[test]

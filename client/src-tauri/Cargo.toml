@@ -28,7 +28,7 @@ tokio-tungstenite = { version = "0.27", features = ["rustls-tls-native-roots"] }
 futures = "0.3"
 rand = "0.9"
 livekit = { version = "0.9.3", features = ["rustls-tls-native-roots"] }
-cpal = "0.15"
+cpal = "0.18.2"
 os_info = "3"
 anyhow.workspace = true
 tracing.workspace = true
@@ -61,3 +61,7 @@ webkit2gtk = "2.0"
 
 [target.'cfg(windows)'.dependencies]
 tauri-plugin-global-shortcut = "2"
+# 0.18's `realtime` raises cpal's own WASAPI threads via MMCSS (0.15 never did: thread id passed as a handle).
+cpal = { version = "0.18.2", features = ["realtime"] }
+# MMCSS for our own audio threads (voice/rtprio.rs); already in the tree via tauri and cpal.
+windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Threading"] }

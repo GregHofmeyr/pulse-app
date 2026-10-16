@@ -121,9 +121,9 @@ pub fn play(name: &str, output: Option<String>) {
             // cache only the device actually asked for: a missing one falls back to the default
             // (uncached), so it's picked up again once it's back
             let exact = |n: Option<&str>| {
-                find_device(false, n)
-                    .ok()
-                    .filter(|d| n.is_none() || d.name().ok().as_deref() == n)
+                find_device(false, n).ok().filter(|d| {
+                    n.is_none() || crate::voice::devices::device_name(d).as_deref() == n
+                })
             };
             let chosen = DEVICES
                 .get(output.as_deref(), exact)
@@ -148,7 +148,7 @@ fn play_on(dev: &cpal::Device, sound: &Sound) -> bool {
     let Ok(cfg) = dev.default_output_config() else {
         return false;
     };
-    let (rate, ch) = (cfg.sample_rate().0, cfg.channels() as usize);
+    let (rate, ch) = (cfg.sample_rate(), cfg.channels() as usize);
     let step = sound.rate as f64 / rate as f64;
     let total = (sound.samples.len() as f64 / step) as usize;
     let samples = sound.samples.clone();
