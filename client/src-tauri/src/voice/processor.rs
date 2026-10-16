@@ -111,9 +111,7 @@ impl MicChain {
         let in_level = (ns_in / block.len().max(1) as f32).sqrt();
         let prob = self.denoiser.process(block);
         let ns_out = energy(block);
-        // Decide on the newest audio, not the cleaned block (which lags it): the engine's delay
-        // then doubles as the gate's pre-roll instead of adding to it.
-        let decide = self.denoiser.decision_level().unwrap_or(in_level) * self.gain;
+        let newest = self.denoiser.decision_level().unwrap_or(in_level) * self.gain;
         for v in block.iter_mut() {
             *v = soft_limit(*v * self.gain);
         }
@@ -130,8 +128,16 @@ impl MicChain {
                 in_level,
             };
         }
-        self.gate
-            .set_preroll(PREROLL_BLOCKS.saturating_sub(self.denoiser.gate_lead_blocks()));
+        // Auto decides on the newest audio, not the cleaned block (which lags it): the engine's
+        // delay then doubles as the gate's pre-roll instead of adding to it. A manual threshold
+        // sits on the mic meter, so it judges what the meter shows behind the full pre-roll.
+        let (decide, preroll) = if self.gate.is_auto() {
+            let lead = self.denoiser.gate_lead_blocks();
+            (newest, PREROLL_BLOCKS.saturating_sub(lead))
+        } else {
+            (level, PREROLL_BLOCKS)
+        };
+        self.gate.set_preroll(preroll);
         let sent = self.gate.process(block, decide, prob, now);
         BlockOut {
             level,
@@ -630,16 +636,13 @@ mod tests {
         }
     }
 
-    /// How many blocks after a loud onset enters does it leave the chain at full level?
-    fn onset_lag(delay: usize, lead: usize) -> usize {
-        let mut c = MicChain::new(NsLevel::Off, true, 0.02, 1.0);
-        c.set_denoiser(NsLevel::Standard, Box::new(Lagging::new(delay, lead)));
-        let t0 = Instant::now();
-        let mut k = 0u64;
+    /// How many blocks after a loud onset enters does it leave the chain at full level? Feeds 1 s
+    /// of quiet room first (long enough for an earlier onset's hold and fade to end).
+    fn onset_lag_on(c: &mut MicChain, t0: Instant, k: &mut u64) -> usize {
         let mut step = |amp: f32| {
             let mut b = vec![amp; FRAME];
-            c.process(&mut b, true, t0 + Duration::from_millis(k * 10));
-            k += 1;
+            c.process(&mut b, true, t0 + Duration::from_millis(*k * 10));
+            *k += 1;
             rms(&b)
         };
         for _ in 0..100 {
@@ -648,6 +651,16 @@ mod tests {
         (0..20)
             .position(|_| step(0.1) > 0.09)
             .expect("the onset never got through")
+    }
+
+    fn onset_lag_with(auto: bool, delay: usize, lead: usize) -> usize {
+        let mut c = MicChain::new(NsLevel::Off, auto, 0.02, 1.0);
+        c.set_denoiser(NsLevel::Standard, Box::new(Lagging::new(delay, lead)));
+        onset_lag_on(&mut c, Instant::now(), &mut 0)
+    }
+
+    fn onset_lag(delay: usize, lead: usize) -> usize {
+        onset_lag_with(true, delay, lead)
     }
 
     /// The engine's lookahead is the gate's pre-roll: Strong's 30 ms, not 30 + 20.
@@ -664,6 +677,43 @@ mod tests {
     #[test]
     fn off_keeps_its_20ms_preroll() {
         assert_eq!(onset_lag(0, 0), 2, "Off");
+    }
+
+    /// Manual mode compares the threshold with what the meter shows, so it keeps deciding on the
+    /// cleaned block behind the full 20 ms pre-roll: the engine's delay adds to it, as before.
+    #[test]
+    fn manual_onset_lag_is_unchanged() {
+        assert_eq!(onset_lag_with(false, 3, 2), 5, "Strong");
+        assert_eq!(onset_lag_with(false, 1, 1), 3, "Standard");
+        assert_eq!(onset_lag_with(false, 0, 0), 2, "Off");
+    }
+
+    /// The manual threshold sits on the mic meter: noise the denoiser takes below it must not
+    /// open the gate, however loud the raw input was.
+    #[test]
+    fn manual_threshold_judges_the_cleaned_level_the_meter_shows() {
+        let mut c = MicChain::new(NsLevel::Off, false, 0.05, 1.0);
+        c.set_denoiser(NsLevel::Standard, Box::new(Halve));
+        let t0 = Instant::now();
+        for k in 0..10 {
+            let mut b = vec![0.08f32; FRAME]; // raw 0.08 is over; cleaned 0.04 is under
+            let out = c.process(&mut b, true, t0 + Duration::from_millis(k * 10));
+            assert!(out.level < 0.05 && !out.sent, "block {k} opened the gate");
+        }
+    }
+
+    /// Switching engines mid-stream resizes the gate's pre-roll without panicking, and each
+    /// engine's onset lag holds after the switch.
+    #[test]
+    fn switching_engines_mid_stream_settles_to_each_engines_lag() {
+        let mut c = MicChain::new(NsLevel::Off, true, 0.02, 1.0);
+        let (t0, mut k) = (Instant::now(), 0);
+        c.set_denoiser(NsLevel::Standard, Box::new(Lagging::new(1, 1)));
+        assert_eq!(onset_lag_on(&mut c, t0, &mut k), 2, "Standard");
+        c.set_denoiser(NsLevel::Strong, Box::new(Lagging::new(3, 2)));
+        assert_eq!(onset_lag_on(&mut c, t0, &mut k), 3, "Strong");
+        c.set_denoiser(NsLevel::Standard, Box::new(Lagging::new(1, 1)));
+        assert_eq!(onset_lag_on(&mut c, t0, &mut k), 2, "back to Standard");
     }
 
     #[test]

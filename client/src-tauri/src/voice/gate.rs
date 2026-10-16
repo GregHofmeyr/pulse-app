@@ -55,6 +55,11 @@ impl VoiceGate {
         self.threshold = threshold;
     }
 
+    /// Automatic (speech) mode, as opposed to a manual threshold.
+    pub fn is_auto(&self) -> bool {
+        self.auto
+    }
+
     /// Forget buffered audio and any open state (mute: nothing may leak afterwards).
     pub fn reset(&mut self) {
         self.open_until = None;
