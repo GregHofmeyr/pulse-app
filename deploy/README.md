@@ -68,7 +68,7 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
 
 1. Make the image public, once: GitHub → your profile → Packages → `pulse-server` → Package settings →
    Change visibility → Public.
-2. `ssh pulse@pulse 'nano /srv/pulse/.env'` → set `ACME_EMAIL` (your personal address).
+2. `ssh -t pulse@pulse 'TERM=xterm-256color nano /srv/pulse/.env'` → set `ACME_EMAIL` (your personal address).
 3. `just deploy` → ends with `healthy: latest`. Caddy fetches the certificates on the first request.
 4. `just smoke` → every line `ok`.
 5. `just invite-prod` → a code for the first account.
@@ -102,7 +102,7 @@ Setup, once:
 3. On your machine: `mkdir -p ~/.config/pulse && age-keygen -o ~/.config/pulse/backup-age.key`.
    **Copy the whole file into NordPass now** and check it syncs to a second device. Without it the backups
    can't be opened. The line `# public key: age1…` is the public half.
-4. `ssh pulse@pulse 'nano /srv/pulse/.env'` → fill `AGE_RECIPIENT` (the `age1…` key), `R2_ACCOUNT_ID`,
+4. `ssh -t pulse@pulse 'TERM=xterm-256color nano /srv/pulse/.env'` → fill `AGE_RECIPIENT` (the `age1…` key), `R2_ACCOUNT_ID`,
    `R2_BUCKET=pulse-backups`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`.
 5. `just backup-now` → `backed up pulse-<time>.db.age`.
 6. `just restore-drill` → downloads the latest, decrypts it here, checks it: `integrity ok: N users, M messages`.
