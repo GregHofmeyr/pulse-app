@@ -148,13 +148,23 @@ impl<R: CloseRoom> OpenRoom<R> {
 
 impl<R: CloseRoom> Drop for OpenRoom<R> {
     fn drop(&mut self) {
-        if let Some(room) = self.0.take()
-            && let Ok(rt) = tokio::runtime::Handle::try_current()
-        {
-            rt.spawn(async move {
-                let _ = tokio::time::timeout(CLOSE_TIMEOUT, room.close_room()).await;
-            });
+        if let Some(room) = self.0.take() {
+            close_in_background(room);
         }
+    }
+}
+
+/// Close `room` without waiting for it (bounded by `CLOSE_TIMEOUT`).
+fn close_in_background<R: CloseRoom>(room: Arc<R>) {
+    if let Ok(rt) = tokio::runtime::Handle::try_current() {
+        rt.spawn(async move {
+            if tokio::time::timeout(CLOSE_TIMEOUT, room.close_room())
+                .await
+                .is_err()
+            {
+                tracing::warn!("voice: room close timed out; dropping it");
+            }
+        });
     }
 }
 
@@ -443,9 +453,10 @@ pub enum VoiceEvent {
 
 pub type EventSink = Arc<dyn Fn(VoiceEvent) + Send + Sync>;
 
-struct Session {
+/// `R`: the room (a stand-in in tests).
+struct Session<R: CloseRoom = Room> {
     channel: ChannelId,
-    room: Arc<Room>,
+    room: Arc<R>,
     shared: Arc<Shared>,
     io: Arc<Mutex<Option<AudioIo>>>,
     cfg: Arc<Mutex<AudioConfig>>,
@@ -457,11 +468,28 @@ struct Session {
     tasks: Vec<JoinHandle<()>>,
 }
 
-impl Drop for Session {
+impl<R: CloseRoom> Drop for Session<R> {
     fn drop(&mut self) {
         for t in &self.tasks {
             t.abort();
         }
+    }
+}
+
+impl<R: CloseRoom> Session<R> {
+    /// Leave this room for another one: stop feeding it, close it in the background (others may
+    /// see us in both rooms for about a round trip) and report nothing (the switch goes straight
+    /// to connecting the next room).
+    async fn detach(self) {
+        tracing::info!(channel = %self.channel, "voice: leaving for another channel");
+        // first: a reopen in flight must not open devices for a session that's gone
+        self.alive.store(false, Ordering::SeqCst);
+        self.reopener.settle().await;
+        stop_audio(&self.shared, &self.io, &self.rx);
+        let room = self.room.clone();
+        // its tasks stop here: our own close must not look like LiveKit dropping us (a rejoin)
+        drop(self);
+        close_in_background(room);
     }
 }
 
@@ -645,7 +673,12 @@ impl VoiceManager {
             self.clear_pending_join(id);
             return Err(VoiceError::Cancelled); // the user left or switched while we waited
         }
-        self.leave_locked(rejoin_of.is_none()).await;
+        if rejoin_of.is_some() {
+            // the dead session's devices are opened again next: wait until they're closed
+            self.leave_locked(false).await;
+        } else {
+            self.detach_locked().await;
+        }
         tracing::info!(%channel, rejoin = rejoin_of.is_some(), "voice: joining");
         let trying = if rejoin_of.is_some() {
             Connection::Reconnecting
@@ -1201,6 +1234,15 @@ impl VoiceManager {
         }
     }
 
+    /// Leave the current room (if any) for another one: closed in the background, no
+    /// "disconnected" (a plain Leave and a rejoin wait for the close: `leave_locked`).
+    async fn detach_locked(&self) {
+        let s = self.session.lock().await.take();
+        if let Some(s) = s {
+            s.detach().await;
+        }
+    }
+
     /// Tear down the session, if any (true if there was one). `announce`: tell the UI
     /// "disconnected" (a rejoin replaces the dead session without saying so).
     async fn leave_locked(&self, announce: bool) -> bool {
@@ -1499,6 +1541,104 @@ mod tests {
             !closed.load(Ordering::SeqCst),
             "a session's room was closed"
         );
+    }
+
+    /// A room whose close never finishes (a lossy link): records that it was started.
+    struct StuckRoom(Arc<AtomicBool>);
+    impl CloseRoom for StuckRoom {
+        async fn close_room(&self) {
+            self.0.store(true, Ordering::SeqCst);
+            std::future::pending::<()>().await;
+        }
+    }
+
+    type Frames = Arc<Mutex<usize>>;
+    struct CountFrames(Frames);
+    impl processor::FrameSink for CountFrames {
+        fn send(&mut self, _frame: &[i16]) -> bool {
+            *self.0.lock().unwrap() += 1;
+            true
+        }
+    }
+
+    fn counting(shared: &Shared) -> Frames {
+        let n = Frames::default();
+        shared.set_mic_sink(Some(Box::new(CountFrames(n.clone()))));
+        n
+    }
+
+    fn wait_frames(n: &Frames, at_least: usize) -> usize {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while *n.lock().unwrap() < at_least && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        *n.lock().unwrap()
+    }
+
+    /// A switch hands the mic to the new room: the old one gets nothing more, and the switch
+    /// doesn't wait for the old room's close (started in the background).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_detached_room_gets_no_more_frames() {
+        let cfg = AudioConfig {
+            noise_suppression: denoise::NsLevel::Off,
+            ..Default::default()
+        };
+        let shared = Shared::new(&cfg, Default::default(), PEER_BUFFER_MS);
+        let (raw_tx, _processor) = processor::spawn(shared.clone());
+        let (io, alive) = (Arc::new(Mutex::new(None)), Arc::new(AtomicBool::new(true)));
+        let cfg = Arc::new(Mutex::new(cfg));
+        let closing = Arc::new(AtomicBool::new(false));
+        let session = Session {
+            channel: ChannelId::new(),
+            room: Arc::new(StuckRoom(closing.clone())),
+            shared: shared.clone(),
+            io: io.clone(),
+            cfg: cfg.clone(),
+            real: false,
+            rx: Default::default(),
+            alive: alive.clone(),
+            reopener: Arc::new(Reopener {
+                cfg,
+                io,
+                shared: shared.clone(),
+                raw_tx: raw_tx.clone(),
+                alive,
+                one_at_a_time: tokio::sync::Mutex::new(()),
+                failed: Default::default(),
+                count: Default::default(),
+            }),
+            tasks: Vec::new(),
+        };
+        let old = counting(&shared);
+        let block = || (48_000, vec![0.0; 480], std::time::Instant::now());
+        for _ in 0..5 {
+            raw_tx.send(block()).unwrap();
+        }
+        assert!(wait_frames(&old, 5) >= 5);
+        tokio::time::timeout(Duration::from_secs(1), session.detach())
+            .await
+            .expect("the switch waited for the old room's close");
+        let before = *old.lock().unwrap();
+        for _ in 0..5 {
+            raw_tx.send(block()).unwrap();
+        }
+        std::thread::sleep(Duration::from_millis(300)); // ample: a block takes well under 1 ms
+        assert_eq!(
+            *old.lock().unwrap(),
+            before,
+            "the old room kept getting our mic"
+        );
+        // the processor was still running (frames would have reached the old room)
+        let probe = counting(&shared);
+        raw_tx.send(block()).unwrap();
+        assert!(wait_frames(&probe, 1) >= 1);
+        for _ in 0..100 {
+            if closing.load(Ordering::SeqCst) {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the old room was never closed");
     }
 
     /// LiveKit holds its runtime weakly: without our handle it dies with each call's last Room

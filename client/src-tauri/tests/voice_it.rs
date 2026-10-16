@@ -7,6 +7,7 @@ use std::time::Duration;
 use pulse_client::api::Api;
 use pulse_client::voice::devices::AudioConfig;
 use pulse_client::voice::{AudioMode, Connection, VoiceEvent, VoiceManager};
+use pulse_protocol::rest::ChannelKind;
 use pulse_server::testing;
 
 const DEV_SECRET: &str = "pulse-dev-secret-0123456789abcdefghij";
@@ -485,4 +486,148 @@ async fn connected_shows_before_the_mic_is_published() {
         .expect("mic published");
     assert!(connected < live, "{seen:?}");
     vm.leave().await;
+}
+
+/// A switch goes straight to the new room: no Disconnected flash (leave sound) between rooms,
+/// and no waiting for the old room's close.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn switching_channels_goes_straight_to_the_new_room() {
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, token) = testing::register(&app, "alex").await;
+    let s = testing::create_server(&app, &token, "Main").await;
+    let api = Api::new(&format!("http://{}", app.addr));
+    let lounge = api
+        .channels(&token, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+    let den = api
+        .create_channel(&token, s.id, ChannelKind::Voice, "Den")
+        .await
+        .unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    let vm = VoiceManager::new(Arc::new(move |e| {
+        if let VoiceEvent::State {
+            channel_id,
+            connection,
+            ..
+        } = e
+        {
+            sink.lock().unwrap().push((channel_id, connection));
+        }
+    }));
+    vm.join(
+        &api,
+        &token,
+        lounge.id,
+        AudioConfig::default(),
+        AudioMode::Null(48_000),
+    )
+    .await
+    .unwrap();
+    seen.lock().unwrap().clear();
+    let t = std::time::Instant::now();
+    vm.join(
+        &api,
+        &token,
+        den.id,
+        AudioConfig::default(),
+        AudioMode::Null(48_000),
+    )
+    .await
+    .unwrap();
+    println!("switch took {:?}", t.elapsed());
+    tokio::time::sleep(Duration::from_secs(1)).await; // the old room's close lands meanwhile
+    let states = seen.lock().unwrap().clone();
+    assert_eq!(
+        states.first(),
+        Some(&(Some(den.id), Connection::Connecting)),
+        "{states:?}"
+    );
+    assert!(
+        !states.iter().any(|(_, c)| *c == Connection::Disconnected),
+        "Disconnected between rooms: {states:?}"
+    );
+    assert_eq!(vm.current_channel().await, Some(den.id));
+    vm.leave().await;
+}
+
+/// A switch whose join fails ends Disconnected (not stuck "connecting", not back in A), and
+/// the old room's close never pulls us back into it (the rejoin loop runs).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn a_failed_switch_ends_disconnected_and_the_old_room_stays_left() {
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, token) = testing::register(&app, "alex").await;
+    let s = testing::create_server(&app, &token, "Main").await;
+    let text = testing::general(&app, &token, s.id).await; // no voice: its token request fails
+    let api = Api::new(&format!("http://{}", app.addr));
+    let lounge = api
+        .channels(&token, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let sink = seen.clone();
+    let vm = Arc::new(VoiceManager::new(Arc::new(move |e| {
+        if let VoiceEvent::State {
+            channel_id,
+            connection,
+            ..
+        } = e
+        {
+            sink.lock().unwrap().push((channel_id, connection));
+        }
+    })));
+    let rejoins = tokio::spawn({
+        let vm = vm.clone();
+        async move { vm.run_rejoins().await }
+    });
+    vm.join(
+        &api,
+        &token,
+        lounge.id,
+        AudioConfig::default(),
+        AudioMode::Null(48_000),
+    )
+    .await
+    .unwrap();
+    seen.lock().unwrap().clear();
+    let r = vm
+        .join(
+            &api,
+            &token,
+            text.id,
+            AudioConfig::default(),
+            AudioMode::Null(48_000),
+        )
+        .await;
+    assert!(r.is_err());
+    tokio::time::sleep(Duration::from_secs(3)).await; // A's close (and any rejoin) would land by now
+    let states = seen.lock().unwrap().clone();
+    assert_eq!(
+        states.last(),
+        Some(&(None, Connection::Disconnected)),
+        "{states:?}"
+    );
+    assert!(
+        !states.iter().any(|(c, _)| *c == Some(lounge.id)),
+        "pulled back into the old room: {states:?}"
+    );
+    assert!(!vm.in_voice());
+    assert_eq!(vm.current_channel().await, None);
+    assert_eq!(vm.rejoins(), 0, "the old room's close started a rejoin");
+    rejoins.abort();
 }
