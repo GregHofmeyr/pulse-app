@@ -8,7 +8,7 @@
   import { app, clock, ui } from '../lib/store.svelte'
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
   import { addHistory, addOlder, addPending, markHistory } from '../lib/state'
-  import { displayName, stableList, typingNames } from '../lib/selectors'
+  import { displayName, nextTypingExpiry, stableList, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -35,10 +35,13 @@
   const history = $derived(app.state.history[channelId])
   const reachedStart = $derived(!!history?.start)
 
-  // fade typing indicators on time, not just on events
+  // Fade typing indicators on time, not just on events: one timer for the next expiry, and only
+  // while someone is typing (an always-on 1 s interval woke the app all day).
   $effect(() => {
-    const t = setInterval(() => (now = Date.now()), 1000)
-    return () => clearInterval(t)
+    const next = nextTypingExpiry(app.state, channelId, now)
+    if (next === null) return
+    const t = setTimeout(() => (now = Date.now()), Math.max(0, next - Date.now()) + 50)
+    return () => clearTimeout(t)
   })
 
   $effect(() => {
