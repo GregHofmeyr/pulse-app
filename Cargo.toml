@@ -56,6 +56,15 @@ debug-assertions = false
 [profile.dev.package.nnnoiseless]
 opt-level = 3
 
+# Release builds (installer, test kit, server image). Fat LTO + one codegen unit: smaller, slightly
+# faster code (tract/ndarray generics are otherwise duplicated across 16 units); it costs build
+# time only. strip: the Linux binary carried ~20 MB of symbols (Windows writes no PDB). Panics still
+# unwind: a panicking tokio task (gateway, outbox, voice) must not take the whole app down.
+[profile.release]
+lto = "fat"
+codegen-units = 1
+strip = true
+
 # libwebrtc formats every RTC_LOG line at LS_VERBOSE and hands it to Rust only to be dropped
 # (measured: 501 lines/s in a call, tests/webrtc_log_volume.rs). The vendored copy registers its
 # sink at LS_WARNING; the only change is src/webrtc.cpp's AddLogToStream. Drop this when upstream
