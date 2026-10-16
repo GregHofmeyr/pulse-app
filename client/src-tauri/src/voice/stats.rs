@@ -69,11 +69,46 @@ pub struct Pipeline {
     pub apm: StageTime,
     /// Noise suppression + gate.
     pub chain: StageTime,
+    /// The denoiser's input and output energy (sum of squares × ENERGY_SCALE), mic open only.
+    ns_in: AtomicU64,
+    ns_out: AtomicU64,
+    /// Mic-open 10 ms blocks the gate judged, and how many it let through.
+    gate_judged: AtomicU64,
+    gate_passed: AtomicU64,
     /// The receive queue (fullest peer), in ms, sampled every 100 ms.
     recv_ms: Mutex<Vec<u32>>,
 }
 
+/// Block energies are f32 sums of squares; stored as integers so the audio side stays lock-free.
+const ENERGY_SCALE: f64 = 1e9;
+/// Below this the window had no real input (≈ −100 dBFS over a 5 s window).
+const SILENT_ENERGY: u64 = 1_000;
+/// "Removed everything" reads as this instead of −∞.
+const ATTEN_FLOOR_DB: f64 = -60.0;
+
+/// Level change through the denoiser over the window, in dB (negative = removed).
+fn atten_db(e_in: u64, e_out: u64) -> Option<f64> {
+    (e_in >= SILENT_ENERGY)
+        .then(|| (10.0 * (e_out.max(1) as f64 / e_in as f64).log10()).max(ATTEN_FLOOR_DB))
+}
+
 impl Pipeline {
+    /// One processed mic block: the denoiser's input/output energy and the gate's verdict. Muted
+    /// blocks (`judged == false`) don't count: nothing was judged or sent.
+    pub fn record_mic_block(&self, ns_in: f32, ns_out: f32, judged: bool, passed: bool) {
+        if !judged {
+            return;
+        }
+        self.ns_in
+            .fetch_add((ns_in as f64 * ENERGY_SCALE) as u64, Relaxed);
+        self.ns_out
+            .fetch_add((ns_out as f64 * ENERGY_SCALE) as u64, Relaxed);
+        self.gate_judged.fetch_add(1, Relaxed);
+        if passed {
+            self.gate_passed.fetch_add(1, Relaxed);
+        }
+    }
+
     pub fn sample_recv_queue(&self, ms: u32) {
         self.recv_ms
             .lock()
@@ -85,6 +120,11 @@ impl Pipeline {
     pub fn take(&self, underrun_ms: u64) -> Summary {
         let mut recv = std::mem::take(&mut *self.recv_ms.lock().unwrap_or_else(|e| e.into_inner()));
         recv.sort_unstable();
+        let (ns_in, ns_out) = (self.ns_in.swap(0, Relaxed), self.ns_out.swap(0, Relaxed));
+        let (judged, passed) = (
+            self.gate_judged.swap(0, Relaxed),
+            self.gate_passed.swap(0, Relaxed),
+        );
         Summary {
             in_frames: self.in_frames.take(),
             out_frames: self.out_frames.take(),
@@ -98,6 +138,8 @@ impl Pipeline {
             silence_fill: self.silence_fill.swap(0, Relaxed),
             apm_us: self.apm.take_mean(),
             chain_us: self.chain.take_mean(),
+            ns_atten_db: atten_db(ns_in, ns_out),
+            gate_open_pct: (judged > 0).then(|| passed as f64 * 100.0 / judged as f64),
         }
     }
 }
@@ -116,6 +158,10 @@ pub struct Summary {
     pub silence_fill: u64,
     pub apm_us: Option<u64>,
     pub chain_us: Option<u64>,
+    /// Denoiser output vs input power over the window, dB (negative = removed; floor −60).
+    pub ns_atten_db: Option<f64>,
+    /// Share of mic-open 10 ms blocks the voice gate let through.
+    pub gate_open_pct: Option<f64>,
 }
 
 impl fmt::Display for Summary {
@@ -125,9 +171,13 @@ impl fmt::Display for Summary {
         let recv = self
             .recv_ms
             .map_or("-".into(), |(a, b, c)| format!("{a}/{b}/{c}ms"));
+        let ns = self.ns_atten_db.map_or("-".into(), |v| format!("{v:.1}dB"));
+        let gate = self
+            .gate_open_pct
+            .map_or("-".into(), |v| format!("{v:.0}%"));
         write!(
             f,
-            "frames in {} out {} device ms in {} out {} recv {recv} underrun {}ms drops lag {} send {} fill {} (x10ms) cpu apm {} ns+gate {}",
+            "frames in {} out {} device ms in {} out {} recv {recv} underrun {}ms drops lag {} send {} fill {} (x10ms) cpu apm {} ns+gate {} ns {ns} gate {gate}",
             range(self.in_frames),
             range(self.out_frames),
             range(self.in_latency_ms),
@@ -165,12 +215,43 @@ mod tests {
         assert_eq!((s.lag_drops, s.chain_us, s.underrun_ms), (2, Some(500), 15));
         assert_eq!(
             s.to_string(),
-            "frames in 480-1056 out - device ms in - out - recv 10/30/55ms underrun 15ms drops lag 2 send 0 fill 0 (x10ms) cpu apm - ns+gate 500us"
+            "frames in 480-1056 out - device ms in - out - recv 10/30/55ms underrun 15ms drops lag 2 send 0 fill 0 (x10ms) cpu apm - ns+gate 500us ns - gate -"
         );
         let next = p.take(0);
         assert_eq!(
             (next.in_frames, next.recv_ms, next.lag_drops, next.chain_us),
             (None, None, 0, None)
         );
+    }
+
+    /// R4: what the denoiser removed and how often the gate let the mic through, per window.
+    /// Muted blocks count for neither (the gate doesn't judge them, nothing is sent).
+    #[test]
+    fn denoiser_attenuation_and_gate_open_share_per_window() {
+        let p = Pipeline::default();
+        for k in 0..4 {
+            p.record_mic_block(1.0, 0.1, true, k == 0); // −10 dB, gate passed 1 of 4
+        }
+        p.record_mic_block(1.0, 1.0, false, false); // muted: ignored
+        let s = p.take(0);
+        assert_eq!(
+            s.ns_atten_db.map(|v| (v * 10.0).round() / 10.0),
+            Some(-10.0)
+        );
+        assert_eq!(s.gate_open_pct.map(f64::round), Some(25.0));
+        assert!(s.to_string().ends_with(" ns -10.0dB gate 25%"), "{s}");
+        let next = p.take(0);
+        assert_eq!((next.ns_atten_db, next.gate_open_pct), (None, None));
+    }
+
+    #[test]
+    fn fully_removed_reads_as_the_floor_and_silence_as_unmeasured() {
+        let p = Pipeline::default();
+        p.record_mic_block(1.0, 0.0, true, false);
+        let s = p.take(0);
+        assert_eq!(s.ns_atten_db, Some(-60.0));
+        assert_eq!(s.gate_open_pct, Some(0.0));
+        p.record_mic_block(0.0, 0.0, true, false); // digital silence in
+        assert_eq!(p.take(0).ns_atten_db, None);
     }
 }

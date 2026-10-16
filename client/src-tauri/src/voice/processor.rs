@@ -56,6 +56,11 @@ pub struct BlockOut {
     pub level: f32,
     /// Whether audio (not silence) went out.
     pub sent: bool,
+    /// Sum of squares into and out of the denoiser (its attenuation, for the path line).
+    pub ns_in: f32,
+    pub ns_out: f32,
+    /// Whether the gate judged this block (false while muted).
+    pub judged: bool,
 }
 
 /// One block's journey after APM: denoise → gain (soft-limited) → gate → mute.
@@ -95,7 +100,10 @@ impl MicChain {
     }
 
     pub fn process(&mut self, block: &mut [f32], mic_open: bool, now: Instant) -> BlockOut {
+        let energy = |b: &[f32]| b.iter().map(|v| v * v).sum::<f32>();
+        let ns_in = energy(block);
         let prob = self.denoiser.process(block);
+        let ns_out = energy(block);
         for v in block.iter_mut() {
             *v = soft_limit(*v * self.gain);
         }
@@ -103,10 +111,22 @@ impl MicChain {
         if !mic_open {
             self.gate.reset();
             block.fill(0.0);
-            return BlockOut { level, sent: false };
+            return BlockOut {
+                level,
+                sent: false,
+                ns_in,
+                ns_out,
+                judged: false,
+            };
         }
         let sent = self.gate.process(block, prob, now);
-        BlockOut { level, sent }
+        BlockOut {
+            level,
+            sent,
+            ns_in,
+            ns_out,
+            judged: true,
+        }
     }
 }
 
@@ -385,6 +405,9 @@ fn run(
             let t = Instant::now();
             let out = chain.process(&mut block, mic_open, t);
             shared.stats.chain.record(t.elapsed());
+            shared
+                .stats
+                .record_mic_block(out.ns_in, out.ns_out, out.judged, out.sent);
             if chain.level() == NsLevel::Strong
                 && switcher.wanted() == NsLevel::Strong
                 && overload.record(t.elapsed())
@@ -443,6 +466,55 @@ mod tests {
     fn under_budget_never_downgrades() {
         let mut o = OverloadDetector::new();
         assert!((0..2000).all(|_| !o.record(Duration::from_micros(6500))));
+    }
+
+    struct Halve;
+    impl Denoiser for Halve {
+        fn process(&mut self, block: &mut [f32]) -> Option<f32> {
+            block.iter_mut().for_each(|v| *v *= 0.5);
+            Some(1.0)
+        }
+    }
+
+    /// R4: each block reports the denoiser's input and output energy, and whether the gate judged it.
+    #[test]
+    fn block_out_reports_denoiser_energy_and_whether_the_gate_judged() {
+        let mut c = MicChain::new(NsLevel::Off, false, 0.0, 1.0);
+        c.set_denoiser(NsLevel::Standard, Box::new(Halve));
+        let mut b = vec![0.2f32; FRAME];
+        let out = c.process(&mut b, true, Instant::now());
+        // 480 × 0.04 = 19.2 in; 480 × 0.01 = 4.8 out (−6 dB)
+        assert!((out.ns_in - 19.2).abs() < 1e-3, "{}", out.ns_in);
+        assert!((out.ns_out - 4.8).abs() < 1e-3, "{}", out.ns_out);
+        assert!(out.judged);
+        let out = c.process(&mut vec![0.2f32; FRAME], false, Instant::now());
+        assert!(!out.judged, "muted: the gate didn't judge it");
+    }
+
+    /// R4 end to end: the processor feeds the path-line counters.
+    #[test]
+    fn processor_counts_denoiser_energy_and_gate_verdicts() {
+        let shared = shared_with(AudioConfig {
+            noise_suppression: NsLevel::Off,
+            auto_sensitivity: false,
+            sensitivity: 0.0, // manual, threshold 0 = always open
+            ..Default::default()
+        });
+        let (mic_tx, mut mic_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (raw_tx, _h) = spawn(shared.clone(), mic_tx);
+        let tone: Vec<f32> = (0..480).map(|i| 0.1 * (i as f32 * 0.0576).sin()).collect();
+        for _ in 0..10 {
+            raw_tx.send((48_000, tone.clone(), Instant::now())).unwrap();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(recv_n(&mut mic_rx, 10).len(), 10);
+        let s = shared.stats.take(0);
+        assert_eq!(
+            s.ns_atten_db.map(f64::round),
+            Some(0.0),
+            "Off removes nothing"
+        );
+        assert_eq!(s.gate_open_pct.map(f64::round), Some(100.0));
     }
 
     struct Loud;
