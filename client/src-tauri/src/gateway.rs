@@ -81,6 +81,13 @@ impl Liveness {
         self.rtt.map_or(self.ack_min, |r| (r * 3).max(self.ack_min))
     }
 
+    /// How long a probe may wait: `probe_ack`, or 3 round trips on a link slower than that.
+    /// (Not `ack_wait`: its floor is above `probe_ack`, which would make every probe as slow
+    /// as a heartbeat.)
+    fn probe_wait(&self, probe_ack: Duration) -> Duration {
+        self.rtt.map_or(probe_ack, |r| (r * 3).max(probe_ack))
+    }
+
     /// A heartbeat went out at `now`; it must be answered within `wait` (a probe can only shorten
     /// an outstanding deadline, never extend it).
     fn sent(&mut self, now: Instant, wait: Duration) {
@@ -463,7 +470,7 @@ async fn session(
                 Some(Cmd::ReconnectNow) => return lost(),
                 Some(Cmd::Probe) => {
                     if ws.send(Ws::text(heartbeat.clone())).await.is_err() { return lost() }
-                    live.sent(Instant::now(), t.probe_ack);
+                    live.sent(Instant::now(), live.probe_wait(t.probe_ack));
                 }
                 Some(Cmd::Send(f)) => {
                     let f = serde_json::to_string(&f).expect("serialize");
@@ -1039,5 +1046,25 @@ mod tests {
         l.heard(t0 + Duration::from_millis(1500), false); // an event: alive
         assert_eq!(l.due, None);
         assert_eq!(l.rtt, None, "only an ack measures the round trip");
+    }
+
+    /// A probe on a link slower than its own deadline (alt-tab on a >1 s RTT link) must not
+    /// drop a live connection: it gets 3 round trips when that's longer than the probe deadline.
+    #[test]
+    fn a_probe_waits_at_least_three_round_trips() {
+        let probe = Duration::from_secs(3);
+        let mut l = Liveness::new(Duration::from_secs(5));
+        assert_eq!(l.probe_wait(probe), probe, "no round trip measured yet");
+        let t0 = Instant::now();
+        l.sent(t0, l.ack_wait());
+        l.heard(t0 + Duration::from_millis(500), true);
+        assert_eq!(
+            l.probe_wait(probe),
+            probe,
+            "a quick link keeps the short deadline"
+        );
+        l.sent(t0, l.ack_wait());
+        l.heard(t0 + Duration::from_secs(2), true); // a 2 s round trip
+        assert_eq!(l.probe_wait(probe), Duration::from_secs(6));
     }
 }
