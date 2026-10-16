@@ -8,7 +8,13 @@ import { api } from './tauri'
 import { isMuted, messageSound } from './conversations'
 import { playSound } from './voiceui'
 
-export const app = $state<{ state: AppState }>({ state: emptyState() })
+// The reducer (state.ts) is pure and never mutates: hold its output as-is (`$state.raw`) instead
+// of deep-proxying it. Reassigning `app.state` is the only way to change it, and the only way that
+// re-renders; unchanged slices keep their identity, so deriveds over them stop there.
+class AppStore {
+  state = $state.raw<AppState>(emptyState())
+}
+export const app = new AppStore()
 
 /** What the user is looking at: drives the message sound and read marking. */
 export const ui = $state({ openChannelId: null as string | null, focused: true, autoReported: false })

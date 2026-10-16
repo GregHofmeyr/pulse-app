@@ -6,4 +6,6 @@ export default defineConfig({
   plugins: [svelte()],
   clearScreen: false,
   server: { port: 1420, strictPort: true },
+  // Tests: resolve Svelte's client runtime, so $effect and mount() work under vitest (the default is the SSR build).
+  resolve: process.env.VITEST ? { conditions: ['browser'] } : undefined,
 })
