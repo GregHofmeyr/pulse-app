@@ -4756,7 +4756,9 @@ dependencies = [
  "tract-onnx",
  "tract-pulse",
  "webkit2gtk",
+ "webview2-com",
  "windows",
+ "windows-core",
 ]
 
 [[package]]

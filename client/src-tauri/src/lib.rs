@@ -13,6 +13,7 @@ pub mod sounds;
 pub mod startup;
 pub mod throttle;
 pub mod voice;
+pub mod webview_memory;
 
 /// Keeps the log writer alive (dropping it flushes and stops logging).
 struct LogGuard(
@@ -39,7 +40,10 @@ fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri:
             view.reload();
         });
     })?;
-    #[cfg(not(target_os = "linux"))]
+    // WebView2: the Low memory target while minimised or in the background.
+    #[cfg(windows)]
+    webview_memory::install(&win);
+    #[cfg(not(any(target_os = "linux", windows)))]
     let _ = win;
     Ok(())
 }
