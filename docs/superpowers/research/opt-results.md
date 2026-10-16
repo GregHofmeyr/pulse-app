@@ -42,10 +42,10 @@ NetEq verdict (R5): see opt-neteq-buffer.md.
     4.6 ms/window). The null "device" is a 10 ms tokio timer, not a real audio callback, so timer jitter produces
     them; not a real-device result, to be judged on Windows (see L7b's note on lowest-fill target).
   - `Strong ns+gate` is the `cpu ... ns+gate Nus` field, present on main too: mean CPU per 10 ms block. p50/max are
-    over the 46 windows per build with a value above 500 us (all 46 pre-switch windows of each build); Linux,
+    over the 46 of 50 pre-switch windows per build with a value above 500 us; Linux,
     both clients in one process, so not comparable with the Windows figure.
-  - `ns attenuation / gate open` (R4) did not exist on main: "-" before. After: median over the 46 pre-switch windows
-    with the field, input is silence, so 0 % gate and a few dB are not meaningful.
+  - `ns attenuation / gate open` (R4) did not exist on main: "-" before. After: median over the 46 of 50 pre-switch windows
+    with a numeric value (the first window of each client has "-"), input is silence, so 0 % gate and a few dB are not meaningful.
 - Not measured: the `tc netem` run (RTT 80 ms each way). It needs sudo and is pending the owner. Join at a
   160 ms RTT, the headline 2.0 s to about 1.0–1.2 s, is therefore not yet verified.
 
