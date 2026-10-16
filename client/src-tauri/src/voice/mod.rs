@@ -740,9 +740,7 @@ impl<R: CloseRoom> Session<R> {
         close_in_background(room);
         pipeline
     }
-}
 
-impl<R: CloseRoom> Session<R> {
     /// Tear this session down for good: out of its room, devices closed, the pipeline with it.
     /// `announce` (the user's Leave): out of the room first, then wait out a reopen in flight
     /// (up to `SETTLE_WAIT`), and don't wait on the devices. Otherwise (a rejoin, which opens the
@@ -2042,12 +2040,11 @@ mod tests {
             closed,
         ));
         let (session, _room) = session_on(p.clone());
-        let rx = session.rx.clone();
         assert!(!drop_call(
             &session.alive,
             (&p.alive, &p.shared),
             &p.io,
-            &rx,
+            &session.rx,
             || false
         ));
         assert!(p.io.lock().unwrap().is_none(), "devices left open");
