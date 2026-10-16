@@ -889,6 +889,30 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn signing_out_forgets_prefetched_tokens() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let lounge = api
+            .channels(&token, s.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.kind == pulse_protocol::rest::ChannelKind::Voice)
+            .unwrap();
+        let vm = VoiceManager::new(Arc::new(|_| {}));
+        vm.prefetch(&api, &token, lounge.id);
+        vm.forget_tokens();
+        assert!(
+            vm.tokens
+                .take(&token, lounge.id, Instant::now())
+                .await
+                .is_none()
+        );
+    }
+
+    #[tokio::test]
     async fn diagnostics_dont_wait_on_a_stuck_voice_session() {
         // a hung device reopen holds the session lock; the bug report must still go out
         let vm = VoiceManager::new(Arc::new(|_| {}));

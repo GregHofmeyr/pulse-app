@@ -142,6 +142,19 @@ mod tests {
         assert!(c.take(&token, lounge, late).await.is_none(), "stale");
     }
 
+    #[tokio::test]
+    async fn a_cleared_cache_gives_nothing() {
+        let (_app, api, token, lounge, _) = setup().await;
+        let c = TokenCache::default();
+        let now = Instant::now();
+        c.prefetch(&api, &token, lounge, now);
+        c.clear();
+        assert!(
+            c.take(&token, lounge, now).await.is_none(),
+            "cleared on sign-out"
+        );
+    }
+
     /// A prefetch that failed (here: a text channel has no voice) just means a normal fetch.
     #[tokio::test]
     async fn a_failed_prefetch_gives_nothing() {
