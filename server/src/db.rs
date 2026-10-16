@@ -2,13 +2,19 @@ use std::str::FromStr;
 
 use anyhow::Context;
 
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions};
+use sqlx::sqlite::{
+    SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
+};
+use sqlx::{Sqlite, Transaction};
 
 /// Open (creating if needed) the database in WAL mode with FKs on, and run migrations.
 pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
     let opts = SqliteConnectOptions::from_str(url)?
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
+        // Safe from corruption in WAL; an OS crash or power cut (not a process crash) can roll back
+        // the last commits. One fsync per checkpoint instead of one per commit.
+        .synchronous(SqliteSynchronous::Normal)
         .foreign_keys(true)
         .busy_timeout(std::time::Duration::from_secs(5));
     let pool = SqlitePoolOptions::new()
@@ -17,6 +23,13 @@ pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
         .await?;
     sqlx::migrate!("./migrations").run(&pool).await?;
     Ok(pool)
+}
+
+/// Start a transaction that will write. `BEGIN IMMEDIATE` takes the write lock up front, so a
+/// handler that reads and then writes queues behind other writers (busy_timeout) instead of
+/// failing at once with SQLITE_BUSY when a write commits between its read and its write.
+pub async fn begin_write(db: &SqlitePool) -> sqlx::Result<Transaction<'static, Sqlite>> {
+    db.begin_with("BEGIN IMMEDIATE").await
 }
 
 /// Consistent snapshot of the live database into a new file at `path` (`VACUUM INTO`:

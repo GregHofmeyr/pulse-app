@@ -107,7 +107,7 @@ async fn create_server(
     let name = clean_name(&req.name)?;
     let id = ServerId::new();
     let at = now();
-    let mut tx = s.db.begin().await?;
+    let mut tx = crate::db::begin_write(&s.db).await?;
     sqlx::query("INSERT INTO servers (id, name, created_by, created_at) VALUES (?, ?, ?, ?)")
         .bind(id.to_string())
         .bind(&name)
@@ -183,13 +183,16 @@ async fn join(
     Path(id): Path<ServerId>,
 ) -> AppResult<StatusCode> {
     server_exists(&s.db, id).await?;
+    // One transaction, under the write lock: a channel created concurrently is either seen here
+    // (and gets a read point) or sees us as a member in create_channel.
+    let mut tx = crate::db::begin_write(&s.db).await?;
     let added = sqlx::query(
         "INSERT OR IGNORE INTO server_members (server_id, user_id, joined_at) VALUES (?, ?, ?)",
     )
     .bind(id.to_string())
     .bind(me.to_string())
     .bind(now())
-    .execute(&s.db)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
     if added > 0 {
@@ -197,12 +200,14 @@ async fn join(
         let text: Vec<String> =
             sqlx::query_scalar("SELECT id FROM channels WHERE server_id = ? AND kind = 'text'")
                 .bind(id.to_string())
-                .fetch_all(&s.db)
+                .fetch_all(&mut *tx)
                 .await?;
-        let mut c = s.db.acquire().await?;
         for ch in text {
-            crate::reads::init_point(&mut c, me, ch.parse().map_err(anyhow::Error::from)?).await?;
+            crate::reads::init_point(&mut tx, me, ch.parse().map_err(anyhow::Error::from)?).await?;
         }
+    }
+    tx.commit().await?;
+    if added > 0 {
         s.hub
             .publish(
                 &s.db,
@@ -251,7 +256,7 @@ async fn create_channel(
         ));
     }
     let name = clean_name(&req.name)?;
-    let mut tx = s.db.begin().await?;
+    let mut tx = crate::db::begin_write(&s.db).await?;
     let pos: i64 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(position) + 1, 0) FROM channels WHERE server_id = ? AND kind = ?",
     )
@@ -354,7 +359,7 @@ async fn create_dm(
         }
     }
 
-    let mut tx = s.db.begin().await?;
+    let mut tx = crate::db::begin_write(&s.db).await?;
     if others.len() == 1 {
         let other = others.iter().next().unwrap().to_string();
         let existing: Option<String> = sqlx::query_scalar(
@@ -368,16 +373,16 @@ async fn create_dm(
         .fetch_optional(&mut *tx)
         .await?;
         if let Some(id) = existing {
-            tx.rollback().await?;
             let channel_id: ChannelId = id.parse().map_err(anyhow::Error::from)?;
             // Starting a DM you had closed reopens it.
             let reopened =
                 sqlx::query("DELETE FROM dm_hidden WHERE user_id = ? AND channel_id = ?")
                     .bind(me.to_string())
                     .bind(&id)
-                    .execute(&s.db)
+                    .execute(&mut *tx)
                     .await?
                     .rows_affected();
+            tx.commit().await?;
             if reopened > 0 {
                 s.hub
                     .publish(

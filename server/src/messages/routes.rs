@@ -190,6 +190,8 @@ async fn send(
         deleted: false,
         mentions: mentioned.clone(),
     };
+    // One transaction: the message, its mentions and your read point land together or not at all.
+    let mut tx = crate::db::begin_write(&s.db).await?;
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at) VALUES (?, ?, ?, 'normal', ?, ?, ?)")
         .bind(msg.id.to_string())
         .bind(id.to_string())
@@ -197,16 +199,20 @@ async fn send(
         .bind(&msg.content)
         .bind(msg.reply_to_id.map(|r| r.to_string()))
         .bind(&msg.created_at)
-        .execute(&s.db)
+        .execute(&mut *tx)
         .await?;
-    mentions::store(&s.db, msg.id, &mentioned).await?;
-    // A new message reopens closed conversations (clients un-hide on MessageCreated).
-    sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ?")
-        .bind(id.to_string())
-        .execute(&s.db)
-        .await?;
+    mentions::store(&mut tx, msg.id, &mentioned).await?;
+    if ch.kind.is_private() {
+        // A new message reopens closed conversations (clients un-hide on MessageCreated).
+        // Server channels can't be closed, so they skip this write entirely.
+        sqlx::query("DELETE FROM dm_hidden WHERE channel_id = ?")
+            .bind(id.to_string())
+            .execute(&mut *tx)
+            .await?;
+    }
     // Sending marks your own read point (you've obviously seen everything up to here).
-    let moved = crate::reads::advance(&s.db, me, id, msg.id).await?;
+    let moved = crate::reads::advance(&mut tx, me, id, msg.id).await?;
+    tx.commit().await?;
     s.hub
         .publish(
             &s.db,

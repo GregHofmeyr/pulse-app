@@ -26,7 +26,7 @@ pub async fn init_point(
 
 /// Move the point forward to `message` (never backwards). True if it moved.
 pub async fn advance(
-    db: &SqlitePool,
+    c: &mut SqliteConnection,
     user: UserId,
     channel: ChannelId,
     message: MessageId,
@@ -39,7 +39,7 @@ pub async fn advance(
     .bind(user.to_string())
     .bind(channel.to_string())
     .bind(message.to_string())
-    .execute(db)
+    .execute(&mut *c)
     .await?;
     Ok(r.rows_affected() > 0)
 }

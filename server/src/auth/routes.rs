@@ -96,7 +96,7 @@ async fn register_with(s: &AppState, mut req: RegisterRequest) -> AppResult<Json
     let id = UserId::new();
     let at = now();
 
-    let mut tx = s.db.begin().await?;
+    let mut tx = crate::db::begin_write(&s.db).await?;
     let inserted = sqlx::query(
         "INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)",
     )

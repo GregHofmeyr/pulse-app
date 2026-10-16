@@ -48,7 +48,11 @@ async fn mark_read(
     if in_channel.is_none() {
         return Err(AppError::BadRequest("message not in this channel".into()));
     }
-    if crate::reads::advance(&s.db, me, id, req.message_id).await? {
+    let moved = {
+        let mut c = s.db.acquire().await?;
+        crate::reads::advance(&mut c, me, id, req.message_id).await?
+    };
+    if moved {
         s.hub
             .publish(
                 &s.db,
@@ -125,9 +129,9 @@ async fn add_members(
             return Err(AppError::BadRequest("unknown user".into()));
         }
     }
-    // Write first, then count: the first INSERT takes SQLite's write lock, so the count below
-    // sees every committed add, and two adds racing past the check above can't overfill the group.
-    let mut tx = s.db.begin().await?;
+    // Write first, then count, under the write lock: two adds racing past the check above
+    // can't overfill the group.
+    let mut tx = crate::db::begin_write(&s.db).await?;
     for u in &new {
         sqlx::query("INSERT INTO channel_members (channel_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)")
             .bind(id.to_string()).bind(u.to_string()).bind(me.to_string()).bind(now())
@@ -185,14 +189,17 @@ async fn remove_member(
     Path((id, user)): Path<(ChannelId, UserId)>,
 ) -> AppResult<StatusCode> {
     group_for(&s, me, id).await?;
+    // One transaction: a crash or a concurrent add can't leave a half-removed member or an
+    // empty group behind.
+    let mut tx = crate::db::begin_write(&s.db).await?;
     let removed = sqlx::query("DELETE FROM channel_members WHERE channel_id = ? AND user_id = ?")
         .bind(id.to_string())
         .bind(user.to_string())
-        .execute(&s.db)
+        .execute(&mut *tx)
         .await?
         .rows_affected();
     if removed == 0 {
-        return Err(AppError::NotFound);
+        return Err(AppError::NotFound); // dropping `tx` rolls back
     }
     for t in ["read_states", "dm_hidden"] {
         sqlx::query(&format!(
@@ -200,7 +207,7 @@ async fn remove_member(
         ))
         .bind(id.to_string())
         .bind(user.to_string())
-        .execute(&s.db)
+        .execute(&mut *tx)
         .await?;
     }
     let unmuted = sqlx::query(
@@ -208,9 +215,21 @@ async fn remove_member(
     )
     .bind(user.to_string())
     .bind(id.to_string())
-    .execute(&s.db)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM channel_members WHERE channel_id = ?")
+            .bind(id.to_string())
+            .fetch_one(&mut *tx)
+            .await?;
+    if remaining == 0 {
+        sqlx::query("DELETE FROM channels WHERE id = ?")
+            .bind(id.to_string())
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
     if unmuted > 0 {
         s.hub
             .publish(
@@ -231,12 +250,7 @@ async fn remove_member(
             },
         )
         .await;
-    let left = members_of(&s.db, id).await?;
-    if left.is_empty() {
-        sqlx::query("DELETE FROM channels WHERE id = ?")
-            .bind(id.to_string())
-            .execute(&s.db)
-            .await?;
+    if remaining == 0 {
         return Ok(StatusCode::NO_CONTENT);
     }
     s.hub
@@ -244,7 +258,7 @@ async fn remove_member(
             &s.db,
             Event::GroupMembersChanged {
                 channel_id: id,
-                user_ids: left,
+                user_ids: members_of(&s.db, id).await?,
             },
         )
         .await;

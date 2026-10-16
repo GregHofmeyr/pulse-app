@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use pulse_protocol::ids::{MessageId, UserId};
 use pulse_protocol::rest::Channel;
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::error::AppResult;
 
@@ -85,12 +85,16 @@ pub async fn can_see(db: &SqlitePool, channel: &Channel, user: UserId) -> AppRes
     Ok(hit.is_some())
 }
 
-pub async fn store(db: &SqlitePool, message: MessageId, users: &[UserId]) -> AppResult<()> {
+pub async fn store(
+    c: &mut SqliteConnection,
+    message: MessageId,
+    users: &[UserId],
+) -> AppResult<()> {
     for u in users {
         sqlx::query("INSERT OR IGNORE INTO mentions (message_id, user_id) VALUES (?, ?)")
             .bind(message.to_string())
             .bind(u.to_string())
-            .execute(db)
+            .execute(&mut *c)
             .await?;
     }
     Ok(())
