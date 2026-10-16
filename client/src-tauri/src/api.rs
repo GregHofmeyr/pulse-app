@@ -111,6 +111,23 @@ fn log_failure(path: Option<String>, what: &str) {
     );
 }
 
+/// A fresh HTTPS connection costs two extra round trips (TCP + TLS: ~320 ms on a 160 ms path),
+/// so keep the one we have. reqwest's default drops it after 90 s idle, which made most voice
+/// joins and first messages after a lull pay for a new one. Caddy keeps idle connections for
+/// 60 min (deploy/Caddyfile); we let go a little earlier so we never reuse one it just closed.
+pub const POOL_IDLE: Duration = Duration::from_secs(55 * 60);
+/// TCP keepalive and HTTP/2 pings keep NAT and firewall mappings alive under an idle connection.
+const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
+const H2_PING_EVERY: Duration = Duration::from_secs(25);
+const H2_PING_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Logged once per run: the HTTP version the server agreed to (h2 through ALPN behind Caddy).
+fn note_version(r: &reqwest::Response) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    let version = r.version();
+    ONCE.call_once(|| tracing::info!(?version, "rest: connected"));
+}
+
 #[derive(Clone)]
 pub struct Api {
     base: String,
@@ -122,6 +139,11 @@ impl Api {
         let http = reqwest::Client::builder()
             .connect_timeout(Duration::from_secs(5))
             .timeout(Duration::from_secs(15))
+            .pool_idle_timeout(POOL_IDLE)
+            .tcp_keepalive(TCP_KEEPALIVE)
+            .http2_keep_alive_interval(H2_PING_EVERY)
+            .http2_keep_alive_timeout(H2_PING_TIMEOUT)
+            .http2_keep_alive_while_idle(true)
             .build()
             .expect("http client");
         Self {
@@ -137,6 +159,9 @@ impl Api {
     async fn parse<T: DeserializeOwned>(
         r: Result<reqwest::Response, reqwest::Error>,
     ) -> Result<T, ApiError> {
+        if let Ok(resp) = &r {
+            note_version(resp);
+        }
         let r = r.map_err(|e| {
             let path = e.url().map(path_only);
             let text = failure_text(e);
@@ -170,6 +195,9 @@ impl Api {
 
     /// For endpoints that answer 204.
     async fn ok_empty(r: Result<reqwest::Response, reqwest::Error>) -> Result<(), ApiError> {
+        if let Ok(resp) = &r {
+            note_version(resp);
+        }
         let r = r.map_err(|e| {
             let path = e.url().map(path_only);
             let text = failure_text(e);
@@ -555,6 +583,82 @@ impl Api {
 mod tests {
     use super::*;
     use pulse_server::testing;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// A bare HTTP/1.1 server that answers every request with 204 and never closes an idle
+    /// connection itself (axum's test server drops idle ones after 30 s: hyper's header read
+    /// timeout), counting the connections made to it.
+    async fn keepalive_server() -> (String, Arc<AtomicUsize>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("localhost:0").await.unwrap();
+        let base = format!("http://localhost:{}", l.local_addr().unwrap().port());
+        let conns = Arc::new(AtomicUsize::new(0));
+        let count = conns.clone();
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = l.accept().await {
+                count.fetch_add(1, Ordering::SeqCst);
+                tokio::spawn(async move {
+                    let (mut buf, mut chunk) = (Vec::new(), [0u8; 1024]);
+                    loop {
+                        let Ok(n) = s.read(&mut chunk).await else {
+                            return;
+                        };
+                        if n == 0 {
+                            return;
+                        }
+                        buf.extend_from_slice(&chunk[..n]);
+                        // the requests in these tests have no body: a blank line ends each one
+                        while let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                            buf.drain(..end + 4);
+                            if s.write_all(b"HTTP/1.1 204 No Content\r\n\r\n")
+                                .await
+                                .is_err()
+                            {
+                                return;
+                            }
+                        }
+                    }
+                });
+            }
+        });
+        (base, conns)
+    }
+
+    #[tokio::test]
+    async fn back_to_back_requests_share_one_connection() {
+        let (base, conns) = keepalive_server().await;
+        let api = Api::new(&base);
+        api.logout("t").await.unwrap();
+        api.logout("t").await.unwrap();
+        assert_eq!(conns.load(Ordering::SeqCst), 1);
+    }
+
+    /// Field log 2026-10-13: a voice join 3.5 min after the last request paid ~300 ms more for
+    /// its token (a new TCP + TLS handshake). The connection must survive a long lull.
+    #[tokio::test]
+    #[ignore = "idles 100 s; run: cargo test -p pulse-client --lib rest_connection -- --ignored"]
+    async fn rest_connection_survives_a_long_idle() {
+        let (base, conns) = keepalive_server().await;
+        let api = Api::new(&base);
+        api.logout("t").await.unwrap();
+        tokio::time::sleep(Duration::from_secs(100)).await; // past reqwest's 90 s default
+        api.logout("t").await.unwrap();
+        assert_eq!(
+            conns.load(Ordering::SeqCst),
+            1,
+            "the idle connection was dropped: the second call paid a new handshake"
+        );
+    }
+
+    #[test]
+    fn idle_connections_are_kept_longer_than_a_lull_but_shorter_than_caddy_keeps_them() {
+        assert!(POOL_IDLE >= Duration::from_secs(30 * 60));
+        assert!(
+            POOL_IDLE < Duration::from_secs(60 * 60),
+            "Caddy's idle timeout is 60 min"
+        );
+    }
 
     #[tokio::test]
     async fn a_report_reaches_the_server() {

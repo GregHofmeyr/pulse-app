@@ -1,5 +1,12 @@
 {
 	email {$ACME_EMAIL}
+	# Clients keep their HTTPS connection for 55 min between requests (client api.rs POOL_IDLE):
+	# a new one costs two round trips. Caddy's default would close it after 5 min.
+	servers {
+		timeouts {
+			idle 60m
+		}
+	}
 }
 
 {$PULSE_DOMAIN} {
