@@ -12,6 +12,7 @@ type VoiceEvent =
   | { kind: 'noise_suppression'; active: NsLevel; note: string | null }
   | { kind: 'device_stalled' }
   | { kind: 'device_recovered' }
+  | { kind: 'mic'; live: boolean; error: string | null }
 
 export const voice = $state({
   channelId: null as string | null,
@@ -25,6 +26,8 @@ export const voice = $state({
   /** Suppression actually running (Strong can be loading or have fallen back) and why. */
   ns: { active: null as NsLevel | null, note: null as string | null },
   stalled: false,
+  /** Our mic is in the room (shows a moment after connected). */
+  micLive: false,
   error: '',
   volumes: loadVolumes() as Record<string, number>,
 })
@@ -39,6 +42,7 @@ export async function startVoiceListening() {
         voice.connection = e.connection
         voice.controls = e.controls
         if (!e.channel_id) voice.speaking = new Set()
+        if (!e.channel_id) voice.micLive = false
         break
       }
       case 'speaking':
@@ -59,6 +63,10 @@ export async function startVoiceListening() {
         break
       case 'device_recovered':
         voice.stalled = false
+        break
+      case 'mic':
+        voice.micLive = e.live
+        if (e.error) voice.error = e.error
         break
     }
   })

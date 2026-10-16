@@ -158,6 +158,53 @@ impl<R: CloseRoom> Drop for OpenRoom<R> {
     }
 }
 
+/// Tell the UI how the background mic publish went, once its join has shown "connected"
+/// (`connected` fires; dropped = the join never got there: say nothing, its room guard closes the
+/// room). A session already torn down (`alive` cleared by a leave, a drop, or a rejoin replacing
+/// it) says nothing either. A failed publish ends the call: `teardown` stops the session's audio,
+/// the room is closed, and the UI is told why.
+async fn report_publish<R: CloseRoom>(
+    published: Result<(), String>,
+    connected: tokio::sync::oneshot::Receiver<()>,
+    alive: &AtomicBool,
+    room: &R,
+    teardown: impl FnOnce(),
+    events: &EventSink,
+    controls: &Mutex<Controls>,
+) {
+    if connected.await.is_err() {
+        return;
+    }
+    let e = match published {
+        Ok(()) => {
+            if alive.load(Ordering::SeqCst) {
+                events(VoiceEvent::Mic {
+                    live: true,
+                    error: None,
+                });
+            }
+            return;
+        }
+        Err(e) => e,
+    };
+    if !alive.swap(false, Ordering::SeqCst) {
+        return;
+    }
+    // a call nobody can hear us in isn't a call: end it, and say why
+    tracing::warn!(error = %e, "voice: publishing the mic failed; leaving");
+    teardown();
+    let _ = tokio::time::timeout(CLOSE_TIMEOUT, room.close_room()).await;
+    events(VoiceEvent::Mic {
+        live: false,
+        error: Some(format!("Couldn't send your mic: {e}")),
+    });
+    events(VoiceEvent::State {
+        channel_id: None,
+        connection: Connection::Disconnected,
+        controls: *controls.lock().unwrap(),
+    });
+}
+
 /// Reopens the session's devices (stays in the room). Stall recovery, device following and
 /// settings changes can all want one: they take turns, and each reads the newest settings.
 struct Reopener {
@@ -352,6 +399,12 @@ pub enum VoiceEvent {
     },
     DeviceStalled,
     DeviceRecovered,
+    /// Whether our mic is in the room. "Connected" comes first; the publish follows ~1 RTT later.
+    /// A failed publish ends the call (`error` says why).
+    Mic {
+        live: bool,
+        error: Option<String>,
+    },
 }
 
 pub type EventSink = Arc<dyn Fn(VoiceEvent) + Send + Sync>;
@@ -377,6 +430,10 @@ impl Drop for Session {
         }
     }
 }
+
+/// A joined session, the guard on its room (until the session is stored), and the signal that
+/// "connected" has been shown (the background mic publish reports only after it).
+type Connected = (Session, OpenRoom<Room>, tokio::sync::oneshot::Sender<()>);
 
 /// The user's last join, kept so a dropped call can be rejoined with the same settings.
 #[derive(Clone)]
@@ -570,11 +627,13 @@ impl VoiceManager {
             Err(e) => tracing::warn!(error = %e, elapsed_ms, "voice: join failed"),
         }
         match outcome {
-            Ok((session, open_room)) => {
+            Ok((session, open_room, connected)) => {
                 *self.live.lock().unwrap() = Some(session.alive.clone());
                 *self.session.lock().await = Some(session);
                 open_room.disarm();
                 self.emit_state(Some(channel), Connection::Connected);
+                // the mic publish reports from here on, so never before "connected"
+                let _ = connected.send(());
                 Ok(())
             }
             Err(e) => {
@@ -696,7 +755,7 @@ impl VoiceManager {
         channel: ChannelId,
         cfg: AudioConfig,
         mode: AudioMode,
-    ) -> Result<(Session, OpenRoom<Room>), VoiceError> {
+    ) -> Result<Connected, VoiceError> {
         // join phases, for finding where a slow join's time goes (bug reports carry the log)
         let started = Instant::now();
         let ms = |t: Instant| t.elapsed().as_millis() as u64;
@@ -740,8 +799,13 @@ impl VoiceManager {
         let ((io, devices_ms), (open_room, mut room_events, room_connect_ms)) =
             side_by_side(devices, room, |(room, _, _)| room.close()).await?;
         let room = open_room.room().clone();
-        let t = Instant::now();
-        tracing::info!("voice: room connected");
+        tracing::info!(
+            token_ms,
+            token_prefetched,
+            devices_ms,
+            room_connect_ms,
+            "voice: room connected"
+        );
         // Fixed 48 kHz towards LiveKit, whatever the device does.
         // queue 0 = WebRTC's fast path: each 10 ms frame goes straight out. A queue there drains on
         // the system clock and is never trimmed, so any backlog in it (a burst, a mic clock running
@@ -751,31 +815,53 @@ impl VoiceManager {
             LocalAudioTrack::create_audio_track("mic", RtcAudioSource::Native(source.clone()));
         // from now on the mic processor hands each 10 ms frame straight to WebRTC
         shared.set_mic_sink(Some(Box::new(processor::LiveKitSink::new(source.clone()))));
-        let published = tokio::time::timeout(
-            PUBLISH_TIMEOUT,
-            room.local_participant()
-                .publish_track(LocalTrack::Audio(track), mic_publish_options()),
-        )
-        .await;
-        let failure = match published {
-            Ok(Ok(_)) => None,
-            Ok(Err(e)) => Some(VoiceError::Connect(e.to_string())),
-            Err(_) => Some(VoiceError::Timeout("publishing the mic")),
-        };
-        if let Some(e) = failure {
-            open_room.close().await;
-            return Err(e);
-        }
-        tracing::info!(
-            token_ms,
-            token_prefetched,
-            devices_ms,
-            room_connect_ms,
-            publish_ms = ms(t),
-            "voice: mic published"
-        );
 
         let mut tasks = Vec::new();
+        let rx = Arc::new(Mutex::new(RxTasks::default()));
+        let io = Arc::new(Mutex::new(Some(io)));
+        let alive = Arc::new(AtomicBool::new(true));
+        // fires once the join has shown "connected" (dropped if it never does)
+        let (connected_tx, connected_rx) = tokio::sync::oneshot::channel();
+        // publish in the background: "connected" doesn't wait the round trip for it. The task is
+        // the session's (aborted with it); the room is closed by its guard or the session's leave.
+        {
+            let (room, events, controls) =
+                (room.clone(), self.events.clone(), self.controls.clone());
+            let (alive, io, rx, shared) = (alive.clone(), io.clone(), rx.clone(), shared.clone());
+            tasks.push(tokio::spawn(async move {
+                let t = Instant::now();
+                let published = tokio::time::timeout(
+                    PUBLISH_TIMEOUT,
+                    room.local_participant()
+                        .publish_track(LocalTrack::Audio(track), mic_publish_options()),
+                )
+                .await;
+                let published = match published {
+                    Ok(Ok(_)) => {
+                        let (publish_ms, since_join_ms) = (ms(t), ms(started));
+                        tracing::info!(publish_ms, since_join_ms, "voice: mic published");
+                        Ok(())
+                    }
+                    Ok(Err(e)) => Err(e.to_string()),
+                    Err(_) => Err("timed out".to_string()),
+                };
+                let teardown = || {
+                    shared.set_mic_sink(None);
+                    io.lock().unwrap().take();
+                    rx.lock().unwrap().clear();
+                };
+                report_publish(
+                    published,
+                    connected_rx,
+                    &alive,
+                    &*room,
+                    teardown,
+                    &events,
+                    &controls,
+                )
+                .await;
+            }));
+        }
         // what WebRTC measures about the path, for telling network lag from local lag
         {
             let room = room.clone();
@@ -808,9 +894,6 @@ impl VoiceManager {
                 }
             }));
         }
-        let rx = Arc::new(Mutex::new(RxTasks::default()));
-        let io = Arc::new(Mutex::new(Some(io)));
-        let alive = Arc::new(AtomicBool::new(true));
 
         // a drop LiveKit gives up on is handed to the rejoin loop (if it runs) under this join's epoch
         let (epoch, dropped) = (
@@ -1060,7 +1143,7 @@ impl VoiceManager {
             reopener,
             tasks,
         };
-        Ok((session, open_room))
+        Ok((session, open_room, connected_tx))
     }
 
     pub async fn leave(&self) {
@@ -1429,6 +1512,105 @@ mod tests {
             .await
             .expect("diagnostics waited on the lock");
         assert_eq!(d["state"], "busy");
+    }
+
+    #[test]
+    fn mic_event_serialises_for_the_ui() {
+        let e = VoiceEvent::Mic {
+            live: false,
+            error: Some("Couldn't send your mic".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&e).unwrap(),
+            serde_json::json!({"kind":"mic","live":false,"error":"Couldn't send your mic"})
+        );
+    }
+
+    /// Runs `report_publish` with fakes; returns the events it emitted, whether the room was
+    /// closed and whether the session was torn down.
+    async fn reported(
+        published: Result<(), String>,
+        connected: bool,
+        alive: bool,
+    ) -> (Vec<VoiceEvent>, bool, bool) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let events: EventSink = Arc::new(move |e| sink.lock().unwrap().push(e));
+        let (tx, rx) = tokio::sync::oneshot::channel();
+        if connected {
+            tx.send(()).unwrap();
+        } else {
+            drop(tx);
+        }
+        let (closed, alive) = (Arc::new(AtomicBool::new(false)), AtomicBool::new(alive));
+        let torn_down = AtomicBool::new(false);
+        report_publish(
+            published,
+            rx,
+            &alive,
+            &FakeRoom(closed.clone()),
+            || torn_down.store(true, Ordering::SeqCst),
+            &events,
+            &Mutex::new(Controls::default()),
+        )
+        .await;
+        let seen = seen.lock().unwrap().clone();
+        (seen, closed.load(Ordering::SeqCst), torn_down.into_inner())
+    }
+
+    #[tokio::test]
+    async fn a_published_mic_is_reported_live() {
+        let (seen, closed, torn_down) = reported(Ok(()), true, true).await;
+        assert!(
+            matches!(
+                &seen[..],
+                [VoiceEvent::Mic {
+                    live: true,
+                    error: None
+                }]
+            ),
+            "{seen:?}"
+        );
+        assert!(!closed && !torn_down);
+    }
+
+    /// "Connected" was already shown: a mic that never made it in ends the call, and says why.
+    #[tokio::test]
+    async fn a_failed_publish_ends_the_call_with_an_error() {
+        let (seen, closed, torn_down) = reported(Err("timed out".into()), true, true).await;
+        assert!(closed && torn_down);
+        assert!(
+            matches!(
+                &seen[..],
+                [
+                    VoiceEvent::Mic { live: false, error: Some(e) },
+                    VoiceEvent::State { channel_id: None, connection: Connection::Disconnected, .. },
+                ] if e == "Couldn't send your mic: timed out"
+            ),
+            "{seen:?}"
+        );
+    }
+
+    /// The session is already being torn down (a leave, or a rejoin replacing it): its close is
+    /// what failed the publish. Say nothing: no "disconnected" flash during a rejoin.
+    #[tokio::test]
+    async fn a_publish_failing_during_teardown_says_nothing() {
+        let (seen, closed, torn_down) = reported(Err("closed".into()), true, false).await;
+        assert!(seen.is_empty(), "{seen:?}");
+        assert!(!closed && !torn_down);
+        let (seen, ..) = reported(Ok(()), true, false).await;
+        assert!(seen.is_empty(), "{seen:?}");
+    }
+
+    /// The join never got to "connected" (cancelled): its room guard closes the room; the
+    /// publish reports nothing, so no event can land after the join's own "disconnected".
+    #[tokio::test]
+    async fn a_publish_for_a_join_that_never_connected_says_nothing() {
+        for published in [Ok(()), Err("closed".to_string())] {
+            let (seen, _, torn_down) = reported(published, false, true).await;
+            assert!(seen.is_empty(), "{seen:?}");
+            assert!(!torn_down);
+        }
     }
 
     #[test]

@@ -1,11 +1,12 @@
 //! Needs the dev LiveKit (`just dev-livekit`). Run: `just voice-it`.
 
 use std::process::Command;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use pulse_client::api::Api;
 use pulse_client::voice::devices::AudioConfig;
-use pulse_client::voice::{AudioMode, VoiceManager};
+use pulse_client::voice::{AudioMode, Connection, VoiceEvent, VoiceManager};
 use pulse_server::testing;
 
 const DEV_SECRET: &str = "pulse-dev-secret-0123456789abcdefghij";
@@ -425,4 +426,63 @@ async fn leaving_while_devices_open_leaves_no_ghost() {
     assert!(joining.await.unwrap().is_err(), "the join was cancelled");
     assert!(wait_for(0).await, "alex is still in the room: a ghost");
     watcher.close().await.unwrap();
+}
+
+/// "Connected" (and the join sound) must not wait a round trip for the mic publish.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn connected_shows_before_the_mic_is_published() {
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, token) = testing::register(&app, "alex").await;
+    let s = testing::create_server(&app, &token, "Main").await;
+    let api = Api::new(&format!("http://{}", app.addr));
+    let lounge = api
+        .channels(&token, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink = seen.clone();
+    let vm = VoiceManager::new(Arc::new(move |e| {
+        let tag = match e {
+            VoiceEvent::State {
+                connection: Connection::Connected,
+                ..
+            } => "connected".to_string(),
+            VoiceEvent::Mic { live, .. } => format!("mic:{live}"),
+            _ => return,
+        };
+        sink.lock().unwrap().push(tag);
+    }));
+    vm.join(
+        &api,
+        &token,
+        lounge.id,
+        AudioConfig::default(),
+        AudioMode::Null(48_000),
+    )
+    .await
+    .unwrap();
+    for _ in 0..100 {
+        if seen.lock().unwrap().iter().any(|t| t == "mic:true") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let seen = seen.lock().unwrap().clone();
+    let connected = seen
+        .iter()
+        .position(|t| t == "connected")
+        .expect("connected");
+    let live = seen
+        .iter()
+        .position(|t| t == "mic:true")
+        .expect("mic published");
+    assert!(connected < live, "{seen:?}");
+    vm.leave().await;
 }
