@@ -35,7 +35,7 @@ use tokio::task::JoinHandle;
 use crate::api::{Api, ApiError};
 use controls::Controls;
 use devices::{AudioConfig, AudioIo, INTERNAL_RATE, Shared, Sides};
-use mixer::{Mixer, percent_to_gain};
+use mixer::percent_to_gain;
 use rx::RxTasks;
 
 /// Max audio buffered per peer before the oldest is dropped (bounds latency).
@@ -376,8 +376,7 @@ impl VoiceManager {
         let token_ms = ms(started);
         let t = Instant::now();
 
-        let mixer = Arc::new(Mutex::new(Mixer::new(INTERNAL_RATE, PEER_BUFFER_MS)));
-        let shared = Shared::new(&cfg, self.controls.clone(), mixer.clone());
+        let shared = Shared::new(&cfg, self.controls.clone(), PEER_BUFFER_MS);
         // devices → processor (denoise, gate) → the room's mic track, once there is one
         let (raw_tx, _processor) = processor::spawn(shared.clone());
         let io = match mode {
@@ -433,7 +432,7 @@ impl VoiceManager {
         let mut tasks = Vec::new();
         // what WebRTC measures about the path, for telling network lag from local lag
         {
-            let (room, mixer) = (room.clone(), mixer.clone());
+            let room = room.clone();
             let shared = shared.clone();
             tasks.push(tokio::spawn(async move {
                 let mut totals = netstats::Totals::default();
@@ -454,12 +453,11 @@ impl VoiceManager {
                         totals = t;
                         // ours: worst send backlog this window, and the pipeline's counters
                         let send_ms = shared.mic_queue.take_worst();
-                        let (underrun, adjust) = {
-                            let mut m = mixer.lock().unwrap();
-                            (m.take_underrun_samples(), m.take_adjusted_samples())
-                        };
+                        let underrun = shared.mix_in.take_underrun_samples();
+                        let adjust = shared.mix_in.take_adjusted_samples();
+                        let mix_busy = shared.take_mix_busy();
                         let ours = shared.stats.take(underrun * 1000 / INTERNAL_RATE as u64);
-                        tracing::info!(%line, send_ms, adjust, %ours, "voice: path");
+                        tracing::info!(%line, send_ms, adjust, mix_busy, %ours, "voice: path");
                     }
                 }
             }));
@@ -470,9 +468,9 @@ impl VoiceManager {
 
         // room events: subscriptions (FINDINGS rule 1), speaking, quality, connection state
         {
-            let (rx, mixer, volumes, events) = (
+            let (rx, mix_in, volumes, events) = (
                 rx.clone(),
-                mixer.clone(),
+                shared.mix_in.clone(),
                 self.volumes.clone(),
                 self.events.clone(),
             );
@@ -493,8 +491,8 @@ impl VoiceManager {
                         } => {
                             let id = participant.identity().to_string();
                             let pct = volumes.lock().unwrap().get(&id).copied().unwrap_or(100);
-                            mixer.lock().unwrap().set_gain(&id, percent_to_gain(pct));
-                            let (m, peer) = (mixer.clone(), id.clone());
+                            mix_in.set_gain(&id, percent_to_gain(pct));
+                            let (m, peer) = (mix_in.clone(), id.clone());
                             let subscribed = Instant::now();
                             tracing::info!(
                                 peer = %id,
@@ -517,7 +515,7 @@ impl VoiceManager {
                                             "voice: first sound"
                                         );
                                     }
-                                    m.lock().unwrap().push(&peer, &f.data);
+                                    m.push(&peer, &f.data);
                                 }
                             });
                             rx.lock().unwrap().replace(id, task);
@@ -525,12 +523,12 @@ impl VoiceManager {
                         RoomEvent::TrackUnsubscribed { participant, .. } => {
                             let id = participant.identity().to_string();
                             rx.lock().unwrap().drop_for(&id);
-                            mixer.lock().unwrap().remove(&id);
+                            mix_in.remove(&id);
                         }
                         RoomEvent::ParticipantDisconnected(p) => {
                             let id = p.identity().to_string();
                             rx.lock().unwrap().drop_for(&id);
-                            mixer.lock().unwrap().remove(&id);
+                            mix_in.remove(&id);
                         }
                         RoomEvent::ConnectionQualityChanged {
                             quality,
@@ -596,7 +594,7 @@ impl VoiceManager {
                         break;
                     }
                     let (mic, speaker) = shared.take_levels();
-                    let queued = shared.mixer.lock().unwrap().max_buffered();
+                    let queued = shared.mix_in.max_buffered();
                     shared
                         .stats
                         .sample_recv_queue((queued * 1000 / INTERNAL_RATE as usize) as u32);
@@ -613,7 +611,7 @@ impl VoiceManager {
                         });
                     }
                     // Ring = actually audible: received levels per peer + what we really send.
-                    let mut levels = shared.mixer.lock().unwrap().take_peer_levels();
+                    let mut levels = shared.mix_in.take_peer_levels();
                     levels.push((me_id.clone(), shared.take_sent_level()));
                     if let Some(user_ids) = speaking.update(&levels, Instant::now()) {
                         events(VoiceEvent::Speaking { user_ids });
@@ -793,11 +791,7 @@ impl VoiceManager {
             .unwrap()
             .insert(user_id.clone(), pct.min(200));
         if let Some(s) = self.session.lock().await.as_ref() {
-            s.shared
-                .mixer
-                .lock()
-                .unwrap()
-                .set_gain(&user_id, percent_to_gain(pct));
+            s.shared.mix_in.set_gain(&user_id, percent_to_gain(pct));
         }
     }
 
@@ -825,7 +819,7 @@ impl VoiceManager {
     // --- diagnostics (tests) ---
     pub async fn mixer_pushed(&self) -> u64 {
         match self.session.lock().await.as_ref() {
-            Some(s) => s.shared.mixer.lock().unwrap().pushed_total(),
+            Some(s) => s.shared.mix_in.pushed_total(),
             None => 0,
         }
     }

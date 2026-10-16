@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use super::backlog::QueueGauge;
 use super::controls::Controls;
 use super::devices::{AudioConfig, AudioIo, INTERNAL_RATE, Shared};
-use super::mixer::Mixer;
+use super::mixer::MixerInput;
 use super::{EventSink, VoiceError, VoiceEvent};
 
 const DELAY_MS: u32 = 300;
@@ -18,13 +18,13 @@ const DELAY_MS: u32 = 300;
 /// The mic test's "speaker": your processed mic, delayed, into the local mixer.
 struct Loopback {
     delay: DelayLine,
-    mixer: Arc<Mutex<Mixer>>,
+    mixer: Arc<MixerInput>,
 }
 
 impl super::processor::FrameSink for Loopback {
     fn send(&mut self, frame: &[i16]) -> bool {
         let out = self.delay.process(frame);
-        self.mixer.lock().unwrap().push("self", &out);
+        self.mixer.push("self", &out);
         true
     }
 }
@@ -65,18 +65,13 @@ impl Default for MicTest {
 impl MicTest {
     pub fn start(&self, cfg: &AudioConfig, events: EventSink) -> Result<(), VoiceError> {
         self.stop();
-        let mixer = Arc::new(Mutex::new(Mixer::new(INTERNAL_RATE, 1000)));
-        let shared = Shared::new(
-            cfg,
-            Arc::new(Mutex::new(Controls::default())),
-            mixer.clone(),
-        );
+        let shared = Shared::new(cfg, Arc::new(Mutex::new(Controls::default())), 1000);
         // Same pipeline as a call: devices → processor (denoise, gate) → loopback. The AudioIo holds
         // the only sender into the processor, so stopping the test ends it.
         // The mixer runs at 48 kHz; the output edge resamples to the device.
         shared.set_mic_sink(Some(Box::new(Loopback {
             delay: DelayLine::new((INTERNAL_RATE * DELAY_MS / 1000) as usize),
-            mixer: mixer.clone(),
+            mixer: shared.mix_in.clone(),
         })));
         let (raw_tx, _processor) = super::processor::spawn(shared.clone());
         let io = AudioIo::start(cfg, shared.clone(), raw_tx)
@@ -88,7 +83,7 @@ impl MicTest {
             let mut tick = tokio::time::interval(Duration::from_millis(100));
             loop {
                 tick.tick().await;
-                let queued = shared.mixer.lock().unwrap().max_buffered();
+                let queued = shared.mix_in.max_buffered();
                 queue.record((queued * 1000 / INTERNAL_RATE as usize) as u32);
                 let (mic, speaker) = shared.take_levels();
                 let gate_open = shared.gate_open.load(Ordering::Relaxed);

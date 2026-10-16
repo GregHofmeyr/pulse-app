@@ -344,10 +344,7 @@ fn device_lookup_cost() {
 async fn reopening_one_side_leaves_the_other_alone() {
     use pulse_client::voice::devices::{AudioIo, Shared, Sides};
     let cfg = AudioConfig::default();
-    let mixer = std::sync::Arc::new(std::sync::Mutex::new(
-        pulse_client::voice::mixer::Mixer::new(48_000, 200),
-    ));
-    let shared = Shared::new(&cfg, Default::default(), mixer);
+    let shared = Shared::new(&cfg, Default::default(), 200);
     let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
     let mut io = AudioIo::start(&cfg, shared, raw_tx).unwrap();
     let (mic, spk) = io.generations();

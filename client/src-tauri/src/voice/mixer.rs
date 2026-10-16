@@ -1,6 +1,10 @@
 //! Per-peer receive queues, per-peer gain on a dB curve, soft limiter (FINDINGS: dB slider + soft limit).
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
+use std::sync::{Arc, Mutex};
+
+use super::meter::Meter;
 
 /// Slider percent (0..=200) → linear gain. 100% = 0 dB; above maps linearly in dB up to +12 dB at 200%;
 /// below falls to −40 dB at 1% and true silence at 0%. Loudness is logarithmic, so this feels even.
@@ -71,8 +75,183 @@ fn skip(q: &mut VecDeque<i16>, n: usize) {
     q.drain(..n);
 }
 
-pub struct Mixer {
+/// Network side → speaker side changes, applied by the speakers at their next pull.
+enum Cmd {
+    Add {
+        id: String,
+        ring: rtrb::Consumer<i16>,
+        filled: Arc<AtomicUsize>,
+    },
+    Gain {
+        id: String,
+        gain: f32,
+    },
+    Remove {
+        id: String,
+    },
+    Clear,
+}
+
+/// A mixer in two halves that share no lock the speakers wait on: `MixerInput` for the
+/// receive tasks and UI, `Mixer` for the speaker callback only.
+pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
+    let rate = sample_rate as usize;
+    let cap = (rate * cap_ms as usize / 1000).max(1);
+    let cmds = Arc::new(Mutex::new(Vec::new()));
+    let (underrun, adjusted) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
+    let input = MixerInput {
+        cmds: cmds.clone(),
+        peers: Mutex::new(HashMap::new()),
+        cap,
+        pushed: AtomicU64::new(0),
+        underrun: underrun.clone(),
+        adjusted: adjusted.clone(),
+    };
+    let speakers = Mixer {
+        cmds,
+        cap,
+        peers: HashMap::with_capacity(32), // no growth in the callback for a normal call
+        target: rate * TARGET_MS / 1000,
+        refill: rate * TARGET_MS / 1000 + rate / 100,
+        window: rate * WINDOW_MS / 1000,
+        budget: rate * WINDOW_MS / 1000 * MAX_ADJUST_PER_MILLE / 1000,
+        deadband: rate * DEADBAND_MS / 1000,
+        cut_above: rate * CUT_ABOVE_MS / 1000,
+        pulled: 0,
+        underrun,
+        adjusted,
+    };
+    (input, speakers)
+}
+
+/// The receive side: one lock-free ring per peer into the speakers, plus what the UI and the
+/// stats line read. Its locks are only ever taken by network-side tasks.
+pub struct MixerInput {
+    cmds: Arc<Mutex<Vec<Cmd>>>,
+    pub(crate) peers: Mutex<HashMap<String, PeerIn>>,
     cap: usize,
+    /// Total samples ever pushed (diagnostics: intake must track real time, see FINDINGS).
+    pushed: AtomicU64,
+    /// Samples a peer didn't have when the speakers asked (diagnostics: gaps / clicks).
+    underrun: Arc<AtomicU64>,
+    /// Samples dropped or repeated so far (diagnostics: how hard drift is being corrected).
+    adjusted: Arc<AtomicU64>,
+}
+
+pub(crate) struct PeerIn {
+    ring: rtrb::Producer<i16>,
+    gain: f32,
+    /// Level of what we received (drives the speaking ring: lit = audible).
+    meter: Meter,
+    /// Queued for this peer as of the speakers' last pull.
+    filled: Arc<AtomicUsize>,
+}
+
+impl MixerInput {
+    fn peer<'a>(&self, peers: &'a mut HashMap<String, PeerIn>, id: &str) -> &'a mut PeerIn {
+        if !peers.contains_key(id) {
+            // twice the cap: a burst while the speakers reopen is trimmed on their side
+            let (tx, rx) = rtrb::RingBuffer::new(2 * self.cap);
+            let filled = Arc::new(AtomicUsize::new(0));
+            self.cmds.lock().unwrap().push(Cmd::Add {
+                id: id.to_string(),
+                ring: rx,
+                filled: filled.clone(),
+            });
+            peers.insert(
+                id.to_string(),
+                PeerIn {
+                    ring: tx,
+                    gain: 1.0,
+                    meter: Meter::default(),
+                    filled,
+                },
+            );
+        }
+        peers.get_mut(id).expect("just added")
+    }
+
+    /// Queue received samples (mono i16).
+    pub fn push(&self, peer: &str, samples: &[i16]) {
+        self.pushed.fetch_add(samples.len() as u64, Relaxed);
+        let mut peers = self.peers.lock().unwrap();
+        let p = self.peer(&mut peers, peer);
+        for s in samples {
+            p.meter.add(*s as f32 / i16::MAX as f32 * p.gain);
+        }
+        // a full ring means the speakers aren't pulling (a reopen): keep the newest
+        let newest = &samples[samples.len().saturating_sub(p.ring.slots())..];
+        if let Ok(chunk) = p.ring.write_chunk_uninit(newest.len()) {
+            chunk.fill_from_iter(newest.iter().copied());
+        }
+    }
+
+    pub fn set_gain(&self, peer: &str, gain: f32) {
+        let mut peers = self.peers.lock().unwrap();
+        self.peer(&mut peers, peer).gain = gain;
+        // still under the peers lock: commands reach the speakers in the order peers changed
+        self.cmds.lock().unwrap().push(Cmd::Gain {
+            id: peer.to_string(),
+            gain,
+        });
+    }
+
+    pub fn remove(&self, peer: &str) {
+        let mut peers = self.peers.lock().unwrap();
+        if peers.remove(peer).is_some() {
+            self.cmds.lock().unwrap().push(Cmd::Remove {
+                id: peer.to_string(),
+            });
+        }
+    }
+
+    /// Forget every peer (a channel switch keeps the mixer, not the last room's people).
+    pub fn clear(&self) {
+        let mut peers = self.peers.lock().unwrap();
+        peers.clear();
+        self.cmds.lock().unwrap().push(Cmd::Clear);
+    }
+
+    /// (peer, rms since the last call): what each person sounded like, after their volume.
+    pub fn take_peer_levels(&self) -> Vec<(String, f32)> {
+        self.peers
+            .lock()
+            .unwrap()
+            .iter_mut()
+            .map(|(id, p)| (id.clone(), p.meter.take().0))
+            .collect()
+    }
+
+    /// Underrun samples since the last call.
+    pub fn take_underrun_samples(&self) -> u64 {
+        self.underrun.swap(0, Relaxed)
+    }
+
+    /// Samples dropped or repeated (drift correction) since the last call.
+    pub fn take_adjusted_samples(&self) -> u64 {
+        self.adjusted.swap(0, Relaxed)
+    }
+
+    pub fn pushed_total(&self) -> u64 {
+        self.pushed.load(Relaxed)
+    }
+
+    /// Samples queued for the fullest peer, as of the speakers' last pull.
+    pub fn max_buffered(&self) -> usize {
+        let peers = self.peers.lock().unwrap();
+        peers
+            .values()
+            .map(|p| p.filled.load(Relaxed))
+            .max()
+            .unwrap_or(0)
+    }
+}
+
+/// The speaker side: owned by the output callback.
+pub struct Mixer {
+    cmds: Arc<Mutex<Vec<Cmd>>>,
+    cap: usize,
+    peers: HashMap<String, Peer>,
     /// Lowest fill wanted (samples), and what a dry peer refills to before playing on.
     target: usize,
     refill: usize,
@@ -83,116 +262,83 @@ pub struct Mixer {
     cut_above: usize,
     /// Samples pulled since the last window was judged.
     pulled: usize,
-    peers: HashMap<String, Peer>,
-    /// Total samples ever pushed (diagnostics: intake must track real time, see FINDINGS).
-    pushed: u64,
-    /// Samples a peer didn't have when the speakers asked (diagnostics: gaps / clicks).
-    underrun: u64,
-    /// Samples dropped or repeated so far (diagnostics: how hard drift is being corrected).
-    adjusted: u64,
+    underrun: Arc<AtomicU64>,
+    adjusted: Arc<AtomicU64>,
 }
 
 struct Peer {
+    ring: rtrb::Consumer<i16>,
+    /// What the speakers work on (trims, drift steps): sized once, never grown in the callback.
     queue: VecDeque<i16>,
+    /// Published fill (queue + ring) for the network side's `max_buffered`.
+    filled: Arc<AtomicUsize>,
     /// Shortest the queue has been (right after a pull) this window.
     low: usize,
+    gain: f32,
     /// Drift correction due this window: > 0 samples to drop, < 0 to repeat.
     adjust: i32,
     /// The front sample was just played once and is to be played again (a repeat).
     held: bool,
     /// Ran dry: silent until the queue holds `Mixer::refill` again.
     rebuffering: bool,
-    gain: f32,
-    /// Level of what we received (drives the speaking ring: lit = audible).
-    meter: super::meter::Meter,
 }
 
 impl Mixer {
-    pub fn new(sample_rate: u32, cap_ms: u32) -> Self {
-        Self {
-            cap: (sample_rate as usize * cap_ms as usize / 1000).max(1),
-            target: sample_rate as usize * TARGET_MS / 1000,
-            refill: sample_rate as usize * TARGET_MS / 1000 + sample_rate as usize / 100,
-            window: sample_rate as usize * WINDOW_MS / 1000,
-            budget: sample_rate as usize * WINDOW_MS / 1000 * MAX_ADJUST_PER_MILLE / 1000,
-            deadband: sample_rate as usize * DEADBAND_MS / 1000,
-            cut_above: sample_rate as usize * CUT_ABOVE_MS / 1000,
-            pulled: 0,
-            peers: HashMap::new(),
-            pushed: 0,
-            underrun: 0,
-            adjusted: 0,
+    /// Apply the network side's changes (only if they're not being written right now: never
+    /// wait) and move what arrived from the rings into the working queues.
+    fn intake(&mut self) {
+        if let Ok(mut cmds) = self.cmds.try_lock() {
+            for c in cmds.drain(..) {
+                match c {
+                    Cmd::Add { id, ring, filled } => {
+                        let p = Peer {
+                            ring,
+                            queue: VecDeque::with_capacity(3 * self.cap),
+                            filled,
+                            low: usize::MAX,
+                            gain: 1.0,
+                            adjust: 0,
+                            held: false,
+                            rebuffering: false,
+                        };
+                        self.peers.insert(id, p);
+                    }
+                    Cmd::Gain { id, gain } => {
+                        if let Some(p) = self.peers.get_mut(&id) {
+                            p.gain = gain;
+                        }
+                    }
+                    Cmd::Remove { id } => {
+                        self.peers.remove(&id);
+                    }
+                    Cmd::Clear => self.peers.clear(),
+                }
+            }
+        }
+        for p in self.peers.values_mut() {
+            let n = p.ring.slots();
+            if let Ok(chunk) = p.ring.read_chunk(n) {
+                let (a, b) = chunk.as_slices();
+                p.queue.extend(a.iter().chain(b).copied());
+                chunk.commit_all();
+            }
+            if p.queue.len() > self.cap {
+                let excess = p.queue.len() - self.cap;
+                skip(&mut p.queue, excess); // oldest out, crossfaded
+            }
         }
     }
 
-    fn peer(&mut self, id: &str) -> &mut Peer {
-        self.peers.entry(id.to_string()).or_insert_with(|| Peer {
-            queue: VecDeque::new(),
-            low: usize::MAX,
-            adjust: 0,
-            held: false,
-            rebuffering: false,
-            gain: 1.0,
-            meter: Default::default(),
-        })
-    }
-
-    /// Queue received samples (mono i16). Beyond the cap, the oldest are dropped (bounded latency).
-    pub fn push(&mut self, peer: &str, samples: &[i16]) {
-        let cap = self.cap;
-        self.pushed += samples.len() as u64;
-        let p = self.peer(peer);
-        for s in samples {
-            p.meter.add(*s as f32 / i16::MAX as f32 * p.gain);
-        }
-        let q = &mut p.queue;
-        q.extend(samples.iter().copied());
-        if q.len() > cap {
-            let excess = q.len() - cap;
-            skip(q, excess);
-        }
-    }
-
-    pub fn set_gain(&mut self, peer: &str, gain: f32) {
-        self.peer(peer).gain = gain;
-    }
-
-    pub fn remove(&mut self, peer: &str) {
-        self.peers.remove(peer);
-    }
-
-    /// (peer, rms since the last call) — what each person sounded like, after their volume.
-    pub fn take_peer_levels(&mut self) -> Vec<(String, f32)> {
-        self.peers
-            .iter_mut()
-            .map(|(id, p)| (id.clone(), p.meter.take().0))
-            .collect()
-    }
-
-    /// Underrun samples since the last call.
-    pub fn take_underrun_samples(&mut self) -> u64 {
-        std::mem::take(&mut self.underrun)
-    }
-
-    pub fn pushed_total(&self) -> u64 {
-        self.pushed
-    }
-
-    /// Samples queued for the fullest peer.
-    pub fn max_buffered(&self) -> usize {
-        self.peers
-            .values()
-            .map(|p| p.queue.len())
-            .max()
-            .unwrap_or(0)
-    }
-
-    pub fn buffered(&self, peer: &str) -> usize {
+    /// Samples queued for `peer` (tests and diagnostics; takes in what arrived first).
+    pub fn buffered(&mut self, peer: &str) -> usize {
+        self.intake();
         self.peers.get(peer).map_or(0, |p| p.queue.len())
     }
 
     /// Fill interleaved `out` (`channels` per frame), one sample per peer per frame.
     pub fn mix_into(&mut self, out: &mut [f32], channels: usize, master: f32) {
+        self.intake();
+        let (mut underrun, mut adjusted) = (0u64, 0u64);
         for p in self.peers.values_mut() {
             if p.rebuffering && p.queue.len() >= self.refill {
                 p.rebuffering = false;
@@ -202,17 +348,17 @@ impl Mixer {
             let mut acc = 0.0f32;
             for p in self.peers.values_mut() {
                 if p.rebuffering {
-                    self.underrun += 1;
+                    underrun += 1;
                     continue;
                 }
                 match p.next() {
-                    Some((s, adjusted)) => {
+                    Some((s, adj)) => {
                         acc += s as f32 / i16::MAX as f32 * p.gain;
-                        self.adjusted += adjusted as u64;
+                        adjusted += adj as u64;
                     }
                     None => {
                         // ran dry: refill before playing on (one gap, not a dribble of clicks)
-                        self.underrun += 1;
+                        underrun += 1;
                         p.rebuffering = true;
                     }
                 }
@@ -229,11 +375,11 @@ impl Mixer {
                 p.judge(self.target, self.budget, self.deadband, self.cut_above);
             }
         }
-    }
-
-    /// Samples dropped or repeated (drift correction) since the last call.
-    pub fn take_adjusted_samples(&mut self) -> u64 {
-        std::mem::take(&mut self.adjusted)
+        for p in self.peers.values() {
+            p.filled.store(p.queue.len() + p.ring.slots(), Relaxed);
+        }
+        self.underrun.fetch_add(underrun, Relaxed);
+        self.adjusted.fetch_add(adjusted, Relaxed);
     }
 }
 
@@ -282,10 +428,10 @@ mod tests {
     use super::*;
 
     /// Push and pull at the same rate, as a call does once running.
-    fn steady(m: &mut Mixer, ms: usize) {
+    fn steady(input: &MixerInput, m: &mut Mixer, ms: usize) {
         let mut out = vec![0.0; 480];
         for _ in 0..ms / 10 {
-            m.push("a", &[100; 480]);
+            input.push("a", &[100; 480]);
             m.mix_into(&mut out, 1, 1.0);
         }
     }
@@ -293,9 +439,9 @@ mod tests {
     #[test]
     fn a_standing_backlog_drains_to_the_target() {
         // e.g. the output was reopened while audio kept arriving: the queue sits at the cap
-        let mut m = Mixer::new(48_000, 200);
-        m.push("a", &[100; 9600]);
-        steady(&mut m, 2500);
+        let (input, mut m) = mixer(48_000, 200);
+        input.push("a", &[100; 9600]);
+        steady(&input, &mut m, 2500);
         assert!(
             m.buffered("a") <= TARGET_MS * 48 + 480,
             "{} queued",
@@ -310,18 +456,18 @@ mod tests {
         let tone = |i: usize| {
             (10_000.0 * (i as f64 * 437.0 * std::f64::consts::TAU / 48_000.0).sin()) as i16
         };
-        let mut m = Mixer::new(48_000, 200);
+        let (input, mut m) = mixer(48_000, 200);
         let mut next = 0;
-        let mut feed = |m: &mut Mixer, n: usize| {
+        let mut feed = |input: &MixerInput, n: usize| {
             let chunk: Vec<i16> = (next..next + n).map(tone).collect();
             next += n;
-            m.push("a", &chunk);
+            input.push("a", &chunk);
         };
-        feed(&mut m, 9600); // a 200 ms standing backlog
+        feed(&input, 9600); // a 200 ms standing backlog
         let mut played = Vec::new();
         let mut out = vec![0.0; 480];
         for _ in 0..250 {
-            feed(&mut m, 480);
+            feed(&input, 480);
             m.mix_into(&mut out, 1, 1.0);
             played.extend(out.iter().map(|v| (v * i16::MAX as f32) as i32));
         }
@@ -337,19 +483,19 @@ mod tests {
     /// The speakers asked for audio a peer didn't have (yet): heard as a gap or a click.
     #[test]
     fn underruns_are_counted_per_peer_sample_missed() {
-        let mut m = Mixer::new(48_000, 200);
-        m.push("a", &[1; 240]);
+        let (input, mut m) = mixer(48_000, 200);
+        input.push("a", &[1; 240]);
         let mut out = vec![0.0; 480];
         m.mix_into(&mut out, 1, 1.0);
-        assert_eq!(m.take_underrun_samples(), 240);
-        assert_eq!(m.take_underrun_samples(), 0, "restarts after a take");
+        assert_eq!(input.take_underrun_samples(), 240);
+        assert_eq!(input.take_underrun_samples(), 0, "restarts after a take");
     }
 
     #[test]
     fn a_queue_at_the_target_is_left_alone() {
-        let mut m = Mixer::new(48_000, 200);
-        m.push("a", &[100; 480]); // 10 ms: at the target, nothing to drop or repeat
-        steady(&mut m, 3000);
+        let (input, mut m) = mixer(48_000, 200);
+        input.push("a", &[100; 480]); // 10 ms: at the target, nothing to drop or repeat
+        steady(&input, &mut m, 3000);
         assert_eq!(m.buffered("a"), 480);
     }
 
@@ -383,10 +529,10 @@ mod tests {
 
     #[test]
     fn mixes_two_peers_with_per_peer_gain() {
-        let mut m = Mixer::new(48_000, 200);
-        m.push("a", &[8192; 4]); // 0.25
-        m.push("b", &[8192; 4]);
-        m.set_gain("b", 0.0);
+        let (input, mut m) = mixer(48_000, 200);
+        input.push("a", &[8192; 4]); // 0.25
+        input.push("b", &[8192; 4]);
+        input.set_gain("b", 0.0);
         let mut out = [0.0f32; 8];
         m.mix_into(&mut out, 2, 1.0);
         for v in out {
@@ -396,8 +542,8 @@ mod tests {
 
     #[test]
     fn empty_peer_contributes_silence() {
-        let mut m = Mixer::new(48_000, 200);
-        m.push("a", &[16384; 2]);
+        let (input, mut m) = mixer(48_000, 200);
+        input.push("a", &[16384; 2]);
         let mut out = [1.0f32; 4];
         m.mix_into(&mut out, 1, 1.0);
         assert!((out[0] - 0.5).abs() < 1e-3);
@@ -405,40 +551,66 @@ mod tests {
     }
 
     #[test]
-    fn cap_drops_oldest() {
-        let mut m = Mixer::new(1000, 10); // cap = 10 samples
+    fn overflow_keeps_the_newest_audio_bounded() {
+        let (input, mut m) = mixer(1000, 10); // cap = 10 samples
         let samples: Vec<i16> = (0..25).collect();
-        m.push("a", &samples);
+        input.push("a", &samples);
         assert_eq!(m.buffered("a"), 10);
         let mut out = [0.0f32; 10];
         m.mix_into(&mut out, 1, 1.0);
-        // the oldest 15 were dropped: playback fades from where they were (0) into the newest
-        // (10 samples here, the whole queue: 0.1 x 9 + 0.9 x 24 = 22.5 at the end)
-        let at = |i: usize| out[i] * i16::MAX as f32;
-        assert!(at(0).abs() < 0.5, "{}", at(0));
-        assert!((at(9) - 22.5).abs() < 1.0, "{}", at(9));
+        // the newest 10 are kept, faded in from what was cut: last = 0.1 x 14 + 0.9 x 24 = 23
+        // (the crossfade truncates to i16, so 22.99.. plays as 22)
+        assert!(
+            (out[9] * i16::MAX as f32 - 23.0).abs() < 1.5,
+            "{}",
+            out[9] * i16::MAX as f32
+        );
     }
 
     #[test]
     fn remove_peer_drops_queue() {
-        let mut m = Mixer::new(48_000, 200);
-        m.push("a", &[1; 10]);
-        m.remove("a");
+        let (input, mut m) = mixer(48_000, 200);
+        input.push("a", &[1; 10]);
+        input.remove("a");
+        assert_eq!(m.buffered("a"), 0);
+    }
+
+    /// Receive tasks and the speakers share no lock: pushes from another thread arrive.
+    #[test]
+    fn pushes_from_another_thread_reach_the_speakers() {
+        let (input, mut m) = mixer(48_000, 200);
+        let input = std::sync::Arc::new(input);
+        let i2 = input.clone();
+        std::thread::spawn(move || i2.push("a", &[8192; 480]))
+            .join()
+            .unwrap();
+        let mut out = vec![0.0f32; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!((out[0] - 0.25).abs() < 1e-3);
+        assert_eq!(input.max_buffered(), 0, "fill is published after each pull");
+        assert_eq!(input.pushed_total(), 480);
+    }
+
+    #[test]
+    fn clear_forgets_the_last_rooms_peers() {
+        let (input, mut m) = mixer(48_000, 200);
+        input.push("a", &[100; 960]);
+        input.clear();
         assert_eq!(m.buffered("a"), 0);
     }
 
     #[test]
     fn per_peer_levels_reflect_pushed_audio() {
-        let mut m = Mixer::new(48_000, 200);
-        m.push("loud", &[16384; 480]);
-        m.push("quiet", &[0; 480]);
-        let mut levels = m.take_peer_levels();
+        let (input, _speakers) = mixer(48_000, 200);
+        input.push("loud", &[16384; 480]);
+        input.push("quiet", &[0; 480]);
+        let mut levels = input.take_peer_levels();
         levels.sort_by(|a, b| a.0.cmp(&b.0));
         assert_eq!(levels[0].0, "loud");
         assert!((levels[0].1 - 0.5).abs() < 0.01);
         assert_eq!(levels[1].1, 0.0);
         assert!(
-            m.take_peer_levels().iter().all(|(_, v)| *v == 0.0),
+            input.take_peer_levels().iter().all(|(_, v)| *v == 0.0),
             "reset after take"
         );
     }
@@ -451,7 +623,13 @@ mod tests {
 
     /// One sender, one speaker: per 10 ms pulled, the sender delivers 480 × (1 + ppm/10⁶) samples
     /// (fraction carried). Returns what played, as i16-scaled values.
-    fn drifting(m: &mut Mixer, secs: usize, ppm: f64, next: &mut usize) -> Vec<i32> {
+    fn drifting(
+        input: &MixerInput,
+        m: &mut Mixer,
+        secs: usize,
+        ppm: f64,
+        next: &mut usize,
+    ) -> Vec<i32> {
         let (mut owed, mut out, mut played) = (0.0f64, vec![0.0f32; 480], Vec::new());
         for _ in 0..secs * 100 {
             owed += 480.0 * (1.0 + ppm / 1e6);
@@ -459,7 +637,7 @@ mod tests {
             owed -= n as f64;
             let chunk: Vec<i16> = (*next..*next + n).map(tone).collect();
             *next += n;
-            m.push("a", &chunk);
+            input.push("a", &chunk);
             m.mix_into(&mut out, 1, 1.0);
             played.extend(out.iter().map(|v| (v * i16::MAX as f32) as i32));
         }
@@ -474,22 +652,22 @@ mod tests {
     /// queue must stay near the target, eased down without clicks, never trimmed in big cuts.
     #[test]
     fn a_fast_sender_is_held_near_the_target() {
-        let mut m = Mixer::new(48_000, 200);
+        let (input, mut m) = mixer(48_000, 200);
         let mut next = 0;
-        let played = drifting(&mut m, 60, 1000.0, &mut next);
+        let played = drifting(&input, &mut m, 60, 1000.0, &mut next);
         assert!(
             m.buffered("a") <= (TARGET_MS + 12) * 48,
             "queue grew to {} samples",
             m.buffered("a")
         );
-        assert_eq!(m.take_underrun_samples(), 0);
+        assert_eq!(input.take_underrun_samples(), 0);
         assert!(
             max_step(&played) < 1500,
             "a click: step of {}",
             max_step(&played)
         );
         assert!(
-            m.take_adjusted_samples() > 0,
+            input.take_adjusted_samples() > 0,
             "drift was corrected sample by sample"
         );
     }
@@ -498,12 +676,12 @@ mod tests {
     /// do, a few samples at a time, forever).
     #[test]
     fn a_slow_sender_never_underruns_once_settled() {
-        let mut m = Mixer::new(48_000, 200);
+        let (input, mut m) = mixer(48_000, 200);
         let mut next = 0;
-        drifting(&mut m, 10, -1000.0, &mut next);
-        m.take_underrun_samples();
-        let played = drifting(&mut m, 50, -1000.0, &mut next);
-        assert_eq!(m.take_underrun_samples(), 0, "ran dry while settled");
+        drifting(&input, &mut m, 10, -1000.0, &mut next);
+        input.take_underrun_samples();
+        let played = drifting(&input, &mut m, 50, -1000.0, &mut next);
+        assert_eq!(input.take_underrun_samples(), 0, "ran dry while settled");
         assert!(
             max_step(&played) < 1500,
             "a click: step of {}",
@@ -515,15 +693,15 @@ mod tests {
     /// margin where the next late frame is another gap.
     #[test]
     fn after_an_underrun_playback_resumes_with_a_cushion() {
-        let mut m = Mixer::new(48_000, 200);
+        let (input, mut m) = mixer(48_000, 200);
         let mut next = 0;
-        drifting(&mut m, 1, 0.0, &mut next);
+        drifting(&input, &mut m, 1, 0.0, &mut next);
         let mut out = vec![0.0f32; 480];
         for _ in 0..5 {
             m.mix_into(&mut out, 1, 1.0); // 50 ms with nothing arriving
         }
-        assert!(m.take_underrun_samples() > 0);
-        drifting(&mut m, 1, 0.0, &mut next);
+        assert!(input.take_underrun_samples() > 0);
+        drifting(&input, &mut m, 1, 0.0, &mut next);
         assert!(
             m.buffered("a") >= TARGET_MS * 48,
             "resumed with {} samples of margin",
@@ -534,11 +712,11 @@ mod tests {
     /// A queue a little over the target (start-up) is eased down, not cut.
     #[test]
     fn a_small_excess_is_eased_out_without_a_cut() {
-        let mut m = Mixer::new(48_000, 200);
+        let (input, mut m) = mixer(48_000, 200);
         let pre: Vec<i16> = (0..48 * 45).map(tone).collect(); // 45 ms
-        m.push("a", &pre);
+        input.push("a", &pre);
         let mut next = pre.len();
-        let played = drifting(&mut m, 3, 0.0, &mut next);
+        let played = drifting(&input, &mut m, 3, 0.0, &mut next);
         let left = m.buffered("a");
         assert!(left < 48 * 45 && left > TARGET_MS * 48, "{left} queued");
         assert!(
@@ -554,7 +732,7 @@ mod tests {
     #[test]
     fn big_device_callbacks_underrun_once_then_hold() {
         for ppm in [-100.0, 0.0, 100.0] {
-            let mut m = Mixer::new(48_000, 200);
+            let (input, mut m) = mixer(48_000, 200);
             let mut out = vec![0.0f32; 2048];
             let (mut next_push, mut next_pull) = (0.0f64, 0);
             let mut i = 0;
@@ -562,7 +740,7 @@ mod tests {
                 while next_push <= t as f64 {
                     let chunk: Vec<i16> = (i..i + 480).map(tone).collect();
                     i += 480;
-                    m.push("a", &chunk);
+                    input.push("a", &chunk);
                     next_push += 480.0 * (1.0 + ppm / 1e6);
                 }
                 if t == next_pull {
@@ -570,10 +748,14 @@ mod tests {
                     next_pull += out.len();
                 }
                 if t == 48_000 {
-                    assert!(m.take_underrun_samples() > 0, "the first pull ran dry");
+                    assert!(input.take_underrun_samples() > 0, "the first pull ran dry");
                 }
             }
-            assert_eq!(m.take_underrun_samples(), 0, "ran dry again at {ppm} ppm");
+            assert_eq!(
+                input.take_underrun_samples(),
+                0,
+                "ran dry again at {ppm} ppm"
+            );
             assert!(m.buffered("a") <= 4096, "{} queued", m.buffered("a"));
         }
     }
@@ -582,14 +764,14 @@ mod tests {
     /// by up to a frame with no drift at all: that's noise, not a reason to drop and repeat.
     #[test]
     fn big_callbacks_without_drift_are_barely_adjusted() {
-        let mut m = Mixer::new(48_000, 200);
+        let (input, mut m) = mixer(48_000, 200);
         let mut out = vec![0.0f32; 2048];
         let (mut next_push, mut next_pull, mut i) = (0, 0, 0);
         for t in 0..48_000 * 40 {
             while next_push <= t {
                 let chunk: Vec<i16> = (i..i + 480).map(tone).collect();
                 i += 480;
-                m.push("a", &chunk);
+                input.push("a", &chunk);
                 next_push += 480;
             }
             if t == next_pull {
@@ -597,12 +779,12 @@ mod tests {
                 next_pull += out.len();
             }
             if t == 48_000 * 5 {
-                m.take_adjusted_samples(); // start-up settled
-                m.take_underrun_samples();
+                input.take_adjusted_samples(); // start-up settled
+                input.take_underrun_samples();
             }
         }
-        let per_window = m.take_adjusted_samples() / (35 * 4);
+        let per_window = input.take_adjusted_samples() / (35 * 4);
         assert!(per_window < 10, "{per_window} adjusted per window");
-        assert_eq!(m.take_underrun_samples(), 0, "ran dry after start-up");
+        assert_eq!(input.take_underrun_samples(), 0, "ran dry after start-up");
     }
 }

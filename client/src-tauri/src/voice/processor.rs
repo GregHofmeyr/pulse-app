@@ -807,15 +807,10 @@ mod tests {
         assert!((out.in_level - 0.1).abs() < 1e-3 && (out.level - 0.2).abs() < 1e-3);
     }
     use crate::voice::devices::{AudioConfig, Shared};
-    use crate::voice::mixer::Mixer;
     use std::sync::{Arc, Mutex};
 
     fn shared_with(cfg: AudioConfig) -> Arc<Shared> {
-        Shared::new(
-            &cfg,
-            Default::default(),
-            Arc::new(Mutex::new(Mixer::new(48_000, 200))),
-        )
+        Shared::new(&cfg, Default::default(), 200)
     }
 
     type Seen = Arc<Mutex<Vec<(usize, Option<String>)>>>;

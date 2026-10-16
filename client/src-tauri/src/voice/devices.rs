@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use super::controls::Controls;
 use super::denoise::NsLevel;
 use super::meter::Meter;
-use super::mixer::Mixer;
+use super::mixer::{Mixer, MixerInput};
 use super::processor::RawTx;
 
 pub const STALL_AFTER: Duration = Duration::from_secs(2);
@@ -286,7 +286,15 @@ pub fn list_outputs() -> Vec<DeviceInfo> {
 pub struct Shared {
     /// The same Arc the VoiceManager holds: one source of truth for mute/deafen (no stale copies).
     pub controls: Arc<Mutex<Controls>>,
-    pub mixer: Arc<Mutex<Mixer>>,
+    /// Speaker side of the mixer: only the output callback takes it (`try_lock`; the only other
+    /// taker is a second output stream during a reopen).
+    pub mixer: Mutex<Mixer>,
+    /// Receive side: network tasks push here, lock-free towards the speakers.
+    pub mix_in: Arc<MixerInput>,
+    /// Last mute/deafen state the speaker callback saw (used when a toggle holds the lock).
+    playout_on: std::sync::atomic::AtomicBool,
+    /// Speaker callbacks that found the mixer busy and played silence (diagnostics).
+    mix_busy: AtomicU64,
     pub(crate) apm: Mutex<AudioProcessingModule>,
     /// (echo, agc) the APM was built with — rebuilt only when these change (rebuilding resets AEC).
     apm_cfg: Mutex<(bool, bool)>,
@@ -316,11 +324,16 @@ impl Shared {
     pub fn new(
         cfg: &AudioConfig,
         controls: Arc<Mutex<Controls>>,
-        mixer: Arc<Mutex<Mixer>>,
+        peer_buffer_ms: u32,
     ) -> Arc<Self> {
+        let (mix_in, mixer) = super::mixer::mixer(INTERNAL_RATE, peer_buffer_ms);
+        let playout_on = controls.lock().unwrap().playout_on();
         Arc::new(Self {
             controls,
-            mixer,
+            mixer: Mutex::new(mixer),
+            mix_in: Arc::new(mix_in),
+            playout_on: std::sync::atomic::AtomicBool::new(playout_on),
+            mix_busy: AtomicU64::new(0),
             apm: Mutex::new(AudioProcessingModule::new(
                 cfg.echo_cancel,
                 cfg.auto_gain,
@@ -347,6 +360,11 @@ impl Shared {
             mic_sink: Mutex::new(None),
             mic_queue: Default::default(),
         })
+    }
+
+    /// Speaker callbacks since the last call that found the mixer busy (played silence).
+    pub fn take_mix_busy(&self) -> u64 {
+        self.mix_busy.swap(0, Ordering::Relaxed)
     }
 
     pub fn set_mic_sink(&self, sink: Option<Box<dyn super::processor::FrameSink>>) {
@@ -402,34 +420,49 @@ impl Shared {
         self.stats
             .out_frames
             .record((out.len() / channels.max(1)) as u64);
-        let master = if self.controls.lock().unwrap().playout_on() {
-            1.0
-        } else {
-            0.0
+        // Real-time: never wait on a lock another thread may hold (a preempted holder costs a
+        // scheduler quantum, an underrun click).
+        let on = match self.controls.try_lock() {
+            Ok(c) => {
+                let on = c.playout_on();
+                self.playout_on.store(on, Ordering::Relaxed);
+                on
+            }
+            Err(_) => self.playout_on.load(Ordering::Relaxed), // a toggle in progress
         };
+        let master = if on { 1.0 } else { 0.0 };
         let ch = channels.max(1);
         let frames = out.len() / ch;
-        if rate == INTERNAL_RATE || frames == 0 {
-            self.mixer.lock().unwrap().mix_into(out, channels, master);
-        } else {
-            scratch.resize(frames, 0.0);
-            playout.fill(scratch, |buf| {
-                self.mixer.lock().unwrap().mix_into(buf, 1, master)
-            });
-            for (frame, v) in out.chunks_mut(ch).zip(scratch.iter()) {
-                frame.fill(*v);
+        match self.mixer.try_lock() {
+            Ok(mut mixer) => {
+                if rate == INTERNAL_RATE || frames == 0 {
+                    mixer.mix_into(out, channels, master);
+                } else {
+                    scratch.resize(frames, 0.0);
+                    playout.fill(scratch, |buf| mixer.mix_into(buf, 1, master));
+                    for (frame, v) in out.chunks_mut(ch).zip(scratch.iter()) {
+                        frame.fill(*v);
+                    }
+                }
+            }
+            Err(_) => {
+                out.fill(0.0);
+                self.mix_busy.fetch_add(1, Ordering::Relaxed);
             }
         }
         // Hand what we played to the echo canceller via a queue the mic processor drains: never
         // take the APM lock here (this callback is real-time; the processor can hold it for ms).
-        let mut meter = self.spk_meter.lock().unwrap();
+        // The meter is cosmetic: skip it rather than wait for the levels task.
+        let mut meter = self.spk_meter.try_lock().ok();
         let mut echo = self.echo_ref.lock().unwrap();
         if echo.rate != rate {
             echo.rate = rate;
             echo.samples.clear();
         }
         for v in downmix(out, channels) {
-            meter.add(v);
+            if let Some(m) = meter.as_mut() {
+                m.add(v);
+            }
             echo.samples.push_back(to_i16(v));
         }
         let cap = (rate / 5) as usize; // 200 ms: bounded even if nothing drains it
@@ -1162,11 +1195,7 @@ mod tests {
     /// echo canceller (a preempted processor would otherwise stutter playback).
     #[test]
     fn playback_never_waits_for_the_echo_canceller() {
-        let s = Shared::new(
-            &AudioConfig::default(),
-            Default::default(),
-            Arc::new(Mutex::new(Mixer::new(48_000, 200))),
-        );
+        let s = Shared::new(&AudioConfig::default(), Default::default(), 200);
         let held = s.apm.lock().unwrap(); // the processor is busy with it
         let s2 = s.clone();
         let (tx, rx) = std::sync::mpsc::channel();
@@ -1185,6 +1214,31 @@ mod tests {
         );
     }
 
+    /// The speaker callback is real-time: a receive task preempted mid-push, a mute toggle in
+    /// progress, or the levels task reading the meter must never make it wait.
+    #[test]
+    fn playback_never_waits_on_the_network_side() {
+        let s = Shared::new(&AudioConfig::default(), Default::default(), 200);
+        s.mix_in.push("a", &[100; 480]);
+        let held_peers = s.mix_in.peers.lock().unwrap();
+        let held_controls = s.controls.lock().unwrap();
+        let held_meter = s.spk_meter.lock().unwrap();
+        let s2 = s.clone();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut out = vec![0f32; 960]; // 10 ms stereo at 48 kHz
+            let mut playout = super::super::playout::Playout::new(48_000);
+            s2.on_output(&mut out, 2, 48_000, &mut Vec::new(), &mut playout);
+            let _ = tx.send(());
+        });
+        let done = rx.recv_timeout(Duration::from_millis(500)).is_ok();
+        drop((held_peers, held_controls, held_meter));
+        assert!(
+            done,
+            "the speaker callback blocked on a lock the network side holds"
+        );
+    }
+
     fn play(s: &Shared, ms: usize) {
         let mut playout = super::super::playout::Playout::new(48_000);
         for _ in 0..ms / 10 {
@@ -1195,11 +1249,7 @@ mod tests {
 
     #[test]
     fn echo_reference_is_fed_in_whole_10ms_chunks() {
-        let s = Shared::new(
-            &AudioConfig::default(),
-            Default::default(),
-            Arc::new(Mutex::new(Mixer::new(48_000, 200))),
-        );
+        let s = Shared::new(&AudioConfig::default(), Default::default(), 200);
         let mut playout = super::super::playout::Playout::new(48_000);
         let mut out = vec![0.1f32; 1200]; // 25 ms
         s.on_output(&mut out, 1, 48_000, &mut Vec::new(), &mut playout);
@@ -1213,11 +1263,7 @@ mod tests {
 
     #[test]
     fn echo_reference_queue_is_capped_at_200ms() {
-        let s = Shared::new(
-            &AudioConfig::default(),
-            Default::default(),
-            Arc::new(Mutex::new(Mixer::new(48_000, 200))),
-        );
+        let s = Shared::new(&AudioConfig::default(), Default::default(), 200);
         play(&s, 1000); // nothing drains it (processor stopped)
         assert_eq!(s.echo_ref.lock().unwrap().samples.len(), 9600);
     }
@@ -1245,11 +1291,7 @@ mod tests {
 
     #[test]
     fn ns_status_change_is_reported_once() {
-        let s = Shared::new(
-            &AudioConfig::default(),
-            Default::default(),
-            Arc::new(Mutex::new(Mixer::new(48_000, 200))),
-        );
+        let s = Shared::new(&AudioConfig::default(), Default::default(), 200);
         let st = NsStatus {
             active: NsLevel::Standard,
             note: Some("Strong unavailable".into()),
@@ -1267,11 +1309,7 @@ mod tests {
 
     #[test]
     fn apply_config_bumps_processor_version() {
-        let s = Shared::new(
-            &AudioConfig::default(),
-            Default::default(),
-            Arc::new(Mutex::new(Mixer::new(48_000, 200))),
-        );
+        let s = Shared::new(&AudioConfig::default(), Default::default(), 200);
         let v0 = s.proc_cfg.lock().unwrap().version;
         s.apply_config(&AudioConfig {
             noise_suppression: NsLevel::Off,
