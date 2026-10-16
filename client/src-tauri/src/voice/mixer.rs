@@ -38,6 +38,11 @@ pub const TARGET_MS: usize = 10;
 const WINDOW_MS: usize = 250;
 /// Most samples dropped or repeated per window: 0.5 % of what plays, inaudible on speech.
 const MAX_ADJUST_PER_MILLE: usize = 5;
+/// A lowest fill up to this far over the target is left alone (never dropped from): each window's
+/// low swings by up to one 10 ms push frame (sender timer jitter, big callbacks beating against
+/// the frames), and chasing that would drop and repeat back and forth with no drift at all.
+/// Below the target is still repeated straight away (the underrun side).
+const DEADBAND_MS: usize = 10;
 /// Further over the target than this (an output reopen, a stall): cut straight back, crossfaded.
 const CUT_ABOVE_MS: usize = 80;
 /// A sample this quiet (1 % of full scale, near a zero crossing) is where one is dropped or
@@ -74,6 +79,7 @@ pub struct Mixer {
     window: usize,
     /// Samples a peer may drop or repeat per window.
     budget: usize,
+    deadband: usize,
     cut_above: usize,
     /// Samples pulled since the last window was judged.
     pulled: usize,
@@ -109,6 +115,7 @@ impl Mixer {
             refill: sample_rate as usize * TARGET_MS / 1000 + sample_rate as usize / 100,
             window: sample_rate as usize * WINDOW_MS / 1000,
             budget: sample_rate as usize * WINDOW_MS / 1000 * MAX_ADJUST_PER_MILLE / 1000,
+            deadband: sample_rate as usize * DEADBAND_MS / 1000,
             cut_above: sample_rate as usize * CUT_ABOVE_MS / 1000,
             pulled: 0,
             peers: HashMap::new(),
@@ -219,7 +226,7 @@ impl Mixer {
         if self.pulled >= self.window {
             self.pulled = 0;
             for p in self.peers.values_mut() {
-                p.judge(self.target, self.budget, self.cut_above);
+                p.judge(self.target, self.budget, self.deadband, self.cut_above);
             }
         }
     }
@@ -234,12 +241,14 @@ impl Mixer {
 /// difference is corrected one quiet sample at a time while it plays.
 impl Peer {
     /// End of a window: set this window's correction from how low the queue got (samples).
-    fn judge(&mut self, target: usize, budget: usize, cut_above: usize) {
+    fn judge(&mut self, target: usize, budget: usize, deadband: usize, cut_above: usize) {
         if self.low != usize::MAX && !self.rebuffering {
             let over = self.low as i64 - target as i64;
             if over > cut_above as i64 {
                 skip(&mut self.queue, over as usize);
                 self.adjust = 0;
+            } else if (0..=deadband as i64).contains(&over) {
+                self.adjust = 0; // within a frame of the target: noise, not drift
             } else {
                 self.adjust = over.clamp(-(budget as i64), budget as i64) as i32;
             }
@@ -567,5 +576,33 @@ mod tests {
             assert_eq!(m.take_underrun_samples(), 0, "ran dry again at {ppm} ppm");
             assert!(m.buffered("a") <= 4096, "{} queued", m.buffered("a"));
         }
+    }
+
+    /// Big callbacks beat against the sender's 10 ms frames, so each window's lowest fill swings
+    /// by up to a frame with no drift at all: that's noise, not a reason to drop and repeat.
+    #[test]
+    fn big_callbacks_without_drift_are_barely_adjusted() {
+        let mut m = Mixer::new(48_000, 200);
+        let mut out = vec![0.0f32; 2048];
+        let (mut next_push, mut next_pull, mut i) = (0, 0, 0);
+        for t in 0..48_000 * 40 {
+            while next_push <= t {
+                let chunk: Vec<i16> = (i..i + 480).map(tone).collect();
+                i += 480;
+                m.push("a", &chunk);
+                next_push += 480;
+            }
+            if t == next_pull {
+                m.mix_into(&mut out, 1, 1.0);
+                next_pull += out.len();
+            }
+            if t == 48_000 * 5 {
+                m.take_adjusted_samples(); // start-up settled
+                m.take_underrun_samples();
+            }
+        }
+        let per_window = m.take_adjusted_samples() / (35 * 4);
+        assert!(per_window < 10, "{per_window} adjusted per window");
+        assert_eq!(m.take_underrun_samples(), 0, "ran dry after start-up");
     }
 }
