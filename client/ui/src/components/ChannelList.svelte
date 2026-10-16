@@ -5,6 +5,7 @@
   import { avatarColor, initial } from '../lib/avatar'
   import { api, errorText } from '../lib/tauri'
   import { isMuted } from '../lib/conversations'
+  import { voiceApi } from '../lib/voice.svelte'
 
   let {
     serverId,
@@ -84,6 +85,8 @@
     {@const people = member ? voiceOccupants(app.state, serverId, c.id) : []}
     <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId}
       data-tip={c.id === voiceChannelId ? 'You’re here' : `Join ${c.name}`}
+      onmouseenter={() => { if (member && c.id !== voiceChannelId) voiceApi.prefetch(c.id) }}
+      onfocus={() => { if (member && c.id !== voiceChannelId) voiceApi.prefetch(c.id) }}
       onclick={() => onJoinVoice(c.id)} ondblclick={() => onSelect(c.id)}>
       <span class="ico"><Icon name="speaker" size={17} /></span><span class="grow">{c.name}</span>
       {#if people.length}<span class="count">{people.length}</span>{/if}

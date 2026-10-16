@@ -16,6 +16,7 @@ pub mod rtprio;
 pub mod rx;
 pub mod speaking;
 pub mod stats;
+pub mod tokens;
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -295,6 +296,8 @@ pub struct VoiceManager {
     /// The current session's `alive` (cleared on leave or when LiveKit drops us): the truth for
     /// "in voice", readable without the session lock.
     live: Mutex<Option<Arc<AtomicBool>>>,
+    /// The join token fetched while hovering a voice channel.
+    tokens: tokens::TokenCache,
 }
 
 impl VoiceManager {
@@ -307,7 +310,19 @@ impl VoiceManager {
             volumes: Arc::new(Mutex::new(HashMap::new())),
             events,
             live: Mutex::new(None),
+            tokens: Default::default(),
         }
+    }
+
+    /// Hovering a voice channel: fetch its join token now, so a click right after doesn't wait
+    /// a round trip for it.
+    pub fn prefetch(&self, api: &Api, token: &str, channel: ChannelId) {
+        self.tokens.prefetch(api, token, channel, Instant::now());
+    }
+
+    /// Signed out: no token of this session may be used by the next.
+    pub fn forget_tokens(&self) {
+        self.tokens.clear();
     }
 
     fn emit_state(&self, channel: Option<ChannelId>, connection: Connection) {
@@ -372,7 +387,12 @@ impl VoiceManager {
         // join phases, for finding where a slow join's time goes (bug reports carry the log)
         let started = Instant::now();
         let ms = |t: Instant| t.elapsed().as_millis() as u64;
-        let vt = api.voice_token(token, channel).await?;
+        let prefetched = self.tokens.take(token, channel, Instant::now()).await;
+        let token_prefetched = prefetched.is_some();
+        let vt = match prefetched {
+            Some(vt) => vt,
+            None => api.voice_token(token, channel).await?,
+        };
         let token_ms = ms(started);
         let t = Instant::now();
 
@@ -422,6 +442,7 @@ impl VoiceManager {
         }
         tracing::info!(
             token_ms,
+            token_prefetched,
             devices_ms,
             room_connect_ms,
             publish_ms = ms(t),

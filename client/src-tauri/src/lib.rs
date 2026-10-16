@@ -152,6 +152,7 @@ pub fn run() {
             commands::delete_message,
             commands::join_voice,
             commands::leave_voice,
+            commands::prefetch_voice,
             commands::toggle_mute,
             commands::toggle_deafen,
             commands::set_peer_volume,

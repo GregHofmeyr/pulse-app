@@ -148,6 +148,7 @@ impl Core {
         }
         // Signed out: nothing from this session may keep running or be sent under the next account.
         self.outbox.clear();
+        app.state::<VoiceManager>().forget_tokens();
         app.state::<crate::voice::mictest::MicTest>().stop();
         let app = app.clone();
         tauri::async_runtime::spawn(async move { app.state::<VoiceManager>().leave().await });
@@ -494,6 +495,19 @@ pub async fn join_voice(
 #[tauri::command]
 pub async fn leave_voice(voice: State<'_, VoiceManager>) -> Result<(), VoiceError> {
     voice.leave().await;
+    Ok(())
+}
+
+/// Hovering a voice channel (a click usually follows within 150-400 ms).
+#[tauri::command]
+pub async fn prefetch_voice(
+    core: State<'_, Core>,
+    voice: State<'_, VoiceManager>,
+    channel_id: ChannelId,
+) -> Result<(), VoiceError> {
+    if let Ok((api, token)) = core.current() {
+        voice.prefetch(&api, &token, channel_id);
+    }
     Ok(())
 }
 
