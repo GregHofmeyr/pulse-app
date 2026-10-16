@@ -77,12 +77,23 @@ impl Inbound {
     }
 }
 
-/// Each stream's counters at the previous sample.
+/// A stream's counters when last seen, and how many samples in a row it has been missing since.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct Seen {
+    counters: Inbound,
+    absent: u8,
+}
+
+/// Each stream's counters at the previous sample (or the last one it was in, for a while).
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Totals {
-    inbound: HashMap<u32, Inbound>,
+    inbound: HashMap<u32, Seen>,
     packets_sent: u64,
 }
+
+/// Windows a stream may be missing from the stats before it is forgotten. Until then its last
+/// counters carry forward, so a stream that skips one snapshot doesn't count its lifetime on return.
+const MAX_ABSENT_WINDOWS: u8 = 3;
 
 /// Opus runs NetEq at 48 kHz: samples per millisecond.
 const SAMPLES_PER_MS: f64 = 48.0;
@@ -137,13 +148,25 @@ pub fn summarize(
                 out.jitter_ms = Some(out.jitter_ms.map_or(jitter, |j: f64| j.max(jitter)));
                 out.lost += r.received.packets_lost;
                 let now = Inbound::of(r);
-                window.add(&now.since(prev.inbound.get(&r.stream.ssrc)));
-                totals.inbound.insert(r.stream.ssrc, now);
+                let before = prev.inbound.get(&r.stream.ssrc).map(|s| &s.counters);
+                window.add(&now.since(before));
+                let seen = Seen {
+                    counters: now,
+                    absent: 0,
+                };
+                totals.inbound.insert(r.stream.ssrc, seen);
             }
             RtcStats::OutboundRtp(o) if o.stream.kind == "audio" => {
                 totals.packets_sent += o.sent.packets_sent;
             }
             _ => {}
+        }
+    }
+    // streams missing from this sample keep their last counters for a few windows
+    for (ssrc, seen) in &prev.inbound {
+        if seen.absent < MAX_ABSENT_WINDOWS && !totals.inbound.contains_key(ssrc) {
+            let absent = seen.absent + 1;
+            totals.inbound.insert(*ssrc, Seen { absent, ..*seen });
         }
     }
     if window.emitted > 0 {
@@ -357,6 +380,39 @@ mod tests {
         let (_, first) = summarize(&[], &[jb(1, 100.0, 50.0, 48_000)], &Totals::default());
         let (s, _) = summarize(&[], &[jb(3, 4800.0, 2400.0, 240_000)], &first);
         assert_eq!(s.buffer_ms.map(f64::round), Some(20.0));
+    }
+
+    /// A stream missing from one snapshot (stats are best-effort) and back with continuing counters
+    /// counts only what it did since it was last seen, not its whole lifetime (accel is a raw sum).
+    #[test]
+    fn a_stream_missing_from_one_snapshot_counts_only_its_delta_on_return() {
+        let at = |emitted, accel| {
+            inbound(5, |r| {
+                r.inbound.jitter_buffer_delay = emitted as f64 * 0.02;
+                r.inbound.jitter_buffer_emitted_count = emitted;
+                r.inbound.removed_samples_for_acceleration = accel;
+            })
+        };
+        // minutes in: 480 000 samples (10 s) cut by acceleration over the stream's lifetime
+        let (_, first) = summarize(&[], &[at(14_400_000, 480_000)], &Totals::default());
+        let (gap, absent) = summarize(&[], &[], &first);
+        assert_eq!(gap.accel_ms, None);
+        // back: 240 000 more samples, 2 400 more cut (50 ms)
+        let (s, _) = summarize(&[], &[at(14_640_000, 482_400)], &absent);
+        assert_eq!(s.accel_ms.map(f64::round), Some(50.0));
+        assert_eq!(s.buffer_ms.map(f64::round), Some(20.0));
+    }
+
+    /// Streams that stay gone are forgotten after a few windows (peers come and go all call long).
+    #[test]
+    fn a_stream_gone_for_several_windows_is_forgotten() {
+        let (_, mut t) = summarize(&[], &[jb(9, 1.0, 0.5, 48_000)], &Totals::default());
+        for _ in 0..MAX_ABSENT_WINDOWS {
+            t = summarize(&[], &[], &t).1;
+            assert_eq!(t.inbound.len(), 1, "still remembered");
+        }
+        t = summarize(&[], &[], &t).1;
+        assert!(t.inbound.is_empty(), "forgotten");
     }
 
     /// R5 (b)/(c): time-stretching and comfort noise per window. Is NetEq draining a standing
