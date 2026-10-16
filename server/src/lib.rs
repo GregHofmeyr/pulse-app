@@ -56,11 +56,28 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
         router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
     )
     .with_graceful_shutdown(async move {
-        let _ = tokio::signal::ctrl_c().await;
+        shutdown_signal().await;
         // Upgraded sockets aren't covered by graceful shutdown: tell clients to reconnect.
         hub.close_all(1012);
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
     })
     .await?;
     Ok(())
+}
+
+/// Ctrl-C (SIGINT) or SIGTERM, which is what `docker stop` sends. As PID 1 in its container the
+/// server gets no default action for a signal it doesn't handle, so without this SIGTERM was
+/// ignored: Docker waited 10 s, SIGKILLed it, and clients never got the 1012 close.
+async fn shutdown_signal() {
+    #[cfg(unix)]
+    {
+        use tokio::signal::unix::{SignalKind, signal};
+        let mut term = signal(SignalKind::terminate()).expect("install SIGTERM handler");
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = term.recv() => {}
+        }
+    }
+    #[cfg(not(unix))]
+    let _ = tokio::signal::ctrl_c().await;
 }

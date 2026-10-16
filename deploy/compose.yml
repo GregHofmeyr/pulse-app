@@ -12,6 +12,10 @@ services:
     image: ghcr.io/greghofmeyr/pulse-server:${PULSE_TAG:-latest}
     network_mode: host
     restart: unless-stopped
+    # The server handles SIGTERM too; SIGINT is what it has always handled (belt and braces for
+    # an older image). It closes sockets with 1012 and exits in ~0.2 s, so 5 s is plenty.
+    stop_signal: SIGINT
+    stop_grace_period: 5s
     user: "${PULSE_UID:?}:${PULSE_GID:?}"
     environment:
       PULSE_DB_URL: sqlite:///data/pulse.db
