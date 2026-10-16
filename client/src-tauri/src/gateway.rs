@@ -37,6 +37,10 @@ pub struct Tuning {
     pub healthy_after: Duration,
 }
 
+/// Frames sent right after every Ready: state the server keeps only in memory (our mute/deafen),
+/// which a server restart or a dropped offline send would otherwise lose.
+pub type AfterReady = std::sync::Arc<dyn Fn() -> Vec<ClientFrame> + Send + Sync>;
+
 impl Default for Tuning {
     fn default() -> Self {
         Self {
@@ -288,6 +292,22 @@ impl GatewayHandle {
         tx: mpsc::UnboundedSender<GatewayUpdate>,
         t: Tuning,
     ) -> Self {
+        Self::spawn_full(
+            base_url,
+            token,
+            tx,
+            t,
+            std::sync::Arc::new(Vec::<ClientFrame>::new),
+        )
+    }
+
+    pub fn spawn_full(
+        base_url: String,
+        token: String,
+        tx: mpsc::UnboundedSender<GatewayUpdate>,
+        t: Tuning,
+        after_ready: AfterReady,
+    ) -> Self {
         let (cmd, mut cmd_rx) = mpsc::unbounded_channel();
         tokio::spawn(async move {
             let url = ws_url(&base_url);
@@ -295,7 +315,7 @@ impl GatewayHandle {
             let (mut n, mut after_healthy) = (0u32, false);
             let _ = tx.send(GatewayUpdate::Connection(ConnState::Connecting));
             loop {
-                match session(&url, &token, &tx, &mut cmd_rx, &t).await {
+                match session(&url, &token, &tx, &mut cmd_rx, &t, &after_ready).await {
                     End::Stop => return,
                     End::LoggedOut => {
                         let _ = tx.send(GatewayUpdate::Connection(ConnState::LoggedOut));
@@ -359,6 +379,7 @@ async fn session(
     tx: &mpsc::UnboundedSender<GatewayUpdate>,
     cmd_rx: &mut mpsc::UnboundedReceiver<Cmd>,
     t: &Tuning,
+    after_ready: &AfterReady,
 ) -> End {
     let Ok(Ok((mut ws, _))) =
         tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(url)).await
@@ -385,6 +406,13 @@ async fn session(
             }
             let _ = tx.send(GatewayUpdate::Ready(Box::new(r)));
             let _ = tx.send(GatewayUpdate::Connection(ConnState::Connected));
+            // what the server only keeps in memory (our mute/deafen): say it again on every Ready
+            for f in after_ready() {
+                let f = serde_json::to_string(&f).expect("serialize");
+                if ws.send(Ws::text(f)).await.is_err() {
+                    return End::Retry(Went::Brief);
+                }
+            }
         }
         Ok(Frame::Closed(Some(CloseCode::Library(4001)))) => return End::LoggedOut,
         Ok(Frame::Closed(Some(CloseCode::Library(4005)))) => return End::UpdateRequired,
@@ -796,6 +824,46 @@ mod tests {
         let addr = listener.local_addr().unwrap();
         silent_server_on(listener);
         addr
+    }
+
+    async fn wait_for(ok: impl Fn() -> bool) {
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !ok() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("condition never held");
+    }
+
+    /// R6: what the server keeps only in memory (our mute/deafen) is declared again after every
+    /// Ready, so a server restart or a reconnect can't show us unmuted while we're muted.
+    #[tokio::test]
+    async fn after_ready_frames_are_sent_on_every_connect() {
+        use pulse_protocol::gateway::VoiceFlags;
+        let app = testing::spawn().await;
+        let (me, token) = testing::register(&app, "alex").await;
+        let muted = VoiceFlags {
+            muted: true,
+            deafened: false,
+        };
+        let after: AfterReady =
+            std::sync::Arc::new(move || vec![ClientFrame::VoiceState { flags: muted }]);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _gw = GatewayHandle::spawn_full(
+            format!("http://{}", app.addr),
+            token,
+            tx,
+            quick(Duration::from_secs(60)),
+            after,
+        );
+        next_ready(&mut rx).await;
+        wait_for(|| app.voice.declared(me).muted).await;
+        // a restart forgets what we declared; the reconnect must say it again
+        app.voice.set_flags(me, VoiceFlags::default());
+        app.hub.close_all(1012);
+        next_ready(&mut rx).await;
+        wait_for(|| app.voice.declared(me).muted).await;
     }
 
     fn quick(heartbeat: Duration) -> Tuning {

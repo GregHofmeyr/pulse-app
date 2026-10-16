@@ -69,7 +69,22 @@ impl Core {
             api.clone(),
             token.clone(),
         ));
-        let handle = GatewayHandle::spawn(api.base().to_string(), token, tx);
+        let declare: crate::gateway::AfterReady = {
+            let app = app.clone();
+            std::sync::Arc::new(move || {
+                // try_state: the gateway may start before voice is set up
+                app.try_state::<VoiceManager>()
+                    .map(|v| after_ready_frames(v.controls()))
+                    .unwrap_or_default()
+            })
+        };
+        let handle = GatewayHandle::spawn_full(
+            api.base().to_string(),
+            token,
+            tx,
+            crate::gateway::Tuning::default(),
+            declare,
+        );
         // Replacing an old handle drops (and stops) it.
         *self.gateway.lock().unwrap() = Some(handle);
         tauri::async_runtime::spawn(forward(app.clone(), rx));
@@ -440,6 +455,12 @@ fn flags(c: Controls) -> pulse_protocol::gateway::VoiceFlags {
     }
 }
 
+/// Sent after every gateway Ready: the server forgets declared flags on restart, and a toggle
+/// made while offline never reached it.
+fn after_ready_frames(c: Controls) -> Vec<ClientFrame> {
+    vec![ClientFrame::VoiceState { flags: flags(c) }]
+}
+
 #[tauri::command]
 pub async fn join_voice(
     app: AppHandle,
@@ -674,6 +695,24 @@ pub async fn close_conversation(
 mod tests {
     use super::*;
     use pulse_server::testing;
+
+    /// R6: after every Ready the client declares its current mute/deafen, whatever they are.
+    #[test]
+    fn after_ready_declares_the_current_flags() {
+        let mut c = Controls::default();
+        c.toggle_deafen(); // deafen implies mute
+        let frames = after_ready_frames(c);
+        assert_eq!(frames.len(), 1);
+        let json = serde_json::to_value(&frames[0]).unwrap();
+        let want = serde_json::to_value(ClientFrame::VoiceState {
+            flags: pulse_protocol::gateway::VoiceFlags {
+                muted: true,
+                deafened: true,
+            },
+        })
+        .unwrap();
+        assert_eq!(json, want);
+    }
 
     /// A server that answers every request with 503 (a proxy in front of a Pulse that's down).
     async fn always_503() -> String {
