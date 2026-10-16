@@ -462,9 +462,12 @@ impl VoiceManager {
                         totals = t;
                         // ours: worst send backlog this window, and the pipeline's counters
                         let send_ms = send_queue.take_worst();
-                        let underrun = mixer.lock().unwrap().take_underrun_samples();
+                        let (underrun, adjust) = {
+                            let mut m = mixer.lock().unwrap();
+                            (m.take_underrun_samples(), m.take_adjusted_samples())
+                        };
                         let ours = shared.stats.take(underrun * 1000 / INTERNAL_RATE as u64);
-                        tracing::info!(%line, send_ms, %ours, "voice: path");
+                        tracing::info!(%line, send_ms, adjust, %ours, "voice: path");
                     }
                 }
             }));
