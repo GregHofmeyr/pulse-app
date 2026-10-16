@@ -46,3 +46,9 @@ export function typingNames(s: AppState, serverId: string | null, channelId: str
     .filter(([user, until]) => until > now && user !== s.me?.id)
     .map(([user]) => displayName(s, serverId, user))
 }
+
+/** `prev` when `next` has the same items in the same order, else `next`: keeps a derived list's
+ * identity across events that didn't change it, so components fed with it don't re-render. */
+export function stableList<T>(prev: T[], next: T[]): T[] {
+  return prev.length === next.length && prev.every((v, i) => v === next[i]) ? prev : next
+}

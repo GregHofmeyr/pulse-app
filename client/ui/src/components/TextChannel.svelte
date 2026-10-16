@@ -8,7 +8,7 @@
   import { app, clock, ui } from '../lib/store.svelte'
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
   import { addHistory, addPending, markHistory } from '../lib/state'
-  import { displayName, typingNames } from '../lib/selectors'
+  import { displayName, stableList, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -99,7 +99,9 @@
       .map((id) => ({ id, name: app.state.people[id]?.user.username ?? '' }))
       .filter((p) => p.name)
   })
-  const mentionNames = $derived(mentionables.map((p) => p.name))
+  // Same names → same array, so an unrelated event (typing, presence) doesn't re-render every message.
+  let lastNames: string[] = []
+  const mentionNames = $derived((lastNames = stableList(lastNames, mentionables.map((p) => p.name))))
 
   // --- DM/group header ---
   const isPrivate = $derived(channel?.server_id === null)

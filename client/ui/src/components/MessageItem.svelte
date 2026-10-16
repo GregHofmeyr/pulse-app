@@ -1,6 +1,6 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
-  import { renderMarkdown } from '../lib/markdown'
+  import { renderMessage } from '../lib/markdown'
   import { avatarColor, initial } from '../lib/avatar'
   import type { Message } from '../lib/protocol/Message'
 
@@ -76,8 +76,8 @@
           <textarea bind:value={draft} onkeydown={key} rows="2" aria-label="Edit message"></textarea>
           <small class="hint">Enter to save · Esc to cancel</small>
         {:else}
-          <!-- renderMarkdown output is DOMPurify-sanitised (allow-list); the only {@html} in the app. -->
-          <div class="content">{@html renderMarkdown(message.content, mentionNames)}</div>
+          <!-- renderMessage output is DOMPurify-sanitised (allow-list, cached per message); the only {@html} in the app. -->
+          <div class="content">{@html renderMessage(message, mentionNames)}</div>
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
       </div>

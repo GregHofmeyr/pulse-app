@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest'
-import { renderMarkdown, typingThrottle } from './markdown'
+import DOMPurify from 'dompurify'
+import { describe, expect, it, vi } from 'vitest'
+import { RENDER_CACHE_MAX, renderMarkdown, renderMessage, typingThrottle } from './markdown'
 
 const XSS = [
   '<script>alert(1)</script>',
@@ -67,5 +68,42 @@ describe('mentions', () => {
   it('mention markup cannot be injected by content', () => {
     const html = renderMarkdown('<span class="mention">fake</span>', [])
     expect(html).not.toContain('<span class="mention">')
+  })
+})
+
+describe('renderMessage (cached)', () => {
+  const msg = (id: string, content: string, edited_at: string | null = null) => ({ id, content, edited_at })
+
+  it('renders each message once, however often it is shown', () => {
+    const spy = vi.spyOn(DOMPurify, 'sanitize')
+    const names = ['sam']
+    const a = renderMessage(msg('01A', 'hi **@sam**'), names)
+    const b = renderMessage(msg('01A', 'hi **@sam**'), names)
+    expect(b).toBe(a)
+    expect(spy).toHaveBeenCalledTimes(1)
+    renderMessage(msg('01A', 'hi **@sam**'), ['sam']) // equal names, new array: still cached
+    expect(spy).toHaveBeenCalledTimes(1)
+    spy.mockRestore()
+  })
+
+  it('an edit or different mentionable names render again', () => {
+    expect(renderMessage(msg('01B', 'old'))).toContain('old')
+    expect(renderMessage(msg('01B', 'new', '2026-10-16T08:00:00Z'))).toContain('new')
+    expect(renderMessage(msg('01C', '@sam'), [])).not.toContain('mention')
+    expect(renderMessage(msg('01C', '@sam'), ['sam'])).toContain('<span class="mention">@sam</span>')
+  })
+
+  it('is bounded: the least recently shown entries are evicted', () => {
+    renderMessage(msg('KEEP', 'kept'))
+    for (let i = 0; i < RENDER_CACHE_MAX; i++) {
+      renderMessage(msg(`F${i}`, 'x'))
+      if (i % 100 === 0) renderMessage(msg('KEEP', 'kept')) // shown now and then: stays
+    }
+    const spy = vi.spyOn(DOMPurify, 'sanitize')
+    renderMessage(msg('KEEP', 'kept'))
+    expect(spy).not.toHaveBeenCalled()
+    renderMessage(msg('F0', 'x'))
+    expect(spy).toHaveBeenCalledTimes(1)
+    spy.mockRestore()
   })
 })

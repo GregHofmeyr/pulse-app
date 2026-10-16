@@ -56,3 +56,14 @@ describe('selectors', () => {
     expect(typingNames(t, 'S1', 'C1', 8000)).toEqual([])
   })
 })
+
+describe('stableList', () => {
+  it('keeps the old array when nothing changed', async () => {
+    const { stableList } = await import('./selectors')
+    const a = ['sam', 'alex']
+    expect(stableList(a, ['sam', 'alex'])).toBe(a)
+    const b = ['sam']
+    expect(stableList(a, b)).toBe(b)
+    expect(stableList(a, ['alex', 'sam'])).not.toBe(a)
+  })
+})

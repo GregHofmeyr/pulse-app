@@ -2,6 +2,7 @@
 // DOMPurify allow-list. This is the ONLY string the UI may pass to {@html}.
 import DOMPurify from 'dompurify'
 import { Marked } from 'marked'
+import type { Message } from './protocol/Message'
 
 const escapeHtml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -44,6 +45,33 @@ export function renderMarkdown(src: string, mentionNames: string[] = []): string
     .trim()
   if (!mentionNames.length) return sanitized
   return withMentionPills(sanitized, new Set(mentionNames.map((n) => n.toLowerCase())))
+}
+
+/** Most rendered messages kept (a few long channels' worth); the least recently shown go first. */
+export const RENDER_CACHE_MAX = 2000
+const rendered = new Map<string, string>()
+const namesKeys = new WeakMap<string[], string>()
+
+/** `renderMarkdown` for a message, cached: a re-render (someone typing, presence, a channel
+ * revisit) reuses the HTML instead of re-running marked + DOMPurify. An edit changes `edited_at`,
+ * and a different set of mentionable names is a different entry, so neither can show stale HTML. */
+export function renderMessage(m: Pick<Message, 'id' | 'edited_at' | 'content'>, mentionNames: string[] = []): string {
+  let names = namesKeys.get(mentionNames)
+  if (names === undefined) {
+    names = mentionNames.join('\u0000')
+    namesKeys.set(mentionNames, names)
+  }
+  const key = `${m.id}\u0001${m.edited_at ?? ''}\u0001${names}`
+  const hit = rendered.get(key)
+  if (hit !== undefined) {
+    rendered.delete(key) // re-insert: Map order is the LRU order
+    rendered.set(key, hit)
+    return hit
+  }
+  const html = renderMarkdown(m.content, mentionNames)
+  rendered.set(key, html)
+  if (rendered.size > RENDER_CACHE_MAX) rendered.delete(rendered.keys().next().value!)
+  return html
 }
 
 const MENTION = /(^|[\s(])@([A-Za-z0-9_.-]{1,32})/g
