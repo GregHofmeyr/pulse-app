@@ -106,7 +106,7 @@ Setup, once:
    `R2_BUCKET=pulse-backups`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`.
 5. `just backup-now` → `backed up pulse-<time>.db.age`.
 6. `just restore-drill` → downloads the latest, decrypts it here, checks it: `integrity ok: N users, M messages`.
-   Do this now and then; an untested backup is a hope.
+   Do this now and then; an untested backup is a hope. `RCLONE_CONFIG_R2_NO_HEAD` in `backup.sh` drops rclone's post-upload check, so the drill is the integrity check of what reached R2.
 
 Restoring for real: `just restore daily/pulse-<time>.db.age`. The server stops for a few seconds; the old
 database is kept next to it as `data/pulse.db.pre-restore-<time>`.

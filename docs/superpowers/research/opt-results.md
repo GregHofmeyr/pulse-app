@@ -13,10 +13,10 @@ Before = `main` (de4b2ea). After = `optimisation-run` (c81e41c). Both built `--r
 | Join (elapsed_ms) | 2.0 s | 103 ms (83–209, n=4) | 53 ms (51–97, n=4) | |
 | room_connect_ms | 1.6 s | not logged | 45–49 ms | |
 | Channel switch | — | 100 ms (91–116, n=4), no pipeline reuse | 41 ms (32–65, n=4), `pipeline_reused=true` | |
-| NetEq buffer / target | 80–100 / 20–40 ms | 34 / 20 ms (windows with audio, median) | 30 / 27 ms | |
-| recv queue p50 | 20 ms | 0 ms (max 10) | 10 ms (max 20) | |
-| Strong ns+gate p50/max | 0.57 / 1.9 ms | 2.1 / 2.7 ms per 10 ms (both clients in one process) | 2.1 / 2.4 ms | |
-| ns attenuation / gate open | — | not logged | -7.0 dB / 0 % (tone + silence input) | |
+| NetEq buffer / target | 80–100 / 20–40 ms | 34 / 20 ms (n=23) | 30 / 27 ms (n=46) | |
+| recv queue p50 | 20 ms | 0 ms (max 10; n=23) | 10 ms (max 20; n=46) | |
+| Strong ns+gate p50/max | 0.57 / 1.9 ms | 2.1 / 2.7 ms per 10 ms (n=46) | 2.1 / 2.4 ms (n=46) | |
+| ns attenuation / gate open | — | — (field added in R4) | -7.0 dB / 0 % (n=46; silent mic input) | |
 | Linux binary / Windows installer | — / — | 94.4 MB / — | 62.1 MB / | |
 
 NetEq verdict (R5): see opt-neteq-buffer.md.
@@ -32,15 +32,20 @@ NetEq verdict (R5): see opt-neteq-buffer.md.
   Both join one voice channel, a LiveKit CLI bot loops `tone.ogg` into the room for 60 s so each client has a real
   stream to receive, then both switch to a second voice channel, wait 10 s and leave. Two runs per build (n=4
   joins and switches per build, first joins include cold start).
-- Path-line columns are medians over the 5 s windows in the first 60 s that had a stream (buffer present):
-  46 windows per build, both clients and both runs pooled.
-- `recv`: p50 of the receive queue before playout. `Strong ns+gate` is the CPU per 10 ms block; Linux, not
-  comparable to the Windows figure, and the "before" run had no `ns`/`gate` fields.
-- Underruns: before 5 of 23 windows with an `underrun` (3.0 ms/window mean); after 14 of 46 (4.6 ms/window). The
-  null "device" is a 10 ms tokio timer, not a real audio callback, so timer jitter produces them; they are not a
-  real-device result and need the Windows run to judge (see L7b's note on lowest-fill target).
-- After keeps a stream's stats for up to three windows when it disappears (R5 per-stream handling), so the
-  count of windows with buffer data is higher after than before (28 vs 17 per run) even though the bot gaps are the same.
+- Path lines: every run logs 32 `voice: path` lines (two clients, 5 s windows); 25 per run fall in the first 60 s,
+  before the switch, so 50 per build over the two runs. Only those 50 are used. Both builds had the same run length.
+  - Columns buffer / target / recv use the windows that had a stream (buffer present): before 23 (12 + 11), after 46
+    (23 + 23). Before has fewer because the stats dropped a stream's values the window it vanished (bot gaps); after
+    keeps them for up to three windows (R5), so its windows during bot gaps carry the last values. Medians are
+    over those 23 and 46.
+  - Underruns, same windows: before 5 of 23 windows (70 ms total, 3.0 ms/window), after 14 of 46 (213 ms total,
+    4.6 ms/window). The null "device" is a 10 ms tokio timer, not a real audio callback, so timer jitter produces
+    them; not a real-device result, to be judged on Windows (see L7b's note on lowest-fill target).
+  - `Strong ns+gate` is the `cpu ... ns+gate Nus` field, present on main too: mean CPU per 10 ms block. p50/max are
+    over the 46 windows per build with a value above 500 us (all 46 pre-switch windows of each build); Linux,
+    both clients in one process, so not comparable with the Windows figure.
+  - `ns attenuation / gate open` (R4) did not exist on main: "-" before. After: median over the 46 pre-switch windows
+    with the field, input is silence, so 0 % gate and a few dB are not meaningful.
 - Not measured: the `tc netem` run (RTT 80 ms each way). It needs sudo and is pending the owner. Join at a
   160 ms RTT, the headline 2.0 s to about 1.0–1.2 s, is therefore not yet verified.
 
