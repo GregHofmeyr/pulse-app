@@ -1124,6 +1124,17 @@ impl AudioIo {
         first_err.map_or(Ok(()), Err)
     }
 
+    /// Stop both sides and wait (up to 1 s each) until they're really closed. Dropping only asks;
+    /// use this when the same devices are about to be opened again.
+    pub fn close(mut self) {
+        for half in [self.input.take(), self.output.take()]
+            .into_iter()
+            .flatten()
+        {
+            half.close();
+        }
+    }
+
     /// Nothing open yet (`reopen` fills in the sides).
     pub fn empty(shared: Arc<Shared>, raw_tx: RawTx) -> Self {
         Self {
@@ -1780,6 +1791,47 @@ mod tests {
         assert!((input_gain(250) - 2.5).abs() < 1e-6);
         assert!((input_gain(10) - 0.5).abs() < 1e-6, "clamped to 50%");
         assert!((input_gain(900) - 4.0).abs() < 1e-6, "clamped to 400%");
+    }
+
+    /// A rejoin reopens the same devices right after tearing down: `close` must not return until
+    /// the old streams are really gone (a Bluetooth headset can't be open twice).
+    #[test]
+    fn close_waits_until_the_streams_are_really_gone() {
+        use std::sync::atomic::AtomicBool;
+        struct SlowStream(Arc<AtomicBool>);
+        impl Drop for SlowStream {
+            fn drop(&mut self) {
+                std::thread::sleep(Duration::from_millis(200)); // a driver taking its time
+                self.0.store(true, Ordering::SeqCst);
+            }
+        }
+        let gone = Arc::new(AtomicBool::new(false));
+        let g = gone.clone();
+        let half = Parked::spawn("test-half", Duration::from_secs(1), move || {
+            Ok((
+                SlowStream(g),
+                HalfInfo {
+                    rate: 48_000,
+                    name: "test".into(),
+                    generation: 0,
+                },
+            ))
+        })
+        .unwrap();
+        let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
+        let shared = Shared::new(&AudioConfig::default(), Default::default(), 200);
+        let io = AudioIo {
+            input: Some(half),
+            output: None,
+            null: None,
+            shared,
+            raw_tx,
+        };
+        io.close();
+        assert!(
+            gone.load(Ordering::SeqCst),
+            "returned before the stream closed"
+        );
     }
 }
 

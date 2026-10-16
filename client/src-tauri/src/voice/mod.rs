@@ -11,6 +11,7 @@ pub mod mixer;
 pub mod netstats;
 pub mod playout;
 pub mod processor;
+pub mod rejoin;
 pub mod resampler;
 pub mod rtprio;
 pub mod rx;
@@ -31,6 +32,7 @@ use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
 use livekit::webrtc::audio_stream::native::NativeAudioStream;
 use pulse_protocol::ids::ChannelId;
 use serde::Serialize;
+use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
 
 use crate::api::{Api, ApiError};
@@ -65,6 +67,8 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(1);
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(15);
 const PUBLISH_TIMEOUT: Duration = Duration::from_secs(10);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How long a teardown waits for a device reopen in flight: `open_half`'s own 5 s limit plus a close.
+const SETTLE_WAIT: Duration = Duration::from_secs(6);
 
 /// Opening devices blocks (cpal + a possibly-flapping Bluetooth headset): never on an async worker.
 async fn start_audio(
@@ -125,18 +129,34 @@ impl Reopener {
             Ok(r) => r,
             Err(e) => (None, Err(anyhow::anyhow!("audio thread: {e}"))),
         };
-        if let Some(io) = io
-            && self.alive.load(Ordering::SeqCst)
-        {
-            tracing::info!(?sides, "voice: devices reopened");
-            self.shared.watchdog.rearm(Instant::now());
-            self.failed
-                .lock()
-                .unwrap()
-                .record(sides, &targets, &io.opened(), Instant::now());
-            *self.io.lock().unwrap() = Some(io);
+        match io {
+            Some(io) if self.alive.load(Ordering::SeqCst) => {
+                tracing::info!(?sides, "voice: devices reopened");
+                self.shared.watchdog.rearm(Instant::now());
+                self.failed
+                    .lock()
+                    .unwrap()
+                    .record(sides, &targets, &io.opened(), Instant::now());
+                *self.io.lock().unwrap() = Some(io);
+            }
+            // the session ended meanwhile: really close (a rejoin may open the same device next)
+            Some(io) => {
+                let _ = tokio::task::spawn_blocking(move || io.close()).await;
+            }
+            None => {}
         }
         result.map_err(|e| VoiceError::Device(e.to_string()))
+    }
+
+    /// Wait (bounded) until no reopen is in flight. Call after clearing `alive`: a reopen that
+    /// finishes now closes what it opened instead of keeping it.
+    async fn settle(&self) {
+        if tokio::time::timeout(SETTLE_WAIT, self.one_at_a_time.lock())
+            .await
+            .is_err()
+        {
+            tracing::warn!("voice: a device reopen is still running; going ahead");
+        }
     }
 
     /// Whether the devices should change (and why): the system default moved, or a chosen device
@@ -281,6 +301,24 @@ impl Drop for Session {
     }
 }
 
+/// The user's last join, kept so a dropped call can be rejoined with the same settings.
+#[derive(Clone)]
+struct JoinArgs {
+    api: Api,
+    token: String,
+    channel: ChannelId,
+    cfg: AudioConfig,
+    mode: AudioMode,
+}
+
+/// How a rejoin ended.
+enum Rejoined {
+    Yes,
+    /// The user left or joined something else meanwhile: their action reported its own state.
+    Superseded,
+    GaveUp,
+}
+
 pub struct VoiceManager {
     /// Serialises join/leave: two fast clicks can't leave a ghost connection behind.
     op: tokio::sync::Mutex<()>,
@@ -298,6 +336,17 @@ pub struct VoiceManager {
     live: Mutex<Option<Arc<AtomicBool>>>,
     /// The join token fetched while hovering a voice channel.
     tokens: tokens::TokenCache,
+    /// Bumped by every user join/leave: a rejoin for an older one stands down.
+    epoch: std::sync::atomic::AtomicU64,
+    /// What the user last joined (the rejoin target); cleared on Leave.
+    last_join: Mutex<Option<JoinArgs>>,
+    /// Calls LiveKit dropped for good → `run_rejoins` (None until that loop runs: no rejoins).
+    dropped_tx: Mutex<Option<mpsc::UnboundedSender<u64>>>,
+    /// The channel being rejoined right now (the UI shows "reconnecting" for it).
+    rejoining: Mutex<Option<ChannelId>>,
+    rejoin_count: std::sync::atomic::AtomicU32,
+    /// Scales the rejoin backoff (1 s in production; small in tests).
+    rejoin_unit: Duration,
 }
 
 impl VoiceManager {
@@ -311,6 +360,12 @@ impl VoiceManager {
             events,
             live: Mutex::new(None),
             tokens: Default::default(),
+            epoch: Default::default(),
+            last_join: Mutex::new(None),
+            dropped_tx: Mutex::new(None),
+            rejoining: Mutex::new(None),
+            rejoin_count: Default::default(),
+            rejoin_unit: Duration::from_secs(1),
         }
     }
 
@@ -342,15 +397,46 @@ impl VoiceManager {
         cfg: AudioConfig,
         mode: AudioMode,
     ) -> Result<(), VoiceError> {
+        // the user's choice: supersedes any rejoin in progress
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        *self.last_join.lock().unwrap() = Some(JoinArgs {
+            api: api.clone(),
+            token: token.to_string(),
+            channel,
+            cfg: cfg.clone(),
+            mode,
+        });
+        self.join_inner(api, token, channel, cfg, mode, None).await
+    }
+
+    /// `rejoin_of`: Some(epoch) for an automatic rejoin. It stands down if the user acted since,
+    /// and it reports "reconnecting" instead of "connecting"/"disconnected".
+    async fn join_inner(
+        &self,
+        api: &Api,
+        token: &str,
+        channel: ChannelId,
+        cfg: AudioConfig,
+        mode: AudioMode,
+        rejoin_of: Option<u64>,
+    ) -> Result<(), VoiceError> {
         let (cancel_tx, cancel_rx) = tokio::sync::oneshot::channel();
         // a newer join supersedes an older pending one
         if let Some(old) = self.pending_join.lock().unwrap().replace(cancel_tx) {
             let _ = old.send(());
         }
         let _op = self.op.lock().await;
-        self.leave_locked().await;
-        tracing::info!(%channel, "voice: joining");
-        self.emit_state(Some(channel), Connection::Connecting);
+        if rejoin_of.is_some_and(|e| e != self.epoch.load(Ordering::SeqCst)) {
+            return Err(VoiceError::Cancelled); // the user left or switched while we waited
+        }
+        self.leave_locked(rejoin_of.is_none()).await;
+        tracing::info!(%channel, rejoin = rejoin_of.is_some(), "voice: joining");
+        let trying = if rejoin_of.is_some() {
+            Connection::Reconnecting
+        } else {
+            Connection::Connecting
+        };
+        self.emit_state(Some(channel), trying);
         let started = Instant::now();
         let outcome = tokio::select! {
             r = self.connect(api, token, channel, cfg, mode) => r,
@@ -370,10 +456,104 @@ impl VoiceManager {
                 Ok(())
             }
             Err(e) => {
-                self.emit_state(None, Connection::Disconnected);
+                if rejoin_of.is_none() {
+                    self.emit_state(None, Connection::Disconnected);
+                }
                 Err(e)
             }
         }
+    }
+
+    /// Brings voice back after LiveKit gives up: rejoins the same channel with backoff until it
+    /// works, the user leaves or switches, or `rejoin::MAX_ATTEMPTS` fail. Runs for the app's life.
+    pub async fn run_rejoins(&self) {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        *self.dropped_tx.lock().unwrap() = Some(tx);
+        while let Some(epoch) = rx.recv().await {
+            self.rejoin(epoch).await;
+        }
+    }
+
+    async fn rejoin(&self, epoch: u64) {
+        let Some(channel) = self
+            .last_join
+            .lock()
+            .unwrap()
+            .as_ref()
+            .filter(|_| self.epoch.load(Ordering::SeqCst) == epoch)
+            .map(|a| a.channel)
+        else {
+            return;
+        };
+        *self.rejoining.lock().unwrap() = Some(channel);
+        let outcome = self.rejoin_attempts(epoch).await;
+        *self.rejoining.lock().unwrap() = None;
+        if let Rejoined::GaveUp = outcome {
+            tracing::warn!(%channel, "voice: couldn't rejoin; giving up");
+            self.emit_state(None, Connection::Disconnected);
+        }
+    }
+
+    async fn rejoin_attempts(&self, epoch: u64) -> Rejoined {
+        for attempt in 0..rejoin::MAX_ATTEMPTS {
+            let wait = rejoin::delay(attempt, rand::random::<f64>())
+                .mul_f64(self.rejoin_unit.as_secs_f64());
+            tokio::time::sleep(wait).await;
+            let args = self.last_join.lock().unwrap().clone();
+            let Some(a) = args.filter(|_| self.epoch.load(Ordering::SeqCst) == epoch) else {
+                return Rejoined::Superseded;
+            };
+            self.rejoin_count.fetch_add(1, Ordering::Relaxed);
+            tracing::info!(attempt, channel = %a.channel, "voice: rejoining (connection lost)");
+            match self
+                .join_inner(
+                    &a.api,
+                    &a.token,
+                    a.channel,
+                    a.cfg.clone(),
+                    a.mode,
+                    Some(epoch),
+                )
+                .await
+            {
+                Ok(()) => return Rejoined::Yes,
+                Err(VoiceError::Cancelled) => return Rejoined::Superseded,
+                Err(VoiceError::Api(ApiError::Unauthorized)) => return Rejoined::GaveUp,
+                Err(e) => tracing::warn!(attempt, error = %e, "voice: rejoin failed"),
+            }
+        }
+        Rejoined::GaveUp
+    }
+
+    /// Rejoin attempts so far (diagnostics).
+    pub fn rejoins(&self) -> u32 {
+        self.rejoin_count.load(Ordering::Relaxed)
+    }
+
+    /// The channel being rejoined right now, if any.
+    pub fn rejoining(&self) -> Option<ChannelId> {
+        *self.rejoining.lock().unwrap()
+    }
+
+    /// Tests: act as if LiveKit just gave up on a call in `channel` the user had joined.
+    #[cfg(test)]
+    async fn simulate_drop(&self, api: &Api, token: &str, channel: ChannelId) {
+        let epoch = self.epoch.fetch_add(1, Ordering::SeqCst) + 1;
+        *self.last_join.lock().unwrap() = Some(JoinArgs {
+            api: api.clone(),
+            token: token.into(),
+            channel,
+            cfg: AudioConfig::default(),
+            mode: AudioMode::Null(48_000),
+        });
+        let tx = loop {
+            if let Some(tx) = self.dropped_tx.lock().unwrap().clone() {
+                break tx;
+            }
+            tokio::time::sleep(Duration::from_millis(1)).await;
+        };
+        self.emit_state(Some(channel), Connection::Reconnecting);
+        tx.send(epoch).unwrap();
     }
 
     async fn connect(
@@ -487,6 +667,11 @@ impl VoiceManager {
         let io = Arc::new(Mutex::new(Some(io)));
         let alive = Arc::new(AtomicBool::new(true));
 
+        // a drop LiveKit gives up on is handed to the rejoin loop (if it runs) under this join's epoch
+        let (epoch, dropped) = (
+            self.epoch.load(Ordering::SeqCst),
+            self.dropped_tx.lock().unwrap().clone(),
+        );
         // room events: subscriptions (FINDINGS rule 1), speaking, quality, connection state
         {
             let (rx, mix_in, volumes, events) = (
@@ -570,12 +755,19 @@ impl VoiceManager {
                         }
                         RoomEvent::Disconnected { reason } => {
                             tracing::warn!(?reason, "voice disconnected by LiveKit");
-                            // Gone for good: stop the mic/speakers and mark the session dead.
-                            alive.store(false, Ordering::SeqCst);
+                            // Gone: stop the mic/speakers and mark the session dead.
+                            let was_alive = alive.swap(false, Ordering::SeqCst);
                             shared.set_mic_sink(None);
                             io.lock().unwrap().take();
                             rx.lock().unwrap().clear();
-                            events(state(Connection::Disconnected, None));
+                            let handed_over = was_alive
+                                && rejoin::worth_rejoining(reason)
+                                && dropped.as_ref().is_some_and(|d| d.send(epoch).is_ok());
+                            if handed_over {
+                                events(state(Connection::Reconnecting, Some(channel)));
+                            } else {
+                                events(state(Connection::Disconnected, None));
+                            }
                             break;
                         }
                         _ => {}
@@ -703,33 +895,53 @@ impl VoiceManager {
     }
 
     pub async fn leave(&self) {
+        // the user's choice: a rejoin in progress stands down
+        self.epoch.fetch_add(1, Ordering::SeqCst);
+        let was_joined = self.last_join.lock().unwrap().take().is_some();
         // Cancel a join that's still connecting first, so we never queue behind it.
         if let Some(cancel) = self.pending_join.lock().unwrap().take() {
             tracing::info!("voice: leave cancels an in-flight join");
             let _ = cancel.send(());
         }
         let _op = self.op.lock().await;
-        self.leave_locked().await;
-    }
-
-    async fn leave_locked(&self) {
-        let s = self.session.lock().await.take();
-        if let Some(s) = s {
-            tracing::info!("voice: leaving");
-            // first: a reopen in flight must not open devices for a session that's gone
-            s.alive.store(false, Ordering::SeqCst);
-            s.shared.set_mic_sink(None);
-            if tokio::time::timeout(CLOSE_TIMEOUT, s.room.close())
-                .await
-                .is_err()
-            {
-                tracing::warn!("voice: room close timed out; dropping it");
-            }
-            s.rx.lock().unwrap().clear();
-            s.io.lock().unwrap().take();
-            drop(s);
+        if !self.leave_locked(true).await && was_joined {
+            // nothing to tear down (a rejoin was between attempts): still say we're out
             self.emit_state(None, Connection::Disconnected);
         }
+    }
+
+    /// Tear down the session, if any (true if there was one). `announce`: tell the UI
+    /// "disconnected" (a rejoin replaces the dead session without saying so).
+    async fn leave_locked(&self, announce: bool) -> bool {
+        let Some(s) = self.session.lock().await.take() else {
+            return false;
+        };
+        tracing::info!("voice: leaving");
+        // first: a reopen in flight must not open devices for a session that's gone
+        s.alive.store(false, Ordering::SeqCst);
+        s.shared.set_mic_sink(None);
+        s.reopener.settle().await;
+        if tokio::time::timeout(CLOSE_TIMEOUT, s.room.close())
+            .await
+            .is_err()
+        {
+            tracing::warn!("voice: room close timed out; dropping it");
+        }
+        s.rx.lock().unwrap().clear();
+        let io = s.io.lock().unwrap().take();
+        if let Some(io) = io {
+            if announce {
+                drop(io); // the user's Leave: don't wait on the devices
+            } else {
+                // a rejoin opens the same devices next: wait until these are really closed
+                let _ = tokio::task::spawn_blocking(move || io.close()).await;
+            }
+        }
+        drop(s);
+        if announce {
+            self.emit_state(None, Connection::Disconnected);
+        }
+        true
     }
 
     /// Whether we're in a voice channel right now (no lock waits: safe from any thread).
@@ -780,14 +992,13 @@ impl VoiceManager {
             *c
         };
         // The audio callbacks share `controls`, so this already took effect; just tell the UI.
-        let channel = self.current_channel().await;
-        let connection = if channel.is_some() {
-            Connection::Connected
-        } else {
-            Connection::Disconnected
+        let (channel_id, connection) = match (self.current_channel().await, self.rejoining()) {
+            (Some(c), _) => (Some(c), Connection::Connected),
+            (None, Some(c)) => (Some(c), Connection::Reconnecting),
+            (None, None) => (None, Connection::Disconnected),
         };
         (self.events)(VoiceEvent::State {
-            channel_id: channel,
+            channel_id,
             connection,
             controls: c,
         });
@@ -818,6 +1029,10 @@ impl VoiceManager {
 
     /// Apply new device/processing settings: processing changes live; device changes reopen the streams.
     pub async fn set_audio_config(&self, cfg: AudioConfig) -> Result<(), VoiceError> {
+        // a rejoin uses the newest settings
+        if let Some(a) = self.last_join.lock().unwrap().as_mut() {
+            a.cfg = cfg.clone();
+        }
         let guard = self.session.lock().await;
         let Some(s) = guard.as_ref() else {
             return Ok(());
@@ -1034,5 +1249,140 @@ mod tests {
             _ => None,
         });
         assert_eq!(last, Some(Connection::Disconnected));
+    }
+
+    async fn states_of(seen: &Mutex<Vec<VoiceEvent>>) -> Vec<(Option<ChannelId>, Connection)> {
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                VoiceEvent::State {
+                    channel_id,
+                    connection,
+                    ..
+                } => Some((*channel_id, *connection)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A4: LiveKit gave up → voice rejoins by itself, says "reconnecting" for that channel the
+    /// whole time (no "disconnected" flash), and gives up after MAX_ATTEMPTS. A text channel makes
+    /// every attempt fail fast at the token step (no LiveKit needed).
+    #[tokio::test]
+    async fn a_dropped_call_is_rejoined_then_given_up_on() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let general = testing::general(&app, &token, s.id).await;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let mut vm = VoiceManager::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
+        vm.rejoin_unit = Duration::from_millis(5);
+        let vm = Arc::new(vm);
+        let runner = {
+            let vm = vm.clone();
+            tokio::spawn(async move { vm.run_rejoins().await })
+        };
+        let api = Api::new(&format!("http://{}", app.addr));
+        vm.simulate_drop(&api, &token, general.id).await;
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while vm.rejoins() < rejoin::MAX_ATTEMPTS || vm.rejoining().is_some() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("rejoin never finished");
+        let states = states_of(&seen).await;
+        let (last, before) = states.split_last().unwrap();
+        assert_eq!(
+            *last,
+            (None, Connection::Disconnected),
+            "gave up: {states:?}"
+        );
+        assert!(
+            before
+                .iter()
+                .all(|s| *s == (Some(general.id), Connection::Reconnecting)),
+            "{states:?}"
+        );
+        assert_eq!(vm.rejoins(), rejoin::MAX_ATTEMPTS);
+        runner.abort();
+    }
+
+    /// A4: the user's Leave wins over a rejoin in progress, at once and for good.
+    #[tokio::test]
+    async fn leaving_stops_a_rejoin() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let general = testing::general(&app, &token, s.id).await;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let mut vm = VoiceManager::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
+        vm.rejoin_unit = Duration::from_millis(50);
+        let vm = Arc::new(vm);
+        let runner = {
+            let vm = vm.clone();
+            tokio::spawn(async move { vm.run_rejoins().await })
+        };
+        let api = Api::new(&format!("http://{}", app.addr));
+        vm.simulate_drop(&api, &token, general.id).await;
+        tokio::time::timeout(Duration::from_secs(3), async {
+            while vm.rejoins() < 1 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("no rejoin attempt");
+        vm.leave().await;
+        let n = vm.rejoins();
+        tokio::time::sleep(Duration::from_millis(400)).await;
+        assert_eq!(vm.rejoins(), n, "kept rejoining after Leave");
+        assert_eq!(vm.rejoining(), None);
+        assert_eq!(
+            states_of(&seen).await.last(),
+            Some(&(None, Connection::Disconnected))
+        );
+        runner.abort();
+    }
+
+    fn idle_reopener() -> Arc<Reopener> {
+        let cfg = AudioConfig::default();
+        let shared = Shared::new(&cfg, Default::default(), PEER_BUFFER_MS);
+        let (raw_tx, _raw_rx) = std::sync::mpsc::channel();
+        Arc::new(Reopener {
+            cfg: Arc::new(Mutex::new(cfg)),
+            io: Arc::new(Mutex::new(None)),
+            shared,
+            raw_tx,
+            alive: Arc::new(AtomicBool::new(false)),
+            one_at_a_time: tokio::sync::Mutex::new(()),
+            failed: Default::default(),
+            count: Default::default(),
+        })
+    }
+
+    /// A rejoin's teardown waits for a device reopen that's still running, so it doesn't open
+    /// the same (Bluetooth) device while the reopen still holds it.
+    #[tokio::test]
+    async fn teardown_waits_for_a_device_reopen_in_flight() {
+        let r = idle_reopener();
+        let held = {
+            let r = r.clone();
+            tokio::spawn(async move {
+                let _turn = r.one_at_a_time.lock().await; // a reopen in flight
+                tokio::time::sleep(Duration::from_millis(300)).await;
+            })
+        };
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        let t = Instant::now();
+        r.settle().await;
+        assert!(
+            t.elapsed() >= Duration::from_millis(250),
+            "{:?}",
+            t.elapsed()
+        );
+        held.await.unwrap();
     }
 }

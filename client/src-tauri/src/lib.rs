@@ -115,6 +115,11 @@ pub fn run() {
                     let _ = handle.emit("voice://event", &e);
                 },
             )));
+            // voice comes back by itself after LiveKit gives up reconnecting
+            let h = app.handle().clone();
+            tauri::async_runtime::spawn(async move {
+                h.state::<voice::VoiceManager>().run_rejoins().await
+            });
             // A stored login connects now, while the webview boots: Ready no longer waits for
             // the UI and a separate /me round trip. (Keychain reads block: not on the UI thread.)
             let h = app.handle().clone();
