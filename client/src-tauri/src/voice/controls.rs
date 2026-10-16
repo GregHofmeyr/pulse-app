@@ -63,6 +63,12 @@ impl Controls {
     pub fn meters_shown(&self) -> bool {
         self.meter_views > 0
     }
+
+    /// The mic chain has to clean audio: it goes out, or the meter shows the cleaned level.
+    /// Muted with no meter on screen, the denoiser can idle.
+    pub fn denoise_needed(&self) -> bool {
+        self.mic_open() || self.meters_shown()
+    }
 }
 
 #[cfg(test)]
@@ -99,6 +105,19 @@ mod tests {
             !c.meters_shown(),
             "the new page's open/close pair balances again"
         );
+    }
+
+    #[test]
+    fn denoiser_idles_only_when_muted_and_unwatched() {
+        let mut c = Controls::default();
+        assert!(c.denoise_needed(), "talking");
+        c.toggle_mute();
+        assert!(!c.denoise_needed(), "muted, nobody looking");
+        c.watch_meters(true);
+        assert!(c.denoise_needed(), "muted but the meter is open");
+        c.watch_meters(false);
+        c.toggle_deafen();
+        assert!(!c.denoise_needed(), "deafened (implies muted)");
     }
 
     #[test]

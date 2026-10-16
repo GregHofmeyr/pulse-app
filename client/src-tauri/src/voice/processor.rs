@@ -71,12 +71,20 @@ fn rms(b: &[f32]) -> f32 {
     (b.iter().map(|v| v * v).sum::<f32>() / b.len().max(1) as f32).sqrt()
 }
 
+/// Blocks kept while the denoiser idles (muted, no meter open), replayed into it on waking so its
+/// look-back holds the last 80 ms of real audio, not what came just before the mute (that would
+/// leak out as a blip on unmute). DeepFilterNet looks back df_order + lookahead = 7 hops; 8 covers it.
+const PRIME_BLOCKS: usize = 8;
+
 /// One block's journey after APM: denoise → gain (soft-limited) → gate → mute.
 pub struct MicChain {
     level: NsLevel,
     denoiser: Box<dyn Denoiser>,
     gate: VoiceGate,
     gain: f32,
+    /// The latest blocks seen while idle, oldest first (at most PRIME_BLOCKS).
+    recent: VecDeque<Vec<f32>>,
+    idle: bool,
 }
 
 impl MicChain {
@@ -86,6 +94,8 @@ impl MicChain {
             denoiser: make_fast(level),
             gate: VoiceGate::new(auto, threshold),
             gain,
+            recent: VecDeque::with_capacity(PRIME_BLOCKS),
+            idle: false,
         }
     }
 
@@ -107,7 +117,40 @@ impl MicChain {
         self.gain = gain;
     }
 
+    /// Muted with no meter on screen: send silence (as a muted `process` does) without running the
+    /// denoiser, and remember the block for waking up. Like a muted block, nothing is judged and
+    /// nothing counts toward the path line's suppression figure.
+    pub fn idle(&mut self, block: &mut [f32]) -> BlockOut {
+        let in_level = rms(block);
+        let mut kept = if self.recent.len() == PRIME_BLOCKS {
+            self.recent.pop_front().unwrap_or_default()
+        } else {
+            Vec::with_capacity(block.len())
+        };
+        kept.clear();
+        kept.extend_from_slice(block);
+        self.recent.push_back(kept);
+        self.idle = true;
+        self.gate.reset();
+        block.fill(0.0);
+        BlockOut {
+            level: 0.0,
+            sent: false,
+            ns_in: 0.0,
+            ns_out: 0.0,
+            judged: false,
+            in_level,
+        }
+    }
+
     pub fn process(&mut self, block: &mut [f32], mic_open: bool, now: Instant) -> BlockOut {
+        if self.idle {
+            // Back from idle: bring the denoiser's state up to date (output discarded) first.
+            self.idle = false;
+            for mut b in std::mem::take(&mut self.recent) {
+                self.denoiser.process(&mut b);
+            }
+        }
         let energy = |b: &[f32]| b.iter().map(|v| v * v).sum::<f32>();
         let ns_in = energy(block);
         let in_level = (ns_in / block.len().max(1) as f32).sqrt();
@@ -516,7 +559,23 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
                 *d = *v as f32 / 32767.0;
             }
 
-            let mic_open = shared.controls.lock().unwrap().mic_open();
+            let (mic_open, denoise) = {
+                let c = shared.controls.lock().unwrap();
+                (c.mic_open(), c.denoise_needed())
+            };
+            if !denoise {
+                // Muted, no meter on screen: skip the denoiser (Strong is most of a call's CPU).
+                // APM above keeps running, so echo cancellation is still converged on unmute.
+                // Silence still goes out every 10 ms: a send gap would grow listeners' jitter buffers.
+                let out = chain.idle(&mut block);
+                shared
+                    .stats
+                    .record_mic_block(out.ns_in, out.ns_out, out.judged, out.sent);
+                shared.add_mic_level(out.level, out.sent);
+                i16buf.fill(0);
+                deliver(&shared, &mut gap, &i16buf);
+                continue;
+            }
             let t = Instant::now();
             let out = chain.process(&mut block, mic_open, t);
             shared.stats.chain.record(t.elapsed());
@@ -553,6 +612,8 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
 mod tests {
     use super::*;
     use crate::voice::denoise::{Denoiser, FRAME, NsLevel};
+    use std::cell::RefCell;
+    use std::rc::Rc;
     use std::time::{Duration, Instant};
 
     #[test]
@@ -671,6 +732,99 @@ mod tests {
                 "block {k} leaked after mute"
             );
         }
+    }
+
+    /// Records the first sample of every block it is given and of every block it hands back.
+    /// With `delay`, it returns the previous block, like a real denoiser's look-back buffers.
+    struct Spy {
+        seen: Rc<RefCell<Vec<f32>>>,
+        emitted: Rc<RefCell<Vec<f32>>>,
+        delay: Option<Vec<f32>>,
+    }
+    impl Denoiser for Spy {
+        fn process(&mut self, block: &mut [f32]) -> Option<f32> {
+            self.seen.borrow_mut().push(block[0]);
+            if let Some(prev) = self.delay.as_mut() {
+                let input = block.to_vec();
+                block.copy_from_slice(prev);
+                *prev = input;
+            }
+            self.emitted.borrow_mut().push(block[0]);
+            Some(1.0)
+        }
+    }
+    type Log = Rc<RefCell<Vec<f32>>>;
+    fn spy(delay: bool) -> (Box<Spy>, Log, Log) {
+        let (seen, emitted) = (Log::default(), Log::default());
+        let d = Spy {
+            seen: seen.clone(),
+            emitted: emitted.clone(),
+            delay: delay.then(|| vec![0.0; FRAME]),
+        };
+        (Box::new(d), seen, emitted)
+    }
+
+    #[test]
+    fn idle_skips_the_denoiser_and_sends_silence() {
+        let (d, seen, _) = spy(false);
+        let mut c = MicChain::new(NsLevel::Off, false, 0.0, 1.0);
+        c.set_denoiser(NsLevel::Standard, d);
+        for k in 0..20 {
+            let mut b = vec![0.5f32; FRAME];
+            let out = c.idle(&mut b);
+            assert!(
+                b.iter().all(|v| *v == 0.0) && !out.sent && out.level == 0.0,
+                "block {k} leaked while idle"
+            );
+            // like a muted block: nothing judged, nothing for the path line's ns/gate
+            assert!(!out.judged && out.ns_in == 0.0 && out.ns_out == 0.0);
+            assert!(
+                (out.in_level - 0.5).abs() < 1e-6,
+                "in_level is measured before zeroing"
+            );
+        }
+        assert!(seen.borrow().is_empty(), "the denoiser ran while idle");
+    }
+
+    #[test]
+    fn waking_replays_the_last_80ms_once_before_the_live_block() {
+        let (d, seen, _) = spy(false);
+        let mut c = MicChain::new(NsLevel::Off, false, 0.0, 1.0);
+        c.set_denoiser(NsLevel::Standard, d);
+        for k in 0..20 {
+            let mut b = vec![k as f32 / 100.0; FRAME];
+            c.idle(&mut b);
+        }
+        let mut live = vec![0.99f32; FRAME];
+        c.process(&mut live, true, Instant::now());
+        let want: Vec<f32> = (12..20).map(|k| k as f32 / 100.0).chain([0.99]).collect();
+        assert_eq!(*seen.borrow(), want);
+        let mut next = vec![0.5f32; FRAME];
+        c.process(&mut next, true, Instant::now());
+        assert_eq!(seen.borrow().len(), want.len() + 1, "replayed only once");
+    }
+
+    #[test]
+    fn unmute_does_not_leak_audio_from_before_the_mute() {
+        let (d, _, emitted) = spy(true);
+        let mut c = MicChain::new(NsLevel::Off, false, 0.0, 1.0);
+        c.set_denoiser(NsLevel::Standard, d);
+        let t0 = Instant::now();
+        for k in 0..5 {
+            let mut b = vec![0.5f32; FRAME]; // talking
+            c.process(&mut b, true, t0 + Duration::from_millis(k * 10));
+        }
+        for _ in 0..50 {
+            let mut b = vec![0.01f32; FRAME]; // muted, quiet room
+            c.idle(&mut b);
+        }
+        let mut b = vec![0.01f32; FRAME];
+        c.process(&mut b, true, t0 + Duration::from_millis(600));
+        let first_live = *emitted.borrow().last().unwrap();
+        assert_eq!(
+            first_live, 0.01,
+            "the denoiser emitted pre-mute speech on unmute"
+        );
     }
 
     #[test]
