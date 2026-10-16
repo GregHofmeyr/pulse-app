@@ -458,7 +458,7 @@ impl VoiceManager {
                             last_codec = Some(c);
                         }
                         let (line, t) =
-                            netstats::summarize(&s.publisher_stats, &s.subscriber_stats, totals);
+                            netstats::summarize(&s.publisher_stats, &s.subscriber_stats, &totals);
                         totals = t;
                         // ours: worst send backlog this window, and the pipeline's counters
                         let send_ms = send_queue.take_worst();
@@ -933,7 +933,8 @@ impl VoiceManager {
 
 /// How the mic is sent. The SDK's default (`None`) is 48 kbps; Discord defaults to 64 kbps.
 /// DTX makes silence ~free and RED (redundant audio) hides packet loss.
-fn mic_publish_options() -> TrackPublishOptions {
+/// Also used by tests/neteq_probe.rs, so the probe sends exactly like the app.
+pub fn mic_publish_options() -> TrackPublishOptions {
     TrackPublishOptions {
         source: TrackSource::Microphone,
         audio_encoding: Some(livekit::options::AudioEncoding {
