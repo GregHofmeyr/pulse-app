@@ -266,10 +266,13 @@ export function trimHistory(s: AppState, channel: string, keep = KEEP_ON_LEAVE):
 }
 
 /** Add an older page fetched with `before` = the channel's oldest message at the time. Dropped if
- * the list was trimmed meanwhile: adding it would leave a hole that scroll-up never fills. */
+ * the list was trimmed meanwhile (adding it would leave a hole that scroll-up never fills), with
+ * history untouched. A page shorter than 50 marks the channel start as reached. */
 export function addOlder(s: AppState, channel: string, before: string, older: Message[]): AppState {
+  // Only prepends and trims change messages[0], so a different head means a trim (or newer page) intervened.
   if (s.messages[channel]?.[0]?.id !== before) return s
-  return addHistory(s, channel, older)
+  // The start marker is set here, with the add, so a dropped page can't mark a trimmed list as "start reached".
+  return markHistory(addHistory(s, channel, older), channel, older.length < 50)
 }
 
 /** Prepend an older page of history (from scroll-up). */

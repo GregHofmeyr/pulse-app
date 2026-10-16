@@ -39,11 +39,12 @@ describe('TextChannel: leaving while an older page is loading', () => {
     unmount(c) // switched channel: Shell trims on leave
     app.state = trimHistory(app.state, 'C1')
     const trimmed = app.state.messages['C1']
-    releaseOlder(page(50, 50)) // M0050..M0099 lands late
+    releaseOlder(page(90, 10)) // a SHORT late page (M0090..M0099) lands after the trim
     await tick()
     await new Promise((r) => setTimeout(r, 0))
 
     expect(app.state.messages['C1']).toBe(trimmed)
     expect(app.state.messages['C1'][0].id).toBe('M0200')
+    expect(app.state.history['C1'].start).toBe(false) // the trimmed list has not reached the channel start
   })
 })

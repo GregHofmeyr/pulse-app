@@ -218,6 +218,18 @@ describe('trimming history on leave', () => {
     expect(fresh.messages['C1'][0].id).toBe('M0150')
     expect(fresh.messages['C1']).toHaveLength(150)
   })
+
+  it('a SHORT late page after a trim does not mark the trimmed list as reaching the start', async () => {
+    const { addHistory, addOlder, markHistory, trimHistory } = await import('./state')
+    let s = markHistory(addHistory(applyReady(emptyState(), ready()), 'C1', page(100, 200)), 'C1', false)
+    const before = s.messages['C1'][0].id
+    s = trimHistory(s, 'C1')
+    const late = addOlder(s, 'C1', before, page(90, 10)) // short page: would mean "start reached"
+    expect(late).toBe(s)
+    expect(late.history['C1'].start).toBe(false)
+    const fresh = addOlder(s, 'C1', 'M0200', page(190, 10)) // a genuine short page does mark the start
+    expect(fresh.history['C1'].start).toBe(true)
+  })
 })
 
 describe('trimming keeps unread messages', () => {

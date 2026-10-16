@@ -82,7 +82,7 @@
     try {
       const oldest = messages[0].id
       const page = await api.listMessages(channelId, oldest)
-      app.state = markHistory(addOlder(app.state, channelId, oldest, page), channelId, page.length < 50)
+      app.state = addOlder(app.state, channelId, oldest, page)
       await tick()
       if (list) list.scrollTop = list.scrollHeight - before // keep the view where it was (unless we left)
     } catch (e) {
