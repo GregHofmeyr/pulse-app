@@ -42,6 +42,10 @@ voice-smoke:
 voice-it: dev-livekit
     cargo test -p pulse-client --test voice_it --test voice_outage_it -- --ignored --nocapture
 
+# libwebrtc log lines per second in a two-person call (decides whether to filter at the source)
+webrtc-log-volume: dev-livekit
+    cargo test -p pulse-client --test webrtc_log_volume -- --ignored --nocapture
+
 # validate the deploy/ files the same way CI does (needs Docker)
 deploy-check:
     sed -e 's/^PULSE_UID=$/PULSE_UID=1000/' -e 's/^PULSE_GID=$/PULSE_GID=1000/' \

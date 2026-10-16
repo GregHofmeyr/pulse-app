@@ -55,6 +55,8 @@ dfn-ll = ["deep_filter/default-model-ll"]
 
 [dev-dependencies]
 tempfile = "3"
+# tests/webrtc_log_volume.rs counts libwebrtc's log lines (it logs through the `log` facade)
+log = "0.4"
 # paused-clock tests (`#[tokio::test(start_paused = true)]`)
 tokio = { workspace = true, features = ["test-util"] }
 pulse-server = { path = "../../server", features = ["testing"] }

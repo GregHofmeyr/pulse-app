@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["protocol", "server", "client/src-tauri"]
-exclude = ["spikes"]
+exclude = ["spikes", "vendor/webrtc-sys"]
 
 [workspace.package]
 edition = "2024"
@@ -55,3 +55,10 @@ opt-level = 3
 debug-assertions = false
 [profile.dev.package.nnnoiseless]
 opt-level = 3
+
+# libwebrtc formats every RTC_LOG line at LS_VERBOSE and hands it to Rust only to be dropped
+# (measured: 501 lines/s in a call, tests/webrtc_log_volume.rs). The vendored copy registers its
+# sink at LS_WARNING; the only change is src/webrtc.cpp's AddLogToStream. Drop this when upstream
+# makes the severity follow log::max_level().
+[patch.crates-io]
+webrtc-sys = { path = "vendor/webrtc-sys" }
