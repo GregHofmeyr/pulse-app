@@ -1371,16 +1371,16 @@ impl VoiceManager {
                                     m.push_in(mix_gen, &peer, &f.data);
                                 }
                             });
-                            rx.lock().unwrap().replace(id, task);
+                            rx.lock().unwrap().replace(id.clone(), id, task);
                         }
                         RoomEvent::TrackUnsubscribed { participant, .. } => {
                             let id = participant.identity().to_string();
-                            rx.lock().unwrap().drop_for(&id);
+                            rx.lock().unwrap().drop_owner(&id);
                             mix_in.remove_source(mix_gen, &id);
                         }
                         RoomEvent::ParticipantDisconnected(p) => {
                             let id = p.identity().to_string();
-                            rx.lock().unwrap().drop_for(&id);
+                            rx.lock().unwrap().drop_owner(&id);
                             mix_in.remove_owner(mix_gen, &id);
                         }
                         RoomEvent::ConnectionQualityChanged {
