@@ -1,5 +1,6 @@
 pub mod api;
 pub mod backoff;
+pub mod bindmatch;
 pub mod commands;
 pub mod gateway;
 pub mod hotkeys;
