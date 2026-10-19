@@ -85,8 +85,8 @@ in the focused app.
 - Held-state hygiene: low-level hooks see every key-up system-wide, except while an elevated window
   or the secure desktop (lock screen, UAC) has input. So a key can look "stuck down" afterwards and
   its next press would be mistaken for a repeat. Rule: a down for a key already in the "down" set is
-  a repeat **only if** it arrives within 1 s of that key's previous down/repeat event (Windows
-  auto-repeat runs every ≤ 0.5 s); otherwise it's a fresh press. Requirement: "held = once, never
+  a repeat **only if** it arrives within 1.5 s of that key's previous down/repeat event (the slowest Windows
+  repeat delay is ~1 s before the first repeat); otherwise it's a fresh press. Requirement: "held = once, never
   stuck". Builder may pick a cleaner rule that meets it.
 - Pause/resume while recording stays (`pause_keybinds`), implemented as "hook installed but
   ignores binds" so recording doesn't need a reinstall. Paused = **only firing is suppressed**:

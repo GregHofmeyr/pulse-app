@@ -11,14 +11,16 @@ mod platform {
     use tauri::AppHandle;
     use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
-    use windows::Win32::UI::Input::KeyboardAndMouse::{MAPVK_VK_TO_VSC_EX, MapVirtualKeyW};
+    use windows::Win32::UI::Input::KeyboardAndMouse::{
+        GetAsyncKeyState, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW,
+    };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, GetMessageW, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT,
         SetWindowsHookExW, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_MBUTTONDOWN,
         WM_MBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
     };
 
-    use crate::bindmatch::{Matcher, code_for_scan};
+    use crate::bindmatch::{Matcher, key_code};
     use crate::keybinds::{Action, Keybinds};
 
     /// Locked by the hook procedures once per event and briefly by apply/pause; nothing else.
@@ -33,11 +35,31 @@ mod platform {
         MATCHER.lock().unwrap_or_else(|e| e.into_inner())
     }
 
+    /// Whether Windows thinks a modifier is down (it tracks key-ups we never saw).
+    fn still_down(code: &str) -> bool {
+        let vk = match code {
+            "ControlLeft" => 0xA2,
+            "ControlRight" => 0xA3,
+            "ShiftLeft" => 0xA0,
+            "ShiftRight" => 0xA1,
+            "AltLeft" => 0xA4,
+            "AltRight" => 0xA5,
+            "MetaLeft" => 0x5B,
+            "MetaRight" => 0x5C,
+            _ => return true,
+        };
+        (unsafe { GetAsyncKeyState(vk) }) < 0
+    }
+
     fn event(code: &str, down: bool) {
         if !down {
             return matcher().up(code);
         }
-        let fired = matcher().down(code, Instant::now());
+        let fired = {
+            let mut m = matcher();
+            m.forget_released(still_down);
+            m.down(code, Instant::now())
+        };
         if let Some(tx) = FIRED.get() {
             for a in fired {
                 let _ = tx.send(a);
@@ -46,18 +68,16 @@ mod platform {
     }
 
     /// Keys by physical position (scan code), so a layout switch doesn't move binds. Injected keys
-    /// (gaming-keyboard software, remappers) count like real ones.
+    /// (gaming-keyboard software, remappers) count like real ones; injected text (VK_PACKET)
+    /// doesn't.
     unsafe extern "system" fn keyboard(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
         if n >= 0 {
             // SAFETY: for WH_KEYBOARD_LL with n >= 0, lParam points to a KBDLLHOOKSTRUCT.
             let k = unsafe { &*(l.0 as *const KBDLLHOOKSTRUCT) };
-            let (mut scan, mut ext) = (k.scanCode, k.flags.0 & LLKHF_EXTENDED.0 != 0);
-            if scan == 0 {
-                // some injected keys carry only a virtual-key code
-                let v = unsafe { MapVirtualKeyW(k.vkCode, MAPVK_VK_TO_VSC_EX) };
-                (scan, ext) = (v & 0xFF, v & 0xFF00 == 0xE000);
-            }
-            if let Some(code) = code_for_scan(scan, ext) {
+            let ext = k.flags.0 & LLKHF_EXTENDED.0 != 0;
+            // SAFETY: MapVirtualKeyW only reads its arguments.
+            let to_scan = |vk| unsafe { MapVirtualKeyW(vk, MAPVK_VK_TO_VSC_EX) };
+            if let Some(code) = key_code(k.vkCode, k.scanCode, ext, to_scan) {
                 match w.0 as u32 {
                     WM_KEYDOWN | WM_SYSKEYDOWN => event(code, true),
                     WM_KEYUP | WM_SYSKEYUP => event(code, false),

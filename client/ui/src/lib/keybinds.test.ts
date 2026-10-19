@@ -50,6 +50,24 @@ describe('recording a bind', () => {
     expect(r.up(ev('ControlLeft'))).toEqual({ kind: 'none' })
   })
 
+  // AltGr layouts: the browser sees a fake Left Ctrl before Right Alt; Windows' hook doesn't
+  it('AltGr + a key records Alt + key, not Ctrl + Alt + key', () => {
+    const r = new Recorder()
+    r.down(ev('ControlLeft', { ctrlKey: true }))
+    r.down(ev('AltRight', { ctrlKey: true, altKey: true }))
+    expect(r.down(ev('KeyQ', { ctrlKey: true, altKey: true }))).toEqual({ kind: 'bind', bind: { code: 'KeyQ', ...none, alt: true } })
+  })
+
+  it('AltGr alone records Right Alt, whichever key-up comes first', () => {
+    for (const first of ['ControlLeft', 'AltRight']) {
+      const r = new Recorder()
+      r.down(ev('ControlLeft', { ctrlKey: true }))
+      r.down(ev('AltRight', { ctrlKey: true, altKey: true }))
+      const ups = [r.up(ev(first)), r.up(ev(first === 'AltRight' ? 'ControlLeft' : 'AltRight'))]
+      expect(ups.filter((u) => u.kind === 'bind')).toEqual([{ kind: 'bind', bind: { code: 'AltRight', ...none } }])
+    }
+  })
+
   it('mouse buttons: wheel click and the side buttons, never left or right click', () => {
     const r = new Recorder()
     expect(r.mouse(click(1))).toEqual({ kind: 'bind', bind: { code: 'Mouse3', ...none } })

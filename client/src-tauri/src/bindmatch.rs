@@ -67,6 +67,27 @@ pub fn code_for_scan(scan: u32, extended: bool) -> Option<&'static str> {
         .map(|(_, _, c)| *c)
 }
 
+/// What a low-level keyboard event is, from its virtual-key code, scan code and extended flag.
+/// `vk_to_scan` (MapVirtualKeyW with MAPVK_VK_TO_VSC_EX on Windows) covers injected keys that carry
+/// only a virtual-key code.
+pub fn key_code(
+    vk: u32,
+    scan: u32,
+    extended: bool,
+    vk_to_scan: impl FnOnce(u32) -> u32,
+) -> Option<&'static str> {
+    /// Unicode text sent by apps (SendInput KEYEVENTF_UNICODE): the scan field holds a character.
+    const VK_PACKET: u32 = 0xE7;
+    if vk == VK_PACKET {
+        return None;
+    }
+    if scan != 0 {
+        return code_for_scan(scan, extended);
+    }
+    let v = vk_to_scan(vk);
+    code_for_scan(v & 0xFF, v & 0xFF00 == 0xE000)
+}
+
 /// A code Pulse can see: a key from the table or a mouse button.
 pub fn is_known(code: &str) -> bool {
     KEYS.iter().any(|(_, _, c)| *c == code)
@@ -74,9 +95,22 @@ pub fn is_known(code: &str) -> bool {
         || matches!(code, "Mouse1" | "Mouse2")
 }
 
-/// Windows auto-repeat is at most ~0.5 s apart; a "down" for a held key later than this is a fresh
-/// press whose key-up we missed (lock screen, UAC, an admin window).
-const REPEAT_WINDOW: Duration = Duration::from_secs(1);
+/// Windows' first auto-repeat comes up to ~1 s after the press (the slowest "repeat delay"); a
+/// "down" for a held key later than this is a fresh press whose key-up we missed (lock screen,
+/// UAC, an admin window).
+const REPEAT_WINDOW: Duration = Duration::from_millis(1500);
+
+/// The modifier keys, by code.
+pub const MODIFIER_CODES: [&str; 8] = [
+    "ControlLeft",
+    "ControlRight",
+    "ShiftLeft",
+    "ShiftRight",
+    "AltLeft",
+    "AltRight",
+    "MetaLeft",
+    "MetaRight",
+];
 
 /// Turns key/button downs and ups into the actions they fire. Binds never swallow anything: this
 /// only decides, the caller always passes the event on.
@@ -150,6 +184,13 @@ impl Matcher {
             .filter(|(_, b)| Some(mods(b)) == best)
             .map(|(a, _)| *a)
             .collect()
+    }
+
+    /// Drop held modifiers the OS says are up: their key-ups went to the secure desktop (UAC,
+    /// Ctrl+Alt+Del, Ctrl+Shift+Esc) and would otherwise turn a plain key into a combo.
+    pub fn forget_released(&mut self, still_down: impl Fn(&str) -> bool) {
+        self.held
+            .retain(|(c, _)| !MODIFIER_CODES.contains(&c.as_str()) || still_down(c));
     }
 
     pub fn up(&mut self, code: &str) {
@@ -320,5 +361,42 @@ mod tests {
         let mut m = m(Some(b("PageDown", "")), None);
         m.set_binds(&Keybinds::default());
         assert_eq!(m.down("PageDown", Instant::now()), vec![]);
+    }
+    #[test]
+    fn unicode_packets_and_vk_only_keys() {
+        // VK_PACKET: scanCode holds a character, not a key: never a bind
+        assert_eq!(key_code(0xE7, 0x32, false, |_| unreachable!()), None);
+        // some injected keys carry only a virtual-key code: map it (0xE0 prefix = extended)
+        assert_eq!(key_code(0x22, 0, false, |_| 0xE051), Some("PageDown"));
+        assert_eq!(
+            key_code(0x4D, 0x32, false, |_| unreachable!()),
+            Some("KeyM")
+        );
+    }
+
+    #[test]
+    fn a_slow_auto_repeat_is_still_a_repeat() {
+        // Windows' longest repeat delay is ~1 s
+        let mut m = m(Some(b("PageDown", "")), None);
+        let t0 = Instant::now();
+        assert_eq!(m.down("PageDown", t0), vec![M]);
+        assert_eq!(m.down("PageDown", at(t0, 1100)), vec![]);
+    }
+
+    #[test]
+    fn modifiers_released_behind_our_back_are_forgotten() {
+        // Ctrl+Shift+Esc / UAC: the key-ups went to the secure desktop
+        let mut m = m(Some(b("KeyM", "cs")), None);
+        let t0 = Instant::now();
+        m.down("ControlLeft", t0);
+        m.down("ShiftLeft", t0);
+        m.forget_released(|_| false);
+        assert_eq!(m.down("KeyM", t0), vec![]);
+        // still held per the OS: kept
+        m.down("ControlLeft", at(t0, 5000));
+        m.down("ShiftLeft", at(t0, 5000));
+        m.up("KeyM");
+        m.forget_released(|_| true);
+        assert_eq!(m.down("KeyM", at(t0, 6000)), vec![M]);
     }
 }

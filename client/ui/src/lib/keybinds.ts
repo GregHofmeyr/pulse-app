@@ -32,10 +32,23 @@ export class Recorder {
   private pressed = new Set<string>()
   /** The one modifier pressed so far with nothing else, which becomes the bind on release. */
   private lone: string | null = null
+  /** AltGr: the browser reports a fake Left Ctrl before Right Alt; Windows' hook never sees it,
+   *  so a bind recorded with it would never fire. */
+  private fakeCtrl = false
+
+  private mods(e: Mods) {
+    const m = mods(e)
+    if (this.fakeCtrl && !this.pressed.has('ControlRight')) m.ctrl = false
+    return m
+  }
 
   down(e: KeyLike): Recorded {
     if (e.code === 'Escape') return { kind: 'cancel' }
-    const held = { kind: 'held' as const, label: [...modLabels(mods(e)), '…'].join(' + ') }
+    if (e.code === 'AltRight' && this.pressed.has('ControlLeft') && !this.pressed.has('AltRight')) {
+      this.pressed.delete('ControlLeft')
+      this.fakeCtrl = true
+    }
+    const held = { kind: 'held' as const, label: [...modLabels(this.mods(e)), '…'].join(' + ') }
     if (!e.code) return held
     if (this.pressed.has(e.code)) return held // auto-repeat
     if (MODIFIERS.includes(e.code)) {
@@ -44,24 +57,24 @@ export class Recorder {
       return held
     }
     this.lone = null
-    return { kind: 'bind', bind: { code: e.code, ...mods(e) } }
+    return { kind: 'bind', bind: { code: e.code, ...this.mods(e) } }
   }
 
   up(e: KeyLike): Recorded {
-    const lone = this.lone === e.code
+    const m = this.mods(e)
     this.pressed.delete(e.code)
+    if (this.lone !== e.code) return { kind: 'none' }
     this.lone = null
-    if (!lone) return { kind: 'none' }
-    // the released modifier itself isn't also its own modifier (Rust normalizes the same way)
+    // the released modifier isn't also its own modifier (Rust normalizes the same way)
     const flag = { Control: 'ctrl', Shift: 'shift', Alt: 'alt', Meta: 'meta' }[e.code.replace(/Left|Right/, '')]
-    return { kind: 'bind', bind: { code: e.code, ...mods(e), ...(flag ? { [flag]: false } : {}) } }
+    return { kind: 'bind', bind: { code: e.code, ...m, ...(flag ? { [flag]: false } : {}) } }
   }
 
   mouse(e: MouseLike): Recorded {
     const code = MOUSE[e.button]
     if (!code) return { kind: 'none' }
     this.lone = null
-    return { kind: 'bind', bind: { code, ...mods(e) } }
+    return { kind: 'bind', bind: { code, ...this.mods(e) } }
   }
 }
 
