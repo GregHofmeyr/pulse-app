@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import Icon from './Icon.svelte'
-  import { actions, bindLabel, fromKeyEvent, keybindsApi, type Action, type Keybinds } from '../lib/keybinds'
+  import { Recorder, actions, bindLabel, keybindsApi, type Action, type Keybinds, type Recorded } from '../lib/keybinds'
 
   const linux = navigator.userAgent.includes('Linux')
 
@@ -10,6 +10,10 @@
   let held = $state('')
   let error = $state('')
   let problems = $state<string[]>([])
+  let recorder = new Recorder()
+  /** The mouse button just recorded: its mouseup/auxclick is swallowed too, or the side buttons
+   *  would navigate the webview back/forward after recording ends. */
+  let swallowButton: number | null = null
 
   onMount(async () => {
     try {
@@ -36,8 +40,9 @@
     if (recording === action) return stop()
     error = ''
     held = ''
+    recorder = new Recorder()
     recording = action
-    // Windows would swallow the keys being recorded while they're registered globally
+    // the key being recorded mustn't also toggle mute/deafen
     await keybindsApi.pause(true).catch(() => {})
   }
 
@@ -47,11 +52,8 @@
     await keybindsApi.pause(false).catch(() => {})
   }
 
-  async function onKey(e: KeyboardEvent) {
-    if (!recording || !binds) return
-    e.preventDefault()
-    e.stopPropagation()
-    const r = fromKeyEvent(e)
+  async function finish(r: Recorded) {
+    if (!recording || !binds || r.kind === 'none') return
     if (r.kind === 'held') return void (held = r.label)
     // stop first: a second keydown (or auto-repeat) during the save mustn't save again
     const action = recording
@@ -61,25 +63,58 @@
     await keybindsApi.pause(false).catch(() => {})
   }
 
+  function swallow(e: Event) {
+    e.preventDefault()
+    e.stopPropagation()
+  }
+
+  function onKeyDown(e: KeyboardEvent) {
+    if (!recording) return
+    swallow(e)
+    void finish(recorder.down(e))
+  }
+
+  function onKeyUp(e: KeyboardEvent) {
+    if (!recording) return
+    swallow(e)
+    void finish(recorder.up(e))
+  }
+
+  // wheel click and the side buttons; left/right clicks keep their normal meaning
+  function onMouseDown(e: MouseEvent) {
+    if (!recording || e.button === 0 || e.button === 2) return
+    swallow(e)
+    const r = recorder.mouse(e)
+    if (r.kind === 'bind') swallowButton = e.button
+    void finish(r)
+  }
+
+  function onMouseAfter(e: MouseEvent) {
+    if (e.button !== swallowButton && !(recording && e.button !== 0 && e.button !== 2)) return
+    swallow(e)
+    if (e.type === 'auxclick') swallowButton = null
+  }
+
   onDestroy(() => {
     if (recording) void keybindsApi.pause(false).catch(() => {})
   })
 </script>
 
 <!-- leaving the window mid-recording ends it, or the hotkeys would stay released -->
-<svelte:window onkeydowncapture={onKey} onblur={() => recording && stop()} />
+<svelte:window onkeydowncapture={onKeyDown} onkeyupcapture={onKeyUp} onmousedowncapture={onMouseDown}
+  onmouseupcapture={onMouseAfter} onauxclickcapture={onMouseAfter} onblur={() => recording && stop()} />
 
 <section class="pane">
   <h2>Keybinds</h2>
   {#if linux}
-    <p class="hint">On Linux, apps can't grab keys for themselves: bind these commands in your desktop's keyboard settings (Hyprland: <code>bind = CTRL SHIFT, M, exec, pulse-app --toggle-mute</code>).</p>
+    <p class="hint">On Linux, apps can't grab keys for themselves: bind these commands in your desktop's keyboard settings (Hyprland: <code>bindn = , Next, exec, pulse-app --toggle-mute</code>; <code>bindn</code> keeps the key working in other apps).</p>
     <div class="list">
       {#each actions as a}
         <div class="row"><strong>{a.label}</strong><code>pulse-app --{a.key.replace('_', '-')}</code></div>
       {/each}
     </div>
   {:else if binds}
-    <p class="hint">Work everywhere, even when Pulse isn't focused or you're not in a call. Click a key to change it.</p>
+    <p class="hint">Works everywhere and the key keeps working in other apps. Doesn't work while an app running as administrator is focused.</p>
     <div class="list">
       {#each actions as a}
         <div class="row">
@@ -93,7 +128,7 @@
         </div>
       {/each}
     </div>
-    {#if recording}<small>Press the combination. Esc cancels.</small>{/if}
+    {#if recording}<small>Press a key, a combination or a mouse button. Esc cancels.</small>{/if}
     {#if error}<p class="error" role="alert">{error}</p>{/if}
     {#each problems as p}<p class="warn" role="status">{p}</p>{/each}
   {/if}

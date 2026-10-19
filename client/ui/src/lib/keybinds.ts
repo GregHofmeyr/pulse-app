@@ -11,17 +11,58 @@ export const actions: { key: Action; label: string }[] = [
   { key: 'toggle_deafen', label: 'Toggle deafen' },
 ]
 
-type KeyLike = { code: string; ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }
-export type Recorded = { kind: 'bind'; bind: Bind } | { kind: 'held'; label: string } | { kind: 'cancel' }
+type Mods = { ctrlKey: boolean; shiftKey: boolean; altKey: boolean; metaKey: boolean }
+type KeyLike = Mods & { code: string }
+type MouseLike = Mods & { button: number }
+export type Recorded =
+  | { kind: 'bind'; bind: Bind }
+  | { kind: 'held'; label: string }
+  | { kind: 'cancel' }
+  | { kind: 'none' }
 
 const MODIFIERS = ['ControlLeft', 'ControlRight', 'ShiftLeft', 'ShiftRight', 'AltLeft', 'AltRight', 'MetaLeft', 'MetaRight']
+/** `MouseEvent.button` → bindable button: wheel click and the two side buttons. */
+const MOUSE: Record<number, string> = { 1: 'Mouse3', 3: 'Mouse4', 4: 'Mouse5' }
 
-/** One keydown while recording. Only keyboard keys are read, so mouse clicks never become binds. */
-export function fromKeyEvent(e: KeyLike): Recorded {
-  if (e.code === 'Escape') return { kind: 'cancel' }
-  const mods = { ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey }
-  if (MODIFIERS.includes(e.code) || !e.code) return { kind: 'held', label: [...modLabels(mods), '…'].join(' + ') }
-  return { kind: 'bind', bind: { code: e.code, ...mods } }
+const mods = (e: Mods) => ({ ctrl: e.ctrlKey, shift: e.shiftKey, alt: e.altKey, meta: e.metaKey })
+
+/** One recording: a key (with modifiers), a mouse button, or a modifier pressed and released on
+ *  its own (Right Ctrl). Left and right click are never read, so they can't become binds. */
+export class Recorder {
+  private pressed = new Set<string>()
+  /** The one modifier pressed so far with nothing else, which becomes the bind on release. */
+  private lone: string | null = null
+
+  down(e: KeyLike): Recorded {
+    if (e.code === 'Escape') return { kind: 'cancel' }
+    const held = { kind: 'held' as const, label: [...modLabels(mods(e)), '…'].join(' + ') }
+    if (!e.code) return held
+    if (this.pressed.has(e.code)) return held // auto-repeat
+    if (MODIFIERS.includes(e.code)) {
+      this.lone = this.pressed.size === 0 ? e.code : null
+      this.pressed.add(e.code)
+      return held
+    }
+    this.lone = null
+    return { kind: 'bind', bind: { code: e.code, ...mods(e) } }
+  }
+
+  up(e: KeyLike): Recorded {
+    const lone = this.lone === e.code
+    this.pressed.delete(e.code)
+    this.lone = null
+    if (!lone) return { kind: 'none' }
+    // the released modifier itself isn't also its own modifier (Rust normalizes the same way)
+    const flag = { Control: 'ctrl', Shift: 'shift', Alt: 'alt', Meta: 'meta' }[e.code.replace(/Left|Right/, '')]
+    return { kind: 'bind', bind: { code: e.code, ...mods(e), ...(flag ? { [flag]: false } : {}) } }
+  }
+
+  mouse(e: MouseLike): Recorded {
+    const code = MOUSE[e.button]
+    if (!code) return { kind: 'none' }
+    this.lone = null
+    return { kind: 'bind', bind: { code, ...mods(e) } }
+  }
 }
 
 function modLabels(m: { ctrl: boolean; shift: boolean; alt: boolean; meta: boolean }): string[] {
@@ -39,6 +80,9 @@ const NAMED: Record<string, string> = {
 
 export function keyLabel(code: string): string {
   if (NAMED[code]) return NAMED[code]
+  if (code.startsWith('Mouse')) return `Mouse ${code.slice(5)}`
+  const side = code.match(/^(Control|Shift|Alt|Meta)(Left|Right)$/)
+  if (side) return `${side[2]} ${{ Control: 'Ctrl', Shift: 'Shift', Alt: 'Alt', Meta: 'Win' }[side[1]]}`
   if (code.startsWith('Key')) return code.slice(3)
   if (code.startsWith('Digit')) return code.slice(5)
   if (code.startsWith('Numpad')) return `Num ${code.slice(6)}`
