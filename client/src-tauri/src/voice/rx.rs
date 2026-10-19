@@ -83,7 +83,10 @@ mod tests {
         rx.replace("TR_mic".into(), "alex".into(), mic);
         rx.replace("TR_game".into(), "alex".into(), pending());
         tokio::task::yield_now().await;
-        assert!(!mic_abort.is_finished(), "the stream track must not replace the mic");
+        assert!(
+            !mic_abort.is_finished(),
+            "the stream track must not replace the mic"
+        );
         assert_eq!(rx.len(), 2);
     }
 
