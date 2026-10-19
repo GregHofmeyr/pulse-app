@@ -10,7 +10,7 @@ use tokio::task::JoinHandle;
 use super::backlog::QueueGauge;
 use super::controls::Controls;
 use super::devices::{AudioConfig, AudioIo, INTERNAL_RATE, Shared};
-use super::mixer::MixerInput;
+use super::mixer::{MixerInput, SourceKind};
 use super::{EventSink, VoiceError, VoiceEvent};
 
 const DELAY_MS: u32 = 300;
@@ -19,6 +19,17 @@ const DELAY_MS: u32 = 300;
 struct Loopback {
     delay: DelayLine,
     mixer: Arc<MixerInput>,
+}
+
+impl Loopback {
+    fn new(mixer: Arc<MixerInput>) -> Self {
+        // a push to an unregistered source is dropped
+        mixer.add_source(mixer.generation(), "self", "self", SourceKind::Voice);
+        Self {
+            delay: DelayLine::new((INTERNAL_RATE * DELAY_MS / 1000) as usize),
+            mixer,
+        }
+    }
 }
 
 impl super::processor::FrameSink for Loopback {
@@ -69,10 +80,7 @@ impl MicTest {
         // Same pipeline as a call: devices → processor (denoise, gate) → loopback. The AudioIo holds
         // the only sender into the processor, so stopping the test ends it.
         // The mixer runs at 48 kHz; the output edge resamples to the device.
-        shared.set_mic_sink(Some(Box::new(Loopback {
-            delay: DelayLine::new((INTERNAL_RATE * DELAY_MS / 1000) as usize),
-            mixer: shared.mix_in.clone(),
-        })));
+        shared.set_mic_sink(Some(Box::new(Loopback::new(shared.mix_in.clone()))));
         let (raw_tx, _processor) = super::processor::spawn(shared.clone());
         let io = AudioIo::start(cfg, shared.clone(), raw_tx)
             .map_err(|e| VoiceError::Device(e.to_string()))?;
@@ -126,6 +134,16 @@ impl MicTest {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The loopback registers its source: an unregistered push is dropped (silence).
+    #[test]
+    fn the_loopback_is_heard() {
+        use super::super::processor::FrameSink;
+        let input = Arc::new(super::super::mixer::mixer(48_000, 200).0);
+        let mut lb = Loopback::new(input.clone());
+        lb.send(&[100; 480]);
+        assert_eq!(input.pushed_total(), 480);
+    }
 
     #[test]
     fn delay_line_delays_by_n_samples() {

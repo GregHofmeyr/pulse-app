@@ -38,7 +38,7 @@ use tokio::task::JoinHandle;
 use crate::api::{Api, ApiError};
 use controls::Controls;
 use devices::{AudioConfig, AudioIo, INTERNAL_RATE, Shared, Sides};
-use mixer::percent_to_gain;
+use mixer::{SourceKind, percent_to_gain};
 use rx::RxTasks;
 
 /// Max audio buffered per peer before the oldest is dropped (bounds latency).
@@ -1343,7 +1343,8 @@ impl VoiceManager {
                         } => {
                             let id = participant.identity().to_string();
                             let pct = volumes.lock().unwrap().get(&id).copied().unwrap_or(100);
-                            mix_in.set_gain(&id, percent_to_gain(pct));
+                            mix_in.set_gain(&id, SourceKind::Voice, percent_to_gain(pct));
+                            mix_in.add_source(mix_gen, &id, &id, SourceKind::Voice);
                             let (m, peer) = (mix_in.clone(), id.clone());
                             let subscribed = Instant::now();
                             tracing::info!(
@@ -1375,12 +1376,12 @@ impl VoiceManager {
                         RoomEvent::TrackUnsubscribed { participant, .. } => {
                             let id = participant.identity().to_string();
                             rx.lock().unwrap().drop_for(&id);
-                            mix_in.remove(&id);
+                            mix_in.remove_source(mix_gen, &id);
                         }
                         RoomEvent::ParticipantDisconnected(p) => {
                             let id = p.identity().to_string();
                             rx.lock().unwrap().drop_for(&id);
-                            mix_in.remove(&id);
+                            mix_in.remove_owner(mix_gen, &id);
                         }
                         RoomEvent::ConnectionQualityChanged {
                             quality,
@@ -1593,7 +1594,7 @@ impl VoiceManager {
             s.pipeline
                 .shared
                 .mix_in
-                .set_gain(&user_id, percent_to_gain(pct));
+                .set_gain(&user_id, SourceKind::Voice, percent_to_gain(pct));
         }
     }
 
@@ -1858,6 +1859,12 @@ mod tests {
             tasks: Vec::new(),
         };
         let old = counting(&shared);
+        shared.mix_in.add_source(
+            shared.mix_in.generation(),
+            "peer",
+            "peer",
+            SourceKind::Voice,
+        );
         shared.mix_in.push("peer", &[100; 960]);
         let block = || (48_000, vec![0.0; 480], std::time::Instant::now());
         for _ in 0..5 {

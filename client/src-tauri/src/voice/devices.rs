@@ -1245,6 +1245,7 @@ impl AudioIo {
 mod tests {
     use super::*;
     use crate::voice::denoise::NsLevel;
+    use crate::voice::mixer::SourceKind;
 
     /// The speaker callback is real-time: it must never wait while the mic processor holds the
     /// echo canceller (a preempted processor would otherwise stutter playback).
@@ -1274,8 +1275,10 @@ mod tests {
     #[test]
     fn playback_never_waits_on_the_network_side() {
         let s = Shared::new(&AudioConfig::default(), Default::default(), 200);
+        s.mix_in
+            .add_source(s.mix_in.generation(), "a", "a", SourceKind::Voice);
         s.mix_in.push("a", &[100; 480]);
-        let held_peers = s.mix_in.peers.lock().unwrap();
+        let held_peers = s.mix_in.sources.lock().unwrap();
         let held_controls = s.controls.lock().unwrap();
         let held_meter = s.spk_meter.lock().unwrap();
         let s2 = s.clone();
