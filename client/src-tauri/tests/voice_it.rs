@@ -683,3 +683,107 @@ async fn switching_keeps_the_audio_pipeline_and_leave_drops_it() {
     assert_eq!(vm.pipelines_built(), 2, "after Leave a join starts fresh");
     vm.leave().await;
 }
+
+/// One person publishing a mic AND stream audio: the listener plays both, and unpublishing the
+/// stream audio leaves the mic playing (screen-share spec §2, step zero).
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn two_tracks_from_one_person_both_play() {
+    use livekit::options::TrackPublishOptions;
+    use livekit::prelude::*;
+    use livekit::webrtc::audio_frame::AudioFrame;
+    use livekit::webrtc::audio_source::native::NativeAudioSource;
+    use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
+
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, alex) = testing::register(&app, "alex").await;
+    let (_, sam) = testing::register(&app, "sam").await;
+    let s = testing::create_server(&app, &alex, "Main").await;
+    let api = Api::new(&format!("http://{}", app.addr));
+    api.join_server(&sam, s.id).await.unwrap();
+    let lounge = api
+        .channels(&alex, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+
+    // alex listens through Pulse's voice pipeline
+    let vm = VoiceManager::new(std::sync::Arc::new(|_| {}));
+    vm.join(
+        &api,
+        &alex,
+        lounge.id,
+        AudioConfig::default(),
+        AudioMode::Null(48_000),
+    )
+    .await
+    .unwrap();
+
+    // sam is a bare SDK client publishing two tracks
+    let vt = api.voice_token(&sam, lounge.id).await.unwrap();
+    let (room, _events) = Room::connect(&vt.url, &vt.token, RoomOptions::default())
+        .await
+        .unwrap();
+    let publish = |name: &str, source: TrackSource| {
+        let src = NativeAudioSource::new(AudioSourceOptions::default(), 48_000, 1, 100);
+        let track = LocalAudioTrack::create_audio_track(name, RtcAudioSource::Native(src.clone()));
+        (
+            src,
+            track,
+            TrackPublishOptions {
+                source,
+                ..Default::default()
+            },
+        )
+    };
+    let (mic_src, mic, mic_opts) = publish("mic", TrackSource::Microphone);
+    let (game_src, game, game_opts) = publish("game", TrackSource::ScreenshareAudio);
+    let lp = room.local_participant();
+    lp.publish_track(LocalTrack::Audio(mic), mic_opts)
+        .await
+        .unwrap();
+    let game_pub = lp
+        .publish_track(LocalTrack::Audio(game), game_opts)
+        .await
+        .unwrap();
+
+    // feed both with a tone for 3 s at real time
+    let feed = |src: NativeAudioSource| {
+        tokio::spawn(async move {
+            let tone: Vec<i16> = (0..480)
+                .map(|i| ((i as f32 * 0.13).sin() * 8000.0) as i16)
+                .collect();
+            for _ in 0..300 {
+                let frame = AudioFrame {
+                    data: tone.clone().into(),
+                    sample_rate: 48_000,
+                    num_channels: 1,
+                    samples_per_channel: 480,
+                };
+                src.capture_frame(&frame).await.unwrap();
+            }
+        })
+    };
+    let (a, b) = (feed(mic_src), feed(game_src));
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(vm.rx_len().await, 2, "one receive task per track");
+    assert_eq!(vm.mixer_sources().await, 2, "both tracks in the mixer");
+
+    lp.unpublish_track(&game_pub.sid()).await.unwrap();
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(vm.rx_len().await, 1, "the mic task survives");
+    assert_eq!(vm.mixer_sources().await, 1, "the mic source survives");
+    let before = vm.mixer_pushed().await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(vm.mixer_pushed().await > before, "the mic is still playing");
+
+    a.abort();
+    b.abort();
+    room.close().await.unwrap();
+    vm.leave().await;
+}

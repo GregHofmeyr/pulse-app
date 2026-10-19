@@ -293,6 +293,11 @@ impl MixerInput {
         self.cmds.lock().unwrap().push(Cmd::Clear);
     }
 
+    /// How many sources are registered: for diagnostics and tests.
+    pub fn source_count(&self) -> usize {
+        self.sources.lock().unwrap().len()
+    }
+
     /// (person, rms since the last call): how each person's *voice* sounded, after their volume.
     /// Stream meters are drained too but never reported: a loud game isn't talking.
     pub fn take_peer_levels(&self) -> Vec<(String, f32)> {
@@ -844,6 +849,16 @@ mod tests {
         let mut out = [0.0f32; 2];
         m.mix_into(&mut out, 1, 1.0);
         assert!((out[0] - 0.25).abs() < 1e-3, "{}", out[0]);
+    }
+
+    #[test]
+    fn source_count_follows_adds_and_removes() {
+        let (input, _m) = alex_mic_and_game();
+        assert_eq!(input.source_count(), 2);
+        input.remove_source(input.generation(), "TR_game");
+        assert_eq!(input.source_count(), 1);
+        input.clear();
+        assert_eq!(input.source_count(), 0);
     }
 
     #[test]

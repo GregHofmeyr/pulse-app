@@ -1657,6 +1657,14 @@ impl VoiceManager {
             None => 0,
         }
     }
+
+    /// Sources in the mixer: with `rx_len`, shows each track is wired once.
+    pub async fn mixer_sources(&self) -> usize {
+        match self.session.lock().await.as_ref() {
+            Some(s) => s.pipeline.shared.mix_in.source_count(),
+            None => 0,
+        }
+    }
 }
 
 /// How the mic is sent. The SDK's default (`None`) is 48 kbps; Discord defaults to 64 kbps.
