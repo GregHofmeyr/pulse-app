@@ -1278,7 +1278,7 @@ mod tests {
         s.mix_in
             .add_source(s.mix_in.generation(), "a", "a", SourceKind::Voice);
         s.mix_in.push("a", &[100; 480]);
-        let held_peers = s.mix_in.sources.lock().unwrap();
+        let held_sources = s.mix_in.sources.lock().unwrap();
         let held_controls = s.controls.lock().unwrap();
         let held_meter = s.spk_meter.lock().unwrap();
         let s2 = s.clone();
@@ -1290,7 +1290,7 @@ mod tests {
             let _ = tx.send(());
         });
         let done = rx.recv_timeout(Duration::from_millis(500)).is_ok();
-        drop((held_peers, held_controls, held_meter));
+        drop((held_sources, held_controls, held_meter));
         assert!(
             done,
             "the speaker callback blocked on a lock the network side holds"

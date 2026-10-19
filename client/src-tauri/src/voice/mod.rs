@@ -1349,6 +1349,9 @@ impl VoiceManager {
                                     volumes.lock().unwrap().get(&owner).copied().unwrap_or(100);
                                 mix_in.set_gain(&owner, kind, percent_to_gain(pct));
                             }
+                            // a re-subscribe under the same SID: stop the old task before the
+                            // new ring exists, or its last frame lands in it
+                            rx.lock().unwrap().drop_track(&source);
                             // before the task starts: a push for an unregistered source is dropped
                             mix_in.add_source(mix_gen, &source, &owner, kind);
                             let (m, src, peer) = (mix_in.clone(), source.clone(), owner.clone());
@@ -1371,6 +1374,8 @@ impl VoiceManager {
                                         heard = true;
                                         tracing::info!(
                                             %peer,
+                                            track = %src,
+                                            ?kind,
                                             since_subscribed_ms =
                                                 subscribed.elapsed().as_millis() as u64,
                                             "voice: first sound"
@@ -1655,6 +1660,14 @@ impl VoiceManager {
         match self.session.lock().await.as_ref() {
             Some(s) => s.rx.lock().unwrap().len(),
             None => 0,
+        }
+    }
+
+    /// Loudest voice level per person since the last call (tests: sound, not just frames).
+    pub async fn mixer_levels(&self) -> Vec<(String, f32)> {
+        match self.session.lock().await.as_ref() {
+            Some(s) => s.pipeline.shared.mix_in.take_peer_levels(),
+            None => Vec::new(),
         }
     }
 

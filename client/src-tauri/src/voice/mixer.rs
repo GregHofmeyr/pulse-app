@@ -1,4 +1,4 @@
-//! Per-peer receive queues, per-peer gain on a dB curve, soft limiter (FINDINGS: dB slider + soft limit).
+//! Per-track receive queues, per-person gain on a dB curve, soft limiter (FINDINGS: dB slider + soft limit).
 
 use std::collections::{HashMap, VecDeque};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
@@ -236,6 +236,9 @@ impl MixerInput {
         }
     }
 
+    /// Volume for `owner`'s `kind` of audio. Stored even with no such track yet (a slider moved
+    /// before they join applies when they do) and kept across `clear`: one f32 per person and
+    /// kind, never pruned, which stays tiny for a friends server.
     pub fn set_gain(&self, owner: &str, kind: SourceKind, gain: f32) {
         let mut sources = self.sources.lock().unwrap();
         self.gains
@@ -379,6 +382,8 @@ struct Peer {
     held: bool,
     /// Ran dry: silent until the queue holds `Mixer::refill` again.
     rebuffering: bool,
+    /// Registered on subscribe but nothing arrived yet: silent, and not an underrun.
+    waiting: bool,
 }
 
 impl Mixer {
@@ -403,6 +408,7 @@ impl Mixer {
                             adjust: 0,
                             held: false,
                             rebuffering: false,
+                            waiting: true,
                         };
                         self.peers.insert(id, p);
                     }
@@ -432,10 +438,10 @@ impl Mixer {
         }
     }
 
-    /// Samples queued for `peer` (tests and diagnostics; takes in what arrived first).
-    pub fn buffered(&mut self, peer: &str) -> usize {
+    /// Samples queued for track `source` (tests and diagnostics; takes in what arrived first).
+    pub fn buffered(&mut self, source: &str) -> usize {
         self.intake();
-        self.peers.get(peer).map_or(0, |p| p.queue.len())
+        self.peers.get(source).map_or(0, |p| p.queue.len())
     }
 
     /// What a dry peer refills to before playing on: the target plus the largest recent pull.
@@ -454,10 +460,16 @@ impl Mixer {
             if p.rebuffering && p.queue.len() >= refill {
                 p.rebuffering = false;
             }
+            if p.waiting && !p.queue.is_empty() {
+                p.waiting = false;
+            }
         }
         for frame in out.chunks_mut(channels.max(1)) {
             let mut acc = 0.0f32;
             for p in self.peers.values_mut() {
+                if p.waiting {
+                    continue;
+                }
                 if p.rebuffering {
                     underrun += 1;
                     continue;
@@ -476,8 +488,8 @@ impl Mixer {
             }
             frame.fill(soft_limit(acc * master));
         }
-        for p in self.peers.values_mut() {
-            p.low = p.low.min(p.queue.len());
+        for p in self.peers.values_mut().filter(|p| !p.waiting) {
+            p.low = p.low.min(p.queue.len()); // a source still waiting isn't drifting
         }
         self.pulled += frames;
         if self.pulled >= self.window {
@@ -621,6 +633,21 @@ mod tests {
         m.mix_into(&mut out, 1, 1.0);
         assert_eq!(input.take_underrun_samples(), 240);
         assert_eq!(input.take_underrun_samples(), 0, "restarts after a take");
+    }
+
+    /// A track is registered on subscribe, before its first frame: that wait isn't an underrun
+    /// (on main the peer only appeared with its first push).
+    #[test]
+    fn a_source_waiting_for_its_first_frame_isnt_an_underrun() {
+        let (input, mut m) = mixer_with(48_000, 200, &["a"]);
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        assert_eq!(input.take_underrun_samples(), 0);
+        input.push("a", &[1000; 480]);
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|s| *s > 0.0), "plays once audio arrives");
+        m.mix_into(&mut out, 1, 1.0);
+        assert_eq!(input.take_underrun_samples(), 480, "ran dry after: counted");
     }
 
     #[test]

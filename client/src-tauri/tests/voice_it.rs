@@ -752,13 +752,13 @@ async fn two_tracks_from_one_person_both_play() {
         .await
         .unwrap();
 
-    // feed both with a tone for 3 s at real time
+    // feed both with a tone for 5 s at real time (outlasts every check below)
     let feed = |src: NativeAudioSource| {
         tokio::spawn(async move {
             let tone: Vec<i16> = (0..480)
                 .map(|i| ((i as f32 * 0.13).sin() * 8000.0) as i16)
                 .collect();
-            for _ in 0..300 {
+            for _ in 0..500 {
                 let frame = AudioFrame {
                     data: tone.clone().into(),
                     sample_rate: 48_000,
@@ -779,8 +779,15 @@ async fn two_tracks_from_one_person_both_play() {
     assert_eq!(vm.rx_len().await, 1, "the mic task survives");
     assert_eq!(vm.mixer_sources().await, 1, "the mic source survives");
     let before = vm.mixer_pushed().await;
+    vm.mixer_levels().await; // start a fresh level window
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert!(vm.mixer_pushed().await > before, "the mic is still playing");
+    // frames alone could be WebRTC's silence: the tone itself must still be heard
+    let levels = vm.mixer_levels().await;
+    assert!(
+        levels.iter().any(|(_, l)| *l > 0.01),
+        "the mic's tone is still heard: {levels:?}"
+    );
 
     a.abort();
     b.abort();
