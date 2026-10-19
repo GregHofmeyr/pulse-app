@@ -51,7 +51,7 @@ mod platform {
         (unsafe { GetAsyncKeyState(vk) }) < 0
     }
 
-    fn event(code: &str, down: bool) {
+    fn event(code: &'static str, down: bool) {
         if !down {
             return matcher().up(code);
         }

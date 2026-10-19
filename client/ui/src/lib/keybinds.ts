@@ -1,5 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
-// Keybinds: recorded here, validated, saved and registered by the Rust core (keybinds.rs).
+// Keybinds: recorded here, validated, saved and listened for by the Rust core (keybinds.rs).
 
 /** A key combination, by physical key (W3C `code`), so it survives a layout switch. */
 export type Bind = { code: string; ctrl: boolean; shift: boolean; alt: boolean; meta: boolean }
@@ -86,7 +86,7 @@ const NAMED: Record<string, string> = {
   Backquote: '`', Minus: '-', Equal: '=', BracketLeft: '[', BracketRight: ']', Backslash: '\\',
   Semicolon: ';', Quote: "'", Comma: ',', Period: '.', Slash: '/',
   ArrowUp: '↑', ArrowDown: '↓', ArrowLeft: '←', ArrowRight: '→',
-  PageUp: 'Page Up', PageDown: 'Page Down', ScrollLock: 'Scroll Lock', PrintScreen: 'Print Screen',
+  PageUp: 'Page Up', PageDown: 'Page Down', BrowserBack: 'Browser Back', BrowserForward: 'Browser Forward', NumpadEqual: 'Num =', ScrollLock: 'Scroll Lock', PrintScreen: 'Print Screen',
   NumpadAdd: 'Num +', NumpadSubtract: 'Num -', NumpadMultiply: 'Num *', NumpadDivide: 'Num /',
   NumpadDecimal: 'Num .', NumpadEnter: 'Num Enter',
 }
@@ -107,7 +107,7 @@ export function bindLabel(b: Bind | null): string {
   return [...modLabels(b), keyLabel(b.code)].join(' + ')
 }
 
-/** The binds in use, any that couldn't be registered (another app owns them), and whether the
+/** The binds in use, why they aren't working if they aren't (Windows key hooks failed), and whether the
  *  user has ever chosen (nothing is bound by default: first run nudges them to pick). */
 export type Applied = { binds: Keybinds; problems: string[]; chosen: boolean }
 
