@@ -1338,17 +1338,25 @@ impl VoiceManager {
                     match ev {
                         RoomEvent::TrackSubscribed {
                             track: RemoteTrack::Audio(t),
+                            publication,
                             participant,
-                            ..
                         } => {
-                            let id = participant.identity().to_string();
-                            let pct = volumes.lock().unwrap().get(&id).copied().unwrap_or(100);
-                            mix_in.set_gain(&id, SourceKind::Voice, percent_to_gain(pct));
-                            mix_in.add_source(mix_gen, &id, &id, SourceKind::Voice);
-                            let (m, peer) = (mix_in.clone(), id.clone());
+                            let owner = participant.identity().to_string();
+                            let source = publication.sid().to_string();
+                            let kind = source_kind(publication.source());
+                            if kind == SourceKind::Voice {
+                                let pct =
+                                    volumes.lock().unwrap().get(&owner).copied().unwrap_or(100);
+                                mix_in.set_gain(&owner, kind, percent_to_gain(pct));
+                            }
+                            // before the task starts: a push for an unregistered source is dropped
+                            mix_in.add_source(mix_gen, &source, &owner, kind);
+                            let (m, src, peer) = (mix_in.clone(), source.clone(), owner.clone());
                             let subscribed = Instant::now();
                             tracing::info!(
-                                peer = %id,
+                                peer = %owner,
+                                track = %source,
+                                ?kind,
                                 since_join_ms = started.elapsed().as_millis() as u64,
                                 "voice: subscribed"
                             );
@@ -1368,20 +1376,20 @@ impl VoiceManager {
                                             "voice: first sound"
                                         );
                                     }
-                                    m.push_in(mix_gen, &peer, &f.data);
+                                    m.push_in(mix_gen, &src, &f.data);
                                 }
                             });
-                            rx.lock().unwrap().replace(id.clone(), id, task);
+                            rx.lock().unwrap().replace(source, owner, task);
                         }
-                        RoomEvent::TrackUnsubscribed { participant, .. } => {
-                            let id = participant.identity().to_string();
-                            rx.lock().unwrap().drop_owner(&id);
-                            mix_in.remove_source(mix_gen, &id);
+                        RoomEvent::TrackUnsubscribed { publication, .. } => {
+                            let source = publication.sid().to_string();
+                            rx.lock().unwrap().drop_track(&source);
+                            mix_in.remove_source(mix_gen, &source);
                         }
                         RoomEvent::ParticipantDisconnected(p) => {
-                            let id = p.identity().to_string();
-                            rx.lock().unwrap().drop_owner(&id);
-                            mix_in.remove_owner(mix_gen, &id);
+                            let owner = p.identity().to_string();
+                            rx.lock().unwrap().drop_owner(&owner);
+                            mix_in.remove_owner(mix_gen, &owner);
                         }
                         RoomEvent::ConnectionQualityChanged {
                             quality,
@@ -1666,9 +1674,28 @@ pub fn mic_publish_options() -> TrackPublishOptions {
     }
 }
 
+/// Stream audio (a shared game's sound) gets its own volume and never lights the speaking ring.
+fn source_kind(s: TrackSource) -> SourceKind {
+    match s {
+        TrackSource::ScreenshareAudio => SourceKind::Stream,
+        _ => SourceKind::Voice,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screen_share_audio_is_stream_everything_else_is_voice() {
+        assert_eq!(
+            source_kind(TrackSource::ScreenshareAudio),
+            SourceKind::Stream
+        );
+        assert_eq!(source_kind(TrackSource::Microphone), SourceKind::Voice);
+        // an unknown source plays like a voice: never silently dropped
+        assert_eq!(source_kind(TrackSource::Unknown), SourceKind::Voice);
+    }
 
     #[tokio::test(start_paused = true)]
     async fn devices_open_while_the_room_connects() {
