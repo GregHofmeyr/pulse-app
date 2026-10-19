@@ -601,7 +601,7 @@ pub fn watch_voice_meters(voice: State<'_, VoiceManager>, on: bool) {
     voice.watch_meters(on);
 }
 
-/// Hotkey path (IPC on Linux, global shortcut on Windows): toggle + broadcast, same as the buttons.
+/// Hotkey path (IPC on Linux, keyboard/mouse hooks on Windows): toggle + broadcast, same as the buttons.
 pub fn hotkey(app: &AppHandle, c: crate::ipc::Command) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {

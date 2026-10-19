@@ -1,162 +1,161 @@
-//! Global hotkeys from the keybinds (Windows; on Linux the compositor binds the CLI, see ipc.rs).
-//! Always on, like Discord: people mute before joining, or tap mute to hear that their sound
-//! works. Paused while a bind is being recorded, or Windows would swallow the keys being recorded.
-
-use std::sync::Mutex;
-
-use crate::keybinds::{Action, Bind, Keybinds, label};
-
-/// The OS side: turn a bind into a key and (un)register it.
-pub trait Registrar {
-    type Key: Clone + PartialEq;
-    fn key(&self, b: &Bind) -> Option<Self::Key>;
-    /// False if it couldn't be registered (another app owns it).
-    fn register(&self, k: &Self::Key) -> bool;
-    fn unregister(&self, k: &Self::Key);
-}
-
-/// Which binds are registered, and the rules for changing them.
-pub struct Hotkeys<K> {
-    /// What's registered now. Read by the shortcut handler (Windows: main thread); registering
-    /// also hops to the main thread, so this is never held while (un)registering.
-    active: Mutex<Vec<(K, Action)>>,
-    /// The binds wanted, and whether we're paused. Serialises changes.
-    wanted: Mutex<(Option<Keybinds>, bool)>,
-}
-
-impl<K: Clone + PartialEq> Default for Hotkeys<K> {
-    fn default() -> Self {
-        Self {
-            active: Mutex::new(Vec::new()),
-            wanted: Mutex::new((None, false)),
-        }
-    }
-}
-
-impl<K: Clone + PartialEq> Hotkeys<K> {
-    /// The action a pressed key is bound to.
-    pub fn action_for(&self, k: &K) -> Option<Action> {
-        let active = self.active.lock().unwrap_or_else(|e| e.into_inner());
-        active
-            .iter()
-            .find(|(a, _)| a == k)
-            .map(|(_, action)| *action)
-    }
-
-    fn unregister_all(&self, r: &impl Registrar<Key = K>) {
-        let old = std::mem::take(&mut *self.active.lock().unwrap_or_else(|e| e.into_inner()));
-        for (k, _) in old {
-            r.unregister(&k);
-        }
-    }
-
-    fn register_all(&self, r: &impl Registrar<Key = K>, binds: &Keybinds) -> Vec<String> {
-        let (mut ok, mut problems) = (Vec::new(), Vec::new());
-        for (action, b) in binds.bound() {
-            match r.key(b) {
-                Some(k) if r.register(&k) => ok.push((k, action)),
-                Some(_) => problems.push(format!(
-                    "{}: {} is taken by another app",
-                    action.label(),
-                    label(b)
-                )),
-                None => problems.push(format!(
-                    "{}: {} can't be used as a global key",
-                    action.label(),
-                    label(b)
-                )),
-            }
-        }
-        *self.active.lock().unwrap_or_else(|e| e.into_inner()) = ok;
-        problems
-    }
-
-    /// Use `binds` from now on; one message per bind that couldn't be registered. While paused
-    /// (recording) they're registered on unpause instead.
-    pub fn apply(&self, r: &impl Registrar<Key = K>, binds: &Keybinds) -> Vec<String> {
-        let mut wanted = self.wanted.lock().unwrap_or_else(|e| e.into_inner());
-        wanted.0 = Some(binds.clone());
-        self.unregister_all(r);
-        if wanted.1 {
-            return Vec::new();
-        }
-        self.register_all(r, binds)
-    }
-
-    pub fn pause(&self, r: &impl Registrar<Key = K>, paused: bool) -> Vec<String> {
-        let mut wanted = self.wanted.lock().unwrap_or_else(|e| e.into_inner());
-        if wanted.1 == paused {
-            return Vec::new();
-        }
-        wanted.1 = paused;
-        self.unregister_all(r);
-        match (&wanted.0, paused) {
-            (Some(binds), false) => self.register_all(r, binds),
-            _ => Vec::new(),
-        }
-    }
-}
+//! Global binds (Windows; on Linux the compositor binds the CLI, see ipc.rs). Low-level keyboard and
+//! mouse hooks see every key and button system-wide and always pass it on: a bind toggles mute or
+//! deafen and the key still works in the focused app, like Discord. Which press fires what is
+//! decided by `bindmatch::Matcher`. Always on; paused while a bind is being recorded.
 
 #[cfg(windows)]
 mod platform {
-    use tauri::{AppHandle, Manager};
-    use tauri_plugin_global_shortcut::{
-        Code, GlobalShortcutExt, Modifiers, Shortcut, ShortcutState,
+    use std::sync::{LazyLock, Mutex, OnceLock, mpsc};
+    use std::time::Instant;
+
+    use tauri::AppHandle;
+    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::UI::Input::KeyboardAndMouse::{MAPVK_VK_TO_VSC_EX, MapVirtualKeyW};
+    use windows::Win32::UI::WindowsAndMessaging::{
+        CallNextHookEx, GetMessageW, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT,
+        SetWindowsHookExW, WH_KEYBOARD_LL, WH_MOUSE_LL, WM_KEYDOWN, WM_KEYUP, WM_MBUTTONDOWN,
+        WM_MBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
     };
 
-    use super::{Hotkeys, Registrar};
-    use crate::keybinds::{Bind, Keybinds};
+    use crate::bindmatch::{Matcher, code_for_scan};
+    use crate::keybinds::{Action, Keybinds};
 
-    struct Plugin<'a>(&'a AppHandle);
+    /// Locked by the hook procedures once per event and briefly by apply/pause; nothing else.
+    static MATCHER: LazyLock<Mutex<Matcher>> = LazyLock::new(Default::default);
+    /// Fired actions go to a forwarder thread: the hook procedure must return at once, or Windows
+    /// silently drops the hook (LowLevelHooksTimeout).
+    static FIRED: OnceLock<mpsc::Sender<Action>> = OnceLock::new();
+    /// Set if the hooks couldn't be installed; reported in Settings until restart.
+    static BROKEN: OnceLock<String> = OnceLock::new();
 
-    impl Registrar for Plugin<'_> {
-        type Key = Shortcut;
+    fn matcher() -> std::sync::MutexGuard<'static, Matcher> {
+        MATCHER.lock().unwrap_or_else(|e| e.into_inner())
+    }
 
-        fn key(&self, b: &Bind) -> Option<Shortcut> {
-            let code: Code = b.code.parse().ok()?;
-            let mut mods = Modifiers::empty();
-            mods.set(Modifiers::CONTROL, b.ctrl);
-            mods.set(Modifiers::SHIFT, b.shift);
-            mods.set(Modifiers::ALT, b.alt);
-            mods.set(Modifiers::SUPER, b.meta);
-            Some(Shortcut::new(Some(mods), code))
+    fn event(code: &str, down: bool) {
+        if !down {
+            return matcher().up(code);
         }
-
-        fn register(&self, k: &Shortcut) -> bool {
-            self.0.global_shortcut().register(*k).is_ok()
-        }
-
-        fn unregister(&self, k: &Shortcut) {
-            let _ = self.0.global_shortcut().unregister(*k);
+        let fired = matcher().down(code, Instant::now());
+        if let Some(tx) = FIRED.get() {
+            for a in fired {
+                let _ = tx.send(a);
+            }
         }
     }
 
-    type State = Hotkeys<Shortcut>;
+    /// Keys by physical position (scan code), so a layout switch doesn't move binds. Injected keys
+    /// (gaming-keyboard software, remappers) count like real ones.
+    unsafe extern "system" fn keyboard(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
+        if n >= 0 {
+            // SAFETY: for WH_KEYBOARD_LL with n >= 0, lParam points to a KBDLLHOOKSTRUCT.
+            let k = unsafe { &*(l.0 as *const KBDLLHOOKSTRUCT) };
+            let (mut scan, mut ext) = (k.scanCode, k.flags.0 & LLKHF_EXTENDED.0 != 0);
+            if scan == 0 {
+                // some injected keys carry only a virtual-key code
+                let v = unsafe { MapVirtualKeyW(k.vkCode, MAPVK_VK_TO_VSC_EX) };
+                (scan, ext) = (v & 0xFF, v & 0xFF00 == 0xE000);
+            }
+            if let Some(code) = code_for_scan(scan, ext) {
+                match w.0 as u32 {
+                    WM_KEYDOWN | WM_SYSKEYDOWN => event(code, true),
+                    WM_KEYUP | WM_SYSKEYUP => event(code, false),
+                    _ => {}
+                }
+            }
+        }
+        unsafe { CallNextHookEx(None, n, w, l) }
+    }
 
-    /// Returns the binds that couldn't be registered.
+    /// Wheel click and the side buttons; everything else (moves, left/right clicks) passes untouched.
+    unsafe extern "system" fn mouse(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
+        if n >= 0 {
+            let msg = w.0 as u32;
+            let button = match msg {
+                WM_MBUTTONDOWN | WM_MBUTTONUP => Some("Mouse3"),
+                WM_XBUTTONDOWN | WM_XBUTTONUP => {
+                    // SAFETY: for WH_MOUSE_LL with n >= 0, lParam points to an MSLLHOOKSTRUCT.
+                    let m = unsafe { &*(l.0 as *const MSLLHOOKSTRUCT) };
+                    match (m.mouseData >> 16) & 0xFFFF {
+                        1 => Some("Mouse4"),
+                        2 => Some("Mouse5"),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(code) = button {
+                event(code, matches!(msg, WM_MBUTTONDOWN | WM_XBUTTONDOWN));
+            }
+        }
+        unsafe { CallNextHookEx(None, n, w, l) }
+    }
+
+    /// Hooks are delivered through the installing thread's message loop, so they get their own
+    /// thread that does nothing else.
+    fn run_hooks(ready: mpsc::Sender<Result<(), String>>) {
+        let installed = (|| unsafe {
+            let module = GetModuleHandleW(None).map_err(|e| e.to_string())?;
+            SetWindowsHookExW(WH_KEYBOARD_LL, Some(keyboard), Some(module.into()), 0)
+                .map_err(|e| e.to_string())?;
+            SetWindowsHookExW(WH_MOUSE_LL, Some(mouse), Some(module.into()), 0)
+                .map_err(|e| e.to_string())?;
+            Ok(())
+        })();
+        let ok = installed.is_ok();
+        let _ = ready.send(installed);
+        if !ok {
+            return;
+        }
+        let mut msg = MSG::default();
+        while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {}
+    }
+
+    /// Returns the binds' problems (only "couldn't start", if the hooks failed).
     pub fn install(app: &tauri::App, binds: &Keybinds) -> tauri::Result<Vec<String>> {
-        app.handle().plugin(
-            tauri_plugin_global_shortcut::Builder::new()
-                .with_handler(|app, sc, ev| {
-                    if ev.state() != ShortcutState::Pressed {
-                        return;
-                    }
-                    if let Some(a) = app.state::<State>().action_for(sc) {
-                        crate::commands::hotkey(app, a.command());
-                    }
-                })
-                .build(),
-        )?;
-        app.manage(State::default());
-        Ok(apply(app.handle(), binds))
+        matcher().set_binds(binds);
+        let (tx, rx) = mpsc::channel::<Action>();
+        let _ = FIRED.set(tx);
+        let handle = app.handle().clone();
+        std::thread::Builder::new()
+            .name("pulse-keys-fire".into())
+            .spawn(move || {
+                for a in rx {
+                    crate::commands::hotkey(&handle, a.command());
+                }
+            })?;
+        let (ready_tx, ready) = mpsc::channel();
+        std::thread::Builder::new()
+            .name("pulse-keys".into())
+            .spawn(move || run_hooks(ready_tx))?;
+        match ready.recv() {
+            Ok(Ok(())) => tracing::info!("keybinds: hooks installed"),
+            Ok(Err(e)) => {
+                tracing::warn!(error = %e, "keybinds: hooks couldn't be installed");
+                let _ = BROKEN.set(format!(
+                    "Keybinds couldn't start ({e}); restart Pulse to try again"
+                ));
+            }
+            Err(_) => {
+                let _ = BROKEN.set("Keybinds couldn't start; restart Pulse to try again".into());
+            }
+        }
+        Ok(problems())
     }
 
-    pub fn apply(app: &AppHandle, binds: &Keybinds) -> Vec<String> {
-        app.state::<State>().apply(&Plugin(app), binds)
+    fn problems() -> Vec<String> {
+        BROKEN.get().cloned().into_iter().collect()
     }
 
-    pub fn pause(app: &AppHandle, paused: bool) -> Vec<String> {
-        app.state::<State>().pause(&Plugin(app), paused)
+    pub fn apply(_app: &AppHandle, binds: &Keybinds) -> Vec<String> {
+        matcher().set_binds(binds);
+        problems()
+    }
+
+    pub fn pause(_app: &AppHandle, paused: bool) -> Vec<String> {
+        matcher().set_paused(paused);
+        problems()
     }
 }
 
@@ -178,102 +177,3 @@ mod platform {
 }
 
 pub use platform::{apply, install, pause};
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::cell::RefCell;
-
-    /// Records what's registered; `taken` keys belong to another app.
-    #[derive(Default)]
-    struct Fake {
-        registered: RefCell<Vec<String>>,
-        taken: Vec<String>,
-    }
-
-    impl Registrar for Fake {
-        type Key = String;
-        fn key(&self, b: &Bind) -> Option<String> {
-            Some(label(b))
-        }
-        fn register(&self, k: &String) -> bool {
-            if self.taken.contains(k) {
-                return false;
-            }
-            self.registered.borrow_mut().push(k.clone());
-            true
-        }
-        fn unregister(&self, k: &String) {
-            self.registered.borrow_mut().retain(|x| x != k);
-        }
-    }
-
-    fn ctrl_shift_m_d() -> Keybinds {
-        let cs = |code: &str| Bind {
-            code: code.into(),
-            ctrl: true,
-            shift: true,
-            alt: false,
-            meta: false,
-        };
-        Keybinds {
-            toggle_mute: Some(cs("KeyM")),
-            toggle_deafen: Some(cs("KeyD")),
-        }
-    }
-
-    fn f13() -> Keybinds {
-        Keybinds {
-            toggle_mute: Some(Bind {
-                code: "F13".into(),
-                ctrl: false,
-                shift: false,
-                alt: false,
-                meta: false,
-            }),
-            toggle_deafen: None,
-        }
-    }
-
-    #[test]
-    fn applying_replaces_the_registered_binds() {
-        let (h, r) = (Hotkeys::default(), Fake::default());
-        h.apply(&r, &ctrl_shift_m_d());
-        assert_eq!(*r.registered.borrow(), ["Ctrl+Shift+M", "Ctrl+Shift+D"]);
-        h.apply(&r, &f13());
-        assert_eq!(*r.registered.borrow(), ["F13"]);
-        assert_eq!(h.action_for(&"F13".to_string()), Some(Action::ToggleMute));
-        assert_eq!(h.action_for(&"Ctrl+Shift+M".to_string()), None);
-    }
-
-    #[test]
-    fn a_bind_another_app_owns_is_reported_and_the_rest_still_work() {
-        let h = Hotkeys::default();
-        let r = Fake {
-            taken: vec!["Ctrl+Shift+M".into()],
-            ..Default::default()
-        };
-        let problems = h.apply(&r, &ctrl_shift_m_d());
-        assert_eq!(
-            problems,
-            ["Toggle mute: Ctrl+Shift+M is taken by another app"]
-        );
-        assert_eq!(*r.registered.borrow(), ["Ctrl+Shift+D"]);
-    }
-
-    /// Recording: everything's released, a new bind saved meanwhile isn't registered until the
-    /// recording ends (it would swallow the next keypress), then the newest binds come back.
-    #[test]
-    fn while_paused_nothing_is_registered_and_unpause_brings_the_latest_back() {
-        let (h, r) = (Hotkeys::default(), Fake::default());
-        h.apply(&r, &ctrl_shift_m_d());
-        h.pause(&r, true);
-        assert!(r.registered.borrow().is_empty());
-        h.apply(&r, &f13());
-        assert!(r.registered.borrow().is_empty(), "still recording");
-        h.pause(&r, false);
-        assert_eq!(*r.registered.borrow(), ["F13"]);
-        h.pause(&r, false); // a second unpause changes nothing
-        assert_eq!(*r.registered.borrow(), ["F13"]);
-    }
-}

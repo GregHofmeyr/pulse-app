@@ -65,11 +65,17 @@ pulse-server = { path = "../../server", features = ["testing"] }
 webkit2gtk = "2.0"
 
 [target.'cfg(windows)'.dependencies]
-tauri-plugin-global-shortcut = "2"
 # 0.18's `realtime` raises cpal's own WASAPI threads via MMCSS (0.15 never did: thread id passed as a handle).
 cpal = { version = "0.18.2", features = ["realtime"] }
 # MMCSS for our own audio threads (voice/rtprio.rs); already in the tree via tauri and cpal.
-windows = { version = "0.62", features = ["Win32_Foundation", "Win32_System_Threading"] }
+# + low-level keyboard/mouse hooks for pass-through keybinds (hotkeys.rs).
+windows = { version = "0.62", features = [
+    "Win32_Foundation",
+    "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse",
+] }
 # WebView2 memory target (webview_memory.rs). Keep these on the versions tauri/wry use (see
 # Cargo.lock), or the COM types don't match (E0308).
 webview2-com = "0.39"
