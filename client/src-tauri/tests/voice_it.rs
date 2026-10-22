@@ -724,7 +724,8 @@ async fn two_tracks_from_one_person_both_play() {
     .await
     .unwrap();
 
-    // sam is a bare SDK client publishing two tracks
+    // sam is a bare SDK client publishing two tracks. Voice tickets may only publish `Microphone`
+    // (stream audio lives in the stream room now), so both are mic-sourced: this checks the mixer, not the source.
     let vt = api.voice_token(&sam, lounge.id).await.unwrap();
     let (room, _events) = Room::connect(&vt.url, &vt.token, RoomOptions::default())
         .await
@@ -742,7 +743,7 @@ async fn two_tracks_from_one_person_both_play() {
         )
     };
     let (mic_src, mic, mic_opts) = publish("mic", TrackSource::Microphone);
-    let (game_src, game, game_opts) = publish("game", TrackSource::ScreenshareAudio);
+    let (game_src, game, game_opts) = publish("game", TrackSource::Microphone);
     let lp = room.local_participant();
     lp.publish_track(LocalTrack::Audio(mic), mic_opts)
         .await
