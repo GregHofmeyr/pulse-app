@@ -63,7 +63,9 @@
       await streamApi.goLive(channelId, track, picked.label, settings)
       onClose() // the track now belongs to the live stream
     } catch {
-      handedOff = false // kept for Retry
+      // kept for Retry, unless the dialog is already gone (its onDestroy left the capture to us)
+      if (destroyed) track.stop()
+      else handedOff = false
     } finally {
       busy = false
     }

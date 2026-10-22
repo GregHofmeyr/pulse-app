@@ -221,7 +221,11 @@ async function goLive(token: number, channelId: string, track: LocalVideoTrack, 
     // cancelled = Stop or a voice change meanwhile: the capture goes too; a plain failure keeps it for Retry
     await room?.unpublish(cancelled).catch(() => {})
     await releaseIfIdle()
-    if (cancelled) return
+    if (cancelled) {
+      // cancelled before publishing: unpublish had nothing to stop, and the dialog has handed it over
+      track.stop()
+      return
+    }
     stream.error = errorText(e)
     streamCmd.log({ ev: 'go_live_error', error: stream.error })
     throw e
@@ -263,6 +267,8 @@ export const streamApi = {
     if (stream.live) return Promise.resolve()
     const p = goLive(liveGen.next(), channelId, track, label, settings).finally(() => {
       if (pendingLive?.p === p) pendingLive = null
+      // a share that ended meanwhile skipped this (the attempt was still pending)
+      void releaseIfIdle()
     })
     pendingLive = { channelId, p }
     return p
