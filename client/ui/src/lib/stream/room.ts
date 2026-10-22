@@ -22,12 +22,14 @@ const DEADLINE_MS = 15_000
 
 export type Picked = { track: LocalVideoTrack; label: string; surface: string; width: number; height: number }
 
+type Watched = { pub: RemoteTrackPublication; track: RemoteTrack | null; el: HTMLVideoElement; abort: AbortController }
+
 // createScreenTracks lives on LocalParticipant but needs no connection: an unconnected Room's is enough.
 let pickerRoom: Room | null = null
 
 export class StreamRoom {
   private published: LocalVideoTrack | null = null
-  private watched: { pub: RemoteTrackPublication; track: RemoteTrack | null; el: HTMLVideoElement } | null = null
+  private watched: Watched | null = null
 
   private constructor(private readonly room: Room) {}
 
@@ -111,31 +113,52 @@ export class StreamRoom {
     if (t) await this.room.localParticipant.unpublishTrack(t, stop)
   }
 
+  /** Subscribes and waits for the first painted frame. `unwatch()` meanwhile rejects it with an `AbortError`. */
   async watch(streamer: string, el: HTMLVideoElement): Promise<void> {
     this.unwatch()
     const t0 = performance.now()
     const pub = this.room.remoteParticipants.get(`${streamer}#v`)?.getTrackPublication(Track.Source.ScreenShare)
     if (!pub) throw new Error('That stream has ended')
-    this.watched = { pub, track: null, el }
-    pub.setSubscribed(true)
-    // timers, not requestAnimationFrame: rAF stops while the window is hidden
-    let polling = true
-    const track = await withDeadline(
-      new Promise<RemoteTrack>((resolve) => {
-        const check = () => (pub.track ? resolve(pub.track) : polling && void setTimeout(check, 50))
-        check()
-      }),
-      DEADLINE_MS,
-      'No video 15 s after subscribing',
-    ).finally(() => (polling = false))
-    if (this.watched?.pub !== pub) return // unwatched meanwhile
-    this.watched.track = track
-    track.attach(el)
-    await withDeadline(
-      new Promise<void>((resolve) => el.requestVideoFrameCallback(() => resolve())),
-      DEADLINE_MS,
-      'No picture 15 s after the video arrived',
+    const abort = new AbortController()
+    const w: Watched = { pub, track: null, el, abort }
+    this.watched = w
+    const unwatched = new Promise<never>((_, reject) =>
+      abort.signal.addEventListener('abort', () => reject(new DOMException('Stopped watching', 'AbortError')), { once: true }),
     )
+    unwatched.catch(() => {}) // only ever raced
+    pub.setSubscribed(true)
+    let frameId: number | null = null
+    try {
+      // timers, not requestAnimationFrame: rAF stops while the window is hidden
+      const track = await withDeadline(
+        Promise.race([
+          new Promise<RemoteTrack>((resolve) => {
+            const check = () => {
+              if (abort.signal.aborted) return
+              if (pub.track) resolve(pub.track)
+              else setTimeout(check, 50)
+            }
+            check()
+          }),
+          unwatched,
+        ]),
+        DEADLINE_MS,
+        'No video 15 s after subscribing',
+      )
+      w.track = track
+      track.attach(el)
+      await withDeadline(
+        Promise.race([new Promise<void>((resolve) => (frameId = el.requestVideoFrameCallback(() => resolve()))), unwatched]),
+        DEADLINE_MS,
+        'No picture 15 s after the video arrived',
+      )
+    } catch (e) {
+      if (this.watched === w) this.unwatch() // timed out: stop polling and subscribing
+      throw e
+    } finally {
+      if (frameId !== null) el.cancelVideoFrameCallback(frameId)
+    }
+    if (this.watched !== w) throw new DOMException('Stopped watching', 'AbortError')
     const ms = Math.round(performance.now() - t0)
     diag.firstFrameMs = ms
     streamCmd.log({ ev: 'first_frame', ms })
@@ -145,6 +168,7 @@ export class StreamRoom {
     const w = this.watched
     this.watched = null
     if (!w) return
+    w.abort.abort()
     w.track?.detach(w.el)
     w.pub.setSubscribed(false)
   }

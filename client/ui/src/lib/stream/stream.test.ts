@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { needsReannounce } from './stream.svelte'
+import { generation, needsReannounce } from './stream.svelte'
 import type { StreamInfo } from '../protocol/StreamInfo'
 
 const info = (channel_id: string, user_id: string): StreamInfo => ({
@@ -24,5 +24,23 @@ describe('needsReannounce', () => {
   it('no_reannounce_when_not_live', () => {
     expect(needsReannounce('me', null, [])).toBe(false)
     expect(needsReannounce('me', null, [info('c1', 'me')])).toBe(false)
+  })
+})
+
+describe('generation', () => {
+  it('a_newer_call_supersedes_an_older_one', () => {
+    const g = generation()
+    const first = g.next()
+    expect(g.current(first)).toBe(true)
+    const second = g.next()
+    expect(g.current(first)).toBe(false)
+    expect(g.current(second)).toBe(true)
+  })
+  it('cancel_invalidates_the_call_in_flight', () => {
+    const g = generation()
+    const t = g.next()
+    g.cancel()
+    expect(g.current(t)).toBe(false)
+    expect(g.current(g.next())).toBe(true)
   })
 })

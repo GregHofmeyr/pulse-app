@@ -30,6 +30,19 @@ export function needsReannounce(meId: string, live: { channelId: string } | null
   return !readyStreams.some((s) => s.channel_id === live.channelId && s.user_id === meId)
 }
 
+/**
+ * Tokens for async calls that a later call (or a cancel) supersedes: after every `await`, a call
+ * checks `current(token)` and backs out if something newer has started since.
+ */
+export function generation() {
+  let n = 0
+  return {
+    next: () => ++n,
+    current: (token: number) => token === n,
+    cancel: () => void ++n,
+  }
+}
+
 const PREVIEW_W = 480
 const PREVIEW_H = 270
 const PREVIEW_FIRST_MS = 1_000
@@ -42,6 +55,11 @@ let liveTrack: LocalVideoTrack | null = null
 let stopPreview: (() => void) | null = null
 let stopOutDiag: (() => void) | null = null
 let stopInDiag: (() => void) | null = null
+let watchingEl: HTMLVideoElement | null = null
+/** Go Live in flight (a second click joins it) and its channel. */
+let pendingLive: { channelId: string; p: Promise<void> } | null = null
+const liveGen = generation()
+const watchGen = generation()
 
 const logError = (ev: string) => (e: unknown) => streamCmd.log({ ev, error: errorText(e) })
 const meId = () => app.state.me?.id ?? ''
@@ -76,12 +94,13 @@ async function disconnect() {
 
 /** Nothing to publish or watch: let the connection go. */
 async function releaseIfIdle() {
-  if (!stream.live && !stream.watching && !connecting) await disconnect()
+  if (!stream.live && !stream.watching && !connecting && !pendingLive) await disconnect()
 }
 
 function onTrackEnded() {
   streamCmd.log({ ev: 'track_ended' })
-  void streamApi.stop()
+  liveGen.cancel()
+  void endLive(true)
 }
 
 /** Every 15 s while live: a 480×270 WebP of what we share, for the LIVE popover. */
@@ -162,6 +181,7 @@ async function endWatch(announce: boolean) {
   const w = stream.watching
   if (!w) return
   stream.watching = null
+  watchingEl = null
   stopInDiag?.()
   stopInDiag = null
   stream.room?.unwatch()
@@ -171,59 +191,106 @@ async function endWatch(announce: boolean) {
   ])
 }
 
+const CAPTURE_ENDED = 'The shared window or screen closed'
+
+async function goLive(token: number, channelId: string, track: LocalVideoTrack, label: string, settings: GoLive) {
+  stream.error = ''
+  const { res, fps, audio } = settings
+  const ended = () => track.mediaStreamTrack.readyState === 'ended'
+  let room: StreamRoom | null = null
+  let announced = false
+  try {
+    if (ended()) throw new Error(CAPTURE_ENDED)
+    room = await ensureRoom(channelId)
+    if (!liveGen.current(token)) throw new Error('cancelled')
+    await room.publish(track, res, fps)
+    if (!liveGen.current(token)) throw new Error('cancelled')
+    await streamCmd.goLive(channelId, { height: res, fps, audio })
+    announced = true
+    if (!liveGen.current(token)) throw new Error('cancelled')
+  } catch (e) {
+    const cancelled = !liveGen.current(token)
+    pendingLive = null // this attempt is over: let releaseIfIdle drop the connection
+    if (announced) await streamCmd.stop(channelId).catch(logError('stop_error'))
+    // cancelled = Stop or a voice change meanwhile: the capture goes too; a plain failure keeps it for Retry
+    await room?.unpublish(cancelled).catch(() => {})
+    await releaseIfIdle()
+    if (cancelled) return
+    stream.error = errorText(e)
+    streamCmd.log({ ev: 'go_live_error', error: stream.error })
+    throw e
+  }
+  liveTrack = track
+  stream.live = { channelId, res, fps, audio, audioMuted: false, label, encoderWarning: false }
+  streamCmd.log({ ev: 'live', res, fps, audio })
+  // the shared window closed (or the capture otherwise ended); it may already have, before we listened
+  track.mediaStreamTrack.addEventListener('ended', onTrackEnded)
+  if (ended()) return onTrackEnded()
+  if (audio) {
+    const windowTitle = track.mediaStreamTrack.getSettings().displaySurface === 'window' ? label : null
+    // Video carries on without it; Rust retries the capture itself.
+    await streamCmd.audioStart(channelId, windowTitle).catch(logError('audio_start_error'))
+    if (liveTrack !== track) {
+      // stopped meanwhile: that stop's audio_stop ran before this start landed
+      await streamCmd.audioStop().catch(logError('audio_stop_error'))
+      return
+    }
+  }
+  stopPreview = startPreview(channelId, track.mediaStreamTrack)
+  const r = room
+  stopOutDiag = startDiagnostics('out', () => r.localStats(), fps, (warn) => {
+    if (stream.live) stream.live.encoderWarning = warn
+  })
+}
+
 export const streamApi = {
-  /** Publishes the picked `track` and tells everyone. Throws (and sets `stream.error`) on failure; the track is left running for a retry. */
-  async goLive(channelId: string, track: LocalVideoTrack, label: string, settings: GoLive): Promise<void> {
-    stream.error = ''
-    const { res, fps, audio } = settings
-    let room: StreamRoom | null = null
-    try {
-      room = await ensureRoom(channelId)
-      await room.publish(track, res, fps)
-      await streamCmd.goLive(channelId, { height: res, fps, audio })
-    } catch (e) {
-      stream.error = errorText(e)
-      streamCmd.log({ ev: 'go_live_error', error: stream.error })
-      await room?.unpublish(false).catch(() => {})
-      await releaseIfIdle()
-      throw e
-    }
-    liveTrack = track
-    stream.live = { channelId, res, fps, audio, audioMuted: false, label, encoderWarning: false }
-    streamCmd.log({ ev: 'live', res, fps, audio })
-    // the shared window closed (or the capture otherwise ended)
-    track.mediaStreamTrack.addEventListener('ended', onTrackEnded)
-    if (audio) {
-      const windowTitle = track.mediaStreamTrack.getSettings().displaySurface === 'window' ? label : null
-      // Video carries on without it; Rust retries the capture itself.
-      await streamCmd.audioStart(channelId, windowTitle).catch(logError('audio_start_error'))
-      if (liveTrack !== track) return // stopped meanwhile
-    }
-    stopPreview = startPreview(channelId, track.mediaStreamTrack)
-    const r = room
-    stopOutDiag = startDiagnostics('out', () => r.localStats(), fps, (warn) => {
-      if (stream.live) stream.live.encoderWarning = warn
+  /**
+   * Publishes the picked `track` and tells everyone. Throws (and sets `stream.error`) on failure;
+   * the track is left running for a retry. A second call while one is in flight joins it; while
+   * live it does nothing.
+   */
+  goLive(channelId: string, track: LocalVideoTrack, label: string, settings: GoLive): Promise<void> {
+    if (pendingLive) return pendingLive.p
+    if (stream.live) return Promise.resolve()
+    const p = goLive(liveGen.next(), channelId, track, label, settings).finally(() => {
+      if (pendingLive?.p === p) pendingLive = null
     })
+    pendingLive = { channelId, p }
+    return p
   },
 
-  stop: () => endLive(true),
+  stop() {
+    liveGen.cancel()
+    return endLive(true)
+  },
 
   /** Watches `streamer` into `el` (switching from anyone watched before). Errors land in `stream.error`. */
   async watch(channelId: string, streamer: string, el: HTMLVideoElement): Promise<void> {
+    const same = (w: Watching | null) => w?.channelId === channelId && w.streamer === streamer
+    if (same(stream.watching) && watchingEl === el) return // a second click
+    const token = watchGen.next()
+    const current = () => watchGen.current(token)
     await endWatch(true)
+    if (!current()) return
     stream.error = ''
     stream.notice = ''
-    const w: Watching = { channelId, streamer, quality: 'auto' }
-    stream.watching = w
-    const current = () => stream.watching?.channelId === channelId && stream.watching.streamer === streamer
+    stream.watching = { channelId, streamer, quality: 'auto' }
+    watchingEl = el
     try {
       const room = await ensureRoom(channelId)
+      if (!current()) return
       await streamCmd.watch(channelId, streamer)
       if (!current()) return
-      void streamCmd.audioWatch(channelId, streamer, true).catch(logError('audio_watch_error'))
+      await streamCmd.audioWatch(channelId, streamer, true).catch(logError('audio_watch_error'))
+      if (!current()) {
+        // switched or closed meanwhile, and that endWatch's "off" ran before this "on" landed
+        if (!same(stream.watching)) await streamCmd.audioWatch(channelId, streamer, false).catch(logError('audio_watch_error'))
+        return
+      }
       await room.watch(streamer, el)
       if (!current()) return
       room.setQuality(stream.watching!.quality)
+      stopInDiag?.()
       stopInDiag = startDiagnostics('in', () => room.remoteStats(), 0)
     } catch (e) {
       if (!current()) return
@@ -235,6 +302,7 @@ export const streamApi = {
   },
 
   async unwatch(): Promise<void> {
+    watchGen.cancel()
     await endWatch(true)
     await releaseIfIdle()
   },
@@ -253,8 +321,15 @@ export const streamApi = {
 
   /** Voice channel changed (`null` = left voice): a stream never outlives your voice channel. */
   async onVoiceChanged(channelId: string | null) {
-    if (stream.live && stream.live.channelId !== channelId) await endLive(true)
-    if (stream.watching && stream.watching.channelId !== channelId) await endWatch(true)
+    if (pendingLive && pendingLive.channelId !== channelId) liveGen.cancel()
+    if (stream.live && stream.live.channelId !== channelId) {
+      liveGen.cancel()
+      await endLive(true)
+    }
+    if (stream.watching && stream.watching.channelId !== channelId) {
+      watchGen.cancel()
+      await endWatch(true)
+    }
     if (stream.room && roomChannel !== channelId) await disconnect()
   },
 
@@ -262,6 +337,7 @@ export const streamApi = {
   async onStreamEnded(channelId: string, userId: string, reason: StreamEndReason) {
     const w = stream.watching
     if (w && w.channelId === channelId && w.streamer === userId) {
+      watchGen.cancel()
       await endWatch(false)
       stream.notice = `${nameOf(channelId, userId)} stopped streaming`
       await releaseIfIdle()
@@ -269,6 +345,7 @@ export const streamApi = {
     // the server ended ours (e.g. timed out): stop sending into nothing
     if (userId === meId() && stream.live?.channelId === channelId) {
       streamCmd.log({ ev: 'ended_by_server', reason })
+      liveGen.cancel()
       await endLive(false)
     }
   },
