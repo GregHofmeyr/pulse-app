@@ -38,7 +38,7 @@ use tokio::task::JoinHandle;
 use crate::api::{Api, ApiError};
 use controls::Controls;
 use devices::{AudioConfig, AudioIo, INTERNAL_RATE, Shared, Sides};
-use mixer::percent_to_gain;
+use mixer::{SourceKind, percent_to_gain};
 use rx::RxTasks;
 
 /// Max audio buffered per peer before the oldest is dropped (bounds latency).
@@ -1338,16 +1338,28 @@ impl VoiceManager {
                     match ev {
                         RoomEvent::TrackSubscribed {
                             track: RemoteTrack::Audio(t),
+                            publication,
                             participant,
-                            ..
                         } => {
-                            let id = participant.identity().to_string();
-                            let pct = volumes.lock().unwrap().get(&id).copied().unwrap_or(100);
-                            mix_in.set_gain(&id, percent_to_gain(pct));
-                            let (m, peer) = (mix_in.clone(), id.clone());
+                            let owner = participant.identity().to_string();
+                            let source = publication.sid().to_string();
+                            let kind = source_kind(publication.source());
+                            if kind == SourceKind::Voice {
+                                let pct =
+                                    volumes.lock().unwrap().get(&owner).copied().unwrap_or(100);
+                                mix_in.set_gain(&owner, kind, percent_to_gain(pct));
+                            }
+                            // a re-subscribe under the same SID: stop the old task before the
+                            // new ring exists, or its last frame lands in it
+                            rx.lock().unwrap().drop_track(&source);
+                            // before the task starts: a push for an unregistered source is dropped
+                            mix_in.add_source(mix_gen, &source, &owner, kind);
+                            let (m, src, peer) = (mix_in.clone(), source.clone(), owner.clone());
                             let subscribed = Instant::now();
                             tracing::info!(
-                                peer = %id,
+                                peer = %owner,
+                                track = %source,
+                                ?kind,
                                 since_join_ms = started.elapsed().as_millis() as u64,
                                 "voice: subscribed"
                             );
@@ -1362,25 +1374,27 @@ impl VoiceManager {
                                         heard = true;
                                         tracing::info!(
                                             %peer,
+                                            track = %src,
+                                            ?kind,
                                             since_subscribed_ms =
                                                 subscribed.elapsed().as_millis() as u64,
                                             "voice: first sound"
                                         );
                                     }
-                                    m.push_in(mix_gen, &peer, &f.data);
+                                    m.push_in(mix_gen, &src, &f.data);
                                 }
                             });
-                            rx.lock().unwrap().replace(id, task);
+                            rx.lock().unwrap().replace(source, owner, task);
                         }
-                        RoomEvent::TrackUnsubscribed { participant, .. } => {
-                            let id = participant.identity().to_string();
-                            rx.lock().unwrap().drop_for(&id);
-                            mix_in.remove(&id);
+                        RoomEvent::TrackUnsubscribed { publication, .. } => {
+                            let source = publication.sid().to_string();
+                            rx.lock().unwrap().drop_track(&source);
+                            mix_in.remove_source(mix_gen, &source);
                         }
                         RoomEvent::ParticipantDisconnected(p) => {
-                            let id = p.identity().to_string();
-                            rx.lock().unwrap().drop_for(&id);
-                            mix_in.remove(&id);
+                            let owner = p.identity().to_string();
+                            rx.lock().unwrap().drop_owner(&owner);
+                            mix_in.remove_owner(mix_gen, &owner);
                         }
                         RoomEvent::ConnectionQualityChanged {
                             quality,
@@ -1593,7 +1607,7 @@ impl VoiceManager {
             s.pipeline
                 .shared
                 .mix_in
-                .set_gain(&user_id, percent_to_gain(pct));
+                .set_gain(&user_id, SourceKind::Voice, percent_to_gain(pct));
         }
     }
 
@@ -1648,6 +1662,22 @@ impl VoiceManager {
             None => 0,
         }
     }
+
+    /// Loudest voice level per person since the last call (tests: sound, not just frames).
+    pub async fn mixer_levels(&self) -> Vec<(String, f32)> {
+        match self.session.lock().await.as_ref() {
+            Some(s) => s.pipeline.shared.mix_in.take_peer_levels(),
+            None => Vec::new(),
+        }
+    }
+
+    /// Sources in the mixer: with `rx_len`, shows each track is wired once.
+    pub async fn mixer_sources(&self) -> usize {
+        match self.session.lock().await.as_ref() {
+            Some(s) => s.pipeline.shared.mix_in.source_count(),
+            None => 0,
+        }
+    }
 }
 
 /// How the mic is sent. The SDK's default (`None`) is 48 kbps; Discord defaults to 64 kbps.
@@ -1665,9 +1695,28 @@ pub fn mic_publish_options() -> TrackPublishOptions {
     }
 }
 
+/// Stream audio (a shared game's sound) gets its own volume and never lights the speaking ring.
+fn source_kind(s: TrackSource) -> SourceKind {
+    match s {
+        TrackSource::ScreenshareAudio => SourceKind::Stream,
+        _ => SourceKind::Voice,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn screen_share_audio_is_stream_everything_else_is_voice() {
+        assert_eq!(
+            source_kind(TrackSource::ScreenshareAudio),
+            SourceKind::Stream
+        );
+        assert_eq!(source_kind(TrackSource::Microphone), SourceKind::Voice);
+        // an unknown source plays like a voice: never silently dropped
+        assert_eq!(source_kind(TrackSource::Unknown), SourceKind::Voice);
+    }
 
     #[tokio::test(start_paused = true)]
     async fn devices_open_while_the_room_connects() {
@@ -1858,6 +1907,12 @@ mod tests {
             tasks: Vec::new(),
         };
         let old = counting(&shared);
+        shared.mix_in.add_source(
+            shared.mix_in.generation(),
+            "peer",
+            "peer",
+            SourceKind::Voice,
+        );
         shared.mix_in.push("peer", &[100; 960]);
         let block = || (48_000, vec![0.0; 480], std::time::Instant::now());
         for _ in 0..5 {
