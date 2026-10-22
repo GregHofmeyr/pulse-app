@@ -222,6 +222,12 @@ fn wasapi_capture(
         Capture::Include(p) => (p, true),
         Capture::Exclude(p) => (p, false),
     };
+    // opened before the capture, so an INCLUDE target that is already gone ends it right away
+    let target = if include {
+        Some(Target::open(pid).ok_or_else(|| format!("target process {pid} exited"))?)
+    } else {
+        None
+    };
     wasapi::initialize_mta()
         .ok()
         .map_err(|e| format!("{e:?}"))?;
@@ -244,7 +250,7 @@ fn wasapi_capture(
     client.start_stream().map_err(|e| format!("start: {e}"))?;
     let mut q = std::collections::VecDeque::<u8>::new();
     while !stop.load(Ordering::Relaxed) {
-        if include && !process_alive(pid) {
+        if target.as_ref().is_some_and(|t| !t.alive()) {
             let _ = client.stop_stream();
             return Err(format!("target process {pid} exited"));
         }
@@ -269,19 +275,46 @@ fn wasapi_capture(
     Ok(())
 }
 
+/// An INCLUDE capture's target process, opened once for the whole capture (the handle also
+/// keeps its pid from being reused). Fails open: a process we may not open (anti-cheat, a
+/// protected process) counts as running for as long as the capture lasts; only "no such
+/// process" means it is gone.
 #[cfg(windows)]
-fn process_alive(pid: u32) -> bool {
-    use windows::Win32::System::Threading::{
-        GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION,
-    };
-    unsafe {
-        let Ok(h) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
-            return false;
-        };
-        let mut code = 0u32;
-        let ok = GetExitCodeProcess(h, &mut code).is_ok();
-        let _ = windows::Win32::Foundation::CloseHandle(h);
-        ok && code == 259 // STILL_ACTIVE
+struct Target(Option<windows::Win32::Foundation::HANDLE>);
+
+#[cfg(windows)]
+impl Target {
+    /// `None` when there is no process `pid`.
+    fn open(pid: u32) -> Option<Target> {
+        use windows::Win32::Foundation::ERROR_INVALID_PARAMETER;
+        use windows::Win32::System::Threading::{OpenProcess, PROCESS_SYNCHRONIZE};
+        match unsafe { OpenProcess(PROCESS_SYNCHRONIZE, false, pid) } {
+            Ok(h) => Some(Target(Some(h))),
+            Err(e) if e.code() == windows::core::HRESULT::from_win32(ERROR_INVALID_PARAMETER.0) => {
+                None
+            }
+            Err(e) => {
+                log(json!({"ev": "target_unwatchable", "pid": pid, "error": e.to_string()}));
+                Some(Target(None))
+            }
+        }
+    }
+
+    /// False once the process has exited; true while it runs, or when we can't tell.
+    fn alive(&self) -> bool {
+        use windows::Win32::Foundation::WAIT_OBJECT_0;
+        use windows::Win32::System::Threading::WaitForSingleObject;
+        self.0
+            .is_none_or(|h| unsafe { WaitForSingleObject(h, 0) } != WAIT_OBJECT_0)
+    }
+}
+
+#[cfg(windows)]
+impl Drop for Target {
+    fn drop(&mut self) {
+        if let Some(h) = self.0.take() {
+            let _ = unsafe { windows::Win32::Foundation::CloseHandle(h) };
+        }
     }
 }
 
@@ -423,5 +456,26 @@ mod tests {
         let r = wasapi_capture(Include(child.id()), &stop, &mut |_| {});
         let _ = child.wait();
         assert!(r.unwrap_err().contains("exited"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_target_we_may_not_open_counts_as_running() {
+        // pid 4 is the System process: it never exits, and an unelevated process may not open
+        // it. Either way it must read as running (fail open), never as exited.
+        let t = Target::open(4).expect("System exists");
+        assert!(t.alive());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_target_that_exits_reads_as_gone() {
+        let mut child = std::process::Command::new("cmd")
+            .args(["/C", "exit 0"])
+            .spawn()
+            .unwrap();
+        let t = Target::open(child.id()).expect("opened before it was reaped");
+        let _ = child.wait();
+        assert!(!t.alive());
     }
 }
