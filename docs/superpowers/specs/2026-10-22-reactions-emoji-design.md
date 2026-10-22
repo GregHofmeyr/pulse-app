@@ -115,6 +115,8 @@ picker is described in §3.1.
   - still images → **WebP**; animated → **animated WebP**, keeping frame timing; very long or huge animations are
     refused with a clear message (**my call:** at most 300 frames after processing, at most 512 KB output);
   - strips metadata;
+  - for animated files, also stores a **still first-frame** WebP (added 2026-10-22 from the profiles design: an
+    `<img>` can't pause an animation, and lists and reduced motion need a still);
   - the original is not kept.
 - The client shows a preview of the processed result before saving (so a badly cropped one is obvious).
 
