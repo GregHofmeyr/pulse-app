@@ -81,7 +81,11 @@ jobs:
         env:
           SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
+          # Only main moves :latest (what `just deploy` pulls by default). A manual run on any other
+          # branch (e.g. the screen-share spike) publishes :<sha7> only, to deploy by sha.
+          tags=(-t "$IMAGE:${SHA::7}")
+          if [ "$GITHUB_REF" = refs/heads/main ]; then tags+=(-t "$IMAGE:latest"); fi
           # shellcheck disable=SC2046
-          docker buildx imagetools create -t "$IMAGE:${SHA::7}" -t "$IMAGE:latest" \
+          docker buildx imagetools create "${tags[@]}" \
             $(printf "$IMAGE@sha256:%s " *)
           docker buildx imagetools inspect "$IMAGE:${SHA::7}"
