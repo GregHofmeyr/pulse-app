@@ -21,7 +21,8 @@
 
   let picked = $state<Picked | null>(null)
   let pickError = $state('')
-  const canGoLive = $derived(inHere && voice.connection === 'connected' && !stream.live)
+  const inCall = $derived(inHere && voice.connection === 'connected')
+  const canGoLive = $derived(inCall && !stream.live)
   const windows = isWindows()
 
   async function pickSource() {
@@ -41,17 +42,10 @@
 
   // Leaving voice (or losing the connection) while the dialog is open: drop the picked capture.
   $effect(() => {
-    if (picked && !canGoLive) {
+    if (picked && !inCall) {
       picked.track.stop()
       picked = null
     }
-  })
-
-  // The animation freeze while live (app.css `.streaming`).
-  $effect(() => {
-    if (!stream.live) return
-    document.body.classList.add('streaming')
-    return () => document.body.classList.remove('streaming')
   })
 
   const qualityBars = (q: string | undefined) => (q === 'excellent' ? 3 : q === 'good' ? 2 : q === 'poor' ? 1 : q === 'lost' ? 0 : 3)

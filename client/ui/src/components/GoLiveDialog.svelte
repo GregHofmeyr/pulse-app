@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import Icon from './Icon.svelte'
   import { StreamRoom, type Picked } from '../lib/stream/room'
   import { resolutionsFor, type Fps } from '../lib/stream/encodings'
@@ -17,6 +17,15 @@
   let busy = $state(false)
   let pickError = $state('')
   let video = $state<HTMLVideoElement>()
+  // The capture belongs to this dialog until Go Live hands it to the stream.
+  let track = picked.track
+  let handedOff = false
+  let destroyed = false
+
+  onDestroy(() => {
+    destroyed = true
+    if (!handedOff) track.stop()
+  })
 
   const resolutions = $derived(resolutionsFor(picked.height))
 
@@ -31,8 +40,10 @@
   async function changeSource() {
     try {
       const next = await StreamRoom.pick()
-      picked.track.stop()
+      if (destroyed) return void next.track.stop()
+      track.stop()
       picked = next
+      track = next.track
       const c = clampGoLive({ res, fps, audio }, next.height)
       res = c.res
       fps = c.fps
@@ -47,28 +58,31 @@
     busy = true
     const settings = { res, fps, audio }
     saveGoLive(settings)
+    handedOff = true
     try {
-      await streamApi.goLive(channelId, picked.track, picked.label, settings)
+      await streamApi.goLive(channelId, track, picked.label, settings)
       onClose() // the track now belongs to the live stream
     } catch {
-      /* stream.error shows inline; Retry */
+      handedOff = false // kept for Retry
     } finally {
       busy = false
     }
   }
 
   function cancel() {
-    picked.track.stop()
-    onClose()
+    if (busy) return
+    onClose() // onDestroy stops the capture
   }
 </script>
+
+<svelte:window onkeydown={(e) => e.key === 'Escape' && cancel()} />
 
 <div class="overlay">
   <div class="backdrop" role="presentation" onclick={cancel}></div>
   <div class="modal" role="dialog" aria-label="Go Live">
     <div class="top">
       <h1>Go Live</h1>
-      <button type="button" class="close" aria-label="Cancel" onclick={cancel}><Icon name="x" /></button>
+      <button type="button" class="close" aria-label="Cancel" disabled={busy} onclick={cancel}><Icon name="x" /></button>
     </div>
     <video bind:this={video} muted autoplay playsinline></video>
     <div class="source">
@@ -92,7 +106,7 @@
 
     {#if pickError || stream.error}<p class="err" role="alert">{pickError || stream.error}</p>{/if}
     <div class="actions">
-      <button type="button" class="ghost" onclick={cancel}>Cancel</button>
+      <button type="button" class="ghost" disabled={busy} onclick={cancel}>Cancel</button>
       <button type="button" class="primary" disabled={busy} onclick={goLive}>{busy ? 'Starting…' : stream.error ? 'Retry' : 'Go Live'}</button>
     </div>
   </div>
