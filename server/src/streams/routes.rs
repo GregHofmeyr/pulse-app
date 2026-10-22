@@ -3,9 +3,11 @@
 
 use std::time::Duration;
 
-use axum::extract::{Path, State};
-use axum::http::StatusCode;
-use axum::routing::{delete, post};
+use axum::body::Bytes;
+use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use livekit_api::access_token::{AccessToken, VideoGrants};
 use pulse_protocol::gateway::Event;
@@ -25,6 +27,7 @@ use crate::error::{AppError, AppResult};
 const TICKET_TTL: Duration = Duration::from_secs(10 * 60);
 const HEIGHTS: [u16; 3] = [720, 1080, 1440];
 const FPS: [u8; 3] = [15, 30, 60];
+const PREVIEW_MAX_BYTES: usize = 100 * 1024;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -33,11 +36,25 @@ pub fn router() -> Router<AppState> {
         .route("/streams/{channel}/live", delete(stop))
         .route("/streams/{channel}/watch", post(watch))
         .route("/streams/{channel}/unwatch", post(unwatch))
+        .route(
+            "/streams/{channel}/preview",
+            put(put_preview).layer(DefaultBodyLimit::max(PREVIEW_MAX_BYTES)),
+        )
+        .route("/streams/{channel}/{user}/preview", get(get_preview))
 }
 
 /// Streaming exists only in server voice channels, and only for people in the call right now
 /// (and in the server, same rule as joining voice).
 async fn require_voice_member(s: &AppState, me: UserId, ch: ChannelId) -> AppResult<Channel> {
+    let channel = require_visible_member(s, me, ch).await?;
+    if !s.voice.members(ch).contains(&me) {
+        return Err(AppError::Forbidden);
+    }
+    Ok(channel)
+}
+
+/// A server voice channel the caller can see and belongs to (no voice membership needed).
+async fn require_visible_member(s: &AppState, me: UserId, ch: ChannelId) -> AppResult<Channel> {
     let channel = channel_for(&s.db, me, ch).await?;
     let Some(server) = channel
         .server_id
@@ -48,9 +65,6 @@ async fn require_voice_member(s: &AppState, me: UserId, ch: ChannelId) -> AppRes
         ));
     };
     if !crate::servers::routes::is_server_member(&s.db, server, me).await? {
-        return Err(AppError::Forbidden);
-    }
-    if !s.voice.members(ch).contains(&me) {
         return Err(AppError::Forbidden);
     }
     Ok(channel)
@@ -178,4 +192,47 @@ pub async fn publish_viewers(s: &AppState, ch: ChannelId, streamer: UserId, view
             },
         )
         .await;
+}
+
+/// The streamer uploads their latest preview frame (480x270 WebP, sent every 15 s).
+async fn put_preview(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(ch): Path<ChannelId>,
+    headers: HeaderMap,
+    body: Bytes,
+) -> AppResult<StatusCode> {
+    require_voice_member(&s, me, ch).await?;
+    let is_webp = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v.trim().eq_ignore_ascii_case("image/webp"));
+    if !is_webp {
+        return Err(AppError::UnsupportedMediaType);
+    }
+    if !s.streams.set_preview(ch, me, body) {
+        return Err(AppError::NotFound);
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Anyone who can see the channel (and is in its server) may fetch a live stream's preview.
+async fn get_preview(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path((ch, streamer)): Path<(ChannelId, UserId)>,
+    headers: HeaderMap,
+) -> AppResult<Response> {
+    require_visible_member(&s, me, ch).await?;
+    let (bytes, etag) = s.streams.preview(ch, streamer).ok_or(AppError::NotFound)?;
+    let etag = format!("\"{etag}\"");
+    let cache = [(header::ETAG, etag.clone())];
+    if headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| v == etag)
+    {
+        return Ok((StatusCode::NOT_MODIFIED, cache).into_response());
+    }
+    Ok((cache, [(header::CONTENT_TYPE, "image/webp")], bytes).into_response())
 }

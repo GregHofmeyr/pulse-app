@@ -612,3 +612,148 @@ async fn viewer_leaving_the_stream_room_is_unlisted() {
         StreamStatus::Live
     );
 }
+
+async fn put_preview(
+    app: &TestApp,
+    tok: &str,
+    ch: ChannelId,
+    content_type: &str,
+    body: Vec<u8>,
+) -> reqwest::Response {
+    app.http
+        .put(app.url(&format!("/streams/{ch}/preview")))
+        .bearer_auth(tok)
+        .header("Content-Type", content_type)
+        .body(body)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn get_preview(
+    app: &TestApp,
+    tok: &str,
+    ch: ChannelId,
+    streamer: UserId,
+    if_none_match: Option<&str>,
+) -> reqwest::Response {
+    let mut req = app
+        .http
+        .get(app.url(&format!("/streams/{ch}/{streamer}/preview")))
+        .bearer_auth(tok);
+    if let Some(e) = if_none_match {
+        req = req.header("If-None-Match", e);
+    }
+    req.send().await.unwrap()
+}
+
+#[tokio::test]
+async fn preview_round_trips_with_etag() {
+    let app = spawn().await;
+    let (l, (a_id, a), (b_id, b), _rx) = pair(&app).await;
+    assert_eq!(go_live(&app, &a, l.id, settings()).await.status(), 200);
+    // live but no image yet
+    assert_eq!(get_preview(&app, &b, l.id, a_id, None).await.status(), 404);
+
+    let img = b"RIFF....WEBPfake".to_vec();
+    assert_eq!(
+        put_preview(&app, &a, l.id, "image/webp", img.clone())
+            .await
+            .status(),
+        204
+    );
+    // a viewer who is not in voice can still see it
+    app.voice.leave(l.id, b_id, "PA_test");
+    let r = get_preview(&app, &b, l.id, a_id, None).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["content-type"], "image/webp");
+    let etag = r.headers()["etag"].to_str().unwrap().to_string();
+    assert_eq!(r.bytes().await.unwrap().to_vec(), img);
+
+    let r = get_preview(&app, &b, l.id, a_id, Some(&etag)).await;
+    assert_eq!(r.status(), 304);
+    assert_eq!(r.headers()["etag"].to_str().unwrap(), etag);
+
+    // a new image changes the etag
+    put_preview(&app, &a, l.id, "image/webp", b"other".to_vec()).await;
+    let r = get_preview(&app, &b, l.id, a_id, Some(&etag)).await;
+    assert_eq!(r.status(), 200);
+    assert_ne!(r.headers()["etag"].to_str().unwrap(), etag);
+}
+
+#[tokio::test]
+async fn preview_needs_you_live() {
+    let app = spawn().await;
+    let (l, (_, a), (_, b), _rx) = pair(&app).await;
+    // in voice but not live
+    assert_eq!(
+        put_preview(&app, &a, l.id, "image/webp", vec![1, 2, 3])
+            .await
+            .status(),
+        404
+    );
+    // someone else live does not make it yours
+    go_live(&app, &a, l.id, settings()).await;
+    assert_eq!(
+        put_preview(&app, &b, l.id, "image/webp", vec![1, 2, 3])
+            .await
+            .status(),
+        404
+    );
+}
+
+#[tokio::test]
+async fn preview_rejects_big_or_non_webp() {
+    let app = spawn().await;
+    let (l, (a_id, a), _, _rx) = pair(&app).await;
+    go_live(&app, &a, l.id, settings()).await;
+    assert_eq!(
+        put_preview(&app, &a, l.id, "image/png", vec![1, 2, 3])
+            .await
+            .status(),
+        415
+    );
+    assert_eq!(
+        put_preview(&app, &a, l.id, "image/webp", vec![0; 100 * 1024 + 1])
+            .await
+            .status(),
+        413
+    );
+    assert_eq!(get_preview(&app, &a, l.id, a_id, None).await.status(), 404);
+    // exactly the cap is fine
+    assert_eq!(
+        put_preview(&app, &a, l.id, "image/webp", vec![0; 100 * 1024])
+            .await
+            .status(),
+        204
+    );
+}
+
+#[tokio::test]
+async fn preview_is_gone_after_stop() {
+    let app = spawn().await;
+    let (l, (a_id, a), (_, b), _rx) = pair(&app).await;
+    go_live(&app, &a, l.id, settings()).await;
+    put_preview(&app, &a, l.id, "image/webp", vec![1, 2, 3]).await;
+    assert_eq!(get_preview(&app, &b, l.id, a_id, None).await.status(), 200);
+    assert_eq!(stop(&app, &a, l.id).await.status(), 204);
+    assert_eq!(get_preview(&app, &b, l.id, a_id, None).await.status(), 404);
+    // going live again starts without the old image
+    go_live(&app, &a, l.id, settings()).await;
+    assert_eq!(get_preview(&app, &b, l.id, a_id, None).await.status(), 404);
+}
+
+#[tokio::test]
+async fn preview_needs_server_membership() {
+    let app = spawn().await;
+    let (l, (a_id, a), _, _rx) = pair(&app).await;
+    go_live(&app, &a, l.id, settings()).await;
+    put_preview(&app, &a, l.id, "image/webp", vec![1, 2, 3]).await;
+    let (_, outsider) = register(&app, "kai").await;
+    assert_eq!(
+        get_preview(&app, &outsider, l.id, a_id, None)
+            .await
+            .status(),
+        403
+    );
+}
