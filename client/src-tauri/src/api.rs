@@ -1094,6 +1094,39 @@ mod tests {
         assert!(started.elapsed() >= std::time::Duration::from_millis(1500));
     }
 
+    #[tokio::test]
+    async fn reannounce_retries_a_403_until_the_server_knows_we_are_in_voice() {
+        let app = testing::spawn().await;
+        let (api, token, uid, ch) = voice_fixture(&app, "alex").await;
+        let voice = app.voice.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+            voice.join(ch, uid, "PA_test"); // the restarted server learns we are in voice
+        });
+        let info = crate::stream::reannounce_with_retry(&api, &token, ch, settings())
+            .await
+            .unwrap();
+        assert_eq!(info.user_id, uid);
+    }
+
+    #[tokio::test]
+    async fn reannounce_gives_up_on_a_persistent_403_but_not_on_a_400_at_once() {
+        let app = testing::spawn().await;
+        let (api, token, uid, ch) = voice_fixture(&app, "alex").await;
+        let started = std::time::Instant::now();
+        let r = crate::stream::reannounce_with_retry(&api, &token, ch, settings()).await;
+        assert!(matches!(r, Err(ApiError::Forbidden(_))), "{r:?}");
+        assert!(started.elapsed() >= std::time::Duration::from_millis(4500));
+
+        app.voice.join(ch, uid, "PA_test");
+        let mut odd = settings();
+        odd.height = 999;
+        let started = std::time::Instant::now();
+        let r = crate::stream::reannounce_with_retry(&api, &token, ch, odd).await;
+        assert!(matches!(r, Err(ApiError::Rejected(_))), "{r:?}");
+        assert!(started.elapsed() < std::time::Duration::from_millis(1000));
+    }
+
     #[test]
     fn remote_http_refused() {
         assert!(check_server_url("http://localhost:7890").is_ok());

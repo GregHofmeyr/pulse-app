@@ -192,6 +192,7 @@ pub fn run() {
             reports::save_report,
             stream::stream_ticket,
             stream::stream_go_live,
+            stream::stream_reannounce,
             stream::stream_stop,
             stream::stream_watch,
             stream::stream_unwatch,

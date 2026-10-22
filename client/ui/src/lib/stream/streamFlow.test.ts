@@ -122,3 +122,24 @@ describe('go live', () => {
     expect(stream.room).toBeNull()
   })
 })
+
+describe('re-announce after a server restart', () => {
+  const ready = { me: { id: 'me' }, streams: [] } as never
+
+  it('reannounce_success_keeps_the_share', async () => {
+    const { streamApi, stream } = await goneLive()
+    await streamApi.onReady(ready)
+    expect(calls('stream_reannounce')).toEqual([{ channelId: 'c1', settings: { height: 720, fps: 60, audio: false } }])
+    expect(stream.live).not.toBeNull()
+  })
+
+  it('reannounce_failure_ends_the_local_share_and_says_so', async () => {
+    const { streamApi, stream, room } = await goneLive()
+    core.handlers.stream_reannounce = () => Promise.reject('the server is having trouble (503)')
+    await streamApi.onReady(ready)
+    expect(stream.live).toBeNull()
+    expect(room.unpublish).toHaveBeenCalled()
+    expect(stream.notice).toMatch(/stream stopped/)
+    expect(calls('stream_stop')).toEqual([]) // the server has no stream to stop
+  })
+})

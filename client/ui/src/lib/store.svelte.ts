@@ -61,7 +61,7 @@ export async function startListening(): Promise<UnlistenFn> {
   const offs: UnlistenFn[] = await Promise.all([
     listen<Ready>('pulse://ready', (e) => {
       app.state = applyReady(app.state, e.payload)
-      streamApi.onReady(e.payload)
+      void streamApi.onReady(e.payload)
     }),
     listen<Event>('pulse://event', (e) => {
       maybeSound(e.payload)

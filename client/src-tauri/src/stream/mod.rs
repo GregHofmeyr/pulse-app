@@ -28,6 +28,35 @@ const LOG_LINE_MAX: usize = 4096;
 const TICKET_RETRIES: usize = 3;
 const TICKET_RETRY_EVERY: Duration = Duration::from_millis(500);
 
+/// Re-announcing a live stream after a server restart (the next `Ready` lacks it): the server
+/// may not know we are in voice yet (403) or still be finding its feet (5xx, 429). Retries
+/// after the first try, and the pause between them.
+const REANNOUNCE_RETRIES: usize = 3;
+const REANNOUNCE_RETRY_EVERY: Duration = Duration::from_millis(1500);
+
+/// `call`, tried again up to `retries` times, `every` apart, while it fails with an error
+/// `retry_on` accepts.
+async fn retrying<T, Fut>(
+    retries: usize,
+    every: Duration,
+    retry_on: fn(&ApiError) -> bool,
+    mut call: impl FnMut() -> Fut,
+) -> Result<T, ApiError>
+where
+    Fut: Future<Output = Result<T, ApiError>>,
+{
+    let mut tried = 0;
+    loop {
+        match call().await {
+            Err(e) if tried < retries && retry_on(&e) => {
+                tried += 1;
+                tokio::time::sleep(every).await;
+            }
+            r => return r,
+        }
+    }
+}
+
 /// A stream ticket, retrying a 403 a few times (see `TICKET_RETRIES`) before giving up.
 pub async fn ticket_with_retry(
     api: &Api,
@@ -35,16 +64,35 @@ pub async fn ticket_with_retry(
     channel: ChannelId,
     role: StreamRole,
 ) -> Result<VoiceTokenResponse, ApiError> {
-    let mut retries = 0;
-    loop {
-        match api.stream_ticket(token, channel, role).await {
-            Err(ApiError::Forbidden(_)) if retries < TICKET_RETRIES => {
-                retries += 1;
-                tokio::time::sleep(TICKET_RETRY_EVERY).await;
-            }
-            r => return r,
-        }
-    }
+    retrying(
+        TICKET_RETRIES,
+        TICKET_RETRY_EVERY,
+        |e| matches!(e, ApiError::Forbidden(_)),
+        || api.stream_ticket(token, channel, role),
+    )
+    .await
+}
+
+/// Announces a stream we are still sending (see `REANNOUNCE_RETRIES`). Going live twice is
+/// harmless: the server treats it as an update.
+pub async fn reannounce_with_retry(
+    api: &Api,
+    token: &str,
+    channel: ChannelId,
+    settings: StreamSettings,
+) -> Result<StreamInfo, ApiError> {
+    retrying(
+        REANNOUNCE_RETRIES,
+        REANNOUNCE_RETRY_EVERY,
+        |e| {
+            matches!(
+                e,
+                ApiError::Forbidden(_) | ApiError::Server(_) | ApiError::RateLimited
+            )
+        },
+        || api.go_live(token, channel, settings.clone()),
+    )
+    .await
 }
 
 /// `line` cut to at most `max` bytes, on a char boundary.
@@ -86,6 +134,21 @@ pub async fn stream_go_live(
 ) -> Result<StreamInfo, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.go_live(&token, channel_id, settings).await)
+}
+
+/// After a server restart: announce our stream again, retrying while the server catches up.
+#[tauri::command]
+pub async fn stream_reannounce(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    settings: StreamSettings,
+) -> Result<StreamInfo, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        reannounce_with_retry(&api, &token, channel_id, settings).await,
+    )
 }
 
 #[tauri::command]

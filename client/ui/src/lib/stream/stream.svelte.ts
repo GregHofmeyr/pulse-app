@@ -377,10 +377,19 @@ export const streamApi = {
   },
 
   /** After every gateway `Ready`. */
-  onReady(ready: Ready) {
+  async onReady(ready: Ready) {
     const live = stream.live
     if (!live || !needsReannounce(ready.me.id, live, ready.streams)) return
     streamCmd.log({ ev: 'reannounce' })
-    streamCmd.goLive(live.channelId, { height: live.res, fps: live.fps, audio: live.audio }).catch(logError('reannounce_error'))
+    try {
+      await streamCmd.reannounce(live.channelId, { height: live.res, fps: live.fps, audio: live.audio })
+    } catch (e) {
+      logError('reannounce_error')(e)
+      if (stream.live !== live) return // stopped meanwhile
+      // nobody can see it: stop sending into nothing, and say so
+      stream.notice = "Your stream stopped: the server couldn't take it back"
+      liveGen.cancel()
+      await endLive(false)
+    }
   },
 }

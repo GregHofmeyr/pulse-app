@@ -50,6 +50,8 @@ export const api = {
 export const streamCmd = {
   ticket: (channelId: string, role: 'v' | 'a') => invoke<VoiceTokenResponse>('stream_ticket', { channelId, role }),
   goLive: (channelId: string, settings: StreamSettings) => invoke<StreamInfo>('stream_go_live', { channelId, settings }),
+  /** Announces a stream we are still sending, after a server restart; retries while the server catches up. */
+  reannounce: (channelId: string, settings: StreamSettings) => invoke<StreamInfo>('stream_reannounce', { channelId, settings }),
   stop: (channelId: string) => invoke<void>('stream_stop', { channelId }),
   watch: (channelId: string, streamer: string) => invoke<void>('stream_watch', { channelId, streamer }),
   unwatch: (channelId: string, streamer: string) => invoke<void>('stream_unwatch', { channelId, streamer }),
