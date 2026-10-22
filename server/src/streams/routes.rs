@@ -1,5 +1,5 @@
 //! Screen-share routes: stream-room tickets, go live / stop, watch / unwatch. All bearer-authed,
-//! and every one requires the caller to be in that server voice channel right now.
+//! and every one but unwatch requires the caller to be in that server voice channel right now.
 
 use std::time::Duration;
 
@@ -159,14 +159,15 @@ async fn watch(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// Idempotent: unwatching a stream that already ended, or after our voice already dropped, is
+/// a 204 (the client sends it while tearing down, often after the fact).
 async fn unwatch(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
     Path(ch): Path<ChannelId>,
     Json(req): Json<WatchRequest>,
 ) -> AppResult<StatusCode> {
-    require_voice_member(&s, me, ch).await?;
-    ensure_watchable(&s, me, ch, req.streamer)?;
+    require_visible_member(&s, me, ch).await?;
     if let Some(viewers) = s.streams.remove_viewer(ch, req.streamer, me) {
         publish_viewers(&s, ch, req.streamer, viewers).await;
     }

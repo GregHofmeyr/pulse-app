@@ -368,6 +368,72 @@ async fn watch_adds_a_viewer_and_unwatch_removes_it() {
     );
 }
 
+/// A late unwatch (the stream already ended, or we already left voice) is not an error.
+#[tokio::test]
+async fn unwatch_is_idempotent() {
+    let app = spawn().await;
+    let (l, (a_id, a), (b_id, b), mut rx) = pair(&app).await;
+    let unwatch = format!("/streams/{}/unwatch", l.id);
+    // not live: nothing to leave
+    assert_eq!(
+        post_json(&app, &b, &unwatch, json!({"streamer": a_id}))
+            .await
+            .status(),
+        204
+    );
+    go_live(&app, &a, l.id, settings()).await;
+    assert!(matches!(
+        next_stream_event(&mut rx).await,
+        Event::StreamStarted { .. }
+    ));
+    post_json(
+        &app,
+        &b,
+        &format!("/streams/{}/watch", l.id),
+        json!({"streamer": a_id}),
+    )
+    .await;
+    assert!(matches!(
+        next_stream_event(&mut rx).await,
+        Event::ViewersChanged { .. }
+    ));
+    // the viewer's voice dropped (no webhook yet): the unwatch still lands and unlists them
+    app.voice.leave(l.id, b_id, "PA_test");
+    assert_eq!(
+        post_json(&app, &b, &unwatch, json!({"streamer": a_id}))
+            .await
+            .status(),
+        204
+    );
+    match next_stream_event(&mut rx).await {
+        Event::ViewersChanged { viewers, .. } => assert!(viewers.is_empty()),
+        other => panic!("unexpected {other:?}"),
+    }
+    // twice
+    assert_eq!(
+        post_json(&app, &b, &unwatch, json!({"streamer": a_id}))
+            .await
+            .status(),
+        204
+    );
+    // the stream is gone
+    assert_eq!(stop(&app, &a, l.id).await.status(), 204);
+    assert_eq!(
+        post_json(&app, &b, &unwatch, json!({"streamer": a_id}))
+            .await
+            .status(),
+        204
+    );
+    // still only for people who can see the channel
+    let (_, outsider) = register(&app, "kai").await;
+    assert_eq!(
+        post_json(&app, &outsider, &unwatch, json!({"streamer": a_id}))
+            .await
+            .status(),
+        403
+    );
+}
+
 #[tokio::test]
 async fn leaving_voice_ends_your_stream() {
     let app = spawn().await;
