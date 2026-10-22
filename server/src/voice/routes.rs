@@ -79,6 +79,14 @@ async fn webhook(
         AppError::Unauthorized
     })?;
 
+    // The stream room (`<channel>~s`) has its own rules.
+    if let Some(room) = ev.room.as_ref()
+        && let Some(channel) = room.name.strip_suffix("~s")
+    {
+        crate::streams::webhook::handle(&s, channel, &ev).await?;
+        return Ok(StatusCode::OK);
+    }
+
     // Rooms are channel IDs, identities are user IDs. Anything else isn't ours: ack and ignore.
     let (Some(room), Some(p)) = (ev.room.as_ref(), ev.participant.as_ref()) else {
         return Ok(StatusCode::OK);

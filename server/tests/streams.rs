@@ -464,3 +464,151 @@ async fn ready_lists_live_streams() {
     assert_eq!(ready.streams.len(), 1);
     assert_eq!(ready.streams[0].channel_id, l.id);
 }
+
+async fn stream_webhook(app: &TestApp, event: &str, ch: ChannelId, identity: &str) {
+    let body = json!({"event": event, "id": "EV_test", "room": {"name": format!("{ch}~s")},
+        "participant": {"identity": identity, "sid": "PA_stream"}})
+    .to_string();
+    let r = app
+        .http
+        .post(app.url("/livekit/webhook"))
+        .header("Authorization", signed(app, &body))
+        .header("Content-Type", "application/webhook+json")
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+}
+
+async fn live_with_viewer(
+    app: &TestApp,
+    rx: &mut Receiver<ServerFrame>,
+    l: &Channel,
+    a: &(UserId, String),
+    b: &(UserId, String),
+) {
+    go_live(app, &a.1, l.id, settings()).await;
+    assert!(matches!(
+        next_stream_event(rx).await,
+        Event::StreamStarted { .. }
+    ));
+    post_json(
+        app,
+        &b.1,
+        &format!("/streams/{}/watch", l.id),
+        json!({"streamer": a.0}),
+    )
+    .await;
+    assert!(matches!(
+        next_stream_event(rx).await,
+        Event::ViewersChanged { .. }
+    ));
+}
+
+#[tokio::test]
+async fn streamer_drop_marks_reconnecting_then_times_out() {
+    let app = spawn().await;
+    let (l, a, b, mut rx) = pair(&app).await;
+    live_with_viewer(&app, &mut rx, &l, &a, &b).await;
+    stream_webhook(&app, "participant_left", l.id, &format!("{}#v", a.0)).await;
+    match next_stream_event(&mut rx).await {
+        Event::StreamUpdated { stream } => assert_eq!(stream.status, StreamStatus::Reconnecting),
+        other => panic!("unexpected {other:?}"),
+    }
+    match next_stream_event(&mut rx).await {
+        Event::StreamEnded {
+            user_id, reason, ..
+        } => assert_eq!((user_id, reason), (a.0, StreamEndReason::TimedOut)),
+        other => panic!("unexpected {other:?}"),
+    }
+    assert!(app.streams.all().is_empty());
+}
+
+#[tokio::test]
+async fn streamer_back_in_time_stays_live() {
+    let app = spawn().await;
+    let (l, a, b, mut rx) = pair(&app).await;
+    live_with_viewer(&app, &mut rx, &l, &a, &b).await;
+    let ident = format!("{}#v", a.0);
+    stream_webhook(&app, "participant_left", l.id, &ident).await;
+    assert!(matches!(
+        next_stream_event(&mut rx).await,
+        Event::StreamUpdated { stream } if stream.status == StreamStatus::Reconnecting
+    ));
+    stream_webhook(&app, "participant_joined", l.id, &ident).await;
+    assert!(matches!(
+        next_stream_event(&mut rx).await,
+        Event::StreamUpdated { stream } if stream.status == StreamStatus::Live
+    ));
+    let quiet = tokio::time::timeout(Duration::from_millis(600), next_stream_event(&mut rx)).await;
+    assert!(quiet.is_err(), "no event expected, got {quiet:?}");
+    assert_eq!(
+        app.streams.get(l.id, a.0).unwrap().status,
+        StreamStatus::Live
+    );
+}
+
+#[tokio::test]
+async fn audio_identity_events_are_ignored() {
+    let app = spawn().await;
+    let (l, a, b, mut rx) = pair(&app).await;
+    live_with_viewer(&app, &mut rx, &l, &a, &b).await;
+    stream_webhook(&app, "participant_left", l.id, &format!("{}#a", a.0)).await;
+    stream_webhook(&app, "participant_left", l.id, &format!("{}#a", b.0)).await;
+    stream_webhook(&app, "participant_left", l.id, "not-an-identity").await;
+    let quiet = tokio::time::timeout(Duration::from_millis(600), next_stream_event(&mut rx)).await;
+    assert!(quiet.is_err(), "no event expected, got {quiet:?}");
+    let info = app.streams.get(l.id, a.0).unwrap();
+    assert_eq!(info.status, StreamStatus::Live);
+    assert_eq!(info.viewers, vec![b.0]);
+}
+
+#[tokio::test]
+async fn stream_room_webhooks_never_touch_voice() {
+    let app = spawn().await;
+    let (l, a, _b, mut rx) = pair(&app).await;
+    let before = app.voice.members(l.id);
+    let stranger = register(&app, "kim").await.0;
+    stream_webhook(&app, "participant_joined", l.id, &format!("{}#v", a.0)).await;
+    stream_webhook(&app, "participant_joined", l.id, &format!("{stranger}#v")).await;
+    stream_webhook(&app, "participant_left", l.id, &format!("{stranger}#v")).await;
+    let seen = tokio::time::timeout(Duration::from_millis(400), async {
+        loop {
+            if let Some(ServerFrame::Event(e)) = rx.recv().await
+                && matches!(e, Event::VoiceJoined { .. } | Event::VoiceLeft { .. })
+            {
+                return e;
+            }
+        }
+    })
+    .await;
+    assert!(seen.is_err(), "voice event leaked: {seen:?}");
+    assert_eq!(app.voice.members(l.id), before);
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM voice_sessions")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+}
+
+#[tokio::test]
+async fn viewer_leaving_the_stream_room_is_unlisted() {
+    let app = spawn().await;
+    let (l, a, b, mut rx) = pair(&app).await;
+    live_with_viewer(&app, &mut rx, &l, &a, &b).await;
+    stream_webhook(&app, "participant_left", l.id, &format!("{}#v", b.0)).await;
+    match next_stream_event(&mut rx).await {
+        Event::ViewersChanged {
+            user_id, viewers, ..
+        } => {
+            assert_eq!(user_id, a.0);
+            assert!(viewers.is_empty());
+        }
+        other => panic!("unexpected {other:?}"),
+    }
+    assert_eq!(
+        app.streams.get(l.id, a.0).unwrap().status,
+        StreamStatus::Live
+    );
+}
