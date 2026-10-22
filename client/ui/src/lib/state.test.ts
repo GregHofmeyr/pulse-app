@@ -3,6 +3,7 @@ import { applyEvent, applyReady, emptyState, addPending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 import type { Channel } from './protocol/Channel'
+import type { StreamInfo } from './protocol/StreamInfo'
 
 const ch = (id: string, kind: Channel['kind'] = 'text', server_id: string | null = 'S1', position = 0): Channel => ({
   id, server_id, kind, name: id, position,
@@ -261,5 +262,58 @@ describe('trimming keeps unread messages', () => {
     let s = addHistory(applyReady(emptyState(), ready()), 'C1', page(0, 300))
     s = applyEvent(s, readAt('M0299'), 0)
     expect(trimHistory(s, 'C1').messages['C1']).toHaveLength(KEEP_ON_LEAVE)
+  })
+})
+
+describe('streams', () => {
+  const info = (user_id: string, over: Partial<StreamInfo> = {}, channel_id = 'V1'): StreamInfo => ({
+    channel_id, user_id,
+    settings: { height: 720, fps: 60, audio: true },
+    status: 'live', viewers: [], started_at: '2026-10-23T10:00:00.000Z',
+    ...over,
+  })
+  const base = () => applyReady(emptyState(), ready())
+
+  it('ready_fills_streams', () => {
+    const s = applyReady(emptyState(), ready({ streams: [info('U2'), info('U3'), info('U4', {}, 'V2')] }))
+    expect(Object.keys(s.streams['V1']).sort()).toEqual(['U2', 'U3'])
+    expect(s.streams['V2']['U4'].user_id).toBe('U4')
+    // A reconnect replaces, not merges: a stream missing from the new Ready is gone.
+    expect(applyReady(s, ready()).streams).toEqual({})
+  })
+
+  it('stream_started_adds_and_updated_replaces', () => {
+    let s = applyEvent(base(), { t: 'StreamStarted', d: { stream: info('U2') } }, 0)
+    expect(s.streams['V1']['U2'].status).toBe('live')
+    s = applyEvent(s, { t: 'StreamUpdated', d: { stream: info('U2', { status: 'reconnecting', viewers: ['U1'] }) } }, 0)
+    expect(s.streams['V1']['U2'].status).toBe('reconnecting')
+    expect(s.streams['V1']['U2'].viewers).toEqual(['U1'])
+    expect(Object.keys(s.streams['V1'])).toEqual(['U2'])
+  })
+
+  it('stream_ended_removes', () => {
+    let s = applyEvent(base(), { t: 'StreamStarted', d: { stream: info('U2') } }, 0)
+    s = applyEvent(s, { t: 'StreamStarted', d: { stream: info('U3') } }, 0)
+    s = applyEvent(s, { t: 'StreamEnded', d: { channel_id: 'V1', user_id: 'U2', reason: 'stopped' } }, 0)
+    expect(Object.keys(s.streams['V1'])).toEqual(['U3'])
+    s = applyEvent(s, { t: 'StreamEnded', d: { channel_id: 'V1', user_id: 'U3', reason: 'timed_out' } }, 0)
+    expect(s.streams['V1']).toBeUndefined()
+    // Ending something we never saw changes nothing.
+    expect(applyEvent(s, { t: 'StreamEnded', d: { channel_id: 'V1', user_id: 'U9', reason: 'stopped' } }, 0)).toEqual(s)
+  })
+
+  it('viewers_changed_updates_viewers_only', () => {
+    let s = applyEvent(base(), { t: 'StreamStarted', d: { stream: info('U2', { status: 'reconnecting' }) } }, 0)
+    s = applyEvent(s, { t: 'ViewersChanged', d: { channel_id: 'V1', user_id: 'U2', viewers: ['U1', 'U3'] } }, 0)
+    expect(s.streams['V1']['U2']).toEqual(info('U2', { status: 'reconnecting', viewers: ['U1', 'U3'] }))
+    // Viewers of an unknown stream are ignored rather than inventing one.
+    const same = applyEvent(s, { t: 'ViewersChanged', d: { channel_id: 'V1', user_id: 'U9', viewers: ['U1'] } }, 0)
+    expect(same.streams).toEqual(s.streams)
+  })
+
+  it('voice_left_does_not_touch_streams', () => {
+    let s = applyEvent(base(), { t: 'StreamStarted', d: { stream: info('U2') } }, 0)
+    s = applyEvent(s, { t: 'VoiceLeft', d: { channel_id: 'V1', user_id: 'U2' } }, 0)
+    expect(s.streams['V1']['U2']).toBeDefined() // the server follows up with StreamEnded
   })
 })

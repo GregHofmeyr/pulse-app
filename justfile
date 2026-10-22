@@ -28,7 +28,7 @@ ui-check:
     cd client/ui && pnpm install --frozen-lockfile && pnpm check && pnpm test
 
 dev-client:
-    cd client/src-tauri && cargo tauri dev
+    cd client/src-tauri && cargo tauri dev --config tauri.dev.conf.json
 
 # print a single-use invite for the local dev server
 invite:

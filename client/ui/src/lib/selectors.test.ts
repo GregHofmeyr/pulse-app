@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState } from './state'
-import { channelsFor, displayName, isMember, typingNames, voiceOccupants } from './selectors'
+import { channelsFor, displayName, isLive, isMember, liveIn, typingNames, voiceOccupants } from './selectors'
 import type { Ready } from './protocol/Ready'
+import type { StreamInfo } from './protocol/StreamInfo'
 
 const me = { id: 'U1', username: 'alex', avatar_hash: null }
 const sam = { id: 'U2', username: 'sam', avatar_hash: null }
@@ -78,5 +79,17 @@ describe('nextTypingExpiry', () => {
     expect(nextTypingExpiry(t, 'C1', 7000)).toBe(9000)
     expect(nextTypingExpiry(t, 'C1', 9000)).toBeNull()
     expect(nextTypingExpiry(t, 'C2', 0)).toBeNull()
+  })
+})
+
+describe('stream selectors', () => {
+  const stream: StreamInfo = { channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: true }, status: 'live', viewers: [], started_at: '2026-10-23T10:00:00.000Z' }
+  it('liveIn lists a channel streams and isLive checks one user', () => {
+    const s = { ...emptyState(), streams: { V1: { U2: stream } } }
+    expect(liveIn(s, 'V1')).toEqual({ U2: stream })
+    expect(liveIn(s, 'V9')).toEqual({})
+    expect(isLive(s, 'V1', 'U2')).toBe(true)
+    expect(isLive(s, 'V1', 'U3')).toBe(false)
+    expect(isLive(s, 'V9', 'U2')).toBe(false)
   })
 })
