@@ -24,6 +24,8 @@ export const stream = $state({
   live: null as Live | null,
   watching: null as Watching | null,
   error: '',
+  /** A failed watch, shown by the viewer's toast (`error` belongs to Go Live). */
+  watchError: '',
   /** A neutral one-liner for the viewer, e.g. "<name> stopped streaming". */
   notice: '',
 })
@@ -271,7 +273,7 @@ export const streamApi = {
     return endLive(true)
   },
 
-  /** Watches `streamer` into `el` (switching from anyone watched before). Errors land in `stream.error`. */
+  /** Watches `streamer` into `el` (switching from anyone watched before). Errors land in `stream.watchError`. */
   async watch(channelId: string, streamer: string, el: HTMLVideoElement): Promise<void> {
     const same = (w: Watching | null) => w?.channelId === channelId && w.streamer === streamer
     if (same(stream.watching) && watchingEl === el) return // a second click
@@ -279,7 +281,7 @@ export const streamApi = {
     const current = () => watchGen.current(token)
     await endWatch(true)
     if (!current()) return
-    stream.error = ''
+    stream.watchError = ''
     stream.notice = ''
     stream.watching = { channelId, streamer, quality: 'auto' }
     watchingEl = el
@@ -301,8 +303,8 @@ export const streamApi = {
       stopInDiag = startDiagnostics('in', () => room.remoteStats(), 0)
     } catch (e) {
       if (!current()) return
-      stream.error = errorText(e)
-      streamCmd.log({ ev: 'watch_error', error: stream.error })
+      stream.watchError = errorText(e)
+      streamCmd.log({ ev: 'watch_error', error: stream.watchError })
       await endWatch(true)
       await releaseIfIdle()
     }

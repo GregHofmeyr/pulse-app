@@ -303,7 +303,7 @@
 
     <main class="panel content">
       {#if viewing.req}
-        <StreamViewer serverId={activeServerId} />
+        <StreamViewer />
       {:else if activeServerId && !member}
         <div class="join">
           <p>You're not in <strong>{activeServer?.name}</strong> yet.</p>

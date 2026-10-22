@@ -7,11 +7,11 @@
 
   // Neutral one-liners from the stream store ("<name> stopped streaming", watch errors) fade after a few seconds.
   const MESSAGE_MS = 4_000
-  const message = $derived(stream.error || stream.notice)
+  const message = $derived(stream.watchError || stream.notice)
   $effect(() => {
     if (!message) return
     const t = setTimeout(() => {
-      stream.error = ''
+      stream.watchError = ''
       stream.notice = ''
     }, MESSAGE_MS)
     return () => clearTimeout(t)
@@ -27,7 +27,7 @@
       <button type="button" class="x" aria-label="Dismiss" onclick={() => removeToast(t.channelId, t.streamer)}>×</button>
     </div>
   {/each}
-  {#if message}<div class="toast" role="status" class:err={!!stream.error}><span>{message}</span></div>{/if}
+  {#if message}<div class="toast" role="status" class:err={!!stream.watchError}><span>{message}</span></div>{/if}
 </div>
 
 <style>

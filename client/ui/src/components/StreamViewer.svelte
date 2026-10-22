@@ -9,8 +9,6 @@
   import { viewing } from '../lib/stream/viewer.svelte'
   import { streamCmd } from '../lib/tauri'
 
-  let { serverId }: { serverId: string | null } = $props()
-
   let video = $state<HTMLVideoElement>()
   /** The current request's watch call has finished (started, failed or been superseded). */
   let settled = $state(false)
@@ -18,7 +16,7 @@
   let quality = $state<string | null>('auto')
 
   const req = $derived(viewing.req)
-  const name = $derived(req ? displayName(app.state, serverId, req.streamer) : '')
+  const name = $derived(req ? displayName(app.state, app.state.channels[req.channelId]?.server_id ?? null, req.streamer) : '')
   const volume = $derived(req ? (volumes[req.streamer] ?? 100) : 100)
   const reconnecting = $derived(!!req && liveIn(app.state, req.channelId)[req.streamer]?.status === 'reconnecting')
 
