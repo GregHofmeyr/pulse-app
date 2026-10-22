@@ -11,6 +11,7 @@ pub mod reads;
 pub mod reports;
 pub mod servers;
 pub mod state;
+pub mod streams;
 pub mod voice;
 
 #[cfg(feature = "testing")]
@@ -50,6 +51,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
         cfg: std::sync::Arc::new(cfg),
         hub: hub.clone(),
         voice: voice::VoiceState::default(),
+        streams: streams::state::StreamState::default(),
     };
     // Before serving (connections queue in the listen backlog), so the first Ready is right.
     voice::restore::on_startup(&state, &started_at).await?;
