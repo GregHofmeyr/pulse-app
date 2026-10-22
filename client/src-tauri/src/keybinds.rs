@@ -1,5 +1,5 @@
 //! Keybinds: which key combination does what. Stored per profile as W3C key codes ("KeyM", "F13"):
-//! the physical key, so a bind survives a keyboard layout switch. Windows registers them globally
+//! the physical key, so a bind survives a keyboard layout switch. Windows listens for them globally
 //! (hotkeys.rs); on Linux the compositor binds the CLI instead (ipc.rs).
 
 use std::path::Path;
@@ -165,17 +165,33 @@ pub fn load(dir: &Path) -> Keybinds {
     let Ok(text) = std::fs::read_to_string(dir.join(FILE)) else {
         return Keybinds::default();
     };
-    match serde_json::from_str::<Keybinds>(&text)
-        .map(Keybinds::normalized)
-        .map_err(|e| e.to_string())
-        .and_then(|k| validate(&k).map(|_| k))
-    {
-        Ok(k) => k,
+    let k = match serde_json::from_str::<Keybinds>(&text) {
+        Ok(k) => k.normalized(),
         Err(e) => {
-            tracing::warn!(error = %e, "keybinds file unusable; nothing bound");
-            Keybinds::default()
+            tracing::warn!(error = %e, "keybinds file unreadable; nothing bound");
+            return Keybinds::default();
         }
+    };
+    // a bind this version can't use drops only itself (v1 allowed keys v2 doesn't know)
+    let usable = |b: Option<Bind>| {
+        b.filter(|b| {
+            let alone = Keybinds {
+                toggle_mute: Some(b.clone()),
+                toggle_deafen: None,
+            };
+            validate(&alone)
+                .inspect_err(|e| tracing::warn!(error = %e, "keybind dropped"))
+                .is_ok()
+        })
+    };
+    let mut k = Keybinds {
+        toggle_mute: usable(k.toggle_mute),
+        toggle_deafen: usable(k.toggle_deafen),
+    };
+    if validate(&k).is_err() {
+        k.toggle_deafen = None; // both on one bind: the first keeps it
     }
+    k
 }
 
 pub fn save(dir: &Path, binds: &Keybinds) -> std::io::Result<()> {
@@ -191,7 +207,7 @@ pub fn save(dir: &Path, binds: &Keybinds) -> std::io::Result<()> {
 pub struct Store {
     dir: std::path::PathBuf,
     binds: std::sync::Mutex<Keybinds>,
-    /// Binds that couldn't be registered (another app owns them), from the last apply.
+    /// Why binds aren't working (the Windows key hooks couldn't start), if they aren't.
     problems: std::sync::Mutex<Vec<String>>,
 }
 
@@ -227,7 +243,7 @@ impl Store {
     }
 }
 
-/// What a settings change did: the binds now in use, and any that couldn't be registered.
+/// What a settings change did: the binds now in use, and why they aren't working, if they aren't.
 #[derive(Serialize)]
 pub struct Applied {
     pub binds: Keybinds,
@@ -360,6 +376,28 @@ mod tests {
         assert_eq!(load(dir.path()), v1);
     }
 
+    /// One bind this version can't use (v1 allowed MediaPlay) mustn't cost the other one.
+    #[test]
+    fn an_unusable_bind_only_drops_itself() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(FILE),
+            r#"{"toggle_mute":{"code":"MediaPlay"},"toggle_deafen":{"code":"F13"}}"#,
+        )
+        .unwrap();
+        let k = load(dir.path());
+        assert_eq!(k.toggle_mute, None);
+        assert_eq!(k.toggle_deafen, Some(b("F13", "")));
+        // two actions on one bind: the first keeps it
+        std::fs::write(
+            dir.path().join(FILE),
+            r#"{"toggle_mute":{"code":"F13"},"toggle_deafen":{"code":"F13"}}"#,
+        )
+        .unwrap();
+        let k = load(dir.path());
+        assert_eq!((k.toggle_mute, k.toggle_deafen), (Some(b("F13", "")), None));
+    }
+
     #[test]
     fn labels() {
         assert_eq!(label(&b("Mouse3", "")), "Mouse 3");
@@ -390,11 +428,11 @@ mod tests {
     /// Teams owns Ctrl+Shift+M: the settings pane must say so after a restart too, not show the
     /// bind as if it worked.
     #[test]
-    fn registration_problems_are_kept_for_the_settings_pane() {
+    fn startup_problems_are_kept_for_the_settings_pane() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::load(dir.path());
         store.set_problems(vec![
-            "Toggle mute: Ctrl+Shift+M is taken by another app".into(),
+            "Keybinds couldn't start (access denied); restart Pulse to try again".into(),
         ]);
         let shown = store.applied();
         assert_eq!(shown.problems.len(), 1);

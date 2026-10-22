@@ -38,6 +38,7 @@ pub const KEYS: &[(u16, bool, &str)] = &[
     (0x3F, false, "F5"), (0x40, false, "F6"), (0x41, false, "F7"), (0x42, false, "F8"),
     (0x43, false, "F9"), (0x44, false, "F10"),
     (0x45, false, "Pause"), (0x45, true, "NumLock"), (0x46, false, "ScrollLock"),
+    (0x46, true, "Pause"), // Ctrl+Pause arrives as Break (E0 46)
     (0x47, false, "Numpad7"), (0x47, true, "Home"),
     (0x48, false, "Numpad8"), (0x48, true, "ArrowUp"),
     (0x49, false, "Numpad9"), (0x49, true, "PageUp"),
@@ -51,7 +52,8 @@ pub const KEYS: &[(u16, bool, &str)] = &[
     (0x51, false, "Numpad3"), (0x51, true, "PageDown"),
     (0x52, false, "Numpad0"), (0x52, true, "Insert"),
     (0x53, false, "NumpadDecimal"), (0x53, true, "Delete"),
-    (0x56, false, "IntlBackslash"), (0x57, false, "F11"), (0x58, false, "F12"),
+    (0x56, false, "IntlBackslash"), (0x59, false, "NumpadEqual"),
+    (0x69, true, "BrowserForward"), (0x6A, true, "BrowserBack"), (0x57, false, "F11"), (0x58, false, "F12"),
     (0x5B, true, "MetaLeft"), (0x5C, true, "MetaRight"), (0x5D, true, "ContextMenu"),
     (0x64, false, "F13"), (0x65, false, "F14"), (0x66, false, "F15"), (0x67, false, "F16"),
     (0x68, false, "F17"), (0x69, false, "F18"), (0x6A, false, "F19"), (0x6B, false, "F20"),
@@ -85,7 +87,10 @@ pub fn key_code(
         return code_for_scan(scan, extended);
     }
     let v = vk_to_scan(vk);
-    code_for_scan(v & 0xFF, v & 0xFF00 == 0xE000)
+    match v & 0xFF00 {
+        0xE100 => Some("Pause"), // the only E1-prefixed key
+        prefix => code_for_scan(v & 0xFF, prefix == 0xE000),
+    }
 }
 
 /// A code Pulse can see: a key from the table or a mouse button.
@@ -118,7 +123,7 @@ pub const MODIFIER_CODES: [&str; 8] = [
 pub struct Matcher {
     binds: Vec<(Action, Bind)>,
     /// Held keys/buttons and when each last went down (or repeated).
-    held: Vec<(String, Instant)>,
+    held: Vec<(&'static str, Instant)>,
     paused: bool,
 }
 
@@ -137,15 +142,15 @@ impl Matcher {
         self.paused = paused;
     }
 
-    pub fn down(&mut self, code: &str, at: Instant) -> Vec<Action> {
-        if let Some((_, last)) = self.held.iter_mut().find(|(c, _)| c == code) {
+    pub fn down(&mut self, code: &'static str, at: Instant) -> Vec<Action> {
+        if let Some((_, last)) = self.held.iter_mut().find(|(c, _)| *c == code) {
             let repeat = at.saturating_duration_since(*last) < REPEAT_WINDOW;
             *last = at;
             if repeat {
                 return Vec::new();
             }
         } else {
-            self.held.push((code.to_string(), at));
+            self.held.push((code, at));
         }
         if self.paused {
             return Vec::new();
@@ -153,7 +158,7 @@ impl Matcher {
         let held = |side: [&str; 2]| {
             self.held
                 .iter()
-                .any(|(c, _)| c != code && side.contains(&c.as_str()))
+                .any(|(c, _)| *c != code && side.contains(c))
         };
         let (ctrl, shift, alt, meta) = (
             held(["ControlLeft", "ControlRight"]),
@@ -190,11 +195,11 @@ impl Matcher {
     /// Ctrl+Alt+Del, Ctrl+Shift+Esc) and would otherwise turn a plain key into a combo.
     pub fn forget_released(&mut self, still_down: impl Fn(&str) -> bool) {
         self.held
-            .retain(|(c, _)| !MODIFIER_CODES.contains(&c.as_str()) || still_down(c));
+            .retain(|(c, _)| !MODIFIER_CODES.contains(c) || still_down(c));
     }
 
     pub fn up(&mut self, code: &str) {
-        self.held.retain(|(c, _)| c != code);
+        self.held.retain(|(c, _)| *c != code);
     }
 }
 
@@ -398,5 +403,19 @@ mod tests {
         m.up("KeyM");
         m.forget_released(|_| true);
         assert_eq!(m.down("KeyM", at(t0, 6000)), vec![M]);
+    }
+    #[test]
+    fn ctrl_pause_and_vk_only_pause_are_pause() {
+        // Ctrl+Pause sends E0 46 (Break); the browser records it as Pause
+        assert_eq!(code_for_scan(0x46, true), Some("Pause"));
+        // MAPVK_VK_TO_VSC_EX gives Pause as E1 1D
+        assert_eq!(key_code(0x13, 0, false, |_| 0xE11D), Some("Pause"));
+    }
+
+    #[test]
+    fn browser_keys_and_numpad_equal() {
+        assert_eq!(code_for_scan(0x6A, true), Some("BrowserBack"));
+        assert_eq!(code_for_scan(0x69, true), Some("BrowserForward"));
+        assert_eq!(code_for_scan(0x59, false), Some("NumpadEqual"));
     }
 }
