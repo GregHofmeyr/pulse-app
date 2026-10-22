@@ -1,6 +1,6 @@
 # Clips (phase 1: trim and share): design
 
-Date: 2026-10-22. Status: for the owner's review (builder check done, answers folded in; replay format pending, §3.1).
+Date: 2026-10-22. Status: approved 2026-10-22 (replay format filled in from the owner's check).
 
 Depends on: the **media store** (`2026-10-22-reactions-emoji-design.md` §5), whose R2 location this push builds;
 **reactions**; the **replies side panel** from the quotes design (§3.6 there), reused. **Built after both the
@@ -81,9 +81,12 @@ Approved mockups (git-ignored, owner's machine): `.superpowers/brainstorm/284608
   HEVC/AV1 depend on installed extensions). Files it can play open at once. Others get a short **"Preparing
   preview…"** step: a quick repackage when only the container is the problem (seconds), or a fast low-resolution
   preview encode on the GPU when the codec is. The final export always works from the original file.
-- **Pending:** the owner checks tonight whether NVIDIA Instant Replay files are H.264 or HEVC (and whether the file's
-  Title holds the game). If H.264 MP4, preparation is an edge case; if HEVC, it's the common path and the manual test
-  must cover it.
+- **The group's replays (checked 2026-10-22):** NVIDIA app Instant Replay saves **H.264 (avc1) in MP4**, 2560×1440,
+  about **87 Mbps** (a 2-minute replay is about 1.3 GB), AAC 48 kHz 192 kbps, file name like
+  `RUST 2026.05.20 - 12.26.53.03.DVR.mp4`. WebView2 plays these directly, so preview preparation is an **edge case**
+  (other recorders, or someone switching NVIDIA to HEVC/AV1).
+- **The file's Title tag holds the game name** too (the owner's check). The game guess uses the folder first, then the
+  Title, then the file name's leading words.
 - The header shows the file name, length, resolution, fps and size.
 - **Game guess:** the parent folder's name (for example `Videos\Overwatch 2\…` → "Overwatch 2"). "Desktop" and
   unknown names aren't guessed. A guess that matches a known game (ignoring case) selects it; a new name is offered as
@@ -200,7 +203,7 @@ Approved mockups (git-ignored, owner's machine): `.superpowers/brainstorm/284608
   totals.
 - UI: list and wall render, toggle keeps position and is remembered, paging, filters, new markers, one-at-a-time
   playback, fullscreen.
-- Manual on Windows: a real 2-minute NVIDIA replay (in the group's actual format, §3.1) → cut out the middle → Light → posted and playable by a friend
+- Manual on Windows: a real 2-minute NVIDIA replay (H.264 1440p, about 1.3 GB, §3.1) → cut out the middle → Light → posted and playable by a friend
   within about a minute on home internet.
 
 ## 8. Left to the builder
