@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
@@ -61,7 +61,8 @@ fn set_stream_volume(mixer: &MixerInput, user_id: &str, pct: u16) {
 /// or both publish (the first one's capture would be orphaned).
 #[derive(Default)]
 pub struct StreamAudio {
-    state: tokio::sync::Mutex<State>,
+    /// In an `Arc` so the room's event task can tear down a connection LiveKit closed.
+    state: Arc<tokio::sync::Mutex<State>>,
     /// Stream volume per person (percent), kept with no connection so a slider set early applies.
     volumes: Arc<Mutex<HashMap<String, u16>>>,
 }
@@ -70,9 +71,12 @@ pub struct StreamAudio {
 struct State {
     conn: Option<Conn>,
     publishing: Option<Publishing>,
+    /// Numbers connections, so a late "room closed" can't tear down a newer one.
+    next_conn_id: u64,
 }
 
 struct Conn {
+    id: u64,
     channel: ChannelId,
     room: Room,
     watch: Arc<Watch>,
@@ -92,9 +96,7 @@ struct Watch {
 struct Publishing {
     track: LocalAudioTrack,
     sid: TrackSid,
-    /// Logs `audio_out` and, for a capture plan that can change, rescans it.
-    ticker: JoinHandle<()>,
-    engine: Option<Arc<Engine>>,
+    capturing: Capturing<Engine>,
 }
 
 /// Counts for the `audio_out` line.
@@ -279,6 +281,8 @@ impl Watch {
 async fn run_events(
     mut events: tokio::sync::mpsc::UnboundedReceiver<RoomEvent>,
     watch: Arc<Watch>,
+    state: Weak<tokio::sync::Mutex<State>>,
+    conn_id: u64,
 ) {
     let mut tick = tokio::time::interval(LOG_EVERY);
     tick.tick().await;
@@ -313,8 +317,18 @@ async fn run_events(
                         drop(sub);
                     }
                     RoomEvent::Disconnected { reason } => {
-                        log(json!({"ev": "audio_disconnected", "reason": format!("{reason:?}")}));
+                        log(json!({"ev": "audio_room_closed", "reason": format!("{reason:?}")}));
                         watch.clear();
+                        // Stop publishing into the dead room. Not from this task: the teardown
+                        // aborts it.
+                        if let Some(state) = state.upgrade() {
+                            tokio::spawn(async move {
+                                let mut st = state.lock().await;
+                                if st.conn.as_ref().is_some_and(|c| c.id == conn_id) {
+                                    StreamAudio::leave_locked(&mut st).await;
+                                }
+                            });
+                        }
                     }
                     _ => {}
                 }
@@ -341,31 +355,91 @@ fn plan_now(window_title: Option<&str>) -> (Vec<Capture>, bool) {
     (plan, !from_window)
 }
 
-/// Logs `audio_out` every `LOG_EVERY`; with `rescan`, also moves `engine` to the current plan
-/// every `RESCAN_EVERY`.
-async fn run_ticker(
+/// What the ticker rescans: the capture engine (a fake in tests). Dropping it stops capture
+/// and joins its threads, so it must be dropped off the async workers.
+trait Rescan: Send + Sync + 'static {
+    fn apply(&self, plan: Vec<Capture>);
+}
+
+impl Rescan for Engine {
+    fn apply(&self, plan: Vec<Capture>) {
+        Engine::apply(self, plan)
+    }
+}
+
+type Planner = Arc<dyn Fn() -> Vec<Capture> + Send + Sync>;
+
+/// The capture behind a publication and its ticker, which logs `audio_out` every `LOG_EVERY`
+/// and, given `rescan_every`, moves the engine to `planner`'s plan that often.
+struct Capturing<E: Rescan> {
+    stop: tokio::sync::oneshot::Sender<()>,
+    ticker: JoinHandle<()>,
+    engine: Option<Arc<E>>,
+}
+
+impl<E: Rescan> Capturing<E> {
+    fn start(
+        counts: Arc<OutCounts>,
+        engine: Option<E>,
+        planner: Planner,
+        rescan_every: Option<Duration>,
+    ) -> Self {
+        let engine = engine.map(Arc::new);
+        let (stop, stopped) = tokio::sync::oneshot::channel();
+        let ticker = tokio::spawn(run_ticker(
+            counts,
+            engine.clone(),
+            planner,
+            rescan_every,
+            stopped,
+        ));
+        Capturing {
+            stop,
+            ticker,
+            engine,
+        }
+    }
+
+    /// Stops the ticker (letting a rescan in flight finish), then the capture, on a blocking
+    /// thread. Once this returns no capture is running.
+    async fn stop(self) {
+        let _ = self.stop.send(());
+        let _ = self.ticker.await; // its engine handle is gone once it has ended
+        if let Some(engine) = self.engine {
+            debug_assert_eq!(Arc::strong_count(&engine), 1, "the ticker has let go");
+            let _ = tokio::task::spawn_blocking(move || drop(engine)).await;
+        }
+    }
+}
+
+async fn run_ticker<E: Rescan>(
     counts: Arc<OutCounts>,
-    engine: Option<Arc<Engine>>,
-    window_title: Option<String>,
-    rescan: bool,
+    engine: Option<Arc<E>>,
+    planner: Planner,
+    rescan_every: Option<Duration>,
+    mut stopped: tokio::sync::oneshot::Receiver<()>,
 ) {
     let mut log_tick = tokio::time::interval(LOG_EVERY);
-    let mut scan_tick = tokio::time::interval(RESCAN_EVERY);
+    let mut scan_tick = tokio::time::interval(rescan_every.unwrap_or(LOG_EVERY));
     log_tick.tick().await;
     scan_tick.tick().await;
+    let rescan = rescan_every.is_some() && engine.is_some();
     loop {
         tokio::select! {
+            biased;
+            _ = &mut stopped => break,
             _ = log_tick.tick() => log(json!({
                 "ev": "audio_out",
                 "captures": counts.captures.load(Ordering::Relaxed),
                 "chunks": counts.chunks.swap(0, Ordering::Relaxed),
                 "silentChunks": counts.silent.swap(0, Ordering::Relaxed),
             })),
-            _ = scan_tick.tick(), if rescan && engine.is_some() => {
-                let (engine, counts, title) = (engine.clone(), counts.clone(), window_title.clone());
-                // apply can block while stopped captures wind down
+            _ = scan_tick.tick(), if rescan => {
+                let (engine, counts, planner) = (engine.clone(), counts.clone(), planner.clone());
+                // apply can block while stopped captures wind down; awaited to the end, so
+                // `Capturing::stop` never races it
                 let _ = tokio::task::spawn_blocking(move || {
-                    let (plan, _) = plan_now(title.as_deref());
+                    let plan = planner();
                     counts.captures.store(plan.len(), Ordering::Relaxed);
                     if let Some(e) = engine {
                         e.apply(plan);
@@ -408,8 +482,16 @@ impl StreamAudio {
             mixer,
             volumes: self.volumes.clone(),
         });
-        let events = tokio::spawn(run_events(events, watch.clone()));
+        st.next_conn_id += 1;
+        let id = st.next_conn_id;
+        let events = tokio::spawn(run_events(
+            events,
+            watch.clone(),
+            Arc::downgrade(&self.state),
+            id,
+        ));
         st.conn = Some(Conn {
+            id,
             channel,
             room,
             watch,
@@ -427,16 +509,29 @@ impl StreamAudio {
     /// that isn't Pulse's, else everything but Pulse. Replaces a stream already publishing.
     pub async fn start_publishing(&self, window_title: Option<String>) -> Result<(), String> {
         let mut st = self.state.lock().await;
-        let (outlet, counts) = Self::publish_locked(&mut st).await?;
+        Self::stop_publishing_locked(&mut st).await;
+        if st.conn.is_none() {
+            return Err("stream audio isn't connected".into());
+        }
         let title = window_title.clone();
         let (plan, rescan) = tokio::task::spawn_blocking(move || plan_now(title.as_deref()))
             .await
             .map_err(|e| e.to_string())?;
+        let (track, sid, outlet, counts) = Self::publish_locked(&st).await?;
         counts.captures.store(plan.len(), Ordering::Relaxed);
-        let engine = Arc::new(Engine::start(plan, move |c| outlet.send(c)));
-        let p = st.publishing.as_mut().expect("published above");
-        p.engine = Some(engine.clone());
-        p.ticker = tokio::spawn(run_ticker(counts, Some(engine), window_title, rescan));
+        let engine = Engine::start(plan, move |c| outlet.send(c));
+        let planner: Planner = Arc::new(move || plan_now(window_title.as_deref()).0);
+        let capturing = Capturing::start(
+            counts,
+            Some(engine),
+            planner,
+            rescan.then_some(RESCAN_EVERY),
+        );
+        st.publishing = Some(Publishing {
+            track,
+            sid,
+            capturing,
+        });
         Ok(())
     }
 
@@ -445,14 +540,20 @@ impl StreamAudio {
     #[doc(hidden)]
     pub async fn start_publishing_raw(&self) -> Result<Outlet, String> {
         let mut st = self.state.lock().await;
-        let (outlet, counts) = Self::publish_locked(&mut st).await?;
-        let p = st.publishing.as_mut().expect("published above");
-        p.ticker = tokio::spawn(run_ticker(counts, None, None, false));
+        Self::stop_publishing_locked(&mut st).await;
+        let (track, sid, outlet, counts) = Self::publish_locked(&st).await?;
+        st.publishing = Some(Publishing {
+            track,
+            sid,
+            capturing: Capturing::start(counts, None, Arc::new(Vec::new), None),
+        });
         Ok(outlet)
     }
 
-    async fn publish_locked(st: &mut State) -> Result<(Outlet, Arc<OutCounts>), String> {
-        Self::stop_publishing_locked(st).await;
+    /// Publishes a stream-audio track (nothing may be publishing yet); the caller records it.
+    async fn publish_locked(
+        st: &State,
+    ) -> Result<(LocalAudioTrack, TrackSid, Outlet, Arc<OutCounts>), String> {
         let room = &st.conn.as_ref().ok_or("stream audio isn't connected")?.room;
         let source = NativeAudioSource::new(
             AudioSourceOptions::default(),
@@ -478,18 +579,12 @@ impl StreamAudio {
             .await
             .map_err(|e| e.to_string())?;
         let counts = Arc::new(OutCounts::default());
-        st.publishing = Some(Publishing {
-            track,
-            sid: publication.sid(),
-            ticker: tokio::spawn(async {}),
-            engine: None,
-        });
         let outlet = Outlet {
             source,
             rt: tokio::runtime::Handle::current(),
             counts: counts.clone(),
         };
-        Ok((outlet, counts))
+        Ok((track, publication.sid(), outlet, counts))
     }
 
     /// Stops publishing (capture included); watching carries on.
@@ -502,18 +597,16 @@ impl StreamAudio {
         let Some(p) = st.publishing.take() else {
             return;
         };
-        p.ticker.abort();
-        if let Some(engine) = p.engine {
-            // joining the capture threads blocks
-            let _ = tokio::task::spawn_blocking(move || match Arc::try_unwrap(engine) {
-                Ok(e) => e.stop(),
-                Err(shared) => drop(shared), // a rescan still has it: the last one stops it
-            })
-            .await;
-        }
+        // capture first: nothing is fed into a track being unpublished
+        p.capturing.stop().await;
         if let Some(c) = &st.conn {
             let _ = c.room.local_participant().unpublish_track(&p.sid).await;
         }
+    }
+
+    /// Whether stream audio is being published (diagnostics, tests).
+    pub async fn publishing(&self) -> bool {
+        self.state.lock().await.publishing.is_some()
     }
 
     /// Received stream-audio frames with sound in them, over every track playing now
@@ -650,6 +743,58 @@ mod tests {
         let (_, _, game) = input.describe("TR_game").unwrap();
         assert_eq!(mic, 1.0);
         assert_eq!(game, percent_to_gain(50));
+    }
+
+    /// A capture engine whose rescans take a while; it records what happened, and where.
+    struct SlowEngine(Arc<Mutex<Vec<(&'static str, std::thread::ThreadId)>>>);
+
+    impl Rescan for SlowEngine {
+        fn apply(&self, _plan: Vec<Capture>) {
+            self.0
+                .lock()
+                .unwrap()
+                .push(("apply_start", std::thread::current().id()));
+            std::thread::sleep(Duration::from_millis(300));
+            self.0
+                .lock()
+                .unwrap()
+                .push(("apply_end", std::thread::current().id()));
+        }
+    }
+
+    impl Drop for SlowEngine {
+        fn drop(&mut self) {
+            self.0
+                .lock()
+                .unwrap()
+                .push(("dropped", std::thread::current().id()));
+        }
+    }
+
+    /// Stopping mid-rescan waits it out, then drops the engine (joining capture threads) on a
+    /// blocking thread, never the async worker, and before `stop` returns.
+    #[tokio::test] // current-thread: the async worker is this test's thread
+    async fn stopping_capture_mid_rescan_drops_the_engine_after_it_off_the_async_worker() {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let capturing = Capturing::start(
+            Arc::new(OutCounts::default()),
+            Some(SlowEngine(seen.clone())),
+            Arc::new(Vec::new),
+            Some(Duration::from_millis(20)),
+        );
+        // until a rescan is in flight
+        while seen.lock().unwrap().is_empty() {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        capturing.stop().await;
+        let seen = seen.lock().unwrap();
+        let steps: Vec<&str> = seen.iter().map(|(s, _)| *s).collect();
+        assert_eq!(steps, ["apply_start", "apply_end", "dropped"]);
+        assert_ne!(
+            seen[2].1,
+            std::thread::current().id(),
+            "dropped on the async worker"
+        );
     }
 
     #[test]

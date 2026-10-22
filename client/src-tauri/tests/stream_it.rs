@@ -450,3 +450,56 @@ async fn leave_voice_closes_the_stream_connection() {
     );
     let _ = observer.close().await;
 }
+
+/// LiveKit closing the room under `#a` (here: the participant is removed) stops publishing
+/// and drops the connection, instead of capturing into a dead room until the next stop.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn a_room_closed_by_livekit_stops_publishing() {
+    let f = fixture().await;
+    let alex = StreamAudio::default();
+    alex.ensure_connected(&f.api, &f.token, f.channel, no_mixer())
+        .await
+        .unwrap();
+    let feeder = Feeder::start(alex.start_publishing_raw().await.unwrap());
+    assert!(alex.publishing().await);
+
+    let (room, identity) = (format!("{}~s", f.channel), format!("{}#a", f.uid));
+    let st = tokio::task::spawn_blocking(move || {
+        Command::new("docker")
+            .args([
+                "run",
+                "--rm",
+                "--network",
+                "host",
+                "livekit/livekit-cli:v2.18",
+                "room",
+                "participants",
+                "remove",
+                "--url",
+                "http://127.0.0.1:7880",
+                "--api-key",
+                "devkey",
+                "--api-secret",
+                DEV_SECRET,
+                "--room",
+                &room,
+                &identity,
+            ])
+            .output()
+            .expect("docker")
+    })
+    .await
+    .unwrap();
+    assert!(
+        st.status.success(),
+        "lk remove failed: {}",
+        String::from_utf8_lossy(&st.stderr)
+    );
+
+    wait_for("publishing to stop after the room closed", 10, || async {
+        !alex.publishing().await && alex.connected_channel().await.is_none()
+    })
+    .await;
+    drop(feeder);
+}
