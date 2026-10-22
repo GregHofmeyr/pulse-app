@@ -79,8 +79,16 @@ windows = { version = "0.62", features = [
     "Win32_System_SystemInformation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
+    # stream audio (stream/procs.rs, stream/loopback.rs): process list, audio sessions.
+    "Win32_System_ProcessStatus",
+    "Win32_System_Diagnostics_ToolHelp",
+    "Win32_Media_Audio",
+    "Win32_System_Com",
 ] }
 # WebView2 memory target (webview_memory.rs). Keep these on the versions tauri/wry use (see
 # Cargo.lock), or the COM types don't match (E0308).
 webview2-com = "0.39"
 windows-core = "0.62"
+# Stream audio: WASAPI process loopback (stream/loopback.rs). 0.26.0 depends on windows/windows-core
+# ^0.62.2, the versions in Cargo.lock.
+wasapi = "0.26"

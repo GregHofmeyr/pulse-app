@@ -1,7 +1,9 @@
 //! Which processes the stream-audio capture follows. Pure, so the rules are testable anywhere.
 
 /// One WASAPI process-loopback capture: take only this process tree, or everything but it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+/// Logged as `{"include":pid}` / `{"exclude":pid}`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Capture {
     Include(u32),
     Exclude(u32),
