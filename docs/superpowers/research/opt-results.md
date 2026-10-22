@@ -17,7 +17,7 @@ Before = `main` (de4b2ea). After = `optimisation-run` (c81e41c). Both built `--r
 | recv queue p50 | 20 ms | 0 ms (max 10; n=23) | 10 ms (max 20; n=46) | 20 ms (max 21); 11 ms 2nd profile |
 | Strong ns+gate p50/max | 0.57 / 1.9 ms | 2.1 / 2.7 ms per 10 ms (n=46) | 2.1 / 2.4 ms (n=46) | 0.51 / 1.6 ms (n=209) |
 | ns attenuation / gate open | — | — (field added in R4) | -7.0 dB / 0 % (n=46; silent mic input) | -49.9 dB / 30 % (n=209, real speech + a show) |
-| Linux binary / Windows installer | — / — | 94.4 MB / — | 62.1 MB / || kit zip 74.3 MB |
+| Linux binary / Windows installer | — / — | 94.4 MB / — | 62.1 MB / — | kit zip 74.3 MB |
 
 NetEq verdict (R5): see opt-neteq-buffer.md.
 
