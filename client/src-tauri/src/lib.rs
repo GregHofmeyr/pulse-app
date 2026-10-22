@@ -13,6 +13,7 @@ pub mod reports;
 pub mod session;
 pub mod sounds;
 pub mod startup;
+pub mod stream;
 pub mod throttle;
 pub mod voice;
 pub mod webview_memory;
@@ -100,6 +101,7 @@ pub fn run() {
             ));
             app.manage(commands::Core::new(session::Store::new(dir.clone(), profile.as_deref()), outbox));
             app.manage(voice::mictest::MicTest::default());
+            app.manage(stream::PickerMemory::default());
             #[cfg(unix)]
             {
                 let h = app.handle().clone();
@@ -187,6 +189,15 @@ pub fn run() {
             keybinds::pause_keybinds,
             reports::submit_report,
             reports::save_report,
+            stream::stream_ticket,
+            stream::stream_go_live,
+            stream::stream_stop,
+            stream::stream_watch,
+            stream::stream_unwatch,
+            stream::stream_preview_put,
+            stream::stream_preview_get,
+            stream::stream_log,
+            stream::stream_picker_window,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Pulse")

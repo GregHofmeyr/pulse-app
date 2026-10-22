@@ -4,9 +4,10 @@ use std::time::Duration;
 
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
-    AddMembersRequest, Channel, ChannelKind, CreateDmRequest, EditMessageRequest, LoginRequest,
-    MarkReadRequest, Member, Message, MuteTarget, RegisterRequest, RenameChannelRequest,
-    SendMessageRequest, Server, SessionResponse, SetMuteRequest, User, VoiceTokenResponse,
+    AddMembersRequest, Channel, ChannelKind, CreateDmRequest, EditMessageRequest, GoLiveRequest,
+    LoginRequest, MarkReadRequest, Member, Message, MuteTarget, RegisterRequest,
+    RenameChannelRequest, SendMessageRequest, Server, SessionResponse, SetMuteRequest, StreamInfo,
+    StreamRole, StreamSettings, StreamTicketRequest, User, VoiceTokenResponse, WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -16,6 +17,9 @@ pub enum ApiError {
     Unauthorized,
     #[error("{0}")]
     Rejected(String),
+    /// 403: you are signed in but not allowed (for a stream ticket: not in that voice channel yet).
+    #[error("{0}")]
+    Forbidden(String),
     /// 5xx: the server (or a proxy in front of it) is having trouble; worth retrying.
     #[error("the server is having trouble ({0})")]
     Server(String),
@@ -156,9 +160,10 @@ impl Api {
         &self.base
     }
 
-    async fn parse<T: DeserializeOwned>(
+    /// The response if it succeeded; otherwise the matching `ApiError`.
+    async fn checked(
         r: Result<reqwest::Response, reqwest::Error>,
-    ) -> Result<T, ApiError> {
+    ) -> Result<reqwest::Response, ApiError> {
         if let Ok(resp) = &r {
             note_version(resp);
         }
@@ -181,50 +186,34 @@ impl Api {
             return Err(ApiError::Server(r.status().to_string()));
         }
         if !r.status().is_success() {
+            let status = r.status();
             let msg = r
                 .json::<pulse_protocol::rest::ApiError>()
                 .await
                 .map(|e| e.message)
                 .unwrap_or_else(|_| "unexpected server error".into());
-            return Err(ApiError::Rejected(msg));
+            return Err(if status == reqwest::StatusCode::FORBIDDEN {
+                ApiError::Forbidden(msg)
+            } else {
+                ApiError::Rejected(msg)
+            });
         }
-        r.json()
+        Ok(r)
+    }
+
+    async fn parse<T: DeserializeOwned>(
+        r: Result<reqwest::Response, reqwest::Error>,
+    ) -> Result<T, ApiError> {
+        Self::checked(r)
+            .await?
+            .json()
             .await
             .map_err(|e| ApiError::Network(failure_text(e)))
     }
 
     /// For endpoints that answer 204.
     async fn ok_empty(r: Result<reqwest::Response, reqwest::Error>) -> Result<(), ApiError> {
-        if let Ok(resp) = &r {
-            note_version(resp);
-        }
-        let r = r.map_err(|e| {
-            let path = e.url().map(path_only);
-            let text = failure_text(e);
-            log_failure(path, &text);
-            ApiError::Network(text)
-        })?;
-        if !r.status().is_success() {
-            log_failure(Some(path_only(r.url())), r.status().as_str());
-        }
-        if r.status() == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(ApiError::Unauthorized);
-        }
-        if r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(ApiError::RateLimited);
-        }
-        if r.status().is_server_error() {
-            return Err(ApiError::Server(r.status().to_string()));
-        }
-        if !r.status().is_success() {
-            let msg = r
-                .json::<pulse_protocol::rest::ApiError>()
-                .await
-                .map(|e| e.message)
-                .unwrap_or_else(|_| "unexpected server error".into());
-            return Err(ApiError::Rejected(msg));
-        }
-        Ok(())
+        Self::checked(r).await.map(|_| ())
     }
 
     pub async fn create_server(&self, token: &str, name: &str) -> Result<Server, ApiError> {
@@ -490,6 +479,128 @@ impl Api {
                 .await,
         )
         .await
+    }
+
+    pub async fn stream_ticket(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        role: StreamRole,
+    ) -> Result<VoiceTokenResponse, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/streams/{channel}/ticket", self.base))
+                .bearer_auth(token)
+                .json(&StreamTicketRequest { role })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn go_live(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        settings: StreamSettings,
+    ) -> Result<StreamInfo, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/streams/{channel}/live", self.base))
+                .bearer_auth(token)
+                .json(&GoLiveRequest { settings })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn stop_live(&self, token: &str, channel: ChannelId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/streams/{channel}/live", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn watch_stream(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        streamer: UserId,
+    ) -> Result<(), ApiError> {
+        self.watch_call(token, channel, "watch", streamer).await
+    }
+
+    pub async fn unwatch_stream(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        streamer: UserId,
+    ) -> Result<(), ApiError> {
+        self.watch_call(token, channel, "unwatch", streamer).await
+    }
+
+    async fn watch_call(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        action: &str,
+        streamer: UserId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(format!("{}/streams/{channel}/{action}", self.base))
+                .bearer_auth(token)
+                .json(&WatchRequest { streamer })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn put_preview(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        webp: Vec<u8>,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .put(format!("{}/streams/{channel}/preview", self.base))
+                .bearer_auth(token)
+                .header(reqwest::header::CONTENT_TYPE, "image/webp")
+                .body(webp)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A live stream's latest preview; `None` when there is none (or it isn't live).
+    pub async fn get_preview(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        user: UserId,
+    ) -> Result<Option<Vec<u8>>, ApiError> {
+        let r = self
+            .http
+            .get(format!("{}/streams/{channel}/{user}/preview", self.base))
+            .bearer_auth(token)
+            .send()
+            .await;
+        if matches!(&r, Ok(resp) if resp.status() == reqwest::StatusCode::NOT_FOUND) {
+            return Ok(None);
+        }
+        let resp = Self::checked(r).await?;
+        resp.bytes()
+            .await
+            .map(|b| Some(b.to_vec()))
+            .map_err(|e| ApiError::Network(failure_text(e)))
     }
 
     pub async fn register(
@@ -860,6 +971,127 @@ mod tests {
             .unwrap();
         let t = api.voice_token(&token, lounge.id).await.unwrap();
         assert!(!t.token.is_empty());
+    }
+
+    /// A server voice channel plus a client for it, with one registered user.
+    async fn voice_fixture(
+        app: &testing::TestApp,
+        name: &str,
+    ) -> (Api, String, pulse_protocol::ids::UserId, ChannelId) {
+        let (uid, token) = testing::register(app, name).await;
+        let s = testing::create_server(app, &token, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let lounge = api
+            .channels(&token, s.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name.as_deref() == Some("Lounge"))
+            .unwrap();
+        (api, token, uid, lounge.id)
+    }
+
+    fn settings() -> StreamSettings {
+        StreamSettings {
+            height: 720,
+            fps: 60,
+            audio: true,
+        }
+    }
+
+    #[tokio::test]
+    async fn stream_ticket_after_join() {
+        let app = testing::spawn().await;
+        let (api, token, uid, ch) = voice_fixture(&app, "alex").await;
+        // not in the call yet: refused, and as Forbidden (the retry keys on it)
+        assert!(matches!(
+            api.stream_ticket(&token, ch, StreamRole::V).await,
+            Err(ApiError::Forbidden(_))
+        ));
+        app.voice.join(ch, uid, "PA_test");
+        for role in [StreamRole::V, StreamRole::A] {
+            let t = api.stream_ticket(&token, ch, role).await.unwrap();
+            assert!(!t.token.is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn go_live_then_stop_round_trip() {
+        let app = testing::spawn().await;
+        let (api, token, uid, ch) = voice_fixture(&app, "alex").await;
+        app.voice.join(ch, uid, "PA_test");
+        let info = api.go_live(&token, ch, settings()).await.unwrap();
+        assert_eq!((info.channel_id, info.user_id), (ch, uid));
+        assert_eq!(info.settings, settings());
+        api.stop_live(&token, ch).await.unwrap();
+        // already stopped: the server says 404
+        assert!(matches!(
+            api.stop_live(&token, ch).await,
+            Err(ApiError::Rejected(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn watch_then_unwatch() {
+        let app = testing::spawn().await;
+        let (api, token, uid, ch) = voice_fixture(&app, "alex").await;
+        let (sam, sam_token) = testing::register(&app, "sam").await;
+        let server = api.servers(&token).await.unwrap()[0].id;
+        let joined = testing::post_json(
+            &app,
+            &sam_token,
+            &format!("/servers/{server}/join"),
+            serde_json::json!({}),
+        )
+        .await;
+        assert_eq!(joined.status(), 204);
+        app.voice.join(ch, uid, "PA_test");
+        app.voice.join(ch, sam, "PA_test");
+        api.go_live(&token, ch, settings()).await.unwrap();
+        api.watch_stream(&sam_token, ch, uid).await.unwrap();
+        api.unwatch_stream(&sam_token, ch, uid).await.unwrap();
+        // you can't watch yourself
+        assert!(matches!(
+            api.watch_stream(&token, ch, uid).await,
+            Err(ApiError::Rejected(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn preview_put_then_get() {
+        let app = testing::spawn().await;
+        let (api, token, uid, ch) = voice_fixture(&app, "alex").await;
+        app.voice.join(ch, uid, "PA_test");
+        api.go_live(&token, ch, settings()).await.unwrap();
+        assert_eq!(api.get_preview(&token, ch, uid).await.unwrap(), None);
+        let webp = b"RIFF....WEBPfake".to_vec();
+        api.put_preview(&token, ch, webp.clone()).await.unwrap();
+        assert_eq!(api.get_preview(&token, ch, uid).await.unwrap(), Some(webp));
+    }
+
+    #[tokio::test]
+    async fn stream_ticket_retries_a_403_while_voice_join_lands() {
+        let app = testing::spawn().await;
+        let (api, token, uid, ch) = voice_fixture(&app, "alex").await;
+        let voice = app.voice.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(700)).await;
+            voice.join(ch, uid, "PA_test"); // what the LiveKit join webhook does
+        });
+        let t = crate::stream::ticket_with_retry(&api, &token, ch, StreamRole::V)
+            .await
+            .unwrap();
+        assert!(!t.token.is_empty());
+    }
+
+    #[tokio::test]
+    async fn stream_ticket_gives_up_on_a_persistent_403() {
+        let app = testing::spawn().await;
+        let (api, token, _, ch) = voice_fixture(&app, "alex").await;
+        let started = std::time::Instant::now();
+        let r = crate::stream::ticket_with_retry(&api, &token, ch, StreamRole::V).await;
+        assert!(matches!(r, Err(ApiError::Forbidden(_))));
+        assert!(started.elapsed() >= std::time::Duration::from_millis(1500));
     }
 
     #[test]

@@ -4685,6 +4685,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "audioadapter-buffers",
+ "base64 0.22.1",
  "cpal",
  "deep_filter",
  "futures",
