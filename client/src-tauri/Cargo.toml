@@ -77,8 +77,11 @@ cpal = { version = "0.18.2", features = ["realtime"] }
 # + low-level keyboard/mouse hooks for pass-through keybinds (hotkeys.rs).
 windows = { version = "0.62", features = [
     "Win32_Foundation",
+    "Win32_Security",
     "Win32_System_Threading",
     "Win32_System_LibraryLoader",
+    "Win32_System_StationsAndDesktops",
+    "Win32_System_SystemInformation",
     "Win32_UI_WindowsAndMessaging",
     "Win32_UI_Input_KeyboardAndMouse",
 ] }

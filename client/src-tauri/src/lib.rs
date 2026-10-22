@@ -3,6 +3,7 @@ pub mod backoff;
 pub mod bindmatch;
 pub mod commands;
 pub mod gateway;
+pub mod hookwatch;
 pub mod hotkeys;
 pub mod ipc;
 pub mod keybinds;
