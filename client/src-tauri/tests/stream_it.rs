@@ -59,9 +59,7 @@ impl ToneBot {
         );
         Self(name)
     }
-}
 
-impl ToneBot {
     /// The bot is still joined and publishing (so an empty stream room means something).
     fn running(&self) -> bool {
         Command::new("docker")
@@ -172,6 +170,26 @@ async fn stream_room_never_sees_voice_tracks() {
     })
     .await
     .unwrap();
+    // Positive control: a voice-room listener must actually receive the bot's track first, or an
+    // empty stream room below would prove nothing (the bot joins and publishes asynchronously).
+    let vt = f.api.voice_token(&f.token, f.channel).await.unwrap();
+    let (voice_room, mut voice_events) = Room::connect(&vt.url, &vt.token, RoomOptions::default())
+        .await
+        .expect("voice room connect");
+    let heard_bot = tokio::time::timeout(Duration::from_secs(20), async {
+        while let Some(ev) = voice_events.recv().await {
+            if let RoomEvent::TrackSubscribed { participant, .. } = ev
+                && participant.identity().as_str() == "bot"
+            {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(heard_bot, "the bot never published into the voice room");
+
     let mut opts = RoomOptions::default();
     opts.auto_subscribe = true;
     let (room, mut events) = connect(&f, StreamRole::A, opts).await;
@@ -191,6 +209,7 @@ async fn stream_room_never_sees_voice_tracks() {
     assert!(room.remote_participants().is_empty());
     assert!(bot.running(), "the voice bot exited early");
     let _ = room.close().await;
+    let _ = voice_room.close().await;
     drop(bot);
 }
 
