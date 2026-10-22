@@ -1,5 +1,9 @@
 # Screen share Windows spike — Implementation Plan
 
+> Refreshed 2026-10-22 against main a5abf01. Step zero (per-track audio) is merged; keybinds v2 (Windows low-level
+> hooks) and the optimisation run are in. Paths, signatures, versions and recipes below were checked against that
+> commit. Places where the refresh had to make a call are marked "(refreshed 2026-10-22: …)".
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** A throwaway "spike build" of Pulse that the owner runs on Windows to measure what decides the screen-share
@@ -20,7 +24,8 @@ build:
   - a log command, so every result lands in bug reports;
   - process and OS memory counters;
   - extra WebView2 browser flags from an env var;
-  - a prototype stream-audio path (WASAPI process loopback published into the stream room);
+  - a prototype stream-audio path (WASAPI process loopback published into the stream room as
+    `TrackSource::ScreenshareAudio`, which step zero's `source_kind` maps to `SourceKind::Stream`);
   - beep-onset detection for the A/V sync test.
 - **Client, UI:** a hidden debug panel (`Ctrl+Shift+F12`, spike builds only) built on `livekit-client`, with one
   section per test. It logs `spike:` JSON lines.
@@ -28,8 +33,9 @@ build:
 None of this merges to `main`. The **results document** and the **spec updates** are what we keep.
 
 **Tech Stack:**
-- Rust: axum (server); Tauri 2, `livekit` 0.9.3, the `wasapi` crate and `windows` crate (client).
-- UI: Svelte 5, `livekit-client` 2.22.4.
+- Rust: axum 0.8 and `livekit-api` 0.8.1 (server); Tauri 2.12, `livekit` 0.9.3, `wasapi` 0.26 (new, Windows-only,
+  optional) and `windows` 0.62 / `webview2-com` 0.39 (both already direct Windows dependencies) (client).
+- UI: Svelte 5, `livekit-client` 2.22.4 (pinned exact; 2.23.0 shipped 2026-10-16, too new to adopt for the spike).
 - Tools on the owner's PC: PresentMon (CapFrameX), clumsy, Task Manager.
 
 **Spec:** `docs/superpowers/specs/2026-10-15-screenshare-design.md` §8.1 step 2. The test list and pass bars are in
@@ -43,6 +49,13 @@ None of this merges to `main`. The **results document** and the **spec updates**
   keep 256 KB of log tail, so the owner files a report after each test section.
 - **Prod changes need the owner's OK each time:** deploying the spike server image, `PULSE_SPIKE=1`, and LiveKit
   codec-config switches. Revert all of them when the spike ends.
+  - (refreshed 2026-10-22: how the spike image gets built.) `release-server.yml` only builds `main` automatically.
+    Dispatching it by hand on `screenshare-spike` works, but its `publish` job tags the image `:<sha7>` **and
+    `:latest`**, so `:latest` would point at spike code until the next `main` build. Deploy by sha
+    (`just deploy <spike-sha7>`, run from the spike worktree so its `deploy/compose.yml` is the one copied), and at
+    the end `just deploy <main-sha7>` from `main` and re-run `release-server.yml` on `main` to put `:latest` back.
+  - `just deploy` copies the repo's `deploy/livekit.yaml` to prod, which silently undoes `just spike-codecs on`. Deploy
+    first, switch codecs after.
 - **Hardware:** the owner's PC (RTX 2080 Ti, no iGPU) as the streamer. A second PC as the viewer (the owner's
   partner's 4070 Ti Super). Swap roles once for S1/S2 on the 4070 Ti Super.
 - **Games for capture and FPS tests:** Overwatch, Apex Legends, CS2.
@@ -75,16 +88,20 @@ None of this merges to `main`. The **results document** and the **spec updates**
 | File | Purpose |
 |---|---|
 | `server/src/spike.rs` | `POST /spike/stream/{channel}/ticket` (env-gated) |
-| `server/src/config.rs`, `server/src/lib.rs` | The `spike` flag; mount the router |
+| `server/src/config.rs`, `server/src/lib.rs`, `server/src/testing.rs` | The `spike` flag; mount the router; `test_config()` |
 | `deploy/livekit.codecs.yaml` | The `room.enabled_codecs` block for S1(b) |
+| `deploy/compose.yml` | Pass `PULSE_SPIKE` through to `pulse-server` |
 | `justfile` | `spike-codecs on|off`, `spike-server on|off` |
-| `client/src-tauri/Cargo.toml` | The `spike` feature; `wasapi`, `windows` deps (Windows-only, optional) |
+| `client/src-tauri/Cargo.toml` | The `spike` feature: optional `wasapi`; extra features on the existing `windows` dep |
 | `client/src-tauri/src/spike/mod.rs` | Commands: `spike_log`, `spike_ticket`, `spike_os_stats`, `spike_window_pid` |
 | `client/src-tauri/src/spike/loopback.rs` | Process loopback capture to `NativeAudioSource`; the `#a` room connection |
 | `client/src-tauri/src/spike/onset.rs` | Beep-onset detector (pure, tested) |
 | `client/src-tauri/src/lib.rs` | Extra WebView2 args; renderer-crash hook; register spike commands under `cfg(feature = "spike")` |
+| `client/src-tauri/src/api.rs` | `Api::spike_ticket` |
+| `client/src-tauri/src/voice/mod.rs` | `VoiceManager::spike_mixer()` (spike-only accessor to step zero's `MixerInput`) |
+| `client/src-tauri/tauri.spike.conf.json` | Spike-only config overlay: CSP for LiveKit, the pop-out window's capability |
 | `client/ui/src/spike/*.ts`, `client/ui/src/spike/SpikePanel.svelte` | The debug panel and its pure helpers (tested with vitest) |
-| `.github/workflows/release-windows.yml` | A `spike` input that builds with the feature and `VITE_SPIKE=1` |
+| `.github/workflows/release-windows.yml` | A `spike` input that builds with the feature, the config overlay and `VITE_SPIKE=1` |
 | `docs/superpowers/research/screenshare-spike-protocol.md` | The owner's step-by-step script |
 | `docs/superpowers/research/screenshare-spike-results.md` | Results, written after the runs |
 
@@ -94,9 +111,10 @@ None of this merges to `main`. The **results document** and the **spec updates**
 
 **Files:**
 - Create: `server/src/spike.rs`
-- Modify: `server/src/config.rs` (add `pub spike: bool`, read from `PULSE_SPIKE`)
-- Modify: `server/src/lib.rs:25-35` (merge `spike::router()`)
-- Modify: `server/src/testing.rs` (`test_config()` sets `spike: false`)
+- Modify: `server/src/config.rs` (add `pub spike: bool` to `Config`; read it in `Config::from_env`, `config.rs:25-44`)
+- Modify: `server/src/lib.rs` (`pub mod spike;` next to the other modules, lines 1-14; `.merge(spike::router())` in
+  `router()`, lines 25-38, after `.merge(reports::routes::router())` and before `.fallback(...)`)
+- Modify: `server/src/testing.rs` (`test_config()`, lines 48-60, sets `spike: false`)
 - Test: `server/tests/spike.rs`
 
 **Interfaces:**
@@ -106,12 +124,15 @@ None of this merges to `main`. The **results document** and the **spec updates**
   - Identity: `<uid>#<role>`.
   - Grants: `room_join`; `can_subscribe: true`; `can_publish: true` with `can_publish_sources: ["screen_share"]` for
     `v`, `[]` (subscribe-only) for `v2`, and `["screen_share_audio"]` for `a`.
-  - Requires: server membership, and the caller in that channel's voice (`s.voice` state).
+  - Requires: server membership (the same `is_server_member` check `voice/routes.rs`'s `token` makes), and the caller
+    in that channel's voice (`s.voice.members(id).contains(&me)`; `VoiceState` has no `is_in`, and `members` already
+    answers it).
   - Returns 404 when `spike` is false.
 
 - [ ] **Step 1: Write the failing tests**
 
-`server/tests/spike.rs`:
+`server/tests/spike.rs` (`testing::post_json` takes the body as a `serde_json::Value` by value; `TestApp` exposes
+`voice: VoiceState` directly, so the test marks a user as in voice with `app.voice.join(..)`: no helper needed):
 
 ```rust
 use livekit_api::access_token::TokenVerifier;
@@ -135,7 +156,7 @@ async fn spike_tickets_are_404_when_disabled() {
     let app = testing::spawn().await; // spike: false
     let (_, tok) = testing::register(&app, "alex").await;
     let ch = lounge(&app, &tok).await;
-    let res = testing::post_json(&app, &tok, &format!("/spike/stream/{ch}/ticket"), &json!({"role":"v"})).await;
+    let res = testing::post_json(&app, &tok, &format!("/spike/stream/{ch}/ticket"), json!({"role":"v"})).await;
     assert_eq!(res.status(), 404);
 }
 
@@ -146,9 +167,9 @@ async fn spike_tickets_only_name_the_stream_room() {
     let app = testing::spawn_with(cfg.clone()).await;
     let (uid, tok) = testing::register(&app, "alex").await;
     let ch = lounge(&app, &tok).await;
-    testing::mark_in_voice(&app, ch.parse().unwrap(), uid); // test helper, added in step 3
+    app.voice.join(ch.parse().unwrap(), uid, "PA_test"); // what the LiveKit join webhook does
     for (role, sources) in [("v", vec!["screen_share"]), ("a", vec!["screen_share_audio"]), ("v2", vec![])] {
-        let res = testing::post_json(&app, &tok, &format!("/spike/stream/{ch}/ticket"), &json!({"role":role})).await;
+        let res = testing::post_json(&app, &tok, &format!("/spike/stream/{ch}/ticket"), json!({"role":role})).await;
         assert_eq!(res.status(), 200, "{role}");
         let body: pulse_protocol::rest::VoiceTokenResponse = res.json().await.unwrap();
         let claims = TokenVerifier::with_api_key(&cfg.livekit_key, &cfg.livekit_secret)
@@ -167,7 +188,7 @@ async fn spike_tickets_need_you_in_voice() {
     let app = testing::spawn_with(cfg).await;
     let (_, tok) = testing::register(&app, "alex").await;
     let ch = lounge(&app, &tok).await;
-    let res = testing::post_json(&app, &tok, &format!("/spike/stream/{ch}/ticket"), &json!({"role":"v"})).await;
+    let res = testing::post_json(&app, &tok, &format!("/spike/stream/{ch}/ticket"), json!({"role":"v"})).await;
     assert_eq!(res.status(), 403);
 }
 ```
@@ -175,28 +196,18 @@ async fn spike_tickets_need_you_in_voice() {
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `cargo test -p pulse-server --test spike`
-Expected: compile errors (`spike` field, `mark_in_voice` and the route don't exist).
+Expected: compile errors (no `spike` field on `Config`); once that exists, 404s for the enabled cases (no route yet).
 
 - [ ] **Step 3: Implement**
 
-`server/src/config.rs`: add `pub spike: bool` to `Config`, read in `from_env` as
+`server/src/config.rs`: add `pub spike: bool` to `Config` (with a doc comment: "THROWAWAY: the screen-share spike's
+ticket endpoint, `PULSE_SPIKE=1`"), read in `from_env` as
 `spike: std::env::var("PULSE_SPIKE").is_ok_and(|v| v == "1")`.
 
-`server/src/testing.rs`:
-- in `test_config()` set `spike: false`;
-- add the helper:
-
-```rust
-/// Pretend the user joined voice (no LiveKit in unit tests).
-pub fn mark_in_voice(app: &TestApp, channel: pulse_protocol::ids::ChannelId, user: pulse_protocol::ids::UserId) {
-    app.state.voice.join(channel, user, "PA_test");
-}
-```
-
-`TestApp` must expose `state`. If it doesn't, add `pub state: AppState` where `spawn_with` builds it. Before relying on
-the name, check that `voice::state` has an "is this user in this channel" query; the webhook's `s.voice.join` and
-`s.voice.declared` show the shape. If it isn't there, add `pub fn is_in(&self, channel, user) -> bool` with its own
-unit test in `voice/state.rs`.
+`server/src/testing.rs`: in `test_config()` set `spike: false`. Nothing else: `TestApp` already has
+`pub voice: crate::voice::VoiceState` (and a `state()` method), and `VoiceState::members(channel)` is the "who is in
+this channel" query, so neither a test helper nor a new `is_in` is needed. (refreshed 2026-10-22: the old
+`mark_in_voice` helper and `is_in` method are dropped as redundant.)
 
 `server/src/spike.rs`:
 
@@ -234,8 +245,14 @@ async fn ticket(
     if !s.cfg.spike {
         return Err(AppError::NotFound);
     }
-    let _ch = channel_for(&s.db, me, id).await?;
-    if !s.voice.is_in(id, me) {
+    let ch = channel_for(&s.db, me, id).await?;
+    // same rule as voice/routes.rs `token`: server voice needs server membership
+    if let Some(server) = ch.server_id
+        && !crate::servers::routes::is_server_member(&s.db, server, me).await?
+    {
+        return Err(AppError::Forbidden);
+    }
+    if !s.voice.members(id).contains(&me) {
         return Err(AppError::Forbidden);
     }
     let sources: Vec<String> = match req.role.as_str() {
@@ -263,20 +280,22 @@ async fn ticket(
 }
 ```
 
-If `AppError::NotFound` doesn't exist, add it, mapping to 404, like the existing variants in `error.rs`. In `lib.rs`
-add `pub mod spike;` and `.merge(spike::router())`.
+`AppError::NotFound` (404), `Forbidden` (403), `BadRequest(String)` and `Internal(anyhow::Error)` all exist in
+`error.rs`; no change there. In `lib.rs` add `pub mod spike;` and `.merge(spike::router())` (before `.fallback`).
+The handler uses `let`-chains, as `voice/routes.rs` does (edition 2024).
 
 - [ ] **Step 4: Run the tests to verify they pass**
 
 Run: `cargo test -p pulse-server --test spike` and then `cargo test -p pulse-server`
-Expected: PASS. The webhook already ignores `~s` rooms because `"<id>~s"` doesn't parse as a `ChannelId`. Add this
-assertion to `spike_tickets_only_name_the_stream_room` to pin it:
+Expected: PASS. The webhook (`voice/routes.rs` `webhook`) already ignores `~s` rooms: it acks and returns when
+`room.name.parse::<ChannelId>()` or `identity.parse::<UserId>()` fails, and `"<id>~s"` / `"<uid>#a"` fail both. Add
+this assertion to `spike_tickets_only_name_the_stream_room` to pin it:
 `assert!(format!("{ch}~s").parse::<pulse_protocol::ids::ChannelId>().is_err());`
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add server/src/spike.rs server/src/config.rs server/src/lib.rs server/src/testing.rs server/src/error.rs server/tests/spike.rs server/src/voice/state.rs
+git add server/src/spike.rs server/src/config.rs server/src/lib.rs server/src/testing.rs server/tests/spike.rs
 git commit -m "spike(server): env-gated stream-room tickets (never the voice room)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -289,7 +308,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Files:**
 - Create: `deploy/livekit.codecs.yaml`
 - Modify: `justfile` (append the recipes)
-- Modify: `deploy/compose.yml`: pass `PULSE_SPIKE` through to `pulse-server` (`PULSE_SPIKE: ${PULSE_SPIKE:-0}`)
+- Modify: `deploy/compose.yml`: pass `PULSE_SPIKE` through to `pulse-server` (add `PULSE_SPIKE: ${PULSE_SPIKE:-0}` to
+  its `environment:` map, after `RUST_LOG`)
 
 **Interfaces:**
 - Produces:
@@ -299,9 +319,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Write the codec block**
 
-`deploy/livekit.codecs.yaml`. This is LiveKit v1.13 `config.go`'s full default list, plus strict Main and Baseline
-H.264. Never trim it: dropping `audio/red` or `video/rtx` silently breaks voice loss recovery and video
-retransmission.
+`deploy/livekit.codecs.yaml`. This is LiveKit v1.13.10 `pkg/config/config.go`'s full default `room.enabled_codecs`
+list (checked 2026-10-22: PCMU, PCMA, opus, red, VP8, H264, VP9, AV1, H265, rtx; `CodecSpec` keys `mime` and
+`fmtp_line`), plus strict Main and Baseline H.264. Never trim it: dropping `audio/red` or `video/rtx` silently breaks
+voice loss recovery and video retransmission. Prod's `deploy/livekit.yaml` has no `room:` section today, so appending
+one doesn't create a duplicate key; re-check that before switching.
 
 ```yaml
 # SPIKE S1(b): appended to livekit.yaml on prod by `just spike-codecs on`.
@@ -323,17 +345,19 @@ room:
     - mime: video/rtx
 ```
 
-Validate it with LiveKit itself, so the YAML keys are checked rather than guessed:
-`docker run --rm -v "$PWD/deploy:/c" livekit/livekit-server:v1.13.10 --config /c/livekit.yaml --dev --bind 127.0.0.1 &`
-won't validate the appended block on its own. Instead concatenate:
+Validate it with LiveKit itself (the image prod runs, `deploy/compose.yml`), so the YAML keys are checked rather than
+guessed. Concatenate exactly what prod will get:
 `cat deploy/livekit.yaml deploy/livekit.codecs.yaml > /tmp/lk-spike.yaml`. Then run
-`docker run --rm --network host -e LIVEKIT_KEYS="k: secretsecretsecretsecretsecretsecret" -v /tmp/lk-spike.yaml:/c.yaml livekit/livekit-server:v1.13.10 --config /c.yaml`
-and check that the log shows no config error before it starts listening. Stop it with Ctrl+C. If LiveKit rejects
-`fmtp_line`, check its `config.go` `CodecSpec` field names for v1.13.10 and fix the key.
+`docker run --rm --network host -e LIVEKIT_KEYS="pulse: secretsecretsecretsecretsecretsecret" -v /tmp/lk-spike.yaml:/c.yaml livekit/livekit-server:v1.13.10 --config /c.yaml`
+and check that the log shows no config error before it starts listening. Stop it with Ctrl+C. The key must be named
+`pulse`: `livekit.yaml`'s `webhook.api_key` is `pulse`, and LiveKit refuses to start if that key isn't in
+`LIVEKIT_KEYS`. (refreshed 2026-10-22: was `k:`.) Stop the dev LiveKit (`docker compose down`) first if it's running:
+both bind 7880 on the host. If LiveKit rejects `fmtp_line`, check its `config.go` `CodecSpec` field names for v1.13.10
+and fix the key.
 
 - [ ] **Step 2: Add the recipes**
 
-Append to `justfile`:
+Append to `justfile`, after the production recipes (they use its existing `prod := "pulse@pulse"` variable):
 
 ```make
 # SPIKE: switch prod LiveKit to the strict-H.264 codec list (S1b) and back. Needs the owner's OK.
@@ -355,8 +379,10 @@ spike-server mode:
 
 - [ ] **Step 3: Check**
 
-Run: `just deploy-check` (validates compose and shellcheck).
-Expected: PASS.
+Run: `just deploy-check` (validates `deploy/compose.yml` against `deploy/env.example`, the Caddyfile, and
+shellchecks `deploy/*.sh`; it does not lint justfile recipes) and `just --list` (parses the justfile, so the new
+recipes show up).
+Expected: PASS, and `spike-codecs` / `spike-server` listed.
 
 - [ ] **Step 4: Commit**
 
@@ -374,8 +400,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 **Files:**
 - Modify: `client/src-tauri/Cargo.toml`
 - Create: `client/src-tauri/src/spike/mod.rs`
-- Modify: `client/src-tauri/src/lib.rs` (`create_main_window`, the `invoke_handler` list)
-- Modify: `client/src-tauri/src/api.rs` (add `spike_ticket`)
+- Modify: `client/src-tauri/src/lib.rs` (`create_main_window`, lines 26-50; the `invoke_handler` list, lines 146-189)
+- Modify: `client/src-tauri/src/api.rs` (add `spike_ticket` after `voice_token`, line 480)
 - Test: `client/src-tauri/src/spike/mod.rs` (`mod tests`)
 
 **Interfaces:**
@@ -391,25 +417,36 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Cargo feature and deps**
 
-In `client/src-tauri/Cargo.toml`:
+(refreshed 2026-10-22: `windows` 0.62 is now a normal, non-optional Windows dependency, used by `voice/rtprio.rs` and
+the keybind hooks in `hotkeys.rs`, and `webview2-com` 0.39 / `windows-core` 0.62 are direct Windows dependencies for
+`webview_memory.rs`. So the spike can't make `windows` optional. Instead, it turns on the two extra `windows`
+features it needs, and only `wasapi` is optional.)
+
+In `client/src-tauri/Cargo.toml`, the existing `[features]` table becomes:
 
 ```toml
 [features]
+# Strong uses DeepFilterNet3's low-latency model (36 MB) instead of the normal one (8 MB).
 dfn-ll = ["deep_filter/default-model-ll"]
 # THROWAWAY: the screen-share spike build (debug panel commands, loopback prototype).
-spike = ["dep:wasapi", "dep:windows"]
-
-[target.'cfg(windows)'.dependencies]
-wasapi = { version = "0.26", optional = true }
-windows = { version = "0.61", optional = true, features = [
-  "Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading",
-  "Win32_UI_WindowsAndMessaging", "Win32_System_Diagnostics_ToolHelp",
-] }
+spike = [
+  "dep:wasapi",
+  "windows/Win32_System_ProcessStatus",
+  "windows/Win32_System_Diagnostics_ToolHelp",
+]
 ```
 
-Keep an existing `[target.'cfg(windows)'.dependencies]` table if there is one (merge, don't duplicate). Match the
-`windows` version to the one already in `Cargo.lock` (`grep -A1 'name = "windows"' Cargo.lock`) to avoid a second
-copy.
+and add one line to the existing `[target.'cfg(windows)'.dependencies]` table (don't add a second table, and leave
+its `windows` entry and its feature list as they are):
+
+```toml
+# THROWAWAY (spike): WASAPI process loopback. 0.26.0 depends on windows/windows-core ^0.62.2, the versions in Cargo.lock.
+wasapi = { version = "0.26", optional = true }
+```
+
+The `windows` dependency already enables `Win32_Foundation`, `Win32_System_Threading` and
+`Win32_UI_WindowsAndMessaging`, which the spike code also uses. Check with `cargo tree -p pulse-client --features
+spike --target x86_64-pc-windows-msvc -i windows` that there's still one `windows` (0.62.2) in the tree.
 
 - [ ] **Step 2: Write the failing test (the pure part)**
 
@@ -432,8 +469,9 @@ mod tests {
 }
 ```
 
-Run: `cargo test -p pulse-client --features spike spike::`
-Expected: FAIL (`webview_args` not found).
+Run: `cargo test -p pulse-client --lib --features spike spike::`
+Expected: FAIL (`webview_args` not found). (`tauri::generate_context!` needs `client/ui/dist` to exist; if it doesn't,
+`mkdir -p client/ui/dist`, as CI does.)
 
 - [ ] **Step 3: Implement**
 
@@ -443,8 +481,7 @@ Expected: FAIL (`webview_args` not found).
 //! THROWAWAY (screen-share spike): commands for the hidden debug panel. Results are `spike:` log lines,
 //! so every bug report carries them.
 
-#[cfg(windows)]
-pub mod loopback;
+pub mod loopback; // builds on every OS; only its WASAPI capture is Windows-only (Task 4)
 pub mod onset;
 
 use pulse_protocol::ids::ChannelId;
@@ -472,7 +509,7 @@ pub async fn spike_ticket(
     channel_id: ChannelId,
     role: String,
 ) -> Result<VoiceTokenResponse, ApiError> {
-    let (api, token) = core.api_and_token().await?;
+    let (api, token) = core.current()?; // what join_voice uses: (Api, session token) or Unauthorized
     api.spike_ticket(&token, channel_id, &role).await
 }
 
@@ -619,11 +656,14 @@ mod win {
 }
 ```
 
-The `windows` crate path names shift between versions (for example `BOOL` lives in `windows::core` from 0.61, and in
-`Win32::Foundation` before). Compile on Windows CI (Task 6) and fix paths to the pinned version. Don't change the
-logic.
+These paths and signatures were checked against `windows` 0.62.2 on 2026-10-22: `BOOL` is `windows::core::BOOL`;
+`OpenProcess`, `CreateToolhelp32Snapshot` return `Result<HANDLE>`; `Process32FirstW/NextW`, `GetProcessMemoryInfo`,
+`GetPerformanceInfo`, `GetProcessHandleCount`, `EnumWindows` return `Result<()>`; `GetWindowTextW` takes
+`&mut [u16]`; `GetWindowThreadProcessId` takes `Option<*mut u32>`. Windows CI (Task 6) is still the real check: fix
+any path it rejects without changing the logic.
 
-In `api.rs`, add next to `voice_token`:
+In `api.rs`, add after `voice_token` (`ChannelId` and `VoiceTokenResponse` are already imported; `Self::parse` is the
+same private helper `voice_token` uses):
 
 ```rust
     #[cfg(feature = "spike")]
@@ -640,37 +680,55 @@ In `api.rs`, add next to `voice_token`:
     }
 ```
 
-`core.api_and_token()`: use whatever `join_voice` in `commands.rs` uses to get the `Api` and session token, and copy
-those two lines rather than inventing a helper. If there's no shared helper, inline them in `spike_ticket`.
+There is no `api_and_token()`. Every command, `join_voice` included, gets the `Api` and the session token with
+`let (api, token) = core.current()?;` (`Core::current`, `commands.rs:51`, `pub(crate)`, synchronous, returns
+`ApiError::Unauthorized` when signed out). `spike_ticket` above uses that.
 
 In `lib.rs`:
-- add `#[cfg(feature = "spike")] pub mod spike;`.
-- **WebView2 args:** in `create_main_window`, before `.build()`:
+- add `#[cfg(feature = "spike")] pub mod spike;` with the other `pub mod` lines (1-17).
+- **WebView2 args:** in `create_main_window`. Today it is one chain from `tauri::WebviewWindowBuilder::new(app, "main",
+  ...)` to `.data_directory(profile_dir.join("webview")).build()?` (lines 27-34). Split it so the spike can add one
+  call before `build()`:
 
 ```rust
+    let b = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
+        // ...the existing .title(..) .. .data_directory(..) calls, unchanged...
+        ;
     #[cfg(all(windows, feature = "spike"))]
-    let win = win.additional_browser_args(&spike::webview_args(
-        // wry's default: keep it, or these features come back on
+    let b = b.additional_browser_args(&spike::webview_args(
+        // wry 0.57's default (webview2/mod.rs): keep it, or these features come back on
         "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
         std::env::var("PULSE_WEBVIEW2_ARGS").ok().as_deref(),
     ));
+    let win = b.build()?;
 ```
 
-  `win` is the builder at that point; restructure into `let mut b = WebviewWindowBuilder::new(...)...;` then
-  `#[cfg] { b = b.additional_browser_args(...) }` then `let win = b.build()?;`.
-- **Renderer crash (S12), Windows:** after the window is built, mirroring the Linux block:
+  Tauri's docs warn that webviews with different browser args need different data directories. The main window
+  already has its own per-profile one, so that holds. Don't run a spike build and a normal build on the same profile
+  at the same time. `autoplay` isn't set, so wry would add no other default args.
+- **Renderer crash (S12), Windows:** after the window is built. It goes next to the existing Linux crash block and
+  `webview_memory::install(&win)` (lines 35-47), using the same `with_webview` pattern as
+  `webview_memory::set_target`:
 
 ```rust
     #[cfg(all(windows, feature = "spike"))]
     win.with_webview(|wv| {
+        use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_KIND;
         use webview2_com::ProcessFailedEventHandler;
-        let core = unsafe { wv.controller().CoreWebView2() }.expect("core webview");
-        let mut token = Default::default();
+        let Ok(core) = (unsafe { wv.controller().CoreWebView2() }) else {
+            tracing::warn!(target: "spike", "spike: no CoreWebView2 for the ProcessFailed hook");
+            return;
+        };
+        let mut token = 0i64;
         let _ = unsafe {
             core.add_ProcessFailed(
                 &ProcessFailedEventHandler::create(Box::new(|_, args| {
-                    let kind = args.map(|a| unsafe { a.ProcessFailedKind() }.map(|k| k.0).unwrap_or(-1));
-                    tracing::error!(target: "spike", "spike: {{\"test\":\"S12\",\"event\":\"renderer_failed\",\"kind\":{}}}", kind.unwrap_or(-1));
+                    let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+                    let kind = match args {
+                        Some(a) if unsafe { a.ProcessFailedKind(&mut kind) }.is_ok() => kind.0,
+                        _ => -1,
+                    };
+                    tracing::error!(target: "spike", "spike: {{\"test\":\"S12\",\"event\":\"renderer_failed\",\"kind\":{kind}}}");
                     Ok(())
                 })),
                 &mut token,
@@ -679,25 +737,35 @@ In `lib.rs`:
     })?;
 ```
 
-  `webview2-com` 0.39.1 is already in `Cargo.lock` through wry. Add it as a direct optional Windows dependency in the
-  `spike` feature at the same version.
-- **Register the commands:** `tauri::generate_handler!` can't take `cfg` attributes on individual entries. Build two
-  handler lists:
-  - `#[cfg(feature = "spike")] let builder = builder.invoke_handler(generate_handler![...all existing..., spike::spike_log, spike::spike_ticket, spike::spike_os_stats, spike::spike_window_pid, spike::loopback::spike_loopback_start, spike::loopback::spike_loopback_stop, spike::loopback::spike_beep_watch]);`
-  - `#[cfg(not(feature = "spike"))]` keeps the original list.
+  (refreshed 2026-10-22: in `webview2-com-sys` 0.39.1 `ProcessFailedKind` takes an out-pointer
+  (`*mut COREWEBVIEW2_PROCESS_FAILED_KIND`) and `add_ProcessFailed` takes `*mut i64`. The snippet follows wry's
+  own `add_PermissionRequested` usage.) `webview2-com` 0.39 is already a direct Windows dependency (for
+  `webview_memory.rs`), so the feature needs nothing more for it.
+- **Register the commands:** `tauri::generate_handler!` can't take `cfg` attributes on individual entries, and
+  today `run()` is one chain, `builder.setup(..).on_window_event(..).invoke_handler(generate_handler![..]).build(..)
+  .expect(..).run(..)`. Split it after `.on_window_event(..)` into `let builder = ...;`, then:
+  - `#[cfg(feature = "spike")] let builder = builder.invoke_handler(tauri::generate_handler![...all existing..., spike::spike_log, spike::spike_ticket, spike::spike_os_stats, spike::spike_window_pid, spike::loopback::spike_loopback_start, spike::loopback::spike_loopback_stop, spike::loopback::spike_beep_watch]);`
+  - `#[cfg(not(feature = "spike"))] let builder = builder.invoke_handler(tauri::generate_handler![...])` with the
+    original list (42 entries today, `commands::login` through `reports::save_report`);
+  - then `builder.build(tauri::generate_context!()).expect(..).run(..)` as now.
 
-  (The loopback commands come in Task 4; add them to the list then.)
+  The loopback commands come in Task 4; add them to the list then. They build on every OS (Task 4 keeps only the
+  WASAPI capture under `cfg(windows)`), so one spike list works on Linux and Windows.
+  (refreshed 2026-10-22: the old plan put `mod loopback` under `cfg(windows)` but still listed its commands, which
+  wouldn't compile in the Linux spike build that Step 4 runs.)
 
 - [ ] **Step 4: Run tests and both builds**
 
-Run: `cargo test -p pulse-client --features spike spike::` → PASS.
+Run: `cargo test -p pulse-client --lib --features spike spike::` → PASS.
 Run: `cargo build -p pulse-client` and `cargo build -p pulse-client --features spike` (on Linux, the Windows-only code
 is cfg'd out) → both build.
+Run: `cargo clippy -p pulse-client --all-targets --features spike -- -D warnings`. CI's clippy runs without the
+feature, so this is the only lint of the spike code.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add client/src-tauri
+git add client/src-tauri Cargo.lock  # wasapi lands in the workspace lockfile at the repo root
 git commit -m "spike(client): log/ticket/OS-stats commands, WebView2 args, renderer-crash hook
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -709,14 +777,35 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 **Files:**
 - Create: `client/src-tauri/src/spike/onset.rs` (pure, tested on any OS)
-- Create: `client/src-tauri/src/spike/loopback.rs` (Windows)
+- Create: `client/src-tauri/src/spike/loopback.rs` (builds on every OS; the WASAPI capture inside is `cfg(windows)`)
+- Modify: `client/src-tauri/src/voice/mod.rs` (one spike-only accessor on `VoiceManager`, below)
+- Modify: `client/src-tauri/src/lib.rs` (`app.manage(spike::loopback::Loopback::default())` in `setup`)
 - Test: `client/src-tauri/src/spike/onset.rs`; `client/src-tauri/src/spike/loopback.rs` (Windows-only test)
 
 **Interfaces:**
 - Consumes:
   - Task 3's `spike_ticket`;
-  - step zero's `Mixer::add_source(source, owner, SourceKind::Stream)`, if step zero is merged. If it isn't, the
-    prototype plays through its own cpal output instead (see Step 3).
+  - step zero (merged in a5abf01), in `voice/mixer.rs`:
+    - `MixerInput::add_source(&self, generation: u64, source: &str, owner: &str, kind: SourceKind)`;
+    - `push_in(&self, generation: u64, source: &str, samples: &[i16])` (mono, 48 kHz i16);
+    - `remove_source(&self, generation: u64, source: &str)`;
+    - `generation()`;
+    - sources keyed by track SID; gain per (owner, `SourceKind`).
+  - step zero's `voice/mod.rs` `source_kind(TrackSource::ScreenshareAudio) == SourceKind::Stream`: the prototype
+    publishes with `TrackSource::ScreenshareAudio`, so a later voice-side receive path classifies it the way the real
+    build will.
+  - New, spike-only, in `voice/mod.rs` next to the other diagnostics accessors (`mixer_sources` etc., ~line 1675):
+
+    ```rust
+    /// THROWAWAY (spike): the current call's mixer input, so the spike's `#a` connection plays through it.
+    #[cfg(feature = "spike")]
+    pub async fn spike_mixer(&self) -> Option<Arc<mixer::MixerInput>> {
+        self.session.lock().await.as_ref().map(|s| s.pipeline.shared.mix_in.clone())
+    }
+    ```
+
+    `Shared::mix_in` is already `pub mix_in: Arc<MixerInput>` (`voice/devices.rs`). This is the only spike change
+    inside `voice/`. (refreshed 2026-10-22: added because step zero's mixer has no outside handle.)
 - Produces Tauri commands:
   - `spike_loopback_start(channel_id: ChannelId, mode: "include" | "exclude", pid: Option<u32>, tone: Option<String>)`
     returns `Result<(), String>`. `tone` is `"left"` to publish a left-only 1 kHz tone instead of loopback (stereo
@@ -765,7 +854,7 @@ mod tests {
 }
 ```
 
-Run: `cargo test -p pulse-client --features spike spike::onset` → FAIL (no `Detector`).
+Run: `cargo test -p pulse-client --lib --features spike spike::onset` → FAIL (no `Detector`).
 
 - [ ] **Step 2: Implement the detector**
 
@@ -811,12 +900,25 @@ impl Detector {
 }
 ```
 
-Run: `cargo test -p pulse-client --features spike spike::onset` → PASS.
+Run: `cargo test -p pulse-client --lib --features spike spike::onset` → PASS.
 
-- [ ] **Step 3: Implement loopback publish and listen (Windows)**
+- [ ] **Step 3: Implement loopback publish and listen**
 
-`client/src-tauri/src/spike/loopback.rs` outline (the code goes in as written below; where a `wasapi` 0.26 signature
-differs, follow that crate's `examples/loopback_application.rs` or equivalent, which is the reference):
+`client/src-tauri/src/spike/loopback.rs` outline. The code goes in as written below. The `wasapi` 0.26.0 calls were
+checked on 2026-10-22: `initialize_mta() -> HRESULT`;
+`AudioClient::new_application_loopback_client(process_id: u32, include_tree: bool)`;
+`initialize_client(&mut self, &WaveFormat, &Direction, &StreamMode)`;
+`StreamMode::EventsShared { autoconvert, buffer_duration_hns }`;
+`WaveFormat::new(storebits, validbits, &SampleType, rate, channels, Option<u32>)`;
+`set_get_eventhandle`, `get_audiocaptureclient`, `read_from_device_to_deque(&mut VecDeque<u8>)`,
+`wait_for_event(u32)`. If one has changed, the reference is the crate's `examples/record_application.rs` (there is
+no `loopback_application.rs`). Note that example's advice: for a game that runs as several processes, target the
+parent PID.
+
+(refreshed 2026-10-22: the whole module builds on every OS. Only `wasapi_capture` (the WASAPI half of
+`capture_loop`) and `process_alive` are `#[cfg(windows)]`. Elsewhere a stub `wasapi_capture` returns
+`Err("process loopback is Windows-only")`.
+The left-tone mode and `spike_beep_watch` work on Linux too, and Task 3's single spike handler list compiles there.)
 
 ```rust
 //! THROWAWAY (S9, S19): stream audio via WASAPI process loopback, published as `<uid>#a` into `<ch>~s`.
@@ -826,15 +928,18 @@ use livekit::options::TrackPublishOptions;
 use livekit::prelude::*;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
-use livekit::webrtc::prelude::AudioFrame;
+use livekit::webrtc::audio_frame::AudioFrame; // the path voice/processor.rs uses
 use pulse_protocol::ids::ChannelId;
 use tauri::State;
 
 use crate::commands::Core;
 
+/// The publishing side (`spike_loopback_start`) and the listening side (`spike_beep_watch`): each keeps its
+/// `Room` here, or dropping it would disconnect.
 #[derive(Default)]
-pub struct Loopback(Mutex<Option<Running>>);
+pub struct Loopback(Mutex<Option<Running>>, Mutex<Option<Watching>>);
 struct Running { room: Room, stop: Arc<std::sync::atomic::AtomicBool>, thread: Option<std::thread::JoinHandle<()>> }
+struct Watching { room: Room, tasks: Vec<tokio::task::JoinHandle<()>> }
 
 #[tauri::command]
 pub async fn spike_loopback_start(
@@ -843,10 +948,14 @@ pub async fn spike_loopback_start(
 ) -> Result<(), String> {
     let t = super::spike_ticket(core, channel_id, "a".into()).await.map_err(|e| e.to_string())?;
     let (room, _ev) = Room::connect(&t.url, &t.token, RoomOptions::default()).await.map_err(|e| e.to_string())?;
-    // stereo 48 kHz (needs the rust-sdks #1018 patch to really go out as stereo; S9 checks L≠R on the far end)
+    // stereo 48 kHz (needs the rust-sdks #1018 patch to really go out as stereo; S9 checks L≠R on the far end).
+    // webrtc-sys is already patched from vendor/webrtc-sys (the log-sink change, root Cargo.toml [patch.crates-io]):
+    // if #1018 touches webrtc-sys, apply it to that vendored copy rather than adding a second patch.
+    // A 100 ms queue, unlike the mic's queue 0 (voice/mod.rs): WASAPI hands over bursts.
     let src = NativeAudioSource::new(AudioSourceOptions::default(), 48_000, 2, 100);
     let track = LocalAudioTrack::create_audio_track("stream-audio", RtcAudioSource::Native(src.clone()));
     room.local_participant()
+        // ScreenshareAudio: step zero's `source_kind` maps it to SourceKind::Stream (its own volume, no speaking ring)
         .publish_track(LocalTrack::Audio(track), TrackPublishOptions {
             source: TrackSource::ScreenshareAudio, dtx: false, red: false, ..Default::default()
         })
@@ -897,6 +1006,20 @@ fn capture_loop(
         }
         return Ok(());
     }
+    wasapi_capture(pid, include, stop, sink)
+}
+
+#[cfg(not(windows))]
+fn wasapi_capture(
+    _pid: u32, _include: bool, _stop: &std::sync::atomic::AtomicBool, _sink: impl FnMut(Vec<i16>),
+) -> Result<(), String> {
+    Err("process loopback is Windows-only".into())
+}
+
+#[cfg(windows)]
+fn wasapi_capture(
+    pid: u32, include: bool, stop: &std::sync::atomic::AtomicBool, mut sink: impl FnMut(Vec<i16>),
+) -> Result<(), String> {
     wasapi::initialize_mta().ok().map_err(|e| format!("{e:?}"))?;
     let mut client = wasapi::AudioClient::new_application_loopback_client(pid, include)
         .map_err(|e| format!("activate: {e}"))?;
@@ -922,6 +1045,7 @@ fn capture_loop(
     Ok(())
 }
 
+#[cfg(windows)]
 fn process_alive(pid: u32) -> bool {
     use windows::Win32::System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
     unsafe {
@@ -945,17 +1069,34 @@ pub async fn spike_loopback_stop(lb: State<'_, Loopback>) -> Result<(), String> 
 }
 ```
 
-`spike_beep_watch(channel_id)`:
+`spike_beep_watch(channel_id)` (takes `core: State<Core>`, `lb: State<Loopback>` and
+`voice: State<voice::VoiceManager>`):
 - connects with a `"a"` ticket. A viewer also gets `#a`; the spike reuses role `a`, because the server-side
-  distinction between publish and subscribe isn't needed for the spike.
-- on `TrackSubscribed` for an audio track with source `ScreenshareAudio`, it spawns a `NativeAudioStream` (48 kHz,
-  2 channels), feeds samples as f32 (left channel) into `onset::Detector`, and logs each onset as
-  `spike: {"test":"S9","event":"beep","t_ms":<SystemTime unix ms of the chunk arrival + offset/48>}`.
-- It plays the audio through the voice mixer: if step zero is merged, `add_source(sid, owner, SourceKind::Stream)`
-  and push mono-downmixed chunks. Otherwise it opens a separate cpal default output. S19 (echo) needs the mixer path,
-  so S19 waits for step zero.
+  distinction between publish and subscribe isn't needed for the spike. It keeps the `Room` and its tasks in `lb.1`;
+  a second call closes the previous one first.
+- on `TrackSubscribed` for a `RemoteTrack::Audio` whose `publication.source()` is `TrackSource::ScreenshareAudio`, it
+  spawns a task over `NativeAudioStream::new(t.rtc_track(), 48_000, 2)`. This is the same constructor the voice
+  receive task uses (`voice/mod.rs` ~line 1368), but stereo. The task:
+  - feeds the left channel as f32 into `onset::Detector`;
+  - logs each onset as
+    `spike: {"test":"S9","event":"beep","t_ms":<SystemTime unix ms of the chunk arrival + offset/48>}`;
+  - plays the audio through step zero's mixer, as the real build will (spec table, `#a` row: "plays it through
+    Pulse's mixer"). At subscribe it calls `voice.spike_mixer().await`. With `Some(m)` it takes
+    `let g = m.generation()` and registers
+    `m.add_source(g, &publication.sid().to_string(), owner, SourceKind::Stream)`. Then, per frame, it downmixes to
+    mono i16 and calls `m.push_in(g, &sid, &mono)`.
+  - on `TrackUnsubscribed`: `m.remove_source(g, &sid)` and abort the task, mirroring the voice path.
+  - The `owner` is the identity with the `#a` suffix stripped (`identity.split('#').next()`), so the gain key
+    (owner, `Stream`) is the person, as step zero intends. (refreshed 2026-10-22: the owner format is a spike call;
+    step zero only ever saw plain user ids.)
+  - With `None` (not in voice), it still runs the detector and logs `{"test":"S9","event":"no_mixer"}` once. Nothing
+    plays.
+  - A voice channel switch bumps the mixer generation (`MixerInput::clear`), and later pushes under the old `g` are
+    dropped by design. Re-press **Listen** after switching channels.
+- The old "own cpal output" fallback is gone: step zero is merged, so S19 (echo) is unblocked.
 
-Register `Loopback::default()` with `.manage(...)` under `cfg(feature = "spike")`.
+Register `Loopback::default()` in `setup` next to `app.manage(voice::mictest::MicTest::default())` (`lib.rs` line 101),
+as `#[cfg(feature = "spike")] app.manage(spike::loopback::Loopback::default());`.
 
 **The Windows-only test** (`loopback.rs`, `#[cfg(all(test, windows))]`):
 
@@ -975,14 +1116,15 @@ mark it `#[ignore]` with that reason and have the owner run it once from the spi
 
 - [ ] **Step 4: Build and test**
 
-Run: `cargo test -p pulse-client --features spike spike::onset` → PASS.
-Run: `cargo build -p pulse-client --features spike` → builds (Linux: the loopback module is cfg'd out).
+Run: `cargo test -p pulse-client --lib --features spike spike::onset` → PASS.
+Run: `cargo build -p pulse-client --features spike` → builds (Linux: only the WASAPI capture is cfg'd out).
+Run: `cargo test -p pulse-client --lib voice::` (no feature) → PASS: step zero's mixer and rx tests are unchanged.
 Windows compile and test happen in Task 6's CI run.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add client/src-tauri/src/spike
+git add client/src-tauri/src/spike client/src-tauri/src/voice/mod.rs client/src-tauri/src/lib.rs
 git commit -m "spike(client): process-loopback stream audio prototype and beep-onset detector
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -993,8 +1135,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ### Task 5: The debug panel
 
 **Files:**
-- Modify: `client/ui/package.json` (add `"livekit-client": "2.22.4"`, exact)
-- Modify: `client/ui/src/vite-env.d.ts` (`readonly VITE_SPIKE?: string`)
+- Modify: `client/ui/package.json` (add `"livekit-client": "2.22.4"`, exact, to `dependencies`; `pnpm add
+  livekit-client@2.22.4 --save-exact` updates `pnpm-lock.yaml` too, which CI installs with `--frozen-lockfile`)
+- Modify: `client/ui/src/vite-env.d.ts` (add `readonly VITE_SPIKE?: string` to the existing `ImportMetaEnv`, next to
+  `VITE_DEFAULT_SERVER`)
+- Create: `client/src-tauri/tauri.spike.conf.json` (spike-only config overlay, Step 0 below)
 - Create: `client/ui/src/spike/encodings.ts`, `client/ui/src/spike/encodings.test.ts`
 - Create: `client/ui/src/spike/sdp.ts`, `client/ui/src/spike/sdp.test.ts`
 - Create: `client/ui/src/spike/sampler.ts`, `client/ui/src/spike/sampler.test.ts`
@@ -1017,6 +1162,44 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
     (spec §6.2 rules, logged for S21)
   - `logResult(test: string, fn: () => Promise<object>): Promise<void>` always logs a line; on throw it logs
     `{test, ok:false, error}`.
+
+- [ ] **Step 0: The spike config overlay (CSP and the pop-out's permissions)**
+
+(refreshed 2026-10-22: the old plan didn't cover this, and the panel can't work without it. The app's CSP in
+`client/src-tauri/tauri.conf.json` is `connect-src ipc: http://ipc.localhost`, so `livekit-client`'s `wss://`
+signalling would be blocked. The only capability, `capabilities/default.json`, covers just the `main` window, with no
+`set-size` or webview-creation permission, so S8's resize and S18's pop-out would be refused. Rather than loosen the
+shipped config, spike builds merge an overlay. `tauri build --config <file>` applies it as a JSON merge patch.)
+
+`client/src-tauri/tauri.spike.conf.json`:
+
+```json
+{
+  "app": {
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; style-src 'self' 'unsafe-inline'; font-src 'self'; worker-src 'self' blob:; connect-src ipc: http://ipc.localhost wss: https:",
+      "capabilities": [
+        "default",
+        {
+          "identifier": "spike",
+          "description": "THROWAWAY (screen-share spike): panel resize and the S18 pop-out.",
+          "windows": ["main", "popout"],
+          "permissions": [
+            "core:default",
+            "core:window:allow-set-size",
+            "core:window:allow-close",
+            "core:webview:allow-create-webview-window"
+          ]
+        }
+      ]
+    }
+  }
+}
+```
+
+Listing `capabilities` replaces the default behaviour of enabling every file in `capabilities/`, so `"default"` is
+named explicitly. Check it with `cd client/src-tauri && pnpm dlx @tauri-apps/cli@^2 build --features spike --config
+tauri.spike.conf.json --no-bundle` on Linux (or let Task 6 check it on Windows). A bad permission name fails the build.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1082,7 +1265,7 @@ describe('strain', () => {
 })
 ```
 
-Run: `cd client/ui && pnpm test -- spike` → FAIL (modules don't exist).
+Run: `cd client/ui && pnpm vitest run src/spike` → FAIL (modules don't exist).
 
 - [ ] **Step 2: Implement the pure helpers**
 
@@ -1167,7 +1350,7 @@ export async function logResult(test: string, fn: () => Promise<object>) {
 }
 ```
 
-Run: `pnpm test -- spike` → PASS.
+Run: `pnpm vitest run src/spike` → PASS.
 
 - [ ] **Step 3: Rooms and publishing (`rooms.ts`)**
 
@@ -1258,7 +1441,9 @@ A fixed overlay with collapsible sections. Each button calls a runner wrapped in
 each button does:
 
 - **Setup:** shows `navigator.userAgent` and logs it with the GPU line the owner types in (`S0`). Shows the current
-  voice channel id from the store (`app.state`); every test uses it.
+  voice channel id, `voice.channelId` from `lib/voice.svelte.ts` (set by the Rust `voice://event` state events; `null`
+  when not in voice); every test uses it. (refreshed 2026-10-22: `app.state` is the gateway store and has no voice
+  channel.)
 - **S1 / S5 Encode:**
   - resolution, fps, low-layer and codec selectors, plus **Go live** (`connect('v')` + `publish`) and **Stop**.
   - Every 2 s it logs outbound-rtp per encoding:
@@ -1274,6 +1459,11 @@ each button does:
     `nackCount`, `pliCount`.
 - **S6 Background:** logs `document.visibilityState`, `document.hasFocus()` and the measured rVFC fps every 2 s,
   continuously while the section is enabled.
+  - (refreshed 2026-10-22) Since the optimisation run, main sets WebView2's Low memory target when minimised, or
+    after 120 s unfocused, and Normal again on focus (`webview_memory.rs`, `BACKGROUND_AFTER`). Each change logs a
+    `webview memory target` line. S6 runs must last past 120 s in the background, so the result covers the state
+    the real app sits in. The results write-up reads those lines next to the fps samples. If Low hurts decode or
+    encode, that's a spec finding (the real build would hold Normal while streaming or watching), not a spike change.
 - **S7 Decode:** a `getUserMedia({audio:true})` unlock button (WebView2 hides decoder stats without a media
   permission), then the S4 stats.
 - **S3 Soak:** **Start soak** logs, every 30 s, `spike_os_stats()` plus `performance.memory` (if present) plus the S1
@@ -1281,7 +1471,8 @@ each button does:
   - **Cycle ×20:** stop and start the share 20 times with `replaceTrack` (`localTrack.replaceTrack(newTrack)`) and
     then 20 times with unpublish and republish, logging `spike_os_stats()` after each.
 - **S8 Picker:**
-  - **Set window height 560 / 640** (Tauri `getCurrentWindow().setSize`), then **Pick**;
+  - **Set window height 560 / 640** (Tauri `getCurrentWindow().setSize(new LogicalSize(w, h))`; needs the overlay's
+    `core:window:allow-set-size`; 560 is the main window's `min_inner_size` height, `lib.rs`), then **Pick**;
   - logs the label and settings;
   - **Find PID by title** calls `spike_window_pid(title)` with the title parsed from the label, logs the result
     (gap 4), and fills the S9 PID box.
@@ -1297,7 +1488,11 @@ each button does:
   ProcessFailed. **Reconnect test** calls `room.disconnect()` then `connect` again 5 times, logging timings.
 - **S13 Preview:** every 15 s, `ImageCapture(track).grabFrame()` → `OffscreenCanvas(480,270)` → `convertToBlob({type:'image/webp',quality:0.7})`.
   It logs the size and the time taken. Runs while live.
-- **S18 Pop-out:** **Pop out** opens a `WebviewWindow` labelled `popout` loading `index.html?spike-popout=<streamer>`.
+- **S18 Pop-out:** **Pop out** opens a `WebviewWindow` labelled `popout` loading `index.html?spike-popout=<streamer>`
+  (allowed by the overlay's `spike` capability). It gets wry's default browser args and Tauri's default data
+  directory, not the main window's per-profile one. Tauri requires different data directories for different args, so
+  that's what keeps it legal. But it means a second WebView2 browser process, whose start-up is part of the measured
+  blip. Note that in the results.
   That page connects as `v2`, watches, and logs `first_frame` with a shared epoch (`Date.now()`). The main window
   unsubscribes on the popout's `first_frame` event (Tauri `emit`) and logs `handover` with the last-frame and
   first-frame times. The blip is the gap.
@@ -1305,8 +1500,15 @@ each button does:
   luma <8 or an unchanged hash for 3 s logs `{test:'S20',event:'black_or_frozen'}`.
 
 `App.svelte`: when `import.meta.env.VITE_SPIKE === '1'`, import the panel lazily
-(`const SpikePanel = (await import('./spike/SpikePanel.svelte')).default`). Toggle it on `Ctrl+Shift+F12`. Handle
-`?spike-popout=` by rendering only the pop-out viewer.
+(`const SpikePanel = (await import('./spike/SpikePanel.svelte')).default`, in an `onMount` like the existing ones).
+Render it after the `{#if screen === ...}` block. Toggle it from a `<svelte:window onkeydown>` handler on
+`Ctrl+Shift+F12` (`e.ctrlKey && e.shiftKey && e.code === 'F12'`). Handle `?spike-popout=` by rendering only the
+pop-out viewer.
+- Keybinds v2 doesn't get in the way: the Windows low-level hooks (`hotkeys.rs`) always pass every key on via
+  `CallNextHookEx`, so the webview still sees `Ctrl+Shift+F12` even if the owner has bound it.
+- While a bind is being recorded, `KeybindSettings.svelte` listens with `onkeydowncapture` on the window and calls
+  `preventDefault()` + `stopPropagation()`. So a plain (bubble-phase) `onkeydown` toggle never fires mid-record, which
+  is what we want. Don't register the toggle in the capture phase.
 
 `testpattern.html`: a standalone page. It shows a black screen that flashes white for 100 ms every 2 s, and plays a
 100 ms 1 kHz beep through Web Audio at the same `performance.now()` tick. The owner opens it in Edge or Chrome and
@@ -1316,12 +1518,13 @@ shares that window for S9.
 
 Run: `cd client/ui && pnpm test && pnpm check && VITE_SPIKE=1 pnpm build`
 Expected: PASS. The normal `pnpm build` (no `VITE_SPIKE`) must not include `livekit-client`. Check with
-`grep -c livekit dist/assets/*.js` (0 without the flag) to confirm the panel is tree-shaken.
+`grep -li livekit dist/assets/*.js` after a plain `pnpm build` (no output: no shipped UI source mentions "livekit"
+today) to confirm the panel is tree-shaken.
 
 - [ ] **Step 6: Commit**
 
 ```bash
-git add client/ui
+git add client/ui client/src-tauri/tauri.spike.conf.json
 git commit -m "spike(ui): hidden screen-share debug panel (S1-S21 runners, all results logged)
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
@@ -1352,14 +1555,25 @@ on:
         default: false
 ```
 
-Then:
-- In `env:`, bump `LIVEKIT_VERSION: 1.13.10` (prod runs it since 2026-10-15) and add
-  `VITE_SPIKE: ${{ inputs.spike && '1' || '' }}`.
-- Change the build step to
-  `pnpm dlx @tauri-apps/cli@^2 build ${{ inputs.spike && '--features spike' || '' }}`.
-- Add a test step before assembling:
-  `- if: inputs.spike` / `run: cargo test -p pulse-client --features spike spike:: -- --include-ignored`. If the
-  loopback test can't activate audio on the runner, drop `--include-ignored` (the owner runs it locally).
+This replaces the existing `on:` block. It has the same `push: tags: ['v*']` trigger, plus the input on the existing
+bare `workflow_dispatch:`. Then:
+- In `env:`, add `VITE_SPIKE: ${{ inputs.spike && '1' || '' }}`. `LIVEKIT_VERSION` is already `1.13.10` on main, so
+  leave it. (refreshed 2026-10-22: the bump the old plan asked for has already happened.)
+  - `VITE_DEFAULT_SERVER` and `PULSE_COMMIT` stay as they are. The spike kit's login screen starts on the real server,
+    which is what the owner's runs need.
+- Change the build step (`working-directory: client/src-tauri`) from `pnpm dlx @tauri-apps/cli@^2 build` to
+  `pnpm dlx @tauri-apps/cli@^2 build ${{ inputs.spike && '--features spike --config tauri.spike.conf.json' || '' }}`.
+  Its `beforeBuildCommand` (`pnpm --dir ui build`) inherits `VITE_SPIKE` from the job env.
+- Add a test step after the Tauri build (so `client/ui/dist` exists for `generate_context!`) and before
+  `Assemble test kit`:
+  `- if: inputs.spike` / `run: cargo test -p pulse-client --lib --features spike spike:: -- --include-ignored`. If
+  the loopback test can't activate audio on the runner, drop `--include-ignored` (the owner runs it locally).
+- `Assemble test kit` is unchanged. It still copies `target/release/pulse-app.exe`, `pulse-app-server.exe`, the NSIS
+  installer and LiveKit, and the artifact is still `pulse-windows-kit`. Its `pulse-app-server.exe` is built by the
+  separate `cargo build --release -p pulse-server` step, so the kit's local server has the spike route too (off
+  unless `PULSE_SPIKE=1`).
+- `ci.yml` only runs on pull requests and pushes to `main`, so pushing `screenshare-spike` runs no CI. Lint locally
+  (Task 3 Step 4).
 
 - [ ] **Step 2: Run it**
 
@@ -1374,7 +1588,11 @@ gh run watch "$(gh run list --workflow release-windows.yml --branch screenshare-
 ```
 
 Expected: the run succeeds and the artifact `pulse-windows-kit` exists. Fix Windows-only compile errors (the
-`windows`/`wasapi` paths from Tasks 3 and 4) here, one commit per fix.
+`windows`/`wasapi`/`webview2-com` paths from Tasks 3 and 4) here, one commit per fix.
+
+The spike server image is a separate step, and it's a prod change that needs the owner's OK (Global Constraints):
+`gh workflow run release-server.yml --ref screenshare-spike`, then `just deploy <spike-sha7>` from the spike worktree.
+Remember that this run also moves `:latest`.
 
 ---
 
@@ -1391,8 +1609,11 @@ A numbered, copy-paste script for the owner. No IP addresses or names. It covers
    - the spike installer from the kit on both PCs;
    - PresentMon 2.x (or CapFrameX) and clumsy 0.3 on the streamer PC.
 2. **Before each session:**
+   - once, before the first session: ask Claude to deploy the spike server image (`just deploy <spike-sha7>`, Global
+     Constraints). It has to happen before any codec switch, because `just deploy` re-copies `livekit.yaml`;
    - ask Claude to run `just spike-server on` (and `just spike-codecs on|off` per S1);
-   - join voice on both PCs;
+   - join voice on both PCs. The viewer must be in voice for S9/S19: **Listen** plays the stream audio through the
+     voice mixer, and with no call it only detects beeps;
    - press `Ctrl+Shift+F12`;
    - in Setup, type the GPU and driver version.
 3. **One block per test, in this order:** S1 → S2 → S5 → S4 → S7 → S8 → S9 → S19 → S20 → S12 → S13 → S18 → S6 → S3
@@ -1403,11 +1624,14 @@ A numbered, copy-paste script for the owner. No IP addresses or names. It covers
      - **S4:** clumsy profiles: 1% drop, 5% drop, 3 Mbps throttle, 100 ms lag with ±30 ms jitter;
      - **S1:** Task Manager "Video Encode";
      - **S3:** Task Manager "Dedicated GPU memory" read at 0, 30, 60, 90 and 120 min, typed into a Mark;
-   - **"File a bug report now, titled `spike S<n>`"** at the end. Reports carry the log tail, and one per test keeps
-     each under 256 KB.
+   - **"File a bug report now, titled `spike S<n>`"** at the end. Reports carry the log tail (`TAIL_BYTES`, 256 KB,
+     `client/src-tauri/src/reports/mod.rs`), and one per test keeps each under that.
+   - **S6:** stay in the background for more than 2 minutes. That's when the app drops WebView2 to its Low memory
+     target (Task 5, S6).
 4. **What to say in the report text:** the game, display mode (borderless/exclusive), anything seen by eye (stutter,
    black, echo).
-5. **When done:** ask Claude to run `just spike-server off` and `just spike-codecs off`.
+5. **When done:** ask Claude to run `just spike-server off` and `just spike-codecs off`, then put main's server back
+   (`just deploy <main-sha7>` from `main`, and re-run `release-server.yml` on `main` so `:latest` is main again).
 
 - [ ] **Step 2: Commit**
 
@@ -1464,6 +1688,8 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
 
 Then:
-- revert prod: `just spike-server off`, `just spike-codecs off`;
+- revert prod: `just spike-server off`, `just spike-codecs off`, then `just deploy <main-sha7>` from `main` (this also
+  restores main's `deploy/compose.yml` without `PULSE_SPIKE`) and re-run `release-server.yml` on `main` for
+  `:latest`;
 - ask the owner to approve the updated spec;
 - write the build-phase plans (server, streamer, viewer, adaptation, failure handling) against the measured numbers.
