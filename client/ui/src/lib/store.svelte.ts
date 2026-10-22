@@ -68,6 +68,8 @@ export async function startListening(): Promise<UnlistenFn> {
       app.state = applyEvent(app.state, e.payload, Date.now())
       streamApi.onEvent(e.payload)
     }),
+    // LiveKit closed stream audio's connection under us
+    listen<{ channel_id: string }>('stream://audio_closed', (e) => void streamApi.onAudioClosed(e.payload.channel_id)),
     listen<ConnState>('pulse://conn', (e) => (app.state = { ...app.state, conn: e.payload })),
     // Last session crashed or quit unexpectedly and its report just went out: tell the user once.
     listen('pulse://auto-report-sent', () => (ui.autoReported = true)),

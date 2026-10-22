@@ -102,7 +102,16 @@ pub fn run() {
             app.manage(commands::Core::new(session::Store::new(dir.clone(), profile.as_deref()), outbox));
             app.manage(voice::mictest::MicTest::default());
             app.manage(stream::PickerMemory::default());
-            app.manage(stream::audio::StreamAudio::default());
+            let h = app.handle().clone();
+            app.manage(stream::audio::StreamAudio::new(std::sync::Arc::new(
+                move |channel_id| {
+                    use tauri::Emitter;
+                    let _ = h.emit(
+                        "stream://audio_closed",
+                        serde_json::json!({ "channel_id": channel_id }),
+                    );
+                },
+            )));
             #[cfg(unix)]
             {
                 let h = app.handle().clone();

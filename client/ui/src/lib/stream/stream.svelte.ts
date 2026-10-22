@@ -58,6 +58,8 @@ const PREVIEW_EVERY_MS = 15_000
 let roomChannel: string | null = null
 let connecting: { channelId: string; p: Promise<StreamRoom> } | null = null
 let liveTrack: LocalVideoTrack | null = null
+/** The shared window's title while live with stream audio (`null`: a screen), for an audio restart. */
+let liveWindowTitle: string | null = null
 let stopPreview: (() => void) | null = null
 let stopOutDiag: (() => void) | null = null
 let stopInDiag: (() => void) | null = null
@@ -238,6 +240,7 @@ async function goLive(token: number, channelId: string, track: LocalVideoTrack, 
   if (ended()) return onTrackEnded()
   if (audio) {
     const windowTitle = track.mediaStreamTrack.getSettings().displaySurface === 'window' ? label : null
+    liveWindowTitle = windowTitle
     // Video carries on without it; Rust retries the capture itself.
     await streamCmd.audioStart(channelId, windowTitle).catch(logError('audio_start_error'))
     if (liveTrack !== track) {
@@ -348,6 +351,33 @@ export const streamApi = {
     if (stream.room && roomChannel !== channelId) await disconnect()
     // voice can end without leave_voice (rejoin given up, a failed join): `#a` goes with it
     await streamCmd.audioLeave(channelId).catch(logError('audio_leave_error'))
+  },
+
+  /** LiveKit closed the `#a` connection under us: connect again once, for what we share and watch. */
+  async onAudioClosed(channelId: string) {
+    streamCmd.log({ ev: 'audio_closed' })
+    const live = stream.live
+    if (live?.channelId === channelId && live.audio) {
+      try {
+        await streamCmd.audioStart(channelId, liveWindowTitle)
+        if (!stream.live) {
+          // stopped meanwhile: that stop's audio_stop ran before this start landed
+          await streamCmd.audioStop().catch(logError('audio_stop_error'))
+        } else if (stream.live === live && live.audioMuted) {
+          await streamCmd.audioMute(true).catch(logError('audio_mute_error'))
+        }
+      } catch (e) {
+        logError('audio_restart_error')(e)
+        if (stream.live === live) stream.notice = 'Stream audio stopped'
+      }
+    }
+    const w = stream.watching
+    if (w?.channelId === channelId) {
+      await streamCmd.audioWatch(channelId, w.streamer, true).catch(logError('audio_watch_error'))
+      // switched or closed meanwhile: that endWatch's "off" ran before this "on" landed
+      const now = stream.watching
+      if (now?.channelId !== channelId || now.streamer !== w.streamer) await streamCmd.audioWatch(channelId, w.streamer, false).catch(logError('audio_watch_error'))
+    }
   },
 
   /** A `StreamEnded` from the gateway. */

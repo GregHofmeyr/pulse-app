@@ -411,7 +411,8 @@ async fn published_stream_audio_reaches_a_watcher() {
 #[ignore]
 async fn leave_voice_closes_the_stream_connection() {
     let f = fixture().await;
-    let alex = StreamAudio::default();
+    let (closed, on_closed) = closed_log();
+    let alex = StreamAudio::new(on_closed);
     alex.ensure_connected(&f.api, &f.token, f.channel, no_mixer())
         .await
         .unwrap();
@@ -448,16 +449,32 @@ async fn leave_voice_closes_the_stream_connection() {
         alex.start_publishing_raw().await.is_err(),
         "nothing publishes after leaving"
     );
+    assert!(
+        closed.lock().unwrap().is_empty(),
+        "our own leave is not a room closed under us"
+    );
     let _ = observer.close().await;
 }
 
+/// The channels `StreamAudio`'s on-closed hook reported.
+fn closed_log() -> (
+    Arc<std::sync::Mutex<Vec<ChannelId>>>,
+    pulse_client::stream::audio::OnClosed,
+) {
+    let log = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let l2 = log.clone();
+    (log, Arc::new(move |c| l2.lock().unwrap().push(c)))
+}
+
 /// LiveKit closing the room under `#a` (here: the participant is removed) stops publishing
-/// and drops the connection, instead of capturing into a dead room until the next stop.
+/// and drops the connection, instead of capturing into a dead room until the next stop, and
+/// tells the UI (which connects again).
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn a_room_closed_by_livekit_stops_publishing() {
     let f = fixture().await;
-    let alex = StreamAudio::default();
+    let (closed, on_closed) = closed_log();
+    let alex = StreamAudio::new(on_closed);
     alex.ensure_connected(&f.api, &f.token, f.channel, no_mixer())
         .await
         .unwrap();
@@ -501,5 +518,10 @@ async fn a_room_closed_by_livekit_stops_publishing() {
         !alex.publishing().await && alex.connected_channel().await.is_none()
     })
     .await;
+    wait_for("the UI to be told", 5, || async {
+        !closed.lock().unwrap().is_empty()
+    })
+    .await;
+    assert_eq!(*closed.lock().unwrap(), vec![f.channel]);
     drop(feeder);
 }

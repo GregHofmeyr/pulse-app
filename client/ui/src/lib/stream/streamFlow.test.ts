@@ -144,6 +144,42 @@ describe('re-announce after a server restart', () => {
   })
 })
 
+describe('stream audio closed by LiveKit', () => {
+  it('restarts_stream_audio_with_the_same_window_and_mute', async () => {
+    const { streamApi } = await goneLive(true, 'window')
+    await streamApi.setAudioMuted(true)
+    core.calls = []
+    await streamApi.onAudioClosed('c1')
+    expect(calls('stream_audio_start')).toEqual([{ channelId: 'c1', windowTitle: 'Game' }])
+    expect(calls('stream_audio_mute')).toEqual([{ muted: true }])
+  })
+
+  it('says_so_when_the_restart_fails', async () => {
+    const { streamApi, stream } = await goneLive(true)
+    core.handlers.stream_audio_start = () => Promise.reject('stream audio timed out connecting')
+    await streamApi.onAudioClosed('c1')
+    expect(stream.notice).toBe('Stream audio stopped')
+    expect(stream.live).not.toBeNull() // video carries on
+  })
+
+  it('watches_the_stream_audio_again', async () => {
+    const { streamApi } = await load()
+    fake.connect = async () => fakeRoom()
+    await streamApi.watch('c1', 'other', document.createElement('video'))
+    core.calls = []
+    await streamApi.onAudioClosed('c1')
+    expect(calls('stream_audio_watch')).toEqual([{ channelId: 'c1', streamer: 'other', on: true }])
+    expect(calls('stream_audio_start')).toEqual([]) // not live
+  })
+
+  it('ignores_another_channel', async () => {
+    const { streamApi } = await goneLive(true)
+    core.calls = []
+    await streamApi.onAudioClosed('c2')
+    expect(core.calls.filter(([c]) => c !== 'stream_log')).toEqual([])
+  })
+})
+
 describe('voice changes', () => {
   it('leaving_voice_lets_stream_audio_go', async () => {
     const { streamApi } = await load()

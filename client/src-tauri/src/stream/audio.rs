@@ -59,6 +59,9 @@ fn set_stream_volume(mixer: &MixerInput, user_id: &str, pct: u16) {
     mixer.set_gain(user_id, SourceKind::Stream, percent_to_gain(pct));
 }
 
+/// Told the channel whose `#a` connection LiveKit closed under us (never when we leave).
+pub type OnClosed = Arc<dyn Fn(ChannelId) + Send + Sync>;
+
 /// The `#a` connection. Every operation takes `state`, so two quick clicks can't both connect
 /// or both publish (the first one's capture would be orphaned).
 #[derive(Default)]
@@ -67,6 +70,7 @@ pub struct StreamAudio {
     state: Arc<tokio::sync::Mutex<State>>,
     /// Stream volume per person (percent), kept with no connection so a slider set early applies.
     volumes: Arc<Mutex<HashMap<String, u16>>>,
+    on_closed: Option<OnClosed>,
 }
 
 #[derive(Default)]
@@ -285,6 +289,7 @@ async fn run_events(
     watch: Arc<Watch>,
     state: Weak<tokio::sync::Mutex<State>>,
     conn_id: u64,
+    on_closed: Option<(OnClosed, ChannelId)>,
 ) {
     let mut tick = tokio::time::interval(LOG_EVERY);
     tick.tick().await;
@@ -324,10 +329,16 @@ async fn run_events(
                         // Stop publishing into the dead room. Not from this task: the teardown
                         // aborts it.
                         if let Some(state) = state.upgrade() {
+                            let on_closed = on_closed.clone();
                             tokio::spawn(async move {
                                 let mut st = state.lock().await;
                                 if st.conn.as_ref().is_some_and(|c| c.id == conn_id) {
                                     StreamAudio::leave_locked(&mut st).await;
+                                    drop(st);
+                                    // the UI decides whether to connect again
+                                    if let Some((f, channel)) = on_closed {
+                                        f(channel);
+                                    }
                                 }
                             });
                         }
@@ -454,6 +465,14 @@ async fn run_ticker<E: Rescan>(
 }
 
 impl StreamAudio {
+    /// `on_closed` hears about connections LiveKit closes under us.
+    pub fn new(on_closed: OnClosed) -> Self {
+        StreamAudio {
+            on_closed: Some(on_closed),
+            ..Default::default()
+        }
+    }
+
     /// Connects `#a` to `channel`'s stream room, once: a call for the channel it is already in
     /// does nothing; one for another channel leaves that one first.
     pub async fn ensure_connected(
@@ -494,6 +513,7 @@ impl StreamAudio {
             watch.clone(),
             Arc::downgrade(&self.state),
             id,
+            self.on_closed.clone().map(|f| (f, channel)),
         ));
         st.conn = Some(Conn {
             id,
