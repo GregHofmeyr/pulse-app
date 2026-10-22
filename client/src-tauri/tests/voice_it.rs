@@ -780,14 +780,22 @@ async fn two_tracks_from_one_person_both_play() {
     assert_eq!(vm.rx_len().await, 1, "the mic task survives");
     assert_eq!(vm.mixer_sources().await, 1, "the mic source survives");
     let before = vm.mixer_pushed().await;
+    // Frames alone could be WebRTC's silence: the tone itself must still be heard. A single 250 ms
+    // window is not a reliable "heard" (measured: even one lone mic track gives an all-zero window
+    // now and then, so it is not about the second track), so look over ~3 s for any window with the tone.
     vm.mixer_levels().await; // start a fresh level window
-    tokio::time::sleep(Duration::from_millis(500)).await;
+    let mut heard = Vec::new();
+    for _ in 0..12 {
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        heard.extend(vm.mixer_levels().await);
+        if heard.iter().any(|(_, l)| *l > 0.01) {
+            break;
+        }
+    }
     assert!(vm.mixer_pushed().await > before, "the mic is still playing");
-    // frames alone could be WebRTC's silence: the tone itself must still be heard
-    let levels = vm.mixer_levels().await;
     assert!(
-        levels.iter().any(|(_, l)| *l > 0.01),
-        "the mic's tone is still heard: {levels:?}"
+        heard.iter().any(|(_, l)| *l > 0.01),
+        "the mic's tone is still heard: {heard:?}"
     );
 
     a.abort();
