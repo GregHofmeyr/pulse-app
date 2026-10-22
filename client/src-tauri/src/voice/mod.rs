@@ -1678,6 +1678,16 @@ impl VoiceManager {
             None => 0,
         }
     }
+
+    /// THROWAWAY (spike): the current call's mixer input, so the spike's `#a` connection plays through it.
+    #[cfg(feature = "spike")]
+    pub async fn spike_mixer(&self) -> Option<Arc<mixer::MixerInput>> {
+        self.session
+            .lock()
+            .await
+            .as_ref()
+            .map(|s| s.pipeline.shared.mix_in.clone())
+    }
 }
 
 /// How the mic is sent. The SDK's default (`None`) is 48 kbps; Discord defaults to 64 kbps.

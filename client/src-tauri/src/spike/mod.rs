@@ -1,6 +1,9 @@
 //! THROWAWAY (screen-share spike): commands for the hidden debug panel. Results are `spike:` log lines,
 //! so every bug report carries them.
 
+pub mod loopback; // builds on every OS; only its WASAPI capture is Windows-only
+pub mod onset;
+
 use pulse_protocol::ids::ChannelId;
 use pulse_protocol::rest::VoiceTokenResponse;
 use serde::Serialize;

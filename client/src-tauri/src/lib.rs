@@ -183,6 +183,8 @@ pub fn run() {
             ));
             app.manage(commands::Core::new(session::Store::new(dir.clone(), profile.as_deref()), outbox));
             app.manage(voice::mictest::MicTest::default());
+            #[cfg(feature = "spike")]
+            app.manage(spike::loopback::Loopback::default());
             #[cfg(unix)]
             {
                 let h = app.handle().clone();
@@ -234,6 +236,9 @@ pub fn run() {
         spike::spike_ticket,
         spike::spike_os_stats,
         spike::spike_window_pid,
+        spike::loopback::spike_loopback_start,
+        spike::loopback::spike_loopback_stop,
+        spike::loopback::spike_beep_watch,
     ]);
     #[cfg(not(feature = "spike"))]
     let builder = builder.invoke_handler(handlers![]);
