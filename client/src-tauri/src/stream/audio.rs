@@ -35,6 +35,8 @@ const OUT_QUEUE_MS: u32 = 100;
 const RESCAN_EVERY: Duration = Duration::from_secs(2);
 /// How often the `audio_out` / `audio_in` lines are written.
 const LOG_EVERY: Duration = Duration::from_secs(5);
+/// How long connecting `#a` may take.
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often a receive task with no current mixer asks for one again.
 const REBIND_EVERY: Duration = Duration::from_secs(1);
 
@@ -473,9 +475,12 @@ impl StreamAudio {
             .map_err(|e| e.to_string())?;
         let mut opts = RoomOptions::default();
         opts.auto_subscribe = false; // only the streams we watch
-        let (room, events) = Room::connect(&t.url, &t.token, opts)
-            .await
-            .map_err(|e| e.to_string())?;
+        // bounded: the state lock is held meanwhile, and leave (on exit, too) waits for it
+        let (room, events) =
+            tokio::time::timeout(CONNECT_TIMEOUT, Room::connect(&t.url, &t.token, opts))
+                .await
+                .map_err(|_| "stream audio timed out connecting".to_string())?
+                .map_err(|e| e.to_string())?;
         let watch = Arc::new(Watch {
             streamers: Mutex::new(HashSet::new()),
             subs: Mutex::new(HashMap::new()),

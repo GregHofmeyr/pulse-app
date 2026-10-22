@@ -215,9 +215,9 @@ pub fn run() {
                 let voice = app.state::<voice::VoiceManager>();
                 let stream_audio = app.state::<stream::audio::StreamAudio>();
                 tauri::async_runtime::block_on(async {
+                    // side by side: one slow close must not use up the other's budget
                     let leave = async {
-                        stream_audio.leave().await;
-                        voice.leave().await;
+                        tokio::join!(stream_audio.leave(), voice.leave());
                     };
                     if tokio::time::timeout(std::time::Duration::from_secs(2), leave)
                         .await
