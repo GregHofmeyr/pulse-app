@@ -11,22 +11,32 @@ mod platform {
     use std::time::{Duration, Instant};
 
     use tauri::AppHandle;
-    use windows::Win32::Foundation::{LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Foundation::{CloseHandle, HANDLE, LPARAM, LRESULT, WPARAM};
+    use windows::Win32::Security::{
+        GetTokenInformation, TOKEN_ELEVATION, TOKEN_QUERY, TokenElevation,
+    };
     use windows::Win32::System::LibraryLoader::GetModuleHandleW;
+    use windows::Win32::System::StationsAndDesktops::{
+        CloseDesktop, DESKTOP_CONTROL_FLAGS, DESKTOP_READOBJECTS, OpenInputDesktop,
+    };
     use windows::Win32::System::SystemInformation::GetTickCount;
-    use windows::Win32::System::Threading::GetCurrentThreadId;
+    use windows::Win32::System::Threading::{
+        GetCurrentProcess, GetCurrentThreadId, OpenProcess, OpenProcessToken,
+        PROCESS_QUERY_LIMITED_INFORMATION,
+    };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, GetLastInputInfo, LASTINPUTINFO, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        CallNextHookEx, GetMessageW, HHOOK, KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT,
-        PM_NOREMOVE, PeekMessageW, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
-        WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_KEYDOWN, WM_KEYUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
-        WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
+        CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, HHOOK,
+        KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE, PeekMessageW,
+        PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL,
+        WM_APP, WM_KEYDOWN, WM_KEYUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
+        WM_XBUTTONDOWN, WM_XBUTTONUP,
     };
 
     use crate::bindmatch::{Matcher, key_code};
-    use crate::hookwatch::HookWatch;
+    use crate::hookwatch::{Check, HookWatch};
     use crate::keybinds::{Action, Keybinds};
 
     /// Locked by the hook procedures once per event and briefly by apply/pause; nothing else.
@@ -44,7 +54,8 @@ mod platform {
     /// How often the watchdog looks.
     const WATCH_EVERY: Duration = Duration::from_secs(3);
     /// System input this much newer than the hooks' last event means they're gone; less is the
-    /// race between an event reaching the hook and the watchdog reading the system tick.
+    /// race between an event reaching the hook and the watchdog reading the system tick. A hook
+    /// thread stalled for longer than this reads as dead too (REINSTALL_GAP caps the cost).
     const DEAD_MARGIN_MS: u32 = 1000;
     /// At most one reinstall per this long.
     const REINSTALL_GAP: Duration = Duration::from_secs(10);
@@ -155,6 +166,14 @@ mod platform {
         }
     }
 
+    fn unhook(hooks: [HHOOK; 2]) {
+        for h in hooks {
+            // Windows may already have removed it; nothing to do if so.
+            // SAFETY: h came from SetWindowsHookExW on this thread and isn't used again.
+            let _ = unsafe { UnhookWindowsHookEx(h) };
+        }
+    }
+
     /// Hooks are delivered through the installing thread's message loop, so they get their own
     /// thread that does nothing else (but reinstall them when the watchdog asks).
     fn run_hooks(ready: mpsc::Sender<Result<u32, String>>) {
@@ -163,7 +182,7 @@ mod platform {
         // SAFETY: msg is a valid MSG to write into.
         let _ = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE) };
         let mut hooks = match hook() {
-            Ok(h) => h,
+            Ok(h) => Some(h),
             Err(e) => {
                 let _ = ready.send(Err(e));
                 return;
@@ -173,37 +192,111 @@ mod platform {
         LAST_HOOK_TICK.store(unsafe { GetTickCount() }, Ordering::Relaxed);
         // SAFETY: GetCurrentThreadId has no preconditions.
         let _ = ready.send(Ok(unsafe { GetCurrentThreadId() }));
-        while unsafe { GetMessageW(&mut msg, None, 0, 0) }.as_bool() {
+        loop {
+            // SAFETY: msg is a valid MSG to write into.
+            let got = unsafe { GetMessageW(&mut msg, None, 0, 0) }.0;
+            if got == 0 || got == -1 {
+                break;
+            }
             if msg.message != WM_REINSTALL {
                 continue;
             }
-            for h in hooks {
-                // Windows may already have removed it; nothing to do if so.
-                // SAFETY: h came from SetWindowsHookExW on this thread.
-                let _ = unsafe { UnhookWindowsHookEx(h) };
+            if let Some(h) = hooks.take() {
+                unhook(h);
             }
-            match hook() {
-                Ok(h) => {
-                    hooks = h;
-                    // SAFETY: GetTickCount has no preconditions.
-                    LAST_HOOK_TICK.store(unsafe { GetTickCount() }, Ordering::Relaxed);
-                    // Key-ups missed while the hooks were gone: drop modifiers Windows says are
-                    // up (a stale plain key is already treated as a fresh press, REPEAT_WINDOW).
-                    matcher().forget_released(still_down);
-                    tracing::info!("keybinds: hooks reinstalled");
+            // LAST_HOOK_TICK is left alone: only a real event moving it tells the watchdog the
+            // new hooks work.
+            let mut failures = 0u32;
+            hooks = loop {
+                match hook() {
+                    Ok(h) => break Some(h),
+                    Err(e) => {
+                        if failures == 0 {
+                            tracing::warn!(error = %e, "keybinds: hooks couldn't be reinstalled; retrying");
+                        } else {
+                            tracing::debug!(error = %e, failures, "keybinds: hook reinstall failed again");
+                        }
+                        failures += 1;
+                        // No hooks to service, so blocking this thread is harmless.
+                        std::thread::sleep(REINSTALL_GAP);
+                    }
                 }
-                // The watchdog asks again after REINSTALL_GAP.
-                Err(e) => tracing::warn!(error = %e, "keybinds: hooks couldn't be reinstalled"),
+            };
+            // Key-ups missed while the hooks were gone: drop modifiers Windows says are up (a
+            // stale plain key is already treated as a fresh press, REPEAT_WINDOW).
+            matcher().forget_released(still_down);
+            tracing::info!("keybinds: hooks reinstalled");
+        }
+        if let Some(h) = hooks {
+            unhook(h);
+        }
+    }
+
+    fn token_elevated(process: HANDLE) -> Option<bool> {
+        let mut token = HANDLE::default();
+        // SAFETY: process is a valid process handle; token is written on success.
+        unsafe { OpenProcessToken(process, TOKEN_QUERY, &mut token) }.ok()?;
+        let mut elevation = TOKEN_ELEVATION::default();
+        let mut len = 0u32;
+        // SAFETY: the buffer is a TOKEN_ELEVATION of the size passed.
+        let got = unsafe {
+            GetTokenInformation(
+                token,
+                TokenElevation,
+                Some(&mut elevation as *mut _ as *mut _),
+                size_of::<TOKEN_ELEVATION>() as u32,
+                &mut len,
+            )
+        };
+        // SAFETY: token was opened above and isn't used again.
+        let _ = unsafe { CloseHandle(token) };
+        got.ok()?;
+        Some(elevation.TokenIsElevated != 0)
+    }
+
+    /// Whether the hooks can see input right now. They can't while the secure desktop (UAC, lock
+    /// screen) has the input, nor (UIPI) while a window more privileged than us is in front, yet
+    /// the system's last-input tick still moves: a check then would read as a drop.
+    fn hooks_can_see_input(self_elevated: bool) -> bool {
+        // SAFETY: plain Win32 calls; every handle opened here is closed here.
+        unsafe {
+            match OpenInputDesktop(DESKTOP_CONTROL_FLAGS(0), false, DESKTOP_READOBJECTS) {
+                Ok(desk) => {
+                    let _ = CloseDesktop(desk);
+                }
+                Err(_) => return false,
             }
+            if self_elevated {
+                return true;
+            }
+            let window = GetForegroundWindow();
+            if window.is_invalid() {
+                return false;
+            }
+            let mut pid = 0u32;
+            if GetWindowThreadProcessId(window, Some(&mut pid)) == 0 || pid == 0 {
+                return false;
+            }
+            let Ok(process) = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) else {
+                return false;
+            };
+            let elevated = token_elevated(process);
+            let _ = CloseHandle(process);
+            elevated == Some(false)
         }
     }
 
     /// Low-level hooks get no notice when Windows drops them, so compare what they saw with what
     /// the system saw and have the hook thread reinstall them when they've gone quiet.
     fn watch_hooks(hook_thread: u32) {
+        // SAFETY: GetCurrentProcess returns a pseudo-handle that needs no closing.
+        let self_elevated = token_elevated(unsafe { GetCurrentProcess() }).unwrap_or(false);
         let mut watch = HookWatch::new(DEAD_MARGIN_MS, REINSTALL_GAP);
         loop {
             std::thread::sleep(WATCH_EVERY);
+            if !hooks_can_see_input(self_elevated) {
+                continue;
+            }
             let mut info = LASTINPUTINFO {
                 cbSize: size_of::<LASTINPUTINFO>() as u32,
                 dwTime: 0,
@@ -213,13 +306,21 @@ mod platform {
                 continue;
             }
             let hook_ms = LAST_HOOK_TICK.load(Ordering::Relaxed);
-            if !watch.check(info.dwTime, hook_ms, Instant::now()) {
-                continue;
+            let behind_ms = info.dwTime.wrapping_sub(hook_ms);
+            match watch.check(info.dwTime, hook_ms, Instant::now()) {
+                Check::Fine => continue,
+                Check::GaveUp => {
+                    tracing::debug!(
+                        behind_ms,
+                        "keybinds: hooks still see no input after reinstalling; not retrying until they do"
+                    );
+                    continue;
+                }
+                Check::Reinstall => tracing::warn!(
+                    behind_ms,
+                    "keybinds: hooks stopped seeing input (dropped by Windows?); reinstalling"
+                ),
             }
-            tracing::warn!(
-                behind_ms = info.dwTime.wrapping_sub(hook_ms),
-                "keybinds: hooks stopped seeing input (dropped by Windows?); reinstalling"
-            );
             // SAFETY: posting a thread message with no pointers in it.
             if let Err(e) =
                 unsafe { PostThreadMessageW(hook_thread, WM_REINSTALL, WPARAM(0), LPARAM(0)) }
