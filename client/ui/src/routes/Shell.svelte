@@ -3,6 +3,8 @@
   import Icon from '../components/Icon.svelte'
   import ChannelList from '../components/ChannelList.svelte'
   import MemberList from '../components/MemberList.svelte'
+  import StreamViewer from '../components/StreamViewer.svelte'
+  import StreamToast from '../components/StreamToast.svelte'
   import VoicePanel from '../components/VoicePanel.svelte'
   import TextChannel from '../components/TextChannel.svelte'
   import Settings from '../components/Settings.svelte'
@@ -14,6 +16,7 @@
   import { onMount, untrack } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { stream } from '../lib/stream/stream.svelte'
+  import { viewing } from '../lib/stream/viewer.svelte'
   import { api, errorText } from '../lib/tauri'
   import { app, clock, openDm, ui } from '../lib/store.svelte'
   import { applyEvent, trimHistory } from '../lib/state'
@@ -299,7 +302,9 @@
     </aside>
 
     <main class="panel content">
-      {#if activeServerId && !member}
+      {#if viewing.req}
+        <StreamViewer serverId={activeServerId} />
+      {:else if activeServerId && !member}
         <div class="join">
           <p>You're not in <strong>{activeServer?.name}</strong> yet.</p>
           <button class="primary" onclick={join}>Join server</button>
@@ -322,6 +327,7 @@
     {:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}
   </div>
 </div>
+<StreamToast />
 {#if settingsOpen}<Settings section={settingsSection} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
 {#if creating}

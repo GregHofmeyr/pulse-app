@@ -1,6 +1,7 @@
 // Voice state from the Rust VoiceManager (voice://event).
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import { streamApi } from './stream/stream.svelte'
 import { loadAudioConfig, loadVolumes, playSound, saveVolumes, transitionSounds, type AudioConfig, type Flags, type NsLevel } from './voiceui'
 
 type Connection = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
@@ -41,6 +42,8 @@ export async function startVoiceListening() {
         voice.channelId = e.channel_id
         voice.connection = e.connection
         voice.controls = e.controls
+        // a stream never outlives your voice channel: leaving or switching ends yours and what you watch
+        if (prev.channelId !== e.channel_id) void streamApi.onVoiceChanged(e.channel_id)
         if (!e.channel_id) voice.speaking = new Set()
         if (!e.channel_id) voice.micLive = false
         break

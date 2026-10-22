@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { generation, needsReannounce } from './stream.svelte'
+import { generation, needsReannounce, streamApi } from './stream.svelte'
+import { removeToast, toasts } from './viewer.svelte'
+import { app } from '../store.svelte'
+import { emptyState } from '../state'
+import { voice } from '../voice.svelte'
 import type { StreamInfo } from '../protocol/StreamInfo'
 
 const info = (channel_id: string, user_id: string): StreamInfo => ({
@@ -42,5 +46,34 @@ describe('generation', () => {
     g.cancel()
     expect(g.current(t)).toBe(false)
     expect(g.current(g.next())).toBe(true)
+  })
+})
+
+describe('streamApi.onEvent', () => {
+  const started = (channel: string, user: string) => ({ t: 'StreamStarted', d: { stream: info(channel, user) } }) as never
+  const setup = (voiceChannel: string | null) => {
+    app.state = { ...emptyState(), me: { id: 'me', username: 'me' } as never }
+    voice.channelId = voiceChannel
+    toasts.list = []
+  }
+
+  it('toasts_a_stream_started_in_my_voice_channel', () => {
+    setup('c1')
+    streamApi.onEvent(started('c1', 'other'))
+    expect(toasts.list.map((t) => t.streamer)).toEqual(['other'])
+    removeToast('c1', 'other')
+  })
+  it('nobody_else_gets_the_toast', () => {
+    setup('c2')
+    streamApi.onEvent(started('c1', 'other'))
+    setup('c1')
+    streamApi.onEvent(started('c1', 'me'))
+    expect(toasts.list).toEqual([])
+  })
+  it('stream_ended_removes_its_toast', () => {
+    setup('c1')
+    streamApi.onEvent(started('c1', 'other'))
+    streamApi.onEvent({ t: 'StreamEnded', d: { channel_id: 'c1', user_id: 'other', reason: 'stopped' } } as never)
+    expect(toasts.list).toEqual([])
   })
 })

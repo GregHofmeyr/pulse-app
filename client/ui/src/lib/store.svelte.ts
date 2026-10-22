@@ -66,6 +66,7 @@ export async function startListening(): Promise<UnlistenFn> {
     listen<Event>('pulse://event', (e) => {
       maybeSound(e.payload)
       app.state = applyEvent(app.state, e.payload, Date.now())
+      streamApi.onEvent(e.payload)
     }),
     listen<ConnState>('pulse://conn', (e) => (app.state = { ...app.state, conn: e.payload })),
     // Last session crashed or quit unexpectedly and its report just went out: tell the user once.

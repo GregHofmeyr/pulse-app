@@ -1,16 +1,20 @@
 // Screen-share state and actions: going live, watching, and keeping both in step with voice and
 // the gateway. The `#v` connection is `StreamRoom`; stream audio is the Rust `#a` side.
 import type { LocalVideoTrack } from 'livekit-client'
+import type { Event } from '../protocol/Event'
 import type { Ready } from '../protocol/Ready'
 import type { StreamEndReason } from '../protocol/StreamEndReason'
 import type { StreamInfo } from '../protocol/StreamInfo'
 import { displayName } from '../selectors'
 import { app } from '../store.svelte'
 import { errorText, streamCmd } from '../tauri'
+import { voice } from '../voice.svelte'
 import { startDiagnostics } from './diag.svelte'
 import type { Fps, Res } from './encodings'
 import type { GoLive } from './prefs'
 import { StreamRoom } from './room'
+import { toastFor } from './viewer'
+import { removeToast, showToast } from './viewer.svelte'
 
 type Live = { channelId: string; res: Res; fps: Fps; audio: boolean; audioMuted: boolean; label: string; encoderWarning: boolean }
 type Watching = { channelId: string; streamer: string; quality: 'auto' | 'saver' }
@@ -350,6 +354,17 @@ export const streamApi = {
       streamCmd.log({ ev: 'ended_by_server', reason })
       liveGen.cancel()
       await endLive(false)
+    }
+  },
+
+  /** Every gateway event: stream starts toast the people in that voice channel, ends close the viewer. */
+  onEvent(e: Event) {
+    if (e.t === 'StreamStarted') {
+      const { channel_id: channelId, user_id: streamer } = e.d.stream
+      if (toastFor({ channelId, streamer }, voice.channelId, meId())) showToast({ channelId, streamer, name: nameOf(channelId, streamer) })
+    } else if (e.t === 'StreamEnded') {
+      removeToast(e.d.channel_id, e.d.user_id)
+      void streamApi.onStreamEnded(e.d.channel_id, e.d.user_id, e.d.reason)
     }
   },
 

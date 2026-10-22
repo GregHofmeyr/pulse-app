@@ -1,0 +1,29 @@
+// Pure decisions for watching: who gets the "is live" toast, why Watch is disabled, the toast stack.
+
+export type Toast = { channelId: string; streamer: string; name: string }
+
+export const TOAST_MS = 4_000
+export const MAX_TOASTS = 3
+
+/** The toast goes to people in that voice channel, never to the streamer. */
+export function toastFor(s: { channelId: string; streamer: string }, voiceChannelId: string | null, meId: string): boolean {
+  return voiceChannelId === s.channelId && s.streamer !== meId
+}
+
+/** Why Watch can't be used right now, or null when it can. Linux first: joining voice would not help there. */
+export function watchDisabledReason(a: { windows: boolean; voiceChannelId: string | null; channelId: string }): string | null {
+  if (!a.windows) return "Watching from Linux isn't supported yet"
+  if (a.voiceChannelId !== a.channelId) return 'Join voice to watch'
+  return null
+}
+
+const same = (a: Toast, b: { channelId: string; streamer: string }) => a.channelId === b.channelId && a.streamer === b.streamer
+
+/** Newest last; the same stream replaces its older toast; at most `MAX_TOASTS` stay. */
+export function pushToast(list: Toast[], t: Toast): Toast[] {
+  return [...list.filter((x) => !same(x, t)), t].slice(-MAX_TOASTS)
+}
+
+export function dropToast(list: Toast[], channelId: string, streamer: string): Toast[] {
+  return list.filter((x) => !same(x, { channelId, streamer }))
+}

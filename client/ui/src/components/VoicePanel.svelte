@@ -5,6 +5,7 @@
   import { voiceOccupants } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import { clampVolume, volumeLabel } from '../lib/voiceui'
+  import LiveBadge from './LiveBadge.svelte'
   import GoLiveDialog from './GoLiveDialog.svelte'
   import LiveCard from './LiveCard.svelte'
   import { StreamRoom, type Picked } from '../lib/stream/room'
@@ -76,6 +77,7 @@
         </button>
         <div class="name">
           {p.name}
+          <LiveBadge {channelId} userId={p.userId} />
           <span class="bars" aria-label="Connection {voice.quality[p.userId] ?? 'good'}">
             {#each [1, 2, 3] as b}<span class="bar" class:on={b <= qualityBars(voice.quality[p.userId])} style:height="{b * 4}px"></span>{/each}
           </span>
