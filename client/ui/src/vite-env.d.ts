@@ -3,4 +3,6 @@
 interface ImportMetaEnv {
   /** Server address the login screen starts with (release builds: https://pulsechat.co.za). */
   readonly VITE_DEFAULT_SERVER?: string
+  /** THROWAWAY: '1' in screen-share spike builds (the hidden debug panel). */
+  readonly VITE_SPIKE?: string
 }

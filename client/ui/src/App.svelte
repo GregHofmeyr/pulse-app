@@ -18,6 +18,20 @@
 
   onMount(() => installTooltips())
 
+  // THROWAWAY (screen-share spike): the hidden debug panel, Ctrl+Shift+F12. Plain builds tree-shake it away.
+  let SpikePanel = $state<typeof import('./spike/SpikePanel.svelte').default | null>(null)
+  let spikeOpen = $state(false)
+  onMount(async () => {
+    if (import.meta.env.VITE_SPIKE === '1') SpikePanel = (await import('./spike/SpikePanel.svelte')).default
+  })
+  // bubble phase on purpose: keybind recording stops propagation in the capture phase
+  function spikeKey(e: KeyboardEvent) {
+    if (import.meta.env.VITE_SPIKE === '1' && e.ctrlKey && e.shiftKey && e.code === 'F12') {
+      e.preventDefault()
+      spikeOpen = !spikeOpen
+    }
+  }
+
   // Startup timeline: tell the core when the first real screen has painted (once).
   let painted = false
   $effect(() => {
@@ -56,6 +70,8 @@
   })
 </script>
 
+<svelte:window onkeydown={spikeKey} />
+
 {#if screen === 'boot'}
   <div class="boot" aria-busy="true"></div>
 {:else if screen === 'update'}
@@ -64,6 +80,10 @@
   <Shell {user} onLogout={() => { user = null; resetState() }} />
 {:else}
   <Login notice={bootError} onAuthed={(u) => { bootError = ''; user = u }} />
+{/if}
+
+{#if SpikePanel}
+  <div hidden={!spikeOpen}><SpikePanel /></div>
 {/if}
 
 <style>
