@@ -19,6 +19,8 @@ pub struct Config {
     pub heartbeat_timeout: Duration,
     /// Rate limits (spec §3.1).
     pub limits: crate::limits::LimitsConfig,
+    /// THROWAWAY: the screen-share spike's ticket endpoint, `PULSE_SPIKE=1`.
+    pub spike: bool,
 }
 
 impl Config {
@@ -40,6 +42,7 @@ impl Config {
             hello_timeout: Duration::from_secs(10),
             heartbeat_timeout: Duration::from_secs(60),
             limits: crate::limits::LimitsConfig::default(),
+            spike: std::env::var("PULSE_SPIKE").is_ok_and(|v| v == "1"),
         })
     }
 }

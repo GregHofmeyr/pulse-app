@@ -56,6 +56,7 @@ pub fn test_config() -> Config {
         hello_timeout: Duration::from_millis(300),
         heartbeat_timeout: Duration::from_secs(5),
         limits: crate::limits::LimitsConfig::unlimited(),
+        spike: false,
     }
 }
 
