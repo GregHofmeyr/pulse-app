@@ -11,6 +11,7 @@
   import { logResult, spikeLog } from './log'
   import { connect, firstStreamer, pick, publish, watch, type PublishOpts } from './rooms'
   import { Ring, strain, type Sample } from './sampler'
+  import { frameLoop } from './frames'
   import type { Fps, Res } from './encodings'
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -119,6 +120,8 @@
   }
 
   async function stopWatch() {
+    stopFrames?.()
+    stopFrames = undefined
     remote?.detach()
     remote = null
     await viewRoom?.disconnect()
@@ -163,15 +166,14 @@
   // rVFC frame counting on the viewer <video> (S6 fps, S18 last frame)
   let rvfcFrames = 0
   let lastFrameAt = 0
+  let stopFrames: (() => void) | undefined
   function countFrames() {
-    const el = videoEl
-    if (!el) return
-    const tick = () => {
+    stopFrames?.()
+    if (!videoEl) return
+    stopFrames = frameLoop(videoEl, () => {
       rvfcFrames++
       lastFrameAt = Date.now()
-      if (remote) el.requestVideoFrameCallback(tick)
-    }
-    el.requestVideoFrameCallback(tick)
+    })
   }
 
   // ---- S6 background
@@ -406,6 +408,7 @@
   onDestroy(() => {
     for (const t of [every2s, every15s, every500ms, soakTimer]) clearInterval(t)
     unlistenPopout?.()
+    stopFrames?.()
   })
 
   const run = (test: string, fn: () => Promise<object>) => () => void logResult(test, fn)

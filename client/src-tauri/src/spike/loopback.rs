@@ -28,9 +28,14 @@ fn unix_ms() -> u64 {
 }
 
 /// The publishing side (`spike_loopback_start`) and the listening side (`spike_beep_watch`): each keeps its
-/// `Room` here, or dropping it would disconnect.
+/// `Room` here, or dropping it would disconnect. The third field serialises the commands: two quick clicks
+/// would otherwise both connect, and the first one's capture thread or listen task would be orphaned.
 #[derive(Default)]
-pub struct Loopback(Mutex<Option<Running>>, Mutex<Option<Watching>>);
+pub struct Loopback(
+    Mutex<Option<Running>>,
+    Mutex<Option<Watching>>,
+    tokio::sync::Mutex<()>,
+);
 
 struct Running {
     room: Room,
@@ -52,6 +57,8 @@ pub async fn spike_loopback_start(
     pid: Option<u32>,
     tone: Option<String>,
 ) -> Result<(), String> {
+    let target = capture_target(&mode, pid, std::process::id())?;
+    let _op = lb.2.lock().await;
     stop_publishing(&lb).await?; // a second Start replaces the first instead of orphaning its thread
     let t = super::spike_ticket(core, channel_id, "a".into())
         .await
@@ -81,11 +88,6 @@ pub async fn spike_loopback_start(
         .map_err(|e| e.to_string())?;
     let stop = Arc::new(AtomicBool::new(false));
     let (stop2, rt) = (stop.clone(), tokio::runtime::Handle::current());
-    let target = match (mode.as_str(), pid) {
-        ("include", Some(p)) => (p, true),
-        // EXCLUDE our own tree: Pulse + its WebView2 children never reach the stream
-        _ => (std::process::id(), false),
-    };
     let thread = std::thread::spawn(move || {
         let r = capture_loop(
             target.0,
@@ -116,6 +118,17 @@ pub async fn spike_loopback_start(
         thread: Some(thread),
     });
     Ok(())
+}
+
+/// (pid, include): INCLUDE a named process tree, or EXCLUDE our own (Pulse + its WebView2 children).
+/// Include with no PID is an error: falling back to exclude would silently record every app.
+fn capture_target(mode: &str, pid: Option<u32>, own: u32) -> Result<(u32, bool), String> {
+    match (mode, pid) {
+        ("include", Some(p)) => Ok((p, true)),
+        ("include", None) => Err("include needs a pid (Find PID by title, or type one)".into()),
+        ("exclude", _) => Ok((own, false)),
+        _ => Err(format!("mode is include or exclude, not {mode:?}")),
+    }
 }
 
 /// Capture 10 ms stereo i16 chunks until `stop`, the target process exits, or an error.
@@ -240,6 +253,7 @@ async fn stop_publishing(lb: &Loopback) -> Result<(), String> {
 
 #[tauri::command]
 pub async fn spike_loopback_stop(lb: State<'_, Loopback>) -> Result<(), String> {
+    let _op = lb.2.lock().await;
     stop_publishing(&lb).await
 }
 
@@ -267,6 +281,7 @@ pub async fn spike_beep_watch(
     lb: State<'_, Loopback>,
     channel_id: ChannelId,
 ) -> Result<(), String> {
+    let _op = lb.2.lock().await;
     let prev = lb.1.lock().unwrap().take();
     if let Some(w) = prev {
         w.task.abort();
@@ -348,6 +363,18 @@ pub async fn spike_beep_watch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn include_without_a_pid_is_an_error_not_whole_system_capture() {
+        assert!(
+            capture_target("include", None, 7)
+                .unwrap_err()
+                .contains("pid")
+        );
+        assert_eq!(capture_target("include", Some(42), 7), Ok((42, true)));
+        assert_eq!(capture_target("exclude", None, 7), Ok((7, false)));
+        assert!(capture_target("sideways", None, 7).is_err());
+    }
 
     #[test]
     fn left_tone_is_stereo_10ms_chunks_with_a_silent_right_channel() {

@@ -4,6 +4,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { encodingFor, type Fps, type Res } from './encodings'
 import { addRtxTime } from './sdp'
 import { spikeLog } from './log'
+import { withDeadline } from './frames'
 
 type Ticket = { url: string; token: string }
 const ticket = (channelId: string, role: 'v' | 'v2') => invoke<Ticket>('spike_ticket', { channelId, role })
@@ -94,19 +95,21 @@ export async function watch(room: Room, streamer: string, el: HTMLVideoElement):
   const pub = p?.getTrackPublication(Track.Source.ScreenShare)
   if (!pub) throw new Error(`${streamer} is not publishing`)
   pub.setSubscribed(true)
-  const deadline = Date.now() + 15_000
-  return new Promise<RemoteTrack>((resolve, reject) => {
-    const check = () => {
-      if (!pub.track) {
-        if (Date.now() > deadline) return reject(new Error('no track 15 s after subscribing'))
-        return void requestAnimationFrame(check)
-      }
-      pub.track.attach(el)
-      el.requestVideoFrameCallback(() => {
-        spikeLog({ test: 'S12', event: 'first_frame', ms: Math.round(performance.now() - t0), epochMs: Date.now() })
-        resolve(pub.track!)
-      })
-    }
-    check()
-  })
+  // timers, not requestAnimationFrame: rAF stops while the window is hidden
+  const track = await withDeadline(
+    new Promise<RemoteTrack>((resolve) => {
+      const check = () => (pub.track ? resolve(pub.track) : void setTimeout(check, 50))
+      check()
+    }),
+    15_000,
+    'no track 15 s after subscribing',
+  )
+  track.attach(el)
+  await withDeadline(
+    new Promise<void>((resolve) => el.requestVideoFrameCallback(() => resolve())),
+    15_000,
+    'no frame painted 15 s after the track arrived (nothing sent, or the video is hidden)',
+  )
+  spikeLog({ test: 'S12', event: 'first_frame', ms: Math.round(performance.now() - t0), epochMs: Date.now() })
+  return track
 }
