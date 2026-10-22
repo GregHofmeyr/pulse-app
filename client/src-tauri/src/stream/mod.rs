@@ -1,5 +1,6 @@
 //! Screen share, client side: REST calls wrapped as Tauri commands, and small window helpers.
 
+pub mod audio;
 pub mod loopback;
 pub mod plan;
 pub mod procs;
@@ -15,6 +16,8 @@ use tauri::{AppHandle, LogicalSize, Manager, State};
 
 use crate::api::{Api, ApiError};
 use crate::commands::Core;
+use crate::voice::VoiceManager;
+use audio::StreamAudio;
 
 /// The picker needs room for its thumbnails: the window grows to at least this while it is open.
 const PICKER_MIN_HEIGHT: f64 = 640.0;
@@ -180,6 +183,77 @@ pub fn stream_picker_window(
     } else if let Some(size) = saved.take() {
         win.set_size(size).map_err(|e| e.to_string())?;
     }
+    Ok(())
+}
+
+/// The voice call's mixer, looked up through the app whenever stream audio needs it.
+fn app_mixer(app: &AppHandle) -> audio::MixerSource {
+    let app = app.clone();
+    std::sync::Arc::new(move || {
+        let app = app.clone();
+        Box::pin(async move { app.state::<VoiceManager>().mixer_input().await })
+    })
+}
+
+/// Connects `#a` to the stream room (if it isn't) and publishes stream audio: `window_title`'s
+/// app for a window share, everything but Pulse otherwise.
+#[tauri::command]
+pub async fn stream_audio_start(
+    app: AppHandle,
+    core: State<'_, Core>,
+    audio: State<'_, StreamAudio>,
+    channel_id: ChannelId,
+    window_title: Option<String>,
+) -> Result<(), String> {
+    let (api, token) = core.current().map_err(|e| e.to_string())?;
+    audio
+        .ensure_connected(&api, &token, channel_id, app_mixer(&app))
+        .await?;
+    audio.start_publishing(window_title).await
+}
+
+#[tauri::command]
+pub async fn stream_audio_stop(audio: State<'_, StreamAudio>) -> Result<(), String> {
+    audio.stop_publishing().await;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn stream_audio_mute(audio: State<'_, StreamAudio>, muted: bool) -> Result<(), String> {
+    audio.set_muted(muted).await;
+    Ok(())
+}
+
+/// Starts (`on`) or stops playing `streamer`'s stream audio.
+#[tauri::command]
+pub async fn stream_audio_watch(
+    app: AppHandle,
+    core: State<'_, Core>,
+    audio: State<'_, StreamAudio>,
+    channel_id: ChannelId,
+    streamer: UserId,
+    on: bool,
+) -> Result<(), String> {
+    if on {
+        let (api, token) = core.current().map_err(|e| e.to_string())?;
+        audio
+            .ensure_connected(&api, &token, channel_id, app_mixer(&app))
+            .await?;
+    } else if audio.connected_channel().await != Some(channel_id) {
+        return Ok(()); // nothing playing there
+    }
+    audio.watch(streamer, on).await
+}
+
+#[tauri::command]
+pub async fn set_stream_volume(
+    voice: State<'_, VoiceManager>,
+    audio: State<'_, StreamAudio>,
+    user_id: UserId,
+    pct: u16,
+) -> Result<(), String> {
+    let mixer = voice.mixer_input().await;
+    audio.set_volume(mixer.as_ref().map(|(m, _)| &**m), &user_id.to_string(), pct);
     Ok(())
 }
 

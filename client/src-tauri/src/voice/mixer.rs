@@ -296,6 +296,15 @@ impl MixerInput {
         self.cmds.lock().unwrap().push(Cmd::Clear);
     }
 
+    /// (owner, kind, gain) of one registered source (tests).
+    #[cfg(test)]
+    pub(crate) fn describe(&self, source: &str) -> Option<(String, SourceKind, f32)> {
+        let sources = self.sources.lock().unwrap();
+        sources
+            .get(source)
+            .map(|s| (s.owner.clone(), s.kind, s.gain))
+    }
+
     /// How many sources are registered: for diagnostics and tests.
     pub fn source_count(&self) -> usize {
         self.sources.lock().unwrap().len()

@@ -3,6 +3,8 @@
 //! The stream room (`<channel>~s`) must never carry voice, and each ticket may publish only its own source.
 
 use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use livekit::options::TrackPublishOptions;
@@ -10,7 +12,10 @@ use livekit::prelude::*;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
 use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
 use pulse_client::api::Api;
-use pulse_protocol::ids::{ChannelId, UserId};
+use pulse_client::stream::audio::{MixerSource, Outlet, StreamAudio};
+use pulse_client::voice::devices::AudioConfig;
+use pulse_client::voice::{AudioMode, VoiceManager};
+use pulse_protocol::ids::{ChannelId, ServerId, UserId};
 use pulse_protocol::rest::StreamRole;
 use pulse_server::testing;
 
@@ -82,9 +87,11 @@ impl Drop for ToneBot {
 
 struct Fixture {
     api: Api,
+    uid: UserId,
     token: String,
+    server: ServerId,
     channel: ChannelId,
-    _app: testing::TestApp,
+    app: testing::TestApp,
 }
 
 /// A server against the dev LiveKit, with alex registered and counted as in the voice channel.
@@ -107,10 +114,27 @@ async fn fixture() -> Fixture {
     app.voice.join(lounge.id, uid, "PA_test");
     Fixture {
         api,
+        uid,
         token,
+        server: s.id,
         channel: lounge.id,
-        _app: app,
+        app,
     }
+}
+
+/// Another user, a member of the server and counted as in the voice channel.
+async fn member(f: &Fixture, name: &str) -> (UserId, String) {
+    let (uid, token) = testing::register(&f.app, name).await;
+    let joined = testing::post_json(
+        &f.app,
+        &token,
+        &format!("/servers/{}/join", f.server),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(joined.status(), 204, "{name} joins the server");
+    f.app.voice.join(f.channel, uid, "PA_test");
+    (uid, token)
 }
 
 async fn connect(f: &Fixture, role: StreamRole, opts: RoomOptions) -> (Room, RoomEvents) {
@@ -230,4 +254,199 @@ async fn a_ticket_publishes_screenshare_audio() {
     let (room, _events) = connect(&f, StreamRole::A, RoomOptions::default()).await;
     assert!(audio_publish_accepted(&room, TrackSource::ScreenshareAudio).await);
     let _ = room.close().await;
+}
+
+/// `voice`'s mixer, as the app hands it to `StreamAudio`.
+fn mixer_of(voice: &Arc<VoiceManager>) -> MixerSource {
+    let voice = voice.clone();
+    Arc::new(move || {
+        let voice = voice.clone();
+        Box::pin(async move { voice.mixer_input().await })
+    })
+}
+
+fn no_mixer() -> MixerSource {
+    Arc::new(|| Box::pin(async { None }))
+}
+
+/// A call joined with no devices (`AudioMode::Null`): its mixer is what stream audio plays into.
+async fn voice_call(f: &Fixture, token: &str) -> Arc<VoiceManager> {
+    let vm = Arc::new(VoiceManager::new(Arc::new(|_| {})));
+    vm.join(
+        &f.api,
+        token,
+        f.channel,
+        AudioConfig::default(),
+        AudioMode::Null(48_000),
+    )
+    .await
+    .expect("voice join");
+    vm
+}
+
+/// Feeds `outlet` 10 ms stereo chunks (a test-only square wave) in real time until dropped.
+struct Feeder(Arc<AtomicBool>, Option<std::thread::JoinHandle<()>>);
+
+impl Feeder {
+    fn start(outlet: Outlet) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop2 = stop.clone();
+        let t = std::thread::spawn(move || {
+            let chunk: Vec<i16> = (0..960)
+                .map(|i| if (i / 2) % 48 < 24 { 6000 } else { -6000 })
+                .collect();
+            let start = std::time::Instant::now();
+            let mut sent = 0u32;
+            while !stop2.load(Ordering::Relaxed) {
+                outlet.send(chunk.clone());
+                sent += 1;
+                let due = start + Duration::from_millis(10 * sent as u64);
+                if let Some(wait) = due.checked_duration_since(std::time::Instant::now()) {
+                    std::thread::sleep(wait);
+                }
+            }
+        });
+        Self(stop, Some(t))
+    }
+}
+
+impl Drop for Feeder {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+        if let Some(t) = self.1.take() {
+            let _ = t.join();
+        }
+    }
+}
+
+async fn wait_for<F, Fut>(what: &str, secs: u64, mut cond: F)
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let end = tokio::time::Instant::now() + Duration::from_secs(secs);
+    while !cond().await {
+        assert!(
+            tokio::time::Instant::now() < end,
+            "timed out waiting for {what}"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// alex publishes stream audio (synthetic frames through the real `NativeAudioSource` path:
+/// CI can't capture). sam watches before it is published, kim after; both hear it through
+/// their voice mixer as one source that never lights the speaking ring. Unwatching removes it.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn published_stream_audio_reaches_a_watcher() {
+    let f = fixture().await;
+    let (_, sam_token) = member(&f, "sam").await;
+    let (_, kim_token) = member(&f, "kim").await;
+
+    // sam: in the call, watching alex before alex publishes (subscribes on TrackPublished)
+    let sam_vm = voice_call(&f, &sam_token).await;
+    let sam = StreamAudio::default();
+    sam.ensure_connected(&f.api, &sam_token, f.channel, mixer_of(&sam_vm))
+        .await
+        .unwrap();
+    sam.watch(f.uid, true).await.unwrap();
+
+    let alex = StreamAudio::default();
+    alex.ensure_connected(&f.api, &f.token, f.channel, no_mixer())
+        .await
+        .unwrap();
+    let feeder = Feeder::start(alex.start_publishing_raw().await.unwrap());
+
+    wait_for("sam to hear alex's stream audio", 20, || async {
+        sam.heard_frames().await > 50
+    })
+    .await;
+    assert_eq!(
+        sam_vm.mixer_sources().await,
+        1,
+        "one stream source, no voice"
+    );
+    let pushed = sam_vm.mixer_pushed().await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert!(
+        sam_vm.mixer_pushed().await > pushed + 48_000 / 4,
+        "stream audio keeps flowing into the mixer"
+    );
+    assert!(
+        sam_vm.mixer_levels().await.is_empty(),
+        "stream audio never lights the speaking ring"
+    );
+
+    sam.watch(f.uid, false).await.unwrap();
+    wait_for("unwatching to take the source out", 5, || async {
+        sam_vm.mixer_sources().await == 0
+    })
+    .await;
+    sam.leave().await;
+    sam_vm.leave().await;
+
+    // kim: watches once it is already published (subscribes straight away)
+    let kim_vm = voice_call(&f, &kim_token).await;
+    let kim = StreamAudio::default();
+    kim.ensure_connected(&f.api, &kim_token, f.channel, mixer_of(&kim_vm))
+        .await
+        .unwrap();
+    // the room state (alex's track) arrives just after connecting
+    wait_for("kim to hear alex's stream audio", 20, || async {
+        kim.watch(f.uid, true).await.unwrap();
+        kim.heard_frames().await > 50
+    })
+    .await;
+    assert_eq!(kim_vm.mixer_sources().await, 1);
+
+    drop(feeder);
+    kim.leave().await;
+    kim_vm.leave().await;
+    alex.leave().await;
+}
+
+/// Leaving voice leaves the stream room too: the `#a` participant is gone for everyone in it.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn leave_voice_closes_the_stream_connection() {
+    let f = fixture().await;
+    let alex = StreamAudio::default();
+    alex.ensure_connected(&f.api, &f.token, f.channel, no_mixer())
+        .await
+        .unwrap();
+    let _outlet = alex.start_publishing_raw().await.unwrap();
+    assert_eq!(alex.connected_channel().await, Some(f.channel));
+
+    // an observer in the stream room (alex's own `#v` connection) sees `#a` come and go
+    let (observer, mut events) = connect(&f, StreamRole::V, RoomOptions::default()).await;
+    let a_identity = format!("{}#a", f.uid);
+    wait_for("the observer to see #a", 10, || async {
+        observer
+            .remote_participants()
+            .keys()
+            .any(|k| k.as_str() == a_identity)
+    })
+    .await;
+
+    alex.leave().await;
+    assert_eq!(alex.connected_channel().await, None);
+    let gone = tokio::time::timeout(Duration::from_secs(10), async {
+        while let Some(ev) = events.recv().await {
+            if let RoomEvent::ParticipantDisconnected(p) = ev
+                && p.identity().as_str() == a_identity
+            {
+                return true;
+            }
+        }
+        false
+    })
+    .await
+    .unwrap_or(false);
+    assert!(gone, "#a never left the stream room");
+    assert!(
+        alex.start_publishing_raw().await.is_err(),
+        "nothing publishes after leaving"
+    );
+    let _ = observer.close().await;
 }

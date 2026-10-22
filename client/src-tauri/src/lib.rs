@@ -102,6 +102,7 @@ pub fn run() {
             app.manage(commands::Core::new(session::Store::new(dir.clone(), profile.as_deref()), outbox));
             app.manage(voice::mictest::MicTest::default());
             app.manage(stream::PickerMemory::default());
+            app.manage(stream::audio::StreamAudio::default());
             #[cfg(unix)]
             {
                 let h = app.handle().clone();
@@ -198,6 +199,11 @@ pub fn run() {
             stream::stream_preview_get,
             stream::stream_log,
             stream::stream_picker_window,
+            stream::stream_audio_start,
+            stream::stream_audio_stop,
+            stream::stream_audio_mute,
+            stream::stream_audio_watch,
+            stream::set_stream_volume,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Pulse")
@@ -207,8 +213,12 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 use tauri::Manager;
                 let voice = app.state::<voice::VoiceManager>();
+                let stream_audio = app.state::<stream::audio::StreamAudio>();
                 tauri::async_runtime::block_on(async {
-                    let leave = voice.leave();
+                    let leave = async {
+                        stream_audio.leave().await;
+                        voice.leave().await;
+                    };
                     if tokio::time::timeout(std::time::Duration::from_secs(2), leave)
                         .await
                         .is_err()
