@@ -1,4 +1,5 @@
 <script lang="ts">
+  import StreamDiagOverlay from './StreamDiagOverlay.svelte'
   import { app } from '../lib/store.svelte'
   import { liveIn, displayName } from '../lib/selectors'
   import { loadHidePreview, saveHidePreview } from '../lib/stream/prefs'
@@ -35,7 +36,12 @@
       <span class="spacer"></span>
       <button type="button" class="ghost" onclick={toggleHidden}>{hidden ? 'Show preview' : 'Hide preview'}</button>
     </div>
-    {#if !hidden}<video bind:this={video} muted autoplay playsinline></video>{/if}
+    {#if !hidden}
+      <div class="preview">
+        <video bind:this={video} muted autoplay playsinline></video>
+        <StreamDiagOverlay kind="out" />
+      </div>
+    {/if}
     <p class="viewers">
       {#if viewers.length}Watching: {viewers.map((u) => displayName(app.state, serverId, u)).join(', ')}{:else}Nobody is watching yet{/if}
     </p>
@@ -58,7 +64,8 @@
   .spacer { flex: 1; }
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); }
   .meta { color: var(--text-3); font-size: 12px; }
-  video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; object-fit: contain; }
+  .preview { position: relative; }
+  video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; object-fit: contain; }
   .viewers { margin: 0; font-size: 13px; color: var(--text-2); }
   .warn { margin: 0; font-size: 13px; color: var(--warn); }
   .ghost { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }

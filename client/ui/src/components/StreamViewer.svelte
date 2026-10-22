@@ -1,5 +1,6 @@
 <script lang="ts">
   import { untrack } from 'svelte'
+  import StreamDiagOverlay from './StreamDiagOverlay.svelte'
   import Select from './Select.svelte'
   import { app } from '../lib/store.svelte'
   import { displayName, liveIn } from '../lib/selectors'
@@ -76,6 +77,7 @@
   </div>
   <div class="stage">
     <video bind:this={video} autoplay playsinline></video>
+    <StreamDiagOverlay kind="in" />
     {#if reconnecting}<div class="overlay" role="status">Reconnecting…</div>{/if}
   </div>
 </div>

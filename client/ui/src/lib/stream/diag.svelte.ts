@@ -1,7 +1,7 @@
 // Quiet diagnostics: samples getStats() while sharing or watching, writes one `share:` log line per
 // sample (so a bug report carries the numbers), and keeps the latest for the overlay.
 import { streamCmd } from '../tauri'
-import { loadDiagOverlay } from './prefs'
+import { loadDiagOverlay, saveDiagOverlay } from './prefs'
 import { inboundSummary, isHardwareEncoder, outboundSummary, type InboundSummary, type OutboundSummary } from './stats'
 
 export const diag = $state({
@@ -11,6 +11,13 @@ export const diag = $state({
   connectMs: null as number | null,
   firstFrameMs: null as number | null,
 })
+
+/** The overlay toggle: one reactive source for Settings and every open overlay (and the sampler's pace). */
+export const diagUi = $state({ on: loadDiagOverlay() })
+export function setDiagOverlay(on: boolean) {
+  diagUi.on = on
+  saveDiagOverlay(on)
+}
 
 const SAMPLE_MS = 5_000
 const SAMPLE_OVERLAY_MS = 2_000
@@ -32,10 +39,13 @@ export function startDiagnostics(
   let prev: RTCStatsReport | null = null
   let prevAt = 0
   const timers: ReturnType<typeof setTimeout>[] = []
-  const next = () => (loadDiagOverlay() ? SAMPLE_OVERLAY_MS : SAMPLE_MS)
+  const next = () => (diagUi.on ? SAMPLE_OVERLAY_MS : SAMPLE_MS)
 
+  let inFlight = false
   const sample = async () => {
+    inFlight = true
     const rep = await getReport().catch(() => undefined)
+    inFlight = false
     if (stopped) return
     if (rep) {
       const now = performance.now()
@@ -53,6 +63,21 @@ export function startDiagnostics(
     timers[0] = setTimeout(sample, next())
   }
   timers[0] = setTimeout(sample, next())
+
+  // Toggling the overlay changes the pace now, not after the pending 5 s wait.
+  let firstRun = true
+  const stopPace = $effect.root(() => {
+    $effect(() => {
+      const ms = next()
+      if (firstRun) {
+        firstRun = false
+        return
+      }
+      if (stopped || inFlight) return // an in-flight sample re-arms itself with the new pace
+      clearTimeout(timers[0])
+      timers[0] = setTimeout(sample, ms)
+    })
+  })
 
   if (kind === 'out') {
     let hardware: boolean | null = null
@@ -78,6 +103,7 @@ export function startDiagnostics(
 
   return () => {
     stopped = true
+    stopPace()
     clearTimeout(timers[0])
     clearTimeout(timers[1])
     clearInterval(timers[2])
