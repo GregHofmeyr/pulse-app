@@ -492,6 +492,25 @@ impl Api {
         .await
     }
 
+    /// THROWAWAY (screen-share spike): a stream-room ticket (`POST /spike/stream/{channel}/ticket`).
+    #[cfg(feature = "spike")]
+    pub async fn spike_ticket(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        role: &str,
+    ) -> Result<VoiceTokenResponse, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/spike/stream/{channel}/ticket", self.base))
+                .bearer_auth(token)
+                .json(&serde_json::json!({ "role": role }))
+                .send()
+                .await,
+        )
+        .await
+    }
+
     pub async fn register(
         &self,
         invite_code: &str,

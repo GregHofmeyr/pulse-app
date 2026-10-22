@@ -11,6 +11,8 @@ pub mod outbox;
 pub mod reports;
 pub mod session;
 pub mod sounds;
+#[cfg(feature = "spike")]
+pub mod spike;
 pub mod startup;
 pub mod throttle;
 pub mod voice;
@@ -24,14 +26,21 @@ struct LogGuard(
 /// The main window is built here rather than in tauri.conf.json so each profile gets its own
 /// webview storage (settings, per-user volumes) and so we can recover if the renderer dies.
 fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri::Result<()> {
-    let win = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
+    let b = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
         .title("Pulse")
         .inner_size(1280.0, 800.0)
         .min_inner_size(900.0, 560.0)
         .decorations(false)
         .background_color(tauri::window::Color(0x14, 0x15, 0x19, 0xff))
-        .data_directory(profile_dir.join("webview"))
-        .build()?;
+        .data_directory(profile_dir.join("webview"));
+    // THROWAWAY (spike): extra WebView2 browser args from PULSE_WEBVIEW2_ARGS (S1 HW off, S6, S7).
+    #[cfg(all(windows, feature = "spike"))]
+    let b = b.additional_browser_args(&spike::webview_args(
+        // wry 0.57's default (webview2/mod.rs): keep it, or these features come back on
+        "--disable-features=msWebOOUI,msPdfOOUI,msSmartScreenProtection",
+        std::env::var("PULSE_WEBVIEW2_ARGS").ok().as_deref(),
+    ));
+    let win = b.build()?;
     // WebKitGTK: if the page renderer crashes, reload instead of leaving a dead window.
     #[cfg(target_os = "linux")]
     win.with_webview(|wv| {
@@ -44,9 +53,84 @@ fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri:
     // WebView2: the Low memory target while minimised or in the background.
     #[cfg(windows)]
     webview_memory::install(&win);
+    // THROWAWAY (spike S12): log WebView2 renderer/browser process failures.
+    #[cfg(all(windows, feature = "spike"))]
+    win.with_webview(|wv| {
+        use webview2_com::Microsoft::Web::WebView2::Win32::COREWEBVIEW2_PROCESS_FAILED_KIND;
+        use webview2_com::ProcessFailedEventHandler;
+        let Ok(core) = (unsafe { wv.controller().CoreWebView2() }) else {
+            tracing::warn!(target: "spike", "spike: no CoreWebView2 for the ProcessFailed hook");
+            return;
+        };
+        let handler = ProcessFailedEventHandler::create(Box::new(|_, args| {
+            let mut kind = COREWEBVIEW2_PROCESS_FAILED_KIND::default();
+            let kind = match args {
+                Some(a) if unsafe { a.ProcessFailedKind(&mut kind) }.is_ok() => kind.0,
+                _ => -1,
+            };
+            tracing::error!(
+                target: "spike",
+                "spike: {{\"test\":\"S12\",\"event\":\"renderer_failed\",\"kind\":{kind}}}"
+            );
+            Ok(())
+        }));
+        let mut token = 0i64;
+        let _ = unsafe { core.add_ProcessFailed(&handler, &mut token) };
+    })?;
     #[cfg(not(any(target_os = "linux", windows)))]
     let _ = win;
     Ok(())
+}
+
+/// Every IPC command, plus any extra ones (the spike build's) appended at the end.
+macro_rules! handlers {
+    ($($extra:tt)*) => {
+        tauri::generate_handler![
+            commands::login,
+            commands::register,
+            commands::restore_session,
+            commands::logout,
+            commands::list_servers,
+            commands::gateway_probe,
+            commands::send_typing,
+            commands::create_server,
+            commands::create_channel,
+            commands::join_server,
+            commands::list_channels,
+            commands::list_members,
+            commands::list_messages,
+            commands::send_message,
+            commands::edit_message,
+            commands::delete_message,
+            commands::join_voice,
+            commands::leave_voice,
+            commands::prefetch_voice,
+            commands::toggle_mute,
+            commands::toggle_deafen,
+            commands::set_peer_volume,
+            commands::set_audio_config,
+            commands::list_audio_devices,
+            commands::start_mic_test,
+            commands::stop_mic_test,
+            commands::watch_voice_meters,
+            commands::play_sound,
+            commands::create_dm,
+            commands::add_members,
+            commands::remove_member,
+            commands::rename_channel,
+            commands::mark_read,
+            commands::set_mute,
+            commands::clear_mute,
+            commands::close_conversation,
+            startup::ui_painted,
+            keybinds::get_keybinds,
+            keybinds::set_keybinds,
+            keybinds::pause_keybinds,
+            reports::submit_report,
+            reports::save_report,
+            $($extra)*
+        ]
+    };
 }
 
 pub fn run() {
@@ -63,7 +147,7 @@ pub fn run() {
             }
         }));
     }
-    builder
+    let builder = builder
         .setup(|app| {
             use tauri::Manager;
             let profile = std::env::var("PULSE_PROFILE").ok();
@@ -142,51 +226,18 @@ pub fn run() {
                     core.probe_gateway();
                 }
             }
-        })
-        .invoke_handler(tauri::generate_handler![
-            commands::login,
-            commands::register,
-            commands::restore_session,
-            commands::logout,
-            commands::list_servers,
-            commands::gateway_probe,
-            commands::send_typing,
-            commands::create_server,
-            commands::create_channel,
-            commands::join_server,
-            commands::list_channels,
-            commands::list_members,
-            commands::list_messages,
-            commands::send_message,
-            commands::edit_message,
-            commands::delete_message,
-            commands::join_voice,
-            commands::leave_voice,
-            commands::prefetch_voice,
-            commands::toggle_mute,
-            commands::toggle_deafen,
-            commands::set_peer_volume,
-            commands::set_audio_config,
-            commands::list_audio_devices,
-            commands::start_mic_test,
-            commands::stop_mic_test,
-            commands::watch_voice_meters,
-            commands::play_sound,
-            commands::create_dm,
-            commands::add_members,
-            commands::remove_member,
-            commands::rename_channel,
-            commands::mark_read,
-            commands::set_mute,
-            commands::clear_mute,
-            commands::close_conversation,
-            startup::ui_painted,
-            keybinds::get_keybinds,
-            keybinds::set_keybinds,
-            keybinds::pause_keybinds,
-            reports::submit_report,
-            reports::save_report,
-        ])
+        });
+    // `generate_handler!` can't take `cfg` on single entries: spike builds append theirs here.
+    #[cfg(feature = "spike")]
+    let builder = builder.invoke_handler(handlers![
+        spike::spike_log,
+        spike::spike_ticket,
+        spike::spike_os_stats,
+        spike::spike_window_pid,
+    ]);
+    #[cfg(not(feature = "spike"))]
+    let builder = builder.invoke_handler(handlers![]);
+    builder
         .build(tauri::generate_context!())
         .expect("error while building Pulse")
         .run(|app, event| {

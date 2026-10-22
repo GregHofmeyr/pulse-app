@@ -52,6 +52,12 @@ tauri-plugin-single-instance = "2"
 [features]
 # Strong uses DeepFilterNet3's low-latency model (36 MB) instead of the normal one (8 MB).
 dfn-ll = ["deep_filter/default-model-ll"]
+# THROWAWAY: the screen-share spike build (debug panel commands, loopback prototype).
+spike = [
+  "dep:wasapi",
+  "windows/Win32_System_ProcessStatus",
+  "windows/Win32_System_Diagnostics_ToolHelp",
+]
 
 [dev-dependencies]
 tempfile = "3"
@@ -80,3 +86,5 @@ windows = { version = "0.62", features = [
 # Cargo.lock), or the COM types don't match (E0308).
 webview2-com = "0.39"
 windows-core = "0.62"
+# THROWAWAY (spike): WASAPI process loopback. 0.26.0 depends on windows/windows-core ^0.62.2, the versions in Cargo.lock.
+wasapi = { version = "0.26", optional = true }
