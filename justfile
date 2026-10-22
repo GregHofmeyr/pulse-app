@@ -107,3 +107,19 @@ restore name:
 # live server logs
 logs service="pulse-server":
     ssh {{prod}} 'cd /srv/pulse && docker compose logs --tail 100 -f {{service}}'
+
+# SPIKE: switch prod LiveKit to the strict-H.264 codec list (S1b) and back. Needs the owner's OK.
+spike-codecs mode:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    if [ "{{mode}}" = on ]; then
+      cat deploy/livekit.yaml deploy/livekit.codecs.yaml > /tmp/livekit.spike.yaml
+      scp /tmp/livekit.spike.yaml {{prod}}:/srv/pulse/livekit.yaml
+    else
+      scp deploy/livekit.yaml {{prod}}:/srv/pulse/livekit.yaml
+    fi
+    ssh {{prod}} 'cd /srv/pulse && docker compose restart livekit && sleep 3 && docker compose logs --tail 5 livekit'
+
+# SPIKE: enable/disable the spike ticket endpoint on prod. Needs the owner's OK.
+spike-server mode:
+    ssh {{prod}} 'cd /srv/pulse && sed -i "/^PULSE_SPIKE=/d" .env && echo "PULSE_SPIKE={{ if mode == "on" { "1" } else { "0" } }}" >> .env && docker compose up -d pulse-server'

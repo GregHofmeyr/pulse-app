@@ -26,6 +26,7 @@ services:
       PULSE_LIVEKIT_KEY: pulse
       PULSE_LIVEKIT_SECRET: ${LIVEKIT_SECRET:?}
       RUST_LOG: info,sqlx=warn
+      PULSE_SPIKE: ${PULSE_SPIKE:-0}
     volumes:
       - ./data:/data
     healthcheck:
