@@ -202,6 +202,7 @@ pub fn run() {
             stream::stream_picker_window,
             stream::stream_audio_start,
             stream::stream_audio_stop,
+            stream::stream_audio_leave,
             stream::stream_audio_mute,
             stream::stream_audio_watch,
             stream::set_stream_volume,

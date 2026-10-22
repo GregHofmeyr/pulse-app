@@ -281,6 +281,17 @@ pub async fn stream_audio_stop(audio: State<'_, StreamAudio>) -> Result<(), Stri
     Ok(())
 }
 
+/// Voice moved to `keep` (`None`: left voice): `#a` goes unless it is in that channel. Covers
+/// voice ending without `leave_voice` (rejoin given up, a failed join).
+#[tauri::command]
+pub async fn stream_audio_leave(
+    audio: State<'_, StreamAudio>,
+    keep: Option<ChannelId>,
+) -> Result<(), String> {
+    audio.leave_unless_in(keep).await;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn stream_audio_mute(audio: State<'_, StreamAudio>, muted: bool) -> Result<(), String> {
     audio.set_muted(muted).await;

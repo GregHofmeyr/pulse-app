@@ -143,3 +143,13 @@ describe('re-announce after a server restart', () => {
     expect(calls('stream_stop')).toEqual([]) // the server has no stream to stop
   })
 })
+
+describe('voice changes', () => {
+  it('leaving_voice_lets_stream_audio_go', async () => {
+    const { streamApi } = await load()
+    await streamApi.onVoiceChanged(null)
+    expect(calls('stream_audio_leave')).toEqual([{ keep: null }])
+    await streamApi.onVoiceChanged('c2')
+    expect(calls('stream_audio_leave')).toEqual([{ keep: null }, { keep: 'c2' }])
+  })
+})

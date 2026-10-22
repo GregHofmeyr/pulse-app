@@ -694,6 +694,15 @@ impl StreamAudio {
         Self::leave_locked(&mut st).await;
     }
 
+    /// Leaves unless connected to `keep` (the voice channel we are in now, if any).
+    pub async fn leave_unless_in(&self, keep: Option<ChannelId>) {
+        let mut st = self.state.lock().await;
+        if st.conn.as_ref().is_some_and(|c| Some(c.channel) == keep) {
+            return;
+        }
+        Self::leave_locked(&mut st).await;
+    }
+
     async fn leave_locked(st: &mut State) {
         Self::stop_publishing_locked(st).await;
         if let Some(c) = st.conn.take() {

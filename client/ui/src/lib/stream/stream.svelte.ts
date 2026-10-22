@@ -346,6 +346,8 @@ export const streamApi = {
       await endWatch(true)
     }
     if (stream.room && roomChannel !== channelId) await disconnect()
+    // voice can end without leave_voice (rejoin given up, a failed join): `#a` goes with it
+    await streamCmd.audioLeave(channelId).catch(logError('audio_leave_error'))
   },
 
   /** A `StreamEnded` from the gateway. */
