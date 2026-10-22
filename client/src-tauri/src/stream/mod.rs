@@ -1,5 +1,8 @@
 //! Screen share, client side: REST calls wrapped as Tauri commands, and small window helpers.
 
+pub mod plan;
+pub mod summer;
+
 use std::sync::Mutex;
 use std::time::Duration;
 
