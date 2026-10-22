@@ -42,7 +42,8 @@ and a little game-like.
 - **Importing the Discord history.** Later, with a script like the owner's Discord-to-Root work. This design keeps the
   door open (§3.4).
 - A yearly awards show (most time in voice, most streamed, …). Idea parked by the owner; it needs extra tracking.
-- Quote threads, quote search beyond the tabs in §4.3, exporting.
+- Quote search beyond the leaderboard in §4.3, exporting.
+- Placeholders for badges (for example a "23 quote awards" profile stat). The data is recorded; badges show it.
 
 ### Anti-goals
 
@@ -60,7 +61,10 @@ and a little game-like.
 | Year | Filled in automatically. |
 | Poster | Shown (the message header), so people can jokingly complain at whoever quoted them. |
 | Reactions | **Open:** any emoji, built-in or custom. A row under each quote with faded suggested reactions and a "+". |
-| Score | **All reactions on a quote together**, not one specific emoji. |
+| Score | Any emoji counts (not one specific emoji), but **one reaction per person per quote**. The score is the number of people who reacted. |
+| Replies | A quote can have **replies** for banter: "Reply" opens a **side panel** with a chat about that quote (like Root's side panels, thread-like). The quote shows "View N replies". Replies never affect scores, votes or awards. |
+| Leaderboard | No Top tab. A **leaderboard icon** in the channel header opens a small view: Quote of the Year winners, most-reacted quotes, and more. |
+| Image quotes | A quote line can be an **image** (a screenshot of chat or in-game text) instead of text, still with a speaker. Uses the media storage the reactions and emoji push brings. |
 | Quote awards | Per **line**. "Give quote award" in the line's menu. Goes to that line's **speaker**. Anyone, any time, no vote. One per person per line, can be taken back. You can't give one to your own line. Each line shows a 🏆 count; hover shows who gave them. |
 | Award progression | Awards add up per person into a **levelling badge** (first at about 10–20, then every about 10). Numbers are tuned in the badges push. |
 | Quote of the Year | An **event**. Top 5 quotes of the year by reactions, plus quotes anyone adds by hand. One vote each, changeable, **self votes allowed**. **Live vote counts.** |
@@ -81,16 +85,17 @@ machine): `quotes-layout.html` (option B) and `qoty-event-v5.html` (the event). 
 - A new channel kind, **`quotes`**, for server channels only. Created like any other channel (anyone can, flat
   permissions as today).
 - Unread dots, mentions-free notifications, read points and the message list behave as in a text channel.
-- **My call:** the channel holds quotes only. The composer always makes a quote. Banter about a quote goes in a normal
-  channel, or in reactions. (If the group misses chatting there, a later change can allow replies to a quote.)
-- **My call:** a server can have any number of quotes channels. Quote of the Year covers all of them in that server.
+- The channel's main list holds **quotes only**; the composer at the bottom always makes a quote. Chat about a quote
+  happens in its **replies** (§3.6).
+- A server will normally have one quotes channel, but there's no hard limit. Quote of the Year covers all of them in
+  that server.
 
 ### 3.2 A quote
 
 A quote is a **message** in a quotes channel (so reactions, editing, deleting, unread and the gateway all reuse the
 message machinery). Its lines are stored alongside it:
 
-- one or more **lines**, in order; each has text and a **speaker**;
+- one or more **lines**, in order; each has a **speaker** and either **text** or an **image** (§3.7);
 - the **poster** is the message author;
 - the **year** is the year it was said: the posting date, unless a "said on" date is set (import, §3.4).
 
@@ -111,7 +116,7 @@ message machinery). Its lines are stored alongside it:
 **Deleting** a quote removes its awards and reactions, and takes it out of any live Quote of the Year (votes for it
 are dropped and those people can vote again). A quote that already won can still be deleted; the stored win stays.
 
-Limits: **my call:** up to 10 lines per quote; each line up to the normal message length limit.
+Limits: **my call:** up to 10 lines per quote; each text line up to the normal message length limit.
 
 ### 3.3 The composer
 
@@ -119,6 +124,7 @@ Limits: **my call:** up to 10 lines per quote; each line up to the normal messag
 - "+ line" adds another line with its own speaker before posting.
 - Quotation marks are added by the display. If someone types them, they're stripped.
 - No speaker picked: the composer won't post, and it says "Who said it?".
+- Pasting or dropping an image into a line (or an image button on the line) makes it an image line (§3.7).
 
 ### 3.4 Speakers not on Pulse yet (and the later import)
 
@@ -135,31 +141,55 @@ Limits: **my call:** up to 10 lines per quote; each line up to the normal messag
 - Message header: poster avatar, name, date.
 - Quote block: each line as `“text”` with the speaker name on the right; a line's 🏆 count sits beside its speaker
   (hidden at 0).
-- Under the block: the reaction row (existing reactions, faded suggestions, "+").
+- Under the block: the reaction row (existing reactions, faded suggestions, "+"), then **"View N replies"** when there
+  are any (with a "new" marker if there are replies you haven't seen).
 - Line menu (hover or right-click a line): "Give quote award" / "Take back award", "Copy".
-- Message menu: edit, delete (poster only), as today.
+- Quote menu: **Reply** (opens the replies panel), edit and delete (poster only).
+
+### 3.6 Replies (the banter panel)
+
+- **Reply** on a quote opens a **side panel** on the right: the quote pinned at the top, then a normal chat (text,
+  mentions, reactions, edit, delete, as in a text channel) about that quote only. Closing the panel returns to the
+  channel. One panel at a time.
+- Replies **never count** toward anything: not the score, votes, awards or badges.
+- **My calls:**
+  - Replies are messages in the same channel, tied to their quote, and kept **out of the main list**.
+  - New replies don't make the channel show unread. "View N replies" gets a "new" marker for replies since you last
+    opened that panel. An @mention in a reply notifies you as usual.
+  - A reply is text only (no quote lines). Deleting the quote deletes its replies.
+
+### 3.7 Image quotes
+
+- A line can hold one image instead of text: a screenshot of something from another channel, in-game text, and so on.
+  It still has a speaker, so it counts like any other line (awards, Quote of the Year).
+- Images use the upload and storage built in the **reactions and emoji** push (custom emoji need it first). Same
+  limits and formats as that push sets.
+- Display: the image inline in the quote block at a sensible max size, click to view full size.
+- **My call:** an image line can have an optional short caption.
 
 ## 4. Scores and awards
 
 ### 4.1 Reaction score
 
-A quote's score is its total number of reactions: every (person, emoji) pair counts once. **My call, flagged:** one
-person adding five different emoji counts five. This follows the owner's "count reactions as a whole"; if it gets
-gamed, switch to counting distinct people.
+**Agreed with the owner:** in a quotes channel each person can have **one reaction per quote**, any emoji. Picking a
+different emoji replaces yours; picking the same one removes it. The score is the number of people who reacted. (This
+rule is for quotes only; replies and other channels keep normal reactions.)
 
 ### 4.2 Quote awards
 
 - One row per (line, giver). Can't give to your own line (speaker is you). Can't give to a plain-name speaker's line?
   **My call: you can.** It's kept on the line and counts for the person once the speaker is linked.
 - Giving or taking back an award updates everyone's view live.
-- **Per-person total:** the number of awards on lines whose speaker is that person. Shown on the profile as a stat
-  ("🏆 23 quote awards") until badges replace it.
+- **Per-person total:** the number of awards on lines whose speaker is that person. Recorded for badges; not shown on
+  the profile in this push (the owner prefers no placeholders).
 - Undo is the same menu item. No limit on how many lines you can award.
 
-### 4.3 Channel tabs
+### 4.3 Leaderboard
 
-**My call:** at the top of a quotes channel: **New** (default, chat order), **Top <year>** (by reaction score, this
-year), **By person** (pick a member, see their quotes). These are views of the same channel.
+- A **leaderboard icon** in the quotes channel header opens a small view (a popover or the side panel).
+- **My call on its sections:** Quote of the Year winners (by year); most-reacted quotes (this year, all time); most
+  quoted people; most quote awards. Each entry jumps to the quote.
+- The channel itself has no tabs; it's always the chat-order list.
 
 ## 5. Quote of the Year
 
@@ -231,6 +261,10 @@ Names are suggestions; the builder may change them.
 - `qoty_events(id, server_id, year, started_by, started_at, ends_at NULL, ended_at NULL, ended_by NULL, end_reason)`.
 - `qoty_options(event_id, message_id, added_by NULL)`; `qoty_votes(event_id, user_id, message_id)`, PK `(event_id,
   user_id)`.
+- Replies: `messages` gains a nullable `thread_root_id` (the quote); the main list excludes rows that have it; a per-user "replies last seen" point per quote for the "new" marker.
+- Image lines: `quote_lines` gains a nullable media reference (from the reactions and emoji push's storage) and a
+  caption; exactly one of text or media is set.
+- One reaction per person per quote: enforced by the server for quotes in a quotes channel.
 - `qoty_winners(event_id, message_id, speakers snapshot)` (co-winners are rows; speakers as they were at the end).
 - Line ids: `quote_lines` gets its own id; awards reference it.
 - `speaker_links(server_id, name_key, user_id, linked_by, linked_at)` for §3.4.
@@ -251,12 +285,14 @@ badge as big stylised quotation marks; a Founder badge for the owner and an excl
 
 ## 8. Tests
 
-- Server units: line and speaker validation; award rules (own line refused, one per giver, undo); score counting;
+- Server units: line and speaker validation (text or image, not both); one reaction per person per quote (replace,
+  remove); replies kept out of the main list and out of every count; award rules (own line refused, one per giver, undo); score counting;
   event rules (one live per server, one finished per year, reopen within 24 h of an early end only, top-5 snapshot with ties, add option only from that year,
   vote change and removal, self vote allowed, early end by anyone, end by time including after a restart, co-winners,
   no-vote end); deleting a quote mid-event; edit rules (text keeps awards, speaker change drops them, speakers locked while an option, wins keep their speaker snapshot); linking and unlinking a plain-name speaker.
 - Gateway: everyone in the event's audience sees awards, votes, the end and a reopen live.
-- UI: composer (layers, picker, no-speaker guard, stripping typed quote marks), option B rendering, the banner and
+- UI: composer (layers, picker, no-speaker guard, stripping typed quote marks, pasting an image), the replies panel,
+  the leaderboard view, option B rendering, the banner and
   voice strip appearing and disappearing with the event, reduced motion.
 - A manual run with the group: post a dozen quotes, run a 10-minute Quote of the Year in a call.
 
