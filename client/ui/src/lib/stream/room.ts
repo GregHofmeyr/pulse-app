@@ -3,11 +3,13 @@
 import {
   ConnectionState,
   Room,
+  RoomEvent,
   Track,
   VideoPreset,
   VideoQuality,
   type LocalTrack,
   type LocalVideoTrack,
+  type RemoteParticipant,
   type RemoteTrack,
   type RemoteTrackPublication,
 } from 'livekit-client'
@@ -22,7 +24,21 @@ const DEADLINE_MS = 15_000
 
 export type Picked = { track: LocalVideoTrack; label: string; surface: string; width: number; height: number }
 
-type Watched = { pub: RemoteTrackPublication; track: RemoteTrack | null; el: HTMLVideoElement; abort: AbortController }
+type Watched = {
+  streamer: string
+  pub: RemoteTrackPublication
+  track: RemoteTrack | null
+  el: HTMLVideoElement
+  abort: AbortController
+  /** The first track is attached: later ones (after a resubscribe) attach as they arrive. */
+  settled: boolean
+  quality: 'auto' | 'saver'
+}
+
+/** A publication from stream-room participant `identity` with `source` is `streamer`'s screen share. */
+export function isScreenOf(identity: string, source: Track.Source, streamer: string): boolean {
+  return source === Track.Source.ScreenShare && identity === `${streamer}#v`
+}
 
 // createScreenTracks lives on LocalParticipant but needs no connection: an unconnected Room's is enough.
 let pickerRoom: Room | null = null
@@ -31,7 +47,41 @@ export class StreamRoom {
   private published: LocalVideoTrack | null = null
   private watched: Watched | null = null
 
-  private constructor(private readonly room: Room) {}
+  private constructor(private readonly room: Room) {
+    // The streamer's `#v` came back with a new publication, or ours rejoined (a full reconnect
+    // brings new publication objects): autoSubscribe is off, so subscribe to it again.
+    room.on(RoomEvent.TrackPublished, (pub: RemoteTrackPublication, p: RemoteParticipant) => {
+      const w = this.watched
+      if (w && pub !== w.pub && isScreenOf(p.identity, pub.source, w.streamer)) this.resubscribe(w, pub)
+    })
+    room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, pub: RemoteTrackPublication) => {
+      const w = this.watched
+      if (!w || !w.settled || pub !== w.pub || w.track === track) return
+      w.track?.detach(w.el)
+      w.track = track
+      track.attach(w.el)
+    })
+    room.on(RoomEvent.Reconnected, () => {
+      const w = this.watched
+      const pub = w && this.screenOf(w.streamer)
+      if (w && pub && (pub !== w.pub || !pub.isSubscribed)) this.resubscribe(w, pub)
+    })
+  }
+
+  private screenOf(streamer: string): RemoteTrackPublication | undefined {
+    return this.room.remoteParticipants.get(`${streamer}#v`)?.getTrackPublication(Track.Source.ScreenShare)
+  }
+
+  /** Moves the watched stream onto `pub` (same element, same quality); its track attaches when it arrives. */
+  private resubscribe(w: Watched, pub: RemoteTrackPublication): void {
+    streamCmd.log({ ev: 'resubscribe' })
+    if (w.pub !== pub) w.pub.setSubscribed(false)
+    w.track?.detach(w.el)
+    w.track = null
+    w.pub = pub
+    pub.setSubscribed(true)
+    pub.setVideoQuality(w.quality === 'saver' ? VideoQuality.LOW : VideoQuality.HIGH)
+  }
 
   static async connect(channelId: string): Promise<StreamRoom> {
     const t0 = performance.now()
@@ -117,10 +167,10 @@ export class StreamRoom {
   async watch(streamer: string, el: HTMLVideoElement): Promise<void> {
     this.unwatch()
     const t0 = performance.now()
-    const pub = this.room.remoteParticipants.get(`${streamer}#v`)?.getTrackPublication(Track.Source.ScreenShare)
+    const pub = this.screenOf(streamer)
     if (!pub) throw new Error('That stream has ended')
     const abort = new AbortController()
-    const w: Watched = { pub, track: null, el, abort }
+    const w: Watched = { streamer, pub, track: null, el, abort, settled: false, quality: 'auto' }
     this.watched = w
     const unwatched = new Promise<never>((_, reject) =>
       abort.signal.addEventListener('abort', () => reject(new DOMException('Stopped watching', 'AbortError')), { once: true }),
@@ -135,7 +185,8 @@ export class StreamRoom {
           new Promise<RemoteTrack>((resolve) => {
             const check = () => {
               if (abort.signal.aborted) return
-              if (pub.track) resolve(pub.track)
+              // w.pub, not pub: a resubscribe meanwhile moves it
+              if (w.pub.track) resolve(w.pub.track)
               else setTimeout(check, 50)
             }
             check()
@@ -147,6 +198,7 @@ export class StreamRoom {
       )
       w.track = track
       track.attach(el)
+      w.settled = true
       await withDeadline(
         Promise.race([new Promise<void>((resolve) => (frameId = el.requestVideoFrameCallback(() => resolve()))), unwatched]),
         DEADLINE_MS,
@@ -174,7 +226,9 @@ export class StreamRoom {
   }
 
   setQuality(q: 'auto' | 'saver'): void {
-    this.watched?.pub.setVideoQuality(q === 'saver' ? VideoQuality.LOW : VideoQuality.HIGH)
+    if (!this.watched) return
+    this.watched.quality = q
+    this.watched.pub.setVideoQuality(q === 'saver' ? VideoQuality.LOW : VideoQuality.HIGH)
   }
 
   localStats(): Promise<RTCStatsReport | undefined> {
