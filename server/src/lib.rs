@@ -32,6 +32,7 @@ pub fn router(state: AppState) -> Router {
         .merge(messages::routes::router())
         .merge(dms::routes::router())
         .merge(voice::routes::router())
+        .merge(streams::routes::router())
         .merge(reports::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())

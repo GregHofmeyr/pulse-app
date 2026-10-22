@@ -8,7 +8,7 @@ use livekit_api::access_token::{AccessToken, TokenVerifier, VideoGrants};
 use livekit_api::webhooks::WebhookReceiver;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
-use pulse_protocol::rest::{ChannelKind, VoiceTokenResponse};
+use pulse_protocol::rest::{ChannelKind, StreamEndReason, VoiceTokenResponse};
 
 use crate::AppState;
 use crate::access::{channel_for, load_channel};
@@ -47,6 +47,8 @@ async fn token(
             room_join: true,
             room: id.to_string(),
             can_publish: Some(true),
+            // Voice rooms carry the microphone only: screen share has its own room (`<id>~s`).
+            can_publish_sources: vec!["microphone".into()],
             can_subscribe: Some(true),
             ..Default::default()
         })
@@ -135,6 +137,27 @@ async fn webhook(
             } else {
                 false
             };
+            if in_memory {
+                // Only the stream in THIS channel: a late leave for an old channel must not
+                // end a stream the user has since started elsewhere.
+                if s.streams.end(channel_id, user_id).is_some() {
+                    tracing::info!(user = %user_id, channel = %channel_id, reason = "left_voice", "stream ended");
+                    s.hub
+                        .publish(
+                            &s.db,
+                            Event::StreamEnded {
+                                channel_id,
+                                user_id,
+                                reason: StreamEndReason::LeftVoice,
+                            },
+                        )
+                        .await;
+                }
+                for (streamer, viewers) in s.streams.remove_viewer_everywhere(channel_id, user_id) {
+                    crate::streams::routes::publish_viewers(&s, channel_id, streamer, viewers)
+                        .await;
+                }
+            }
             if in_memory || closed {
                 s.hub
                     .publish(

@@ -19,6 +19,7 @@ use crate::auth::session;
 use crate::db::now;
 use crate::error::AppResult;
 use crate::servers::routes::{all_servers, dms_of, server_channels, server_members};
+use crate::streams::state::StreamState;
 use crate::voice::VoiceState;
 
 pub use super::hub::{CLOSE_TOO_SLOW, CLOSE_UNAUTHORIZED, CLOSE_UPDATE_REQUIRED};
@@ -133,6 +134,7 @@ pub async fn people(db: &SqlitePool, hub: &Hub) -> AppResult<Vec<Person>> {
 pub async fn build_ready(
     db: &SqlitePool,
     voice_state: &VoiceState,
+    streams: &StreamState,
     hub: &Hub,
     me: UserId,
 ) -> AppResult<Ready> {
@@ -177,6 +179,13 @@ pub async fn build_ready(
             });
         }
     }
+    let mut live = vec![];
+    for stream in streams.all() {
+        // Same visibility rule as voice rooms.
+        if channel_for(db, me, stream.channel_id).await.is_ok() {
+            live.push(stream);
+        }
+    }
     Ok(Ready {
         me: load_user(db, me).await?,
         servers,
@@ -189,7 +198,7 @@ pub async fn build_ready(
         mutes: crate::dms::routes::mutes_of(db, me).await?,
         hidden: crate::dms::routes::hidden_of(db, me).await?,
         latest: crate::reads::latest_for(db, me).await?,
-        streams: vec![],
+        streams: live,
     })
 }
 
@@ -205,7 +214,7 @@ async fn run(mut socket: WebSocket, s: AppState) {
     // Register before building Ready so no event between the snapshot and the stream is lost.
     let reg = s.hub.register(me, token_hash);
     let (conn, mut rx, mut kick) = (reg.id, reg.rx, reg.kick);
-    let ready = match build_ready(&s.db, &s.voice, &s.hub, me).await {
+    let ready = match build_ready(&s.db, &s.voice, &s.streams, &s.hub, me).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = ?e, "build_ready failed");
