@@ -8,6 +8,7 @@ import type { Person } from "./Person";
 import type { ReadState } from "./ReadState";
 import type { Server } from "./Server";
 import type { ServerMembers } from "./ServerMembers";
+import type { StreamInfo } from "./StreamInfo";
 import type { User } from "./User";
 import type { VoiceRoom } from "./VoiceRoom";
 
@@ -31,4 +32,8 @@ hidden: Array<ChannelId>,
 /**
  * Latest message of each of your DMs/groups (list previews + sorting).
  */
-latest: Array<Message>, };
+latest: Array<Message>, 
+/**
+ * Streams live right now (only in channels you may see).
+ */
+streams: Array<StreamInfo>, };

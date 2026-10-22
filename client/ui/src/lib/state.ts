@@ -228,6 +228,12 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const { [e.d.channel_id]: _x, ...rest } = s.hidden
       return { ...s, hidden: e.d.hidden ? { ...rest, [e.d.channel_id]: true } : rest }
     }
+    // Stream state arrives with the stream store; until then these events change nothing.
+    case 'StreamStarted':
+    case 'StreamUpdated':
+    case 'StreamEnded':
+    case 'ViewersChanged':
+      return s
   }
 }
 

@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
-use crate::rest::{Channel, Member, Message, Mute, Person, ReadState, Server, User};
+use crate::rest::{
+    Channel, Member, Message, Mute, Person, ReadState, Server, StreamEndReason, StreamInfo, User,
+};
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "op", content = "d")]
@@ -61,6 +63,9 @@ pub struct Ready {
     pub hidden: Vec<ChannelId>,
     /// Latest message of each of your DMs/groups (list previews + sorting).
     pub latest: Vec<Message>,
+    /// Streams live right now (only in channels you may see).
+    #[serde(default)]
+    pub streams: Vec<StreamInfo>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -165,6 +170,22 @@ pub enum Event {
         channel_id: ChannelId,
         hidden: bool,
     },
+    StreamStarted {
+        stream: StreamInfo,
+    },
+    StreamUpdated {
+        stream: StreamInfo,
+    },
+    StreamEnded {
+        channel_id: ChannelId,
+        user_id: UserId,
+        reason: StreamEndReason,
+    },
+    ViewersChanged {
+        channel_id: ChannelId,
+        user_id: UserId,
+        viewers: Vec<UserId>,
+    },
 }
 
 impl Event {
@@ -185,6 +206,12 @@ impl Event {
             | Self::ReadStateUpdated { channel_id, .. }
             | Self::ConversationVisibility { channel_id, .. } => Some(*channel_id),
             Self::ChannelUpdated { channel } => Some(channel.id),
+            Self::StreamStarted { stream } | Self::StreamUpdated { stream } => {
+                Some(stream.channel_id)
+            }
+            Self::StreamEnded { channel_id, .. } | Self::ViewersChanged { channel_id, .. } => {
+                Some(*channel_id)
+            }
             Self::ServerCreated { .. }
             | Self::MemberJoined { .. }
             | Self::UserCreated { .. }
@@ -208,6 +235,7 @@ impl Event {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::rest::{StreamRole, StreamSettings, StreamStatus};
 
     #[test]
     fn hello_without_a_version_is_version_zero() {
@@ -235,5 +263,79 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    fn stream_info(channel: ChannelId, user: UserId) -> StreamInfo {
+        StreamInfo {
+            channel_id: channel,
+            user_id: user,
+            settings: StreamSettings {
+                height: 720,
+                fps: 60,
+                audio: true,
+            },
+            status: StreamStatus::Live,
+            viewers: vec![],
+            started_at: "2026-01-01T00:00:00Z".into(),
+        }
+    }
+
+    #[test]
+    fn ready_without_streams_parses() {
+        let mut v = serde_json::to_value(Ready {
+            me: User {
+                id: UserId::new(),
+                username: "a".into(),
+                avatar_hash: None,
+            },
+            servers: vec![],
+            channels: vec![],
+            members: vec![],
+            dm_members: vec![],
+            voice: vec![],
+            people: vec![],
+            read_states: vec![],
+            mutes: vec![],
+            hidden: vec![],
+            latest: vec![],
+            streams: vec![],
+        })
+        .unwrap();
+        v.as_object_mut().unwrap().remove("streams");
+        let ready: Ready = serde_json::from_value(v).unwrap();
+        assert!(ready.streams.is_empty());
+    }
+
+    #[test]
+    fn stream_events_are_channel_scoped() {
+        let (c, u) = (ChannelId::new(), UserId::new());
+        let events = [
+            Event::StreamStarted {
+                stream: stream_info(c, u),
+            },
+            Event::StreamUpdated {
+                stream: stream_info(c, u),
+            },
+            Event::StreamEnded {
+                channel_id: c,
+                user_id: u,
+                reason: StreamEndReason::Stopped,
+            },
+            Event::ViewersChanged {
+                channel_id: c,
+                user_id: u,
+                viewers: vec![u],
+            },
+        ];
+        for e in events {
+            assert_eq!(e.channel_id(), Some(c), "{e:?}");
+            assert_eq!(e.only_for(), None, "{e:?}");
+        }
+    }
+
+    #[test]
+    fn stream_role_is_a_letter() {
+        assert_eq!(serde_json::to_string(&StreamRole::V).unwrap(), "\"v\"");
+        assert_eq!(serde_json::to_string(&StreamRole::A).unwrap(), "\"a\"");
     }
 }

@@ -23,6 +23,7 @@ const r: Ready = {
   mutes: [],
   hidden: [],
   latest: [],
+  streams: [],
 }
 const s = applyReady(emptyState(), r)
 

@@ -24,6 +24,7 @@ const ready = (over: Partial<Ready> = {}): Ready => ({
   mutes: [],
   hidden: [],
   latest: [],
+  streams: [],
   ...over,
 })
 
