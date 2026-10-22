@@ -6,6 +6,11 @@ on:
   push:
     tags: ['v*']
   workflow_dispatch:
+    inputs:
+      spike:
+        description: Build the screen-share spike (debug panel + loopback prototype)
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -16,6 +21,8 @@ env:
   VITE_DEFAULT_SERVER: https://pulsechat.co.za
   # Bug reports name the build they came from.
   PULSE_COMMIT: ${{ github.sha }}
+  # THROWAWAY (screen-share spike): '1' turns on the hidden debug panel in the UI build.
+  VITE_SPIKE: ${{ inputs.spike && '1' || '' }}
 
 jobs:
   build:
@@ -35,8 +42,13 @@ jobs:
       - run: pnpm install --frozen-lockfile
         working-directory: client/ui
       # Prebuilt CLI from npm: no ~5 min `cargo install tauri-cli` on every run.
-      - run: pnpm dlx @tauri-apps/cli@^2 build
+      - run: pnpm dlx @tauri-apps/cli@^2 build ${{ inputs.spike && '--features spike --config tauri.spike.conf.json' || '' }}
         working-directory: client/src-tauri
+      # THROWAWAY (spike): the spike's Rust tests, on Windows (WASAPI loopback included). --release reuses the
+      # build above. Doesn't block the kit: a runner with no audio endpoint can't activate loopback.
+      - if: inputs.spike
+        continue-on-error: true
+        run: cargo test --release -p pulse-client --lib --features spike 'spike::'
       - run: cargo build --release -p pulse-server --bin pulse-app-server
       - name: Assemble test kit
         shell: pwsh
@@ -51,6 +63,8 @@ jobs:
           Expand-Archive $zip lk
           Copy-Item lk/livekit-server.exe $kit
           Copy-Item lk/LICENSE "$kit/LICENSE-livekit.txt"
+          # THROWAWAY (spike): the S9 flash-and-beep page, opened in Edge/Chrome on the streamer PC.
+          if ('${{ inputs.spike }}' -eq 'true') { Copy-Item client/ui/src/spike/testpattern.html $kit }
           Get-ChildItem $kit | Format-Table Name, Length
       - uses: actions/upload-artifact@v5
         with:
