@@ -9,15 +9,15 @@ Before = `main` (de4b2ea). After = `optimisation-run` (c81e41c). Both built `--r
 
 | Metric | Baseline (Windows) | Linux before | Linux after | Windows after |
 |---|---|---|---|---|
-| Startup → Ready | 2.4 s | 229 ms (224–239, n=5) | 100 ms (99–103, n=5) | |
-| Join (elapsed_ms) | 2.0 s | 103 ms (83–209, n=4) | 53 ms (51–97, n=4) | |
-| room_connect_ms | 1.6 s | not logged | 45–49 ms | |
-| Channel switch | — | 100 ms (91–116, n=4), no pipeline reuse | 41 ms (32–65, n=4), `pipeline_reused=true` | |
-| NetEq buffer / target | 80–100 / 20–40 ms | 34 / 20 ms (n=23) | 30 / 27 ms (n=46) | |
-| recv queue p50 | 20 ms | 0 ms (max 10; n=23) | 10 ms (max 20; n=46) | |
-| Strong ns+gate p50/max | 0.57 / 1.9 ms | 2.1 / 2.7 ms per 10 ms (n=46) | 2.1 / 2.4 ms (n=46) | |
-| ns attenuation / gate open | — | — (field added in R4) | -7.0 dB / 0 % (n=46; silent mic input) | |
-| Linux binary / Windows installer | — / — | 94.4 MB / — | 62.1 MB / | |
+| Startup → Ready | 2.4 s | 229 ms (224–239, n=5) | 100 ms (99–103, n=5) | 2.17 s (profile 1); 1.25 s (2nd profile) |
+| Join (elapsed_ms) | 2.0 s | 103 ms (83–209, n=4) | 53 ms (51–97, n=4) | 1.07–1.09 s (n=3); 1.50 s (2nd profile) |
+| room_connect_ms | 1.6 s | not logged | 45–49 ms | 1.07–1.09 s (n=3); 1.50 s |
+| Channel switch | — | 100 ms (91–116, n=4), no pipeline reuse | 41 ms (32–65, n=4), `pipeline_reused=true` | 1.07–1.08 s (n=2), `pipeline_reused=true`, devices 0 ms |
+| NetEq buffer / target | 80–100 / 20–40 ms | 34 / 20 ms (n=23) | 30 / 27 ms (n=46) | 49 / 20 ms (n=194); 30 / 20 ms 2nd profile (n=194) |
+| recv queue p50 | 20 ms | 0 ms (max 10; n=23) | 10 ms (max 20; n=46) | 20 ms (max 21); 11 ms 2nd profile |
+| Strong ns+gate p50/max | 0.57 / 1.9 ms | 2.1 / 2.7 ms per 10 ms (n=46) | 2.1 / 2.4 ms (n=46) | 0.51 / 1.6 ms (n=209) |
+| ns attenuation / gate open | — | — (field added in R4) | -7.0 dB / 0 % (n=46; silent mic input) | -49.9 dB / 30 % (n=209, real speech + a show) |
+| Linux binary / Windows installer | — / — | 94.4 MB / — | 62.1 MB / || kit zip 74.3 MB |
 
 NetEq verdict (R5): see opt-neteq-buffer.md.
 
@@ -81,12 +81,24 @@ as indicative only, and read underrun together with `adjust`/`mix_busy` and the 
   skipped while muted, WebView2 low memory target in the background, latin-only fonts, UI sounds shipped once,
   libwebrtc log sink at warning, fat LTO + one codegen unit + strip, one tokio-tungstenite.
 
+## Windows run 2026-10-22 (kit 6d8e451, run 39757553671)
+
+Two profiles on the owner's PC (Windows 11, same network path as the baseline: RTT 170–190 ms, p50 172 ms), reports
+MFKAYG, DEQ5B8, VBS657, FSP7WB. Protocol: Task 35 Step 8 minus the network-off step and the Bluetooth join.
+
+- **Join and switch roughly halved:** 2.0 s → about 1.08 s at RTT 172 ms (the plan's 1.0–1.2 s target at 160 ms).
+  Join is now almost entirely `room_connect_ms` (token prefetched, devices 42–51 ms, 0 ms on a reused pipeline).
+- **Voice path clean:** 0 lost, 0.0 % concealed (one 0.5 % window on the 2nd profile), mix_busy 0. Underruns: 2
+  windows, 28 ms total in 18 min on profile 1; none on profile 2. `recv` p50 ≤ 20 ms on a real device (L7b ✓).
+- **NetEq buffer** p50 49 ms (profile 1) and 30 ms (profile 2) against a 20 ms target, down from 80–100 ms.
+- **Strong while muted (F11 ✓):** the muted profile logged `ns+gate` in only 19 of 196 windows (min 3 µs).
+- **MMCSS (R3 ✓):** `pulse-mic` and `pulse-strong` both got "Pro Audio" real-time priority.
+- **WebView2 memory target (F2 ✓):** Low on minimise / after background, Normal on restore.
+- One `input stream error … underrun or overrun` at the start of each join (`repeated=0`): device start-up, harmless.
+- The owner: "testing went very well", per-track audio and keybinds "no hiccups".
+
 ## Pending owner checks
 
-- Windows test with the `release-windows` kit (protocol in the plan, Task 35 Step 8); fill the last column above.
-- `tc netem` run (80 ms each way) on Linux for the join at 160 ms RTT.
+- `tc netem` run (80 ms each way) on Linux for the join at 160 ms RTT (largely answered by the Windows run at 172 ms).
+- Network-off recovery on Windows (step 5 of the protocol, skipped 2026-10-22).
 - Bluetooth headset join (device reopen racing a rejoin).
-- MMCSS log lines for the mic and Strong threads (R3 Step 5; Windows only).
-- WebView2 memory target log lines on minimise/restore (F2; Windows only).
-- Strong CPU while muted (F11: should drop to about zero on Windows).
-- Real-device underrun check on Windows with `recv` p50 ≤ 20 ms (L7b).
