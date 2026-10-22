@@ -5,6 +5,12 @@
   import { voiceOccupants } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import { clampVolume, volumeLabel } from '../lib/voiceui'
+  import GoLiveDialog from './GoLiveDialog.svelte'
+  import LiveCard from './LiveCard.svelte'
+  import { StreamRoom, type Picked } from '../lib/stream/room'
+  import { isWindows } from '../lib/stream/platform'
+  import { stream } from '../lib/stream/stream.svelte'
+  import { errorText } from '../lib/tauri'
 
   let { channelId, serverId }: { channelId: string; serverId: string | null } = $props()
 
@@ -12,6 +18,41 @@
   const inHere = $derived(voice.channelId === channelId)
   const people = $derived(voiceOccupants(app.state, serverId, channelId))
   let popoverFor = $state<string | null>(null)
+
+  let picked = $state<Picked | null>(null)
+  let pickError = $state('')
+  const canGoLive = $derived(inHere && voice.connection === 'connected' && !stream.live)
+  const windows = isWindows()
+
+  async function pickSource() {
+    if (!windows) return
+    pickError = ''
+    try {
+      picked = await StreamRoom.pick()
+    } catch (e) {
+      // cancelling the picker is not an error
+      if ((e as Error)?.name !== 'NotAllowedError') pickError = errorText(e)
+    }
+  }
+
+  function closeDialog() {
+    picked = null
+  }
+
+  // Leaving voice (or losing the connection) while the dialog is open: drop the picked capture.
+  $effect(() => {
+    if (picked && !canGoLive) {
+      picked.track.stop()
+      picked = null
+    }
+  })
+
+  // The animation freeze while live (app.css `.streaming`).
+  $effect(() => {
+    if (!stream.live) return
+    document.body.classList.add('streaming')
+    return () => document.body.classList.remove('streaming')
+  })
 
   const qualityBars = (q: string | undefined) => (q === 'excellent' ? 3 : q === 'good' ? 2 : q === 'poor' ? 1 : q === 'lost' ? 0 : 3)
 </script>
@@ -61,6 +102,9 @@
     {/each}
   </div>
 
+  {#if inHere && stream.live?.channelId === channelId}<LiveCard {channelId} {serverId} />{/if}
+  {#if pickError}<p class="error" role="alert">{pickError}</p>{/if}
+
   <div class="bar-wrap">
     {#if inHere}
       <div class="controls">
@@ -70,6 +114,10 @@
         <button class="ctl" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label={voice.controls.deafened ? "Undeafen" : "Deafen"} onclick={() => voiceApi.toggleDeafen()}>
           <Icon name={voice.controls.deafened ? 'headphonesOff' : 'headphones'} size={20} />
         </button>
+        {#if canGoLive}
+          <!-- aria-disabled, not disabled: a disabled button swallows the hover that shows the tooltip -->
+          <button class="golive" class:off={!windows} aria-disabled={!windows} data-tip={windows ? undefined : "Streaming from Linux isn't supported yet"} onclick={pickSource}>Go Live</button>
+        {/if}
         <button class="leave" aria-label="Leave voice" onclick={() => voiceApi.leave()}><Icon name="hangup" size={22} /></button>
       </div>
     {:else}
@@ -77,6 +125,8 @@
     {/if}
   </div>
 </div>
+
+{#if picked}<GoLiveDialog {channelId} bind:picked onClose={closeDialog} />{/if}
 
 <style>
   .panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
@@ -108,6 +158,8 @@
   .ctl { width: 48px; height: 48px; border: 0; border-radius: 14px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
   .ctl.on { background: var(--danger); color: #fff; }
   .leave { width: 64px; height: 48px; border: 0; border-radius: 14px; background: var(--danger); color: #fff; display: grid; place-items: center; }
+  .golive { height: 48px; padding: 0 16px; border: 0; border-radius: 14px; background: var(--ok); color: #0f2a1c; font-weight: 700; }
+  .golive.off { opacity: .5; cursor: not-allowed; }
   .primary { height: 44px; padding: 0 22px; border: 0; border-radius: 12px; background: var(--ok); color: #0f2a1c; font-weight: 700; }
   .ghost { align-self: flex-start; height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
 </style>

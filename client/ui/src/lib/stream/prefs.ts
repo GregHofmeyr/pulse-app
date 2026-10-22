@@ -1,4 +1,4 @@
-import type { Fps, Res } from './encodings'
+import { resolutionsFor, type Fps, type Res } from './encodings'
 
 // Per-device preferences: guarded localStorage, same pattern as lib/voiceui.ts.
 function load<T>(key: string, fallback: T): T {
@@ -22,6 +22,21 @@ const GO_LIVE_DEFAULT: GoLive = { res: 720, fps: 60, audio: true }
 
 export const loadGoLive = (): GoLive => load('pulse.golive', GO_LIVE_DEFAULT)
 export const saveGoLive = (v: GoLive) => save('pulse.golive', v)
+
+const FPS: Fps[] = [15, 30, 60]
+
+/** The stored choice made safe for a source of `sourceHeight`: storage is untrusted, and the source may be smaller than last time. */
+export function clampGoLive(stored: GoLive, sourceHeight: number): GoLive {
+  const offered = resolutionsFor(sourceHeight)
+  const largest = offered[offered.length - 1]
+  const res = offered.includes(stored.res) ? stored.res : stored.res > largest ? largest : GO_LIVE_DEFAULT.res
+  const fps = FPS.includes(stored.fps) ? stored.fps : GO_LIVE_DEFAULT.fps
+  const audio = typeof stored.audio === 'boolean' ? stored.audio : GO_LIVE_DEFAULT.audio
+  return { res, fps, audio }
+}
+
+export const loadHidePreview = (): boolean => load<{ on: boolean }>('pulse.stream.hidepreview', { on: false }).on
+export const saveHidePreview = (on: boolean) => save('pulse.stream.hidepreview', { on })
 
 export const loadDiagOverlay = (): boolean => load<{ on: boolean }>('pulse.stream.diag', { on: false }).on
 export const saveDiagOverlay = (on: boolean) => save('pulse.stream.diag', { on })

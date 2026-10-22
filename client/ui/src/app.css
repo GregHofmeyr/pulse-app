@@ -38,3 +38,6 @@ button { cursor: pointer; }
   opacity: 0; transition: opacity .12s; left: -9999px; top: -9999px;
 }
 .pulse-tooltip.show { opacity: 1; }
+
+/* While you stream, the UI stops animating so it doesn't cost game frames (spec 3.3). */
+.streaming *, .streaming *::before, .streaming *::after { animation-play-state: paused !important; transition: none !important; }

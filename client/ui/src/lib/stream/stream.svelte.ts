@@ -243,6 +243,9 @@ async function goLive(token: number, channelId: string, track: LocalVideoTrack, 
   })
 }
 
+/** The captured track while live, for the local preview (not reactive state: a track must not be proxied). */
+export const liveMediaTrack = (): MediaStreamTrack | null => liveTrack?.mediaStreamTrack ?? null
+
 export const streamApi = {
   /**
    * Publishes the picked `track` and tells everyone. Throws (and sets `stream.error`) on failure;
