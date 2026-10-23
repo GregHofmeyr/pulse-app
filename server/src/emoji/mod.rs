@@ -3,14 +3,20 @@
 
 pub mod routes;
 
+use std::collections::HashSet;
+
 use chrono::{DateTime, Utc};
+use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ServerId, UserId};
 use pulse_protocol::rest::CustomEmoji;
 use sqlx::{SqliteConnection, SqlitePool};
 
+use crate::AppState;
 use crate::error::{AppError, AppResult};
 
 pub const MAX_PER_SERVER: i64 = 100;
+/// How many "frequently used" emoji Ready and [`Event::FrequentEmoji`] carry: 3 rows of 9.
+pub const FREQUENT: usize = 27;
 const HALF_LIFE_DAYS: f64 = 14.0;
 
 type Row = (
@@ -103,8 +109,13 @@ pub async fn record_use_at(
     now: DateTime<Utc>,
 ) -> AppResult<()> {
     let at = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let mut seen = HashSet::new();
     for emoji in emojis {
         let emoji = &canonical_key(emoji);
+        // `❤` and `❤️` in one write are one use.
+        if !seen.insert(emoji.clone()) {
+            continue;
+        }
         let prev: Option<(f64, String)> = sqlx::query_as(
             "SELECT score, last_used_at FROM emoji_usage WHERE user_id = ? AND emoji = ?",
         )
@@ -139,14 +150,22 @@ fn decayed(score: f64, last_used_at: &str, now: DateTime<Utc>) -> f64 {
     score * 0.5f64.powf(days / HALF_LIFE_DAYS)
 }
 
-/// The `n` highest-scoring emoji for `user`, best first, scores decayed to now.
+/// The `n` highest-scoring emoji `user` can use right now, best first, scores decayed to now.
+/// Custom emoji that were deleted, or whose server `user` isn't in, are skipped and the next ones
+/// down fill their places.
 pub async fn frequent(db: &SqlitePool, user: UserId, n: usize) -> AppResult<Vec<String>> {
     let now = Utc::now();
-    let rows: Vec<(String, f64, String)> =
-        sqlx::query_as("SELECT emoji, score, last_used_at FROM emoji_usage WHERE user_id = ?")
-            .bind(user.to_string())
-            .fetch_all(db)
-            .await?;
+    let rows: Vec<(String, f64, String)> = sqlx::query_as(
+        "SELECT u.emoji, u.score, u.last_used_at FROM emoji_usage u
+         WHERE u.user_id = ?1
+           AND (substr(u.emoji, 1, 7) != 'custom:' OR EXISTS (
+                SELECT 1 FROM custom_emoji e
+                JOIN server_members m ON m.server_id = e.server_id AND m.user_id = ?1
+                WHERE e.id = substr(u.emoji, 8) AND e.deleted_at IS NULL))",
+    )
+    .bind(user.to_string())
+    .fetch_all(db)
+    .await?;
     let mut scored: Vec<(String, f64, String)> = rows
         .into_iter()
         .map(|(e, s, last)| {
@@ -161,4 +180,20 @@ pub async fn frequent(db: &SqlitePool, user: UserId, n: usize) -> AppResult<Vec<
             .then_with(|| a.0.cmp(&b.0))
     });
     Ok(scored.into_iter().take(n).map(|(e, ..)| e).collect())
+}
+
+/// Tell `user`'s own sessions their new frequently used list, after a committed write that
+/// counted their emoji use. Call it under [`crate::gateway::hub::Hub::in_order`] so two writes'
+/// lists can't arrive stale-last. Best effort: the write stands whether or not this goes out.
+pub async fn publish_frequent(s: &AppState, user: UserId) {
+    match frequent(&s.db, user, FREQUENT).await {
+        Ok(frequent_emoji) => {
+            let event = Event::FrequentEmoji {
+                user_id: user,
+                frequent_emoji,
+            };
+            s.hub.publish(&s.db, event).await;
+        }
+        Err(e) => tracing::error!(error = ?e, %user, "frequent emoji not published"),
+    }
 }

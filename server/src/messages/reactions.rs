@@ -25,7 +25,8 @@ use crate::servers::routes::is_server_member;
 /// Distinct emoji on one message.
 pub const MAX_DISTINCT: i64 = 20;
 const MAX_REACTORS: i64 = 100;
-/// Distinct emoji counted as usage per message; the rest of a long message goes uncounted.
+/// Distinct emoji counted as usage per message; the rest of a long message goes uncounted. The
+/// cap applies before [`live_keys`] drops the ones the sender can't use.
 pub const MAX_USED: usize = 50;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -124,6 +125,13 @@ fn is_standard(s: &str) -> bool {
     STANDARD.contains(&canonical_key(s))
 }
 
+/// `custom:<id>` with an id that could be one (letters, digits, `_`), whether or not it exists.
+fn is_custom_key(key: &str) -> bool {
+    key.strip_prefix("custom:").is_some_and(|id| {
+        !id.is_empty() && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+    })
+}
+
 /// Whether `key` is on `msg` at all.
 async fn on_message(db: &SqlitePool, msg: MessageId, key: &str) -> AppResult<bool> {
     let hit: Option<i64> =
@@ -196,7 +204,11 @@ pub async fn toggle(
         }
         _ => {}
     }
-    check_key(&s.db, me, msg, emoji, add).await?;
+    // Taking off a well-formed custom key needs no emoji: if it's gone, or this is a second click,
+    // there's simply nothing to remove.
+    if add || !is_custom_key(emoji) {
+        check_key(&s.db, me, msg, emoji, add).await?;
+    }
     // Events carry absolute counts, so two racing toggles must not publish out of commit order.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
@@ -211,6 +223,7 @@ pub async fn toggle(
     }
 
     let mut events = Vec::new();
+    let mut used = false;
     let event = |emoji: &str, count, added| {
         let (emoji, user_id) = (emoji.to_string(), me);
         if added {
@@ -280,6 +293,7 @@ pub async fn toggle(
             let n = count(&mut tx, msg, emoji).await?;
             events.push(event(emoji, n, true));
             crate::emoji::record_use(&mut tx, me, std::slice::from_ref(emoji)).await?;
+            used = true;
         }
     } else {
         let deleted =
@@ -298,6 +312,9 @@ pub async fn toggle(
     tx.commit().await?;
     for e in events {
         s.hub.publish(&s.db, e).await;
+    }
+    if used {
+        crate::emoji::publish_frequent(s, me).await;
     }
     Ok(())
 }

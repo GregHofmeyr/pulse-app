@@ -583,9 +583,10 @@ async fn reactors_reject_unknown_keys() {
         reactors_status(&app, &alex, msg.id, "custom:01JAAAAAAAAAAAAAAAAAAAAAAA").await,
         400
     );
+    // Taking one off is a no-op rather than an error: see removing_a_gone_custom_reaction_is_a_no_op.
     assert_eq!(
         unreact(&app, &alex, msg.id, "custom:01JAAAAAAAAAAAAAAAAAAAAAAA").await,
-        400
+        204
     );
     assert_eq!(reactors_status(&app, &alex, msg.id, "👍").await, 200);
 }
@@ -749,4 +750,89 @@ async fn concurrent_adds_fill_only_the_last_slot() {
             .await
             .unwrap();
     assert_eq!(distinct, 20);
+}
+
+#[tokio::test]
+async fn removing_a_gone_custom_reaction_is_a_no_op() {
+    let app = spawn().await;
+    let (_, alex, _, _, srv, msg) = setup(&app).await;
+    let e = custom_emoji(&app, &alex, srv, "pog").await;
+    let key = format!("custom:{}", e.id);
+    assert_eq!(react(&app, &alex, msg.id, &key).await, 204);
+    sqlx::query("DELETE FROM custom_emoji WHERE id = ?")
+        .bind(&e.id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // The first removal takes it off; the second (a double click) finds nothing and still succeeds.
+    assert_eq!(unreact(&app, &alex, msg.id, &key).await, 204);
+    assert_eq!(unreact(&app, &alex, msg.id, &key).await, 204);
+    assert!(reactions_of(&app, &alex, &msg).await.is_empty());
+    // Malformed keys are still refused.
+    for junk in ["custom:", "custom:a b", "custom:a%3Ab", "abc"] {
+        assert_eq!(unreact(&app, &alex, msg.id, junk).await, 400, "{junk}");
+    }
+}
+
+/// The next FrequentEmoji event, skipping everything else.
+async fn next_frequent(ws: &mut Socket) -> (UserId, Vec<String>) {
+    loop {
+        match next_frame(ws, Duration::from_secs(3)).await {
+            Some(ServerFrame::Event(Event::FrequentEmoji {
+                user_id,
+                frequent_emoji,
+            })) => return (user_id, frequent_emoji),
+            Some(_) => continue,
+            None => panic!("no FrequentEmoji event"),
+        }
+    }
+}
+
+/// Every frame until the socket goes quiet.
+async fn drain(ws: &mut Socket) -> Vec<ServerFrame> {
+    let mut out = Vec::new();
+    while let Some(f) = next_frame(ws, Duration::from_millis(500)).await {
+        out.push(f);
+    }
+    out
+}
+
+fn has_frequent(frames: &[ServerFrame]) -> bool {
+    frames
+        .iter()
+        .any(|f| matches!(f, ServerFrame::Event(Event::FrequentEmoji { .. })))
+}
+
+#[tokio::test]
+async fn frequent_updates_reach_only_your_own_sessions() {
+    let app = spawn().await;
+    let (alex_id, alex, sam_id, sam, _, msg) = setup(&app).await;
+    let mut alex1 = hello(&app, &alex).await;
+    let mut alex2 = hello(&app, &alex).await;
+    let mut sam1 = hello(&app, &sam).await;
+
+    assert_eq!(react(&app, &alex, msg.id, "🎉").await, 204);
+    for ws in [&mut alex1, &mut alex2] {
+        assert_eq!(next_frequent(ws).await, (alex_id, vec!["🎉".to_string()]));
+    }
+    send(&app, &alex, msg.channel_id, "yay 😂").await;
+    let want = emoji::frequent(&app.db, alex_id, 27).await.unwrap();
+    assert_eq!(want.len(), 2);
+    for ws in [&mut alex1, &mut alex2] {
+        assert_eq!(next_frequent(ws).await, (alex_id, want.clone()));
+    }
+    assert!(!has_frequent(&drain(&mut sam1).await));
+
+    // Writes that record no usage publish nothing.
+    assert_eq!(unreact(&app, &alex, msg.id, "🎉").await, 204);
+    send(&app, &alex, msg.channel_id, "plain").await;
+    // Sam's own usage goes to sam alone.
+    assert_eq!(react(&app, &sam, msg.id, "👍").await, 204);
+    assert_eq!(
+        next_frequent(&mut sam1).await,
+        (sam_id, vec!["👍".to_string()])
+    );
+    for ws in [&mut alex1, &mut alex2] {
+        assert!(!has_frequent(&drain(ws).await));
+    }
 }

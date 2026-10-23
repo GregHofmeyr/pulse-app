@@ -196,6 +196,12 @@ pub enum Event {
         user_id: UserId,
         count: u32,
     },
+    /// Only to the user's own sessions, after a write that counted their emoji use: the new
+    /// [`Ready::frequent_emoji`].
+    FrequentEmoji {
+        user_id: UserId,
+        frequent_emoji: Vec<String>,
+    },
 }
 
 impl Event {
@@ -225,7 +231,8 @@ impl Event {
             | Self::MutesChanged { .. }
             | Self::EmojiCreated { .. }
             | Self::EmojiUpdated { .. }
-            | Self::EmojiDeleted { .. } => None,
+            | Self::EmojiDeleted { .. }
+            | Self::FrequentEmoji { .. } => None,
         }
     }
 
@@ -235,6 +242,7 @@ impl Event {
             Self::ChannelRemoved { user_id, .. }
             | Self::ReadStateUpdated { user_id, .. }
             | Self::MutesChanged { user_id, .. }
+            | Self::FrequentEmoji { user_id, .. }
             | Self::ConversationVisibility { user_id, .. } => Some(*user_id),
             _ => None,
         }

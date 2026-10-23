@@ -280,6 +280,10 @@ async fn send(
             )
             .await;
     }
+    if !used.is_empty() {
+        let _order = s.hub.in_order().await;
+        crate::emoji::publish_frequent(&s, me).await;
+    }
     Ok(Json(msg))
 }
 

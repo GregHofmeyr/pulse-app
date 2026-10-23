@@ -569,3 +569,82 @@ async fn shared_media_survives_while_one_emoji_uses_it() {
     assert_eq!(media::cleanup(&app.db, dir, DAY).await.unwrap(), 1);
     assert!(!file.exists());
 }
+
+async fn seed_usage(app: &TestApp, user: UserId, emoji: &str, score: f64) {
+    sqlx::query(
+        "INSERT INTO emoji_usage (user_id, emoji, score, last_used_at) VALUES (?, ?, ?, ?)",
+    )
+    .bind(user.to_string())
+    .bind(emoji)
+    .bind(score)
+    .bind(chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    .execute(&app.db)
+    .await
+    .unwrap();
+}
+
+#[tokio::test]
+async fn frequent_skips_unusable_and_fills_to_27() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    let mine = create_server(&app, &alex, "Main").await;
+    let theirs = create_server(&app, &sam, "Other").await;
+    let media = upload(&app, &alex).await;
+    let live = create_ok(&app, &alex, mine.id, "pog", &media.hash).await;
+    let gone = create_ok(&app, &alex, mine.id, "kek", &media.hash).await;
+    assert!(
+        delete_emoji(&app, &alex, &gone.id)
+            .await
+            .status()
+            .is_success()
+    );
+    let theirs_media = upload(&app, &sam).await;
+    let foreign = create_ok(&app, &sam, theirs.id, "lul", &theirs_media.hash).await;
+
+    // The unusable ones rank highest: deleted, another server's, and one that never existed.
+    seed_usage(&app, alex_id, &format!("custom:{}", gone.id), 100.0).await;
+    seed_usage(&app, alex_id, &format!("custom:{}", foreign.id), 99.0).await;
+    seed_usage(&app, alex_id, "custom:01JAAAAAAAAAAAAAAAAAAAAAAA", 98.0).await;
+    let live_key = format!("custom:{}", live.id);
+    seed_usage(&app, alex_id, &live_key, 50.0).await;
+    let standard: Vec<String> = (0..30)
+        .map(|i| char::from_u32(0x1F600 + i).unwrap().to_string())
+        .collect();
+    for (i, e) in standard.iter().enumerate() {
+        seed_usage(&app, alex_id, e, 40.0 - i as f64).await;
+    }
+
+    let want: Vec<String> = std::iter::once(live_key.clone())
+        .chain(standard[..26].iter().cloned())
+        .collect();
+    assert_eq!(emoji::frequent(&app.db, alex_id, 27).await.unwrap(), want);
+    let (_, ready) = hello(&app, &alex).await;
+    assert_eq!(ready.frequent_emoji, want);
+
+    // Fewer usable than 27: all of them, still none of the rest.
+    sqlx::query("DELETE FROM emoji_usage WHERE emoji NOT LIKE 'custom:%'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        emoji::frequent(&app.db, alex_id, 27).await.unwrap(),
+        [live_key]
+    );
+}
+
+#[tokio::test]
+async fn one_write_counts_each_emoji_once() {
+    let app = spawn().await;
+    let (alex, _) = register(&app, "alex").await;
+    let mut conn = app.db.acquire().await.unwrap();
+    let both = ["\u{2764}".to_string(), "\u{2764}\u{FE0F}".to_string()];
+    emoji::record_use(&mut conn, alex, &both).await.unwrap();
+    let rows: Vec<(String, f64)> =
+        sqlx::query_as("SELECT emoji, score FROM emoji_usage WHERE user_id = ?")
+            .bind(alex.to_string())
+            .fetch_all(&mut *conn)
+            .await
+            .unwrap();
+    assert_eq!(rows, [("\u{2764}".to_string(), 1.0)]);
+}
