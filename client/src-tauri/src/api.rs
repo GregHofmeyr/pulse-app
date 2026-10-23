@@ -4,9 +4,10 @@ use std::time::Duration;
 
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
-    AddMembersRequest, Channel, ChannelKind, CreateDmRequest, EditMessageRequest, LoginRequest,
-    MarkReadRequest, Member, Message, MuteTarget, RegisterRequest, RenameChannelRequest,
-    SendMessageRequest, Server, SessionResponse, SetMuteRequest, User, VoiceTokenResponse,
+    AddMembersRequest, Channel, ChannelKind, CreateDmRequest, CreateEmojiRequest, CustomEmoji,
+    EditMessageRequest, LoginRequest, MarkReadRequest, MediaInfo, Member, Message, MuteTarget,
+    RegisterRequest, RenameChannelRequest, RenameEmojiRequest, SendMessageRequest, Server,
+    SessionResponse, SetMuteRequest, User, VoiceTokenResponse,
 };
 use serde::de::DeserializeOwned;
 
@@ -88,6 +89,9 @@ pub fn path_only(url: &reqwest::Url) -> String {
     url.path().to_string()
 }
 
+/// What an emoji upload over the server's body limit says.
+pub const TOO_BIG: &str = "Files can be 2 MB at most";
+
 /// The connection was never made: a request with this error certainly didn't arrive.
 pub const CONNECT_FAILED: &str = "couldn't connect";
 
@@ -156,9 +160,10 @@ impl Api {
         &self.base
     }
 
-    async fn parse<T: DeserializeOwned>(
+    /// The response, if it succeeded; otherwise the failure, logged.
+    async fn ok_response(
         r: Result<reqwest::Response, reqwest::Error>,
-    ) -> Result<T, ApiError> {
+    ) -> Result<reqwest::Response, ApiError> {
         if let Ok(resp) = &r {
             note_version(resp);
         }
@@ -188,43 +193,22 @@ impl Api {
                 .unwrap_or_else(|_| "unexpected server error".into());
             return Err(ApiError::Rejected(msg));
         }
-        r.json()
+        Ok(r)
+    }
+
+    async fn parse<T: DeserializeOwned>(
+        r: Result<reqwest::Response, reqwest::Error>,
+    ) -> Result<T, ApiError> {
+        Self::ok_response(r)
+            .await?
+            .json()
             .await
             .map_err(|e| ApiError::Network(failure_text(e)))
     }
 
     /// For endpoints that answer 204.
     async fn ok_empty(r: Result<reqwest::Response, reqwest::Error>) -> Result<(), ApiError> {
-        if let Ok(resp) = &r {
-            note_version(resp);
-        }
-        let r = r.map_err(|e| {
-            let path = e.url().map(path_only);
-            let text = failure_text(e);
-            log_failure(path, &text);
-            ApiError::Network(text)
-        })?;
-        if !r.status().is_success() {
-            log_failure(Some(path_only(r.url())), r.status().as_str());
-        }
-        if r.status() == reqwest::StatusCode::UNAUTHORIZED {
-            return Err(ApiError::Unauthorized);
-        }
-        if r.status() == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            return Err(ApiError::RateLimited);
-        }
-        if r.status().is_server_error() {
-            return Err(ApiError::Server(r.status().to_string()));
-        }
-        if !r.status().is_success() {
-            let msg = r
-                .json::<pulse_protocol::rest::ApiError>()
-                .await
-                .map(|e| e.message)
-                .unwrap_or_else(|_| "unexpected server error".into());
-            return Err(ApiError::Rejected(msg));
-        }
-        Ok(())
+        Self::ok_response(r).await.map(|_| ())
     }
 
     pub async fn create_server(&self, token: &str, name: &str) -> Result<Server, ApiError> {
@@ -577,6 +561,160 @@ impl Api {
         )
         .await
     }
+
+    /// Processing a 2 MB image takes a moment: allow longer than the usual 15 s.
+    pub async fn upload_emoji_media(
+        &self,
+        token: &str,
+        bytes: Vec<u8>,
+    ) -> Result<MediaInfo, ApiError> {
+        let r = self
+            .http
+            .post(format!("{}/media/emoji", self.base))
+            .bearer_auth(token)
+            .timeout(Duration::from_secs(45))
+            .body(bytes)
+            .send()
+            .await;
+        // axum's body limit answers in plain text, not our JSON error
+        if let Ok(resp) = &r
+            && resp.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE
+        {
+            log_failure(Some(path_only(resp.url())), resp.status().as_str());
+            return Err(ApiError::Rejected(TOO_BIG.into()));
+        }
+        Self::parse(r).await
+    }
+
+    pub async fn media(&self, token: &str, hash: &str) -> Result<Vec<u8>, ApiError> {
+        let r = self
+            .http
+            .get(format!("{}/media/{hash}", self.base))
+            .bearer_auth(token)
+            .send()
+            .await;
+        let bytes = Self::ok_response(r)
+            .await?
+            .bytes()
+            .await
+            .map_err(|e| ApiError::Network(failure_text(e)))?;
+        Ok(bytes.to_vec())
+    }
+
+    pub async fn create_emoji(
+        &self,
+        token: &str,
+        server: ServerId,
+        name: &str,
+        media_hash: &str,
+    ) -> Result<CustomEmoji, ApiError> {
+        let body = CreateEmojiRequest {
+            name: name.into(),
+            media_hash: media_hash.into(),
+        };
+        Self::parse(
+            self.http
+                .post(format!("{}/servers/{server}/emoji", self.base))
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn rename_emoji(
+        &self,
+        token: &str,
+        id: &str,
+        name: &str,
+    ) -> Result<CustomEmoji, ApiError> {
+        let body = RenameEmojiRequest { name: name.into() };
+        Self::parse(
+            self.http
+                .patch(self.url(&["emoji", id])?)
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn delete_emoji(&self, token: &str, id: &str) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(self.url(&["emoji", id])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// `emoji`: a Unicode emoji or `custom:<id>`.
+    pub async fn add_reaction(
+        &self,
+        token: &str,
+        message: MessageId,
+        emoji: &str,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .put(self.reaction_url(message, emoji)?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn remove_reaction(
+        &self,
+        token: &str,
+        message: MessageId,
+        emoji: &str,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(self.reaction_url(message, emoji)?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn reactors(
+        &self,
+        token: &str,
+        message: MessageId,
+        emoji: &str,
+    ) -> Result<Vec<UserId>, ApiError> {
+        Self::parse(
+            self.http
+                .get(self.reaction_url(message, emoji)?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    fn reaction_url(&self, message: MessageId, emoji: &str) -> Result<reqwest::Url, ApiError> {
+        self.url(&["messages", &message.to_string(), "reactions", emoji])
+    }
+
+    /// `base/seg/seg…`, each segment percent-encoded on its own (an emoji or id can't add a `/`).
+    fn url(&self, segments: &[&str]) -> Result<reqwest::Url, ApiError> {
+        let bad = || ApiError::Rejected("the server address isn't valid".into());
+        let mut url = reqwest::Url::parse(&self.base).map_err(|_| bad())?;
+        url.path_segments_mut()
+            .map_err(|_| bad())?
+            .pop_if_empty()
+            .extend(segments);
+        Ok(url)
+    }
 }
 
 #[cfg(test)]
@@ -924,5 +1062,87 @@ mod tests {
             (ChannelKind::Voice, Some("Gaming"))
         );
         assert_eq!(api.channels(&token, s.id).await.unwrap().len(), 4);
+    }
+
+    #[test]
+    fn reaction_emoji_is_one_path_segment() {
+        let api = Api::new("https://pulse.example.com/");
+        let id: MessageId = "01J0000000000000000000000A".parse().unwrap();
+        let u = api.reaction_url(id, "👍🏽").unwrap();
+        assert_eq!(
+            u.as_str(),
+            "https://pulse.example.com/messages/01J0000000000000000000000A/reactions/%F0%9F%91%8D%F0%9F%8F%BD"
+        );
+        let u = api.reaction_url(id, "custom:01ABC").unwrap();
+        assert!(u.as_str().ends_with("/reactions/custom:01ABC"), "{u}");
+        let u = api.reaction_url(id, "a/../b%").unwrap();
+        assert!(u.as_str().ends_with("/reactions/a%2F..%2Fb%25"), "{u}");
+    }
+
+    #[tokio::test]
+    async fn custom_emoji_roundtrip() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let media = api
+            .upload_emoji_media(&token, crate::media::tests::PNG.to_vec())
+            .await
+            .unwrap();
+        let bytes = api.media(&token, &media.hash).await.unwrap();
+        assert!(crate::media::verify(&media.hash, &bytes));
+        let e = api
+            .create_emoji(&token, s.id, "pog", &media.hash)
+            .await
+            .unwrap();
+        assert_eq!(
+            (e.name.as_str(), e.hash.as_deref()),
+            ("pog", Some(media.hash.as_str()))
+        );
+        assert_eq!(
+            api.rename_emoji(&token, &e.id, "poggers")
+                .await
+                .unwrap()
+                .name,
+            "poggers"
+        );
+        api.delete_emoji(&token, &e.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn an_oversized_upload_says_how_big_files_can_be() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let err = api
+            .upload_emoji_media(&token, vec![0; 3 * 1024 * 1024])
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), TOO_BIG);
+    }
+
+    #[tokio::test]
+    async fn react_list_and_unreact() {
+        let app = testing::spawn().await;
+        let (me, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let g = testing::general(&app, &token, s.id).await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let m = api
+            .send_message(
+                &token,
+                g.id,
+                &SendMessageRequest {
+                    content: "hi".into(),
+                    reply_to_id: None,
+                    nonce: None,
+                },
+            )
+            .await
+            .unwrap();
+        api.add_reaction(&token, m.id, "👍🏽").await.unwrap();
+        assert_eq!(api.reactors(&token, m.id, "👍🏽").await.unwrap(), vec![me]);
+        api.remove_reaction(&token, m.id, "👍🏽").await.unwrap();
+        assert!(api.reactors(&token, m.id, "👍🏽").await.unwrap().is_empty());
     }
 }

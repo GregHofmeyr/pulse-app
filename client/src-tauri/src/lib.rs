@@ -8,6 +8,7 @@ pub mod hotkeys;
 pub mod ipc;
 pub mod keybinds;
 pub mod logging;
+pub mod media;
 pub mod outbox;
 pub mod reports;
 pub mod session;
@@ -144,6 +145,7 @@ pub fn run() {
                 }
             }
         })
+        .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::handle)
         .invoke_handler(tauri::generate_handler![
             commands::login,
             commands::register,
@@ -181,6 +183,13 @@ pub fn run() {
             commands::set_mute,
             commands::clear_mute,
             commands::close_conversation,
+            commands::upload_emoji_media,
+            commands::create_emoji,
+            commands::rename_emoji,
+            commands::delete_emoji,
+            commands::add_reaction,
+            commands::remove_reaction,
+            commands::list_reactors,
             startup::ui_painted,
             keybinds::get_keybinds,
             keybinds::set_keybinds,

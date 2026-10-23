@@ -4,7 +4,9 @@ use std::sync::Mutex;
 
 use pulse_protocol::gateway::ClientFrame;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
-use pulse_protocol::rest::{Channel, Member, Message, MuteTarget, Server, SetMuteRequest, User};
+use pulse_protocol::rest::{
+    Channel, CustomEmoji, MediaInfo, Member, Message, MuteTarget, Server, SetMuteRequest, User,
+};
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
 
@@ -712,6 +714,93 @@ pub async fn close_conversation(
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.close_conversation(&token, channel_id).await)
+}
+
+// ---------- emoji + reactions ----------
+
+/// The UI passes the file as a raw `Uint8Array` (a JSON number array of 2 MB is slow).
+#[tauri::command]
+pub async fn upload_emoji_media(
+    app: AppHandle,
+    core: State<'_, Core>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<MediaInfo, ApiError> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(ApiError::Rejected("expected the file's bytes".into()));
+    };
+    let (api, token) = core.current()?;
+    core.check(&app, api.upload_emoji_media(&token, bytes.clone()).await)
+}
+
+#[tauri::command]
+pub async fn create_emoji(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    name: String,
+    media_hash: String,
+) -> Result<CustomEmoji, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.create_emoji(&token, server_id, &name, &media_hash)
+            .await,
+    )
+}
+
+#[tauri::command]
+pub async fn rename_emoji(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: String,
+    name: String,
+) -> Result<CustomEmoji, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.rename_emoji(&token, &id, &name).await)
+}
+
+#[tauri::command]
+pub async fn delete_emoji(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: String,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_emoji(&token, &id).await)
+}
+
+/// `emoji`: a Unicode emoji or `custom:<id>`.
+#[tauri::command]
+pub async fn add_reaction(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    emoji: String,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.add_reaction(&token, message_id, &emoji).await)
+}
+
+#[tauri::command]
+pub async fn remove_reaction(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    emoji: String,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.remove_reaction(&token, message_id, &emoji).await)
+}
+
+#[tauri::command]
+pub async fn list_reactors(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    emoji: String,
+) -> Result<Vec<UserId>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.reactors(&token, message_id, &emoji).await)
 }
 
 #[cfg(test)]
