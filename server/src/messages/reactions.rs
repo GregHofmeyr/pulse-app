@@ -160,6 +160,8 @@ pub async fn toggle(
         _ => {}
     }
     check_key(&s.db, emoji, add).await?;
+    // Events carry absolute counts, so two racing toggles must not publish out of commit order.
+    let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     // A delete that committed since the check wins.
     let live: Option<i64> =

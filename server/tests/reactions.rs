@@ -448,3 +448,56 @@ async fn send_records_usage() {
     want.sort();
     assert_eq!(top, want);
 }
+
+// Multi-threaded, so the toggles really race.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_reactions_arrive_in_commit_order() {
+    let app = spawn().await;
+    let (_, alex, _, _, srv, msg) = setup(&app).await;
+    let mut tokens = Vec::new();
+    for i in 0..8 {
+        let (_, t) = register(&app, &format!("user{i}")).await;
+        join(&app, &t, srv).await;
+        tokens.push(t);
+    }
+    let n = tokens.len() as u32;
+    let mut ws = hello(&app, &alex).await;
+    let app = &app;
+    // Several rounds of everyone adding at once, then everyone removing at once: with commit
+    // order kept, the counts climb 1..=n and fall back to 0 exactly.
+    for _ in 0..5 {
+        for add in [true, false] {
+            let codes = futures::future::join_all(tokens.iter().map(|t| async move {
+                if add {
+                    react(app, t, msg.id, "👍").await
+                } else {
+                    unreact(app, t, msg.id, "👍").await
+                }
+            }))
+            .await;
+            assert!(codes.iter().all(|&c| c == 204), "{codes:?}");
+            let mut counts = Vec::new();
+            for _ in 0..n {
+                match next_reaction(&mut ws).await {
+                    Event::ReactionAdded { count, .. } | Event::ReactionRemoved { count, .. } => {
+                        counts.push(count)
+                    }
+                    other => panic!("{other:?}"),
+                }
+            }
+            let total: i64 =
+                sqlx::query_scalar("SELECT COUNT(*) FROM reactions WHERE message_id = ?")
+                    .bind(msg.id.to_string())
+                    .fetch_one(&app.db)
+                    .await
+                    .unwrap();
+            assert_eq!(*counts.last().unwrap() as i64, total);
+            let want: Vec<u32> = if add {
+                (1..=n).collect()
+            } else {
+                (0..n).rev().collect()
+            };
+            assert_eq!(counts, want);
+        }
+    }
+}

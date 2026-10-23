@@ -54,6 +54,8 @@ struct Inner {
     conns: Mutex<HashMap<ConnId, Conn>>,
     /// What everyone was last told about each user's presence. Locked only while `conns` is held.
     announced: Mutex<HashMap<UserId, bool>>,
+    /// See [`Hub::in_order`].
+    ordered: tokio::sync::Mutex<()>,
 }
 
 impl Hub {
@@ -116,6 +118,13 @@ impl Hub {
         for (_, mut c) in self.inner.conns.lock().unwrap().drain() {
             c.kick(code);
         }
+    }
+
+    /// Hold this from before a write transaction until its events are published, so events
+    /// carrying absolute state (reaction counts) are delivered in commit order. Taken before
+    /// `begin_write`, so waiters hold no pool connection.
+    pub async fn in_order(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.inner.ordered.lock().await
     }
 
     /// Deliver `event` to every connection whose user is in its audience.
