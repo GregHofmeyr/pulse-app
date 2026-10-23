@@ -6,6 +6,7 @@ import type { Ready } from './protocol/Ready'
 import { applyEvent, applyReady, emptyState, setPendingStatus, type AppState, type ConnState } from './state'
 import { api } from './tauri'
 import { isMuted, messageSound } from './conversations'
+import { noteReactionEvent } from './reactions'
 import { playSound } from './voiceui'
 
 // The reducer (state.ts) is pure and never mutates: hold its output as-is (`$state.raw`) instead
@@ -61,6 +62,7 @@ export async function startListening(): Promise<UnlistenFn> {
     listen<Ready>('pulse://ready', (e) => (app.state = applyReady(app.state, e.payload))),
     listen<Event>('pulse://event', (e) => {
       maybeSound(e.payload)
+      noteReactionEvent(e.payload, app.state.me?.id)
       app.state = applyEvent(app.state, e.payload, Date.now())
     }),
     listen<ConnState>('pulse://conn', (e) => (app.state = { ...app.state, conn: e.payload })),

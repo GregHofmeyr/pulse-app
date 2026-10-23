@@ -3,11 +3,10 @@
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { Std } from '../lib/emoji'
   import { mediaUrl, reactionKey, twemojiUrl } from '../lib/emoji'
-  import { clickOutside } from '../lib/actions'
-  import { memberServers, popoverStyle, react, tooltipText } from '../lib/reactions'
+  import { react, tooltipText } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import { api } from '../lib/tauri'
-  import EmojiPicker from './EmojiPicker.svelte'
+  import EmojiPopover from './EmojiPopover.svelte'
   import Icon from './Icon.svelte'
 
   let { message, meId, nameOf, onError = () => {} }: {
@@ -21,7 +20,7 @@
   let tipFor = $state<string | null>(null)
   let tipText = $state('')
   let animated = $state<string | null>(null)
-  let picking = $state<string | null>(null)
+  let picking = $state(false)
   let addBtn: HTMLButtonElement | undefined = $state()
 
   const customOf = (key: string): CustomEmoji | undefined => app.state.customEmoji[key.slice(7)]
@@ -30,40 +29,47 @@
     void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, add, meId, onError)
   }
 
-  // Fetched fresh on every hover: a cache could not tell "one left, one joined" from no change.
-  async function hover(key: string, count: number) {
+  let tipReq = 0
+
+  // Fetched fresh on every hover/focus: a cache could not tell "one left, one joined" from no change.
+  // Only the newest request may fill the tooltip; a slow earlier one would show an older list.
+  async function showTip(key: string, count: number) {
+    const req = ++tipReq
     tipFor = key
     tipText = '…'
     try {
       const ids = await api.listReactors(message.id, key)
-      if (tipFor === key) tipText = tooltipText(ids.map((id) => nameOf(id)), count)
+      if (req === tipReq) tipText = tooltipText(ids.map((id) => nameOf(id)), count)
     } catch {
-      if (tipFor === key) tipText = ''
+      if (req === tipReq) tipText = ''
     }
   }
+  function hideTip() {
+    tipReq++
+    tipFor = null
+  }
+  const tipId = (i: number) => `reactors-${message.id}-${i}`
 
   function pick(e: Std | CustomEmoji) {
-    picking = null
+    picking = false
     toggle(reactionKey(e), true)
   }
-
-  const style = () =>
-    addBtn
-      ? popoverStyle(addBtn.getBoundingClientRect(), { width: 360, height: 420 }, { width: window.innerWidth, height: window.innerHeight })
-      : ''
 </script>
 
 {#if !message.deleted && message.reactions.length > 0}
   <div class="reactions">
-    {#each message.reactions as r (r.emoji)}
+    {#each message.reactions as r, i (r.emoji)}
       {@const c = r.emoji.startsWith('custom:') ? customOf(r.emoji) : undefined}
       {@const custom = r.emoji.startsWith('custom:')}
       <span class="wrap">
         <button
           class="chip" class:mine={r.me} type="button" aria-pressed={r.me}
+          aria-describedby={tipFor === r.emoji && tipText ? tipId(i) : undefined}
           onclick={() => toggle(r.emoji, !r.me)}
-          onpointerenter={() => { animated = r.emoji; void hover(r.emoji, r.count) }}
-          onpointerleave={() => { animated = null; tipFor = null }}
+          onpointerenter={() => { animated = r.emoji; void showTip(r.emoji, r.count) }}
+          onpointerleave={() => { animated = null; hideTip() }}
+          onfocus={() => void showTip(r.emoji, r.count)}
+          onblur={hideTip}
         >
           {#if !custom}
             <img src={twemojiUrl(r.emoji)} alt={r.emoji} draggable="false" />
@@ -74,17 +80,15 @@
           {/if}
           <span class="n">{r.count}</span>
         </button>
-        {#if tipFor === r.emoji && tipText}<span class="tip" role="tooltip">{tipText}</span>{/if}
+        {#if tipFor === r.emoji && tipText}<span class="tip" id={tipId(i)} role="tooltip">{tipText}</span>{/if}
       </span>
     {/each}
-    <button bind:this={addBtn} class="chip add" type="button" aria-label="Add reaction" data-menu-toggle onclick={() => (picking = picking ? null : 'row')}>
+    <button bind:this={addBtn} class="chip add" type="button" aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}>
       <Icon name="smile" size={15} />
     </button>
   </div>
-  {#if picking}
-    <div use:clickOutside={() => (picking = null)} style={style()}>
-      <EmojiPicker onPick={pick} onClose={() => (picking = null)} servers={app.state.servers} memberOf={memberServers(app.state)} />
-    </div>
+  {#if picking && addBtn}
+    <EmojiPopover anchor={addBtn} onPick={pick} onClose={() => (picking = false)} />
   {/if}
 {/if}
 

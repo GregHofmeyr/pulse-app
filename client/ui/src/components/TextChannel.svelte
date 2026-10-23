@@ -243,7 +243,7 @@
       <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={grouped(i)}
         replyTo={m.reply_to_id ? (byId.get(m.reply_to_id) ?? null) : null}
         mine={m.author_id === app.state.me?.id}
-        {mentionNames} meId={app.state.me?.id ?? ''} onError={(m) => (error = m)}
+        {mentionNames} meId={app.state.me?.id ?? ''} onError={(text) => (error = text)}
         onReply={() => (replyTo = m)}
         onEdit={async (c) => { try { await api.editMessage(m.id, c) } catch (e) { error = errorText(e) } }}
         onDelete={async () => { try { await api.deleteMessage(m.id) } catch (e) { error = errorText(e) } }} />

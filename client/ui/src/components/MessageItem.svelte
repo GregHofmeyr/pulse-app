@@ -1,10 +1,9 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
-  import EmojiPicker from './EmojiPicker.svelte'
+  import EmojiPopover from './EmojiPopover.svelte'
   import ReactionRow from './ReactionRow.svelte'
-  import { clickOutside } from '../lib/actions'
   import { reactionKey, type Std } from '../lib/emoji'
-  import { memberServers, popoverStyle, react } from '../lib/reactions'
+  import { react } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import { renderMessage } from '../lib/markdown'
@@ -42,7 +41,6 @@
   } = $props()
 
   let picking = $state(false)
-  let pickStyle = $state('')
   let smileBtn: HTMLButtonElement | undefined = $state()
   let editing = $state(false)
   let draft = $state('')
@@ -56,11 +54,6 @@
     const d = draft.trim()
     if (d && d !== message.content) await onEdit(d)
     editing = false
-  }
-  function openPicker() {
-    if (picking) return (picking = false)
-    pickStyle = popoverStyle(smileBtn!.getBoundingClientRect(), { width: 360, height: 420 }, { width: window.innerWidth, height: window.innerHeight })
-    picking = true
   }
   function pick(e: Std | CustomEmoji) {
     picking = false
@@ -106,17 +99,15 @@
       </div>
       {#if !message.deleted && !editing}
         <div class="actions" class:open={picking}>
-          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={openPicker}><Icon name="smile" size={15} /></button>
+          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={15} /></button>
           <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>
           {#if mine}
             <button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={15} /></button>
             <button aria-label="Delete" onclick={onDelete}><Icon name="trash" size={15} /></button>
           {/if}
         </div>
-        {#if picking}
-          <div use:clickOutside={() => (picking = false)} style={pickStyle}>
-            <EmojiPicker onPick={pick} onClose={() => (picking = false)} servers={app.state.servers} memberOf={memberServers(app.state)} />
-          </div>
+        {#if picking && smileBtn}
+          <EmojiPopover anchor={smileBtn} onPick={pick} onClose={() => (picking = false)} />
         {/if}
       {/if}
     </div>

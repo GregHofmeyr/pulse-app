@@ -1,3 +1,4 @@
+import type { Event } from './protocol/Event'
 import type { ReactionSummary } from './protocol/ReactionSummary'
 import type { AppState } from './state'
 import { api, errorText } from './tauri'
@@ -55,36 +56,74 @@ function setEntry(s: AppState, channel: string, id: string, key: string, e: Reac
   return { ...s, messages: { ...s.messages, [channel]: list.map((m) => (m.id === id ? { ...m, reactions: put(m.reactions) } : m)) } }
 }
 
+type Toggle = { add: boolean; landed: boolean }
+// Per (message, emoji): the last queued toggle, and the one talking to the server now.
+const queued = new Map<string, Promise<void>>()
+const inFlight = new Map<string, Toggle>()
+const toggleKey = (id: string, key: string) => `${id}\u0000${key}`
+
+/** Feed every gateway event through here (before the reducer): it notes when the server has
+ * already applied the toggle in flight, so a failed response doesn't undo a committed change. */
+export function noteReactionEvent(e: Event, meId: string | undefined): void {
+  if ((e.t !== 'ReactionAdded' && e.t !== 'ReactionRemoved') || e.d.user_id !== meId) return
+  const t = inFlight.get(toggleKey(e.d.message_id, e.d.emoji))
+  if (t && t.add === (e.t === 'ReactionAdded')) t.landed = true
+}
+
 /**
- * Flips locally, then asks the server; a failure is handed to `onError`. On failure the server's
- * reactor list is the truth: an event may have landed during the call (even an identical-looking one,
- * e.g. the add committed but its response was lost), so decrementing blindly could drift the count.
- * Only if that fetch fails too is the flip undone locally.
+ * Flips locally, then asks the server; a failure is handed to `onError`. Toggles of one emoji on
+ * one message run one at a time, in click order: a double click's add and remove can't reach the
+ * server swapped. Each re-checks the state when its turn comes, so one that's become a no-op sends nothing.
  */
-export async function react(
+export function react(
   get: () => AppState, set: (s: AppState) => void,
   channel: string, id: string, key: string, add: boolean, meId: string, onError: (msg: string) => void,
+): Promise<void> {
+  const k = toggleKey(id, key)
+  const run = (queued.get(k) ?? Promise.resolve()).catch(() => {}).then(() => toggle(get, set, channel, id, key, add, meId, onError, k))
+  queued.set(k, run)
+  return run.finally(() => {
+    if (queued.get(k) === run) queued.delete(k)
+  })
+}
+
+/**
+ * On failure the server's reactor list is the truth: an event may have landed during the call (even
+ * an identical-looking one, e.g. the add committed but its response was lost), so decrementing
+ * blindly could drift the count. If that list can't settle it (capped, or the fetch fails too), the
+ * flip is undone locally, unless my own event for this toggle already arrived.
+ */
+async function toggle(
+  get: () => AppState, set: (s: AppState) => void,
+  channel: string, id: string, key: string, add: boolean, meId: string, onError: (msg: string) => void, k: string,
 ): Promise<void> {
   const before = get()
   if ((entry(before, channel, id, key)?.me ?? false) === add) return
   set(flip(before, channel, id, key, add, meId))
+  const t: Toggle = { add, landed: false }
+  inFlight.set(k, t)
   try {
     await (add ? api.addReaction(id, key) : api.removeReaction(id, key))
   } catch (e) {
     const at = entry(get(), channel, id, key)
+    const undo = () => {
+      if (!t.landed) set(flip(get(), channel, id, key, !add, meId))
+    }
     try {
       const ids = await api.listReactors(id, key)
       const now = entry(get(), channel, id, key)
       // The server caps the list (oldest first): at the cap it can't give a count or my membership.
-      if (ids.length >= REACTOR_CAP) set(flip(get(), channel, id, key, !add, meId))
+      if (ids.length >= REACTOR_CAP) undo()
       // An event landed during the fetch: its absolute count is newer than this snapshot.
       else if (now?.count === at?.count && now?.me === at?.me) {
         set(setEntry(get(), channel, id, key, ids.length ? { emoji: key, count: ids.length, me: ids.includes(meId) } : null))
       }
     } catch {
-      set(flip(get(), channel, id, key, !add, meId))
+      undo()
     }
     onError(errorText(e))
+  } finally {
+    inFlight.delete(k)
   }
 }
 

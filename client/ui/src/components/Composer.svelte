@@ -6,14 +6,13 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import Icon from './Icon.svelte'
-  import EmojiPicker from './EmojiPicker.svelte'
-  import { clickOutside } from '../lib/actions'
+  import EmojiPopover from './EmojiPopover.svelte'
   import { customToken, mediaUrl, search, twemojiUrl, type Std } from '../lib/emoji'
   import { applyEmoji, emojiQuery, insertAt } from '../lib/emojiComplete'
   import { typingThrottle } from '../lib/markdown'
   import { applyMention, mentionQuery, suggest, type Mentionable } from '../lib/mentions'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
-  import { memberServers, popoverStyle } from '../lib/reactions'
+  import { memberServers } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
 
   let {
@@ -66,8 +65,7 @@
   const emojiText = (e: Std | CustomEmoji) => ('u' in e ? e.u : customToken(e))
 
   let picking = $state(false)
-  let pickStyle = $state('')
-  let emojiBtn: HTMLButtonElement
+  let emojiBtn: HTMLButtonElement | undefined = $state()
 
   function syncCaret() {
     caret = box?.selectionStart ?? text.length
@@ -85,11 +83,6 @@
   const choose = (name: string) => setText(applyMention(text, caret, name))
   const chooseEmoji = (e: Std | CustomEmoji) => setText(applyEmoji(text, caret, emojiText(e)))
 
-  function openPicker() {
-    if (picking) return (picking = false)
-    pickStyle = popoverStyle(emojiBtn.getBoundingClientRect(), { width: 360, height: 420 }, { width: window.innerWidth, height: window.innerHeight })
-    picking = true
-  }
   // The textarea keeps its selection while the picker has focus: insert there.
   function pickEmoji(e: Std | CustomEmoji) {
     picking = false
@@ -171,20 +164,17 @@
       <button aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={13} /></button></div>
   {/if}
   <textarea bind:this={box} bind:value={text} rows="1" {placeholder} aria-label={placeholder} onkeydown={key} oninput={input} onclick={syncCaret} onkeyup={(e) => { if (e.key.startsWith("Arrow") && !shown) syncCaret() }} maxlength="4000"></textarea>
-  <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={openPicker}><Icon name="smile" size={20} /></button>
-  {#if picking}
-    <div use:clickOutside={() => (picking = false)} style={pickStyle}>
-      <EmojiPicker onPick={pickEmoji} onClose={() => (picking = false)} servers={app.state.servers} memberOf={memberServers(app.state)} />
-    </div>
+  <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={20} /></button>
+  {#if picking && emojiBtn}
+    <EmojiPopover anchor={emojiBtn} onPick={pickEmoji} onClose={() => (picking = false)} />
   {/if}
 </div>
 
 <style>
   .wrap { position: relative; margin: 4px 16px 16px; background: var(--bg-3); border-radius: 12px; }
   .mentions { position: absolute; left: 0; bottom: calc(100% + 6px); min-width: 200px; padding: 6px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--bg-3); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); z-index: 5; }
-  .mentions button { text-align: left; padding: 7px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--text-2); font: inherit; }
+  .mentions button { display: flex; align-items: center; gap: 8px; text-align: left; padding: 7px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--text-2); font: inherit; }
   .mentions button.on { background: var(--bg-4); color: var(--text); }
-  .mentions button { display: flex; align-items: center; gap: 8px; }
   .mentions img { width: 20px; height: 20px; }
   .mentions small { margin-left: auto; padding-left: 12px; color: var(--text-3); font-size: 11px; }
   .emoji-btn { position: absolute; right: 8px; bottom: 8px; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
