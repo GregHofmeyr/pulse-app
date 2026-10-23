@@ -149,5 +149,6 @@
   .content :global(img.emoji) { width: 1.375em; height: 1.375em; vertical-align: -0.3em; object-fit: contain; }
   .content :global(img.emoji.big) { width: 48px; height: 48px; }
   .content :global(.emoji-gone) { color: var(--text-3); background: var(--bg-3); border-radius: 4px; padding: 0 4px; font-size: .9em; }
+  .content :global(.emoji-gone.big) { font-size: 1.25em; }
   .content :global(.mention) { color: var(--accent); background: rgba(139, 156, 255, .15); border-radius: 4px; padding: 0 3px; font-weight: 600; }
 </style>
