@@ -79,7 +79,10 @@ async fn reactors(
 ) -> AppResult<Json<Vec<UserId>>> {
     visible_message(&s.db, me, id).await?;
     let emoji = canonical_key(&emoji);
-    check_key(&s.db, me, id, &emoji, false).await?;
+    // Any well-formed custom key lists (possibly nobody), as DELETE accepts it; only junk is refused.
+    if !is_custom_key(&emoji) {
+        check_key(&s.db, me, id, &emoji, false).await?;
+    }
     let rows: Vec<String> = sqlx::query_scalar(
         "SELECT user_id FROM reactions WHERE message_id = ? AND emoji = ?
          ORDER BY created_at, rowid LIMIT ?",
@@ -399,7 +402,7 @@ fn custom_token(s: &str) -> Option<(&str, usize)> {
 }
 
 /// Of `keys`, those `user` may use: standard emoji, and live custom emoji of servers `user` is
-/// in. One query, however many tokens.
+/// in. One query, however many tokens. (The same "usable" rule as `emoji::frequent`'s SQL.)
 pub async fn live_keys(
     conn: &mut SqliteConnection,
     user: UserId,

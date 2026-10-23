@@ -152,7 +152,7 @@ fn decayed(score: f64, last_used_at: &str, now: DateTime<Utc>) -> f64 {
 
 /// The `n` highest-scoring emoji `user` can use right now, best first, scores decayed to now.
 /// Custom emoji that were deleted, or whose server `user` isn't in, are skipped and the next ones
-/// down fill their places.
+/// down fill their places. (The same "usable" rule as `messages::reactions::live_keys`.)
 pub async fn frequent(db: &SqlitePool, user: UserId, n: usize) -> AppResult<Vec<String>> {
     let now = Utc::now();
     let rows: Vec<(String, f64, String)> = sqlx::query_as(

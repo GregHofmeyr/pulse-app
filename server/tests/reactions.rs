@@ -579,9 +579,17 @@ async fn reactors_reject_unknown_keys() {
     let (_, alex, _, _, _, msg) = setup(&app).await;
     assert_eq!(reactors_status(&app, &alex, msg.id, "abc").await, 400);
     assert_eq!(reactors_status(&app, &alex, msg.id, "👍🏽🏽").await, 400);
+    for junk in ["custom:", "custom:a b", "custom:a%3Ab"] {
+        assert_eq!(
+            reactors_status(&app, &alex, msg.id, junk).await,
+            400,
+            "{junk}"
+        );
+    }
+    // A well-formed custom key that isn't on the message lists nobody, as DELETE accepts it.
     assert_eq!(
         reactors_status(&app, &alex, msg.id, "custom:01JAAAAAAAAAAAAAAAAAAAAAAA").await,
-        400
+        200
     );
     // Taking one off is a no-op rather than an error: see removing_a_gone_custom_reaction_is_a_no_op.
     assert_eq!(
