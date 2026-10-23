@@ -56,6 +56,8 @@ pub fn test_config() -> Config {
         hello_timeout: Duration::from_millis(300),
         heartbeat_timeout: Duration::from_secs(5),
         limits: crate::limits::LimitsConfig::unlimited(),
+        media_dir: Default::default(), // under the test's temp dir unless a test sets one
+        media_min_free_bytes: 0,
     }
 }
 
@@ -66,6 +68,9 @@ pub async fn spawn() -> TestApp {
 pub async fn spawn_with(mut cfg: Config) -> TestApp {
     let dir = tempfile::tempdir().unwrap();
     cfg.db_url = format!("sqlite://{}", dir.path().join("test.db").display());
+    if cfg.media_dir.as_os_str().is_empty() {
+        cfg.media_dir = dir.path().join("media");
+    }
     let db = db::connect(&cfg.db_url).await.unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

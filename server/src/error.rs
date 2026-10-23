@@ -19,6 +19,8 @@ pub enum AppError {
     Conflict(String),
     #[error("too many attempts, try again in a bit")]
     TooManyRequests,
+    #[error("server storage is full, so uploads are paused for now")]
+    InsufficientStorage,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -39,6 +41,7 @@ impl IntoResponse for AppError {
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             Self::TooManyRequests => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
+            Self::InsufficientStorage => (StatusCode::INSUFFICIENT_STORAGE, "storage_full"),
             Self::Internal(e) => {
                 tracing::error!(error = ?e, "internal error");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal")

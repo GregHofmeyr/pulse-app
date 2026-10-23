@@ -36,6 +36,12 @@ reqwest = { version = "0.12", default-features = false, features = ["json"], opt
 tempfile = { version = "3", optional = true }
 livekit-api = { version = "0.8.1", default-features = false, features = ["access-token", "webhooks", "services"] }
 livekit-protocol = "0.8.0"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
+# Static: libwebp is built from source, so the runtime image needs no libwebp packages.
+webp-animation = { version = "0.10", features = ["static"] }
+
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1", features = ["fs"] }
 
 [dev-dependencies]
 livekit-api = { version = "0.8.1", default-features = false, features = ["access-token"] }
@@ -52,3 +58,4 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 tempfile = "3"
 prost = "0.14"
 livekit-protocol = "0.8.0"
+image = { version = "0.25", default-features = false, features = ["png", "gif"] }

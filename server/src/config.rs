@@ -1,4 +1,5 @@
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -19,6 +20,10 @@ pub struct Config {
     pub heartbeat_timeout: Duration,
     /// Rate limits (spec §3.1).
     pub limits: crate::limits::LimitsConfig,
+    /// Where uploaded media is stored.
+    pub media_dir: PathBuf,
+    /// Uploads are refused when the media filesystem has less free space than this.
+    pub media_min_free_bytes: u64,
 }
 
 impl Config {
@@ -40,6 +45,8 @@ impl Config {
             hello_timeout: Duration::from_secs(10),
             heartbeat_timeout: Duration::from_secs(60),
             limits: crate::limits::LimitsConfig::default(),
+            media_dir: var("PULSE_MEDIA_DIR", "/data/media").into(),
+            media_min_free_bytes: 2 * 1024 * 1024 * 1024,
         })
     }
 }

@@ -259,3 +259,16 @@ pub struct CreateReportRequest {
 pub struct CreateReportResponse {
     pub id: String,
 }
+
+/// A stored, processed upload (`POST /media/emoji`). Fetch the bytes at `GET /media/{hash}`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct MediaInfo {
+    pub hash: String,
+    pub content_type: String,
+    pub width: u32,
+    pub height: u32,
+    pub frames: u32,
+    pub animated: bool,
+    /// The first frame alone, for animations.
+    pub still_hash: Option<String>,
+}

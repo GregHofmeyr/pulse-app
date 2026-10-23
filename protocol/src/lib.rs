@@ -35,6 +35,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::ReportKind::export_all(&cfg)?;
     rest::CreateReportRequest::export_all(&cfg)?;
     rest::CreateReportResponse::export_all(&cfg)?;
+    rest::MediaInfo::export_all(&cfg)?;
     Ok(())
 }
 

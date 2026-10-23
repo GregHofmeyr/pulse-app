@@ -6,6 +6,7 @@ pub mod dms;
 pub mod error;
 pub mod gateway;
 pub mod limits;
+pub mod media;
 pub mod messages;
 pub mod reads;
 pub mod reports;
@@ -32,6 +33,7 @@ pub fn router(state: AppState) -> Router {
         .merge(dms::routes::router())
         .merge(voice::routes::router())
         .merge(reports::routes::router())
+        .merge(media::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)
@@ -44,6 +46,11 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
     tracing::info!(addr = %cfg.bind, "pulse-app-server listening");
     let hub = gateway::Hub::default();
+    // A failure here (e.g. a dev machine without /data) only matters once someone uploads.
+    if let Err(e) = std::fs::create_dir_all(&cfg.media_dir) {
+        tracing::warn!(error = %e, dir = %cfg.media_dir.display(), "media dir unavailable");
+    }
+    media::spawn_cleanup(db.clone(), cfg.media_dir.clone());
     let state = AppState {
         db,
         limits: std::sync::Arc::new(limits::Limits::new(&cfg.limits)),
