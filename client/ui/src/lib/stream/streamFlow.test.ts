@@ -144,6 +144,56 @@ describe('re-announce after a server restart', () => {
   })
 })
 
+describe('streams back after a server restart', () => {
+  const info = (user: string) => ({ channel_id: 'c1', user_id: user, settings: { height: 720, fps: 60, audio: true }, status: 'live', viewers: [], started_at: 't' })
+  const ready = { me: { id: 'me' }, streams: [] } as never
+  const before = { c1: { other: info('other') } } as never
+  const started = (user: string) => ({ t: 'StreamStarted', d: { stream: info(user) } }) as never
+
+  async function inVoice() {
+    const mod = await load()
+    const { voice } = await import('../voice.svelte')
+    const { toasts } = await import('./viewer.svelte')
+    voice.channelId = 'c1'
+    return { ...mod, toasts }
+  }
+
+  it('a_known_stream_re_announced_is_not_toasted_again', async () => {
+    const { streamApi, toasts } = await inVoice()
+    await streamApi.onReady(ready, before)
+    streamApi.onEvent(started('other'))
+    expect(toasts.list).toEqual([])
+  })
+
+  it('a_stream_new_to_us_still_toasts', async () => {
+    const { streamApi, toasts } = await inVoice()
+    await streamApi.onReady(ready, before)
+    streamApi.onEvent(started('kim'))
+    expect(toasts.list.map((t) => t.streamer)).toEqual(['kim'])
+  })
+
+  it('a_stream_starting_long_after_the_restart_is_news', async () => {
+    const { streamApi, toasts } = await inVoice()
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+    await streamApi.onReady(ready, before)
+    now.mockReturnValue(1_000_000 + 60_000)
+    streamApi.onEvent(started('other'))
+    expect(toasts.list.map((t) => t.streamer)).toEqual(['other'])
+    now.mockRestore()
+  })
+
+  it('the_stream_we_watch_lists_us_again', async () => {
+    const { streamApi } = await inVoice()
+    fake.connect = async () => fakeRoom()
+    await streamApi.watch('c1', 'other', document.createElement('video'))
+    await streamApi.onReady(ready, before)
+    core.calls = []
+    streamApi.onEvent(started('other'))
+    await settle()
+    expect(calls('stream_watch')).toEqual([{ channelId: 'c1', streamer: 'other' }])
+  })
+})
+
 describe('stream audio closed by LiveKit', () => {
   it('restarts_stream_audio_with_the_same_window_and_mute', async () => {
     const { streamApi } = await goneLive(true, 'window')

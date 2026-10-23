@@ -6,6 +6,7 @@ import type { Ready } from '../protocol/Ready'
 import type { StreamEndReason } from '../protocol/StreamEndReason'
 import type { StreamInfo } from '../protocol/StreamInfo'
 import { displayName } from '../selectors'
+import type { AppState } from '../state'
 import { app } from '../store.svelte'
 import { errorText, streamCmd } from '../tauri'
 import { voice } from '../voice.svelte'
@@ -59,6 +60,8 @@ const PREVIEW_EVERY_MS = 15_000
  */
 const AUDIO_RECONNECTS_MAX = 3
 const AUDIO_RECONNECT_WINDOW_MS = 60_000
+/** A stream a server restart dropped from Ready and that comes back within this is re-announced, not new. */
+const BACK_WITHIN_MS = 60_000
 
 // Not reactive: handles the UI never reads.
 let roomChannel: string | null = null
@@ -68,6 +71,9 @@ let liveTrack: LocalVideoTrack | null = null
 let liveWindowTitle: string | null = null
 /** When LiveKit last closed `#a` under us, within `AUDIO_RECONNECT_WINDOW_MS`. */
 let audioClosedAt: number[] = []
+/** Streams we knew that the last Ready left out (`channel/user` → when): a server restart. */
+const vanished = new Map<string, number>()
+const streamKey = (channelId: string, userId: string) => `${channelId}/${userId}`
 let stopPreview: (() => void) | null = null
 let stopOutDiag: (() => void) | null = null
 let stopInDiag: (() => void) | null = null
@@ -417,15 +423,30 @@ export const streamApi = {
   onEvent(e: Event) {
     if (e.t === 'StreamStarted') {
       const { channel_id: channelId, user_id: streamer } = e.d.stream
-      if (toastFor({ channelId, streamer }, voice.channelId, meId())) showToast({ channelId, streamer, name: nameOf(channelId, streamer) })
+      const k = streamKey(channelId, streamer)
+      const back = Date.now() - (vanished.get(k) ?? -Infinity) < BACK_WITHIN_MS
+      vanished.delete(k)
+      // a stream re-announced after a server restart isn't news
+      if (!back && toastFor({ channelId, streamer }, voice.channelId, meId())) showToast({ channelId, streamer, name: nameOf(channelId, streamer) })
+      // only a restart re-starts a stream we watch (a real stop ends the watch first): the
+      // restarted server lost its viewers, so list us again
+      const w = stream.watching
+      if (w?.channelId === channelId && w.streamer === streamer) void streamCmd.watch(channelId, streamer).catch(logError('rewatch_error'))
     } else if (e.t === 'StreamEnded') {
       removeToast(e.d.channel_id, e.d.user_id)
       void streamApi.onStreamEnded(e.d.channel_id, e.d.user_id, e.d.reason)
     }
   },
 
-  /** After every gateway `Ready`. */
-  async onReady(ready: Ready) {
+  /** After every gateway `Ready`; `before` is the streams we knew until it came. */
+  async onReady(ready: Ready, before: AppState['streams'] = {}) {
+    const now = Date.now()
+    for (const [k, at] of vanished) if (now - at >= BACK_WITHIN_MS) vanished.delete(k)
+    for (const [channelId, byUser] of Object.entries(before)) {
+      for (const userId of Object.keys(byUser)) {
+        if (!ready.streams.some((s) => s.channel_id === channelId && s.user_id === userId)) vanished.set(streamKey(channelId, userId), now)
+      }
+    }
     const live = stream.live
     if (!live || !needsReannounce(ready.me.id, live, ready.streams)) return
     streamCmd.log({ ev: 'reannounce' })

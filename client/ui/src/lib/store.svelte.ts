@@ -60,8 +60,9 @@ export async function openDm(userId: string): Promise<string> {
 export async function startListening(): Promise<UnlistenFn> {
   const offs: UnlistenFn[] = await Promise.all([
     listen<Ready>('pulse://ready', (e) => {
+      const before = app.state.streams
       app.state = applyReady(app.state, e.payload)
-      void streamApi.onReady(e.payload)
+      void streamApi.onReady(e.payload, before)
     }),
     listen<Event>('pulse://event', (e) => {
       maybeSound(e.payload)
