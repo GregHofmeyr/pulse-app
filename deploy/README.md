@@ -124,9 +124,10 @@ database is kept next to it as `data/pulse.db.pre-restore-<time>`.
 Restoring the media (the database restore doesn't touch it; do this after a lost or rebuilt server, or to roll
 emoji back): `just restore-media-drill` downloads the newest media backup, decrypts it here and lists it
 (`archive ok: N media files`; it also refuses an archive with paths outside `media/`). Then
-`just restore-media daily/pulse-media-<time>.tgz.age` stops the server for a few seconds and unpacks it over
-`data/media`: files in the backup come back, newer uploads it doesn't have stay. The newest name is also
+`just restore-media daily/pulse-media-<time>.tgz.age` unpacks it over `data/media` (the server keeps running): files in the backup come back, newer uploads it doesn't have stay. The newest name is also
 `ssh pulse@pulse /srv/pulse/backup.sh latest-media`, which (like `latest`) says so and exits non-zero if there are none.
+Files restored without matching database rows (e.g. rolling emoji back past a database restore) are never removed by
+the row-driven hourly cleanup: delete those under `data/media` by hand, or restore the database from the same time.
 Backups of a media directory that changes mid-archive (an upload during the backup) only warn; the database backup
 and the rest of the media are kept.
 

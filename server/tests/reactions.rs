@@ -587,10 +587,15 @@ async fn reactors_reject_unknown_keys() {
         );
     }
     // A well-formed custom key that isn't on the message lists nobody, as DELETE accepts it.
-    assert_eq!(
-        reactors_status(&app, &alex, msg.id, "custom:01JAAAAAAAAAAAAAAAAAAAAAAA").await,
-        200
-    );
+    let r = app
+        .http
+        .get(app.url(&path(msg.id, "custom:01JAAAAAAAAAAAAAAAAAAAAAAA")))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.json::<Vec<UserId>>().await.unwrap(), vec![]);
     // Taking one off is a no-op rather than an error: see removing_a_gone_custom_reaction_is_a_no_op.
     assert_eq!(
         unreact(&app, &alex, msg.id, "custom:01JAAAAAAAAAAAAAAAAAAAAAAA").await,

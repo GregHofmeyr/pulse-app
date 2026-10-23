@@ -339,8 +339,8 @@ mod tests {
 
     #[test]
     fn huge_screen_animation_is_refused_quickly() {
-        // The budget is injected: a 1024² screen against a 3 Mpx budget trips at its 4th frame, the
-        // same path as 4096² against MAX_DECODED_PIXELS but without minutes of debug-build decoding.
+        // The budget is injected: a 1024² screen against a 3 Mpx budget trips at its 3rd frame, the
+        // same path as 4096² against MAX_DECODED_PIXELS but without seconds of debug-build decoding.
         let bomb = screen_bomb(1024, 300);
         assert!(bomb.len() < 10 * 1024);
         assert!(matches!(

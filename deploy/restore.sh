@@ -3,7 +3,7 @@
 #   restore.sh drill [OBJ]         download, decrypt, integrity-check the database locally; the server is untouched
 #   restore.sh apply OBJ           …then replace the live database (pulse-server stops for a few seconds)
 #   restore.sh media-drill [OBJ]   download, decrypt and list a media backup locally; the server is untouched
-#   restore.sh media-apply OBJ     …then unpack it over the live media (pulse-server stops for a few seconds)
+#   restore.sh media-apply OBJ     …then unpack it over the live media (the server keeps running)
 set -euo pipefail
 PROD=${PULSE_PROD:-pulse@pulse}
 KEY=${PULSE_BACKUP_KEY:-$HOME/.config/pulse/backup-age.key}
@@ -38,11 +38,10 @@ if [[ $mode == media-* ]]; then
   [[ $mode == media-drill ]] && exit 0
   scp -q "$work/media.tgz" "$PROD:/srv/pulse/media.tgz"
   # Unpacks over data/media: files in the backup are put back, newer uploads it doesn't have stay.
+  # The server keeps running: files are content-addressed, so an overwrite writes identical bytes.
   ssh "$PROD" 'set -e; cd /srv/pulse
-    docker compose stop pulse-server
+    trap "rm -f media.tgz" EXIT
     tar -xzf media.tgz -C data
-    rm media.tgz
-    docker compose start pulse-server
     echo "media restored"'
   exit 0
 fi
@@ -55,9 +54,10 @@ echo "integrity ok: $(sqlite3 "$work/pulse.db" 'SELECT COUNT(*) FROM users;') us
 
 scp -q "$work/pulse.db" "$PROD:/srv/pulse/restore.db"
 ssh "$PROD" 'set -e; cd /srv/pulse
+  # Whatever fails below, the server comes back up.
+  trap "docker compose start pulse-server" EXIT
   docker compose stop pulse-server
   ts=$(date -u +%Y%m%dT%H%M%SZ)
   for f in data/pulse.db data/pulse.db-wal data/pulse.db-shm; do [ -e "$f" ] && mv "$f" "$f.pre-restore-$ts"; done
   mv restore.db data/pulse.db
-  docker compose start pulse-server
   echo "restored; the previous database was kept as data/pulse.db.pre-restore-$ts"'
