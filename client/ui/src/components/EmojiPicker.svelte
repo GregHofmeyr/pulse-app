@@ -50,7 +50,8 @@
   }
 
   const isCustom = (e: Item): e is CustomEmoji => 'server_id' in e
-  const keyOf = (e: Item) => (isCustom(e) ? `custom:${e.id}` : `${e.g}:${e.n}`)
+  // Keyed on the reaction key: frequent entries can be several tones of one base emoji.
+  const keyOf = (e: Item) => reactionKey(e)
 
   // A frequent key may be a skin-toned Unicode variant: index those back to their base emoji.
   const byUnicode = new Map<string, Std>()

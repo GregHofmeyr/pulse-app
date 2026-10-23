@@ -106,6 +106,13 @@ describe('EmojiPicker', () => {
     expect([...first.querySelectorAll('.cell')].map((c) => c.getAttribute('data-key'))).toEqual(['🔥', 'custom:a'])
   })
 
+  it('frequent_tones_of_one_emoji_do_not_collide', () => {
+    app.state = { ...emptyState(), frequentEmoji: ['👍', '👍🏽'] }
+    open()
+    const first = document.querySelector('[data-section="frequent"]')!
+    expect([...first.querySelectorAll('.cell')].map((c) => c.getAttribute('data-key'))).toEqual(['👍', '👍🏽'])
+  })
+
   it('skin_tone_applies_to_toned_emoji', () => {
     open()
     const wave = byShortcode('wave')!
