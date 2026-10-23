@@ -5,6 +5,8 @@
 //! under another without that login's own authorised fetch. Signing out deletes it.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use pulse_protocol::ids::UserId;
 use sha2::{Digest, Sha256};
@@ -22,6 +24,8 @@ pub struct Session {
     pub api: Api,
     pub token: String,
     pub cache: Option<PathBuf>,
+    /// False once that session has ended (signed out, or another took its place).
+    pub alive: Arc<AtomicBool>,
 }
 
 /// This account's cache on this server: `root/<sha256(server + user)>`. The server is
@@ -44,8 +48,8 @@ pub fn parse_path(path: &str) -> Option<&str> {
     path.strip_prefix('/').filter(|h| is_hash(h))
 }
 
-/// `scope/ab/abcdef….webp`, sharded like the server's store.
-pub fn cache_path(scope: &Path, hash: &str) -> PathBuf {
+/// `scope/ab/abcdef….webp`, sharded like the server's store. `hash` comes from `parse_path`.
+fn cache_path(scope: &Path, hash: &str) -> PathBuf {
     scope.join(&hash[..2]).join(format!("{hash}.webp"))
 }
 
@@ -77,7 +81,7 @@ async fn respond(app: &AppHandle, path: &str) -> Response<Vec<u8>> {
         return status(StatusCode::SERVICE_UNAVAILABLE);
     };
     let session = core.media_session();
-    let signed_in = session.is_some();
+    let alive = session.as_ref().map(|s| s.alive.clone());
     match serve(session, path).await {
         Ok(bytes) => Response::builder()
             .header(header::CONTENT_TYPE, "image/webp")
@@ -85,7 +89,9 @@ async fn respond(app: &AppHandle, path: &str) -> Response<Vec<u8>> {
             .body(bytes)
             .expect("static headers"),
         Err(code) => {
-            if code == StatusCode::UNAUTHORIZED && signed_in {
+            // only while the asking session is still current: a 401 because it ended (or for an
+            // old one) must not sign out whoever is signed in now
+            if code == StatusCode::UNAUTHORIZED && alive.is_some_and(|a| a.load(Ordering::SeqCst)) {
                 // the server refused our token: the session is dead, same as any other 401
                 let _ = core.check::<()>(app, Err(ApiError::Unauthorized));
             }
@@ -105,14 +111,25 @@ fn status(code: StatusCode) -> Response<Vec<u8>> {
 /// out serves nothing, not even what's cached.
 pub async fn serve(session: Option<Session>, path: &str) -> Result<Vec<u8>, StatusCode> {
     let hash = parse_path(path).ok_or(StatusCode::NOT_FOUND)?;
-    let Session { api, token, cache } = session.ok_or(StatusCode::UNAUTHORIZED)?;
+    let Session {
+        api,
+        token,
+        cache,
+        alive,
+    } = session.ok_or(StatusCode::UNAUTHORIZED)?;
+    // A session that ended meanwhile gets nothing: the webview was told to forget its images.
+    let ended = || !alive.load(Ordering::SeqCst);
     let file = cache.map(|scope| cache_path(&scope, hash));
     // checked on the way out too: a cache file that went bad is fetched again
     if let Some(file) = &file
         && let Ok(bytes) = tokio::fs::read(file).await
         && verify(hash, &bytes)
     {
-        return Ok(bytes);
+        return if ended() {
+            Err(StatusCode::UNAUTHORIZED)
+        } else {
+            Ok(bytes)
+        };
     }
     let bytes = match api.media(&token, hash).await {
         Ok(b) => b,
@@ -124,10 +141,20 @@ pub async fn serve(session: Option<Session>, path: &str) -> Result<Vec<u8>, Stat
         tracing::warn!(hash, "media: the server's bytes don't match their hash");
         return Err(StatusCode::BAD_GATEWAY);
     }
+    if ended() {
+        return Err(StatusCode::UNAUTHORIZED);
+    }
     if let Some(file) = &file
         && let Err(e) = store(file, &bytes).await
     {
         tracing::warn!(error = %e, "media: caching failed");
+    }
+    if ended() {
+        // signed out while storing: the scope may have been deleted before this file landed
+        if let Some(file) = &file {
+            let _ = tokio::fs::remove_file(file).await;
+        }
+        return Err(StatusCode::UNAUTHORIZED);
     }
     Ok(bytes)
 }
@@ -221,6 +248,7 @@ pub(crate) mod tests {
             api: api.clone(),
             token: token.into(),
             cache: cache.map(Path::to_path_buf),
+            alive: Arc::new(AtomicBool::new(true)),
         })
     }
 
@@ -384,6 +412,35 @@ pub(crate) mod tests {
             .await
             .unwrap();
         assert!(verify(&info.hash, &bytes));
+    }
+
+    #[tokio::test]
+    async fn an_ended_session_neither_serves_nor_stores() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let info = api.upload_emoji_media(&token, PNG.to_vec()).await.unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let path = format!("/{}", info.hash);
+        let ended = |api: &Api| {
+            let s = session(api, &token, Some(dir.path())).unwrap();
+            s.alive.store(false, Ordering::SeqCst);
+            Some(s)
+        };
+        // fetched after the sign-out: not cached, not handed to the webview
+        assert_eq!(
+            serve(ended(&api), &path).await,
+            Err(StatusCode::UNAUTHORIZED)
+        );
+        assert!(!cache_path(dir.path(), &info.hash).exists());
+        // nor is what it had cached
+        serve(session(&api, &token, Some(dir.path())), &path)
+            .await
+            .unwrap();
+        assert_eq!(
+            serve(ended(&api), &path).await,
+            Err(StatusCode::UNAUTHORIZED)
+        );
     }
 
     #[tokio::test]

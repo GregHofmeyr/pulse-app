@@ -1,6 +1,7 @@
 //! Tauri commands: the UI's only way to reach the server. Tokens stay in here.
 
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 
 use pulse_protocol::gateway::ClientFrame;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
@@ -22,6 +23,8 @@ struct Session {
     api: Api,
     token: String,
     me: Option<UserId>,
+    /// False once this session has ended: a media fetch it started must not land afterwards.
+    alive: Arc<AtomicBool>,
 }
 
 /// Runs on every sign-out: clears what the webview cached (see `media::clear_webview_cache`).
@@ -44,6 +47,9 @@ pub struct Core {
     ui_attached: watch::Sender<bool>,
     /// setup and restore_session may both try to start the stored session: one at a time.
     starting: Mutex<()>,
+    /// The latest session's server and account in this run (kept across `suspend`, reset by a
+    /// sign-out): signing in as anyone else clears the webview's cache first.
+    last: Mutex<Option<(String, Option<UserId>)>>,
     /// Where each account's `pulse-media` cache lives (`media::scope_dir`).
     media_root: std::path::PathBuf,
     signed_out: SignedOut,
@@ -66,6 +72,7 @@ impl Core {
             boot: watch::channel(Boot::starting()).0,
             ui_attached: watch::channel(false).0,
             starting: Mutex::new(()),
+            last: Mutex::new(None),
             media_root,
             signed_out,
         }
@@ -90,6 +97,7 @@ impl Core {
             api: s.api,
             token: s.token,
             cache,
+            alive: s.alive,
         })
     }
 
@@ -99,6 +107,7 @@ impl Core {
             && s.token == token
         {
             s.me = Some(me);
+            *self.last.lock().unwrap() = Some((s.api.base().to_string(), Some(me)));
         }
     }
 
@@ -115,11 +124,7 @@ impl Core {
         if persist {
             self.store.save(api.base(), &token);
         }
-        *self.inner.lock().unwrap() = Some(Session {
-            api: api.clone(),
-            token: token.clone(),
-            me,
-        });
+        self.begin(api.clone(), token.clone(), me);
         let (tx, rx) = mpsc::unbounded_channel();
         tauri::async_runtime::spawn(crate::reports::crash::send_pending(
             app.clone(),
@@ -164,6 +169,40 @@ impl Core {
         }
     }
 
+    /// The session part of `activate`. Unless this is provably the same account on the same
+    /// server as the run's previous session, the webview's cache is cleared first: it outlives
+    /// restarts and a failed restore, and its images say `immutable`.
+    fn begin(&self, api: Api, token: String, me: Option<UserId>) {
+        let next = (api.base().to_string(), me);
+        let same = matches!(
+            self.last.lock().unwrap().replace(next.clone()),
+            Some(prev) if prev == next && me.is_some()
+        );
+        if !same {
+            (self.signed_out)();
+        }
+        let old = self.inner.lock().unwrap().replace(Session {
+            api,
+            token: token.clone(),
+            me,
+            alive: Arc::new(AtomicBool::new(true)),
+        });
+        if let Some(old) = old
+            && old.token != token
+        {
+            old.alive.store(false, Ordering::SeqCst);
+        }
+    }
+
+    /// Startup couldn't restore the stored session. `refused`: its token is dead, so it is
+    /// signed out (the caller clears the store); otherwise it stays for the next launch.
+    fn give_up_restoring(&self, refused: bool) {
+        self.suspend();
+        if refused {
+            self.forget();
+        }
+    }
+
     /// Start the stored session's live connection, once (setup and restore_session both ask; the
     /// first wins). `restart`: the webview reloaded, so a running session starts a fresh gateway
     /// (the new page needs its own Ready). The stored server, or `None` when nobody is signed in.
@@ -189,7 +228,9 @@ impl Core {
         if let Some(t) = self.retry.lock().unwrap().take() {
             t.abort();
         }
-        self.inner.lock().unwrap().take();
+        if let Some(s) = self.inner.lock().unwrap().take() {
+            s.alive.store(false, Ordering::SeqCst);
+        }
     }
 
     /// Turns true once the UI listens for `pulse://…` events (anything emitted earlier is lost).
@@ -219,15 +260,21 @@ impl Core {
     /// server, if there was one.
     fn forget(&self) -> Option<Api> {
         let session = self.inner.lock().unwrap().take();
+        if let Some(s) = &session {
+            s.alive.store(false, Ordering::SeqCst);
+        }
+        self.last.lock().unwrap().take();
         (self.signed_out)();
         let s = session?;
         if let Some(me) = &s.me {
             let scope = crate::media::scope_dir(&self.media_root, s.api.base(), me);
-            if let Err(e) = std::fs::remove_dir_all(&scope)
-                && e.kind() != std::io::ErrorKind::NotFound
-            {
-                tracing::warn!(error = %e, "media: cache not removed");
-            }
+            tauri::async_runtime::spawn_blocking(move || {
+                if let Err(e) = std::fs::remove_dir_all(&scope)
+                    && e.kind() != std::io::ErrorKind::NotFound
+                {
+                    tracing::warn!(error = %e, "media: cache not removed");
+                }
+            });
         }
         Some(s.api)
     }
@@ -370,7 +417,7 @@ pub async fn restore_session(
                 Ok((api, token)) => unrestored_reason(&api, &token).await,
                 Err(_) => ApiError::Network(crate::api::CONNECT_FAILED.into()),
             };
-            core.suspend();
+            core.give_up_restoring(matches!(why, ApiError::Unauthorized));
             match why {
                 ApiError::Unauthorized => {
                     core.store.clear(&server);
@@ -904,9 +951,8 @@ mod tests {
         root: &std::path::Path,
         server: &str,
         me: Option<UserId>,
-    ) -> (Core, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
-        use std::sync::atomic::{AtomicUsize, Ordering};
-        let cleared = std::sync::Arc::new(AtomicUsize::new(0));
+    ) -> (Core, Arc<std::sync::atomic::AtomicUsize>) {
+        let cleared = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let c = cleared.clone();
         let core = Core::new(
             Store::new(root.join("session"), Some("unit-test")),
@@ -916,17 +962,75 @@ mod tests {
                 c.fetch_add(1, Ordering::SeqCst);
             }),
         );
-        *core.inner.lock().unwrap() = Some(Session {
-            api: Api::new(server),
-            token: "t1".into(),
-            me,
-        });
+        core.begin(Api::new(server), "t1".into(), me);
+        // the run's first sign-in clears too (nothing proves the webview's cache is this
+        // account's); the tests count from here
+        assert_eq!(cleared.swap(0, Ordering::SeqCst), 1);
         (core, cleared)
     }
 
     #[test]
+    fn a_stored_login_refused_at_startup_is_signed_out() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, cleared) = signed_in(root.path(), "https://pulse.example.com", None);
+        core.give_up_restoring(true);
+        assert_eq!(cleared.load(Ordering::SeqCst), 1);
+        assert!(core.media_session().is_none());
+    }
+
+    #[test]
+    fn signing_in_as_someone_else_after_a_failed_restore_clears_first() {
+        let root = tempfile::tempdir().unwrap();
+        let server = "https://pulse.example.com";
+        let (core, cleared) = signed_in(root.path(), server, None);
+        // the server didn't answer: nobody signed out, nothing cleared
+        core.give_up_restoring(false);
+        assert_eq!(cleared.load(Ordering::SeqCst), 0);
+        // whoever logs in next may not be who that was
+        core.begin(Api::new(server), "t2".into(), Some(UserId::new()));
+        assert_eq!(cleared.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn only_a_different_account_or_server_clears_on_sign_in() {
+        let root = tempfile::tempdir().unwrap();
+        let server = "https://pulse.example.com";
+        let alex = UserId::new();
+        let (core, cleared) = signed_in(root.path(), server, Some(alex));
+        let count = || cleared.load(Ordering::SeqCst);
+        // the webview reloaded: same session again
+        core.begin(Api::new(server), "t1".into(), Some(alex));
+        assert_eq!(count(), 0);
+        core.begin(
+            Api::new("https://other.example.com"),
+            "t3".into(),
+            Some(alex),
+        );
+        assert_eq!(count(), 1);
+        core.begin(
+            Api::new("https://other.example.com"),
+            "t4".into(),
+            Some(UserId::new()),
+        );
+        assert_eq!(count(), 2);
+    }
+
+    #[test]
+    fn signing_out_ends_the_media_session_it_handed_out() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, _) = signed_in(
+            root.path(),
+            "https://pulse.example.com",
+            Some(UserId::new()),
+        );
+        let media = core.media_session().unwrap();
+        assert!(media.alive.load(Ordering::SeqCst));
+        core.forget();
+        assert!(!media.alive.load(Ordering::SeqCst));
+    }
+
+    #[test]
     fn signing_out_clears_the_webview_and_this_accounts_media_cache() {
-        use std::sync::atomic::Ordering;
         let root = tempfile::tempdir().unwrap();
         let server = "https://pulse.example.com";
         let alex = UserId::new();
@@ -948,6 +1052,11 @@ mod tests {
             Some(server)
         );
         assert_eq!(cleared.load(Ordering::SeqCst), 1);
+        // removed off the async workers
+        let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while scope.exists() && std::time::Instant::now() < until {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         assert!(!scope.exists(), "this account's cache is deleted");
         assert!(other.exists(), "another account's is not");
         assert!(core.media_session().is_none());

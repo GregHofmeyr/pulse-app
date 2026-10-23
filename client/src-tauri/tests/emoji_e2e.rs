@@ -224,6 +224,7 @@ async fn emoji_reactions_and_media_end_to_end() {
             api: api.clone(),
             token: token.into(),
             cache: Some(media::scope_dir(root.path(), &base, me)),
+            alive: std::sync::Arc::new(true.into()),
         })
     };
     for hash in [&anim.hash, anim.still_hash.as_ref().unwrap()] {
