@@ -5,7 +5,8 @@
   import Composer from './Composer.svelte'
   import Avatar from './Avatar.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
-  import { app, clock, ui } from '../lib/store.svelte'
+  import { app, clock } from '../lib/store.svelte'
+  import { windowFocus } from '../lib/windowFocus.svelte'
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
   import { addHistory, addOlder, addPending, markHistory } from '../lib/state'
   import { displayName, nextTypingExpiry, stableList, typingNames } from '../lib/selectors'
@@ -139,7 +140,7 @@
   let atBottom = $state(true)
   let wasWatching = false
   $effect(() => {
-    const now = ui.focused && atBottom
+    const now = windowFocus.focused && atBottom
     const newest = untrack(() => messages.at(-1)?.id ?? null)
     const next = reanchor(untrack(() => anchor), { was: wasWatching, now, newest })
     if (next !== untrack(() => anchor)) {
@@ -153,7 +154,7 @@
   $effect(() => {
     const newest = messages.at(-1)?.id
     const read = app.state.reads[channelId]?.last_read_message_id ?? null
-    const want = shouldMarkRead({ open: true, focused: ui.focused, atBottom })
+    const want = shouldMarkRead({ open: true, focused: windowFocus.focused, atBottom })
     if (!newest || !want || (read !== null && newest <= read)) return
     if (markTimer) clearTimeout(markTimer)
     markTimer = setTimeout(() => void api.markRead(channelId, newest).catch(() => {}), 300)

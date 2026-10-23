@@ -1,4 +1,5 @@
 <script lang="ts">
+  import Segmented from './Segmented.svelte'
   import { motion, setAnimateMode, type AnimateMode } from '../lib/animate.svelte'
 
   const modes: { value: AnimateMode; label: string; help: string }[] = [
@@ -8,26 +9,10 @@
   ]
 </script>
 
-<section class="pane">
+<section class="settings-pane">
   <h2>Chat</h2>
-  <div class="field"><span class="lbl">ANIMATE EMOJI</span>
-    <div class="seg" role="radiogroup" aria-label="Animate emoji">
-      {#each modes as m}
-        <button role="radio" aria-checked={motion.mode === m.value} class:on={motion.mode === m.value}
-          onclick={() => setAnimateMode(m.value)}>{m.label}</button>
-      {/each}
-    </div>
+  <div class="settings-field"><span class="settings-label">ANIMATE EMOJI</span>
+    <Segmented label="Animate emoji" options={modes} value={motion.mode} onchange={setAnimateMode} />
     <small>{modes.find((m) => m.value === motion.mode)?.help} Your system's reduce-motion setting always stops them.</small>
   </div>
 </section>
-
-<style>
-  .pane { display: flex; flex-direction: column; gap: 20px; }
-  h2 { margin: 0; font-size: 20px; font-weight: 600; }
-  .field { display: flex; flex-direction: column; gap: 8px; }
-  .lbl { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
-  small { font-size: 12px; color: var(--text-3); }
-  .seg { display: inline-flex; align-self: flex-start; border: 1px solid var(--bg-4); border-radius: 10px; overflow: hidden; }
-  .seg button { padding: 8px 14px; border: 0; background: transparent; color: var(--text-2); font-weight: 600; }
-  .seg button.on { background: var(--accent); color: var(--on-accent); }
-</style>

@@ -8,6 +8,7 @@ import { api } from './tauri'
 import { isMuted, messageSound } from './conversations'
 import { noteReactionEvent } from './reactions'
 import { playSound } from './voiceui'
+import { windowFocus } from './windowFocus.svelte'
 
 // The reducer (state.ts) is pure and never mutates: hold its output as-is (`$state.raw`) instead
 // of deep-proxying it. Reassigning `app.state` is the only way to change it, and the only way that
@@ -18,7 +19,7 @@ class AppStore {
 export const app = new AppStore()
 
 /** What the user is looking at: drives the message sound and read marking. */
-export const ui = $state({ openChannelId: null as string | null, focused: true, autoReported: false })
+export const ui = $state({ openChannelId: null as string | null, autoReported: false })
 
 /** One shared clock for time-dependent UI (mute expiry, "5m ago"). Ticks every 30 s. */
 export const clock = $state({ nowIso: new Date().toISOString() })
@@ -37,7 +38,7 @@ function maybeSound(e: Event) {
     me: me.id,
     channel: ch,
     open: ui.openChannelId === m.channel_id,
-    focused: ui.focused,
+    focused: windowFocus.focused,
     muted: isMuted(app.state, ch, new Date(now).toISOString()),
     lastPlayedAt,
     now,

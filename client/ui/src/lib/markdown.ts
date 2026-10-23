@@ -2,7 +2,7 @@
 // DOMPurify allow-list. This is the ONLY string the UI may pass to {@html}.
 import DOMPurify from 'dompurify'
 import { Marked, type TokenizerAndRendererExtension } from 'marked'
-import { mediaUrl, standard, TOKEN_RE, twemojiUrl } from './emoji'
+import { isMediaHash, isMediaUrl, mediaUrl, standard, TOKEN_RE, twemojiUrl } from './emoji'
 import type { CustomEmoji } from './protocol/CustomEmoji'
 import type { Message } from './protocol/Message'
 
@@ -59,13 +59,8 @@ const ALLOWED_ATTR = ['href', 'target', 'rel', 'class', 'alt', 'src', 'draggable
 const SAFE_HREF = /^(https?:|mailto:)/i
 // The exact shapes we emit: a Twemoji file, or a stored media hash through the core's scheme.
 // Anything else (remote, data:, other hosts, other paths) goes.
-const SAFE_IMG_SRCS = [
-  /^\/emoji\/[0-9a-f]{1,6}(-[0-9a-f]{1,6})*\.svg$/,
-  /^(pulse-media:\/\/localhost|http:\/\/pulse-media\.localhost)\/[0-9a-f]{64}$/,
-]
-const safeImgSrc = (src: string) => SAFE_IMG_SRCS.some((re) => re.test(src))
-// An animated custom emoji's media hash (the src carries its still frame).
-const SAFE_ANIM = /^[0-9a-f]{64}$/
+const TWEMOJI_SRC = /^\/emoji\/[0-9a-f]{1,6}(-[0-9a-f]{1,6})*\.svg$/
+const safeImgSrc = (src: string) => TWEMOJI_SRC.test(src) || isMediaUrl(src)
 // The only classes we emit; content can't set any other.
 const CLASSES: Record<string, string[]> = { IMG: ['emoji', 'emoji big'], SPAN: ['mention', 'emoji-gone', 'emoji-gone big'] }
 
@@ -74,7 +69,7 @@ function purifier() {
   if (!hooked) {
     DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
       if (data.attrName === 'data-anim') {
-        if (node.tagName !== 'IMG' || !SAFE_ANIM.test(data.attrValue)) data.keepAttr = false
+        if (node.tagName !== 'IMG' || !isMediaHash(data.attrValue)) data.keepAttr = false
         return
       }
       if (data.attrName !== 'src') return

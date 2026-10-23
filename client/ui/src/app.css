@@ -38,3 +38,10 @@ button { cursor: pointer; }
   opacity: 0; transition: opacity .12s; left: -9999px; top: -9999px;
 }
 .pulse-tooltip.show { opacity: 1; }
+
+/* Settings panes (Voice & Audio, Chat): page layout, and a labelled field. */
+.settings-pane { display: flex; flex-direction: column; gap: 20px; }
+.settings-pane > h2 { margin: 0; font-size: 20px; font-weight: 600; }
+.settings-field { display: flex; flex-direction: column; gap: 8px; }
+.settings-label { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
+.settings-pane small { font-size: 12px; font-weight: 400; color: var(--text-3); letter-spacing: 0; }

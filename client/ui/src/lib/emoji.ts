@@ -9,6 +9,12 @@ export function mediaUrl(hash: string, ua: string = navigator.userAgent): string
   return ua.includes('Windows') ? `http://pulse-media.localhost/${hash}` : `pulse-media://localhost/${hash}`
 }
 
+/** A stored image's URL through the core's scheme, as `mediaUrl` builds it (either platform's form). */
+const MEDIA_URL = /^(pulse-media:\/\/localhost|http:\/\/pulse-media\.localhost)\/[0-9a-f]{64}$/
+export const isMediaUrl = (src: string): boolean => MEDIA_URL.test(src)
+/** A stored image's content hash. */
+export const isMediaHash = (h: string): boolean => /^[0-9a-f]{64}$/.test(h)
+
 /** One standard emoji: `u` Unicode, `n` primary shortcode, `k` keywords + other shortcodes, `g` index into `groups`, `s` the 5 skin-tone variants. */
 export type Std = { u: string; n: string; k: string[]; g: number; s?: string[] }
 

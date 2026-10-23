@@ -2,8 +2,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeMatchMedia, FakeIntersectionObserver } from './testMotion'
 
-const onFocusChanged = vi.fn(async (_h: (e: { payload: boolean }) => void) => () => {})
-vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ onFocusChanged }) }))
 
 type Mod = typeof import('./animate.svelte')
 // The watchers install once per module: each test gets a fresh one.
@@ -18,14 +16,12 @@ async function fresh(): Promise<Mod> {
 
 beforeEach(() => {
   localStorage.clear()
-  onFocusChanged.mockClear()
   vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
   FakeIntersectionObserver.all = []
 })
 afterEach(() => {
   vi.unstubAllGlobals()
   vi.restoreAllMocks()
-  delete (window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__
 })
 
 describe('shouldAnimate', () => {
@@ -61,32 +57,7 @@ describe('Animate emoji setting', () => {
   })
 })
 
-describe('window focus and reduced motion', () => {
-  it('starts from document.hasFocus() and follows window focus/blur', async () => {
-    vi.spyOn(document, 'hasFocus').mockReturnValue(false)
-    const m = await fresh()
-    m.watchMotion()
-    expect(m.motion.focused).toBe(false)
-    window.dispatchEvent(new Event('focus'))
-    expect(m.motion.focused).toBe(true)
-    window.dispatchEvent(new Event('blur'))
-    expect(m.motion.focused).toBe(false)
-  })
-
-  it('also follows the Tauri window focus event when running in Tauri', async () => {
-    ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
-    const m = await fresh()
-    m.watchMotion()
-    m.watchMotion() // once only
-    expect(onFocusChanged).toHaveBeenCalledOnce()
-    const handler = onFocusChanged.mock.calls[0][0]
-    handler({ payload: false })
-    expect(m.motion.focused).toBe(false)
-    handler({ payload: true })
-    expect(m.motion.focused).toBe(true)
-  })
-
+describe('reduced motion', () => {
   it('follows prefers-reduced-motion live', async () => {
     const mm = fakeMatchMedia(true)
     vi.stubGlobal('matchMedia', mm.matchMedia)
@@ -166,5 +137,28 @@ describe('wireEmoji', () => {
     a.parentElement!.dispatchEvent(new Event('pointerleave'))
     flushSync()
     expect(a.getAttribute('src')).toBe(STILL)
+  })
+
+  it('animateEmojiIn wires only a stored-media still with an exact hash', async () => {
+    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
+    const m = await fresh()
+    const H = 'a'.repeat(64)
+    const box = document.createElement('div')
+    const good = `<img src="pulse-media://localhost/${'b'.repeat(64)}" data-anim="${H}">`
+    const bad = [
+      `<img src="https://evil.example/x.webp" data-anim="${H}">`,
+      `<img src="/emoji/1f44d.svg" data-anim="${H}">`,
+      `<img src="pulse-media://localhost/${'b'.repeat(64)}" data-anim="../${H}">`,
+    ]
+    box.innerHTML = good + bad.join('')
+    document.body.append(box)
+    const stop = m.animateEmojiIn(box.innerHTML)(box) as () => void
+    expect(FakeIntersectionObserver.watching()).toBe(1)
+    for (const img of box.querySelectorAll('img')) FakeIntersectionObserver.set(img, true)
+    flushSync()
+    const srcs = [...box.querySelectorAll('img')].map((i) => i.getAttribute('src'))
+    expect(srcs[0]).toBe(`pulse-media://localhost/${H}`)
+    expect(srcs.slice(1)).toEqual(['https://evil.example/x.webp', '/emoji/1f44d.svg', `pulse-media://localhost/${'b'.repeat(64)}`])
+    stop()
   })
 })

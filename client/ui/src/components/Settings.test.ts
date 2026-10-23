@@ -22,14 +22,24 @@ afterEach(() => {
 const options = () => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Animate emoji"] [role=radio]')]
 
 describe('Settings: Chat', () => {
-  it('has a Chat section with Animate emoji, Always by default', () => {
-    cmp = mount(Settings, { target: document.body, props: { onClose: () => {} } })
-    flushSync()
-    const chat = [...document.querySelectorAll('nav button')].find((b) => b.textContent === 'Chat') as HTMLButtonElement
-    chat.click()
-    flushSync()
-    expect(options().map((o) => o.textContent)).toEqual(['Always', 'On hover', 'Never'])
-    expect(options().map((o) => o.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false'])
+  it('has a Chat section with Animate emoji, Always by default (nothing stored)', async () => {
+    // A fresh setting module reads the empty storage itself (beforeEach's choice doesn't count).
+    localStorage.clear()
+    vi.resetModules()
+    const svelte = await import('svelte')
+    const { default: FreshSettings } = await import('./Settings.svelte')
+    const fresh = svelte.mount(FreshSettings, { target: document.body, props: { onClose: () => {} } })
+    try {
+      svelte.flushSync()
+      const chat = [...document.querySelectorAll('nav button')].find((b) => b.textContent === 'Chat') as HTMLButtonElement
+      chat.click()
+      svelte.flushSync()
+      expect(options().map((o) => o.textContent)).toEqual(['Always', 'On hover', 'Never'])
+      expect(options().map((o) => o.getAttribute('aria-checked'))).toEqual(['true', 'false', 'false'])
+      expect(localStorage.getItem('pulse.animateEmoji')).toBeNull()
+    } finally {
+      svelte.unmount(fresh)
+    }
   })
 
   it('choosing an option applies and persists it', () => {

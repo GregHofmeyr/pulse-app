@@ -22,6 +22,7 @@
   import { isMember } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import { keybindsApi } from '../lib/keybinds'
+  import { watchWindowFocus } from '../lib/windowFocus.svelte'
   import type { User } from '../lib/protocol/User'
 
   let { user, onLogout }: { user: User; onLogout: () => void } = $props()
@@ -67,17 +68,7 @@
   // Badges depend on mute expiry: they re-evaluate on the shared clock.
   const nowIso = $derived(clock.nowIso)
   onMount(() => void checkKeybinds())
-  onMount(() => {
-    const focus = () => (ui.focused = true)
-    const blur = () => (ui.focused = false)
-    window.addEventListener('focus', focus)
-    window.addEventListener('blur', blur)
-    ui.focused = document.hasFocus()
-    return () => {
-      window.removeEventListener('focus', focus)
-      window.removeEventListener('blur', blur)
-    }
-  })
+  onMount(watchWindowFocus)
   $effect(() => {
     ui.openChannelId = activeChannelId
   })

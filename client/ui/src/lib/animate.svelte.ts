@@ -3,8 +3,8 @@
 // its stored first frame shows. Both images are immutable-cached, so swapping src is cheap.
 import { untrack } from 'svelte'
 import type { Attachment } from 'svelte/attachments'
-import { getCurrentWindow } from '@tauri-apps/api/window'
-import { mediaUrl } from './emoji'
+import { isMediaHash, isMediaUrl, mediaUrl } from './emoji'
+import { watchWindowFocus, windowFocus } from './windowFocus.svelte'
 
 export type AnimateMode = 'always' | 'hover' | 'never'
 export const ANIMATE_MODES: AnimateMode[] = ['always', 'hover', 'never']
@@ -25,8 +25,8 @@ function savedMode(): AnimateMode {
   }
 }
 
-/** The one shared source every animated emoji follows. */
-export const motion = $state({ mode: savedMode(), focused: true, reducedMotion: false })
+/** The setting and reduced motion; with `windowFocus`, the shared source every animated emoji follows. */
+export const motion = $state({ mode: savedMode(), reducedMotion: false })
 
 /** The "Animate emoji" setting (this device only, like the skin tone). */
 export function setAnimateMode(m: AnimateMode): void {
@@ -44,20 +44,7 @@ let watching = false
 export function watchMotion(): void {
   if (watching) return
   watching = true
-  motion.focused = document.hasFocus()
-  window.addEventListener('focus', () => (motion.focused = true))
-  window.addEventListener('blur', () => (motion.focused = false))
-  // The webview may not get DOM focus/blur when the OS window changes focus (WebKitGTK, WebView2
-  // with focus inside a native control); the window's own event always comes. Last one wins.
-  if ('__TAURI_INTERNALS__' in window) {
-    try {
-      void getCurrentWindow()
-        .onFocusChanged(({ payload }) => (motion.focused = payload))
-        .catch(() => {})
-    } catch {
-      /* DOM events only */
-    }
-  }
+  watchWindowFocus()
   const mq = typeof window.matchMedia === 'function' ? window.matchMedia('(prefers-reduced-motion: reduce)') : null
   if (mq) {
     motion.reducedMotion = mq.matches
@@ -109,7 +96,7 @@ export function wireEmoji(img: HTMLImageElement, anim: string, still: string, ho
     const unobserve = observe(img, (v) => (visible = v))
     const stop = $effect.root(() => {
       $effect(() => {
-        const on = shouldAnimate({ ...motion, visible, hovered: hovered ? hovered() : pointer })
+        const on = shouldAnimate({ ...motion, focused: windowFocus.focused, visible, hovered: hovered ? hovered() : pointer })
         const src = on ? anim : still
         if (img.getAttribute('src') !== src) img.setAttribute('src', src)
       })
@@ -139,12 +126,16 @@ export function animatedEmoji(e: { hash: string | null; still_hash: string | nul
 }
 
 /** `{@attach}` for rendered message HTML: wires each `img[data-anim]` in it. Pass the HTML so a
- * new render re-wires. */
+ * new render re-wires. Only a stored-media still and an exact hash are used (the sanitiser already
+ * ensures both; this doesn't rely on it). */
 export function animateEmojiIn(_html: string): Attachment<HTMLElement> {
   return (node) => {
-    const stops = Array.from(node.querySelectorAll<HTMLImageElement>('img[data-anim]'), (img) =>
-      wireEmoji(img, mediaUrl(img.dataset.anim!), img.getAttribute('src')!),
-    )
+    const stops: (() => void)[] = []
+    for (const img of node.querySelectorAll<HTMLImageElement>('img[data-anim]')) {
+      const still = img.getAttribute('src') ?? ''
+      const anim = img.dataset.anim ?? ''
+      if (isMediaUrl(still) && isMediaHash(anim)) stops.push(wireEmoji(img, mediaUrl(anim), still))
+    }
     return () => stops.forEach((s) => s())
   }
 }

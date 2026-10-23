@@ -19,7 +19,8 @@ import EmojiPicker from './EmojiPicker.svelte'
 import Composer from './Composer.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
-import { motion, setAnimateMode } from '../lib/animate.svelte'
+import { setAnimateMode } from '../lib/animate.svelte'
+import { windowFocus } from '../lib/windowFocus.svelte'
 
 const A = 'a'.repeat(64) // animated
 const S = 'b'.repeat(64) // its still first frame
@@ -87,7 +88,7 @@ describe('animated emoji in a message', () => {
     expect(src(anim)).toBe(url(A))
     expect(src(still)).toBe(url(P)) // still emoji untouched
     fire(window, 'blur')
-    expect(motion.focused).toBe(false)
+    expect(windowFocus.focused).toBe(false)
     expect(src(anim)).toBe(url(S))
     fire(window, 'focus')
     expect(src(anim)).toBe(url(A))
