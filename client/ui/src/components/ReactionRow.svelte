@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { untrack } from 'svelte'
   import type { Message } from '../lib/protocol/Message'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { Std } from '../lib/emoji'
@@ -33,25 +34,36 @@
   let hoverOn: string | null = null
   let focusOn: string | null = null
 
+  let tipFailed = false
+  const reaction = (key: string) => message.reactions.find((r) => r.emoji === key)
+
   // Fetched fresh each time the tip opens: a cache could not tell "one left, one joined" from no
   // change. Only the newest request may fill it; a slow earlier one would show an older list.
-  async function showTip(key: string, count: number) {
-    if (tipFor === key) return // already shown or loading (a click is a hover, then a focus)
+  // `keep` refreshes in place (no flash back to "…") when the chip changes under an open tip.
+  async function loadTip(key: string, count: number, keep = false) {
     const req = ++tipReq
     tipFor = key
-    tipText = '…'
+    tipFailed = false
+    if (!keep) tipText = '…'
     try {
       const ids = await api.listReactors(message.id, key)
       if (req === tipReq) tipText = tooltipText(ids.map((id) => nameOf(id)), count)
     } catch {
-      if (req === tipReq) tipText = ''
+      if (req === tipReq) {
+        tipFailed = true
+        tipText = "Couldn't load reactors"
+      }
     }
+  }
+  function showTip(key: string, count: number) {
+    if (tipFor === key && !tipFailed) return // already shown or loading (a click is a hover, then a focus)
+    void loadTip(key, count)
   }
   // The tip stays while the chip is hovered or focused.
   function enter(key: string, count: number, how: 'hover' | 'focus') {
     if (how === 'hover') hoverOn = key
     else focusOn = key
-    void showTip(key, count)
+    showTip(key, count)
   }
   function leave(key: string, how: 'hover' | 'focus') {
     if (how === 'hover') hoverOn = null
@@ -59,8 +71,24 @@
     if (tipFor === key && hoverOn !== key && focusOn !== key) {
       tipReq++
       tipFor = null
+      // Another chip still has keyboard focus (or the pointer): its tip comes back.
+      const back = focusOn ?? hoverOn
+      const r = back && reaction(back)
+      if (r) showTip(r.emoji, r.count)
     }
   }
+  // A click (or someone else's reaction) changes the list under an open tip: refetch it.
+  let seen = ''
+  $effect(() => {
+    const r = tipFor ? reaction(tipFor) : undefined
+    const sig = r ? `${r.emoji}|${r.count}|${r.me}` : ''
+    untrack(() => {
+      const prev = seen
+      seen = sig
+      if (!r || !prev || prev.split('|')[0] !== r.emoji || prev === sig) return
+      void loadTip(r.emoji, r.count, true)
+    })
+  })
   // Keyed by emoji so it stays put if the chips reorder; ids are alphanumeric, Unicode goes by code point.
   const tipId = (key: string) =>
     `reactors-${message.id}-${key.startsWith('custom:') ? 'custom-' + key.slice(7) : [...key].map((c) => c.codePointAt(0)!.toString(16)).join('-')}`

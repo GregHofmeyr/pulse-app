@@ -407,3 +407,70 @@ describe('reactor tooltip', () => {
     expect(chips()[1].getAttribute('aria-describedby')).toBe(tip.id)
   })
 })
+
+describe('reactor tooltip edge cases', () => {
+  const two = () => msg({ reactions: [{ emoji: '👍', count: 2, me: false }, { emoji: '🎉', count: 1, me: false }] })
+  const tipText = () => document.querySelector('.tip')?.textContent
+  // The message follows app.state, as MessageItem's does, so a count change reaches the row.
+  function showLive(m: Message) {
+    load(m)
+    cmp = mount(ReactionRow, { target: document.body, props: { get message() { return app.state.messages['C1'][0] }, meId: 'U1', nameOf: (id: string | null) => id ?? '', onError } })
+    flushSync()
+  }
+
+  it('restores the focused chip\'s tip when the pointer leaves another chip', async () => {
+    invoke.mockImplementation(async (_c, a) => ((a as { emoji: string }).emoji === '👍' ? ['U2', 'U3'] : ['U9']))
+    show(two())
+    const [a, b] = chips()
+    a.dispatchEvent(new FocusEvent('focus'))
+    b.dispatchEvent(new Event('pointerenter'))
+    await settle()
+    flushSync()
+    expect(tipText()).toBe('U9')
+    b.dispatchEvent(new Event('pointerleave'))
+    await settle()
+    flushSync()
+    expect(tipText()).toBe('U2 and U3')
+    expect(a.getAttribute('aria-describedby')).toBe(document.querySelector('.tip')!.id)
+  })
+
+  it('refetches when the count changes while the tip is open', async () => {
+    invoke.mockResolvedValue(['U2', 'U3'])
+    showLive(two())
+    chips()[0].dispatchEvent(new Event('pointerenter'))
+    await settle()
+    flushSync()
+    expect(tipText()).toBe('U2 and U3')
+    invoke.mockResolvedValue(['U2', 'U3', 'U4'])
+    app.state = { ...app.state, messages: { C1: [{ ...cur(), reactions: [{ emoji: '👍', count: 3, me: false }, cur().reactions[1]] }] } }
+    await settle()
+    flushSync()
+    expect(calls('list_reactors')).toHaveLength(2)
+    expect(tipText()).toBe('U2, U3 and U4')
+  })
+
+  it('refetches when only "me" flips (a click that swaps one reactor)', async () => {
+    invoke.mockResolvedValue(['U2'])
+    showLive(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))
+    chips()[0].dispatchEvent(new Event('pointerenter'))
+    await settle()
+    app.state = { ...app.state, messages: { C1: [{ ...cur(), reactions: [{ emoji: '👍', count: 2, me: true }] }] } }
+    await settle()
+    expect(calls('list_reactors')).toHaveLength(2)
+  })
+
+  it('a failed fetch shows a fallback, and the next show retries', async () => {
+    invoke.mockRejectedValueOnce('offline').mockResolvedValue(['U2', 'U3'])
+    show(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))
+    const c = chips()[0]
+    c.dispatchEvent(new FocusEvent('focus'))
+    await settle()
+    flushSync()
+    expect(tipText()).toMatch(/couldn.t load/i)
+    c.dispatchEvent(new Event('pointerenter')) // still shown (focus holds it): this show retries
+    await settle()
+    flushSync()
+    expect(tipText()).toBe('U2 and U3')
+    expect(calls('list_reactors')).toHaveLength(2)
+  })
+})
