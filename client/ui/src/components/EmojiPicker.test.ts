@@ -207,6 +207,15 @@ describe('EmojiPicker', () => {
     expect(document.querySelector('.cell.active')).toBe(cells().at(-1))
   })
 
+  it('enter_on_other_controls_does_not_pick_the_highlight', () => {
+    open()
+    key(search(), 'ArrowDown')
+    for (const sel of ['.tone', '.head', '.rail-btn']) {
+      key(document.querySelector(sel)!, 'Enter')
+    }
+    expect(onPick).not.toHaveBeenCalled()
+  })
+
   it('rail_click_during_search_clears_it_and_scrolls', async () => {
     open()
     type('wave')

@@ -153,7 +153,10 @@
     } else if (ev.key === 'Enter') {
       // The focused cell wins, then the highlighted one; with nothing highlighted only a search's
       // first result is picked, so Enter in a fresh picker never chooses an emoji unseen.
-      const cellEl = (ev.target as HTMLElement).closest?.('.cell')
+      const el = ev.target as HTMLElement
+      const cellEl = el.closest?.('.cell')
+      // Any other control (tone, rail, section header) handles its own Enter.
+      if (!cellEl && el !== searchEl && el !== root) return
       const target = cellEl
         ? flat.find((e) => keyOf(e) === cellEl.getAttribute('data-key'))
         : navigated || hovered ? flat[active] : results?.[0]
