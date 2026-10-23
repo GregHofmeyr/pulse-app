@@ -141,17 +141,26 @@ pub async fn serve(session: Option<Session>, path: &str) -> Result<Vec<u8>, Stat
         tracing::warn!(hash, "media: the server's bytes don't match their hash");
         return Err(StatusCode::BAD_GATEWAY);
     }
+    keep(file.as_deref(), bytes, ended).await
+}
+
+/// Fetched bytes: cached and returned, unless the session ended before or while storing them.
+async fn keep(
+    file: Option<&Path>,
+    bytes: Vec<u8>,
+    ended: impl Fn() -> bool,
+) -> Result<Vec<u8>, StatusCode> {
     if ended() {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    if let Some(file) = &file
+    if let Some(file) = file
         && let Err(e) = store(file, &bytes).await
     {
         tracing::warn!(error = %e, "media: caching failed");
     }
     if ended() {
         // signed out while storing: the scope may have been deleted before this file landed
-        if let Some(file) = &file {
+        if let Some(file) = file {
             let _ = tokio::fs::remove_file(file).await;
         }
         return Err(StatusCode::UNAUTHORIZED);
@@ -441,6 +450,30 @@ pub(crate) mod tests {
             serve(ended(&api), &path).await,
             Err(StatusCode::UNAUTHORIZED)
         );
+    }
+
+    #[tokio::test]
+    async fn signed_out_while_storing_takes_the_file_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = cache_path(dir.path(), HASH);
+        // alive at the first check, ended by the second (after the store)
+        let checks = std::cell::Cell::new(0);
+        let ended = || {
+            checks.set(checks.get() + 1);
+            checks.get() > 1
+        };
+        assert_eq!(
+            keep(Some(&file), b"bytes".to_vec(), ended).await,
+            Err(StatusCode::UNAUTHORIZED)
+        );
+        assert_eq!(checks.get(), 2);
+        assert!(!file.exists());
+        // still alive: kept and returned
+        assert_eq!(
+            keep(Some(&file), b"bytes".to_vec(), || false).await,
+            Ok(b"bytes".to_vec())
+        );
+        assert!(file.exists());
     }
 
     #[tokio::test]

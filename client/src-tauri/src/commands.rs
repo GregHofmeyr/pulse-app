@@ -181,17 +181,23 @@ impl Core {
         if !same {
             (self.signed_out)();
         }
-        let old = self.inner.lock().unwrap().replace(Session {
+        let mut inner = self.inner.lock().unwrap();
+        // the same token (a webview reload) is the same session: its fetches end with it
+        let alive = match inner.take() {
+            Some(old) if old.token == token => old.alive,
+            old => {
+                if let Some(old) = old {
+                    old.alive.store(false, Ordering::SeqCst);
+                }
+                Arc::new(AtomicBool::new(true))
+            }
+        };
+        *inner = Some(Session {
             api,
-            token: token.clone(),
+            token,
             me,
-            alive: Arc::new(AtomicBool::new(true)),
+            alive,
         });
-        if let Some(old) = old
-            && old.token != token
-        {
-            old.alive.store(false, Ordering::SeqCst);
-        }
     }
 
     /// Startup couldn't restore the stored session. `refused`: its token is dead, so it is
@@ -1013,6 +1019,19 @@ mod tests {
             Some(UserId::new()),
         );
         assert_eq!(count(), 2);
+    }
+
+    #[test]
+    fn a_reload_keeps_the_session_so_a_sign_out_still_ends_its_fetches() {
+        let root = tempfile::tempdir().unwrap();
+        let server = "https://pulse.example.com";
+        let alex = UserId::new();
+        let (core, _) = signed_in(root.path(), server, Some(alex));
+        let before_reload = core.media_session().unwrap();
+        core.begin(Api::new(server), "t1".into(), Some(alex));
+        assert!(before_reload.alive.load(Ordering::SeqCst));
+        core.forget();
+        assert!(!before_reload.alive.load(Ordering::SeqCst));
     }
 
     #[test]
