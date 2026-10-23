@@ -131,10 +131,19 @@ mod tests {
                 }))
             })
             .collect();
-        tokio::time::sleep(Duration::from_millis(300)).await;
-        assert_eq!(started.load(Ordering::SeqCst), 2, "the third must wait");
+        // Wait for the first two to start (bounded), then give a third time to wrongly follow.
+        for _ in 0..500 {
+            if started.load(Ordering::SeqCst) >= 2 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(200)).await;
+        let running = started.load(Ordering::SeqCst);
+        // Release first, so a failed assertion doesn't leave blocked threads hanging the runtime.
         *gate.0.lock().unwrap() = true;
         gate.1.notify_all();
+        assert_eq!(running, 2, "the third must wait");
         for j in jobs {
             j.await.unwrap().unwrap();
         }

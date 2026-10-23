@@ -62,9 +62,9 @@ echo "backed up pulse-$ts.db.age"
 if [[ -d data/media ]]; then
   # tar exits 1 when a file changed while it was read (an upload during the backup): the archive is
   # still written and the database backup above already succeeded, so that only warrants a warning.
-  # A file the hourly cleanup removes mid-archive is not an error either (else GNU tar may exit 2).
+  # A file the hourly cleanup removes mid-archive is not an error either (no warning for it); an unreadable file stays a real error.
   tar_rc=0
-  tar --warning=no-file-removed --ignore-failed-read -C data -czf "$media" media || tar_rc=$?
+  tar --warning=no-file-removed -C data -czf "$media" media || tar_rc=$?
   if [[ $tar_rc -eq 1 ]]; then
     echo "warning: media changed while being archived; the backup may miss the newest uploads" >&2
   elif [[ $tar_rc -ne 0 ]]; then
