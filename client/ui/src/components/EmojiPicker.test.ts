@@ -9,7 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: async () => undefined }))
 import EmojiPicker from './EmojiPicker.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
-import { byShortcode } from '../lib/emoji'
+import { byShortcode, standard } from '../lib/emoji'
 
 const servers: Server[] = [
   { id: 'S1', name: 'Main', icon_hash: null },
@@ -145,15 +145,83 @@ describe('EmojiPicker', () => {
     expect(onPick.mock.calls[0][0].u).toBe(wave.s![2])
   })
 
-  it('opens the full grid quickly', () => {
-    const times: number[] = []
-    for (let i = 0; i < 4; i++) {
-      if (cmp) unmount(cmp)
-      const t0 = performance.now()
-      open()
-      times.push(performance.now() - t0)
+  it('frequent_caps_at_27_of_usable_mixed_keys', () => {
+    const ids = Array.from({ length: 10 }, (_, i) => 'c' + i)
+    const smileys = Array.from({ length: 30 }, (_, i) => String.fromCodePoint(0x1f600 + i))
+    app.state = {
+      ...emptyState(),
+      frequentEmoji: [...ids.map((i) => 'custom:' + i), ...smileys],
+      customEmoji: Object.fromEntries(ids.map((i) => [i, custom(i, 'S1', 'e' + i)])),
     }
-    console.info(`emoji picker open (cold, warm...): ${times.map((t) => t.toFixed(1)).join(' ')} ms, ${cells().length} cells`)
-    expect(cells().length).toBeGreaterThan(1800)
+    open()
+    const keys = [...document.querySelectorAll('[data-section="frequent"] .cell')].map((c) => c.getAttribute('data-key'))
+    expect(keys).toEqual([...ids.map((i) => 'custom:' + i), ...smileys.slice(0, 17)])
+  })
+
+  it('left_right_move_the_caret_in_a_typed_search_until_the_grid_is_entered', () => {
+    open()
+    type('thumbs')
+    const ev = (k: string) => {
+      const e = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })
+      search().dispatchEvent(e)
+      flushSync()
+      return e.defaultPrevented
+    }
+    expect(ev('ArrowLeft')).toBe(false)
+    expect(ev('ArrowRight')).toBe(false)
+    expect(ev('ArrowDown')).toBe(true) // enters the grid
+    expect(ev('ArrowRight')).toBe(true) // now navigating it
+  })
+
+  it('left_right_navigate_the_grid_when_the_search_is_empty', () => {
+    open()
+    const e = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
+    search().dispatchEvent(e)
+    expect(e.defaultPrevented).toBe(true)
+  })
+
+  it('enter_on_a_tab_focused_cell_picks_that_cell', () => {
+    open()
+    const cell = cells()[5] as HTMLElement
+    cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    expect(onPick).toHaveBeenCalledTimes(1)
+    expect(onPick.mock.calls[0][0].u).toBe(cell.getAttribute('data-key'))
+  })
+
+  it('enter_with_nothing_highlighted_and_no_search_does_nothing', () => {
+    open()
+    key(search(), 'Enter')
+    expect(onPick).not.toHaveBeenCalled()
+  })
+
+  it('active_is_clamped_when_a_section_collapses', () => {
+    open()
+    for (let i = 0; i < 150; i++) key(search(), 'ArrowDown')
+    const heads = [...document.querySelectorAll('.head')] as HTMLElement[]
+    for (const h of heads.slice(0, -1)) h.click()
+    flushSync()
+    key(search(), 'Enter')
+    const last = cells().at(-1)!.getAttribute('data-key')
+    expect(onPick).toHaveBeenCalledTimes(1)
+    expect(onPick.mock.calls[0][0].u).toBe(last)
+    expect(document.querySelector('.cell.active')).toBe(cells().at(-1))
+  })
+
+  it('rail_click_during_search_clears_it_and_scrolls', async () => {
+    open()
+    type('wave')
+    expect(cells().length).toBeLessThan(60)
+    ;(document.querySelector('[data-rail="group:objects"]') as HTMLElement).click()
+    await tick()
+    expect(search().value).toBe('')
+    expect(document.querySelector('[data-section="group:objects"] .cell')).not.toBeNull()
+    expect(scrollIntoView.mock.contexts.at(-1)).toBe(document.querySelector('[data-section="group:objects"]'))
+  })
+
+  it('renders_every_standard_emoji_with_lazy_images', () => {
+    open()
+    expect(cells().length).toBe(standard.length)
+    const imgs = [...document.querySelectorAll('.cell img')]
+    expect(imgs.every((i) => i.getAttribute('loading') === 'lazy')).toBe(true)
   })
 })

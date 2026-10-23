@@ -14,7 +14,7 @@
   } = $props()
 
   type Item = Std | CustomEmoji
-  type Section = { id: string; label: string; items: Item[]; server?: Server }
+  type Section = { id: string; label: string; items: Item[]; server?: Server; glyph?: string }
   type Tone = 0 | 1 | 2 | 3 | 4 | 5
 
   const COLS = 9
@@ -86,7 +86,10 @@
       const items = liveCustom.filter((c) => c.server_id === s.id).sort((a, b) => a.name.localeCompare(b.name))
       if (items.length) out.push({ id: `server:${s.id}`, label: s.name, items, server: s })
     }
-    groups.forEach((g, i) => out.push({ id: `group:${g.key}`, label: g.label, items: standard.filter((e) => e.g === i) }))
+    groups.forEach((g, i) => {
+      const items = standard.filter((e) => e.g === i)
+      out.push({ id: `group:${g.key}`, label: g.label, items, glyph: items[0]?.u })
+    })
     return out
   })
 
@@ -98,6 +101,11 @@
     void query
     active = 0
     navigated = false
+  })
+
+  // Collapsing a section shrinks `flat`; keep the highlight on a cell that still exists.
+  $effect(() => {
+    if (active > flat.length - 1) active = Math.max(0, flat.length - 1)
   })
 
   $effect(() => {
@@ -114,6 +122,7 @@
   }
 
   function jump(id: string) {
+    query = '' // the sections are hidden while a search is showing
     collapsed[id] = false
     void tick().then(() => root.querySelector(`[data-section="${id}"]`)?.scrollIntoView({ block: 'start' }))
   }
@@ -130,12 +139,11 @@
     if (ev.key === 'Escape') {
       ev.preventDefault()
       onClose()
-    } else if (ev.key === 'ArrowRight') {
+    } else if (ev.key === 'ArrowRight' || ev.key === 'ArrowLeft') {
+      // In a typed search the caret needs these keys, until ArrowDown enters the grid.
+      if (ev.target === searchEl && query && !navigated) return
       ev.preventDefault()
-      move(1)
-    } else if (ev.key === 'ArrowLeft') {
-      ev.preventDefault()
-      move(-1)
+      move(ev.key === 'ArrowRight' ? 1 : -1)
     } else if (ev.key === 'ArrowDown') {
       ev.preventDefault()
       move(COLS)
@@ -143,9 +151,15 @@
       ev.preventDefault()
       move(-COLS)
     } else if (ev.key === 'Enter') {
-      if (flat[active]) {
-        ev.preventDefault()
-        pick(flat[active])
+      // The focused cell wins, then the highlighted one; with nothing highlighted only a search's
+      // first result is picked, so Enter in a fresh picker never chooses an emoji unseen.
+      const cellEl = (ev.target as HTMLElement).closest?.('.cell')
+      const target = cellEl
+        ? flat.find((e) => keyOf(e) === cellEl.getAttribute('data-key'))
+        : navigated || hovered ? flat[active] : results?.[0]
+      if (target) {
+        ev.preventDefault() // also stops the button's own click from picking twice
+        pick(target)
       }
     } else if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.target !== searchEl) {
       searchEl.focus() // the keystroke then lands in the search box
@@ -196,8 +210,8 @@
             {:else}
               <span class="srv init">{s.server.name.trim().charAt(0).toUpperCase()}</span>
             {/if}
-          {:else if 'u' in s.items[0]}
-            <img class="grp" src={twemojiUrl(s.items[0].u)} alt="" loading="lazy" />
+          {:else if s.glyph}
+            <img class="grp" src={twemojiUrl(s.glyph)} alt="" loading="lazy" />
           {/if}
         </button>
       {/each}
