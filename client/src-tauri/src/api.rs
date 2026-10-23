@@ -125,8 +125,18 @@ const TCP_KEEPALIVE: Duration = Duration::from_secs(30);
 const H2_PING_EVERY: Duration = Duration::from_secs(25);
 const H2_PING_TIMEOUT: Duration = Duration::from_secs(10);
 
+// Tests count calls on their own thread (the log line itself is once per process).
+#[cfg(test)]
+thread_local!(static NOTED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) });
+#[cfg(test)]
+fn noted() -> usize {
+    NOTED.with(|n| n.get())
+}
+
 /// Logged once per run: the HTTP version the server agreed to (h2 through ALPN behind Caddy).
 fn note_version(r: &reqwest::Response) {
+    #[cfg(test)]
+    NOTED.with(|n| n.set(n.get() + 1));
     static ONCE: std::sync::Once = std::sync::Once::new();
     let version = r.version();
     ONCE.call_once(|| tracing::info!(?version, "rest: connected"));
@@ -580,6 +590,7 @@ impl Api {
         if let Ok(resp) = &r
             && resp.status() == reqwest::StatusCode::PAYLOAD_TOO_LARGE
         {
+            note_version(resp);
             log_failure(Some(path_only(resp.url())), resp.status().as_str());
             return Err(ApiError::Rejected(TOO_BIG.into()));
         }
@@ -587,9 +598,12 @@ impl Api {
     }
 
     pub async fn media(&self, token: &str, hash: &str) -> Result<Vec<u8>, ApiError> {
+        if !crate::media::is_hash(hash) {
+            return Err(ApiError::Rejected("not a media hash".into()));
+        }
         let r = self
             .http
-            .get(format!("{}/media/{hash}", self.base))
+            .get(self.url(&["media", hash])?)
             .bearer_auth(token)
             .send()
             .await;
@@ -706,7 +720,12 @@ impl Api {
     }
 
     /// `base/seg/seg…`, each segment percent-encoded on its own (an emoji or id can't add a `/`).
+    /// A `.` or `..` segment is refused: the URL parser would drop it (or the one before it) and
+    /// send the request somewhere else.
     fn url(&self, segments: &[&str]) -> Result<reqwest::Url, ApiError> {
+        if segments.iter().any(|s| matches!(*s, "." | "..")) {
+            return Err(ApiError::Rejected("that name can't be used here".into()));
+        }
         let bad = || ApiError::Rejected("the server address isn't valid".into());
         let mut url = reqwest::Url::parse(&self.base).map_err(|_| bad())?;
         url.path_segments_mut()
@@ -1079,6 +1098,44 @@ mod tests {
         assert!(u.as_str().ends_with("/reactions/a%2F..%2Fb%25"), "{u}");
     }
 
+    #[test]
+    fn dot_segments_are_refused_not_dropped() {
+        let api = Api::new("https://pulse.example.com/");
+        let id: MessageId = "01J0000000000000000000000A".parse().unwrap();
+        for seg in [".", ".."] {
+            assert!(api.reaction_url(id, seg).is_err(), "{seg:?}");
+            assert!(api.url(&["emoji", seg]).is_err(), "{seg:?}");
+        }
+        // only whole segments: dots inside one are ordinary text
+        assert!(api.url(&["emoji", "..a"]).is_ok());
+        assert!(api.url(&["emoji", "a.b"]).is_ok());
+    }
+
+    #[tokio::test]
+    async fn media_refuses_anything_but_a_hash() {
+        // never sent: nothing listens here
+        let api = Api::new("http://localhost:9");
+        let hash = "ab0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcd";
+        for bad in [
+            "..",
+            "../me",
+            &hash.to_uppercase(),
+            &hash[1..],
+            &format!("{hash}/x"),
+            &format!("{}?x", &hash[1..]),
+        ] {
+            match api.media("t", bad).await {
+                Err(ApiError::Rejected(_)) => {}
+                other => panic!("{bad:?}: {:?}", other.map(|b| b.len())),
+            }
+        }
+        // a valid hash is sent (and fails to connect)
+        assert!(matches!(
+            api.media("t", hash).await,
+            Err(ApiError::Network(_))
+        ));
+    }
+
     #[tokio::test]
     async fn custom_emoji_roundtrip() {
         let app = testing::spawn().await;
@@ -1119,6 +1176,20 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.to_string(), TOO_BIG);
+    }
+
+    #[tokio::test]
+    async fn an_oversized_upload_still_notes_the_http_version() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let before = noted();
+        let err = api
+            .upload_emoji_media(&token, vec![0; 3 * 1024 * 1024])
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), TOO_BIG);
+        assert_eq!(noted(), before + 1);
     }
 
     #[tokio::test]

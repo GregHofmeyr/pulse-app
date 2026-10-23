@@ -13,11 +13,14 @@ use crate::commands::Core;
 
 pub const SCHEME: &str = "pulse-media";
 
+/// A media hash: sha256 as 64 lowercase hex digits.
+pub fn is_hash(s: &str) -> bool {
+    s.len() == 64 && s.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
+}
+
 /// The hash in a `/<hash>` request path.
 pub fn parse_path(path: &str) -> Option<&str> {
-    let hash = path.strip_prefix('/')?;
-    let hex = hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'));
-    (hash.len() == 64 && hex).then_some(hash)
+    path.strip_prefix('/').filter(|h| is_hash(h))
 }
 
 /// `root/media/ab/abcdef….webp`, sharded like the server's store.
