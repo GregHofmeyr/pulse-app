@@ -8,7 +8,9 @@ const onFocusChanged = vi.fn(async (h: Handler) => {
   handler = h
   return subscribe()
 })
-vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ onFocusChanged }) }))
+let currentlyFocused: () => Promise<boolean>
+const isFocused = vi.fn(() => currentlyFocused())
+vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ onFocusChanged, isFocused }) }))
 
 type Mod = typeof import('./windowFocus.svelte')
 // The watcher installs once per module: each test gets a fresh one.
@@ -23,7 +25,9 @@ const inTauri = () => ((window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INT
 beforeEach(() => {
   handler = undefined
   subscribe = async () => () => {}
+  currentlyFocused = async () => true
   onFocusChanged.mockClear()
+  isFocused.mockClear()
 })
 afterEach(() => {
   vi.restoreAllMocks()
@@ -31,6 +35,12 @@ afterEach(() => {
 })
 
 describe('window focus without Tauri (DOM fallback)', () => {
+  it('test files start from a focused window (shared setup)', async () => {
+    const m = await fresh()
+    m.watchWindowFocus()
+    expect(m.windowFocus.focused).toBe(true)
+  })
+
   it('starts from document.hasFocus() and follows window focus/blur', async () => {
     vi.spyOn(document, 'hasFocus').mockReturnValue(false)
     const m = await fresh()
@@ -47,7 +57,6 @@ describe('window focus without Tauri (DOM fallback)', () => {
 describe('window focus in Tauri (C8: the OS window is the authority)', () => {
   it('once subscribed, DOM focus/blur no longer change it; Tauri events do', async () => {
     inTauri()
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     const m = await fresh()
     m.watchWindowFocus()
     m.watchWindowFocus() // once only
@@ -66,9 +75,9 @@ describe('window focus in Tauri (C8: the OS window is the authority)', () => {
 
   it('DOM events count until the subscription is established', async () => {
     inTauri()
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     let established!: () => void
     subscribe = () => new Promise((done) => (established = () => done(() => {})))
+    currentlyFocused = async () => false // the window really is in the background
     const m = await fresh()
     m.watchWindowFocus()
     fire('blur')
@@ -83,7 +92,6 @@ describe('window focus in Tauri (C8: the OS window is the authority)', () => {
 
   it('a failed subscription falls back to the DOM events', async () => {
     inTauri()
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     subscribe = async () => {
       throw new Error('not allowed')
     }
@@ -93,6 +101,41 @@ describe('window focus in Tauri (C8: the OS window is the authority)', () => {
     fire('blur')
     expect(m.windowFocus.focused).toBe(false)
     fire('focus')
+    expect(m.windowFocus.focused).toBe(true)
+  })
+
+  it('once subscribed, reads the window\'s current focus (hasFocus() may be wrong at startup)', async () => {
+    inTauri()
+    vi.spyOn(document, 'hasFocus').mockReturnValue(false)
+    const m = await fresh()
+    m.watchWindowFocus()
+    expect(m.windowFocus.focused).toBe(false)
+    await settle()
+    expect(isFocused).toHaveBeenCalledOnce()
+    expect(m.windowFocus.focused).toBe(true) // focused in the foreground, no focus event ever came
+  })
+
+  it('a focus event that lands first beats the current-focus read', async () => {
+    inTauri()
+    let answer!: (f: boolean) => void
+    currentlyFocused = () => new Promise((done) => (answer = done))
+    const m = await fresh()
+    m.watchWindowFocus()
+    await settle()
+    handler!({ payload: false })
+    answer(true) // read before the event, answered after it: stale
+    await settle()
+    expect(m.windowFocus.focused).toBe(false)
+  })
+
+  it('a failed current-focus read keeps the value', async () => {
+    inTauri()
+    currentlyFocused = async () => {
+      throw new Error('not allowed')
+    }
+    const m = await fresh()
+    m.watchWindowFocus()
+    await settle()
     expect(m.windowFocus.focused).toBe(true)
   })
 })

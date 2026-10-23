@@ -16,7 +16,10 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 let tauriFocus: ((e: { payload: boolean }) => void) | undefined
 vi.mock('@tauri-apps/api/window', () => ({
-  getCurrentWindow: () => ({ onFocusChanged: async (h: (e: { payload: boolean }) => void) => ((tauriFocus = h), () => {}) }),
+  getCurrentWindow: () => ({
+    onFocusChanged: async (h: (e: { payload: boolean }) => void) => ((tauriFocus = h), () => {}),
+    isFocused: async () => true,
+  }),
 }))
 
 import TextChannel from './TextChannel.svelte'
@@ -41,7 +44,6 @@ const sounds = () => invoke.mock.calls.filter((c) => c[0] === 'play_sound').leng
 
 // In Tauri, with the subscription established: the OS window decides.
 ;(window as { __TAURI_INTERNALS__?: unknown }).__TAURI_INTERNALS__ = {}
-vi.spyOn(document, 'hasFocus').mockReturnValue(true)
 Element.prototype.scrollTo = () => {}
 watchWindowFocus()
 

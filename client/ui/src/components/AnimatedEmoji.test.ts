@@ -11,7 +11,6 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: async () => [] }))
 vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
 const media = fakeMatchMedia(false)
 vi.stubGlobal('matchMedia', media.matchMedia)
-vi.spyOn(document, 'hasFocus').mockReturnValue(true)
 
 import MessageItem from './MessageItem.svelte'
 import ReactionRow from './ReactionRow.svelte'

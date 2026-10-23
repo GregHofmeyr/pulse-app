@@ -91,7 +91,6 @@ describe('wireEmoji', () => {
   }
 
   it('shares one IntersectionObserver and swaps src when on-screen', async () => {
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     const m = await fresh()
     const a = img()
     const b = img()
@@ -114,7 +113,6 @@ describe('wireEmoji', () => {
 
   it('without IntersectionObserver, images count as on-screen', async () => {
     vi.stubGlobal('IntersectionObserver', undefined)
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     const m = await fresh()
     const a = img()
     m.wireEmoji(a, ANIM, STILL)
@@ -123,7 +121,6 @@ describe('wireEmoji', () => {
   })
 
   it('on hover, animates while the pointer is over the containing button', async () => {
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     const m = await fresh()
     m.setAnimateMode('hover')
     const a = img(true)
@@ -140,7 +137,6 @@ describe('wireEmoji', () => {
   })
 
   it('animateEmojiIn wires only a stored-media still with an exact hash', async () => {
-    vi.spyOn(document, 'hasFocus').mockReturnValue(true)
     const m = await fresh()
     const H = 'a'.repeat(64)
     const box = document.createElement('div')

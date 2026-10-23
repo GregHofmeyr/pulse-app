@@ -21,11 +21,26 @@ export function watchWindowFocus(): void {
     if (!native) windowFocus.focused = false
   })
   if (!('__TAURI_INTERNALS__' in window)) return
+  let heard = false
   try {
-    getCurrentWindow()
-      .onFocusChanged(({ payload }) => (windowFocus.focused = payload))
+    const win = getCurrentWindow()
+    win
+      .onFocusChanged(({ payload }) => {
+        heard = true
+        windowFocus.focused = payload
+      })
       .then(
-        () => (native = true),
+        () => {
+          native = true
+          // hasFocus() can read false at startup in a focused window, and no focus event follows
+          // until focus changes: ask the window once. A focus event that came first is newer.
+          win.isFocused().then(
+            (f) => {
+              if (!heard) windowFocus.focused = f
+            },
+            () => {},
+          )
+        },
         () => {}, // DOM events only
       )
   } catch {
