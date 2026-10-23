@@ -39,9 +39,10 @@ impl MediaKind {
     }
 }
 
-/// `dir/ab/abcdef….webp`, sharded by the hash's first two characters.
-pub fn path_for(dir: &Path, hash: &str) -> PathBuf {
-    dir.join(&hash[..2]).join(format!("{hash}.webp"))
+/// `dir/ab/abcdef….webp`, sharded by the hash's first two characters. `None` unless `hash` is a
+/// stored-hash shape (64 lowercase hex), so nothing else can name a path.
+pub fn path_for(dir: &Path, hash: &str) -> Option<PathBuf> {
+    valid_hash(hash).then(|| dir.join(&hash[..2]).join(format!("{hash}.webp")))
 }
 
 /// What a stored hash looks like; anything else never reaches the filesystem.
@@ -96,21 +97,8 @@ async fn put_one(
     by: UserId,
 ) -> AppResult<String> {
     let hash = hex::encode(Sha256::digest(bytes));
-    let path = path_for(dir, &hash);
-    if !tokio::fs::try_exists(&path).await.unwrap_or(false) {
-        let shard = path.parent().expect("sharded path");
-        tokio::fs::create_dir_all(shard)
-            .await
-            .with_context(|| format!("create {}", shard.display()))?;
-        // Write then rename, so a crash never leaves a truncated file under a real hash.
-        let tmp = shard.join(format!("{hash}.{:016x}.tmp", rand::random::<u64>()));
-        tokio::fs::write(&tmp, bytes)
-            .await
-            .with_context(|| format!("write {}", tmp.display()))?;
-        tokio::fs::rename(&tmp, &path)
-            .await
-            .with_context(|| format!("rename to {}", path.display()))?;
-    }
+    let path = path_for(dir, &hash).expect("a SHA-256 hex digest is a valid hash");
+    ensure_file(&path, &hash, bytes).await?;
     // A re-upload restarts the cleanup grace period, so a hash the client was just given is
     // never swept from under it.
     sqlx::query(
@@ -131,7 +119,31 @@ async fn put_one(
     .bind(crate::db::now())
     .execute(db)
     .await?;
+    // Again after the row exists: a cleanup that deleted this row just before our insert may have
+    // unlinked the file after the first check (it does so inside its transaction, so by now it is
+    // done). A row must never outlive its file.
+    ensure_file(&path, &hash, bytes).await?;
     Ok(hash)
+}
+
+/// Write `bytes` at `path` unless it is already there (which also restores a file that went missing).
+async fn ensure_file(path: &Path, hash: &str, bytes: &[u8]) -> AppResult<()> {
+    if tokio::fs::try_exists(path).await.unwrap_or(false) {
+        return Ok(());
+    }
+    let shard = path.parent().expect("sharded path");
+    tokio::fs::create_dir_all(shard)
+        .await
+        .with_context(|| format!("create {}", shard.display()))?;
+    // Write then rename, so a crash never leaves a truncated file under a real hash.
+    let tmp = shard.join(format!("{hash}.{:016x}.tmp", rand::random::<u64>()));
+    tokio::fs::write(&tmp, bytes)
+        .await
+        .with_context(|| format!("write {}", tmp.display()))?;
+    tokio::fs::rename(&tmp, path)
+        .await
+        .with_context(|| format!("rename to {}", path.display()))?;
+    Ok(())
 }
 
 /// Refuse uploads when the media filesystem has less than `min_free` bytes free.
@@ -153,12 +165,14 @@ pub fn disk_ok(dir: &Path, min_free: u64) -> AppResult<()> {
     Ok(())
 }
 
-/// Delete media nothing uses that is older than `grace`: rows first, then files. A still goes
-/// with its parent. Returns how many were deleted.
+/// Delete media nothing uses that is older than `grace`: rows, then their files, in one
+/// transaction. A re-upload's insert waits for the commit, so it sees the files gone and rewrites
+/// them (see `put_one`). A still goes with its parent. Returns how many were deleted.
 pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<u64> {
     let cutoff = chrono::Utc::now()
         - chrono::Duration::from_std(grace).context("cleanup grace out of range")?;
     let cutoff = cutoff.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    let mut tx = db.begin().await?;
     let gone: Vec<String> = sqlx::query_scalar(
         "DELETE FROM media
          WHERE created_at <= ?1
@@ -172,16 +186,20 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
          RETURNING hash",
     )
     .bind(&cutoff)
-    .fetch_all(db)
+    .fetch_all(&mut *tx)
     .await?;
     for hash in &gone {
-        let path = path_for(dir, hash);
+        let Some(path) = path_for(dir, hash) else {
+            tracing::warn!(hash, "media row with a malformed hash; no file removed");
+            continue;
+        };
         match tokio::fs::remove_file(&path).await {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => tracing::warn!(error = %e, path = %path.display(), "media file not removed"),
         }
     }
+    tx.commit().await?;
     Ok(gone.len() as u64)
 }
 
@@ -218,8 +236,13 @@ mod tests {
         let h = "ab".repeat(32);
         assert_eq!(
             path_for(Path::new("/m"), &h),
-            Path::new("/m/ab").join(format!("{h}.webp"))
+            Some(Path::new("/m/ab").join(format!("{h}.webp")))
         );
+        // Short, odd or non-ASCII input is refused, never sliced.
+        for bad in ["", "a", "ab", "../etc/passwd", "é", &"é".repeat(32)] {
+            assert_eq!(path_for(Path::new("/m"), bad), None, "{bad:?}");
+        }
+        assert_eq!(path_for(Path::new("/m"), &"AB".repeat(32)), None);
         assert!(valid_hash(&h));
         assert!(!valid_hash(&"AB".repeat(32)));
         assert!(!valid_hash("../etc/passwd"));

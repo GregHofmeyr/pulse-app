@@ -73,6 +73,11 @@ fn limits() -> Limits {
 
 /// Process an emoji upload. CPU-bound: call it off the async runtime.
 pub fn emoji(input: &[u8]) -> Result<Processed, ProcessError> {
+    emoji_with_budget(input, MAX_DECODED_PIXELS)
+}
+
+/// [`emoji`] with the animation pixel budget injected, so tests needn't decode 100 Mpx.
+fn emoji_with_budget(input: &[u8], max_decoded_pixels: u64) -> Result<Processed, ProcessError> {
     if input.len() > MAX_INPUT {
         return Err(ProcessError::TooBig);
     }
@@ -112,8 +117,11 @@ pub fn emoji(input: &[u8]) -> Result<Processed, ProcessError> {
                 let f = f?;
                 // Counted per decoded frame, before the costly resize.
                 let (w, h) = f.buffer().dimensions();
+                if w > MAX_SIDE || h > MAX_SIDE {
+                    return Err(ProcessError::TooLarge);
+                }
                 decoded += u64::from(w) * u64::from(h);
-                if decoded > MAX_DECODED_PIXELS {
+                if decoded > max_decoded_pixels {
                     return Err(ProcessError::AnimationTooLarge);
                 }
                 let (n, d) = f.delay().numer_denom_ms();
@@ -235,6 +243,17 @@ mod tests {
         assert_eq!((p.width, p.height, p.frames), (128, 128, 1));
         assert!(p.still.is_none());
         assert!(is_webp(&p.webp));
+        // Decode what was produced rather than trust the constants.
+        let out = image::load_from_memory_with_format(&p.webp, ImageFormat::WebP).unwrap();
+        assert_eq!((out.width(), out.height()), (128, 128));
+        assert_eq!(image::guess_format(&p.webp).unwrap(), ImageFormat::WebP);
+        // The source's colour survives re-encoding (lossy, so within a tolerance). Transparency of
+        // the padding isn't asserted: the encoder crops the frame to its content, and how the
+        // decoder fills the rest is up to it.
+        let centre = out.to_rgba8().get_pixel(64, 64).0;
+        for (got, want) in centre.into_iter().zip([200u8, 30, 30, 255]) {
+            assert!(got.abs_diff(want) < 12, "{centre:?}");
+        }
     }
 
     #[test]
@@ -320,11 +339,41 @@ mod tests {
 
     #[test]
     fn huge_screen_animation_is_refused_quickly() {
-        let bomb = screen_bomb(4096, 300);
+        // The budget is injected: a 1024² screen against a 3 Mpx budget trips at its 4th frame, the
+        // same path as 4096² against MAX_DECODED_PIXELS but without minutes of debug-build decoding.
+        let bomb = screen_bomb(1024, 300);
         assert!(bomb.len() < 10 * 1024);
-        let t = std::time::Instant::now();
-        assert!(matches!(emoji(&bomb), Err(ProcessError::AnimationTooLarge)));
-        eprintln!("screen bomb refused in {:?}", t.elapsed());
+        assert!(matches!(
+            emoji_with_budget(&bomb, 3_000_000),
+            Err(ProcessError::AnimationTooLarge)
+        ));
+        // The same file under a budget that fits it is not refused for size.
+        assert!(emoji_with_budget(&screen_bomb(8, 3), 3_000_000).is_ok());
+    }
+
+    /// Frames of differing sizes; each is placed on the first frame's logical screen.
+    fn gif_of(sizes: &[(u32, u32)]) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut enc = GifEncoder::new(&mut out);
+            for &(w, h) in sizes {
+                let img = RgbaImage::from_pixel(w, h, Rgba([9, 9, 9, 255]));
+                let delay = Delay::from_numer_denom_ms(50, 1);
+                enc.encode_frame(Frame::from_parts(img, 0, 0, delay))
+                    .unwrap();
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn a_frame_wider_than_the_side_limit_is_refused() {
+        // Small screen, so the header check passes; the second frame alone is 5000 wide.
+        assert!(matches!(
+            emoji(&gif_of(&[(8, 8), (5000, 1)])),
+            Err(ProcessError::TooLarge)
+        ));
+        assert!(emoji(&gif_of(&[(8, 8), (4096, 1)])).is_ok());
     }
 
     #[test]

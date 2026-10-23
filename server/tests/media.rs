@@ -61,7 +61,11 @@ async fn upload_returns_info_and_dedupes() {
     );
     assert_eq!(a.still_hash, None);
     assert_eq!(media_rows(&app).await, 1);
-    assert!(media::path_for(&app.cfg.media_dir, &a.hash).is_file());
+    assert!(
+        media::path_for(&app.cfg.media_dir, &a.hash)
+            .unwrap()
+            .is_file()
+    );
 }
 
 #[tokio::test]
@@ -165,7 +169,7 @@ async fn cleanup_removes_unreferenced_after_grace() {
     let app = spawn().await;
     let (_, token) = register(&app, "alex").await;
     let info = upload_ok(&app, &token).await;
-    let file = media::path_for(&app.cfg.media_dir, &info.hash);
+    let file = media::path_for(&app.cfg.media_dir, &info.hash).unwrap();
 
     let n = media::cleanup(&app.db, &app.cfg.media_dir, Duration::from_secs(3600))
         .await
@@ -221,7 +225,7 @@ async fn animated_upload_stores_its_still_and_cleanup_follows_the_parent() {
         (Some(still.as_str()), 1)
     );
     let dir = &app.cfg.media_dir;
-    assert!(media::path_for(dir, &still).is_file());
+    assert!(media::path_for(dir, &still).unwrap().is_file());
 
     // In use by an emoji: neither the animation nor its still goes.
     let server = create_server(&app, &token, "home").await;
@@ -251,6 +255,32 @@ async fn animated_upload_stores_its_still_and_cleanup_follows_the_parent() {
         2
     );
     assert_eq!(media_rows(&app).await, 0);
-    assert!(!media::path_for(dir, &still).exists());
-    assert!(!media::path_for(dir, &info.hash).exists());
+    assert!(!media::path_for(dir, &still).unwrap().exists());
+    assert!(!media::path_for(dir, &info.hash).unwrap().exists());
+}
+
+#[tokio::test]
+async fn reupload_restores_a_missing_file() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let info = upload_ok(&app, &token).await;
+    let file = media::path_for(&app.cfg.media_dir, &info.hash).unwrap();
+    std::fs::remove_file(&file).unwrap();
+    // Row present, file absent: the next upload of the same bytes heals it.
+    let again = upload_ok(&app, &token).await;
+    assert_eq!(again.hash, info.hash);
+    assert!(file.is_file());
+    assert_eq!(media_rows(&app).await, 1);
+}
+
+#[tokio::test]
+async fn oversize_body_is_a_json_413() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let r = upload(&app, &token, vec![0u8; 2 * 1024 * 1024 + 64 * 1024 + 1]).await;
+    assert_eq!(r.status(), 413);
+    let e: ApiError = r.json().await.unwrap();
+    assert_eq!(e.code, "payload_too_large");
+    assert!(e.message.contains("2 MB at most"), "{}", e.message);
+    assert_eq!(media_rows(&app).await, 0);
 }

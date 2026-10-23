@@ -51,7 +51,11 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     let hub = gateway::Hub::default();
     // A failure here (e.g. a dev machine without /data) only matters once someone uploads.
     if let Err(e) = std::fs::create_dir_all(&cfg.media_dir) {
-        tracing::warn!(error = %e, dir = %cfg.media_dir.display(), "media dir unavailable");
+        tracing::warn!(
+            error = %e,
+            dir = %cfg.media_dir.display(),
+            "media dir unavailable, so emoji uploads will fail: set PULSE_MEDIA_DIR to a writable directory (`just dev-server` uses data/media)"
+        );
     }
     media::spawn_cleanup(db.clone(), cfg.media_dir.clone());
     let state = AppState {

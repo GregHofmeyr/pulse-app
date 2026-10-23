@@ -3,6 +3,7 @@ rustflags = ["-C", "target-feature=+crt-static"]
 
 [env]
 # Cross builds (cargo xwin) compile C with clang-cl, which, unlike cl.exe, needs the target feature enabled to use
-# libwebp's SSE4.1 intrinsics. Hyphenated name because cargo-xwin owns CFLAGS_x86_64_pc_windows_msvc; cc merges both.
+# libwebp's SSE4.1 intrinsics. These flags apply to every C source built for this target, not just libwebp.
+# Hyphenated name because cargo-xwin owns CFLAGS_x86_64_pc_windows_msvc; cc merges both.
 # cl.exe ignores the unknown option (warning D9002). Windows 11 24H2 requires SSE4.2 anyway.
 "CFLAGS_x86_64-pc-windows-msvc" = "-msse4.1"

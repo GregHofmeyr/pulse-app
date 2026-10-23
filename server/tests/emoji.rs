@@ -318,7 +318,7 @@ async fn deleted_emoji_media_is_cleaned() {
     let srv = create_server(&app, &alex, "Main").await;
     let media = upload(&app, &alex).await;
     let e = create_ok(&app, &alex, srv.id, "pog", &media.hash).await;
-    let file = media::path_for(&app.cfg.media_dir, &media.hash);
+    let file = media::path_for(&app.cfg.media_dir, &media.hash).unwrap();
 
     // Live emoji pin their media.
     let n = media::cleanup(&app.db, &app.cfg.media_dir, Duration::ZERO)
@@ -545,8 +545,8 @@ async fn deleted_animated_emoji_media_is_cleaned() {
 
     assert_eq!(delete_emoji(&app, &alex, &e.id).await.status(), 200);
     assert_eq!(media::cleanup(&app.db, dir, DAY).await.unwrap(), 2);
-    assert!(!media::path_for(dir, &media.hash).exists());
-    assert!(!media::path_for(dir, &still).exists());
+    assert!(!media::path_for(dir, &media.hash).unwrap().exists());
+    assert!(!media::path_for(dir, &still).unwrap().exists());
 }
 
 #[tokio::test]
@@ -559,7 +559,7 @@ async fn shared_media_survives_while_one_emoji_uses_it() {
     let b = create_ok(&app, &alex, srv.id, "kek", &media.hash).await;
     age_media(&app).await;
     let dir = &app.cfg.media_dir;
-    let file = media::path_for(dir, &media.hash);
+    let file = media::path_for(dir, &media.hash).unwrap();
 
     assert_eq!(delete_emoji(&app, &alex, &a.id).await.status(), 200);
     assert_eq!(media::cleanup(&app.db, dir, DAY).await.unwrap(), 0);
