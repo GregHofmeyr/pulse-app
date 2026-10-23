@@ -194,4 +194,40 @@ describe('EmojiSettings', () => {
     await settle()
     expect(calls('rename_emoji')).toHaveLength(1)
   })
+
+  it('Esc on a rename clears its error, and an invalid rename is not sent', async () => {
+    invoke.mockRejectedValueOnce('that name is already taken')
+    show([emoji('X1', 'pog')])
+    btn('Rename :pog:').click()
+    await tick()
+    const input = () => document.querySelector<HTMLInputElement>('input[aria-label="Rename emoji"]')!
+    const press = (k: string) => input().dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
+    input().value = 'bad name'
+    input().dispatchEvent(new Event('input', { bubbles: true }))
+    press('Enter')
+    await settle()
+    expect(calls('rename_emoji')).toHaveLength(0)
+    input().value = 'taken'
+    input().dispatchEvent(new Event('input', { bubbles: true }))
+    press('Enter')
+    await settle()
+    flushSync()
+    expect(document.querySelector('[role=alert]')).not.toBeNull()
+    press('Escape')
+    flushSync()
+    expect(document.querySelector('[role=alert]')).toBeNull()
+  })
+
+  it('a rename in flight does not block saving a new emoji', async () => {
+    show([emoji('X1', 'pog')])
+    invoke.mockResolvedValueOnce(info)
+    await upload()
+    btn('Rename :pog:').click()
+    await tick()
+    invoke.mockImplementationOnce(() => new Promise<void>(() => {}))
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Rename emoji"]')!
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    flushSync()
+    expect((text('Save') as HTMLButtonElement).disabled).toBe(false)
+  })
 })

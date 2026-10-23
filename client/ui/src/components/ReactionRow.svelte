@@ -48,7 +48,8 @@
     try {
       const ids = await api.listReactors(message.id, key)
       if (req === tipReq) tipText = tooltipText(ids.map((id) => nameOf(id)), count)
-    } catch {
+    } catch (err) {
+      console.warn('could not load reactors', err)
       if (req === tipReq) {
         tipFailed = true
         tipText = "Couldn't load reactors"
@@ -56,13 +57,16 @@
     }
   }
   function showTip(key: string, count: number) {
-    if (tipFor === key && !tipFailed) return // already shown or loading (a click is a hover, then a focus)
+    if (tipFor === key && !tipFailed) return // already shown or loading
     void loadTip(key, count)
   }
-  // The tip stays while the chip is hovered or focused.
+  // The tip stays while the chip is hovered or focused. A click is a hover then a focus, so only the
+  // first of them is a "show": a failed tip is retried by the next show, not by its own focus.
   function enter(key: string, count: number, how: 'hover' | 'focus') {
+    const engaged = hoverOn === key || focusOn === key
     if (how === 'hover') hoverOn = key
     else focusOn = key
+    if (engaged && tipFor === key) return
     showTip(key, count)
   }
   function leave(key: string, how: 'hover' | 'focus') {

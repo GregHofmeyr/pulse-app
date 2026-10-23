@@ -449,6 +449,20 @@ describe('reactor tooltip edge cases', () => {
     expect(tipText()).toBe('U2, U3 and U4')
   })
 
+  it('a click on a failing chip (hover, then focus) makes one request, and logs it', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    invoke.mockRejectedValue('offline')
+    show(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))
+    const c = chips()[0]
+    c.dispatchEvent(new Event('pointerenter'))
+    await settle()
+    c.dispatchEvent(new FocusEvent('focus'))
+    await settle()
+    expect(calls('list_reactors')).toHaveLength(1)
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
   it('refetches when only "me" flips (a click that swaps one reactor)', async () => {
     invoke.mockResolvedValue(['U2'])
     showLive(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))
@@ -467,7 +481,12 @@ describe('reactor tooltip edge cases', () => {
     await settle()
     flushSync()
     expect(tipText()).toMatch(/couldn.t load/i)
-    c.dispatchEvent(new Event('pointerenter')) // still shown (focus holds it): this show retries
+    c.dispatchEvent(new Event('pointerenter')) // same click: not a new show
+    await settle()
+    expect(calls('list_reactors')).toHaveLength(1)
+    c.dispatchEvent(new FocusEvent('blur'))
+    c.dispatchEvent(new Event('pointerleave'))
+    c.dispatchEvent(new Event('pointerenter')) // a new show retries
     await settle()
     flushSync()
     expect(tipText()).toBe('U2 and U3')

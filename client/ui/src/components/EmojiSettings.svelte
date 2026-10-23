@@ -60,19 +60,20 @@
     }
   }
 
+  let renameBusy = false // apart from `busy`, so a rename and an upload/save don't block each other
   let renaming = $state<{ id: string; name: string } | null>(null)
   async function commitRename() {
-    if (!renaming || busy) return
+    if (!renaming || renameBusy || !isValidEmojiName(renaming.name.trim())) return
     const { id, name } = renaming
     error = ''
-    busy = true
+    renameBusy = true
     try {
       await api.renameEmoji(id, name.trim())
       renaming = null
     } catch (err) {
       error = errorText(err)
     } finally {
-      busy = false
+      renameBusy = false
     }
   }
   const focus = (n: HTMLElement) => n.focus()
@@ -132,7 +133,7 @@
           <div class="meta">
             {#if renaming?.id === e.id}
               <input class="rename" aria-label="Rename emoji" bind:value={renaming.name} maxlength="32" use:focus
-                onkeydown={(ev) => { if (ev.key === 'Enter') void commitRename(); else if (ev.key === 'Escape') { ev.preventDefault(); renaming = null } }} />
+                onkeydown={(ev) => { if (ev.key === 'Enter') void commitRename(); else if (ev.key === 'Escape') { ev.preventDefault(); renaming = null; error = '' } }} />
             {:else}
               <span class="name">:{e.name}:</span>
             {/if}

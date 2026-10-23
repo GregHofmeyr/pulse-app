@@ -72,4 +72,19 @@ describe('Settings dialog', () => {
     cmp = undefined
     expect(document.activeElement).toBe(opener)
   })
+
+  it('Esc on an open Select closes the dropdown only', () => {
+    const onClose = vi.fn()
+    cmp = mount(Settings, { target: document.body, props: { onClose } })
+    flushSync()
+    const trigger = document.querySelector<HTMLButtonElement>('button[aria-label="Input device"]')!
+    const key = (k: string) => trigger.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+    key('ArrowDown')
+    flushSync()
+    expect(document.querySelector('[role=listbox]')).not.toBeNull()
+    key('Escape')
+    flushSync()
+    expect(document.querySelector('[role=listbox]')).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+  })
 })

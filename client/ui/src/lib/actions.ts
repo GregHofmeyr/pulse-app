@@ -40,6 +40,8 @@ export function modal(node: HTMLElement, onClose: () => void) {
   const before = document.activeElement as HTMLElement | null
   const items = () => [...node.querySelectorAll<HTMLElement>(FOCUSABLE)]
   ;(items()[0] ?? node).focus()
+  // On window, in the bubble phase: Svelte delegates onkeydown to the mount root, so inner
+  // handlers (an input's or Select's own Esc) have run, and can mark the event handled, by now.
   const key = (e: KeyboardEvent) => {
     if (e.key === 'Escape') {
       if (!e.defaultPrevented) {
@@ -54,7 +56,11 @@ export function modal(node: HTMLElement, onClose: () => void) {
     const first = list[0]
     const last = list[list.length - 1]
     const at = document.activeElement
-    if (e.shiftKey && (at === first || at === node)) {
+    if (!at || !node.contains(at)) {
+      // focus fell out of the dialog (e.g. onto the page behind): bring it back
+      e.preventDefault()
+      ;(e.shiftKey ? last : first).focus()
+    } else if (e.shiftKey && (at === first || at === node)) {
       e.preventDefault()
       last.focus()
     } else if (!e.shiftKey && (at === last || at === node)) {
@@ -62,13 +68,13 @@ export function modal(node: HTMLElement, onClose: () => void) {
       first.focus()
     }
   }
-  node.addEventListener('keydown', key)
+  window.addEventListener('keydown', key)
   return {
     update(next: () => void) {
       cb = next
     },
     destroy() {
-      node.removeEventListener('keydown', key)
+      window.removeEventListener('keydown', key)
       if (before?.isConnected) before.focus()
     },
   }
