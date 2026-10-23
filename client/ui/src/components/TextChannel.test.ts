@@ -17,7 +17,7 @@ import { addHistory, applyReady, emptyState, markHistory, trimHistory } from '..
 
 const msg = (n: number): Message => ({
   id: `M${String(n).padStart(4, '0')}`, channel_id: 'C1', author_id: 'U2', kind: 'normal', content: `m${n}`,
-  reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [],
+  reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [],
 })
 const page = (from: number, n: number) => Array.from({ length: n }, (_, i) => msg(from + i))
 

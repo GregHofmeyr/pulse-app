@@ -31,6 +31,7 @@ pub fn router(state: AppState) -> Router {
         .merge(auth::routes::router())
         .merge(servers::routes::router())
         .merge(messages::routes::router())
+        .merge(messages::reactions::router())
         .merge(dms::routes::router())
         .merge(voice::routes::router())
         .merge(reports::routes::router())

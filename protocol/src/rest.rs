@@ -132,6 +132,17 @@ pub struct Message {
     /// Users this message @mentions (only people who can see the channel).
     #[serde(default)]
     pub mentions: Vec<UserId>,
+    /// In first-reacted order. `me` is per caller; in gateway events it is always false.
+    #[serde(default)]
+    pub reactions: Vec<ReactionSummary>,
+}
+
+/// One emoji on a message: a Unicode emoji or `custom:<id>`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ReactionSummary {
+    pub emoji: String,
+    pub count: u32,
+    pub me: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]

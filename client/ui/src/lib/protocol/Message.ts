@@ -2,10 +2,15 @@
 import type { ChannelId } from "./ChannelId";
 import type { MessageId } from "./MessageId";
 import type { MessageKind } from "./MessageKind";
+import type { ReactionSummary } from "./ReactionSummary";
 import type { UserId } from "./UserId";
 
 export type Message = { id: MessageId, channel_id: ChannelId, author_id: UserId | null, kind: MessageKind, content: string, reply_to_id: MessageId | null, created_at: string, edited_at: string | null, deleted: boolean, 
 /**
  * Users this message @mentions (only people who can see the channel).
  */
-mentions: Array<UserId>, };
+mentions: Array<UserId>, 
+/**
+ * In first-reacted order. `me` is per caller; in gateway events it is always false.
+ */
+reactions: Array<ReactionSummary>, };

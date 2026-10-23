@@ -39,6 +39,8 @@ livekit-protocol = "0.8.0"
 image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp"] }
 # Static: libwebp is built from source, so the runtime image needs no libwebp packages.
 webp-animation = { version = "0.10", features = ["static"] }
+emojis = "0.9"
+unicode-segmentation = "1"
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs"] }

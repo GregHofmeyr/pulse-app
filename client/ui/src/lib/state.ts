@@ -233,6 +233,10 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'EmojiUpdated':
     case 'EmojiDeleted':
       return s
+    // Reaction state arrives with the reaction row; until then these change nothing.
+    case 'ReactionAdded':
+    case 'ReactionRemoved':
+      return s
   }
 }
 

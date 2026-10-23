@@ -163,6 +163,7 @@ async fn silent_client_times_out_despite_outbound_traffic() {
                 edited_at: None,
                 deleted: false,
                 mentions: vec![],
+                reactions: vec![],
             };
             hub.publish(
                 &db,

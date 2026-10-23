@@ -181,6 +181,21 @@ pub enum Event {
     EmojiDeleted {
         emoji: CustomEmoji,
     },
+    /// `count` is the new absolute count, so repeated or crossed events can't drift.
+    ReactionAdded {
+        channel_id: ChannelId,
+        message_id: MessageId,
+        emoji: String,
+        user_id: UserId,
+        count: u32,
+    },
+    ReactionRemoved {
+        channel_id: ChannelId,
+        message_id: MessageId,
+        emoji: String,
+        user_id: UserId,
+        count: u32,
+    },
 }
 
 impl Event {
@@ -194,7 +209,9 @@ impl Event {
             | Self::Typing { channel_id, .. }
             | Self::VoiceJoined { channel_id, .. }
             | Self::VoiceLeft { channel_id, .. }
-            | Self::VoiceStateChanged { channel_id, .. } => Some(*channel_id),
+            | Self::VoiceStateChanged { channel_id, .. }
+            | Self::ReactionAdded { channel_id, .. }
+            | Self::ReactionRemoved { channel_id, .. } => Some(*channel_id),
             Self::ChannelCreated { channel } => Some(channel.id),
             Self::GroupMembersChanged { channel_id, .. }
             | Self::ChannelRemoved { channel_id, .. }
