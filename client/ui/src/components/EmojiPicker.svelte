@@ -3,7 +3,7 @@
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { Server } from '../lib/protocol/Server'
   import { app } from '../lib/store.svelte'
-  import { canonicalKey, groups, mediaUrl, reactionKey, search, standard, twemojiUrl, withSkin, type Std } from '../lib/emoji'
+  import { canonicalKey, groups, mediaUrl, reactionKey, savedTone, saveTone, search, standard, twemojiUrl, withSkin, type Std, type Tone } from '../lib/emoji'
   import Icon from './Icon.svelte'
 
   let { onPick, onClose, servers, memberOf }: {
@@ -15,23 +15,12 @@
 
   type Item = Std | CustomEmoji
   type Section = { id: string; label: string; items: Item[]; server?: Server; glyph?: string }
-  type Tone = 0 | 1 | 2 | 3 | 4 | 5
 
   const COLS = 9
   const MAX_FREQUENT = 27
-  const TONE_KEY = 'pulse.skinTone'
-
-  function loadTone(): Tone {
-    try {
-      const n = Number(localStorage.getItem(TONE_KEY))
-      return n >= 1 && n <= 5 ? (n as Tone) : 0
-    } catch {
-      return 0
-    }
-  }
 
   let query = $state('')
-  let tone = $state<Tone>(loadTone())
+  let tone = $state<Tone>(savedTone())
   let collapsed = $state<Record<string, boolean>>({})
   let active = $state(0)
   let hovered = $state<Item | null>(null)
@@ -42,11 +31,7 @@
 
   function setTone(t: Tone) {
     tone = t
-    try {
-      localStorage.setItem(TONE_KEY, String(t))
-    } catch {
-      /* ignore */
-    }
+    saveTone(t)
   }
 
   const isCustom = (e: Item): e is CustomEmoji => 'server_id' in e

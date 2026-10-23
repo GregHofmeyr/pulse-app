@@ -43,7 +43,7 @@ const press = (box: HTMLTextAreaElement, key: string) => {
 }
 const options = () => [...document.querySelectorAll('[aria-label="Insert emoji"] [role=option]')].map((o) => o.textContent!.trim())
 
-beforeEach(() => onSend.mockClear())
+beforeEach(() => { onSend.mockClear(); localStorage.clear() })
 afterEach(() => { if (cmp) unmount(cmp); cmp = undefined; document.body.innerHTML = '' })
 
 describe('Composer emoji', () => {
@@ -85,5 +85,19 @@ describe('Composer emoji', () => {
     await tick()
     expect(box.value).toBe('a😀 b')
     expect(document.querySelector('.picker')).toBeNull()
+  })
+
+  it('autocomplete uses your saved skin tone where the emoji has one', async () => {
+    localStorage.setItem('pulse.skinTone', '3')
+    const box = show()
+    type(box, ':thumbsup')
+    expect(document.querySelector('[aria-label="Insert emoji"] img')!.getAttribute('src')).toBe('/emoji/1f44d-1f3fd.svg')
+    press(box, 'Enter')
+    await tick()
+    expect(box.value).toBe('👍🏽 ')
+    type(box, ':grinning')
+    press(box, 'Enter')
+    await tick()
+    expect(box.value).toBe('😀 ') // no tones: unchanged
   })
 })

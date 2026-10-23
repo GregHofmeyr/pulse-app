@@ -175,6 +175,19 @@ it('an edit to the latest message updates the preview', () => {
   expect(s.latest['D1'].content).toBe('fixed')
 })
 
+it('an edit to the latest message keeps the preview\'s reactions (counts and me)', () => {
+  let s = applyReady(emptyState(), ready({ channels: [ch('D1', 'dm', null)], dm_members: [{ channel_id: 'D1', user_ids: ['U1', 'U2'] }] }))
+  const m = { ...msg('M1', 'D1', 'typo'), reactions: [{ emoji: '👍', count: 2, me: true }] }
+  s = applyEvent(s, { t: 'MessageCreated', d: { message: m, nonce: null } }, 0)
+  // The server sends me:false for everyone on edits.
+  const edited = { ...msg('M1', 'D1', 'fixed'), edited_at: 'x', reactions: [{ emoji: '👍', count: 2, me: false }] }
+  for (const loaded of [true, false]) {
+    const s1 = applyEvent(loaded ? s : { ...s, messages: {} }, { t: 'MessageUpdated', d: { message: edited } }, 0)
+    expect(s1.latest['D1'].content).toBe('fixed')
+    expect(s1.latest['D1'].reactions).toEqual([{ emoji: '👍', count: 2, me: true }])
+  }
+})
+
 it('removal from a conversation forgets everything about it, unsent messages included', () => {
   let s = applyReady(emptyState(), ready({ channels: [ch('G1', 'group', null)], dm_members: [{ channel_id: 'G1', user_ids: ['U1', 'U2', 'U3'] }] }))
   s = addPending(s, 'G1', { nonce: 'n1', content: 'are you there?', reply_to_id: null, status: 'failed' })

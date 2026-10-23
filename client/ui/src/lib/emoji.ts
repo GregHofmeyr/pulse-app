@@ -61,9 +61,31 @@ export function twemojiUrl(u: string): string {
   return `/emoji/${(cps.includes('200d') ? cps : cps.filter((c) => c !== 'fe0f')).join('-')}.svg`
 }
 
-/** `tone` 0 is the default yellow; 1..5 pick a skin tone where the emoji has them. */
-export function withSkin(e: Std, tone: 0 | 1 | 2 | 3 | 4 | 5): string {
+/** 0 is the default yellow; 1..5 pick a skin tone where the emoji has them. */
+export type Tone = 0 | 1 | 2 | 3 | 4 | 5
+
+export function withSkin(e: Std, tone: Tone): string {
   return (tone > 0 && e.s?.[tone - 1]) || e.u
+}
+
+const TONE_KEY = 'pulse.skinTone'
+
+/** The skin tone last chosen in the picker (this device only). */
+export function savedTone(): Tone {
+  try {
+    const n = Number(localStorage.getItem(TONE_KEY))
+    return n >= 1 && n <= 5 ? (n as Tone) : 0
+  } catch {
+    return 0
+  }
+}
+
+export function saveTone(t: Tone): void {
+  try {
+    localStorage.setItem(TONE_KEY, String(t))
+  } catch {
+    /* ignore */
+  }
 }
 
 /** How a custom emoji is written in message text. */

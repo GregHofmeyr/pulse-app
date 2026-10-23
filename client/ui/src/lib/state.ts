@@ -135,7 +135,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'MessageUpdated': {
       const m = e.d.message
       const c = m.channel_id
-      const latest = s.latest[c]?.id === m.id ? { ...s.latest, [c]: m } : s.latest
+      const prev = s.latest[c]
+      // Like the loaded copy (upsertEdited): the edit's reactions say me:false for everyone.
+      const latest = prev?.id === m.id ? { ...s.latest, [c]: { ...m, reactions: prev.reactions } } : s.latest
       if (!s.messages[c]) return latest === s.latest ? s : { ...s, latest } // history never loaded
       return { ...s, latest, messages: { ...s.messages, [c]: upsertEdited(s.messages[c], m) } }
     }

@@ -7,7 +7,7 @@
   import { untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
-  import { customToken, mediaUrl, search, twemojiUrl, type Std } from '../lib/emoji'
+  import { customToken, mediaUrl, savedTone, search, twemojiUrl, withSkin, type Std } from '../lib/emoji'
   import { applyEmoji, emojiQuery, insertAt } from '../lib/emojiComplete'
   import { typingThrottle } from '../lib/markdown'
   import { applyMention, mentionQuery, suggest, type Mentionable } from '../lib/mentions'
@@ -59,10 +59,12 @@
     return Object.values(app.state.customEmoji).filter((c) => mine.has(c.server_id))
   })
   const emojiOptions = $derived(emojiQ === null ? [] : search(emojiQ, usable).slice(0, 8))
+  // Re-read as the query changes: a tone picked in the picker meanwhile applies from the next keystroke.
+  const tone = $derived(emojiOptions.length ? savedTone() : 0)
   const emojiOpen = $derived(emojiOptions.length > 0 && dismissed !== ':' + emojiQ)
   const shown = $derived(open ? options.length : emojiOpen ? emojiOptions.length : 0)
   const serverName = (id: string) => app.state.servers.find((s) => s.id === id)?.name ?? ''
-  const emojiText = (e: Std | CustomEmoji) => ('u' in e ? e.u : customToken(e))
+  const emojiText = (e: Std | CustomEmoji) => ('u' in e ? withSkin(e, tone) : customToken(e))
 
   let picking = $state(false)
   let emojiBtn: HTMLButtonElement | undefined = $state()
@@ -150,7 +152,7 @@
         <button role="option" aria-selected={i === pick} class:on={i === pick}
           onmousedown={(e) => { e.preventDefault(); void chooseEmoji(o) }}>
           {#if 'u' in o}
-            <img src={twemojiUrl(o.u)} alt="" draggable="false" /><span>:{o.n}:</span>
+            <img src={twemojiUrl(withSkin(o, tone))} alt="" draggable="false" /><span>:{o.n}:</span>
           {:else}
             <img src={mediaUrl(o.still_hash ?? o.hash!)} alt="" draggable="false" /><span>:{o.name}:</span>
             <small>{serverName(o.server_id)}</small>
