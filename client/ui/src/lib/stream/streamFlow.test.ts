@@ -81,6 +81,7 @@ async function goneLive(audio = false, surface: 'monitor' | 'window' = 'monitor'
 beforeEach(() => {
   core.handlers = {}
   core.calls = []
+  localStorage.clear()
   // jsdom has no media playback or canvas: the preview loop must not log "not implemented"
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
   vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
@@ -120,6 +121,30 @@ describe('go live', () => {
     expect(stream.live).toBeNull()
     expect(room.disconnect).toHaveBeenCalled()
     expect(stream.room).toBeNull()
+  })
+})
+
+describe('stream audio mute', () => {
+  it('a_muted_stream_audio_stays_muted_next_go_live', async () => {
+    const { streamApi, stream } = await goneLive(true)
+    await streamApi.setAudioMuted(true)
+    await streamApi.stop()
+    core.calls = []
+    await streamApi.goLive('c1', fakeTrack() as never, 'Game', settings(true))
+    expect(stream.live?.audioMuted).toBe(true)
+    expect(core.calls.map(([c]) => c).filter((c) => c.startsWith('stream_audio'))).toEqual(['stream_audio_start', 'stream_audio_mute'])
+    expect(calls('stream_audio_mute')).toEqual([{ muted: true }])
+  })
+
+  it('unmuting_is_remembered_too', async () => {
+    const { streamApi } = await goneLive(true)
+    await streamApi.setAudioMuted(true)
+    await streamApi.setAudioMuted(false)
+    await streamApi.stop()
+    core.calls = []
+    const mod = await goneLive(true) // a fresh start of the app, too
+    expect(mod.stream.live?.audioMuted).toBe(false)
+    expect(calls('stream_audio_mute')).toEqual([])
   })
 })
 

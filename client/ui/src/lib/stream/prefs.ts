@@ -38,6 +38,10 @@ export function clampGoLive(stored: GoLive, sourceHeight: number): GoLive {
 export const loadHidePreview = (): boolean => load<{ on: boolean }>('pulse.stream.hidepreview', { on: false }).on
 export const saveHidePreview = (on: boolean) => save('pulse.stream.hidepreview', { on })
 
+/** Stream audio muted, carried to the next Go Live. */
+export const loadAudioMuted = (): boolean => load<{ on: boolean }>('pulse.stream.audiomuted', { on: false }).on
+export const saveAudioMuted = (on: boolean) => save('pulse.stream.audiomuted', { on })
+
 export const loadDiagOverlay = (): boolean => load<{ on: boolean }>('pulse.stream.diag', { on: false }).on
 export const saveDiagOverlay = (on: boolean) => save('pulse.stream.diag', { on })
 

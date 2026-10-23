@@ -12,7 +12,7 @@ import { errorText, streamCmd } from '../tauri'
 import { voice } from '../voice.svelte'
 import { startDiagnostics } from './diag.svelte'
 import type { Fps, Res } from './encodings'
-import type { GoLive } from './prefs'
+import { loadAudioMuted, saveAudioMuted, type GoLive } from './prefs'
 import { StreamRoom } from './room'
 import { toastFor } from './viewer'
 import { removeToast, showToast } from './viewer.svelte'
@@ -247,7 +247,9 @@ async function goLive(token: number, channelId: string, track: LocalVideoTrack, 
     throw e
   }
   liveTrack = track
-  stream.live = { channelId, res, fps, audio, audioMuted: false, label, encoderWarning: false }
+  // muted stays muted from the last Go Live
+  const audioMuted = audio && loadAudioMuted()
+  stream.live = { channelId, res, fps, audio, audioMuted, label, encoderWarning: false }
   streamCmd.log({ ev: 'live', res, fps, audio })
   // the shared window closed (or the capture otherwise ended); it may already have, before we listened
   track.mediaStreamTrack.addEventListener('ended', onTrackEnded)
@@ -262,6 +264,8 @@ async function goLive(token: number, channelId: string, track: LocalVideoTrack, 
       await streamCmd.audioStop().catch(logError('audio_stop_error'))
       return
     }
+    // the mute set meanwhile (a click while starting) is in `stream.live`
+    if (stream.live?.audioMuted) await streamCmd.audioMute(true).catch(logError('audio_mute_error'))
   }
   stopPreview = startPreview(channelId, track.mediaStreamTrack)
   const r = room
@@ -348,6 +352,7 @@ export const streamApi = {
   async setAudioMuted(muted: boolean) {
     if (!stream.live?.audio) return
     stream.live.audioMuted = muted
+    saveAudioMuted(muted)
     await streamCmd.audioMute(muted).catch(logError('audio_mute_error'))
   },
 
