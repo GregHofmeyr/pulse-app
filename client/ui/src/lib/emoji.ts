@@ -62,3 +62,9 @@ export const TOKEN_RE = /<(a?):([A-Za-z0-9_]{2,32}):([A-Za-z0-9]+)>/
 export function reactionKey(e: Std | CustomEmoji): string {
   return 'u' in e ? e.u : `custom:${e.id}`
 }
+
+/** "Big Pog!.gif" -> "Big_Pog": emoji names are 2-32 of [A-Za-z0-9_]. */
+export function defaultName(file: string): string {
+  const base = file.replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 32)
+  return base.padEnd(2, '_')
+}

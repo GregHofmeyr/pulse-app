@@ -6,6 +6,8 @@
   import VoicePanel from '../components/VoicePanel.svelte'
   import TextChannel from '../components/TextChannel.svelte'
   import Settings from '../components/Settings.svelte'
+  import ServerSettings from '../components/ServerSettings.svelte'
+  import { clickOutside } from '../lib/actions'
   import ReportBug from '../components/ReportBug.svelte'
   import ConversationList from '../components/ConversationList.svelte'
   import PeopleBoard from '../components/PeopleBoard.svelte'
@@ -55,6 +57,8 @@
   }
   let reportOpen = $state(false)
   let menuOpen = $state(false)
+  let serverMenuOpen = $state(false)
+  let serverSettingsOpen = $state(false)
   let creating = $state(false)
   let newName = $state('')
   let createError = $state('')
@@ -250,7 +254,17 @@
 
   <div class="body">
     <aside class="panel side">
-      <div class="panel-head">{activeServer ? activeServer.name : 'Direct messages'}</div>
+      <div class="panel-head">
+        {#if activeServer}
+          <button class="head-btn" data-menu-toggle aria-haspopup="menu" aria-expanded={serverMenuOpen}
+            onclick={() => (serverMenuOpen = !serverMenuOpen)}>{activeServer.name}<Icon name="chevron" size={14} /></button>
+          {#if serverMenuOpen}
+            <div class="menu head-menu" role="menu" use:clickOutside={() => (serverMenuOpen = false)}>
+              <button role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsOpen = true }}>Server settings</button>
+            </div>
+          {/if}
+        {:else}Direct messages{/if}
+      </div>
       {#if activeServerId}
         <ChannelList serverId={activeServerId} {activeChannelId} voiceChannelId={voice.channelId} speaking={voice.speaking}
           onSelect={(id) => (activeChannelId = id)}
@@ -314,6 +328,7 @@
     {:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}
   </div>
 </div>
+{#if serverSettingsOpen && activeServer}<ServerSettings server={activeServer} onClose={() => (serverSettingsOpen = false)} />{/if}
 {#if settingsOpen}<Settings section={settingsSection} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
 {#if creating}
@@ -375,7 +390,10 @@
   .body { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 0 8px 8px; }
   .panel { border-radius: var(--radius); overflow: hidden; }
   .side { width: 264px; flex-shrink: 0; background: var(--bg-1); display: flex; flex-direction: column; }
-  .panel-head { height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid #26282e; }
+  .panel-head { position: relative; height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid #26282e; }
+  .head-btn { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+  .head-btn:hover { background: var(--bg-2); }
+  .head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; }
   .me { padding: 10px 10px 10px 12px; background: #17181c; display: flex; align-items: center; gap: 10px; }
   .avatar { width: 34px; height: 34px; border-radius: 50%; color: #fff; font-weight: 700; display: grid; place-items: center; }
   .who { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
