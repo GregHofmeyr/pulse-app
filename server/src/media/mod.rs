@@ -12,11 +12,12 @@ use pulse_protocol::rest::MediaInfo;
 use sha2::{Digest, Sha256};
 use sqlx::SqlitePool;
 
-use crate::error::{AppError, AppResult};
+use crate::error::AppResult;
 pub use process::Processed;
 
 pub const CONTENT_TYPE: &str = "image/webp";
 /// Below this much free space, uploads still work but the logs say so.
+#[cfg(unix)]
 const WARN_FREE_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -141,7 +142,7 @@ pub fn disk_ok(dir: &Path, min_free: u64) -> AppResult<()> {
         let free = st.f_bavail.saturating_mul(st.f_frsize);
         if free < min_free {
             tracing::error!(free, dir = %dir.display(), "media disk full, refusing uploads");
-            return Err(AppError::InsufficientStorage);
+            return Err(crate::error::AppError::InsufficientStorage);
         }
         if free < WARN_FREE_BYTES {
             tracing::warn!(free, dir = %dir.display(), "media disk nearly full");
