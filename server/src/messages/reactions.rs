@@ -2,6 +2,7 @@
 //! reaction mode, so the quotes push can extend one function.
 
 use std::collections::{HashMap, HashSet};
+use std::sync::LazyLock;
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -17,12 +18,15 @@ use crate::AppState;
 use crate::access::channel_for;
 use crate::auth::AuthUser;
 use crate::db::now;
+use crate::emoji::canonical_key;
 use crate::error::{AppError, AppResult};
 use crate::servers::routes::is_server_member;
 
 /// Distinct emoji on one message.
 pub const MAX_DISTINCT: i64 = 20;
 const MAX_REACTORS: i64 = 100;
+/// Distinct emoji counted as usage per message; the rest of a long message goes uncounted.
+pub const MAX_USED: usize = 50;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ReactionMode {
@@ -32,10 +36,11 @@ pub enum ReactionMode {
 }
 
 impl ReactionMode {
-    fn parse(s: &str) -> Self {
+    fn parse(s: &str) -> Option<Self> {
         match s {
-            "one_per_person" => Self::OnePerPerson,
-            _ => Self::Normal,
+            "normal" => Some(Self::Normal),
+            "one_per_person" => Some(Self::OnePerPerson),
+            _ => None,
         }
     }
 }
@@ -72,6 +77,8 @@ async fn reactors(
     Path((id, emoji)): Path<(MessageId, String)>,
 ) -> AppResult<Json<Vec<UserId>>> {
     visible_message(&s.db, me, id).await?;
+    let emoji = canonical_key(&emoji);
+    check_key(&s.db, me, id, &emoji, false).await?;
     let rows: Vec<String> = sqlx::query_scalar(
         "SELECT user_id FROM reactions WHERE message_id = ? AND emoji = ?
          ORDER BY created_at, rowid LIMIT ?",
@@ -104,23 +111,52 @@ async fn visible_message(db: &SqlitePool, me: UserId, id: MessageId) -> AppResul
     channel_for(db, me, channel).await
 }
 
-fn strip_skin_tones(s: &str) -> String {
-    s.chars()
-        .filter(|c| !('\u{1F3FB}'..='\u{1F3FF}').contains(c))
+/// Every standard emoji and each of its skin-tone variants, in canonical form. Exact sequences
+/// only, so a skin tone can't sit anywhere but where Unicode puts one.
+static STANDARD: LazyLock<HashSet<String>> = LazyLock::new(|| {
+    emojis::iter()
+        .flat_map(|e| std::iter::once(e).chain(e.skin_tones().into_iter().flatten()))
+        .map(|e| canonical_key(e.as_str()))
         .collect()
-}
+});
 
 fn is_standard(s: &str) -> bool {
-    emojis::get(&strip_skin_tones(s)).is_some()
+    STANDARD.contains(&canonical_key(s))
 }
 
-/// A valid reaction key: a standard emoji (skin tone kept), or `custom:<id>` that exists. Only a
-/// live custom emoji can be added; a deleted one can still be taken off.
-async fn check_key(db: &SqlitePool, key: &str, add: bool) -> AppResult<()> {
+/// Whether `key` is on `msg` at all.
+async fn on_message(db: &SqlitePool, msg: MessageId, key: &str) -> AppResult<bool> {
+    let hit: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM reactions WHERE message_id = ? AND emoji = ? LIMIT 1")
+            .bind(msg.to_string())
+            .bind(key)
+            .fetch_optional(db)
+            .await?;
+    Ok(hit.is_some())
+}
+
+/// A valid canonical reaction key: a standard emoji (skin tone kept), or `custom:<id>`. Adding a
+/// custom one needs it live and `me` in its server (DMs too); taking one off or listing who
+/// reacted never does, so a reaction can't get stuck.
+async fn check_key(
+    db: &SqlitePool,
+    me: UserId,
+    msg: MessageId,
+    key: &str,
+    add: bool,
+) -> AppResult<()> {
     let ok = match key.strip_prefix("custom:") {
         Some(id) => match crate::emoji::load(db, id).await? {
-            Some(e) => e.hash.is_some() || !add,
-            None => false,
+            Some(e) if add => {
+                if e.hash.is_some() && !is_server_member(db, e.server_id, me).await? {
+                    return Err(AppError::Forbidden);
+                }
+                e.hash.is_some()
+            }
+            Some(_) => true,
+            // The emoji row is gone. Servers can't be deleted yet, but deleting one would take its
+            // emoji with it, leaving reactions that must still be listable and removable.
+            None => !add && on_message(db, msg, key).await?,
         },
         None => is_standard(key),
     };
@@ -149,6 +185,7 @@ pub async fn toggle(
     emoji: &str,
     add: bool,
 ) -> AppResult<()> {
+    let emoji = &canonical_key(emoji);
     // Access checks read through the pool, so they run before the write lock: holding it while
     // waiting for a second pool connection could starve the pool under concurrent toggles.
     let ch = visible_message(&s.db, me, msg).await?;
@@ -159,7 +196,7 @@ pub async fn toggle(
         }
         _ => {}
     }
-    check_key(&s.db, emoji, add).await?;
+    check_key(&s.db, me, msg, emoji, add).await?;
     // Events carry absolute counts, so two racing toggles must not publish out of commit order.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
@@ -199,7 +236,12 @@ pub async fn toggle(
             .bind(channel_id.to_string())
             .fetch_one(&mut *tx)
             .await?;
-        if ReactionMode::parse(&mode) == ReactionMode::OnePerPerson {
+        let mode = ReactionMode::parse(&mode).unwrap_or_else(|| {
+            // Normal is the safe reading: it never removes anyone's reactions.
+            tracing::warn!(%channel_id, mode, "unknown reaction mode; treating as normal");
+            ReactionMode::Normal
+        });
+        if mode == ReactionMode::OnePerPerson {
             let others: Vec<String> = sqlx::query_scalar(
                 "DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji != ?
                  RETURNING emoji",
@@ -237,7 +279,7 @@ pub async fn toggle(
         if inserted > 0 {
             let n = count(&mut tx, msg, emoji).await?;
             events.push(event(emoji, n, true));
-            crate::emoji::record_use(&mut tx, me, &[emoji.to_string()]).await?;
+            crate::emoji::record_use(&mut tx, me, std::slice::from_ref(emoji)).await?;
         }
     } else {
         let deleted =
@@ -293,12 +335,13 @@ pub async fn summaries(
 }
 
 /// Emoji used in a message's text, as usage keys: `custom:<id>` for `<:name:id>` and
-/// `<a:name:id>` tokens, plain Unicode for standard emoji. Deduplicated, in order.
+/// `<a:name:id>` tokens, canonical Unicode for standard emoji. Deduplicated, in order, and at
+/// most [`MAX_USED`] of them.
 pub fn used_in(content: &str) -> Vec<String> {
     let mut seen = HashSet::new();
     let mut out = Vec::new();
     let mut push = |k: String| {
-        if seen.insert(k.clone()) {
+        if out.len() < MAX_USED && seen.insert(k.clone()) {
             out.push(k);
         }
     };
@@ -322,7 +365,7 @@ fn push_standard(text: &str, push: &mut impl FnMut(String)) {
     for g in text.graphemes(true) {
         // ASCII digits, `#` and `*` are emoji bases only with a keycap, which isn't ASCII.
         if !g.is_ascii() && is_standard(g) {
-            push(g.to_string());
+            push(canonical_key(g));
         }
     }
 }
@@ -338,24 +381,44 @@ fn custom_token(s: &str) -> Option<(&str, usize)> {
     (word(name) && word(id)).then_some((id, end + 1))
 }
 
-/// Of `keys`, those that are standard emoji or live custom emoji.
-pub async fn live_keys(conn: &mut SqliteConnection, keys: Vec<String>) -> AppResult<Vec<String>> {
-    let mut out = Vec::with_capacity(keys.len());
-    for k in keys {
-        if let Some(id) = k.strip_prefix("custom:") {
-            let live: Option<i64> = sqlx::query_scalar(
-                "SELECT 1 FROM custom_emoji WHERE id = ? AND deleted_at IS NULL",
-            )
-            .bind(id)
-            .fetch_optional(&mut *conn)
-            .await?;
-            if live.is_none() {
-                continue;
-            }
+/// Of `keys`, those `user` may use: standard emoji, and live custom emoji of servers `user` is
+/// in. One query, however many tokens.
+pub async fn live_keys(
+    conn: &mut SqliteConnection,
+    user: UserId,
+    keys: Vec<String>,
+) -> AppResult<Vec<String>> {
+    let ids: Vec<&str> = keys
+        .iter()
+        .filter_map(|k| k.strip_prefix("custom:"))
+        .collect();
+    let usable: HashSet<String> = if ids.is_empty() {
+        HashSet::new()
+    } else {
+        let mut q = sqlx::QueryBuilder::new(
+            "SELECT e.id FROM custom_emoji e
+             JOIN server_members m ON m.server_id = e.server_id AND m.user_id = ",
+        );
+        q.push_bind(user.to_string());
+        q.push(" WHERE e.deleted_at IS NULL AND e.id IN (");
+        let mut list = q.separated(", ");
+        for id in &ids {
+            list.push_bind(*id);
         }
-        out.push(k);
-    }
-    Ok(out)
+        q.push(")");
+        q.build_query_scalar()
+            .fetch_all(&mut *conn)
+            .await?
+            .into_iter()
+            .collect()
+    };
+    Ok(keys
+        .into_iter()
+        .filter(|k| {
+            k.strip_prefix("custom:")
+                .is_none_or(|id| usable.contains(id))
+        })
+        .collect())
 }
 
 #[cfg(test)]
@@ -377,5 +440,64 @@ mod tests {
             ["custom:01AB", "custom:02CD", "👍🏽", "😂"]
         );
         assert!(used_in("plain text, 123 #tag *bold*").is_empty());
+    }
+
+    #[test]
+    fn used_keys_are_canonical_and_capped() {
+        assert_eq!(used_in("\u{2764}\u{FE0F} \u{2764} 👍️"), ["\u{2764}", "👍"]);
+        let many: String = (0..60).map(|i| format!("<:e{i}:E{i:03}> ")).collect();
+        let used = used_in(&many);
+        assert_eq!(used.len(), MAX_USED);
+        assert_eq!(used[MAX_USED - 1], format!("custom:E{:03}", MAX_USED - 1));
+    }
+
+    #[test]
+    fn unknown_reaction_mode_is_not_a_mode() {
+        assert_eq!(ReactionMode::parse("normal"), Some(ReactionMode::Normal));
+        assert_eq!(
+            ReactionMode::parse("one_per_person"),
+            Some(ReactionMode::OnePerPerson)
+        );
+        assert_eq!(ReactionMode::parse("bogus"), None);
+    }
+
+    #[test]
+    fn skin_tones_only_where_they_belong() {
+        for junk in [
+            "👍🏽🏽",
+            "🏽👍",
+            "🏽",
+            "😀🏽",
+            "👍\u{200D}🏽",
+            "👩🏽🏽\u{200D}💻",
+        ] {
+            assert!(!is_standard(junk), "{junk:?}");
+        }
+        assert!(is_standard("🧑🏻\u{200D}🤝\u{200D}🧑🏿"));
+    }
+
+    /// Every emoji the picker offers, skin tones included, is a valid key once canonical.
+    #[test]
+    fn picker_emoji_are_all_accepted() {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../client/ui/src/lib/emoji-data.json"
+        );
+        let data: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
+        let mut rejected = Vec::new();
+        let mut n = 0;
+        for e in data["emoji"].as_array().unwrap() {
+            let tones = e["s"].as_array().into_iter().flatten();
+            for u in std::iter::once(&e["u"]).chain(tones) {
+                let u = u.as_str().unwrap();
+                n += 1;
+                if !is_standard(&crate::emoji::canonical_key(u)) {
+                    rejected.push(u.to_string());
+                }
+            }
+        }
+        assert!(n > 3000, "{n}");
+        assert!(rejected.is_empty(), "{rejected:?}");
     }
 }

@@ -246,7 +246,7 @@ async fn send(
         .execute(&mut *tx)
         .await?;
     mentions::store(&mut tx, msg.id, &mentioned).await?;
-    let used = reactions::live_keys(&mut tx, reactions::used_in(&msg.content)).await?;
+    let used = reactions::live_keys(&mut tx, me, reactions::used_in(&msg.content)).await?;
     crate::emoji::record_use(&mut tx, me, &used).await?;
     if ch.kind.is_private() {
         // A new message reopens closed conversations (clients un-hide on MessageCreated).

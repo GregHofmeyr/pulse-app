@@ -501,3 +501,252 @@ async fn concurrent_reactions_arrive_in_commit_order() {
         }
     }
 }
+
+async fn reactors_status(app: &TestApp, token: &str, msg: MessageId, emoji: &str) -> u16 {
+    app.http
+        .get(app.url(&path(msg, emoji)))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+#[tokio::test]
+async fn fe0f_variants_are_one_reaction() {
+    let app = spawn().await;
+    let (alex_id, alex, sam_id, sam, _, msg) = setup(&app).await;
+    assert_eq!(react(&app, &alex, msg.id, "\u{2764}").await, 204);
+    assert_eq!(react(&app, &sam, msg.id, "\u{2764}\u{FE0F}").await, 204);
+    assert_eq!(
+        reactions_of(&app, &alex, &msg).await,
+        [summary("\u{2764}", 2, true)]
+    );
+    let users: Vec<UserId> = get_json(&app, &alex, &path(msg.id, "\u{2764}\u{FE0F}")).await;
+    assert_eq!(users, [alex_id, sam_id]);
+    // Removing works with either spelling.
+    assert_eq!(unreact(&app, &alex, msg.id, "\u{2764}\u{FE0F}").await, 204);
+    assert_eq!(unreact(&app, &sam, msg.id, "\u{2764}").await, 204);
+    assert!(reactions_of(&app, &alex, &msg).await.is_empty());
+
+    assert_eq!(react(&app, &alex, msg.id, "👍").await, 204);
+    assert_eq!(react(&app, &sam, msg.id, "👍\u{FE0F}").await, 204);
+    assert_eq!(
+        reactions_of(&app, &alex, &msg).await,
+        [summary("👍", 2, true)]
+    );
+
+    // Usage keys are canonical too, from reactions and from message text.
+    react(&app, &alex, msg.id, "\u{263A}\u{FE0F}").await;
+    send(&app, &alex, msg.channel_id, "\u{2764}\u{FE0F} \u{2764}").await;
+    let top = emoji::frequent(&app.db, alex_id, 27).await.unwrap();
+    assert!(top.iter().all(|k| !k.contains('\u{FE0F}')), "{top:?}");
+    assert!(top.contains(&"\u{263A}".to_string()), "{top:?}");
+    assert!(top.contains(&"\u{2764}".to_string()), "{top:?}");
+}
+
+#[tokio::test]
+async fn junk_skin_tones_rejected() {
+    let app = spawn().await;
+    let (_, alex, _, _, _, msg) = setup(&app).await;
+    for junk in [
+        "👍🏽🏽",
+        "🏽👍",
+        "🏽",
+        "👍🏽🏻",
+        "😀🏽",
+        "👍\u{200D}🏽",
+        "🏽\u{200D}👍",
+        "👩🏽🏽\u{200D}💻",
+        "👍🏽x",
+    ] {
+        assert_eq!(react(&app, &alex, msg.id, junk).await, 400, "{junk:?}");
+    }
+    for ok in [
+        "👍🏽",
+        "👩🏿\u{200D}\u{2764}\u{FE0F}\u{200D}👨🏼",
+        "🧑🏻\u{200D}🤝\u{200D}🧑🏿",
+        "🏃🏽\u{200D}\u{2640}\u{FE0F}",
+    ] {
+        assert_eq!(react(&app, &alex, msg.id, ok).await, 204, "{ok:?}");
+    }
+}
+
+#[tokio::test]
+async fn reactors_reject_unknown_keys() {
+    let app = spawn().await;
+    let (_, alex, _, _, _, msg) = setup(&app).await;
+    assert_eq!(reactors_status(&app, &alex, msg.id, "abc").await, 400);
+    assert_eq!(reactors_status(&app, &alex, msg.id, "👍🏽🏽").await, 400);
+    assert_eq!(
+        reactors_status(&app, &alex, msg.id, "custom:01JAAAAAAAAAAAAAAAAAAAAAAA").await,
+        400
+    );
+    assert_eq!(
+        unreact(&app, &alex, msg.id, "custom:01JAAAAAAAAAAAAAAAAAAAAAAA").await,
+        400
+    );
+    assert_eq!(reactors_status(&app, &alex, msg.id, "👍").await, 200);
+}
+
+#[tokio::test]
+async fn unknown_reaction_mode_acts_normal() {
+    let app = spawn().await;
+    let (_, alex, _, _, _, msg) = setup(&app).await;
+    sqlx::query("UPDATE channels SET reaction_mode = 'bogus' WHERE id = ?")
+        .bind(msg.channel_id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(react(&app, &alex, msg.id, "👍").await, 204);
+    assert_eq!(react(&app, &alex, msg.id, "😂").await, 204);
+    assert_eq!(
+        reactions_of(&app, &alex, &msg).await,
+        [summary("👍", 1, true), summary("😂", 1, true)]
+    );
+}
+
+#[tokio::test]
+async fn custom_reactions_need_membership_of_the_emoji_server() {
+    let app = spawn().await;
+    let (alex_id, alex, sam_id, sam, srv, _) = setup(&app).await;
+    let (kim_id, kim) = register(&app, "kim").await;
+    let e = custom_emoji(&app, &alex, srv, "pog").await;
+    let key = format!("custom:{}", e.id);
+
+    // In a DM, and in kim's own server: kim isn't in the emoji's server.
+    let dm = create_dm(&app, &alex, &[kim_id, sam_id]).await;
+    let dm_msg = send(&app, &alex, dm.id, "hi").await;
+    assert_eq!(react(&app, &kim, dm_msg.id, &key).await, 403);
+    let other = create_server(&app, &kim, "Other").await;
+    let og = general(&app, &kim, other.id).await;
+    let other_msg = send(&app, &kim, og.id, "hi").await;
+    assert_eq!(react(&app, &kim, other_msg.id, &key).await, 403);
+    // A member may use it anywhere they can react.
+    assert_eq!(react(&app, &sam, dm_msg.id, &key).await, 204);
+    assert_eq!(react(&app, &alex, dm_msg.id, &key).await, 204);
+
+    // Leaving the server never strands your reaction.
+    sqlx::query("DELETE FROM server_members WHERE server_id = ? AND user_id = ?")
+        .bind(srv.to_string())
+        .bind(sam_id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(react(&app, &sam, dm_msg.id, &key).await, 403);
+    let users: Vec<UserId> = get_json(&app, &sam, &path(dm_msg.id, &key)).await;
+    assert_eq!(users, [sam_id, alex_id]);
+    assert_eq!(unreact(&app, &sam, dm_msg.id, &key).await, 204);
+
+    // Sending another server's token: the text stays, but it isn't counted as kim's usage.
+    let text = format!("look <:pog:{}>", e.id);
+    let sent = send(&app, &kim, dm.id, &text).await;
+    assert_eq!(sent.content, text);
+    let top = emoji::frequent(&app.db, kim_id, 27).await.unwrap();
+    assert!(top.is_empty(), "{top:?}");
+}
+
+#[tokio::test]
+async fn orphaned_custom_reactions_can_be_listed_and_removed() {
+    let app = spawn().await;
+    let (alex_id, alex, sam_id, sam, srv, _) = setup(&app).await;
+    let dm = create_dm(&app, &alex, &[sam_id]).await;
+    let msg = send(&app, &alex, dm.id, "hi").await;
+    let a = custom_emoji(&app, &alex, srv, "pog").await;
+    let b = custom_emoji(&app, &alex, srv, "kek").await;
+    let (ka, kb) = (format!("custom:{}", a.id), format!("custom:{}", b.id));
+    assert_eq!(react(&app, &alex, msg.id, &ka).await, 204);
+    assert_eq!(react(&app, &sam, msg.id, &kb).await, 204);
+
+    // The emoji row is gone.
+    sqlx::query("DELETE FROM custom_emoji WHERE id = ?")
+        .bind(&a.id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let users: Vec<UserId> = get_json(&app, &sam, &path(msg.id, &ka)).await;
+    assert_eq!(users, [alex_id]);
+    assert_eq!(react(&app, &sam, msg.id, &ka).await, 400);
+    assert_eq!(unreact(&app, &alex, msg.id, &ka).await, 204);
+
+    // The server row is gone (servers can't be deleted yet; this is what one would leave).
+    let mut conn = app.db.acquire().await.unwrap();
+    sqlx::query("PRAGMA foreign_keys = OFF")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM servers WHERE id = ?")
+        .bind(srv.to_string())
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    sqlx::query("PRAGMA foreign_keys = ON")
+        .execute(&mut *conn)
+        .await
+        .unwrap();
+    drop(conn);
+    let users: Vec<UserId> = get_json(&app, &alex, &path(msg.id, &kb)).await;
+    assert_eq!(users, [sam_id]);
+    assert_eq!(unreact(&app, &sam, msg.id, &kb).await, 204);
+    assert!(reactions_of(&app, &alex, &msg).await.is_empty());
+}
+
+#[tokio::test]
+async fn send_usage_is_capped() {
+    let app = spawn().await;
+    let (alex_id, alex, _, _, srv, msg) = setup(&app).await;
+    let e = custom_emoji(&app, &alex, srv, "pog").await;
+    let mut text = String::new();
+    for i in 0..60 {
+        let id = format!("E{i:03}");
+        sqlx::query(
+            "INSERT INTO custom_emoji (id, server_id, name, media_hash, animated, added_by, created_at)
+             VALUES (?, ?, ?, ?, 0, ?, '2026-10-01T00:00:00.000Z')",
+        )
+        .bind(&id)
+        .bind(srv.to_string())
+        .bind(format!("e{i:03}"))
+        .bind(e.hash.as_deref().unwrap())
+        .bind(alex_id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+        text.push_str(&format!("<:e{i:03}:{id}>"));
+    }
+    send(&app, &alex, msg.channel_id, &text).await;
+    let used: Vec<String> =
+        sqlx::query_scalar("SELECT emoji FROM emoji_usage WHERE user_id = ? ORDER BY emoji")
+            .bind(alex_id.to_string())
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    let want: Vec<String> = (0..50).map(|i| format!("custom:E{i:03}")).collect();
+    assert_eq!(used, want);
+}
+
+// Multi-threaded, so the adds really race for the last slot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn concurrent_adds_fill_only_the_last_slot() {
+    let app = spawn().await;
+    let (_, alex, _, sam, _, msg) = setup(&app).await;
+    for e in &TWENTY[..19] {
+        assert_eq!(react(&app, &alex, msg.id, e).await, 204, "{e}");
+    }
+    let racers = ["😋", "😛", "😜", "🤪", "😝", "🤑", "🤗", "🤭", "🤫", "🤔"];
+    let app = &app;
+    let codes = futures::future::join_all(racers.iter().enumerate().map(|(i, e)| {
+        let token = if i % 2 == 0 { &alex } else { &sam };
+        async move { react(app, token, msg.id, e).await }
+    }))
+    .await;
+    assert_eq!(codes.iter().filter(|&&c| c == 204).count(), 1, "{codes:?}");
+    assert_eq!(codes.iter().filter(|&&c| c == 400).count(), 9, "{codes:?}");
+    let distinct: i64 =
+        sqlx::query_scalar("SELECT COUNT(DISTINCT emoji) FROM reactions WHERE message_id = ?")
+            .bind(msg.id.to_string())
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(distinct, 20);
+}
