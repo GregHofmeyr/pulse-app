@@ -161,11 +161,13 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
     let gone: Vec<String> = sqlx::query_scalar(
         "DELETE FROM media
          WHERE created_at <= ?1
-           AND hash NOT IN (SELECT media_hash FROM custom_emoji)
+           AND hash NOT IN (SELECT media_hash FROM custom_emoji
+                         WHERE media_hash IS NOT NULL)
            AND hash NOT IN (SELECT p.still_hash FROM media p
                             WHERE p.still_hash IS NOT NULL
                               AND (p.created_at > ?1
-                                   OR p.hash IN (SELECT media_hash FROM custom_emoji)))
+                                   OR p.hash IN (SELECT media_hash FROM custom_emoji
+                                                  WHERE media_hash IS NOT NULL)))
          RETURNING hash",
     )
     .bind(&cutoff)

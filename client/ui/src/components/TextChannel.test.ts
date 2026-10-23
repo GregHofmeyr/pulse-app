@@ -28,7 +28,7 @@ describe('TextChannel: leaving while an older page is loading', () => {
       me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
       channels: [{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }],
       members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [],
+      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], custom_emoji: [], frequent_emoji: [],
     })
     app.state = markHistory(addHistory(s, 'C1', page(100, 200)), 'C1', false) // M0100..M0299
     const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })

@@ -813,6 +813,8 @@ mod tests {
                         mutes: vec![],
                         hidden: vec![],
                         latest: vec![],
+                        custom_emoji: vec![],
+                        frequent_emoji: vec![],
                     });
                     ws.send(tokio_tungstenite::tungstenite::Message::text(
                         serde_json::to_string(&ready).unwrap(),

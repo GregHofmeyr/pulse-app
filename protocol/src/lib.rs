@@ -36,6 +36,9 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::CreateReportRequest::export_all(&cfg)?;
     rest::CreateReportResponse::export_all(&cfg)?;
     rest::MediaInfo::export_all(&cfg)?;
+    rest::CustomEmoji::export_all(&cfg)?;
+    rest::CreateEmojiRequest::export_all(&cfg)?;
+    rest::RenameEmojiRequest::export_all(&cfg)?;
     Ok(())
 }
 

@@ -34,6 +34,8 @@ function ready(over: Partial<Ready> = {}): Ready {
     mutes: [],
     hidden: [],
     latest: [msg('M3', 'DM1', 'U1'), msg('M9', 'G1', 'U2')],
+    custom_emoji: [],
+    frequent_emoji: [],
     ...over,
   }
 }

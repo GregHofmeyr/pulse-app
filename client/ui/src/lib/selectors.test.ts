@@ -22,7 +22,7 @@ const r: Ready = {
   read_states: [],
   mutes: [],
   hidden: [],
-  latest: [],
+  latest: [], custom_emoji: [], frequent_emoji: [],
 }
 const s = applyReady(emptyState(), r)
 

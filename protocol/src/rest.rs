@@ -272,3 +272,30 @@ pub struct MediaInfo {
     /// The first frame alone, for animations.
     pub still_hash: Option<String>,
 }
+
+/// A server's custom emoji. `hash: None` means it was deleted: the name stays so old messages
+/// and reactions can still show a `:name:` chip.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct CustomEmoji {
+    pub id: String,
+    pub server_id: ServerId,
+    pub name: String,
+    pub hash: Option<String>,
+    /// The first frame, for animated emoji.
+    pub still_hash: Option<String>,
+    pub animated: bool,
+    pub added_by: Option<UserId>,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CreateEmojiRequest {
+    pub name: String,
+    /// From `POST /media/emoji`.
+    pub media_hash: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct RenameEmojiRequest {
+    pub name: String,
+}

@@ -3,6 +3,7 @@ pub mod auth;
 pub mod config;
 pub mod db;
 pub mod dms;
+pub mod emoji;
 pub mod error;
 pub mod gateway;
 pub mod limits;
@@ -34,6 +35,7 @@ pub fn router(state: AppState) -> Router {
         .merge(voice::routes::router())
         .merge(reports::routes::router())
         .merge(media::routes::router())
+        .merge(emoji::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)

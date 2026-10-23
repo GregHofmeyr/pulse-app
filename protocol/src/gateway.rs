@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
-use crate::rest::{Channel, Member, Message, Mute, Person, ReadState, Server, User};
+use crate::rest::{Channel, CustomEmoji, Member, Message, Mute, Person, ReadState, Server, User};
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 #[serde(tag = "op", content = "d")]
@@ -61,6 +61,12 @@ pub struct Ready {
     pub hidden: Vec<ChannelId>,
     /// Latest message of each of your DMs/groups (list previews + sorting).
     pub latest: Vec<Message>,
+    /// Every server's custom emoji, deleted ones (without a hash) included.
+    #[serde(default)]
+    pub custom_emoji: Vec<CustomEmoji>,
+    /// Your most used emoji (standard as Unicode, custom as `<:name:id>`), best first.
+    #[serde(default)]
+    pub frequent_emoji: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -165,6 +171,16 @@ pub enum Event {
         channel_id: ChannelId,
         hidden: bool,
     },
+    EmojiCreated {
+        emoji: CustomEmoji,
+    },
+    EmojiUpdated {
+        emoji: CustomEmoji,
+    },
+    /// Carries `hash: None`.
+    EmojiDeleted {
+        emoji: CustomEmoji,
+    },
 }
 
 impl Event {
@@ -189,7 +205,10 @@ impl Event {
             | Self::MemberJoined { .. }
             | Self::UserCreated { .. }
             | Self::PresenceChanged { .. }
-            | Self::MutesChanged { .. } => None,
+            | Self::MutesChanged { .. }
+            | Self::EmojiCreated { .. }
+            | Self::EmojiUpdated { .. }
+            | Self::EmojiDeleted { .. } => None,
         }
     }
 

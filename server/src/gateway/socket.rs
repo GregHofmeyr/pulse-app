@@ -189,6 +189,8 @@ pub async fn build_ready(
         mutes: crate::dms::routes::mutes_of(db, me).await?,
         hidden: crate::dms::routes::hidden_of(db, me).await?,
         latest: crate::reads::latest_for(db, me).await?,
+        custom_emoji: crate::emoji::for_ready(db).await?,
+        frequent_emoji: crate::emoji::frequent(db, me, 27).await?,
     })
 }
 

@@ -23,7 +23,7 @@ const ready = (over: Partial<Ready> = {}): Ready => ({
   read_states: [],
   mutes: [],
   hidden: [],
-  latest: [],
+  latest: [], custom_emoji: [], frequent_emoji: [],
   ...over,
 })
 
