@@ -19,7 +19,7 @@
 </script>
 
 <div class="overlay">
-<div class="backdrop" role="presentation" onclick={onClose}></div>
+<div class="backdrop" role="presentation" data-backdrop onclick={onClose}></div>
 <div class="modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1" use:modal={onClose}>
   <nav aria-label="Settings sections">
     <h1>Settings</h1>

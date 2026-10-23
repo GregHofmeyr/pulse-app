@@ -8,7 +8,7 @@
 </script>
 
 <div class="overlay">
-<div class="backdrop" role="presentation" onclick={onClose}></div>
+<div class="backdrop" role="presentation" data-backdrop onclick={onClose}></div>
 <div class="modal" role="dialog" aria-modal="true" aria-label="Server settings" tabindex="-1" use:modal={onClose}>
   <nav aria-label="Server settings sections">
     <h1>{server.name}</h1>

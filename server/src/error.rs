@@ -9,6 +9,9 @@ pub enum AppError {
     NotFound,
     #[error("forbidden")]
     Forbidden,
+    /// A 403 whose reason is worth showing to the user as-is.
+    #[error("{0}")]
+    ForbiddenMsg(String),
     #[error("unauthorized")]
     Unauthorized,
     #[error("gone")]
@@ -37,7 +40,7 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code) = match &self {
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-            Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+            Self::Forbidden | Self::ForbiddenMsg(_) => (StatusCode::FORBIDDEN, "forbidden"),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             Self::Gone => (StatusCode::GONE, "gone"),
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),

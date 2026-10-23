@@ -105,16 +105,16 @@ mod tests {
     fn each_profile_has_its_own_socket() {
         let run = Some(std::ffi::OsString::from("/run/user/1000"));
         assert_eq!(
-            socket_path_for(run.clone(), "greg", None),
+            socket_path_for(run.clone(), "alex", None),
             PathBuf::from("/run/user/1000/pulse-app.sock")
         );
         assert_eq!(
-            socket_path_for(run, "greg", Some("b")),
+            socket_path_for(run, "alex", Some("b")),
             PathBuf::from("/run/user/1000/pulse-app-b.sock")
         );
         assert_eq!(
-            socket_path_for(None, "greg", Some("../x")),
-            std::env::temp_dir().join("pulse-app-greg-x.sock"),
+            socket_path_for(None, "alex", Some("../x")),
+            std::env::temp_dir().join("pulse-app-alex-x.sock"),
             "cleaned like the profile dirs"
         );
     }

@@ -79,4 +79,27 @@ describe('modal', () => {
     key(dialog, 'Tab')
     expect(document.activeElement).toBe(dialog.querySelector('#a'))
   })
+
+  it('makes everything behind it inert while open, and puts it back on destroy', () => {
+    document.body.innerHTML = ''
+    document.body.innerHTML =
+      '<div id="app"><nav><button id="opener">o</button></nav><main><p id="side">s</p>' +
+      '<div id="host"><div id="bd" data-backdrop></div><div id="dlg" tabindex="-1"><button id="in">in</button><div id="pop"><button id="pick">p</button></div></div></div>' +
+      '</main><aside id="already" inert></aside></div><div id="toast"></div><div id="tip" role="tooltip"></div>'
+    const $ = (id: string) => document.getElementById(id)!
+    const inert = (el: Element) => el.hasAttribute('inert')
+    $('opener').focus()
+    const a = modal($('dlg'), () => {})
+    for (const id of ['toast', 'side']) expect(inert($(id)), id).toBe(true)
+    expect(inert(document.querySelector('nav')!)).toBe(true)
+    // The dialog, its ancestors and anything nested inside it stay usable.
+    for (const id of ['app', 'host', 'dlg', 'pop', 'pick', 'tip', 'bd']) expect(inert($(id)), id).toBe(false)
+    expect(document.activeElement).toBe($('in'))
+    a.destroy()
+    for (const id of ['toast', 'side']) expect(inert($(id)), id).toBe(false)
+    expect(inert(document.querySelector('nav')!)).toBe(false)
+    expect(inert($('already'))).toBe(true) // was inert before: left alone
+    expect(document.activeElement).toBe($('opener'))
+    document.body.innerHTML = ''
+  })
 })

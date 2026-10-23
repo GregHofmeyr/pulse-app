@@ -11,18 +11,18 @@ const msg = (id: string, channel: string, author: string | null, extra: Partial<
 })
 function ready(over: Partial<Ready> = {}): Ready {
   return {
-    me: user('ME', 'greg'),
+    me: user('ME', 'alex'),
     servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
     channels: [
       { id: 'DM1', server_id: null, kind: 'dm', name: null, position: 0 },
       { id: 'G1', server_id: null, kind: 'group', name: null, position: 0 },
       { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },
     ],
-    members: [{ server_id: 'S1', members: [{ user: user('ME', 'greg'), nickname: null }] }],
+    members: [{ server_id: 'S1', members: [{ user: user('ME', 'alex'), nickname: null }] }],
     dm_members: [{ channel_id: 'DM1', user_ids: ['ME', 'U1'] }, { channel_id: 'G1', user_ids: ['ME', 'U1', 'U2'] }],
     voice: [],
     people: [
-      { user: user('ME', 'greg'), online: true, last_seen_at: null },
+      { user: user('ME', 'alex'), online: true, last_seen_at: null },
       { user: user('U1', 'sam'), online: true, last_seen_at: null },
       { user: user('U2', 'jo'), online: false, last_seen_at: '2026-10-08T08:00:00Z' },
     ],
@@ -250,7 +250,7 @@ describe('inVoice', () => {
       servers: [{ id: 'S1', name: 'Main', icon_hash: null }, { id: 'S2', name: 'Other', icon_hash: null }],
       channels: [{ id: 'V3', server_id: 'S2', kind: 'voice', name: 'c', position: 0 }],
       members: [
-        { server_id: 'S1', members: [{ user: user('ME', 'greg'), nickname: null }] },
+        { server_id: 'S1', members: [{ user: user('ME', 'alex'), nickname: null }] },
         { server_id: 'S2', members: [{ user: user('U1', 'sam'), nickname: null }] },
       ],
       voice: [{ channel_id: 'V3', members: [{ user_id: 'U1', flags }] }],
@@ -277,11 +277,11 @@ describe('NEW divider anchor', () => {
   })
 
   it('three-person round: each away stretch gets its own line', () => {
-    // greg watched up to M2, then switched windows; sam and jo wrote M3, M4
+    // alex watched up to M2, then switched windows; sam and jo wrote M3, M4
     const msgs = [msg('M1', 'G1', 'U1'), msg('M2', 'G1', 'ME'), msg('M3', 'G1', 'U1'), msg('M4', 'G1', 'U2')]
     let anchor = reanchor('M1', { was: true, now: false, newest: 'M2' })
     expect(firstUnreadIndex(msgs, anchor, 'ME')).toBe(2)
-    // greg replies (M5): line goes; looks away again, U1 writes M6
+    // alex replies (M5): line goes; looks away again, U1 writes M6
     const more = [...msgs, msg('M5', 'G1', 'ME'), msg('M6', 'G1', 'U1')]
     expect(firstUnreadIndex(more.slice(0, 5), anchor, 'ME')).toBe(-1)
     anchor = reanchor(anchor, { was: true, now: false, newest: 'M5' })

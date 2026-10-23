@@ -5,7 +5,7 @@
   import type { Std } from '../lib/emoji'
   import { reactionKey, twemojiUrl } from '../lib/emoji'
   import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
-  import { react, tooltipText } from '../lib/reactions'
+  import { memberServers, react, tooltipText } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import { api } from '../lib/tauri'
   import EmojiPopover from './EmojiPopover.svelte'
@@ -25,6 +25,15 @@
   let addBtn: HTMLButtonElement | undefined = $state()
 
   const customOf = (key: string): CustomEmoji | undefined => app.state.customEmoji[key.slice(7)]
+
+  const members = $derived(memberServers(app.state))
+  // Why you can't add this reaction (the server would refuse), or null. Removing your own is always allowed.
+  function blocked(key: string): string | null {
+    if (!key.startsWith('custom:')) return null
+    const c = customOf(key)
+    if (!c?.hash) return 'This emoji was deleted'
+    return members.has(c.server_id) ? null : "From a server you're not in"
+  }
 
   function toggle(key: string, add: boolean) {
     void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, add, meId, onError)
@@ -108,11 +117,13 @@
     {#each message.reactions as r (r.emoji)}
       {@const c = r.emoji.startsWith('custom:') ? customOf(r.emoji) : undefined}
       {@const custom = r.emoji.startsWith('custom:')}
+      {@const why = r.me ? null : blocked(r.emoji)}
       <span class="wrap">
         <button
-          class="chip" class:mine={r.me} type="button" aria-pressed={r.me}
+          class="chip" class:mine={r.me} class:locked={!!why} type="button" aria-pressed={r.me}
+          aria-disabled={why ? 'true' : undefined}
           aria-describedby={tipFor === r.emoji && tipText ? tipId(r.emoji) : undefined}
-          onclick={() => toggle(r.emoji, !r.me)}
+          onclick={() => { if (!why) toggle(r.emoji, !r.me) }}
           onpointerenter={() => enter(r.emoji, r.count, 'hover')}
           onpointerleave={() => leave(r.emoji, 'hover')}
           onfocus={() => enter(r.emoji, r.count, 'focus')}
@@ -127,7 +138,7 @@
           {/if}
           <span class="n">{r.count}</span>
         </button>
-        {#if tipFor === r.emoji && tipText}<span class="tip" id={tipId(r.emoji)} role="tooltip">{tipText}</span>{/if}
+        {#if tipFor === r.emoji && tipText}<span class="tip" id={tipId(r.emoji)} role="tooltip">{tipText}{#if why}<span class="why">{why}</span>{/if}</span>{/if}
       </span>
     {/each}
     <button bind:this={addBtn} class="chip add" type="button" aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}>
@@ -144,9 +155,12 @@
   .wrap { position: relative; display: inline-flex; }
   .chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-3); color: var(--text-2); font-size: 13px; }
   .chip:hover { border-color: var(--text-3); }
+  .chip.locked { cursor: default; opacity: .7; }
+  .chip.locked:hover { border-color: var(--bg-4); }
   .chip.mine { border-color: var(--accent); background: rgba(139, 156, 255, .15); color: var(--text); }
   .chip img { width: 16px; height: 16px; }
   .gone { color: var(--text-3); font-size: 12px; }
   .add { padding: 0 6px; }
+  .why { display: block; color: var(--text-3); }
   .tip { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 20; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; padding: 4px 8px; border-radius: 6px; background: var(--bg-1); border: 1px solid var(--bg-4); font-size: 12px; color: var(--text); pointer-events: none; }
 </style>

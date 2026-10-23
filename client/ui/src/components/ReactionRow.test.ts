@@ -493,3 +493,70 @@ describe('reactor tooltip edge cases', () => {
     expect(calls('list_reactors')).toHaveLength(2)
   })
 })
+
+describe('chips you cannot add to', () => {
+  const me = { id: 'U1', username: 'alex', avatar_hash: null }
+  const ce = (id: string, server: string, hash: string | null) =>
+    ({ id, server_id: server, name: `e${id}`, hash, still_hash: null, animated: false, added_by: null, created_at: '2026-10-01T00:00:00.000Z' })
+  function showCustom(reactions: Message['reactions']) {
+    app.state = {
+      ...emptyState(), me,
+      servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
+      members: { S1: [{ user: me, nickname: null }] },
+      customEmoji: { X1: ce('X1', 'S1', 'h1'), X2: ce('X2', 'S2', 'h2'), X3: ce('X3', 'S1', null) },
+      messages: { C1: [msg({ reactions })] },
+    }
+    cmp = mount(ReactionRow, { target: document.body, props: { message: cur(), meId: 'U1', nameOf: (id: string | null) => id ?? '', onError } })
+    flushSync()
+  }
+  const chip = (key: string) => chips()[cur().reactions.findIndex((r) => r.emoji === key)]
+  async function hoverTip(c: HTMLButtonElement) {
+    c.dispatchEvent(new Event('pointerenter'))
+    await settle()
+    flushSync()
+    return document.querySelector('.tip')?.textContent ?? ''
+  }
+
+  it("a chip from a server you're not in is not toggled and says why", async () => {
+    invoke.mockResolvedValue(['U2'])
+    showCustom([{ emoji: 'custom:X2', count: 1, me: false }])
+    const c = chip('custom:X2')
+    expect(c.getAttribute('aria-disabled')).toBe('true')
+    c.click()
+    await settle()
+    expect(calls('add_reaction')).toHaveLength(0)
+    expect(cur().reactions).toEqual([{ emoji: 'custom:X2', count: 1, me: false }])
+    expect(await hoverTip(c)).toContain("From a server you're not in")
+  })
+
+  it('a deleted or unknown emoji chip is not toggled and says why', async () => {
+    invoke.mockResolvedValue(['U2'])
+    showCustom([{ emoji: 'custom:X3', count: 1, me: false }, { emoji: 'custom:ZZ', count: 1, me: false }])
+    for (const key of ['custom:X3', 'custom:ZZ']) {
+      const c = chip(key)
+      expect(c.getAttribute('aria-disabled')).toBe('true')
+      c.click()
+      await settle()
+      expect(await hoverTip(c)).toContain('This emoji was deleted')
+      c.dispatchEvent(new Event('pointerleave'))
+    }
+    expect(calls('add_reaction')).toHaveLength(0)
+  })
+
+  it('a reaction you hold stays removable even when you could not add it', async () => {
+    showCustom([{ emoji: 'custom:X2', count: 2, me: true }, { emoji: 'custom:X3', count: 1, me: true }])
+    expect(chip('custom:X2').hasAttribute('aria-disabled')).toBe(false)
+    chip('custom:X2').click()
+    chip('custom:X3').click()
+    await settle()
+    expect(calls('remove_reaction').map((c) => (c[1] as { emoji: string }).emoji)).toEqual(['custom:X2', 'custom:X3'])
+  })
+
+  it('a usable custom chip from your server still adds', async () => {
+    showCustom([{ emoji: 'custom:X1', count: 1, me: false }])
+    expect(chip('custom:X1').hasAttribute('aria-disabled')).toBe(false)
+    chip('custom:X1').click()
+    await settle()
+    expect(calls('add_reaction')).toHaveLength(1)
+  })
+})

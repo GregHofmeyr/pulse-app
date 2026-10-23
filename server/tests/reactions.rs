@@ -9,7 +9,7 @@ use futures::{SinkExt, StreamExt};
 use image::{ImageFormat, Rgba, RgbaImage};
 use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
 use pulse_protocol::ids::{MessageId, ServerId, UserId};
-use pulse_protocol::rest::{CustomEmoji, MediaInfo, Message, ReactionSummary};
+use pulse_protocol::rest::{ApiError, CustomEmoji, MediaInfo, Message, ReactionSummary};
 use pulse_server::emoji;
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
@@ -633,6 +633,18 @@ async fn custom_reactions_need_membership_of_the_emoji_server() {
     let dm = create_dm(&app, &alex, &[kim_id, sam_id]).await;
     let dm_msg = send(&app, &alex, dm.id, "hi").await;
     assert_eq!(react(&app, &kim, dm_msg.id, &key).await, 403);
+    // The refusal reads as a reason, not a bare "forbidden".
+    let r = app
+        .http
+        .put(app.url(&path(dm_msg.id, &key)))
+        .bearer_auth(&kim)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+    let err: ApiError = r.json().await.unwrap();
+    assert_eq!(err.code, "forbidden");
+    assert!(err.message.contains("servers you're in"), "{}", err.message);
     let other = create_server(&app, &kim, "Other").await;
     let og = general(&app, &kim, other.id).await;
     let other_msg = send(&app, &kim, og.id, "hi").await;

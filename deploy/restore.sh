@@ -34,6 +34,11 @@ if [[ $mode == media-* ]]; then
     echo "archive has paths outside media/; refusing" >&2
     exit 1
   fi
+  # ...and only as plain files and directories: a symlink or hardlink entry could reach outside it.
+  if tar -tvzf "$work/media.tgz" | awk '$1 !~ /^[-d]/ { bad = 1 } END { exit !bad }'; then
+    echo "archive has links or special files; refusing" >&2
+    exit 1
+  fi
   echo "archive ok: $(grep -c '\.webp$' "$work/list") media files"
   [[ $mode == media-drill ]] && exit 0
   scp -q "$work/media.tgz" "$PROD:/srv/pulse/media.tgz"

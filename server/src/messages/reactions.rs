@@ -160,7 +160,9 @@ async fn check_key(
         Some(id) => match crate::emoji::load(db, id).await? {
             Some(e) if add => {
                 if e.hash.is_some() && !is_server_member(db, e.server_id, me).await? {
-                    return Err(AppError::Forbidden);
+                    return Err(AppError::ForbiddenMsg(
+                        "you can only react with emoji from servers you're in".into(),
+                    ));
                 }
                 e.hash.is_some()
             }
