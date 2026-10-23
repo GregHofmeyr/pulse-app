@@ -7,3 +7,4 @@ client/ui/dist/
 spikes/**/*.wav
 *.ogg
 .superpowers/
+client/ui/public/emoji/

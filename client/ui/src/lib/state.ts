@@ -1,6 +1,7 @@
 // The app's single source of truth, as pure functions over plain data so they're easy to test.
 // The reactive wrapper lives in store.svelte.ts.
 import type { Channel } from './protocol/Channel'
+import type { CustomEmoji } from './protocol/CustomEmoji'
 import type { Event } from './protocol/Event'
 import type { Member } from './protocol/Member'
 import type { Message } from './protocol/Message'
@@ -35,12 +36,14 @@ export type AppState = {
   mutes: Mute[]
   hidden: Record<string, true> // closed conversations
   latest: Record<string, Message> // DM/group channelId -> newest message
+  customEmoji: Record<string, CustomEmoji> // id -> emoji; deleted ones stay (hash null) so old messages render a chip
+  frequentEmoji: string[] // your most-used reaction keys, best first
 }
 
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {}, customEmoji: {}, frequentEmoji: [] }
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -67,6 +70,8 @@ export function applyReady(s: AppState, r: Ready): AppState {
     mutes: r.mutes,
     hidden: Object.fromEntries(r.hidden.map((id) => [id, true as const])),
     latest: Object.fromEntries(r.latest.map((m) => [m.channel_id, m])),
+    customEmoji: Object.fromEntries(r.custom_emoji.map((c) => [c.id, c])),
+    frequentEmoji: r.frequent_emoji,
   }
 }
 
@@ -76,6 +81,13 @@ function tracksUnread(s: AppState, channel: string): boolean {
   if (!ch || !s.me) return false
   if (ch.server_id === null) return true
   return ch.kind === 'text' && (s.members[ch.server_id] ?? []).some((m) => m.user.id === s.me!.id)
+}
+
+/** An edit event's reaction list is unreliable (`me` is always false), so reactions are kept as-is:
+ * they change only through Reaction* events. */
+function upsertEdited(list: Message[], m: Message): Message[] {
+  const old = list.find((x) => x.id === m.id)
+  return upsertMessage(list, old ? { ...m, reactions: old.reactions } : m)
 }
 
 function upsertMessage(list: Message[] | undefined, m: Message): Message[] {
@@ -125,7 +137,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const c = m.channel_id
       const latest = s.latest[c]?.id === m.id ? { ...s.latest, [c]: m } : s.latest
       if (!s.messages[c]) return latest === s.latest ? s : { ...s, latest } // history never loaded
-      return { ...s, latest, messages: { ...s.messages, [c]: upsertMessage(s.messages[c], m) } }
+      return { ...s, latest, messages: { ...s.messages, [c]: upsertEdited(s.messages[c], m) } }
     }
     case 'MessageDeleted': {
       const { channel_id: c, message_id: id, author_id, mentions } = e.d
@@ -228,15 +240,26 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const { [e.d.channel_id]: _x, ...rest } = s.hidden
       return { ...s, hidden: e.d.hidden ? { ...rest, [e.d.channel_id]: true } : rest }
     }
-    // Emoji state arrives with the picker; until then these events change nothing.
     case 'EmojiCreated':
     case 'EmojiUpdated':
+      return { ...s, customEmoji: { ...s.customEmoji, [e.d.emoji.id]: e.d.emoji } }
     case 'EmojiDeleted':
-      return s
-    // Reaction state arrives with the reaction row; until then these change nothing.
+      return { ...s, customEmoji: { ...s.customEmoji, [e.d.emoji.id]: { ...e.d.emoji, hash: null, still_hash: null } } }
     case 'ReactionAdded':
-    case 'ReactionRemoved':
-      return s
+    case 'ReactionRemoved': {
+      const { channel_id: c, message_id: id, emoji, user_id, count } = e.d
+      const list = s.messages[c]
+      const msg = list?.find((m) => m.id === id)
+      if (!list || !msg) return s // not loaded: the fetch brings current reactions
+      // The event carries the absolute count, so a reordered pair still ends on the latest value.
+      const mine = user_id === s.me?.id
+      const me = mine ? e.t === 'ReactionAdded' : undefined
+      const has = msg.reactions.some((r) => r.emoji === emoji)
+      const upd = (has ? msg.reactions : [...msg.reactions, { emoji, count, me: false }])
+        .map((r) => (r.emoji === emoji ? { ...r, count, me: me ?? r.me } : r))
+        .filter((r) => r.count > 0)
+      return { ...s, messages: { ...s.messages, [c]: list.map((m) => (m.id === id ? { ...m, reactions: upd } : m)) } }
+    }
   }
 }
 
