@@ -17,7 +17,7 @@ use tauri::{AppHandle, LogicalSize, Manager, State};
 use crate::api::{Api, ApiError};
 use crate::commands::Core;
 use crate::voice::VoiceManager;
-use audio::StreamAudio;
+use audio::{StreamAudio, StreamAudioError};
 
 /// The picker needs room for its thumbnails: the window grows to at least this while it is open.
 const PICKER_MIN_HEIGHT: f64 = 640.0;
@@ -267,12 +267,25 @@ pub async fn stream_audio_start(
     audio: State<'_, StreamAudio>,
     channel_id: ChannelId,
     window_title: Option<String>,
-) -> Result<(), String> {
-    let (api, token) = core.current().map_err(|e| e.to_string())?;
-    audio
+) -> Result<(), StreamAudioError> {
+    let (api, token) = core.current()?;
+    let r = audio
         .ensure_connected(&api, &token, channel_id, app_mixer(&app))
-        .await?;
-    audio.start_publishing(window_title).await
+        .await;
+    audio_check(&app, &core, r)?;
+    Ok(audio.start_publishing(window_title).await?)
+}
+
+/// A dead login (401) while `#a` connects logs out, as it does for every other command.
+fn audio_check(
+    app: &AppHandle,
+    core: &Core,
+    r: Result<(), StreamAudioError>,
+) -> Result<(), StreamAudioError> {
+    if let Err(StreamAudioError::Api(ApiError::Unauthorized)) = &r {
+        let _ = core.check::<()>(app, Err(ApiError::Unauthorized));
+    }
+    r
 }
 
 #[tauri::command]
@@ -307,16 +320,17 @@ pub async fn stream_audio_watch(
     channel_id: ChannelId,
     streamer: UserId,
     on: bool,
-) -> Result<(), String> {
+) -> Result<(), StreamAudioError> {
     if on {
-        let (api, token) = core.current().map_err(|e| e.to_string())?;
-        audio
+        let (api, token) = core.current()?;
+        let r = audio
             .ensure_connected(&api, &token, channel_id, app_mixer(&app))
-            .await?;
+            .await;
+        audio_check(&app, &core, r)?;
     } else if audio.connected_channel().await != Some(channel_id) {
         return Ok(()); // nothing playing there
     }
-    audio.watch(streamer, on).await
+    Ok(audio.watch(streamer, on).await?)
 }
 
 #[tauri::command]

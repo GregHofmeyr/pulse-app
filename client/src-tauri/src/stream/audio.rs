@@ -22,7 +22,7 @@ use tokio::task::JoinHandle;
 use super::loopback::Engine;
 use super::plan::{Capture, PlanInput, capture_plan};
 use super::procs;
-use crate::api::Api;
+use crate::api::{Api, ApiError};
 use crate::voice::devices::INTERNAL_RATE;
 use crate::voice::mixer::{MixerInput, SourceKind, percent_to_gain};
 
@@ -57,6 +57,28 @@ fn owner_of(identity: &str) -> &str {
 /// A stream's volume: only the `Stream` kind, so it never changes how loud their voice is.
 fn set_stream_volume(mixer: &MixerInput, user_id: &str, pct: u16) {
     mixer.set_gain(user_id, SourceKind::Stream, percent_to_gain(pct));
+}
+
+/// Why `#a` couldn't connect. The server's own answers stay `Api`, so a dead login (401) can
+/// log out like it does for every other command. Serialized as its message, like theirs.
+#[derive(Debug, thiserror::Error)]
+pub enum StreamAudioError {
+    #[error(transparent)]
+    Api(#[from] ApiError),
+    #[error("{0}")]
+    Other(String),
+}
+
+impl From<String> for StreamAudioError {
+    fn from(e: String) -> Self {
+        Self::Other(e)
+    }
+}
+
+impl serde::Serialize for StreamAudioError {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(&self.to_string())
+    }
 }
 
 /// Told the channel whose `#a` connection LiveKit closed under us (never when we leave).
@@ -481,7 +503,7 @@ impl StreamAudio {
         token: &str,
         channel: ChannelId,
         mixer: MixerSource,
-    ) -> Result<(), String> {
+    ) -> Result<(), StreamAudioError> {
         let mut st = self.state.lock().await;
         if let Some(c) = &st.conn {
             if c.channel == channel && c.room.connection_state() != ConnectionState::Disconnected {
@@ -489,9 +511,7 @@ impl StreamAudio {
             }
             Self::leave_locked(&mut st).await;
         }
-        let t = super::ticket_with_retry(api, token, channel, StreamRole::A)
-            .await
-            .map_err(|e| e.to_string())?;
+        let t = super::ticket_with_retry(api, token, channel, StreamRole::A).await?;
         let mut opts = RoomOptions::default();
         opts.auto_subscribe = false; // only the streams we watch
         // bounded: the state lock is held meanwhile, and leave (on exit, too) waits for it
@@ -738,6 +758,23 @@ impl StreamAudio {
 mod tests {
     use super::*;
     use crate::voice::mixer::{SourceKind, mixer, percent_to_gain};
+
+    /// A refused login comes back as the server's 401, not a string, so the command can log
+    /// the user out like every other command does.
+    #[tokio::test]
+    async fn a_dead_login_is_unauthorized() {
+        let app = pulse_server::testing::spawn().await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let channel: ChannelId = "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap();
+        let none: MixerSource = Arc::new(|| Box::pin(async { None }));
+        let r = StreamAudio::default()
+            .ensure_connected(&api, "garbage", channel, none)
+            .await;
+        assert!(
+            matches!(r, Err(StreamAudioError::Api(ApiError::Unauthorized))),
+            "{r:?}"
+        );
+    }
 
     #[test]
     fn received_stream_audio_lands_in_the_mixer_as_stream_kind() {
