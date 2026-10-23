@@ -162,6 +162,22 @@ describe('stream audio closed by LiveKit', () => {
     expect(stream.live).not.toBeNull() // video carries on
   })
 
+  it('a_restart_landing_after_going_live_again_without_audio_is_stopped', async () => {
+    const { streamApi, stream } = await goneLive(true, 'window')
+    const restarted = deferred()
+    core.handlers.stream_audio_start = () => restarted.p
+    const closed = streamApi.onAudioClosed('c1')
+    // meanwhile: Stop, then Go Live again with stream audio off
+    await streamApi.stop()
+    delete core.handlers.stream_audio_start
+    await streamApi.goLive('c1', fakeTrack() as never, 'Other', settings(false))
+    expect(stream.live?.audio).toBe(false)
+    core.calls = []
+    restarted.resolve(undefined) // the old window's restart lands now
+    await closed
+    expect(calls('stream_audio_stop')).toEqual([undefined])
+  })
+
   it('watches_the_stream_audio_again', async () => {
     const { streamApi } = await load()
     fake.connect = async () => fakeRoom()

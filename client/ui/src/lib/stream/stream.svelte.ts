@@ -360,8 +360,8 @@ export const streamApi = {
     if (live?.channelId === channelId && live.audio) {
       try {
         await streamCmd.audioStart(channelId, liveWindowTitle)
-        if (!stream.live) {
-          // stopped meanwhile: that stop's audio_stop ran before this start landed
+        if (!stream.live?.audio) {
+          // stopped (or live again without audio) meanwhile: that stop's audio_stop ran before this start landed
           await streamCmd.audioStop().catch(logError('audio_stop_error'))
         } else if (stream.live === live && live.audioMuted) {
           await streamCmd.audioMute(true).catch(logError('audio_mute_error'))
