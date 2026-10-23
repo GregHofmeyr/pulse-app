@@ -25,6 +25,7 @@ On the server everything lives in `/srv/pulse`:
 ```
 compose.yml  Caddyfile  livekit.yaml  backup.sh  .env (600: settings + secrets)
 data/pulse.db                         the database
+data/media/                           uploaded emoji
 caddy/                                certificates and Caddy state
 ```
 
@@ -98,8 +99,9 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
 
 ## 8. Backups
 
-Nightly at about 03:00 (and before every deploy): a consistent snapshot of the database, encrypted with
-**age** for your key, uploaded to **Cloudflare R2**. 14 daily and 8 weekly copies are kept. The server can
+Nightly at about 03:00 (and before every deploy): a consistent snapshot of the database and a tarball of the
+uploaded media (`data/media`, e.g. custom emoji; skipped until something has been uploaded), each encrypted with
+**age** for your key and uploaded to **Cloudflare R2**. 14 daily and 8 weekly copies of each are kept. The server can
 encrypt but never decrypt. A plaintext copy never stays on the server, even if a step fails.
 
 Setup, once:
@@ -118,6 +120,17 @@ Setup, once:
 
 Restoring for real: `just restore daily/pulse-<time>.db.age`. The server stops for a few seconds; the old
 database is kept next to it as `data/pulse.db.pre-restore-<time>`.
+
+Restoring the media (the database restore doesn't touch it; do this after a lost or rebuilt server, or to roll
+emoji back): the newest is `ssh pulse@pulse /srv/pulse/backup.sh latest-media`, or pick one from `daily/` in R2.
+
+```
+ssh pulse@pulse '/srv/pulse/backup.sh fetch daily/pulse-media-<time>.tgz.age' > media.tgz.age
+age -d -i ~/.config/pulse/backup-age.key -o media.tgz media.tgz.age
+tar -tzf media.tgz | head                      # look before you restore: paths start with media/
+scp media.tgz pulse@pulse:/srv/pulse/media.tgz
+ssh pulse@pulse 'cd /srv/pulse && docker compose stop pulse-server && tar -xzf media.tgz -C data && rm media.tgz && docker compose start pulse-server'
+```
 
 ## 9. Uptime monitor
 
