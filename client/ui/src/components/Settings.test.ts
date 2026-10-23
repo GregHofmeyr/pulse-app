@@ -56,3 +56,20 @@ describe('Settings: Chat', () => {
     expect(localStorage.getItem('pulse.animateEmoji')).toBe('never')
   })
 })
+
+describe('Settings dialog', () => {
+  it('focuses into the dialog, closes on Esc, and gives focus back', () => {
+    const opener = document.createElement('button')
+    document.body.append(opener)
+    opener.focus()
+    const onClose = vi.fn()
+    cmp = mount(Settings, { target: document.body, props: { onClose } })
+    flushSync()
+    expect(document.querySelector('[role=dialog]')!.contains(document.activeElement)).toBe(true)
+    document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    expect(onClose).toHaveBeenCalledTimes(1)
+    unmount(cmp)
+    cmp = undefined
+    expect(document.activeElement).toBe(opener)
+  })
+})

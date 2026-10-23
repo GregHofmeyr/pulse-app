@@ -60,6 +60,12 @@
   let menuOpen = $state(false)
   let serverMenuOpen = $state(false)
   let serverSettingsOpen = $state(false)
+  // Both belong to the server they were opened on.
+  $effect(() => {
+    void activeServerId
+    serverMenuOpen = false
+    serverSettingsOpen = false
+  })
   let creating = $state(false)
   let newName = $state('')
   let createError = $state('')

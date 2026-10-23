@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import Icon from './Icon.svelte'
+  import { modal } from '../lib/actions'
   import VoiceSettings from './VoiceSettings.svelte'
   import KeybindSettings from './KeybindSettings.svelte'
   import ChatSettings from './ChatSettings.svelte'
@@ -19,7 +20,7 @@
 
 <div class="overlay">
 <div class="backdrop" role="presentation" onclick={onClose}></div>
-<div class="modal" role="dialog" aria-label="Settings">
+<div class="modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1" use:modal={onClose}>
   <nav aria-label="Settings sections">
     <h1>Settings</h1>
     {#each sections as s}

@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
+  import { modal } from '../lib/actions'
   import EmojiSettings from './EmojiSettings.svelte'
   import type { Server } from '../lib/protocol/Server'
 
@@ -8,7 +9,7 @@
 
 <div class="overlay">
 <div class="backdrop" role="presentation" onclick={onClose}></div>
-<div class="modal" role="dialog" aria-label="Server settings">
+<div class="modal" role="dialog" aria-modal="true" aria-label="Server settings" tabindex="-1" use:modal={onClose}>
   <nav aria-label="Server settings sections">
     <h1>{server.name}</h1>
     <button class="on" aria-current="page">Emoji</button>
