@@ -16,9 +16,20 @@ use crate::session::Store;
 use crate::voice::devices::{AudioConfig, DeviceInfo};
 use crate::voice::{AudioMode, VoiceError, VoiceManager, controls::Controls};
 
+/// Signed in: where, with which token, and as whom (`None` until login or the first Ready says).
+#[derive(Clone)]
+struct Session {
+    api: Api,
+    token: String,
+    me: Option<UserId>,
+}
+
+/// Runs on every sign-out: clears what the webview cached (see `media::clear_webview_cache`).
+pub type SignedOut = Box<dyn Fn() + Send + Sync>;
+
 pub struct Core {
     pub outbox: std::sync::Arc<crate::outbox::Outbox>,
-    inner: Mutex<Option<(Api, String)>>,
+    inner: Mutex<Option<Session>>,
     /// Retries queued messages every 15 s while signed in (a failed send isn't left waiting for
     /// the next send or reconnect).
     retry: Mutex<Option<tauri::async_runtime::JoinHandle<()>>>,
@@ -33,10 +44,18 @@ pub struct Core {
     ui_attached: watch::Sender<bool>,
     /// setup and restore_session may both try to start the stored session: one at a time.
     starting: Mutex<()>,
+    /// Where each account's `pulse-media` cache lives (`media::scope_dir`).
+    media_root: std::path::PathBuf,
+    signed_out: SignedOut,
 }
 
 impl Core {
-    pub fn new(store: Store, outbox: crate::outbox::Outbox) -> Self {
+    pub fn new(
+        store: Store,
+        outbox: crate::outbox::Outbox,
+        media_root: std::path::PathBuf,
+        signed_out: SignedOut,
+    ) -> Self {
         Self {
             outbox: std::sync::Arc::new(outbox),
             inner: Mutex::new(None),
@@ -47,6 +66,8 @@ impl Core {
             boot: watch::channel(Boot::starting()).0,
             ui_attached: watch::channel(false).0,
             starting: Mutex::new(()),
+            media_root,
+            signed_out,
         }
     }
 
@@ -55,16 +76,50 @@ impl Core {
             .lock()
             .unwrap()
             .clone()
+            .map(|s| (s.api, s.token))
             .ok_or(ApiError::Unauthorized)
     }
 
+    /// What `pulse-media` fetches with, and the cache it may use: `None` when signed out.
+    pub(crate) fn media_session(&self) -> Option<crate::media::Session> {
+        let s = self.inner.lock().unwrap().clone()?;
+        let cache =
+            s.me.as_ref()
+                .map(|me| crate::media::scope_dir(&self.media_root, s.api.base(), me));
+        Some(crate::media::Session {
+            api: s.api,
+            token: s.token,
+            cache,
+        })
+    }
+
+    /// Ready named the account behind `token`; ignored if that session has ended since.
+    fn learn_me(&self, token: &str, me: UserId) {
+        if let Some(s) = self.inner.lock().unwrap().as_mut()
+            && s.token == token
+        {
+            s.me = Some(me);
+        }
+    }
+
     /// Remember the session and (re)start the live connection.
-    fn activate(&self, app: &AppHandle, api: Api, token: String, persist: bool) {
+    fn activate(
+        &self,
+        app: &AppHandle,
+        api: Api,
+        token: String,
+        me: Option<UserId>,
+        persist: bool,
+    ) {
         self.boot.send_replace(Boot::starting());
         if persist {
             self.store.save(api.base(), &token);
         }
-        *self.inner.lock().unwrap() = Some((api.clone(), token.clone()));
+        *self.inner.lock().unwrap() = Some(Session {
+            api: api.clone(),
+            token: token.clone(),
+            me,
+        });
         let (tx, rx) = mpsc::unbounded_channel();
         tauri::async_runtime::spawn(crate::reports::crash::send_pending(
             app.clone(),
@@ -82,14 +137,14 @@ impl Core {
         };
         let handle = GatewayHandle::spawn_full(
             api.base().to_string(),
-            token,
+            token.clone(),
             tx,
             crate::gateway::Tuning::default(),
             declare,
         );
         // Replacing an old handle drops (and stops) it.
         *self.gateway.lock().unwrap() = Some(handle);
-        tauri::async_runtime::spawn(forward(app.clone(), rx));
+        tauri::async_runtime::spawn(forward(app.clone(), rx, token));
         let app2 = app.clone();
         let timer = tauri::async_runtime::spawn(async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
@@ -115,15 +170,15 @@ impl Core {
     pub(crate) fn start_stored(&self, app: &AppHandle, restart: bool) -> Option<String> {
         let _one = self.starting.lock().unwrap();
         let running = self.inner.lock().unwrap().clone();
-        if let Some((api, token)) = running {
-            let server = api.base().to_string();
+        if let Some(s) = running {
+            let server = s.api.base().to_string();
             if restart {
-                self.activate(app, api, token, false);
+                self.activate(app, s.api, s.token, s.me, false);
             }
             return Some(server);
         }
         let (server, token) = self.store.load()?;
-        self.activate(app, Api::new(&server), token, false);
+        self.activate(app, Api::new(&server), token, None, false);
         Some(server)
     }
 
@@ -154,9 +209,27 @@ impl Core {
         app.state::<crate::voice::mictest::MicTest>().stop();
         let app = app.clone();
         tauri::async_runtime::spawn(async move { app.state::<VoiceManager>().leave().await });
-        if let Some((api, _)) = self.inner.lock().unwrap().take() {
+        if let Some(api) = self.forget() {
             self.store.clear(api.base());
         }
+    }
+
+    /// Drop the session and what it cached on this machine: its media cache scope, and the
+    /// webview's copies. The next login (even the same account) fetches afresh. The session's
+    /// server, if there was one.
+    fn forget(&self) -> Option<Api> {
+        let session = self.inner.lock().unwrap().take();
+        (self.signed_out)();
+        let s = session?;
+        if let Some(me) = &s.me {
+            let scope = crate::media::scope_dir(&self.media_root, s.api.base(), me);
+            if let Err(e) = std::fs::remove_dir_all(&scope)
+                && e.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(error = %e, "media: cache not removed");
+            }
+        }
+        Some(s.api)
     }
 
     /// A 401 outside login means the session died server-side: drop it and tell the UI.
@@ -187,12 +260,13 @@ impl Core {
 }
 
 /// Gateway updates → Tauri events for the UI.
-async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>) {
+async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>, token: String) {
     let mut attached = app.state::<Core>().ui_listening();
     let _ = attached.wait_for(|a| *a).await;
     while let Some(u) = rx.recv().await {
         match &u {
             GatewayUpdate::Ready(r) => {
+                app.state::<Core>().learn_me(&token, r.me.id);
                 let _ = app.emit("pulse://ready", &**r);
             }
             GatewayUpdate::Event(e) => {
@@ -236,7 +310,7 @@ pub async fn login(
     check_server_url(&server_url)?;
     let api = Api::new(&server_url);
     let s = api.login(&username, &password).await?;
-    core.activate(&app, api, s.token, true);
+    core.activate(&app, api, s.token, Some(s.user.id), true);
     Ok(s.user)
 }
 
@@ -252,7 +326,7 @@ pub async fn register(
     check_server_url(&server_url)?;
     let api = Api::new(&server_url);
     let s = api.register(&invite_code, &username, &password).await?;
-    core.activate(&app, api, s.token, true);
+    core.activate(&app, api, s.token, Some(s.user.id), true);
     Ok(s.user)
 }
 
@@ -323,8 +397,7 @@ async fn unrestored_reason(api: &Api, token: &str) -> ApiError {
 
 #[tauri::command]
 pub async fn logout(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiError> {
-    let current = core.inner.lock().unwrap().clone();
-    if let Some((api, token)) = current {
+    if let Ok((api, token)) = core.current() {
         let _ = api.logout(&token).await;
     }
     core.deactivate(&app);
@@ -824,6 +897,77 @@ mod tests {
         })
         .unwrap();
         assert_eq!(json, want);
+    }
+
+    /// A Core with a sign-out hook that counts, signed in as `me` on `server`.
+    fn signed_in(
+        root: &std::path::Path,
+        server: &str,
+        me: Option<UserId>,
+    ) -> (Core, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let cleared = std::sync::Arc::new(AtomicUsize::new(0));
+        let c = cleared.clone();
+        let core = Core::new(
+            Store::new(root.join("session"), Some("unit-test")),
+            crate::outbox::Outbox::new(std::sync::Arc::new(|_: &str, _, _: Option<&Message>| {})),
+            root.join("media"),
+            Box::new(move || {
+                c.fetch_add(1, Ordering::SeqCst);
+            }),
+        );
+        *core.inner.lock().unwrap() = Some(Session {
+            api: Api::new(server),
+            token: "t1".into(),
+            me,
+        });
+        (core, cleared)
+    }
+
+    #[test]
+    fn signing_out_clears_the_webview_and_this_accounts_media_cache() {
+        use std::sync::atomic::Ordering;
+        let root = tempfile::tempdir().unwrap();
+        let server = "https://pulse.example.com";
+        let alex = UserId::new();
+        let sam = UserId::new();
+        let (core, cleared) = signed_in(root.path(), server, Some(alex));
+        let scope = core.media_session().unwrap().cache.unwrap();
+        assert_eq!(
+            scope,
+            crate::media::scope_dir(&root.path().join("media"), server, &alex)
+        );
+        let other = crate::media::scope_dir(&root.path().join("media"), server, &sam);
+        for dir in [&scope, &other] {
+            std::fs::create_dir_all(dir.join("ab")).unwrap();
+            std::fs::write(dir.join("ab").join("x.webp"), b"x").unwrap();
+        }
+
+        assert_eq!(
+            core.forget().map(|a| a.base().to_string()).as_deref(),
+            Some(server)
+        );
+        assert_eq!(cleared.load(Ordering::SeqCst), 1);
+        assert!(!scope.exists(), "this account's cache is deleted");
+        assert!(other.exists(), "another account's is not");
+        assert!(core.media_session().is_none());
+
+        // already signed out (a second 401): the webview is cleared again, nothing else to do
+        assert!(core.forget().is_none());
+        assert_eq!(cleared.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
+    fn media_is_cached_only_once_we_know_who_is_signed_in() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, _) = signed_in(root.path(), "https://pulse.example.com", None);
+        assert!(core.media_session().unwrap().cache.is_none());
+        let alex = UserId::new();
+        // a Ready from a session that has ended since names nobody
+        core.learn_me("old token", alex);
+        assert!(core.media_session().unwrap().cache.is_none());
+        core.learn_me("t1", alex);
+        assert!(core.media_session().unwrap().cache.is_some());
     }
 
     /// A server that answers every request with 503 (a proxy in front of a Pulse that's down).

@@ -99,7 +99,15 @@ pub fn run() {
                     );
                 },
             ));
-            app.manage(commands::Core::new(session::Store::new(dir.clone(), profile.as_deref()), outbox));
+            let media_root =
+                session::profile_dir(&app.path().app_cache_dir()?, profile.as_deref()).join("media");
+            let h = app.handle().clone();
+            app.manage(commands::Core::new(
+                session::Store::new(dir.clone(), profile.as_deref()),
+                outbox,
+                media_root,
+                Box::new(move || media::clear_webview_cache(&h)),
+            ));
             app.manage(voice::mictest::MicTest::default());
             #[cfg(unix)]
             {

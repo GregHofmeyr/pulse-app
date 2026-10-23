@@ -1,6 +1,6 @@
 //! Task 11's dev check, headless: two accounts upload emoji, react and watch the counts live,
-//! then one emoji is deleted. REST goes through the client core's own `Api`; events are read
-//! from raw gateway sockets.
+//! then one emoji is deleted, and the images are read through per-account pulse-media caches.
+//! REST goes through the client core's own `Api`; events are read from raw gateway sockets.
 
 use std::io::Cursor;
 use std::time::Duration;
@@ -214,12 +214,30 @@ async fn emoji_reactions_and_media_end_to_end() {
         want(true, false)
     );
 
-    // 6. the bytes behind a hash are what the pulse-media cache stores: they hash to their name
-    // (media::serve itself is private; its fetch-once behaviour is covered by the unit tests in
-    // src/media.rs, and the real scheme routing needs a webview)
+    // 6. the pulse-media path: each account fetches into its own cache once, then the cache
+    // answers (even with the server gone); another account's cache never answers for it
+    let base = format!("http://{}", app.addr);
+    let root = tempfile::tempdir().unwrap();
+    let offline = Api::new("http://localhost:9");
+    let session = |api: &Api, token: &str, me: &UserId| {
+        Some(media::Session {
+            api: api.clone(),
+            token: token.into(),
+            cache: Some(media::scope_dir(root.path(), &base, me)),
+        })
+    };
     for hash in [&anim.hash, anim.still_hash.as_ref().unwrap()] {
-        let bytes = api.media(&sam, hash).await.unwrap();
-        assert!(media::verify(hash, &bytes));
-        assert!(media::parse_path(&format!("/{hash}")).is_some());
+        let path = format!("/{hash}");
+        let fetched = media::serve(session(&api, &sam, &sam_id), &path)
+            .await
+            .unwrap();
+        assert!(media::verify(hash, &fetched));
+        let cached = media::serve(session(&offline, &sam, &sam_id), &path).await;
+        assert_eq!(cached.as_deref(), Ok(&fetched[..]));
+        assert_eq!(
+            media::serve(session(&offline, &alex, &alex_id), &path).await,
+            Err(tauri::http::StatusCode::BAD_GATEWAY),
+            "alex's cache is not sam's"
+        );
     }
 }
