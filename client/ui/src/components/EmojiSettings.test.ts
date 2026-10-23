@@ -68,6 +68,21 @@ describe('EmojiSettings', () => {
     expect(invoke).toHaveBeenCalledWith('create_emoji', { serverId: 'S1', name: 'Big_Pog', mediaHash: 'newhash' })
   })
 
+  it('enter_twice_saves_once', async () => {
+    invoke.mockResolvedValueOnce(info)
+    show()
+    await upload()
+    let done!: () => void
+    invoke.mockImplementationOnce(() => new Promise<void>((r) => { done = r }))
+    const name = document.querySelector<HTMLInputElement>('input[aria-label="Emoji name"]')!
+    const enter = () => name.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    enter()
+    enter()
+    done()
+    await settle()
+    expect(invoke.mock.calls.filter(([cmd]) => cmd === 'create_emoji')).toHaveLength(1)
+  })
+
   it('delete_asks_first', async () => {
     show([emoji('X1', 'pog')])
     btn('Delete :pog:').click()

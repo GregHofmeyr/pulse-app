@@ -41,7 +41,7 @@
   }
 
   async function save() {
-    if (!uploaded) return
+    if (!uploaded || busy) return
     error = ''
     busy = true
     try {
