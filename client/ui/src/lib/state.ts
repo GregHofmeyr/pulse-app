@@ -228,6 +228,11 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const { [e.d.channel_id]: _x, ...rest } = s.hidden
       return { ...s, hidden: e.d.hidden ? { ...rest, [e.d.channel_id]: true } : rest }
     }
+    // Emoji state arrives with the picker; until then these events change nothing.
+    case 'EmojiCreated':
+    case 'EmojiUpdated':
+    case 'EmojiDeleted':
+      return s
   }
 }
 
