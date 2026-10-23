@@ -1,5 +1,12 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
+  import EmojiPicker from './EmojiPicker.svelte'
+  import ReactionRow from './ReactionRow.svelte'
+  import { clickOutside } from '../lib/actions'
+  import { reactionKey, type Std } from '../lib/emoji'
+  import { memberServers, popoverStyle, react } from '../lib/reactions'
+  import { app } from '../lib/store.svelte'
+  import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import { renderMessage } from '../lib/markdown'
   import { avatarColor, initial } from '../lib/avatar'
   import type { Message } from '../lib/protocol/Message'
@@ -16,6 +23,7 @@
     onDelete,
     mentionNames = [],
     meId = '',
+    onError = () => {},
   }: {
     message: Message
     name: string
@@ -29,8 +37,13 @@
     /** Usernames that may be mentioned here (rendered as pills). */
     mentionNames?: string[]
     meId?: string
+    /** Where a failed reaction is reported. */
+    onError?: (msg: string) => void
   } = $props()
 
+  let picking = $state(false)
+  let pickStyle = $state('')
+  let smileBtn: HTMLButtonElement | undefined = $state()
   let editing = $state(false)
   let draft = $state('')
   const time = $derived(new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
@@ -43,6 +56,15 @@
     const d = draft.trim()
     if (d && d !== message.content) await onEdit(d)
     editing = false
+  }
+  function openPicker() {
+    if (picking) return (picking = false)
+    pickStyle = popoverStyle(smileBtn!.getBoundingClientRect(), { width: 360, height: 420 }, { width: window.innerWidth, height: window.innerHeight })
+    picking = true
+  }
+  function pick(e: Std | CustomEmoji) {
+    picking = false
+    void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, reactionKey(e), true, meId, onError)
   }
   function key(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -80,15 +102,22 @@
           <div class="content">{@html renderMessage(message, mentionNames)}</div>
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
+        <ReactionRow {message} {meId} {nameOf} {onError} />
       </div>
       {#if !message.deleted && !editing}
-        <div class="actions">
+        <div class="actions" class:open={picking}>
+          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={openPicker}><Icon name="smile" size={15} /></button>
           <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>
           {#if mine}
             <button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={15} /></button>
             <button aria-label="Delete" onclick={onDelete}><Icon name="trash" size={15} /></button>
           {/if}
         </div>
+        {#if picking}
+          <div use:clickOutside={() => (picking = false)} style={pickStyle}>
+            <EmojiPicker onPick={pick} onClose={() => (picking = false)} servers={app.state.servers} memberOf={memberServers(app.state)} />
+          </div>
+        {/if}
       {/if}
     </div>
   </div>
@@ -119,7 +148,7 @@
   .hook { width: 28px; height: 10px; margin-top: 10px; border-left: 2px solid #3a3c44; border-top: 2px solid #3a3c44; border-top-left-radius: 6px; flex-shrink: 0; }
   .snippet { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .actions { position: absolute; top: -10px; right: 18px; display: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: 8px; }
-  .msg:hover .actions, .actions:focus-within { display: flex; }
+  .msg:hover .actions, .actions:focus-within, .actions.open { display: flex; }
   .actions button { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .actions button:hover { color: var(--text); }
   textarea { width: 100%; resize: vertical; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; font: inherit; }
