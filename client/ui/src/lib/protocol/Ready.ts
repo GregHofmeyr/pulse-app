@@ -38,6 +38,6 @@ latest: Array<Message>,
  */
 custom_emoji: Array<CustomEmoji>, 
 /**
- * Your most used emoji (standard as Unicode, custom as `<:name:id>`), best first.
+ * Your most used emoji (standard as Unicode, custom as `custom:<id>`), best first.
  */
 frequent_emoji: Array<string>, };

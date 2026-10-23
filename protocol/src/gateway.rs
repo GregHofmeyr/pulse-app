@@ -64,7 +64,7 @@ pub struct Ready {
     /// Every server's custom emoji, deleted ones (without a hash) included.
     #[serde(default)]
     pub custom_emoji: Vec<CustomEmoji>,
-    /// Your most used emoji (standard as Unicode, custom as `<:name:id>`), best first.
+    /// Your most used emoji (standard as Unicode, custom as `custom:<id>`), best first.
     #[serde(default)]
     pub frequent_emoji: Vec<String>,
 }
