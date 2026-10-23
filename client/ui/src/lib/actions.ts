@@ -27,3 +27,49 @@ export function clickOutside(node: HTMLElement, onOutside: () => void) {
     },
   }
 }
+
+const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+
+/**
+ * Dialog behaviour for a modal's root (give it tabindex="-1"): focus moves in on open, Tab wraps
+ * inside, Escape calls `onClose` (unless an inner control already took it), and focus returns to
+ * what had it before when the modal goes away.
+ */
+export function modal(node: HTMLElement, onClose: () => void) {
+  let cb = onClose
+  const before = document.activeElement as HTMLElement | null
+  const items = () => [...node.querySelectorAll<HTMLElement>(FOCUSABLE)]
+  ;(items()[0] ?? node).focus()
+  const key = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      if (!e.defaultPrevented) {
+        e.preventDefault()
+        cb()
+      }
+      return
+    }
+    if (e.key !== 'Tab') return
+    const list = items()
+    if (list.length === 0) return void e.preventDefault()
+    const first = list[0]
+    const last = list[list.length - 1]
+    const at = document.activeElement
+    if (e.shiftKey && (at === first || at === node)) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && (at === last || at === node)) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
+  node.addEventListener('keydown', key)
+  return {
+    update(next: () => void) {
+      cb = next
+    },
+    destroy() {
+      node.removeEventListener('keydown', key)
+      if (before?.isConnected) before.focus()
+    },
+  }
+}

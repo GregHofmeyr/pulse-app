@@ -112,3 +112,6 @@ export function defaultName(file: string): string {
   const base = file.replace(/\.[^.]*$/, '').replace(/[^A-Za-z0-9_]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 32)
   return base.padEnd(2, '_')
 }
+
+/** The server's rule for an emoji name (checked again there). */
+export const isValidEmojiName = (n: string): boolean => /^[A-Za-z0-9_]{2,32}$/.test(n)

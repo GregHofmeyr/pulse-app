@@ -1,7 +1,7 @@
 <script lang="ts">
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
-  import { defaultName, mediaUrl } from '../lib/emoji'
+  import { defaultName, isValidEmojiName, mediaUrl } from '../lib/emoji'
   import { displayName } from '../lib/selectors'
   import type { Server } from '../lib/protocol/Server'
   import type { MediaInfo } from '../lib/protocol/MediaInfo'
@@ -40,8 +40,14 @@
     }
   }
 
+  const validName = $derived(isValidEmojiName(newName.trim()))
+  function cancelAdd() {
+    uploaded = null
+    error = ''
+  }
+
   async function save() {
-    if (!uploaded || busy) return
+    if (!uploaded || busy || !validName) return
     error = ''
     busy = true
     try {
@@ -56,14 +62,17 @@
 
   let renaming = $state<{ id: string; name: string } | null>(null)
   async function commitRename() {
-    if (!renaming) return
+    if (!renaming || busy) return
     const { id, name } = renaming
     error = ''
+    busy = true
     try {
       await api.renameEmoji(id, name.trim())
       renaming = null
     } catch (err) {
       error = errorText(err)
+    } finally {
+      busy = false
     }
   }
   const focus = (n: HTMLElement) => n.focus()
@@ -99,11 +108,11 @@
       </div>
       <label>Name
         <input bind:value={newName} maxlength="32" aria-label="Emoji name"
-          onkeydown={(e) => { if (e.key === 'Enter') void save(); else if (e.key === 'Escape') uploaded = null }} />
+          onkeydown={(e) => { if (e.key === 'Enter') void save(); else if (e.key === 'Escape') { e.preventDefault(); cancelAdd() } }} />
       </label>
       <div class="row">
-        <button class="primary" disabled={busy} onclick={save}>Save</button>
-        <button onclick={() => (uploaded = null)}>Cancel</button>
+        <button class="primary" disabled={busy || !validName} onclick={save}>Save</button>
+        <button onclick={cancelAdd}>Cancel</button>
       </div>
     </div>
   {:else}
@@ -123,7 +132,7 @@
           <div class="meta">
             {#if renaming?.id === e.id}
               <input class="rename" aria-label="Rename emoji" bind:value={renaming.name} maxlength="32" use:focus
-                onkeydown={(ev) => { if (ev.key === 'Enter') void commitRename(); else if (ev.key === 'Escape') renaming = null }} />
+                onkeydown={(ev) => { if (ev.key === 'Enter') void commitRename(); else if (ev.key === 'Escape') { ev.preventDefault(); renaming = null } }} />
             {:else}
               <span class="name">:{e.name}:</span>
             {/if}

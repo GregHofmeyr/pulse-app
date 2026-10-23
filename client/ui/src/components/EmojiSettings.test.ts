@@ -26,6 +26,7 @@ const show = (list: CustomEmoji[] = []) => {
 }
 const settle = () => new Promise((r) => setTimeout(r, 0))
 const btn = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
+const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const text = (t: string) => [...document.querySelectorAll('button')].find((b) => b.textContent === t)!
 
 async function upload(name = 'Big Pog!.gif') {
@@ -45,6 +46,10 @@ describe('EmojiSettings', () => {
     expect(defaultName('Big Pog!.gif')).toBe('Big_Pog')
     expect(defaultName('a.png')).toBe('a_')
     expect(defaultName('x'.repeat(50) + '.png')).toHaveLength(32)
+    expect(defaultName('..gif')).toBe('__')
+    expect(defaultName('café.png')).toBe('caf')
+    expect(defaultName('日本.png')).toBe('__')
+    expect(defaultName('a.b.c.png')).toBe('a_b_c')
   })
 
   it('lists live emoji of this server with count and adder', () => {
@@ -121,5 +126,72 @@ describe('EmojiSettings', () => {
     flushSync()
     expect(document.querySelector('[role=alert]')!.textContent).toBe('that name is already taken')
     expect(document.querySelector('input[aria-label="Emoji name"]')).not.toBeNull() // stays open to fix the name
+  })
+
+  const nameInput = () => document.querySelector<HTMLInputElement>('input[aria-label="Emoji name"]')!
+  const typeName = (v: string) => {
+    const i = nameInput()
+    i.value = v
+    i.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+  }
+
+  it('Cancel and Esc on the add form clear a shown error', async () => {
+    for (const close of [() => text('Cancel').click(), () => nameInput().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))]) {
+      invoke.mockReset()
+      invoke.mockResolvedValueOnce(info).mockRejectedValueOnce('that name is already taken')
+      show()
+      await upload()
+      text('Save').click()
+      await settle()
+      flushSync()
+      expect(document.querySelector('[role=alert]')).not.toBeNull()
+      close()
+      flushSync()
+      expect(document.querySelector('input[aria-label="Emoji name"]')).toBeNull()
+      expect(document.querySelector('[role=alert]')).toBeNull()
+      unmount(cmp!); cmp = undefined; document.body.innerHTML = ''
+    }
+  })
+
+  it('Esc inside the add form is marked handled, so a surrounding dialog stays open', async () => {
+    invoke.mockResolvedValueOnce(info)
+    show()
+    await upload()
+    const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    nameInput().dispatchEvent(e)
+    expect(e.defaultPrevented).toBe(true)
+  })
+
+  it('Save is disabled for an empty or invalid name and enter does not submit it', async () => {
+    invoke.mockResolvedValueOnce(info)
+    show()
+    await upload()
+    const save = text('Save') as HTMLButtonElement
+    expect(save.disabled).toBe(false)
+    for (const bad of ['', 'a', 'bad name', 'x'.repeat(33), 'caf\u00e9']) {
+      typeName(bad)
+      expect(save.disabled, JSON.stringify(bad)).toBe(true)
+    }
+    nameInput().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await settle()
+    expect(calls('create_emoji')).toHaveLength(0)
+    typeName(' ok_1 ')
+    expect(save.disabled).toBe(false)
+  })
+
+  it('enter twice on a rename renames once', async () => {
+    show([emoji('X1', 'pog')])
+    btn('Rename :pog:').click()
+    await tick()
+    let done!: () => void
+    invoke.mockImplementationOnce(() => new Promise<void>((r) => { done = r }))
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Rename emoji"]')!
+    const enter = () => input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    enter()
+    enter()
+    done()
+    await settle()
+    expect(calls('rename_emoji')).toHaveLength(1)
   })
 })
