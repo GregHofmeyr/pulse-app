@@ -7,6 +7,7 @@
   import { app } from '../lib/store.svelte'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import { renderMessage } from '../lib/markdown'
+  import { animateEmojiIn } from '../lib/animate.svelte'
   import { avatarColor, initial } from '../lib/avatar'
   import type { Message } from '../lib/protocol/Message'
 
@@ -92,7 +93,8 @@
           <small class="hint">Enter to save · Esc to cancel</small>
         {:else}
           <!-- renderMessage output is DOMPurify-sanitised (allow-list, cached per message); the only {@html} in the app. -->
-          <div class="content">{@html renderMessage(message, mentionNames, app.state.customEmoji)}</div>
+          {@const html = renderMessage(message, mentionNames, app.state.customEmoji)}
+          <div class="content" {@attach animateEmojiIn(html)}>{@html html}</div>
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
         <ReactionRow {message} {meId} {nameOf} {onError} />

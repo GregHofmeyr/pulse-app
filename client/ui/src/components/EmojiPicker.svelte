@@ -4,6 +4,7 @@
   import type { Server } from '../lib/protocol/Server'
   import { app } from '../lib/store.svelte'
   import { canonicalKey, groups, mediaUrl, reactionKey, savedTone, saveTone, search, standard, twemojiUrl, withSkin, type Std, type Tone } from '../lib/emoji'
+  import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
   import Icon from './Icon.svelte'
 
   let { onPick, onClose, servers, memberOf }: {
@@ -97,8 +98,8 @@
     searchEl?.focus()
   })
 
-  const imgSrc = (e: Item, animate = false) =>
-    isCustom(e) ? mediaUrl((animate ? e.hash : (e.still_hash ?? e.hash))!) : twemojiUrl(withSkin(e, tone))
+  // A custom emoji starts on its still frame; `animatedEmoji` plays it when the rule allows.
+  const imgSrc = (e: Item) => (isCustom(e) ? stillSrc(e) : twemojiUrl(withSkin(e, tone)))
   const nameOf = (e: Item) => (isCustom(e) ? e.name : e.n)
   const picked = (e: Item): Item => (isCustom(e) ? e : { ...e, u: withSkin(e, tone) })
 
@@ -172,7 +173,7 @@
     data-key={reactionKey(e)} onclick={() => pick(e)}
     onmouseenter={() => { hovered = e; active = idx }} onmouseleave={() => (hovered = null)}
   >
-    <img src={imgSrc(e, isCustom(e) && hovered === e)} alt="" loading="lazy" draggable="false" />
+    <img src={imgSrc(e)} alt="" loading="lazy" draggable="false" {@attach isCustom(e) && animatedEmoji(e)} />
   </button>
 {/snippet}
 
@@ -232,7 +233,8 @@
   </div>
   <div class="foot">
     {#if shown}
-      <img class="big" src={imgSrc(shown, true)} alt="" />
+      <!-- The preview of the hovered (or keyboard-highlighted) cell: "on hover" counts the cell's hover. -->
+      <img class="big" src={imgSrc(shown)} alt="" {@attach isCustom(shown) && animatedEmoji(shown, () => hovered !== null)} />
       <span class="nm">:{nameOf(shown)}:</span>
     {:else}
       <span class="credit">Emoji graphics: Twemoji, CC-BY 4.0</span>

@@ -33,6 +33,11 @@ const customEmoji: TokenizerAndRendererExtension = {
     const name = escapeHtml(c?.name ?? (t.name as string))
     // Deleted or unknown: the name in a muted chip, never a broken image.
     if (!c?.hash) return `<span class="emoji-gone">:${name}:</span>`
+    // An animated one renders its still frame; the page swaps in `data-anim` when it may play.
+    // Kept out of this HTML, so the cached render never depends on focus or settings.
+    if (c.still_hash && c.still_hash !== c.hash) {
+      return `<img class="emoji" src="${escapeHtml(mediaUrl(c.still_hash))}" data-anim="${escapeHtml(c.hash)}" alt=":${name}:" draggable="false">`
+    }
     return `<img class="emoji" src="${escapeHtml(mediaUrl(c.hash))}" alt=":${name}:" draggable="false">`
   },
 }
@@ -50,7 +55,7 @@ const marked = new Marked({
 })
 
 const ALLOWED_TAGS = ['p', 'br', 'strong', 'em', 'del', 'code', 'pre', 'blockquote', 'ul', 'ol', 'li', 'a', 'img', 'span']
-const ALLOWED_ATTR = ['href', 'target', 'rel', 'class', 'alt', 'src', 'draggable']
+const ALLOWED_ATTR = ['href', 'target', 'rel', 'class', 'alt', 'src', 'draggable', 'data-anim']
 const SAFE_HREF = /^(https?:|mailto:)/i
 // The exact shapes we emit: a Twemoji file, or a stored media hash through the core's scheme.
 // Anything else (remote, data:, other hosts, other paths) goes.
@@ -59,6 +64,8 @@ const SAFE_IMG_SRCS = [
   /^(pulse-media:\/\/localhost|http:\/\/pulse-media\.localhost)\/[0-9a-f]{64}$/,
 ]
 const safeImgSrc = (src: string) => SAFE_IMG_SRCS.some((re) => re.test(src))
+// An animated custom emoji's media hash (the src carries its still frame).
+const SAFE_ANIM = /^[0-9a-f]{64}$/
 // The only classes we emit; content can't set any other.
 const CLASSES: Record<string, string[]> = { IMG: ['emoji', 'emoji big'], SPAN: ['mention', 'emoji-gone', 'emoji-gone big'] }
 
@@ -66,6 +73,10 @@ let hooked = false
 function purifier() {
   if (!hooked) {
     DOMPurify.addHook('uponSanitizeAttribute', (node, data) => {
+      if (data.attrName === 'data-anim') {
+        if (node.tagName !== 'IMG' || !SAFE_ANIM.test(data.attrValue)) data.keepAttr = false
+        return
+      }
       if (data.attrName !== 'src') return
       // DOMPurify's own URI check would drop the custom scheme; ours is stricter, so it decides.
       if (node.tagName === 'IMG' && safeImgSrc(data.attrValue)) data.forceKeepAttr = true
@@ -81,7 +92,7 @@ function purifier() {
       if (node.tagName === 'IMG') {
         if (!safeImgSrc(node.getAttribute('src') ?? '')) return node.remove()
       } else {
-        for (const a of ['src', 'alt', 'draggable']) node.removeAttribute(a)
+        for (const a of ['src', 'alt', 'draggable', 'data-anim']) node.removeAttribute(a)
       }
       const cls = node.getAttribute('class')
       if (cls !== null && !CLASSES[node.tagName]?.includes(cls)) node.removeAttribute('class')

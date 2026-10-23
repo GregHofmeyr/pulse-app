@@ -2,7 +2,8 @@
   import type { Message } from '../lib/protocol/Message'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { Std } from '../lib/emoji'
-  import { mediaUrl, reactionKey, twemojiUrl } from '../lib/emoji'
+  import { reactionKey, twemojiUrl } from '../lib/emoji'
+  import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
   import { react, tooltipText } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import { api } from '../lib/tauri'
@@ -19,7 +20,6 @@
 
   let tipFor = $state<string | null>(null)
   let tipText = $state('')
-  let animated = $state<string | null>(null)
   let picking = $state(false)
   let addBtn: HTMLButtonElement | undefined = $state()
 
@@ -81,15 +81,15 @@
           class="chip" class:mine={r.me} type="button" aria-pressed={r.me}
           aria-describedby={tipFor === r.emoji && tipText ? tipId(r.emoji) : undefined}
           onclick={() => toggle(r.emoji, !r.me)}
-          onpointerenter={() => { animated = r.emoji; enter(r.emoji, r.count, 'hover') }}
-          onpointerleave={() => { animated = null; leave(r.emoji, 'hover') }}
+          onpointerenter={() => enter(r.emoji, r.count, 'hover')}
+          onpointerleave={() => leave(r.emoji, 'hover')}
           onfocus={() => enter(r.emoji, r.count, 'focus')}
           onblur={() => leave(r.emoji, 'focus')}
         >
           {#if !custom}
             <img src={twemojiUrl(r.emoji)} alt={r.emoji} draggable="false" />
           {:else if c?.hash}
-            <img src={mediaUrl((animated === r.emoji ? c.hash : (c.still_hash ?? c.hash)))} alt={`:${c.name}:`} draggable="false" />
+            <img src={stillSrc(c)} alt={`:${c.name}:`} draggable="false" {@attach animatedEmoji(c)} />
           {:else}
             <span class="gone">:{c?.name ?? r.emoji}:</span>
           {/if}

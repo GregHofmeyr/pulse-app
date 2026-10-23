@@ -7,8 +7,9 @@
   import { untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
-  import { customToken, mediaUrl, savedTone, search, twemojiUrl, withSkin, type Std } from '../lib/emoji'
+  import { customToken, savedTone, search, twemojiUrl, withSkin, type Std } from '../lib/emoji'
   import { applyEmoji, emojiQuery, insertAt } from '../lib/emojiComplete'
+  import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
   import { typingThrottle } from '../lib/markdown'
   import { applyMention, mentionQuery, suggest, type Mentionable } from '../lib/mentions'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
@@ -154,7 +155,7 @@
           {#if 'u' in o}
             <img src={twemojiUrl(withSkin(o, tone))} alt="" draggable="false" /><span>:{o.n}:</span>
           {:else}
-            <img src={mediaUrl(o.still_hash ?? o.hash!)} alt="" draggable="false" /><span>:{o.name}:</span>
+            <img src={stillSrc(o)} alt="" draggable="false" {@attach animatedEmoji(o)} /><span>:{o.name}:</span>
             <small>{serverName(o.server_id)}</small>
           {/if}
         </button>

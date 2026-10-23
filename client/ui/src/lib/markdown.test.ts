@@ -132,6 +132,28 @@ describe('emoji in messages', () => {
     expect(imgs[1].getAttribute('src')).toBe(`pulse-media://localhost/${H3}`)
   })
 
+  it('an animated emoji renders its still frame and carries the animation hash', () => {
+    const S4 = 'b'.repeat(64)
+    const spin = { ...ce('4', 'spin', H3, true), still_hash: S4 }
+    const html = renderMarkdown('<a:spin:4>', [], { '4': spin })
+    const img = dom(html).querySelector('img')!
+    expect(img.getAttribute('src')).toBe(`pulse-media://localhost/${S4}`)
+    expect(img.getAttribute('data-anim')).toBe(H3)
+    // A still emoji carries nothing extra.
+    expect(dom(renderMarkdown('<:pog:1>', [], custom)).querySelector('img')!.hasAttribute('data-anim')).toBe(false)
+  })
+
+  it('data-anim survives only as an exact hash on an emoji img', () => {
+    const src = `pulse-media://localhost/${H1}`
+    const keep = sanitize(`<img class="emoji" src="${src}" data-anim="${H3}">`)
+    expect(dom(keep).querySelector('img')!.getAttribute('data-anim')).toBe(H3)
+    for (const bad of ['javascript:alert(1)', H3.toUpperCase(), H3 + 'a', `../${H3}`, 'https://evil.example/x']) {
+      expect(dom(sanitize(`<img class="emoji" src="${src}" data-anim="${bad}">`)).querySelector('img')!.hasAttribute('data-anim'), bad).toBe(false)
+    }
+    expect(sanitize(`<span data-anim="${H3}">x</span>`)).toBe('<span>x</span>')
+    expect(sanitize(`<img src="${src}" data-other="1">`)).not.toContain('data-other')
+  })
+
   it('unicode_renders_twemoji', () => {
     const imgs = dom(renderMarkdown('nice 👍 ❤️ 👍🏽 🇿🇦 👨‍👩‍👧')).querySelectorAll('img.emoji')
     expect(Array.from(imgs).map((i) => i.getAttribute('src'))).toEqual([
