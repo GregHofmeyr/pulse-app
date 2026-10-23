@@ -252,17 +252,25 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'ReactionAdded':
     case 'ReactionRemoved': {
       const { channel_id: c, message_id: id, emoji, user_id, count } = e.d
-      const list = s.messages[c]
-      const msg = list?.find((m) => m.id === id)
-      if (!list || !msg) return s // not loaded: the fetch brings current reactions
       // The event carries the absolute count, so a reordered pair still ends on the latest value.
       const mine = user_id === s.me?.id
       const me = mine ? e.t === 'ReactionAdded' : undefined
-      const has = msg.reactions.some((r) => r.emoji === emoji)
-      const upd = (has ? msg.reactions : [...msg.reactions, { emoji, count, me: false }])
-        .map((r) => (r.emoji === emoji ? { ...r, count, me: me ?? r.me } : r))
-        .filter((r) => r.count > 0)
-      return { ...s, messages: { ...s.messages, [c]: list.map((m) => (m.id === id ? { ...m, reactions: upd } : m)) } }
+      const apply = (m: Message): Message => {
+        const has = m.reactions.some((r) => r.emoji === emoji)
+        const reactions = (has ? m.reactions : [...m.reactions, { emoji, count, me: false }])
+          .map((r) => (r.emoji === emoji ? { ...r, count, me: me ?? r.me } : r))
+          .filter((r) => r.count > 0)
+        return { ...m, reactions }
+      }
+      const list = s.messages[c]
+      const loaded = !!list?.some((m) => m.id === id) // not loaded: the fetch brings current reactions
+      const inLatest = s.latest[c]?.id === id // the conversation preview keeps its own copy
+      if (!loaded && !inLatest) return s
+      return {
+        ...s,
+        messages: loaded ? { ...s.messages, [c]: list!.map((m) => (m.id === id ? apply(m) : m)) } : s.messages,
+        latest: inLatest ? { ...s.latest, [c]: apply(s.latest[c]) } : s.latest,
+      }
     }
   }
 }

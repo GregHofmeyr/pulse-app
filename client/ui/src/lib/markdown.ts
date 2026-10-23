@@ -116,6 +116,9 @@ export function renderMarkdown(src: string, mentionNames: string[] = [], custom:
 /** Most rendered messages kept (a few long channels' worth); the least recently shown go first. */
 export const RENDER_CACHE_MAX = 2000
 const rendered = new Map<string, string>()
+// (id, edited_at) -> the custom emoji ids its text renders: finding them may need a lex, which a
+// cache hit must not pay for again. Same bound and LRU order as `rendered`.
+const emojiRefs = new Map<string, string[]>()
 const namesKeys = new WeakMap<string[], string>()
 
 /** `renderMarkdown` for a message, cached: a re-render (someone typing, presence, a channel
@@ -132,7 +135,7 @@ export function renderMessage(
     names = mentionNames.join('\u0000')
     namesKeys.set(mentionNames, names)
   }
-  const key = `${m.id}\u0001${m.edited_at ?? ''}\u0001${names}\u0001${emojiKey(m.content, customEmoji)}`
+  const key = `${m.id}\u0001${m.edited_at ?? ''}\u0001${names}\u0001${emojiKey(m, customEmoji)}`
   const hit = rendered.get(key)
   if (hit !== undefined) {
     rendered.delete(key) // re-insert: Map order is the LRU order
@@ -145,25 +148,33 @@ export function renderMessage(
   return html
 }
 
-/** The state of each custom emoji a message's text renders, for its cache key. Tokens inside code
- * or escaped stay text, so they don't count: without a backtick or backslash none can be, and the
- * cheap scan is exact enough (an indented code block only over-invalidates); otherwise marked decides. */
-function emojiKey(content: string, custom: Record<string, CustomEmoji>): string {
-  if (!content.includes('<')) return ''
-  let ids: string[]
-  if (!/[`\\]/.test(content)) ids = Array.from(content.matchAll(TOKEN_ALL), (t) => t[3])
-  else {
-    ids = []
-    marked.walkTokens(marked.lexer(content), (t) => {
-      if (t.type === 'customEmoji') ids.push(t.id as string)
-    })
-  }
+/** The state of each custom emoji a message's text renders, for its cache key. */
+function emojiKey(m: Pick<Message, 'id' | 'edited_at' | 'content'>, custom: Record<string, CustomEmoji>): string {
+  if (!m.content.includes('<')) return ''
+  const v = `${m.id}\u0001${m.edited_at ?? ''}`
+  let ids = emojiRefs.get(v)
+  if (ids) emojiRefs.delete(v) // re-insert: Map order is the LRU order
+  else ids = renderedEmojiIds(m.content)
+  emojiRefs.set(v, ids)
+  if (emojiRefs.size > RENDER_CACHE_MAX) emojiRefs.delete(emojiRefs.keys().next().value!)
   let k = ''
   for (const id of ids) {
     const c = custom[id]
     k += `${id}=${c?.hash ?? ''}:${c?.name ?? ''};`
   }
   return k
+}
+
+/** Tokens inside code or escaped stay text, so they don't count: without a backtick or backslash
+ * none can be, and the cheap scan is exact enough (an indented code block only over-invalidates);
+ * otherwise marked decides. */
+function renderedEmojiIds(content: string): string[] {
+  if (!/[`\\]/.test(content)) return Array.from(content.matchAll(TOKEN_ALL), (t) => t[3])
+  const ids: string[] = []
+  marked.walkTokens(marked.lexer(content), (t) => {
+    if (t.type === 'customEmoji') ids.push(t.id as string)
+  })
+  return ids
 }
 
 const MENTION = /(^|[\s(])@([A-Za-z0-9_.-]{1,32})/g

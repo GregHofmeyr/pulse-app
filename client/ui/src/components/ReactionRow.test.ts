@@ -280,6 +280,58 @@ describe('reaction toggles', () => {
   })
 })
 
+describe('toggle interleavings', () => {
+  const r = async (on: boolean) => {
+    const { react } = await import('../lib/reactions')
+    return react(() => app.state, (s) => (app.state = s), 'C1', 'M1', '🎉', on, 'U1', onError)
+  }
+
+  it('my own event in the opposite direction does not count as the toggle landing', async () => {
+    const { noteReactionEvent } = await import('../lib/reactions')
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'add_reaction') {
+        noteReactionEvent({ t: 'ReactionRemoved', d: { channel_id: 'C1', message_id: 'M1', emoji: '🎉', user_id: 'U1', count: 2 } }, 'U1')
+        throw 'boom'
+      }
+      throw 'offline'
+    })
+    load(msg({ reactions: [{ emoji: '🎉', count: 2, me: false }] }))
+    await r(true)
+    expect(cur().reactions).toEqual([{ emoji: '🎉', count: 2, me: false }])
+  })
+
+  it('someone else\'s event in the same direction does not count either', async () => {
+    const { noteReactionEvent } = await import('../lib/reactions')
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'add_reaction') {
+        noteReactionEvent({ t: 'ReactionAdded', d: { channel_id: 'C1', message_id: 'M1', emoji: '🎉', user_id: 'U2', count: 3 } }, 'U1')
+        throw 'boom'
+      }
+      throw 'offline'
+    })
+    load(msg({ reactions: [{ emoji: '🎉', count: 2, me: false }] }))
+    await r(true)
+    expect(cur().reactions).toEqual([{ emoji: '🎉', count: 2, me: false }])
+  })
+
+  it('a queued toggle still runs after the one before it fails', async () => {
+    const add = deferred()
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'add_reaction') return add.promise
+      if (cmd === 'list_reactors') return ['U1', 'U2'] // the add did commit
+      return undefined
+    })
+    load(msg({ reactions: [{ emoji: '🎉', count: 1, me: false }] }))
+    const first = r(true)
+    const second = r(false)
+    add.reject('response lost')
+    await Promise.all([first, second])
+    expect(invoke.mock.calls.map((c) => c[0])).toEqual(['add_reaction', 'list_reactors', 'remove_reaction'])
+    expect(cur().reactions).toEqual([{ emoji: '🎉', count: 1, me: false }])
+    expect(onError).toHaveBeenCalledOnce()
+  })
+})
+
 describe('reactor tooltip', () => {
   it('shows on keyboard focus, described by the chip, and hides on blur', async () => {
     invoke.mockResolvedValue(['U2', 'U3'])
@@ -313,5 +365,45 @@ describe('reactor tooltip', () => {
     await settle()
     flushSync()
     expect(document.querySelector('.tip')?.textContent).toBe('U2 and U4')
+  })
+
+  it('a click (hover, then focus) fetches once and never flickers back to loading', async () => {
+    invoke.mockResolvedValue(['U2', 'U3'])
+    show(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))
+    const c = chips()[0]
+    c.dispatchEvent(new Event('pointerenter'))
+    await settle()
+    flushSync()
+    c.dispatchEvent(new FocusEvent('focus'))
+    flushSync()
+    expect(document.querySelector('.tip')?.textContent).toBe('U2 and U3')
+    await settle()
+    expect(calls('list_reactors')).toHaveLength(1)
+  })
+
+  it('stays while the chip has focus, after the pointer leaves', async () => {
+    invoke.mockResolvedValue(['U2', 'U3'])
+    show(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))
+    const c = chips()[0]
+    c.dispatchEvent(new FocusEvent('focus'))
+    c.dispatchEvent(new Event('pointerenter'))
+    await settle()
+    c.dispatchEvent(new Event('pointerleave'))
+    flushSync()
+    expect(document.querySelector('.tip')?.textContent).toBe('U2 and U3')
+    c.dispatchEvent(new FocusEvent('blur'))
+    flushSync()
+    expect(document.querySelector('.tip')).toBeNull()
+  })
+
+  it('is keyed by the emoji, not the chip position', async () => {
+    invoke.mockResolvedValue(['U2'])
+    show(msg({ reactions: [{ emoji: '🎉', count: 1, me: false }, { emoji: 'custom:X1', count: 1, me: false }] }))
+    chips()[1].dispatchEvent(new FocusEvent('focus'))
+    await settle()
+    flushSync()
+    const tip = document.querySelector('.tip')!
+    expect(tip.id).toBe('reactors-M1-custom-X1')
+    expect(chips()[1].getAttribute('aria-describedby')).toBe(tip.id)
   })
 })

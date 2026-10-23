@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import DOMPurify from 'dompurify'
+import { Marked } from 'marked'
 import { describe, expect, it, vi } from 'vitest'
 import { RENDER_CACHE_MAX, renderMarkdown, renderMessage, sanitize, typingThrottle } from './markdown'
 import type { CustomEmoji } from './protocol/CustomEmoji'
@@ -241,6 +242,17 @@ describe('emoji in messages', () => {
     const m = { id: 'CODE9', content: '`<:pog:1>` <:pog:1>', edited_at: null }
     expect(renderMessage(m, [], custom)).toContain('<img')
     expect(renderMessage(m, [], gone)).toContain('emoji-gone')
+  })
+
+  it('a cache hit never re-lexes a message with code in it', () => {
+    const m = { id: 'LEX1', content: '`x` <:pog:1>', edited_at: null }
+    renderMessage(m, [], custom)
+    const lex = vi.spyOn(Marked.prototype, 'lexer')
+    renderMessage(m, [], custom)
+    renderMessage(m, [], { ...custom, '1': ce('1', 'pog', null) }) // still keys the emoji: re-renders, no extra lex
+    expect(lex).not.toHaveBeenCalled()
+    lex.mockRestore()
+    expect(renderMessage(m, [], { ...custom, '1': ce('1', 'pog', null) })).toContain('emoji-gone')
   })
 
   it('a deleted emoji re-renders a cached message as a chip', () => {

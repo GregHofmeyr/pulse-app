@@ -284,6 +284,22 @@ describe('reactions and custom emoji', () => {
   const react = (t: 'ReactionAdded' | 'ReactionRemoved', user_id: string, count: number, emoji = '👍') =>
     ({ t, d: { channel_id: 'C1', message_id: 'M1', emoji, user_id, count } }) as const
 
+  it('reaction events keep a conversation\'s latest preview current, loaded or not', () => {
+    let s = applyReady(emptyState(), ready({ channels: [ch('D1', 'dm', null)], dm_members: [{ channel_id: 'D1', user_ids: ['U1', 'U2'] }] }))
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M1', 'D1'), nonce: null } }, 0)
+    const ev = (t: 'ReactionAdded' | 'ReactionRemoved', user_id: string, count: number) =>
+      ({ t, d: { channel_id: 'D1', message_id: 'M1', emoji: '👍', user_id, count } }) as const
+    for (const loaded of [true, false]) {
+      let s1 = loaded ? s : { ...s, messages: {} }
+      s1 = applyEvent(s1, ev('ReactionAdded', 'U1', 1), 0)
+      s1 = applyEvent(s1, ev('ReactionAdded', 'U2', 2), 0)
+      expect(s1.latest['D1'].reactions, String(loaded)).toEqual([{ emoji: '👍', count: 2, me: true }])
+      if (loaded) expect(s1.messages['D1'][0].reactions).toEqual([{ emoji: '👍', count: 2, me: true }])
+      s1 = applyEvent(s1, ev('ReactionRemoved', 'U1', 1), 0)
+      expect(s1.latest['D1'].reactions).toEqual([{ emoji: '👍', count: 1, me: false }])
+    }
+  })
+
   it('counts another user\'s reaction without touching me', () => {
     const s = applyEvent(withMsg(), react('ReactionAdded', 'U2', 1), 0)
     expect(s.messages['C1'][0].reactions).toEqual([{ emoji: '👍', count: 1, me: false }])

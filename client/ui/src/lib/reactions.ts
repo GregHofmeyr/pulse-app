@@ -80,6 +80,8 @@ export function react(
   channel: string, id: string, key: string, add: boolean, meId: string, onError: (msg: string) => void,
 ): Promise<void> {
   const k = toggleKey(id, key)
+  // Each call settles: the core's HTTP client times requests out (15 s), and Tauri's invoke itself has
+  // no timeout, so a core command that could hang would stall this emoji's later toggles.
   const run = (queued.get(k) ?? Promise.resolve()).catch(() => {}).then(() => toggle(get, set, channel, id, key, add, meId, onError, k))
   queued.set(k, run)
   return run.finally(() => {

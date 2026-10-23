@@ -30,10 +30,13 @@
   }
 
   let tipReq = 0
+  let hoverOn: string | null = null
+  let focusOn: string | null = null
 
-  // Fetched fresh on every hover/focus: a cache could not tell "one left, one joined" from no change.
-  // Only the newest request may fill the tooltip; a slow earlier one would show an older list.
+  // Fetched fresh each time the tip opens: a cache could not tell "one left, one joined" from no
+  // change. Only the newest request may fill it; a slow earlier one would show an older list.
   async function showTip(key: string, count: number) {
+    if (tipFor === key) return // already shown or loading (a click is a hover, then a focus)
     const req = ++tipReq
     tipFor = key
     tipText = '…'
@@ -44,11 +47,23 @@
       if (req === tipReq) tipText = ''
     }
   }
-  function hideTip() {
-    tipReq++
-    tipFor = null
+  // The tip stays while the chip is hovered or focused.
+  function enter(key: string, count: number, how: 'hover' | 'focus') {
+    if (how === 'hover') hoverOn = key
+    else focusOn = key
+    void showTip(key, count)
   }
-  const tipId = (i: number) => `reactors-${message.id}-${i}`
+  function leave(key: string, how: 'hover' | 'focus') {
+    if (how === 'hover') hoverOn = null
+    else focusOn = null
+    if (tipFor === key && hoverOn !== key && focusOn !== key) {
+      tipReq++
+      tipFor = null
+    }
+  }
+  // Keyed by emoji so it stays put if the chips reorder; ids are alphanumeric, Unicode goes by code point.
+  const tipId = (key: string) =>
+    `reactors-${message.id}-${key.startsWith('custom:') ? 'custom-' + key.slice(7) : [...key].map((c) => c.codePointAt(0)!.toString(16)).join('-')}`
 
   function pick(e: Std | CustomEmoji) {
     picking = false
@@ -58,18 +73,18 @@
 
 {#if !message.deleted && message.reactions.length > 0}
   <div class="reactions">
-    {#each message.reactions as r, i (r.emoji)}
+    {#each message.reactions as r (r.emoji)}
       {@const c = r.emoji.startsWith('custom:') ? customOf(r.emoji) : undefined}
       {@const custom = r.emoji.startsWith('custom:')}
       <span class="wrap">
         <button
           class="chip" class:mine={r.me} type="button" aria-pressed={r.me}
-          aria-describedby={tipFor === r.emoji && tipText ? tipId(i) : undefined}
+          aria-describedby={tipFor === r.emoji && tipText ? tipId(r.emoji) : undefined}
           onclick={() => toggle(r.emoji, !r.me)}
-          onpointerenter={() => { animated = r.emoji; void showTip(r.emoji, r.count) }}
-          onpointerleave={() => { animated = null; hideTip() }}
-          onfocus={() => void showTip(r.emoji, r.count)}
-          onblur={hideTip}
+          onpointerenter={() => { animated = r.emoji; enter(r.emoji, r.count, 'hover') }}
+          onpointerleave={() => { animated = null; leave(r.emoji, 'hover') }}
+          onfocus={() => enter(r.emoji, r.count, 'focus')}
+          onblur={() => leave(r.emoji, 'focus')}
         >
           {#if !custom}
             <img src={twemojiUrl(r.emoji)} alt={r.emoji} draggable="false" />
@@ -80,7 +95,7 @@
           {/if}
           <span class="n">{r.count}</span>
         </button>
-        {#if tipFor === r.emoji && tipText}<span class="tip" id={tipId(i)} role="tooltip">{tipText}</span>{/if}
+        {#if tipFor === r.emoji && tipText}<span class="tip" id={tipId(r.emoji)} role="tooltip">{tipText}</span>{/if}
       </span>
     {/each}
     <button bind:this={addBtn} class="chip add" type="button" aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}>
