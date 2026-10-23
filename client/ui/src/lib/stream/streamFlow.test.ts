@@ -132,7 +132,23 @@ describe('stream audio mute', () => {
     core.calls = []
     await streamApi.goLive('c1', fakeTrack() as never, 'Game', settings(true))
     expect(stream.live?.audioMuted).toBe(true)
-    expect(core.calls.map(([c]) => c).filter((c) => c.startsWith('stream_audio'))).toEqual(['stream_audio_start', 'stream_audio_mute'])
+    // published muted from the start: not a moment of audio before a separate mute
+    expect(calls('stream_audio_start')).toEqual([{ channelId: 'c1', windowTitle: null, muted: true }])
+    expect(calls('stream_audio_mute')).toEqual([])
+  })
+
+  it('a_mute_clicked_while_stream_audio_starts_is_applied', async () => {
+    const { streamApi, stream } = await load()
+    fake.connect = async () => fakeRoom()
+    const started = deferred()
+    core.handlers.stream_audio_start = () => started.p
+    const going = streamApi.goLive('c1', fakeTrack() as never, 'Game', settings(true))
+    while (!calls('stream_audio_start').length) await settle()
+    await streamApi.setAudioMuted(true) // reaches Rust before there is a track to mute
+    core.calls = []
+    started.resolve(undefined)
+    await going
+    expect(stream.live?.audioMuted).toBe(true)
     expect(calls('stream_audio_mute')).toEqual([{ muted: true }])
   })
 
@@ -207,6 +223,19 @@ describe('streams back after a server restart', () => {
     now.mockRestore()
   })
 
+  it('a_ready_that_has_our_stream_without_us_lists_us_again', async () => {
+    // the streamer got back to the restarted server first: no StreamStarted reaches us
+    const { streamApi } = await inVoice()
+    fake.connect = async () => fakeRoom()
+    await streamApi.watch('c1', 'other', document.createElement('video'))
+    core.calls = []
+    await streamApi.onReady({ me: { id: 'me' }, streams: [info('other')] } as never, before)
+    expect(calls('stream_watch')).toEqual([{ channelId: 'c1', streamer: 'other' }])
+    core.calls = []
+    await streamApi.onReady({ me: { id: 'me' }, streams: [{ ...info('other'), viewers: ['me'] }] } as never, before)
+    expect(calls('stream_watch')).toEqual([]) // listed already
+  })
+
   it('the_stream_we_watch_lists_us_again', async () => {
     const { streamApi } = await inVoice()
     fake.connect = async () => fakeRoom()
@@ -225,8 +254,8 @@ describe('stream audio closed by LiveKit', () => {
     await streamApi.setAudioMuted(true)
     core.calls = []
     await streamApi.onAudioClosed('c1')
-    expect(calls('stream_audio_start')).toEqual([{ channelId: 'c1', windowTitle: 'Game' }])
-    expect(calls('stream_audio_mute')).toEqual([{ muted: true }])
+    expect(calls('stream_audio_start')).toEqual([{ channelId: 'c1', windowTitle: 'Game', muted: true }])
+    expect(calls('stream_audio_mute')).toEqual([])
   })
 
   it('says_so_when_the_restart_fails', async () => {
@@ -251,6 +280,35 @@ describe('stream audio closed by LiveKit', () => {
     restarted.resolve(undefined) // the old window's restart lands now
     await closed
     expect(calls('stream_audio_stop')).toEqual([undefined])
+  })
+
+  it('a_restart_landing_after_going_live_again_with_audio_redoes_the_new_one', async () => {
+    const { streamApi, stream } = await goneLive(true, 'window')
+    const restarted = deferred()
+    core.handlers.stream_audio_start = () => restarted.p
+    const closed = streamApi.onAudioClosed('c1')
+    // meanwhile: Stop, then Go Live again (a screen this time, muted) with stream audio on
+    await streamApi.stop()
+    delete core.handlers.stream_audio_start
+    await streamApi.goLive('c1', fakeTrack() as never, 'Screen', settings(true))
+    await streamApi.setAudioMuted(true)
+    core.calls = []
+    restarted.resolve(undefined) // the old window's restart lands now and replaced the new track
+    await closed
+    expect(calls('stream_audio_stop')).toEqual([])
+    expect(calls('stream_audio_start')).toEqual([{ channelId: 'c1', windowTitle: null, muted: true }])
+    expect(stream.live?.label).toBe('Screen')
+  })
+
+  it('a_new_go_live_starts_a_fresh_reconnect_count', async () => {
+    const { streamApi, stream } = await goneLive(true)
+    for (let i = 0; i < 4; i++) await streamApi.onAudioClosed('c1') // gave up
+    await streamApi.stop()
+    await streamApi.goLive('c1', fakeTrack() as never, 'Game', settings(true))
+    core.calls = []
+    await streamApi.onAudioClosed('c1')
+    expect(calls('stream_audio_start')).toHaveLength(1)
+    expect(stream.live).not.toBeNull()
   })
 
   it('gives_up_after_three_closes_in_a_minute', async () => {

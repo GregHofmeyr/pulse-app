@@ -62,7 +62,8 @@ export const streamCmd = {
   /** One JSON object, no newlines; Rust prefixes `share: `. */
   log: (line: object) => invoke<void>('stream_log', { line: JSON.stringify(line) }).catch(() => {}),
   pickerWindow: (open: boolean) => invoke<void>('stream_picker_window', { open }),
-  audioStart: (channelId: string, windowTitle: string | null) => invoke<void>('stream_audio_start', { channelId, windowTitle }),
+  /** Publishes `muted` from the first frame (a separate mute would let a moment through). */
+  audioStart: (channelId: string, windowTitle: string | null, muted: boolean) => invoke<void>('stream_audio_start', { channelId, windowTitle, muted }),
   audioStop: () => invoke<void>('stream_audio_stop'),
   /** `#a` leaves unless it is in `keep` (the voice channel now; `null` = no voice). */
   audioLeave: (keep: string | null) => invoke<void>('stream_audio_leave', { keep }),

@@ -247,6 +247,7 @@ async function goLive(token: number, channelId: string, track: LocalVideoTrack, 
     throw e
   }
   liveTrack = track
+  audioClosedAt = [] // a new share gets its own reconnects
   // muted stays muted from the last Go Live
   const audioMuted = audio && loadAudioMuted()
   stream.live = { channelId, res, fps, audio, audioMuted, label, encoderWarning: false }
@@ -258,14 +259,15 @@ async function goLive(token: number, channelId: string, track: LocalVideoTrack, 
     const windowTitle = track.mediaStreamTrack.getSettings().displaySurface === 'window' ? label : null
     liveWindowTitle = windowTitle
     // Video carries on without it; Rust retries the capture itself.
-    await streamCmd.audioStart(channelId, windowTitle).catch(logError('audio_start_error'))
+    await streamCmd.audioStart(channelId, windowTitle, audioMuted).catch(logError('audio_start_error'))
     if (liveTrack !== track) {
       // stopped meanwhile: that stop's audio_stop ran before this start landed
       await streamCmd.audioStop().catch(logError('audio_stop_error'))
       return
     }
-    // the mute set meanwhile (a click while starting) is in `stream.live`
-    if (stream.live?.audioMuted) await streamCmd.audioMute(true).catch(logError('audio_mute_error'))
+    // a mute clicked while starting reached Rust before there was a track to mute
+    const muted = stream.live?.audioMuted ?? audioMuted
+    if (muted !== audioMuted) await streamCmd.audioMute(muted).catch(logError('audio_mute_error'))
   }
   stopPreview = startPreview(channelId, track.mediaStreamTrack)
   const r = room
@@ -385,13 +387,19 @@ export const streamApi = {
     }
     const live = stream.live
     if (live?.channelId === channelId && live.audio) {
+      const muted = live.audioMuted
       try {
-        await streamCmd.audioStart(channelId, liveWindowTitle)
-        if (!stream.live?.audio) {
+        await streamCmd.audioStart(channelId, liveWindowTitle, muted)
+        const now = stream.live
+        if (!now?.audio) {
           // stopped (or live again without audio) meanwhile: that stop's audio_stop ran before this start landed
           await streamCmd.audioStop().catch(logError('audio_stop_error'))
-        } else if (stream.live === live && live.audioMuted) {
-          await streamCmd.audioMute(true).catch(logError('audio_mute_error'))
+        } else if (now !== live) {
+          // stopped and live again with audio: this start may have replaced the new share's
+          // (another window, another mute), so start that one again
+          await streamCmd.audioStart(now.channelId, liveWindowTitle, now.audioMuted).catch(logError('audio_start_error'))
+        } else if (live.audioMuted !== muted) {
+          await streamCmd.audioMute(live.audioMuted).catch(logError('audio_mute_error'))
         }
       } catch (e) {
         logError('audio_restart_error')(e)
@@ -452,6 +460,11 @@ export const streamApi = {
         if (!ready.streams.some((s) => s.channel_id === channelId && s.user_id === userId)) vanished.set(streamKey(channelId, userId), now)
       }
     }
+    // the streamer got back to the restarted server before us: its Ready lists the stream we
+    // watch without us, and no StreamStarted comes
+    const w = stream.watching
+    const watched = w && ready.streams.find((s) => s.channel_id === w.channelId && s.user_id === w.streamer)
+    if (w && watched && !watched.viewers.includes(ready.me.id)) await streamCmd.watch(w.channelId, w.streamer).catch(logError('rewatch_error'))
     const live = stream.live
     if (!live || !needsReannounce(ready.me.id, live, ready.streams)) return
     streamCmd.log({ ev: 'reannounce' })

@@ -552,7 +552,12 @@ impl StreamAudio {
 
     /// Publishes this machine's stream audio: `window_title`'s process when it names a window
     /// that isn't Pulse's, else everything but Pulse. Replaces a stream already publishing.
-    pub async fn start_publishing(&self, window_title: Option<String>) -> Result<(), String> {
+    /// `muted` holds from the first frame.
+    pub async fn start_publishing(
+        &self,
+        window_title: Option<String>,
+        muted: bool,
+    ) -> Result<(), String> {
         let mut st = self.state.lock().await;
         Self::stop_publishing_locked(&mut st).await;
         if st.conn.is_none() {
@@ -563,6 +568,9 @@ impl StreamAudio {
             .await
             .map_err(|e| e.to_string())?;
         let (track, sid, outlet, counts) = Self::publish_locked(&st).await?;
+        if muted {
+            track.mute(); // before any capture feeds it
+        }
         counts.captures.store(plan.len(), Ordering::Relaxed);
         let engine = Engine::start(plan, move |c| outlet.send(c));
         let planner: Planner = Arc::new(move || plan_now(window_title.as_deref()).0);

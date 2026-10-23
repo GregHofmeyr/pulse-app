@@ -259,7 +259,7 @@ fn app_mixer(app: &AppHandle) -> audio::MixerSource {
 }
 
 /// Connects `#a` to the stream room (if it isn't) and publishes stream audio: `window_title`'s
-/// app for a window share, everything but Pulse otherwise.
+/// app for a window share, everything but Pulse otherwise; `muted` from the first frame.
 #[tauri::command]
 pub async fn stream_audio_start(
     app: AppHandle,
@@ -267,13 +267,14 @@ pub async fn stream_audio_start(
     audio: State<'_, StreamAudio>,
     channel_id: ChannelId,
     window_title: Option<String>,
+    muted: bool,
 ) -> Result<(), StreamAudioError> {
     let (api, token) = core.current()?;
     let r = audio
         .ensure_connected(&api, &token, channel_id, app_mixer(&app))
         .await;
     audio_check(&app, &core, r)?;
-    Ok(audio.start_publishing(window_title).await?)
+    Ok(audio.start_publishing(window_title, muted).await?)
 }
 
 /// A dead login (401) while `#a` connects logs out, as it does for every other command.
