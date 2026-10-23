@@ -15,6 +15,11 @@ use crate::error::{AppError, AppResult};
 /// Bodies a little over the processing limit still reach it, so they get its clear message.
 const BODY_LIMIT: usize = process::MAX_INPUT + 64 * 1024;
 
+/// At most this many uploads processed at once: decoding and resizing is the costly part, so this
+/// bounds the CPU/RAM a burst of uploads can take.
+static PROCESS_SLOTS: std::sync::LazyLock<tokio::sync::Semaphore> =
+    std::sync::LazyLock::new(|| tokio::sync::Semaphore::new(2));
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route(
@@ -37,10 +42,18 @@ async fn upload_emoji(
         .await
         .map_err(|e| anyhow::anyhow!("create {}: {e}", dir.display()))?;
     super::disk_ok(dir, s.cfg.media_min_free_bytes)?;
-    let processed = tokio::task::spawn_blocking(move || process::emoji(&body))
+    let slot = PROCESS_SLOTS
+        .acquire()
         .await
-        .map_err(|e| anyhow::anyhow!("emoji processing panicked: {e}"))?
-        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+        .map_err(|e| anyhow::anyhow!("processing slots closed: {e}"))?;
+    // The slot moves into the task: it is held while the work runs, even if the client goes away.
+    let processed = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        process::emoji(&body)
+    })
+    .await
+    .map_err(|e| anyhow::anyhow!("emoji processing panicked: {e}"))?
+    .map_err(|e| AppError::BadRequest(e.to_string()))?;
     let info = super::put(&s.db, dir, MediaKind::Emoji, &processed, me).await?;
     tracing::info!(%me, hash = %info.hash, frames = info.frames, "emoji media stored");
     Ok(Json(info))

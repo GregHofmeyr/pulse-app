@@ -19,6 +19,11 @@ pub const MAX_FRAMES: u32 = 300;
 pub const SIZE: u32 = 128;
 const MAX_SIDE: u32 = 4096;
 const MAX_ALLOC: u64 = 256 * 1024 * 1024;
+/// Most pixels an animation may decode to, summed over its frames. Decoders composite every frame
+/// onto the full logical screen, so a few KB of 1×1 frames on a 4096² screen would otherwise mean
+/// minutes of CPU. 100 Mpx still fits 300 frames at 500×500 (75 Mpx), well beyond real emoji GIFs,
+/// while a 4096² screen is refused at its 6th frame.
+const MAX_DECODED_PIXELS: u64 = 100_000_000;
 const QUALITY: f32 = 80.0;
 
 #[derive(Debug)]
@@ -45,6 +50,8 @@ pub enum ProcessError {
     OutputTooBig,
     #[error("that image's dimensions are too large (4096×4096 at most)")]
     TooLarge,
+    #[error("this animation is too large to convert; try a smaller or shorter one")]
+    AnimationTooLarge,
 }
 
 impl From<ImageError> for ProcessError {
@@ -97,11 +104,18 @@ pub fn emoji(input: &[u8]) -> Result<Processed, ProcessError> {
     let mut fitted = Vec::new();
     match frames {
         Some(frames) => {
+            let mut decoded = 0u64;
             for f in frames {
                 if fitted.len() as u32 == MAX_FRAMES {
                     return Err(ProcessError::TooManyFrames);
                 }
                 let f = f?;
+                // Counted per decoded frame, before the costly resize.
+                let (w, h) = f.buffer().dimensions();
+                decoded += u64::from(w) * u64::from(h);
+                if decoded > MAX_DECODED_PIXELS {
+                    return Err(ProcessError::AnimationTooLarge);
+                }
                 let (n, d) = f.delay().numer_denom_ms();
                 fitted.push((fit(f.buffer()), frame_ms(n, d)));
             }
@@ -144,7 +158,14 @@ fn fit(img: &RgbaImage) -> RgbaImage {
     let scale = SIZE as f64 / w.max(h) as f64;
     let nw = ((w as f64 * scale).round() as u32).clamp(1, SIZE);
     let nh = ((h as f64 * scale).round() as u32).clamp(1, SIZE);
-    let resized = imageops::resize(img, nw, nh, FilterType::Lanczos3);
+    // Lanczos cost grows with the shrink ratio; a box pre-shrink to twice the target keeps big
+    // frames cheap without visible loss.
+    let resized = if w > 4 * nw || h > 4 * nh {
+        let pre = imageops::thumbnail(img, 2 * nw, 2 * nh);
+        imageops::resize(&pre, nw, nh, FilterType::Lanczos3)
+    } else {
+        imageops::resize(img, nw, nh, FilterType::Lanczos3)
+    };
     let mut canvas = RgbaImage::new(SIZE, SIZE);
     imageops::overlay(
         &mut canvas,
@@ -278,6 +299,32 @@ mod tests {
             emoji(&gif(301, 1)),
             Err(ProcessError::TooManyFrames)
         ));
+    }
+
+    /// A tiny GIF with a huge logical screen and many 1x1 frames: each decoded frame is composited
+    /// onto the whole screen, so decoding work grows with screen area times frame count.
+    fn screen_bomb(screen: u16, frames: usize) -> Vec<u8> {
+        let mut b = b"GIF89a".to_vec();
+        b.extend_from_slice(&screen.to_le_bytes());
+        b.extend_from_slice(&screen.to_le_bytes());
+        b.extend_from_slice(&[0x80, 0, 0, 0, 0, 0, 255, 255, 255]);
+        for i in 0..frames {
+            b.extend_from_slice(&[0x21, 0xF9, 4, 0, 5, 0, 0, 0]);
+            b.push(b',');
+            b.extend_from_slice(&[(i % 2) as u8, 0, 0, 0, 1, 0, 1, 0, 0]);
+            b.extend_from_slice(&[2, 2, 0x4C, 0x01, 0]);
+        }
+        b.push(b';');
+        b
+    }
+
+    #[test]
+    fn huge_screen_animation_is_refused_quickly() {
+        let bomb = screen_bomb(4096, 300);
+        assert!(bomb.len() < 10 * 1024);
+        let t = std::time::Instant::now();
+        assert!(matches!(emoji(&bomb), Err(ProcessError::AnimationTooLarge)));
+        eprintln!("screen bomb refused in {:?}", t.elapsed());
     }
 
     #[test]
