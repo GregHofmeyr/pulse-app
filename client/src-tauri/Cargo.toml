@@ -61,6 +61,8 @@ log = "0.4"
 # paused-clock tests (`#[tokio::test(start_paused = true)]`)
 tokio = { workspace = true, features = ["test-util"] }
 pulse-server = { path = "../../server", features = ["testing"] }
+# tests/emoji_e2e.rs builds the PNG and GIF it uploads
+image = { version = "0.25", default-features = false, features = ["png", "gif"] }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "2.0"

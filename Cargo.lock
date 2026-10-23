@@ -4784,6 +4784,7 @@ dependencies = [
  "cpal",
  "deep_filter",
  "futures",
+ "image",
  "keyring",
  "livekit",
  "log",
