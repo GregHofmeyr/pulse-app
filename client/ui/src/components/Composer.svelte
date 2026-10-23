@@ -6,8 +6,15 @@
 <script lang="ts">
   import { untrack } from 'svelte'
   import Icon from './Icon.svelte'
+  import EmojiPicker from './EmojiPicker.svelte'
+  import { clickOutside } from '../lib/actions'
+  import { customToken, mediaUrl, search, twemojiUrl, type Std } from '../lib/emoji'
+  import { applyEmoji, emojiQuery, insertAt } from '../lib/emojiComplete'
   import { typingThrottle } from '../lib/markdown'
   import { applyMention, mentionQuery, suggest, type Mentionable } from '../lib/mentions'
+  import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
+  import { memberServers, popoverStyle } from '../lib/reactions'
+  import { app } from '../lib/store.svelte'
 
   let {
     placeholder,
@@ -45,13 +52,29 @@
   let dismissed = $state<string | null>(null) // Esc closes the popup until the token changes
   const open = $derived(options.length > 0 && dismissed !== query)
 
+  // `:name` popup: custom emoji you can use (your servers) and standard ones. Never open with @mentions:
+  // the two queries can't both end at the caret.
+  const emojiQ = $derived(emojiQuery(text.slice(0, caret)))
+  const usable = $derived.by(() => {
+    const mine = memberServers(app.state)
+    return Object.values(app.state.customEmoji).filter((c) => mine.has(c.server_id))
+  })
+  const emojiOptions = $derived(emojiQ === null ? [] : search(emojiQ, usable).slice(0, 8))
+  const emojiOpen = $derived(emojiOptions.length > 0 && dismissed !== ':' + emojiQ)
+  const shown = $derived(open ? options.length : emojiOpen ? emojiOptions.length : 0)
+  const serverName = (id: string) => app.state.servers.find((s) => s.id === id)?.name ?? ''
+  const emojiText = (e: Std | CustomEmoji) => ('u' in e ? e.u : customToken(e))
+
+  let picking = $state(false)
+  let pickStyle = $state('')
+  let emojiBtn: HTMLButtonElement
+
   function syncCaret() {
     caret = box?.selectionStart ?? text.length
     pick = 0
   }
 
-  async function choose(name: string) {
-    const r = applyMention(text, caret, name)
+  async function setText(r: { text: string; caret: number }) {
     text = r.text
     caret = r.caret
     await Promise.resolve()
@@ -59,21 +82,35 @@
     box.focus()
   }
 
+  const choose = (name: string) => setText(applyMention(text, caret, name))
+  const chooseEmoji = (e: Std | CustomEmoji) => setText(applyEmoji(text, caret, emojiText(e)))
+
+  function openPicker() {
+    if (picking) return (picking = false)
+    pickStyle = popoverStyle(emojiBtn.getBoundingClientRect(), { width: 360, height: 420 }, { width: window.innerWidth, height: window.innerHeight })
+    picking = true
+  }
+  // The textarea keeps its selection while the picker has focus: insert there.
+  function pickEmoji(e: Std | CustomEmoji) {
+    picking = false
+    void setText(insertAt(text, box.selectionStart, box.selectionEnd, emojiText(e)))
+  }
+
   function key(e: KeyboardEvent) {
-    if (open) {
+    if (shown) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
-        pick = (pick + (e.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length
+        pick = (pick + (e.key === 'ArrowDown' ? 1 : shown - 1)) % shown
         return
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault()
-        void choose(options[pick].name)
+        void (open ? choose(options[pick].name) : chooseEmoji(emojiOptions[pick]))
         return
       }
       if (e.key === 'Escape') {
         e.preventDefault()
-        dismissed = query
+        dismissed = open ? query : ':' + emojiQ
         return
       }
     }
@@ -114,12 +151,32 @@
           onmousedown={(e) => { e.preventDefault(); void choose(o.name) }}>@{o.name}</button>
       {/each}
     </div>
+  {:else if emojiOpen}
+    <div class="mentions" role="listbox" aria-label="Insert emoji">
+      {#each emojiOptions as o, i ('u' in o ? o.u : o.id)}
+        <button role="option" aria-selected={i === pick} class:on={i === pick}
+          onmousedown={(e) => { e.preventDefault(); void chooseEmoji(o) }}>
+          {#if 'u' in o}
+            <img src={twemojiUrl(o.u)} alt="" draggable="false" /><span>:{o.n}:</span>
+          {:else}
+            <img src={mediaUrl(o.still_hash ?? o.hash!)} alt="" draggable="false" /><span>:{o.name}:</span>
+            <small>{serverName(o.server_id)}</small>
+          {/if}
+        </button>
+      {/each}
+    </div>
   {/if}
   {#if replyingTo}
     <div class="replying">Replying to <strong>{replyingTo}</strong>
       <button aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={13} /></button></div>
   {/if}
   <textarea bind:this={box} bind:value={text} rows="1" {placeholder} aria-label={placeholder} onkeydown={key} oninput={input} onclick={syncCaret} onkeyup={(e) => { if (e.key.startsWith("Arrow") && !open) syncCaret() }} maxlength="4000"></textarea>
+  <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={openPicker}><Icon name="smile" size={20} /></button>
+  {#if picking}
+    <div use:clickOutside={() => (picking = false)} style={pickStyle}>
+      <EmojiPicker onPick={pickEmoji} onClose={() => (picking = false)} servers={app.state.servers} memberOf={memberServers(app.state)} />
+    </div>
+  {/if}
 </div>
 
 <style>
@@ -127,8 +184,13 @@
   .mentions { position: absolute; left: 0; bottom: calc(100% + 6px); min-width: 200px; padding: 6px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--bg-3); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); z-index: 5; }
   .mentions button { text-align: left; padding: 7px 10px; border: 0; border-radius: 7px; background: transparent; color: var(--text-2); font: inherit; }
   .mentions button.on { background: var(--bg-4); color: var(--text); }
+  .mentions button { display: flex; align-items: center; gap: 8px; }
+  .mentions img { width: 20px; height: 20px; }
+  .mentions small { margin-left: auto; padding-left: 12px; color: var(--text-3); font-size: 11px; }
+  .emoji-btn { position: absolute; right: 8px; bottom: 8px; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .emoji-btn:hover { color: var(--text); }
   .replying { display: flex; align-items: center; gap: 6px; padding: 8px 14px 0; font-size: 12px; color: var(--text-3); }
   .replying strong { color: var(--text-2); }
   .replying button { margin-left: auto; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
-  textarea { width: 100%; box-sizing: border-box; min-height: 48px; max-height: 200px; resize: none; border: 0; background: transparent; padding: 14px; font: inherit; color: var(--text); outline: none; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 48px; max-height: 200px; resize: none; border: 0; background: transparent; padding: 14px 48px 14px 14px; font: inherit; color: var(--text); outline: none; }
 </style>

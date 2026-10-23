@@ -99,7 +99,7 @@
           <small class="hint">Enter to save · Esc to cancel</small>
         {:else}
           <!-- renderMessage output is DOMPurify-sanitised (allow-list, cached per message); the only {@html} in the app. -->
-          <div class="content">{@html renderMessage(message, mentionNames)}</div>
+          <div class="content">{@html renderMessage(message, mentionNames, app.state.customEmoji)}</div>
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
         <ReactionRow {message} {meId} {nameOf} {onError} />
@@ -155,5 +155,8 @@
   .hint { font-size: 11px; color: var(--text-3); }
   .system { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }
   .msg.mentioned { background: rgba(139, 156, 255, .08); box-shadow: inset 2px 0 0 var(--accent); }
+  .content :global(img.emoji) { width: 1.375em; height: 1.375em; vertical-align: -0.3em; object-fit: contain; }
+  .content :global(img.emoji.big) { width: 48px; height: 48px; }
+  .content :global(.emoji-gone) { color: var(--text-3); background: var(--bg-3); border-radius: 4px; padding: 0 4px; font-size: .9em; }
   .content :global(.mention) { color: var(--accent); background: rgba(139, 156, 255, .15); border-radius: 4px; padding: 0 3px; font-weight: 600; }
 </style>
