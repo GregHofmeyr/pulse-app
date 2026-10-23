@@ -46,12 +46,17 @@ pub async fn handle(s: &AppState, channel: &str, ev: &WebhookEvent) -> AppResult
     }
     match ev.event.as_str() {
         "participant_left" => {
+            if !s.streams.video_left(channel_id, user, &p.sid) {
+                // LiveKit kicked this connection for a newer one, which is still in
+                return Ok(());
+            }
             streamer_dropped(s, channel_id, user).await;
             for (streamer, viewers) in s.streams.remove_viewer_everywhere(channel_id, user) {
                 crate::streams::routes::publish_viewers(s, channel_id, streamer, viewers).await;
             }
         }
         "participant_joined" => {
+            s.streams.video_joined(channel_id, user, &p.sid);
             if let Some(stream) = s.streams.set_status(channel_id, user, StreamStatus::Live) {
                 s.streams.bump_epoch(channel_id, user);
                 s.hub.publish(&s.db, Event::StreamUpdated { stream }).await;

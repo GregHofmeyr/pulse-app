@@ -532,8 +532,13 @@ async fn ready_lists_live_streams() {
 }
 
 async fn stream_webhook(app: &TestApp, event: &str, ch: ChannelId, identity: &str) {
+    stream_webhook_sid(app, event, ch, identity, "PA_stream").await;
+}
+
+/// `stream_webhook` for one particular connection (`sid` changes on every join).
+async fn stream_webhook_sid(app: &TestApp, event: &str, ch: ChannelId, identity: &str, sid: &str) {
     let body = json!({"event": event, "id": "EV_test", "room": {"name": format!("{ch}~s")},
-        "participant": {"identity": identity, "sid": "PA_stream"}})
+        "participant": {"identity": identity, "sid": sid}})
     .to_string();
     let r = app
         .http
@@ -822,4 +827,32 @@ async fn preview_needs_server_membership() {
             .status(),
         403
     );
+}
+
+/// LiveKit kicks the old connection when the same identity joins again, and that old
+/// connection's leave can land after the new one's join: it must not touch the current state.
+#[tokio::test]
+async fn a_late_leave_for_a_replaced_stream_connection_is_ignored() {
+    let app = spawn().await;
+    let (l, a, b, mut rx) = pair(&app).await;
+    live_with_viewer(&app, &mut rx, &l, &a, &b).await;
+    let (streamer, viewer) = (format!("{}#v", a.0), format!("{}#v", b.0));
+    stream_webhook_sid(&app, "participant_joined", l.id, &streamer, "PA_a1").await;
+    stream_webhook_sid(&app, "participant_joined", l.id, &viewer, "PA_b1").await;
+    // both reconnect; the old connections' leaves arrive late
+    stream_webhook_sid(&app, "participant_joined", l.id, &streamer, "PA_a2").await;
+    stream_webhook_sid(&app, "participant_joined", l.id, &viewer, "PA_b2").await;
+    stream_webhook_sid(&app, "participant_left", l.id, &streamer, "PA_a1").await;
+    stream_webhook_sid(&app, "participant_left", l.id, &viewer, "PA_b1").await;
+    let quiet = tokio::time::timeout(Duration::from_millis(600), next_stream_event(&mut rx)).await;
+    assert!(quiet.is_err(), "no event expected, got {quiet:?}");
+    let info = app.streams.get(l.id, a.0).unwrap();
+    assert_eq!(info.status, StreamStatus::Live);
+    assert_eq!(info.viewers, vec![b.0]);
+    // the current connection's leave still counts
+    stream_webhook_sid(&app, "participant_left", l.id, &streamer, "PA_a2").await;
+    assert!(matches!(
+        next_stream_event(&mut rx).await,
+        Event::StreamUpdated { stream } if stream.status == StreamStatus::Reconnecting
+    ));
 }

@@ -19,6 +19,9 @@ struct Stream {
 #[derive(Default)]
 struct Inner {
     streams: HashMap<(ChannelId, UserId), Stream>,
+    /// Each person's current `#v` connection (LiveKit participant sid) in a stream room, streaming
+    /// or watching. A rejoin replaces it, and the replaced one's late leave is then ignored.
+    video_sids: HashMap<(ChannelId, UserId), String>,
     /// Source of epochs: never reused, so a new stream never matches an old timer's epoch.
     last_epoch: u64,
 }
@@ -192,6 +195,25 @@ impl StreamState {
         inner.streams.get(&(channel, user))?.preview.clone()
     }
 
+    /// `user`'s `#v` connection `sid` joined `channel`'s stream room.
+    pub fn video_joined(&self, channel: ChannelId, user: UserId, sid: &str) {
+        let mut inner = self.inner.lock().unwrap();
+        inner.video_sids.insert((channel, user), sid.to_owned());
+    }
+
+    /// `user`'s `#v` connection `sid` left; false if a rejoin already replaced it (a late leave
+    /// to ignore). Unknown connections (e.g. from before a restart) count as current.
+    pub fn video_left(&self, channel: ChannelId, user: UserId, sid: &str) -> bool {
+        let mut inner = self.inner.lock().unwrap();
+        match inner.video_sids.get(&(channel, user)) {
+            Some(cur) if !sid.is_empty() && !cur.is_empty() && cur != sid => false,
+            _ => {
+                inner.video_sids.remove(&(channel, user));
+                true
+            }
+        }
+    }
+
     /// Start a new reconnect episode for this stream and return its epoch (0 if there is no
     /// such stream; real epochs start at 1). Epochs are unique across all streams.
     pub fn bump_epoch(&self, channel: ChannelId, user: UserId) -> u64 {
@@ -338,6 +360,20 @@ mod tests {
         assert!(s.preview(ch(2), u(1)).is_none());
         assert_eq!(s.all().len(), 1);
         assert!(s.end_any_for(u(1)).is_empty());
+    }
+
+    #[test]
+    fn a_replaced_video_connection_leaving_is_stale() {
+        let s = StreamState::default();
+        assert!(s.video_left(ch(1), u(1), "PA_x"), "unknown: current");
+        s.video_joined(ch(1), u(1), "PA_1");
+        s.video_joined(ch(1), u(1), "PA_2");
+        assert!(!s.video_left(ch(1), u(1), "PA_1"));
+        assert!(s.video_left(ch(1), u(1), "PA_2"));
+        // gone: a repeat is unknown again, not stale
+        assert!(s.video_left(ch(1), u(1), "PA_2"));
+        s.video_joined(ch(1), u(1), "PA_3");
+        assert!(s.video_left(ch(2), u(1), "PA_1"), "another room is its own");
     }
 
     #[test]
