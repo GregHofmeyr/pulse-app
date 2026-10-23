@@ -102,6 +102,33 @@ describe('ReactionRow', () => {
     expect(cur().reactions).toEqual([{ emoji: '🎉', count: 2, me: false }])
   })
 
+  it('failure at the 100-reactor cap undoes the flip instead of trusting the list', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_reactors') return Array.from({ length: 100 }, (_, i) => `X${i}`)
+      if (cmd === 'add_reaction') throw 'boom'
+      return undefined
+    })
+    show(msg({ reactions: [{ emoji: '🎉', count: 150, me: false }] }))
+    const { react } = await import('../lib/reactions')
+    await react(() => app.state, (s) => (app.state = s), 'C1', 'M1', '🎉', true, 'U1', onError)
+    expect(cur().reactions).toEqual([{ emoji: '🎉', count: 150, me: false }])
+  })
+
+  it('an event landing during the settle fetch is not overwritten', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'add_reaction') throw 'boom'
+      if (cmd === 'list_reactors') {
+        app.state = { ...app.state, messages: { C1: [{ ...cur(), reactions: [{ emoji: '🎉', count: 9, me: false }] }] } }
+        return ['U2', 'U3'] // older snapshot
+      }
+      return undefined
+    })
+    show(msg({ reactions: [{ emoji: '🎉', count: 2, me: false }] }))
+    const { react } = await import('../lib/reactions')
+    await react(() => app.state, (s) => (app.state = s), 'C1', 'M1', '🎉', true, 'U1', onError)
+    expect(cur().reactions).toEqual([{ emoji: '🎉', count: 9, me: false }])
+  })
+
   it('failure after my own event landed keeps the committed reaction', async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'add_reaction') {

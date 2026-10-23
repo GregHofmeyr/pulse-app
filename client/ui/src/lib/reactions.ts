@@ -3,6 +3,8 @@ import type { AppState } from './state'
 import { api, errorText } from './tauri'
 
 const MAX_NAMES = 10
+/** The server's `list_reactors` page size. */
+const REACTOR_CAP = 100
 
 /** "A, B and C"; past ten names "A, B, … J and 3 others". `total` counts everyone, named or not. */
 export function tooltipText(names: string[], total: number): string {
@@ -69,9 +71,16 @@ export async function react(
   try {
     await (add ? api.addReaction(id, key) : api.removeReaction(id, key))
   } catch (e) {
+    const at = entry(get(), channel, id, key)
     try {
       const ids = await api.listReactors(id, key)
-      set(setEntry(get(), channel, id, key, ids.length ? { emoji: key, count: ids.length, me: ids.includes(meId) } : null))
+      const now = entry(get(), channel, id, key)
+      // The server caps the list (oldest first): at the cap it can't give a count or my membership.
+      if (ids.length >= REACTOR_CAP) set(flip(get(), channel, id, key, !add, meId))
+      // An event landed during the fetch: its absolute count is newer than this snapshot.
+      else if (now?.count === at?.count && now?.me === at?.me) {
+        set(setEntry(get(), channel, id, key, ids.length ? { emoji: key, count: ids.length, me: ids.includes(meId) } : null))
+      }
     } catch {
       set(flip(get(), channel, id, key, !add, meId))
     }
