@@ -122,15 +122,13 @@ Restoring for real: `just restore daily/pulse-<time>.db.age`. The server stops f
 database is kept next to it as `data/pulse.db.pre-restore-<time>`.
 
 Restoring the media (the database restore doesn't touch it; do this after a lost or rebuilt server, or to roll
-emoji back): the newest is `ssh pulse@pulse /srv/pulse/backup.sh latest-media`, or pick one from `daily/` in R2.
-
-```
-ssh pulse@pulse '/srv/pulse/backup.sh fetch daily/pulse-media-<time>.tgz.age' > media.tgz.age
-age -d -i ~/.config/pulse/backup-age.key -o media.tgz media.tgz.age
-tar -tzf media.tgz | head                      # look before you restore: paths start with media/
-scp media.tgz pulse@pulse:/srv/pulse/media.tgz
-ssh pulse@pulse 'cd /srv/pulse && docker compose stop pulse-server && tar -xzf media.tgz -C data && rm media.tgz && docker compose start pulse-server'
-```
+emoji back): `just restore-media-drill` downloads the newest media backup, decrypts it here and lists it
+(`archive ok: N media files`; it also refuses an archive with paths outside `media/`). Then
+`just restore-media daily/pulse-media-<time>.tgz.age` stops the server for a few seconds and unpacks it over
+`data/media`: files in the backup come back, newer uploads it doesn't have stay. The newest name is also
+`ssh pulse@pulse /srv/pulse/backup.sh latest-media`, which (like `latest`) says so and exits non-zero if there are none.
+Backups of a media directory that changes mid-archive (an upload during the backup) only warn; the database backup
+and the rest of the media are kept.
 
 ## 9. Uptime monitor
 

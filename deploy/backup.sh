@@ -16,9 +16,20 @@ export RCLONE_CONFIG_R2_TYPE=s3 RCLONE_CONFIG_R2_PROVIDER=Cloudflare RCLONE_CONF
   RCLONE_CONFIG_R2_ENDPOINT="https://${R2_ACCOUNT_ID:-unset}.r2.cloudflarestorage.com"
 remote="r2:${R2_BUCKET:-unset}"
 
+# Newest daily object matching grep pattern $1; $2 names it in the message when there is none.
+newest() {
+  local name
+  name=$(rclone lsf "$remote/daily" | { grep -E "$1" || true; } | sort | tail -n1)
+  if [[ -z $name ]]; then
+    echo "no $2 backup found in $remote/daily" >&2
+    return 1
+  fi
+  echo "daily/$name"
+}
+
 case "${1:-run}" in
-  latest) rclone lsf "$remote/daily" | grep '\.db\.age$' | sort | tail -n1 | sed 's|^|daily/|'; exit 0 ;;
-  latest-media) rclone lsf "$remote/daily" | grep '^pulse-media-' | sort | tail -n1 | sed 's|^|daily/|'; exit 0 ;;
+  latest) newest '\.db\.age$' database; exit $? ;;
+  latest-media) newest '^pulse-media-' media; exit $? ;;
   fetch) rclone cat "$remote/${2:?object name}"; exit 0 ;;
   run) ;;
   *) echo "usage: backup.sh [run|latest|latest-media|fetch OBJ]" >&2; exit 2 ;;
@@ -49,7 +60,16 @@ echo "backed up pulse-$ts.db.age"
 
 # Uploaded emoji live outside the database; no media directory yet means nothing was ever uploaded.
 if [[ -d data/media ]]; then
-  tar -C data -czf "$media" media
+  # tar exits 1 when a file changed while it was read (an upload during the backup): the archive is
+  # still written and the database backup above already succeeded, so that only warrants a warning.
+  tar_rc=0
+  tar -C data -czf "$media" media || tar_rc=$?
+  if [[ $tar_rc -eq 1 ]]; then
+    echo "warning: media changed while being archived; the backup may miss the newest uploads" >&2
+  elif [[ $tar_rc -ne 0 ]]; then
+    echo "media archive failed (tar exit $tar_rc)" >&2
+    exit "$tar_rc"
+  fi
   age -r "$AGE_RECIPIENT" -o "$media.age" "$media"
   rm -f "$media"
   rclone copyto "$media.age" "$remote/daily/pulse-media-$ts.tgz.age"
