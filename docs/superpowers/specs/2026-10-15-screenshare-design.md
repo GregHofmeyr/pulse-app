@@ -4,6 +4,7 @@ Date: 2026-10-15. Status: draft for review.
 
 Inputs: `docs/superpowers/research/screenshare-deep-summary.md` (the decisions from research),
 `screenshare-deep-crosscheck.md` (rulings and the S1-S17 spike checklist), and the brainstorm of 2026-10-15.
+Spike results (2026-10-22): `screenshare-spike-results.md`; the sections it changed say so.
 
 ## 1. Goal
 
@@ -57,8 +58,13 @@ publishing anything.
 | `g_<random>#v`, `g_<random>#a` | Same, for a ghost | Subscribe only |
 
 - Each person has one JS participant and one Rust participant in the stream room. The one exception is a pop-out
-  window, which briefly adds a second JS participant, `#v2` (§4.3). Both connect on first use.
-  They leave when the person leaves voice, or, for a ghost, closes the last stream.
+  window, which briefly adds a second JS participant, `#v2` (§4.3).
+- **`#v` connects when its owner joins voice** (a ghost's connects on first Watch), and `#a` connects on first use.
+  - Spike S12: connecting to the stream room took 1.3-1.6 s at 173 ms RTT, and the first frame took another
+    0.6-1.5 s. So a cold Watch took 1.95-2.85 s against the 1.5 s bar.
+  - Pre-connected, Watch to first frame is the second number only.
+  - The first cut on `screenshare-v1` still connects on first use; this is a follow-up.
+- They leave when the person leaves voice, or, for a ghost, closes the last stream.
 - The voice room keeps its plain `<uid>` identity. The server's webhook already ignores identities and rooms it can't
   parse, so the `~s` room gets its own handling (§4.4).
 
@@ -68,9 +74,12 @@ publishing anything.
   Chromium gives Media Foundation hardware encode and decode, simulcast and rate control.
 - **Stream audio in Rust (Approach 1 from the brainstorm):** it plays through Pulse's mixer, so the echo canceller hears
   it and a viewer on speakers doesn't echo the game into voice. Every viewer, in voice or ghost, follows the same path.
-  - The cost: audio and video come from separate connections, so nothing syncs them. Research estimates audio lands
-    0-80 ms behind the picture. Spike S9 measures it; if it's noticeable, the viewer delays video by the measured
-    offset.
+  - The cost: audio and video come from separate connections, so nothing syncs them. Research estimated audio lands
+    0-80 ms behind the picture.
+  - Spike S9 measured audio arriving +32 and +68 ms behind the picture. That is a thin sample (n = 2, on one PC), but
+    it is inside the 0 to +125 ms bar.
+  - So v1 has no sync controller and only logs the offset, as the first cut does. If a two-PC rerun or the slowdown
+    watch shows the offset outside the bar, the viewer delays video by the measured offset.
 - **Voice is unchanged.**
 
 ### Step zero (a prerequisite, merged on its own)
@@ -129,11 +138,17 @@ These are starting values; spikes S2 and S4 tune them. Each is clamped to the ca
   share is exempt from LiveKit's stream allocator, so a slow viewer would simply freeze.
 - Settings go in `screenShareEncoding` and `screenShareSimulcastLayers`. `livekit-client` ignores `videoEncoding` for
   screen share.
-- **Codec:** H.264, with the client preferring Main (`4d001f`). AV1 is not in v1: the 2080 Ti can't decode it in
-  hardware.
+- **Codec:** H.264, with the client preferring Main (`4d001f`). Baseline `42001f` is fine too: the spike negotiated it
+  and the NVIDIA MFT encoded it (S1). The one profile to avoid is Constrained Baseline `42e01f`. AV1 is not in v1: the
+  2080 Ti can't decode it in hardware.
 - **Encoder check:** 5 s after publishing, and every 30 s after that, read `encoderImplementation` and
   `powerEfficientEncoder` from outbound-rtp stats. If it isn't hardware, the card shows "Your GPU encoder isn't being
   used, so this will cost game FPS" and the event is logged.
+  - **Judge the full layer.** With simulcast, the string is one `SimulcastEncoderAdapter (…, …)` listing every
+    layer, lowest first.
+  - In S1 the low layer of a near-square window ran on OpenH264 for its first 25 s, then moved to the MFT. A software
+    low layer is only logged.
+  - Warn only when the full layer isn't hardware on two reads in a row.
 
 ### 3.3 While live
 
@@ -156,8 +171,15 @@ These are starting values; spikes S2 and S4 tune them. Each is clamped to the ca
   and emoji). It was measured at about a core otherwise.
 - **Stream audio** (Rust, the `wasapi` crate's process loopback):
   - **Window share:** INCLUDE mode on the shared window's process tree.
-  - **Screen share:** EXCLUDE mode on Pulse's own process tree.
-  - If the shared window's process can't be identified (spike S8), a window share uses EXCLUDE mode too.
+  - **Screen share:** EXCLUDE mode on Pulse's own process tree, when Pulse is the only Pulse running.
+  - **Another Pulse instance running** (a second profile): EXCLUDE takes only one process tree, so it would capture
+    the other instance's playback. Spike S9 fed back exactly that way. Instead, INCLUDE every process with an
+    active audio session that isn't a Pulse process. The first cut's `stream/plan.rs` does this.
+  - If the shared window's process can't be identified, a window share uses the screen-share rules.
+    - Spike S8 found the track label is `window:<id>:0`, never the window title, so the label never identifies it.
+    - The process has to come from the window handle, or not at all.
+  - Known gap: EXCLUDE also captures other voice apps (a Teams or Discord call running beside Pulse). S9 ran with a
+    Teams call open. Nothing in v1 filters them.
   - Stereo Opus at 48 kHz, about 96-128 kbps. This needs the rust-sdks #1018 stereo patch.
   - **Mute stream audio** stops sending audio without ending the stream.
 
@@ -209,6 +231,9 @@ event). The client unpublishes, Rust stops the audio connection, and the server 
   - `dynacast: true`;
   - the viewer's SDP answer carries `rtx-time=300` on the RTX codec;
   - `<video>` with hardware decode.
+    - Pulse can't check it in-app: Chromium leaves `decoderImplementation` and `powerEfficientDecoder` out of
+      inbound-rtp stats, even after a `getUserMedia` call (S7).
+    - Task Manager showed Video Decode at about 40 % for 1440p55 on a 2080 Ti.
 - **Upscaling:** when the decoded size is smaller than the tile, a WebGL pass draws it with Lanczos or FSR1, never the
   browser's bilinear scaling. Text streams (15 fps) are never downscaled.
 - **Pop out:** opens a new Tauri window with its own page.
@@ -299,7 +324,10 @@ The server keeps live-stream state in memory, per channel:
   - encode time per frame (`totalEncodeTime / framesEncoded`);
   - `qualityLimitationReason == 'cpu'`.
 - **Strain** means any of these for 3 samples in a row (6 s):
-  - sent fps below 85% of target;
+  - sent fps below 85% of the fps the capture delivered. Spike S21 compared against the target instead, and `lowFps`
+    fired on every sample of a still screen (capture drops to about 2 fps when nothing changes) and of a game that
+    only rendered about 38 fps. Neither is the encoder struggling. A low capture rate alone is "still" or
+    "source-limited", never strain;
   - capture drops above 5%;
   - encode time above 70% of the frame interval;
   - CPU-limited.
@@ -309,8 +337,9 @@ The server keeps live-stream state in memory, per channel:
   setting and turns auto step-down off for the rest of this stream.
 - **There is no automatic step-up.** The card shows "Lowered to 30 fps, **try 60 again**".
 - **Off switch:** Settings → Streaming → "Lower quality automatically when my PC struggles" (on by default).
-- The state machine is a pure, unit-tested function. Spike S21 checks that these signals fire before the game visibly
-  stutters, and tunes the thresholds.
+- The state machine is a pure, unit-tested function. Spike S21 found the sent-vs-target signal wrong (above). Whether
+  the corrected signals fire before the game visibly stutters still needs a two-PC run; the first cut ships no
+  step-down.
 
 ### 6.3 Health
 
@@ -320,7 +349,12 @@ The server keeps live-stream state in memory, per channel:
   - 🟠 or 🔴 with a cause: **"your upload"** (bitrate held under 70% of target for 10 s, rising round-trip time, or
     loss above 2%) or **"your PC"** (the strain signals in §6.2).
 - **Viewer:** the same dot in the stats overlay. **"Your connection"** means receive-side loss, jitter or a frozen
-  picture with the streamer healthy; **"the streamer"** means the streamer's `StreamUpdated` health is amber or red.
+  picture with the streamer healthy.
+  - A still stream isn't frozen. WebRTC's `freezeCount` counted 31 freezes (23 s) in a minute of a still screen, with
+    0 loss (S4/S9).
+  - "Frozen" needs loss, NACKs or PLIs alongside it, or a streamer whose capture is producing frames.
+  - The first cut's overlay already shows a still screen neutrally (`fpsNote 'still'`).
+- **Viewer, "the streamer":** the streamer's `StreamUpdated` health is amber or red.
   - The streamer's client sends its health to the server every 10 s and on every change. The server includes it in
     `StreamUpdated`.
 - The rules are pure functions, tested against recorded stats fixtures.
