@@ -53,6 +53,12 @@ const PREVIEW_W = 480
 const PREVIEW_H = 270
 const PREVIEW_FIRST_MS = 1_000
 const PREVIEW_EVERY_MS = 15_000
+/**
+ * LiveKit closing `#a` more often than this is a fight, not bad luck (the same account signed in
+ * twice: each `#a` join kicks the other's): stop reconnecting, or the two clients loop forever.
+ */
+const AUDIO_RECONNECTS_MAX = 3
+const AUDIO_RECONNECT_WINDOW_MS = 60_000
 
 // Not reactive: handles the UI never reads.
 let roomChannel: string | null = null
@@ -60,6 +66,8 @@ let connecting: { channelId: string; p: Promise<StreamRoom> } | null = null
 let liveTrack: LocalVideoTrack | null = null
 /** The shared window's title while live with stream audio (`null`: a screen), for an audio restart. */
 let liveWindowTitle: string | null = null
+/** When LiveKit last closed `#a` under us, within `AUDIO_RECONNECT_WINDOW_MS`. */
+let audioClosedAt: number[] = []
 let stopPreview: (() => void) | null = null
 let stopOutDiag: (() => void) | null = null
 let stopInDiag: (() => void) | null = null
@@ -353,9 +361,17 @@ export const streamApi = {
     await streamCmd.audioLeave(channelId).catch(logError('audio_leave_error'))
   },
 
-  /** LiveKit closed the `#a` connection under us: connect again once, for what we share and watch. */
+  /** LiveKit closed the `#a` connection under us: connect again once, for what we share and watch (up to `AUDIO_RECONNECTS_MAX` a minute). */
   async onAudioClosed(channelId: string) {
     streamCmd.log({ ev: 'audio_closed' })
+    const now = Date.now()
+    audioClosedAt = [...audioClosedAt.filter((t) => now - t < AUDIO_RECONNECT_WINDOW_MS), now]
+    if (audioClosedAt.length > AUDIO_RECONNECTS_MAX) {
+      streamCmd.log({ ev: 'audio_reconnect_given_up' })
+      const ours = stream.live?.channelId === channelId && stream.live.audio
+      if (ours || stream.watching?.channelId === channelId) stream.notice = 'Stream audio stopped'
+      return
+    }
     const live = stream.live
     if (live?.channelId === channelId && live.audio) {
       try {

@@ -178,6 +178,26 @@ describe('stream audio closed by LiveKit', () => {
     expect(calls('stream_audio_stop')).toEqual([undefined])
   })
 
+  it('gives_up_after_three_closes_in_a_minute', async () => {
+    // e.g. the same account signed in twice: each `#a` join kicks the other
+    const { streamApi, stream } = await goneLive(true)
+    core.calls = []
+    for (let i = 0; i < 4; i++) await streamApi.onAudioClosed('c1')
+    expect(calls('stream_audio_start')).toHaveLength(3)
+    expect(stream.notice).toBe('Stream audio stopped')
+  })
+
+  it('reconnects_again_once_the_minute_is_up', async () => {
+    const { streamApi } = await goneLive(true)
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+    for (let i = 0; i < 4; i++) await streamApi.onAudioClosed('c1')
+    core.calls = []
+    now.mockReturnValue(1_000_000 + 60_000)
+    await streamApi.onAudioClosed('c1')
+    expect(calls('stream_audio_start')).toHaveLength(1)
+    now.mockRestore()
+  })
+
   it('watches_the_stream_audio_again', async () => {
     const { streamApi } = await load()
     fake.connect = async () => fakeRoom()
