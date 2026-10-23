@@ -170,7 +170,7 @@
     <div class="replying">Replying to <strong>{replyingTo}</strong>
       <button aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={13} /></button></div>
   {/if}
-  <textarea bind:this={box} bind:value={text} rows="1" {placeholder} aria-label={placeholder} onkeydown={key} oninput={input} onclick={syncCaret} onkeyup={(e) => { if (e.key.startsWith("Arrow") && !open) syncCaret() }} maxlength="4000"></textarea>
+  <textarea bind:this={box} bind:value={text} rows="1" {placeholder} aria-label={placeholder} onkeydown={key} oninput={input} onclick={syncCaret} onkeyup={(e) => { if (e.key.startsWith("Arrow") && !shown) syncCaret() }} maxlength="4000"></textarea>
   <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={openPicker}><Icon name="smile" size={20} /></button>
   {#if picking}
     <div use:clickOutside={() => (picking = false)} style={pickStyle}>

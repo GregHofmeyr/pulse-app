@@ -38,6 +38,7 @@ function type(box: HTMLTextAreaElement, value: string) {
 }
 const press = (box: HTMLTextAreaElement, key: string) => {
   box.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
+  box.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true }))
   flushSync()
 }
 const options = () => [...document.querySelectorAll('[aria-label="Insert emoji"] [role=option]')].map((o) => o.textContent!.trim())
