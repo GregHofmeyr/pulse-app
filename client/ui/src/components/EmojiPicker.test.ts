@@ -113,6 +113,27 @@ describe('EmojiPicker', () => {
     expect([...first.querySelectorAll('.cell')].map((c) => c.getAttribute('data-key'))).toEqual(['👍', '👍🏽'])
   })
 
+  it('frequent_dedupes_fe0f_variants', () => {
+    app.state = { ...emptyState(), frequentEmoji: ['❤️', '❤', '👍', '👍'] }
+    open()
+    const first = document.querySelector('[data-section="frequent"]')!
+    const cells = [...first.querySelectorAll('.cell')]
+    expect(cells.map((c) => c.getAttribute('data-key'))).toEqual(['❤', '👍'])
+    expect(cells[0].querySelector('img')!.getAttribute('src')).toBe('/emoji/2764.svg')
+  })
+
+  it('frequent_fills_to_27_past_unusable_keys', () => {
+    const smileys = Array.from({ length: 30 }, (_, i) => String.fromCodePoint(0x1f600 + i))
+    app.state = {
+      ...emptyState(),
+      frequentEmoji: ['custom:gone', 'custom:b', 'custom:zzz', ...smileys],
+      customEmoji: { gone: custom('gone', 'S1', 'gone', null), b: custom('b', 'S2', 'theirs') },
+    }
+    open()
+    const first = document.querySelector('[data-section="frequent"]')!
+    expect([...first.querySelectorAll('.cell')].map((c) => c.getAttribute('data-key'))).toEqual(smileys.slice(0, 27))
+  })
+
   it('skin_tone_applies_to_toned_emoji', () => {
     open()
     const wave = byShortcode('wave')!

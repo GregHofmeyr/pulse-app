@@ -323,4 +323,10 @@ describe('reactions and custom emoji', () => {
     s = applyEvent(s, { t: 'EmojiCreated', d: { emoji: { ...pog, id: 'E2', name: 'new' } } }, 0)
     expect(Object.keys(s.customEmoji)).toEqual(['E1', 'E2'])
   })
+
+  it('replaces the frequent list on FrequentEmoji', () => {
+    const s0 = applyReady(emptyState(), ready({ frequent_emoji: ['👍', '😂'] }))
+    const s = applyEvent(s0, { t: 'FrequentEmoji', d: { user_id: 'U1', frequent_emoji: ['🎉', '👍'] } }, 0)
+    expect(s.frequentEmoji).toEqual(['🎉', '👍'])
+  })
 })

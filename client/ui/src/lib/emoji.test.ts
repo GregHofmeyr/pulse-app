@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { byShortcode, customToken, groups, mediaUrl, reactionKey, search, TOKEN_RE, twemojiUrl, withSkin } from './emoji'
+import { byShortcode, canonicalKey, customToken, groups, mediaUrl, reactionKey, search, standard, TOKEN_RE, twemojiUrl, withSkin } from './emoji'
 import type { CustomEmoji } from './protocol/CustomEmoji'
 
 const custom = (name: string, over: Partial<CustomEmoji> = {}): CustomEmoji => ({
@@ -79,5 +79,24 @@ describe('custom emoji tokens', () => {
   it('keys reactions by unicode or custom id', () => {
     expect(reactionKey(byShortcode('thumbsup')!)).toBe('👍')
     expect(reactionKey(custom('pog'))).toBe('custom:01ABC')
+  })
+
+  it('keys drop FE0F, like the server', () => {
+    const heart = byShortcode('heart')!
+    expect(heart.u).toContain('\uFE0F')
+    expect(reactionKey(heart)).toBe('❤')
+    expect(reactionKey({ ...heart, u: '❤' })).toBe(reactionKey(heart))
+    expect(canonicalKey('🏃🏽‍♀️')).toBe('🏃🏽\u200D♀')
+    expect(canonicalKey('custom:01ABC')).toBe('custom:01ABC')
+  })
+
+  it('finds the Twemoji file from a canonical key, ZWJ sequences included', () => {
+    expect(twemojiUrl(canonicalKey('🏃🏽‍♀️'))).toBe('/emoji/1f3c3-1f3fd-200d-2640-fe0f.svg')
+    expect(twemojiUrl(canonicalKey('🏳️‍🌈'))).toBe('/emoji/1f3f3-fe0f-200d-1f308.svg')
+    const broken: string[] = []
+    for (const e of standard) for (const u of [e.u, ...(e.s ?? [])]) {
+      if (twemojiUrl(canonicalKey(u)) !== twemojiUrl(u)) broken.push(u)
+    }
+    expect(broken).toEqual([])
   })
 })

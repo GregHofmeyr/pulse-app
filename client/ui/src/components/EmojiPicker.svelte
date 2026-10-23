@@ -3,7 +3,7 @@
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { Server } from '../lib/protocol/Server'
   import { app } from '../lib/store.svelte'
-  import { groups, mediaUrl, reactionKey, search, standard, twemojiUrl, withSkin, type Std } from '../lib/emoji'
+  import { canonicalKey, groups, mediaUrl, reactionKey, search, standard, twemojiUrl, withSkin, type Std } from '../lib/emoji'
   import Icon from './Icon.svelte'
 
   let { onPick, onClose, servers, memberOf }: {
@@ -53,12 +53,10 @@
   // Keyed on the reaction key: frequent entries can be several tones of one base emoji.
   const keyOf = (e: Item) => reactionKey(e)
 
-  // A frequent key may be a skin-toned Unicode variant: index those back to their base emoji.
-  const byUnicode = new Map<string, Std>()
-  for (const e of standard) {
-    byUnicode.set(e.u, e)
-    for (const v of e.s ?? []) byUnicode.set(v, e)
-  }
+  // A frequent key is canonical (no FE0F) and may be a skin-toned variant: index each back to its
+  // base emoji and the variant as emoji-data spells it.
+  const byKey = new Map<string, { e: Std; u: string }>()
+  for (const e of standard) for (const u of [e.u, ...(e.s ?? [])]) byKey.set(canonicalKey(u), { e, u })
 
   const liveCustom = $derived(
     Object.values(app.state.customEmoji).filter((c) => c.hash !== null && memberOf.has(c.server_id)),
@@ -67,15 +65,19 @@
   const sections = $derived.by<Section[]>(() => {
     const out: Section[] = []
     const frequent: Item[] = []
-    for (const k of app.state.frequentEmoji) {
+    const seen = new Set<string>()
+    for (const raw of app.state.frequentEmoji) {
       if (frequent.length >= MAX_FREQUENT) break
+      const k = canonicalKey(raw)
+      if (seen.has(k)) continue
+      seen.add(k)
       if (k.startsWith('custom:')) {
         const c = app.state.customEmoji[k.slice(7)]
         if (c && c.hash !== null && memberOf.has(c.server_id)) frequent.push(c)
       } else {
-        const e = byUnicode.get(k)
+        const hit = byKey.get(k)
         // Show the variant that was actually used, not the base.
-        if (e) frequent.push(k === e.u ? e : { ...e, u: k })
+        if (hit) frequent.push(hit.u === hit.e.u ? hit.e : { ...hit.e, u: hit.u })
       }
     }
     if (frequent.length) out.push({ id: 'frequent', label: 'Frequently used', items: frequent })

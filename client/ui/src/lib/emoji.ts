@@ -39,8 +39,24 @@ export function search(q: string, custom: CustomEmoji[]): Array<Std | CustomEmoj
   return out.slice(0, MAX_RESULTS)
 }
 
-/** Twemoji's file rule: code points joined by '-', FE0F dropped unless the sequence is a ZWJ one. */
+/**
+ * The key an emoji is stored under, as the server computes it: U+FE0F only asks for emoji
+ * presentation, so `❤` and `❤️` are one emoji. `custom:<id>` keys never contain it.
+ */
+export function canonicalKey(u: string): string {
+  return u.replaceAll('\uFE0F', '')
+}
+
+// Canonical key -> the sequence as emoji-data spells it, which is what Twemoji's file names follow.
+const spelled = new Map<string, string>()
+for (const e of standard) for (const u of [e.u, ...(e.s ?? [])]) spelled.set(canonicalKey(u), u)
+
+/**
+ * Twemoji's file rule: code points joined by '-', FE0F dropped unless the sequence is a ZWJ one.
+ * A canonical key (FE0F stripped) is first spelled out again, so a ZWJ file that needs FE0F is found.
+ */
 export function twemojiUrl(u: string): string {
+  u = spelled.get(canonicalKey(u)) ?? u
   const cps = [...u].map((c) => c.codePointAt(0)!.toString(16))
   return `/emoji/${(cps.includes('200d') ? cps : cps.filter((c) => c !== 'fe0f')).join('-')}.svg`
 }
@@ -58,9 +74,9 @@ export function customToken(e: CustomEmoji): string {
 /** `<:name:id>` / `<a:name:id>`. Not global: clone with `new RegExp(TOKEN_RE, 'g')` to scan text. */
 export const TOKEN_RE = /<(a?):([A-Za-z0-9_]{2,32}):([A-Za-z0-9]+)>/
 
-/** The key a reaction is stored under: the Unicode itself, or `custom:<id>`. */
+/** The key a reaction is stored under: the canonical Unicode, or `custom:<id>`. */
 export function reactionKey(e: Std | CustomEmoji): string {
-  return 'u' in e ? e.u : `custom:${e.id}`
+  return 'u' in e ? canonicalKey(e.u) : `custom:${e.id}`
 }
 
 /** "Big Pog!.gif" -> "Big_Pog": emoji names are 2-32 of [A-Za-z0-9_]. */

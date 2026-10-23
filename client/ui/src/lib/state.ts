@@ -236,6 +236,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     }
     case 'MutesChanged':
       return { ...s, mutes: e.d.mutes }
+    case 'FrequentEmoji':
+      return { ...s, frequentEmoji: e.d.frequent_emoji }
     case 'ConversationVisibility': {
       const { [e.d.channel_id]: _x, ...rest } = s.hidden
       return { ...s, hidden: e.d.hidden ? { ...rest, [e.d.channel_id]: true } : rest }
