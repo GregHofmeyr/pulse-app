@@ -39,19 +39,42 @@ function flip(s: AppState, channel: string, id: string, key: string, add: boolea
   }
 }
 
-/** Flips locally, then asks the server; a failure undoes the flip and is handed to `onError`. */
+const entry = (s: AppState, channel: string, id: string, key: string) =>
+  s.messages[channel]?.find((m) => m.id === id)?.reactions.find((r) => r.emoji === key)
+
+function setEntry(s: AppState, channel: string, id: string, key: string, e: ReactionSummary | null): AppState {
+  const list = s.messages[channel]
+  if (!list) return s
+  const put = (rs: ReactionSummary[]) => {
+    const rest = rs.filter((r) => r.emoji !== key)
+    if (!e) return rest
+    return rs.some((r) => r.emoji === key) ? rs.map((r) => (r.emoji === key ? e : r)) : [...rest, e]
+  }
+  return { ...s, messages: { ...s.messages, [channel]: list.map((m) => (m.id === id ? { ...m, reactions: put(m.reactions) } : m)) } }
+}
+
+/**
+ * Flips locally, then asks the server; a failure is handed to `onError`. On failure the server's
+ * reactor list is the truth: an event may have landed during the call (even an identical-looking one,
+ * e.g. the add committed but its response was lost), so decrementing blindly could drift the count.
+ * Only if that fetch fails too is the flip undone locally.
+ */
 export async function react(
   get: () => AppState, set: (s: AppState) => void,
   channel: string, id: string, key: string, add: boolean, meId: string, onError: (msg: string) => void,
 ): Promise<void> {
   const before = get()
-  const had = before.messages[channel]?.find((m) => m.id === id)?.reactions.find((r) => r.emoji === key)?.me ?? false
-  if (had === add) return
+  if ((entry(before, channel, id, key)?.me ?? false) === add) return
   set(flip(before, channel, id, key, add, meId))
   try {
     await (add ? api.addReaction(id, key) : api.removeReaction(id, key))
   } catch (e) {
-    set(flip(get(), channel, id, key, !add, meId))
+    try {
+      const ids = await api.listReactors(id, key)
+      set(setEntry(get(), channel, id, key, ids.length ? { emoji: key, count: ids.length, me: ids.includes(meId) } : null))
+    } catch {
+      set(flip(get(), channel, id, key, !add, meId))
+    }
     onError(errorText(e))
   }
 }

@@ -60,7 +60,7 @@ describe('ReactionRow', () => {
     expect(document.querySelector('.chip img')).toBeNull()
   })
 
-  it('hover lists reactors once per count', async () => {
+  it('hover lists reactors, fetching fresh on each hover', async () => {
     invoke.mockResolvedValue(['U2', 'U3'])
     show(msg({ reactions: [{ emoji: '👍', count: 2, me: false }] }))
     const c = chips()[0]
@@ -69,9 +69,52 @@ describe('ReactionRow', () => {
     flushSync()
     expect(document.querySelector('.tip')?.textContent).toBe('U2 and U3')
     c.dispatchEvent(new Event('pointerleave'))
+    invoke.mockResolvedValue(['U2', 'U4']) // one left, one joined: same count
     c.dispatchEvent(new Event('pointerenter'))
     await new Promise((r) => setTimeout(r, 0))
-    expect(invoke.mock.calls.filter((x) => x[0] === 'list_reactors')).toHaveLength(1)
+    flushSync()
+    expect(document.querySelector('.tip')?.textContent).toBe('U2 and U4')
+    expect(invoke.mock.calls.filter((x) => x[0] === 'list_reactors')).toHaveLength(2)
+  })
+
+  it('failure after an event landed takes the server list, not a blind decrement', async () => {
+    // Someone else's event (count 2, excludes me) arrives mid-flight, then add fails.
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'add_reaction') {
+        app.state = { ...app.state, messages: { C1: [{ ...cur(), reactions: [{ emoji: '🎉', count: 4, me: true }] }] } }
+        throw 'boom'
+      }
+      if (cmd === 'list_reactors') return ['U2', 'U3']
+      return undefined
+    })
+    show(msg({ reactions: [{ emoji: '🎉', count: 2, me: false }] }))
+    const { react } = await import('../lib/reactions')
+    await react(() => app.state, (s) => (app.state = s), 'C1', 'M1', '🎉', true, 'U1', onError)
+    expect(cur().reactions).toEqual([{ emoji: '🎉', count: 2, me: false }])
+    expect(onError).toHaveBeenCalledOnce()
+  })
+
+  it('failure with no event and an unreachable reactor list undoes the flip', async () => {
+    invoke.mockRejectedValue('offline')
+    show(msg({ reactions: [{ emoji: '🎉', count: 2, me: false }] }))
+    const { react } = await import('../lib/reactions')
+    await react(() => app.state, (s) => (app.state = s), 'C1', 'M1', '🎉', true, 'U1', onError)
+    expect(cur().reactions).toEqual([{ emoji: '🎉', count: 2, me: false }])
+  })
+
+  it('failure after my own event landed keeps the committed reaction', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'add_reaction') {
+        app.state = { ...app.state, messages: { C1: [{ ...cur(), reactions: [{ emoji: '🎉', count: 3, me: true }] }] } }
+        throw 'response lost'
+      }
+      if (cmd === 'list_reactors') return ['U1', 'U2', 'U3']
+      return undefined
+    })
+    show(msg({ reactions: [{ emoji: '🎉', count: 2, me: false }] }))
+    const { react } = await import('../lib/reactions')
+    await react(() => app.state, (s) => (app.state = s), 'C1', 'M1', '🎉', true, 'U1', onError)
+    expect(cur().reactions).toEqual([{ emoji: '🎉', count: 3, me: true }])
   })
 })
 

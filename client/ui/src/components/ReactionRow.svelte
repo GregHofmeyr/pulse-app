@@ -18,8 +18,6 @@
     onError?: (msg: string) => void
   } = $props()
 
-  // Reactors per message+emoji; the key carries the count and `me`, so the next event for it drops the entry.
-  const cache = new Map<string, string[]>()
   let tipFor = $state<string | null>(null)
   let tipText = $state('')
   let animated = $state<string | null>(null)
@@ -32,21 +30,16 @@
     void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, add, meId, onError)
   }
 
-  async function hover(key: string, count: number, me: boolean) {
+  // Fetched fresh on every hover: a cache could not tell "one left, one joined" from no change.
+  async function hover(key: string, count: number) {
     tipFor = key
-    const ck = `${message.id}|${key}|${count}|${me}`
-    let ids = cache.get(ck)
-    if (!ids) {
-      tipText = '…'
-      try {
-        ids = await api.listReactors(message.id, key)
-        cache.set(ck, ids)
-      } catch {
-        if (tipFor === key) tipText = ''
-        return
-      }
+    tipText = '…'
+    try {
+      const ids = await api.listReactors(message.id, key)
+      if (tipFor === key) tipText = tooltipText(ids.map((id) => nameOf(id)), count)
+    } catch {
+      if (tipFor === key) tipText = ''
     }
-    if (tipFor === key) tipText = tooltipText(ids.map((id) => nameOf(id)), count)
   }
 
   function pick(e: Std | CustomEmoji) {
@@ -69,7 +62,7 @@
         <button
           class="chip" class:mine={r.me} type="button" aria-pressed={r.me}
           onclick={() => toggle(r.emoji, !r.me)}
-          onpointerenter={() => { animated = r.emoji; void hover(r.emoji, r.count, r.me) }}
+          onpointerenter={() => { animated = r.emoji; void hover(r.emoji, r.count) }}
           onpointerleave={() => { animated = null; tipFor = null }}
         >
           {#if !custom}
