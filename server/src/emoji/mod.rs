@@ -47,17 +47,26 @@ fn from_row(
     })
 }
 
-/// 2-32 characters of letters, digits and `_`.
+/// 2-32 characters of letters, digits and `_`, exactly as given.
 pub fn clean_name(name: &str) -> AppResult<&str> {
-    let n = name.trim();
-    let ok =
-        (2..=32).contains(&n.len()) && n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
+    let ok = (2..=32).contains(&name.len())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
     if !ok {
         return Err(AppError::BadRequest(
             "emoji names are 2-32 letters, numbers or underscores".into(),
         ));
     }
-    Ok(n)
+    Ok(name)
+}
+
+/// The key an emoji is stored under, for reactions and usage alike. U+FE0F only asks for emoji
+/// presentation, so `❤` and `❤️` are one emoji; `custom:<id>` keys are kept as they are.
+pub fn canonical_key(key: &str) -> String {
+    if key.starts_with("custom:") {
+        key.to_string()
+    } else {
+        key.replace('\u{FE0F}', "")
+    }
 }
 
 /// Every server's emoji, deleted ones included (without a hash).
@@ -95,6 +104,7 @@ pub async fn record_use_at(
 ) -> AppResult<()> {
     let at = now.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
     for emoji in emojis {
+        let emoji = &canonical_key(emoji);
         let prev: Option<(f64, String)> = sqlx::query_as(
             "SELECT score, last_used_at FROM emoji_usage WHERE user_id = ? AND emoji = ?",
         )

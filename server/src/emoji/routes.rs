@@ -19,27 +19,34 @@ pub fn router() -> Router<AppState> {
         .route("/emoji/{id}", patch(rename).delete(delete))
 }
 
+fn upload_missing() -> AppError {
+    AppError::BadRequest("that upload wasn't found; upload the image again".into())
+}
+
 fn taken(e: sqlx::Error) -> AppError {
     match &e {
         sqlx::Error::Database(d) if d.is_unique_violation() => {
             AppError::Conflict("this server already has an emoji with that name".into())
         }
+        // The media row went between the check and the insert.
+        sqlx::Error::Database(d) if d.is_foreign_key_violation() => upload_missing(),
         _ => e.into(),
     }
 }
 
-/// The emoji, if `me` may change it: members of its server only. Deleted ones are gone (404).
+/// The emoji, if `me` may change it: members of its server only. Deleted or missing ones are
+/// gone (404) for everyone.
 async fn editable(
     s: &AppState,
     me: pulse_protocol::ids::UserId,
     id: &str,
 ) -> AppResult<CustomEmoji> {
     let emoji = load(&s.db, id).await?.ok_or(AppError::NotFound)?;
-    if !is_server_member(&s.db, emoji.server_id, me).await? {
-        return Err(AppError::Forbidden);
-    }
     if emoji.hash.is_none() {
         return Err(AppError::NotFound);
+    }
+    if !is_server_member(&s.db, emoji.server_id, me).await? {
+        return Err(AppError::Forbidden);
     }
     Ok(emoji)
 }
@@ -54,22 +61,21 @@ async fn create(
         return Err(AppError::Forbidden);
     }
     let name = clean_name(&req.name)?;
-    let media: Option<(i64,)> = if valid_hash(&req.media_hash) {
+    if !valid_hash(&req.media_hash) {
+        return Err(upload_missing());
+    }
+    let id = next_ulid().to_string();
+    // Checked under the write lock, so cleanup can't remove the media before the insert.
+    let mut tx = begin_write(&s.db).await?;
+    let media: Option<(i64,)> =
         sqlx::query_as("SELECT frames FROM media WHERE hash = ? AND kind = ?")
             .bind(&req.media_hash)
             .bind(MediaKind::Emoji.as_str())
-            .fetch_optional(&s.db)
-            .await?
-    } else {
-        None
-    };
+            .fetch_optional(&mut *tx)
+            .await?;
     let Some((frames,)) = media else {
-        return Err(AppError::BadRequest(
-            "that upload wasn't found; upload the image again".into(),
-        ));
+        return Err(upload_missing());
     };
-    let id = next_ulid().to_string();
-    let mut tx = begin_write(&s.db).await?;
     let live: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM custom_emoji WHERE server_id = ? AND deleted_at IS NULL",
     )

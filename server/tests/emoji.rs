@@ -373,3 +373,199 @@ async fn frequent_ranks_with_decay() {
             .is_empty()
     );
 }
+
+async fn patch_name(app: &TestApp, token: &str, id: &str, name: &str) -> reqwest::Response {
+    app.http
+        .patch(app.url(&format!("/emoji/{id}")))
+        .bearer_auth(token)
+        .json(&json!({ "name": name }))
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn delete_emoji(app: &TestApp, token: &str, id: &str) -> reqwest::Response {
+    app.http
+        .delete(app.url(&format!("/emoji/{id}")))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn names_are_not_trimmed() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    let media = upload(&app, &alex).await;
+    for bad in [" pog ", "pog ", " pog", "pog\n"] {
+        let r = create(&app, &alex, srv.id, bad, &media.hash).await;
+        assert_eq!(r.status(), 400, "{bad:?}");
+    }
+    let e = create_ok(&app, &alex, srv.id, "pog", &media.hash).await;
+    assert_eq!(patch_name(&app, &alex, &e.id, " kek ").await.status(), 400);
+}
+
+#[tokio::test]
+async fn rename_validates_and_conflicts() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    let media = upload(&app, &alex).await;
+    let pog = create_ok(&app, &alex, srv.id, "pog", &media.hash).await;
+    create_ok(&app, &alex, srv.id, "kek", &media.hash).await;
+    for bad in ["a", "has space", "dash-ed", &"x".repeat(33)] {
+        assert_eq!(
+            patch_name(&app, &alex, &pog.id, bad).await.status(),
+            400,
+            "{bad}"
+        );
+    }
+    let r = patch_name(&app, &alex, &pog.id, "KEK").await;
+    assert_eq!(r.status(), 409);
+    // Same name in another case is just a rename of itself.
+    assert_eq!(patch_name(&app, &alex, &pog.id, "POG").await.status(), 200);
+}
+
+#[tokio::test]
+async fn deleted_emoji_is_404_for_everyone() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    let media = upload(&app, &alex).await;
+    let e = create_ok(&app, &alex, srv.id, "pog", &media.hash).await;
+    // Live: a non-member is refused.
+    assert_eq!(patch_name(&app, &sam, &e.id, "kek").await.status(), 403);
+    assert_eq!(delete_emoji(&app, &alex, &e.id).await.status(), 200);
+    assert_eq!(patch_name(&app, &sam, &e.id, "kek").await.status(), 404);
+    assert_eq!(delete_emoji(&app, &sam, &e.id).await.status(), 404);
+    assert_eq!(patch_name(&app, &sam, "nope", "kek").await.status(), 404);
+}
+
+#[tokio::test]
+async fn media_vanishing_during_create_is_400() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    let media = upload(&app, &alex).await;
+    // Stands in for a cleanup that lands between the media check and the insert.
+    sqlx::query(
+        "CREATE TRIGGER vanish BEFORE INSERT ON custom_emoji
+         BEGIN DELETE FROM media WHERE hash = NEW.media_hash; END",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let r = create(&app, &alex, srv.id, "pog", &media.hash).await;
+    assert_eq!(r.status(), 400);
+    assert!(error_message(r).await.contains("upload the image again"));
+}
+
+#[tokio::test]
+async fn usage_decays_on_write() {
+    let app = spawn().await;
+    let (alex, _) = register(&app, "alex").await;
+    let now = chrono::Utc::now();
+    let then = now - chrono::Duration::days(7);
+    sqlx::query(
+        "INSERT INTO emoji_usage (user_id, emoji, score, last_used_at) VALUES (?, 'x', 4.0, ?)",
+    )
+    .bind(alex.to_string())
+    .bind(then.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let mut conn = app.db.acquire().await.unwrap();
+    emoji::record_use_at(&mut conn, alex, &["x".to_string()], now)
+        .await
+        .unwrap();
+    let score: f64 = sqlx::query_scalar("SELECT score FROM emoji_usage WHERE user_id = ?")
+        .bind(alex.to_string())
+        .fetch_one(&mut *conn)
+        .await
+        .unwrap();
+    // 4·0.5^(7/14) + 1
+    let want = 4.0 * 0.5f64.sqrt() + 1.0;
+    assert!((score - want).abs() < 1e-6, "{score} vs {want}");
+}
+
+fn gif(frames: usize) -> Vec<u8> {
+    use image::codecs::gif::GifEncoder;
+    use image::{Delay, Frame};
+    let mut out = Vec::new();
+    {
+        let mut enc = GifEncoder::new(&mut out);
+        for i in 0..frames {
+            let img = RgbaImage::from_pixel(32, 32, Rgba([(i * 80) as u8, 40, 90, 255]));
+            enc.encode_frame(Frame::from_parts(
+                img,
+                0,
+                0,
+                Delay::from_numer_denom_ms(50, 1),
+            ))
+            .unwrap();
+        }
+    }
+    out
+}
+
+/// Ages every media row past the hourly job's one-day grace.
+async fn age_media(app: &TestApp) {
+    sqlx::query("UPDATE media SET created_at = '2026-01-01T00:00:00.000Z'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+}
+
+const DAY: Duration = Duration::from_secs(24 * 3600);
+
+#[tokio::test]
+async fn deleted_animated_emoji_media_is_cleaned() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    let r = app
+        .http
+        .post(app.url("/media/emoji"))
+        .bearer_auth(&alex)
+        .body(gif(3))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let media: MediaInfo = r.json().await.unwrap();
+    let still = media.still_hash.clone().unwrap();
+    let e = create_ok(&app, &alex, srv.id, "dance", &media.hash).await;
+    assert!(e.animated);
+    age_media(&app).await;
+    let dir = &app.cfg.media_dir;
+    assert_eq!(media::cleanup(&app.db, dir, DAY).await.unwrap(), 0);
+
+    assert_eq!(delete_emoji(&app, &alex, &e.id).await.status(), 200);
+    assert_eq!(media::cleanup(&app.db, dir, DAY).await.unwrap(), 2);
+    assert!(!media::path_for(dir, &media.hash).exists());
+    assert!(!media::path_for(dir, &still).exists());
+}
+
+#[tokio::test]
+async fn shared_media_survives_while_one_emoji_uses_it() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    let media = upload(&app, &alex).await;
+    let a = create_ok(&app, &alex, srv.id, "pog", &media.hash).await;
+    let b = create_ok(&app, &alex, srv.id, "kek", &media.hash).await;
+    age_media(&app).await;
+    let dir = &app.cfg.media_dir;
+    let file = media::path_for(dir, &media.hash);
+
+    assert_eq!(delete_emoji(&app, &alex, &a.id).await.status(), 200);
+    assert_eq!(media::cleanup(&app.db, dir, DAY).await.unwrap(), 0);
+    assert!(file.is_file());
+
+    assert_eq!(delete_emoji(&app, &alex, &b.id).await.status(), 200);
+    assert_eq!(media::cleanup(&app.db, dir, DAY).await.unwrap(), 1);
+    assert!(!file.exists());
+}
