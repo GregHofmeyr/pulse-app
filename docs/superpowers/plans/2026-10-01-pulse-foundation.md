@@ -18,7 +18,7 @@ server v1.13 / lk CLI v2.18).
 
 ## Global Constraints
 
-- Local ports (checked against MyCar 8080/8090/9000/9001/5434, gesturepad 8765, KDE Connect 1716, test-engine 5432, JC 5433): **LiveKit 7880 (HTTP/WS), 7881 (TCP), 7882/udp; pulse-app-server 7890; Vite dev 1420.**
+- Local ports (chosen to avoid ports commonly used by other dev tools): **LiveKit 7880 (HTTP/WS), 7881 (TCP), 7882/udp; pulse-app-server 7890; Vite dev 1420.**
 
 - Technical name `pulse-app` everywhere (crates `pulse-protocol`, `pulse-server`, `pulse-client`; binaries `pulse-app-server`, `pulse-app`); display name "Pulse" only in UI copy.
 - SQLite in WAL mode, `STRICT` tables; IDs are ULIDs stored as TEXT.
