@@ -206,8 +206,8 @@ ties each of those tokens to the session that asked for it:
     the same check on every participant carrying a grant ID: one that fails is removed (in the background, as above)
     and isn't shown as in the call. Grants whose connection LiveKit no longer reports are marked as ended (their leave
     notification was missed). Participants without a grant ID, connected with a token from before grant IDs existed,
-    are left alone. If LiveKit can't be reached at startup, the server retries every 5 seconds for a minute; if every
-    try fails, this check doesn't happen for that restart.
+    are left alone. If LiveKit can't be reached at startup, the server retries 12 times, about 5 to 10 seconds apart
+    (one to two minutes in all); if every try fails, this check doesn't happen for that restart.
 - **Lifetime.** Voice and stream tokens are valid for 10 minutes. LiveKit keeps refreshing the token of a participant
   that stays connected, so token expiry alone does not end a call. The join check above, not expiry, is what keeps a
   signed-out device out.
@@ -335,7 +335,7 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   - **Actions.** Every GitHub Action is pinned to a full commit SHA.
   - **Base images.** The server image's base images are pinned to an exact version and digest (`rust:1.98.1-bookworm`,
     `debian:bookworm-20261020-slim`). A pull request that changes the Dockerfile (a Dependabot bump included) gets a
-    CI build of the image (amd64, not published) before it can be merged.
+    CI build of the image (amd64, not published) on the pull request.
   - **Rust.** The toolchain is pinned to 1.98.1 in `rust-toolchain.toml`. CI and the release builds install exactly
     that version.
   - **Tauri CLI.** The Windows build uses the Tauri CLI at an exact version (2.12.1), installed from the UI's lockfile.
