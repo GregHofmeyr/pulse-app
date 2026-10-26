@@ -1,6 +1,6 @@
 # Call view and quality-of-life batch: design
 
-Date: 2026-10-26. Status: for the owner's review.
+Date: 2026-10-26. Status: for the owner's review (builder check done, answers folded in).
 
 Comes after: screenshare first cut (merged), reactions + emoji (merged). Comes before: watching several streams at
 once (its own later push, §2.5), quotes.
@@ -61,6 +61,18 @@ Discord and Root.
 - **Back** (button top-left) or **Esc** returns to the grid; the stream keeps playing as a preview.
 - Today's stream viewer becomes this full view (same controls and diagnostics overlay). There is no pop-out yet; that
   is a later push.
+
+### 2.2a Leaving the call view while watching (owner's choice)
+
+- Opening a text channel, DM or any other page while watching keeps the stream going: its audio keeps playing and a
+  small floating **mini-preview** sits in a corner of the main area (draggable between corners, remembered).
+- Clicking the mini-preview goes back to the call view (to full view if that's where you were). Its ✕ stops watching.
+- So the watched stream's video element belongs to the shell, not the grid: it moves between the grid tile, full view
+  and the mini-preview without restarting.
+- **Watch from elsewhere (my call):** "Watch" in a stream toast or the channel list's LIVE popover opens the call view
+  straight in full view on that stream.
+- **A stream in a voice channel you're not in (my call):** its tile shows **Join & watch**, which joins that voice
+  channel (leaving your current one, as joining always does) and then opens the stream.
 
 ### 2.3 Right-click menus (user tiles, stream tiles, and people in the channel list's voice section)
 
