@@ -178,3 +178,122 @@ tests.
   8. Reporting an issue: GitHub private vulnerability reporting / a security advisory on the repo (no email address).
 - [ ] Nothing claimed that is not true; anything that turned out false is either fixed (if trivially in scope) or
   listed as a known gap.
+
+---
+
+# Wave 2: no leftovers
+
+The first wave's review left follow-ups and known gaps. The owner's rule is "leave no leftovers", so this wave closes
+them. Same Global Constraints as above. Remaining deliberate known gaps (SECURITY.md must state them clearly): no
+end-to-end encryption; no MFA (owner decides separately); the deploy service user is in the `docker` group (mitigation:
+only the owner's SSH keys over Tailscale reach it).
+
+## Task 8: Clear client message for a refused connection (4006 / 429)
+
+**Files:** `client/src-tauri/src/gateway.rs` (connection state / Boot), the UI that renders connection state, tests.
+
+- [ ] A 4006 close shows "Too many devices connected — close Pulse on another device" (or equivalent wording matching the
+  app's tone) instead of "server unreachable"/plain "Reconnecting"; the client keeps retrying with backoff.
+- [ ] An HTTP 429 at upgrade shows "Too many attempts, retrying in Ns" with the real backoff delay.
+- [ ] Neither is LoggedOut/UpdateRequired. Tests in gateway.rs's existing style (state emitted) and a UI test for the
+  rendering.
+
+## Task 9: Re-encode Go Live preview frames
+
+**Files:** `server/src/streams/routes.rs` (put_preview/get_preview), `server/src/media/` (reuse its image pipeline and
+decode budgets), tests.
+
+- [ ] `put_preview` decodes the uploaded image under the media pipeline's decode budget, re-encodes it as WebP with
+  metadata stripped and fixed maximum dimensions (480×270, aspect kept, never upscaled), and stores/serves only the
+  re-encoded bytes. Undecodable or over-budget input → 4xx, nothing stored. Keep the 100 KB input cap.
+- [ ] Tests: a valid preview round-trips as WebP within 480×270; garbage/non-image/oversized-dimension input is rejected;
+  served bytes differ from uploaded bytes when the upload carried metadata (or is a different format).
+
+## Task 10: Revocation removes LiveKit participants; live-only revoked count
+
+**Files:** `server/src/auth/{routes,session}.rs`, `server/src/voice/`, `server/src/streams/`, LiveKit API client code
+already used by `voice/restore.rs`, tests.
+
+- [ ] On `/auth/logout` and `/auth/logout-others`, every LiveKit participant (voice room and stream rooms) that was
+  admitted with a token issued to a revoked session is removed via the LiveKit RoomService `RemoveParticipant`.
+  Participants admitted through sessions that stay valid are untouched (e.g. the caller's own voice on logout-others).
+  Voice identity is `<user ulid>`, stream identities `<user ulid>#v` / `#a` — the server must remember which session
+  each issued token belongs to (server-side only; session hashes never go into LiveKit tokens/metadata).
+- [ ] Failure to reach LiveKit must not fail the logout (log it; revocation of REST/gateway access already happened).
+- [ ] `revoked` counts only sessions that were live (unexpired); expired rows are still deleted.
+- [ ] Tests: a mock or the existing LiveKit test harness verifying RemoveParticipant calls for exactly the revoked
+  sessions' participants; count excludes expired.
+
+## Task 11: No binds = no hooks; hook-thread edge cases
+
+**Files:** `client/src-tauri/src/{hotkeys,hookwatch,keybinds}.rs`, tests.
+
+- [ ] Hooks are installed only when the switch is on AND at least one bind exists: adding the first bind installs, removing
+  the last uninstalls, the watchdog's gate treats "no binds" like "off". Startup with no binds installs nothing.
+  Recording a new bind while none exist must still work (decide how — e.g. recording happens in the webview, not via the
+  hooks; verify).
+- [ ] If the hook thread never started, `set_enabled(true)` (and the new bind-driven path) must not report "on, no
+  problem" — surface the failure.
+- [ ] The reinstall retry loop stops promptly when the switch goes off (or binds become empty): no input-API polling
+  while off, and `HOOKED` reflects reality.
+- [ ] Pure decision logic unit-tested; xwin clippy clean.
+
+## Task 12: Owner-only session.json fallback
+
+**Files:** `client/src-tauri/src/session.rs`, tests.
+
+- [ ] Unix: 0600 (already) — keep the test. Windows: the file's DACL grants access only to the current user (protected
+  DACL, inheritance off), set atomically at creation (no window where it's readable with inherited ACLs).
+- [ ] Test what's testable: a Windows-only test that reads back the DACL (compiles under xwin; runs on Windows CI if any)
+  and the Unix mode test.
+
+## Task 13: "Send crash reports automatically" toggle
+
+**Files:** `client/src-tauri/src/reports/`, settings storage + command, the Settings UI (Advanced), tests.
+
+- [ ] Toggle "Send crash reports automatically", default on, persisted. Off: a crash report is saved locally and on next
+  launch the user is offered "Send" / "Don't send" (the saved report is deleted either way after the choice). Manual bug
+  reports unchanged.
+- [ ] Tests: Rust (default on, off ⇒ not auto-sent and kept pending; choice paths), UI (toggle, the next-launch prompt).
+
+## Task 14: No third-party STUN handed to clients
+
+**Files:** `deploy/livekit.yaml`, `docker/livekit.yaml` (dev), deploy/README.md if relevant.
+
+- [ ] Find in LiveKit v1.13.10 source how ICE servers handed to clients are built and how STUN is used for external IP
+  discovery (`use_external_ip`). Configure prod (and dev, to test it) so clients are not given third-party STUN servers
+  (node's own TURN/STUN only, or none) while the server can still determine its public IP without a third party if
+  possible — without committing the server IP. If an unavoidable third-party lookup remains (e.g. server-side IP
+  discovery), say exactly what and where.
+- [ ] `just voice-it` passes with the dev config change (coordinate with any other worktree's LiveKit; never stop other
+  sessions' containers).
+
+## Task 15: Verify the libwebrtc download
+
+**Files:** `vendor/webrtc-sys/build.rs` (and whatever it needs), docs.
+
+- [ ] Pin the SHA-256 of the prebuilt libwebrtc archive for every target we build (linux x64 — CI + dev; windows msvc x64
+  — release; any other target a workflow builds) and verify it before extraction; mismatch fails the build with a clear
+  message. `LK_CUSTOM_WEBRTC` (local build) bypasses the download and the check, as now. Document how to bump.
+- [ ] Verify: a clean download path computes and checks the hash (e.g. remove the cached archive/dir in a scratch
+  `CARGO_TARGET_DIR` and build `webrtc-sys`), and a deliberately wrong hash fails.
+
+## Task 16: Deterministic login rate-limit test
+
+**Files:** `client/src-tauri/src/api.rs` tests (and whatever the root cause touches).
+
+- [ ] Find why `api::tests::too_many_failed_logins_says_slow_down` failed under load (systematic debugging; evidence),
+  fix the root cause so it is deterministic. Prove it with a stress loop (e.g. 50 runs while the machine is busy).
+
+## Task 17: SECURITY.md wave-2 update
+
+**Files:** `SECURITY.md`.
+
+- [ ] TURN: LiveKit v1.13.10's embedded TURN refuses restricted peers — verify against the tag
+  (`gh api 'repos/livekit/livekit/contents/pkg/service/turnrelay.go?ref=v1.13.10'` and `pkg/service/turn.go`):
+  `isRestrictedPeerIP` (loopback, link-local unicast/multicast, multicast, private, unspecified) applied in the TURN
+  PermissionHandler, `newTURNRelayPolicy` limiting relays to the node's own IPs + media ports, TCP relay rejected,
+  per-user allocation quota; our livekit.yaml sets no allow-list. State it with that source reference.
+- [ ] Reflect Tasks 8–16 (remove the closed gaps; describe the new behaviour precisely).
+- [ ] Known gaps left: no E2E encryption; no MFA; deploy user in the docker group (mitigation: only the owner's SSH keys
+  over Tailscale reach it). Every claim re-verified against the final code.
