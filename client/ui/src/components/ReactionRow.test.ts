@@ -218,7 +218,7 @@ describe('reaction toggles', () => {
     expect(cur().reactions).toEqual([{ emoji: '🎉', count: 1, me: true }])
   })
 
-  it('shift_click_toggles_and_keeps_the_picker_open', async () => {
+  it('smile_button_shift_click_toggles_and_keeps_the_picker_open', async () => {
     showItem(msg({ reactions: [{ emoji: '👍', count: 1, me: true }] }))
     ;(document.querySelector('.actions [aria-label="Add reaction"]') as HTMLButtonElement).click()
     flushSync()
@@ -231,6 +231,74 @@ describe('reaction toggles', () => {
     await settle()
     expect(invoke).toHaveBeenCalledWith('add_reaction', { messageId: 'M1', emoji: '🎉' })
     expect(document.querySelector('.cell')).not.toBeNull()
+  })
+
+  const shiftClick = (k: string) => cell(k).dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))
+  const openFromChip = () => {
+    ;(document.querySelector('.chip.add') as HTMLButtonElement).click()
+    flushSync()
+  }
+
+  it('chip_shift_click_removes_your_sole_reaction_and_the_picker_stays', async () => {
+    show(msg({ reactions: [{ emoji: '👍', count: 1, me: true }] }))
+    openFromChip()
+    shiftClick('👍')
+    await settle()
+    flushSync()
+    expect(calls('remove_reaction')).toHaveLength(1)
+    expect(cur().reactions).toEqual([])
+    expect(document.querySelector('.cell')).not.toBeNull() // the row emptied, the picker did not go
+    shiftClick('🎉')
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('add_reaction', { messageId: 'M1', emoji: '🎉' })
+    expect(document.querySelectorAll('.picker')).toHaveLength(1)
+  })
+
+  it('chip_shift_click_adds_when_not_yours_and_plain_click_closes', async () => {
+    show(msg({ reactions: [{ emoji: '👍', count: 1, me: false }] }))
+    openFromChip()
+    shiftClick('👍')
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('add_reaction', { messageId: 'M1', emoji: '👍' })
+    expect(document.querySelector('.cell')).not.toBeNull()
+    cell('🎉').click()
+    await settle()
+    expect(document.querySelector('.cell')).toBeNull()
+  })
+
+  it('a_closed_picker_does_not_reopen_after_the_row_empties_and_refills', async () => {
+    show(msg({ reactions: [{ emoji: '👍', count: 1, me: true }] }))
+    openFromChip()
+    cell('👍').click() // plain click: adds (already mine, no-op) and closes
+    flushSync()
+    expect(document.querySelector('.cell')).toBeNull()
+    app.state = { ...app.state, messages: { C1: [{ ...cur(), reactions: [] }] } }
+    flushSync()
+    app.state = { ...app.state, messages: { C1: [{ ...cur(), reactions: [{ emoji: '🎉', count: 1, me: false }] }] } }
+    flushSync()
+    expect(document.querySelector('.cell')).toBeNull()
+  })
+
+  it('rapid_shift_clicks_on_one_emoji_add_then_remove_in_order', async () => {
+    const add = deferred()
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'add_reaction' ? add.promise : undefined))
+    load(msg({ reactions: [] }))
+    cmp = mount(MessageItem, { target: document.body, props: {
+      get message() { return cur() }, // live, as in the app: the store's message, not a snapshot
+      name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false, mine: false,
+      onReply: () => {}, onEdit: async () => {}, onDelete: () => {}, meId: 'U1', onError,
+    } })
+    flushSync()
+    ;(document.querySelector('.actions [aria-label="Add reaction"]') as HTMLButtonElement).click()
+    flushSync()
+    shiftClick('🎉')
+    await tick() // the optimistic flip lands; the add itself stays in flight
+    shiftClick('🎉') // optimistic state already says mine: this one removes
+    await tick()
+    add.resolve(undefined)
+    await settle()
+    expect(invoke.mock.calls.map((c) => c[0]).filter((c) => c.endsWith('_reaction'))).toEqual(['add_reaction', 'remove_reaction'])
+    expect(cur().reactions).toEqual([])
   })
 
   it('a failed add removes the new chip again and reports the error', async () => {

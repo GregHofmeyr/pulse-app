@@ -3,7 +3,7 @@
   import EmojiPopover from './EmojiPopover.svelte'
   import ReactionRow from './ReactionRow.svelte'
   import { reactionKey, type Std } from '../lib/emoji'
-  import { react } from '../lib/reactions'
+  import { pickAdds, react } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import { renderMessage } from '../lib/markdown'
@@ -59,9 +59,7 @@
   function pick(e: Std | CustomEmoji, { keep }: { keep: boolean }) {
     if (!keep) picking = false
     const key = reactionKey(e)
-    // Shift-picking several toggles each one: a second pick of the same emoji takes it back.
-    const add = !keep || !message.reactions.some((r) => r.emoji === key && r.me)
-    void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, add, meId, onError)
+    void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, pickAdds(message.reactions, key, keep), meId, onError)
   }
   function key(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {

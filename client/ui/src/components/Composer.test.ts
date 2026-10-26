@@ -103,6 +103,8 @@ describe('Composer emoji', () => {
     await tick()
     expect(box.value).toBe('a😀 😂 b')
     expect(document.querySelector('.picker')).not.toBeNull()
+    expect(document.activeElement).not.toBe(box)
+    expect(box.selectionStart).toBe('a😀 😂 '.length)
   })
 
   it('plain_click_inserts_and_closes', async () => {

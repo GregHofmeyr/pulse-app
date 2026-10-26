@@ -106,7 +106,7 @@
 
   function pick(e: Item, keep = false) {
     onPick(picked(e), { keep })
-    if (keep) searchEl.focus()
+    if (keep) searchEl?.focus()
   }
 
   function jump(id: string) {
@@ -153,7 +153,7 @@
         pick(target, ev.shiftKey)
       }
     } else if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.target !== searchEl) {
-      searchEl.focus() // the keystroke then lands in the search box
+      searchEl?.focus() // the keystroke then lands in the search box
     }
   }
 
