@@ -24,6 +24,8 @@ use crate::auth::AuthUser;
 use crate::auth::extractor::BearerToken;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
+use crate::media::process::{PreviewError, preview, preview_format};
+use crate::media::routes::run_processing;
 
 const TICKET_TTL: Duration = Duration::from_secs(10 * 60);
 const HEIGHTS: [u16; 3] = [720, 1080, 1440];
@@ -206,7 +208,8 @@ pub async fn publish_viewers(s: &AppState, ch: ChannelId, streamer: UserId, view
         .await;
 }
 
-/// The streamer uploads their latest preview frame (480x270 WebP, sent every 15 s). It is decoded
+/// The streamer uploads their latest preview frame (480x270, sent every 15 s; WebP, or JPEG/PNG
+/// from a webview that can't encode WebP, labelled with its real type). It is decoded
 /// and re-encoded (see [`crate::media::process::preview`]): only the fresh WebP is kept and served,
 /// and an upload that can't be decoded within the limits leaves the last preview as it was.
 async fn put_preview(
@@ -217,13 +220,11 @@ async fn put_preview(
     body: Bytes,
 ) -> AppResult<StatusCode> {
     require_voice_member(&s, me, ch).await?;
-    let is_webp = headers
+    let declared = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.trim().eq_ignore_ascii_case("image/webp"));
-    if !is_webp {
-        return Err(AppError::UnsupportedMediaType);
-    }
+        .and_then(preview_format)
+        .ok_or(AppError::UnsupportedMediaType)?;
     if !s.limits.preview_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests);
     }
@@ -231,9 +232,12 @@ async fn put_preview(
     if s.streams.get(ch, me).is_none() {
         return Err(AppError::NotFound);
     }
-    let webp = crate::media::routes::run_processing(move || crate::media::process::preview(&body))
+    let webp = run_processing(move || preview(&body, declared))
         .await?
-        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+        .map_err(|e| match e {
+            PreviewError::Encode => anyhow::anyhow!("preview encode failed").into(),
+            e => AppError::BadRequest(e.to_string()),
+        })?;
     if !s.streams.set_preview(ch, me, Bytes::from(webp)) {
         return Err(AppError::NotFound);
     }

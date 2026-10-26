@@ -792,6 +792,63 @@ fn dimension_bomb() -> Vec<u8> {
     riff(body)
 }
 
+fn crc32(bytes: &[u8]) -> u32 {
+    let mut c = !0u32;
+    for &b in bytes {
+        c ^= u32::from(b);
+        for _ in 0..8 {
+            c = if c & 1 == 1 {
+                (c >> 1) ^ 0xEDB8_8320
+            } else {
+                c >> 1
+            };
+        }
+    }
+    !c
+}
+
+/// A valid PNG header claiming 100000×100000 RGBA (40 GB decoded), with a token IDAT.
+fn png_bomb() -> Vec<u8> {
+    let png_chunk = |kind: &[u8; 4], data: &[u8]| {
+        let mut out = (data.len() as u32).to_be_bytes().to_vec();
+        let mut crc_in = kind.to_vec();
+        crc_in.extend_from_slice(data);
+        out.extend_from_slice(&crc_in);
+        out.extend_from_slice(&crc32(&crc_in).to_be_bytes());
+        out
+    };
+    let mut ihdr = 100_000u32.to_be_bytes().to_vec();
+    ihdr.extend_from_slice(&100_000u32.to_be_bytes());
+    ihdr.extend_from_slice(&[8, 6, 0, 0, 0]);
+    let mut out = b"\x89PNG\r\n\x1a\n".to_vec();
+    out.extend(png_chunk(b"IHDR", &ihdr));
+    out.extend(png_chunk(
+        b"IDAT",
+        &[0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01],
+    ));
+    out.extend(png_chunk(b"IEND", &[]));
+    out
+}
+
+/// A baseline JPEG frame header claiming 65535×65535.
+fn jpeg_bomb() -> Vec<u8> {
+    let mut out = vec![
+        0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 8, 0xFF, 0xFF, 0xFF, 0xFF, 3,
+    ];
+    out.extend_from_slice(&[1, 0x22, 0, 2, 0x11, 1, 3, 0x11, 1]);
+    out.extend_from_slice(&[0xFF, 0xD9]);
+    out
+}
+
+fn jpeg(w: u32, h: u32) -> Vec<u8> {
+    let mut out = std::io::Cursor::new(Vec::new());
+    image::DynamicImage::ImageRgba8(rgba(w, h, [40, 80, 160]))
+        .to_rgb8()
+        .write_to(&mut out, ImageFormat::Jpeg)
+        .unwrap();
+    out.into_inner()
+}
+
 fn animated_webp() -> Vec<u8> {
     let mut enc = webp_animation::Encoder::new((32, 18)).unwrap();
     enc.add_frame(rgba(32, 18, [255, 0, 0]).as_raw(), 0)
@@ -887,20 +944,34 @@ async fn preview_is_fitted_within_480x270_and_never_upscaled() {
 }
 
 #[tokio::test]
-async fn a_png_labelled_webp_is_served_as_a_real_webp() {
+async fn png_and_jpeg_previews_are_served_as_real_webps() {
+    // What a webview without WebP encoding sends instead, under its real type.
     let app = spawn().await;
     let (l, (a_id, a), (_, b), _rx) = pair(&app).await;
     go_live(&app, &a, l.id, settings()).await;
-    let upload = png(480, 270);
-    assert_eq!(
-        put_preview(&app, &a, l.id, "image/webp", upload.clone())
-            .await
-            .status(),
-        204
-    );
-    let (bytes, w, h) = served(&app, &b, l.id, a_id).await;
-    assert_eq!((w, h), (480, 270));
-    assert_ne!(bytes, upload);
+    for (ct, upload) in [("image/png", png(480, 270)), ("image/jpeg", jpeg(480, 270))] {
+        let r = put_preview(&app, &a, l.id, ct, upload.clone()).await;
+        assert_eq!(r.status(), 204, "{ct}");
+        let (bytes, w, h) = served(&app, &b, l.id, a_id).await;
+        assert_eq!((w, h), (480, 270), "{ct}");
+        assert_ne!(bytes, upload, "{ct}");
+    }
+}
+
+#[tokio::test]
+async fn a_preview_must_be_what_its_content_type_says() {
+    let app = spawn().await;
+    let (l, (a_id, a), (_, b), _rx) = pair(&app).await;
+    go_live(&app, &a, l.id, settings()).await;
+    for (ct, body) in [
+        ("image/webp", png(48, 27)),
+        ("image/png", webp(48, 27, [0, 0, 0])),
+        ("image/jpeg", png(48, 27)),
+    ] {
+        let r = put_preview(&app, &a, l.id, ct, body).await;
+        assert_eq!(r.status(), 400, "{ct}");
+    }
+    assert_eq!(get_preview(&app, &b, l.id, a_id, None).await.status(), 404);
 }
 
 #[tokio::test]
@@ -910,18 +981,29 @@ async fn preview_rejects_unusable_images_and_stores_nothing() {
     go_live(&app, &a, l.id, settings()).await;
     let good = webp(480, 270, [1, 2, 3]);
     let truncated = good[..good.len() / 2].to_vec();
-    let bad: [(&str, Vec<u8>); 7] = [
-        ("garbage", b"RIFF....WEBPfake".to_vec()),
-        ("text", b"hello, this is not an image".to_vec()),
-        ("empty", Vec::new()),
-        ("truncated", truncated),
-        ("dimension bomb", dimension_bomb()),
-        ("over the side limit", webp(2000, 100, [1, 2, 3])),
-        ("animated", animated_webp()),
+    let bad: [(&str, &str, Vec<u8>); 10] = [
+        ("garbage", "image/webp", b"RIFF....WEBPfake".to_vec()),
+        (
+            "text",
+            "image/webp",
+            b"hello, this is not an image".to_vec(),
+        ),
+        ("empty", "image/webp", Vec::new()),
+        ("truncated", "image/webp", truncated),
+        ("webp dimension bomb", "image/webp", dimension_bomb()),
+        ("png dimension bomb", "image/png", png_bomb()),
+        ("jpeg dimension bomb", "image/jpeg", jpeg_bomb()),
+        (
+            "over the side limit",
+            "image/webp",
+            webp(2000, 100, [1, 2, 3]),
+        ),
+        ("png over the side limit", "image/png", png(100, 1921)),
+        ("animated", "image/webp", animated_webp()),
     ];
-    for (what, body) in &bad {
+    for (what, ct, body) in &bad {
         assert!(body.len() <= 100 * 1024, "{what}");
-        let r = put_preview(&app, &a, l.id, "image/webp", body.clone()).await;
+        let r = put_preview(&app, &a, l.id, ct, body.clone()).await;
         assert_eq!(r.status(), 400, "{what}");
         // nothing stored
         assert_eq!(
@@ -933,8 +1015,8 @@ async fn preview_rejects_unusable_images_and_stores_nothing() {
     // A rejected upload leaves the last good preview in place, untouched.
     put_preview(&app, &a, l.id, "image/webp", good).await;
     let before = served(&app, &b, l.id, a_id).await.0;
-    for (what, body) in bad {
-        let r = put_preview(&app, &a, l.id, "image/webp", body).await;
+    for (what, ct, body) in bad {
+        let r = put_preview(&app, &a, l.id, ct, body).await;
         assert_eq!(r.status(), 400, "{what}");
         assert_eq!(served(&app, &b, l.id, a_id).await.0, before, "{what}");
     }
@@ -962,12 +1044,18 @@ async fn preview_needs_you_live() {
 }
 
 #[tokio::test]
-async fn preview_rejects_big_or_non_webp() {
+async fn preview_rejects_big_or_unlisted_types() {
     let app = spawn().await;
     let (l, (a_id, a), _, _rx) = pair(&app).await;
     go_live(&app, &a, l.id, settings()).await;
     assert_eq!(
-        put_preview(&app, &a, l.id, "image/png", webp(48, 27, [0, 0, 0]))
+        put_preview(&app, &a, l.id, "image/gif", webp(48, 27, [0, 0, 0]))
+            .await
+            .status(),
+        415
+    );
+    assert_eq!(
+        put_preview(&app, &a, l.id, "text/plain", webp(48, 27, [0, 0, 0]))
             .await
             .status(),
         415

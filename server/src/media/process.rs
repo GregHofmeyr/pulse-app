@@ -32,8 +32,8 @@ pub const PREVIEW_MAX_INPUT: usize = 100 * 1024;
 /// Box a preview is fitted into (the client sends exactly this).
 pub const PREVIEW_W: u32 = 480;
 pub const PREVIEW_H: u32 = 270;
-/// Largest preview side decoded: 4x the box, far beyond what the client sends, and a 16th of the
-/// pixels an emoji may have, since a streamer sends one every 15 s.
+/// Largest preview side decoded: 4x the box and far beyond what the client sends. That is under a
+/// quarter of the pixels an emoji may have, since a streamer sends one every 15 s.
 const PREVIEW_MAX_SIDE: u32 = 1920;
 
 #[derive(Debug)]
@@ -89,26 +89,44 @@ fn limits_with_side(max_side: u32) -> Limits {
 pub enum PreviewError {
     #[error("the preview is too big (100 KB at most)")]
     TooBig,
-    #[error("the preview isn't a usable still image (WebP, PNG or JPEG, 1920×1920 at most)")]
+    #[error(
+        "the preview isn't a usable still image of its declared type (WebP, PNG or JPEG, 1920×1920 at most)"
+    )]
     Unusable,
+    /// Encoding failed: the server's fault, not the upload's.
+    #[error("the preview couldn't be encoded")]
+    Encode,
 }
 
-/// Re-encode a Go Live preview frame: sniff (WebP, PNG or JPEG; animations refused), check the
+/// The image format a preview's `Content-Type` declares, if it is one previews may be.
+pub fn preview_format(content_type: &str) -> Option<ImageFormat> {
+    match content_type.trim().to_ascii_lowercase().as_str() {
+        "image/webp" => Some(ImageFormat::WebP),
+        "image/png" => Some(ImageFormat::Png),
+        "image/jpeg" => Some(ImageFormat::Jpeg),
+        _ => None,
+    }
+}
+
+/// Re-encode a Go Live preview frame: sniff (it must be the `declared` format, one of WebP, PNG or
+/// JPEG; animations refused), check the
 /// header's dimensions before decoding, decode under the media limits, fit within
 /// [`PREVIEW_W`]×[`PREVIEW_H`] (aspect kept, never enlarged) and encode a fresh still WebP. Only
 /// pixels survive, so the upload's metadata and any extra chunks are gone. CPU-bound: call it off
 /// the async runtime.
-pub fn preview(input: &[u8]) -> Result<Vec<u8>, PreviewError> {
+pub fn preview(input: &[u8], declared: ImageFormat) -> Result<Vec<u8>, PreviewError> {
     if input.len() > PREVIEW_MAX_INPUT {
         return Err(PreviewError::TooBig);
     }
     let format = image::guess_format(input).map_err(|_| PreviewError::Unusable)?;
-    // The client asks its webview for WebP; PNG or JPEG are what a webview gives instead when it
-    // can't encode WebP.
-    if !matches!(
-        format,
-        ImageFormat::WebP | ImageFormat::Png | ImageFormat::Jpeg
-    ) {
+    // The client asks its webview for WebP, and falls back to JPEG when the webview can't encode
+    // WebP; PNG is that fallback's own fallback.
+    if format != declared
+        || !matches!(
+            format,
+            ImageFormat::WebP | ImageFormat::Png | ImageFormat::Jpeg
+        )
+    {
         return Err(PreviewError::Unusable);
     }
     let unusable = |_| PreviewError::Unusable;
@@ -135,7 +153,7 @@ pub fn preview(input: &[u8]) -> Result<Vec<u8>, PreviewError> {
     } else {
         resize(&img, nw, nh)
     };
-    encode(&[(fitted, 0)]).map_err(|_| PreviewError::Unusable)
+    encode(&[(fitted, 0)]).map_err(|_| PreviewError::Encode)
 }
 
 /// Process an emoji upload. CPU-bound: call it off the async runtime.
@@ -471,34 +489,63 @@ mod tests {
 
     #[test]
     fn preview_side_limit_is_inclusive() {
-        assert_eq!(dims(&preview(&webp_lossless(1920, 1)).unwrap()), (480, 1));
+        assert_eq!(
+            dims(&preview(&webp_lossless(1920, 1), ImageFormat::WebP).unwrap()),
+            (480, 1)
+        );
         assert!(matches!(
-            preview(&webp_lossless(1921, 1)),
+            preview(&webp_lossless(1921, 1), ImageFormat::WebP),
             Err(PreviewError::Unusable)
         ));
         assert!(matches!(
-            preview(&webp_lossless(1, 1921)),
+            preview(&webp_lossless(1, 1921), ImageFormat::WebP),
             Err(PreviewError::Unusable)
         ));
     }
 
     #[test]
     fn preview_accepts_png_and_jpeg_and_refuses_gif() {
-        assert_eq!(dims(&preview(&png(960, 540)).unwrap()), (480, 270));
+        assert_eq!(
+            dims(&preview(&png(960, 540), ImageFormat::Png).unwrap()),
+            (480, 270)
+        );
         let mut jpg = Cursor::new(Vec::new());
         image::DynamicImage::ImageRgba8(RgbaImage::from_pixel(64, 36, Rgba([5, 5, 5, 255])))
             .to_rgb8()
             .write_to(&mut jpg, ImageFormat::Jpeg)
             .unwrap();
-        assert_eq!(dims(&preview(jpg.get_ref()).unwrap()), (64, 36));
-        assert!(matches!(preview(&gif(1, 8)), Err(PreviewError::Unusable)));
+        assert_eq!(
+            dims(&preview(jpg.get_ref(), ImageFormat::Jpeg).unwrap()),
+            (64, 36)
+        );
+        assert!(matches!(
+            preview(&gif(1, 8), ImageFormat::Gif),
+            Err(PreviewError::Unusable)
+        ));
+    }
+
+    #[test]
+    fn preview_types_are_webp_png_and_jpeg_only() {
+        assert_eq!(preview_format("image/webp"), Some(ImageFormat::WebP));
+        assert_eq!(preview_format(" Image/PNG "), Some(ImageFormat::Png));
+        assert_eq!(preview_format("image/jpeg"), Some(ImageFormat::Jpeg));
+        assert_eq!(preview_format("image/gif"), None);
+        assert_eq!(preview_format("image/svg+xml"), None);
+        // and the bytes must agree with it
+        assert!(matches!(
+            preview(&png(8, 8), ImageFormat::WebP),
+            Err(PreviewError::Unusable)
+        ));
     }
 
     #[test]
     fn preview_over_the_input_cap_is_refused_unread() {
         let mut big = webp_lossless(8, 8);
         big.resize(PREVIEW_MAX_INPUT + 1, 0);
-        assert!(matches!(preview(&big), Err(PreviewError::TooBig)));
+        assert!(matches!(
+            preview(&big, ImageFormat::WebP),
+            Err(PreviewError::TooBig)
+        ));
     }
 
     #[test]

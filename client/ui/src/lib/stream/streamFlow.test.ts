@@ -358,3 +358,37 @@ describe('voice changes', () => {
     expect(calls('stream_audio_leave')).toEqual([{ keep: null }, { keep: 'c2' }])
   })
 })
+
+describe('preview encoding', () => {
+  /** A canvas whose `toBlob` only produces the types in `supported`, like a real webview (PNG otherwise). */
+  function fakeCanvas(supported: string[]) {
+    const toBlob = vi.fn((cb: (b: Blob | null) => void, type?: string) => {
+      const t = type && supported.includes(type) ? type : 'image/png'
+      cb(new Blob(['x'], { type: t }))
+    })
+    return { toBlob } as unknown as HTMLCanvasElement & { toBlob: typeof toBlob }
+  }
+
+  it('a_webview_with_webp_sends_webp', async () => {
+    const { previewBlob } = await load()
+    const canvas = fakeCanvas(['image/webp', 'image/jpeg'])
+    const blob = await previewBlob(canvas)
+    expect(blob?.type).toBe('image/webp')
+    expect(canvas.toBlob).toHaveBeenCalledTimes(1)
+  })
+
+  it('a_webview_without_webp_sends_jpeg_not_png', async () => {
+    // WebKitGTK hands back PNG for 'image/webp', and a busy 480x270 PNG can pass the 100 KB cap.
+    const { previewBlob } = await load()
+    const canvas = fakeCanvas(['image/jpeg'])
+    const blob = await previewBlob(canvas)
+    expect(blob?.type).toBe('image/jpeg')
+    expect(canvas.toBlob).toHaveBeenLastCalledWith(expect.any(Function), 'image/jpeg', 0.7)
+  })
+
+  it('no_blob_at_all_sends_nothing', async () => {
+    const { previewBlob } = await load()
+    const canvas = { toBlob: vi.fn((cb: (b: Blob | null) => void) => cb(null)) } as unknown as HTMLCanvasElement
+    expect(await previewBlob(canvas)).toBeNull()
+  })
+})

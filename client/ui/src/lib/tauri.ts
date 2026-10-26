@@ -81,8 +81,8 @@ export const streamCmd = {
   stop: (channelId: string) => invoke<void>('stream_stop', { channelId }),
   watch: (channelId: string, streamer: string) => invoke<void>('stream_watch', { channelId, streamer }),
   unwatch: (channelId: string, streamer: string) => invoke<void>('stream_unwatch', { channelId, streamer }),
-  /** `webpBase64` without the `data:` prefix. */
-  previewPut: (channelId: string, webpBase64: string) => invoke<void>('stream_preview_put', { channelId, webpBase64 }),
+  /** `imageBase64` (WebP, or JPEG/PNG where the webview can't encode WebP) without the `data:` prefix. */
+  previewPut: (channelId: string, imageBase64: string) => invoke<void>('stream_preview_put', { channelId, imageBase64 }),
   /** A `data:` URL, or null when the streamer hasn't sent one yet. */
   previewGet: (channelId: string, userId: string) => invoke<string | null>('stream_preview_get', { channelId, userId }),
   /** One JSON object, no newlines; Rust prefixes `share: `. */

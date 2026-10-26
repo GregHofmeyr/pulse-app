@@ -576,18 +576,22 @@ impl Api {
         .await
     }
 
+    /// Upload a preview frame, labelled with the type its bytes are (the server checks they agree).
     pub async fn put_preview(
         &self,
         token: &str,
         channel: ChannelId,
-        webp: Vec<u8>,
+        image: Vec<u8>,
     ) -> Result<(), ApiError> {
+        let Some(content_type) = preview_type(&image) else {
+            return Err(ApiError::Rejected("preview isn't WebP, PNG or JPEG".into()));
+        };
         Self::ok_empty(
             self.http
                 .put(format!("{}/streams/{channel}/preview", self.base))
                 .bearer_auth(token)
-                .header(reqwest::header::CONTENT_TYPE, "image/webp")
-                .body(webp)
+                .header(reqwest::header::CONTENT_TYPE, content_type)
+                .body(image)
                 .send()
                 .await,
         )
@@ -880,6 +884,18 @@ impl Api {
     }
 }
 
+/// The `Content-Type` of a preview frame, from its leading bytes: what a webview's canvas gives.
+fn preview_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else {
+        None
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1297,6 +1313,31 @@ mod tests {
                 .await
                 .is_err()
         );
+    }
+
+    #[tokio::test]
+    async fn a_png_preview_goes_out_as_png_and_comes_back_as_webp() {
+        // A webview that can't encode WebP gives PNG (or JPEG); it is labelled as what it is.
+        let app = testing::spawn().await;
+        let (api, token, uid, ch) = voice_fixture(&app, "alex").await;
+        app.voice.join(ch, uid, "PA_test");
+        api.go_live(&token, ch, settings()).await.unwrap();
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(48, 27, image::Rgba([1, 2, 3, 255]))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        api.put_preview(&token, ch, png.into_inner()).await.unwrap();
+        let got = api.get_preview(&token, ch, uid).await.unwrap().unwrap();
+        assert_eq!((&got[..4], &got[8..12]), (&b"RIFF"[..], &b"WEBP"[..]));
+    }
+
+    #[test]
+    fn preview_types_come_from_the_bytes() {
+        assert_eq!(preview_type(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
+        assert_eq!(preview_type(b"\x89PNG\r\n\x1a\n...."), Some("image/png"));
+        assert_eq!(preview_type(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
+        assert_eq!(preview_type(b"GIF89a"), None);
+        assert_eq!(preview_type(b""), None);
     }
 
     #[tokio::test]

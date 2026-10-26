@@ -125,7 +125,7 @@ function onTrackEnded() {
   void endLive(true)
 }
 
-/** Every 15 s while live: a 480×270 WebP of what we share, for the LIVE popover. */
+/** Every 15 s while live: a 480×270 WebP (JPEG where the webview has no WebP) of what we share, for the LIVE popover. */
 function startPreview(channelId: string, track: MediaStreamTrack): () => void {
   let stopped = false
   const video = document.createElement('video')
@@ -146,16 +146,9 @@ function startPreview(channelId: string, track: MediaStreamTrack): () => void {
     ctx.fillStyle = '#000'
     ctx.fillRect(0, 0, PREVIEW_W, PREVIEW_H)
     ctx.drawImage(video, (PREVIEW_W - w) / 2, (PREVIEW_H - h) / 2, w, h)
-    canvas.toBlob(
-      (blob) => {
-        if (!blob || stopped) return
-        blobBase64(blob)
-          .then((b64) => streamCmd.previewPut(channelId, b64))
-          .catch(logError('preview_error'))
-      },
-      'image/webp',
-      0.7,
-    )
+    previewBlob(canvas)
+      .then((blob) => (blob && !stopped ? blobBase64(blob).then((b64) => streamCmd.previewPut(channelId, b64)) : undefined))
+      .catch(logError('preview_error'))
   }
   const first = setTimeout(shot, PREVIEW_FIRST_MS)
   const every = setInterval(shot, PREVIEW_EVERY_MS)
@@ -165,6 +158,15 @@ function startPreview(channelId: string, track: MediaStreamTrack): () => void {
     clearInterval(every)
     video.srcObject = null
   }
+}
+
+/** The canvas as WebP; where the webview can't encode WebP (it hands back PNG, which for a busy
+ *  frame can pass the server's 100 KB cap), as JPEG instead. */
+export async function previewBlob(canvas: HTMLCanvasElement): Promise<Blob | null> {
+  const encode = (type: string) => new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, type, 0.7))
+  const webp = await encode('image/webp')
+  if (!webp || webp.type === 'image/webp') return webp
+  return encode('image/jpeg')
 }
 
 /** Base64 of a blob, without the `data:` prefix. */

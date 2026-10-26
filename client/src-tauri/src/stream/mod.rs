@@ -183,19 +183,19 @@ pub async fn stream_unwatch(
     core.check(&app, api.unwatch_stream(&token, channel_id, streamer).await)
 }
 
-/// `webp_base64` is the plain base64 of the WebP bytes (no `data:` prefix).
+/// `image_base64` is the plain base64 of the frame's WebP (or JPEG/PNG) bytes (no `data:` prefix).
 #[tauri::command]
 pub async fn stream_preview_put(
     app: AppHandle,
     core: State<'_, Core>,
     channel_id: ChannelId,
-    webp_base64: String,
+    image_base64: String,
 ) -> Result<(), ApiError> {
-    let webp = base64::engine::general_purpose::STANDARD
-        .decode(webp_base64.trim())
+    let image = base64::engine::general_purpose::STANDARD
+        .decode(image_base64.trim())
         .map_err(|_| ApiError::Rejected("preview isn't valid base64".into()))?;
     let (api, token) = core.current()?;
-    core.check(&app, api.put_preview(&token, channel_id, webp).await)
+    core.check(&app, api.put_preview(&token, channel_id, image).await)
 }
 
 /// The preview as a `data:image/webp;base64,...` URL, or `None` when there isn't one.
