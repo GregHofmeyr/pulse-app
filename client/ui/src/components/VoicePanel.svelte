@@ -41,7 +41,9 @@
     if (meId) saveShowEveryone(meId, on)
   }
   function openMenu(userId: string, e: MouseEvent | KeyboardEvent, anchor: HTMLElement) {
-    menu = { userId, ...menuPoint(e, anchor), opener: anchor }
+    // clicking the opener again closes its menu
+    if (e.type === 'click' && menu?.opener === anchor) menu = null
+    else menu = { userId, ...menuPoint(e, anchor), opener: anchor }
   }
   /** The watch in full view, when it's in this channel and still being watched. */
   const fullStreamer = $derived.by(() => {

@@ -252,8 +252,10 @@
   // Leaving voice (or losing the connection) while the Go Live dialog is open: drop the picked capture.
   $effect(() => {
     const p = goLiveUi.picked
-    if (p && !(voice.channelId === goLiveUi.channelId && voice.connection === 'connected')) {
-      p.track.stop()
+    const here = voice.channelId === goLiveUi.channelId && voice.connection === 'connected'
+    if (!here && (p || goLiveUi.channelId)) {
+      // a picker error or capture from a call you've left must not come back later
+      p?.track.stop()
       closeGoLive()
     }
   })

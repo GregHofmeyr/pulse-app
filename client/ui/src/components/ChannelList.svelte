@@ -65,7 +65,9 @@
   // the participant menu for someone in a voice channel (right-click, click, or the menu key on the focused row)
   let menu = $state<{ channelId: string; userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
   function openMenu(channelId: string, userId: string, e: MouseEvent | KeyboardEvent, anchor: HTMLElement) {
-    menu = { channelId, userId, ...menuPoint(e, anchor), opener: anchor }
+    // clicking the opener again closes its menu
+    if (e.type === 'click' && menu?.opener === anchor) menu = null
+    else menu = { channelId, userId, ...menuPoint(e, anchor), opener: anchor }
   }
   function occupantKey(e: KeyboardEvent, channelId: string, p: { userId: string; pending: boolean }) {
     if (e.target !== e.currentTarget || p.pending) return
@@ -114,7 +116,7 @@
     </button>
     {#each people as p (p.userId)}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="occupant" class:pending={p.pending} role="button" tabindex="0" aria-haspopup="menu" aria-label={p.name} data-user={p.userId}
+      <div class="occupant" class:pending={p.pending} role="button" tabindex="0" data-menu-toggle aria-haspopup="menu" aria-label={p.name} data-user={p.userId}
         oncontextmenu={(e) => { e.preventDefault(); if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
         onclick={(e) => { if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
         onkeydown={(e) => occupantKey(e, c.id, p)}>

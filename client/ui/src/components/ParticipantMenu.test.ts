@@ -13,7 +13,8 @@ import ChannelList from './ChannelList.svelte'
 import { app } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { voice, voiceApi } from '../lib/voice.svelte'
-import { stream, streamApi } from '../lib/stream/stream.svelte'
+import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
+import { goLiveUi } from '../lib/stream/golive.svelte'
 import { callView } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 
@@ -217,12 +218,13 @@ describe('ParticipantMenu', () => {
     expect(menu()).not.toBeNull()
   })
 
-  it('joining_re_applies_volumes_then_local_mutes', async () => {
-    voice.volumes = { U2: 150 }
+  it('joining_re_applies_volumes_then_local_mutes_without_a_blip', async () => {
+    voice.volumes = { U2: 150, U3: 120 }
     voice.localMutes = { U2: true }
     await voiceApi.join('V1')
     const calls = invoke.mock.calls.filter(([c]) => c === 'set_peer_volume').map(([, a]) => a)
-    expect(calls).toEqual([{ userId: 'U2', percent: 150 }, { userId: 'U2', percent: 0 }])
+    // a locally muted person never gets their remembered volume first (no audible blip)
+    expect(calls).toEqual([{ userId: 'U3', percent: 120 }, { userId: 'U2', percent: 0 }])
   })
 
   it('esc_closes_the_menu_without_leaving_full_view', async () => {
@@ -239,5 +241,157 @@ describe('ParticipantMenu', () => {
     flushSync()
     expect(menu()).toBeNull()
     expect(q('.full-view')).not.toBeNull()
+  })
+
+  const live = { channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false }, status: 'live' as const, viewers: [], started_at: '2026-10-26T10:00:00Z' }
+  const watchSam = async () => {
+    app.state = applyReady(emptyState(), { ...ready, streams: [live] })
+    await streamApi.watch('V1', 'U2')
+    mountPanel()
+    await settle()
+  }
+  const item = (id: string) => document.querySelector<HTMLElement>(`[data-item="${id}"]`)!
+
+  it('enter_picks_the_focused_item_once', () => {
+    mountPanel()
+    rightClick(q('[data-user="U2"]')!)
+    item('message').focus()
+    key(item('message'), 'Enter')
+    expect(onMessage).toHaveBeenCalledTimes(1)
+    expect(onMessage).toHaveBeenCalledWith('U2')
+    expect(menu()).toBeNull()
+  })
+
+  it('tab_closes_the_menu_and_returns_focus_to_the_opener', () => {
+    mountPanel()
+    const opener = q('[data-user="U2"] .avatar-btn')!
+    opener.focus()
+    key(opener, 'ContextMenu')
+    expect(menu()).not.toBeNull()
+    key(document.activeElement!, 'Tab')
+    expect(menu()).toBeNull()
+    expect(document.activeElement).toBe(opener)
+  })
+
+  it('moving_the_user_slider_clears_a_local_mute', async () => {
+    voice.localMutes = { U2: true }
+    localStorage.setItem('pulse.localmutes', JSON.stringify({ U2: true }))
+    mountPanel()
+    rightClick(q('[data-user="U2"]')!)
+    expect(item('local-mute').textContent).toContain('Unmute')
+    const slider = q('[role=menu] input[aria-label="User volume"]') as HTMLInputElement
+    slider.focus()
+    key(slider, 'ArrowRight')
+    await settle()
+    expect(voice.localMutes).toEqual({})
+    expect(JSON.parse(localStorage.getItem('pulse.localmutes')!)).toEqual({})
+    expect(invoke.mock.calls.filter(([c]) => c === 'set_peer_volume').at(-1)![1]).toEqual({ userId: 'U2', percent: 105 })
+    expect(item('local-mute').textContent).toContain('Mute for me')
+  })
+
+  it('a_muted_for_you_hint_shows_beside_the_user_volume', () => {
+    voice.localMutes = { U2: true }
+    mountPanel()
+    rightClick(q('[data-user="U2"]')!)
+    expect(q('[role=menu] .slider .hint')?.textContent).toBe('Muted for you')
+    voice.localMutes = {}
+    flushSync()
+    expect(q('[role=menu] .slider .hint')).toBeNull()
+  })
+
+  it('on_linux_watch_and_go_live_are_disabled_with_their_reason', () => {
+    vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (X11; Linux x86_64)')
+    app.state = applyReady(emptyState(), { ...ready, streams: [live] })
+    mountPanel()
+    rightClick(q('[data-stream="U2"]')!)
+    expect(item('watch').getAttribute('aria-disabled')).toBe('true')
+    expect(item('watch').textContent).toContain("Watching from Linux isn't supported yet")
+    item('watch').click()
+    flushSync()
+    expect(invoke).not.toHaveBeenCalledWith('stream_watch', expect.anything())
+    key(menu()!, 'Escape')
+    rightClick(q('[data-user="U1"]')!)
+    expect(item('go-live').getAttribute('aria-disabled')).toBe('true')
+    expect(item('go-live').textContent).toContain("Streaming from Linux isn't supported yet")
+    invoke.mockClear()
+    item('go-live').click()
+    flushSync()
+    expect(invoke).not.toHaveBeenCalled()
+    expect(goLiveUi.picked).toBeNull()
+  })
+
+  it('the_stream_volume_slider_uses_the_shared_stream_volumes', async () => {
+    await watchSam()
+    rightClick(q('[data-stream="U2"]')!)
+    expect(items().map((i) => i.dataset.item)).toEqual(['volume', 'local-mute', 'message', 'stream-volume', 'stop-watching', 'full-view'])
+    const slider = q('[role=menu] input[aria-label="Stream volume"]') as HTMLInputElement
+    slider.focus()
+    key(slider, 'ArrowRight')
+    expect(stream.volumes.U2).toBe(105)
+    expect(slider.closest('.slider')!.textContent).toContain('105%')
+  })
+
+  it('stop_watching_and_full_view_items_work', async () => {
+    await watchSam()
+    rightClick(q('[data-stream="U2"]')!)
+    item('full-view').click()
+    await settle()
+    expect(callView.full).toEqual({ channelId: 'V1', streamer: 'U2' })
+    expect(callView.goTo).toBe('V1')
+    callView.goTo = null
+    rightClick(q('.strip [data-user="U2"]')!)
+    expect(items().map((i) => i.dataset.item)).not.toContain('full-view')
+    item('stop-watching').click()
+    await settle()
+    expect(findWatch('V1', 'U2')).toBeUndefined()
+  })
+
+  it('stop_streaming_stops_your_stream', () => {
+    stream.live = { channelId: 'V1', res: 720, fps: 30, audio: false, audioMuted: false, label: 'x', encoderWarning: false } as typeof stream.live
+    const stop = vi.spyOn(streamApi, 'stop').mockResolvedValue()
+    mountPanel()
+    rightClick(q('[data-user="U1"]')!)
+    expect(items().map((i) => i.dataset.item)).toEqual(['mute', 'deafen', 'stop-streaming', 'voice-settings'])
+    item('stop-streaming').click()
+    expect(stop).toHaveBeenCalledTimes(1)
+    stream.live = null
+  })
+
+  it('clicking_the_opener_again_closes_its_menu', async () => {
+    mountPanel()
+    const btn = q('[data-user="U2"] .avatar-btn')!
+    btn.click()
+    flushSync()
+    expect(menu()).not.toBeNull()
+    await new Promise((r) => setTimeout(r, 5))
+    btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    btn.click()
+    flushSync()
+    expect(menu()).toBeNull()
+  })
+
+  it('clicking_a_channel_list_row_again_closes_its_menu', async () => {
+    cmp = mount(ChannelList, {
+      target: document.body,
+      props: { serverId: 'S1', activeChannelId: null, voiceChannelId: 'V1', speaking: new Set<string>(), onSelect: () => {}, onJoinVoice: () => {}, onMessage, onVoiceSettings },
+    })
+    flushSync()
+    const occ = [...document.querySelectorAll<HTMLElement>('.occupant')].find((o) => o.textContent?.includes('sam'))!
+    occ.click()
+    flushSync()
+    expect(menu()).not.toBeNull()
+    await new Promise((r) => setTimeout(r, 5))
+    occ.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    occ.click()
+    flushSync()
+    expect(menu()).toBeNull()
+  })
+
+  it('the_menu_is_clamped_into_the_viewport', () => {
+    mountPanel()
+    q('[data-user="U2"]')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 99999, clientY: 99999 }))
+    flushSync()
+    expect(parseFloat(menu()!.style.left)).toBeLessThanOrEqual(window.innerWidth - 8)
+    expect(parseFloat(menu()!.style.top)).toBeLessThanOrEqual(window.innerHeight - 8)
   })
 })

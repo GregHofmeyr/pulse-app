@@ -23,6 +23,7 @@ const room = vi.hoisted(() => ({
   setLayer: vi.fn(),
   remoteStats: async () => undefined,
 }))
+vi.mock('../components/GoLiveDialog.svelte', () => ({ default: () => {} }))
 vi.mock('../lib/stream/room', () => ({ StreamRoom: { connect: async () => room, pick: async () => null }, STREAM_UNAVAILABLE: 'unavailable' }))
 
 import Shell from './Shell.svelte'
@@ -31,6 +32,7 @@ import { app, startListening } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { startVoiceListening, voice } from '../lib/voice.svelte'
 import { stream, streamApi } from '../lib/stream/stream.svelte'
+import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
 import { callView, joinAndWatch, openFull, showToast } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 
@@ -302,5 +304,49 @@ describe('watching from anywhere', () => {
     await settle()
     expect(invoke.mock.calls.filter(([c]) => c === 'join_voice')).toHaveLength(1)
     expect(callView.joinThenWatch).toEqual(SAM)
+  })
+})
+
+describe('Go Live cleanup', () => {
+  const user = { id: 'U1', username: 'alex', avatar_hash: null }
+  const mountShell = () => {
+    cmp = mount(Shell, { target: document.body, props: { user, onLogout: () => {} } })
+    flushSync()
+  }
+  afterEach(() => {
+    closeGoLive()
+    voice.channelId = null
+    voice.connection = 'disconnected'
+  })
+
+  it('losing_the_connection_drops_the_picked_capture', async () => {
+    voice.channelId = 'V1'
+    voice.connection = 'connected'
+    const stop = vi.fn()
+    goLiveUi.picked = { track: { stop } } as never
+    goLiveUi.channelId = 'V1'
+    mountShell()
+    expect(goLiveUi.picked).not.toBeNull()
+    expect(stop).not.toHaveBeenCalled()
+    voice.connection = 'reconnecting'
+    await tick()
+    flushSync()
+    expect(stop).toHaveBeenCalledTimes(1)
+    expect(goLiveUi.picked).toBeNull()
+  })
+
+  it('a_picker_error_does_not_outlive_the_call', async () => {
+    voice.channelId = 'V1'
+    voice.connection = 'connected'
+    goLiveUi.error = 'no screen'
+    goLiveUi.channelId = 'V1'
+    mountShell()
+    expect(goLiveUi.error).toBe('no screen')
+    voice.channelId = null
+    voice.connection = 'disconnected'
+    await tick()
+    flushSync()
+    expect(goLiveUi.error).toBe('')
+    expect(goLiveUi.channelId).toBeNull()
   })
 })

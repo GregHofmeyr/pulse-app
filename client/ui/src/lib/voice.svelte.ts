@@ -133,8 +133,8 @@ export const voiceApi = {
     }
     try {
       // re-apply remembered per-user volumes
-      for (const [userId, percent] of Object.entries(voice.volumes)) await invoke('set_peer_volume', { userId, percent })
-      // ...then the local mutes win over them
+      // (locally muted people go straight to 0: no blip at their remembered volume)
+      for (const [userId, percent] of Object.entries(voice.volumes)) if (!voice.localMutes[userId]) await invoke('set_peer_volume', { userId, percent })
       for (const userId of Object.keys(voice.localMutes)) await invoke('set_peer_volume', { userId, percent: 0 })
     } catch (e) {
       voice.error = errText(e)

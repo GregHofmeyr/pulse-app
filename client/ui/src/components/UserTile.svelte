@@ -47,7 +47,7 @@
 <!-- the context menu is a pointer shortcut; the keyboard route is the avatar button's ContextMenu / Shift+F10 -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="tile" class:compact class:pending={entry.pending} class:speaking={voice.speaking.has(entry.userId)} data-user={entry.userId} oncontextmenu={contextMenu}>
-  <button bind:this={avatar} type="button" class="avatar-btn" aria-disabled={locked} aria-haspopup="menu" aria-label={entry.name} data-tip={isMe ? undefined : `Options for ${entry.name}`}
+  <button bind:this={avatar} type="button" class="avatar-btn" data-menu-toggle aria-disabled={locked} aria-haspopup="menu" aria-label={entry.name} data-tip={isMe ? undefined : `Options for ${entry.name}`}
     onkeydown={key} onclick={ask}>
     <span class="av" style:background={avatarColor(entry.userId)}>{initial(entry.name)}</span>
     {#if entry.deafened}<span class="badge"><Icon name="headphonesOff" size={compact ? 11 : 14} label="Deafened" /></span>

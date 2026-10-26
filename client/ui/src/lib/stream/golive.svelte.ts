@@ -32,4 +32,5 @@ export async function pickSource(channelId: string): Promise<void> {
 export function closeGoLive() {
   goLiveUi.picked = null
   goLiveUi.channelId = null
+  goLiveUi.error = ''
 }

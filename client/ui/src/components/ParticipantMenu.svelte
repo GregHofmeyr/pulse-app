@@ -9,7 +9,7 @@
   import { isWindows } from '../lib/stream/platform'
   import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
   import { callView, joinAndWatch, openFull } from '../lib/stream/viewer.svelte'
-  import { goLiveUi, pickSource } from '../lib/stream/golive.svelte'
+  import { pickSource } from '../lib/stream/golive.svelte'
   import { watchDisabledReason } from '../lib/stream/viewer'
 
   let {
@@ -138,6 +138,7 @@
     {#if id === 'volume'}
       <div class="slider" role="none">
         <span class="lbl">User volume</span><strong>{volumeLabel(volume)}</strong>
+        {#if muted}<span class="hint">Muted for you</span>{/if}
         <input data-item="volume" type="range" min="0" max="200" step="5" value={volume} aria-label="User volume" aria-valuetext={volumeLabel(volume)}
           oninput={(e) => voiceApi.setVolume(userId, clampVolume(+e.currentTarget.value))} />
       </div>
@@ -179,7 +180,6 @@
       <button type="button" role="menuitem" data-item="voice-settings" onclick={() => pick(onVoiceSettings)}>Voice settings</button>
     {/if}
   {/each}
-  {#if goLiveUi.error && self && goLiveUi.channelId === channelId}<p class="err" role="alert">{goLiveUi.error}</p>{/if}
 </div>
 
 <style>
@@ -192,5 +192,5 @@
   .slider input { grid-column: 1 / -1; accent-color: var(--accent); }
   .slider input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
   .slider strong { color: var(--text); font-weight: 600; }
-  .err { margin: 4px 10px; color: #f2616b; font-size: 12px; }
+  .hint { grid-column: 1 / -1; font-size: 11px; color: var(--text-3); }
 </style>

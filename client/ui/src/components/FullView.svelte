@@ -81,7 +81,7 @@
   </div>
   <div class="strip">
     {#each roster as entry (entry.userId)}
-      <div class="slot"><UserTile {entry} {channelId} compact onMenu={(e, a) => (menu = { userId: entry.userId, ...menuPoint(e, a), opener: a })} /></div>
+      <div class="slot"><UserTile {entry} {channelId} compact onMenu={(e, a) => (menu = e.type === 'click' && menu?.opener === a ? null : { userId: entry.userId, ...menuPoint(e, a), opener: a })} /></div>
     {/each}
   </div>
 </div>
