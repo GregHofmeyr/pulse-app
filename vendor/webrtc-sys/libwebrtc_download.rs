@@ -8,7 +8,7 @@
 use std::{
     env,
     fs::{self, File},
-    io::{self, Write},
+    io::{self, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
 
@@ -92,9 +92,11 @@ fn ensure(triple: &str, expected: &str) -> Result<(), String> {
 
     let url = webrtc_sys_build::download_url();
     let zip_path = PathBuf::from(env::var("OUT_DIR").unwrap()).join("webrtc.zip");
-    let actual = download(&url, &zip_path)?;
+    // Removes the zip on every exit path, success, error or panic (declared before the file
+    // handle, so the handle is closed first, which Windows needs).
+    let _zip_guard = RemoveOnDrop(zip_path.clone());
+    let (zip_file, actual) = download(&url, &zip_path)?;
     if actual != expected {
-        let _ = fs::remove_file(&zip_path);
         return Err(format!(
             "SHA-256 mismatch for {url}\n  expected {expected}\n  got      {actual}\n\
              The archive was not extracted. If LiveKit re-published it on purpose, verify the new \
@@ -102,16 +104,17 @@ fn ensure(triple: &str, expected: &str) -> Result<(), String> {
         ));
     }
 
-    extract(&zip_path, &parent, triple, &webrtc_dir)?;
+    // Extracted from the same open handle that was hashed: nothing can swap the file in between.
+    extract(zip_file, &parent, triple, &webrtc_dir)?;
     // Written last: a crash before this point leaves a cache that gets re-verified next time.
     fs::write(&marker, format!("{expected}\n"))
         .map_err(|e| format!("write {}: {e}", marker.display()))?;
-    let _ = fs::remove_file(&zip_path);
     Ok(())
 }
 
-/// Stream `url` into `dest`, returning the hex SHA-256 of what was written.
-fn download(url: &str, dest: &Path) -> Result<String, String> {
+/// Stream `url` into `dest`, returning the still-open file (rewound to the start) and the hex
+/// SHA-256 of what was written to it.
+fn download(url: &str, dest: &Path) -> Result<(File, String), String> {
     let mut last_err = String::new();
     for attempt in 1..=3 {
         if attempt > 1 {
@@ -136,12 +139,21 @@ fn download(url: &str, dest: &Path) -> Result<String, String> {
         if status != reqwest::StatusCode::OK {
             return Err(format!("download {url}: HTTP {status}"));
         }
-        let file = File::create(dest).map_err(|e| format!("create {}: {e}", dest.display()))?;
+        let file = File::options()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(dest)
+            .map_err(|e| format!("create {}: {e}", dest.display()))?;
         let mut out = HashingWriter { inner: file, hasher: Sha256::new() };
         match io::copy(&mut resp, &mut out) {
             Ok(_) => {
-                out.inner.flush().map_err(|e| format!("write {}: {e}", dest.display()))?;
-                return Ok(hex(&out.hasher.finalize()));
+                let HashingWriter { inner: mut file, hasher } = out;
+                file.flush().map_err(|e| format!("write {}: {e}", dest.display()))?;
+                file.seek(SeekFrom::Start(0))
+                    .map_err(|e| format!("rewind {}: {e}", dest.display()))?;
+                return Ok((file, hex(&hasher.finalize())));
             }
             Err(e) => last_err = e.to_string(),
         }
@@ -151,24 +163,37 @@ fn download(url: &str, dest: &Path) -> Result<String, String> {
 
 /// Extract into a sibling temp dir, then rename into place (as upstream does), so observers see
 /// either no `webrtc_dir` or a complete one.
-fn extract(zip_path: &Path, parent: &Path, triple: &str, webrtc_dir: &Path) -> Result<(), String> {
+fn extract(zip_file: File, parent: &Path, triple: &str, webrtc_dir: &Path) -> Result<(), String> {
     let tmp = parent.join(format!(".{triple}.tmp"));
     let _ = fs::remove_dir_all(&tmp);
+    // Removes the temp dir on every exit path, including a failed extract or rename.
+    let _tmp_guard = RemoveOnDrop(tmp.clone());
     fs::create_dir_all(&tmp).map_err(|e| format!("create {}: {e}", tmp.display()))?;
 
-    let file = File::open(zip_path).map_err(|e| format!("open {}: {e}", zip_path.display()))?;
-    let mut archive = zip::ZipArchive::new(file).map_err(|e| format!("open archive: {e}"))?;
+    let mut archive = zip::ZipArchive::new(zip_file).map_err(|e| format!("open archive: {e}"))?;
     archive.extract(&tmp).map_err(|e| format!("extract archive: {e}"))?;
     drop(archive);
 
     // The zip root is `{triple}/`.
     fs::rename(tmp.join(triple), webrtc_dir)
         .map_err(|e| format!("move extracted libwebrtc into {}: {e}", webrtc_dir.display()))?;
-    let _ = fs::remove_dir_all(&tmp);
 
     #[cfg(unix)]
     ensure_owner_readable(webrtc_dir).map_err(|e| format!("fix permissions: {e}"))?;
     Ok(())
+}
+
+/// Deletes a file or directory tree when dropped (best effort).
+struct RemoveOnDrop(PathBuf);
+
+impl Drop for RemoveOnDrop {
+    fn drop(&mut self) {
+        if self.0.is_dir() {
+            let _ = fs::remove_dir_all(&self.0);
+        } else {
+            let _ = fs::remove_file(&self.0);
+        }
+    }
 }
 
 struct HashingWriter {
