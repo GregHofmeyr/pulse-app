@@ -91,22 +91,27 @@ impl serde::Serialize for ApiError {
 
 /// Plain http:// only for this machine; anything remote must be https (passwords + tokens).
 pub fn check_server_url(url: &str) -> Result<(), ApiError> {
+    use reqwest::Url;
+    use url::Host;
     let reject = |m: &str| Err(ApiError::Rejected(m.into()));
-    if url.starts_with("https://") {
-        return Ok(());
+    let Ok(u) = Url::parse(url) else {
+        return reject("not a valid server address");
+    };
+    // Judge the URL the way the HTTP client reads it: the host it connects to is `u.host()`
+    // (userinfo ends at the last '@'), so anything that could disguise it is refused.
+    if !u.username().is_empty() || u.password().is_some() {
+        return reject("the server address can't contain a user name or password");
     }
-    let Some(rest) = url.strip_prefix("http://") else {
-        return reject("server address must start with https://");
-    };
-    let authority = rest.split('/').next().unwrap_or_default();
-    let host = match authority.strip_prefix('[') {
-        Some(v6) => v6.split(']').next().unwrap_or_default(),
-        None => authority.split(':').next().unwrap_or_default(),
-    };
-    if matches!(host, "localhost" | "127.0.0.1" | "::1") {
-        Ok(())
-    } else {
-        reject("use https:// for remote servers")
+    if u.query().is_some() || u.fragment().is_some() {
+        return reject("the server address can't contain a ? or # part");
+    }
+    match (u.scheme(), u.host()) {
+        ("https", Some(_)) => Ok(()),
+        ("http", Some(Host::Domain("localhost"))) => Ok(()),
+        ("http", Some(Host::Ipv4(ip))) if ip.is_loopback() => Ok(()),
+        ("http", Some(Host::Ipv6(ip))) if ip.is_loopback() => Ok(()),
+        ("http", Some(_)) => reject("use https:// for remote servers"),
+        _ => reject("server address must start with https://"),
     }
 }
 
@@ -1874,6 +1879,39 @@ mod tests {
             check_server_url("ftp://x"),
             Err(ApiError::Rejected(_))
         ));
+    }
+
+    #[test]
+    fn server_url_check_parses_like_the_http_client() {
+        // The url crate ends userinfo at the last '@': these connect to evil.example.com.
+        for bad in [
+            "http://localhost:1@evil.example.com",
+            "http://[::1]@evil.example.com",
+            "http://127.0.0.1:x@evil.example.com/",
+            "https://user:pw@example.com",
+            "https://example.com/?a=b",
+            "https://example.com/#x",
+            "http://localhost:7890/?a=b",
+            "http://localhost.evil.example.com",
+            "https://",
+            "",
+        ] {
+            assert!(
+                matches!(check_server_url(bad), Err(ApiError::Rejected(_))),
+                "{bad} must be rejected"
+            );
+        }
+        for ok in [
+            "http://localhost:7890",
+            "http://127.0.0.1:7890",
+            "http://127.5.6.7:7890",
+            "http://[::1]:7890",
+            "https://example.com",
+            "https://example.com/",
+            "https://example.com:8443/base",
+        ] {
+            assert!(check_server_url(ok).is_ok(), "{ok} must be accepted");
+        }
     }
 
     #[tokio::test]

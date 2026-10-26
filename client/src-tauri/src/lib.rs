@@ -90,7 +90,7 @@ pub fn run() {
                 }
                 Err(e) => eprintln!("logging unavailable ({}): {e}", log_dir.display()),
             }
-            tracing::info!(profile = ?profile, data = %dir.display(), "profile");
+            tracing::info!(profile = ?profile, data = %logging::redact_home(&dir), "profile");
             // Loaded (and acted on) above, before logging was up: report how that went now.
             app.state::<reports::settings::Store>().log_loaded();
             startup::mark("logging_ready"); // (since process start: covers crash checks + log setup)
@@ -137,7 +137,7 @@ pub fn run() {
                 // Needs a runtime: run the listener on Tauri's.
                 tauri::async_runtime::spawn(async move {
                     if let Err(e) = ipc::serve(&path, move |c| commands::hotkey(&h, c)) {
-                        tracing::warn!(path = %path.display(), error = %e, "hotkey socket unavailable");
+                        tracing::warn!(path = %logging::redact_home(&path), error = %e, "hotkey socket unavailable");
                     }
                 });
             }

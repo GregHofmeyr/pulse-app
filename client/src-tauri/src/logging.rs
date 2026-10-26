@@ -6,6 +6,64 @@ use std::path::Path;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::EnvFilter;
 
+/// Logged once per sign-in / restore. Report log tails start at the last one, so a report holds
+/// the current session only.
+pub const SESSION_MARKER: &str = "pulse-session-start";
+
+pub fn session_start() {
+    tracing::info!("{SESSION_MARKER}");
+}
+
+/// Libraries that must never log below info, whatever `PULSE_LOG` says: tungstenite trace-logs
+/// frame payloads (the gateway Hello carries the session token); the others log headers/bytes.
+const CAPPED_TARGETS: [&str; 8] = [
+    "tungstenite",
+    "tokio_tungstenite",
+    "hyper",
+    "hyper_util",
+    "h2",
+    "reqwest",
+    "rustls",
+    "tower_http",
+];
+
+/// The log filter: `user` (the `PULSE_LOG` value) or the default, then the library caps. The caps
+/// come last so they win: for the same target a later directive replaces an earlier one, and a
+/// target directive also covers its child modules.
+pub fn build_filter(user: Option<&str>) -> EnvFilter {
+    let mut filter = user
+        .and_then(|s| EnvFilter::try_new(s).ok())
+        .unwrap_or_else(|| EnvFilter::new("info,livekit=warn,libwebrtc=warn"));
+    for target in CAPPED_TARGETS {
+        if let Ok(d) = format!("{target}=info").parse() {
+            filter = filter.add_directive(d);
+        }
+    }
+    filter
+}
+
+/// `path` for a log line: the home directory prefix becomes `~`.
+pub fn redact_home(path: &Path) -> String {
+    redact_home_in(path, home_dir().as_deref())
+}
+
+fn home_dir() -> Option<std::path::PathBuf> {
+    let var = if cfg!(windows) { "USERPROFILE" } else { "HOME" };
+    std::env::var_os(var)
+        .map(std::path::PathBuf::from)
+        .filter(|p| !p.as_os_str().is_empty())
+}
+
+fn redact_home_in(path: &Path, home: Option<&Path>) -> String {
+    if let Some(rest) = home.and_then(|h| path.strip_prefix(h).ok()) {
+        if rest.as_os_str().is_empty() {
+            return "~".into();
+        }
+        return format!("~{}{}", std::path::MAIN_SEPARATOR, rest.display());
+    }
+    path.display().to_string()
+}
+
 /// Start logging to `<dir>/pulse.log.<date>` (daily files, last 7 kept). Keep the guard alive for
 /// the app's lifetime: dropping it flushes and stops the writer.
 pub fn init(dir: &Path) -> anyhow::Result<WorkerGuard> {
@@ -18,8 +76,7 @@ pub fn init(dir: &Path) -> anyhow::Result<WorkerGuard> {
         .build(dir)?;
     let (writer, guard) =
         tracing_appender::non_blocking(Capped::new(appender, LOG_CAP_BYTES, utc_day));
-    let filter = EnvFilter::try_from_env("PULSE_LOG")
-        .unwrap_or_else(|_| EnvFilter::new("info,livekit=warn,libwebrtc=warn"));
+    let filter = build_filter(std::env::var("PULSE_LOG").ok().as_deref());
     // try_init: tests / a second call must not panic on an already-set global subscriber
     let _ = tracing_subscriber::fmt()
         .with_writer(writer)
@@ -123,6 +180,8 @@ mod tests {
     use super::*;
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
+    use tracing::Level;
+    use tracing_subscriber::layer::SubscriberExt;
 
     static DAY: AtomicU64 = AtomicU64::new(1);
     fn fake_day() -> u64 {
@@ -211,5 +270,82 @@ mod tests {
             .map(|f| std::fs::read_to_string(f.path()).unwrap_or_default())
             .collect();
         assert!(all.contains("xyzzy-123"), "log content: {all}");
+    }
+
+    /// Is `target` enabled at `level` under a subscriber filtered by `filter`?
+    fn enabled(filter: EnvFilter, target: &'static str, level: Level) -> bool {
+        let sub = tracing_subscriber::registry().with(filter);
+        tracing::subscriber::with_default(sub, || probe(target, level))
+    }
+
+    fn probe(target: &'static str, level: Level) -> bool {
+        // one callsite per (target, level): `enabled!` needs literals
+        match (target, level) {
+            ("tungstenite", Level::TRACE) => tracing::enabled!(target: "tungstenite", Level::TRACE),
+            ("tungstenite", Level::DEBUG) => tracing::enabled!(target: "tungstenite", Level::DEBUG),
+            ("tungstenite", Level::INFO) => tracing::enabled!(target: "tungstenite", Level::INFO),
+            ("hyper_util", Level::TRACE) => tracing::enabled!(target: "hyper_util", Level::TRACE),
+            ("hyper_util::client", Level::TRACE) => {
+                tracing::enabled!(target: "hyper_util::client", Level::TRACE)
+            }
+            ("rustls", Level::DEBUG) => tracing::enabled!(target: "rustls", Level::DEBUG),
+            ("pulse_client::gateway", Level::TRACE) => {
+                tracing::enabled!(target: "pulse_client::gateway", Level::TRACE)
+            }
+            _ => panic!("unprobed {target} {level}"),
+        }
+    }
+
+    #[test]
+    fn pulse_log_cannot_raise_library_targets_above_info() {
+        let f = || build_filter(Some("trace"));
+        assert!(!enabled(f(), "tungstenite", Level::TRACE));
+        assert!(!enabled(f(), "tungstenite", Level::DEBUG));
+        assert!(enabled(f(), "tungstenite", Level::INFO));
+        assert!(!enabled(f(), "hyper_util", Level::TRACE));
+        assert!(!enabled(f(), "hyper_util::client", Level::TRACE)); // child modules too
+        assert!(!enabled(f(), "rustls", Level::DEBUG));
+        // the app's own targets still follow PULSE_LOG
+        assert!(enabled(f(), "pulse_client::gateway", Level::TRACE));
+        // an explicit user directive for the same target loses to the cap
+        let g = build_filter(Some("tungstenite=trace,pulse_client=trace"));
+        assert!(!enabled(g, "tungstenite", Level::TRACE));
+    }
+
+    #[test]
+    fn unset_or_invalid_pulse_log_falls_back_to_the_default() {
+        for user in [None, Some("=== not a filter ===[")] {
+            assert!(!enabled(
+                build_filter(user),
+                "pulse_client::gateway",
+                Level::TRACE
+            ));
+            assert!(!enabled(build_filter(user), "tungstenite", Level::DEBUG));
+        }
+    }
+
+    #[test]
+    fn redact_home_replaces_the_home_prefix_only() {
+        let home = Path::new("/home/alex");
+        assert_eq!(
+            redact_home_in(Path::new("/home/alex/.local/share/pulse"), Some(home)),
+            "~/.local/share/pulse"
+        );
+        assert_eq!(redact_home_in(Path::new("/home/alex"), Some(home)), "~");
+        // a sibling with the same string prefix is not under home
+        assert_eq!(
+            redact_home_in(Path::new("/home/alexander/x"), Some(home)),
+            "/home/alexander/x"
+        );
+        assert_eq!(
+            redact_home_in(Path::new("/run/user/1000/pulse.sock"), Some(home)),
+            "/run/user/1000/pulse.sock"
+        );
+        assert_eq!(redact_home_in(Path::new("/a/b"), None), "/a/b");
+    }
+
+    #[test]
+    fn session_marker_is_a_fixed_string() {
+        assert_eq!(SESSION_MARKER, "pulse-session-start");
     }
 }

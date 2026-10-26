@@ -171,6 +171,7 @@ impl Core {
         persist: bool,
     ) {
         self.boot.send_replace(Boot::starting());
+        crate::logging::session_start(); // report log tails start here
         if persist {
             self.store.save(api.base(), &token);
         }

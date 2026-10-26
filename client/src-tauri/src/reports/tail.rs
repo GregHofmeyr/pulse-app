@@ -3,7 +3,8 @@
 use std::path::Path;
 
 /// Last `max` bytes of the newest `pulse.*.log` in `dir`, cut to start at a whole line and
-/// decoded lossily (a cut can land mid-character). Empty if there's no log.
+/// decoded lossily (a cut can land mid-character), and cut further to start at the line of the last
+/// session marker if one is in that window. Empty if there's no log.
 pub fn log_tail(dir: &Path, max: usize) -> String {
     use std::io::{Read, Seek, SeekFrom};
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -39,7 +40,15 @@ pub fn log_tail(dir: &Path, max: usize) -> String {
             None => buf.clear(),
         }
     }
-    String::from_utf8_lossy(&buf).into_owned()
+    let text = String::from_utf8_lossy(&buf);
+    // Start at the current session: the line holding the last marker (if it's in the window).
+    match text.rfind(crate::logging::SESSION_MARKER) {
+        Some(at) => {
+            let line_start = text[..at].rfind('\n').map_or(0, |i| i + 1);
+            text[line_start..].to_string()
+        }
+        None => text.into_owned(),
+    }
 }
 
 #[cfg(test)]
@@ -65,6 +74,36 @@ mod tests {
         .unwrap();
         // 20 bytes from the end lands inside "second é line"
         assert_eq!(log_tail(d.path(), 20), "third\n");
+    }
+
+    #[test]
+    fn tail_starts_at_the_last_session_marker() {
+        let d = tempfile::tempdir().unwrap();
+        let m = crate::logging::SESSION_MARKER;
+        std::fs::write(
+            d.path().join("pulse.2026-10-12.log"),
+            format!("A one\nINFO pulse_client: {m}\nA two\nINFO pulse_client: {m}\nB one\nB two\n"),
+        )
+        .unwrap();
+        let t = log_tail(d.path(), 1024);
+        assert!(
+            t.starts_with("INFO pulse_client: pulse-session-start\nB one"),
+            "{t}"
+        );
+        assert!(!t.contains("A one") && !t.contains("A two"), "{t}");
+        assert_eq!(t.matches(m).count(), 1, "{t}");
+    }
+
+    #[test]
+    fn a_marker_outside_the_window_changes_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let m = crate::logging::SESSION_MARKER;
+        std::fs::write(
+            d.path().join("pulse.2026-10-12.log"),
+            format!("{m}\nfirst line\nsecond line\nthird\n"),
+        )
+        .unwrap();
+        assert_eq!(log_tail(d.path(), 14), "third\n");
     }
 
     #[test]

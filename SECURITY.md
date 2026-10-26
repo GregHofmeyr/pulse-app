@@ -128,12 +128,17 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   - **No tokens or passwords.** Pulse never writes session tokens or passwords to the log. They are never given to the
     logger, and a failed request is logged with its URL path only (no host, no query string). There is no separate
     redaction filter. By default the LiveKit and WebRTC libraries log at warning level and above; everything else logs
-    at info level and above. A local `PULSE_LOG` environment variable can change these levels.
+    at info level and above. A local `PULSE_LOG` environment variable can change these levels, but it can't raise
+    the HTTP, WebSocket and TLS libraries (`tungstenite`, `tokio_tungstenite`, `hyper`, `hyper_util`, `h2`, `reqwest`,
+    `rustls`, `tower_http`) above info. Their debug and trace output can include request and frame contents.
+  - **No home paths.** Paths under the user's home folder are logged with the home part replaced by `~`.
   - **Crash files.** The log folder also holds:
     - a `running` marker, naming the server the current session belongs to;
     - `last-server`, the server address this profile last signed in to;
     - `crash.json`, written on a crash;
     - `pending-report.json`, a crash report not yet sent, including its log tail.
+  - **Report log tails.** A report's log tail is at most the last 256 KB of the newest log file, and it starts at the
+    current session (the last sign-in or restore). Older sessions in the same file are left out.
 - **Image cache.** Custom emoji images are fetched from the server once and cached as WebP files, keyed by their
   SHA-256 hash.
   - **Where.** `%LOCALAPPDATA%\app.pulse.client\media\` on Windows.
