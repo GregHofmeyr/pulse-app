@@ -5,6 +5,7 @@
   import MemberList from '../components/MemberList.svelte'
   import StreamViewer from '../components/StreamViewer.svelte'
   import StreamToast from '../components/StreamToast.svelte'
+  import VoiceStatus from '../components/VoiceStatus.svelte'
   import VoicePanel from '../components/VoicePanel.svelte'
   import TextChannel from '../components/TextChannel.svelte'
   import Settings from '../components/Settings.svelte'
@@ -193,7 +194,6 @@
     }
   }
   let error = $state('')
-  const voiceChannel = $derived(voice.channelId ? app.state.channels[voice.channelId] : null)
 
   const servers = $derived(app.state.servers)
   const activeServer = $derived(servers.find((s) => s.id === activeServerId) ?? null)
@@ -281,13 +281,7 @@
         <ConversationList activeId={activeChannelId} onOpen={openConversation} onNew={() => (picker = { mode: 'new' })}
           onLeft={(id) => { if (activeChannelId === id) activeChannelId = null }} />
       {/if}
-      {#if voiceChannel}
-        <div class="vc">
-          <span class="vc-bars" class:warn={voice.connection !== 'connected'}><span></span><span></span><span></span></span>
-          <span class="vc-text"><strong class:warn={voice.connection !== 'connected'}>{voice.connection === 'connected' ? 'Voice connected' : voice.connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</strong><small>{voiceChannel.name}</small></span>
-          <button class="vc-leave" aria-label="Leave voice" onclick={() => voiceApi.leave()}><Icon name="hangup" size={17} /></button>
-        </div>
-      {/if}
+      <VoiceStatus />
       <div class="me">
         <button class="who-btn" data-tip="Account" aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
           <span class="avatar" style:background={avatarColor(user.id)}>{initial(user.username)}</span>
@@ -432,16 +426,6 @@
   .me-btn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .me-btn:hover { background: var(--bg-2); }
   .me-btn.on { color: #f2616b; }
-  .vc { margin: 0 8px 8px; padding: 10px 10px 10px 14px; background: #232429; border-radius: 12px; display: flex; align-items: center; gap: 10px; }
-  .vc-bars { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
-  .vc-bars span { width: 3px; border-radius: 1px; background: var(--ok); }
-  .vc-bars span:nth-child(1) { height: 5px; } .vc-bars span:nth-child(2) { height: 9px; } .vc-bars span:nth-child(3) { height: 14px; }
-  .vc-bars.warn span { background: #e8b04a; }
-  .vc-text { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .vc-text strong { font-size: 13px; color: var(--ok); }
-  .vc-text strong.warn { color: #e8b04a; }
-  .vc-text small { font-size: 12px; color: var(--text-3); }
-  .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 9px; background: #2e3037; color: #f2616b; display: grid; place-items: center; }
   .ghost { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
   .content { flex: 1; min-width: 0; background: var(--bg-2); display: flex; flex-direction: column; }
   .empty { margin: auto; color: var(--text-3); }

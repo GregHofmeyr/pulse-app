@@ -4,6 +4,7 @@
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { voiceOccupants } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
+  import { stageLabel } from '../lib/voicestage'
   import { clampVolume, volumeLabel } from '../lib/voiceui'
   import LiveBadge from './LiveBadge.svelte'
   import GoLiveDialog from './GoLiveDialog.svelte'
@@ -56,8 +57,8 @@
   <div class="head">
     <Icon name="speaker" /> <span class="title">{channel?.name}</span>
     {#if inHere}
-      <span class="status" class:warn={voice.connection !== 'connected'}>
-        {voice.connection === 'connected' ? 'Connected' : voice.connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}
+      <span class="status" class:warn={voice.stage.stage !== 'connected'}>
+        {stageLabel(voice.stage)}
       </span>
     {/if}
   </div>
