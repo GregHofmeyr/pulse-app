@@ -1,7 +1,7 @@
 //! Rate limits: in-memory token buckets (one node, so no shared store is needed).
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -163,6 +163,18 @@ impl Limiter {
         if map.len() >= MAX_KEYS && !map.contains_key(key) {
             map.retain(|_, b| refilled(b, now, rate) < rate.burst as f64);
         }
+        if map.len() >= MAX_KEYS && !map.contains_key(key) {
+            // Still full of busy buckets (a flood of distinct keys): drop the least recently
+            // updated. That resets a partly drained bucket to full, which only happens past
+            // MAX_KEYS distinct keys at once.
+            while map.len() >= MAX_KEYS {
+                let Some(oldest) = map.iter().min_by_key(|(_, b)| b.at).map(|(k, _)| k.clone())
+                else {
+                    break;
+                };
+                map.remove(&oldest);
+            }
+        }
         let b = map.entry(key.to_owned()).or_insert(Bucket {
             tokens: rate.burst as f64,
             at: now,
@@ -240,6 +252,22 @@ pub fn client_ip(forwarded_for: Option<&str>, peer: Option<IpAddr>) -> IpAddr {
         .and_then(|s| s.trim().parse().ok())
         .or(peer)
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+}
+
+/// The address a per-IP limiter counts: IPv4-mapped IPv6 becomes the IPv4 address, and other
+/// IPv6 addresses collapse to their /64 prefix (one client can hold a whole /64).
+pub fn rate_key(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V4(_) => ip,
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => {
+                let mut o = v6.octets();
+                o[8..].fill(0);
+                IpAddr::V6(Ipv6Addr::from(o))
+            }
+        },
+    }
 }
 
 /// Extractor for [`client_ip`]. Never rejects.
@@ -338,5 +366,45 @@ mod tests {
         assert_eq!(client_ip(Some("garbage"), peer), ip("127.0.0.1"));
         assert_eq!(client_ip(None, peer), ip("127.0.0.1"));
         assert_eq!(client_ip(None, None), ip("0.0.0.0"));
+    }
+
+    #[test]
+    fn rate_key_groups_ipv6_by_slash_64_and_unmaps_ipv4() {
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        let l = Limiter::new(Rate::new(2, 0.0));
+        let t0 = Instant::now();
+        let key = |s: &str| rate_key(ip(s)).to_string();
+        assert!(l.hit_at(&key("2001:db8::1"), t0));
+        assert!(l.hit_at(&key("2001:db8::1"), t0));
+        assert!(
+            !l.hit_at(&key("2001:db8::2"), t0),
+            "same /64 shares the bucket"
+        );
+        assert!(
+            l.hit_at(&key("2001:db8:0:1::1"), t0),
+            "a different /64 has its own"
+        );
+        assert_eq!(rate_key(ip("::ffff:203.0.113.5")), ip("203.0.113.5"));
+        assert_eq!(rate_key(ip("203.0.113.5")), ip("203.0.113.5"));
+        assert!(l.hit_at(&key("203.0.113.5"), t0));
+        assert!(l.hit_at(&key("::ffff:203.0.113.5"), t0));
+        assert!(
+            !l.hit_at(&key("203.0.113.5"), t0),
+            "mapped and plain IPv4 share a bucket"
+        );
+    }
+
+    #[test]
+    fn the_map_never_exceeds_max_keys_even_when_no_bucket_is_idle() {
+        let l = Limiter::new(Rate::new(2, 0.0));
+        let t0 = Instant::now();
+        for i in 0..=MAX_KEYS {
+            l.hit_at(&format!("k{i}"), t0 + Duration::from_millis(i as u64));
+        }
+        assert!(l.len() <= MAX_KEYS, "len {} > {MAX_KEYS}", l.len());
+        // The oldest key was evicted, so it comes back full (2 hits); a kept one would have 1 left.
+        let t = t0 + Duration::from_secs(1);
+        assert!(l.hit_at("k0", t) && l.hit_at("k0", t), "k0 was evicted");
+        assert!(l.len() <= MAX_KEYS);
     }
 }

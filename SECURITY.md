@@ -282,7 +282,7 @@ ties each of those tokens to the session that asked for it:
   that stays connected, so token expiry alone does not end a call. The join check above, not expiry, is what keeps a
   signed-out device out.
 
-**Rate limits.** These are in-memory token buckets:
+**Rate limits.** These are in-memory token buckets. Per-IP limits count an IPv6 client by its /64 prefix (one client can hold a whole /64), and an IPv4-mapped IPv6 address as its IPv4 address. Each limiter tracks at most 10,000 keys; past that, the least recently used bucket is dropped.
 
 | What | Limit |
 |---|---|

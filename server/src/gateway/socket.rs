@@ -40,7 +40,7 @@ pub async fn handler(
 ) -> Response {
     // Spend up front (like login) so a burst of attempts can't all slip past; the token comes
     // back once the socket authenticates, so only failed or abandoned attempts keep the spend.
-    let ip_key = ip.to_string();
+    let ip_key = crate::limits::rate_key(ip).to_string();
     if !s.limits.gateway_ip.hit(&ip_key) {
         return AppError::TooManyRequests.into_response();
     }

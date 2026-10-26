@@ -61,7 +61,7 @@ pub async fn limited_by<T>(
     keeps_spend: fn(&AppError) -> bool,
     check: impl Future<Output = AppResult<T>>,
 ) -> AppResult<T> {
-    let ip_key = ip.to_string();
+    let ip_key = crate::limits::rate_key(ip).to_string();
     let user_key = user.map(|u| u.to_string());
     let ip_ok = s.limits.mfa_ip.hit(&ip_key);
     let user_ok = user_key.as_deref().is_none_or(|u| s.limits.mfa_user.hit(u));

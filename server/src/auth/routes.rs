@@ -58,7 +58,7 @@ async fn register(
 ) -> AppResult<Json<SessionResponse>> {
     // Spend up front so parallel guesses can't all slip past before any pays. Only a wrong,
     // used or expired invite code (guessing) keeps the spend; every other outcome is refunded.
-    let ip_key = ip.to_string();
+    let ip_key = crate::limits::rate_key(ip).to_string();
     if !s.limits.register_ip.hit(&ip_key) {
         return Err(AppError::TooManyRequests);
     }
@@ -161,7 +161,7 @@ async fn login(
     ClientIp(ip): ClientIp,
     Json(mut req): Json<LoginRequest>,
 ) -> AppResult<Json<SessionResponse>> {
-    let ip_key = ip.to_string();
+    let ip_key = crate::limits::rate_key(ip).to_string();
     req.username = normalize_username(&req.username);
     // A name that can't exist gets no bucket of its own (keys stay small); the address still pays.
     let user_key = Some(req.username.clone()).filter(|u| valid_username(u));
