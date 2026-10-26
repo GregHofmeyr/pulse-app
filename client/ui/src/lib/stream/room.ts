@@ -1,5 +1,5 @@
 // The `<uid>#v` connection to the stream room `<channel_id>~s`: publishes our screen share and
-// subscribes to the one we watch. Stream audio is the Rust `#a` connection, not this one.
+// subscribes to the ones we watch. Stream audio is the Rust `#a` connection, not this one.
 import {
   ConnectionState,
   Room,
@@ -32,8 +32,11 @@ type Watched = {
   abort: AbortController
   /** The first track is attached: later ones (after a resubscribe) attach as they arrive. */
   settled: boolean
-  quality: 'auto' | 'saver'
+  layer: Layer
 }
+
+type Layer = 'low' | 'high'
+const videoQuality = (layer: Layer) => (layer === 'high' ? VideoQuality.HIGH : VideoQuality.LOW)
 
 /** A publication from stream-room participant `identity` with `source` is `streamer`'s screen share. */
 export function isScreenOf(identity: string, source: Track.Source, streamer: string): boolean {
@@ -45,26 +48,29 @@ let pickerRoom: Room | null = null
 
 export class StreamRoom {
   private published: LocalVideoTrack | null = null
-  private watched: Watched | null = null
+  private readonly watched = new Map<string, Watched>()
 
   private constructor(private readonly room: Room) {
     // The streamer's `#v` came back with a new publication, or ours rejoined (a full reconnect
     // brings new publication objects): autoSubscribe is off, so subscribe to it again.
     room.on(RoomEvent.TrackPublished, (pub: RemoteTrackPublication, p: RemoteParticipant) => {
-      const w = this.watched
-      if (w && pub !== w.pub && isScreenOf(p.identity, pub.source, w.streamer)) this.resubscribe(w, pub)
+      for (const w of this.watched.values()) {
+        if (pub !== w.pub && isScreenOf(p.identity, pub.source, w.streamer)) this.resubscribe(w, pub)
+      }
     })
     room.on(RoomEvent.TrackSubscribed, (track: RemoteTrack, pub: RemoteTrackPublication) => {
-      const w = this.watched
-      if (!w || !w.settled || pub !== w.pub || w.track === track) return
-      w.track?.detach(w.el)
-      w.track = track
-      track.attach(w.el)
+      for (const w of this.watched.values()) {
+        if (!w.settled || pub !== w.pub || w.track === track) continue
+        w.track?.detach(w.el)
+        w.track = track
+        track.attach(w.el)
+      }
     })
     room.on(RoomEvent.Reconnected, () => {
-      const w = this.watched
-      const pub = w && this.screenOf(w.streamer)
-      if (w && pub && (pub !== w.pub || !pub.isSubscribed)) this.resubscribe(w, pub)
+      for (const w of this.watched.values()) {
+        const pub = this.screenOf(w.streamer)
+        if (pub && (pub !== w.pub || !pub.isSubscribed)) this.resubscribe(w, pub)
+      }
     })
   }
 
@@ -72,7 +78,7 @@ export class StreamRoom {
     return this.room.remoteParticipants.get(`${streamer}#v`)?.getTrackPublication(Track.Source.ScreenShare)
   }
 
-  /** Moves the watched stream onto `pub` (same element, same quality); its track attaches when it arrives. */
+  /** Moves the watched stream onto `pub` (same element, same layer); its track attaches when it arrives. */
   private resubscribe(w: Watched, pub: RemoteTrackPublication): void {
     streamCmd.log({ ev: 'resubscribe' })
     if (w.pub !== pub) w.pub.setSubscribed(false)
@@ -80,7 +86,7 @@ export class StreamRoom {
     w.track = null
     w.pub = pub
     pub.setSubscribed(true)
-    pub.setVideoQuality(w.quality === 'saver' ? VideoQuality.LOW : VideoQuality.HIGH)
+    pub.setVideoQuality(videoQuality(w.layer))
   }
 
   static async connect(channelId: string): Promise<StreamRoom> {
@@ -163,20 +169,24 @@ export class StreamRoom {
     if (t) await this.room.localParticipant.unpublishTrack(t, stop)
   }
 
-  /** Subscribes and waits for the first painted frame. `unwatch()` meanwhile rejects it with an `AbortError`. */
+  /**
+   * Subscribes (on the low layer) and waits for the first painted frame. Other streamers' watches
+   * carry on; `unwatch(streamer)` meanwhile rejects it with an `AbortError`.
+   */
   async watch(streamer: string, el: HTMLVideoElement): Promise<void> {
-    this.unwatch()
+    this.unwatch(streamer)
     const t0 = performance.now()
     const pub = this.screenOf(streamer)
     if (!pub) throw new Error('That stream has ended')
     const abort = new AbortController()
-    const w: Watched = { streamer, pub, track: null, el, abort, settled: false, quality: 'auto' }
-    this.watched = w
+    const w: Watched = { streamer, pub, track: null, el, abort, settled: false, layer: 'low' }
+    this.watched.set(streamer, w)
     const unwatched = new Promise<never>((_, reject) =>
       abort.signal.addEventListener('abort', () => reject(new DOMException('Stopped watching', 'AbortError')), { once: true }),
     )
     unwatched.catch(() => {}) // only ever raced
     pub.setSubscribed(true)
+    pub.setVideoQuality(videoQuality(w.layer))
     let frameId: number | null = null
     try {
       // timers, not requestAnimationFrame: rAF stops while the window is hidden
@@ -205,38 +215,43 @@ export class StreamRoom {
         'No picture 15 s after the video arrived',
       )
     } catch (e) {
-      if (this.watched === w) this.unwatch() // timed out: stop polling and subscribing
+      if (this.watched.get(streamer) === w) this.unwatch(streamer) // timed out: stop polling and subscribing
       throw e
     } finally {
       if (frameId !== null) el.cancelVideoFrameCallback(frameId)
     }
-    if (this.watched !== w) throw new DOMException('Stopped watching', 'AbortError')
+    if (this.watched.get(streamer) !== w) throw new DOMException('Stopped watching', 'AbortError')
     const ms = Math.round(performance.now() - t0)
     diag.firstFrameMs = ms
     streamCmd.log({ ev: 'first_frame', ms })
   }
 
-  unwatch(): void {
-    const w = this.watched
-    this.watched = null
-    if (!w) return
-    w.abort.abort()
-    w.track?.detach(w.el)
-    w.pub.setSubscribed(false)
+  /** Stops watching `streamer`, or everyone when no streamer is given. */
+  unwatch(streamer?: string): void {
+    const ws = streamer === undefined ? [...this.watched.values()] : [this.watched.get(streamer)]
+    for (const w of ws) {
+      if (!w) continue
+      this.watched.delete(w.streamer)
+      w.abort.abort()
+      w.track?.detach(w.el)
+      w.pub.setSubscribed(false)
+    }
   }
 
-  setQuality(q: 'auto' | 'saver'): void {
-    if (!this.watched) return
-    this.watched.quality = q
-    this.watched.pub.setVideoQuality(q === 'saver' ? VideoQuality.LOW : VideoQuality.HIGH)
+  /** Which simulcast layer `streamer`'s watch asks for (a resubscribe keeps it). */
+  setLayer(streamer: string, layer: Layer): void {
+    const w = this.watched.get(streamer)
+    if (!w) return
+    w.layer = layer
+    w.pub.setVideoQuality(videoQuality(layer))
   }
 
   localStats(): Promise<RTCStatsReport | undefined> {
     return this.published?.getRTCStatsReport() ?? Promise.resolve(undefined)
   }
 
-  remoteStats(): Promise<RTCStatsReport | undefined> {
-    return this.watched?.track?.getRTCStatsReport() ?? Promise.resolve(undefined)
+  remoteStats(streamer: string): Promise<RTCStatsReport | undefined> {
+    return this.watched.get(streamer)?.track?.getRTCStatsReport() ?? Promise.resolve(undefined)
   }
 
   async disconnect(): Promise<void> {

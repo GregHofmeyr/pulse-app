@@ -10,20 +10,25 @@ import type { AppState } from '../state'
 import { app } from '../store.svelte'
 import { errorText, streamCmd } from '../tauri'
 import { voice } from '../voice.svelte'
+import { clampVolume } from '../voiceui'
 import { startDiagnostics } from './diag.svelte'
 import type { Fps, Res } from './encodings'
-import { loadAudioMuted, saveAudioMuted, type GoLive } from './prefs'
+import { loadAudioMuted, loadStreamVolumes, saveAudioMuted, saveStreamVolumes, type GoLive } from './prefs'
 import { StreamRoom } from './room'
-import { toastFor } from './viewer'
+import { admit, layerFor, toastFor, type Quality, type View } from './viewer'
 import { removeToast, showToast } from './viewer.svelte'
 
 type Live = { channelId: string; res: Res; fps: Fps; audio: boolean; audioMuted: boolean; label: string; encoderWarning: boolean }
-type Watching = { channelId: string; streamer: string; quality: 'auto' | 'saver' }
+export type Watching = { channelId: string; streamer: string; quality: Quality; view: View }
+
+/** How many streams you can watch at once; at the cap, a new watch stops the oldest first. */
+export const MAX_WATCHED = 1
 
 export const stream = $state({
   room: null as StreamRoom | null,
   live: null as Live | null,
-  watching: null as Watching | null,
+  /** Oldest first. An entry exists from the Watch click on, before its video is up. */
+  watching: [] as Watching[],
   error: '',
   /** A failed watch, shown by the viewer's toast (`error` belongs to Go Live). */
   watchError: '',
@@ -76,12 +81,17 @@ const vanished = new Map<string, number>()
 const streamKey = (channelId: string, userId: string) => `${channelId}/${userId}`
 let stopPreview: (() => void) | null = null
 let stopOutDiag: (() => void) | null = null
-let stopInDiag: (() => void) | null = null
-let watchingEl: HTMLVideoElement | null = null
+/** Inbound diagnostics sample the watch shown in full view: its key, and the stop function. */
+let inDiag: { key: string; stop: () => void } | null = null
+/** One `<video>` per watch, owned here so it moves between hosts without restarting. */
+const videos = new Map<string, HTMLVideoElement>()
+/** Watches whose video is up (`room.watch` resolved). */
+const up = new Set<string>()
+/** Per watch: a later watch of the same stream, or its end, supersedes the calls in flight. */
+const watchGens = new Map<string, ReturnType<typeof generation>>()
 /** Go Live in flight (a second click joins it) and its channel. */
 let pendingLive: { channelId: string; p: Promise<void> } | null = null
 const liveGen = generation()
-const watchGen = generation()
 
 const logError = (ev: string) => (e: unknown) => streamCmd.log({ ev, error: errorText(e) })
 const meId = () => app.state.me?.id ?? ''
@@ -116,7 +126,7 @@ async function disconnect() {
 
 /** Nothing to publish or watch: let the connection go. */
 async function releaseIfIdle() {
-  if (!stream.live && !stream.watching && !connecting && !pendingLive) await disconnect()
+  if (!stream.live && !stream.watching.length && !connecting && !pendingLive) await disconnect()
 }
 
 function onTrackEnded() {
@@ -198,19 +208,108 @@ async function endLive(announce: boolean) {
   await releaseIfIdle()
 }
 
-/** Stops watching locally; `announce` false when the stream is already gone on the server. */
-async function endWatch(announce: boolean) {
-  const w = stream.watching
-  if (!w) return
-  stream.watching = null
-  watchingEl = null
-  stopInDiag?.()
-  stopInDiag = null
-  stream.room?.unwatch()
+/** The watch of `streamer` in `channelId`, if any. */
+export function findWatch(channelId: string, streamer: string): Watching | undefined {
+  return stream.watching.find((w) => w.channelId === channelId && w.streamer === streamer)
+}
+
+/** The watch's `<video>` (not reactive: read it where a watch is known to exist), or null. */
+export function videoOf(channelId: string, streamer: string): HTMLVideoElement | null {
+  return videos.get(streamKey(channelId, streamer)) ?? null
+}
+
+/** Inbound diagnostics follow the watch in full view, once its video is up. */
+function syncInDiag() {
+  const full = stream.watching.find((w) => w.view === 'full' && up.has(streamKey(w.channelId, w.streamer)))
+  const key = full && streamKey(full.channelId, full.streamer)
+  if (inDiag?.key === key) return
+  inDiag?.stop()
+  inDiag = null
+  if (!full || !key) return
+  const { streamer } = full
+  inDiag = { key, stop: startDiagnostics('in', () => stream.room?.remoteStats(streamer) ?? Promise.resolve(undefined), 0) }
+}
+
+/** Asks the room for the layer `w`'s view and quality call for. */
+function applyLayer(w: Watching) {
+  stream.room?.setLayer(w.streamer, layerFor(w.view, w.quality))
+}
+
+/**
+ * Stops watching locally; `announce` false when the stream is already gone on the server. Supersedes
+ * the watch's calls in flight, and its `<video>` goes (out of the DOM, `srcObject` cleared).
+ */
+async function endWatch(channelId: string, streamer: string, announce: boolean) {
+  const k = streamKey(channelId, streamer)
+  if (!findWatch(channelId, streamer)) return
+  stream.watching = stream.watching.filter((w) => streamKey(w.channelId, w.streamer) !== k)
+  watchGens.get(k)?.cancel()
+  watchGens.delete(k)
+  up.delete(k)
+  stream.room?.unwatch(streamer)
+  const el = videos.get(k)
+  videos.delete(k)
+  if (el) {
+    el.srcObject = null
+    el.remove()
+  }
+  syncInDiag()
   await Promise.all([
-    streamCmd.audioWatch(w.channelId, w.streamer, false).catch(logError('audio_watch_error')),
-    announce ? streamCmd.unwatch(w.channelId, w.streamer).catch(logError('unwatch_error')) : undefined,
+    streamCmd.audioWatch(channelId, streamer, false).catch(logError('audio_watch_error')),
+    announce ? streamCmd.unwatch(channelId, streamer).catch(logError('unwatch_error')) : undefined,
   ])
+}
+
+/** A snapshot of the watches matching `pred`, ended one by one. */
+async function endWatches(pred: (w: Watching) => boolean, announce: boolean) {
+  for (const { channelId, streamer } of stream.watching.filter(pred)) await endWatch(channelId, streamer, announce)
+}
+
+async function watch(channelId: string, streamer: string): Promise<void> {
+  if (findWatch(channelId, streamer)) return // a second click
+  const k = streamKey(channelId, streamer)
+  const gen = generation()
+  watchGens.set(k, gen)
+  const token = gen.next()
+  const current = () => gen.current(token)
+  stream.watchError = ''
+  stream.notice = ''
+  const el = document.createElement('video')
+  el.autoplay = true
+  el.playsInline = true
+  el.muted = true // stream audio plays from the Rust `#a` side
+  videos.set(k, el)
+  const { list, dropped } = admit<Watching>(stream.watching, { channelId, streamer, quality: 'auto', view: 'preview' }, MAX_WATCHED)
+  // the cap: the oldest watches stop first (their calls in flight back out)
+  const ending = dropped.map((d) => endWatch(d.channelId, d.streamer, true))
+  stream.watching = list
+  await Promise.all(ending)
+  if (!current()) return
+  try {
+    const room = await ensureRoom(channelId)
+    if (!current()) return
+    await streamCmd.watch(channelId, streamer)
+    if (!current()) return
+    await streamCmd.audioWatch(channelId, streamer, true).catch(logError('audio_watch_error'))
+    if (!current()) {
+      // stopped meanwhile, and that endWatch's "off" ran before this "on" landed
+      if (!findWatch(channelId, streamer)) await streamCmd.audioWatch(channelId, streamer, false).catch(logError('audio_watch_error'))
+      return
+    }
+    await room.watch(streamer, el)
+    if (!current()) return
+    up.add(k)
+    const w = findWatch(channelId, streamer)
+    if (w) applyLayer(w)
+    void streamCmd.setVolume(streamer, loadStreamVolumes()[streamer] ?? 100).catch(logError('stream_volume_error'))
+    syncInDiag()
+  } catch (e) {
+    if (!current()) return
+    stream.watchError = errorText(e)
+    streamCmd.log({ ev: 'watch_error', error: stream.watchError })
+    await endWatch(channelId, streamer, true)
+    await releaseIfIdle()
+  }
 }
 
 const CAPTURE_ENDED = 'The shared window or screen closed'
@@ -302,53 +401,43 @@ export const streamApi = {
     return endLive(true)
   },
 
-  /** Watches `streamer` into `el` (switching from anyone watched before). Errors land in `stream.watchError`. */
-  async watch(channelId: string, streamer: string, el: HTMLVideoElement): Promise<void> {
-    const same = (w: Watching | null) => w?.channelId === channelId && w.streamer === streamer
-    if (same(stream.watching) && watchingEl === el) return // a second click
-    const token = watchGen.next()
-    const current = () => watchGen.current(token)
-    await endWatch(true)
-    if (!current()) return
-    stream.watchError = ''
-    stream.notice = ''
-    stream.watching = { channelId, streamer, quality: 'auto' }
-    watchingEl = el
-    try {
-      const room = await ensureRoom(channelId)
-      if (!current()) return
-      await streamCmd.watch(channelId, streamer)
-      if (!current()) return
-      await streamCmd.audioWatch(channelId, streamer, true).catch(logError('audio_watch_error'))
-      if (!current()) {
-        // switched or closed meanwhile, and that endWatch's "off" ran before this "on" landed
-        if (!same(stream.watching)) await streamCmd.audioWatch(channelId, streamer, false).catch(logError('audio_watch_error'))
-        return
-      }
-      await room.watch(streamer, el)
-      if (!current()) return
-      room.setQuality(stream.watching!.quality)
-      stopInDiag?.()
-      stopInDiag = startDiagnostics('in', () => room.remoteStats(), 0)
-    } catch (e) {
-      if (!current()) return
-      stream.watchError = errorText(e)
-      streamCmd.log({ ev: 'watch_error', error: stream.watchError })
-      await endWatch(true)
-      await releaseIfIdle()
-    }
-  },
+  /**
+   * Watches `streamer` into a `<video>` this store owns (`videoOf`); a second call for the same
+   * stream does nothing. At `MAX_WATCHED` the oldest watch stops first. Errors land in `stream.watchError`.
+   */
+  watch,
 
-  async unwatch(): Promise<void> {
-    watchGen.cancel()
-    await endWatch(true)
+  async unwatch(channelId: string, streamer: string): Promise<void> {
+    await endWatch(channelId, streamer, true)
     await releaseIfIdle()
   },
 
-  setQuality(q: 'auto' | 'saver') {
-    if (!stream.watching) return
-    stream.watching.quality = q
-    stream.room?.setQuality(q)
+  async unwatchAll(): Promise<void> {
+    await endWatches(() => true, true)
+    await releaseIfIdle()
+  },
+
+  setQuality(channelId: string, streamer: string, q: Quality) {
+    const w = findWatch(channelId, streamer)
+    if (!w) return
+    w.quality = q
+    applyLayer(w)
+  },
+
+  /** Grid tile or mini-preview (`preview`), or the main area (`full`): the layer and diagnostics follow. */
+  setView(channelId: string, streamer: string, view: View) {
+    const w = findWatch(channelId, streamer)
+    if (!w) return
+    w.view = view
+    applyLayer(w)
+    syncInDiag()
+  },
+
+  /** Remembered per streamer, and applied now (and each time a watch of them is up). */
+  setStreamVolume(streamer: string, pct: number) {
+    const v = clampVolume(pct)
+    saveStreamVolumes({ ...loadStreamVolumes(), [streamer]: v })
+    void streamCmd.setVolume(streamer, v).catch(logError('stream_volume_error'))
   },
 
   async setAudioMuted(muted: boolean) {
@@ -365,10 +454,7 @@ export const streamApi = {
       liveGen.cancel()
       await endLive(true)
     }
-    if (stream.watching && stream.watching.channelId !== channelId) {
-      watchGen.cancel()
-      await endWatch(true)
-    }
+    await endWatches((w) => w.channelId !== channelId, true)
     if (stream.room && roomChannel !== channelId) await disconnect()
     // voice can end without leave_voice (rejoin given up, a failed join): `#a` goes with it
     await streamCmd.audioLeave(channelId).catch(logError('audio_leave_error'))
@@ -382,7 +468,7 @@ export const streamApi = {
     if (audioClosedAt.length > AUDIO_RECONNECTS_MAX) {
       streamCmd.log({ ev: 'audio_reconnect_given_up' })
       const ours = stream.live?.channelId === channelId && stream.live.audio
-      if (ours || stream.watching?.channelId === channelId) stream.notice = 'Stream audio stopped'
+      if (ours || stream.watching.some((w) => w.channelId === channelId)) stream.notice = 'Stream audio stopped'
       return
     }
     const live = stream.live
@@ -406,21 +492,17 @@ export const streamApi = {
         if (stream.live === live) stream.notice = 'Stream audio stopped'
       }
     }
-    const w = stream.watching
-    if (w?.channelId === channelId) {
-      await streamCmd.audioWatch(channelId, w.streamer, true).catch(logError('audio_watch_error'))
-      // switched or closed meanwhile: that endWatch's "off" ran before this "on" landed
-      const now = stream.watching
-      if (now?.channelId !== channelId || now.streamer !== w.streamer) await streamCmd.audioWatch(channelId, w.streamer, false).catch(logError('audio_watch_error'))
+    for (const { streamer } of stream.watching.filter((w) => w.channelId === channelId)) {
+      await streamCmd.audioWatch(channelId, streamer, true).catch(logError('audio_watch_error'))
+      // stopped meanwhile: that endWatch's "off" ran before this "on" landed
+      if (!findWatch(channelId, streamer)) await streamCmd.audioWatch(channelId, streamer, false).catch(logError('audio_watch_error'))
     }
   },
 
   /** A `StreamEnded` from the gateway. */
   async onStreamEnded(channelId: string, userId: string, reason: StreamEndReason) {
-    const w = stream.watching
-    if (w && w.channelId === channelId && w.streamer === userId) {
-      watchGen.cancel()
-      await endWatch(false)
+    if (findWatch(channelId, userId)) {
+      await endWatch(channelId, userId, false)
       stream.notice = `${nameOf(channelId, userId)} stopped streaming`
       await releaseIfIdle()
     }
@@ -443,8 +525,7 @@ export const streamApi = {
       if (!back && toastFor({ channelId, streamer }, voice.channelId, meId())) showToast({ channelId, streamer, name: nameOf(channelId, streamer) })
       // only a restart re-starts a stream we watch (a real stop ends the watch first): the
       // restarted server lost its viewers, so list us again
-      const w = stream.watching
-      if (w?.channelId === channelId && w.streamer === streamer) void streamCmd.watch(channelId, streamer).catch(logError('rewatch_error'))
+      if (findWatch(channelId, streamer)) void streamCmd.watch(channelId, streamer).catch(logError('rewatch_error'))
     } else if (e.t === 'StreamEnded') {
       removeToast(e.d.channel_id, e.d.user_id)
       void streamApi.onStreamEnded(e.d.channel_id, e.d.user_id, e.d.reason)
@@ -462,9 +543,10 @@ export const streamApi = {
     }
     // the streamer got back to the restarted server before us: its Ready lists the stream we
     // watch without us, and no StreamStarted comes
-    const w = stream.watching
-    const watched = w && ready.streams.find((s) => s.channel_id === w.channelId && s.user_id === w.streamer)
-    if (w && watched && !watched.viewers.includes(ready.me.id)) await streamCmd.watch(w.channelId, w.streamer).catch(logError('rewatch_error'))
+    for (const w of [...stream.watching]) {
+      const watched = ready.streams.find((s) => s.channel_id === w.channelId && s.user_id === w.streamer)
+      if (watched && !watched.viewers.includes(ready.me.id)) await streamCmd.watch(w.channelId, w.streamer).catch(logError('rewatch_error'))
+    }
     const live = stream.live
     if (!live || !needsReannounce(ready.me.id, live, ready.streams)) return
     streamCmd.log({ ev: 'reannounce' })

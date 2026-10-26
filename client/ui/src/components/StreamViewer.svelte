@@ -5,60 +5,51 @@
   import { app } from '../lib/store.svelte'
   import { displayName, liveIn } from '../lib/selectors'
   import { clampVolume, volumeLabel } from '../lib/voiceui'
-  import { loadStreamVolumes, saveStreamVolumes } from '../lib/stream/prefs'
-  import { stream, streamApi } from '../lib/stream/stream.svelte'
+  import { loadStreamVolumes } from '../lib/stream/prefs'
+  import { findWatch, streamApi } from '../lib/stream/stream.svelte'
+  import { hostVideo } from '../lib/stream/videoHost'
   import { viewing } from '../lib/stream/viewer.svelte'
-  import { streamCmd } from '../lib/tauri'
 
-  let video = $state<HTMLVideoElement>()
   /** The current request's watch call has finished (started, failed or been superseded). */
   let settled = $state(false)
   let volumes = $state(loadStreamVolumes())
   let quality = $state<string | null>('auto')
 
   const req = $derived(viewing.req)
+  const watch = $derived(req ? findWatch(req.channelId, req.streamer) : undefined)
   const name = $derived(req ? displayName(app.state, app.state.channels[req.channelId]?.server_id ?? null, req.streamer) : '')
   const volume = $derived(req ? (volumes[req.streamer] ?? 100) : 100)
   const reconnecting = $derived(!!req && liveIn(app.state, req.channelId)[req.streamer]?.status === 'reconnecting')
 
-  // Start (or switch) watching whenever the request or the element changes.
+  // Start (or switch) watching whenever the request changes; this viewer is the full view.
   $effect(() => {
     const r = req
-    const el = video
-    if (!r || !el) return
+    if (!r) return
     settled = false
-    quality = 'auto'
     untrack(() => {
-      void streamApi.watch(r.channelId, r.streamer, el).finally(() => {
+      void streamApi.watch(r.channelId, r.streamer).finally(() => {
         if (viewing.req === r) settled = true
       })
+      streamApi.setView(r.channelId, r.streamer, 'full')
+      quality = findWatch(r.channelId, r.streamer)?.quality ?? 'auto'
     })
   })
 
   // The stream is gone (ended, failed, or voice changed): close the viewer. The notice stays.
   $effect(() => {
-    if (settled && !stream.watching) viewing.req = null
-  })
-
-  // Remembered stream volume, applied once the watch is up.
-  $effect(() => {
-    if (!settled || !stream.watching) return
-    const { streamer } = stream.watching
-    const pct = untrack(() => volumes[streamer] ?? 100)
-    void streamCmd.setVolume(streamer, pct).catch(() => {})
+    if (settled && !watch) viewing.req = null
   })
 
   function setVolume(pct: number) {
     if (!req) return
-    const v = clampVolume(pct)
-    volumes = { ...volumes, [req.streamer]: v }
-    saveStreamVolumes(volumes)
-    void streamCmd.setVolume(req.streamer, v).catch(() => {})
+    volumes = { ...volumes, [req.streamer]: clampVolume(pct) }
+    streamApi.setStreamVolume(req.streamer, pct)
   }
 
   function close() {
+    const r = req
     viewing.req = null
-    void streamApi.unwatch()
+    if (r) void streamApi.unwatch(r.channelId, r.streamer)
   }
 </script>
 
@@ -69,14 +60,14 @@
     <div class="ctl">
       <span>Quality</span>
       <Select bind:value={quality} label="Quality" options={[{ value: 'auto', label: 'Auto' }, { value: 'saver', label: 'Data saver' }]}
-        onchange={() => streamApi.setQuality(quality === 'saver' ? 'saver' : 'auto')} />
+        onchange={() => req && streamApi.setQuality(req.channelId, req.streamer, quality === 'saver' ? 'saver' : 'auto')} />
     </div>
     <label class="ctl" for="stream-vol">Volume <strong>{volumeLabel(volume)}</strong></label>
     <input id="stream-vol" type="range" min="0" max="200" step="5" value={volume} oninput={(e) => setVolume(+e.currentTarget.value)} />
     <button type="button" class="close" onclick={close}>Close</button>
   </div>
   <div class="stage">
-    <video bind:this={video} autoplay playsinline></video>
+    {#if watch}<div class="host" {@attach hostVideo(watch.channelId, watch.streamer)}></div>{/if}
     <StreamDiagOverlay kind="in" />
     {#if reconnecting}<div class="overlay" role="status">Reconnecting…</div>{/if}
   </div>
@@ -90,6 +81,7 @@
   input[type='range'] { width: 120px; accent-color: var(--accent); }
   .close { height: 32px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--danger); color: #fff; font-weight: 700; }
   .stage { position: relative; flex: 1; min-height: 0; }
-  video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
+  .host { position: absolute; inset: 0; }
+  .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .5); color: #fff; font-size: 18px; font-weight: 600; }
 </style>

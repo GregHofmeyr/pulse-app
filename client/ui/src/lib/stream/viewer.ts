@@ -1,4 +1,5 @@
-// Pure decisions for watching: who gets the "is live" toast, why Watch is disabled, the toast stack.
+// Pure decisions for watching: who gets the "is live" toast, why Watch is disabled, the toast stack,
+// which simulcast layer a watch asks for, and the watch cap.
 
 export type Toast = { channelId: string; streamer: string; name: string }
 
@@ -26,4 +27,21 @@ export function pushToast(list: Toast[], t: Toast): Toast[] {
 
 export function dropToast(list: Toast[], channelId: string, streamer: string): Toast[] {
   return list.filter((x) => !same(x, { channelId, streamer }))
+}
+
+/** Where a watched stream shows: a grid tile or the mini-preview (`preview`), or the main area (`full`). */
+export type View = 'preview' | 'full'
+/** The viewer's pick: Auto asks for the full layer in full view, Data saver never does. */
+export type Quality = 'auto' | 'saver'
+
+/** Previews always take the low layer; full view takes the high one unless the viewer saves data. */
+export function layerFor(view: View, quality: Quality): 'low' | 'high' {
+  return view === 'full' && quality === 'auto' ? 'high' : 'low'
+}
+
+/** Adds `next` to `list`; past `max`, the oldest entries go first. */
+export function admit<T>(list: T[], next: T, max: number): { list: T[]; dropped: T[] } {
+  const all = [...list, next]
+  const cut = Math.max(0, all.length - max)
+  return { list: all.slice(cut), dropped: all.slice(0, cut) }
 }

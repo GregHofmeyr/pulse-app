@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { dropToast, MAX_TOASTS, pushToast, toastFor, watchDisabledReason, type Toast } from './viewer'
+import { admit, dropToast, layerFor, MAX_TOASTS, pushToast, toastFor, watchDisabledReason, type Toast } from './viewer'
 
 describe('toastFor', () => {
   it('only_people_in_that_voice_channel_get_the_toast', () => {
@@ -43,5 +43,20 @@ describe('toast stack', () => {
     const s = [t('a'), t('b')]
     expect(dropToast(s, 'c1', 'a').map((x) => x.streamer)).toEqual(['b'])
     expect(dropToast(s, 'c2', 'a')).toHaveLength(2)
+  })
+})
+
+describe('watch list', () => {
+  it('preview_is_always_low_full_follows_quality', () => {
+    expect(layerFor('preview', 'auto')).toBe('low')
+    expect(layerFor('preview', 'saver')).toBe('low')
+    expect(layerFor('full', 'auto')).toBe('high')
+    expect(layerFor('full', 'saver')).toBe('low')
+  })
+  it('admit_drops_the_oldest_at_the_cap', () => {
+    expect(admit(['a'], 'b', 1)).toEqual({ list: ['b'], dropped: ['a'] })
+    expect(admit(['a', 'b'], 'c', 2)).toEqual({ list: ['b', 'c'], dropped: ['a'] })
+    expect(admit(['a'], 'b', 3)).toEqual({ list: ['a', 'b'], dropped: [] })
+    expect(admit([], 'a', 1)).toEqual({ list: ['a'], dropped: [] })
   })
 })
