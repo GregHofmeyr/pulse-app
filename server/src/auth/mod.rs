@@ -6,3 +6,4 @@ pub mod session;
 pub mod totp;
 
 pub use extractor::AuthUser;
+pub mod two_factor;

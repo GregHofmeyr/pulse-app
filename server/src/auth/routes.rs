@@ -228,17 +228,21 @@ async fn logout(
 
 /// Sign out every other device: revoke the caller's other sessions and close their sockets
 /// (4001, so those clients drop to the login screen), then remove the LiveKit participants they
-/// admitted. This device stays signed in, calls included. `revoked` counts live sessions only.
+/// admitted. This device stays signed in, calls included. Returns how many live sessions went.
+pub(super) async fn sign_out_others(s: &AppState, user: UserId, token: &str) -> AppResult<u32> {
+    let revoked = session::revoke_others(&s.db, user, token).await?;
+    s.hub.drop_other_sessions(user, &session::hash_token(token));
+    crate::voice::revoke::remove_revoked(s, &revoked.grants).await;
+    Ok(u32::try_from(revoked.live).unwrap_or(u32::MAX))
+}
+
 async fn logout_others(
     State(s): State<AppState>,
     AuthUser(u): AuthUser,
     BearerToken(t): BearerToken,
 ) -> AppResult<Json<LogoutOthersResponse>> {
-    let revoked = session::revoke_others(&s.db, u, &t).await?;
-    s.hub.drop_other_sessions(u, &session::hash_token(&t));
-    crate::voice::revoke::remove_revoked(&s, &revoked.grants).await;
     Ok(Json(LogoutOthersResponse {
-        revoked: u32::try_from(revoked.live).unwrap_or(u32::MAX),
+        revoked: sign_out_others(&s, u, &t).await?,
     }))
 }
 

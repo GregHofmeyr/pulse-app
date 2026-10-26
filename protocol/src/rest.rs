@@ -42,6 +42,47 @@ pub struct LogoutOthersResponse {
     pub revoked: u32,
 }
 
+/// `GET /auth/2fa`: the caller's own two-factor state. `available` is false when the server has
+/// no encryption key, so the UI can say so instead of offering a setup that would fail.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct TwoFactorStatus {
+    pub enabled: bool,
+    pub available: bool,
+    pub recovery_codes_left: u32,
+}
+
+/// `POST /auth/2fa/setup`: starting (or restarting) setup needs the account password.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct TwoFactorSetupRequest {
+    pub password: String,
+}
+
+/// The pending secret as base32 text and as the `otpauth://` URI a QR code carries.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct TwoFactorSetupResponse {
+    pub secret: String,
+    pub otpauth_uri: String,
+}
+
+/// A TOTP code (or, where allowed, a recovery code).
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct TwoFactorCodeRequest {
+    pub code: String,
+}
+
+/// `POST /auth/2fa/enable`: the recovery codes (shown once) and how many other sessions were
+/// signed out.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct TwoFactorEnabledResponse {
+    pub recovery_codes: Vec<String>,
+    pub signed_out: u32,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct RecoveryCodesResponse {
+    pub recovery_codes: Vec<String>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct Server {
     pub id: ServerId,

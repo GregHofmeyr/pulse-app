@@ -30,6 +30,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(|| async { "ok" }))
         .route("/gateway", get(gateway::socket::handler))
         .merge(auth::routes::router())
+        .merge(auth::two_factor::router())
         .merge(servers::routes::router())
         .merge(messages::routes::router())
         .merge(messages::reactions::router())
