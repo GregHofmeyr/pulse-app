@@ -62,6 +62,7 @@ deploy-check:
     sed -e 's/^PULSE_UID=$/PULSE_UID=1000/' -e 's/^PULSE_GID=$/PULSE_GID=1000/' \
         -e 's/^ACME_EMAIL=$/ACME_EMAIL=ci@example.com/' -e 's/^LIVEKIT_SECRET=$/LIVEKIT_SECRET=x/' \
         -e 's/^LIVEKIT_NODE_IP=$/LIVEKIT_NODE_IP=203.0.113.10/' \
+        -e 's/^PULSE_TOTP_KEY=$/PULSE_TOTP_KEY=0000000000000000000000000000000000000000000000000000000000000000/' \
         deploy/env.example > /tmp/pulse-ci.env
     docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config -q
     caddy_image=$(docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config --images | grep '^caddy:') && \
