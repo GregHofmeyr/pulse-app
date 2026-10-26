@@ -91,7 +91,7 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
   take the digest of the multi-arch **index**, not of one platform: `docker manifest inspect <image>:<tag> -v`, or
   `HEAD /v2/<repo>/manifests/<tag>` on the registry with the OCI index and manifest-list `Accept` headers and read
   `Docker-Content-Digest`. Check that the index lists `linux/arm64` (the server is ARM64). Then update
-  `compose.yml` (and the Caddy image in `justfile` and `.github/workflows/ci.yml`), run `just deploy-check`, `just deploy`.
+  `compose.yml` (CI and `just deploy-check` read the Caddy image from it), run `just deploy-check`, `just deploy`.
 - Order for a release: deploy the server first, then send friends the new installer. Clients older than the
   server see "plz update :)".
 - Building a branch: running `release-server` by hand (workflow dispatch) also tags it `:latest`, as every

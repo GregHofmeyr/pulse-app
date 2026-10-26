@@ -16,14 +16,15 @@ ignore = [
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",
-    # Unmaintained crates, all transitive through Tauri/GTK, DeepFilterNet or keyring with no
-    # drop-in replacement we control. No known vulnerability; revisit when upstreams move.
-    "RUSTSEC-2026-0319", # anymap2 (tauri-plugin dependency tree)
-    "RUSTSEC-2024-0436", # paste (tauri / tract / sqlx macros)
-    "RUSTSEC-2024-0370", # proc-macro-error (gtk3-macros, Tauri on Linux)
-    "RUSTSEC-2026-0370", # zvariant (zbus, via keyring's dbus-secret-service)
-    "RUSTSEC-2026-0371", # zbus_names (same chain)
-    "RUSTSEC-2026-0372", # zvariant_derive (same chain)
+    # Unmaintained crates, all transitive through Tauri/GTK or DeepFilterNet with no drop-in
+    # replacement we control. No known vulnerability; revisit when upstreams move.
+    # Paths checked with `cargo tree -i <crate> -e normal,build`.
+    "RUSTSEC-2026-0319", # anymap2: build-dependency only (tract-linalg -> liquid -> liquid-core); not shipped
+    "RUSTSEC-2024-0436", # paste: proc macro used by tract-core and tract-linalg (DeepFilterNet); compile-time only
+    "RUSTSEC-2024-0370", # proc-macro-error: glib-macros and gtk3-macros (gtk, Tauri on Linux); compile-time only
+    "RUSTSEC-2026-0370", # zvariant: zbus 5 via tauri-plugin-single-instance
+    "RUSTSEC-2026-0371", # zbus_names: same chain
+    "RUSTSEC-2026-0372", # zvariant_derive: same chain
 ]
 
 [licenses]

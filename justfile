@@ -53,8 +53,9 @@ deploy-check:
         -e 's/^ACME_EMAIL=$/ACME_EMAIL=ci@example.com/' -e 's/^LIVEKIT_SECRET=$/LIVEKIT_SECRET=x/' \
         deploy/env.example > /tmp/pulse-ci.env
     docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config -q
-    docker run --rm -e PULSE_DOMAIN=example.com -e ACME_EMAIL=ci@example.com \
-        -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb caddy validate --config /etc/caddy/Caddyfile
+    caddy_image=$(docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config --images | grep '^caddy:') && \
+        docker run --rm -e PULSE_DOMAIN=example.com -e ACME_EMAIL=ci@example.com \
+        -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" "$caddy_image" caddy validate --config /etc/caddy/Caddyfile
     docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh
 
 # --- production (pulsechat.co.za); see deploy/README.md ---

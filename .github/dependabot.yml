@@ -37,9 +37,9 @@ updates:
       docker-minor-patch:
         update-types: [minor, patch]
 
-  # image: lines in deploy/compose.yml (livekit, caddy) and the dev docker-compose.yml
+  # image: lines in deploy/compose.yml (livekit, caddy); the dev docker-compose.yml is not tracked
   - package-ecosystem: docker-compose
-    directories: [/deploy, /]
+    directory: /deploy
     schedule:
       interval: weekly
     open-pull-requests-limit: 3

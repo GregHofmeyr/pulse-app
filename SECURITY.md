@@ -245,8 +245,9 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   - **Licences.** Licences must be on an explicit allow-list.
 - **UI dependencies.** `pnpm audit --prod --audit-level high` checks the UI's production dependencies.
 - **When the checks run.** Both checks run in CI whenever dependencies change, and weekly.
-- **Dependabot.** It opens weekly update pull requests for Cargo, npm, GitHub Actions, the server Dockerfile and the
-  compose images.
+- **Dependabot.** It opens weekly update pull requests for Cargo, npm, GitHub Actions and the production compose
+  images (`deploy/compose.yml`). It is also configured for the server Dockerfile, but that file's base images use
+  floating tags, so it will rarely have anything to bump (see the known gaps).
 
 ## 7. Known gaps
 
@@ -268,7 +269,7 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   - Rate limits are held in memory, so they reset when the server restarts.
 - **Pinning and verification.**
   - GitHub Actions in the workflows are referenced by version tag, not commit SHA.
-  - The server image's base images are referenced by tag. The image that is actually deployed is pinned by digest.
+  - The server image's base images are referenced by floating tags (`rust:1-bookworm`, `debian:bookworm-slim`). The image that is actually deployed is pinned by digest.
   - The prebuilt `libwebrtc` and the test kit's LiveKit binary are downloaded without checksum verification.
   - The Windows build takes the Tauri CLI from a version range and Rust from the current stable toolchain.
 - **Preview images are relayed unmodified.** Go Live preview images are passed from the streamer to viewers byte for
