@@ -5,6 +5,7 @@ pub mod controls;
 pub mod denoise;
 pub mod devices;
 pub mod gate;
+pub mod linkstats;
 pub mod meter;
 pub mod mictest;
 pub mod mixer;
@@ -670,6 +671,8 @@ pub enum VoiceEvent {
         stage: JoinStage,
         attempt: Option<u32>,
     },
+    /// Ping, jitter, loss and connection type, while the status panel is open.
+    Link(linkstats::LinkReport),
     State {
         channel_id: Option<ChannelId>,
         connection: Connection,
@@ -863,6 +866,8 @@ pub struct VoiceManager {
     reconnect_give_up: Duration,
     /// Audio pipelines built so far (a switch reuses the one it has).
     built: AtomicU64,
+    /// Link figures for the status panel (reported only while it is open).
+    link: Arc<linkstats::LinkState>,
 }
 
 impl VoiceManager {
@@ -887,6 +892,7 @@ impl VoiceManager {
             rejoin_unit: Duration::from_secs(1),
             reconnect_give_up: rejoin::RECONNECT_GIVE_UP,
             built: Default::default(),
+            link: Default::default(),
         }
     }
 
@@ -1212,6 +1218,11 @@ impl VoiceManager {
             ((pipeline, pipeline_reused), devices_ms),
             (open_room, mut room_events, room_connect_ms),
         ) = side_by_side(pipeline, room, |(room, _, _)| room.close()).await?;
+        // the panel's "voice server": the host only
+        self.link.clear();
+        *self.link.server.lock().unwrap() = reqwest::Url::parse(&vt.url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned));
         let room = open_room.room().clone();
         let shared = pipeline.shared.clone();
         shared.mix_in.clear(); // the last room's people
@@ -1293,23 +1304,48 @@ impl VoiceManager {
         {
             let room = room.clone();
             let shared = shared.clone();
+            let (events, link) = (self.events.clone(), self.link.clone());
             tasks.push(tokio::spawn(async move {
-                let mut totals = netstats::Totals::default();
-                let mut last_codec = None;
-                let mut tick = tokio::time::interval(netstats::WINDOW);
-                loop {
-                    tick.tick().await;
-                    if let Ok(s) = room.get_stats().await {
+                // per-task counters, shared into each tick's future (never held across an await)
+                let state = Arc::new(Mutex::new((
+                    netstats::Totals::default(),
+                    None::<String>,
+                    linkstats::LossWindow::default(),
+                )));
+                linkstats::run_ticks(link.clone(), |tick| {
+                    let (room, shared, events, link, state) = (
+                        room.clone(),
+                        shared.clone(),
+                        events.clone(),
+                        link.clone(),
+                        state.clone(),
+                    );
+                    async move {
+                        let Ok(s) = room.get_stats().await else {
+                            return;
+                        };
+                        let now = tokio::time::Instant::now();
+                        let (totals, last_codec, loss) = &mut *state.lock().unwrap();
+                        let sample = linkstats::sample(&s.publisher_stats, loss, now);
+                        if let Some(rtt) = sample.rtt_ms {
+                            link.history.lock().unwrap().push(now, rtt);
+                        }
+                        if tick.report {
+                            events(VoiceEvent::Link(link.report(sample, now)));
+                        }
+                        if !tick.log {
+                            return;
+                        }
                         // which codec our mic is sent with (stereo? FEC/DTX?), once per change
                         if let Some(c) = netstats::send_codec(&s.publisher_stats)
                             && last_codec.as_ref() != Some(&c)
                         {
                             tracing::info!(codec = %c, "voice: send codec");
-                            last_codec = Some(c);
+                            *last_codec = Some(c);
                         }
                         let (line, t) =
-                            netstats::summarize(&s.publisher_stats, &s.subscriber_stats, &totals);
-                        totals = t;
+                            netstats::summarize(&s.publisher_stats, &s.subscriber_stats, totals);
+                        *totals = t;
                         // ours: worst send backlog this window, and the pipeline's counters
                         let send_ms = shared.mic_queue.take_worst();
                         let underrun = shared.mix_in.take_underrun_samples();
@@ -1318,7 +1354,8 @@ impl VoiceManager {
                         let ours = shared.stats.take(underrun * 1000 / INTERNAL_RATE as u64);
                         tracing::info!(%line, send_ms, adjust, mix_busy, %ours, "voice: path");
                     }
-                }
+                })
+                .await;
             }));
         }
 
@@ -1542,6 +1579,7 @@ impl VoiceManager {
         };
         tracing::info!("voice: leaving");
         s.end(announce).await;
+        self.link.clear();
         if announce {
             self.emit_state(None, Connection::Disconnected);
         }
@@ -1624,6 +1662,11 @@ impl VoiceManager {
     /// A voice meter appeared in (`true`) or left (`false`) the UI. Survives sessions, like mute.
     pub fn watch_meters(&self, on: bool) {
         self.controls.lock().unwrap().watch_meters(on);
+    }
+
+    /// The status panel opened (`true`) or closed: link figures are sent only while it is open.
+    pub fn watch_link(&self, on: bool) {
+        self.link.set_watching(on);
     }
 
     /// A fresh page: meters shown by the previous one are gone.

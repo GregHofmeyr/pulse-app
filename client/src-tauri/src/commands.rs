@@ -737,6 +737,12 @@ pub fn watch_voice_meters(voice: State<'_, VoiceManager>, on: bool) {
     voice.watch_meters(on);
 }
 
+/// The status panel opened (`on`) or closed: ping, jitter and loss are sent only while it is open.
+#[tauri::command]
+pub fn watch_voice_link(voice: State<'_, VoiceManager>, on: bool) {
+    voice.watch_link(on);
+}
+
 /// Hotkey path (IPC on Linux, keyboard/mouse hooks on Windows): toggle + broadcast, same as the buttons.
 pub fn hotkey(app: &AppHandle, c: crate::ipc::Command) {
     let app = app.clone();
