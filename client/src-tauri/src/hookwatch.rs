@@ -36,8 +36,48 @@ pub fn hook_step(enabled: bool, installed: bool, reinstall_asked: bool) -> HookS
     }
 }
 
-/// What the watchdog does on a tick, given the switch, whether the hook thread holds hooks, and
-/// whether their install failed.
+/// Whether there should be hooks at all: the switch is on AND something is bound. With nothing
+/// bound there's nothing to match, so the keyboard and mouse aren't watched (first run included).
+/// Recording a bind doesn't need them: the Settings window records it from its own key events.
+pub fn hooks_wanted(enabled: bool, has_binds: bool) -> bool {
+    enabled && has_binds
+}
+
+/// What the hook thread holds, as one atomic so a reader never sees a half-made change.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Hooks {
+    /// No hooks.
+    None = 0,
+    /// Both hooks installed.
+    In = 1,
+    /// The watchdog's reinstall removed them and is (re)trying to put them back: no hooks yet.
+    Retrying = 2,
+}
+
+impl Hooks {
+    pub fn from_u8(v: u8) -> Self {
+        match v {
+            1 => Self::In,
+            2 => Self::Retrying,
+            _ => Self::None,
+        }
+    }
+}
+
+/// A snapshot of the hook machinery, for the decisions below.
+#[derive(Debug, Clone, Copy)]
+pub struct Seen<'a> {
+    /// `hooks_wanted`, as it reads now.
+    pub wanted: bool,
+    pub hooks: Hooks,
+    /// The hook thread started and is still running its message loop.
+    pub thread_alive: bool,
+    /// Why the last install failed, if it did (cleared by the next attempt).
+    pub install_failed: Option<&'a str>,
+}
+
+/// What the watchdog does on a tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Gate {
     /// Hooks are in and should be: check they still see input.
@@ -46,36 +86,96 @@ pub enum Gate {
     /// Harmless if the original is merely late: the hook thread reads the switch when it gets
     /// there, and a second one finds nothing to do.
     Resend,
-    /// Nothing to watch: switched off with no hooks, or the install failed (reported; the user's
-    /// off/on retries it).
+    /// Nothing to watch: not wanted with no hooks, the install failed (reported; the user's
+    /// off/on retries it), or there's no hook thread to talk to (reported). Forget the backoff.
     Idle,
+    /// The hook thread is retrying a reinstall: no input polled, nothing sent (it isn't reading
+    /// messages), and the backoff kept for the hooks it puts back.
+    Wait,
 }
 
-pub fn watch_gate(enabled: bool, hooked: bool, install_failed: bool) -> Gate {
-    match (enabled, hooked) {
-        (true, true) => Gate::Watch,
-        (false, true) => Gate::Resend,
-        (true, false) if !install_failed => Gate::Resend,
+pub fn watch_gate(s: &Seen) -> Gate {
+    if !s.thread_alive {
+        return Gate::Idle;
+    }
+    match (s.wanted, s.hooks) {
+        (_, Hooks::Retrying) => Gate::Wait,
+        (true, Hooks::In) => Gate::Watch,
+        (false, Hooks::In) => Gate::Resend,
+        (true, Hooks::None) if s.install_failed.is_none() => Gate::Resend,
         _ => Gate::Idle,
     }
 }
 
-/// What Settings shows. Off isn't a problem, but off with the hooks still in is (until the
-/// watchdog's resend removes them), unless `switch_on_its_way`: the "off" was just delivered and
-/// the hook thread hasn't got to it yet. On, it's the install failure, if any.
-pub fn switch_problem(
-    enabled: bool,
-    hooked: bool,
-    install_failed: Option<&str>,
-    switch_on_its_way: bool,
-) -> Option<String> {
-    match (enabled, hooked) {
-        (false, true) if switch_on_its_way => None,
-        (false, true) => Some(
-            "Keybinds are switched off but the keyboard and mouse hooks are still in; Pulse keeps trying to remove them (restart Pulse if this stays)".into(),
+/// What Settings shows. Off (or nothing bound) isn't a problem, but hooks still in then is (until
+/// the watchdog's resend removes them), unless `switch_on_its_way`: the change was just delivered
+/// and the hook thread hasn't got to it yet. Wanted, it's a missing hook thread or the install
+/// failure, if any.
+pub fn switch_problem(s: &Seen, switch_on_its_way: bool) -> Option<String> {
+    if s.wanted && !s.thread_alive {
+        return Some("Keybinds aren't running (their background thread couldn't start or stopped); restart Pulse to try again".into());
+    }
+    match (s.wanted, s.hooks) {
+        (false, Hooks::In) if switch_on_its_way => None,
+        (false, Hooks::In) => Some(
+            "Global keybinds are off but the keyboard and mouse hooks are still in; Pulse keeps trying to remove them (restart Pulse if this stays)".into(),
         ),
-        (false, false) => None,
-        (true, _) => install_failed.map(str::to_owned),
+        (false, _) => None,
+        // the watchdog is putting them back
+        (true, Hooks::Retrying) => None,
+        (true, _) => s.install_failed.map(str::to_owned),
+    }
+}
+
+/// Whether the hook thread has caught up with a change: the hooks match what's wanted, or it
+/// can't get there (the install failed, no thread). A settings change waits for this, briefly,
+/// so its reply says what really happened.
+pub fn settled(s: &Seen) -> bool {
+    if !s.thread_alive {
+        return true;
+    }
+    match s.hooks {
+        Hooks::Retrying => false,
+        Hooks::In => s.wanted,
+        Hooks::None => !s.wanted || s.install_failed.is_some(),
+    }
+}
+
+/// The reinstall retry's pause: `total` in `slice`s, stopping as soon as `wanted` says hooks
+/// aren't wanted any more (switched off, last bind removed). Returns whether they still are.
+pub fn retry_wait(
+    total: Duration,
+    slice: Duration,
+    mut wanted: impl FnMut() -> bool,
+    mut sleep: impl FnMut(Duration),
+) -> bool {
+    let mut left = total;
+    while !left.is_zero() {
+        let d = slice.min(left);
+        sleep(d);
+        left -= d;
+        if !wanted() {
+            return false;
+        }
+    }
+    true
+}
+
+/// A run of failures to log once (and its end once), not on every retry.
+#[derive(Debug, Default)]
+pub struct Episode {
+    failing: bool,
+}
+
+impl Episode {
+    /// A failure: true if it starts a new run (log it).
+    pub fn failed(&mut self) -> bool {
+        !std::mem::replace(&mut self.failing, true)
+    }
+
+    /// A success: true if it ends a run (log the recovery).
+    pub fn succeeded(&mut self) -> bool {
+        std::mem::replace(&mut self.failing, false)
     }
 }
 
@@ -223,12 +323,19 @@ mod tests {
         }
     }
 
+    fn failed(wanted: bool, hooks: Hooks) -> Seen<'static> {
+        Seen {
+            install_failed: Some("boom"),
+            ..seen(wanted, hooks)
+        }
+    }
+
     /// A lost "off" (the post to the hook thread failed) mustn't leave hooks running while the
     /// switch says off: the watchdog re-sends the switch until the hooks match.
     #[test]
     fn hooked_but_switched_off_is_resent_until_the_hooks_go() {
-        assert_eq!(watch_gate(false, true, false), Gate::Resend);
-        assert_eq!(watch_gate(false, true, true), Gate::Resend);
+        assert_eq!(watch_gate(&seen(false, Hooks::In)), Gate::Resend);
+        assert_eq!(watch_gate(&failed(false, Hooks::In)), Gate::Resend);
         // and handling that resend unhooks
         assert_eq!(hook_step(false, true, false), HookStep::Unhook);
     }
@@ -237,32 +344,32 @@ mod tests {
     /// user is told, and off/on retries it).
     #[test]
     fn switched_on_without_hooks_is_resent_unless_the_install_failed() {
-        assert_eq!(watch_gate(true, false, false), Gate::Resend);
-        assert_eq!(watch_gate(true, false, true), Gate::Idle);
+        assert_eq!(watch_gate(&seen(true, Hooks::None)), Gate::Resend);
+        assert_eq!(watch_gate(&failed(true, Hooks::None)), Gate::Idle);
     }
 
     #[test]
     fn the_watchdog_only_watches_hooks_that_should_be_there() {
-        assert_eq!(watch_gate(true, true, false), Gate::Watch);
-        assert_eq!(watch_gate(false, false, false), Gate::Idle);
-        assert_eq!(watch_gate(false, false, true), Gate::Idle);
+        assert_eq!(watch_gate(&seen(true, Hooks::In)), Gate::Watch);
+        assert_eq!(watch_gate(&seen(false, Hooks::None)), Gate::Idle);
+        assert_eq!(watch_gate(&failed(false, Hooks::None)), Gate::Idle);
     }
 
     /// Off isn't a problem, but off with the hooks still in is, and stays visible.
     #[test]
     fn hooks_still_in_while_off_is_a_problem() {
-        assert_eq!(switch_problem(false, false, None, false), None);
-        assert_eq!(switch_problem(false, false, Some("boom"), false), None);
+        assert_eq!(switch_problem(&seen(false, Hooks::None), false), None);
+        assert_eq!(switch_problem(&failed(false, Hooks::None), false), None);
         assert!(
-            switch_problem(false, true, None, false)
+            switch_problem(&seen(false, Hooks::In), false)
                 .unwrap()
                 .contains("still")
         );
         assert_eq!(
-            switch_problem(true, false, Some("boom"), false),
+            switch_problem(&failed(true, Hooks::None), false),
             Some("boom".into())
         );
-        assert_eq!(switch_problem(true, true, None, false), None);
+        assert_eq!(switch_problem(&seen(true, Hooks::In), false), None);
     }
 
     /// A normal "off": the message reached the hook thread, which hasn't unhooked yet. That's
@@ -270,12 +377,167 @@ mod tests {
     /// see it later.
     #[test]
     fn hooks_still_in_right_after_a_delivered_off_is_not_a_problem() {
-        assert_eq!(switch_problem(false, true, None, true), None);
+        assert_eq!(switch_problem(&seen(false, Hooks::In), true), None);
         // an install failure while switching on is still shown
         assert_eq!(
-            switch_problem(true, false, Some("boom"), true),
+            switch_problem(&failed(true, Hooks::None), true),
             Some("boom".into())
         );
+    }
+
+    fn seen(wanted: bool, hooks: Hooks) -> Seen<'static> {
+        Seen {
+            wanted,
+            hooks,
+            thread_alive: true,
+            install_failed: None,
+        }
+    }
+
+    /// Hooks only when the switch is on AND something is bound: nothing to match, nothing to
+    /// watch the keyboard for.
+    #[test]
+    fn hooks_are_wanted_only_when_on_with_something_bound() {
+        assert!(hooks_wanted(true, true));
+        assert!(!hooks_wanted(true, false), "on, nothing bound");
+        assert!(!hooks_wanted(false, true), "off");
+        assert!(!hooks_wanted(false, false));
+    }
+
+    /// Adding the first bind installs, removing the last unhooks: the same step as the switch.
+    #[test]
+    fn the_first_bind_installs_and_the_last_one_removed_unhooks() {
+        assert_eq!(
+            hook_step(hooks_wanted(true, true), false, false),
+            HookStep::Install
+        );
+        assert_eq!(
+            hook_step(hooks_wanted(true, false), true, false),
+            HookStep::Unhook
+        );
+        // a watchdog request with nothing bound can't put them back
+        assert_eq!(
+            hook_step(hooks_wanted(true, false), false, true),
+            HookStep::Nothing
+        );
+    }
+
+    /// The watchdog treats "nothing bound" like "off": no input polled, the hooks resent away.
+    #[test]
+    fn the_watchdog_treats_nothing_bound_like_off() {
+        let none = hooks_wanted(true, false);
+        assert_eq!(watch_gate(&seen(none, Hooks::None)), Gate::Idle);
+        assert_eq!(watch_gate(&seen(none, Hooks::In)), Gate::Resend);
+    }
+
+    /// While the hook thread is between hooks retrying a reinstall, the watchdog neither polls
+    /// input nor resends nor forgets its backoff (that would cost an extra reinstall after).
+    #[test]
+    fn the_watchdog_waits_out_a_reinstall() {
+        assert_eq!(watch_gate(&seen(true, Hooks::Retrying)), Gate::Wait);
+        assert_eq!(watch_gate(&seen(false, Hooks::Retrying)), Gate::Wait);
+    }
+
+    /// A hook thread that never started, or stopped, can't be posted to: nothing to resend
+    /// (no warning every tick), and if hooks are wanted it's shown, whatever an earlier
+    /// install failure said or didn't.
+    #[test]
+    fn a_missing_hook_thread_is_shown_and_not_posted_to() {
+        let dead = Seen {
+            wanted: true,
+            hooks: Hooks::None,
+            thread_alive: false,
+            install_failed: None,
+        };
+        assert_eq!(watch_gate(&dead), Gate::Idle);
+        assert!(
+            switch_problem(&dead, false)
+                .unwrap()
+                .contains("restart Pulse")
+        );
+        assert!(switch_problem(&dead, true).is_some(), "not 'on its way'");
+        // not wanted: nothing should run anyway
+        let off = Seen {
+            wanted: false,
+            ..dead
+        };
+        assert_eq!(switch_problem(&off, false), None);
+        assert_eq!(watch_gate(&off), Gate::Idle);
+    }
+
+    /// Off (or nothing bound) mid-retry: the loop stops by itself within a moment; not a
+    /// problem. On mid-retry: the watchdog is fixing it.
+    #[test]
+    fn retrying_is_not_a_problem() {
+        assert_eq!(switch_problem(&seen(false, Hooks::Retrying), false), None);
+        assert_eq!(switch_problem(&seen(true, Hooks::Retrying), false), None);
+    }
+
+    #[test]
+    fn the_hook_state_round_trips_through_its_atomic() {
+        for h in [Hooks::None, Hooks::In, Hooks::Retrying] {
+            assert_eq!(Hooks::from_u8(h as u8), h);
+        }
+        assert_eq!(Hooks::from_u8(99), Hooks::None);
+    }
+
+    /// A settings change waits (briefly) for the hook thread to settle, so its reply is true.
+    #[test]
+    fn settled_means_the_hooks_match_or_the_install_failed() {
+        assert!(settled(&seen(true, Hooks::In)));
+        assert!(settled(&seen(false, Hooks::None)));
+        assert!(!settled(&seen(true, Hooks::None)), "install on its way");
+        assert!(!settled(&seen(false, Hooks::In)), "unhook on its way");
+        assert!(!settled(&seen(true, Hooks::Retrying)));
+        assert!(!settled(&seen(false, Hooks::Retrying)));
+        let failed = Seen {
+            install_failed: Some("boom"),
+            ..seen(true, Hooks::None)
+        };
+        assert!(settled(&failed));
+        let dead = Seen {
+            thread_alive: false,
+            ..seen(true, Hooks::None)
+        };
+        assert!(settled(&dead), "nothing will change: report now");
+    }
+
+    /// The reinstall retry loop sleeps in slices and stops as soon as hooks aren't wanted.
+    #[test]
+    fn the_retry_wait_stops_as_soon_as_hooks_arent_wanted() {
+        let mut checks = 0;
+        let mut slept = 0;
+        let kept_wanting = retry_wait(
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+            || {
+                checks += 1;
+                checks < 3
+            },
+            |d| slept += d.as_millis(),
+        );
+        assert!(!kept_wanting);
+        assert_eq!(slept, 300, "stopped on the third slice, not after 10 s");
+        let mut slept = 0;
+        assert!(retry_wait(
+            Duration::from_secs(10),
+            Duration::from_millis(100),
+            || true,
+            |d| slept += d.as_millis(),
+        ));
+        assert_eq!(slept, 10_000);
+    }
+
+    /// Failing to reach the hook thread is logged once per run of failures, not every tick.
+    #[test]
+    fn failures_log_once_per_episode() {
+        let mut e = Episode::default();
+        assert!(e.failed(), "first failure: log");
+        assert!(!e.failed());
+        assert!(!e.failed());
+        assert!(e.succeeded(), "recovered: log that once too");
+        assert!(!e.succeeded());
+        assert!(e.failed(), "a new episode logs again");
     }
 
     #[test]

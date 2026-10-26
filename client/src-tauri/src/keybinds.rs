@@ -167,7 +167,8 @@ const FILE: &str = "keybinds.json";
 pub struct Saved {
     #[serde(flatten)]
     pub binds: Keybinds,
-    /// Global binds on: on Windows, keyboard and mouse hooks run to match them. Off: no hooks.
+    /// Global binds on: on Windows, keyboard and mouse hooks run to match them (only while
+    /// something is bound: nothing bound, no hooks either). Off: no hooks.
     #[serde(default = "on")]
     pub enabled: bool,
 }
