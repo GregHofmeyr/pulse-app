@@ -254,6 +254,10 @@ async fn report_publish<R: CloseRoom>(
         Ok(()) => {
             w.retries.store(0, Ordering::SeqCst);
             if w.alive.load(Ordering::SeqCst) {
+                (w.events)(VoiceEvent::Stage {
+                    stage: JoinStage::Connected,
+                    attempt: None,
+                });
                 (w.events)(VoiceEvent::Mic {
                     live: true,
                     error: None,
@@ -646,9 +650,26 @@ pub enum Connection {
     Disconnected,
 }
 
+/// Where a join is, for the UI's progress copy. `Disconnected` and LiveKit's own reconnecting
+/// stay `State` events.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum JoinStage {
+    RequestingAccess,
+    Connecting,
+    StartingAudio,
+    Connected,
+    Reconnecting,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VoiceEvent {
+    /// A join stage; `attempt` numbers a rejoin (1-based).
+    Stage {
+        stage: JoinStage,
+        attempt: Option<u32>,
+    },
     State {
         channel_id: Option<ChannelId>,
         connection: Connection,
@@ -900,6 +921,10 @@ impl VoiceManager {
         self.tokens.clear();
     }
 
+    fn emit_stage(&self, stage: JoinStage, attempt: Option<u32>) {
+        (self.events)(VoiceEvent::Stage { stage, attempt });
+    }
+
     fn emit_state(&self, channel: Option<ChannelId>, connection: Connection) {
         (self.events)(VoiceEvent::State {
             channel_id: channel,
@@ -980,6 +1005,9 @@ impl VoiceManager {
             Connection::Connecting
         };
         self.emit_state(Some(channel), trying);
+        if rejoin_of.is_none() {
+            self.emit_stage(JoinStage::RequestingAccess, None);
+        }
         let started = Instant::now();
         // the room stays guarded until the session holding it is stored
         let outcome = tokio::select! {
@@ -999,6 +1027,7 @@ impl VoiceManager {
                 *self.live.lock().unwrap() = Some(session.alive.clone());
                 *self.session.lock().await = Some(session);
                 open_room.disarm();
+                self.emit_stage(JoinStage::StartingAudio, None);
                 self.emit_state(Some(channel), Connection::Connected);
                 if stalled {
                     (self.events)(VoiceEvent::DeviceStalled);
@@ -1064,6 +1093,7 @@ impl VoiceManager {
                 return Rejoined::Superseded;
             };
             self.rejoin_count.fetch_add(1, Ordering::Relaxed);
+            self.emit_stage(JoinStage::Reconnecting, Some(attempt + 1));
             tracing::info!(attempt, channel = %a.channel, "voice: rejoining (connection lost)");
             match self
                 .join_inner(
@@ -1140,6 +1170,9 @@ impl VoiceManager {
             None => api.voice_token(token, channel).await?,
         };
         let token_ms = ms(started);
+        if !rejoin {
+            self.emit_stage(JoinStage::Connecting, None);
+        }
 
         self.keep_runtime();
         let (controls, events) = (self.controls.clone(), self.events.clone());
@@ -2282,10 +2315,16 @@ mod tests {
         assert!(
             matches!(
                 &seen[..],
-                [VoiceEvent::Mic {
-                    live: true,
-                    error: None
-                }]
+                [
+                    VoiceEvent::Stage {
+                        stage: JoinStage::Connected,
+                        attempt: None
+                    },
+                    VoiceEvent::Mic {
+                        live: true,
+                        error: None
+                    }
+                ]
             ),
             "{seen:?}"
         );
@@ -2532,6 +2571,166 @@ mod tests {
             _ => None,
         });
         assert_eq!(last, Some(Connection::Disconnected));
+    }
+
+    /// `Stage`/`State` events as tags (`stage:connecting`, `stage:reconnecting:2`, `state:disconnected`).
+    fn tags_of(seen: &Mutex<Vec<VoiceEvent>>) -> Vec<String> {
+        let tag = |c: &Connection| format!("{c:?}").to_lowercase();
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                VoiceEvent::Stage { stage, attempt } => {
+                    let s = serde_json::to_value(stage).unwrap();
+                    Some(match attempt {
+                        Some(n) => format!("stage:{}:{n}", s.as_str().unwrap()),
+                        None => format!("stage:{}", s.as_str().unwrap()),
+                    })
+                }
+                VoiceEvent::State { connection, .. } => Some(format!("state:{}", tag(connection))),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn position(tags: &[String], tag: &str) -> usize {
+        tags.iter()
+            .position(|t| t == tag)
+            .unwrap_or_else(|| panic!("no {tag} in {tags:?}"))
+    }
+
+    #[tokio::test]
+    async fn a_failed_token_request_stops_after_requesting_access() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let lounge = api
+            .channels(&alex, s.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.kind == pulse_protocol::rest::ChannelKind::Voice)
+            .unwrap();
+        let (_, sam) = testing::register(&app, "sam").await;
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let vm = VoiceManager::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
+        let r = vm
+            .join(
+                &api,
+                &sam,
+                lounge.id,
+                AudioConfig::default(),
+                AudioMode::Null(48_000),
+            )
+            .await;
+        assert!(r.is_err());
+        assert_eq!(
+            tags_of(&seen),
+            [
+                "state:connecting",
+                "stage:requesting_access",
+                "state:disconnected"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_connect_stops_after_connecting() {
+        let mut cfg = testing::test_config();
+        cfg.livekit_url = "ws://127.0.0.1:1".into();
+        let app = testing::spawn_with(cfg).await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let lounge = api
+            .channels(&token, s.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.kind == pulse_protocol::rest::ChannelKind::Voice)
+            .unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let vm = VoiceManager::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
+        let r = vm
+            .join(
+                &api,
+                &token,
+                lounge.id,
+                AudioConfig::default(),
+                AudioMode::Null(48_000),
+            )
+            .await;
+        assert!(r.is_err());
+        let tags = tags_of(&seen);
+        assert!(
+            position(&tags, "stage:requesting_access") < position(&tags, "stage:connecting")
+                && position(&tags, "stage:connecting") < position(&tags, "state:disconnected"),
+            "{tags:?}"
+        );
+        assert!(
+            !tags.contains(&"stage:starting_audio".to_string()),
+            "{tags:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejoin_attempts_are_numbered() {
+        let mut cfg = testing::test_config();
+        cfg.livekit_url = "ws://127.0.0.1:1".into();
+        let app = testing::spawn_with(cfg).await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let lounge = api
+            .channels(&token, s.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.kind == pulse_protocol::rest::ChannelKind::Voice)
+            .unwrap();
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let mut vm = VoiceManager::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
+        vm.rejoin_unit = Duration::from_millis(1);
+        let vm = Arc::new(vm);
+        let runner = {
+            let vm = vm.clone();
+            tokio::spawn(async move { vm.run_rejoins().await })
+        };
+        vm.simulate_drop(&api, &token, lounge.id).await;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while vm.rejoins() < rejoin::MAX_ATTEMPTS || vm.rejoining().is_some() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("rejoin never finished");
+        let tags = tags_of(&seen);
+        let numbered: Vec<&String> = tags
+            .iter()
+            .filter(|t| t.starts_with("stage:reconnecting"))
+            .collect();
+        let expected: Vec<String> = (1..=rejoin::MAX_ATTEMPTS)
+            .map(|n| format!("stage:reconnecting:{n}"))
+            .collect();
+        assert_eq!(numbered, expected.iter().collect::<Vec<_>>());
+        assert_eq!(tags.last().map(String::as_str), Some("state:disconnected"));
+        runner.abort();
+    }
+
+    #[test]
+    fn stage_event_serialises_for_the_ui() {
+        let e = VoiceEvent::Stage {
+            stage: JoinStage::Reconnecting,
+            attempt: Some(2),
+        };
+        assert_eq!(
+            serde_json::to_string(&e).unwrap(),
+            r#"{"kind":"stage","stage":"reconnecting","attempt":2}"#
+        );
     }
 
     async fn states_of(seen: &Mutex<Vec<VoiceEvent>>) -> Vec<(Option<ChannelId>, Connection)> {

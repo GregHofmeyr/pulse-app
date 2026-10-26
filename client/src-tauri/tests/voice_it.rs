@@ -488,6 +488,71 @@ async fn connected_shows_before_the_mic_is_published() {
     vm.leave().await;
 }
 
+/// The join reports its stages in order, with "connected" (state) between starting audio and the
+/// final connected stage.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn stages_arrive_in_order() {
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, token) = testing::register(&app, "alex").await;
+    let s = testing::create_server(&app, &token, "Main").await;
+    let api = Api::new(&format!("http://{}", app.addr));
+    let lounge = api
+        .channels(&token, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+    let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+    let sink = seen.clone();
+    let vm = VoiceManager::new(Arc::new(move |e| {
+        let tag = match e {
+            VoiceEvent::Stage { stage, .. } => format!(
+                "stage:{}",
+                serde_json::to_value(stage).unwrap().as_str().unwrap()
+            ),
+            VoiceEvent::State {
+                connection: Connection::Connected,
+                ..
+            } => "state:connected".to_string(),
+            _ => return,
+        };
+        sink.lock().unwrap().push(tag);
+    }));
+    vm.join(
+        &api,
+        &token,
+        lounge.id,
+        AudioConfig::default(),
+        AudioMode::Null(48_000),
+    )
+    .await
+    .unwrap();
+    for _ in 0..100 {
+        if seen.lock().unwrap().iter().any(|t| t == "stage:connected") {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let seen = seen.lock().unwrap().clone();
+    assert_eq!(
+        seen,
+        [
+            "stage:requesting_access",
+            "stage:connecting",
+            "stage:starting_audio",
+            "state:connected",
+            "stage:connected"
+        ],
+        "{seen:?}"
+    );
+    vm.leave().await;
+}
+
 /// A switch goes straight to the new room: no Disconnected flash (leave sound) between rooms,
 /// and no waiting for the old room's close.
 #[tokio::test(flavor = "multi_thread")]
