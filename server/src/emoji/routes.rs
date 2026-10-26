@@ -61,6 +61,7 @@ async fn create(
     if !s.limits.emoji_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests);
     }
+    crate::media::writes_ok(&s.cfg)?;
     if !is_server_member(&s.db, server, me).await? {
         return Err(AppError::Forbidden);
     }

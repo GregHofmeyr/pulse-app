@@ -6,6 +6,7 @@ pub mod dms;
 pub mod emoji;
 pub mod error;
 pub mod gateway;
+pub mod hygiene;
 pub mod limits;
 pub mod media;
 pub mod messages;
@@ -63,6 +64,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
         );
     }
     media::spawn_cleanup(db.clone(), cfg.media_dir.clone());
+    hygiene::spawn_prune(db.clone());
     let state = AppState {
         db,
         limits: std::sync::Arc::new(limits::Limits::new(&cfg.limits)),

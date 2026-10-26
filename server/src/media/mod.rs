@@ -165,6 +165,37 @@ pub fn disk_ok(dir: &Path, min_free: u64) -> AppResult<()> {
     Ok(())
 }
 
+/// The directory holding the SQLite file named by `db_url`; `None` for in-memory databases.
+fn db_dir(db_url: &str) -> Option<PathBuf> {
+    let rest = db_url
+        .strip_prefix("sqlite://")
+        .or_else(|| db_url.strip_prefix("sqlite:"))
+        .unwrap_or(db_url);
+    let path = rest.split('?').next().unwrap_or(rest);
+    if path.is_empty() || path == ":memory:" {
+        return None;
+    }
+    match Path::new(path).parent() {
+        Some(p) if !p.as_os_str().is_empty() => Some(p.to_path_buf()),
+        _ => Some(PathBuf::from(".")),
+    }
+}
+
+/// `dir`, or its nearest ancestor that exists (the media dir is created on first upload).
+fn existing_ancestor(dir: &Path) -> &Path {
+    dir.ancestors().find(|d| d.exists()).unwrap_or(dir)
+}
+
+/// The same free-space check for a write that grows the database (a message, a report, an
+/// emoji): refuses when either the database's directory or the media directory is low.
+/// Usually these are one volume; they are both checked in case they are not.
+pub fn writes_ok(cfg: &crate::config::Config) -> AppResult<()> {
+    if let Some(dir) = db_dir(&cfg.db_url) {
+        disk_ok(existing_ancestor(&dir), cfg.media_min_free_bytes)?;
+    }
+    disk_ok(existing_ancestor(&cfg.media_dir), cfg.media_min_free_bytes)
+}
+
 /// Delete media nothing uses that is older than `grace`: rows, then their files, in one
 /// transaction. A re-upload's insert waits for the commit, so it sees the files gone and rewrites
 /// them (see `put_one`). A still goes with its parent. Returns how many were deleted.
@@ -221,6 +252,17 @@ pub fn spawn_cleanup(db: SqlitePool, dir: PathBuf) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn db_dir_from_url() {
+        assert_eq!(db_dir("sqlite:///data/pulse.db"), Some("/data".into()));
+        assert_eq!(
+            db_dir("sqlite:///data/pulse.db?mode=rwc"),
+            Some("/data".into())
+        );
+        assert_eq!(db_dir("sqlite://pulse.db"), Some(".".into()));
+        assert_eq!(db_dir("sqlite::memory:"), None);
+    }
 
     #[test]
     fn kind_round_trips() {

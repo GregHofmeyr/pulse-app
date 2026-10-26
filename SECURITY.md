@@ -314,6 +314,20 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
 - Custom emoji: 100 per server at a time, and 500 ever added per server (deleted emoji still count, because their
   names are kept for old messages).
 
+**Database cleanup.** Once an hour the server deletes, one statement per table and logging the counts:
+- sessions past their expiry (their LiveKit grants go with them);
+- invite codes older than their 24 hours, used or not (nothing refers to an invite row, and an expired code is already
+  refused as unknown);
+- expired two-factor login tickets;
+- bug and crash reports older than 90 days (the report retention).
+
+Unused media is cleaned up in the same hourly pass (see "Uploaded images").
+
+**Low disk.** Sending a message, submitting a report and adding a custom emoji are refused with a 507 "server storage
+is full" when the free space on the database's volume or the media volume is below the configured minimum (2 GB by
+default). Image uploads were already refused the same way. The check comes after sign-in and the rate limit, before
+any work.
+
 **Uploaded images.**
 - **Who can upload and read them.** Upload and download both need a signed-in session.
 - **What is accepted.**

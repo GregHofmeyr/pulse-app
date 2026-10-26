@@ -24,6 +24,7 @@ async fn create(
     if !s.limits.report_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests);
     }
+    crate::media::writes_ok(&s.cfg)?;
     let id = super::store::insert(&s.db, me, &req).await?;
     tracing::info!(%me, kind = req.kind.as_str(), %id, "report received");
     Ok(Json(CreateReportResponse { id }))

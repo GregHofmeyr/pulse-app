@@ -157,6 +157,7 @@ async fn send(
     if !s.limits.send_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests);
     }
+    crate::media::writes_ok(&s.cfg)?;
     let ch = channel_for(&s.db, me, id).await?;
     match (ch.kind, ch.server_id) {
         (ChannelKind::Voice, _) => {
