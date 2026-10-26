@@ -129,6 +129,17 @@ describe('StreamRoom watching', () => {
     expect(pub1.setSubscribed).toHaveBeenCalledTimes(2)
   })
 
+  it('watch_returns_its_first_frame_time_and_leaves_the_overlay_to_the_store', async () => {
+    const { diag } = await import('./diag.svelte')
+    diag.firstFrameMs = null
+    const sr = await StreamRoom.connect('c1')
+    const room = rooms.at(-1) as FakeRoom
+    join(room, 'other#v', publication(track()))
+    const ms = await sr.watch('other', videoEl())
+    expect(typeof ms).toBe('number')
+    expect(diag.firstFrameMs).toBeNull() // a preview coming up must not overwrite the full view's
+  })
+
   it('a_new_watch_starts_on_the_low_layer', async () => {
     const { pub1 } = await watching()
     expect(pub1.setVideoQuality).toHaveBeenLastCalledWith(VideoQuality.LOW)

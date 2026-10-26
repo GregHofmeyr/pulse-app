@@ -170,10 +170,11 @@ export class StreamRoom {
   }
 
   /**
-   * Subscribes (on the low layer) and waits for the first painted frame. Other streamers' watches
-   * carry on; `unwatch(streamer)` meanwhile rejects it with an `AbortError`.
+   * Subscribes (on the low layer) and waits for the first painted frame; resolves with the time
+   * that took, in ms (the store shows it for the full view only). Other streamers' watches carry
+   * on; `unwatch(streamer)` meanwhile rejects it with an `AbortError`.
    */
-  async watch(streamer: string, el: HTMLVideoElement): Promise<void> {
+  async watch(streamer: string, el: HTMLVideoElement): Promise<number> {
     this.unwatch(streamer)
     const t0 = performance.now()
     const pub = this.screenOf(streamer)
@@ -222,8 +223,8 @@ export class StreamRoom {
     }
     if (this.watched.get(streamer) !== w) throw new DOMException('Stopped watching', 'AbortError')
     const ms = Math.round(performance.now() - t0)
-    diag.firstFrameMs = ms
     streamCmd.log({ ev: 'first_frame', ms })
+    return ms
   }
 
   /** Stops watching `streamer`, or everyone when no streamer is given. */

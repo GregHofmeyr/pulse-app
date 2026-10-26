@@ -1,7 +1,7 @@
 // Viewer UI state: the stream the main area is showing, and the "<name> is live" toasts.
 import { dropToast, pushToast, TOAST_MS, type Toast } from './viewer'
 
-/** What the main area should show. `stream.watching` follows once the video element has joined it. */
+/** What the main area should show. Its `stream.watching` entry exists from the Watch click on; the `<video>` is the store's. */
 export const viewing = $state({ req: null as { channelId: string; streamer: string } | null })
 
 export const toasts = $state({ list: [] as Toast[] })

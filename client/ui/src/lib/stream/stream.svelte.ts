@@ -11,7 +11,7 @@ import { app } from '../store.svelte'
 import { errorText, streamCmd } from '../tauri'
 import { voice } from '../voice.svelte'
 import { clampVolume } from '../voiceui'
-import { startDiagnostics } from './diag.svelte'
+import { diag, startDiagnostics } from './diag.svelte'
 import type { Fps, Res } from './encodings'
 import { loadAudioMuted, loadStreamVolumes, saveAudioMuted, saveStreamVolumes, type GoLive } from './prefs'
 import { StreamRoom } from './room'
@@ -85,8 +85,8 @@ let stopOutDiag: (() => void) | null = null
 let inDiag: { key: string; stop: () => void } | null = null
 /** One `<video>` per watch, owned here so it moves between hosts without restarting. */
 const videos = new Map<string, HTMLVideoElement>()
-/** Watches whose video is up (`room.watch` resolved). */
-const up = new Set<string>()
+/** Watches whose video is up (`room.watch` resolved) → their time to the first frame, in ms. */
+const up = new Map<string, number>()
 /** Per watch: a later watch of the same stream, or its end, supersedes the calls in flight. */
 const watchGens = new Map<string, ReturnType<typeof generation>>()
 /** Go Live in flight (a second click joins it) and its channel. */
@@ -218,10 +218,11 @@ export function videoOf(channelId: string, streamer: string): HTMLVideoElement |
   return videos.get(streamKey(channelId, streamer)) ?? null
 }
 
-/** Inbound diagnostics follow the watch in full view, once its video is up. */
+/** Inbound diagnostics (and the first-frame time) follow the watch in full view, once its video is up. */
 function syncInDiag() {
   const full = stream.watching.find((w) => w.view === 'full' && up.has(streamKey(w.channelId, w.streamer)))
   const key = full && streamKey(full.channelId, full.streamer)
+  diag.firstFrameMs = key ? (up.get(key) ?? null) : null
   if (inDiag?.key === key) return
   inDiag?.stop()
   inDiag = null
@@ -296,9 +297,9 @@ async function watch(channelId: string, streamer: string): Promise<void> {
       if (!findWatch(channelId, streamer)) await streamCmd.audioWatch(channelId, streamer, false).catch(logError('audio_watch_error'))
       return
     }
-    await room.watch(streamer, el)
+    const firstFrameMs = await room.watch(streamer, el)
     if (!current()) return
-    up.add(k)
+    up.set(k, firstFrameMs)
     const w = findWatch(channelId, streamer)
     if (w) applyLayer(w)
     void streamCmd.setVolume(streamer, loadStreamVolumes()[streamer] ?? 100).catch(logError('stream_volume_error'))
@@ -544,6 +545,7 @@ export const streamApi = {
     // the streamer got back to the restarted server before us: its Ready lists the stream we
     // watch without us, and no StreamStarted comes
     for (const w of [...stream.watching]) {
+      if (!findWatch(w.channelId, w.streamer)) continue // ended while an earlier one was re-listed
       const watched = ready.streams.find((s) => s.channel_id === w.channelId && s.user_id === w.streamer)
       if (watched && !watched.viewers.includes(ready.me.id)) await streamCmd.watch(w.channelId, w.streamer).catch(logError('rewatch_error'))
     }
