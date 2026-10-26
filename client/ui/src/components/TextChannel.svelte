@@ -244,15 +244,15 @@
       <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={grouped(i)}
         replyTo={m.reply_to_id ? (byId.get(m.reply_to_id) ?? null) : null}
         mine={m.author_id === app.state.me?.id}
-        {mentionNames} meId={app.state.me?.id ?? ''} onError={(text) => (error = text)}
+        {mentionNames} meId={app.state.me?.id ?? ''}
         onReply={() => (replyTo = m)}
-        onEdit={async (c) => { try { await api.editMessage(m.id, c) } catch (e) { error = errorText(e) } }}
-        onDelete={async () => { try { await api.deleteMessage(m.id) } catch (e) { error = errorText(e) } }} />
+        onEdit={async (c) => { await api.editMessage(m.id, c) }}
+        onDelete={() => api.deleteMessage(m.id)} />
     {/each}
     {#each pending as p (p.nonce)}
       <MessageItem message={pendingMessage(p, channelId, app.state.me?.id ?? '')} name={nameOf(app.state.me?.id ?? null)} {nameOf} grouped={false}
         replyTo={p.reply_to_id ? (byId.get(p.reply_to_id) ?? null) : null} mine
-        {mentionNames} meId={app.state.me?.id ?? ''} pending={p} onReply={() => {}} onEdit={async () => {}} onDelete={() => {}}
+        {mentionNames} meId={app.state.me?.id ?? ''} pending={p} onReply={() => {}} onEdit={async () => {}} onDelete={async () => {}}
         onRetry={() => retry(p.nonce)} onDiscard={() => (app.state = removePending(app.state, channelId, p.nonce))} />
     {/each}
   </div>

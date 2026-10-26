@@ -45,7 +45,7 @@ function showItem(m: Message) {
   load(m)
   cmp = mount(MessageItem, { target: document.body, props: {
     message: cur(), name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false, mine: false,
-    onReply: () => {}, onEdit: async () => {}, onDelete: () => {}, meId: 'U1', onError,
+    onReply: () => {}, onEdit: async () => {}, onDelete: async () => {}, meId: 'U1',
   } })
   flushSync()
 }
@@ -170,7 +170,7 @@ describe('MessageItem reactions', () => {
     load(msg({ deleted: true }))
     cmp = mount(MessageItem, { target: document.body, props: {
       message: cur(), name: 'sam', nameOf: () => 'sam', replyTo: null, grouped: false, mine: false,
-      onReply: () => {}, onEdit: async () => {}, onDelete: () => {},
+      onReply: () => {}, onEdit: async () => {}, onDelete: async () => {},
     } })
     flushSync()
     expect(document.querySelector('.reactions')).toBeNull()
@@ -286,7 +286,7 @@ describe('reaction toggles', () => {
     cmp = mount(MessageItem, { target: document.body, props: {
       get message() { return cur() }, // live, as in the app: the store's message, not a snapshot
       name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false, mine: false,
-      onReply: () => {}, onEdit: async () => {}, onDelete: () => {}, meId: 'U1', onError,
+      onReply: () => {}, onEdit: async () => {}, onDelete: async () => {}, meId: 'U1',
     } })
     flushSync()
     ;(document.querySelector('.actions [aria-label="Add reaction"]') as HTMLButtonElement).click()
@@ -311,7 +311,7 @@ describe('reaction toggles', () => {
     cell('🎉').click()
     await settle()
     expect(cur().reactions).toEqual([])
-    expect(onError).toHaveBeenCalledWith('nope')
+    expect(document.querySelector('[role="alert"]')?.textContent).toBe('nope') // inline on the message
   })
 
   it('both pickers open in the same fixed popover', () => {

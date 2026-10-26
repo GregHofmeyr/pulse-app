@@ -50,7 +50,7 @@ function showMessage(m = msg()) {
   load(m)
   cmp = mount(MessageItem, { target: document.body, props: {
     message: app.state.messages['C1'][0], name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false,
-    mine: false, onReply: () => {}, onEdit: async () => {}, onDelete: () => {}, meId: 'U1',
+    mine: false, onReply: () => {}, onEdit: async () => {}, onDelete: async () => {}, meId: 'U1',
   } })
   flushSync()
 }
@@ -139,7 +139,7 @@ describe('animated emoji in a message', () => {
     unmount(cmp!)
     cmp = mount(MessageItem, { target: document.body, props: {
       message: app.state.messages['C1'][0], name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false,
-      mine: false, onReply: () => {}, onEdit: async () => {}, onDelete: () => {}, meId: 'U1',
+      mine: false, onReply: () => {}, onEdit: async () => {}, onDelete: async () => {}, meId: 'U1',
     } })
     flushSync()
     expect(FakeIntersectionObserver.watching()).toBe(2)

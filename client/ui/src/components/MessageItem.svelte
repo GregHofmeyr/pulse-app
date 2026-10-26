@@ -1,3 +1,8 @@
+<script lang="ts" module>
+  /** How long a failed delete/reaction error stays on its message. */
+  export const INLINE_ERROR_MS = 5_000
+</script>
+
 <script lang="ts">
   import Icon from './Icon.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
@@ -5,6 +10,7 @@
   import { reactionKey, type Std } from '../lib/emoji'
   import { pickAdds, react } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
+  import { errorText } from '../lib/tauri'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import { renderMessage } from '../lib/markdown'
   import { animateEmojiIn } from '../lib/animate.svelte'
@@ -24,7 +30,6 @@
     onDelete,
     mentionNames = [],
     meId = '',
-    onError = () => {},
     pending,
     onRetry = () => {},
     onDiscard = () => {},
@@ -37,12 +42,10 @@
     mine: boolean
     onReply: () => void
     onEdit: (content: string) => Promise<void>
-    onDelete: () => void
+    onDelete: () => Promise<void>
     /** Usernames that may be mentioned here (rendered as pills). */
     mentionNames?: string[]
     meId?: string
-    /** Where a failed reaction is reported. */
-    onError?: (msg: string) => void
     /** Set when `message` is an unsent one (`pendingMessage`): faded, no actions or reactions, status line under it. */
     pending?: Pending
     onRetry?: () => void
@@ -53,27 +56,56 @@
   let smileBtn: HTMLButtonElement | undefined = $state()
   let editing = $state(false)
   let draft = $state('')
+  let editError = $state('')
+  let inlineError = $state('')
+  let errTimer: ReturnType<typeof setTimeout> | undefined
+  // A failed delete or reaction shows on this message for a few seconds; a newer one restarts the clock.
+  function showError(msg: string) {
+    clearTimeout(errTimer)
+    inlineError = msg
+    errTimer = setTimeout(() => (inlineError = ''), INLINE_ERROR_MS)
+  }
+  $effect(() => () => clearTimeout(errTimer))
+  async function del() {
+    try {
+      await onDelete()
+    } catch (e) {
+      showError(errorText(e))
+    }
+  }
   const time = $derived(new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
 
   function startEdit() {
     draft = message.content
+    editError = ''
     editing = true
   }
   async function save() {
     const d = draft.trim()
-    if (d && d !== message.content) await onEdit(d)
+    editError = ''
+    if (d && d !== message.content) {
+      try {
+        await onEdit(d)
+      } catch (e) {
+        editError = errorText(e) // the box stays open with the text intact
+        return
+      }
+    }
     editing = false
   }
   function pick(e: Std | CustomEmoji, { keep }: { keep: boolean }) {
     if (!keep) picking = false
     const key = reactionKey(e)
-    void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, pickAdds(message.reactions, key, keep), meId, onError)
+    void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, pickAdds(message.reactions, key, keep), meId, showError)
   }
   function key(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       void save()
-    } else if (e.key === 'Escape') editing = false
+    } else if (e.key === 'Escape') {
+      editing = false
+      editError = ''
+    }
   }
 </script>
 
@@ -101,13 +133,15 @@
         {:else if editing}
           <textarea bind:value={draft} onkeydown={key} rows="2" aria-label="Edit message"></textarea>
           <small class="hint">Enter to save · Esc to cancel</small>
+          {#if editError}<p class="err" role="alert">{editError}</p>{/if}
         {:else}
           <!-- renderMessage output is DOMPurify-sanitised (allow-list, cached per message); the only {@html} in the app. -->
           {@const html = renderMessage(message, mentionNames, app.state.customEmoji)}
           <div class="content" {@attach animateEmojiIn(html)}>{@html html}</div>
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
-        {#if !pending}<ReactionRow {message} {meId} {nameOf} {onError} />{/if}
+        {#if !pending}<ReactionRow {message} {meId} {nameOf} onError={showError} />{/if}
+        {#if inlineError}<p class="err" role="alert">{inlineError}</p>{/if}
       </div>
       {#if !pending && !message.deleted && !editing}
         <div class="actions" class:open={picking}>
@@ -115,7 +149,7 @@
           <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>
           {#if mine}
             <button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={15} /></button>
-            <button aria-label="Delete" onclick={onDelete}><Icon name="trash" size={15} /></button>
+            <button aria-label="Delete" onclick={() => void del()}><Icon name="trash" size={15} /></button>
           {/if}
         </div>
         {#if picking && smileBtn}
@@ -176,6 +210,7 @@
   .actions button { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .actions button:hover { color: var(--text); }
   textarea { width: 100%; resize: vertical; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; font: inherit; }
+  .err { margin: 2px 0 0; font-size: 12px; color: var(--danger); }
   .hint { font-size: 11px; color: var(--text-3); }
   .system { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }
   .msg.mentioned { background: rgba(139, 156, 255, .08); box-shadow: inset 2px 0 0 var(--accent); }
