@@ -73,7 +73,7 @@ describe('Shell', () => {
   it('a refused startup shows the message on the waiting screen', () => {
     app.connAt = Date.now()
     app.state = { ...emptyState(), conn: 'too_many_devices' }
-    cmp = mount(Waiting, { target: document.body })
+    cmp = mount(Waiting, { target: document.body, props: { onSignOut: () => {} } })
     flushSync()
     expect(document.querySelector('[role=status]')!.textContent).toContain('Too many devices connected')
   })

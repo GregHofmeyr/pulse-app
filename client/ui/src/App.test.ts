@@ -2,9 +2,12 @@
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const h = vi.hoisted(() => ({ restore: { status: 'refused' } as unknown, handlers: {} as Record<string, (e: { payload: unknown }) => void> }))
+const h = vi.hoisted(() => ({ restore: { status: 'refused' } as unknown, handlers: {} as Record<string, (e: { payload: unknown }) => void>, calls: [] as string[] }))
 vi.mock('@tauri-apps/api/core', () => ({
-  invoke: async (cmd: string) => (cmd === 'restore_session' ? h.restore : undefined),
+  invoke: async (cmd: string) => {
+    h.calls.push(cmd)
+    return cmd === 'restore_session' ? h.restore : undefined
+  },
   convertFileSrc: (s: string) => s,
 }))
 vi.mock('@tauri-apps/api/event', () => ({
@@ -38,6 +41,7 @@ async function start(restore: unknown) {
 
 beforeEach(() => {
   h.handlers = {}
+  h.calls = []
 })
 afterEach(() => {
   if (cmp) unmount(cmp)
@@ -86,6 +90,24 @@ describe('App: startup refused by the server', () => {
     conn('too_many_devices')
     expect(document.querySelector('.waiting')).toBeNull()
     expect(document.querySelector('form')).not.toBeNull()
+  })
+
+  it('Sign out on the waiting screen logs out and goes to login with a clean state', async () => {
+    await start({ status: 'refused' })
+    conn('too_many_devices')
+    app.state = { ...app.state, me: alex }
+    const out = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Sign out')
+    expect(out).toBeTruthy()
+    out!.click()
+    await vi.waitFor(() => expect(document.querySelector('form')).not.toBeNull())
+    expect(h.calls).toContain('logout')
+    expect(document.querySelector('.waiting')).toBeNull()
+    expect(app.state.me).toBeNull()
+    expect(text()).not.toContain('You were signed out') // they chose to: no notice
+    // the core resets to connecting / refusal states after a logout: still login
+    conn('connecting')
+    conn('too_many_devices')
+    expect(document.querySelector('.waiting')).toBeNull()
   })
 
   it('a plain logged-out start shows login even while a refusal state is showing', async () => {

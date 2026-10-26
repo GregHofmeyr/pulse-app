@@ -59,6 +59,19 @@
     }
   })
 
+  // The user gave up waiting: sign out (the core forgets the session even if the server can't be
+  // told) and go to login.
+  async function signOutWhileWaiting() {
+    try {
+      await api.logout()
+    } finally {
+      user = null
+      restoreRefused = false
+      resetState()
+      bootError = ''
+    }
+  }
+
   // The server ended our session (logout elsewhere, expiry): back to login.
   $effect(() => {
     if ((user || restoreRefused) && app.state.conn === 'logged_out') {
@@ -75,7 +88,7 @@
 {:else if screen === 'update'}
   <UpdateRequired />
 {:else if screen === 'waiting'}
-  <Waiting />
+  <Waiting onSignOut={signOutWhileWaiting} />
 {:else if screen === 'shell' && user}
   <Shell {user} onLogout={() => { user = null; restoreRefused = false; resetState() }} />
 {:else}
