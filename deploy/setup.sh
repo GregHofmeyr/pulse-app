@@ -83,7 +83,7 @@ if [[ ! -f $APP/.env ]]; then
 fi
 # 2FA secrets are encrypted with this; fill it only when missing or empty, never replace one (that would lock
 # out everyone with 2FA on). Appended when absent (older servers), like deploy.sh's set_env.
-if ! grep -q '^PULSE_TOTP_KEY=.' "$APP/.env"; then
+if ! grep -q '^PULSE_TOTP_KEY=[^[:space:]]' "$APP/.env"; then
   if grep -q '^PULSE_TOTP_KEY=' "$APP/.env"; then
     sed -i "s/^PULSE_TOTP_KEY=.*/PULSE_TOTP_KEY=$(openssl rand -hex 32)/" "$APP/.env"
   else

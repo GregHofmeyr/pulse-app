@@ -107,7 +107,8 @@ reset-2fa $username:
     #!/usr/bin/env bash
     set -euo pipefail
     [[ "$username" =~ ^[A-Za-z0-9_.]{2,32}$ ]] || { echo "reset-2fa: username must be 2-32 characters of letters, digits, _ or ." >&2; exit 1; }
-    ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server reset-2fa '"$username"
+    # `run`, not `exec`: works with the server stopped (it refuses to start on a wrong key). The image's entrypoint is the binary.
+    ssh {{prod}} 'cd /srv/pulse && docker compose run --rm --no-deps -T pulse-server reset-2fa '"$username"
 
 # newest bug/crash reports on the live server (`new` = not looked at yet)
 reports:

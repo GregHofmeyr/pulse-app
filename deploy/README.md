@@ -51,8 +51,8 @@ GitHub, Oracle Cloud (or xneelo), Cloudflare (DNS + R2), Tailscale, UptimeRobot.
    for now). Oracle: VCN → public subnet → Default Security List → Add Ingress Rules. xneelo: security groups.
 3. From the repo: `just provision ubuntu@<public-ip> <path to the VM's ssh key>`. It installs Docker, automatic
    security updates, the firewall (Oracle's built-in iptables rules included), the UDP buffer sysctl
-   LiveKit wants (`/etc/sysctl.d/60-pulse-udp.conf`), the `pulse` user, `/srv/pulse` with a fresh LiveKit
-   secret and a fresh `PULSE_TOTP_KEY` (encrypts the 2FA secrets in the database), the nightly backup timer, and Tailscale.
+   LiveKit wants (`/etc/sysctl.d/60-pulse-udp.conf`), the `pulse` user, `/srv/pulse` with fresh LiveKit and
+   2FA (`PULSE_TOTP_KEY`) secrets, the nightly backup timer, and Tailscale.
 4. When it prints a Tailscale login URL, open it and approve the machine.
 5. Check: `ssh ubuntu@pulse hostname` prints `pulse`.
 6. **Turn off key expiry for the server**: Tailscale admin console → Machines → `pulse` → ⋯ → *Disable key
@@ -93,19 +93,30 @@ somewhere offline now, next to the backup key (section 8 step 3).
 Servers set up before two-factor have no `PULSE_TOTP_KEY` in `.env`, and `just deploy` stops until it's there.
 Either:
 
-- re-run `just provision ubuntu@pulse` (setup.sh is safe to re-run; it only fills `PULSE_TOTP_KEY` when it's
-  missing or empty and never replaces one), or
-- add it by hand: `ssh pulse@pulse`, then `echo "PULSE_TOTP_KEY=$(openssl rand -hex 32)" >> /srv/pulse/.env`
-  (the file stays mode 600).
+- re-run `just provision ubuntu@pulse` (preferred: setup.sh is safe to re-run; it only fills `PULSE_TOTP_KEY` when
+  it's missing or empty and never replaces one), or
+- add it by hand: `ssh pulse@pulse`, then
+  `printf '\nPULSE_TOTP_KEY=%s\n' "$(openssl rand -hex 32)" >> /srv/pulse/.env` (the leading newline keeps it off the
+  last line; the file stays mode 600).
 
 Then copy the value somewhere offline (`grep ^PULSE_TOTP_KEY /srv/pulse/.env`) and `just deploy`. Do it before
 anyone turns 2FA on: the key can't be changed afterwards without locking those users out.
+
+### Lost key
+
+With any 2FA user in the database, a wrong or missing `PULSE_TOTP_KEY` makes the server refuse to start (the log
+says `PULSE_TOTP_KEY …`; compose keeps restarting it and `just deploy` fails at its health check). A key that is
+set but not 64 hex characters stops every command, `reset-2fa` included: fix the format first.
+
+- Put the original key back in `/srv/pulse/.env` (your offline copy), then `just deploy`.
+- If it is truly lost: set a new one (`openssl rand -hex 32`), run `just reset-2fa <username>` for every user who
+  had 2FA (it works with the server down), then `just deploy`. They sign in with their password and set 2FA up again.
 
 ### Two-factor reset
 
 Someone lost their phone and their recovery codes: `just reset-2fa <username>`. It turns their 2FA off (drops the
 stored secret, recovery codes and any pending sign-in; existing sessions stay). They then sign in with just their password and can
-set 2FA up again in settings. It runs inside the server container over SSH and needs no key.
+set 2FA up again in settings. It runs in a one-off server container over SSH, so it works with the server stopped.
 
 ## 7. Deploying and rolling back
 
@@ -167,8 +178,7 @@ uploaded media (`data/media`, e.g. custom emoji; skipped until something has bee
 encrypt but never decrypt. A plaintext copy never stays on the server, even if a step fails.
 
 **`PULSE_TOTP_KEY` is not in the backups.** The database holds the 2FA secrets only encrypted with it, so keep a
-copy of the key with the age key (NordPass). A database restored without it locks every 2FA user out until you
-`just reset-2fa` each of them.
+copy of the key with the age key (NordPass). See "Lost key" below for what happens without it.
 
 Setup, once:
 
@@ -185,7 +195,7 @@ Setup, once:
    Do this now and then; an untested backup is a hope. `RCLONE_CONFIG_R2_NO_HEAD` in `backup.sh` drops rclone's post-upload check, so the drill is the integrity check of what reached R2.
 
 Restoring for real: `just restore daily/pulse-<time>.db.age`. The restored database needs the `PULSE_TOTP_KEY` it was
-written under (same server: already in `.env`; new server: section 11). The server stops for a few seconds; the old
+written under (same server: already in `.env`; new server: section 11; otherwise see "Lost key"). The server stops for a few seconds; the old
 database is kept next to it as `data/pulse.db.pre-restore-<time>`.
 
 Restoring the media (the database restore doesn't touch it; do this after a lost or rebuilt server, or to roll
@@ -219,8 +229,8 @@ access through your Tailscale identity, and the backup key in NordPass.
 1. Section 4 on the new VM (it gets its own Tailscale name; use `ubuntu@<name>` until the old one is gone).
 2. `just backup-now` on the old server.
 3. Deploy to the new one and restore onto it, pointing the recipes at it:
-   copy `PULSE_TOTP_KEY` from the old `.env` into the new one (replacing the one setup.sh generated; the
-   key must travel with the database or every 2FA user is locked out), then
+   copy `PULSE_TOTP_KEY` from the old `.env` or your offline copy into the new one (replacing the one setup.sh
+   generated; it must travel with the database, see "Lost key"), then
    `just --set prod pulse@<new-name> deploy`, then
    `PULSE_PROD=pulse@<new-name> just restore <that backup>`.
 4. Switch the two Cloudflare A records to the new IP (they take effect within minutes). The new server's
