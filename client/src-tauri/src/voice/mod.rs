@@ -1567,6 +1567,7 @@ impl VoiceManager {
     /// "disconnected" (a plain Leave and a rejoin wait for the close: `leave_locked`). Returns
     /// its pipeline for the next room.
     async fn detach_locked(&self) -> Option<Arc<Pipeline>> {
+        self.link.clear();
         let s = self.session.lock().await.take()?;
         Some(s.detach().await)
     }
@@ -1574,12 +1575,13 @@ impl VoiceManager {
     /// Tear down the session, if any (true if there was one). `announce`: tell the UI
     /// "disconnected" (a rejoin replaces the dead session without saying so).
     async fn leave_locked(&self, announce: bool) -> bool {
+        // also after a join that never got a session
+        self.link.clear();
         let Some(s) = self.session.lock().await.take() else {
             return false;
         };
         tracing::info!("voice: leaving");
         s.end(announce).await;
-        self.link.clear();
         if announce {
             self.emit_state(None, Connection::Disconnected);
         }
@@ -2652,6 +2654,45 @@ mod tests {
         let sink = seen.clone();
         let vm = VoiceManager::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
         (vm, seen)
+    }
+
+    fn stale_link(vm: &VoiceManager) {
+        *vm.link.server.lock().unwrap() = Some("voice.example.test".into());
+        vm.link
+            .history
+            .lock()
+            .unwrap()
+            .push(tokio::time::Instant::now(), 40.0);
+    }
+
+    fn link_is_clear(vm: &VoiceManager) -> bool {
+        vm.link.server.lock().unwrap().is_none()
+            && vm
+                .link
+                .history
+                .lock()
+                .unwrap()
+                .points(tokio::time::Instant::now())
+                .is_empty()
+    }
+
+    /// A join that never got a session (failed or cancelled) must not leave the last call's
+    /// server and ping history behind.
+    #[tokio::test]
+    async fn leave_without_a_session_still_clears_the_link() {
+        let (vm, _) = collecting_manager();
+        stale_link(&vm);
+        vm.leave().await;
+        assert!(link_is_clear(&vm));
+    }
+
+    /// A channel switch detaches the old room: its server and history go with it.
+    #[tokio::test]
+    async fn detach_clears_the_link() {
+        let (vm, _) = collecting_manager();
+        stale_link(&vm);
+        assert!(vm.detach_locked().await.is_none());
+        assert!(link_is_clear(&vm));
     }
 
     /// alex's token, a client for `app`, and the voice channel of alex's new server.

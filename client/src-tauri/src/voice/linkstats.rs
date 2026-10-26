@@ -46,9 +46,10 @@ impl LossWindow {
     /// Add this sample's counters; returns the loss over the window (None until it has a
     /// denominator).
     fn push(&mut self, now: Instant, lost: i64, received: u64, sent: u64) -> Option<f64> {
-        // counters that went backwards mean a restarted stream: start over
-        if let Some(&(_, l, r, s)) = self.0.back()
-            && (lost < l || received < r || sent < s)
+        // packet counters going backwards mean a restarted stream: start over. (`lost` is not
+        // one: RTCP's cumulative loss can legitimately fall when late packets arrive.)
+        if let Some(&(_, _, r, s)) = self.0.back()
+            && (received < r || sent < s)
         {
             self.0.clear();
         }
@@ -73,19 +74,37 @@ impl LossWindow {
 
 pub fn sample(publisher: &[RtcStats], loss: &mut LossWindow, now: Instant) -> LinkSample {
     let mut out = LinkSample::default();
-    let mut local_id = None;
     let (mut lost, mut received, mut sent) = (0i64, 0u64, 0u64);
+    // the active pair, picked once: ping and connection type both describe it
+    let active = publisher.iter().find_map(|s| match s {
+        RtcStats::CandidatePair(p)
+            if p.candidate_pair.nominated
+                && p.candidate_pair.state == Some(IceCandidatePairState::Succeeded) =>
+        {
+            Some(&p.candidate_pair)
+        }
+        _ => None,
+    });
+    if let Some(c) = active {
+        if c.current_round_trip_time > 0.0 {
+            out.rtt_ms = Some(c.current_round_trip_time * 1000.0);
+        }
+        out.transport = publisher.iter().find_map(|s| match s {
+            RtcStats::LocalCandidate(l) if l.rtc.id == c.local_candidate_id => {
+                let l = &l.local_candidate;
+                Some(if l.candidate_type == Some(IceCandidateType::Relay) {
+                    Transport::Turn
+                } else if l.protocol.eq_ignore_ascii_case("tcp") {
+                    Transport::Tcp
+                } else {
+                    Transport::Udp
+                })
+            }
+            _ => None,
+        });
+    }
     for s in publisher {
         match s {
-            RtcStats::CandidatePair(p) => {
-                let c = &p.candidate_pair;
-                if c.nominated && c.state == Some(IceCandidatePairState::Succeeded) {
-                    local_id = Some(c.local_candidate_id.as_str());
-                    if c.current_round_trip_time > 0.0 {
-                        out.rtt_ms = Some(c.current_round_trip_time * 1000.0);
-                    }
-                }
-            }
             RtcStats::RemoteInboundRtp(r) if r.stream.kind == "audio" => {
                 let j = r.received.jitter * 1000.0;
                 out.jitter_ms = Some(out.jitter_ms.map_or(j, |x: f64| x.max(j)));
@@ -97,21 +116,6 @@ pub fn sample(publisher: &[RtcStats], loss: &mut LossWindow, now: Instant) -> Li
             }
             _ => {}
         }
-    }
-    if let Some(id) = local_id {
-        out.transport = publisher.iter().find_map(|s| match s {
-            RtcStats::LocalCandidate(c) if c.rtc.id == id => {
-                let c = &c.local_candidate;
-                Some(if c.candidate_type == Some(IceCandidateType::Relay) {
-                    Transport::Turn
-                } else if c.protocol.eq_ignore_ascii_case("tcp") {
-                    Transport::Tcp
-                } else {
-                    Transport::Udp
-                })
-            }
-            _ => None,
-        });
     }
     out.loss_pct = loss.push(now, lost, received, sent);
     out
@@ -214,33 +218,34 @@ where
     F: FnMut(Tick) -> Fut,
     Fut: Future<Output = ()>,
 {
-    let start = Instant::now();
-    let mut log = tokio::time::interval_at(start + netstats::WINDOW, netstats::WINDOW);
-    let mut every = tokio::time::interval_at(start + LINK_EVERY, LINK_EVERY);
+    // like the loop this replaced, the first log sample is immediate
+    let mut log = tokio::time::interval(netstats::WINDOW);
+    let mut every = tokio::time::interval(LINK_EVERY);
     every.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    // a report this recent already covers any other that is due (two arms can be ready at once)
     let mut last_report: Option<Instant> = None;
+    let fresh = |at: Option<Instant>| at.is_some_and(|t| t.elapsed() < Duration::from_millis(100));
     loop {
+        let watching = link.is_watching();
         tokio::select! {
             _ = log.tick() => {
-                let report = link.is_watching();
+                let report = link.is_watching() && !fresh(last_report);
                 if report {
+                    // the next report is a second after this one, not on the old phase
+                    every.reset();
                     last_report = Some(Instant::now());
                 }
                 on_tick(Tick { log: true, report }).await;
             }
-            _ = every.tick(), if link.is_watching() => {
-                // closed since the guard was read; or a log tick that just reported covers this one
-                if !link.is_watching() {
-                    continue;
+            _ = every.tick(), if watching => {
+                // (re-check: closed since the guard was read)
+                if link.is_watching() && !fresh(last_report) {
+                    last_report = Some(Instant::now());
+                    on_tick(Tick { log: false, report: true }).await;
                 }
-                if last_report.is_some_and(|t| t.elapsed() < LINK_EVERY / 2) {
-                    continue;
-                }
-                last_report = Some(Instant::now());
-                on_tick(Tick { log: false, report: true }).await;
             }
             _ = link.wake.notified() => {
-                if link.is_watching() {
+                if link.is_watching() && !fresh(last_report) {
                     every.reset();
                     last_report = Some(Instant::now());
                     on_tick(Tick { log: false, report: true }).await;
@@ -377,9 +382,10 @@ mod tests {
         };
         let take = || std::mem::take(&mut *seen.lock().unwrap());
 
+        // log ticks at 0, 5, 10, 15 and 20 s
         tokio::time::sleep(Duration::from_millis(20_500)).await;
         let t = take();
-        assert_eq!(t.len(), 4);
+        assert_eq!(t.len(), 5);
         assert!(t.iter().all(|t| t.log && !t.report));
 
         link.set_watching(true);
@@ -402,6 +408,87 @@ mod tests {
         let t = take();
         assert!(t.iter().all(|t| t.log && !t.report), "{t:?}");
         task.abort();
+    }
+
+    type Seen = Arc<Mutex<Vec<(Duration, Tick)>>>;
+
+    /// Runs `run_ticks` under a paused clock, recording each tick with its time since start.
+    fn spawn_ticks(link: &Arc<LinkState>) -> (tokio::task::JoinHandle<()>, Seen) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let start = Instant::now();
+        let task = {
+            let (link, seen) = (link.clone(), seen.clone());
+            tokio::spawn(run_ticks(link, move |t| {
+                let seen = seen.clone();
+                async move { seen.lock().unwrap().push((start.elapsed(), t)) }
+            }))
+        };
+        (task, seen)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn opening_after_a_long_wait_reports_exactly_once() {
+        let link = Arc::new(LinkState::default());
+        let (task, seen) = spawn_ticks(&link);
+        tokio::time::sleep(Duration::from_millis(33_300)).await;
+        seen.lock().unwrap().clear();
+        link.set_watching(true);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let t = seen.lock().unwrap().clone();
+        assert_eq!(t.iter().filter(|(_, t)| t.report).count(), 1, "{t:?}");
+        task.abort();
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn watched_reports_are_about_a_second_apart_even_around_log_ticks() {
+        let link = Arc::new(LinkState::default());
+        link.set_watching(true);
+        let (task, seen) = spawn_ticks(&link);
+        tokio::time::sleep(Duration::from_millis(30_100)).await;
+        let times: Vec<Duration> = seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|(_, t)| t.report)
+            .map(|(at, _)| *at)
+            .collect();
+        assert!(times.len() >= 29, "{times:?}");
+        for w in times.windows(2) {
+            let gap = w[1] - w[0];
+            assert!(
+                gap >= Duration::from_millis(900) && gap <= Duration::from_millis(1100),
+                "gap {gap:?} in {times:?}"
+            );
+        }
+        task.abort();
+    }
+
+    #[test]
+    fn loss_survives_a_lost_counter_that_goes_down() {
+        // RTCP's cumulative loss can decrease (late packets arrive): not a restart
+        let t0 = Instant::now();
+        let mut w = LossWindow::default();
+        sample(&[remote_in(0.0, 5, 100)], &mut w, t0);
+        let s = sample(&[remote_in(0.0, 3, 200)], &mut w, at(t0, 1));
+        assert_eq!(s.loss_pct, Some(0.0));
+        let s = sample(&[remote_in(0.0, 9, 300)], &mut w, at(t0, 2));
+        assert!((s.loss_pct.unwrap() - 4.0 / 204.0 * 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn rtt_and_transport_come_from_the_same_pair() {
+        let s = sample(
+            &[
+                pair(true, 0.010, "a"),
+                pair(true, 0.050, "b"),
+                local("a", IceCandidateType::Host, "udp"),
+                local("b", IceCandidateType::Relay, "udp"),
+            ],
+            &mut LossWindow::default(),
+            Instant::now(),
+        );
+        assert_eq!(s.rtt_ms.map(f64::round), Some(10.0));
+        assert_eq!(s.transport, Some(Transport::Udp));
     }
 
     #[test]
