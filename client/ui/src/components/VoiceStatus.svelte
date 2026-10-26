@@ -5,7 +5,8 @@
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { stageLabel } from '../lib/voicestage'
 
-  const channelId = $derived(voice.channelId ?? voice.joining ?? voice.joinFailed?.channelId ?? null)
+  // during a switch, the channel being joined
+  const channelId = $derived(voice.joining ?? voice.channelId ?? voice.joinFailed?.channelId ?? null)
   const channelName = $derived((channelId && app.state.channels[channelId]?.name) || '')
   const visible = $derived(!!(voice.channelId || voice.joining || voice.joinFailed))
   const failed = $derived(voice.joinFailed && !voice.joining && !voice.channelId ? voice.joinFailed : null)
@@ -20,14 +21,24 @@
     if (refocus) trigger?.focus()
   }
 
+  let box = $state<HTMLDivElement>()
+  let status = $state<HTMLSpanElement>()
+  let refocus = false
+  // before the button and panel go: was focus in them? (afterwards it has already dropped to the body)
+  $effect.pre(() => {
+    if (!clickable && box?.contains(document.activeElement)) refocus = true
+  })
   // the panel only exists while there is a connection to describe
   $effect(() => {
-    if (!clickable) open = false
+    if (clickable) return
+    open = false
+    if (refocus && status) status.focus()
+    refocus = false
   })
 </script>
 
 {#if visible}
-  <div class="vc">
+  <div class="vc" bind:this={box}>
     {#if failed}
       <span class="vc-bars warn"><span></span><span></span><span></span></span>
       <span class="vc-text"><strong class="bad">Couldn't connect</strong><small title={failed.error}>{failed.error}</small></span>
@@ -40,7 +51,7 @@
           <span class="vc-text"><strong>{stageLabel(voice.stage)}</strong><small>{channelName}</small></span>
         </button>
       {:else}
-        <span class="vc-main">
+        <span class="vc-main" tabindex="-1" bind:this={status}>
           <span class="vc-bars warn"><span></span><span></span><span></span></span>
           <span class="vc-text"><strong class:warn>{stageLabel(voice.stage)}</strong><small>{channelName}</small></span>
         </span>

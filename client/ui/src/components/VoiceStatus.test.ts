@@ -23,7 +23,10 @@ const me = { id: 'U1', username: 'alex', avatar_hash: null }
 const ready: Ready = {
   me,
   servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
-  channels: [{ id: 'V1', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 0 }],
+  channels: [
+    { id: 'V1', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 0 },
+    { id: 'V2', server_id: 'S1', kind: 'voice', name: 'Games', position: 1 },
+  ],
   members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
   dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [],
 }
@@ -207,6 +210,26 @@ describe('VoiceStatus panel behaviour', () => {
     expect(watchCalls()).toEqual([{ on: false }])
   })
 
+  it('reconnecting_with_focus_in_the_panel_keeps_focus_on_the_status', async () => {
+    await open()
+    expect(document.querySelector('[role=dialog]')!.contains(document.activeElement)).toBe(true)
+    emit({ kind: 'stage', stage: 'reconnecting', attempt: 2 })
+    flushSync()
+    const status = document.querySelector<HTMLElement>('span.vc-main')!
+    expect(status.tabIndex).toBe(-1)
+    expect(document.activeElement).toBe(status)
+  })
+
+  it('reconnecting_does_not_take_focus_from_elsewhere', async () => {
+    await open()
+    const input = document.createElement('input')
+    document.body.appendChild(input)
+    input.focus()
+    emit({ kind: 'stage', stage: 'reconnecting', attempt: 2 })
+    flushSync()
+    expect(document.activeElement).toBe(input)
+  })
+
   it('leaving_clears_the_report_so_the_next_call_starts_empty', async () => {
     await open()
     emit(link)
@@ -232,6 +255,14 @@ describe('VoiceStatus panel behaviour', () => {
     expect(unhandled).not.toHaveBeenCalled()
     expect(warn).toHaveBeenCalled()
     warn.mockRestore()
+  })
+
+  it('switching_channel_names_the_channel_being_joined', () => {
+    connect()
+    voice.joining = 'V2'
+    voice.stage = { stage: 'connecting', attempt: null }
+    flushSync()
+    expect(document.querySelector('.vc-text small')?.textContent).toBe('Games')
   })
 
   it('the_failed_state_can_be_dismissed', () => {

@@ -218,13 +218,15 @@ describe('ParticipantMenu', () => {
     expect(menu()).not.toBeNull()
   })
 
-  it('joining_re_applies_volumes_then_local_mutes_without_a_blip', async () => {
+  it('volumes_then_local_mutes_are_applied_before_the_join_without_a_blip', async () => {
     voice.volumes = { U2: 150, U3: 120 }
     voice.localMutes = { U2: true }
+    voice.channelId = null
     await voiceApi.join('V1')
-    const calls = invoke.mock.calls.filter(([c]) => c === 'set_peer_volume').map(([, a]) => a)
-    // a locally muted person never gets their remembered volume first (no audible blip)
-    expect(calls).toEqual([{ userId: 'U3', percent: 120 }, { userId: 'U2', percent: 0 }])
+    const calls = invoke.mock.calls.filter(([c]) => c === 'set_peer_volume' || c === 'join_voice').map(([c, a]) => (c === 'join_voice' ? 'join' : a))
+    // the core keeps them without a session: set before the join, nobody muted for you is heard on arrival,
+    // and a locally muted person never gets their remembered volume first (no audible blip)
+    expect(calls).toEqual([{ userId: 'U3', percent: 120 }, { userId: 'U2', percent: 0 }, 'join'])
   })
 
   it('esc_closes_the_menu_without_leaving_full_view', async () => {

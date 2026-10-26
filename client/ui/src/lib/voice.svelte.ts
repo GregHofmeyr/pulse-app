@@ -74,7 +74,8 @@ export async function startVoiceListening() {
         break
       }
       case 'link':
-        voice.link = e
+        // a late sample after leaving must not bring the old call's figures back
+        if (voice.channelId || voice.joining) voice.link = e
         break
       case 'speaking':
         voice.speaking = new Set(e.user_ids)
@@ -110,6 +111,8 @@ const errText = (e: unknown) => (typeof e === 'string' ? e : 'Voice error')
 
 export const voiceApi = {
   async join(channelId: string) {
+    // a second click on the channel already being joined: that join carries on (restarting it flashes Disconnected)
+    if (voice.joining === channelId) return
     voice.error = ''
     voice.stalled = false
     // show the join at once, before the core has answered
@@ -120,24 +123,25 @@ export const voiceApi = {
     const seq = ++joinSeq
     voice.stage = { stage: 'requesting_access', attempt: null }
     try {
-      await invoke('join_voice', { channelId, config: loadAudioConfig() })
-    } catch (e) {
-      // a newer join cancelled this one: not a failure
-      if (e === 'cancelled' || seq !== joinSeq) return
-      voice.error = errText(e)
-      voice.joinFailed = { channelId, error: errText(e) }
-      voice.joining = null
-      voice.link = null
-      voice.stage = { stage: 'disconnected', attempt: null }
-      return
-    }
-    try {
-      // re-apply remembered per-user volumes
-      // (locally muted people go straight to 0: no blip at their remembered volume)
+      // remembered per-user volumes and local mutes go first: the core keeps them with or without a session,
+      // so nobody muted for you is heard on arrival (and they go straight to 0: no blip at their remembered volume)
       for (const [userId, percent] of Object.entries(voice.volumes)) if (!voice.localMutes[userId]) await invoke('set_peer_volume', { userId, percent })
       for (const userId of Object.keys(voice.localMutes)) await invoke('set_peer_volume', { userId, percent: 0 })
     } catch (e) {
       voice.error = errText(e)
+    }
+    // a newer join, or a leave, came in meanwhile
+    if (seq !== joinSeq) return
+    try {
+      await invoke('join_voice', { channelId, config: loadAudioConfig() })
+    } catch (e) {
+      // a newer join cancelled this one: not a failure
+      if (e === 'cancelled' || seq !== joinSeq) return
+      // the status block shows it (with Retry and Dismiss): not voice.error too
+      voice.joinFailed = { channelId, error: errText(e) }
+      voice.joining = null
+      voice.link = null
+      voice.stage = { stage: 'disconnected', attempt: null }
     }
   },
   retry: async () => {

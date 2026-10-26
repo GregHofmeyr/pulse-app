@@ -80,6 +80,21 @@ afterEach(async () => {
   vi.restoreAllMocks()
 })
 
+describe('join failure', () => {
+  it('a_failed_join_shows_no_second_error_in_the_panel', async () => {
+    voice.channelId = null
+    voice.connection = 'disconnected'
+    voice.stage = { stage: 'disconnected', attempt: null }
+    invoke.mockImplementation((c: string) => (c === 'join_voice' ? Promise.reject("couldn't connect to voice: x") : Promise.resolve()))
+    mountPanel()
+    button('Join voice')!.click()
+    await settle()
+    expect(voice.joinFailed?.channelId).toBe('V1')
+    // VoiceStatus shows the failure (with Retry and Dismiss); the panel doesn't repeat it
+    expect(q('.panel .error[role=alert]')).toBeNull()
+  })
+})
+
 describe('stream tiles', () => {
   it('not_watching_tile_shows_live_watch_and_viewer_count', () => {
     mountPanel()

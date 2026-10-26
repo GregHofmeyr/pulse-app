@@ -53,6 +53,8 @@ beforeEach(async () => {
   voice.error = ''
   voice.connection = 'disconnected'
   voice.micLive = false
+  voice.volumes = {}
+  voice.localMutes = {}
   cmp = mount(ChannelList, {
     target: document.body,
     props: { serverId: 'S1', activeChannelId: null, voiceChannelId: null, speaking: new Set<string>(), onSelect: () => {}, onJoinVoice: () => {}, onMessage: () => {}, onVoiceSettings: () => {} },
@@ -109,18 +111,47 @@ const stage = (s: string) => ({ kind: 'stage', stage: s, attempt: null })
 const settle = async () => { await tick(); flushSync() }
 
 describe('voice listener rules', () => {
-  it('a_failed_first_click_does_not_break_a_second_click_on_the_same_channel', async () => {
-    let rejectFirst!: (e: unknown) => void
-    invoke.mockReturnValueOnce(new Promise((_, rej) => (rejectFirst = rej)))
+  it('a_second_click_on_the_channel_being_joined_does_not_restart_it', async () => {
     invoke.mockReturnValue(new Promise(() => {}))
-    const first = voiceApi.join('V1')
     void voiceApi.join('V1')
-    rejectFirst("couldn't connect to voice: x")
-    await first
     await settle()
-    expect(voice.joinFailed).toBeNull()
+    emit(stage('connecting'))
+    void voiceApi.join('V1')
+    await settle()
+    expect(invoke.mock.calls.filter(([c]) => c === 'join_voice')).toHaveLength(1)
+    expect(voice.stage.stage).toBe('connecting')
     expect(voice.joining).toBe('V1')
     expect(rows('Lounge')).toHaveLength(1)
+  })
+
+  it('a_failed_join_is_reported_once_by_the_status_not_also_as_a_voice_error', async () => {
+    invoke.mockImplementation((c: string) => (c === 'join_voice' ? Promise.reject("couldn't connect to voice: x") : Promise.resolve()))
+    await voiceApi.join('V1')
+    expect(voice.joinFailed).toEqual({ channelId: 'V1', error: "couldn't connect to voice: x" })
+    expect(voice.error).toBe('')
+  })
+
+  it('a_join_rejecting_after_leave_is_not_a_failure', async () => {
+    let rejectJoin!: (e: unknown) => void
+    invoke.mockImplementation((c: string) => (c === 'join_voice' ? new Promise((_, rej) => (rejectJoin = rej)) : Promise.resolve()))
+    const joining = voiceApi.join('V1')
+    await settle()
+    expect(rejectJoin).toBeDefined()
+    void voiceApi.leave()
+    rejectJoin("couldn't connect to voice: x")
+    await joining
+    await settle()
+    expect(voice.joinFailed).toBeNull()
+    expect(voice.error).toBe('')
+  })
+
+  it('a_link_sample_after_leaving_is_dropped', () => {
+    const sample = { kind: 'link', rtt_ms: 40, jitter_ms: 2, loss_pct: 0, transport: 'udp', server: 'voice.example.test', version: '1.0.0', history: [] }
+    emit(sample)
+    expect(voice.link).toBeNull()
+    voice.channelId = 'V1'
+    emit(sample)
+    expect(voice.link).not.toBeNull()
   })
 
   it('a_real_failure_resets_the_stage', async () => {
