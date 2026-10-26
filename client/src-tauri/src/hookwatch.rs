@@ -36,6 +36,42 @@ pub fn hook_step(enabled: bool, installed: bool, reinstall_asked: bool) -> HookS
     }
 }
 
+/// What the watchdog does on a tick, given the switch, whether the hook thread holds hooks, and
+/// whether their install failed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Gate {
+    /// Hooks are in and should be: check they still see input.
+    Watch,
+    /// Hooks and switch disagree (a WM_SWITCH was lost, or is still on its way): send it again.
+    /// Harmless if the original is merely late: the hook thread reads the switch when it gets
+    /// there, and a second one finds nothing to do.
+    Resend,
+    /// Nothing to watch: switched off with no hooks, or the install failed (reported; the user's
+    /// off/on retries it).
+    Idle,
+}
+
+pub fn watch_gate(enabled: bool, hooked: bool, install_failed: bool) -> Gate {
+    match (enabled, hooked) {
+        (true, true) => Gate::Watch,
+        (false, true) => Gate::Resend,
+        (true, false) if !install_failed => Gate::Resend,
+        _ => Gate::Idle,
+    }
+}
+
+/// What Settings shows. Off isn't a problem, but off with the hooks still in is (until the
+/// watchdog's resend removes them); on, it's the install failure, if any.
+pub fn switch_problem(enabled: bool, hooked: bool, install_failed: Option<&str>) -> Option<String> {
+    match (enabled, hooked) {
+        (false, true) => Some(
+            "Keybinds are switched off but the keyboard and mouse hooks are still in; Pulse keeps trying to remove them (restart Pulse if this stays)".into(),
+        ),
+        (false, false) => None,
+        (true, _) => install_failed.map(str::to_owned),
+    }
+}
+
 /// Whether the system saw input more than `margin_ms` after the hooks last did. Ticks are
 /// `GetTickCount`-style milliseconds that wrap every ~49.7 days; the difference is read as signed,
 /// so a wrap between the two ticks is fine and hooks newer than the system (a race) are alive.
@@ -178,6 +214,44 @@ mod tests {
             }
             assert_eq!(installed, last, "{flips:?}");
         }
+    }
+
+    /// A lost "off" (the post to the hook thread failed) mustn't leave hooks running while the
+    /// switch says off: the watchdog re-sends the switch until the hooks match.
+    #[test]
+    fn hooked_but_switched_off_is_resent_until_the_hooks_go() {
+        assert_eq!(watch_gate(false, true, false), Gate::Resend);
+        assert_eq!(watch_gate(false, true, true), Gate::Resend);
+        // and handling that resend unhooks
+        assert_eq!(hook_step(false, true, false), HookStep::Unhook);
+    }
+
+    /// A lost "on" heals the same way; a failed install isn't retried every few seconds (the
+    /// user is told, and off/on retries it).
+    #[test]
+    fn switched_on_without_hooks_is_resent_unless_the_install_failed() {
+        assert_eq!(watch_gate(true, false, false), Gate::Resend);
+        assert_eq!(watch_gate(true, false, true), Gate::Idle);
+    }
+
+    #[test]
+    fn the_watchdog_only_watches_hooks_that_should_be_there() {
+        assert_eq!(watch_gate(true, true, false), Gate::Watch);
+        assert_eq!(watch_gate(false, false, false), Gate::Idle);
+        assert_eq!(watch_gate(false, false, true), Gate::Idle);
+    }
+
+    /// Off isn't a problem, but off with the hooks still in is, and stays visible.
+    #[test]
+    fn hooks_still_in_while_off_is_a_problem() {
+        assert_eq!(switch_problem(false, false, None), None);
+        assert_eq!(switch_problem(false, false, Some("boom")), None);
+        assert!(switch_problem(false, true, None).unwrap().contains("still"));
+        assert_eq!(
+            switch_problem(true, false, Some("boom")),
+            Some("boom".into())
+        );
+        assert_eq!(switch_problem(true, true, None), None);
     }
 
     #[test]

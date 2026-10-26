@@ -40,7 +40,9 @@ mod platform {
     };
 
     use crate::bindmatch::{Matcher, key_code};
-    use crate::hookwatch::{Check, HookStep, HookWatch, hook_step};
+    use crate::hookwatch::{
+        Check, Gate, HookStep, HookWatch, hook_step, switch_problem, watch_gate,
+    };
     use crate::keybinds::{Action, Keybinds};
 
     /// Locked by the hook procedures once per event and briefly by apply/pause; nothing else.
@@ -366,6 +368,18 @@ mod platform {
         }
     }
 
+    /// Asks the hook thread to do something; a failure is logged (the watchdog tries again).
+    fn post(thread: u32, message: u32) -> bool {
+        // SAFETY: posting a thread message with no pointers in it.
+        match unsafe { PostThreadMessageW(thread, message, WPARAM(0), LPARAM(0)) } {
+            Ok(()) => true,
+            Err(e) => {
+                tracing::warn!(error = %e, message, "keybinds: couldn't reach the hook thread");
+                false
+            }
+        }
+    }
+
     /// Low-level hooks get no notice when Windows drops them, so compare what they saw with what
     /// the system saw and have the hook thread reinstall them when they've gone quiet.
     fn watch_hooks(hook_thread: u32) {
@@ -374,11 +388,29 @@ mod platform {
         let mut watch = HookWatch::new(DEAD_MARGIN_MS, REINSTALL_GAP);
         loop {
             std::thread::sleep(WATCH_EVERY);
-            if !HOOKED.load(Ordering::SeqCst) {
-                // switched off (or never started): nothing to watch, and the next hooks get a
-                // fresh watch
-                watch.reset();
-                continue;
+            let enabled = ENABLED.load(Ordering::SeqCst);
+            let hooked = HOOKED.load(Ordering::SeqCst);
+            let failed = BROKEN.lock().unwrap_or_else(|e| e.into_inner()).is_some();
+            match watch_gate(enabled, hooked, failed) {
+                Gate::Watch => {}
+                Gate::Resend => {
+                    // A lost (or late) WM_SWITCH: hooks and switch disagree. The next hooks get
+                    // a fresh watch either way.
+                    watch.reset();
+                    tracing::debug!(
+                        enabled,
+                        hooked,
+                        "keybinds: hooks don't match the switch; resending"
+                    );
+                    post(hook_thread, WM_SWITCH);
+                    continue;
+                }
+                Gate::Idle => {
+                    // switched off (or the install failed): nothing to watch, and no input
+                    // polled; the next hooks get a fresh watch
+                    watch.reset();
+                    continue;
+                }
             }
             if !hooks_can_see_input(self_elevated) {
                 continue;
@@ -407,12 +439,7 @@ mod platform {
                     "keybinds: hooks stopped seeing input (dropped by Windows?); reinstalling"
                 ),
             }
-            // SAFETY: posting a thread message with no pointers in it.
-            if let Err(e) =
-                unsafe { PostThreadMessageW(hook_thread, WM_REINSTALL, WPARAM(0), LPARAM(0)) }
-            {
-                tracing::warn!(error = %e, "keybinds: couldn't ask for a hook reinstall");
-            }
+            post(hook_thread, WM_REINSTALL);
         }
     }
 
@@ -456,17 +483,17 @@ mod platform {
         Ok(problems())
     }
 
-    /// Why binds aren't working, if they aren't. Switched off isn't a problem.
+    /// Why binds aren't working, if they aren't. Switched off isn't a problem; switched off with
+    /// the hooks still in is.
     pub fn problems() -> Vec<String> {
-        if !ENABLED.load(Ordering::SeqCst) {
-            return Vec::new();
-        }
-        BROKEN
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .clone()
-            .into_iter()
-            .collect()
+        let broken = BROKEN.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        switch_problem(
+            ENABLED.load(Ordering::SeqCst),
+            HOOKED.load(Ordering::SeqCst),
+            broken.as_deref(),
+        )
+        .into_iter()
+        .collect()
     }
 
     pub fn apply(_app: &AppHandle, binds: &Keybinds) -> Vec<String> {
@@ -482,7 +509,8 @@ mod platform {
     /// The master switch. The hook thread owns the hooks, so it's told to add or remove them;
     /// it reads ENABLED when it gets to the message, so a burst of toggles ends where the last
     /// one left the switch. Switching on retries a failed install, so the old failure is cleared
-    /// (a new one shows the next time Settings asks).
+    /// (a new one shows the next time Settings asks). A post that fails is retried briefly here,
+    /// and after that by the watchdog (`watch_gate`) until the hooks match the switch.
     pub fn set_enabled(_app: &AppHandle, enabled: bool) -> Vec<String> {
         if enabled {
             set_broken(None);
@@ -491,14 +519,16 @@ mod platform {
         let Some(&thread) = HOOK_THREAD.get() else {
             return problems();
         };
-        // SAFETY: posting a thread message with no pointers in it.
-        if let Err(e) = unsafe { PostThreadMessageW(thread, WM_SWITCH, WPARAM(0), LPARAM(0)) } {
-            tracing::warn!(error = %e, enabled, "keybinds: couldn't reach the hook thread");
-            return vec![format!(
-                "Couldn't switch keybinds {} ({e}); restart Pulse",
-                if enabled { "on" } else { "off" }
-            )];
+        for attempt in 0..3 {
+            if post(thread, WM_SWITCH) {
+                break;
+            }
+            if attempt < 2 {
+                std::thread::sleep(Duration::from_millis(20));
+            }
         }
+        // a post that never got through shows here while off (hooks still in) and the watchdog
+        // keeps resending
         problems()
     }
 
