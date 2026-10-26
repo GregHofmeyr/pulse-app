@@ -6,6 +6,8 @@
   const linux = navigator.userAgent.includes('Linux')
 
   let binds = $state<Keybinds | null>(null)
+  /** The master switch: off, the bind editors are disabled and (Windows) no hooks run. */
+  let enabled = $state(true)
   let recording = $state<Action | null>(null)
   let held = $state('')
   let error = $state('')
@@ -19,6 +21,7 @@
     try {
       const r = await keybindsApi.get()
       binds = r.binds
+      enabled = r.enabled
       problems = r.problems
     } catch (e) {
       error = typeof e === 'string' ? e : "Couldn't load keybinds"
@@ -36,7 +39,20 @@
     }
   }
 
+  async function setEnabled(on: boolean) {
+    try {
+      const r = await keybindsApi.setEnabled(on)
+      binds = r.binds
+      enabled = r.enabled
+      problems = r.problems
+      error = ''
+    } catch (e) {
+      error = typeof e === 'string' ? e : "Couldn't switch keybinds"
+    }
+  }
+
   async function record(action: Action) {
+    if (!enabled) return
     if (recording === action) return stop()
     error = ''
     held = ''
@@ -106,6 +122,20 @@
 
 <section class="pane">
   <h2>Keybinds</h2>
+  {#if binds}
+    <div class="row master">
+      <div>
+        <strong>Global keybinds</strong>
+        {#if linux}
+          <small>Saved for Windows. On Linux Pulse never watches the keyboard or mouse itself: your desktop runs the commands below.</small>
+        {:else}
+          <small>Pulse watches the keyboard and mouse system-wide only to match these binds; nothing is recorded or sent. Turning this off removes the hooks entirely.</small>
+        {/if}
+      </div>
+      <button class="switch" aria-label="Global keybinds" aria-pressed={enabled} class:on={enabled} disabled={!!recording}
+        onclick={() => setEnabled(!enabled)}><span></span></button>
+    </div>
+  {/if}
   {#if linux}
     <p class="hint">On Linux, apps can't grab keys for themselves: bind these commands in your desktop's keyboard settings (Hyprland: <code>bindn = , Next, exec, pulse-app --toggle-mute</code>; <code>bindn</code> keeps the key working in other apps).</p>
     <div class="list">
@@ -119,19 +149,19 @@
       {#each actions as a}
         <div class="row">
           <strong>{a.label}</strong>
-          <button class="key" class:recording={recording === a.key} aria-label="Change {a.label}"
+          <button class="key" class:recording={recording === a.key} aria-label="Change {a.label}" disabled={!enabled}
             onclick={() => record(a.key)}>
             {recording === a.key ? held || 'Press keys…' : bindLabel(binds[a.key])}
           </button>
-          <button class="clear" aria-label="Remove {a.label} bind" title="Remove" disabled={!binds[a.key] || !!recording}
+          <button class="clear" aria-label="Remove {a.label} bind" title="Remove" disabled={!enabled || !binds[a.key] || !!recording}
             onclick={() => binds && save({ ...binds, [a.key]: null })}><Icon name="x" size={14} /></button>
         </div>
       {/each}
     </div>
     {#if recording}<small>Press a key, a combination or a mouse button. Esc cancels.</small>{/if}
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
     {#each problems as p}<p class="warn" role="status">{p}</p>{/each}
   {/if}
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
 </section>
 
 <style>
@@ -144,6 +174,14 @@
   .row strong { flex: 1; font-weight: 600; }
   .key { min-width: 160px; height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-2); color: var(--text); font-weight: 600; letter-spacing: .02em; }
   .key.recording { border-color: var(--accent); color: var(--accent); }
+  .key:disabled { opacity: .4; }
+  .master > div { flex: 1; display: flex; flex-direction: column; gap: 2px; }
+  .master small { line-height: 1.4; }
+  .switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; border: 0; border-radius: 12px; padding: 0; background: #3a3c44; }
+  .switch span { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #b9bcc6; transition: left .12s; }
+  .switch.on { background: var(--accent); }
+  .switch.on span { left: 23px; background: var(--on-accent); }
+  .switch:disabled { opacity: .5; }
   .clear { width: 32px; height: 32px; border-radius: 50%; border: 0; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .clear:disabled { opacity: .3; }
   small { font-size: 12px; color: var(--text-3); }

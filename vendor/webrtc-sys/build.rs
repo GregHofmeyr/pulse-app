@@ -12,6 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+mod libwebrtc_download;
+
 use std::path::Path;
 use std::path::PathBuf;
 use std::{env, path, process::Command};
@@ -109,9 +111,8 @@ fn main() {
     let webrtc_include = webrtc_dir.join("include");
     let webrtc_lib = webrtc_dir.join("lib");
 
-    if !webrtc_dir.exists() {
-        webrtc_sys_build::download_webrtc().unwrap();
-    }
+    // Pulse: download + SHA-256-verify instead of webrtc_sys_build::download_webrtc().
+    libwebrtc_download::ensure_verified_webrtc();
 
     builder.includes(&[
         path::PathBuf::from("./include"),

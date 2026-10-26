@@ -42,6 +42,16 @@ voice-smoke:
 # voice integration test against the dev LiveKit (real WebRTC, fake peer)
 voice-it: dev-livekit
     cargo test -p pulse-client --test voice_it --test voice_outage_it --test stream_it -- --ignored --nocapture
+    cargo test -p pulse-server --test livekit_ice -- --ignored --nocapture
+
+# This checkout's dev LiveKit then listens on 17880-17882 and 13478 instead of 7880-7882 and 3478, and sends its
+# webhooks to 17890, where nothing listens (the tests' servers use ephemeral ports and don't need them), not to
+# the other checkout's dev server on 7890.
+# `docker compose down` afterwards; a plain `just dev-livekit` moves it back.
+# voice-it beside another checkout's dev LiveKit (alternate ports)
+voice-it-alt:
+    PULSE_DEV_LIVEKIT_PORT=17880 PULSE_DEV_LIVEKIT_TCP_PORT=17881 PULSE_DEV_LIVEKIT_UDP_PORT=17882 \
+        PULSE_DEV_LIVEKIT_TURN_PORT=13478 PULSE_DEV_WEBHOOK_PORT=17890 just voice-it
 
 # libwebrtc log lines per second in a two-person call (decides whether to filter at the source)
 webrtc-log-volume: dev-livekit
@@ -51,11 +61,14 @@ webrtc-log-volume: dev-livekit
 deploy-check:
     sed -e 's/^PULSE_UID=$/PULSE_UID=1000/' -e 's/^PULSE_GID=$/PULSE_GID=1000/' \
         -e 's/^ACME_EMAIL=$/ACME_EMAIL=ci@example.com/' -e 's/^LIVEKIT_SECRET=$/LIVEKIT_SECRET=x/' \
+        -e 's/^LIVEKIT_NODE_IP=$/LIVEKIT_NODE_IP=203.0.113.10/' \
         deploy/env.example > /tmp/pulse-ci.env
     docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config -q
-    docker run --rm -e PULSE_DOMAIN=example.com -e ACME_EMAIL=ci@example.com \
-        -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10 caddy validate --config /etc/caddy/Caddyfile
+    caddy_image=$(docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config --images | grep '^caddy:') && \
+        docker run --rm -e PULSE_DOMAIN=example.com -e ACME_EMAIL=ci@example.com \
+        -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" "$caddy_image" caddy validate --config /etc/caddy/Caddyfile
     docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh
+    bash deploy/deploy-selftest.sh
 
 # --- production (pulsechat.co.za); see deploy/README.md ---
 prod := "pulse@pulse"
@@ -74,6 +87,9 @@ close-public-ssh:
 
 # back up, then run image TAG (a 7-char commit or `latest`); prints the commit that's live
 deploy tag="latest":
+    # Checks the server's .env (LIVEKIT_NODE_IP) with this deploy.sh before anything is copied, so a refusal
+    # leaves /srv/pulse exactly as it was.
+    ssh {{prod}} 'bash -s -- --check-env' < deploy/deploy.sh
     scp deploy/compose.yml deploy/Caddyfile deploy/livekit.yaml deploy/backup.sh deploy/deploy.sh {{prod}}:/srv/pulse/
     ssh {{prod}} '/srv/pulse/deploy.sh {{tag}}'
 
@@ -116,3 +132,7 @@ restore-media name:
 # live server logs
 logs service="pulse-server":
     ssh {{prod}} 'cd /srv/pulse && docker compose logs --tail 100 -f {{service}}'
+
+# dependency policy: advisories, licences, bans, sources (needs `cargo install cargo-deny --locked`)
+deny:
+    cargo deny check

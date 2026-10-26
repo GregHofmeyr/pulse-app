@@ -9,7 +9,8 @@ x-logging: &logging
 
 services:
   pulse-server:
-    image: ghcr.io/greghofmeyr/pulse-server:${PULSE_TAG:-latest}
+    # deploy.sh pins PULSE_IMAGE to the pulled digest; PULSE_TAG alone (older .env files) still works.
+    image: ${PULSE_IMAGE:-ghcr.io/greghofmeyr/pulse-server:${PULSE_TAG:-latest}}
     network_mode: host
     restart: unless-stopped
     # The server handles SIGTERM too; SIGINT is what it has always handled (belt and braces for
@@ -36,19 +37,21 @@ services:
     logging: *logging
 
   livekit:
-    image: livekit/livekit-server:v1.13.10
+    image: livekit/livekit-server:v1.13.10@sha256:89ca9ce0791e18d6e03bf6e2c49ceb27e1c754eae8bd50c989386c1a5963791a
     network_mode: host
     restart: unless-stopped
     user: "${PULSE_UID:?}:${PULSE_GID:?}"
     command: --config /etc/livekit.yaml
     environment:
       LIVEKIT_KEYS: "pulse: ${LIVEKIT_SECRET:?}"
+      # The public IPv4 LiveKit advertises to clients (livekit.yaml has use_external_ip off: no STUN lookup).
+      NODE_IP: ${LIVEKIT_NODE_IP:?}
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
     logging: *logging
 
   caddy:
-    image: caddy:2.10
+    image: caddy:2.10.2@sha256:c3d7ee5d2b11f9dc54f947f68a734c84e9c9666c92c88a7f30b9cba5da182adb
     network_mode: host
     restart: unless-stopped
     user: "${PULSE_UID:?}:${PULSE_GID:?}"

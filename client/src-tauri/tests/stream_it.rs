@@ -21,6 +21,13 @@ use pulse_server::testing;
 
 const DEV_SECRET: &str = "pulse-dev-secret-0123456789abcdefghij";
 
+/// The dev LiveKit's address: `PULSE_DEV_LIVEKIT_PORT` when set (`just voice-it-alt`, beside another
+/// checkout's LiveKit), else 7880 as in docker/livekit.yaml.
+fn dev_livekit(scheme: &str) -> String {
+    let port = std::env::var("PULSE_DEV_LIVEKIT_PORT").unwrap_or_else(|_| "7880".into());
+    format!("{scheme}://127.0.0.1:{port}")
+}
+
 /// A voice-room bot that keeps publishing the tone until the guard drops.
 struct ToneBot(String);
 
@@ -43,7 +50,7 @@ impl ToneBot {
                 "room",
                 "join",
                 "--url",
-                "ws://127.0.0.1:7880",
+                &dev_livekit("ws"),
                 "--api-key",
                 "devkey",
                 "--api-secret",
@@ -97,7 +104,7 @@ struct Fixture {
 /// A server against the dev LiveKit, with alex registered and counted as in the voice channel.
 async fn fixture() -> Fixture {
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (uid, token): (UserId, String) = testing::register(&app, "alex").await;
@@ -494,7 +501,7 @@ async fn a_room_closed_by_livekit_stops_publishing() {
                 "participants",
                 "remove",
                 "--url",
-                "http://127.0.0.1:7880",
+                &dev_livekit("http"),
                 "--api-key",
                 "devkey",
                 "--api-secret",

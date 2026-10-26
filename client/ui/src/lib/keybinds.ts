@@ -107,13 +107,16 @@ export function bindLabel(b: Bind | null): string {
   return [...modLabels(b), keyLabel(b.code)].join(' + ')
 }
 
-/** The binds in use, why they aren't working if they aren't (Windows key hooks failed), and whether the
- *  user has ever chosen (nothing is bound by default: first run nudges them to pick). */
-export type Applied = { binds: Keybinds; problems: string[]; chosen: boolean }
+/** The binds in use, the master switch (off: Pulse doesn't listen globally at all, no hooks), why they
+ *  aren't working if they aren't (Windows key hooks failed), and whether the user has ever chosen
+ *  (nothing is bound by default: first run nudges them to pick). */
+export type Applied = { binds: Keybinds; enabled: boolean; problems: string[]; chosen: boolean }
 
 export const keybindsApi = {
   get: () => invoke<Applied>('get_keybinds'),
   /** Rejects with a message if the set isn't usable (nothing changes). */
   set: (binds: Keybinds) => invoke<Applied>('set_keybinds', { binds }),
   pause: (paused: boolean) => invoke<void>('pause_keybinds', { paused }),
+  /** The master switch; saved, and on Windows adds or removes the keyboard and mouse hooks. */
+  setEnabled: (enabled: boolean) => invoke<Applied>('set_keybinds_enabled', { enabled }),
 }

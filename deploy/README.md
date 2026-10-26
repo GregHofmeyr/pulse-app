@@ -70,7 +70,17 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
 
 1. Make the image public, once: GitHub → your profile → Packages → `pulse-server` → Package settings →
    Change visibility → Public.
-2. `ssh -t pulse@pulse 'TERM=xterm-256color nano /srv/pulse/.env'` → set `ACME_EMAIL` (your personal address).
+2. `ssh -t pulse@pulse 'TERM=xterm-256color nano /srv/pulse/.env'` → set `ACME_EMAIL` (your personal address)
+   and `LIVEKIT_NODE_IP` (the VM's public IPv4, the one the A records point at; `dig +short voice.pulsechat.co.za`).
+   LiveKit advertises that address to clients; it does not look it up (no STUN at start-up). Clients are only
+   ever given LiveKit's own TURN (`turn:<that IP>:3478`) as an ICE server, never a third-party STUN server.
+   `just deploy` checks the value on the server before it copies anything, and stops if it is missing or not a
+   public IPv4 (private, loopback, link-local and CGNAT/Tailscale ranges are refused): `/srv/pulse` is then
+   left exactly as it was. Existing servers need this line added once before the first deploy that has it.
+   IPv6: the node IP only rewrites IPv4 candidates. If the VM has a global IPv6 address, LiveKit also offers it
+   to clients as-is (it did before this setting too). `ip -6 addr show scope global` on the server shows
+   whether there is one. If there is, the cloud firewall must allow the same ports over IPv6, or clients just
+   fall back to IPv4.
 3. `just deploy` → ends with `healthy: latest`. Caddy fetches the certificates on the first request.
 4. `just smoke` → every line `ok`.
 5. `just invite-prod` → a code for the first account.
@@ -80,9 +90,37 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
 - Every push to `main` that passes CI builds `ghcr.io/greghofmeyr/pulse-server:<7-char commit>` and `:latest`
   (`.github/workflows/release-server.yml`, about ten minutes).
 - `just deploy` runs `latest`; `just deploy <sha7>` runs a specific build. Each deploy takes a backup first,
-  pulls (a mistyped sha fails here and changes nothing), restarts in a few seconds, and prints the commit
+  pulls (a mistyped sha fails here and changes nothing), pins the image (below), restarts in a few seconds, and prints the commit
   that's now live. Right after a merge, `latest` is still the previous build until the image workflow
   finishes (about ten minutes): check the printed commit. Clients reconnect on their own and voice keeps going.
+- One-time, for the deploy that first adds `0006_livekit_grants`: deploy while nobody's in a call, or expect
+  them to rejoin once. Calls connected before it carry no grant id, so the next time LiveKit fully reconnects one
+  (a network change or a long drop, not a quick resume), or a token fetched just before the deploy is used, the
+  server removes that participant. The app shows the call as disconnected and does not rejoin by itself (it never
+  does after being removed); clicking the channel again joins normally.
+- Images are pinned by digest, so what runs is exactly what was pulled, even if a tag moves. `deploy.sh` looks up
+  the digest of the pulled `pulse-server:<tag>` and writes `PULSE_IMAGE=…:<tag>@sha256:…` into `/srv/pulse/.env`
+  (`PULSE_TAG` stays, for humans; an old `.env` without `PULSE_IMAGE` just gets the line appended). It prints
+  `pinned: …` and the digest on the final `healthy:` line. LiveKit and Caddy are pinned in `compose.yml`.
+- Build inputs are pinned too. When bumping the Rust version, change it in three places together: `rust-toolchain.toml`
+  (CI, the Windows release and local builds), the `rust:<version>-bookworm@sha256:…` line in `server.Dockerfile`, and, if
+  the `tauri` crate's minor changed, `@tauri-apps/cli@<version>` in `release-windows.yml`. Dependabot opens PRs for
+  each of these (rust-toolchain, docker, github-actions); the digest is the multi-arch index digest. GitHub Actions are
+  pinned to commit SHAs with a `# vX.Y.Z` comment, and `ci.yml` checks the LLVM apt key against its published fingerprint.
+- Node and pnpm are pinned to exact versions (`node-version` / `version` of the setup actions) in `ci.yml` and
+  `release-windows.yml`. Dependabot doesn't bump those inputs: to bump, take the newest release of the same major
+  (`https://nodejs.org/dist/index.json`, `npm view pnpm@<major> version`), change it in both workflows, and let CI run.
+- Bumping LiveKit or Caddy: Dependabot opens a PR for new tags (`.github/dependabot.yml`). To do it by hand,
+  take the digest of the multi-arch **index**, not of one platform: `docker manifest inspect <image>:<tag> -v`, or
+  `HEAD /v2/<repo>/manifests/<tag>` on the registry with the OCI index and manifest-list `Accept` headers and read
+  `Docker-Content-Digest`. Check that the index lists `linux/arm64` (the server is ARM64). Then update
+  `compose.yml` (CI and `just deploy-check` read the Caddy image from it), run `just deploy-check`, `just deploy`.
+- LiveKit lives in three places that move together: `deploy/compose.yml` (production), the root `docker-compose.yml`
+  (dev and `just voice-it`; same `image:` line, so the tests run what ships), and `release-windows.yml`
+  (`LIVEKIT_VERSION` and `LIVEKIT_WINDOWS_SHA256`, the Windows test kit's binary). Dependabot bumps both compose
+  files in one PR; add the `release-windows.yml` change to it by hand (the comment there says how to get the
+  SHA-256). `deploy-selftest.sh` (CI and `just deploy-check`) fails if the two image lines differ or the version
+  isn't their tag; it can't check the SHA-256.
 - Order for a release: deploy the server first, then send friends the new installer. Clients older than the
   server see "plz update :)".
 - Building a branch: running `release-server` by hand (workflow dispatch) also tags it `:latest`, as every
@@ -96,6 +134,7 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
   `just restore <the backup that deploy made>` and then `just deploy <previous sha7>`.
 - `just logs` (or `just logs caddy` / `just logs livekit`) follows the live logs.
 - After changing `livekit.yaml`: `just deploy`, then `ssh pulse@pulse 'cd /srv/pulse && docker compose restart livekit'`.
+  (A changed `LIVEKIT_NODE_IP` needs no restart: `just deploy` recreates LiveKit with it.)
   The codec list needs a LiveKit restart to apply; `just deploy` copies the file but does not restart LiveKit.
 
 ## 8. Backups
@@ -155,5 +194,6 @@ access through your Tailscale identity, and the backup key in NordPass.
 3. Deploy to the new one and restore onto it, pointing the recipes at it:
    `just --set prod pulse@<new-name> deploy`, then
    `PULSE_PROD=pulse@<new-name> just restore <that backup>`.
-4. Switch the two Cloudflare A records to the new IP (they take effect within minutes).
+4. Switch the two Cloudflare A records to the new IP (they take effect within minutes). The new server's
+   `.env` has its own `LIVEKIT_NODE_IP`, set in section 6.
 5. Delete the old VM and remove it from Tailscale.

@@ -76,6 +76,12 @@ pub fn run() {
             // Last session's crash / unexpected exit, captured before this session writes to the log.
             reports::crash::detect(&log_dir, reports::unix_now());
             reports::crash::mark_running(&log_dir);
+            // "Send crash reports automatically" off: what was just captured waits for the user.
+            let report_settings = reports::settings::Store::load(&dir);
+            if !report_settings.auto_send_crashes() {
+                reports::crash::hold_pending(&log_dir);
+            }
+            app.manage(report_settings);
             app.manage(reports::LogDir(log_dir.clone()));
             match logging::init(&log_dir) {
                 Ok(guard) => {
@@ -84,6 +90,8 @@ pub fn run() {
                 Err(e) => eprintln!("logging unavailable ({}): {e}", log_dir.display()),
             }
             tracing::info!(profile = ?profile, data = %dir.display(), "profile");
+            // Loaded (and acted on) above, before logging was up: report how that went now.
+            app.state::<reports::settings::Store>().log_loaded();
             startup::mark("logging_ready"); // (since process start: covers crash checks + log setup)
             let webview_dir = session::profile_dir(&app.path().app_local_data_dir()?, profile.as_deref());
             create_main_window(app, &webview_dir)?;
@@ -133,7 +141,8 @@ pub fn run() {
                 });
             }
             let binds = keybinds::Store::load(&dir);
-            binds.set_problems(hotkeys::install(app, &binds.get())?);
+            let saved = binds.get();
+            binds.set_problems(hotkeys::install(app, &saved.binds, saved.enabled)?);
             app.manage(binds);
             let handle = app.handle().clone();
             app.manage(voice::VoiceManager::new(std::sync::Arc::new(
@@ -171,6 +180,7 @@ pub fn run() {
             commands::register,
             commands::restore_session,
             commands::logout,
+            commands::logout_others,
             commands::list_servers,
             commands::gateway_probe,
             commands::send_typing,
@@ -214,9 +224,14 @@ pub fn run() {
             startup::ui_painted,
             keybinds::get_keybinds,
             keybinds::set_keybinds,
+            keybinds::set_keybinds_enabled,
             keybinds::pause_keybinds,
             reports::submit_report,
             reports::save_report,
+            reports::crash::send_held_report,
+            reports::crash::discard_held_report,
+            reports::settings::get_report_settings,
+            reports::settings::set_report_settings,
             stream::stream_ticket,
             stream::stream_go_live,
             stream::stream_reannounce,

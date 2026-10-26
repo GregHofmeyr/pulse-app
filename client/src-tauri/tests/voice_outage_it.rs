@@ -12,6 +12,13 @@ use pulse_server::testing;
 
 const DEV_SECRET: &str = "pulse-dev-secret-0123456789abcdefghij";
 
+/// The dev LiveKit's address: `PULSE_DEV_LIVEKIT_PORT` when set (`just voice-it-alt`, beside another
+/// checkout's LiveKit), else 7880 as in docker/livekit.yaml.
+fn dev_livekit(scheme: &str) -> String {
+    let port = std::env::var("PULSE_DEV_LIVEKIT_PORT").unwrap_or_else(|_| "7880".into());
+    format!("{scheme}://127.0.0.1:{port}")
+}
+
 /// Pauses the dev LiveKit (a server that stops answering: no refusal, nothing) until dropped.
 struct PausedLiveKit;
 
@@ -43,7 +50,7 @@ impl Drop for PausedLiveKit {
 #[ignore]
 async fn a_livekit_that_stops_answering_is_rejoined() {
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, token) = testing::register(&app, "alex").await;

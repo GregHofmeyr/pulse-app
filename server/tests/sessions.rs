@@ -96,3 +96,14 @@ async fn revoked_token_rejected() {
     session::revoke(&app.db, &t).await.unwrap();
     assert_eq!(session::authenticate(&app.db, &t).await.unwrap(), None);
 }
+
+#[tokio::test]
+async fn exists_tracks_the_row() {
+    let app = common::spawn().await;
+    let u = user(&app.db).await;
+    let t = session::create(&app.db, u).await.unwrap();
+    let h = session::hash_token(&t);
+    assert!(session::exists(&app.db, &h).await.unwrap());
+    session::revoke(&app.db, &t).await.unwrap();
+    assert!(!session::exists(&app.db, &h).await.unwrap());
+}

@@ -11,6 +11,9 @@ import type { VoiceTokenResponse } from './protocol/VoiceTokenResponse'
 import type { MediaInfo } from './protocol/MediaInfo'
 import type { CustomEmoji } from './protocol/CustomEmoji'
 
+/** What startup found: signed in, show login, or signed in but the server refused the connection. */
+export type Restored = { status: 'ready'; user: User } | { status: 'logged_out' } | { status: 'refused' }
+
 export const api = {
   createDm: (userIds: string[]) => invoke<Channel>('create_dm', { userIds }),
   addMembers: (channelId: string, userIds: string[]) => invoke<void>('add_members', { channelId, userIds }),
@@ -24,8 +27,10 @@ export const api = {
     invoke<User>('login', { serverUrl, username, password }),
   register: (serverUrl: string, inviteCode: string, username: string, password: string) =>
     invoke<User>('register', { serverUrl, inviteCode, username, password }),
-  restoreSession: () => invoke<User | null>('restore_session'),
+  restoreSession: () => invoke<Restored>('restore_session'),
   logout: () => invoke<void>('logout'),
+  /** Sign out every other device of this account; resolves to how many were signed out. */
+  logoutOthers: () => invoke<number>('logout_others'),
   probe: () => invoke<void>('gateway_probe'),
   listServers: () => invoke<Server[]>('list_servers'),
   createServer: (name: string) => invoke<Server>('create_server', { name }),
@@ -56,7 +61,16 @@ export const api = {
   submitReport: (text: string) => invoke<string>('submit_report', { text }),
   /** Writes a .txt to Downloads; returns its path. `serverUrl` when not signed in. */
   saveReport: (text: string, serverUrl: string | null) => invoke<string>('save_report', { text, serverUrl }),
+  /** "Send" on last session's held crash report; returns its short id. Fails (and keeps it) if not sent. */
+  sendHeldReport: () => invoke<string>('send_held_report'),
+  /** "Don't send": deletes the held crash report. */
+  discardHeldReport: () => invoke<void>('discard_held_report'),
+  getReportSettings: () => invoke<ReportSettings>('get_report_settings'),
+  setReportSettings: (settings: ReportSettings) => invoke<ReportSettings>('set_report_settings', { settings }),
 }
+
+/** Off: crash reports are saved on this computer and only sent if the user says so on the next launch. */
+export type ReportSettings = { auto_send_crashes: boolean }
 
 /** Screen-share commands (the `#v` ticket, live/watch bookkeeping, previews, and the Rust `#a` audio side). */
 export const streamCmd = {
@@ -67,8 +81,8 @@ export const streamCmd = {
   stop: (channelId: string) => invoke<void>('stream_stop', { channelId }),
   watch: (channelId: string, streamer: string) => invoke<void>('stream_watch', { channelId, streamer }),
   unwatch: (channelId: string, streamer: string) => invoke<void>('stream_unwatch', { channelId, streamer }),
-  /** `webpBase64` without the `data:` prefix. */
-  previewPut: (channelId: string, webpBase64: string) => invoke<void>('stream_preview_put', { channelId, webpBase64 }),
+  /** `imageBase64` (WebP, or JPEG/PNG where the webview can't encode WebP) without the `data:` prefix. */
+  previewPut: (channelId: string, imageBase64: string) => invoke<void>('stream_preview_put', { channelId, imageBase64 }),
   /** A `data:` URL, or null when the streamer hasn't sent one yet. */
   previewGet: (channelId: string, userId: string) => invoke<string | null>('stream_preview_get', { channelId, userId }),
   /** One JSON object, no newlines; Rust prefixes `share: `. */

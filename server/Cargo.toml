@@ -61,3 +61,5 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 tempfile = "3"
 prost = "0.14"
 livekit-protocol = "0.8.0"
+# tests/livekit_ice.rs reads deploy/livekit.yaml and docker/livekit.yaml
+yaml-rust2 = { version = "0.13", default-features = false }

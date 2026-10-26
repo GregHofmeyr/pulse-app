@@ -4,9 +4,13 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Weekly (Monday 06:00 UTC): new advisories appear without any code change. Only the
+    # dependency jobs run on a schedule; rust/ui/deploy need `changes`, which is skipped.
+    - cron: '0 6 * * 1'
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
@@ -14,7 +18,8 @@ permissions:
 
 jobs:
   changes:
-    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: read
@@ -22,9 +27,11 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       ui: ${{ steps.filter.outputs.ui }}
       deploy: ${{ steps.filter.outputs.deploy }}
+      image: ${{ steps.filter.outputs.image }}
+      deps: ${{ steps.filter.outputs.deps }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: dorny/paths-filter@0e4a8c6effa4802afeda77dc8d303f8176d7dfad # v3.0.4
         id: filter
         with:
           filters: |
@@ -34,37 +41,73 @@ jobs:
               - 'client/src-tauri/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
+              - 'rust-toolchain.toml'
+              - 'vendor/**'
               - 'justfile'
+              # server/tests/livekit_ice.rs reads both LiveKit configs
+              - 'deploy/livekit.yaml'
+              - 'docker/livekit.yaml'
               - '.github/workflows/ci.yml'
             ui:
               - 'client/ui/**'
               - '.github/workflows/ci.yml'
             deploy:
               - 'deploy/**'
+              # deploy-selftest.sh checks the LiveKit pins in these agree with deploy/compose.yml
+              - 'docker-compose.yml'
+              - '.github/workflows/release-windows.yml'
+              - '.github/workflows/ci.yml'
+            image:
+              - 'deploy/server.Dockerfile'
+              - '.dockerignore'
+              - '.github/workflows/ci.yml'
+            deps:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '**/Cargo.toml'
+              - 'deny.toml'
+              - 'client/ui/package.json'
+              - 'client/ui/pnpm-lock.yaml'
               - '.github/workflows/ci.yml'
 
   rust:
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && needs.changes.outputs.rust == 'true'
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: System deps (Tauri / WebKitGTK)
         run: |
           sudo apt-get update
           sudo apt-get install -y --no-install-recommends \
             libglib2.0-dev libclang-dev pkg-config libwebkit2gtk-4.1-dev \
             libayatana-appindicator3-dev librsvg2-dev libasound2-dev libssl-dev libdbus-1-dev
+      # Signed apt.llvm.org repo, not `llvm.sh | bash`: the key is checked against its published fingerprint and
+      # the install fails on a mismatch.
       - name: LLVM 21 (webrtc-sys builds against libwebrtc's hermetic libc++)
         run: |
-          wget -qO- https://apt.llvm.org/llvm.sh | sudo bash -s -- 21
+          set -euo pipefail
+          expected=6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
+          key="$RUNNER_TEMP/llvm.key"
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o "$key"
+          fprs=$(gpg --show-keys --with-colons "$key" | grep '^fpr:')
+          actual=$(printf '%s\n' "$fprs" | head -n1 | cut -d: -f10)
+          [ "$actual" = "$expected" ] || { echo "LLVM apt key fingerprint mismatch: $actual" >&2; exit 1; }
+          sudo gpg --dearmor -o /etc/apt/keyrings/llvm.gpg "$key"
+          echo "deb [signed-by=/etc/apt/keyrings/llvm.gpg] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-21 main" \
+            | sudo tee /etc/apt/sources.list.d/llvm.list
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends clang-21 lld-21 llvm-21
           echo "CC=clang-21" >> "$GITHUB_ENV"
           echo "CXX=clang++-21" >> "$GITHUB_ENV"
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
-      - uses: extractions/setup-just@v3
+      # Exact version and components come from rust-toolchain.toml (rustup >= 1.28 installs what the file names).
+      - name: Rust toolchain (pinned in rust-toolchain.toml)
+        shell: bash
+        run: |
+          rustup toolchain install --profile minimal
+          rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: extractions/setup-just@f8a3cce218d9f83db3a2ecd90e41ac3de6cdfd9b # v3.1.0
       - name: Placeholder UI dist (tauri::generate_context! needs the folder)
         run: mkdir -p client/ui/dist
       - run: cargo fmt --all -- --check
@@ -74,19 +117,20 @@ jobs:
 
   ui:
     needs: changes
-    if: needs.changes.outputs.ui == 'true'
-    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && needs.changes.outputs.ui == 'true'
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: client/ui
     steps:
-      - uses: actions/checkout@v5
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      # Exact versions; Dependabot doesn't bump these inputs (see deploy/README.md).
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
-          version: 11
-      - uses: actions/setup-node@v5
+          version: 11.28.8
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          node-version: 22
+          node-version: 22.23.4
           cache: pnpm
           cache-dependency-path: client/ui/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
@@ -95,19 +139,67 @@ jobs:
 
   deploy:
     needs: changes
-    if: needs.changes.outputs.deploy == 'true'
-    runs-on: ubuntu-latest
+    if: github.event_name != 'schedule' && needs.changes.outputs.deploy == 'true'
+    runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: compose file
         run: |
           sed -e 's/^PULSE_UID=$/PULSE_UID=1000/' -e 's/^PULSE_GID=$/PULSE_GID=1000/' \
               -e 's/^ACME_EMAIL=$/ACME_EMAIL=ci@example.com/' -e 's/^LIVEKIT_SECRET=$/LIVEKIT_SECRET=x/' \
+              -e 's/^LIVEKIT_NODE_IP=$/LIVEKIT_NODE_IP=203.0.113.10/' \
               deploy/env.example > /tmp/pulse-ci.env
           docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config -q
       - name: Caddyfile
-        run: >
-          docker run --rm -e PULSE_DOMAIN=example.com -e ACME_EMAIL=ci@example.com
-          -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10 caddy validate --config /etc/caddy/Caddyfile
+        run: |
+          # The pinned image comes from compose.yml, the one place Dependabot bumps.
+          caddy_image=$(docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config --images | grep '^caddy:')
+          docker run --rm -e PULSE_DOMAIN=example.com -e ACME_EMAIL=ci@example.com \
+            -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" "$caddy_image" caddy validate --config /etc/caddy/Caddyfile
       - name: shell scripts
         run: docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh
+      - name: deploy.sh self-test
+        run: bash deploy/deploy-selftest.sh
+
+  # A Dependabot bump of the server image's base images gets built before it merges (amd64 only,
+  # nothing pushed; release-server.yml builds and publishes both architectures from main).
+  server-image:
+    needs: changes
+    if: github.event_name != 'schedule' && needs.changes.outputs.image == 'true'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - run: docker build -f deploy/server.Dockerfile .
+
+  # Dependency policy (deny.toml): advisories, licences, bans, sources. Also runs weekly.
+  cargo-deny:
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || needs.changes.outputs.deps == 'true') }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
+        with:
+          command: check advisories licenses bans sources
+
+  pnpm-audit:
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || needs.changes.outputs.deps == 'true') }}
+    runs-on: ubuntu-24.04
+    defaults:
+      run:
+        working-directory: client/ui
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
+        with:
+          version: 11.28.8
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: 22.23.4
+      - name: shipped dependencies
+        run: pnpm audit --prod --audit-level high
+      # Build tools too (vite, svelte-check, the Tauri CLI): they run on CI and release machines.
+      - name: all dependencies
+        if: ${{ !cancelled() }}
+        run: pnpm audit --audit-level high

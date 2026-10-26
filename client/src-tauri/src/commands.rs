@@ -387,13 +387,26 @@ pub async fn register(
 /// Longest startup waits for the first gateway session to decide (connect 10 s + Ready 10 s).
 const BOOT_WAIT: std::time::Duration = std::time::Duration::from_secs(25);
 
-/// Resume the stored session. `Ok(None)` means "show the login screen".
+/// What `restore_session` found.
+#[derive(Debug, serde::Serialize, PartialEq)]
+#[serde(tag = "status", content = "user", rename_all = "snake_case")]
+pub enum Restored {
+    /// Signed in and connected.
+    Ready(User),
+    /// Nothing stored, or the session is dead: show the login screen.
+    LoggedOut,
+    /// Signed in, but the server turned the connection away (too many devices / attempts). The
+    /// gateway keeps retrying; the app opens when Ready arrives.
+    Refused,
+}
+
+/// Resume the stored session.
 #[tauri::command]
 pub async fn restore_session(
     app: AppHandle,
     core: State<'_, Core>,
     voice: State<'_, VoiceManager>,
-) -> Result<Option<User>, ApiError> {
+) -> Result<Restored, ApiError> {
     crate::startup::mark("restore_begin");
     // Runs once per page load: a reload (renderer crash) can't leave the old page's meters
     // counted or its status panel's 1 s link polling running.
@@ -401,7 +414,7 @@ pub async fn restore_session(
     // The UI listens before it calls this. Already attached = the webview reloaded.
     let reload = core.ui_attached.send_replace(true);
     let Some(server) = core.start_stored(&app, reload) else {
-        return Ok(None);
+        return Ok(Restored::LoggedOut);
     };
     let mut boot = core.boot.subscribe();
     let decided = tokio::time::timeout(BOOT_WAIT, boot.wait_for(|b| !b.is_waiting()))
@@ -410,14 +423,18 @@ pub async fn restore_session(
         .and_then(|r| r.ok().map(|b| b.clone()));
     crate::startup::mark("restore_end");
     match decided {
-        Some(Boot::Ready(user)) => Ok(Some(user)),
-        Some(Boot::LoggedOut) => Ok(None), // forward() already cleared the stored session
+        Some(Boot::Ready(user)) => Ok(Restored::Ready(user)),
+        Some(Boot::LoggedOut) => Ok(Restored::LoggedOut), // forward() already cleared the stored session
+        // Turned away (too many devices / attempts) but signed in: leave the session and its
+        // gateway running. The UI sees the refusal in `pulse://conn`, shows it, and opens the
+        // app when Ready arrives.
+        Some(Boot::Refused(_)) => Ok(Restored::Refused),
         Some(Boot::UpdateRequired) => {
             // the update screen sits inside the signed-in shell: it needs the user (rare path)
             let (api, token) = core.current()?;
             api.me(&token)
                 .await
-                .map(Some)
+                .map(Restored::Ready)
                 .map_err(|e| e.while_restoring(&server))
         }
         _ => {
@@ -429,7 +446,7 @@ pub async fn restore_session(
             match why {
                 ApiError::Unauthorized => {
                     core.store.clear(&server);
-                    Ok(None)
+                    Ok(Restored::LoggedOut)
                 }
                 e => Err(e.while_restoring(&server)),
             }
@@ -457,6 +474,13 @@ pub async fn logout(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiErro
     }
     core.deactivate(&app);
     Ok(())
+}
+
+/// Settings → Advanced: sign out every other device; this one stays signed in.
+#[tauri::command]
+pub async fn logout_others(app: AppHandle, core: State<'_, Core>) -> Result<u32, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.logout_others(&token).await)
 }
 
 /// The UI calls this when the network comes back (`online`); window focus probes from Rust.
@@ -947,6 +971,19 @@ pub async fn list_reactors(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn restore_results_tell_the_ui_apart() {
+        let j = |r: Restored| serde_json::to_string(&r).unwrap();
+        assert_eq!(j(Restored::LoggedOut), r#"{"status":"logged_out"}"#);
+        assert_eq!(j(Restored::Refused), r#"{"status":"refused"}"#);
+        let u = User {
+            id: UserId::new(),
+            username: "alex".into(),
+            avatar_hash: None,
+        };
+        assert!(j(Restored::Ready(u)).starts_with(r#"{"status":"ready","user":{"#));
+    }
     use pulse_server::testing;
 
     /// R6: after every Ready the client declares its current mute/deafen, whatever they are.

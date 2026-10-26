@@ -46,6 +46,15 @@ pub struct LimitsConfig {
     pub report_user: Rate,
     /// Media uploads per user.
     pub upload_user: Rate,
+    /// LiveKit voice tokens + stream tickets per user (each records a grant row).
+    pub livekit_token_user: Rate,
+    /// Go Live preview uploads per user (each is decoded and re-encoded).
+    pub preview_user: Rate,
+    /// `/gateway` upgrades per client IP; refunded once the socket authenticates, so only
+    /// failed or abandoned attempts (bad token, no Hello) keep the spend.
+    pub gateway_ip: Rate,
+    /// Concurrent authenticated gateway connections per user.
+    pub gateway_per_user: usize,
 }
 
 impl Default for LimitsConfig {
@@ -58,6 +67,18 @@ impl Default for LimitsConfig {
             typing_user: Rate::new(1, 1.0),
             report_user: Rate::per_hour(5),
             upload_user: Rate::per_hour(30),
+            // The client prefetches a voice token on hover (one per channel, reused for 2 min),
+            // so sweeping the pointer down a long channel list can ask for dozens at once; a
+            // join plus going live is 3 more. 60 at once and one a second after that is far
+            // beyond any person; with the per-session cap on never-joined grants (100, see
+            // `auth::session`) it keeps the grant table small.
+            livekit_token_user: Rate::new(60, 1.0),
+            // The client sends one a second after going live, then one every 15 s. Six at once
+            // covers a few quick restarts; one per 5 s after that is 3x the cadence, and caps
+            // the decoding a user can ask for at 12 small images a minute.
+            preview_user: Rate::new(6, 0.2),
+            gateway_ip: Rate::per_minute(20),
+            gateway_per_user: 8,
         }
     }
 }
@@ -74,6 +95,10 @@ impl LimitsConfig {
             typing_user: r,
             report_user: r,
             upload_user: r,
+            livekit_token_user: r,
+            preview_user: r,
+            gateway_ip: r,
+            gateway_per_user: usize::MAX,
         }
     }
 }
@@ -170,6 +195,10 @@ pub struct Limits {
     pub typing_user: Limiter,
     pub report_user: Limiter,
     pub upload_user: Limiter,
+    pub livekit_token_user: Limiter,
+    pub preview_user: Limiter,
+    pub gateway_ip: Limiter,
+    pub gateway_per_user: usize,
 }
 
 impl Limits {
@@ -182,6 +211,10 @@ impl Limits {
             typing_user: Limiter::new(c.typing_user),
             report_user: Limiter::new(c.report_user),
             upload_user: Limiter::new(c.upload_user),
+            livekit_token_user: Limiter::new(c.livekit_token_user),
+            preview_user: Limiter::new(c.preview_user),
+            gateway_ip: Limiter::new(c.gateway_ip),
+            gateway_per_user: c.gateway_per_user,
         }
     }
 }

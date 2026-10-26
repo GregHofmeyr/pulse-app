@@ -1,6 +1,7 @@
 //! Bug and crash reports: gather diagnostics, send them, or save them to a file to pass on by hand.
 
 pub mod crash;
+pub mod settings;
 pub mod tail;
 
 use std::future::Future;
@@ -60,6 +61,24 @@ pub fn file_text(kind: ReportKind, text: &str, meta: &serde_json::Value, log: &s
         },
         serde_json::to_string_pretty(meta).unwrap_or_default(),
     )
+}
+
+/// Replace `dir/name` whole: write a temp file beside it, flush it to disk, then rename it over
+/// the old one. A crash or power loss leaves the old file or the new one, never half of one (the
+/// rename itself isn't synced: right after a power loss it may be the old one).
+pub fn write_atomic(dir: &Path, name: &str, contents: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let tmp = dir.join(format!("{name}.tmp"));
+    let r = std::fs::File::create(&tmp)
+        .and_then(|mut f| {
+            f.write_all(contents)?;
+            f.sync_all()
+        })
+        .and_then(|()| std::fs::rename(&tmp, dir.join(name)));
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
 }
 
 /// `pulse-report-YYYYMMDD-HHMMSS.txt` in UTC, from the unix time (no date crate in the client).

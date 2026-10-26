@@ -13,6 +13,7 @@ use pulse_protocol::rest::{ChannelKind, StreamEndReason, VoiceTokenResponse};
 use crate::AppState;
 use crate::access::{channel_for, load_channel};
 use crate::auth::AuthUser;
+use crate::auth::extractor::BearerToken;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
 use crate::voice::state::Left;
@@ -28,6 +29,7 @@ pub fn router() -> Router<AppState> {
 async fn token(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
+    BearerToken(session): BearerToken,
     Path(id): Path<ChannelId>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
     let ch = channel_for(&s.db, me, id).await?;
@@ -40,12 +42,22 @@ async fn token(
     {
         return Err(AppError::Forbidden);
     }
+    // A random grant id, mapped to this session server-side only: the join webhook checks it
+    // and revoking this session removes the participant that joined with it.
+    let room = id.to_string();
+    if !s.limits.livekit_token_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
+    let grant = crate::auth::session::record_grant(&s.db, &session, &room, &me.to_string())
+        .await?
+        .ok_or(AppError::Unauthorized)?;
     let jwt = AccessToken::with_api_key(&s.cfg.livekit_key, &s.cfg.livekit_secret)
         .with_identity(&me.to_string())
+        .with_attributes([(crate::auth::session::GRANT_ATTRIBUTE, grant)])
         .with_ttl(TOKEN_TTL)
         .with_grants(VideoGrants {
             room_join: true,
-            room: id.to_string(),
+            room,
             can_publish: Some(true),
             // Voice rooms carry the microphone only: screen share has its own room (`<id>~s`).
             can_publish_sources: vec!["microphone".into()],
@@ -96,6 +108,13 @@ async fn webhook(
     else {
         return Ok(StatusCode::OK);
     };
+    // A join needs a live session behind it (a revoked device's JWT still works at LiveKit).
+    if ev.event == "participant_joined" && !crate::voice::revoke::admit(&s, &room.name, p).await? {
+        return Ok(StatusCode::OK);
+    }
+    if ev.event == "participant_left" {
+        crate::voice::revoke::left(&s, p).await?;
+    }
     let Some(ch) = load_channel(&s.db, channel_id).await? else {
         return Ok(StatusCode::OK);
     };

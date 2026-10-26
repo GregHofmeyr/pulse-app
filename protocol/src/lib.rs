@@ -17,6 +17,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::LoginRequest::export_all(&cfg)?;
     rest::SessionResponse::export_all(&cfg)?;
     rest::InviteResponse::export_all(&cfg)?;
+    rest::LogoutOthersResponse::export_all(&cfg)?;
     rest::CreateServerRequest::export_all(&cfg)?;
     rest::CreateChannelRequest::export_all(&cfg)?;
     rest::CreateDmRequest::export_all(&cfg)?;

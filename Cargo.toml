@@ -56,6 +56,14 @@ debug-assertions = false
 [profile.dev.package.nnnoiseless]
 opt-level = 3
 
+# argon2 (and the blake2 it hashes with) unoptimised takes ~0.5 s per password check, and the
+# server allows only 2 at once per process: a test binary full of logins then queues past the
+# client's 15 s timeout. Optimising them changes build speed only, not the hash parameters.
+[profile.dev.package.argon2]
+opt-level = 3
+[profile.dev.package.blake2]
+opt-level = 3
+
 # Release builds (installer, test kit, server image). Fat LTO + one codegen unit: smaller, slightly
 # faster code (tract/ndarray generics are otherwise duplicated across 16 units); it costs build
 # time only. strip: the Linux binary carried ~20 MB of symbols (Windows writes no PDB). Panics still
@@ -67,7 +75,9 @@ strip = true
 
 # libwebrtc formats every RTC_LOG line at LS_VERBOSE and hands it to Rust only to be dropped
 # (measured: 501 lines/s in a call, tests/webrtc_log_volume.rs). The vendored copy registers its
-# sink at LS_WARNING; the only change is src/webrtc.cpp's AddLogToStream. Drop this when upstream
-# makes the severity follow log::max_level().
+# sink at LS_WARNING (src/webrtc.cpp's AddLogToStream). It also verifies the prebuilt libwebrtc
+# archive against pinned SHA-256s before extracting it (libwebrtc_download.rs, called from build.rs;
+# upstream extracts it unverified). Those are the only two changes. Drop the log change when
+# upstream makes the severity follow log::max_level(); keep the verification while we patch.
 [patch.crates-io]
 webrtc-sys = { path = "vendor/webrtc-sys" }

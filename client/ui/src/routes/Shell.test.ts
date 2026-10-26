@@ -35,6 +35,7 @@ import { stream, streamApi } from '../lib/stream/stream.svelte'
 import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
 import { callView, joinAndWatch, openFull, showToast } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
+import Waiting from './Waiting.svelte'
 
 let cmp: ReturnType<typeof mount> | undefined
 let offs: (() => void)[] = []
@@ -75,6 +76,45 @@ describe('Shell', () => {
     flushSync()
     expect(document.querySelector('[role=dialog][aria-label="Server settings"]')).toBeNull()
     expect(document.querySelector('[role=menu]')).toBeNull()
+  })
+
+  it('the top bar says why a refused connection is retrying', () => {
+    app.state = { ...emptyState(), conn: 'too_many_devices' }
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    flushSync()
+    expect(document.querySelector('.conn')!.textContent).toBe('Too many devices connected — close Pulse on another device')
+    app.connAt = Date.now()
+    app.state = { ...app.state, conn: { rate_limited: 4 } }
+    flushSync()
+    expect(document.querySelector('.conn')!.textContent).toBe('Too many attempts, retrying in 4s…')
+  })
+
+  it('the retry countdown ticks down and is replaced when the next attempt starts', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(100_000)
+      app.connAt = Date.now()
+      app.state = { ...emptyState(), conn: { rate_limited: 3 } }
+      cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+      flushSync()
+      expect(document.querySelector('.conn')!.textContent).toBe('Too many attempts, retrying in 3s…')
+      vi.advanceTimersByTime(1000)
+      flushSync()
+      expect(document.querySelector('.conn')!.textContent).toBe('Too many attempts, retrying in 2s…')
+      vi.advanceTimersByTime(2000)
+      flushSync()
+      expect(document.querySelector('.conn')!.textContent).toBe('Connecting…')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a refused startup shows the message on the waiting screen', () => {
+    app.connAt = Date.now()
+    app.state = { ...emptyState(), conn: 'too_many_devices' }
+    cmp = mount(Waiting, { target: document.body, props: { onSignOut: () => {} } })
+    flushSync()
+    expect(document.querySelector('[role=status]')!.textContent).toContain('Too many devices connected')
   })
 })
 

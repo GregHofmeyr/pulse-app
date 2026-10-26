@@ -154,8 +154,9 @@ export const voiceApi = {
   retry: async () => {
     if (voice.joinFailed) await voiceApi.join(voice.joinFailed.channelId)
   },
-  /** Hovering a voice channel: the core fetches its join token ahead of the click. */
-  prefetch: (channelId: string) => void invoke('prefetch_voice', { channelId }).catch(() => {}),
+  /** Hovering a voice channel: the core fetches its join token ahead of the click. Resolves once
+   *  the core has taken the request (it fetches in the background and keeps the token). */
+  prefetch: (channelId: string): Promise<void> => invoke('prefetch_voice', { channelId }),
   leave() {
     // your row goes at once, not when the server's list catches up
     voice.leaving = voice.channelId ?? voice.joining ?? voice.leaving

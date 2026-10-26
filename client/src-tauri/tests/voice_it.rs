@@ -12,6 +12,13 @@ use pulse_server::testing;
 
 const DEV_SECRET: &str = "pulse-dev-secret-0123456789abcdefghij";
 
+/// The dev LiveKit's address: `PULSE_DEV_LIVEKIT_PORT` when set (`just voice-it-alt`, beside another
+/// checkout's LiveKit), else 7880 as in docker/livekit.yaml.
+fn dev_livekit(scheme: &str) -> String {
+    let port = std::env::var("PULSE_DEV_LIVEKIT_PORT").unwrap_or_else(|_| "7880".into());
+    format!("{scheme}://127.0.0.1:{port}")
+}
+
 fn bot_publishes_tone(room: &str) {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spikes/voice");
     let st = Command::new("docker")
@@ -26,7 +33,7 @@ fn bot_publishes_tone(room: &str) {
             "room",
             "join",
             "--url",
-            "ws://127.0.0.1:7880",
+            &dev_livekit("ws"),
             "--api-key",
             "devkey",
             "--api-secret",
@@ -51,7 +58,7 @@ fn bot_publishes_tone(room: &str) {
 #[ignore]
 async fn receives_peer_audio_at_real_time_across_rejoins() {
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, token) = testing::register(&app, "alex").await;
@@ -108,7 +115,7 @@ async fn receives_peer_audio_at_real_time_across_rejoins() {
 #[ignore]
 async fn rapid_join_leave_never_hangs() {
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, token) = testing::register(&app, "alex").await;
@@ -177,7 +184,7 @@ async fn rapid_join_leave_never_hangs() {
 #[ignore]
 async fn mic_audio_is_not_sent_late_after_joining() {
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, token) = testing::register(&app, "alex").await;
@@ -238,7 +245,7 @@ async fn mic_test_queue_on_real_devices() {
 #[ignore]
 async fn one_client_hears_another_at_real_time() {
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, alex) = testing::register(&app, "alex").await;
@@ -294,7 +301,7 @@ async fn real_devices_are_not_reopened_without_a_reason() {
         .with_env_filter("info,libwebrtc=warn")
         .try_init();
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, token) = testing::register(&app, "alex").await;
@@ -371,7 +378,7 @@ async fn reopening_one_side_leaves_the_other_alone() {
 #[ignore]
 async fn leaving_while_devices_open_leaves_no_ghost() {
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, alex) = testing::register(&app, "alex").await;
@@ -434,7 +441,7 @@ async fn leaving_while_devices_open_leaves_no_ghost() {
 #[ignore]
 async fn connected_shows_before_the_mic_is_published() {
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, token) = testing::register(&app, "alex").await;
@@ -563,7 +570,7 @@ async fn stages_arrive_in_order() {
 #[ignore]
 async fn switching_channels_goes_straight_to_the_new_room() {
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, token) = testing::register(&app, "alex").await;
@@ -634,7 +641,7 @@ async fn switching_channels_goes_straight_to_the_new_room() {
 #[ignore]
 async fn a_failed_switch_ends_disconnected_and_the_old_room_stays_left() {
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, token) = testing::register(&app, "alex").await;
@@ -706,7 +713,7 @@ async fn a_failed_switch_ends_disconnected_and_the_old_room_stays_left() {
 #[ignore]
 async fn switching_keeps_the_audio_pipeline_and_leave_drops_it() {
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, token) = testing::register(&app, "alex").await;
@@ -765,7 +772,7 @@ async fn two_tracks_from_one_person_both_play() {
     use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
 
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, alex) = testing::register(&app, "alex").await;

@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
 import type { Ready } from './protocol/Ready'
+import type { ReportKind } from './protocol/ReportKind'
 import { applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, type AppState, type ConnState } from './state'
 import { api } from './tauri'
 import { loadUnsent, saveUnsent } from './unsent'
@@ -17,11 +18,18 @@ import { windowFocus } from './windowFocus.svelte'
 // re-renders; unchanged slices keep their identity, so deriveds over them stop there.
 class AppStore {
   state = $state.raw<AppState>(emptyState())
+  /** When the last connection state arrived (ms): the start of a "retrying in Ns" countdown. */
+  connAt = $state(0)
 }
 export const app = new AppStore()
 
 /** What the user is looking at: drives the message sound and read marking. */
-export const ui = $state({ openChannelId: null as string | null, autoReported: false })
+export const ui = $state({
+  openChannelId: null as string | null,
+  autoReported: false,
+  /** Last session's crash report, held because automatic sending is off: ask Send / Don't send. */
+  heldReport: null as ReportKind | null,
+})
 
 /** One shared clock for time-dependent UI (mute expiry, "5m ago"). Ticks every 30 s. */
 export const clock = $state({ nowIso: new Date().toISOString() })
@@ -97,9 +105,14 @@ export async function startListening(): Promise<UnlistenFn> {
     }),
     // LiveKit closed stream audio's connection under us
     listen<{ channel_id: string }>('stream://audio_closed', (e) => void streamApi.onAudioClosed(e.payload.channel_id)),
-    listen<ConnState>('pulse://conn', (e) => (app.state = { ...app.state, conn: e.payload })),
+    listen<ConnState>('pulse://conn', (e) => {
+      app.connAt = Date.now()
+      app.state = { ...app.state, conn: e.payload }
+    }),
     // Last session crashed or quit unexpectedly and its report just went out: tell the user once.
     listen('pulse://auto-report-sent', () => (ui.autoReported = true)),
+    // ...or it was kept back (automatic sending is off): ask the user.
+    listen<{ kind: ReportKind }>('pulse://crash-report-held', (e) => (ui.heldReport = e.payload.kind)),
     listen<{ nonce: string; status: 'sent' | 'failed'; message: Message | null }>('pulse://outbox', (e) => {
       const { nonce, status, message } = e.payload
       if (status === 'sent' && message) {
@@ -127,4 +140,7 @@ export async function startListening(): Promise<UnlistenFn> {
 export function resetState() {
   restoredFor = null // the next Ready restores again
   app.state = emptyState()
+  // a held crash report belongs to the session (and server) it was offered in: the next sign-in
+  // asks again if the core still has it for that server
+  ui.heldReport = null
 }

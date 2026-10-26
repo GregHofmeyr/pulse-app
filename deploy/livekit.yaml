@@ -1,15 +1,24 @@
 # Production LiveKit. Clients reach signalling (7880) only through Caddy at voice.<domain>;
-# the firewall keeps 7880 closed. The API key "pulse" and its secret come from LIVEKIT_KEYS
+# 7880 itself listens on loopback only (compose uses host networking, so without bind_addresses it would also
+# answer on the tailnet and every other interface, bypassing Caddy), and the firewall keeps it closed too.
+# bind_addresses covers only that HTTP listener; the RTC and TURN ports are bound separately and stay public.
+# The API key "pulse" and its secret come from LIVEKIT_KEYS
 # (compose.yml); the Pulse server uses the same pair.
 port: 7880
+bind_addresses: ["127.0.0.1"]
 rtc:
   tcp_port: 7881
   udp_port: 7882
-  use_external_ip: true
+  # The public IP comes from NODE_IP (compose.yml, from LIVEKIT_NODE_IP in .env), never from discovery:
+  # use_external_ip would ask Twilio's and Google's public STUN servers for it at every start-up.
+  use_external_ip: false
   # Only the public path: without this, clients that are also on the tailnet (or the host itself)
   # get offered the Tailscale/Docker addresses, and their audio skips the route everyone else uses.
   interfaces:
     excludes: [docker0, tailscale0]
+# The embedded TURN (UDP) doubles as the clients' STUN server. While it is on, the join response lists only
+# turn:<node ip>:3478; without it LiveKit hands every client Twilio's and Google's public STUN servers instead.
+# Never set rtc.stun_servers: every entry is handed to clients.
 turn:
   enabled: true
   udp_port: 3478

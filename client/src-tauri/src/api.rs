@@ -576,18 +576,22 @@ impl Api {
         .await
     }
 
+    /// Upload a preview frame, labelled with the type its bytes are (the server checks they agree).
     pub async fn put_preview(
         &self,
         token: &str,
         channel: ChannelId,
-        webp: Vec<u8>,
+        image: Vec<u8>,
     ) -> Result<(), ApiError> {
+        let Some(content_type) = preview_type(&image) else {
+            return Err(ApiError::Rejected("preview isn't WebP, PNG or JPEG".into()));
+        };
         Self::ok_empty(
             self.http
                 .put(format!("{}/streams/{channel}/preview", self.base))
                 .bearer_auth(token)
-                .header(reqwest::header::CONTENT_TYPE, "image/webp")
-                .body(webp)
+                .header(reqwest::header::CONTENT_TYPE, content_type)
+                .body(image)
                 .send()
                 .await,
         )
@@ -661,6 +665,19 @@ impl Api {
             .await
             .map_err(|e| ApiError::Network(failure_text(e)))?;
         Ok(())
+    }
+
+    /// Sign out every other device of this account; returns how many sessions were revoked.
+    pub async fn logout_others(&self, token: &str) -> Result<u32, ApiError> {
+        let r: pulse_protocol::rest::LogoutOthersResponse = Self::parse(
+            self.http
+                .post(format!("{}/auth/logout-others", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await?;
+        Ok(r.revoked)
     }
 
     /// Reports carry up to 256 KB of log: allow longer than the usual 15 s on a slow line.
@@ -867,6 +884,18 @@ impl Api {
     }
 }
 
+/// The `Content-Type` of a preview frame, from its leading bytes: what a webview's canvas gives.
+fn preview_type(bytes: &[u8]) -> Option<&'static str> {
+    if bytes.len() >= 12 && &bytes[..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        Some("image/webp")
+    } else if bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        Some("image/png")
+    } else if bytes.starts_with(&[0xFF, 0xD8, 0xFF]) {
+        Some("image/jpeg")
+    } else {
+        None
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -962,6 +991,28 @@ mod tests {
         assert_eq!(api.create_report(&token, &req).await.unwrap().id.len(), 26);
     }
 
+    #[tokio::test]
+    async fn logout_others_signs_out_the_other_sessions_and_reports_how_many() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let other = api.login("alex", "hunter2hunter2").await.unwrap().token;
+        assert_eq!(api.logout_others(&token).await.unwrap(), 1);
+        assert!(matches!(api.me(&other).await, Err(ApiError::Unauthorized)));
+        assert!(api.me(&token).await.is_ok(), "this device stays signed in");
+        assert_eq!(api.logout_others(&token).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn logout_others_with_a_dead_token_is_unauthorized() {
+        let app = testing::spawn().await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        assert!(matches!(
+            api.logout_others("garbage").await,
+            Err(ApiError::Unauthorized)
+        ));
+    }
+
     #[test]
     fn a_failed_restore_says_which_server_and_what_to_do() {
         let e =
@@ -1037,10 +1088,12 @@ mod tests {
     async fn too_many_failed_logins_says_slow_down() {
         use pulse_server::limits::{LimitsConfig, Rate};
         let mut cfg = testing::test_config();
-        // a burst of 5 that never refills within the test: the burst rule, not the machine's speed
+        // The production burst of 5, but no refill: argon2 is capped at 2 hashes per process, so
+        // under a busy test run these 5 attempts can take 30 s, and per_minute(5) would hand
+        // back a token every 12 s and let the 6th through to the password check.
         cfg.limits = LimitsConfig {
-            login_ip: Rate::new(5, 1e-9),
-            ..LimitsConfig::unlimited()
+            login_ip: Rate::new(LimitsConfig::default().login_ip.burst, 0.0),
+            ..LimitsConfig::default()
         };
         let app = testing::spawn_with(cfg).await;
         testing::register(&app, "alex").await;
@@ -1255,9 +1308,45 @@ mod tests {
         app.voice.join(ch, uid, "PA_test");
         api.go_live(&token, ch, settings()).await.unwrap();
         assert_eq!(api.get_preview(&token, ch, uid).await.unwrap(), None);
-        let webp = b"RIFF....WEBPfake".to_vec();
-        api.put_preview(&token, ch, webp.clone()).await.unwrap();
-        assert_eq!(api.get_preview(&token, ch, uid).await.unwrap(), Some(webp));
+        // A real 1×1 WebP: the server decodes and re-encodes previews, refusing anything else.
+        use base64::Engine;
+        let webp = base64::engine::general_purpose::STANDARD
+            .decode("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")
+            .unwrap();
+        api.put_preview(&token, ch, webp).await.unwrap();
+        let got = api.get_preview(&token, ch, uid).await.unwrap().unwrap();
+        assert_eq!((&got[..4], &got[8..12]), (&b"RIFF"[..], &b"WEBP"[..]));
+        // and junk is refused
+        assert!(
+            api.put_preview(&token, ch, b"RIFF....WEBPfake".to_vec())
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_png_preview_goes_out_as_png_and_comes_back_as_webp() {
+        // A webview that can't encode WebP gives PNG (or JPEG); it is labelled as what it is.
+        let app = testing::spawn().await;
+        let (api, token, uid, ch) = voice_fixture(&app, "alex").await;
+        app.voice.join(ch, uid, "PA_test");
+        api.go_live(&token, ch, settings()).await.unwrap();
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(48, 27, image::Rgba([1, 2, 3, 255]))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        api.put_preview(&token, ch, png.into_inner()).await.unwrap();
+        let got = api.get_preview(&token, ch, uid).await.unwrap().unwrap();
+        assert_eq!((&got[..4], &got[8..12]), (&b"RIFF"[..], &b"WEBP"[..]));
+    }
+
+    #[test]
+    fn preview_types_come_from_the_bytes() {
+        assert_eq!(preview_type(b"RIFF\0\0\0\0WEBPVP8 "), Some("image/webp"));
+        assert_eq!(preview_type(b"\x89PNG\r\n\x1a\n...."), Some("image/png"));
+        assert_eq!(preview_type(&[0xFF, 0xD8, 0xFF, 0xE0]), Some("image/jpeg"));
+        assert_eq!(preview_type(b"GIF89a"), None);
+        assert_eq!(preview_type(b""), None);
     }
 
     #[tokio::test]

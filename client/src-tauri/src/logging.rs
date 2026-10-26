@@ -27,28 +27,39 @@ pub fn init(dir: &Path) -> anyhow::Result<WorkerGuard> {
         .with_env_filter(filter)
         .try_init();
 
-    let marker_dir = dir.to_path_buf();
-    std::panic::set_hook(Box::new(move |info| {
-        // marker first: it's what reports the crash, and logging could itself fail mid-panic
-        let message = info
-            .payload()
-            .downcast_ref::<&str>()
-            .map(|s| s.to_string())
-            .or_else(|| info.payload().downcast_ref::<String>().cloned())
-            .unwrap_or_else(|| "panic".into());
-        let location = info
-            .location()
-            .map(|l| format!("{}:{}", l.file(), l.line()))
-            .unwrap_or_default();
-        crate::reports::crash::write_panic_marker(&marker_dir, &message, &location);
-        tracing::error!(panic = %info, "PANIC");
-    }));
+    install_panic_hook(dir.to_path_buf());
     tracing::info!(
         version = env!("CARGO_PKG_VERSION"),
         os = std::env::consts::OS,
         "Pulse starting"
     );
     Ok(guard)
+}
+
+/// The crash marker + `PANIC` log line, then the previous hook (so the panic still prints).
+/// Once per process: a second `init` must not stack another wrapper and log each panic twice.
+fn install_panic_hook(marker_dir: std::path::PathBuf) {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        // Chain to the previous hook so the panic still prints (a console run, and test output).
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            // marker first: it's what reports the crash, and logging could itself fail mid-panic
+            let message = info
+                .payload()
+                .downcast_ref::<&str>()
+                .map(|s| s.to_string())
+                .or_else(|| info.payload().downcast_ref::<String>().cloned())
+                .unwrap_or_else(|| "panic".into());
+            let location = info
+                .location()
+                .map(|l| format!("{}:{}", l.file(), l.line()))
+                .unwrap_or_default();
+            crate::reports::crash::write_panic_marker(&marker_dir, &message, &location);
+            tracing::error!(panic = %info, "PANIC");
+            previous(info);
+        }));
+    });
 }
 
 /// Stops writing after `cap` bytes per UTC day (one notice line marks the cut), so a log flood
@@ -135,6 +146,55 @@ mod tests {
             String::from_utf8(w.inner.clone())
                 .unwrap()
                 .ends_with("fresh\n")
+        );
+    }
+
+    const PANIC_CHILD: &str = "PULSE_TEST_PANIC_HOOK_CHILD";
+
+    /// Runs only as the child of `a_panic_after_init_still_prints_and_leaves_a_marker`.
+    #[test]
+    fn panic_hook_child() {
+        let Some(dir) = std::env::var_os(PANIC_CHILD) else {
+            return;
+        };
+        let _guard = init(Path::new(&dir)).unwrap();
+        let _again = init(Path::new(&dir)).unwrap(); // a second init must not stack the hook
+        panic!("child-panic-xyzzy");
+    }
+
+    /// The hook is process-wide, so it's installed in a child test process: here it can't hide
+    /// other tests' panics. After init a panic must still print (the default hook runs too), and a
+    /// second init must not stack a second hook (the panic would be logged twice).
+    #[test]
+    fn a_panic_after_init_still_prints_and_leaves_a_marker() {
+        let dir = tempfile::tempdir().unwrap();
+        let out = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", "logging::tests::panic_hook_child", "--nocapture"])
+            .args(["--test-threads", "1"])
+            .env(PANIC_CHILD, dir.path())
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(!out.status.success(), "the child panics: {stdout}");
+        assert!(
+            stderr.contains("child-panic-xyzzy"),
+            "panic text reaches stderr: {stderr}"
+        );
+        let log: String = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .filter(|f| f.file_name().to_string_lossy().starts_with("pulse"))
+            .map(|f| std::fs::read_to_string(f.path()).unwrap_or_default())
+            .collect();
+        assert_eq!(
+            log.matches("child-panic-xyzzy").count(),
+            1,
+            "logged once although init ran twice: {log}"
+        );
+        assert!(
+            dir.path().join("crash.json").exists(),
+            "crash marker written"
         );
     }
 

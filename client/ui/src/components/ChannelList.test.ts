@@ -17,6 +17,7 @@ import { app } from '../lib/store.svelte'
 import { applyEvent, applyReady, emptyState } from '../lib/state'
 import { startVoiceListening, voice, voiceApi } from '../lib/voice.svelte'
 import type { Ready } from '../lib/protocol/Ready'
+import { HOVER_DELAY_MS } from '../lib/hoverPrefetch'
 
 const me = { id: 'U1', username: 'alex', avatar_hash: null }
 const sam = { id: 'U2', username: 'sam', avatar_hash: null }
@@ -217,5 +218,43 @@ describe('voice listener rules', () => {
     app.state = applyEvent(app.state, { t: 'VoiceLeft', d: { channel_id: 'V1', user_id: 'U1' } } as never, 0)
     await settle()
     expect(voice.leaving).toBeNull()
+  })
+})
+
+describe('ChannelList voice prefetch', () => {
+  // the hover delay runs on fake timers; the row is re-mounted with a join spy
+  function render(onJoinVoice = vi.fn()) {
+    if (cmp) unmount(cmp)
+    document.body.innerHTML = ''
+    vi.useFakeTimers()
+    invoke.mockResolvedValue(undefined)
+    cmp = mount(ChannelList, {
+      target: document.body,
+      props: { serverId: 'S1', activeChannelId: null, voiceChannelId: null, speaking: new Set<string>(), onSelect: () => {}, onJoinVoice, onMessage: () => {}, onVoiceSettings: () => {} },
+    })
+    flushSync()
+    return [...document.querySelectorAll<HTMLButtonElement>('button.row')].find((b) => b.textContent?.includes('Lounge'))!
+  }
+  const prefetches = () => invoke.mock.calls.filter(([cmd]) => cmd === 'prefetch_voice').length
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  it('resting on a voice channel prefetches its token', async () => {
+    const row = render()
+    row.dispatchEvent(new MouseEvent('mouseenter'))
+    await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
+    expect(prefetches()).toBe(1)
+  })
+
+  it('clicking before the hover delay cancels the prefetch (the join fetches its own token)', async () => {
+    const onJoinVoice = vi.fn()
+    const row = render(onJoinVoice)
+    row.dispatchEvent(new MouseEvent('mouseenter'))
+    await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS / 2)
+    row.click()
+    await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS * 5)
+    expect(onJoinVoice).toHaveBeenCalledWith('V1')
+    expect(prefetches()).toBe(0)
   })
 })

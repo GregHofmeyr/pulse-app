@@ -10,12 +10,15 @@
   import Login from './routes/Login.svelte'
   import Shell from './routes/Shell.svelte'
   import UpdateRequired from './routes/UpdateRequired.svelte'
+  import Waiting from './routes/Waiting.svelte'
   import { screenFor } from './lib/screen'
 
   let user = $state<User | null>(null)
   let booting = $state(true)
   let bootError = $state('')
-  const screen = $derived(screenFor({ booting, signedIn: !!user, conn: app.state.conn }))
+  // restore found a stored session but the server turned the connection away: wait for Ready
+  let restoreRefused = $state(false)
+  const screen = $derived(screenFor({ booting, signedIn: !!user, conn: app.state.conn, restoreRefused }))
 
   onMount(() => installTooltips())
   onMount(watchWindowFocus)
@@ -45,7 +48,9 @@
         unlistenVoice()
       }
       try {
-        user = await api.restoreSession()
+        const r = await api.restoreSession()
+        user = r.status === 'ready' ? r.user : null
+        restoreRefused = r.status === 'refused'
       } catch (e) {
         bootError = errorText(e)
       } finally {
@@ -55,10 +60,32 @@
     return () => off?.()
   })
 
+  // The refused startup got in: Ready carries who we are.
+  $effect(() => {
+    if (restoreRefused && !user && app.state.me && app.state.conn === 'connected') {
+      user = app.state.me
+      restoreRefused = false
+    }
+  })
+
+  // The user gave up waiting: sign out (the core forgets the session even if the server can't be
+  // told) and go to login.
+  async function signOutWhileWaiting() {
+    try {
+      await api.logout()
+    } finally {
+      user = null
+      restoreRefused = false
+      resetState()
+      bootError = ''
+    }
+  }
+
   // The server ended our session (logout elsewhere, expiry): back to login.
   $effect(() => {
-    if (user && app.state.conn === 'logged_out') {
+    if ((user || restoreRefused) && app.state.conn === 'logged_out') {
       user = null
+      restoreRefused = false
       resetState()
       bootError = 'You were signed out. Please log in again.'
     }
@@ -69,10 +96,12 @@
   <div class="boot" aria-busy="true"></div>
 {:else if screen === 'update'}
   <UpdateRequired />
+{:else if screen === 'waiting'}
+  <Waiting onSignOut={signOutWhileWaiting} />
 {:else if screen === 'shell' && user}
-  <Shell {user} onLogout={() => { user = null; resetState() }} />
+  <Shell {user} onLogout={() => { user = null; restoreRefused = false; resetState() }} />
 {:else}
-  <Login notice={bootError} onAuthed={(u) => { bootError = ''; user = u }} />
+  <Login notice={bootError} onAuthed={(u) => { bootError = ''; restoreRefused = false; user = u }} />
 {/if}
 
 <style>

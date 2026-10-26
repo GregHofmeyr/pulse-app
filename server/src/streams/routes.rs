@@ -21,13 +21,16 @@ use super::state::Started;
 use crate::AppState;
 use crate::access::channel_for;
 use crate::auth::AuthUser;
+use crate::auth::extractor::BearerToken;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
+use crate::media::process::{PreviewError, preview, preview_format};
+use crate::media::routes::run_processing;
 
 const TICKET_TTL: Duration = Duration::from_secs(10 * 60);
 const HEIGHTS: [u16; 3] = [720, 1080, 1440];
 const FPS: [u8; 3] = [15, 30, 60];
-const PREVIEW_MAX_BYTES: usize = 100 * 1024;
+const PREVIEW_MAX_BYTES: usize = crate::media::process::PREVIEW_MAX_INPUT;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -73,6 +76,7 @@ async fn require_visible_member(s: &AppState, me: UserId, ch: ChannelId) -> AppR
 async fn ticket(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
+    BearerToken(session): BearerToken,
     Path(ch): Path<ChannelId>,
     Json(req): Json<StreamTicketRequest>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
@@ -81,12 +85,21 @@ async fn ticket(
         StreamRole::V => ("v", "screen_share"),
         StreamRole::A => ("a", "screen_share_audio"),
     };
+    // A random grant id for this session, checked on join (see `voice/routes.rs`).
+    let (room, identity) = (format!("{ch}~s"), format!("{me}#{suffix}"));
+    if !s.limits.livekit_token_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
+    let grant = crate::auth::session::record_grant(&s.db, &session, &room, &identity)
+        .await?
+        .ok_or(AppError::Unauthorized)?;
     let jwt = AccessToken::with_api_key(&s.cfg.livekit_key, &s.cfg.livekit_secret)
-        .with_identity(&format!("{me}#{suffix}"))
+        .with_identity(&identity)
+        .with_attributes([(crate::auth::session::GRANT_ATTRIBUTE, grant)])
         .with_ttl(TICKET_TTL)
         .with_grants(VideoGrants {
             room_join: true,
-            room: format!("{ch}~s"),
+            room,
             can_publish: Some(true),
             can_publish_sources: vec![source.into()],
             can_subscribe: Some(true),
@@ -195,7 +208,10 @@ pub async fn publish_viewers(s: &AppState, ch: ChannelId, streamer: UserId, view
         .await;
 }
 
-/// The streamer uploads their latest preview frame (480x270 WebP, sent every 15 s).
+/// The streamer uploads their latest preview frame (480x270, sent every 15 s; WebP, or JPEG/PNG
+/// from a webview that can't encode WebP, labelled with its real type). It is decoded
+/// and re-encoded (see [`crate::media::process::preview`]): only the fresh WebP is kept and served,
+/// and an upload that can't be decoded within the limits leaves the last preview as it was.
 async fn put_preview(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -204,14 +220,25 @@ async fn put_preview(
     body: Bytes,
 ) -> AppResult<StatusCode> {
     require_voice_member(&s, me, ch).await?;
-    let is_webp = headers
+    let declared = headers
         .get(header::CONTENT_TYPE)
         .and_then(|v| v.to_str().ok())
-        .is_some_and(|v| v.trim().eq_ignore_ascii_case("image/webp"));
-    if !is_webp {
-        return Err(AppError::UnsupportedMediaType);
+        .and_then(preview_format)
+        .ok_or(AppError::UnsupportedMediaType)?;
+    if !s.limits.preview_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
     }
-    if !s.streams.set_preview(ch, me, body) {
+    // Not live: refuse before spending any decoding on it.
+    if s.streams.get(ch, me).is_none() {
+        return Err(AppError::NotFound);
+    }
+    let webp = run_processing(move || preview(&body, declared))
+        .await?
+        .map_err(|e| match e {
+            PreviewError::Encode => anyhow::anyhow!("preview encode failed").into(),
+            e => AppError::BadRequest(e.to_string()),
+        })?;
+    if !s.streams.set_preview(ch, me, Bytes::from(webp)) {
         return Err(AppError::NotFound);
     }
     Ok(StatusCode::NO_CONTENT)
