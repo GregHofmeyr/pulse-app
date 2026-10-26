@@ -69,8 +69,72 @@ CLASSIC = {
     "live_end": tone([(1175, 1175), (784, 784), (587, 587)], 0.07, vol=0.30),
 }
 
+
+def _note(freq, dur, partials, attack, release=0.03, decay=None):
+    """One note: summed partials (multiple of freq, amplitude), linear attack/release,
+    optionally each partial decaying exponentially (tau seconds per partial)."""
+    n = int(RATE * dur)
+    out = []
+    for i in range(n):
+        t = i / RATE
+        v = 0.0
+        for k, (mult, amp) in enumerate(partials):
+            a = amp * (math.exp(-t / decay[k]) if decay else 1.0)
+            v += a * math.sin(2 * math.pi * freq * mult * t)
+        env = min(1.0, t / attack) * min(1.0, (dur - t) / release)
+        out.append(v * env)
+    return out
+
+# Two-step timbres: base Hz, partials, note length (s), attack (s)
+TWOSTEP = {
+    "bright": (1047, [(1, 1.0), (2, 0.25)], 0.07, 0.004),
+    "warm": (659, [(1, 1.0), (3, 0.2), (5, 0.08)], 0.085, 0.010),
+    "deep": (220, [(1, 1.0), (2, 0.5), (3, 0.3)], 0.10, 0.006),
+}
+# event -> (first, second) multiples of the base, note length scale
+TWOSTEP_PAIRS = {
+    "join": ((1, 1.5), 1.0), "leave": ((1.5, 1), 1.0),
+    "unmute": ((1, 1.25), 0.8), "mute": ((1.25, 1), 0.8),
+    "undeafen": ((0.5, 0.6667), 1.0), "deafen": ((0.6667, 0.5), 1.0),
+    "live": ((1, 1.6667), 1.0), "live_end": ((1.6667, 1), 1.0),
+    "message": ((1.5, 2.0), 0.6 / 0.07),  # notes are 0.06 s whatever the variant
+}
+
+def twostep(variant, event):
+    base, partials, note, attack = TWOSTEP[variant]
+    (m1, m2), scale = TWOSTEP_PAIRS[event]
+    dur = 0.06 if event == "message" else note * scale
+    gap = [0.0] * int(RATE * 0.025)
+    return _note(base * m1, dur, partials, attack) + gap + _note(base * m2, dur, partials, attack)
+
+# Minimal: one note at base * multiple
+MINIMAL_MULT = {
+    "join": 1.5, "leave": 1.0, "unmute": 1.3333, "mute": 1.1225, "undeafen": 0.9,
+    "deafen": 0.75, "live": 2.0, "live_end": 1.6818, "message": 1.8877,
+}
+
+def minimal(variant, event):
+    m = MINIMAL_MULT[event]
+    if variant == "soft":
+        n = int(RATE * 0.12)
+        return [math.sin(2 * math.pi * 880 * m * i / RATE) * 0.5 * (1 - math.cos(2 * math.pi * i / n))
+                for i in range(n)]
+    if variant == "wood":
+        return _note(587 * m, 0.12, [(1, 1.0), (2.76, 0.3)], 0.002, release=1e-9, decay=[0.025, 0.025])
+    return _note(1319 * m, 0.18, [(1, 1.0), (2.76, 0.4), (5.4, 0.15)], 0.002, release=1e-9,
+                 decay=[0.060, 0.030, 0.015])
+
+def _scaled(make, minus_db=0.0):
+    """Every event of a set, normalised to Classic's active RMS for that event (minus `minus_db`)."""
+    k = 10 ** (-minus_db / 20)
+    return {name: normalise(make(name), active_rms(CLASSIC[name]) * k) for name in CLASSIC}
+
 # set id -> {event name: samples}. Classic is the loudness reference and is NOT normalised.
 SETS = {"classic": CLASSIC}
+for _v in TWOSTEP:
+    SETS[f"twostep-{_v}"] = _scaled(lambda e, v=_v: twostep(v, e))
+for _v in ("soft", "wood", "glass"):
+    SETS[f"minimal-{_v}"] = _scaled(lambda e, v=_v: minimal(v, e), minus_db=6.0)
 
 def main():
     for set_id, sounds in SETS.items():

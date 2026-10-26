@@ -34,7 +34,15 @@ macro_rules! sound_table {
     };
 }
 
-sound_table!("classic");
+sound_table!(
+    "classic",
+    "twostep-bright",
+    "twostep-warm",
+    "twostep-deep",
+    "minimal-soft",
+    "minimal-wood",
+    "minimal-glass",
+);
 
 /// The events, in the order the settings list shows them.
 pub const NAMES: &[&str] = &[
@@ -393,6 +401,131 @@ mod tests {
                 j.samples[..200].iter().any(|v| v.abs() > 0.0001) || j.samples.len() < lead,
                 "{set}: join has no lead-in"
             );
+        }
+    }
+
+    /// The file's samples, without the message lead-in.
+    fn raw(set: &str, name: &str) -> Vec<f32> {
+        bytes(set, name).and_then(decode_wav).unwrap().samples
+    }
+
+    /// The samples from the first to the last one with |s| >= 2 % of the peak.
+    fn active(s: &[f32]) -> &[f32] {
+        let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
+        let on = |v: &&f32| v.abs() >= 0.02 * peak;
+        let first = s.iter().position(|v| on(&v)).unwrap();
+        let last = s.iter().rposition(|v| on(&v)).unwrap();
+        &s[first..=last]
+    }
+
+    fn active_rms(s: &[f32]) -> f32 {
+        let a = active(s);
+        (a.iter().map(|v| v * v).sum::<f32>() / a.len() as f32).sqrt()
+    }
+
+    /// Sign changes per sample (exact zeros don't count as a sign).
+    fn zcr(s: &[f32]) -> f32 {
+        let (mut last, mut n) = (0f32, 0u32);
+        for v in s.iter().filter(|v| **v != 0.0) {
+            if last != 0.0 && (*v > 0.0) != (last > 0.0) {
+                n += 1;
+            }
+            last = *v;
+        }
+        n as f32 / s.len() as f32
+    }
+
+    fn db(a: f32, b: f32) -> f32 {
+        20.0 * (a / b).log10()
+    }
+
+    #[test]
+    fn loudness_matches_classic() {
+        for set in SETS.iter().filter(|s| **s != "classic") {
+            // (offset from Classic in dB, tolerance in dB)
+            let (offset, tol) = if set.starts_with("minimal-") {
+                (-6.0, 1.5)
+            } else if *set == "goofy" {
+                (0.0, 3.0)
+            } else {
+                (0.0, 1.5)
+            };
+            for name in NAMES {
+                let s = raw(set, name);
+                let delta = db(active_rms(&s), active_rms(&raw("classic", name)));
+                assert!(
+                    (delta - offset).abs() <= tol,
+                    "{set}/{name} is {delta:.2} dB vs Classic, want {offset} +/- {tol}"
+                );
+                let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
+                assert!(peak <= 0.98, "{set}/{name} peaks at {peak}");
+            }
+        }
+    }
+
+    #[test]
+    fn twostep_rises_for_on_and_falls_for_off() {
+        for set in SETS.iter().filter(|s| s.starts_with("twostep-")) {
+            for (name, rises) in [
+                ("join", true),
+                ("unmute", true),
+                ("undeafen", true),
+                ("live", true),
+                ("leave", false),
+                ("mute", false),
+                ("deafen", false),
+                ("live_end", false),
+            ] {
+                let s = raw(set, name);
+                let a = active(&s);
+                let k = a.len() * 2 / 5;
+                let (first, last) = (zcr(&a[..k]), zcr(&a[a.len() - k..]));
+                if rises {
+                    assert!(
+                        last > first * 1.1,
+                        "{set}/{name} should rise: {first} -> {last}"
+                    );
+                } else {
+                    assert!(
+                        first > last * 1.1,
+                        "{set}/{name} should fall: {first} -> {last}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn minimal_on_events_are_higher_than_off() {
+        for set in SETS.iter().filter(|s| s.starts_with("minimal-")) {
+            for (on, off) in [
+                ("join", "leave"),
+                ("unmute", "mute"),
+                ("undeafen", "deafen"),
+                ("live", "live_end"),
+            ] {
+                let (a, b) = (raw(set, on), raw(set, off));
+                let (a, b) = (zcr(active(&a)), zcr(active(&b)));
+                assert!(
+                    a > b * 1.05,
+                    "{set}: {on} ({a}) should be above {off} ({b})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_two_events_in_a_set_are_identical() {
+        for set in SETS {
+            for (i, a) in NAMES.iter().enumerate() {
+                for b in &NAMES[i + 1..] {
+                    assert_ne!(
+                        bytes(set, a),
+                        bytes(set, b),
+                        "{set}: {a} and {b} are identical"
+                    );
+                }
+            }
         }
     }
 
