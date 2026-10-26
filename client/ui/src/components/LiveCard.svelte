@@ -14,11 +14,13 @@
   let video = $state<HTMLVideoElement>()
 
   $effect(() => {
-    if (!video) return
+    // the element this run set up: by teardown the binding may already be cleared (the preview went with Stop)
+    const v = video
+    if (!v) return
     const t = liveMediaTrack()
-    video.srcObject = t ? new MediaStream([t]) : null
+    v.srcObject = t ? new MediaStream([t]) : null
     return () => {
-      video!.srcObject = null
+      v.srcObject = null
     }
   })
 

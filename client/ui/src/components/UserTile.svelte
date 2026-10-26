@@ -12,7 +12,6 @@
     onMenu,
   }: {
     entry: RosterEntry
-    channelId: string
     /** The small tile in the full view's strip. */
     compact?: boolean
     onMenu: (e: MouseEvent | KeyboardEvent, anchor: HTMLElement) => void

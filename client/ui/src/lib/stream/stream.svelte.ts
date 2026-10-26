@@ -34,6 +34,8 @@ export const stream = $state({
   watchError: '',
   /** A neutral one-liner for the viewer, e.g. "<name> stopped streaming". */
   notice: '',
+  /** The channel our own Stop just ended a share in, until the server's list drops us (not "live elsewhere"). */
+  stopping: null as string | null,
   /** Stream playback volume per streamer (percent), remembered on this device: tiles and full view read it. */
   volumes: loadStreamVolumes() as Record<string, number>,
 })
@@ -97,6 +99,14 @@ const liveGen = generation()
 
 const logError = (ev: string) => (e: unknown) => streamCmd.log({ ev, error: errorText(e) })
 const meId = () => app.state.me?.id ?? ''
+
+// Forget `stopping` once the server's list no longer has our stream there (it follows app state, mounted or not).
+$effect.root(() => {
+  $effect(() => {
+    const ch = stream.stopping
+    if (ch && !app.state.streams[ch]?.[meId()]) stream.stopping = null
+  })
+})
 
 function nameOf(channelId: string, userId: string): string {
   return displayName(app.state, app.state.channels[channelId]?.server_id ?? null, userId)
@@ -202,8 +212,15 @@ async function endLive(announce: boolean) {
   stopPreview?.()
   stopPreview = null
   if (live.audio) await streamCmd.audioStop().catch(logError('audio_stop_error'))
+  if (announce) stream.stopping = live.channelId
   // the server call never holds up the local stop
-  const server = announce ? streamCmd.stop(live.channelId).catch(logError('stop_error')) : Promise.resolve()
+  const server = announce
+    ? streamCmd.stop(live.channelId).catch((e) => {
+        // the server still lists us: say so again rather than hide it
+        if (stream.stopping === live.channelId) stream.stopping = null
+        logError('stop_error')(e)
+      })
+    : Promise.resolve()
   await stream.room?.unpublish().catch(logError('unpublish_error'))
   await server
   streamCmd.log({ ev: 'stopped' })

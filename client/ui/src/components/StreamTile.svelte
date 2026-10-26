@@ -3,7 +3,6 @@
   import Icon from './Icon.svelte'
   import LiveCard from './LiveCard.svelte'
   import Select from './Select.svelte'
-  import StreamDiagOverlay from './StreamDiagOverlay.svelte'
   import { app } from '../lib/store.svelte'
   import { displayName, liveIn } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
@@ -70,13 +69,13 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="tile own" data-stream={streamer} bind:this={tile} tabindex="-1" oncontextmenu={contextMenu} onkeydown={menuKey}>
     <LiveCard {channelId} {serverId} tile />
-    {#if !stream.live}<p class="reason">You're live from another device</p>{/if}
+    <!-- not while our own Stop waits for the server's list to drop us -->
+    {#if !stream.live && stream.stopping !== channelId}<p class="reason">You're live from another device</p>{/if}
   </div>
 {:else if watch}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_static_element_interactions -->
   <div class="tile watching" data-stream={streamer} bind:this={tile} tabindex="-1" oncontextmenu={contextMenu} onkeydown={menuKey}>
     <div class="host" role="button" tabindex="0" aria-label="Open {name}'s stream in full view" onclick={() => onFull({ channelId, streamer })} onkeydown={hostKey} {@attach hostVideo(channelId, streamer)}></div>
-    <StreamDiagOverlay kind="in" />
     {#if info?.status === 'reconnecting'}<div class="overlay" role="status">Reconnecting…</div>{/if}
     <div class="name-tag">{name}</div>
     <div class="toolbar">

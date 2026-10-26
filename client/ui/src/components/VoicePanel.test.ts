@@ -23,6 +23,7 @@ import { applyEvent, applyReady, emptyState } from '../lib/state'
 import { voice } from '../lib/voice.svelte'
 import { stream, streamApi } from '../lib/stream/stream.svelte'
 import { callView } from '../lib/stream/viewer.svelte'
+import { diag, diagUi } from '../lib/stream/diag.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 
 const me = { id: 'U1', username: 'alex', avatar_hash: null }
@@ -66,6 +67,7 @@ beforeEach(() => {
   voice.stage = { stage: 'connected', attempt: null }
   voice.error = ''
   stream.live = null
+  stream.stopping = null
   stream.watching = []
   room.setLayer.mockClear()
 })
@@ -185,6 +187,42 @@ describe('stream tiles', () => {
     expect(tile.querySelector('.card.tile')).not.toBeNull()
   })
 
+  it('own_stream_from_another_device_shows_the_note', () => {
+    app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1' } } }, 0)
+    mountPanel()
+    expect(q('[data-stream="U1"]')!.textContent).toContain("You're live from another device")
+  })
+
+  it('stopping_here_does_not_flash_the_another_device_note', async () => {
+    app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1' } } }, 0)
+    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false }
+    mountPanel()
+    void streamApi.stop()
+    await settle()
+    // the server still lists us until its StreamEnded lands
+    expect(q('[data-stream="U1"]')).not.toBeNull()
+    expect(q('[data-stream="U1"]')!.textContent).not.toContain('another device')
+    app.state = applyEvent(app.state, { t: 'StreamEnded', d: { channel_id: 'V1', user_id: 'U1', reason: 'stopped' } }, 0)
+    await settle()
+    expect(q('[data-stream="U1"]')).toBeNull()
+    // live from elsewhere later: the note is back
+    app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1' } } }, 0)
+    await settle()
+    expect(q('[data-stream="U1"]')!.textContent).toContain("You're live from another device")
+  })
+
+  it('a_grid_tile_has_no_diagnostics_overlay', async () => {
+    diagUi.on = true
+    diag.in = { w: 1280, h: 720, fps: 30, kbps: 900, decoder: 'x', powerEfficient: null, freezes: 0, freezeMs: 0, stillLikely: false } as never
+    mountPanel()
+    q('[data-stream="U2"]')!.click()
+    await settle()
+    expect(q('[data-stream="U2"].watching')).not.toBeNull()
+    expect(q('[data-stream="U2"] [aria-label="Stream diagnostics"]')).toBeNull()
+    diagUi.on = false
+    diag.in = null
+  })
+
   it('own_tile_shows_from_the_local_live_state_before_the_server_lists_it', () => {
     stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false }
     mountPanel()
@@ -275,7 +313,7 @@ describe('user tiles', () => {
 
   it('the_menu_key_works_on_a_joining_tile_without_opening_a_menu_yet', () => {
     const onMenu = vi.fn()
-    cmp = mount(UserTile, { target: document.body, props: { entry: { userId: 'U1', name: 'alex', muted: false, deafened: false, pending: true }, channelId: 'V1', onMenu } })
+    cmp = mount(UserTile, { target: document.body, props: { entry: { userId: 'U1', name: 'alex', muted: false, deafened: false, pending: true }, onMenu } })
     flushSync()
     const btn = q('.avatar-btn')!
     expect(btn.getAttribute('aria-disabled')).toBe('true')
@@ -286,7 +324,7 @@ describe('user tiles', () => {
 
   it('the_menu_key_works_on_your_own_tile', () => {
     const onMenu = vi.fn()
-    cmp = mount(UserTile, { target: document.body, props: { entry: { userId: 'U1', name: 'alex', muted: false, deafened: false, pending: false }, channelId: 'V1', onMenu } })
+    cmp = mount(UserTile, { target: document.body, props: { entry: { userId: 'U1', name: 'alex', muted: false, deafened: false, pending: false }, onMenu } })
     flushSync()
     const btn = q('.avatar-btn')!
     expect(btn.getAttribute('aria-disabled')).toBe('false')
