@@ -6,7 +6,7 @@
   import { api, errorText } from '../lib/tauri'
   import { isMuted } from '../lib/conversations'
   import LiveBadge from './LiveBadge.svelte'
-  import { voice, voiceApi, settleLeaving } from '../lib/voice.svelte'
+  import { voice, voiceApi } from '../lib/voice.svelte'
 
   let {
     serverId,
@@ -24,14 +24,8 @@
     onJoinVoice: (id: string) => void
   } = $props()
 
-  // you, for the roster: the channel being joined counts as yours from the click
-  const self = $derived({ channelId: voice.joining ?? voice.channelId, joining: voice.joining !== null, leaving: voice.leaving })
-  // the server's list dropping you ends the optimistic "leaving"
-  $effect(() => {
-    void app.state.voice
-    settleLeaving()
-  })
-
+  // you, for the roster: the channel being joined counts as yours from the click, the one being left stops at once
+  const self = $derived({ channelId: voice.joining ?? (voice.channelId === voice.leaving ? null : voice.channelId), joining: voice.joining !== null, leaving: voice.leaving })
   const lists = $derived(channelsFor(app.state, serverId))
   // Who's in voice is only shown to people who've joined the server.
   const member = $derived(isMember(app.state, serverId))
@@ -107,9 +101,9 @@
         {#if p.pending}
           <span class="joining">Joining…</span><span class="spinner" role="progressbar" aria-label="Joining"></span>
         {:else}
-        <LiveBadge channelId={c.id} userId={p.userId} />
-        {#if p.deafened}<span class="flag"><Icon name="headphonesOff" size={14} label="Deafened" /></span>
-        {:else if p.muted}<span class="flag"><Icon name="micOff" size={14} label="Muted" /></span>{/if}
+          <LiveBadge channelId={c.id} userId={p.userId} />
+          {#if p.deafened}<span class="flag"><Icon name="headphonesOff" size={14} label="Deafened" /></span>
+          {:else if p.muted}<span class="flag"><Icon name="micOff" size={14} label="Muted" /></span>{/if}
         {/if}
       </div>
     {/each}
@@ -136,7 +130,7 @@
   .av { width: 22px; height: 22px; border-radius: 50%; color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; flex-shrink: 0; transition: box-shadow .12s; }
   .av.speaking { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--ok); }
   .occupant.pending { opacity: .6; }
-  .joining { font-size: 11px; color: var(--text-3); }
+  .joining { font-size: 11px; color: var(--text-2); }
   .spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--text-3); border-top-color: transparent; animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }

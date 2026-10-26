@@ -33,18 +33,21 @@ export const voice = $state({
   volumes: loadVolumes() as Record<string, number>,
 })
 
-/** Forget `leaving` once the server's list no longer has you in that channel. */
-export function settleLeaving() {
-  const ch = voice.leaving
-  if (ch && !(app.state.voice[ch] ?? []).some((m) => m.user_id === app.state.me?.id)) voice.leaving = null
-}
+// Forget `leaving` once the server's list no longer has you in that channel. The one settle path:
+// it follows app state wherever the update lands, whether or not any component is mounted.
+$effect.root(() => {
+  $effect(() => {
+    const ch = voice.leaving
+    if (ch && !(app.state.voice[ch] ?? []).some((m) => m.user_id === app.state.me?.id)) voice.leaving = null
+  })
+})
+
+/** The newest join; an older one's result is stale. */
+let joinSeq = 0
 
 export async function startVoiceListening() {
   return listen<VoiceEvent>('voice://event', ({ payload: e }) => {
     voice.stage = reduceStage(voice.stage, e)
-    // audio starting (or anything after) ends the optimistic join; a disconnect is handled by the join's own result
-    if (voice.joining && voice.stage.stage !== 'disconnected' && !isJoining(voice.stage.stage)) voice.joining = null
-    settleLeaving()
     switch (e.kind) {
       case 'state': {
         const prev = { channelId: voice.channelId, connection: voice.connection, controls: voice.controls }
@@ -85,6 +88,9 @@ export async function startVoiceListening() {
         if (e.error) voice.error = e.error
         break
     }
+    // the optimistic join ends once audio is starting in the channel being joined: not on the audio stage
+    // alone, since a cancelled join's disconnect can land after it and leave channelId unset for a moment
+    if (voice.joining && voice.channelId === voice.joining && voice.stage.stage !== 'disconnected' && !isJoining(voice.stage.stage)) voice.joining = null
   })
 }
 
@@ -98,15 +104,17 @@ export const voiceApi = {
     voice.joinFailed = null
     voice.leaving = voice.channelId ?? voice.leaving
     voice.joining = channelId
+    const seq = ++joinSeq
     voice.stage = { stage: 'requesting_access', attempt: null }
     try {
       await invoke('join_voice', { channelId, config: loadAudioConfig() })
     } catch (e) {
       // a newer join cancelled this one: not a failure
-      if (e === 'cancelled' || voice.joining !== channelId) return
+      if (e === 'cancelled' || seq !== joinSeq) return
       voice.error = errText(e)
       voice.joinFailed = { channelId, error: errText(e) }
       voice.joining = null
+      voice.stage = { stage: 'disconnected', attempt: null }
       return
     }
     try {
@@ -121,7 +129,13 @@ export const voiceApi = {
   },
   /** Hovering a voice channel: the core fetches its join token ahead of the click. */
   prefetch: (channelId: string) => void invoke('prefetch_voice', { channelId }).catch(() => {}),
-  leave: () => invoke('leave_voice'),
+  leave() {
+    // your row goes at once, not when the server's list catches up
+    voice.leaving = voice.channelId ?? voice.joining ?? voice.leaving
+    voice.joining = null
+    ++joinSeq
+    return invoke('leave_voice')
+  },
   toggleMute: () => invoke('toggle_mute'),
   toggleDeafen: () => invoke('toggle_deafen'),
   async setVolume(userId: string, percent: number) {
