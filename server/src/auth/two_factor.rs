@@ -132,6 +132,23 @@ pub async fn consume_recovery(
     Ok(n == 1)
 }
 
+/// Delete everything 2FA keeps for `user`: the secret, recovery codes and login tickets.
+async fn forget_two_factor(conn: &mut SqliteConnection, user: &str) -> sqlx::Result<()> {
+    sqlx::query("DELETE FROM user_totp WHERE user_id = ?")
+        .bind(user)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM recovery_codes WHERE user_id = ?")
+        .bind(user)
+        .execute(&mut *conn)
+        .await?;
+    sqlx::query("DELETE FROM mfa_tickets WHERE user_id = ?")
+        .bind(user)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 /// Replace all of the user's recovery codes with ten fresh ones; returns them for display.
 async fn replace_recovery_codes(
     conn: &mut SqliteConnection,
@@ -150,6 +167,19 @@ async fn replace_recovery_codes(
             .await?;
     }
     Ok(codes)
+}
+
+/// Whether the user's `user_totp` secret still decrypts with `key`.
+async fn pending_secret_readable(
+    conn: &mut SqliteConnection,
+    key: &totp::TotpKey,
+    user: UserId,
+) -> AppResult<bool> {
+    let blob: Vec<u8> = sqlx::query_scalar("SELECT secret_enc FROM user_totp WHERE user_id = ?")
+        .bind(user.to_string())
+        .fetch_one(&mut *conn)
+        .await?;
+    Ok(totp::decrypt(key, user, &blob).is_ok())
 }
 
 fn wrong_code() -> AppError {
@@ -246,7 +276,7 @@ async fn enable(
     Json(req): Json<TwoFactorCodeRequest>,
 ) -> AppResult<Json<TwoFactorEnabledResponse>> {
     let key = key(&s)?;
-    let recovery_codes = limited(&s, ip, u, async {
+    let (recovery_codes, revoked) = limited(&s, ip, u, async {
         let mut tx = crate::db::begin_write(&s.db).await?;
         match state(&mut tx, u).await? {
             None => return Err(AppError::Conflict("no two-factor setup in progress".into())),
@@ -256,6 +286,12 @@ async fn enable(
                 ));
             }
             Some(false) => {}
+        }
+        // E.g. the server's key changed since setup: no code can ever match, so say what helps.
+        if !pending_secret_readable(&mut tx, key, u).await? {
+            return Err(AppError::Conflict(
+                "this two-factor setup can't be finished; start setup again".into(),
+            ));
         }
         // Recovery codes make no sense before the first code has proved the app works.
         if !totp::is_totp_shaped(&req.code) || !accept_totp(&mut tx, key, u, &req.code).await? {
@@ -267,12 +303,14 @@ async fn enable(
             .execute(&mut *tx)
             .await?;
         let codes = replace_recovery_codes(&mut tx, u).await?;
+        // Whoever had the password but not the app is out; this device stays. In the same
+        // transaction, so 2FA is never on with the other devices still signed in.
+        let revoked = session::revoke_others_in(&mut tx, u, &t).await?;
         tx.commit().await?;
-        Ok(codes)
+        Ok((codes, revoked))
     })
     .await?;
-    // Whoever had the password but not the app is out; this device stays.
-    let signed_out = super::routes::sign_out_others(&s, u, &t).await?;
+    let signed_out = super::routes::after_revoke_others(&s, u, &t, revoked).await;
     Ok(Json(TwoFactorEnabledResponse {
         recovery_codes,
         signed_out,
@@ -301,12 +339,7 @@ async fn disable(
         if !ok {
             return Err(wrong_code());
         }
-        for table in ["user_totp", "recovery_codes", "mfa_tickets"] {
-            sqlx::query(&format!("DELETE FROM {table} WHERE user_id = ?"))
-                .bind(u.to_string())
-                .execute(&mut *tx)
-                .await?;
-        }
+        forget_two_factor(&mut tx, &u.to_string()).await?;
         tx.commit().await?;
         Ok(StatusCode::NO_CONTENT)
     })
@@ -499,12 +532,7 @@ pub async fn reset(db: &SqlitePool, username: &str) -> anyhow::Result<String> {
         .fetch_optional(&mut *tx)
         .await?;
     let id = id.ok_or_else(|| anyhow::anyhow!("no user named {name}"))?;
-    for table in ["user_totp", "recovery_codes", "mfa_tickets"] {
-        sqlx::query(&format!("DELETE FROM {table} WHERE user_id = ?"))
-            .bind(&id)
-            .execute(&mut *tx)
-            .await?;
-    }
+    forget_two_factor(&mut tx, &id).await?;
     tx.commit().await?;
     Ok(name)
 }

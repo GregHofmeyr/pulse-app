@@ -44,8 +44,8 @@ pub fn secret_base32(secret: &[u8]) -> String {
     Secret::new(secret.into()).to_base32()
 }
 
-/// The `otpauth://` URI a QR code carries. The username is percent-encoded (it can hold any
-/// character the server allows), everything else is fixed.
+/// The `otpauth://` URI a QR code carries. Usernames are `[a-z0-9_.]` today; anything else is
+/// percent-encoded in case that ever changes. Everything else is fixed.
 pub fn otpauth_uri(username: &str, secret: &[u8]) -> String {
     let mut label = String::new();
     for b in username.bytes() {
@@ -186,6 +186,8 @@ mod tests {
 
     #[test]
     fn rfc6238_vectors() {
+        // RFC 6238 lists 8-digit codes; HOTP truncation is `mod 10^digits`, so their last six
+        // digits are the 6-digit codes.
         for (t, code) in [
             (59, "287082"),
             (1_111_111_109, "081804"),

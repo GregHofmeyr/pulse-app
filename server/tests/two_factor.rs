@@ -37,6 +37,16 @@ fn code_at(secret_b32: &str, offset: i64) -> String {
     t.generate((now as i64 + offset * 30) as u64).to_string()
 }
 
+/// A 6-digit code that is certainly not valid now: never one of the three in the window.
+fn wrong_code(secret_b32: &str) -> String {
+    let valid: Vec<String> = (-1..=1).map(|o| code_at(secret_b32, o)).collect();
+    ["000000", "000001"]
+        .into_iter()
+        .find(|c| !valid.iter().any(|v| v == c))
+        .unwrap()
+        .to_string()
+}
+
 async fn setup(app: &TestApp, token: &str) -> reqwest::Response {
     post_json(app, token, "/auth/2fa/setup", json!({"password": PW})).await
 }
@@ -141,8 +151,7 @@ async fn setup_returns_a_secret_and_uri_and_enable_checks_the_code() {
     assert!(!status(&app, &a).await.enabled);
 
     let good = code_at(&s.secret, 0);
-    let wrong = if good == "000000" { "000001" } else { "000000" };
-    let r = code_req(&app, &a, "/auth/2fa/enable", wrong).await;
+    let r = code_req(&app, &a, "/auth/2fa/enable", &wrong_code(&s.secret)).await;
     assert_eq!(r.status(), 403);
     let body: serde_json::Value = r.json().await.unwrap();
     assert_eq!(body["message"], "wrong code");
@@ -490,39 +499,104 @@ async fn wrong_codes_are_rate_limited_and_a_refused_attempt_costs_nothing() {
     let (_, a) = register(&app, "alex").await;
     let (_, s) = register(&app, "sam").await;
     // Successes are refunded, so setup is free.
-    setup_ok(&app, &s).await;
-    setup_ok(&app, &a).await;
+    let s_wrong = wrong_code(&setup_ok(&app, &s).await.secret);
+    let a_wrong = wrong_code(&setup_ok(&app, &a).await.secret);
     assert_eq!(
-        code_req(&app, &a, "/auth/2fa/enable", "000000")
+        code_req(&app, &a, "/auth/2fa/enable", &a_wrong)
             .await
             .status(),
         403
     );
     assert_eq!(
-        code_req(&app, &a, "/auth/2fa/enable", "000000")
+        code_req(&app, &a, "/auth/2fa/enable", &a_wrong)
             .await
             .status(),
         403
     );
     assert_eq!(
-        code_req(&app, &a, "/auth/2fa/enable", "000000")
+        code_req(&app, &a, "/auth/2fa/enable", &a_wrong)
             .await
             .status(),
         429
     );
     // The refused attempt gave its address token back: sam still gets one try from it.
     assert_eq!(
-        code_req(&app, &s, "/auth/2fa/enable", "000000")
+        code_req(&app, &s, "/auth/2fa/enable", &s_wrong)
             .await
             .status(),
         403
     );
     assert_eq!(
-        code_req(&app, &s, "/auth/2fa/enable", "000000")
+        code_req(&app, &s, "/auth/2fa/enable", &s_wrong)
             .await
             .status(),
         429
     );
+}
+
+#[tokio::test]
+async fn enable_with_an_unreadable_pending_secret_is_409_start_again() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let s = setup_ok(&app, &a).await;
+    // As if the key changed between setup and enable: the pending secret no longer decrypts.
+    sqlx::query("UPDATE user_totp SET secret_enc = ? WHERE user_id = ?")
+        .bind(vec![7u8; 48])
+        .bind(a_id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let r = code_req(&app, &a, "/auth/2fa/enable", &code_at(&s.secret, 0)).await;
+    assert_eq!(r.status(), 409);
+    let body: serde_json::Value = r.json().await.unwrap();
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .contains("start setup again"),
+        "{body}"
+    );
+    assert!(!status(&app, &a).await.enabled);
+    // Starting again works.
+    let s = setup_ok(&app, &a).await;
+    let r = code_req(&app, &a, "/auth/2fa/enable", &code_at(&s.secret, 0)).await;
+    assert_eq!(r.status(), 200);
+}
+
+#[tokio::test]
+async fn enabling_and_signing_out_others_commit_together() {
+    let app = spawn().await;
+    let (_, a1) = register(&app, "alex").await;
+    let a2 = login(&app, "alex").await;
+    let s = setup_ok(&app, &a1).await;
+    // Make the sign-out fail: if enabling had already committed, 2FA would be on with the
+    // recovery codes never shown and the other device still signed in.
+    sqlx::query(
+        "CREATE TRIGGER fail_revoke BEFORE DELETE ON sessions BEGIN SELECT RAISE(ABORT, 'boom'); END",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let r = code_req(&app, &a1, "/auth/2fa/enable", &code_at(&s.secret, 0)).await;
+    assert_eq!(r.status(), 500);
+    assert!(!status(&app, &a1).await.enabled, "nothing committed");
+    let me = app
+        .http
+        .get(app.url("/me"))
+        .bearer_auth(&a2)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(me.status(), 200);
+    sqlx::query("DROP TRIGGER fail_revoke")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    // The code's step was rolled back with the rest, so the next step's code enables.
+    let r = code_req(&app, &a1, "/auth/2fa/enable", &code_at(&s.secret, 1)).await;
+    assert_eq!(r.status(), 200);
+    let on: TwoFactorEnabledResponse = r.json().await.unwrap();
+    assert_eq!(on.signed_out, 1);
 }
 
 #[tokio::test]

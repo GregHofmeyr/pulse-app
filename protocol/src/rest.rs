@@ -5,18 +5,35 @@ use ts_rs::TS;
 
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
 
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+/// A `Debug` that names every field but prints the secret ones as `<redacted>`, for types that
+/// carry passwords, codes or tickets: debug output can end up in a log.
+macro_rules! redacting_debug {
+    ($t:ident { $($shown:ident),* ; $($hidden:ident),* }) => {
+        impl std::fmt::Debug for $t {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                f.debug_struct(stringify!($t))
+                    $(.field(stringify!($shown), &self.$shown))*
+                    $(.field(stringify!($hidden), &"<redacted>"))*
+                    .finish()
+            }
+        }
+    };
+}
+
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct RegisterRequest {
     pub invite_code: String,
     pub username: String,
     pub password: String,
 }
+redacting_debug!(RegisterRequest { username ; invite_code, password });
 
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct LoginRequest {
     pub username: String,
     pub password: String,
 }
+redacting_debug!(LoginRequest { username ; password });
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct SessionResponse {
@@ -52,36 +69,42 @@ pub struct TwoFactorStatus {
 }
 
 /// `POST /auth/2fa/setup`: starting (or restarting) setup needs the account password.
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct TwoFactorSetupRequest {
     pub password: String,
 }
+redacting_debug!(TwoFactorSetupRequest { ; password });
 
 /// The pending secret as base32 text and as the `otpauth://` URI a QR code carries.
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct TwoFactorSetupResponse {
     pub secret: String,
     pub otpauth_uri: String,
 }
+redacting_debug!(TwoFactorSetupResponse { ; secret, otpauth_uri });
 
 /// A TOTP code (or, where allowed, a recovery code).
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct TwoFactorCodeRequest {
     pub code: String,
 }
+redacting_debug!(TwoFactorCodeRequest { ; code });
 
 /// `POST /auth/2fa/enable`: the recovery codes (shown once) and how many other sessions were
 /// signed out.
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct TwoFactorEnabledResponse {
     pub recovery_codes: Vec<String>,
     pub signed_out: u32,
 }
+redacting_debug!(TwoFactorEnabledResponse { signed_out ; recovery_codes });
 
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+/// `POST /auth/2fa/recovery-codes`: the new set, shown once.
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct RecoveryCodesResponse {
     pub recovery_codes: Vec<String>,
 }
+redacting_debug!(RecoveryCodesResponse { ; recovery_codes });
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct Server {
@@ -417,16 +440,100 @@ pub struct RenameEmojiRequest {
 
 /// The 403 body `POST /auth/login` answers when the password is right but a second factor is
 /// needed. `code` is always `"mfa_required"`; the `ticket` is sent back with the code.
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct MfaRequired {
     pub code: String,
     pub message: String,
     pub ticket: String,
 }
+redacting_debug!(MfaRequired { code, message ; ticket });
 
 /// `POST /auth/login/2fa`: the ticket from `MfaRequired` plus a TOTP or recovery code.
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+#[derive(Clone, Serialize, Deserialize, TS)]
 pub struct LoginMfaRequest {
     pub ticket: String,
     pub code: String,
+}
+redacting_debug!(LoginMfaRequest { ; ticket, code });
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Debug output can end up in logs, so it never shows passwords, codes or tickets.
+    #[test]
+    fn debug_never_shows_secrets() {
+        let s = |v: &str| v.to_string();
+        let shown = [
+            format!(
+                "{:?}",
+                RegisterRequest {
+                    invite_code: s("SECRET-INVITE"),
+                    username: s("alex"),
+                    password: s("SECRET-PW"),
+                }
+            ),
+            format!(
+                "{:?}",
+                LoginRequest {
+                    username: s("alex"),
+                    password: s("SECRET-PW"),
+                }
+            ),
+            format!(
+                "{:?}",
+                TwoFactorSetupRequest {
+                    password: s("SECRET-PW"),
+                }
+            ),
+            format!(
+                "{:?}",
+                TwoFactorSetupResponse {
+                    secret: s("SECRET-B32"),
+                    otpauth_uri: s("otpauth://totp/Pulse:alex?secret=SECRET-B32"),
+                }
+            ),
+            format!(
+                "{:?}",
+                TwoFactorCodeRequest {
+                    code: s("SECRET-CODE")
+                }
+            ),
+            format!(
+                "{:?}",
+                TwoFactorEnabledResponse {
+                    recovery_codes: vec![s("SECRET-RC")],
+                    signed_out: 2,
+                }
+            ),
+            format!(
+                "{:?}",
+                RecoveryCodesResponse {
+                    recovery_codes: vec![s("SECRET-RC")],
+                }
+            ),
+            format!(
+                "{:?}",
+                MfaRequired {
+                    code: s("mfa_required"),
+                    message: s("enter your code"),
+                    ticket: s("SECRET-TICKET"),
+                }
+            ),
+            format!(
+                "{:?}",
+                LoginMfaRequest {
+                    ticket: s("SECRET-TICKET"),
+                    code: s("SECRET-CODE"),
+                }
+            ),
+        ];
+        for d in &shown {
+            assert!(!d.contains("SECRET"), "{d}");
+        }
+        // The harmless fields are still there to debug with.
+        assert!(shown[1].contains("alex"), "{}", shown[1]);
+        assert!(shown[5].contains("signed_out: 2"), "{}", shown[5]);
+        assert!(shown[7].contains("mfa_required"), "{}", shown[7]);
+    }
 }

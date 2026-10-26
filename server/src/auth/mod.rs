@@ -4,6 +4,6 @@ pub mod password;
 pub mod routes;
 pub mod session;
 pub mod totp;
+pub mod two_factor;
 
 pub use extractor::AuthUser;
-pub mod two_factor;

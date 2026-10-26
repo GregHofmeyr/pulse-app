@@ -159,6 +159,10 @@ async fn reset_2fa_turns_it_off() {
             .await
             .unwrap();
     }
+    // A device alex is already signed in on: the reset leaves it alone.
+    let alex_session = pulse_server::auth::session::create(&db, alex)
+        .await
+        .unwrap();
     let env = [("PULSE_TOTP_KEY", &KEY_A[..64])];
     let p = spawn_binary_on(url.clone(), &env, None).await;
     assert_eq!(login(&p, "alex").await, 403, "2FA is on: ticket step");
@@ -172,6 +176,13 @@ async fn reset_2fa_turns_it_off() {
     );
     assert_eq!(login(&p, "alex").await, 200, "password alone now works");
     assert_eq!(login(&p, "sam").await, 403, "other users are untouched");
+    let me = reqwest::Client::new()
+        .get(p.url("/me"))
+        .bearer_auth(&alex_session)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(me.status(), 200, "sessions survive the reset");
     for t in ["user_totp", "recovery_codes", "mfa_tickets"] {
         let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {t} WHERE user_id = ?"))
             .bind(alex.to_string())
