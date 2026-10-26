@@ -1,7 +1,7 @@
 {
   "app": {
     "security": {
-      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' data:; media-src 'self' mediastream: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src ipc: http://ipc.localhost wss://voice.pulsechat.co.za https://voice.pulsechat.co.za ws://127.0.0.1:7880 http://127.0.0.1:7880 ws://localhost:7880 http://localhost:7880"
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' data: pulse-media: http://pulse-media.localhost; media-src 'self' mediastream: blob:; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src ipc: http://ipc.localhost wss://voice.pulsechat.co.za https://voice.pulsechat.co.za ws://127.0.0.1:7880 http://127.0.0.1:7880 ws://localhost:7880 http://localhost:7880"
     }
   }
 }

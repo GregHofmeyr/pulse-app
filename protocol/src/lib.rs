@@ -43,6 +43,10 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::StreamTicketRequest::export_all(&cfg)?;
     rest::GoLiveRequest::export_all(&cfg)?;
     rest::WatchRequest::export_all(&cfg)?;
+    rest::MediaInfo::export_all(&cfg)?;
+    rest::CustomEmoji::export_all(&cfg)?;
+    rest::CreateEmojiRequest::export_all(&cfg)?;
+    rest::RenameEmojiRequest::export_all(&cfg)?;
     Ok(())
 }
 

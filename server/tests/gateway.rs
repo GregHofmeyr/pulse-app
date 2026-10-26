@@ -81,6 +81,7 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         edited_at: None,
         deleted: false,
         mentions: vec![],
+        reactions: vec![],
     }
 }
 

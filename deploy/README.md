@@ -25,6 +25,7 @@ On the server everything lives in `/srv/pulse`:
 ```
 compose.yml  Caddyfile  livekit.yaml  backup.sh  .env (600: settings + secrets)
 data/pulse.db                         the database
+data/media/                           uploaded emoji
 caddy/                                certificates and Caddy state
 ```
 
@@ -99,8 +100,9 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
 
 ## 8. Backups
 
-Nightly at about 03:00 (and before every deploy): a consistent snapshot of the database, encrypted with
-**age** for your key, uploaded to **Cloudflare R2**. 14 daily and 8 weekly copies are kept. The server can
+Nightly at about 03:00 (and before every deploy): a consistent snapshot of the database and a tarball of the
+uploaded media (`data/media`, e.g. custom emoji; skipped until something has been uploaded), each encrypted with
+**age** for your key and uploaded to **Cloudflare R2**. 14 daily and 8 weekly copies of each are kept. The server can
 encrypt but never decrypt. A plaintext copy never stays on the server, even if a step fails.
 
 Setup, once:
@@ -119,6 +121,16 @@ Setup, once:
 
 Restoring for real: `just restore daily/pulse-<time>.db.age`. The server stops for a few seconds; the old
 database is kept next to it as `data/pulse.db.pre-restore-<time>`.
+
+Restoring the media (the database restore doesn't touch it; do this after a lost or rebuilt server, or to roll
+emoji back): `just restore-media-drill` downloads the newest media backup, decrypts it here and lists it
+(`archive ok: N media files`; it also refuses an archive with paths outside `media/`). Then
+`just restore-media daily/pulse-media-<time>.tgz.age` unpacks it over `data/media` (the server keeps running): files in the backup come back, newer uploads it doesn't have stay. The newest name is also
+`ssh pulse@pulse /srv/pulse/backup.sh latest-media`, which (like `latest`) says so and exits non-zero if there are none.
+Files restored without matching database rows (e.g. rolling emoji back past a database restore) are never removed by
+the row-driven hourly cleanup: delete those under `data/media` by hand, or restore the database from the same time.
+Backups of a media directory that changes mid-archive (an upload during the backup) only warn; the database backup
+and the rest of the media are kept.
 
 ## 9. Uptime monitor
 

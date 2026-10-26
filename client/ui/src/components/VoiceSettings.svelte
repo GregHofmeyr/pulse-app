@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import Select from './Select.svelte'
+  import Segmented from './Segmented.svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { loadAudioConfig, saveAudioConfig, type AudioConfig, type NsLevel } from '../lib/voiceui'
 
@@ -75,14 +76,14 @@
   ]
 </script>
 
-<section class="pane">
+<section class="settings-pane">
 <h2>Voice &amp; Audio</h2>
   <div class="two">
-  <div class="field"><span class="lbl">INPUT DEVICE</span>
+  <div class="settings-field"><span class="settings-label">INPUT DEVICE</span>
     <Select label="Input device" bind:value={cfg.input} onchange={apply}
       options={[{ value: null, label: 'System default' }, ...inputs.filter((d) => d.name !== 'default').map((d) => ({ value: d.name, label: d.name }))]} />
   </div>
-  <div class="field"><span class="lbl">OUTPUT DEVICE</span>
+  <div class="settings-field"><span class="settings-label">OUTPUT DEVICE</span>
     <Select label="Output device" bind:value={cfg.output} onchange={apply}
       options={[{ value: null, label: 'System default' }, ...outputs.filter((d) => d.name !== 'default').map((d) => ({ value: d.name, label: d.name }))]} />
   </div>
@@ -94,7 +95,7 @@
     <input type="range" min="50" max="400" step="10" bind:value={cfg.input_gain_pct} onchange={apply} />
     <small>For quiet mics: boosts your voice before it's sent.</small>
   </label>
-  <div class="field"><span class="lbl">INPUT SENSITIVITY</span>
+  <div class="settings-field"><span class="settings-label">INPUT SENSITIVITY</span>
     <!-- the slider sits ON the level meter, so its thumb is the threshold marker -->
     <div class="row auto">
       <div><strong>Automatically determine sensitivity</strong></div>
@@ -112,13 +113,8 @@
   </div>
 </div>
 
-<div class="field"><span class="lbl">NOISE SUPPRESSION</span>
-  <div class="seg" role="radiogroup" aria-label="Noise suppression">
-    {#each levels as l}
-      <button role="radio" aria-checked={cfg.noise_suppression === l.value} class:on={cfg.noise_suppression === l.value}
-        onclick={() => { cfg.noise_suppression = l.value; apply() }}>{l.label}</button>
-    {/each}
-  </div>
+<div class="settings-field"><span class="settings-label">NOISE SUPPRESSION</span>
+  <Segmented label="Noise suppression" options={levels} value={cfg.noise_suppression} onchange={(v) => { cfg.noise_suppression = v; apply() }} />
   <small>{levels.find((l) => l.value === cfg.noise_suppression)?.help}</small>
   {#if voice.ns.note}<p class="warn" role="status">{voice.ns.note}</p>{/if}
 </div>
@@ -144,16 +140,11 @@
 </section>
 
 <style>
-  .pane { display: flex; flex-direction: column; gap: 20px; }
-  h2 { margin: 0; font-size: 20px; font-weight: 600; }
   .two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
   label { display: flex; flex-direction: column; gap: 8px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
   label strong { color: var(--text); letter-spacing: 0; }
   input[type='range'] { accent-color: var(--accent); }
-  small { font-size: 12px; font-weight: 400; color: var(--text-3); letter-spacing: 0; }
   .hint { margin: -8px 0 0; font-size: 12px; color: var(--text-3); }
-  .field { display: flex; flex-direction: column; gap: 8px; }
-  .lbl { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
   .sens { position: relative; height: 22px; display: flex; align-items: center; }
   .meter { position: absolute; left: 0; right: 0; height: 12px; border-radius: 6px; background: #2f3138; overflow: hidden; }
   .fill { height: 100%; background: #3a7d5a; transition: width .1s linear; }
@@ -173,7 +164,4 @@
   .switch.on { background: var(--accent); }
   .switch.on span { left: 23px; background: var(--on-accent); }
   .row.auto { padding: 0; border: 0; }
-  .seg { display: inline-flex; align-self: flex-start; border: 1px solid var(--bg-4); border-radius: 10px; overflow: hidden; }
-  .seg button { padding: 8px 14px; border: 0; background: transparent; color: var(--text-2); font-weight: 600; }
-  .seg button.on { background: var(--accent); color: var(--on-accent); }
 </style>

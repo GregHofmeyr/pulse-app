@@ -1,6 +1,7 @@
 // The app's single source of truth, as pure functions over plain data so they're easy to test.
 // The reactive wrapper lives in store.svelte.ts.
 import type { Channel } from './protocol/Channel'
+import type { CustomEmoji } from './protocol/CustomEmoji'
 import type { Event } from './protocol/Event'
 import type { Member } from './protocol/Member'
 import type { Message } from './protocol/Message'
@@ -37,12 +38,14 @@ export type AppState = {
   hidden: Record<string, true> // closed conversations
   latest: Record<string, Message> // DM/group channelId -> newest message
   streams: Record<string, Record<string, StreamInfo>> // channelId -> userId -> live stream
+  customEmoji: Record<string, CustomEmoji> // id -> emoji; deleted ones stay (hash null) so old messages render a chip
+  frequentEmoji: string[] // your most-used reaction keys, best first
 }
 
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [] }
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -70,6 +73,8 @@ export function applyReady(s: AppState, r: Ready): AppState {
     hidden: Object.fromEntries(r.hidden.map((id) => [id, true as const])),
     latest: Object.fromEntries(r.latest.map((m) => [m.channel_id, m])),
     streams: r.streams.reduce<AppState['streams']>((acc, x) => withStream(acc, x), {}),
+    customEmoji: Object.fromEntries(r.custom_emoji.map((c) => [c.id, c])),
+    frequentEmoji: r.frequent_emoji,
   }
 }
 
@@ -79,6 +84,13 @@ function tracksUnread(s: AppState, channel: string): boolean {
   if (!ch || !s.me) return false
   if (ch.server_id === null) return true
   return ch.kind === 'text' && (s.members[ch.server_id] ?? []).some((m) => m.user.id === s.me!.id)
+}
+
+/** An edit event's reaction list is unreliable (`me` is always false), so reactions are kept as-is:
+ * they change only through Reaction* events. */
+function upsertEdited(list: Message[], m: Message): Message[] {
+  const old = list.find((x) => x.id === m.id)
+  return upsertMessage(list, old ? { ...m, reactions: old.reactions } : m)
 }
 
 function upsertMessage(list: Message[] | undefined, m: Message): Message[] {
@@ -126,9 +138,11 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'MessageUpdated': {
       const m = e.d.message
       const c = m.channel_id
-      const latest = s.latest[c]?.id === m.id ? { ...s.latest, [c]: m } : s.latest
+      const prev = s.latest[c]
+      // Like the loaded copy (upsertEdited): the edit's reactions say me:false for everyone.
+      const latest = prev?.id === m.id ? { ...s.latest, [c]: { ...m, reactions: prev.reactions } } : s.latest
       if (!s.messages[c]) return latest === s.latest ? s : { ...s, latest } // history never loaded
-      return { ...s, latest, messages: { ...s.messages, [c]: upsertMessage(s.messages[c], m) } }
+      return { ...s, latest, messages: { ...s.messages, [c]: upsertEdited(s.messages[c], m) } }
     }
     case 'MessageDeleted': {
       const { channel_id: c, message_id: id, author_id, mentions } = e.d
@@ -227,6 +241,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     }
     case 'MutesChanged':
       return { ...s, mutes: e.d.mutes }
+    case 'FrequentEmoji':
+      return { ...s, frequentEmoji: e.d.frequent_emoji }
     case 'ConversationVisibility': {
       const { [e.d.channel_id]: _x, ...rest } = s.hidden
       return { ...s, hidden: e.d.hidden ? { ...rest, [e.d.channel_id]: true } : rest }
@@ -246,6 +262,34 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const cur = s.streams[e.d.channel_id]?.[e.d.user_id]
       if (!cur) return s
       return { ...s, streams: withStream(s.streams, { ...cur, viewers: e.d.viewers }) }
+    }
+    case 'EmojiCreated':
+    case 'EmojiUpdated':
+      return { ...s, customEmoji: { ...s.customEmoji, [e.d.emoji.id]: e.d.emoji } }
+    case 'EmojiDeleted':
+      return { ...s, customEmoji: { ...s.customEmoji, [e.d.emoji.id]: { ...e.d.emoji, hash: null, still_hash: null } } }
+    case 'ReactionAdded':
+    case 'ReactionRemoved': {
+      const { channel_id: c, message_id: id, emoji, user_id, count } = e.d
+      // The event carries the absolute count, so a reordered pair still ends on the latest value.
+      const mine = user_id === s.me?.id
+      const me = mine ? e.t === 'ReactionAdded' : undefined
+      const apply = (m: Message): Message => {
+        const has = m.reactions.some((r) => r.emoji === emoji)
+        const reactions = (has ? m.reactions : [...m.reactions, { emoji, count, me: false }])
+          .map((r) => (r.emoji === emoji ? { ...r, count, me: me ?? r.me } : r))
+          .filter((r) => r.count > 0)
+        return { ...m, reactions }
+      }
+      const list = s.messages[c]
+      const loaded = !!list?.some((m) => m.id === id) // not loaded: the fetch brings current reactions
+      const inLatest = s.latest[c]?.id === id // the conversation preview keeps its own copy
+      if (!loaded && !inLatest) return s
+      return {
+        ...s,
+        messages: loaded ? { ...s.messages, [c]: list!.map((m) => (m.id === id ? apply(m) : m)) } : s.messages,
+        latest: inLatest ? { ...s.latest, [c]: apply(s.latest[c]) } : s.latest,
+      }
     }
   }
 }

@@ -25,6 +25,7 @@ pub async fn post(
         edited_at: None,
         deleted: false,
         mentions: vec![],
+        reactions: vec![],
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")
         .bind(msg.id.to_string())

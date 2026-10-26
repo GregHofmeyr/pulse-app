@@ -1,11 +1,13 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import Icon from './Icon.svelte'
+  import { modal } from '../lib/actions'
   import VoiceSettings from './VoiceSettings.svelte'
   import KeybindSettings from './KeybindSettings.svelte'
+  import ChatSettings from './ChatSettings.svelte'
   import AdvancedSettings from './AdvancedSettings.svelte'
 
-  type Section = 'voice' | 'keybinds' | 'advanced'
+  type Section = 'voice' | 'keybinds' | 'chat' | 'advanced'
   let { onClose, section = 'voice' }: { onClose: () => void; section?: Section } = $props()
 
   let current = $state<Section>('voice')
@@ -13,13 +15,14 @@
   const sections: { key: Section; label: string }[] = [
     { key: 'voice', label: 'Voice & Audio' },
     { key: 'keybinds', label: 'Keybinds' },
+    { key: 'chat', label: 'Chat' },
     { key: 'advanced', label: 'Advanced' },
   ]
 </script>
 
 <div class="overlay">
-<div class="backdrop" role="presentation" onclick={onClose}></div>
-<div class="modal" role="dialog" aria-label="Settings">
+<div class="backdrop" role="presentation" data-backdrop onclick={onClose}></div>
+<div class="modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1" use:modal={onClose}>
   <nav aria-label="Settings sections">
     <h1>Settings</h1>
     {#each sections as s}
@@ -29,7 +32,7 @@
   </nav>
   <div class="content">
     <button class="close" aria-label="Close settings" onclick={onClose}><Icon name="x" size={16} /></button>
-    {#if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else}<AdvancedSettings />{/if}
+    {#if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else}<AdvancedSettings />{/if}
   </div>
 </div>
 </div>

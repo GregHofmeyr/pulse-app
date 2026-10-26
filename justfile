@@ -21,8 +21,9 @@ types-check: gen-types
 dev-livekit:
     docker compose up -d livekit
 
+# uploads go to ./data/media (gitignored) unless PULSE_MEDIA_DIR says otherwise; the server's own default is /data/media
 dev-server:
-    cargo run -p pulse-server --bin pulse-app-server -- serve
+    PULSE_MEDIA_DIR="${PULSE_MEDIA_DIR:-data/media}" cargo run -p pulse-server --bin pulse-app-server -- serve
 
 ui-check:
     cd client/ui && pnpm install --frozen-lockfile && pnpm check && pnpm test
@@ -103,6 +104,14 @@ restore-drill name="":
 # replace the live database with backup NAME (e.g. daily/pulse-20261010T010000Z.db.age)
 restore name:
     ./deploy/restore.sh apply {{name}}
+
+# download + decrypt + list a media backup locally (latest if NAME is empty); the server is untouched
+restore-media-drill name="":
+    ./deploy/restore.sh media-drill {{name}}
+
+# unpack media backup NAME over the live media (e.g. daily/pulse-media-20261010T010000Z.tgz.age)
+restore-media name:
+    ./deploy/restore.sh media-apply {{name}}
 
 # live server logs
 logs service="pulse-server":

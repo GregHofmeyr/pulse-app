@@ -8,6 +8,7 @@ pub mod hotkeys;
 pub mod ipc;
 pub mod keybinds;
 pub mod logging;
+pub mod media;
 pub mod outbox;
 pub mod reports;
 pub mod session;
@@ -99,7 +100,15 @@ pub fn run() {
                     );
                 },
             ));
-            app.manage(commands::Core::new(session::Store::new(dir.clone(), profile.as_deref()), outbox));
+            let media_root =
+                session::profile_dir(&app.path().app_cache_dir()?, profile.as_deref()).join("media");
+            let h = app.handle().clone();
+            app.manage(commands::Core::new(
+                session::Store::new(dir.clone(), profile.as_deref()),
+                outbox,
+                media_root,
+                Box::new(move || media::clear_webview_cache(&h)),
+            ));
             app.manage(voice::mictest::MicTest::default());
             app.manage(stream::PickerMemory::default());
             let h = app.handle().clone();
@@ -156,6 +165,7 @@ pub fn run() {
                 }
             }
         })
+        .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::handle)
         .invoke_handler(tauri::generate_handler![
             commands::login,
             commands::register,
@@ -193,6 +203,13 @@ pub fn run() {
             commands::set_mute,
             commands::clear_mute,
             commands::close_conversation,
+            commands::upload_emoji_media,
+            commands::create_emoji,
+            commands::rename_emoji,
+            commands::delete_emoji,
+            commands::add_reaction,
+            commands::remove_reaction,
+            commands::list_reactors,
             startup::ui_painted,
             keybinds::get_keybinds,
             keybinds::set_keybinds,

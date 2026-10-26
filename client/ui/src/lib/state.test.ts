@@ -10,7 +10,7 @@ const ch = (id: string, kind: Channel['kind'] = 'text', server_id: string | null
 })
 const msg = (id: string, channel_id = 'C1', content = 'hi', author_id: string | null = 'U2'): Message => ({
   id, channel_id, author_id, kind: 'normal', content, reply_to_id: null,
-  created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [],
+  created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [],
 })
 const me = { id: 'U1', username: 'alex', avatar_hash: null }
 const ready = (over: Partial<Ready> = {}): Ready => ({
@@ -26,6 +26,8 @@ const ready = (over: Partial<Ready> = {}): Ready => ({
   hidden: [],
   latest: [],
   streams: [],
+  custom_emoji: [],
+  frequent_emoji: [],
   ...over,
 })
 
@@ -177,6 +179,19 @@ it('an edit to the latest message updates the preview', () => {
   expect(s.latest['D1'].content).toBe('fixed')
 })
 
+it('an edit to the latest message keeps the preview\'s reactions (counts and me)', () => {
+  let s = applyReady(emptyState(), ready({ channels: [ch('D1', 'dm', null)], dm_members: [{ channel_id: 'D1', user_ids: ['U1', 'U2'] }] }))
+  const m = { ...msg('M1', 'D1', 'typo'), reactions: [{ emoji: '👍', count: 2, me: true }] }
+  s = applyEvent(s, { t: 'MessageCreated', d: { message: m, nonce: null } }, 0)
+  // The server sends me:false for everyone on edits.
+  const edited = { ...msg('M1', 'D1', 'fixed'), edited_at: 'x', reactions: [{ emoji: '👍', count: 2, me: false }] }
+  for (const loaded of [true, false]) {
+    const s1 = applyEvent(loaded ? s : { ...s, messages: {} }, { t: 'MessageUpdated', d: { message: edited } }, 0)
+    expect(s1.latest['D1'].content).toBe('fixed')
+    expect(s1.latest['D1'].reactions).toEqual([{ emoji: '👍', count: 2, me: true }])
+  }
+})
+
 it('removal from a conversation forgets everything about it, unsent messages included', () => {
   let s = applyReady(emptyState(), ready({ channels: [ch('G1', 'group', null)], dm_members: [{ channel_id: 'G1', user_ids: ['U1', 'U2', 'U3'] }] }))
   s = addPending(s, 'G1', { nonce: 'n1', content: 'are you there?', reply_to_id: null, status: 'failed' })
@@ -315,5 +330,89 @@ describe('streams', () => {
     let s = applyEvent(base(), { t: 'StreamStarted', d: { stream: info('U2') } }, 0)
     s = applyEvent(s, { t: 'VoiceLeft', d: { channel_id: 'V1', user_id: 'U2' } }, 0)
     expect(s.streams['V1']['U2']).toBeDefined() // the server follows up with StreamEnded
+  })
+})
+
+describe('reactions and custom emoji', () => {
+  const withMsg = (reactions: Message['reactions'] = []) => {
+    let s = applyReady(emptyState(), ready())
+    return applyEvent(s, { t: 'MessageCreated', d: { message: { ...msg('M1'), reactions }, nonce: null } }, 0)
+  }
+  const react = (t: 'ReactionAdded' | 'ReactionRemoved', user_id: string, count: number, emoji = '👍') =>
+    ({ t, d: { channel_id: 'C1', message_id: 'M1', emoji, user_id, count } }) as const
+
+  it('reaction events keep a conversation\'s latest preview current, loaded or not', () => {
+    let s = applyReady(emptyState(), ready({ channels: [ch('D1', 'dm', null)], dm_members: [{ channel_id: 'D1', user_ids: ['U1', 'U2'] }] }))
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M1', 'D1'), nonce: null } }, 0)
+    const ev = (t: 'ReactionAdded' | 'ReactionRemoved', user_id: string, count: number) =>
+      ({ t, d: { channel_id: 'D1', message_id: 'M1', emoji: '👍', user_id, count } }) as const
+    for (const loaded of [true, false]) {
+      let s1 = loaded ? s : { ...s, messages: {} }
+      s1 = applyEvent(s1, ev('ReactionAdded', 'U1', 1), 0)
+      s1 = applyEvent(s1, ev('ReactionAdded', 'U2', 2), 0)
+      expect(s1.latest['D1'].reactions, String(loaded)).toEqual([{ emoji: '👍', count: 2, me: true }])
+      if (loaded) expect(s1.messages['D1'][0].reactions).toEqual([{ emoji: '👍', count: 2, me: true }])
+      s1 = applyEvent(s1, ev('ReactionRemoved', 'U1', 1), 0)
+      expect(s1.latest['D1'].reactions).toEqual([{ emoji: '👍', count: 1, me: false }])
+    }
+  })
+
+  it('counts another user\'s reaction without touching me', () => {
+    const s = applyEvent(withMsg(), react('ReactionAdded', 'U2', 1), 0)
+    expect(s.messages['C1'][0].reactions).toEqual([{ emoji: '👍', count: 1, me: false }])
+  })
+
+  it('sets me when the reaction is mine, and clears it on removal', () => {
+    let s = applyEvent(withMsg(), react('ReactionAdded', 'U1', 2), 0)
+    expect(s.messages['C1'][0].reactions).toEqual([{ emoji: '👍', count: 2, me: true }])
+    s = applyEvent(s, react('ReactionRemoved', 'U2', 1), 0)
+    expect(s.messages['C1'][0].reactions[0]).toEqual({ emoji: '👍', count: 1, me: true })
+    s = applyEvent(s, react('ReactionRemoved', 'U1', 0), 0)
+    expect(s.messages['C1'][0].reactions).toEqual([])
+  })
+
+  it('appends new emoji after existing ones', () => {
+    let s = applyEvent(withMsg(), react('ReactionAdded', 'U2', 1), 0)
+    s = applyEvent(s, react('ReactionAdded', 'U2', 1, '🎉'), 0)
+    expect(s.messages['C1'][0].reactions.map((r) => r.emoji)).toEqual(['👍', '🎉'])
+  })
+
+  it('lets the absolute count win over event order', () => {
+    let s = applyEvent(withMsg(), react('ReactionAdded', 'U2', 2), 0)
+    s = applyEvent(s, react('ReactionRemoved', 'U3', 1), 0)
+    expect(s.messages['C1'][0].reactions[0].count).toBe(1)
+  })
+
+  it('ignores reactions on messages that are not loaded', () => {
+    const s = applyReady(emptyState(), ready())
+    expect(applyEvent(s, react('ReactionAdded', 'U2', 1), 0)).toBe(s)
+  })
+
+  it('keeps reactions (counts and me) when a message is edited', () => {
+    const s0 = withMsg([{ emoji: '👍', count: 3, me: true }])
+    // The server sends me:false for everyone on edits.
+    const edited = { ...msg('M1', 'C1', 'edited'), edited_at: '2026-10-01T00:01:00.000Z', reactions: [{ emoji: '👍', count: 1, me: false }] }
+    const s = applyEvent(s0, { t: 'MessageUpdated', d: { message: edited } }, 0)
+    expect(s.messages['C1'][0].content).toBe('edited')
+    expect(s.messages['C1'][0].reactions).toEqual([{ emoji: '👍', count: 3, me: true }])
+  })
+
+  it('loads custom and frequent emoji from Ready and upserts Emoji events', () => {
+    const pog = { id: 'E1', server_id: 'S1', name: 'pog', hash: 'h', still_hash: null, animated: false, added_by: 'U1', created_at: '2026-10-01T00:00:00.000Z' }
+    let s = applyReady(emptyState(), ready({ custom_emoji: [pog], frequent_emoji: ['👍'] }))
+    expect(s.customEmoji['E1'].name).toBe('pog')
+    expect(s.frequentEmoji).toEqual(['👍'])
+    s = applyEvent(s, { t: 'EmojiUpdated', d: { emoji: { ...pog, name: 'pogger' } } }, 0)
+    expect(s.customEmoji['E1'].name).toBe('pogger')
+    s = applyEvent(s, { t: 'EmojiDeleted', d: { emoji: { ...pog, name: 'pogger', hash: null } } }, 0)
+    expect(s.customEmoji['E1']).toMatchObject({ name: 'pogger', hash: null })
+    s = applyEvent(s, { t: 'EmojiCreated', d: { emoji: { ...pog, id: 'E2', name: 'new' } } }, 0)
+    expect(Object.keys(s.customEmoji)).toEqual(['E1', 'E2'])
+  })
+
+  it('replaces the frequent list on FrequentEmoji', () => {
+    const s0 = applyReady(emptyState(), ready({ frequent_emoji: ['👍', '😂'] }))
+    const s = applyEvent(s0, { t: 'FrequentEmoji', d: { user_id: 'U1', frequent_emoji: ['🎉', '👍'] } }, 0)
+    expect(s.frequentEmoji).toEqual(['🎉', '👍'])
   })
 })

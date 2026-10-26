@@ -4,16 +4,21 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "predev": "pnpm gen:emoji",
     "dev": "vite",
+    "prebuild": "pnpm gen:emoji",
     "build": "vite build",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.app.json && tsc -p tsconfig.node.json",
-    "test": "vitest run"
+    "test": "vitest run",
+    "gen:emoji": "node scripts/gen-emoji.mjs"
   },
   "devDependencies": {
     "@sveltejs/vite-plugin-svelte": "^7.3.0",
     "@tsconfig/svelte": "^5.0.8",
+    "@twemoji/svg": "15.0.0",
     "@types/node": "^24.13.3",
+    "emojibase-data": "15.0.0",
     "jsdom": "^30.1.2",
     "svelte": "^5.57.2",
     "svelte-check": "^4.7.6",

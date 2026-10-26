@@ -9,6 +9,9 @@ pub enum AppError {
     NotFound,
     #[error("forbidden")]
     Forbidden,
+    /// A 403 whose reason is worth showing to the user as-is.
+    #[error("{0}")]
+    ForbiddenMsg(String),
     #[error("unauthorized")]
     Unauthorized,
     #[error("gone")]
@@ -19,8 +22,12 @@ pub enum AppError {
     BadRequest(String),
     #[error("{0}")]
     Conflict(String),
+    #[error("{0}")]
+    PayloadTooLarge(String),
     #[error("too many attempts, try again in a bit")]
     TooManyRequests,
+    #[error("server storage is full, so uploads are paused for now")]
+    InsufficientStorage,
     #[error(transparent)]
     Internal(#[from] anyhow::Error),
 }
@@ -35,15 +42,17 @@ impl IntoResponse for AppError {
     fn into_response(self) -> Response {
         let (status, code) = match &self {
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
-            Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
+            Self::Forbidden | Self::ForbiddenMsg(_) => (StatusCode::FORBIDDEN, "forbidden"),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             Self::Gone => (StatusCode::GONE, "gone"),
             Self::UnsupportedMediaType => {
                 (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type")
             }
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
+            Self::PayloadTooLarge(_) => (StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large"),
             Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             Self::TooManyRequests => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
+            Self::InsufficientStorage => (StatusCode::INSUFFICIENT_STORAGE, "storage_full"),
             Self::Internal(e) => {
                 tracing::error!(error = ?e, "internal error");
                 (StatusCode::INTERNAL_SERVER_ERROR, "internal")

@@ -1,6 +1,13 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
+  import EmojiPopover from './EmojiPopover.svelte'
+  import ReactionRow from './ReactionRow.svelte'
+  import { reactionKey, type Std } from '../lib/emoji'
+  import { react } from '../lib/reactions'
+  import { app } from '../lib/store.svelte'
+  import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import { renderMessage } from '../lib/markdown'
+  import { animateEmojiIn } from '../lib/animate.svelte'
   import { avatarColor, initial } from '../lib/avatar'
   import type { Message } from '../lib/protocol/Message'
 
@@ -16,6 +23,7 @@
     onDelete,
     mentionNames = [],
     meId = '',
+    onError = () => {},
   }: {
     message: Message
     name: string
@@ -29,8 +37,12 @@
     /** Usernames that may be mentioned here (rendered as pills). */
     mentionNames?: string[]
     meId?: string
+    /** Where a failed reaction is reported. */
+    onError?: (msg: string) => void
   } = $props()
 
+  let picking = $state(false)
+  let smileBtn: HTMLButtonElement | undefined = $state()
   let editing = $state(false)
   let draft = $state('')
   const time = $derived(new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
@@ -43,6 +55,10 @@
     const d = draft.trim()
     if (d && d !== message.content) await onEdit(d)
     editing = false
+  }
+  function pick(e: Std | CustomEmoji) {
+    picking = false
+    void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, reactionKey(e), true, meId, onError)
   }
   function key(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
@@ -77,18 +93,24 @@
           <small class="hint">Enter to save · Esc to cancel</small>
         {:else}
           <!-- renderMessage output is DOMPurify-sanitised (allow-list, cached per message); the only {@html} in the app. -->
-          <div class="content">{@html renderMessage(message, mentionNames)}</div>
+          {@const html = renderMessage(message, mentionNames, app.state.customEmoji)}
+          <div class="content" {@attach animateEmojiIn(html)}>{@html html}</div>
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
+        <ReactionRow {message} {meId} {nameOf} {onError} />
       </div>
       {#if !message.deleted && !editing}
-        <div class="actions">
+        <div class="actions" class:open={picking}>
+          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={15} /></button>
           <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>
           {#if mine}
             <button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={15} /></button>
             <button aria-label="Delete" onclick={onDelete}><Icon name="trash" size={15} /></button>
           {/if}
         </div>
+        {#if picking && smileBtn}
+          <EmojiPopover anchor={smileBtn} onPick={pick} onClose={() => (picking = false)} />
+        {/if}
       {/if}
     </div>
   </div>
@@ -119,12 +141,16 @@
   .hook { width: 28px; height: 10px; margin-top: 10px; border-left: 2px solid #3a3c44; border-top: 2px solid #3a3c44; border-top-left-radius: 6px; flex-shrink: 0; }
   .snippet { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .actions { position: absolute; top: -10px; right: 18px; display: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: 8px; }
-  .msg:hover .actions, .actions:focus-within { display: flex; }
+  .msg:hover .actions, .actions:focus-within, .actions.open { display: flex; }
   .actions button { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .actions button:hover { color: var(--text); }
   textarea { width: 100%; resize: vertical; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; font: inherit; }
   .hint { font-size: 11px; color: var(--text-3); }
   .system { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }
   .msg.mentioned { background: rgba(139, 156, 255, .08); box-shadow: inset 2px 0 0 var(--accent); }
+  .content :global(img.emoji) { width: 1.375em; height: 1.375em; vertical-align: -0.3em; object-fit: contain; }
+  .content :global(img.emoji.big) { width: 48px; height: 48px; }
+  .content :global(.emoji-gone) { color: var(--text-3); background: var(--bg-3); border-radius: 4px; padding: 0 4px; font-size: .9em; }
+  .content :global(.emoji-gone.big) { font-size: 1.25em; }
   .content :global(.mention) { color: var(--accent); background: rgba(139, 156, 255, .15); border-radius: 4px; padding: 0 3px; font-weight: 600; }
 </style>

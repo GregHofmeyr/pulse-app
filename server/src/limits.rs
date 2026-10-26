@@ -44,6 +44,8 @@ pub struct LimitsConfig {
     pub typing_user: Rate,
     /// Bug/crash reports per user.
     pub report_user: Rate,
+    /// Media uploads per user.
+    pub upload_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -55,6 +57,7 @@ impl Default for LimitsConfig {
             send_user: Rate::new(20, 5.0),
             typing_user: Rate::new(1, 1.0),
             report_user: Rate::per_hour(5),
+            upload_user: Rate::per_hour(30),
         }
     }
 }
@@ -70,6 +73,7 @@ impl LimitsConfig {
             send_user: r,
             typing_user: r,
             report_user: r,
+            upload_user: r,
         }
     }
 }
@@ -165,6 +169,7 @@ pub struct Limits {
     pub send_user: Limiter,
     pub typing_user: Limiter,
     pub report_user: Limiter,
+    pub upload_user: Limiter,
 }
 
 impl Limits {
@@ -176,6 +181,7 @@ impl Limits {
             send_user: Limiter::new(c.send_user),
             typing_user: Limiter::new(c.typing_user),
             report_user: Limiter::new(c.report_user),
+            upload_user: Limiter::new(c.upload_user),
         }
     }
 }

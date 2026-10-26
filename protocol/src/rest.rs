@@ -132,6 +132,17 @@ pub struct Message {
     /// Users this message @mentions (only people who can see the channel).
     #[serde(default)]
     pub mentions: Vec<UserId>,
+    /// In first-reacted order. `me` is per caller; in gateway events it is always false.
+    #[serde(default)]
+    pub reactions: Vec<ReactionSummary>,
+}
+
+/// One emoji on a message: a Unicode emoji or `custom:<id>`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ReactionSummary {
+    pub emoji: String,
+    pub count: u32,
+    pub me: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
@@ -315,4 +326,44 @@ pub struct CreateReportRequest {
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct CreateReportResponse {
     pub id: String,
+}
+
+/// A stored, processed upload (`POST /media/emoji`). Fetch the bytes at `GET /media/{hash}`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct MediaInfo {
+    pub hash: String,
+    pub content_type: String,
+    pub width: u32,
+    pub height: u32,
+    pub frames: u32,
+    pub animated: bool,
+    /// The first frame alone, for animations.
+    pub still_hash: Option<String>,
+}
+
+/// A server's custom emoji. `hash: None` means it was deleted: the name stays so old messages
+/// and reactions can still show a `:name:` chip.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct CustomEmoji {
+    pub id: String,
+    pub server_id: ServerId,
+    pub name: String,
+    pub hash: Option<String>,
+    /// The first frame, for animated emoji.
+    pub still_hash: Option<String>,
+    pub animated: bool,
+    pub added_by: Option<UserId>,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CreateEmojiRequest {
+    pub name: String,
+    /// From `POST /media/emoji`.
+    pub media_hash: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct RenameEmojiRequest {
+    pub name: String,
 }

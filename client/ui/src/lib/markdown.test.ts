@@ -1,7 +1,9 @@
 // @vitest-environment jsdom
 import DOMPurify from 'dompurify'
+import { Marked } from 'marked'
 import { describe, expect, it, vi } from 'vitest'
-import { RENDER_CACHE_MAX, renderMarkdown, renderMessage, typingThrottle } from './markdown'
+import { RENDER_CACHE_MAX, renderMarkdown, renderMessage, sanitize, typingThrottle } from './markdown'
+import type { CustomEmoji } from './protocol/CustomEmoji'
 
 const XSS = [
   '<script>alert(1)</script>',
@@ -105,5 +107,179 @@ describe('renderMessage (cached)', () => {
     renderMessage(msg('F0', 'x'))
     expect(spy).toHaveBeenCalledTimes(1)
     spy.mockRestore()
+  })
+})
+
+describe('emoji in messages', () => {
+  const ce = (id: string, name: string, hash: string | null, animated = false): CustomEmoji => ({
+    id, server_id: 'S1', name, hash, still_hash: null, animated, added_by: null, created_at: '2026-10-01T00:00:00Z',
+  })
+  const H1 = 'a'.repeat(64)
+  const H3 = '0123456789abcdef'.repeat(4)
+  const custom = { '1': ce('1', 'pog', H1), '2': ce('2', 'gone', null), '3': ce('3', 'party', H3, true) }
+  const dom = (html: string) => {
+    const host = document.createElement('div')
+    host.innerHTML = html
+    return host
+  }
+
+  it('custom_token_renders_img', () => {
+    const imgs = dom(renderMarkdown('gg <:pog:1> and <a:party:3>', [], custom)).querySelectorAll('img')
+    expect(imgs).toHaveLength(2)
+    expect(imgs[0].getAttribute('src')).toBe(`pulse-media://localhost/${H1}`)
+    expect(imgs[0].getAttribute('alt')).toBe(':pog:')
+    expect(imgs[0].className).toBe('emoji')
+    expect(imgs[1].getAttribute('src')).toBe(`pulse-media://localhost/${H3}`)
+  })
+
+  it('an animated emoji renders its still frame and carries the animation hash', () => {
+    const S4 = 'b'.repeat(64)
+    const spin = { ...ce('4', 'spin', H3, true), still_hash: S4 }
+    const html = renderMarkdown('<a:spin:4>', [], { '4': spin })
+    const img = dom(html).querySelector('img')!
+    expect(img.getAttribute('src')).toBe(`pulse-media://localhost/${S4}`)
+    expect(img.getAttribute('data-anim')).toBe(H3)
+    // A still emoji carries nothing extra.
+    expect(dom(renderMarkdown('<:pog:1>', [], custom)).querySelector('img')!.hasAttribute('data-anim')).toBe(false)
+  })
+
+  it('data-anim survives only as an exact hash on an emoji img', () => {
+    const src = `pulse-media://localhost/${H1}`
+    const keep = sanitize(`<img class="emoji" src="${src}" data-anim="${H3}">`)
+    expect(dom(keep).querySelector('img')!.getAttribute('data-anim')).toBe(H3)
+    for (const bad of ['javascript:alert(1)', H3.toUpperCase(), H3 + 'a', `../${H3}`, 'https://evil.example/x']) {
+      expect(dom(sanitize(`<img class="emoji" src="${src}" data-anim="${bad}">`)).querySelector('img')!.hasAttribute('data-anim'), bad).toBe(false)
+    }
+    expect(sanitize(`<span data-anim="${H3}">x</span>`)).toBe('<span>x</span>')
+    expect(sanitize(`<img src="${src}" data-other="1">`)).not.toContain('data-other')
+  })
+
+  it('unicode_renders_twemoji', () => {
+    const imgs = dom(renderMarkdown('nice 👍 ❤️ 👍🏽 🇿🇦 👨‍👩‍👧')).querySelectorAll('img.emoji')
+    expect(Array.from(imgs).map((i) => i.getAttribute('src'))).toEqual([
+      '/emoji/1f44d.svg', '/emoji/2764.svg', '/emoji/1f44d-1f3fd.svg', '/emoji/1f1ff-1f1e6.svg', '/emoji/1f468-200d-1f469-200d-1f467.svg',
+    ])
+    expect(imgs[1].getAttribute('alt')).toBe('❤️')
+  })
+
+  it('plain digits, #, *, bare ©/® and unknown graphemes stay text', () => {
+    expect(renderMarkdown('1 # * © ® ❤ é')).not.toContain('<img')
+    expect(renderMarkdown('©️')).toContain('<img')
+    expect(renderMarkdown('👍️')).toContain('src="/emoji/1f44d.svg"') // FE0F-qualified emoji-presentation still matches
+  })
+
+  it('tokens_in_code_stay_text', () => {
+    for (const src of ['`<:pog:1>` `👍`', '```\n<:pog:1> 👍\n```', '\\<:pog:1>']) {
+      const host = dom(renderMarkdown(src, [], custom))
+      expect(host.querySelector('img'), src).toBeNull()
+      expect(host.textContent).toContain('<:pog:1>')
+    }
+  })
+
+  it('unknown_token_is_name_chip', () => {
+    for (const src of ['<:gone:2>', '<:nope:999>']) {
+      const host = dom(renderMarkdown(src, [], custom))
+      expect(host.querySelector('img')).toBeNull()
+      const chip = host.querySelector('span.emoji-gone')!
+      expect(chip.textContent).toBe(src === '<:gone:2>' ? ':gone:' : ':nope:')
+    }
+  })
+
+  it('only_emoji_is_big', () => {
+    const host = dom(renderMarkdown('👍 <:pog:1>\n🎉', [], custom))
+    const imgs = host.querySelectorAll('img')
+    expect(imgs).toHaveLength(3)
+    for (const i of imgs) expect(i.className).toBe('emoji big')
+    expect(renderMarkdown('👍'.repeat(28))).not.toContain('big')
+    expect(renderMarkdown('👍'.repeat(27))).toContain('emoji big')
+  })
+
+  it('text_plus_emoji_is_not_big', () => {
+    for (const src of ['ok 👍', '`x` 👍', '<:gone:2> hi', 'a **👍**']) {
+      expect(renderMarkdown(src, [], custom), src).not.toContain('big')
+    }
+  })
+
+  it('deleted emoji chips count as emoji for big rendering', () => {
+    const host = dom(renderMarkdown('<:gone:2> 👍 <:nope:999>', [], custom))
+    expect(host.querySelector('img')!.className).toBe('emoji big')
+    expect([...host.querySelectorAll('span')].map((c) => c.className)).toEqual(['emoji-gone big', 'emoji-gone big'])
+    expect(dom(renderMarkdown('<:gone:2>', [], custom)).querySelector('span')!.className).toBe('emoji-gone big')
+    expect(renderMarkdown('<:gone:2>'.repeat(28), [], custom)).not.toContain('big')
+  })
+
+  it('remote_img_src_still_stripped', () => {
+    for (const src of ['<img src=https://x>', '<img src="pulse-media://localhost/x" onerror=alert(1)>']) {
+      const host = dom(renderMarkdown(src, [], custom))
+      expect(host.querySelector('img'), src).toBeNull()
+    }
+  })
+
+  it('markdown_image_stays_alt_text', () => {
+    const host = dom(renderMarkdown('![pic](https://evil.example/t.png)'))
+    expect(host.querySelector('img')).toBeNull()
+    expect(host.textContent).toBe('pic')
+  })
+
+  it('a hostile emoji hash cannot break out of the attribute', () => {
+    const host = dom(renderMarkdown('<:pog:9>', [], { '9': ce('9', 'pog', '"><script>alert(1)</script>') }))
+    expect(host.querySelector('script')).toBeNull()
+    expect(host.querySelectorAll('img').length).toBeLessThanOrEqual(1)
+    for (const el of host.querySelectorAll('*')) for (const a of el.attributes) expect(a.name.startsWith('on')).toBe(false)
+  })
+
+  it('the img allow-list only keeps emoji sources', () => {
+    const ok = ['/emoji/1f44d.svg', '/emoji/1f468-200d-1f469-200d-1f467.svg', `pulse-media://localhost/${H1}`, `http://pulse-media.localhost/${H3}`]
+    for (const src of ok) {
+      expect(dom(sanitize(`<img class="emoji" src="${src}" alt="x" draggable="false">`)).querySelector('img')?.getAttribute('src'), src).toBe(src)
+    }
+    const bad = [
+      'https://evil.example/x.png', '//evil.example/x.png', 'javascript:alert(1)', ' javascript:alert(1)',
+      'data:image/svg+xml,<svg onload=alert(1)>', 'data:image/png;base64,AAAA', 'pulse-media://evil/x',
+      'pulse-media://localhost.evil/x', 'http://pulse-media.localhost.evil.example/x', 'https://pulse-media.localhost/x',
+      'PULSE-MEDIA://localhost/x', 'http://x/emoji/a.svg', '', 'emoji/1f44d.svg',
+      '/emoji/../../x', '/emoji/../media/x.svg', '/emoji/xyz.svg', '/emoji/1F44D.svg', '/emoji/1f44d.svg?x', '/emoji/1f44d.svg#x',
+      '/emoji/1f44d-.svg', '/emoji/.svg', '/emoji/1f44d.png', '/emoji/1f44d/x.svg',
+      'pulse-media://localhost/abc', `pulse-media://localhost/${H1}/x`, `pulse-media://localhost/${H1}0`,
+      `pulse-media://localhost/${H1.toUpperCase()}`, `pulse-media://localhost/../${H1}`, `http://pulse-media.localhost/${H1}?x`,
+    ]
+    for (const src of bad) expect(dom(sanitize(`<img class="emoji" src="${src}">`)).querySelector('img'), src).toBeNull()
+    expect(dom(sanitize('<img class="emoji">')).querySelector('img')).toBeNull()
+    const kept = dom(sanitize('<img class="x" src="/emoji/1f44d.svg" onerror="alert(1)" style="x">')).querySelector('img')!
+    expect(kept.getAttribute('onerror')).toBeNull()
+    expect(kept.getAttribute('style')).toBeNull()
+    expect(kept.getAttribute('class')).toBeNull()
+  })
+
+  it('tokens only inside code never key the render cache', () => {
+    const gone = { ...custom, '1': ce('1', 'pog', null) }
+    for (const [i, content] of ['`<:pog:1>` hi', '```\n<:pog:1>\n```', '\\<:pog:1>', '``a ` <:pog:1>``'].entries()) {
+      const m = { id: `CODE${i}`, content, edited_at: null }
+      renderMessage(m, [], custom)
+      const spy = vi.spyOn(DOMPurify, 'sanitize')
+      renderMessage(m, [], gone)
+      expect(spy, content).not.toHaveBeenCalled()
+      spy.mockRestore()
+    }
+    const m = { id: 'CODE9', content: '`<:pog:1>` <:pog:1>', edited_at: null }
+    expect(renderMessage(m, [], custom)).toContain('<img')
+    expect(renderMessage(m, [], gone)).toContain('emoji-gone')
+  })
+
+  it('a cache hit never re-lexes a message with code in it', () => {
+    const m = { id: 'LEX1', content: '`x` <:pog:1>', edited_at: null }
+    renderMessage(m, [], custom)
+    const lex = vi.spyOn(Marked.prototype, 'lexer')
+    renderMessage(m, [], custom)
+    renderMessage(m, [], { ...custom, '1': ce('1', 'pog', null) }) // still keys the emoji: re-renders, no extra lex
+    expect(lex).not.toHaveBeenCalled()
+    lex.mockRestore()
+    expect(renderMessage(m, [], { ...custom, '1': ce('1', 'pog', null) })).toContain('emoji-gone')
+  })
+
+  it('a deleted emoji re-renders a cached message as a chip', () => {
+    const m = { id: 'E1', content: '<:pog:1>', edited_at: null }
+    expect(renderMessage(m, [], custom)).toContain('<img')
+    expect(renderMessage(m, [], { ...custom, '1': ce('1', 'pog', null) })).toContain('emoji-gone')
   })
 })

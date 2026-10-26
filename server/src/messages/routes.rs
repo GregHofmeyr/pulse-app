@@ -17,7 +17,7 @@ use crate::db::now;
 use crate::error::{AppError, AppResult};
 use crate::servers::routes::is_server_member;
 
-use super::mentions;
+use super::{mentions, reactions};
 
 const MAX_LEN: usize = 4000;
 /// Client nonces are UUIDs (36 bytes); anything much longer isn't one of ours.
@@ -73,6 +73,7 @@ fn from_row(r: Row) -> AppResult<Message> {
         edited_at,
         deleted: deleted_at.is_some(),
         mentions: vec![],
+        reactions: vec![],
     })
 }
 
@@ -88,6 +89,12 @@ pub(crate) async fn load(db: &SqlitePool, id: MessageId) -> AppResult<Option<Mes
         .await?
         .remove(&m.id)
         .unwrap_or_default();
+    if !m.deleted {
+        m.reactions = reactions::summaries(db, None, &[m.id])
+            .await?
+            .remove(&m.id)
+            .unwrap_or_default();
+    }
     Ok(Some(m))
 }
 
@@ -131,8 +138,12 @@ async fn list(
     let mut page: Vec<Message> = rows.into_iter().map(from_row).collect::<AppResult<_>>()?;
     let ids: Vec<MessageId> = page.iter().map(|m| m.id).collect();
     let mut map = mentions::for_messages(&s.db, &ids).await?;
+    // A deleted message shows no reactions, like no content.
+    let live: Vec<MessageId> = page.iter().filter(|m| !m.deleted).map(|m| m.id).collect();
+    let mut reacted = reactions::summaries(&s.db, Some(me), &live).await?;
     for m in &mut page {
         m.mentions = map.remove(&m.id).unwrap_or_default();
+        m.reactions = reacted.remove(&m.id).unwrap_or_default();
     }
     Ok(Json(page))
 }
@@ -200,6 +211,7 @@ async fn send(
         edited_at: None,
         deleted: false,
         mentions: mentioned.clone(),
+        reactions: vec![],
     };
     // One transaction: the message, its mentions and your read point land together or not at all.
     let mut tx = crate::db::begin_write(&s.db).await?;
@@ -234,6 +246,8 @@ async fn send(
         .execute(&mut *tx)
         .await?;
     mentions::store(&mut tx, msg.id, &mentioned).await?;
+    let used = reactions::live_keys(&mut tx, me, reactions::used_in(&msg.content)).await?;
+    crate::emoji::record_use(&mut tx, me, &used).await?;
     if ch.kind.is_private() {
         // A new message reopens closed conversations (clients un-hide on MessageCreated).
         // Server channels can't be closed, so they skip this write entirely.
@@ -265,6 +279,10 @@ async fn send(
                 },
             )
             .await;
+    }
+    if !used.is_empty() {
+        let _order = s.hub.in_order().await;
+        crate::emoji::publish_frequent(&s, me).await;
     }
     Ok(Json(msg))
 }

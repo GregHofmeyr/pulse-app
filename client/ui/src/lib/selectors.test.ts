@@ -25,6 +25,8 @@ const r: Ready = {
   hidden: [],
   latest: [],
   streams: [],
+  custom_emoji: [],
+  frequent_emoji: [],
 }
 const s = applyReady(emptyState(), r)
 

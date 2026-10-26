@@ -1,3 +1,4 @@
+/// <reference types="vitest/config" />
 import { svelte } from '@sveltejs/vite-plugin-svelte'
 import { defineConfig } from 'vite'
 
@@ -8,4 +9,5 @@ export default defineConfig({
   server: { port: 1420, strictPort: true },
   // Tests: resolve Svelte's client runtime, so $effect and mount() work under vitest (the default is the SSR build).
   resolve: process.env.VITEST ? { conditions: ['browser'] } : undefined,
+  test: { setupFiles: ['./src/test-setup.ts'] },
 })

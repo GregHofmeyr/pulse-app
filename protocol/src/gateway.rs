@@ -5,7 +5,8 @@ use ts_rs::TS;
 
 use crate::ids::{ChannelId, MessageId, ServerId, UserId};
 use crate::rest::{
-    Channel, Member, Message, Mute, Person, ReadState, Server, StreamEndReason, StreamInfo, User,
+    Channel, CustomEmoji, Member, Message, Mute, Person, ReadState, Server, StreamEndReason,
+    StreamInfo, User,
 };
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -66,6 +67,12 @@ pub struct Ready {
     /// Streams live right now (only in channels you may see).
     #[serde(default)]
     pub streams: Vec<StreamInfo>,
+    /// Every server's custom emoji, deleted ones (without a hash) included.
+    #[serde(default)]
+    pub custom_emoji: Vec<CustomEmoji>,
+    /// Your most used emoji (standard as Unicode, custom as `custom:<id>`), best first.
+    #[serde(default)]
+    pub frequent_emoji: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -186,6 +193,37 @@ pub enum Event {
         user_id: UserId,
         viewers: Vec<UserId>,
     },
+    EmojiCreated {
+        emoji: CustomEmoji,
+    },
+    EmojiUpdated {
+        emoji: CustomEmoji,
+    },
+    /// Carries `hash: None`.
+    EmojiDeleted {
+        emoji: CustomEmoji,
+    },
+    /// `count` is the new absolute count, so repeated or crossed events can't drift.
+    ReactionAdded {
+        channel_id: ChannelId,
+        message_id: MessageId,
+        emoji: String,
+        user_id: UserId,
+        count: u32,
+    },
+    ReactionRemoved {
+        channel_id: ChannelId,
+        message_id: MessageId,
+        emoji: String,
+        user_id: UserId,
+        count: u32,
+    },
+    /// Only to the user's own sessions, after a write that counted their emoji use: the new
+    /// [`Ready::frequent_emoji`].
+    FrequentEmoji {
+        user_id: UserId,
+        frequent_emoji: Vec<String>,
+    },
 }
 
 impl Event {
@@ -199,7 +237,9 @@ impl Event {
             | Self::Typing { channel_id, .. }
             | Self::VoiceJoined { channel_id, .. }
             | Self::VoiceLeft { channel_id, .. }
-            | Self::VoiceStateChanged { channel_id, .. } => Some(*channel_id),
+            | Self::VoiceStateChanged { channel_id, .. }
+            | Self::ReactionAdded { channel_id, .. }
+            | Self::ReactionRemoved { channel_id, .. } => Some(*channel_id),
             Self::ChannelCreated { channel } => Some(channel.id),
             Self::GroupMembersChanged { channel_id, .. }
             | Self::ChannelRemoved { channel_id, .. }
@@ -216,7 +256,11 @@ impl Event {
             | Self::MemberJoined { .. }
             | Self::UserCreated { .. }
             | Self::PresenceChanged { .. }
-            | Self::MutesChanged { .. } => None,
+            | Self::MutesChanged { .. }
+            | Self::EmojiCreated { .. }
+            | Self::EmojiUpdated { .. }
+            | Self::EmojiDeleted { .. }
+            | Self::FrequentEmoji { .. } => None,
         }
     }
 
@@ -226,6 +270,7 @@ impl Event {
             Self::ChannelRemoved { user_id, .. }
             | Self::ReadStateUpdated { user_id, .. }
             | Self::MutesChanged { user_id, .. }
+            | Self::FrequentEmoji { user_id, .. }
             | Self::ConversationVisibility { user_id, .. } => Some(*user_id),
             _ => None,
         }
@@ -299,6 +344,8 @@ mod tests {
             hidden: vec![],
             latest: vec![],
             streams: vec![],
+            custom_emoji: vec![],
+            frequent_emoji: vec![],
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");

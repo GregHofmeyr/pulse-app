@@ -8,6 +8,8 @@ import type { Message } from './protocol/Message'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { StreamSettings } from './protocol/StreamSettings'
 import type { VoiceTokenResponse } from './protocol/VoiceTokenResponse'
+import type { MediaInfo } from './protocol/MediaInfo'
+import type { CustomEmoji } from './protocol/CustomEmoji'
 
 export const api = {
   createDm: (userIds: string[]) => invoke<Channel>('create_dm', { userIds }),
@@ -40,6 +42,16 @@ export const api = {
   editMessage: (messageId: string, content: string) => invoke<Message>('edit_message', { messageId, content }),
   deleteMessage: (messageId: string) => invoke<void>('delete_message', { messageId }),
   sendTyping: (channelId: string) => invoke<void>('send_typing', { channelId }),
+  /** The raw file goes as the request body (a JSON number array would be slow at 2 MB). */
+  uploadEmojiMedia: (bytes: Uint8Array) => invoke<MediaInfo>('upload_emoji_media', bytes),
+  createEmoji: (serverId: string, name: string, mediaHash: string) =>
+    invoke<CustomEmoji>('create_emoji', { serverId, name, mediaHash }),
+  renameEmoji: (id: string, name: string) => invoke<CustomEmoji>('rename_emoji', { id, name }),
+  deleteEmoji: (id: string) => invoke<void>('delete_emoji', { id }),
+  /** `emoji`: a Unicode emoji or `custom:<id>`. */
+  addReaction: (messageId: string, emoji: string) => invoke<void>('add_reaction', { messageId, emoji }),
+  removeReaction: (messageId: string, emoji: string) => invoke<void>('remove_reaction', { messageId, emoji }),
+  listReactors: (messageId: string, emoji: string) => invoke<string[]>('list_reactors', { messageId, emoji }),
   /** Returns the report's short id. */
   submitReport: (text: string) => invoke<string>('submit_report', { text }),
   /** Writes a .txt to Downloads; returns its path. `serverUrl` when not signed in. */
