@@ -44,6 +44,8 @@ services:
     command: --config /etc/livekit.yaml
     environment:
       LIVEKIT_KEYS: "pulse: ${LIVEKIT_SECRET:?}"
+      # The public IPv4 LiveKit advertises to clients (livekit.yaml has use_external_ip off: no STUN lookup).
+      NODE_IP: ${LIVEKIT_NODE_IP:?}
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml:ro
     logging: *logging

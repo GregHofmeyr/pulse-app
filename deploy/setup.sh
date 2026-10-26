@@ -112,4 +112,4 @@ if $CLOSE_SSH; then
 fi
 
 say "done"
-echo "Next: fill the blanks in $APP/.env (ACME_EMAIL now, backups later), then 'just deploy' from your laptop."
+echo "Next: fill the blanks in $APP/.env (ACME_EMAIL and LIVEKIT_NODE_IP now, backups later), then 'just deploy' from your laptop."

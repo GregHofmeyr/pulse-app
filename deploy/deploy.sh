@@ -18,11 +18,23 @@ set_env() {
   fi
 }
 
+# check_node_ip FILE: LIVEKIT_NODE_IP must be a plain IPv4. LiveKit silently ignores a malformed NODE_IP and
+# then advertises the VM's private address: calls would connect and carry no audio.
+check_node_ip() {
+  local ip
+  ip=$(sed -n 's/^LIVEKIT_NODE_IP=//p' "$1" | tail -n1)
+  if ! [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    echo "LIVEKIT_NODE_IP in $1 must be the server's public IPv4 (deploy/README.md, section 6)" >&2
+    return 1
+  fi
+}
+
 # Sourced by the self-test with DEPLOY_SH_LIB=1: define the functions, run nothing.
 [ -n "${DEPLOY_SH_LIB:-}" ] && return 0
 
 tag=${1:?usage: deploy.sh TAG}
 cd /srv/pulse
+check_node_ip .env
 ./backup.sh run
 # Pull first: a mistyped tag fails here and leaves .env and the running server untouched.
 # PULSE_IMAGE from the shell wins over .env, so this pulls TAG and not the previously pinned digest.

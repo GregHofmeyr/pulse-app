@@ -70,7 +70,11 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
 
 1. Make the image public, once: GitHub → your profile → Packages → `pulse-server` → Package settings →
    Change visibility → Public.
-2. `ssh -t pulse@pulse 'TERM=xterm-256color nano /srv/pulse/.env'` → set `ACME_EMAIL` (your personal address).
+2. `ssh -t pulse@pulse 'TERM=xterm-256color nano /srv/pulse/.env'` → set `ACME_EMAIL` (your personal address)
+   and `LIVEKIT_NODE_IP` (the VM's public IPv4, the one the A records point at; `dig +short voice.pulsechat.co.za`).
+   LiveKit advertises that address to clients; it does not look it up (no STUN at start-up), and `deploy.sh`
+   refuses to run without it. Clients are only ever given LiveKit's own TURN (`turn:<that IP>:3478`) as an ICE
+   server, never a third-party STUN server.
 3. `just deploy` → ends with `healthy: latest`. Caddy fetches the certificates on the first request.
 4. `just smoke` → every line `ok`.
 5. `just invite-prod` → a code for the first account.
@@ -105,6 +109,7 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
   `just restore <the backup that deploy made>` and then `just deploy <previous sha7>`.
 - `just logs` (or `just logs caddy` / `just logs livekit`) follows the live logs.
 - After changing `livekit.yaml`: `just deploy`, then `ssh pulse@pulse 'cd /srv/pulse && docker compose restart livekit'`.
+  (A changed `LIVEKIT_NODE_IP` needs no restart: `just deploy` recreates LiveKit with it.)
   The codec list needs a LiveKit restart to apply; `just deploy` copies the file but does not restart LiveKit.
 
 ## 8. Backups
@@ -164,5 +169,6 @@ access through your Tailscale identity, and the backup key in NordPass.
 3. Deploy to the new one and restore onto it, pointing the recipes at it:
    `just --set prod pulse@<new-name> deploy`, then
    `PULSE_PROD=pulse@<new-name> just restore <that backup>`.
-4. Switch the two Cloudflare A records to the new IP (they take effect within minutes).
+4. Switch the two Cloudflare A records to the new IP (they take effect within minutes). The new server's
+   `.env` has its own `LIVEKIT_NODE_IP`, set in section 6.
 5. Delete the old VM and remove it from Tailscale.

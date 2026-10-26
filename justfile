@@ -42,6 +42,7 @@ voice-smoke:
 # voice integration test against the dev LiveKit (real WebRTC, fake peer)
 voice-it: dev-livekit
     cargo test -p pulse-client --test voice_it --test voice_outage_it --test stream_it -- --ignored --nocapture
+    cargo test -p pulse-server --test livekit_ice -- --ignored --nocapture
 
 # libwebrtc log lines per second in a two-person call (decides whether to filter at the source)
 webrtc-log-volume: dev-livekit
@@ -51,6 +52,7 @@ webrtc-log-volume: dev-livekit
 deploy-check:
     sed -e 's/^PULSE_UID=$/PULSE_UID=1000/' -e 's/^PULSE_GID=$/PULSE_GID=1000/' \
         -e 's/^ACME_EMAIL=$/ACME_EMAIL=ci@example.com/' -e 's/^LIVEKIT_SECRET=$/LIVEKIT_SECRET=x/' \
+        -e 's/^LIVEKIT_NODE_IP=$/LIVEKIT_NODE_IP=203.0.113.10/' \
         deploy/env.example > /tmp/pulse-ci.env
     docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config -q
     caddy_image=$(docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config --images | grep '^caddy:') && \
