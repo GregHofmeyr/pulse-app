@@ -10,6 +10,7 @@
   import { animateEmojiIn } from '../lib/animate.svelte'
   import { avatarColor, initial } from '../lib/avatar'
   import type { Message } from '../lib/protocol/Message'
+import type { Pending } from '../lib/state'
 
   let {
     message,
@@ -24,6 +25,9 @@
     mentionNames = [],
     meId = '',
     onError = () => {},
+    pending,
+    onRetry = () => {},
+    onDiscard = () => {},
   }: {
     message: Message
     name: string
@@ -39,6 +43,10 @@
     meId?: string
     /** Where a failed reaction is reported. */
     onError?: (msg: string) => void
+    /** Set when `message` is an unsent one (`pendingMessage`): faded, no actions or reactions, status line under it. */
+    pending?: Pending
+    onRetry?: () => void
+    onDiscard?: () => void
   } = $props()
 
   let picking = $state(false)
@@ -69,6 +77,7 @@
   }
 </script>
 
+{#snippet item()}
 {#if message.kind === 'system'}
   <div class="system">{message.content} <span class="time">{time}</span></div>
 {:else}
@@ -98,9 +107,9 @@
           <div class="content" {@attach animateEmojiIn(html)}>{@html html}</div>
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
-        <ReactionRow {message} {meId} {nameOf} {onError} />
+        {#if !pending}<ReactionRow {message} {meId} {nameOf} {onError} />{/if}
       </div>
-      {#if !message.deleted && !editing}
+      {#if !pending && !message.deleted && !editing}
         <div class="actions" class:open={picking}>
           <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={15} /></button>
           <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>
@@ -116,8 +125,29 @@
     </div>
   </div>
 {/if}
+{/snippet}
+
+{#if pending}
+  <div class="pend">
+    <div class="unsent" style:opacity={0.6}>{@render item()}</div>
+    <div class="status" class:failed={pending.status === 'failed'}>
+      {#if pending.status === 'failed'}
+        <span class="fail">Failed to send</span>
+        <button onclick={onRetry}>Retry</button>
+        <button onclick={onDiscard}>Discard</button>
+      {:else}
+        <span>Sending…</span>
+      {/if}
+    </div>
+  </div>
+{:else}
+  {@render item()}
+{/if}
 
 <style>
+  .status { display: flex; gap: 10px; align-items: baseline; padding: 0 18px 4px 72px; font-size: 12px; color: var(--text-3); }
+  .status .fail { color: var(--danger, #f2616b); }
+  .status button { border: 0; background: none; padding: 0; font-size: 12px; color: var(--text-2); text-decoration: underline; }
   .msg { padding: 8px 18px 2px; position: relative; }
   .msg.grouped { padding-top: 1px; }
   .msg:hover { background: rgba(255, 255, 255, .02); }

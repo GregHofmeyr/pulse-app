@@ -3,8 +3,9 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
 import type { Ready } from './protocol/Ready'
-import { applyEvent, applyReady, emptyState, setPendingStatus, type AppState, type ConnState } from './state'
+import { applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, type AppState, type ConnState } from './state'
 import { api } from './tauri'
+import { loadUnsent, saveUnsent } from './unsent'
 import { isMuted, messageSound } from './conversations'
 import { noteReactionEvent } from './reactions'
 import { playSound } from './voiceui'
@@ -58,14 +59,34 @@ export async function openDm(userId: string): Promise<string> {
   return ch.id
 }
 
+// Unsent messages: saved whenever the pending map changes, and restored (failed, never resent) on
+// the first Ready for each signed-in user. Saving waits for `me`, so a not-yet-restored empty map
+// never overwrites what an earlier run left.
+let restoredFor: string | null = null
+$effect.root(() => {
+  $effect(() => {
+    const me = app.state.me
+    const pending = app.state.pending
+    if (me && restoredFor === me.id) saveUnsent(me.id, pending)
+  })
+})
+
+/** The core's (re)connected snapshot. */
+export function handleReady(r: Ready) {
+  const before = app.state.streams
+  let next = applyReady(app.state, r)
+  if (restoredFor !== r.me.id) {
+    restoredFor = r.me.id
+    next = restoreUnsent(next, loadUnsent(r.me.id))
+  }
+  app.state = next
+  void streamApi.onReady(r, before)
+}
+
 /** Subscribe to the live connection. Returns an unsubscribe function. */
 export async function startListening(): Promise<UnlistenFn> {
   const offs: UnlistenFn[] = await Promise.all([
-    listen<Ready>('pulse://ready', (e) => {
-      const before = app.state.streams
-      app.state = applyReady(app.state, e.payload)
-      void streamApi.onReady(e.payload, before)
-    }),
+    listen<Ready>('pulse://ready', (e) => handleReady(e.payload)),
     listen<Event>('pulse://event', (e) => {
       maybeSound(e.payload)
       noteReactionEvent(e.payload, app.state.me?.id)

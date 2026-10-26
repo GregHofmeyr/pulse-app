@@ -17,7 +17,7 @@ import type { VoiceMember } from './protocol/VoiceMember'
 export type ConnState = 'connecting' | 'connected' | 'reconnecting' | 'logged_out' | 'update_required'
 
 /** A message we've sent but the server hasn't confirmed yet (optimistic UI / offline outbox). */
-export type Pending = { nonce: string; content: string; reply_to_id: string | null; status: 'pending' | 'failed' }
+export type Pending = { nonce: string; content: string; reply_to_id: string | null; status: 'pending' | 'failed'; created_at: string }
 
 export type AppState = {
   me: User | null
@@ -300,6 +300,37 @@ function withStream(streams: AppState['streams'], x: StreamInfo): AppState['stre
 
 export function addPending(s: AppState, channel: string, p: Pending): AppState {
   return { ...s, pending: { ...s.pending, [channel]: [...(s.pending[channel] ?? []), p] } }
+}
+
+export function removePending(s: AppState, channel: string, nonce: string): AppState {
+  const left = (s.pending[channel] ?? []).filter((p) => p.nonce !== nonce)
+  const { [channel]: _gone, ...rest } = s.pending
+  return { ...s, pending: left.length ? { ...s.pending, [channel]: left } : rest }
+}
+
+/** Unsent messages saved by an earlier run: all come back failed (never resent on their own). A
+ * channel that is gone is skipped, and so is a nonce that is already pending. */
+export function restoreUnsent(s: AppState, saved: Record<string, Pending[]>): AppState {
+  const now = new Date().toISOString()
+  const pending = { ...s.pending }
+  let changed = false
+  for (const [channel, list] of Object.entries(saved)) {
+    if (!(channel in s.channels)) continue
+    const known = new Set((pending[channel] ?? []).map((p) => p.nonce))
+    const fresh = list.filter((p) => !known.has(p.nonce)).map((p): Pending => ({ ...p, status: 'failed', created_at: p.created_at || now }))
+    if (!fresh.length) continue
+    pending[channel] = [...(pending[channel] ?? []), ...fresh]
+    changed = true
+  }
+  return changed ? { ...s, pending } : s
+}
+
+/** An unsent message as a normal one (yours), so it renders through the same path as a sent one. */
+export function pendingMessage(p: Pending, channelId: string, meId: string): Message {
+  return {
+    id: `pending:${p.nonce}`, channel_id: channelId, author_id: meId, kind: 'normal', content: p.content,
+    reply_to_id: p.reply_to_id, created_at: p.created_at, edited_at: null, deleted: false, mentions: [], reactions: [],
+  }
 }
 
 export function setPendingStatus(s: AppState, channel: string, nonce: string, status: Pending['status']): AppState {
