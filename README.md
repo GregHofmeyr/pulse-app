@@ -6,6 +6,8 @@ DMs (soon), and none of the bloat. Rust server (axum + SQLite), LiveKit for voic
 Design: [`docs/superpowers/specs/2026-10-01-pulse-design.md`](docs/superpowers/specs/2026-10-01-pulse-design.md) ·
 Voice lessons: [`spikes/voice/FINDINGS.md`](spikes/voice/FINDINGS.md)
 
+Security overview and how to report a vulnerability: [`SECURITY.md`](SECURITY.md)
+
 ## Dev quickstart (Linux)
 
 Needs: Rust stable, clang ≥ 21, pnpm, Docker, `just`, WebKitGTK 4.1, and `cargo install tauri-cli --version "^2"`.
