@@ -68,8 +68,8 @@ impl Default for LimitsConfig {
             // The client prefetches a voice token on hover (one per channel, reused for 2 min),
             // so sweeping the pointer down a long channel list can ask for dozens at once; a
             // join plus going live is 3 more. 60 at once and one a second after that is far
-            // beyond any person and still caps the grant table (unused grants are pruned after
-            // 15 min, so about 960 rows per user at most).
+            // beyond any person; with the per-session cap on never-joined grants (100, see
+            // `auth::session`) it keeps the grant table small.
             livekit_token_user: Rate::new(60, 1.0),
             gateway_ip: Rate::per_minute(20),
             gateway_per_user: 8,
