@@ -92,4 +92,13 @@ describe('Login', () => {
     flushSync()
     expect(document.querySelector('input[type=password]')).not.toBeNull()
   })
+
+  it('Back is disabled while the code is being verified', async () => {
+    await toCodeStep()
+    invoke.mockImplementation(() => new Promise(() => {}))
+    type('input', '123456')
+    await submit()
+    const back = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Back')!
+    expect(back.disabled).toBe(true)
+  })
 })

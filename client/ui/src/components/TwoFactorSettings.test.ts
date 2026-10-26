@@ -37,7 +37,12 @@ const ON = { enabled: true, available: true, recovery_codes_left: 7 }
 const CODES = ['aaaa-bbbb-cccc-dddd', 'eeee-ffff-gggg-hhhh']
 
 beforeEach(() => { invoke.mockReset(); invoke.mockResolvedValue(undefined) })
-afterEach(() => { if (cmp) unmount(cmp); cmp = undefined; document.body.innerHTML = '' })
+const realClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+afterEach(() => {
+  if (realClipboard) Object.defineProperty(navigator, 'clipboard', realClipboard)
+  else delete (navigator as unknown as Record<string, unknown>).clipboard
+  if (cmp) unmount(cmp); cmp = undefined; document.body.innerHTML = ''
+})
 
 describe('TwoFactorSettings', () => {
   it('unavailable: the sentence and no button', async () => {
@@ -161,5 +166,102 @@ describe('TwoFactorSettings', () => {
     click('Turn off'); type('input', '111111'); await submit()
     expect(document.querySelector('[role=alert]')?.textContent).toBe("That code didn't work.")
     expect(document.querySelector('input')).not.toBeNull()
+  })
+
+  it('QR modules are a whole number of pixels', async () => {
+    answers(OFF, { two_factor_setup: () => ({ secret: 'K', qr: { size: 3, modules: [true, false, false, false, false, false, false, false, false] } }) })
+    await show()
+    click('Set up'); type('input', 'pw'); await submit()
+    const svg = document.querySelector('svg')!
+    expect(svg.getAttribute('width')).toBe('198') // 11 modules x 18px
+    expect(svg.getAttribute('height')).toBe('198')
+  })
+
+  it('Copy says Copied, or says to copy by hand when it fails', async () => {
+    const enabled = { two_factor_setup: () => ({ secret: 'K', qr: { size: 1, modules: [true] } }), two_factor_enable: () => ({ recovery_codes: CODES, signed_out: 0 }) }
+    answers(OFF, enabled)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn(async () => {}) }, configurable: true })
+    await show()
+    click('Set up'); type('input', 'pw'); await submit()
+    type('input', '123456'); await submit()
+    click('Copy'); await settle(); flushSync()
+    expect(button('Copied')).toBeTruthy()
+    unmount(cmp!); document.body.innerHTML = ''
+    answers(OFF, enabled)
+    Object.defineProperty(navigator, 'clipboard', { value: { writeText: vi.fn(async () => { throw new Error('denied') }) }, configurable: true })
+    await show()
+    click('Set up'); type('input', 'pw'); await submit()
+    type('input', '123456'); await submit()
+    click('Copy'); await settle(); flushSync()
+    expect(text()).toContain("Couldn't copy: select and copy them by hand.")
+    expect(button('Copy')).toBeTruthy()
+  })
+
+  it('a failed status call keeps the heading, shows the error and Try again', async () => {
+    let fail = true
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd !== 'two_factor_status') return undefined
+      if (fail) throw 'Network down.'
+      return OFF
+    })
+    await show()
+    expect(text()).toContain('Two-factor authentication')
+    expect(document.querySelector('h3')).not.toBeNull()
+    expect(document.querySelector('[role=alert]')?.textContent).toBe('Network down.')
+    fail = false
+    click('Try again'); await settle(); flushSync()
+    expect(calls('two_factor_status')).toHaveLength(2)
+    expect(button('Set up')).toBeTruthy()
+    expect(document.querySelector('[role=alert]')).toBeNull()
+  })
+
+  it('if the refresh after "I\'ve saved these" fails, no stale status is shown', async () => {
+    let n = 0
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'two_factor_status') { if (++n > 1) throw 'Network down.'; return OFF }
+      if (cmd === 'two_factor_setup') return { secret: 'K', qr: { size: 1, modules: [true] } }
+      if (cmd === 'two_factor_enable') return { recovery_codes: CODES, signed_out: 0 }
+    })
+    await show()
+    click('Set up'); type('input', 'pw'); await submit()
+    type('input', '123456'); await submit()
+    click("I've saved these"); await settle(); flushSync()
+    expect(button('Set up')).toBeUndefined()
+    expect(button('Try again')).toBeTruthy()
+  })
+
+  it('if the refresh after turning off fails, no stale status is shown', async () => {
+    let n = 0
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'two_factor_status') { if (++n > 1) throw 'Network down.'; return ON }
+    })
+    await show()
+    click('Turn off'); type('input', '123456'); await submit()
+    expect(button('Turn off')).toBeUndefined()
+    expect(button('Try again')).toBeTruthy()
+  })
+
+  it('new recovery codes with a wrong code shows the error and shows no codes', async () => {
+    answers(ON, { two_factor_regenerate: () => { throw "That code didn't work." } })
+    await show()
+    click('New recovery codes'); type('input', '111111'); await submit()
+    expect(document.querySelector('[role=alert]')?.textContent).toBe("That code didn't work.")
+    expect(document.querySelector('ul')).toBeNull()
+  })
+
+  it('Cancel on the regenerate and turn-off views forgets the code and returns to status', async () => {
+    answers(ON)
+    await show()
+    for (const [open, again] of [['New recovery codes', 'New recovery codes'], ['Turn off', 'Turn off']]) {
+      click(open); type('input', '123456')
+      click('Cancel')
+      expect(document.querySelector('input')).toBeNull()
+      expect(text()).toContain('7 recovery codes left')
+      click(again)
+      expect(document.querySelector<HTMLInputElement>('input')!.value).toBe('')
+      click('Cancel')
+    }
+    expect(calls('two_factor_regenerate')).toHaveLength(0)
+    expect(calls('two_factor_disable')).toHaveLength(0)
   })
 })

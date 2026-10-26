@@ -82,23 +82,23 @@
       </label>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <button class="primary" disabled={busy}>{busy ? '…' : 'Verify'}</button>
-      <button type="button" class="link" onclick={() => back()}>Back</button>
+      <button type="button" class="link" disabled={busy} onclick={() => back()}>Back</button>
     {:else}
-    <label>Server <input bind:value={serverUrl} required autocomplete="url" /></label>
-    {#if mode === 'register'}
-      <label>Invite code <input bind:value={inviteCode} required autocomplete="off" /></label>
-    {/if}
-    <label>Username <input bind:value={username} required autocomplete="username" autocapitalize="off" spellcheck="false" /></label>
-    <label>Password
-      <input type="password" bind:value={password} required minlength={mode === 'register' ? 8 : undefined}
-        autocomplete={mode === 'login' ? 'current-password' : 'new-password'} />
-    </label>
+      <label>Server <input bind:value={serverUrl} required autocomplete="url" /></label>
+      {#if mode === 'register'}
+        <label>Invite code <input bind:value={inviteCode} required autocomplete="off" /></label>
+      {/if}
+      <label>Username <input bind:value={username} required autocomplete="username" autocapitalize="off" spellcheck="false" /></label>
+      <label>Password
+        <input type="password" bind:value={password} required minlength={mode === 'register' ? 8 : undefined}
+          autocomplete={mode === 'login' ? 'current-password' : 'new-password'} />
+      </label>
 
-    {#if error}<p class="error" role="alert">{error}</p>{/if}
-    <button class="primary" disabled={busy}>{busy ? '…' : mode === 'login' ? 'Log in' : 'Create account'}</button>
-    <button type="button" class="link" onclick={() => { mode = mode === 'login' ? 'register' : 'login'; error = '' }}>
-      {mode === 'login' ? 'Got an invite? Create an account' : 'Already have an account? Log in'}
-    </button>
+      {#if error}<p class="error" role="alert">{error}</p>{/if}
+      <button class="primary" disabled={busy}>{busy ? '…' : mode === 'login' ? 'Log in' : 'Create account'}</button>
+      <button type="button" class="link" onclick={() => { mode = mode === 'login' ? 'register' : 'login'; error = '' }}>
+        {mode === 'login' ? 'Got an invite? Create an account' : 'Already have an account? Log in'}
+      </button>
     {/if}
   </form>
   <button type="button" class="report" onclick={() => (reportOpen = true)}>Report a bug</button>

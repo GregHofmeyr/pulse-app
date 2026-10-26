@@ -15,10 +15,14 @@
   let setup = $state<TwoFactorSetup | null>(null)
   let codes = $state<string[]>([])
   let signedOutNote = $state('')
+  let copyNote = $state<'' | 'ok' | 'fail'>('')
 
   // The matrix plus a 4-module white quiet zone around it, drawn at a fixed size.
   const QUIET = 4
-  const PX = 200
+  const PX_TARGET = 200
+  // whole pixels per module, so every module is the same size
+  const scale = $derived(setup ? Math.max(1, Math.floor(PX_TARGET / (setup.qr.size + 2 * QUIET))) : 1)
+  const px = $derived(setup ? (setup.qr.size + 2 * QUIET) * scale : 0)
   const dark = $derived.by(() => {
     const out: { x: number; y: number }[] = []
     if (!setup) return out
@@ -31,6 +35,8 @@
     n === 0 ? 'No other devices were signed in.' : `Signed out ${n} other device${n === 1 ? '' : 's'}.`
 
   async function refresh() {
+    status = null
+    error = ''
     try {
       status = (await twoFactor.status()) ?? null
     } catch (err) {
@@ -46,6 +52,7 @@
     setup = null
     codes = []
     signedOutNote = ''
+    copyNote = ''
     error = ''
   }
   function open(v: View) {
@@ -107,18 +114,21 @@
   }
   async function copy() {
     try {
-      await navigator.clipboard?.writeText(codes.join('\n'))
+      if (!navigator.clipboard) throw new Error('no clipboard')
+      await navigator.clipboard.writeText(codes.join('\n'))
+      copyNote = 'ok'
     } catch {
-      // clipboard not available: the codes are still on screen
+      copyNote = 'fail'
     }
   }
 </script>
 
-{#if status || view !== 'status'}
-  <h3>Two-factor authentication</h3>
-{/if}
+<h3>Two-factor authentication</h3>
 
-{#if view === 'status' && status}
+{#if view === 'status' && !status && error}
+  <p class="err" role="alert">{error}</p>
+  <button onclick={refresh}>Try again</button>
+{:else if view === 'status' && status}
   {#if !status.available}
     <p class="hint">Two-factor authentication isn't set up on this server yet.</p>
   {:else if status.enabled}
@@ -143,7 +153,7 @@
 {:else if view === 'scan' && setup}
   <form onsubmit={enable}>
     <p class="q">Scan this with an authenticator app, or type the key in. Then enter the 6-digit code it shows.</p>
-    <svg class="qr" role="img" aria-label="QR code for your authenticator app" width={PX} height={PX}
+    <svg class="qr" role="img" aria-label="QR code for your authenticator app" width={px} height={px}
       viewBox="0 0 {setup.qr.size + 2 * QUIET} {setup.qr.size + 2 * QUIET}" shape-rendering="crispEdges">
       <rect width={setup.qr.size + 2 * QUIET} height={setup.qr.size + 2 * QUIET} fill="#fff" />
       {#each dark as m (m.x + ',' + m.y)}
@@ -164,9 +174,10 @@
   </ul>
   {#if signedOutNote}<p class="ok" role="status">{signedOutNote}</p>{/if}
   <div class="actions">
-    <button onclick={copy}>Copy</button>
+    <button onclick={copy}>{copyNote === 'ok' ? 'Copied' : 'Copy'}</button>
     <button onclick={saved}>I've saved these</button>
   </div>
+  {#if copyNote === 'fail'}<p class="hint" role="status">Couldn't copy: select and copy them by hand.</p>{/if}
 {:else if view === 'regen' || view === 'disable'}
   <form onsubmit={view === 'regen' ? regenerate : disable}>
     <p class="q">
@@ -184,7 +195,7 @@
     </div>
   </form>
 {/if}
-{#if error}<p class="err" role="alert">{error}</p>{/if}
+{#if view !== 'status' && error}<p class="err" role="alert">{error}</p>{/if}
 
 <style>
   h3 { margin: 28px 0 10px; font-size: 15px; }
