@@ -1,11 +1,19 @@
 //! Rebuild voice presence after a restart from LiveKit's own view of its rooms. A Pulse deploy
 //! restarts the server but not LiveKit, so calls carry on and no `participant_joined` is re-sent.
+//!
+//! The same view stands in for the webhooks missed while the server was down: every connected
+//! participant carrying a `pulse_grant` goes through the join check (`revoke::admit`: kept and
+//! recorded as the grant's connection if it's a live session's grant for that room + identity,
+//! removed from LiveKit otherwise), and grants whose recorded connection LiveKit no longer has
+//! are marked left. Participants without the attribute (tokens from before grants existed) are
+//! left alone.
 
 use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::Context;
 use livekit_api::services::room::RoomClient;
+use livekit_protocol::ParticipantInfo;
 use livekit_protocol::participant_info::State;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
@@ -14,6 +22,7 @@ use sqlx::SqlitePool;
 use super::VoiceState;
 use crate::AppState;
 use crate::access::load_channel;
+use crate::auth::session::{self, GRANT_ATTRIBUTE};
 
 /// Startup waits this long for LiveKit before serving without it.
 const BOOT_BUDGET: Duration = Duration::from_secs(2);
@@ -30,37 +39,43 @@ pub struct LiveParticipant {
     pub joined_at: String,
 }
 
-/// Everyone connected, per LiveKit. Rooms are channel ids and identities user ids (our tokens,
-/// `voice/routes.rs`); anything else isn't ours and is skipped. `budget` bounds the whole call.
-pub async fn fetch(
-    url: &str,
-    key: &str,
-    secret: &str,
-    budget: Duration,
-) -> anyhow::Result<Vec<LiveParticipant>> {
+/// What LiveKit reports connected.
+#[derive(Clone, Debug, Default)]
+pub struct Live {
+    /// Voice-room participants: rooms that are channel ids, identities that are user ids (our
+    /// tokens, `voice/routes.rs`).
+    pub voice: Vec<LiveParticipant>,
+    /// Every connected participant in every room (stream rooms included), with its room name.
+    pub all: Vec<(String, ParticipantInfo)>,
+}
+
+/// Everyone connected, per LiveKit. `voice` keeps only rooms that are channel ids and
+/// identities that are user ids; anything else isn't a voice call. `budget` bounds the whole
+/// call.
+pub async fn fetch(url: &str, key: &str, secret: &str, budget: Duration) -> anyhow::Result<Live> {
     let client = RoomClient::with_api_key(url, key, secret)
         .with_failover(false)
         .with_request_timeout(budget);
     tokio::time::timeout(budget, async {
-        let mut out = Vec::new();
+        let mut out = Live::default();
         for room in client.list_rooms(vec![]).await? {
-            let Ok(channel) = room.name.parse::<ChannelId>() else {
-                continue;
-            };
             for p in client.list_participants(&room.name).await? {
-                let Ok(user) = p.identity.parse::<UserId>() else {
-                    continue;
-                };
                 if p.state == State::Disconnected as i32 {
                     continue;
                 }
+                out.all.push((room.name.clone(), p.clone()));
+                let (Ok(channel), Ok(user)) =
+                    (room.name.parse::<ChannelId>(), p.identity.parse::<UserId>())
+                else {
+                    continue;
+                };
                 // 0 (or negative) means LiveKit didn't set it: treat as now, not 1970.
                 let joined_at = (p.joined_at > 0)
                     .then(|| chrono::DateTime::from_timestamp(p.joined_at, 0))
                     .flatten()
                     .map(|t| t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
                     .unwrap_or_else(crate::db::now);
-                out.push(LiveParticipant {
+                out.voice.push(LiveParticipant {
                     channel,
                     user,
                     sid: p.sid,
@@ -151,8 +166,48 @@ pub async fn apply(
         .collect())
 }
 
-/// Ask LiveKit, apply, and announce whoever was added (clients connected by then catch up).
+/// Stand in for the join and leave webhooks missed while the server was down. Each participant
+/// carrying a grant goes through [`super::revoke::admit`] (a refused one is removed from LiveKit
+/// in the background); then every grant in `joined` (read before asking LiveKit) whose
+/// connection LiveKit no longer has is marked left. A join webhook that arrives meanwhile moves
+/// its grant to a new sid, so the left mark (conditional on the old sid) can't hit it. Returns
+/// the sids of refused participants.
+async fn check_grants(
+    s: &AppState,
+    all: &[(String, ParticipantInfo)],
+    joined: &[(String, String)],
+) -> anyhow::Result<HashSet<String>> {
+    let mut refused = HashSet::new();
+    for (room, p) in all {
+        if p.attributes.contains_key(GRANT_ATTRIBUTE) && !super::revoke::admit(s, room, p).await? {
+            refused.insert(p.sid.clone());
+        }
+    }
+    let connected: HashSet<&str> = all
+        .iter()
+        .map(|(_, p)| p.sid.as_str())
+        .filter(|sid| !refused.contains(*sid))
+        .collect();
+    let mut ended = 0;
+    for (grant, sid) in joined {
+        if !connected.contains(sid.as_str()) {
+            session::note_left(&s.db, grant, sid).await?;
+            ended += 1;
+        }
+    }
+    if ended > 0 {
+        tracing::info!(
+            ended,
+            "grants whose LiveKit connection ended while down marked left"
+        );
+    }
+    Ok(refused)
+}
+
+/// Ask LiveKit, check grants, apply, and announce whoever was added (clients connected by then
+/// catch up).
 pub async fn sync(s: &AppState, started_at: &str, budget: Duration) -> anyhow::Result<usize> {
+    let joined = session::joined_grants(&s.db).await?;
     let live = fetch(
         &s.cfg.livekit_api_url,
         &s.cfg.livekit_key,
@@ -160,7 +215,13 @@ pub async fn sync(s: &AppState, started_at: &str, budget: Duration) -> anyhow::R
         budget,
     )
     .await?;
-    let added = apply(&s.db, &s.voice, &live, started_at).await?;
+    let refused = check_grants(s, &live.all, &joined).await?;
+    let voice: Vec<LiveParticipant> = live
+        .voice
+        .into_iter()
+        .filter(|p| !refused.contains(&p.sid))
+        .collect();
+    let added = apply(&s.db, &s.voice, &voice, started_at).await?;
     for p in &added {
         s.hub
             .publish(

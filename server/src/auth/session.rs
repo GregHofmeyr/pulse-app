@@ -197,6 +197,16 @@ pub async fn note_left(db: &SqlitePool, grant: &str, sid: &str) -> anyhow::Resul
     Ok(())
 }
 
+/// Grants with a connection on record that hasn't left, as (id, joined_sid): what a restart
+/// checks against LiveKit's participant list (`voice::restore`).
+pub async fn joined_grants(db: &SqlitePool) -> anyhow::Result<Vec<(String, String)>> {
+    Ok(sqlx::query_as(
+        "SELECT id, joined_sid FROM livekit_grants WHERE joined_sid IS NOT NULL AND left_at IS NULL",
+    )
+    .fetch_all(db)
+    .await?)
+}
+
 /// Delete this session; returns its LiveKit grants (they go with it).
 pub async fn revoke(db: &SqlitePool, token: &str) -> anyhow::Result<Vec<RevokedGrant>> {
     let h = hash_token(token);
