@@ -64,6 +64,15 @@ pub async fn authenticate(db: &SqlitePool, token: &str) -> anyhow::Result<Option
     Ok(Some(user_id.parse()?))
 }
 
+/// Whether a session row with this hash still exists (expiry is not re-checked here).
+pub async fn exists(db: &SqlitePool, token_hash: &str) -> anyhow::Result<bool> {
+    let found: Option<i64> = sqlx::query_scalar("SELECT 1 FROM sessions WHERE token_hash = ?")
+        .bind(token_hash)
+        .fetch_optional(db)
+        .await?;
+    Ok(found.is_some())
+}
+
 pub async fn revoke(db: &SqlitePool, token: &str) -> anyhow::Result<()> {
     sqlx::query("DELETE FROM sessions WHERE token_hash = ?")
         .bind(hash_token(token))

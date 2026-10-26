@@ -236,11 +236,27 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
     // Over the per-user cap: refuse this one, never kick an existing connection.
     let Some(reg) = s
         .hub
-        .try_register(me, token_hash, s.limits.gateway_per_user)
+        .try_register(me, token_hash.clone(), s.limits.gateway_per_user)
     else {
         return close(socket, CLOSE_TOO_MANY_CONNECTIONS, "too many connections").await;
     };
     let (conn, mut rx, mut kick) = (reg.id, reg.rx, reg.kick);
+    // A logout / logout-others may have landed between authenticate and try_register: its kick
+    // ran before this socket was in the hub. Every revoke commits the DELETE and only then
+    // kicks, so after registering either this re-check sees the row gone, or the kick (which
+    // now finds this conn) fires and the loop below closes the socket with 4001.
+    match session::exists(&s.db, &token_hash).await {
+        Ok(true) => {}
+        Ok(false) => {
+            disconnected(&s, conn, me).await;
+            return close(socket, CLOSE_UNAUTHORIZED, "unauthorized").await;
+        }
+        Err(e) => {
+            tracing::error!(error = ?e, "session re-check failed");
+            disconnected(&s, conn, me).await;
+            return close(socket, 1011, "internal error").await;
+        }
+    }
     let ready = match build_ready(&s.db, &s.voice, &s.streams, &s.hub, me).await {
         Ok(r) => r,
         Err(e) => {

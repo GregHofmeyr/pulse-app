@@ -176,3 +176,54 @@ async fn logout_others_requires_auth() {
     // Nothing was revoked.
     assert!(session::authenticate(&app.db, &a).await.unwrap().is_some());
 }
+
+/// Review fix: a session revoked between the gateway's authenticate and its register must not
+/// end up with a live socket (the revoke's kick ran before the socket was in the hub). Simulated
+/// deterministically: a trigger deletes the session row during authenticate's sliding-expiry
+/// UPDATE, so authenticate still says "ok" but the row is gone before register.
+#[tokio::test]
+async fn session_revoked_between_auth_and_register_gets_no_socket() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    sqlx::query("UPDATE sessions SET last_used_at = '2000-01-01T00:00:00.000Z'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER revoke_mid_auth AFTER UPDATE OF last_used_at ON sessions
+         BEGIN DELETE FROM sessions WHERE token_hash = NEW.token_hash; END",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+
+    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
+        .await
+        .unwrap()
+        .0;
+    ws.send(Ws::text(
+        serde_json::to_string(&ClientFrame::Hello {
+            token: a.clone(),
+            client_version: pulse_protocol::PROTOCOL_VERSION,
+        })
+        .unwrap(),
+    ))
+    .await
+    .unwrap();
+    let got = tokio::time::timeout(Duration::from_secs(2), async {
+        while let Some(m) = ws.next().await {
+            match m {
+                Ok(Ws::Text(t)) if t.contains("\"Ready\"") => return "ready".to_string(),
+                Ok(Ws::Close(f)) => return format!("close {:?}", f.map(|f| f.code)),
+                Ok(_) => continue,
+                Err(e) => return format!("error {e}"),
+            }
+        }
+        "eof".to_string()
+    })
+    .await
+    .unwrap();
+    assert_eq!(got, format!("close {:?}", Some(CloseCode::Library(4001))));
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(app.hub.connections_for(a_id), 0);
+}
