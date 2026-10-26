@@ -114,6 +114,20 @@ pub async fn record_grant(
     Ok(done.rows_affected() > 0)
 }
 
+/// Whether a still-valid session was issued the latest LiveKit token for `identity` in `room`.
+pub async fn grant_is_live(db: &SqlitePool, room: &str, identity: &str) -> anyhow::Result<bool> {
+    let found: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM livekit_grants g JOIN sessions s ON s.token_hash = g.token_hash
+         WHERE g.room = ? AND g.identity = ? AND s.expires_at > ?",
+    )
+    .bind(room)
+    .bind(identity)
+    .bind(ts(Utc::now()))
+    .fetch_optional(db)
+    .await?;
+    Ok(found.is_some())
+}
+
 /// Delete this session; returns the LiveKit identities it still held (its grants go with it).
 pub async fn revoke(db: &SqlitePool, token: &str) -> anyhow::Result<Vec<LiveKitGrant>> {
     let h = hash_token(token);

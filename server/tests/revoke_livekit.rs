@@ -1,6 +1,8 @@
 //! Revoking a session also removes the LiveKit participants it admitted (voice room and stream
 //! rooms), and `logout-others` counts only sessions that were still live. LiveKit is a fake
 //! RoomService here (Twirp: POST /twirp/livekit.RoomService/RemoveParticipant, protobuf bodies).
+//! LiveKit doesn't revoke the removed device's JWT, so a join webhook for a room + identity with
+//! no live grant is removed again and never shows up as presence.
 
 mod common;
 
@@ -9,30 +11,52 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::routing::post;
 use base64::Engine;
 use common::*;
+use livekit_api::access_token::{AccessToken, TokenVerifier};
 use livekit_protocol as lkp;
 use prost::Message as _;
-use pulse_protocol::ids::UserId;
+use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::{Channel, LogoutOthersResponse, SessionResponse, VoiceTokenResponse};
 use pulse_server::auth::session;
 use serde_json::json;
+use sha2::{Digest, Sha256};
 
 type Removed = Arc<Mutex<Vec<(String, String)>>>;
 
-/// A fake RoomService that records every RemoveParticipant; returns (base URL, calls).
+/// A fake RoomService that records every RemoveParticipant; returns (base URL, calls). Like
+/// LiveKit it refuses (401, nothing recorded) a request that isn't protobuf or whose bearer JWT
+/// isn't signed with the test key or lacks `room_admin` for that room.
 async fn fake_livekit() -> (String, Removed) {
     let removed: Removed = Arc::default();
     let r = removed.clone();
+    let cfg = test_config();
+    let verifier = Arc::new(TokenVerifier::with_api_key(
+        &cfg.livekit_key,
+        &cfg.livekit_secret,
+    ));
     let app = axum::Router::new().route(
         "/twirp/livekit.RoomService/RemoveParticipant",
-        post(move |body: Bytes| {
-            let r = r.clone();
+        post(move |headers: HeaderMap, body: Bytes| {
+            let (r, verifier) = (r.clone(), verifier.clone());
             async move {
                 let req = lkp::RoomParticipantIdentity::decode(body).unwrap();
+                let protobuf = headers
+                    .get(header::CONTENT_TYPE)
+                    .is_some_and(|v| v == "application/protobuf");
+                let claims = headers
+                    .get(header::AUTHORIZATION)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|v| v.strip_prefix("Bearer "))
+                    .and_then(|jwt| verifier.verify(jwt).ok());
+                let admin = claims.is_some_and(|c| c.video.room_admin && c.video.room == req.room);
+                if !(protobuf && admin) {
+                    return Err(StatusCode::UNAUTHORIZED);
+                }
                 r.lock().unwrap().push((req.room, req.identity));
-                lkp::RemoveParticipantResponse {}.encode_to_vec()
+                Ok(lkp::RemoveParticipantResponse {}.encode_to_vec())
             }
         }),
     );
@@ -367,4 +391,143 @@ async fn a_token_for_a_revoked_session_is_refused() {
     logout_others(&app, &a1).await;
     let r = post_json(&app, &a2, &format!("/voice/{}/token", l.id), json!({})).await;
     assert_eq!(r.status(), 401);
+}
+
+fn signed(app: &TestApp, body: &str) -> String {
+    let sum = base64::engine::general_purpose::STANDARD.encode(Sha256::digest(body.as_bytes()));
+    AccessToken::with_api_key(&app.cfg.livekit_key, &app.cfg.livekit_secret)
+        .with_sha256(&sum)
+        .to_jwt()
+        .unwrap()
+}
+
+/// LiveKit's signed `participant_joined` webhook for `identity` in `room`.
+async fn joined(app: &TestApp, room: &str, identity: &str, sid: &str) {
+    let body = json!({"event": "participant_joined", "id": "EV_join", "room": {"name": room},
+        "participant": {"identity": identity, "sid": sid}})
+    .to_string();
+    let r = app
+        .http
+        .post(app.url("/livekit/webhook"))
+        .header("Authorization", signed(app, &body))
+        .header("Content-Type", "application/webhook+json")
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+}
+
+/// Wait (up to 3 s) until `removed` holds `n` calls; the webhook removes in the background.
+async fn wait_for(removed: &Removed, n: usize) {
+    let until = Instant::now() + Duration::from_secs(3);
+    while removed.lock().unwrap().len() < n && Instant::now() < until {
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+#[tokio::test]
+async fn a_revoked_device_rejoining_with_its_old_jwt_is_removed_again() {
+    let t = setup().await;
+    logout_others(&t.app, &t.a1).await;
+    t.removed.lock().unwrap().clear();
+
+    // a3's DM-call identity and a2's stream video identity reconnect with their old JWTs.
+    let dm = t.dm.id.to_string();
+    let stream_room = format!("{}~s", t.lounge.id);
+    joined(&t.app, &dm, &t.alex.to_string(), "PA_back").await;
+    joined(&t.app, &stream_room, &format!("{}#v", t.alex), "PA_back_v").await;
+    wait_for(&t.removed, 2).await;
+    assert_eq!(
+        calls(&t.removed),
+        set(&[
+            (dm.clone(), t.alex.to_string()),
+            (stream_room, format!("{}#v", t.alex)),
+        ])
+    );
+    assert!(
+        !t.app.voice_members(t.dm.id).contains(&t.alex),
+        "no presence for a refused join"
+    );
+}
+
+#[tokio::test]
+async fn joins_backed_by_a_live_grant_are_left_alone() {
+    let t = setup().await;
+    logout_others(&t.app, &t.a1).await;
+    t.removed.lock().unwrap().clear();
+
+    let sam: UserId =
+        sqlx::query_scalar::<_, String>("SELECT id FROM users WHERE username = 'sam'")
+            .fetch_one(&t.app.db)
+            .await
+            .unwrap()
+            .parse()
+            .unwrap();
+    joined(&t.app, &t.dm.id.to_string(), &sam.to_string(), "PA_sam").await;
+    // The caller's own stream audio (a1 still holds it).
+    joined(
+        &t.app,
+        &format!("{}~s", t.lounge.id),
+        &format!("{}#a", t.alex),
+        "PA_a1_audio",
+    )
+    .await;
+    // The caller rejoins Lounge voice with a fresh token from this device.
+    voice_token(&t.app, &t.a1, &t.lounge).await;
+    joined(
+        &t.app,
+        &t.lounge.id.to_string(),
+        &t.alex.to_string(),
+        "PA_a1",
+    )
+    .await;
+
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(
+        t.removed.lock().unwrap().is_empty(),
+        "{:?}",
+        calls(&t.removed)
+    );
+    assert!(t.app.voice_members(t.dm.id).contains(&sam));
+    assert!(t.app.voice_members(t.lounge.id).contains(&t.alex));
+}
+
+#[tokio::test]
+async fn a_join_with_no_grant_at_all_is_removed() {
+    // e.g. a token minted before grants were recorded, or a session that has since expired
+    let (url, removed) = fake_livekit().await;
+    let app = app_with_livekit(url).await;
+    let (alex, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    joined(&app, &l.id.to_string(), &alex.to_string(), "PA_x").await;
+    wait_for(&removed, 1).await;
+    assert_eq!(
+        calls(&removed),
+        set(&[(l.id.to_string(), alex.to_string())])
+    );
+    assert!(!app.voice_members(l.id).contains(&alex));
+    let open: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM voice_sessions")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(open, 0, "no voice-hours row for a refused join");
+    let _: ChannelId = l.id;
+}
+
+#[tokio::test]
+async fn a_join_after_the_session_expired_is_removed() {
+    let (url, removed) = fake_livekit().await;
+    let app = app_with_livekit(url).await;
+    let (alex, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    voice_token(&app, &a, &l).await;
+    sqlx::query("UPDATE sessions SET expires_at = '2020-01-01T00:00:00.000Z'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    joined(&app, &l.id.to_string(), &alex.to_string(), "PA_x").await;
+    wait_for(&removed, 1).await;
+    assert_eq!(removed.lock().unwrap().len(), 1);
+    assert!(!app.voice_members(l.id).contains(&alex));
 }

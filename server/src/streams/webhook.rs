@@ -41,6 +41,12 @@ pub async fn handle(s: &AppState, channel: &str, ev: &WebhookEvent) -> AppResult
             "role": if role == StreamRole::V { "v" } else { "a" },
         })
     );
+    // A join needs a live session behind it, `#a` included (see `voice::revoke::admit`).
+    if ev.event == "participant_joined"
+        && !crate::voice::revoke::admit(s, &format!("{channel}~s"), &p.identity).await?
+    {
+        return Ok(());
+    }
     if role != StreamRole::V {
         return Ok(());
     }

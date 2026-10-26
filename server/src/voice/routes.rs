@@ -104,6 +104,12 @@ async fn webhook(
     else {
         return Ok(StatusCode::OK);
     };
+    // A join needs a live session behind it (a revoked device's JWT still works at LiveKit).
+    if ev.event == "participant_joined"
+        && !crate::voice::revoke::admit(&s, &room.name, &p.identity).await?
+    {
+        return Ok(StatusCode::OK);
+    }
     let Some(ch) = load_channel(&s.db, channel_id).await? else {
         return Ok(StatusCode::OK);
     };

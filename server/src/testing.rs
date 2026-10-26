@@ -215,3 +215,24 @@ pub async fn general(
         .find(|c| c.name.as_deref() == Some("general"))
         .unwrap()
 }
+
+/// Give `identity` (`<user>`, `<user>#v` or `<user>#a`) in `room` a grant through that user's
+/// newest session, as the voice-token and stream-ticket routes do. Tests that post LiveKit join
+/// webhooks directly need it: a join with no live grant behind it is removed, not recorded.
+pub async fn grant_livekit(app: &TestApp, room: &str, identity: &str) {
+    let user = identity.split('#').next().unwrap_or(identity);
+    let n = sqlx::query(
+        "INSERT INTO livekit_grants (room, identity, token_hash, issued_at)
+         SELECT ?, ?, token_hash, ? FROM sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1
+         ON CONFLICT (room, identity) DO UPDATE SET token_hash = excluded.token_hash",
+    )
+    .bind(room)
+    .bind(identity)
+    .bind(db::now())
+    .bind(user)
+    .execute(&app.db)
+    .await
+    .unwrap()
+    .rows_affected();
+    assert_eq!(n, 1, "{identity} has no session to grant through");
+}

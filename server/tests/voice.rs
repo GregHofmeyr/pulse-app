@@ -124,6 +124,9 @@ async fn webhook_join_server_channel_records_session_and_broadcasts() {
     let (a_id, a) = register(&app, "alex").await;
     let l = lounge(&app, &a).await;
     let mut rx = app.hub.register(a_id, String::new()).rx;
+    // the token route records the grant a join needs
+    let t = post_json(&app, &a, &format!("/voice/{}/token", l.id), json!({})).await;
+    assert_eq!(t.status(), 200);
     let body = event_body("participant_joined", l.id, a_id);
     assert_eq!(
         webhook(&app, &body, &signed(&app, &body)).await.status(),
@@ -165,6 +168,9 @@ async fn webhook_join_dm_call_writes_no_voice_session() {
     let (a_id, a) = register(&app, "alex").await;
     let (b_id, _) = register(&app, "sam").await;
     let dm = create_dm(&app, &a, &[b_id]).await;
+    // the token route records the grant a join needs
+    let t = post_json(&app, &a, &format!("/voice/{}/token", dm.id), json!({})).await;
+    assert_eq!(t.status(), 200);
     let body = event_body("participant_joined", dm.id, a_id);
     assert_eq!(
         webhook(&app, &body, &signed(&app, &body)).await.status(),

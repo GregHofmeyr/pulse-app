@@ -537,6 +537,9 @@ async fn stream_webhook(app: &TestApp, event: &str, ch: ChannelId, identity: &st
 
 /// `stream_webhook` for one particular connection (`sid` changes on every join).
 async fn stream_webhook_sid(app: &TestApp, event: &str, ch: ChannelId, identity: &str, sid: &str) {
+    if event == "participant_joined" {
+        grant_livekit(app, &format!("{ch}~s"), identity).await;
+    }
     let body = json!({"event": event, "id": "EV_test", "room": {"name": format!("{ch}~s")},
         "participant": {"identity": identity, "sid": sid}})
     .to_string();
