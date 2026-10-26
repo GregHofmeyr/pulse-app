@@ -1,9 +1,10 @@
 // Voice state from the Rust VoiceManager (voice://event).
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
+import type { Event as AppEvent } from './protocol/Event'
 import { streamApi } from './stream/stream.svelte'
 import type { SelfVoice } from './selectors'
-import { app } from './store.svelte'
+import { app, onAppEvent } from './store.svelte'
 import { loadAudioConfig, loadLocalMutes, loadVolumes, playSound, saveLocalMutes, saveVolumes, transitionSounds, type AudioConfig, type Connection, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
 import { isJoining, reduceStage, type StageState } from './voicestage'
 
@@ -55,8 +56,20 @@ $effect.root(() => {
 /** The newest join; an older one's result is stale. */
 let joinSeq = 0
 
+/** Removed from a DM or group (or left it from another device): leave its call, or call off the
+ *  join to it, through the normal leave so the core disconnects too (the server has already taken
+ *  us out of the call). A call already being left for another join is left alone. */
+function leaveIfRemoved(e: AppEvent) {
+  if (e.t !== 'ChannelRemoved' || e.d.user_id !== app.state.me?.id) return
+  const c = e.d.channel_id
+  if (voice.joining === c || (voice.channelId === c && voice.leaving !== c)) {
+    voiceApi.leave().catch((err: unknown) => (voice.error = errText(err)))
+  }
+}
+
 export async function startVoiceListening() {
-  return listen<VoiceEvent>('voice://event', ({ payload: e }) => {
+  const offApp = onAppEvent(leaveIfRemoved)
+  const offVoice = await listen<VoiceEvent>('voice://event', ({ payload: e }) => {
     voice.stage = reduceStage(voice.stage, e)
     switch (e.kind) {
       case 'state': {
@@ -105,6 +118,10 @@ export async function startVoiceListening() {
     // alone, since a cancelled join's disconnect can land after it and leave channelId unset for a moment
     if (voice.joining && voice.channelId === voice.joining && voice.stage.stage !== 'disconnected' && !isJoining(voice.stage.stage)) voice.joining = null
   })
+  return () => {
+    offApp()
+    offVoice()
+  }
 }
 
 const errText = (e: unknown) => (typeof e === 'string' ? e : 'Voice error')

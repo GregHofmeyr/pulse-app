@@ -292,7 +292,8 @@ ties each of those tokens to the session that asked for it:
     join reported before its voice join). A voice token that was fetched but never used doesn't count.
 - **Removed from a group.** Removing someone from a group (or leaving it) ends their part in its call. Their LiveKit
   tokens for it are forgotten, LiveKit is asked to remove them (best-effort, at most 2 seconds, as on sign-out) and
-  they are taken off the call's member list. A rejoin with a token they kept fails the join check.
+  they are taken off the call's member list. A rejoin with a token they kept fails the join check. Their client also
+  leaves the call when it is told the group is gone.
 - **Leaving voice.** When someone leaves a server voice channel's call (not a reconnect), LiveKit is asked to remove
   their screen-share connections there too, in the background. This is skipped if they are back in the call by then.
   Removal is by identity, so a new screen-share connection made in the same instant could be removed.
