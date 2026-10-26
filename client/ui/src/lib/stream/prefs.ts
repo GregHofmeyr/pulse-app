@@ -48,3 +48,7 @@ export const saveDiagOverlay = (on: boolean) => save('pulse.stream.diag', { on }
 /** Per-streamer playback volume (percent), keyed by user id. */
 export const loadStreamVolumes = () => load<Record<string, number>>('pulse.stream.volumes', {})
 export const saveStreamVolumes = (v: Record<string, number>) => save('pulse.stream.volumes', v)
+
+/** "Show non-streaming participants" in the call grid, per signed-in user; on by default. */
+export const loadShowEveryone = (userId: string): boolean => load<{ on: boolean }>(`pulse.callgrid.everyone.${userId}`, { on: true }).on
+export const saveShowEveryone = (userId: string, on: boolean) => save(`pulse.callgrid.everyone.${userId}`, { on })

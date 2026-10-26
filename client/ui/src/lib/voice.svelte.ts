@@ -2,6 +2,7 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { streamApi } from './stream/stream.svelte'
+import type { SelfVoice } from './selectors'
 import { app } from './store.svelte'
 import { loadAudioConfig, loadVolumes, playSound, saveVolumes, transitionSounds, type AudioConfig, type Connection, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
 import { isJoining, reduceStage, type StageState } from './voicestage'
@@ -31,6 +32,13 @@ export const voice = $state({
   /** Latest link report (ping, jitter, loss...). */
   link: null as LinkReport | null,
   volumes: loadVolumes() as Record<string, number>,
+})
+
+/** You, for a roster: the channel being joined counts as yours from the click, the one being left stops at once. */
+export const selfVoice = (): SelfVoice => ({
+  channelId: voice.joining ?? (voice.channelId === voice.leaving ? null : voice.channelId),
+  joining: voice.joining !== null,
+  leaving: voice.leaving,
 })
 
 // Forget `leaving` once the server's list no longer has you in that channel. The one settle path:

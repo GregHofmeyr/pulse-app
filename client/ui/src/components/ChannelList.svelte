@@ -6,7 +6,7 @@
   import { api, errorText } from '../lib/tauri'
   import { isMuted } from '../lib/conversations'
   import LiveBadge from './LiveBadge.svelte'
-  import { voice, voiceApi } from '../lib/voice.svelte'
+  import { selfVoice, voiceApi } from '../lib/voice.svelte'
 
   let {
     serverId,
@@ -24,8 +24,7 @@
     onJoinVoice: (id: string) => void
   } = $props()
 
-  // you, for the roster: the channel being joined counts as yours from the click, the one being left stops at once
-  const self = $derived({ channelId: voice.joining ?? (voice.channelId === voice.leaving ? null : voice.channelId), joining: voice.joining !== null, leaving: voice.leaving })
+  const self = $derived(selfVoice())
   const lists = $derived(channelsFor(app.state, serverId))
   // Who's in voice is only shown to people who've joined the server.
   const member = $derived(isMember(app.state, serverId))

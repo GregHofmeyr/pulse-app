@@ -1,14 +1,14 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
   import { app } from '../lib/store.svelte'
-  import { voice, voiceApi } from '../lib/voice.svelte'
-  import { voiceOccupants } from '../lib/selectors'
-  import { avatarColor, initial } from '../lib/avatar'
+  import { selfVoice, voice, voiceApi } from '../lib/voice.svelte'
+  import { callRoster, liveIn } from '../lib/selectors'
+  import { gridTiles, nobodyStreaming } from '../lib/callgrid'
   import { stageLabel } from '../lib/voicestage'
-  import { clampVolume, volumeLabel } from '../lib/voiceui'
-  import LiveBadge from './LiveBadge.svelte'
   import GoLiveDialog from './GoLiveDialog.svelte'
-  import LiveCard from './LiveCard.svelte'
+  import StreamTile from './StreamTile.svelte'
+  import UserTile from './UserTile.svelte'
+  import { loadShowEveryone, saveShowEveryone } from '../lib/stream/prefs'
   import { StreamRoom, type Picked } from '../lib/stream/room'
   import { isWindows } from '../lib/stream/platform'
   import { stream } from '../lib/stream/stream.svelte'
@@ -18,8 +18,19 @@
 
   const channel = $derived(app.state.channels[channelId])
   const inHere = $derived(voice.channelId === channelId)
-  const people = $derived(voiceOccupants(app.state, serverId, channelId))
-  let popoverFor = $state<string | null>(null)
+  const meId = $derived(app.state.me?.id ?? '')
+  const roster = $derived(callRoster(app.state, serverId, channelId, selfVoice()))
+  let showEveryone = $state(loadShowEveryone(app.state.me?.id ?? ''))
+  const tiles = $derived(gridTiles({ roster, streams: liveIn(app.state, channelId), meId, showEveryone }))
+
+  function setShowEveryone(on: boolean) {
+    showEveryone = on
+    if (meId) saveShowEveryone(meId, on)
+  }
+  // The participant menu arrives with its own task; until then a right-click or menu key does nothing here.
+  const noMenu = () => {}
+  // Full view is wired by the viewer task.
+  const noFull = () => {}
 
   let picked = $state<Picked | null>(null)
   let pickError = $state('')
@@ -49,8 +60,6 @@
       picked = null
     }
   })
-
-  const qualityBars = (q: string | undefined) => (q === 'excellent' ? 3 : q === 'good' ? 2 : q === 'poor' ? 1 : q === 'lost' ? 0 : 3)
 </script>
 
 <div class="panel">
@@ -61,45 +70,32 @@
         {stageLabel(voice.stage)}
       </span>
     {/if}
+    <button type="button" class="eye" aria-pressed={showEveryone} aria-label="Show non-streaming participants" data-tip="Show non-streaming participants" onclick={() => setShowEveryone(!showEveryone)}>
+      <Icon name={showEveryone ? 'eye' : 'eyeOff'} size={18} />
+    </button>
   </div>
 
   {#if voice.error}<p class="error" role="alert">{voice.error}</p>{/if}
   {#if voice.stalled && inHere}<p class="error" role="alert">Your audio device stopped responding. Check it's connected, then rejoin.</p>{/if}
 
-  <div class="grid">
-    {#each people as p (p.userId)}
-      {@const isMe = p.userId === app.state.me?.id}
-      <div class="tile" class:speaking={voice.speaking.has(p.userId)}>
-        <button class="avatar-btn" disabled={isMe} aria-label={isMe ? p.name : `Volume for ${p.name}`} data-tip={isMe ? undefined : `Adjust ${p.name}'s volume`}
-          onclick={() => (popoverFor = popoverFor === p.userId ? null : p.userId)}>
-          <span class="av" style:background={avatarColor(p.userId)}>{initial(p.name)}</span>
-          {#if p.deafened}<span class="badge"><Icon name="headphonesOff" size={14} label="Deafened" /></span>
-          {:else if p.muted}<span class="badge"><Icon name="micOff" size={14} label="Muted" /></span>{/if}
-        </button>
-        <div class="name">
-          {p.name}
-          <LiveBadge {channelId} userId={p.userId} />
-          <span class="bars" aria-label="Connection {voice.quality[p.userId] ?? 'good'}">
-            {#each [1, 2, 3] as b}<span class="bar" class:on={b <= qualityBars(voice.quality[p.userId])} style:height="{b * 4}px"></span>{/each}
-          </span>
-        </div>
-        {#if (voice.volumes[p.userId] ?? 100) !== 100}<span class="vol">{volumeLabel(voice.volumes[p.userId])}</span>{/if}
-        {#if popoverFor === p.userId}
-          <div class="pop" role="dialog" aria-label="Volume for {p.name}">
-            <label for="vol-{p.userId}">User volume <strong>{volumeLabel(voice.volumes[p.userId] ?? 100)}</strong></label>
-            <input id="vol-{p.userId}" type="range" min="0" max="200" step="5" value={voice.volumes[p.userId] ?? 100}
-              oninput={(e) => voiceApi.setVolume(p.userId, clampVolume(+e.currentTarget.value))} />
-            <small>Only changes what you hear.</small>
-            <button class="ghost" onclick={() => voiceApi.setVolume(p.userId, 100)}>Reset</button>
-          </div>
-        {/if}
-      </div>
+  <div class="grid-wrap">
+    {#if nobodyStreaming(tiles, showEveryone)}
+      <p class="empty">Nobody's streaming — <button type="button" class="link" onclick={() => setShowEveryone(true)}>show everyone</button></p>
     {:else}
-      <p class="empty">Nobody's here yet.</p>
-    {/each}
+      <div class="grid">
+        {#each tiles as t (t.kind === 'user' ? `u:${t.entry.userId}` : `s:${t.streamer}`)}
+          {#if t.kind === 'user'}
+            <UserTile entry={t.entry} {channelId} onMenu={noMenu} />
+          {:else}
+            <StreamTile {channelId} {serverId} streamer={t.streamer} mine={t.mine} onMenu={noMenu} onFull={noFull} />
+          {/if}
+        {:else}
+          <p class="empty">Nobody's here yet.</p>
+        {/each}
+      </div>
+    {/if}
   </div>
 
-  {#if inHere && stream.live?.channelId === channelId}<LiveCard {channelId} {serverId} />{/if}
   {#if pickError}<p class="error" role="alert">{pickError}</p>{/if}
 
   <div class="bar-wrap">
@@ -132,24 +128,15 @@
   .status { font-size: 12px; font-weight: 600; color: var(--ok); padding: 4px 10px; border-radius: 12px; background: rgba(79, 209, 139, .12); }
   .status.warn { color: #e8b04a; background: rgba(232, 176, 74, .12); }
   .error { margin: 12px 18px 0; color: #f2616b; font-size: 13px; }
-  .grid { flex: 1; padding: 20px; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); grid-auto-rows: 200px; gap: 14px; overflow-y: auto; }
-  .tile { position: relative; background: var(--bg-1); border-radius: 16px; border: 2px solid transparent; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; }
-  .tile.speaking { border-color: var(--ok); }
-  .avatar-btn { position: relative; border: 0; padding: 0; background: none; border-radius: 50%; }
-  .avatar-btn:disabled { cursor: default; }
-  .av { width: 84px; height: 84px; border-radius: 50%; color: #fff; font-size: 34px; font-weight: 700; display: grid; place-items: center; transition: box-shadow .12s; }
-  .tile.speaking .av { box-shadow: 0 0 0 4px var(--bg-1), 0 0 0 7px var(--ok); }
-  .badge { position: absolute; right: -4px; bottom: -4px; width: 28px; height: 28px; border-radius: 50%; background: var(--danger); color: #fff; border: 4px solid var(--bg-1); display: grid; place-items: center; }
-  .name { display: flex; align-items: center; gap: 8px; font-weight: 600; }
-  .bars { display: flex; align-items: flex-end; gap: 2px; }
-  .bar { width: 3px; border-radius: 1px; background: var(--bg-4); }
-  .bar.on { background: var(--ok); }
-  .vol { position: absolute; top: 10px; right: 12px; font-size: 11px; color: var(--text-3); }
-  .pop { position: absolute; top: calc(100% - 30px); left: calc(50% - 120px); z-index: 5; width: 240px; padding: 14px; background: #2e3037; border: 1px solid #3d4048; border-radius: 14px; box-shadow: 0 18px 48px rgba(8, 9, 12, .5); display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
-  .pop label { display: flex; justify-content: space-between; color: var(--text-2); }
-  .pop input { accent-color: var(--accent); }
-  .pop small { color: var(--text-3); }
-  .empty { color: var(--text-3); }
+  .eye { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .eye:hover { background: var(--bg-2); color: var(--text); }
+  .eye[aria-pressed='true'] { color: var(--text); }
+  .grid-wrap { flex: 1; min-height: 0; overflow-y: auto; container-type: inline-size; }
+  .grid { padding: 20px; display: grid; grid-template-columns: 1fr; align-items: start; gap: 14px; }
+  @container (min-width: 560px) { .grid { grid-template-columns: repeat(2, 1fr); } }
+  @container (min-width: 900px) { .grid { grid-template-columns: repeat(3, 1fr); } }
+  .link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; }
+  .empty { margin: 20px; color: var(--text-3); }
   .bar-wrap { height: 84px; flex-shrink: 0; display: grid; place-items: center; }
   .controls { padding: 8px; background: #17181c; border-radius: 18px; display: flex; gap: 8px; }
   .ctl { width: 48px; height: 48px; border: 0; border-radius: 14px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
@@ -158,5 +145,4 @@
   .golive { height: 48px; padding: 0 16px; border: 0; border-radius: 14px; background: var(--ok); color: #0f2a1c; font-weight: 700; }
   .golive.off { opacity: .5; cursor: not-allowed; }
   .primary { height: 44px; padding: 0 22px; border: 0; border-radius: 12px; background: var(--ok); color: #0f2a1c; font-weight: 700; }
-  .ghost { align-self: flex-start; height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
 </style>

@@ -53,3 +53,14 @@ describe('clampGoLive', () => {
     expect(clampGoLive(junk, 1440)).toEqual({ res: 720, fps: 60, audio: true })
   })
 })
+
+describe('call grid toggle', () => {
+  it('show_everyone_defaults_on_and_is_remembered_per_user', async () => {
+    const { loadShowEveryone, saveShowEveryone } = await import('./prefs')
+    expect(loadShowEveryone('U1')).toBe(true)
+    saveShowEveryone('U1', false)
+    expect(loadShowEveryone('U1')).toBe(false)
+    expect(loadShowEveryone('U2')).toBe(true)
+    expect(localStorage.getItem('pulse.callgrid.everyone.U1')).not.toBeNull()
+  })
+})
