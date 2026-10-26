@@ -680,6 +680,23 @@ describe('live sounds', () => {
     expect(played('live_end')).toHaveLength(1)
   })
 
+  it('a_watched_stream_ending_in_another_channel_plays_live_end_once', async () => {
+    // only `watching` makes it audible: it must be read before onStreamEnded drops the watch
+    const { streamApi, stream } = await inVoice()
+    stream.watching = [{ channelId: 'c2', streamer: 'sam', quality: 'auto', view: 'preview' }]
+    streamApi.onEvent(ended('sam', 'stopped', 'c2'))
+    await settle()
+    expect(stream.watching).toEqual([])
+    expect(played('live_end')).toHaveLength(1)
+  })
+
+  it('an_unwatched_stream_ending_in_another_channel_is_silent', async () => {
+    const { streamApi } = await inVoice()
+    streamApi.onEvent(ended('sam', 'stopped', 'c2'))
+    await settle()
+    expect(played('live_end')).toEqual([])
+  })
+
   it('my_own_stop_is_silent_but_a_server_end_plays', async () => {
     const { streamApi } = await inVoice()
     streamApi.onEvent(ended('me', 'stopped'))

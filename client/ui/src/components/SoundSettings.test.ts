@@ -126,6 +126,39 @@ describe('SoundSettings', () => {
     expect(stored().set).toBe('classic')
   })
 
+  it('ArrowLeft from Classic wraps to Goofy: selected, saved and focused', () => {
+    show()
+    radio('Classic').dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true }))
+    flushSync()
+    expect(radio('Goofy').getAttribute('aria-checked')).toBe('true')
+    expect(radio('Classic').getAttribute('aria-checked')).toBe('false')
+    expect(stored().set).toBe('goofy')
+    expect(document.activeElement).toBe(radio('Goofy'))
+  })
+
+  it('a key named like an Object.prototype member does nothing and does not throw', () => {
+    show()
+    const errors: unknown[] = []
+    const onError = (e: ErrorEvent) => {
+      errors.push(e.error)
+      e.preventDefault()
+    }
+    window.addEventListener('error', onError)
+    try {
+      for (const k of ['toString', 'constructor', 'hasOwnProperty', '__proto__']) {
+        const ev = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })
+        radio('Classic').dispatchEvent(ev)
+        flushSync()
+        expect(ev.defaultPrevented, k).toBe(false)
+      }
+    } finally {
+      window.removeEventListener('error', onError)
+    }
+    expect(errors).toEqual([])
+    expect(stored()).toBeNull()
+    expect(radio('Classic').getAttribute('aria-checked')).toBe('true')
+  })
+
   it('names each radio by its label and describes it with the blurb', () => {
     show()
     const r = radio('Goofy')

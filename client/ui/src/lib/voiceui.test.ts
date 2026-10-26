@@ -1,6 +1,5 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { readdirSync } from 'node:fs'
-import { afterEach, beforeEach } from 'vitest'
 import {
   soundFor, volumeLabel, clampVolume, migrateAudioConfig, defaultAudioConfig, playSound,
   SOUND_NAMES, SOUND_SETS, SOUND_LABELS, PREVIEW, PREVIEW_GAP_MS, defaultSoundPrefs,
@@ -113,10 +112,15 @@ describe('playSound', () => {
     expect(calls).toEqual([['play_sound', { name: 'live', set: 'classic', volume: 1, output: null }]])
   })
 
-  it('plays nothing for a switched-off event or volume 0', async () => {
+  it('plays nothing for a switched-off event', async () => {
     const calls = await captureInvokes()
     stubStorage({ 'pulse.sounds': JSON.stringify({ set: 'classic', volume_pct: 100, off: ['message'] }) })
     playSound('message')
+    expect(calls).toEqual([])
+  })
+
+  it('plays nothing at volume 0', async () => {
+    const calls = await captureInvokes()
     stubStorage({ 'pulse.sounds': JSON.stringify({ set: 'classic', volume_pct: 0, off: [] }) })
     playSound('join')
     expect(calls).toEqual([])
@@ -229,7 +233,8 @@ describe('sound catalogue', () => {
   const soundsDir = new URL('../../../src-tauri/sounds/', import.meta.url)
 
   it('set ids match the directories on disk', () => {
-    expect(SOUND_SETS.map((s) => s.id).sort()).toEqual(readdirSync(soundsDir).sort())
+    const dirs = readdirSync(soundsDir, { withFileTypes: true }).filter((e) => e.isDirectory()).map((e) => e.name)
+    expect(SOUND_SETS.map((s) => s.id).sort()).toEqual(dirs.sort())
   })
 
   it('set order, shown names and blurbs', () => {

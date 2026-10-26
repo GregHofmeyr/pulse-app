@@ -22,7 +22,7 @@
     if (e.key === 'Enter' || e.key === ' ') {
       e.preventDefault()
       choose(SOUND_SETS[i].id)
-    } else if (e.key in STEP) {
+    } else if (Object.hasOwn(STEP, e.key)) {
       e.preventDefault()
       const j = (i + STEP[e.key] + SOUND_SETS.length) % SOUND_SETS.length
       choose(SOUND_SETS[j].id)
