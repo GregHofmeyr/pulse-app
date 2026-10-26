@@ -31,6 +31,22 @@ describe('gridTiles', () => {
   })
 })
 
+describe('my own live state', () => {
+  it('my_stream_tile_shows_before_the_server_lists_it', () => {
+    const t = gridTiles({ roster: [alex, sam], streams: {}, meId: 'alex', showEveryone: true, myLive: true })
+    expect(label(t)).toEqual(['user alex', 'stream alex', 'user sam'])
+    expect(t[1]).toEqual({ kind: 'stream', streamer: 'alex', mine: true })
+  })
+  it('is_not_doubled_once_the_server_lists_it', () => {
+    const t = gridTiles({ roster: [alex], streams: { alex: info('alex') }, meId: 'alex', showEveryone: true, myLive: true })
+    expect(label(t)).toEqual(['user alex', 'stream alex'])
+  })
+  it('without_my_user_tile_it_goes_last', () => {
+    const t = gridTiles({ roster: [sam], streams: {}, meId: 'alex', showEveryone: false, myLive: true })
+    expect(label(t)).toEqual(['stream alex'])
+  })
+})
+
 describe('nobodyStreaming', () => {
   it('nobody_streaming_with_toggle_off_is_empty_state', () => {
     const off = gridTiles({ roster: [alex, sam], streams: {}, meId: 'alex', showEveryone: false })

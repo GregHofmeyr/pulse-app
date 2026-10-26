@@ -9,12 +9,17 @@
   let {
     entry,
     compact = false,
+    volumeOpen = false,
+    onVolume,
     onMenu,
   }: {
     entry: RosterEntry
     channelId: string
     /** The small tile in the full view's strip. */
     compact?: boolean
+    /** Whether the volume popover is open: owned by the grid, so only one is open at a time. */
+    volumeOpen?: boolean
+    onVolume?: (open: boolean) => void
     onMenu: (e: MouseEvent | KeyboardEvent, anchor: HTMLElement) => void
   } = $props()
 
@@ -26,7 +31,7 @@
   })
   let tile = $state<HTMLElement>()
   // Until the participant menu replaces it, the avatar opens the per-person volume control.
-  let popover = $state(false)
+  const locked = $derived(isMe || entry.pending)
 
   function contextMenu(e: MouseEvent) {
     e.preventDefault()
@@ -43,8 +48,8 @@
 <!-- the context menu is a pointer shortcut; the keyboard route is the avatar button's ContextMenu / Shift+F10 -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div bind:this={tile} class="tile" class:compact class:pending={entry.pending} class:speaking={voice.speaking.has(entry.userId)} data-user={entry.userId} oncontextmenu={contextMenu}>
-  <button type="button" class="avatar-btn" disabled={isMe || entry.pending} aria-label={isMe ? entry.name : `Volume for ${entry.name}`} data-tip={isMe ? undefined : `Adjust ${entry.name}'s volume`}
-    onkeydown={key} onclick={() => (popover = !popover)}>
+  <button type="button" class="avatar-btn" aria-disabled={locked} aria-label={isMe ? entry.name : `Volume for ${entry.name}`} data-tip={isMe ? undefined : `Adjust ${entry.name}'s volume`}
+    onkeydown={key} onclick={() => !locked && onVolume?.(!volumeOpen)}>
     <span class="av" style:background={avatarColor(entry.userId)}>{initial(entry.name)}</span>
     {#if entry.deafened}<span class="badge"><Icon name="headphonesOff" size={compact ? 11 : 14} label="Deafened" /></span>
     {:else if entry.muted}<span class="badge"><Icon name="micOff" size={compact ? 11 : 14} label="Muted" /></span>{/if}
@@ -60,7 +65,7 @@
     {/if}
   </div>
   {#if !entry.pending && volume !== 100}<span class="vol">{volumeLabel(volume)}</span>{/if}
-  {#if popover && !compact}
+  {#if volumeOpen && !compact}
     <div class="pop" role="dialog" aria-label="Volume for {entry.name}">
       <label for="vol-{entry.userId}">User volume <strong>{volumeLabel(volume)}</strong></label>
       <input id="vol-{entry.userId}" type="range" min="0" max="200" step="5" value={volume}
@@ -76,7 +81,7 @@
   .tile.speaking { border-color: var(--ok); }
   .tile.pending { opacity: .6; }
   .avatar-btn { position: relative; border: 0; padding: 0; background: none; border-radius: 50%; }
-  .avatar-btn:disabled { cursor: default; }
+  .avatar-btn[aria-disabled='true'] { cursor: default; }
   .av { width: 84px; height: 84px; border-radius: 50%; color: #fff; font-size: 34px; font-weight: 700; display: grid; place-items: center; transition: box-shadow .12s; }
   .tile.speaking .av { box-shadow: 0 0 0 4px var(--bg-1), 0 0 0 7px var(--ok); }
   .badge { position: absolute; right: -4px; bottom: -4px; width: 28px; height: 28px; border-radius: 50%; background: var(--danger); color: #fff; border: 4px solid var(--bg-1); display: grid; place-items: center; }

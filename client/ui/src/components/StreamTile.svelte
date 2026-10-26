@@ -11,7 +11,7 @@
   import { voice } from '../lib/voice.svelte'
   import { loadStreamVolumes } from '../lib/stream/prefs'
   import { isWindows } from '../lib/stream/platform'
-  import { findWatch, streamApi } from '../lib/stream/stream.svelte'
+  import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
   import { hostVideo } from '../lib/stream/videoHost'
   import { watchDisabledReason } from '../lib/stream/viewer'
 
@@ -52,6 +52,11 @@
     volume = clampVolume(pct)
     streamApi.setStreamVolume(streamer, volume)
   }
+  function hostKey(e: KeyboardEvent) {
+    if (e.key !== 'Enter' && e.key !== ' ') return
+    e.preventDefault()
+    onFull({ channelId, streamer })
+  }
   function contextMenu(e: MouseEvent) {
     e.preventDefault()
     if (tile) onMenu(e, tile)
@@ -60,13 +65,13 @@
 
 {#if mine}
   <div class="tile own" data-stream={streamer} bind:this={tile}>
-    <LiveCard {channelId} {serverId} />
+    <LiveCard {channelId} {serverId} tile />
+    {#if !stream.live}<p class="reason">You're live from another device</p>{/if}
   </div>
 {:else if watch}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div class="tile watching" data-stream={streamer} bind:this={tile} oncontextmenu={contextMenu}>
-    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-    <div class="host" aria-label="{name}'s stream" onclick={() => onFull({ channelId, streamer })} {@attach hostVideo(channelId, streamer)}></div>
+    <div class="host" role="button" tabindex="0" aria-label="Open {name}'s stream in full view" onclick={() => onFull({ channelId, streamer })} onkeydown={hostKey} {@attach hostVideo(channelId, streamer)}></div>
     <StreamDiagOverlay kind="in" />
     {#if info?.status === 'reconnecting'}<div class="overlay" role="status">Reconnecting…</div>{/if}
     <div class="name-tag">{name}</div>
@@ -77,7 +82,7 @@
         <span class="pct">{volumeLabel(volume)}</span>
       </label>
       <div class="quality">
-        <Select bind:value={quality} label="Quality" options={[{ value: 'auto', label: 'Auto' }, { value: 'saver', label: 'Data saver' }]}
+        <Select bind:value={quality} label="Quality" drop="up" options={[{ value: 'auto', label: 'Auto' }, { value: 'saver', label: 'Data saver' }]}
           onchange={() => streamApi.setQuality(channelId, streamer, quality === 'saver' ? 'saver' : 'auto')} />
       </div>
       <span class="spacer"></span>
@@ -94,10 +99,10 @@
     <span class="av" style:background={avatarColor(streamer)}>{initial(name)}</span>
     <div class="who">{name}</div>
     {#if windows && inChannel}
-      <button type="button" class="watch">Watch</button>
+      <button type="button" class="watch" aria-label="Watch {name}'s stream">Watch</button>
     {:else if windows}
       <!-- joining from here arrives with the full view -->
-      <button type="button" class="watch" disabled>Join &amp; watch</button>
+      <button type="button" class="watch" aria-label="Join and watch {name}'s stream" disabled>Join &amp; watch</button>
     {:else}
       <p class="reason">{reason}</p>
     {/if}
@@ -106,8 +111,6 @@
 
 <style>
   .tile { position: relative; aspect-ratio: 16 / 9; min-width: 0; border-radius: 16px; overflow: hidden; background: var(--bg-1); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
-  .own { aspect-ratio: auto; overflow: visible; background: none; align-items: stretch; justify-content: flex-start; }
-  .own :global(.card) { margin: 0; max-width: none; width: auto; }
   .idle { cursor: pointer; }
   .idle.blocked { cursor: default; }
   .backdrop { position: absolute; inset: 0; opacity: .22; }

@@ -10,12 +10,14 @@ const room = vi.hoisted(() => ({
   disconnect: async () => {},
   watch: async () => 0,
   unwatch: () => {},
-  setLayer: () => {},
+  setLayer: vi.fn(),
   remoteStats: async () => undefined,
 }))
 vi.mock('../lib/stream/room', () => ({ StreamRoom: { connect: async () => room, pick: async () => null }, STREAM_UNAVAILABLE: 'unavailable' }))
 
 import VoicePanel from './VoicePanel.svelte'
+import UserTile from './UserTile.svelte'
+import StreamTileForTest from './StreamTile.svelte'
 import { app } from '../lib/store.svelte'
 import { applyEvent, applyReady, emptyState } from '../lib/state'
 import { voice } from '../lib/voice.svelte'
@@ -42,6 +44,7 @@ const mountPanel = () => {
 }
 const q = (sel: string) => document.querySelector<HTMLElement>(sel)
 const button = (text: string) => [...document.querySelectorAll('button')].find((b) => b.textContent?.trim() === text || b.getAttribute('aria-label') === text)
+const WATCH = "Watch sam's stream"
 const settle = async () => {
   for (let i = 0; i < 5; i++) await tick()
   await new Promise((r) => setTimeout(r, 0))
@@ -63,6 +66,7 @@ beforeEach(() => {
   voice.error = ''
   stream.live = null
   stream.watching = []
+  room.setLayer.mockClear()
 })
 afterEach(async () => {
   if (cmp) unmount(cmp)
@@ -77,7 +81,7 @@ describe('stream tiles', () => {
     mountPanel()
     const tile = q('[data-stream="U2"]')!
     expect(tile.textContent).toContain('LIVE')
-    expect(tile.textContent).toContain('Watch')
+    expect(button(WATCH)).toBeDefined()
     expect(tile.querySelector('.viewers')).toBeNull()
     unmount(cmp!)
     app.state = applyEvent(app.state, { t: 'ViewersChanged', d: { channel_id: 'V1', user_id: 'U2', viewers: ['U1', 'U3'] } }, 0)
@@ -96,7 +100,7 @@ describe('stream tiles', () => {
 
   it('the_watch_button_watches_once', async () => {
     mountPanel()
-    button('Watch')!.click()
+    button(WATCH)!.click()
     await settle()
     expect(invoke.mock.calls.filter(([c]) => c === 'stream_watch')).toHaveLength(1)
   })
@@ -137,7 +141,12 @@ describe('stream tiles', () => {
     voice.channelId = null
     voice.connection = 'disconnected'
     mountPanel()
-    expect(q('[data-stream="U2"]')!.textContent).toContain('Join & watch')
+    const tile = q('[data-stream="U2"]')!
+    expect(tile.textContent).toContain('Join & watch')
+    tile.click()
+    button("Join and watch sam's stream")!.click()
+    expect(invoke.mock.calls.filter(([c]) => c === 'stream_watch')).toHaveLength(0)
+    expect(stream.watching).toEqual([])
   })
 
   it('own_stream_tile_shows_the_local_preview_and_hide_toggle', () => {
@@ -148,6 +157,39 @@ describe('stream tiles', () => {
     expect(tile.querySelector('video')).not.toBeNull()
     expect(button('Hide preview')).toBeDefined()
     expect(tile.textContent).not.toContain('Watch')
+    expect(tile.classList.contains('own')).toBe(true)
+    expect(tile.querySelector('.card.tile')).not.toBeNull()
+  })
+
+  it('own_tile_shows_from_the_local_live_state_before_the_server_lists_it', () => {
+    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false }
+    mountPanel()
+    expect(q('[data-stream="U1"] .card.tile')).not.toBeNull()
+  })
+
+  it('a_grid_watch_asks_for_the_low_layer', async () => {
+    mountPanel()
+    q('[data-stream="U2"]')!.click()
+    await settle()
+    expect(room.setLayer).toHaveBeenCalledWith('U2', 'low')
+  })
+
+  it('the_quality_list_opens_upward_on_the_tile', async () => {
+    mountPanel()
+    await streamApi.watch('V1', 'U2')
+    await settle()
+    expect(q('[data-stream="U2"] .select')?.getAttribute('data-drop')).toBe('up')
+  })
+
+  it('the_preview_is_a_keyboard_target_for_full_view', async () => {
+    const onFull = vi.fn()
+    cmp = mount(StreamTileForTest, { target: document.body, props: { channelId: 'V1', serverId: 'S1', streamer: 'U2', mine: false, onMenu: () => {}, onFull } })
+    await streamApi.watch('V1', 'U2')
+    await settle()
+    const host = q('.host')!
+    expect(host.getAttribute('role')).toBe('button')
+    host.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    expect(onFull).toHaveBeenCalledWith({ channelId: 'V1', streamer: 'U2' })
   })
 })
 
@@ -170,8 +212,21 @@ describe('everyone toggle', () => {
     expect(toggle().getAttribute('aria-pressed')).toBe('false')
   })
 
+  it('the_choice_follows_the_signed_in_user_once_known', () => {
+    localStorage.setItem('pulse.callgrid.everyone.U1', JSON.stringify({ on: false }))
+    app.state = { ...app.state, me: null }
+    mountPanel()
+    expect(toggle().getAttribute('aria-pressed')).toBe('true')
+    app.state = { ...app.state, me }
+    flushSync()
+    expect(toggle().getAttribute('aria-pressed')).toBe('false')
+    toggle().click()
+    flushSync()
+    expect(localStorage.getItem('pulse.callgrid.everyone.U1')).toContain('true')
+  })
+
   it('empty_state_button_shows_everyone_again', () => {
-    app.state = applyEvent(app.state, { t: 'StreamEnded', d: { channel_id: 'V1', user_id: 'U2', reason: 'ended' as never } }, 0)
+    app.state = applyEvent(app.state, { t: 'StreamEnded', d: { channel_id: 'V1', user_id: 'U2', reason: 'stopped' } }, 0)
     localStorage.setItem('pulse.callgrid.everyone.U1', JSON.stringify({ on: false }))
     mountPanel()
     expect(document.body.textContent).toContain("Nobody's streaming — show everyone")
@@ -207,5 +262,28 @@ describe('user tiles', () => {
     const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
     q('[data-user="U2"]')!.dispatchEvent(ev)
     expect(ev.defaultPrevented).toBe(true)
+  })
+
+  it('only_one_volume_popover_is_open_at_a_time', () => {
+    app.state = { ...app.state, voice: { V1: [{ user_id: 'U1', flags }, { user_id: 'U2', flags }, { user_id: 'U3', flags }] } }
+    app.state = { ...app.state, members: { S1: [{ user: me, nickname: null }, { user: sam, nickname: null }, { user: { id: 'U3', username: 'kim', avatar_hash: null }, nickname: null }] } }
+    mountPanel()
+    q('[data-user="U2"] .avatar-btn')!.click()
+    flushSync()
+    q('[data-user="U3"] .avatar-btn')!.click()
+    flushSync()
+    expect(document.querySelectorAll('[role=dialog]').length).toBe(1)
+    expect(q('[data-user="U3"] [role=dialog]')).not.toBeNull()
+  })
+
+  it('the_menu_key_works_on_your_own_tile', () => {
+    const onMenu = vi.fn()
+    cmp = mount(UserTile, { target: document.body, props: { entry: { userId: 'U1', name: 'alex', muted: false, deafened: false, pending: false }, channelId: 'V1', onMenu } })
+    flushSync()
+    const btn = q('.avatar-btn')!
+    expect(btn.getAttribute('aria-disabled')).toBe('true')
+    expect((btn as HTMLButtonElement).disabled).toBe(false)
+    btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true, cancelable: true }))
+    expect(onMenu).toHaveBeenCalledTimes(1)
   })
 })

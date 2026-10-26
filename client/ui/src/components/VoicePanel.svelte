@@ -20,8 +20,14 @@
   const inHere = $derived(voice.channelId === channelId)
   const meId = $derived(app.state.me?.id ?? '')
   const roster = $derived(callRoster(app.state, serverId, channelId, selfVoice()))
-  let showEveryone = $state(loadShowEveryone(app.state.me?.id ?? ''))
-  const tiles = $derived(gridTiles({ roster, streams: liveIn(app.state, channelId), meId, showEveryone }))
+  let showEveryone = $state(true)
+  // the choice is per signed-in user: load it when the user is known (and again if it changes)
+  $effect(() => {
+    showEveryone = loadShowEveryone(meId)
+  })
+  let volumeFor = $state<string | null>(null)
+  const myLive = $derived(stream.live?.channelId === channelId)
+  const tiles = $derived(gridTiles({ roster, streams: liveIn(app.state, channelId), meId, showEveryone, myLive }))
 
   function setShowEveryone(on: boolean) {
     showEveryone = on
@@ -85,7 +91,8 @@
       <div class="grid">
         {#each tiles as t (t.kind === 'user' ? `u:${t.entry.userId}` : `s:${t.streamer}`)}
           {#if t.kind === 'user'}
-            <UserTile entry={t.entry} {channelId} onMenu={noMenu} />
+            <UserTile entry={t.entry} {channelId} onMenu={noMenu} volumeOpen={volumeFor === t.entry.userId}
+              onVolume={(open) => (volumeFor = open ? t.entry.userId : null)} />
           {:else}
             <StreamTile {channelId} {serverId} streamer={t.streamer} mine={t.mine} onMenu={noMenu} onFull={noFull} />
           {/if}
