@@ -551,7 +551,7 @@ pub async fn logout_others(app: AppHandle, core: State<'_, Core>) -> Result<u32,
     core.check(&app, api.logout_others(&token).await)
 }
 
-/// Settings → Security: is two-factor on, and can this server do it at all.
+/// Settings → Advanced: is two-factor on, and can this server do it at all.
 #[tauri::command]
 pub async fn two_factor_status(
     app: AppHandle,

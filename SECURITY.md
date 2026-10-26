@@ -119,7 +119,7 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     the QR code itself from the link, locally, and gives the web UI only a grid of dark and light squares to paint.
     The web UI also receives the key as text, for typing in by hand.
   - **Recovery codes.** They are shown once after turning on 2FA or making new codes, and are kept only in the
-    Settings screen's memory until the user clicks Done or cancels. Nothing is stored locally. **Copy** puts them on
+    Settings screen's memory until the user clicks **I've saved these**, starts another action or leaves the screen. Nothing is stored locally. **Copy** puts them on
     the clipboard only when the user clicks it.
 - **Logs.**
   - **Where and how much.** Logs are written to the app's log folder (`%LOCALAPPDATA%\app.pulse.client\logs` on
@@ -193,7 +193,7 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   a 32-byte key from the `PULSE_TOTP_KEY` setting (64 hex characters), with a fresh random 12-byte nonce each time. The
   account's id is bound in as associated data, so a stored secret copied to another account does not decrypt.
   - **What this protects.** The database file and its backups, which hold only the encrypted secret. The key is not
-    in the backups.
+    in the backups. Backups are already encrypted with `age`, so for them the key is a second layer.
   - **What it does not protect.** The key sits in the server's `.env` file, on the same host as the database. Someone
     who can read both can decrypt every secret. It is a defence for stolen database files and backups, not for a
     compromised host.
@@ -232,7 +232,8 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   limits, these are in memory.
 - **Lost app and recovery codes.** There is no self-service way back in. The server's owner turns 2FA off for the
   account from the host (`reset-2fa`, run in a one-off server container). It deletes the account's secret, recovery
-  codes and tickets, needs no key (so it works if the key is lost), and leaves sessions alone.
+  codes and tickets, never uses the key, so any well-formed `PULSE_TOTP_KEY` in `.env` will do (it still works after the key is lost, once a new
+  one is set), and leaves sessions alone.
 - **Who can see it.** Only the account itself can ask whether its 2FA is on, and how many recovery codes are left.
   Nothing in the member list, the real-time events or any other endpoint carries it. Someone who already has the
   password does learn it at sign-in, from the extra step.
@@ -440,7 +441,8 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   once, while the code and the 5-minute ticket are still valid. There is no WebAuthn or passkey support.
 - **The two-factor key is on the database's host.** `PULSE_TOTP_KEY` lives in the server's `.env`, next to the
   database. It protects the database files and backups, not a compromise of the host (section 4). If the key is lost
-  and the secrets can't be decrypted, the owner has to reset each affected account by hand.
+  and the secrets can't be decrypted, the owner has to reset each affected account by hand. Restoring a backup onto a new host needs the same key too,
+  or every 2FA account has to be reset.
 - **Deploy user is root-equivalent.** The host user that runs the containers is in the `docker` group, which makes it
   root-equivalent on the host. Mitigation: public SSH is closed, so it can only be reached over the owner's private VPN
   (section 5).
