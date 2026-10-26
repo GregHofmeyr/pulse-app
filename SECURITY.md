@@ -187,9 +187,9 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
 
 **Two-factor authentication.** Optional, per account, and off until the member turns it on in Settings → Advanced.
 - **Codes.** Time-based one-time passwords (TOTP): SHA-1, 6 digits, 30-second steps, with the previous and next step
-  also accepted (to allow for clock drift). A code can only be used once: the server remembers
-  the newest step it accepted for the account and refuses that step or any older one. The check is atomic, so two
-  requests racing with the same code cannot both pass.
+  also accepted (to allow for clock drift). A code can only be used once: the server remembers the newest step it
+  accepted for the account and refuses that step or any older one. The check is atomic, so two requests racing with the
+  same code cannot both pass.
 - **The secret at rest.** Each account's 20-byte secret is encrypted before it is stored, with ChaCha20-Poly1305 under
   a 32-byte key from the `PULSE_TOTP_KEY` setting (64 hex characters), with a fresh random 12-byte nonce each time. The
   account's id is bound in as associated data, so a stored secret copied to another account does not decrypt.
@@ -207,14 +207,14 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   server command, not only `serve`. The deploy script refuses to go on without a well-formed key, and provisioning
   fills the key in only when it is missing or blank, never replacing a value.
 - **Turning it on.** Settings asks for the account password, then shows a QR code and the key to type in. 2FA turns on
-  only when the member enters one current code from the app, which proves the app works; a recovery code is not
-  accepted for this. Starting again before then replaces the unfinished secret (and is what the member is told to do
-  if that secret can no longer be decrypted). Turning it on **signs out every other device**, the same way **Sign out
-  all other devices** does (their real-time connections are closed and their calls ended, with the limits described
-  under *Signing out ends calls too*); turning 2FA on and ending those sessions are one database transaction, so
-  neither happens without the other. The device doing it stays signed in, so anyone who had only the password is
-  out. Sessions are not touched otherwise: signing in with a code, turning 2FA
-  off, regenerating recovery codes and the owner reset leave existing sessions alone.
+  only when the member enters one current code from the app, which proves the app works; a recovery code is not accepted
+  for this. Starting again before then replaces the unfinished secret (and is what the member is told to do if that
+  secret can no longer be decrypted). Turning it on **signs out every other device**, the same way **Sign out all other
+  devices** does (their real-time connections are closed and their calls ended, with the limits described under *Signing
+  out ends calls too*); turning 2FA on and ending those sessions are one database transaction, so neither happens
+  without the other. The device doing it stays signed in, so anyone who had only the password is out. Sessions are not
+  touched otherwise: signing in with a code, turning 2FA off, regenerating recovery codes and the owner reset leave
+  existing sessions alone.
 - **Recovery codes.** Turning 2FA on gives 10 recovery codes, shown once. Each is 16 characters from a 31-character
   alphabet (about 79 bits), written `xxxx-xxxx-xxxx-xxxx`; spaces, dashes and case are ignored when one is entered.
   Only their SHA-256 hashes are stored. A code works once and is then deleted. Making new codes needs a current TOTP
