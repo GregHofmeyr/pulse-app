@@ -43,8 +43,8 @@ repository.
   - The server decodes each upload and re-encodes it as a new WebP of at most 480×270. Only the re-encoded image is
     kept and served, so the upload's metadata never reaches viewers.
   - It accepts WebP, PNG or JPEG of at most 100 KB and 1920×1920. The bytes must match the declared type. Animated
-    WebP is refused; an animated PNG keeps only its still default image. An upload that can't be decoded within these limits is refused, and the previous preview
-    stays.
+    WebP is refused; an animated PNG keeps only its still default image. An upload that can't be decoded within
+    these limits is refused, and the previous preview stays.
   - The server keeps only the latest image, in memory, and drops it when the stream ends.
   - Uploads are limited per user to a burst of 6, then one every 5 seconds.
 
@@ -293,8 +293,8 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
 - **Secrets.** The server's secrets live in a mode-`0600` file owned by the service user.
 - **Backups.** Provisioning leaves backups off until the operator sets the encryption key and object-store details.
   Once configured, every night and before each deploy, the database and uploaded media are encrypted with `age` and
-  stored in an S3-compatible object store. That object store is with a different provider from the VM. The decryption key is
-  not on the server, and the plaintext snapshot is deleted as soon as it has been encrypted.
+  stored in an S3-compatible object store. That object store is with a different provider from the VM. The
+  decryption key is not on the server, and the plaintext snapshot is deleted as soon as it has been encrypted.
 - **LiveKit's public address.** LiveKit is given the server's public IPv4 address in the deployment's configuration.
   It does not discover it, so it contacts no outside STUN server at start-up. A deploy stops before changing anything
   if that address is missing or malformed, or is a private, loopback, link-local, carrier-grade NAT, multicast or
