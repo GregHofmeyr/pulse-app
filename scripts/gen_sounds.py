@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Generate Pulse's UI sounds, one directory per set. Run from repo root; output is checked in."""
+"""Generate Pulse's UI sounds, one directory per set (into client/src-tauri/sounds, from any cwd).
+Output is checked in."""
 import math, os, struct, wave
 
 RATE = 22050
-OUT = "client/src-tauri/sounds"
+OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "client/src-tauri/sounds")
 
 def tone(freqs, dur, gap=0.0, vol=0.22):
     """Notes in sequence; each note glides from f0 to f1 with a soft envelope."""
@@ -71,8 +72,9 @@ CLASSIC = {
 
 
 def _note(freq, dur, partials, attack, release=0.03, decay=None):
-    """One note: summed partials (multiple of freq, amplitude), linear attack/release,
-    optionally each partial decaying exponentially (tau seconds per partial)."""
+    """One note: summed partials (multiple of freq, amplitude), linear attack/release
+    (`release=None`: no release ramp), optionally each partial decaying exponentially
+    (tau seconds per partial)."""
     n = int(RATE * dur)
     out = []
     for i in range(n):
@@ -81,7 +83,9 @@ def _note(freq, dur, partials, attack, release=0.03, decay=None):
         for k, (mult, amp) in enumerate(partials):
             a = amp * (math.exp(-t / decay[k]) if decay else 1.0)
             v += a * math.sin(2 * math.pi * freq * mult * t)
-        env = min(1.0, t / attack) * min(1.0, (dur - t) / release)
+        env = min(1.0, t / attack)
+        if release is not None:
+            env *= min(1.0, (dur - t) / release)
         out.append(v * env)
     return out
 
@@ -91,19 +95,21 @@ TWOSTEP = {
     "warm": (659, [(1, 1.0), (3, 0.2), (5, 0.08)], 0.085, 0.010),
     "deep": (220, [(1, 1.0), (2, 0.5), (3, 0.3)], 0.10, 0.006),
 }
-# event -> (first, second) multiples of the base, note length scale
+# event -> (first, second) multiples of the base, note length scale (None: MESSAGE_NOTE)
 TWOSTEP_PAIRS = {
     "join": ((1, 1.5), 1.0), "leave": ((1.5, 1), 1.0),
     "unmute": ((1, 1.25), 0.8), "mute": ((1.25, 1), 0.8),
     "undeafen": ((0.5, 0.6667), 1.0), "deafen": ((0.6667, 0.5), 1.0),
     "live": ((1, 1.6667), 1.0), "live_end": ((1.6667, 1), 1.0),
-    "message": ((1.5, 2.0), 0.6 / 0.07),  # notes are 0.06 s whatever the variant
+    "message": ((1.5, 2.0), None),
 }
+# the message notes are this long whatever the variant
+MESSAGE_NOTE = 0.06
 
 def twostep(variant, event):
     base, partials, note, attack = TWOSTEP[variant]
     (m1, m2), scale = TWOSTEP_PAIRS[event]
-    dur = 0.06 if event == "message" else note * scale
+    dur = MESSAGE_NOTE if scale is None else note * scale
     gap = [0.0] * int(RATE * 0.025)
     return _note(base * m1, dur, partials, attack) + gap + _note(base * m2, dur, partials, attack)
 
@@ -120,8 +126,8 @@ def minimal(variant, event):
         return [math.sin(2 * math.pi * 880 * m * i / RATE) * 0.5 * (1 - math.cos(2 * math.pi * i / n))
                 for i in range(n)]
     if variant == "wood":
-        return _note(587 * m, 0.12, [(1, 1.0), (2.76, 0.3)], 0.002, release=1e-9, decay=[0.025, 0.025])
-    return _note(1319 * m, 0.18, [(1, 1.0), (2.76, 0.4), (5.4, 0.15)], 0.002, release=1e-9,
+        return _note(587 * m, 0.12, [(1, 1.0), (2.76, 0.3)], 0.002, release=None, decay=[0.025, 0.025])
+    return _note(1319 * m, 0.18, [(1, 1.0), (2.76, 0.4), (5.4, 0.15)], 0.002, release=None,
                  decay=[0.060, 0.030, 0.015])
 
 def _scaled(make, minus_db=0.0):

@@ -8,17 +8,21 @@ pub struct Sound {
     pub samples: Vec<f32>,
 }
 
-/// Every set × event is embedded from `sounds/<set>/<name>.wav`. `SETS` comes from the same
-/// invocation as the lookup table, so the list and the table cannot drift.
+/// Every set × event is embedded from `sounds/<set>/<name>.wav`. `SETS` and `NAMES` come from the
+/// same invocation as the lookup table, so the lists and the table cannot drift.
 macro_rules! sound_table {
-    ($($set:literal),+ $(,)?) => {
+    (sets: [$($set:literal),+ $(,)?]; names: $names:tt) => {
         pub const SETS: &[&str] = &[$($set),+];
 
+        sound_table!(@names $names);
+
         fn bytes(set: &str, name: &str) -> Option<&'static [u8]> {
-            sound_table!(@set set, name; $($set),+; [
-                "join", "leave", "mute", "unmute", "deafen", "undeafen", "message", "live", "live_end"
-            ])
+            sound_table!(@set set, name; $($set),+; $names)
         }
+    };
+    (@names [$($name:literal),+ $(,)?]) => {
+        /// The events, in the order the settings list shows them.
+        pub const NAMES: &[&str] = &[$($name),+];
     };
     (@set $s:ident, $n:ident; $($set:literal),+; $names:tt) => {
         match $s {
@@ -26,7 +30,7 @@ macro_rules! sound_table {
             _ => None,
         }
     };
-    (@name $set:literal, $n:ident; [$($name:literal),+]) => {
+    (@name $set:literal, $n:ident; [$($name:literal),+ $(,)?]) => {
         match $n {
             $($name => Some(include_bytes!(concat!("../sounds/", $set, "/", $name, ".wav")) as &[u8]),)+
             _ => None,
@@ -35,20 +39,20 @@ macro_rules! sound_table {
 }
 
 sound_table!(
-    "classic",
-    "twostep-bright",
-    "twostep-warm",
-    "twostep-deep",
-    "minimal-soft",
-    "minimal-wood",
-    "minimal-glass",
-    "goofy",
+    sets: [
+        "classic",
+        "twostep-bright",
+        "twostep-warm",
+        "twostep-deep",
+        "minimal-soft",
+        "minimal-wood",
+        "minimal-glass",
+        "goofy",
+    ];
+    names: [
+        "join", "leave", "mute", "unmute", "deafen", "undeafen", "message", "live", "live_end",
+    ]
 );
-
-/// The events, in the order the settings list shows them.
-pub const NAMES: &[&str] = &[
-    "join", "leave", "mute", "unmute", "deafen", "undeafen", "message", "live", "live_end",
-];
 
 pub const DEFAULT_SET: &str = "classic";
 
@@ -293,21 +297,61 @@ mod tests {
         sets
     }
 
+    /// (channels, sample rate, bits per sample) from the `fmt ` chunk, found by walking the chunks
+    /// (it need not sit at a fixed offset).
+    fn wav_format(b: &[u8]) -> Option<(u16, u32, u16)> {
+        if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+            return None;
+        }
+        let mut i = 12;
+        while i + 8 <= b.len() {
+            let len = u32::from_le_bytes(b[i + 4..i + 8].try_into().ok()?) as usize;
+            let body = b.get(i + 8..i + 8 + len)?;
+            if &b[i..i + 4] == b"fmt " && len >= 16 {
+                return Some((
+                    u16::from_le_bytes(body[2..4].try_into().ok()?),
+                    u32::from_le_bytes(body[4..8].try_into().ok()?),
+                    u16::from_le_bytes(body[14..16].try_into().ok()?),
+                ));
+            }
+            i += 8 + len + (len & 1);
+        }
+        None
+    }
+
+    #[test]
+    fn wav_format_finds_fmt_after_another_chunk() {
+        let mut fmt = Vec::new();
+        fmt.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        fmt.extend_from_slice(&2u16.to_le_bytes()); // channels
+        fmt.extend_from_slice(&44_100u32.to_le_bytes());
+        fmt.extend_from_slice(&176_400u32.to_le_bytes());
+        fmt.extend_from_slice(&4u16.to_le_bytes());
+        fmt.extend_from_slice(&16u16.to_le_bytes());
+        let mut b = b"RIFF\0\0\0\0WAVE".to_vec();
+        b.extend_from_slice(b"LIST");
+        b.extend_from_slice(&3u32.to_le_bytes());
+        b.extend_from_slice(b"abc\0"); // odd length + pad byte
+        b.extend_from_slice(b"fmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&fmt);
+        assert_eq!(wav_format(&b), Some((2, 44_100, 16)));
+        assert_eq!(wav_format(b"RIFF\0\0\0\0WAVE"), None, "no fmt chunk");
+    }
+
     #[test]
     fn wav_files_are_mono_pcm16_22050() {
+        let mut n = 0;
         for (set, files) in sets_on_disk() {
             for f in files {
                 let b = std::fs::read(sounds_dir().join(&set).join(&f)).unwrap();
-                assert!(
-                    b.len() > 44 && &b[0..4] == b"RIFF" && &b[8..12] == b"WAVE",
-                    "{set}/{f}"
-                );
-                let channels = u16::from_le_bytes(b[22..24].try_into().unwrap());
-                let rate = u32::from_le_bytes(b[24..28].try_into().unwrap());
-                let bits = u16::from_le_bytes(b[34..36].try_into().unwrap());
+                let (channels, rate, bits) =
+                    wav_format(&b).unwrap_or_else(|| panic!("{set}/{f}: no RIFF/WAVE fmt chunk"));
                 assert_eq!((channels, bits, rate), (1, 16, 22_050), "{set}/{f} header");
+                n += 1;
             }
         }
+        assert_eq!(n, SETS.len() * NAMES.len(), "every file checked");
     }
 
     #[test]

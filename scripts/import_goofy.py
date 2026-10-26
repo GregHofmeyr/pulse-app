@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the Goofy sound set from Kenney's CC0 packs (see THIRD_PARTY.md).
 
-Usage, from the repo root:  python3 -I scripts/import_goofy.py <kenney-root>
+Usage:  python3 -I scripts/import_goofy.py <kenney-root>
 <kenney-root> holds one unzipped pack per subdirectory (digital-audio/, ...). Output is checked in.
 Needs ffmpeg on PATH.
 """
@@ -10,7 +10,7 @@ import os, subprocess, sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import gen_sounds as g
 
-OUT = "client/src-tauri/sounds"
+OUT = g.OUT
 
 # event -> (pack-relative path, start seconds, max length seconds)
 MAPPING = {
@@ -29,10 +29,16 @@ FADE_IN, FADE_OUT = 0.005, 0.020
 
 
 def decode(path):
-    raw = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", str(g.RATE), "-"],
-        check=True, capture_output=True,
-    ).stdout
+    try:
+        raw = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", path, "-f", "s16le", "-ac", "1", "-ar", str(g.RATE), "-"],
+            check=True, capture_output=True,
+        ).stdout
+    except FileNotFoundError:
+        sys.exit("ffmpeg not found: install it and put it on PATH")
+    except subprocess.CalledProcessError as e:
+        err = e.stderr.decode(errors="replace").strip()
+        sys.exit(f"ffmpeg could not decode {path} (exit {e.returncode}): {err}")
     return [int.from_bytes(raw[i:i + 2], "little", signed=True) / 32768 for i in range(0, len(raw) - 1, 2)]
 
 
