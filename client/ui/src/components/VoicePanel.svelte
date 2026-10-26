@@ -5,13 +5,15 @@
   import { callRoster, liveIn } from '../lib/selectors'
   import { gridTiles, nobodyStreaming } from '../lib/callgrid'
   import { stageLabel } from '../lib/voicestage'
+  import FullView from './FullView.svelte'
   import GoLiveDialog from './GoLiveDialog.svelte'
   import StreamTile from './StreamTile.svelte'
   import UserTile from './UserTile.svelte'
   import { loadShowEveryone, saveShowEveryone } from '../lib/stream/prefs'
   import { StreamRoom, type Picked } from '../lib/stream/room'
   import { isWindows } from '../lib/stream/platform'
-  import { stream } from '../lib/stream/stream.svelte'
+  import { findWatch, stream } from '../lib/stream/stream.svelte'
+  import { callView, openFull } from '../lib/stream/viewer.svelte'
   import { errorText } from '../lib/tauri'
 
   let { channelId, serverId }: { channelId: string; serverId: string | null } = $props()
@@ -35,8 +37,11 @@
   }
   // The participant menu arrives with its own task; until then a right-click or menu key does nothing here.
   const noMenu = () => {}
-  // Full view is wired by the viewer task.
-  const noFull = () => {}
+  /** The watch in full view, when it's in this channel and still being watched. */
+  const fullStreamer = $derived.by(() => {
+    const f = callView.full
+    return f && f.channelId === channelId && findWatch(f.channelId, f.streamer) ? f.streamer : null
+  })
 
   let picked = $state<Picked | null>(null)
   let pickError = $state('')
@@ -84,24 +89,28 @@
   {#if voice.error}<p class="error" role="alert">{voice.error}</p>{/if}
   {#if voice.stalled && inHere}<p class="error" role="alert">Your audio device stopped responding. Check it's connected, then rejoin.</p>{/if}
 
-  <div class="grid-wrap">
-    {#if nobodyStreaming(tiles, showEveryone)}
-      <p class="empty">Nobody's streaming — <button type="button" class="link" onclick={() => setShowEveryone(true)}>show everyone</button></p>
-    {:else}
-      <div class="grid">
-        {#each tiles as t (t.kind === 'user' ? `u:${t.entry.userId}` : `s:${t.streamer}`)}
-          {#if t.kind === 'user'}
-            <UserTile entry={t.entry} {channelId} onMenu={noMenu} volumeOpen={volumeFor === t.entry.userId}
-              onVolume={(open) => (volumeFor = open ? t.entry.userId : null)} />
+  {#if fullStreamer}
+    {#key fullStreamer}<FullView {channelId} streamer={fullStreamer} {serverId} />{/key}
+  {:else}
+    <div class="grid-wrap">
+      {#if nobodyStreaming(tiles, showEveryone)}
+        <p class="empty">Nobody's streaming — <button type="button" class="link" onclick={() => setShowEveryone(true)}>show everyone</button></p>
+      {:else}
+        <div class="grid">
+          {#each tiles as t (t.kind === 'user' ? `u:${t.entry.userId}` : `s:${t.streamer}`)}
+            {#if t.kind === 'user'}
+              <UserTile entry={t.entry} {channelId} onMenu={noMenu} volumeOpen={volumeFor === t.entry.userId}
+                onVolume={(open) => (volumeFor = open ? t.entry.userId : null)} />
+            {:else}
+              <StreamTile {channelId} {serverId} streamer={t.streamer} mine={t.mine} onMenu={noMenu} onFull={openFull} />
+            {/if}
           {:else}
-            <StreamTile {channelId} {serverId} streamer={t.streamer} mine={t.mine} onMenu={noMenu} onFull={noFull} />
-          {/if}
-        {:else}
-          <p class="empty">Nobody's here yet.</p>
-        {/each}
-      </div>
-    {/if}
-  </div>
+            <p class="empty">Nobody's here yet.</p>
+          {/each}
+        </div>
+      {/if}
+    </div>
+  {/if}
 
   {#if pickError}<p class="error" role="alert">{pickError}</p>{/if}
 

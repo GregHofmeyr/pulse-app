@@ -14,6 +14,7 @@
   import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
   import { hostVideo } from '../lib/stream/videoHost'
   import { watchDisabledReason } from '../lib/stream/viewer'
+  import { joinAndWatch } from '../lib/stream/viewer.svelte'
 
   let {
     channelId,
@@ -101,8 +102,8 @@
     {#if windows && inChannel}
       <button type="button" class="watch" aria-label="Watch {name}'s stream">Watch</button>
     {:else if windows}
-      <!-- joining from here arrives with the full view -->
-      <button type="button" class="watch" aria-label="Join and watch {name}'s stream" disabled>Join &amp; watch</button>
+      <!-- joins that voice channel (leaving yours), then opens the stream in full view -->
+      <button type="button" class="watch" aria-label="Join and watch {name}'s stream" onclick={() => joinAndWatch(channelId, streamer)}>Join &amp; watch</button>
     {:else}
       <p class="reason">{reason}</p>
     {/if}
@@ -120,7 +121,6 @@
   .av { width: 64px; height: 64px; border-radius: 50%; color: #fff; font-size: 26px; font-weight: 700; display: grid; place-items: center; }
   .who { font-weight: 600; }
   .watch { height: 34px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--ok); color: #0f2a1c; font-weight: 700; }
-  .watch:disabled { opacity: .5; cursor: not-allowed; }
   .reason { margin: 0; font-size: 12px; color: var(--text-2); text-align: center; padding: 0 12px; }
   .watching { background: #000; }
   .host { position: absolute; inset: 0; cursor: pointer; }

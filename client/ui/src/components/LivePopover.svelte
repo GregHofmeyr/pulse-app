@@ -5,7 +5,7 @@
   import { voice } from '../lib/voice.svelte'
   import { isWindows } from '../lib/stream/platform'
   import { watchDisabledReason } from '../lib/stream/viewer'
-  import { watchStream } from '../lib/stream/viewer.svelte'
+  import { joinAndWatch, watchStream } from '../lib/stream/viewer.svelte'
   import { streamCmd } from '../lib/tauri'
 
   let { channelId, userId, anchor, onClose }: { channelId: string; userId: string; anchor: HTMLElement; onClose: () => void } = $props()
@@ -13,7 +13,10 @@
   const PREVIEW_EVERY_MS = 15_000
   const info = $derived(liveIn(app.state, channelId)[userId])
   const mine = $derived(userId === app.state.me?.id)
-  const reason = $derived(watchDisabledReason({ windows: isWindows(), voiceChannelId: voice.channelId, channelId }))
+  const windows = isWindows()
+  const inChannel = $derived(voice.channelId === channelId)
+  // only Linux blocks watching here: out of the call, the button joins first
+  const reason = $derived(windows ? null : watchDisabledReason({ windows, voiceChannelId: voice.channelId, channelId }))
   let preview = $state<string | null>(null)
   let pop = $state<HTMLElement>()
 
@@ -39,7 +42,8 @@
 
   function watch() {
     if (reason) return
-    watchStream(channelId, userId)
+    if (inChannel) watchStream(channelId, userId)
+    else joinAndWatch(channelId, userId)
     onClose()
   }
 </script>
@@ -57,7 +61,7 @@
     </div>
     {#if !mine}
       <!-- aria-disabled, not disabled: a disabled button swallows the hover that shows the reason -->
-      <button type="button" class="watch" class:off={!!reason} aria-disabled={!!reason} data-tip={reason ?? undefined} onclick={watch}>Watch</button>
+      <button type="button" class="watch" class:off={!!reason} aria-disabled={!!reason} data-tip={reason ?? undefined} onclick={watch}>{inChannel || reason ? 'Watch' : 'Join & watch'}</button>
       {#if reason}<small>{reason}</small>{/if}
     {/if}
   </div>

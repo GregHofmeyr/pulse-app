@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { toasts, watchStream, removeToast } from '../lib/stream/viewer.svelte'
-  import { watchDisabledReason } from '../lib/stream/viewer'
+  import { joinAndWatch, toasts, watchStream, removeToast } from '../lib/stream/viewer.svelte'
   import { isWindows } from '../lib/stream/platform'
   import { voice } from '../lib/voice.svelte'
   import { stream } from '../lib/stream/stream.svelte'
@@ -20,10 +19,17 @@
 
 <div class="stack" aria-live="polite">
   {#each toasts.list as t (t.channelId + t.streamer)}
-    {@const reason = watchDisabledReason({ windows: isWindows(), voiceChannelId: voice.channelId, channelId: t.channelId })}
     <div class="toast" role="status">
       <span><strong>{t.name}</strong> is live</span>
-      <button type="button" class="watch" disabled={!!reason} onclick={() => watchStream(t.channelId, t.streamer)}>Watch</button>
+      {#if !isWindows()}
+        <!-- watching from Linux isn't supported yet -->
+        <button type="button" class="watch" disabled>Watch</button>
+      {:else if voice.channelId === t.channelId}
+        <button type="button" class="watch" onclick={() => watchStream(t.channelId, t.streamer)}>Watch</button>
+      {:else}
+        <!-- you've left that call since: join it again, then watch -->
+        <button type="button" class="watch" onclick={() => joinAndWatch(t.channelId, t.streamer)}>Join &amp; watch</button>
+      {/if}
       <button type="button" class="x" aria-label="Dismiss" onclick={() => removeToast(t.channelId, t.streamer)}>×</button>
     </div>
   {/each}

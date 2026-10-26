@@ -64,3 +64,18 @@ describe('call grid toggle', () => {
     expect(localStorage.getItem('pulse.callgrid.everyone.U1')).not.toBeNull()
   })
 })
+
+describe('mini-preview corner', () => {
+  it('defaults_bottom_right_and_is_remembered', async () => {
+    const { loadMiniCorner, saveMiniCorner } = await import('./prefs')
+    expect(loadMiniCorner()).toBe('br')
+    saveMiniCorner('tl')
+    expect(loadMiniCorner()).toBe('tl')
+    expect(localStorage.getItem('pulse.stream.minicorner')).not.toBeNull()
+  })
+  it('junk_in_storage_falls_back_to_bottom_right', async () => {
+    const { loadMiniCorner } = await import('./prefs')
+    localStorage.setItem('pulse.stream.minicorner', JSON.stringify({ corner: 'middle' }))
+    expect(loadMiniCorner()).toBe('br')
+  })
+})

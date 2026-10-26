@@ -13,6 +13,7 @@
     plus: 'M12 5v14M5 12h14',
     clock: 'M12 3a9 9 0 1 0 0 18 9 9 0 0 0 0-18zM12 7v5l3 2',
     chevron: 'm6 9 6 6 6-6',
+    chevronLeft: 'm15 6-6 6 6 6',
     reply: 'M9 14 4 9l5-5M4 9h10a6 6 0 0 1 6 6v4',
     pencil: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
     trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',

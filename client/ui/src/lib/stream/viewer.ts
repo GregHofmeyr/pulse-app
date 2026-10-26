@@ -45,3 +45,11 @@ export function admit<T>(list: T[], next: T, max: number): { list: T[]; dropped:
   const cut = Math.max(0, all.length - max)
   return { list: all.slice(cut), dropped: all.slice(0, cut) }
 }
+
+/** One watched stream: the streamer in a voice channel. */
+export type WatchKey = { channelId: string; streamer: string }
+
+/** A Join & watch can start watching: the join landed and is connected in that stream's channel. */
+export function pendingWatchReady(p: WatchKey | null, v: { channelId: string | null; connection: string }): boolean {
+  return !!p && v.channelId === p.channelId && v.connection === 'connected'
+}

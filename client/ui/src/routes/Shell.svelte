@@ -3,7 +3,7 @@
   import Icon from '../components/Icon.svelte'
   import ChannelList from '../components/ChannelList.svelte'
   import MemberList from '../components/MemberList.svelte'
-  import StreamViewer from '../components/StreamViewer.svelte'
+  import MiniPreview from '../components/MiniPreview.svelte'
   import StreamToast from '../components/StreamToast.svelte'
   import VoiceStatus from '../components/VoiceStatus.svelte'
   import VoicePanel from '../components/VoicePanel.svelte'
@@ -18,13 +18,14 @@
   import GroupMembers from '../components/GroupMembers.svelte'
   import { onMount, untrack } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
-  import { stream } from '../lib/stream/stream.svelte'
-  import { viewing } from '../lib/stream/viewer.svelte'
+  import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
+  import { pendingWatchReady } from '../lib/stream/viewer'
+  import { callView, openFull } from '../lib/stream/viewer.svelte'
   import { api, errorText } from '../lib/tauri'
   import { app, clock, openDm, ui } from '../lib/store.svelte'
   import { applyEvent, trimHistory } from '../lib/state'
   import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
-  import { isMember } from '../lib/selectors'
+  import { isMember, liveIn } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import { keybindsApi } from '../lib/keybinds'
   import { watchWindowFocus } from '../lib/windowFocus.svelte'
@@ -200,6 +201,53 @@
   const member = $derived(activeServerId ? isMember(app.state, activeServerId) : false)
   const activeChannel = $derived(activeChannelId ? app.state.channels[activeChannelId] : null)
 
+  // The call view asked to be shown (a Watch from a toast or popover, Join & watch, the mini-preview).
+  $effect(() => {
+    const id = callView.goTo
+    if (!id) return
+    untrack(() => {
+      const ch = app.state.channels[id]
+      if (ch) {
+        activeServerId = ch.server_id
+        activeChannelId = id
+      }
+      callView.goTo = null
+    })
+  })
+
+  // The watch in full view ended (stopped, the stream ended, voice left): no full view to go back to.
+  $effect(() => {
+    const f = callView.full
+    if (f && !findWatch(f.channelId, f.streamer)) callView.full = null
+  })
+
+  // Join & watch: watch once the join has connected in that channel. A failed join, a join elsewhere
+  // meanwhile, or the stream ending first drops it.
+  $effect(() => {
+    const p = callView.joinThenWatch
+    if (!p) return
+    const v = { channelId: voice.channelId, connection: voice.connection }
+    const live = !!liveIn(app.state, p.channelId)[p.streamer]
+    const stillJoining = voice.joining === p.channelId || v.channelId === p.channelId
+    if (!live || !stillJoining || voice.joinFailed) {
+      callView.joinThenWatch = null
+      return
+    }
+    if (!pendingWatchReady(p, v)) return
+    untrack(() => {
+      callView.joinThenWatch = null
+      void streamApi.watch(p.channelId, p.streamer)
+      openFull(p)
+    })
+  })
+
+  /** The voice channel the main area shows, if any: its watches show in the grid, the rest in the mini-preview. */
+  const shownCall = $derived(activeChannel?.kind === 'voice' && (!activeServerId || member) ? activeChannel.id : null)
+  const mini = $derived.by(() => {
+    const w = stream.watching.find((x) => x.channelId !== shownCall)
+    return w ? { channelId: w.channelId, streamer: w.streamer, key: `${w.channelId}/${w.streamer}` } : null
+  })
+
   // Launch lands on Home (a clean slate); only the person who creates a server is moved into it.
 
   function selectServer(id: string) {
@@ -307,9 +355,7 @@
     </aside>
 
     <main class="panel content">
-      {#if viewing.req}
-        <StreamViewer />
-      {:else if activeServerId && !member}
+      {#if activeServerId && !member}
         <div class="join">
           <p>You're not in <strong>{activeServer?.name}</strong> yet.</p>
           <button class="primary" onclick={join}>Join server</button>
@@ -326,6 +372,7 @@
       {:else}
         <p class="empty">Pick a channel.</p>
       {/if}
+      {#each mini ? [mini] : [] as m (m.key)}<MiniPreview channelId={m.channelId} streamer={m.streamer} />{/each}
     </main>
 
     {#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />
@@ -427,7 +474,7 @@
   .me-btn:hover { background: var(--bg-2); }
   .me-btn.on { color: #f2616b; }
   .ghost { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
-  .content { flex: 1; min-width: 0; background: var(--bg-2); display: flex; flex-direction: column; }
+  .content { position: relative; flex: 1; min-width: 0; background: var(--bg-2); display: flex; flex-direction: column; }
   .empty { margin: auto; color: var(--text-3); }
   .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .primary { height: 40px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }

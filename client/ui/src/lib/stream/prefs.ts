@@ -52,3 +52,14 @@ export const saveStreamVolumes = (v: Record<string, number>) => save('pulse.stre
 /** "Show non-streaming participants" in the call grid, per signed-in user; on by default. */
 export const loadShowEveryone = (userId: string): boolean => load<{ on: boolean }>(`pulse.callgrid.everyone.${userId}`, { on: true }).on
 export const saveShowEveryone = (userId: string, on: boolean) => save(`pulse.callgrid.everyone.${userId}`, { on })
+
+/** A corner of the main area: top/bottom, left/right. */
+export type Corner = 'tl' | 'tr' | 'bl' | 'br'
+const CORNERS: Corner[] = ['tl', 'tr', 'bl', 'br']
+
+/** Where the mini-preview sits; bottom-right by default. */
+export function loadMiniCorner(): Corner {
+  const c = load<{ corner: unknown }>('pulse.stream.minicorner', { corner: 'br' }).corner
+  return CORNERS.includes(c as Corner) ? (c as Corner) : 'br'
+}
+export const saveMiniCorner = (corner: Corner) => save('pulse.stream.minicorner', { corner })

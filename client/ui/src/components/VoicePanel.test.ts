@@ -22,6 +22,7 @@ import { app } from '../lib/store.svelte'
 import { applyEvent, applyReady, emptyState } from '../lib/state'
 import { voice } from '../lib/voice.svelte'
 import { stream, streamApi } from '../lib/stream/stream.svelte'
+import { callView } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 
 const me = { id: 'U1', username: 'alex', avatar_hash: null }
@@ -71,6 +72,9 @@ beforeEach(() => {
 afterEach(async () => {
   if (cmp) unmount(cmp)
   cmp = undefined
+  callView.full = null
+  callView.goTo = null
+  callView.joinThenWatch = null
   await streamApi.unwatchAll()
   document.body.innerHTML = ''
   vi.restoreAllMocks()
@@ -137,16 +141,21 @@ describe('stream tiles', () => {
     expect(invoke.mock.calls.filter(([c]) => c === 'stream_watch')).toHaveLength(0)
   })
 
-  it('in_a_channel_you_are_not_in_the_button_says_join_and_watch', () => {
+  it('in_a_channel_you_are_not_in_join_and_watch_joins_first', () => {
     voice.channelId = null
     voice.connection = 'disconnected'
     mountPanel()
     const tile = q('[data-stream="U2"]')!
     expect(tile.textContent).toContain('Join & watch')
+    // a click elsewhere on the tile doesn't join
     tile.click()
+    expect(invoke.mock.calls.filter(([c]) => c === 'join_voice')).toHaveLength(0)
     button("Join and watch sam's stream")!.click()
+    expect(invoke).toHaveBeenCalledWith('join_voice', expect.objectContaining({ channelId: 'V1' }))
+    // the watch waits for the join to connect
     expect(invoke.mock.calls.filter(([c]) => c === 'stream_watch')).toHaveLength(0)
     expect(stream.watching).toEqual([])
+    expect(callView.joinThenWatch).toEqual({ channelId: 'V1', streamer: 'U2' })
   })
 
   it('own_stream_tile_shows_the_local_preview_and_hide_toggle', () => {

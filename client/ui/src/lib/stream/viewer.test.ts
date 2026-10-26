@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { admit, dropToast, layerFor, MAX_TOASTS, pushToast, toastFor, watchDisabledReason, type Toast } from './viewer'
+import { admit, dropToast, layerFor, MAX_TOASTS, pendingWatchReady, pushToast, toastFor, watchDisabledReason, type Toast } from './viewer'
 
 describe('toastFor', () => {
   it('only_people_in_that_voice_channel_get_the_toast', () => {
@@ -58,5 +58,16 @@ describe('watch list', () => {
     expect(admit(['a', 'b'], 'c', 2)).toEqual({ list: ['b', 'c'], dropped: ['a'] })
     expect(admit(['a'], 'b', 3)).toEqual({ list: ['a', 'b'], dropped: [] })
     expect(admit([], 'a', 1)).toEqual({ list: ['a'], dropped: [] })
+  })
+})
+
+describe('pendingWatchReady', () => {
+  const k = { channelId: 'c1', streamer: 'u2' }
+  it('a_join_and_watch_is_ready_once_connected_in_that_channel', () => {
+    expect(pendingWatchReady(k, { channelId: 'c1', connection: 'connected' })).toBe(true)
+    expect(pendingWatchReady(k, { channelId: 'c1', connection: 'connecting' })).toBe(false)
+    expect(pendingWatchReady(k, { channelId: 'c2', connection: 'connected' })).toBe(false)
+    expect(pendingWatchReady(k, { channelId: null, connection: 'disconnected' })).toBe(false)
+    expect(pendingWatchReady(null, { channelId: 'c1', connection: 'connected' })).toBe(false)
   })
 })
