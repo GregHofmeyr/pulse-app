@@ -1,0 +1,105 @@
+// @vitest-environment jsdom
+import { flushSync, mount, unmount } from 'svelte'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+
+const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: unknown) => invoke(cmd, args) }))
+
+import SoundSettings from './SoundSettings.svelte'
+
+const LABELS = ['Classic', 'Two-step · Bright', 'Two-step · Warm', 'Two-step · Deep', 'Minimal · Soft', 'Minimal · Wood', 'Minimal · Glass', 'Goofy']
+let cmp: ReturnType<typeof mount> | undefined
+const show = () => {
+  cmp = mount(SoundSettings, { target: document.body })
+  flushSync()
+}
+const radios = () => [...document.querySelectorAll<HTMLElement>('[role=radiogroup][aria-label="Sound set"] [role=radio]')]
+const radio = (label: string) => radios().find((r) => r.textContent?.includes(label))!
+const stored = () => JSON.parse(localStorage.getItem('pulse.sounds') ?? 'null')
+const plays = () => invoke.mock.calls.filter(([c]) => c === 'play_sound').map(([, a]) => a as Record<string, unknown>)
+
+beforeEach(() => {
+  vi.useFakeTimers()
+  invoke.mockClear()
+  localStorage.clear()
+})
+afterEach(() => {
+  if (cmp) unmount(cmp)
+  cmp = undefined
+  document.body.innerHTML = ''
+  vi.useRealTimers()
+})
+
+describe('SoundSettings', () => {
+  it('renders the 8 sets with Classic checked by default', () => {
+    show()
+    expect(radios().length).toBe(8)
+    expect(radios().map((r, i) => r.textContent?.includes(LABELS[i]))).toEqual(Array(8).fill(true))
+    expect(radios().map((r) => r.getAttribute('aria-checked'))).toEqual(['true', ...Array(7).fill('false')])
+    expect(document.querySelector('h3')?.textContent).toBe('Sounds')
+  })
+
+  it('clicking a row selects and saves it', () => {
+    show()
+    radio('Two-step · Warm').click()
+    flushSync()
+    expect(radio('Two-step · Warm').getAttribute('aria-checked')).toBe('true')
+    expect(radio('Classic').getAttribute('aria-checked')).toBe('false')
+    expect(stored().set).toBe('twostep-warm')
+  })
+
+  it('Space and Enter on a row select it', () => {
+    show()
+    radio('Minimal · Wood').dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    flushSync()
+    expect(stored().set).toBe('minimal-wood')
+    radio('Goofy').dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    flushSync()
+    expect(stored().set).toBe('goofy')
+  })
+
+  it('the preview button plays the set at once and leaves the selection alone', () => {
+    show()
+    document.querySelector<HTMLButtonElement>('button[aria-label="Preview Goofy"]')!.click()
+    expect(plays()[0]).toMatchObject({ set: 'goofy', name: 'join' })
+    flushSync()
+    expect(radio('Classic').getAttribute('aria-checked')).toBe('true')
+    expect(stored()).toBeNull()
+  })
+
+  it('the volume slider saves and shows the percentage', () => {
+    show()
+    const input = document.querySelector<HTMLInputElement>('input[type=range][aria-label="Sound volume"]')!
+    expect(input.min).toBe('0')
+    expect(input.max).toBe('100')
+    input.value = '40'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new Event('change', { bubbles: true }))
+    flushSync()
+    expect(stored().volume_pct).toBe(40)
+    expect(document.body.textContent).toContain('40%')
+  })
+
+  it('event switches add to and remove from off', () => {
+    show()
+    const sw = () => document.querySelector<HTMLButtonElement>('button[aria-label="A stream ends"]')!
+    expect(sw().getAttribute('aria-pressed')).toBe('true')
+    sw().click()
+    flushSync()
+    expect(stored().off).toEqual(['live_end'])
+    expect(sw().getAttribute('aria-pressed')).toBe('false')
+    sw().click()
+    flushSync()
+    expect(stored().off).toEqual([])
+  })
+
+  it('unmounting stops a running preview', () => {
+    show()
+    document.querySelector<HTMLButtonElement>('button[aria-label="Preview Classic"]')!.click()
+    expect(plays().length).toBe(1)
+    unmount(cmp!)
+    cmp = undefined
+    vi.advanceTimersByTime(5000)
+    expect(plays().length).toBe(1)
+  })
+})
