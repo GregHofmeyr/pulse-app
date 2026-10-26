@@ -10,7 +10,7 @@
   import { animateEmojiIn } from '../lib/animate.svelte'
   import { avatarColor, initial } from '../lib/avatar'
   import type { Message } from '../lib/protocol/Message'
-import type { Pending } from '../lib/state'
+  import type { Pending } from '../lib/state'
 
   let {
     message,
@@ -146,7 +146,7 @@ import type { Pending } from '../lib/state'
 
 <style>
   .status { display: flex; gap: 10px; align-items: baseline; padding: 0 18px 4px 72px; font-size: 12px; color: var(--text-3); }
-  .status .fail { color: var(--danger, #f2616b); }
+  .status .fail { color: var(--danger); }
   .status button { border: 0; background: none; padding: 0; font-size: 12px; color: var(--text-2); text-decoration: underline; }
   .msg { padding: 8px 18px 2px; position: relative; }
   .msg.grouped { padding-top: 1px; }

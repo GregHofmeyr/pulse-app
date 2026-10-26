@@ -317,6 +317,7 @@ export function restoreUnsent(s: AppState, saved: Record<string, Pending[]>): Ap
   for (const [channel, list] of Object.entries(saved)) {
     if (!(channel in s.channels)) continue
     const known = new Set((pending[channel] ?? []).map((p) => p.nonce))
+    // Failed, never resent: a message in flight at quit may already be on the server, so Retry can duplicate it.
     const fresh = list.filter((p) => !known.has(p.nonce)).map((p): Pending => ({ ...p, status: 'failed', created_at: p.created_at || now }))
     if (!fresh.length) continue
     pending[channel] = [...(pending[channel] ?? []), ...fresh]

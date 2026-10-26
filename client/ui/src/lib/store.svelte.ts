@@ -74,7 +74,9 @@ $effect.root(() => {
 /** The core's (re)connected snapshot. */
 export function handleReady(r: Ready) {
   const before = app.state.streams
-  let next = applyReady(app.state, r)
+  // A different user than the one on screen: nothing of theirs carries over (no sign-out was seen).
+  const prev = app.state.me
+  let next = applyReady(prev && prev.id !== r.me.id ? { ...app.state, pending: {} } : app.state, r)
   if (restoredFor !== r.me.id) {
     restoredFor = r.me.id
     next = restoreUnsent(next, loadUnsent(r.me.id))
@@ -123,5 +125,6 @@ export async function startListening(): Promise<UnlistenFn> {
 }
 
 export function resetState() {
+  restoredFor = null // the next Ready restores again
   app.state = emptyState()
 }

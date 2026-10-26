@@ -29,4 +29,11 @@ describe('unsent storage', () => {
     saveUnsent('U1', { C1: [] })
     expect(localStorage.getItem('pulse.unsent.U1')).toBeNull()
   })
+
+  it('ignores a prototype key', () => {
+    localStorage.setItem('pulse.unsent.U1', `{"__proto__":[{"nonce":"a","content":"x","reply_to_id":null}],"C1":[{"nonce":"b","content":"y","reply_to_id":null}]}`)
+    const got = loadUnsent('U1')
+    expect(Object.keys(got)).toEqual(['C1'])
+    expect(Object.getPrototypeOf(got)).toBe(Object.prototype)
+  })
 })

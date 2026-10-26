@@ -16,7 +16,7 @@ export function loadUnsent(userId: string): Record<string, Pending[]> {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {}
     const out: Record<string, Pending[]> = {}
     for (const [channel, list] of Object.entries(parsed)) {
-      if (!Array.isArray(list)) continue
+      if (channel === '__proto__' || !Array.isArray(list)) continue
       const ok = list.filter(isPending).map((p): Pending => ({
         nonce: p.nonce, content: p.content, reply_to_id: p.reply_to_id, status: 'failed', created_at: typeof p.created_at === 'string' ? p.created_at : '',
       }))

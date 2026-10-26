@@ -12,7 +12,7 @@ const invoke = vi.fn(async (cmd: string, args?: { before?: string | null }): Pro
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import TextChannel from './TextChannel.svelte'
-import { app, handleReady } from '../lib/store.svelte'
+import { app, handleReady, resetState } from '../lib/store.svelte'
 import { addHistory, applyReady, emptyState, markHistory, trimHistory } from '../lib/state'
 
 const msg = (n: number): Message => ({
@@ -53,6 +53,7 @@ describe('TextChannel: unsent messages', () => {
   beforeEach(() => {
     Element.prototype.scrollTo = () => {} // jsdom has none
     localStorage.clear()
+    resetState()
   })
   afterEach(() => (document.body.innerHTML = ''))
   const me = { id: 'U1', username: 'alex', avatar_hash: null }
@@ -74,7 +75,7 @@ describe('TextChannel: unsent messages', () => {
   const button = (label: string) => [...document.querySelectorAll('button')].find((b) => b.textContent === label)
 
   it('unsent_message_looks_like_a_message_faded', () => {
-    const c = show([unsent('n1', 'pending')])
+    const c = show([unsent('t1', 'pending')])
     const u = document.querySelector('.unsent') as HTMLElement
     expect(u.querySelector('.meta strong')?.textContent).toBe('alex')
     expect(u.querySelector('.content strong')?.textContent).toBe('world')
@@ -85,7 +86,7 @@ describe('TextChannel: unsent messages', () => {
   })
 
   it('failed_shows_retry_and_discard', () => {
-    const c = show([unsent('n1', 'failed')])
+    const c = show([unsent('t2', 'failed')])
     expect(document.querySelector('.status')?.textContent).toContain('Failed to send')
     expect(button('Retry')).toBeTruthy()
     expect(button('Discard')).toBeTruthy()
@@ -93,18 +94,18 @@ describe('TextChannel: unsent messages', () => {
   })
 
   it('discard_removes_it_and_retry_resends_with_a_new_nonce', () => {
-    const c = show([unsent('n1', 'failed', 'one'), unsent('n2', 'failed', 'two')])
+    const c = show([unsent('t3', 'failed', 'one'), unsent('t4', 'failed', 'two')])
     invoke.mockClear()
     const [, discard2] = [...document.querySelectorAll('button')].filter((b) => b.textContent === 'Discard')
     discard2.click()
     flushSync()
 
-    expect(app.state.pending['C1'].map((p) => p.nonce)).toEqual(['n1'])
+    expect(app.state.pending['C1'].map((p) => p.nonce)).toEqual(['t3'])
     button('Retry')!.click()
     flushSync()
     const sent = invoke.mock.calls.find(([cmd]) => cmd === 'send_message')!
     expect(sent[1]).toMatchObject({ channelId: 'C1', content: 'one' })
-    expect((sent[1] as { nonce: string }).nonce).not.toBe('n1')
+    expect((sent[1] as { nonce: string }).nonce).not.toBe('t3')
     expect(app.state.pending['C1']).toHaveLength(1)
     expect(app.state.pending['C1'][0].status).toBe('pending')
     unmount(c)
