@@ -50,6 +50,8 @@ tract-pulse = "=0.21.4"
 tract-hir = "=0.21.4"
 tauri-plugin-single-instance = "2"
 base64 = "0.22"
+# The 2FA setup QR code, drawn by the UI from a module matrix (the otpauth URI itself never leaves Rust).
+qrcode = { version = "0.14", default-features = false }
 
 [features]
 # Strong uses DeepFilterNet3's low-latency model (36 MB) instead of the normal one (8 MB).
@@ -62,6 +64,8 @@ log = "0.4"
 # paused-clock tests (`#[tokio::test(start_paused = true)]`)
 tokio = { workspace = true, features = ["test-util"] }
 pulse-server = { path = "../../server", features = ["testing"] }
+# tests compute the codes a phone would show (same version/features as the server)
+totp-rs = { version = "6", default-features = false, features = ["std"] }
 # tests/emoji_e2e.rs builds the PNG and GIF it uploads
 image = { version = "0.25", default-features = false, features = ["png", "gif"] }
 

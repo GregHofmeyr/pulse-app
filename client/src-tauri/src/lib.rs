@@ -10,6 +10,7 @@ pub mod keybinds;
 pub mod logging;
 pub mod media;
 pub mod outbox;
+pub mod qr;
 pub mod reports;
 pub mod session;
 pub mod sounds;
@@ -177,10 +178,16 @@ pub fn run() {
         .register_asynchronous_uri_scheme_protocol(media::SCHEME, media::handle)
         .invoke_handler(tauri::generate_handler![
             commands::login,
+            commands::login_mfa,
             commands::register,
             commands::restore_session,
             commands::logout,
             commands::logout_others,
+            commands::two_factor_status,
+            commands::two_factor_setup,
+            commands::two_factor_enable,
+            commands::two_factor_disable,
+            commands::two_factor_regenerate,
             commands::list_servers,
             commands::gateway_probe,
             commands::send_typing,

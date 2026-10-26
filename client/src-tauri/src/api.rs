@@ -5,12 +5,33 @@ use std::time::Duration;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
     AddMembersRequest, Channel, ChannelKind, CreateDmRequest, CreateEmojiRequest, CustomEmoji,
-    EditMessageRequest, GoLiveRequest, LoginRequest, MarkReadRequest, MediaInfo, Member, Message,
-    MuteTarget, RegisterRequest, RenameChannelRequest, RenameEmojiRequest, SendMessageRequest,
-    Server, SessionResponse, SetMuteRequest, StreamInfo, StreamRole, StreamSettings,
-    StreamTicketRequest, User, VoiceTokenResponse, WatchRequest,
+    EditMessageRequest, GoLiveRequest, LoginMfaRequest, LoginRequest, MarkReadRequest, MediaInfo,
+    Member, Message, MfaRequired, MuteTarget, RecoveryCodesResponse, RegisterRequest,
+    RenameChannelRequest, RenameEmojiRequest, SendMessageRequest, Server, SessionResponse,
+    SetMuteRequest, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
+    TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse,
+    TwoFactorStatus, User, VoiceTokenResponse, WatchRequest,
 };
 use serde::de::DeserializeOwned;
+
+/// What a password login led to. Not `Debug`: both variants hold a credential.
+pub enum LoginOutcome {
+    Session(SessionResponse),
+    /// The account has two-factor on: the ticket goes back with the code (`Api::login_mfa`).
+    MfaRequired {
+        ticket: String,
+    },
+}
+
+/// What a second-step login led to. Not `Debug`: the session holds the token.
+pub enum MfaOutcome {
+    Session(SessionResponse),
+    /// The ticket is gone (expired, spent, or too many wrong codes): start again with the password.
+    Expired,
+}
+
+/// What the login screen says for a wrong code (401 from `/auth/login/2fa`).
+const WRONG_CODE: &str = "That code didn't work. Check the time on your phone and try again.";
 
 #[derive(Debug, thiserror::Error)]
 pub enum ApiError {
@@ -642,19 +663,130 @@ impl Api {
         .await
     }
 
-    pub async fn login(&self, username: &str, password: &str) -> Result<SessionResponse, ApiError> {
+    pub async fn login(&self, username: &str, password: &str) -> Result<LoginOutcome, ApiError> {
         let body = LoginRequest {
             username: username.into(),
             password: password.into(),
         };
+        let r = self
+            .http
+            .post(format!("{}/auth/login", self.base))
+            .json(&body)
+            .send()
+            .await;
+        // A 403 here is either "second step needed" (its body carries the ticket) or an
+        // ordinary refusal, and `checked` would flatten both to a message: look first.
+        let r = match r {
+            Ok(resp) if resp.status() == reqwest::StatusCode::FORBIDDEN => {
+                let path = path_only(resp.url());
+                let bytes = resp.bytes().await.map_err(|e| {
+                    let text = failure_text(e);
+                    log_failure(Some(path.clone()), &text);
+                    ApiError::Network(text)
+                })?;
+                if let Ok(m) = serde_json::from_slice::<MfaRequired>(&bytes)
+                    && m.code == "mfa_required"
+                {
+                    return Ok(LoginOutcome::MfaRequired { ticket: m.ticket });
+                }
+                log_failure(Some(path), "403");
+                let msg = serde_json::from_slice::<pulse_protocol::rest::ApiError>(&bytes)
+                    .map(|e| e.message)
+                    .unwrap_or_else(|_| "unexpected server error".into());
+                return Err(ApiError::Forbidden(msg));
+            }
+            other => other,
+        };
+        Self::parse(r).await.map(LoginOutcome::Session)
+    }
+
+    /// Second login step. 410 = the ticket is dead; 401 = the code was wrong (the ticket lives on).
+    pub async fn login_mfa(&self, ticket: &str, code: &str) -> Result<MfaOutcome, ApiError> {
+        let body = LoginMfaRequest {
+            ticket: ticket.into(),
+            code: code.into(),
+        };
+        let r = self
+            .http
+            .post(format!("{}/auth/login/2fa", self.base))
+            .json(&body)
+            .send()
+            .await;
+        if let Ok(resp) = &r
+            && resp.status() == reqwest::StatusCode::GONE
+        {
+            log_failure(Some(path_only(resp.url())), "410");
+            return Ok(MfaOutcome::Expired);
+        }
+        match Self::parse(r).await {
+            Err(ApiError::Unauthorized) => Err(ApiError::Rejected(WRONG_CODE.into())),
+            other => other.map(MfaOutcome::Session),
+        }
+    }
+
+    pub async fn two_factor_status(&self, token: &str) -> Result<TwoFactorStatus, ApiError> {
         Self::parse(
             self.http
-                .post(format!("{}/auth/login", self.base))
-                .json(&body)
+                .get(format!("{}/auth/2fa", self.base))
+                .bearer_auth(token)
                 .send()
                 .await,
         )
         .await
+    }
+
+    /// Starts (or restarts) setup; the account password is the proof it's really you.
+    pub async fn two_factor_setup(
+        &self,
+        token: &str,
+        password: &str,
+    ) -> Result<TwoFactorSetupResponse, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/auth/2fa/setup", self.base))
+                .bearer_auth(token)
+                .json(&TwoFactorSetupRequest {
+                    password: password.into(),
+                })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn two_factor_enable(
+        &self,
+        token: &str,
+        code: &str,
+    ) -> Result<TwoFactorEnabledResponse, ApiError> {
+        Self::parse(self.code_post(token, "enable", code).await).await
+    }
+
+    /// A TOTP or a recovery code turns it off.
+    pub async fn two_factor_disable(&self, token: &str, code: &str) -> Result<(), ApiError> {
+        Self::ok_empty(self.code_post(token, "disable", code).await).await
+    }
+
+    pub async fn two_factor_regenerate(
+        &self,
+        token: &str,
+        code: &str,
+    ) -> Result<RecoveryCodesResponse, ApiError> {
+        Self::parse(self.code_post(token, "recovery-codes", code).await).await
+    }
+
+    async fn code_post(
+        &self,
+        token: &str,
+        action: &str,
+        code: &str,
+    ) -> Result<reqwest::Response, reqwest::Error> {
+        self.http
+            .post(format!("{}/auth/2fa/{action}", self.base))
+            .bearer_auth(token)
+            .json(&TwoFactorCodeRequest { code: code.into() })
+            .send()
+            .await
     }
 
     pub async fn logout(&self, token: &str) -> Result<(), ApiError> {
@@ -996,7 +1128,11 @@ mod tests {
         let app = testing::spawn().await;
         let (_, token) = testing::register(&app, "alex").await;
         let api = Api::new(&format!("http://{}", app.addr));
-        let other = api.login("alex", "hunter2hunter2").await.unwrap().token;
+        let LoginOutcome::Session(other) = api.login("alex", "hunter2hunter2").await.unwrap()
+        else {
+            panic!("no 2FA here");
+        };
+        let other = other.token;
         assert_eq!(api.logout_others(&token).await.unwrap(), 1);
         assert!(matches!(api.me(&other).await, Err(ApiError::Unauthorized)));
         assert!(api.me(&token).await.is_ok(), "this device stays signed in");
@@ -1079,9 +1215,189 @@ mod tests {
         let reg = api.register(&code, "alex", "hunter2hunter2").await.unwrap();
         assert_eq!(reg.user.username, "alex");
 
-        let login = api.login("alex", "hunter2hunter2").await.unwrap();
+        let LoginOutcome::Session(login) = api.login("alex", "hunter2hunter2").await.unwrap()
+        else {
+            panic!("no 2FA here");
+        };
         assert_eq!(login.user.id, reg.user.id);
         assert_eq!(api.me(&login.token).await.unwrap().username, "alex");
+    }
+
+    /// The code a phone would show for `secret` at `offset` 30 s steps from now. The server
+    /// remembers the last step it accepted, so a test that uses several codes uses several steps.
+    fn code_at(secret_b32: &str, offset: i64) -> String {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        use totp_rs::{Algorithm, Builder, Secret};
+        let t = Builder::new()
+            .with_algorithm(Algorithm::SHA1)
+            .with_digits(6)
+            .with_skew(0)
+            .with_step_duration(30)
+            .with_secret(
+                Secret::try_from_base32(secret_b32)
+                    .unwrap()
+                    .as_bytes()
+                    .to_vec(),
+            )
+            .build_noncompliant();
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_secs();
+        t.generate((now as i64 + offset * 30) as u64).to_string()
+    }
+
+    /// A registered user with 2FA on (enabled with the previous step's code); returns the
+    /// secret, the signed-in token and the recovery codes.
+    async fn two_factor_user(app: &testing::TestApp, api: &Api) -> (String, String, Vec<String>) {
+        let (_, token) = testing::register(app, "alex").await;
+        let setup = api
+            .two_factor_setup(&token, "hunter2hunter2")
+            .await
+            .unwrap();
+        let on = api
+            .two_factor_enable(&token, &code_at(&setup.secret, -1))
+            .await
+            .unwrap();
+        (setup.secret, token, on.recovery_codes)
+    }
+
+    #[tokio::test]
+    async fn login_for_a_two_factor_user_asks_for_a_code() {
+        let app = testing::spawn().await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        two_factor_user(&app, &api).await;
+        let out = api.login("alex", "hunter2hunter2").await.unwrap();
+        let LoginOutcome::MfaRequired { ticket } = out else {
+            panic!("expected a ticket");
+        };
+        assert!(!ticket.is_empty());
+    }
+
+    #[tokio::test]
+    async fn login_for_a_user_without_two_factor_still_gives_a_session() {
+        let app = testing::spawn().await;
+        testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let out = api.login("alex", "hunter2hunter2").await.unwrap();
+        assert!(matches!(out, LoginOutcome::Session(s) if s.user.username == "alex"));
+    }
+
+    #[tokio::test]
+    async fn a_403_that_is_not_mfa_required_stays_forbidden() {
+        // a login 403 whose body is a plain api error (not the mfa_required one)
+        let (base, _) = canned_server(
+            "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: 49\r\nConnection: close\r\n\r\n{\"code\":\"forbidden\",\"message\":\"not allowed here\"}",
+        )
+        .await;
+        let err = Api::new(&base).login("alex", "x").await.err().unwrap();
+        assert!(
+            matches!(&err, ApiError::Forbidden(m) if m == "not allowed here"),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn login_mfa_with_the_right_code_gives_a_session_then_the_ticket_is_spent() {
+        let app = testing::spawn().await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let (secret, _, _) = two_factor_user(&app, &api).await;
+        let LoginOutcome::MfaRequired { ticket } =
+            api.login("alex", "hunter2hunter2").await.unwrap()
+        else {
+            panic!("expected a ticket");
+        };
+        let out = api.login_mfa(&ticket, &code_at(&secret, 0)).await.unwrap();
+        assert!(matches!(out, MfaOutcome::Session(s) if s.user.username == "alex"));
+        let again = api.login_mfa(&ticket, &code_at(&secret, 1)).await.unwrap();
+        assert!(matches!(again, MfaOutcome::Expired));
+    }
+
+    #[tokio::test]
+    async fn login_mfa_with_a_wrong_code_says_so_and_keeps_the_ticket() {
+        let app = testing::spawn().await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let (secret, _, _) = two_factor_user(&app, &api).await;
+        let LoginOutcome::MfaRequired { ticket } =
+            api.login("alex", "hunter2hunter2").await.unwrap()
+        else {
+            panic!("expected a ticket");
+        };
+        let err = api.login_mfa(&ticket, "000000").await.err().unwrap();
+        assert!(
+            matches!(&err, ApiError::Rejected(m) if m == "That code didn't work. Check the time on your phone and try again."),
+            "{err:?}"
+        );
+        let out = api.login_mfa(&ticket, &code_at(&secret, 0)).await.unwrap();
+        assert!(matches!(out, MfaOutcome::Session(_)));
+    }
+
+    #[tokio::test]
+    async fn two_factor_setup_enable_regenerate_disable_round_trip() {
+        let app = testing::spawn().await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let (_, token) = testing::register(&app, "alex").await;
+        let st = api.two_factor_status(&token).await.unwrap();
+        assert!((st.available, st.enabled) == (true, false));
+
+        let setup = api
+            .two_factor_setup(&token, "hunter2hunter2")
+            .await
+            .unwrap();
+        assert!(setup.otpauth_uri.starts_with("otpauth://totp/Pulse:alex?"));
+        let on = api
+            .two_factor_enable(&token, &code_at(&setup.secret, -1))
+            .await
+            .unwrap();
+        assert_eq!(on.recovery_codes.len(), 10);
+        assert!(api.two_factor_status(&token).await.unwrap().enabled);
+
+        let fresh = api
+            .two_factor_regenerate(&token, &code_at(&setup.secret, 0))
+            .await
+            .unwrap();
+        assert_eq!(fresh.recovery_codes.len(), 10);
+        assert_ne!(fresh.recovery_codes, on.recovery_codes);
+
+        api.two_factor_disable(&token, &fresh.recovery_codes[0])
+            .await
+            .unwrap();
+        assert!(!api.two_factor_status(&token).await.unwrap().enabled);
+    }
+
+    #[tokio::test]
+    async fn a_wrong_password_or_code_while_signed_in_is_forbidden_not_unauthorized() {
+        let app = testing::spawn().await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let (_, token) = testing::register(&app, "alex").await;
+        let err = api
+            .two_factor_setup(&token, "nopenopenope")
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, ApiError::Forbidden(_)), "{err:?}");
+        api.two_factor_setup(&token, "hunter2hunter2")
+            .await
+            .unwrap();
+        let err = api.two_factor_enable(&token, "000000").await.err().unwrap();
+        assert!(matches!(err, ApiError::Forbidden(_)), "{err:?}");
+    }
+
+    /// Answers every request with `reply` verbatim, then closes.
+    async fn canned_server(reply: &'static str) -> (String, ()) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let l = tokio::net::TcpListener::bind("localhost:0").await.unwrap();
+        let base = format!("http://localhost:{}", l.local_addr().unwrap().port());
+        tokio::spawn(async move {
+            while let Ok((mut s, _)) = l.accept().await {
+                tokio::spawn(async move {
+                    let mut chunk = [0u8; 4096];
+                    let _ = s.read(&mut chunk).await;
+                    let _ = s.write_all(reply.as_bytes()).await;
+                });
+            }
+        });
+        (base, ())
     }
 
     #[tokio::test]
@@ -1101,7 +1417,7 @@ mod tests {
         for _ in 0..5 {
             let _ = api.login("alex", "nopenopenope").await;
         }
-        let err = api.login("alex", "nopenopenope").await.unwrap_err();
+        let err = api.login("alex", "nopenopenope").await.err().unwrap();
         assert!(matches!(err, ApiError::RateLimited), "{err:?}");
         assert_eq!(err.to_string(), "slow down a little, then try again");
         assert!(
@@ -1115,7 +1431,7 @@ mod tests {
         let app = testing::spawn().await;
         testing::register(&app, "alex").await;
         let api = Api::new(&format!("http://{}", app.addr));
-        let err = api.login("alex", "nopenopenope").await.unwrap_err();
+        let err = api.login("alex", "nopenopenope").await.err().unwrap();
         assert!(matches!(err, ApiError::Unauthorized), "{err:?}");
     }
 
@@ -1418,7 +1734,7 @@ mod tests {
     async fn timeout_on_unroutable_host() {
         let api = Api::new("http://10.255.255.1:9");
         let started = std::time::Instant::now();
-        let err = api.login("a", "b").await.unwrap_err();
+        let err = api.login("a", "b").await.err().unwrap();
         assert!(matches!(err, ApiError::Network(_)), "{err:?}");
         assert!(started.elapsed() < std::time::Duration::from_secs(7));
     }
