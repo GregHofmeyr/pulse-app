@@ -1675,9 +1675,11 @@ impl VoiceManager {
         self.link.set_watching(on);
     }
 
-    /// A fresh page: meters shown by the previous one are gone.
-    pub fn reset_meters(&self) {
+    /// A fresh page (first load or a webview reload): the meters and status panel the previous
+    /// page showed are gone, and their close calls will never come.
+    pub fn reset_page_views(&self) {
         self.controls.lock().unwrap().reset_meters();
+        self.link.set_watching(false);
     }
 
     pub async fn set_peer_volume(&self, user_id: String, pct: u16) {
@@ -2678,6 +2680,18 @@ mod tests {
                 .unwrap()
                 .points(tokio::time::Instant::now())
                 .is_empty()
+    }
+
+    /// A webview reload with the status panel open: the old page's close never comes, so the
+    /// 1 s link polling must stop with it (the new page reopens it if it shows the panel).
+    #[test]
+    fn a_reloaded_page_stops_link_watching() {
+        let (vm, _) = collecting_manager();
+        vm.watch_link(true);
+        vm.watch_meters(true);
+        vm.reset_page_views();
+        assert!(!vm.link.is_watching(), "link polling outlived the page");
+        assert!(!vm.controls.lock().unwrap().meters_shown());
     }
 
     /// A join that never got a session (failed or cancelled) must not leave the last call's

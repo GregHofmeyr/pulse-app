@@ -395,8 +395,9 @@ pub async fn restore_session(
     voice: State<'_, VoiceManager>,
 ) -> Result<Option<User>, ApiError> {
     crate::startup::mark("restore_begin");
-    // Runs once per page load: a reload (renderer crash) can't leave the old page's meters counted.
-    voice.reset_meters();
+    // Runs once per page load: a reload (renderer crash) can't leave the old page's meters
+    // counted or its status panel's 1 s link polling running.
+    voice.reset_page_views();
     // The UI listens before it calls this. Already attached = the webview reloaded.
     let reload = core.ui_attached.send_replace(true);
     let Some(server) = core.start_stored(&app, reload) else {

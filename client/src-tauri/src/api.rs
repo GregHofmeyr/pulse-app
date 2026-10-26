@@ -1035,8 +1035,13 @@ mod tests {
 
     #[tokio::test]
     async fn too_many_failed_logins_says_slow_down() {
+        use pulse_server::limits::{LimitsConfig, Rate};
         let mut cfg = testing::test_config();
-        cfg.limits = pulse_server::limits::LimitsConfig::default();
+        // a burst of 5 that never refills within the test: the burst rule, not the machine's speed
+        cfg.limits = LimitsConfig {
+            login_ip: Rate::new(5, 1e-9),
+            ..LimitsConfig::unlimited()
+        };
         let app = testing::spawn_with(cfg).await;
         testing::register(&app, "alex").await;
         let api = Api::new(&format!("http://{}", app.addr));
@@ -1050,6 +1055,15 @@ mod tests {
             crate::outbox::retryable(&err),
             "a rate-limited send is retried later"
         );
+    }
+
+    /// The server's shipped login limits, which the slow-down message above is written for.
+    #[test]
+    fn default_login_limits_are_five_a_minute_per_ip_and_ten_an_hour_per_user() {
+        use pulse_server::limits::{LimitsConfig, Rate};
+        let d = LimitsConfig::default();
+        assert_eq!(d.login_ip, Rate::per_minute(5));
+        assert_eq!(d.login_user, Rate::per_hour(10));
     }
 
     #[tokio::test]
