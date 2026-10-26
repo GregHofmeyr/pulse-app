@@ -394,8 +394,19 @@ any work.
   - no `unsafe-eval` and no inline scripts (inline styles are allowed: `style-src 'self' 'unsafe-inline'`);
   - images only from the app itself, `data:` and the app's emoji cache;
   - `connect-src` limited to the app's own IPC and the voice server.
-- **Tauri capabilities.** The capability set is the Tauri core defaults plus four window controls (minimize, maximize,
-  close, drag). No file-system, shell, HTTP or opener plugins are included.
+- **Tauri capabilities.** The main window gets an explicit list, not `core:default`. It is exactly:
+  - `core:event:allow-listen` and `core:event:allow-unlisten` (the UI listens to events from the Rust core);
+  - `core:window:allow-is-focused` (focus state);
+  - `core:window:allow-minimize`, `core:window:allow-toggle-maximize` and `core:window:allow-close` (the title-bar
+    buttons);
+  - `core:window:allow-start-dragging` and `core:window:allow-internal-toggle-maximize` (dragging the title bar, and
+    double-clicking it to maximise).
+  - The page cannot emit events, use the app, path, image, menu or tray APIs, or open devtools. It reaches the Rust core
+    only through the app's own commands.
+  - No file-system, shell, HTTP or opener plugins are included. There is one capability file and one window (`main`).
+  - A test (`client/src-tauri/tests/capabilities.rs`) fails if the list changes.
+- **DNS prefetch.** `index.html` sets `x-dns-prefetch-control: off`, so the webview does not resolve hostnames it has
+  not been told to connect to.
 - **Where network access happens.**
   - Most network and file access goes through the Rust core's own commands.
   - The exception is screen-share video. The webview publishes and watches it directly with the LiveKit JavaScript SDK
