@@ -222,11 +222,11 @@ async fn check_login(s: &AppState, req: LoginRequest) -> AppResult<Json<SessionR
         let _ = password::verify_async(req.password, DUMMY_HASH.clone()).await;
         return Err(AppError::Unauthorized);
     };
-    if !password::verify_async(req.password.clone(), hash).await {
+    if !password::verify_async(req.password.clone(), hash.clone()).await {
         return Err(AppError::Unauthorized);
     }
     let id: UserId = id.parse().map_err(anyhow::Error::from)?;
-    let token = match session::create_unless_2fa(&s.db, id).await? {
+    let token = match session::create_unless_2fa(&s.db, id, &hash).await? {
         session::PasswordLogin::Session(token) => token,
         session::PasswordLogin::TwoFactor(ticket) => {
             return Err(AppError::MfaRequired(Ticket(ticket)));
@@ -307,34 +307,49 @@ async fn change_password(
         }
         check_password_rule(&req.new_password)?;
         let new = password::hash_async(req.new_password.clone()).await?;
-        let mut tx = crate::db::begin_write(&s.db).await?;
-        super::two_factor::check_code_if_on(&mut tx, &s, u, req.code.as_deref()).await?;
-        // Only over the hash that was checked: a change that committed meanwhile (say, the owner
-        // who just changed it, racing someone with the old password) is not overwritten.
-        let changed =
-            sqlx::query("UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?")
-                .bind(&new)
-                .bind(u.to_string())
-                .bind(&old)
-                .execute(&mut *tx)
-                .await?
-                .rows_affected();
-        if changed != 1 {
-            return Err(AppError::Conflict(
-                "your password was just changed; try again".into(),
-            ));
-        }
-        let revoked = session::revoke_others_in(&mut tx, u, &t).await?;
-        sqlx::query("DELETE FROM mfa_tickets WHERE user_id = ?")
-            .bind(u.to_string())
-            .execute(&mut *tx)
-            .await?;
-        tx.commit().await?;
-        Ok(revoked)
+        replace_password_hash(&s, u, &t, &old, &new, req.code.as_deref()).await
     })
     .await?;
     after_revoke_others(&s, u, &t, revoked).await;
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// The write half of a password change, once `old_hash` (the stored hash the current password
+/// was checked against) and `new_hash` are known: check the 2FA code if 2FA is on, swap the hash
+/// only if it is still `old_hash` (else 409), revoke the caller's other sessions and drop pending
+/// login tickets, in one transaction. Returns what was revoked; the caller closes the sockets.
+pub async fn replace_password_hash(
+    s: &AppState,
+    u: UserId,
+    token: &str,
+    old_hash: &str,
+    new_hash: &str,
+    code: Option<&str>,
+) -> AppResult<session::Revoked> {
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    super::two_factor::check_code_if_on(&mut tx, s, u, code).await?;
+    // Only over the hash that was checked: a change that committed meanwhile (say, the owner
+    // who just changed it, racing someone with the old password) is not overwritten.
+    let changed =
+        sqlx::query("UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?")
+            .bind(new_hash)
+            .bind(u.to_string())
+            .bind(old_hash)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+    if changed != 1 {
+        return Err(AppError::Conflict(
+            "your password was just changed; try again".into(),
+        ));
+    }
+    let revoked = session::revoke_others_in(&mut tx, u, token).await?;
+    sqlx::query("DELETE FROM mfa_tickets WHERE user_id = ?")
+        .bind(u.to_string())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(revoked)
 }
 
 /// The id of the user named `username` (normalised like login), for the owner's CLI tools.
@@ -392,12 +407,16 @@ pub async fn reset_password(
     Ok((name, revoked))
 }
 
-/// Owner tool (`revoke-sessions`): delete every session of a user. Returns the normalised
-/// username and how many live sessions went.
+/// Owner tool (`revoke-sessions`): delete every session and pending login ticket of a user,
+/// in one transaction. Returns the normalised username and how many live sessions went.
 pub async fn revoke_sessions(db: &SqlitePool, username: &str) -> anyhow::Result<(String, u64)> {
     let mut tx = crate::db::begin_write(db).await?;
     let (name, id) = user_named(&mut tx, username).await?;
     let revoked = revoke_all_in(&mut tx, &id).await?;
+    sqlx::query("DELETE FROM mfa_tickets WHERE user_id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
     tx.commit().await?;
     Ok((name, revoked))
 }

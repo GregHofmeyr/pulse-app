@@ -411,3 +411,127 @@ async fn binary_reset_password_and_revoke_sessions() {
     assert!(out.contains("signed out 1 session of alex"), "{out}");
     assert_eq!(session::authenticate(&db, &t).await.unwrap(), None);
 }
+
+async fn count(app: &TestApp, table: &str) -> i64 {
+    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+async fn hash_of(app: &TestApp, id: pulse_protocol::ids::UserId) -> String {
+    sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+/// A login that verified the old password before a change committed must not get a session
+/// afterwards: the session step re-checks the hash it verified.
+#[tokio::test]
+async fn a_login_that_verified_the_old_password_gets_no_session_after_a_change() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let stale = hash_of(&app, a_id).await;
+    assert!(pulse_server::auth::password::verify(PW, &stale));
+    let r = change(
+        &app,
+        &a,
+        json!({"current_password": PW, "new_password": NEW_PW}),
+    )
+    .await;
+    assert_eq!(r.status(), 204);
+    let sessions = count(&app, "sessions").await;
+    let out = session::create_unless_2fa(&app.db, a_id, &stale).await;
+    assert!(
+        matches!(out, Err(pulse_server::error::AppError::Unauthorized)),
+        "a stale password was let in: {out:?}"
+    );
+    assert_eq!(count(&app, "sessions").await, sessions, "no session added");
+    assert_eq!(count(&app, "mfa_tickets").await, 0);
+
+    // Likewise after the owner's reset-password.
+    let stale = hash_of(&app, a_id).await;
+    routes::reset_password(&app.db, "alex", PW).await.unwrap();
+    let out = session::create_unless_2fa(&app.db, a_id, &stale).await;
+    assert!(
+        matches!(out, Err(pulse_server::error::AppError::Unauthorized)),
+        "{out:?}"
+    );
+    assert_eq!(count(&app, "sessions").await, 0);
+}
+
+/// With 2FA on, a stale password gets no login ticket either.
+#[tokio::test]
+async fn a_login_that_verified_the_old_password_gets_no_ticket_after_a_change() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let secret = turn_on(&app, &a).await;
+    let stale = hash_of(&app, a_id).await;
+    let r = change(
+        &app,
+        &a,
+        json!({"current_password": PW, "new_password": NEW_PW, "code": code_at(&secret, 1)}),
+    )
+    .await;
+    assert_eq!(r.status(), 204);
+    let sessions = count(&app, "sessions").await;
+    let out = session::create_unless_2fa(&app.db, a_id, &stale).await;
+    assert!(
+        matches!(out, Err(pulse_server::error::AppError::Unauthorized)),
+        "a stale password got a ticket: {out:?}"
+    );
+    assert_eq!(count(&app, "mfa_tickets").await, 0, "no ticket added");
+    assert_eq!(count(&app, "sessions").await, sessions);
+}
+
+#[tokio::test]
+async fn revoke_sessions_also_drops_pending_login_tickets() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let (_, s) = register(&app, "sam").await;
+    turn_on(&app, &a).await;
+    turn_on(&app, &s).await;
+    assert_eq!(login_status(&app, "alex", PW).await.status(), 403);
+    assert_eq!(login_status(&app, "sam", PW).await.status(), 403);
+    assert_eq!(count(&app, "mfa_tickets").await, 2);
+    routes::revoke_sessions(&app.db, "alex").await.unwrap();
+    let left: Vec<String> =
+        sqlx::query_scalar("SELECT u.username FROM mfa_tickets t JOIN users u ON u.id = t.user_id")
+            .fetch_all(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(left, vec!["sam".to_string()], "only sam's ticket stays");
+}
+
+/// The compare-and-swap: a change whose checked hash was replaced before its transaction (the
+/// owner's reset, or another change, committed in between) is 409 and changes nothing.
+#[tokio::test]
+async fn a_change_over_a_hash_replaced_meanwhile_is_409_and_changes_nothing() {
+    let app = spawn().await;
+    let (a_id, a1) = register(&app, "alex").await;
+    let a2 = login(&app, "alex").await;
+    let checked = hash_of(&app, a_id).await;
+    // Between the check and the transaction, the owner resets it (all sessions go too).
+    routes::reset_password(&app.db, "alex", "owner set this one")
+        .await
+        .unwrap();
+    let a3 = login_status(&app, "alex", "owner set this one").await;
+    let a3 = a3
+        .json::<pulse_protocol::rest::SessionResponse>()
+        .await
+        .unwrap()
+        .token;
+    let after_reset = hash_of(&app, a_id).await;
+    let new = pulse_server::auth::password::hash(NEW_PW).unwrap();
+    let r = routes::replace_password_hash(&app.state(), a_id, &a1, &checked, &new, None).await;
+    assert!(
+        matches!(r, Err(pulse_server::error::AppError::Conflict(_))),
+        "{:?}",
+        r.map(|v| v.live)
+    );
+    assert_eq!(hash_of(&app, a_id).await, after_reset, "not overwritten");
+    assert_eq!(me(&app, &a3).await, 200, "nothing more was signed out");
+    assert_eq!(me(&app, &a2).await, 401);
+}

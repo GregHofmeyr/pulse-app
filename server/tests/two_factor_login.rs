@@ -472,6 +472,15 @@ async fn unknown_tickets_spend_no_user_bucket() {
     );
 }
 
+/// The user's stored password hash (what the password step verified).
+async fn hash_of(app: &TestApp, id: pulse_protocol::ids::UserId) -> String {
+    sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
 #[tokio::test]
 async fn the_session_step_rechecks_2fa_so_enabling_it_mid_login_wins() {
     let app = spawn().await;
@@ -479,7 +488,9 @@ async fn the_session_step_rechecks_2fa_so_enabling_it_mid_login_wins() {
     // login issues its session. The session step must see 2FA on and give no session.
     let (id, _, _) = alex_with_2fa(&app).await;
     let sessions = count(&app, "sessions").await;
-    let out = session::create_unless_2fa(&app.db, id).await.unwrap();
+    let out = session::create_unless_2fa(&app.db, id, &hash_of(&app, id).await)
+        .await
+        .unwrap();
     assert!(
         matches!(out, session::PasswordLogin::TwoFactor(_)),
         "a session was issued past 2FA: {out:?}"
@@ -500,7 +511,9 @@ async fn the_session_step_rechecks_2fa_so_enabling_it_mid_login_wins() {
 async fn the_session_step_without_2fa_issues_a_session() {
     let app = spawn().await;
     let (id, _) = register(&app, "alex").await;
-    let out = session::create_unless_2fa(&app.db, id).await.unwrap();
+    let out = session::create_unless_2fa(&app.db, id, &hash_of(&app, id).await)
+        .await
+        .unwrap();
     let session::PasswordLogin::Session(token) = out else {
         panic!("expected a session: {out:?}");
     };

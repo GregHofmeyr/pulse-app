@@ -52,13 +52,24 @@ pub enum PasswordLogin {
     TwoFactor(String),
 }
 
-/// After the password verified: issue a session, or a login ticket if 2FA is on. The 2FA check
-/// and the insert share one write transaction, so turning 2FA on can't commit between them.
+/// After the password verified against `verified_hash`: issue a session, or a login ticket if
+/// 2FA is on. The checks and the insert share one write transaction, so neither turning 2FA on
+/// nor a password change (or owner reset) can commit between them: if the stored hash is no
+/// longer the one that was verified, the login is refused (`Unauthorized`) and nothing is added.
 pub async fn create_unless_2fa(
     db: &SqlitePool,
     user: UserId,
+    verified_hash: &str,
 ) -> crate::error::AppResult<PasswordLogin> {
     let mut tx = crate::db::begin_write(db).await?;
+    let current: Option<String> =
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+            .bind(user.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+    if current.as_deref() != Some(verified_hash) {
+        return Err(crate::error::AppError::Unauthorized);
+    }
     let two_factor_on: Option<i64> =
         sqlx::query_scalar("SELECT 1 FROM user_totp WHERE user_id = ? AND enabled_at IS NOT NULL")
             .bind(user.to_string())

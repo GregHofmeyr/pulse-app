@@ -209,13 +209,16 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   is checked under the two-factor limits (a wrong current password or code keeps its count). Setting the new hash,
   **signing out every other device** and deleting pending sign-in tickets are one database transaction. The other
   devices' real-time connections are then closed and their calls ended, as with **Sign out all other devices**. The
-  device doing it stays signed in. The client passes the passwords straight to the server and never stores or logs
-  them.
+  device doing it stays signed in. A sign-in that checked the old password but had not finished when the change
+  committed gets no session or sign-in ticket: issuing one re-checks, in the same transaction, that the stored hash is
+  still the one the password was checked against. The same holds after the owner's `reset-password`. The client passes
+  the passwords straight to the server and never stores or logs them.
 - **Owner tools.** The server's owner can run these on the host, against the database:
   - `reset-password <username>` sets a new password, read as one line from standard input (never a command-line
     argument, so it doesn't show up in the process list or shell history). It signs out all of the account's sessions
     and deletes its pending sign-in tickets. It leaves 2FA alone.
-  - `revoke-sessions <username>` deletes all of the account's sessions. The password is not changed.
+  - `revoke-sessions <username>` deletes all of the account's sessions and pending sign-in tickets. The password is
+    not changed.
   - Both work with the server stopped or running. A running server is not told: its next request with a deleted
     session fails, and a new real-time connection is refused, but real-time connections and calls already open stay
     up until they drop. Restarting the server closes them.
