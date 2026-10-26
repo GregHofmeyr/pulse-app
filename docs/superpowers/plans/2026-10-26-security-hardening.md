@@ -297,3 +297,22 @@ already used by `voice/restore.rs`, tests.
 - [ ] Reflect Tasks 8–16 (remove the closed gaps; describe the new behaviour precisely).
 - [ ] Known gaps left: no E2E encryption; no MFA; deploy user in the docker group (mitigation: only the owner's SSH keys
   over Tailscale reach it). Every claim re-verified against the final code.
+
+## Task 18: Pin the remaining build inputs
+
+The wave-1 SECURITY.md listed floating build inputs as a known gap; under the "no leftovers" rule they get pinned.
+
+**Files:** `.github/workflows/*.yml`, `deploy/server.Dockerfile`, `rust-toolchain.toml`, `.github/dependabot.yml`,
+`deploy/README.md`/`README.md` (how to bump).
+
+- [ ] Every third-party GitHub Action pinned to a full commit SHA with a `# vX.Y.Z` comment (Dependabot's
+  github-actions updater keeps them current).
+- [ ] `server.Dockerfile` base images pinned `tag@sha256:<multi-arch index digest>` (check linux/amd64 + linux/arm64 are
+  in the index; Dependabot's docker updater bumps digests).
+- [ ] The Tauri CLI used by release-windows.yml pinned to an exact version (matching the `tauri` crate's minor), not
+  `^2`.
+- [ ] The Rust toolchain pinned to an exact version in `rust-toolchain.toml`, used by CI and release workflows (no
+  `@stable` drift); document how to bump.
+- [ ] ci.yml's LLVM install no longer pipes an unverified script to bash: fetch `llvm.sh` at a pinned commit and verify
+  its SHA-256 (or install from the signed apt repo directly), failing on mismatch.
+- [ ] Dependabot config still covers what's pinned; YAML valid; `just check` + `just deploy-check` green.
