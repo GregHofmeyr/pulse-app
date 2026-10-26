@@ -1,6 +1,7 @@
 //! Session token storage. Preferred: the OS keychain (Windows Credential Manager / Secret Service).
 //! Fallback when no keychain exists (e.g. Hyprland without a Secret Service): an owner-only
-//! (0600) `session.json` in the app data dir — the same protection Discord gives its token.
+//! `session.json` in the app data dir — mode 0600 on Unix; on Windows a protected DACL that grants
+//! only the current user, applied when the file is created.
 //! The token never crosses into the webview either way.
 
 use std::path::{Path, PathBuf};
@@ -131,6 +132,11 @@ pub(crate) mod file {
             server: server.into(),
             token: token.into(),
         })?;
+        write_owner_only(&path, &body)
+    }
+
+    #[cfg(not(windows))]
+    fn write_owner_only(path: &Path, body: &[u8]) -> std::io::Result<()> {
         let mut opts = std::fs::OpenOptions::new();
         opts.write(true).create(true).truncate(true);
         #[cfg(unix)]
@@ -139,23 +145,203 @@ pub(crate) mod file {
             opts.mode(0o600);
         }
         use std::io::Write;
-        opts.open(&path)?.write_all(&body)?;
+        opts.open(path)?.write_all(body)?;
         // mode() only applies on create; tighten an existing file too.
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
         }
         Ok(())
     }
 
+    /// Written to a fresh temp file that is created with the owner-only DACL (so it is never
+    /// readable through the folder's inherited permissions, not even briefly), then renamed over
+    /// the target. A rename on the same volume keeps the moved file's DACL, so this also replaces
+    /// an older, inherited-permission session.json.
+    #[cfg(windows)]
+    fn write_owner_only(path: &Path, body: &[u8]) -> std::io::Result<()> {
+        use std::io::Write;
+        let tmp = path.with_extension("json.tmp");
+        // A leftover from a crash: CREATE_NEW below must create the file (an existing file would
+        // keep its own DACL).
+        let _ = std::fs::remove_file(&tmp);
+        let written = win::create_owner_only(&tmp).and_then(|mut f| {
+            f.write_all(body)?;
+            f.sync_all()
+        });
+        let renamed = written.and_then(|()| std::fs::rename(&tmp, path));
+        if renamed.is_err() {
+            let _ = std::fs::remove_file(&tmp);
+        }
+        renamed
+    }
+
     pub fn load(dir: &Path) -> Option<(String, String)> {
-        let s: Saved = serde_json::from_slice(&std::fs::read(dir.join(NAME)).ok()?).ok()?;
+        let path = dir.join(NAME);
+        let s: Saved = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
+        // Versions before the owner-only DACL left the file with the folder's inherited
+        // permissions; tighten it in place the first time it is read.
+        #[cfg(windows)]
+        if let Err(e) = win::restrict(&path) {
+            tracing::warn!(error = %e, "could not restrict session file permissions");
+        }
         Some((s.server, s.token))
     }
 
     pub fn clear(dir: &Path) {
         let _ = std::fs::remove_file(dir.join(NAME));
+    }
+
+    /// Windows: an owner-only file means a protected DACL (no inherited entries) with a single
+    /// entry granting the current user full access. Nobody else, SYSTEM and Administrators
+    /// included, gets an entry (an administrator can still take ownership; nothing on the machine
+    /// stops that).
+    #[cfg(windows)]
+    pub(crate) mod win {
+        use std::fs::File;
+        use std::io;
+        use std::os::windows::ffi::OsStrExt;
+        use std::os::windows::io::FromRawHandle;
+        use std::path::Path;
+
+        use windows::Win32::Foundation::{CloseHandle, HANDLE, HLOCAL, LocalFree};
+        use windows::Win32::Security::Authorization::{
+            ConvertSidToStringSidW, ConvertStringSecurityDescriptorToSecurityDescriptorW,
+            SDDL_REVISION_1, SE_FILE_OBJECT, SetNamedSecurityInfoW,
+        };
+        use windows::Win32::Security::{
+            ACL, DACL_SECURITY_INFORMATION, GetSecurityDescriptorDacl, GetTokenInformation,
+            PROTECTED_DACL_SECURITY_INFORMATION, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES,
+            TOKEN_QUERY, TOKEN_USER, TokenUser,
+        };
+        use windows::Win32::Storage::FileSystem::{
+            CREATE_NEW, CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_GENERIC_READ, FILE_GENERIC_WRITE,
+            FILE_SHARE_NONE,
+        };
+        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+        use windows::core::{BOOL, HSTRING, PCWSTR, PWSTR};
+
+        fn wide(path: &Path) -> Vec<u16> {
+            path.as_os_str().encode_wide().chain([0]).collect()
+        }
+
+        /// The current user's SID, from the process token (the user, not a group, even when
+        /// elevated).
+        pub struct UserSid {
+            // TOKEN_USER plus the SID it points into; u64 keeps the pointer field aligned.
+            buf: Vec<u64>,
+        }
+
+        impl UserSid {
+            pub fn current() -> io::Result<Self> {
+                unsafe {
+                    let mut token = HANDLE::default();
+                    OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token)?;
+                    let mut len = 0u32;
+                    // First call only reports the size (and fails with "insufficient buffer").
+                    let _ = GetTokenInformation(token, TokenUser, None, 0, &mut len);
+                    let mut buf = vec![0u64; (len as usize).div_ceil(8)];
+                    let got = GetTokenInformation(
+                        token,
+                        TokenUser,
+                        Some(buf.as_mut_ptr().cast()),
+                        len,
+                        &mut len,
+                    );
+                    let _ = CloseHandle(token);
+                    got?;
+                    Ok(Self { buf })
+                }
+            }
+
+            pub fn psid(&self) -> PSID {
+                unsafe { (*(self.buf.as_ptr() as *const TOKEN_USER)).User.Sid }
+            }
+
+            fn to_sddl(&self) -> io::Result<String> {
+                unsafe {
+                    let mut s = PWSTR::null();
+                    ConvertSidToStringSidW(self.psid(), &mut s)?;
+                    let out = s.to_string();
+                    LocalFree(Some(HLOCAL(s.0.cast())));
+                    out.map_err(io::Error::other)
+                }
+            }
+        }
+
+        /// `D:P(A;;FA;;;<sid>)`: protected DACL, one allow-ACE, FILE_ALL_ACCESS, current user.
+        struct OwnerOnly(PSECURITY_DESCRIPTOR);
+
+        impl OwnerOnly {
+            fn new() -> io::Result<Self> {
+                let sddl = format!("D:P(A;;FA;;;{})", UserSid::current()?.to_sddl()?);
+                let mut sd = PSECURITY_DESCRIPTOR::default();
+                unsafe {
+                    ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                        &HSTRING::from(sddl),
+                        SDDL_REVISION_1,
+                        &mut sd,
+                        None,
+                    )?;
+                }
+                Ok(Self(sd))
+            }
+        }
+
+        impl Drop for OwnerOnly {
+            fn drop(&mut self) {
+                unsafe {
+                    LocalFree(Some(HLOCAL(self.0.0)));
+                }
+            }
+        }
+
+        /// Creates `path` (it must not exist) with the owner-only DACL applied at creation.
+        pub fn create_owner_only(path: &Path) -> io::Result<File> {
+            let sd = OwnerOnly::new()?;
+            let attrs = SECURITY_ATTRIBUTES {
+                nLength: std::mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
+                lpSecurityDescriptor: sd.0.0,
+                bInheritHandle: false.into(),
+            };
+            let name = wide(path);
+            unsafe {
+                let h = CreateFileW(
+                    PCWSTR(name.as_ptr()),
+                    (FILE_GENERIC_READ | FILE_GENERIC_WRITE).0,
+                    FILE_SHARE_NONE,
+                    Some(&attrs),
+                    CREATE_NEW,
+                    FILE_ATTRIBUTE_NORMAL,
+                    None,
+                )?;
+                Ok(File::from_raw_handle(h.0))
+            }
+        }
+
+        /// Replaces an existing file's DACL with the owner-only one (protected: inherited entries
+        /// are dropped).
+        pub fn restrict(path: &Path) -> io::Result<()> {
+            let sd = OwnerOnly::new()?;
+            let name = wide(path);
+            unsafe {
+                let (mut present, mut defaulted) = (BOOL::default(), BOOL::default());
+                let mut dacl: *mut ACL = std::ptr::null_mut();
+                GetSecurityDescriptorDacl(sd.0, &mut present, &mut dacl, &mut defaulted)?;
+                SetNamedSecurityInfoW(
+                    PCWSTR(name.as_ptr()),
+                    SE_FILE_OBJECT,
+                    DACL_SECURITY_INFORMATION | PROTECTED_DACL_SECURITY_INFORMATION,
+                    None,
+                    None,
+                    Some(dacl),
+                    None,
+                )
+                .ok()?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -187,6 +373,101 @@ mod tests {
             .permissions()
             .mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    /// The file's DACL is protected (nothing inherited from the folder) and holds exactly one
+    /// ACE: full access for the current user.
+    #[cfg(windows)]
+    fn assert_owner_only(path: &std::path::Path) {
+        use std::os::windows::ffi::OsStrExt;
+        use windows::Win32::Foundation::{HLOCAL, LocalFree};
+        use windows::Win32::Security::Authorization::{GetNamedSecurityInfoW, SE_FILE_OBJECT};
+        use windows::Win32::Security::{
+            ACCESS_ALLOWED_ACE, ACL, ACL_SIZE_INFORMATION, AclSizeInformation,
+            DACL_SECURITY_INFORMATION, EqualSid, GetAce, GetAclInformation,
+            GetSecurityDescriptorControl, PSECURITY_DESCRIPTOR, PSID, SE_DACL_PROTECTED,
+        };
+        use windows::Win32::Storage::FileSystem::FILE_ALL_ACCESS;
+        use windows::core::PCWSTR;
+
+        let wide: Vec<u16> = path.as_os_str().encode_wide().chain([0]).collect();
+        let me = file::win::UserSid::current().unwrap();
+        unsafe {
+            let mut dacl: *mut ACL = std::ptr::null_mut();
+            let mut sd = PSECURITY_DESCRIPTOR::default();
+            GetNamedSecurityInfoW(
+                PCWSTR(wide.as_ptr()),
+                SE_FILE_OBJECT,
+                DACL_SECURITY_INFORMATION,
+                None,
+                None,
+                Some(&mut dacl),
+                None,
+                &mut sd,
+            )
+            .ok()
+            .unwrap();
+
+            let (mut control, mut revision) = (0u16, 0u32);
+            GetSecurityDescriptorControl(sd, &mut control, &mut revision).unwrap();
+            assert_ne!(control & SE_DACL_PROTECTED.0, 0, "DACL must not inherit");
+
+            assert!(!dacl.is_null(), "a NULL DACL grants everyone access");
+            let mut size = ACL_SIZE_INFORMATION::default();
+            GetAclInformation(
+                dacl,
+                &mut size as *mut _ as *mut _,
+                std::mem::size_of::<ACL_SIZE_INFORMATION>() as u32,
+                AclSizeInformation,
+            )
+            .unwrap();
+            assert_eq!(size.AceCount, 1, "exactly one ACE");
+
+            let mut ace: *mut core::ffi::c_void = std::ptr::null_mut();
+            GetAce(dacl, 0, &mut ace).unwrap();
+            let ace = &*(ace as *const ACCESS_ALLOWED_ACE);
+            assert_eq!(ace.Header.AceType, 0, "ACCESS_ALLOWED_ACE_TYPE");
+            assert_eq!(ace.Mask, FILE_ALL_ACCESS.0);
+            let sid = PSID(&ace.SidStart as *const u32 as *mut _);
+            EqualSid(sid, me.psid()).expect("the ACE is for the current user");
+
+            LocalFree(Some(HLOCAL(sd.0)));
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn file_fallback_is_owner_only_on_windows() {
+        let dir = tempfile::tempdir().unwrap();
+        file::save(dir.path(), "http://x", "tok").unwrap();
+        assert_owner_only(&dir.path().join(file::NAME));
+        // saving again (rename over the existing file) keeps it owner-only
+        file::save(dir.path(), "http://x", "tok2").unwrap();
+        assert_owner_only(&dir.path().join(file::NAME));
+        assert_eq!(
+            file::load(dir.path()),
+            Some(("http://x".into(), "tok2".into()))
+        );
+    }
+
+    /// Versions before this one wrote session.json with the folder's inherited permissions.
+    #[cfg(windows)]
+    #[test]
+    fn older_inherited_session_file_is_tightened() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(file::NAME);
+        std::fs::write(&path, br#"{"server":"http://x","token":"tok"}"#).unwrap();
+        assert_eq!(
+            file::load(dir.path()),
+            Some(("http://x".into(), "tok".into()))
+        );
+        assert_owner_only(&path);
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(file::NAME);
+        std::fs::write(&path, b"old").unwrap();
+        file::save(dir.path(), "http://x", "tok").unwrap();
+        assert_owner_only(&path);
     }
 }
 

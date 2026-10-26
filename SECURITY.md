@@ -87,8 +87,10 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
 - **Session token.**
   - **Where it is kept.** The token goes in the OS credential store: Windows Credential Manager, or the Secret Service
     on Linux. If no credential store is available (for example, on some Linux desktops), it falls back to a
-    `session.json` file in the app's data folder. On Linux that file is owner-only (`0600`). On Windows it would inherit
-    the user profile's permissions.
+    `session.json` file in the app's data folder. That file is owner-only. On Linux its mode is `0600`. On Windows it
+    is created with a protected access list (nothing inherited from the folder) that grants only the current user, so
+    it is never readable through the folder's permissions. A `session.json` left by an older version is tightened the
+    same way when Pulse next reads it.
   - **Who can use it.** The token is held by the Rust core and never passed to the web UI.
   - **What it does not hold.** Passwords are never stored on the machine.
 - **Logs.**
