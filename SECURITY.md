@@ -150,7 +150,8 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
       send** in the main window. Don't send deletes it. Turning the setting back on does not release a held report,
       so a held report is only ever sent when the user presses Send.
     - **Settings file.** The setting is stored in `reports.json`. If that file, or the setting in it, is missing, the
-      setting is on. If the file exists but can't be read or parsed, the setting counts as off.
+      setting is on. If the file exists but can't be read or parsed, the setting counts as off, and the local log says
+      why.
     - **Expiry.** A report older than 7 days is deleted instead of sent.
   - **What a report contains.** Each one contains:
     - the user's text, if any;
@@ -197,9 +198,16 @@ ties each of those tokens to the session that asked for it:
   covers a signed-out device rejoining with a token it kept, and an expired session.
   - **Limits of that check.** The removal happens after LiveKit reports the join, in the background, and takes at
     most 2 seconds. Until then the refused device is briefly in the call, and its join response has already given it
-    TURN credentials. If LiveKit's join notification is lost, or LiveKit can't be reached for the removal, the device
-    is not removed, and the miss is logged. Removal is by identity, so a valid device of the same user that joins in
-    the same instant (one LiveKit round trip) could be removed instead.
+    TURN credentials. If LiveKit can't be reached for the removal, the miss is logged; if the join notification itself
+    is lost, nothing is removed and nothing is logged. Removal is by identity, so a valid device of the same user that
+    joins in the same instant (one LiveKit round trip) could be removed instead.
+  - **After a server restart.** LiveKit keeps running when the Pulse server restarts, and doesn't repeat the join
+    notifications. So at startup the server asks LiveKit who is connected, in voice and screen-share rooms, and runs
+    the same check on every participant carrying a grant ID: one that fails is removed (in the background, as above)
+    and isn't shown as in the call. Grants whose connection LiveKit no longer reports are marked as ended (their leave
+    notification was missed). Participants without a grant ID, connected with a token from before grant IDs existed,
+    are left alone. If LiveKit can't be reached at startup, the server retries every 5 seconds for a minute; if every
+    try fails, this check doesn't happen for that restart.
 - **Lifetime.** Voice and stream tokens are valid for 10 minutes. LiveKit keeps refreshing the token of a participant
   that stays connected, so token expiry alone does not end a call. The join check above, not expiry, is what keeps a
   signed-out device out.
@@ -326,10 +334,13 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
 - **Pinned build inputs.**
   - **Actions.** Every GitHub Action is pinned to a full commit SHA.
   - **Base images.** The server image's base images are pinned to an exact version and digest (`rust:1.98.1-bookworm`,
-    `debian:bookworm-20261020-slim`).
+    `debian:bookworm-20261020-slim`). A pull request that changes the Dockerfile (a Dependabot bump included) gets a
+    CI build of the image (amd64, not published) before it can be merged.
   - **Rust.** The toolchain is pinned to 1.98.1 in `rust-toolchain.toml`. CI and the release builds install exactly
     that version.
   - **Tauri CLI.** The Windows build uses the Tauri CLI at an exact version (2.12.1), installed from the UI's lockfile.
+  - **Node.js and pnpm.** CI and the Windows build use exact versions (Node.js 22.23.4, pnpm 11.28.8). Dependabot
+    doesn't update these; `deploy/README.md` says how to bump them.
   - **LLVM (CI only).** LLVM comes from apt.llvm.org's signed package repository. Before adding it, CI checks the
     repository key's fingerprint against a pinned value and fails if it differs. Nothing installed this way ships.
 - **Verified downloads.**
@@ -344,11 +355,12 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   (`deny.toml`). Only crates.io and one pinned git dependency are allowed as sources.
   - **Ignored advisories.** Each ignored advisory is listed there with its reason.
   - **Licences.** Licences must be on an explicit allow-list.
-- **UI dependencies.** `pnpm audit --prod --audit-level high` checks the UI's production dependencies.
+- **UI dependencies.** `pnpm audit --prod --audit-level high` checks the UI's production dependencies, and
+  `pnpm audit --audit-level high` all of them, build tools included (they run on CI and release machines).
 - **When the checks run.** Both checks run in CI whenever dependencies change, and weekly.
 - **Dependabot.** It opens weekly update pull requests for Cargo, npm, GitHub Actions, the Rust toolchain, the server
-  Dockerfile's base images and the production compose images (`deploy/compose.yml`). This keeps the pins above from
-  going stale.
+  Dockerfile's base images and the compose images (production `deploy/compose.yml` and the dev `docker-compose.yml`,
+  whose LiveKit image CI requires to be identical to production's). This keeps the pins above from going stale.
 
 ## 7. Known gaps
 
@@ -364,9 +376,7 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
     the OS release is fixed (none for `windows-latest`);
   - the versions of apt packages installed on the CI runners (system build dependencies, and LLVM 21's patch level);
   - `ca-certificates` in the server image's runtime stage, installed with apt on top of the pinned base image;
-  - the BuildKit (buildx) version used to build the server image, and the `just` version in CI;
-  - the Node.js and pnpm versions in CI and the Windows build (latest 22.x and 11.x). The UI's own dependencies,
-    including the Tauri CLI, are pinned by the lockfile.
+  - the BuildKit (buildx) version used to build the server image, and the `just` version in CI.
 - **Code signing.** The Windows installer is not code-signed yet, so SmartScreen and endpoint tools will see an unsigned
   publisher.
 - **Updates.** There is no auto-updater. New versions are installed by hand.
