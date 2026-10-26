@@ -486,11 +486,18 @@ mod platform {
     /// Why binds aren't working, if they aren't. Switched off isn't a problem; switched off with
     /// the hooks still in is.
     pub fn problems() -> Vec<String> {
+        problems_with(false)
+    }
+
+    /// `switch_on_its_way`: a WM_SWITCH was just delivered, so hooks still in while off are the
+    /// hook thread catching up, not a problem.
+    fn problems_with(switch_on_its_way: bool) -> Vec<String> {
         let broken = BROKEN.lock().unwrap_or_else(|e| e.into_inner()).clone();
         switch_problem(
             ENABLED.load(Ordering::SeqCst),
             HOOKED.load(Ordering::SeqCst),
             broken.as_deref(),
+            switch_on_its_way,
         )
         .into_iter()
         .collect()
@@ -519,17 +526,20 @@ mod platform {
         let Some(&thread) = HOOK_THREAD.get() else {
             return problems();
         };
+        let mut delivered = false;
         for attempt in 0..3 {
             if post(thread, WM_SWITCH) {
+                delivered = true;
                 break;
             }
             if attempt < 2 {
                 std::thread::sleep(Duration::from_millis(20));
             }
         }
-        // a post that never got through shows here while off (hooks still in) and the watchdog
-        // keeps resending
-        problems()
+        // Delivered: the hook thread unhooks in a moment, so no "still in" warning now (if it
+        // really gets stuck, the watchdog resends and Settings shows it when next opened). Not
+        // delivered: shown now while off, and the watchdog keeps resending.
+        problems_with(delivered)
     }
 
     #[cfg(test)]

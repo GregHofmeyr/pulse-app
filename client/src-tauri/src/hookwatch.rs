@@ -61,9 +61,16 @@ pub fn watch_gate(enabled: bool, hooked: bool, install_failed: bool) -> Gate {
 }
 
 /// What Settings shows. Off isn't a problem, but off with the hooks still in is (until the
-/// watchdog's resend removes them); on, it's the install failure, if any.
-pub fn switch_problem(enabled: bool, hooked: bool, install_failed: Option<&str>) -> Option<String> {
+/// watchdog's resend removes them), unless `switch_on_its_way`: the "off" was just delivered and
+/// the hook thread hasn't got to it yet. On, it's the install failure, if any.
+pub fn switch_problem(
+    enabled: bool,
+    hooked: bool,
+    install_failed: Option<&str>,
+    switch_on_its_way: bool,
+) -> Option<String> {
     match (enabled, hooked) {
+        (false, true) if switch_on_its_way => None,
         (false, true) => Some(
             "Keybinds are switched off but the keyboard and mouse hooks are still in; Pulse keeps trying to remove them (restart Pulse if this stays)".into(),
         ),
@@ -244,14 +251,31 @@ mod tests {
     /// Off isn't a problem, but off with the hooks still in is, and stays visible.
     #[test]
     fn hooks_still_in_while_off_is_a_problem() {
-        assert_eq!(switch_problem(false, false, None), None);
-        assert_eq!(switch_problem(false, false, Some("boom")), None);
-        assert!(switch_problem(false, true, None).unwrap().contains("still"));
+        assert_eq!(switch_problem(false, false, None, false), None);
+        assert_eq!(switch_problem(false, false, Some("boom"), false), None);
+        assert!(
+            switch_problem(false, true, None, false)
+                .unwrap()
+                .contains("still")
+        );
         assert_eq!(
-            switch_problem(true, false, Some("boom")),
+            switch_problem(true, false, Some("boom"), false),
             Some("boom".into())
         );
-        assert_eq!(switch_problem(true, true, None), None);
+        assert_eq!(switch_problem(true, true, None, false), None);
+    }
+
+    /// A normal "off": the message reached the hook thread, which hasn't unhooked yet. That's
+    /// the switch on its way, not a problem; if it really gets stuck, Settings and the watchdog
+    /// see it later.
+    #[test]
+    fn hooks_still_in_right_after_a_delivered_off_is_not_a_problem() {
+        assert_eq!(switch_problem(false, true, None, true), None);
+        // an install failure while switching on is still shown
+        assert_eq!(
+            switch_problem(true, false, Some("boom"), true),
+            Some("boom".into())
+        );
     }
 
     #[test]
