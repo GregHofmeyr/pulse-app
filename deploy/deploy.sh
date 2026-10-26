@@ -1,19 +1,45 @@
 #!/usr/bin/env bash
 # Runs on the server (`just deploy TAG`): back up, pull TAG, switch to it, wait until healthy.
 set -euo pipefail
+repo=ghcr.io/greghofmeyr/pulse-server
+
+# set_env FILE KEY VALUE: replace the KEY= line, or append it when absent (older servers have no PULSE_IMAGE line).
+set_env() {
+  local file=$1 key=$2 value=$3
+  if grep -q "^${key}=" "$file"; then
+    # '|' as the sed delimiter: image references contain '/', never '|'
+    sed -i "s|^${key}=.*|${key}=${value}|" "$file"
+  else
+    printf '%s=%s\n' "$key" "$value" >>"$file"
+  fi
+}
+
+# Sourced by the self-test with DEPLOY_SH_LIB=1: define the functions, run nothing.
+[ -n "${DEPLOY_SH_LIB:-}" ] && return 0
+
 tag=${1:?usage: deploy.sh TAG}
 cd /srv/pulse
 ./backup.sh run
 # Pull first: a mistyped tag fails here and leaves .env and the running server untouched.
-PULSE_TAG=$tag docker compose pull -q
-sed -i "s/^PULSE_TAG=.*/PULSE_TAG=$tag/" .env
+# PULSE_IMAGE from the shell wins over .env, so this pulls TAG and not the previously pinned digest.
+PULSE_IMAGE=$repo:$tag docker compose pull -q
+# Pin to the digest of what was just pulled, so compose runs exactly this image even if the tag moves.
+digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$repo:$tag" | grep "^$repo@sha256:" | head -n1)
+if [ -z "$digest" ]; then
+  echo "no registry digest for $repo:$tag; refusing to deploy an unpinned image" >&2
+  exit 1
+fi
+image=$repo:$tag@${digest#*@}
+set_env .env PULSE_TAG "$tag"
+set_env .env PULSE_IMAGE "$image"
+echo "pinned: $image"
 docker compose up -d --remove-orphans
 docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
 for _ in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:7890/health >/dev/null; then
     rev=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
       "$(docker compose ps -q pulse-server)")
-    echo "healthy: $tag (commit ${rev:0:7})"
+    echo "healthy: $tag (commit ${rev:0:7}, ${image#*@})"
     exit 0
   fi
   sleep 1

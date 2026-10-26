@@ -80,9 +80,18 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
 - Every push to `main` that passes CI builds `ghcr.io/greghofmeyr/pulse-server:<7-char commit>` and `:latest`
   (`.github/workflows/release-server.yml`, about ten minutes).
 - `just deploy` runs `latest`; `just deploy <sha7>` runs a specific build. Each deploy takes a backup first,
-  pulls (a mistyped sha fails here and changes nothing), restarts in a few seconds, and prints the commit
+  pulls (a mistyped sha fails here and changes nothing), pins the image (below), restarts in a few seconds, and prints the commit
   that's now live. Right after a merge, `latest` is still the previous build until the image workflow
   finishes (about ten minutes): check the printed commit. Clients reconnect on their own and voice keeps going.
+- Images are pinned by digest, so what runs is exactly what was pulled, even if a tag moves. `deploy.sh` looks up
+  the digest of the pulled `pulse-server:<tag>` and writes `PULSE_IMAGE=…:<tag>@sha256:…` into `/srv/pulse/.env`
+  (`PULSE_TAG` stays, for humans; an old `.env` without `PULSE_IMAGE` just gets the line appended). It prints
+  `pinned: …` and the digest on the final `healthy:` line. LiveKit and Caddy are pinned in `compose.yml`.
+- Bumping LiveKit or Caddy: Dependabot opens a PR for new tags (`.github/dependabot.yml`). To do it by hand,
+  take the digest of the multi-arch **index**, not of one platform: `docker manifest inspect <image>:<tag> -v`, or
+  `HEAD /v2/<repo>/manifests/<tag>` on the registry with the OCI index and manifest-list `Accept` headers and read
+  `Docker-Content-Digest`. Check that the index lists `linux/arm64` (the server is ARM64). Then update
+  `compose.yml` (and the Caddy image in `justfile` and `.github/workflows/ci.yml`), run `just deploy-check`, `just deploy`.
 - Order for a release: deploy the server first, then send friends the new installer. Clients older than the
   server see "plz update :)".
 - Building a branch: running `release-server` by hand (workflow dispatch) also tags it `:latest`, as every
