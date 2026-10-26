@@ -110,6 +110,17 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     tightens it to the same owner-only access list when it reads it (also when the file turns out to be unusable).
   - **Who can use it.** The token is held by the Rust core and never passed to the web UI.
   - **What it does not hold.** Passwords are never stored on the machine.
+- **Two-factor material.**
+  - **Login ticket.** When an account has 2FA, the password step returns a ticket (section 4). The Rust core keeps it in
+    memory only: it is never written to disk, never passed to the web UI and never logged. It is dropped when the code
+    is accepted or the ticket is reported gone, and when the user registers, signs out or starts another login.
+    A wrong code leaves it in place, so the code can be re-entered until the server's own limits end it.
+  - **Setup secret and QR code.** The `otpauth://` link that carries the secret stays in the Rust core. The core draws
+    the QR code itself from the link, locally, and gives the web UI only a grid of dark and light squares to paint.
+    The web UI also receives the key as text, for typing in by hand.
+  - **Recovery codes.** They are shown once after turning on 2FA or making new codes, and are kept only in the
+    Settings screen's memory until the user clicks Done or cancels. Nothing is stored locally. **Copy** puts them on
+    the clipboard only when the user clicks it.
 - **Logs.**
   - **Where and how much.** Logs are written to the app's log folder (`%LOCALAPPDATA%\app.pulse.client\logs` on
     Windows). There is one file per day, the last 7 are kept, and each day is capped at 50 MB.
@@ -173,6 +184,61 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
 - **Unknown usernames.** A login for a username that doesn't exist still runs a hash, so response timing doesn't reveal
   whether the account exists.
 
+**Two-factor authentication.** Optional, per account, and off until the member turns it on in Settings → Advanced.
+- **Codes.** Time-based one-time passwords (TOTP): SHA-1, 6 digits, 30-second steps, with the previous and next step
+  also accepted (to allow for clock drift). A code can only be used once: the server remembers
+  the newest step it accepted for the account and refuses that step or any older one. The check is atomic, so two
+  requests racing with the same code cannot both pass.
+- **The secret at rest.** Each account's 20-byte secret is encrypted before it is stored, with ChaCha20-Poly1305 under
+  a 32-byte key from the `PULSE_TOTP_KEY` setting (64 hex characters), with a fresh random 12-byte nonce each time. The
+  account's id is bound in as associated data, so a stored secret copied to another account does not decrypt.
+  - **What this protects.** The database file and its backups, which hold only the encrypted secret. The key is not
+    in the backups.
+  - **What it does not protect.** The key sits in the server's `.env` file, on the same host as the database. Someone
+    who can read both can decrypt every secret. It is a defence for stolen database files and backups, not for a
+    compromised host.
+  - **Not encrypted.** Whether 2FA is on, and the newest accepted step number, are stored in clear. Recovery codes
+    and login tickets are stored only as SHA-256 hashes (below).
+- **The server will not start with the wrong key.** If any account has 2FA turned on, the server refuses to start
+  when the key is missing, or when any of those accounts' secrets does not decrypt with it, and says so in the log
+  (counts only, never the key or a secret). Setups that were never finished are not checked. With no 2FA accounts, a
+  missing key just means 2FA cannot be set up. A key that is set but is not exactly 64 hex characters stops every
+  server command, not only `serve`. The deploy script refuses to go on without a well-formed key, and provisioning
+  fills the key in only when it is missing or empty, never replacing one.
+- **Turning it on.** Settings asks for the account password, then shows a QR code and the key to type in. 2FA turns on
+  only when the member enters one current code from the app, which proves the app works; a recovery code is not
+  accepted for this. Starting again before then replaces the unfinished secret. Turning it on **signs out every other
+  device**, the same way **Sign out all other devices** does (their real-time connections are closed and their calls
+  ended, with the limits described under *Signing out ends calls too*). The device doing it stays signed in, so
+  anyone who had only the password is out. Sessions are not touched otherwise: signing in with a code, turning 2FA
+  off, regenerating recovery codes and the owner reset leave existing sessions alone.
+- **Recovery codes.** Turning 2FA on gives 10 recovery codes, shown once. Each is 16 characters from a 31-character
+  alphabet (about 79 bits), written `xxxx-xxxx-xxxx-xxxx`; spaces, dashes and case are ignored when one is entered.
+  Only their SHA-256 hashes are stored. A code works once and is then deleted. Making new codes needs a current TOTP
+  code and replaces all the old ones. Signing in and turning 2FA off accept either a TOTP code or a recovery code.
+  In those two, anything that is not 6 digits is tried as a recovery code.
+- **Signing in.** A wrong password gets the same answer whether or not the account has 2FA. With the right password
+  and 2FA on, the server returns no session, only a login ticket:
+  - 256 random bits, valid for 5 minutes. Only its SHA-256 hash is stored; expired tickets are pruned whenever a
+    new one is issued.
+  - Spent by one successful code. The ticket is deleted when it succeeds, and also when the 5th wrong code is entered
+    on it. Unknown, expired and used-up tickets all get the same "gone" answer.
+  - Turning 2FA off, or the owner reset, deletes the account's tickets.
+- **Limits on guessing.** Every 2FA check (the sign-in code, and the password or code asked for when turning it on or
+  off or making new recovery codes) is counted against two limits at once: 5 per minute per IP address and 10 per
+  hour per account. The count is taken before the check, so parallel guesses cannot all slip past. A wrong password
+  or code keeps its count, as does a guess at an unknown or dead ticket (that one counts against the address only);
+  every other outcome is refunded, and a refused attempt costs nothing. A refused attempt gets 429. Like the other
+  limits, these are in memory.
+- **Lost app and recovery codes.** There is no self-service way back in. The server's owner turns 2FA off for the
+  account from the host (`reset-2fa`, run in a one-off server container). It deletes the account's secret, recovery
+  codes and tickets, needs no key (so it works if the key is lost), and leaves sessions alone.
+- **Who can see it.** Only the account itself can ask whether its 2FA is on, and how many recovery codes are left.
+  Nothing in the member list, the real-time events or any other endpoint carries it. Someone who already has the
+  password does learn it at sign-in, from the extra step.
+- **Never logged.** Secrets, codes, recovery codes and tickets are not put in logs or error messages.
+- **Client.** See section 3 for what the desktop client keeps. It makes no calls beyond the Pulse server for this.
+
 **Sessions.**
 - **Format.** Sessions are 256-bit random opaque tokens. The server stores only their SHA-256 hash.
 - **Expiry.** A session expires after 90 days without use. Each use pushes the expiry back; the stored expiry is updated
@@ -218,6 +284,7 @@ ties each of those tokens to the session that asked for it:
 |---|---|
 | Failed logins | 5/minute per IP, and 10/hour per username |
 | Failed registrations (wrong, used or expired invite) | 5/hour per IP |
+| Two-factor checks (sign-in code, and the password or code for turning it on or off or making new recovery codes) | 5/minute per IP, and 10/hour per account; spent up front, kept only for a wrong password or code or a bad ticket |
 | Real-time connection attempts | 20/minute per IP (refunded once the connection authenticates) |
 | Concurrent real-time connections | 8 per user; further connections are refused, and the client tells the user why |
 | New messages | burst of 20, then 5/second per user (edits, deletes and reactions are not rate-limited) |
@@ -367,7 +434,13 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
 - **Not end-to-end encrypted.** Voice and screen share are encrypted in transit (DTLS-SRTP) but not end to end: the SFU
   on the server can access the media. Messages are encrypted in transit (TLS) and stored unencrypted in the server's
   database. Backups are encrypted.
-- **No multi-factor authentication.** Accounts are protected by a password only.
+- **Two-factor authentication is optional.** Nothing requires a member to turn it on, and an account that hasn't is
+  protected by its password only.
+- **Two-factor codes can be phished.** A fake sign-in page can collect the password and a code and pass both on at
+  once, while the code and the 5-minute ticket are still valid. There is no WebAuthn or passkey support.
+- **The two-factor key is on the database's host.** `PULSE_TOTP_KEY` lives in the server's `.env`, next to the
+  database. It protects the database files and backups, not a compromise of the host (section 4). If the key is lost
+  and the secrets can't be decrypted, the owner has to reset each affected account by hand.
 - **Deploy user is root-equivalent.** The host user that runs the containers is in the `docker` group, which makes it
   root-equivalent on the host. Mitigation: public SSH is closed, so it can only be reached over the owner's private VPN
   (section 5).
@@ -382,7 +455,7 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
 - **Updates.** There is no auto-updater. New versions are installed by hand.
 - **Accounts.**
   - Any member can create invite codes.
-  - Rate limits are held in memory, so they reset when the server restarts.
+  - Rate limits, including the two-factor limits, are held in memory, so they reset when the server restarts.
 - **No TURN over TLS.** There is no TURN over TLS/TCP 443, so voice may not work on networks that block UDP and allow
   nothing but 443.
 
