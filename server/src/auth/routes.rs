@@ -204,6 +204,16 @@ async fn check_login(s: &AppState, req: LoginRequest) -> AppResult<Json<SessionR
         return Err(AppError::Unauthorized);
     }
     let id: UserId = id.parse().map_err(anyhow::Error::from)?;
+    let two_factor_on: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM user_totp WHERE user_id = ? AND enabled_at IS NOT NULL")
+            .bind(id.to_string())
+            .fetch_optional(&s.db)
+            .await?;
+    if two_factor_on.is_some() {
+        return Err(AppError::MfaRequired(
+            super::two_factor::issue_ticket(&s.db, id).await?,
+        ));
+    }
     let token = session::create(&s.db, id).await?;
     Ok(Json(SessionResponse {
         token,

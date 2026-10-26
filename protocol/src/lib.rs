@@ -23,6 +23,8 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::TwoFactorSetupResponse::export_all(&cfg)?;
     rest::TwoFactorCodeRequest::export_all(&cfg)?;
     rest::TwoFactorEnabledResponse::export_all(&cfg)?;
+    rest::MfaRequired::export_all(&cfg)?;
+    rest::LoginMfaRequest::export_all(&cfg)?;
     rest::RecoveryCodesResponse::export_all(&cfg)?;
     rest::CreateServerRequest::export_all(&cfg)?;
     rest::CreateChannelRequest::export_all(&cfg)?;

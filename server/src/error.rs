@@ -1,7 +1,7 @@
 use axum::Json;
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
-use pulse_protocol::rest::ApiError;
+use pulse_protocol::rest::{ApiError, MfaRequired};
 
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {
@@ -14,6 +14,10 @@ pub enum AppError {
     ForbiddenMsg(String),
     #[error("unauthorized")]
     Unauthorized,
+    /// Password right, second factor still needed: carries the login ticket. Answered as a 403
+    /// with an `MfaRequired` body; never logged or shown in `Display`.
+    #[error("two-factor code required")]
+    MfaRequired(String),
     #[error("gone")]
     Gone,
     #[error("unsupported media type")]
@@ -40,10 +44,22 @@ impl From<sqlx::Error> for AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
+        if let Self::MfaRequired(ticket) = self {
+            return (
+                StatusCode::FORBIDDEN,
+                Json(MfaRequired {
+                    code: "mfa_required".into(),
+                    message: "Enter the 6-digit code from your authenticator app. If Pulse doesn't ask for one, update it.".into(),
+                    ticket,
+                }),
+            )
+                .into_response();
+        }
         let (status, code) = match &self {
             Self::NotFound => (StatusCode::NOT_FOUND, "not_found"),
             Self::Forbidden | Self::ForbiddenMsg(_) => (StatusCode::FORBIDDEN, "forbidden"),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
+            Self::MfaRequired(_) => unreachable!("answered above"),
             Self::Gone => (StatusCode::GONE, "gone"),
             Self::UnsupportedMediaType => {
                 (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type")

@@ -8,15 +8,18 @@ use axum::extract::State;
 use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use base64::Engine;
 use pulse_protocol::ids::UserId;
 use pulse_protocol::rest::{
-    RecoveryCodesResponse, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
-    TwoFactorSetupResponse, TwoFactorStatus,
+    LoginMfaRequest, RecoveryCodesResponse, SessionResponse, TwoFactorCodeRequest,
+    TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, User,
 };
-use sqlx::SqliteConnection;
+use rand::RngCore;
+use sha2::{Digest, Sha256};
+use sqlx::{SqliteConnection, SqlitePool};
 
 use super::extractor::{AuthUser, BearerToken};
-use super::{password, totp};
+use super::{password, session, totp};
 use crate::AppState;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
@@ -24,6 +27,7 @@ use crate::limits::ClientIp;
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/auth/login/2fa", post(login_second_step))
         .route("/auth/2fa", get(status))
         .route("/auth/2fa/setup", post(setup))
         .route("/auth/2fa/enable", post(enable))
@@ -41,22 +45,41 @@ pub async fn limited<T>(
     user: UserId,
     check: impl Future<Output = AppResult<T>>,
 ) -> AppResult<T> {
-    let (ip_key, user_key) = (ip.to_string(), user.to_string());
+    limited_by(s, ip, Some(user), is_wrong_code, check).await
+}
+
+fn is_wrong_code(e: &AppError) -> bool {
+    matches!(e, AppError::ForbiddenMsg(_) | AppError::Unauthorized)
+}
+
+/// `limited` with the user bucket optional (no user is known for a ticket that doesn't exist)
+/// and the "keeps the spend" outcomes chosen by the caller.
+pub async fn limited_by<T>(
+    s: &AppState,
+    ip: IpAddr,
+    user: Option<UserId>,
+    keeps_spend: fn(&AppError) -> bool,
+    check: impl Future<Output = AppResult<T>>,
+) -> AppResult<T> {
+    let ip_key = ip.to_string();
+    let user_key = user.map(|u| u.to_string());
     let ip_ok = s.limits.mfa_ip.hit(&ip_key);
-    let user_ok = s.limits.mfa_user.hit(&user_key);
-    if !ip_ok || !user_ok {
-        if ip_ok {
+    let user_ok = user_key.as_deref().is_none_or(|u| s.limits.mfa_user.hit(u));
+    let refund = |ip: bool, user: bool| {
+        if ip {
             s.limits.mfa_ip.refund(&ip_key);
         }
-        if user_ok {
-            s.limits.mfa_user.refund(&user_key);
+        if let Some(u) = user_key.as_deref().filter(|_| user) {
+            s.limits.mfa_user.refund(u);
         }
+    };
+    if !ip_ok || !user_ok {
+        refund(ip_ok, user_ok);
         return Err(AppError::TooManyRequests);
     }
     let res = check.await;
-    if !matches!(res, Err(AppError::ForbiddenMsg(_) | AppError::Unauthorized)) {
-        s.limits.mfa_ip.refund(&ip_key);
-        s.limits.mfa_user.refund(&user_key);
+    if !matches!(&res, Err(e) if keeps_spend(e)) {
+        refund(true, true);
     }
     res
 }
@@ -310,6 +333,120 @@ async fn regenerate(
         let recovery_codes = replace_recovery_codes(&mut tx, u).await?;
         tx.commit().await?;
         Ok(Json(RecoveryCodesResponse { recovery_codes }))
+    })
+    .await
+}
+
+/// How long a login ticket lives after the password step.
+const TICKET_MINUTES: i64 = 5;
+/// Wrong codes a ticket survives; the fifth deletes it.
+const TICKET_MAX_FAILURES: i64 = 5;
+
+fn hash_ticket(ticket: &str) -> String {
+    hex::encode(Sha256::digest(ticket.as_bytes()))
+}
+
+/// Start a login ticket for `user` (the password was right): returns the secret half, which is
+/// only ever sent to the client. Expired tickets are pruned on the way.
+pub async fn issue_ticket(db: &SqlitePool, user: UserId) -> AppResult<String> {
+    let mut bytes = [0u8; 32];
+    rand::rng().fill_bytes(&mut bytes);
+    let ticket = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
+    let expires = chrono::Utc::now() + chrono::Duration::minutes(TICKET_MINUTES);
+    sqlx::query("DELETE FROM mfa_tickets WHERE expires_at <= ?")
+        .bind(now())
+        .execute(db)
+        .await?;
+    sqlx::query("INSERT INTO mfa_tickets (ticket_hash, user_id, expires_at) VALUES (?, ?, ?)")
+        .bind(hash_ticket(&ticket))
+        .bind(user.to_string())
+        .bind(expires.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+        .execute(db)
+        .await?;
+    Ok(ticket)
+}
+
+/// The ticket's user, if it exists, is unexpired and has failures left.
+async fn live_ticket(conn: &mut SqliteConnection, hash: &str) -> AppResult<Option<UserId>> {
+    let row: Option<(String,)> = sqlx::query_as(
+        "SELECT user_id FROM mfa_tickets WHERE ticket_hash = ? AND expires_at > ? AND failures < ?",
+    )
+    .bind(hash)
+    .bind(now())
+    .bind(TICKET_MAX_FAILURES)
+    .fetch_optional(&mut *conn)
+    .await?;
+    row.map(|(u,)| u.parse().map_err(anyhow::Error::from).map_err(Into::into))
+        .transpose()
+}
+
+/// `POST /auth/login/2fa`: trade a ticket and a code for a session. A ticket that is unknown,
+/// expired or worn out is 410 (and the address pays, it's a guess); a known ticket is checked
+/// under both limits and a wrong code (401) keeps the spend.
+async fn login_second_step(
+    State(s): State<AppState>,
+    ClientIp(ip): ClientIp,
+    Json(req): Json<LoginMfaRequest>,
+) -> AppResult<Json<SessionResponse>> {
+    let key = key(&s)?;
+    let hash = hash_ticket(&req.ticket);
+    let user = {
+        let mut conn = s.db.acquire().await?;
+        live_ticket(&mut conn, &hash).await?
+    };
+    let Some(user) = user else {
+        return limited_by(&s, ip, None, |e| matches!(e, AppError::Gone), async {
+            Err(AppError::Gone)
+        })
+        .await;
+    };
+    limited(&s, ip, user, async {
+        let mut tx = crate::db::begin_write(&s.db).await?;
+        // Re-read under the write lock: a racing request may have used or burnt the ticket.
+        if live_ticket(&mut tx, &hash).await? != Some(user) {
+            return Err(AppError::Gone);
+        }
+        let ok = if totp::is_totp_shaped(&req.code) {
+            accept_totp(&mut tx, key, user, &req.code).await?
+        } else {
+            consume_recovery(&mut tx, user, &req.code).await?
+        };
+        if !ok {
+            tx.rollback().await?;
+            sqlx::query("UPDATE mfa_tickets SET failures = failures + 1 WHERE ticket_hash = ?")
+                .bind(&hash)
+                .execute(&s.db)
+                .await?;
+            sqlx::query("DELETE FROM mfa_tickets WHERE ticket_hash = ? AND failures >= ?")
+                .bind(&hash)
+                .bind(TICKET_MAX_FAILURES)
+                .execute(&s.db)
+                .await?;
+            return Err(AppError::Unauthorized);
+        }
+        let gone = sqlx::query("DELETE FROM mfa_tickets WHERE ticket_hash = ?")
+            .bind(&hash)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        if gone != 1 {
+            return Err(AppError::Gone);
+        }
+        tx.commit().await?;
+        let token = session::create(&s.db, user).await?;
+        let (username, avatar_hash): (String, Option<String>) =
+            sqlx::query_as("SELECT username, avatar_hash FROM users WHERE id = ?")
+                .bind(user.to_string())
+                .fetch_one(&s.db)
+                .await?;
+        Ok(Json(SessionResponse {
+            token,
+            user: User {
+                id: user,
+                username,
+                avatar_hash,
+            },
+        }))
     })
     .await
 }

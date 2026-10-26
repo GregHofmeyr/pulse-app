@@ -414,3 +414,19 @@ pub struct CreateEmojiRequest {
 pub struct RenameEmojiRequest {
     pub name: String,
 }
+
+/// The 403 body `POST /auth/login` answers when the password is right but a second factor is
+/// needed. `code` is always `"mfa_required"`; the `ticket` is sent back with the code.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct MfaRequired {
+    pub code: String,
+    pub message: String,
+    pub ticket: String,
+}
+
+/// `POST /auth/login/2fa`: the ticket from `MfaRequired` plus a TOTP or recovery code.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct LoginMfaRequest {
+    pub ticket: String,
+    pub code: String,
+}
