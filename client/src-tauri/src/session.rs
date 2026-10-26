@@ -80,12 +80,27 @@ impl Store {
     }
 
     pub fn load(&self) -> Option<(String, String)> {
-        keychain::load(&self.service).or_else(|| file::load(&self.dir))
+        prefer_keychain(&self.dir, keychain::load(&self.service))
     }
 
     pub fn clear(&self, server_url: &str) {
         keychain::clear(&self.service, server_url);
         file::clear(&self.dir);
+    }
+}
+
+/// The keychain's session wins. A session.json beside it is a leftover (from a time without a
+/// keychain, or an older version) that would never be read again, so it is removed.
+fn prefer_keychain(
+    dir: &Path,
+    from_keychain: Option<(String, String)>,
+) -> Option<(String, String)> {
+    match from_keychain {
+        Some(session) => {
+            file::clear(dir);
+            Some(session)
+        }
+        None => file::load(dir),
     }
 }
 
@@ -179,18 +194,21 @@ pub(crate) mod file {
 
     pub fn load(dir: &Path) -> Option<(String, String)> {
         let path = dir.join(NAME);
-        let s: Saved = serde_json::from_slice(&std::fs::read(&path).ok()?).ok()?;
+        let body = std::fs::read(&path).ok()?;
         // Versions before the owner-only DACL left the file with the folder's inherited
-        // permissions; tighten it in place the first time it is read.
+        // permissions; tighten it in place the first time it is read (even if it won't parse).
         #[cfg(windows)]
         if let Err(e) = win::restrict(&path) {
             tracing::warn!(error = %e, "could not restrict session file permissions");
         }
+        let s: Saved = serde_json::from_slice(&body).ok()?;
         Some((s.server, s.token))
     }
 
     pub fn clear(dir: &Path) {
         let _ = std::fs::remove_file(dir.join(NAME));
+        // a temp file a crash left mid-save (Windows writes through one)
+        let _ = std::fs::remove_file(dir.join(NAME).with_extension("json.tmp"));
     }
 
     /// Windows: an owner-only file means a protected DACL (no inherited entries) with a single
@@ -375,6 +393,25 @@ mod tests {
         assert_eq!(mode & 0o777, 0o600);
     }
 
+    /// A session.json left beside a working keychain is never read again, so it is removed
+    /// rather than left on disk (for Windows: with an older version's inherited permissions).
+    #[test]
+    fn a_working_keychain_removes_a_leftover_session_file() {
+        let dir = tempfile::tempdir().unwrap();
+        file::save(dir.path(), "http://old", "stale").unwrap();
+        let from_keychain = Some(("http://x".to_string(), "tok".to_string()));
+        assert_eq!(
+            prefer_keychain(dir.path(), from_keychain.clone()),
+            from_keychain
+        );
+        assert!(!dir.path().join(file::NAME).exists());
+
+        // no keychain entry: the file is the session
+        file::save(dir.path(), "http://x", "tok").unwrap();
+        assert_eq!(prefer_keychain(dir.path(), None), from_keychain);
+        assert!(dir.path().join(file::NAME).exists());
+    }
+
     /// The file's DACL is protected (nothing inherited from the folder) and holds exactly one
     /// ACE: full access for the current user.
     #[cfg(windows)]
@@ -467,6 +504,13 @@ mod tests {
         let path = dir.path().join(file::NAME);
         std::fs::write(&path, b"old").unwrap();
         file::save(dir.path(), "http://x", "tok").unwrap();
+        assert_owner_only(&path);
+
+        // a corrupt one is tightened too, even though it can't be used
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(file::NAME);
+        std::fs::write(&path, b"not json").unwrap();
+        assert_eq!(file::load(dir.path()), None);
         assert_owner_only(&path);
     }
 }
