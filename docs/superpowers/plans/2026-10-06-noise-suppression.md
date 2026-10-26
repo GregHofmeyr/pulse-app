@@ -86,7 +86,7 @@ Expected: builds. If libDF fails with unresolved `log`, add `"logging"` to its `
 - [ ] **Step 2: Create the speech fixture** (public domain LibriVox, "The Art of War", read by Moira Fogarty):
 
 ```bash
-S=/tmp/claude-1000/-home-greghofmeyr/976e3032-6fbd-4099-bced-b680082520ec/scratchpad/fixture; mkdir -p $S
+S=$(mktemp -d)
 curl -sL -o $S/aow.mp3 https://archive.org/download/art_of_war_librivox/art_of_war_01-02_sun_tzu_64kb.mp3
 mkdir -p client/src-tauri/tests/fixtures
 ffmpeg -loglevel error -ss 30 -t 3 -i $S/aow.mp3 -ac 1 -ar 48000 -f s16le client/src-tauri/tests/fixtures/speech_48k_mono_s16le.raw
