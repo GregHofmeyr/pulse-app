@@ -1070,8 +1070,15 @@ mod tests {
 
     #[tokio::test]
     async fn too_many_failed_logins_says_slow_down() {
+        use pulse_server::limits::{LimitsConfig, Rate};
         let mut cfg = testing::test_config();
-        cfg.limits = pulse_server::limits::LimitsConfig::default();
+        // The production burst of 5, but no refill: argon2 is capped at 2 hashes per process, so
+        // under a busy test run these 5 attempts can take 30 s, and per_minute(5) would hand
+        // back a token every 12 s and let the 6th through to the password check.
+        cfg.limits = LimitsConfig {
+            login_ip: Rate::new(LimitsConfig::default().login_ip.burst, 0.0),
+            ..LimitsConfig::default()
+        };
         let app = testing::spawn_with(cfg).await;
         testing::register(&app, "alex").await;
         let api = Api::new(&format!("http://{}", app.addr));
