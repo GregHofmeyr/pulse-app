@@ -19,7 +19,7 @@ permissions:
 jobs:
   changes:
     if: github.event_name != 'schedule'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
       pull-requests: read
@@ -60,7 +60,7 @@ jobs:
   rust:
     needs: changes
     if: github.event_name != 'schedule' && needs.changes.outputs.rust == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: System deps (Tauri / WebKitGTK)
@@ -75,10 +75,12 @@ jobs:
         run: |
           set -euo pipefail
           expected=6084F3CF814B57C1CF12EFD515CF4D18AF4F7421
-          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o llvm.key
-          actual=$(gpg --show-keys --with-colons llvm.key | awk -F: '/^fpr:/ {print $10; exit}')
+          key="$RUNNER_TEMP/llvm.key"
+          curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key -o "$key"
+          fprs=$(gpg --show-keys --with-colons "$key" | grep '^fpr:')
+          actual=$(printf '%s\n' "$fprs" | head -n1 | cut -d: -f10)
           [ "$actual" = "$expected" ] || { echo "LLVM apt key fingerprint mismatch: $actual" >&2; exit 1; }
-          sudo gpg --dearmor -o /etc/apt/keyrings/llvm.gpg llvm.key
+          sudo gpg --dearmor -o /etc/apt/keyrings/llvm.gpg "$key"
           echo "deb [signed-by=/etc/apt/keyrings/llvm.gpg] https://apt.llvm.org/$(lsb_release -cs)/ llvm-toolchain-$(lsb_release -cs)-21 main" \
             | sudo tee /etc/apt/sources.list.d/llvm.list
           sudo apt-get update
@@ -103,7 +105,7 @@ jobs:
   ui:
     needs: changes
     if: github.event_name != 'schedule' && needs.changes.outputs.ui == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: client/ui
@@ -124,7 +126,7 @@ jobs:
   deploy:
     needs: changes
     if: github.event_name != 'schedule' && needs.changes.outputs.deploy == 'true'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - name: compose file
@@ -147,7 +149,7 @@ jobs:
   cargo-deny:
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'schedule' || needs.changes.outputs.deps == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
       - uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2.1.1
@@ -157,7 +159,7 @@ jobs:
   pnpm-audit:
     needs: changes
     if: ${{ !cancelled() && (github.event_name == 'schedule' || needs.changes.outputs.deps == 'true') }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     defaults:
       run:
         working-directory: client/ui

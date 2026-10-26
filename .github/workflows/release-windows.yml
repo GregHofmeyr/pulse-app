@@ -43,8 +43,9 @@ jobs:
           cache-dependency-path: client/ui/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
         working-directory: client/ui
-      # Prebuilt CLI from npm, pinned to the `tauri` crate version in Cargo.lock: no ~5 min `cargo install tauri-cli` on every run.
-      - run: pnpm dlx @tauri-apps/cli@2.12.1 build
+      # Tauri CLI is an exact devDependency of client/ui (lockfile-pinned, audited, kept current by Dependabot), at the
+      # `tauri` crate's version. Run through node so the app is found from src-tauri without a .cmd shim.
+      - run: node ../ui/node_modules/@tauri-apps/cli/tauri.js build
         working-directory: client/src-tauri
       # Screen-share stream code has Windows-only paths (process discovery, open failures) that Linux CI
       # never compiles. --release reuses the build above.
