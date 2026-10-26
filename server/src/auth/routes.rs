@@ -27,7 +27,7 @@ pub fn router() -> Router<AppState> {
 }
 
 /// Names are stored lowercase; any case (and stray spaces) typed at register or login maps to it.
-fn normalize_username(u: &str) -> String {
+pub(crate) fn normalize_username(u: &str) -> String {
     u.trim().to_ascii_lowercase()
 }
 

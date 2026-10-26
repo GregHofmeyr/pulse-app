@@ -48,6 +48,8 @@ pub fn router(state: AppState) -> Router {
 /// Bind and serve until the process is stopped.
 pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     let db = db::connect(&cfg.db_url).await?;
+    // Before binding: a wrong or missing key must not bring up a server that locks 2FA users out.
+    auth::two_factor::check_key(&db, cfg.totp_key.as_ref()).await?;
     let started_at = db::now();
     let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
     tracing::info!(addr = %cfg.bind, "pulse-app-server listening");

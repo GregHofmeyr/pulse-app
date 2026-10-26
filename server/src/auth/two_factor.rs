@@ -452,3 +452,59 @@ async fn login_second_step(
     })
     .await
 }
+
+/// Startup guard: every enabled 2FA secret must decrypt with the configured key, or the server
+/// would come up and lock those users out. Pending setups aren't checked (a bad one just fails
+/// at enable). Messages carry counts only, never the key or a secret.
+pub async fn check_key(db: &SqlitePool, key: Option<&totp::TotpKey>) -> anyhow::Result<()> {
+    let rows: Vec<(String, Vec<u8>)> =
+        sqlx::query_as("SELECT user_id, secret_enc FROM user_totp WHERE enabled_at IS NOT NULL")
+            .fetch_all(db)
+            .await?;
+    let total = rows.len();
+    if total == 0 {
+        return Ok(());
+    }
+    let Some(key) = key else {
+        let who = if total == 1 {
+            "1 account uses".to_string()
+        } else {
+            format!("{total} accounts use")
+        };
+        anyhow::bail!("{who} two-factor authentication but PULSE_TOTP_KEY is not set");
+    };
+    let bad = rows
+        .iter()
+        .filter(|(id, blob)| {
+            !id.parse::<UserId>()
+                .is_ok_and(|id| totp::decrypt(key, id, blob).is_ok())
+        })
+        .count();
+    if bad > 0 {
+        anyhow::bail!(
+            "PULSE_TOTP_KEY does not match the key those secrets were encrypted with ({bad} of {total} can't be decrypted)"
+        );
+    }
+    Ok(())
+}
+
+/// Owner reset: forget a user's 2FA (secret, recovery codes, pending tickets) so they can sign in
+/// with their password and set it up again. Needs no key; leaves sessions alone. Returns the
+/// normalised username.
+pub async fn reset(db: &SqlitePool, username: &str) -> anyhow::Result<String> {
+    let name = super::routes::normalize_username(username);
+    let mut tx = crate::db::begin_write(db).await?;
+    let id: Option<String> = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
+        .bind(&name)
+        .fetch_optional(&mut *tx)
+        .await?;
+    let id = id.ok_or_else(|| anyhow::anyhow!("no user named {name}"))?;
+    for table in ["user_totp", "recovery_codes", "mfa_tickets"] {
+        sqlx::query(&format!("DELETE FROM {table} WHERE user_id = ?"))
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(name)
+}

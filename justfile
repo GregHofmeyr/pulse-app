@@ -101,6 +101,13 @@ smoke:
 invite-prod:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server create-invite'
 
+# turn off two-factor for a locked-out user on the live server (the name goes into a remote shell, so it is checked here first; passed as $username, never pasted into the script)
+reset-2fa $username:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "$username" =~ ^[A-Za-z0-9_.]{2,32}$ ]] || { echo "reset-2fa: username must be 2-32 characters of letters, digits, _ or ." >&2; exit 1; }
+    ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server reset-2fa '"$username"
+
 # newest bug/crash reports on the live server (`new` = not looked at yet)
 reports:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server reports'
