@@ -157,10 +157,10 @@ server stopped.
   isn't their tag; it can't check the SHA-256.
 - Order for a release: deploy the server first, then send friends the new installer. Clients older than the
   server see "plz update :)".
-- Building a branch: running `release-server` by hand (workflow dispatch) also tags it `:latest`, as every
-  CI run on `main` does. Deploy a branch build only as `just deploy <sha7>`, never `just deploy`, and merge
-  that branch before anything else lands on `main`: the next `main` build moves `latest` back to code
-  without it.
+- Building a branch: running `release-server` by hand (workflow dispatch) on a branch other than `main` tags
+  only `:<sha7>`. `:latest` moves only on a `main` build (after CI passes on `main`, or a manual run on `main`).
+  Deploy a branch build as `just deploy <sha7>`: a bare `just deploy` pulls `:latest`, which is `main`. Merge
+  that branch before anything else lands on `main`, or the next deploy of `main` drops it.
 - Roll back: `just deploy <previous sha7>`. If a database migration went wrong, also `just restore <backup>`
   (section 8) with the backup the deploy made.
 - A deploy that ran a new migration can't be rolled back by image alone: an older image refuses to start

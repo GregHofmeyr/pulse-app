@@ -163,4 +163,87 @@ elif livekit_pins_agree "$root/deploy/compose.yml" "$root/docker-compose.yml" "$
 else
   echo "ok   LiveKit drift is caught"
 fi
+
+# Hardening in Caddyfile and compose.yml (SECURITY.md section 5). Each check_* takes the file so the drift
+# tests below can hand it a broken copy.
+# caddy_global FILE: the global options block (from the first line to the first '}' in column 0).
+caddy_global() { sed -n '1,/^}/p' "$1"; }
+# caddy_site FILE NAME: one site block, from its "NAME {" line to the next '}' in column 0.
+caddy_site() { awk -v name="$2 {" '$0 == name { on = 1 } on { print } on && /^}/ { exit }' "$1"; }
+# check_caddy_admin FILE: the admin API is off or on a unix socket under /config (the caddy container's own
+# config volume), never the default TCP localhost:2019 that every host-network container could reach.
+check_caddy_admin() {
+  caddy_global "$1" | grep -Eq '^[[:space:]]*admin[[:space:]]+(off|unix//config/[^[:space:]]+)[[:space:]]*$'
+}
+# check_caddy_twirp FILE: the voice site refuses LiveKit's server API (/twirp/*) before proxying anything.
+check_caddy_twirp() {
+  caddy_site "$1" "voice.{\$PULSE_DOMAIN}" |
+    awk '/^[[:space:]]*respond \/twirp\/\* 404[[:space:]]*$/ { blocked = 1 } /reverse_proxy/ { exit !blocked } END { if (!blocked) exit 1 }'
+}
+# compose_service FILE NAME: one service's block (its "  NAME:" line up to the next 2-space-indented key).
+compose_service() {
+  awk -v name="  $2:" '$0 == name { on = 1; print; next } on && /^  [^ #]/ { exit } on { print }' "$1"
+}
+# check_compose_hardening FILE: every service drops all capabilities and has a pids and memory ceiling; all but
+# caddy set no-new-privileges; caddy gets back NET_BIND_SERVICE only.
+check_compose_hardening() {
+  local svc block bad=0
+  for svc in pulse-server livekit caddy; do
+    block=$(compose_service "$1" "$svc")
+    if [ -z "$block" ]; then echo "$svc: no such service" >&2; bad=1; continue; fi
+    grep -Eq '^ +cap_drop: \[ALL\]$' <<<"$block" || { echo "$svc: cap_drop [ALL] missing" >&2; bad=1; }
+    grep -Eq '^ +pids_limit: [0-9]+$' <<<"$block" || { echo "$svc: pids_limit missing" >&2; bad=1; }
+    grep -Eq '^ +mem_limit: [0-9]+[mg]$' <<<"$block" || { echo "$svc: mem_limit missing" >&2; bad=1; }
+    if [ "$svc" = caddy ]; then
+      grep -Eq '^ +cap_add: \[NET_BIND_SERVICE\]$' <<<"$block" || { echo "caddy: cap_add [NET_BIND_SERVICE] missing" >&2; bad=1; }
+    else
+      grep -Eq '^ +security_opt: \["no-new-privileges:true"\]$' <<<"$block" || { echo "$svc: no-new-privileges missing" >&2; bad=1; }
+      if grep -Eq '^ +cap_add:' <<<"$block"; then echo "$svc: unexpected cap_add" >&2; bad=1; fi
+    fi
+  done
+  return "$bad"
+}
+# check_caddy_config_volume FILE: the admin socket's directory is the caddy service's /config volume.
+check_caddy_config_volume() {
+  compose_service "$1" caddy | grep -Eq '^ +- \./caddy/config:/config$'
+}
+# result STATUS DESCRIPTION: STATUS 0 is a pass.
+result() {
+  if [ "$1" -eq 0 ]; then echo "ok   $2"; else echo "FAIL $2"; failed=1; fi
+}
+caddyfile=$root/deploy/Caddyfile
+compose=$root/deploy/compose.yml
+rc=0; check_caddy_admin "$caddyfile" || rc=$?
+result "$rc" "Caddy admin API on a unix socket under /config (or off)"
+rc=0; check_caddy_twirp "$caddyfile" || rc=$?
+result "$rc" "Caddy refuses /twirp/* on the voice site"
+rc=0; check_compose_hardening "$compose" || rc=$?
+result "$rc" "compose: caps dropped, no-new-privileges, pids and memory ceilings"
+rc=0; check_caddy_config_volume "$compose" || rc=$?
+result "$rc" "compose: caddy mounts its /config volume (the admin socket's home)"
+# and the checks catch drift: each must refuse a copy broken by the given sed expression.
+# refused DESCRIPTION: the previous check (rc) must have failed.
+refused() { if [ "$rc" -ne 0 ]; then echo "ok   drift caught: $1"; else echo "FAIL drift not caught: $1"; failed=1; fi; }
+drift=$tmp/drift
+sed 's#^\([[:space:]]*admin\) .*#\1 localhost:2019#' "$caddyfile" >"$drift"
+rc=0; check_caddy_admin "$drift" || rc=$?; refused "admin back on TCP"
+sed '/^[[:space:]]*admin /d' "$caddyfile" >"$drift"
+rc=0; check_caddy_admin "$drift" || rc=$?; refused "no admin line"
+sed '/respond \/twirp/d' "$caddyfile" >"$drift"
+rc=0; check_caddy_twirp "$drift" || rc=$?; refused "/twirp/ not blocked"
+sed '/respond \/twirp/d; s#^\([[:space:]]*\)reverse_proxy 127.0.0.1:7880$#&\n\1respond /twirp/* 404#' "$caddyfile" >"$drift"
+rc=0; check_caddy_twirp "$drift" || rc=$?; refused "/twirp/ blocked after the proxy"
+sed '/^  livekit:/,/^  caddy:/{/cap_drop/d}' "$compose" >"$drift"
+rc=0; check_compose_hardening "$drift" 2>/dev/null || rc=$?; refused "livekit keeps its capabilities"
+sed '/^  pulse-server:/,/^  livekit:/{/security_opt/d}' "$compose" >"$drift"
+rc=0; check_compose_hardening "$drift" 2>/dev/null || rc=$?; refused "server without no-new-privileges"
+sed '/^  pulse-server:/,/^  livekit:/{/mem_limit/d}' "$compose" >"$drift"
+rc=0; check_compose_hardening "$drift" 2>/dev/null || rc=$?; refused "server without a memory limit"
+# caddy is the last service: its block runs to the end of the file
+sed '/^  caddy:/,/^NOMATCH/{/pids_limit/d}' "$compose" >"$drift"
+rc=0; check_compose_hardening "$drift" 2>/dev/null || rc=$?; refused "caddy without a pids limit"
+sed '/^  caddy:/,/^NOMATCH/{/cap_add/d}' "$compose" >"$drift"
+rc=0; check_compose_hardening "$drift" 2>/dev/null || rc=$?; refused "caddy without NET_BIND_SERVICE"
+sed '/^  caddy:/,/^NOMATCH/{/caddy\/config:/d}' "$compose" >"$drift"
+rc=0; check_caddy_config_volume "$drift" || rc=$?; refused "caddy without its /config volume"
 exit "$failed"

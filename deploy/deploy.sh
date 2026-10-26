@@ -91,6 +91,7 @@ set_env .env PULSE_TAG "$tag"
 set_env .env PULSE_IMAGE "$image"
 echo "pinned: $image"
 docker compose up -d --remove-orphans
+# reload finds the admin API (a unix socket, see the Caddyfile's global block) from --config.
 docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
 for _ in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:7890/health >/dev/null; then

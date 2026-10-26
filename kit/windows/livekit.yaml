@@ -1,0 +1,29 @@
+# Windows test kit LiveKit (start.ps1 runs it with this file). Everything stays on this PC except one port: the
+# ICE-TCP listener (rtc.tcp_port, 7881) binds every interface because LiveKit hard-codes a wildcard address for
+# it, and it only accepts ICE for a live session. The API key "pulse" and its per-install secret come from
+# LIVEKIT_KEYS, which start.ps1 sets; the secret never goes in this file.
+# server/tests/livekit_ice.rs checks this file alongside deploy/livekit.yaml and docker/livekit.yaml.
+port: 7880
+bind_addresses: ["127.0.0.1"]
+rtc:
+  tcp_port: 7881
+  udp_port: 7882
+  use_external_ip: false
+  node_ip: 127.0.0.1
+  # UDP media (and its candidates) on loopback only; without these it listens on every interface, LAN included.
+  # Filtered by address, not interface name (docker/livekit.yaml uses `interfaces: includes: [lo]`): Windows
+  # calls its loopback "Loopback Pseudo-Interface 1", so a name filter would match nothing there.
+  enable_loopback_candidate: true
+  ips:
+    includes: [127.0.0.1/32]
+# The embedded TURN is the clients' only ICE server: without it LiveKit hands every client Twilio's and Google's
+# public STUN servers in the join response. Loopback only.
+turn:
+  enabled: true
+  udp_port: 3478
+  bind_addresses: ["127.0.0.1"]
+webhook:
+  api_key: pulse
+  urls: ["http://127.0.0.1:7890/livekit/webhook"]
+logging:
+  level: info

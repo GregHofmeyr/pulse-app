@@ -417,7 +417,10 @@ any work.
 - **TLS.** Caddy terminates TLS with automatically renewed certificates.
 - **Internal services.** The Pulse server listens on loopback only. LiveKit's signalling port (7880) also listens on
   loopback only, so it is reachable only through Caddy; the firewall keeps 7880 closed as well. LiveKit's media and
-  TURN ports are public (see *Firewall*). The LiveKit webhook path is refused at the proxy.
+  TURN ports are public (see *Firewall*). The LiveKit webhook path is refused at the proxy. So is LiveKit's server API
+  (`/twirp/*`, room and participant admin); the Pulse server calls it over loopback.
+- **Caddy admin API.** Caddy's admin API listens on a unix socket in Caddy's own config volume, not on TCP. The
+  containers share the host's network, so a TCP admin port on loopback would be open to all of them.
 - **Provisioning.** The setup script installs Docker and Tailscale from their vendors' signed apt repositories. It
   checks each repository's signing key against a full fingerprint pinned in the script and stops if it differs. No
   vendor install script is piped into a shell.
@@ -432,6 +435,10 @@ any work.
 - **Containers.**
   - All three containers (Pulse server, LiveKit, Caddy) run as a dedicated host user, not root. The server image also
     defaults to a non-root user.
+  - Every container drops all Linux capabilities and has a process-count and memory ceiling. Caddy keeps one: binding
+    ports 80 and 443. The server and LiveKit also run with `no-new-privileges`. Caddy can't: it binds those ports
+    through a file capability on its binary, which `no-new-privileges` would ignore.
+  - Root filesystems are not read-only: each image's write paths have not been checked.
   - That host user is in the `docker` group so it can run deploys and backups, which makes it root-equivalent on the
     host (see the known gaps).
   - Images are pinned by digest. LiveKit and Caddy are pinned in the compose file. The Pulse server image is pinned to
@@ -489,6 +496,9 @@ any work.
   - **Test kit.** The build output is a test kit zip containing the installer. The kit also includes a LiveKit server
     binary (v1.13.10), for running a local test server. The release job checks the downloaded archive against a
     pinned SHA-256 before extracting it, and fails on a mismatch. The installer does not install it.
+  - **Test kit LiveKit.** The kit's LiveKit config keeps signalling, UDP media and TURN on loopback, and its own
+    TURN means clients are given no third-party STUN server. LiveKit's ICE-TCP port (7881) still listens on every
+    interface; LiveKit gives no way to restrict it. A test checks this config like the production and dev ones.
 - **Rust dependencies.** `cargo-deny` checks advisories, licences, wildcard version requirements and sources
   (`deny.toml`). Only crates.io and one pinned git dependency are allowed as sources.
   - **Ignored advisories.** Each ignored advisory is listed there with its reason.

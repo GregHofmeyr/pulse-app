@@ -42,11 +42,14 @@ jobs:
               - 'Cargo.toml'
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
+              # cargo config (build flags, linker) changes what every Rust job builds
+              - '.cargo/**'
               - 'vendor/**'
               - 'justfile'
-              # server/tests/livekit_ice.rs reads both LiveKit configs
+              # server/tests/livekit_ice.rs reads all three LiveKit configs
               - 'deploy/livekit.yaml'
               - 'docker/livekit.yaml'
+              - 'kit/windows/livekit.yaml'
               - '.github/workflows/ci.yml'
             ui:
               - 'client/ui/**'
@@ -60,6 +63,8 @@ jobs:
             image:
               - 'deploy/server.Dockerfile'
               - '.dockerignore'
+              # the image build copies the tree, .cargo/config.toml included
+              - '.cargo/**'
               - '.github/workflows/ci.yml'
             deps:
               - 'Cargo.toml'
