@@ -1,6 +1,8 @@
 // Pure decisions for watching: who gets the "is live" toast, why Watch is disabled, the toast stack,
 // which simulcast layer a watch asks for, and the watch cap.
 
+import type { StreamEndReason } from '../protocol/StreamEndReason'
+
 export type Toast = { channelId: string; streamer: string; name: string }
 
 export const TOAST_MS = 4_000
@@ -27,6 +29,16 @@ export function pushToast(list: Toast[], t: Toast): Toast[] {
 
 export function dropToast(list: Toast[], channelId: string, streamer: string): Toast[] {
   return list.filter((x) => !same(x, { channelId, streamer }))
+}
+
+/** A stream ended: ours only plays when the server ended it in our channel; someone else's when we watch it or share its channel. */
+export function liveEndSound(
+  e: { channelId: string; userId: string; reason: StreamEndReason },
+  s: { voiceChannelId: string | null; meId: string; watching: boolean },
+): boolean {
+  const inMyChannel = s.voiceChannelId === e.channelId
+  if (e.userId === s.meId) return (e.reason === 'timed_out' || e.reason === 'crashed') && inMyChannel
+  return s.watching || inMyChannel
 }
 
 /** Where a watched stream shows: a grid tile or the mini-preview (`preview`), or the main area (`full`). */
