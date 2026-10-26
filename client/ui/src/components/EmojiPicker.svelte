@@ -8,7 +8,8 @@
   import Icon from './Icon.svelte'
 
   let { onPick, onClose, servers, memberOf }: {
-    onPick: (e: Std | CustomEmoji) => void
+    /** `keep`: Shift was held, so the caller leaves the picker open for the next pick. */
+    onPick: (e: Std | CustomEmoji, opts: { keep: boolean }) => void
     onClose: () => void
     servers: Server[]
     memberOf: Set<string>
@@ -103,8 +104,9 @@
   const nameOf = (e: Item) => (isCustom(e) ? e.name : e.n)
   const picked = (e: Item): Item => (isCustom(e) ? e : { ...e, u: withSkin(e, tone) })
 
-  function pick(e: Item) {
-    onPick(picked(e))
+  function pick(e: Item, keep = false) {
+    onPick(picked(e), { keep })
+    if (keep) searchEl.focus()
   }
 
   function jump(id: string) {
@@ -148,7 +150,7 @@
         : navigated || hovered ? flat[active] : results?.[0]
       if (target) {
         ev.preventDefault() // also stops the button's own click from picking twice
-        pick(target)
+        pick(target, ev.shiftKey)
       }
     } else if (ev.key.length === 1 && !ev.ctrlKey && !ev.metaKey && !ev.altKey && ev.target !== searchEl) {
       searchEl.focus() // the keystroke then lands in the search box
@@ -170,7 +172,7 @@
 {#snippet cell(e: Item, idx: number)}
   <button
     class="cell" class:active={navigated && idx === active} type="button" aria-label={`:${nameOf(e)}:`}
-    data-key={reactionKey(e)} onclick={() => pick(e)}
+    data-key={reactionKey(e)} onclick={(ev) => pick(e, ev.shiftKey)}
     onmouseenter={() => { hovered = e; active = idx }} onmouseleave={() => (hovered = null)}
   >
     <img src={imgSrc(e)} alt="" loading="lazy" draggable="false" {@attach isCustom(e) && animatedEmoji(e)} />

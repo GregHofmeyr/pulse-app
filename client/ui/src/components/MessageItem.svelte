@@ -56,9 +56,12 @@
     if (d && d !== message.content) await onEdit(d)
     editing = false
   }
-  function pick(e: Std | CustomEmoji) {
-    picking = false
-    void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, reactionKey(e), true, meId, onError)
+  function pick(e: Std | CustomEmoji, { keep }: { keep: boolean }) {
+    if (!keep) picking = false
+    const key = reactionKey(e)
+    // Shift-picking several toggles each one: a second pick of the same emoji takes it back.
+    const add = !keep || !message.reactions.some((r) => r.emoji === key && r.me)
+    void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, add, meId, onError)
   }
   function key(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {

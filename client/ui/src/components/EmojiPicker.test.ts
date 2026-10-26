@@ -180,6 +180,26 @@ describe('EmojiPicker', () => {
     expect(e.defaultPrevented).toBe(true)
   })
 
+  it('shift_click_reports_keep', () => {
+    open()
+    const [a, b] = cells() as HTMLElement[]
+    a.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))
+    b.click()
+    expect(onPick.mock.calls[0][1]).toEqual({ keep: true })
+    expect(onPick.mock.calls[1][1]).toEqual({ keep: false })
+  })
+
+  it('shift_enter_reports_keep_and_focuses_search', () => {
+    open()
+    const cell = cells()[3] as HTMLElement
+    cell.focus()
+    cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, shiftKey: true }))
+    flushSync()
+    expect(onPick).toHaveBeenCalledTimes(1)
+    expect(onPick.mock.calls[0][1]).toEqual({ keep: true })
+    expect(document.activeElement).toBe(search())
+  })
+
   it('enter_on_a_tab_focused_cell_picks_that_cell', () => {
     open()
     const cell = cells()[5] as HTMLElement

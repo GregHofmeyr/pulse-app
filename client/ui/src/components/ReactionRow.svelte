@@ -106,9 +106,11 @@
   const tipId = (key: string) =>
     `reactors-${message.id}-${key.startsWith('custom:') ? 'custom-' + key.slice(7) : [...key].map((c) => c.codePointAt(0)!.toString(16)).join('-')}`
 
-  function pick(e: Std | CustomEmoji) {
-    picking = false
-    toggle(reactionKey(e), true)
+  function pick(e: Std | CustomEmoji, { keep }: { keep: boolean }) {
+    if (!keep) picking = false
+    const key = reactionKey(e)
+    // Shift-picking several toggles each one: a second pick of the same emoji takes it back.
+    toggle(key, !keep || !reaction(key)?.me)
   }
 </script>
 

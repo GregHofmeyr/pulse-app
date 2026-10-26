@@ -218,6 +218,21 @@ describe('reaction toggles', () => {
     expect(cur().reactions).toEqual([{ emoji: '🎉', count: 1, me: true }])
   })
 
+  it('shift_click_toggles_and_keeps_the_picker_open', async () => {
+    showItem(msg({ reactions: [{ emoji: '👍', count: 1, me: true }] }))
+    ;(document.querySelector('.actions [aria-label="Add reaction"]') as HTMLButtonElement).click()
+    flushSync()
+    const shiftClick = (k: string) => cell(k).dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))
+    shiftClick('👍') // already mine: removes
+    await settle()
+    expect(calls('remove_reaction')).toHaveLength(1)
+    expect(document.querySelector('.cell')).not.toBeNull()
+    shiftClick('🎉') // not mine: adds
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('add_reaction', { messageId: 'M1', emoji: '🎉' })
+    expect(document.querySelector('.cell')).not.toBeNull()
+  })
+
   it('a failed add removes the new chip again and reports the error', async () => {
     invoke.mockRejectedValue('nope')
     showItem(msg({ reactions: [] }))

@@ -87,6 +87,36 @@ describe('Composer emoji', () => {
     expect(document.querySelector('.picker')).toBeNull()
   })
 
+  it('shift_click_inserts_and_keeps_the_picker_open', async () => {
+    const box = show()
+    type(box, 'ab')
+    box.setSelectionRange(1, 1)
+    ;(document.querySelector('[aria-label="Emoji"]') as HTMLButtonElement).click()
+    flushSync()
+    const shiftClick = (name: string) => {
+      document.querySelector(`.picker button.cell[aria-label=":${name}:"]`)!
+        .dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))
+    }
+    shiftClick('grinning')
+    await tick()
+    shiftClick('joy')
+    await tick()
+    expect(box.value).toBe('a😀 😂 b')
+    expect(document.querySelector('.picker')).not.toBeNull()
+  })
+
+  it('plain_click_inserts_and_closes', async () => {
+    const box = show()
+    type(box, 'ab')
+    box.setSelectionRange(1, 1)
+    ;(document.querySelector('[aria-label="Emoji"]') as HTMLButtonElement).click()
+    flushSync()
+    ;(document.querySelector('.picker button.cell[aria-label=":joy:"]') as HTMLButtonElement).click()
+    await tick()
+    expect(box.value).toBe('a😂 b')
+    expect(document.querySelector('.picker')).toBeNull()
+  })
+
   it('autocomplete uses your saved skin tone where the emoji has one', async () => {
     localStorage.setItem('pulse.skinTone', '3')
     const box = show()
