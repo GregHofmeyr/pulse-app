@@ -11,8 +11,9 @@ ignore = [
     # moved to ndarray 0.16 (see client/src-tauri/Cargo.toml). The fix is in 0.21.16 only. Pulse only
     # loads the DeepFilterNet model bundled in the binary, never an attacker-supplied NNEF file.
     "RUSTSEC-2026-0217",
-    # zip 0.6 is a build-time dependency of webrtc-sys-build (extracts the libwebrtc archive it
-    # downloads at build time). Never shipped, never fed untrusted archives; fix needs zip 9.
+    # zip 0.6 is a build-time dependency of webrtc-sys-build and vendor/webrtc-sys (extracts the
+    # libwebrtc archive downloaded at build time). Never shipped; it only opens an archive after its
+    # SHA-256 matched the pin in vendor/webrtc-sys/libwebrtc_download.rs. Fix needs zip 9.
     "RUSTSEC-2026-0367",
     "RUSTSEC-2026-0368",
     "RUSTSEC-2026-0369",

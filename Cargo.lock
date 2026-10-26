@@ -7673,10 +7673,15 @@ dependencies = [
  "cc",
  "cxx",
  "cxx-build",
+ "fs2",
  "glob",
  "log",
  "pkg-config",
+ "reqwest 0.12.28",
+ "scratch",
+ "sha2",
  "webrtc-sys-build",
+ "zip",
 ]
 
 [[package]]
