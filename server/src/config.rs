@@ -4,6 +4,8 @@ use std::time::Duration;
 
 use anyhow::Context;
 
+use crate::auth::totp::TotpKey;
+
 #[derive(Clone, Debug)]
 pub struct Config {
     pub db_url: String,
@@ -26,6 +28,8 @@ pub struct Config {
     pub media_dir: PathBuf,
     /// Uploads are refused when the media filesystem has less free space than this.
     pub media_min_free_bytes: u64,
+    /// Encrypts TOTP secrets at rest. `None` = two-factor can't be set up (`PULSE_TOTP_KEY` unset).
+    pub totp_key: Option<TotpKey>,
 }
 
 impl Config {
@@ -50,6 +54,33 @@ impl Config {
             stream_media_timeout: Duration::from_secs(60),
             media_dir: var("PULSE_MEDIA_DIR", "/data/media").into(),
             media_min_free_bytes: 2 * 1024 * 1024 * 1024,
+            totp_key: totp_key(std::env::var("PULSE_TOTP_KEY").ok().as_deref())?,
         })
+    }
+}
+
+/// Unset or empty = no key. A malformed one is an error that names the variable, never its value.
+fn totp_key(raw: Option<&str>) -> anyhow::Result<Option<TotpKey>> {
+    match raw {
+        None | Some("") => Ok(None),
+        Some(v) => TotpKey::parse(v)
+            .map(Some)
+            .context("PULSE_TOTP_KEY must be exactly 64 hex characters"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn totp_key_env() {
+        assert!(totp_key(None).unwrap().is_none());
+        assert!(totp_key(Some("")).unwrap().is_none());
+        assert!(totp_key(Some(&"ab".repeat(32))).unwrap().is_some());
+        let bad = "not-a-key-s3cret";
+        let msg = format!("{:#}", totp_key(Some(bad)).unwrap_err());
+        assert!(msg.contains("PULSE_TOTP_KEY"));
+        assert!(!msg.contains(bad));
     }
 }

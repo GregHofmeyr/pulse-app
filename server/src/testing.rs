@@ -61,6 +61,7 @@ pub fn test_config() -> Config {
         stream_media_timeout: Duration::from_millis(300),
         media_dir: Default::default(), // under the test's temp dir unless a test sets one
         media_min_free_bytes: 0,
+        totp_key: Some(crate::auth::totp::TotpKey::parse(&"42".repeat(32)).unwrap()),
     }
 }
 
