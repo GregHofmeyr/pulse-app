@@ -107,11 +107,20 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
   the `tauri` crate's minor changed, `@tauri-apps/cli@<version>` in `release-windows.yml`. Dependabot opens PRs for
   each of these (rust-toolchain, docker, github-actions); the digest is the multi-arch index digest. GitHub Actions are
   pinned to commit SHAs with a `# vX.Y.Z` comment, and `ci.yml` checks the LLVM apt key against its published fingerprint.
+- Node and pnpm are pinned to exact versions (`node-version` / `version` of the setup actions) in `ci.yml` and
+  `release-windows.yml`. Dependabot doesn't bump those inputs: to bump, take the newest release of the same major
+  (`https://nodejs.org/dist/index.json`, `npm view pnpm@<major> version`), change it in both workflows, and let CI run.
 - Bumping LiveKit or Caddy: Dependabot opens a PR for new tags (`.github/dependabot.yml`). To do it by hand,
   take the digest of the multi-arch **index**, not of one platform: `docker manifest inspect <image>:<tag> -v`, or
   `HEAD /v2/<repo>/manifests/<tag>` on the registry with the OCI index and manifest-list `Accept` headers and read
   `Docker-Content-Digest`. Check that the index lists `linux/arm64` (the server is ARM64). Then update
   `compose.yml` (CI and `just deploy-check` read the Caddy image from it), run `just deploy-check`, `just deploy`.
+- LiveKit lives in three places that move together: `deploy/compose.yml` (production), the root `docker-compose.yml`
+  (dev and `just voice-it`; same `image:` line, so the tests run what ships), and `release-windows.yml`
+  (`LIVEKIT_VERSION` and `LIVEKIT_WINDOWS_SHA256`, the Windows test kit's binary). Dependabot bumps both compose
+  files in one PR; add the `release-windows.yml` change to it by hand (the comment there says how to get the
+  SHA-256). `deploy-selftest.sh` (CI and `just deploy-check`) fails if the two image lines differ or the version
+  isn't their tag; it can't check the SHA-256.
 - Order for a release: deploy the server first, then send friends the new installer. Clients older than the
   server see "plz update :)".
 - Building a branch: running `release-server` by hand (workflow dispatch) also tags it `:latest`, as every

@@ -37,9 +37,11 @@ updates:
       docker-minor-patch:
         update-types: [minor, patch]
 
-  # image: lines in deploy/compose.yml (livekit, caddy); the dev docker-compose.yml is not tracked
+  # image: lines in deploy/compose.yml (livekit, caddy) and the dev docker-compose.yml (livekit, kept
+  # identical to prod: deploy-selftest.sh fails CI if they differ). The group puts both in one PR;
+  # release-windows.yml's LIVEKIT_VERSION + SHA-256 are bumped by hand in it (deploy/README.md).
   - package-ecosystem: docker-compose
-    directory: /deploy
+    directories: [/deploy, /]
     schedule:
       interval: weekly
     open-pull-requests-limit: 3

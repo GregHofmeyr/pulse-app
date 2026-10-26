@@ -75,4 +75,42 @@ if bash "$here/deploy.sh" --check-env "$tmp/bad.env" 2>/dev/null; then
 else
   echo "ok   --check-env refuses"
 fi
+
+# The three LiveKit copies move together: deploy/compose.yml (prod), docker-compose.yml (dev and
+# `just voice-it`) and release-windows.yml (the Windows test kit's binary, by version + SHA-256).
+# livekit_pins_agree PROD_COMPOSE DEV_COMPOSE RELEASE_WORKFLOW: the two image refs are identical
+# and the workflow's LIVEKIT_VERSION is their tag.
+livekit_pins_agree() {
+  local prod dev kit
+  prod=$(sed -n 's#^ *image: *\(livekit/livekit-server:.*\)$#\1#p' "$1")
+  dev=$(sed -n 's#^ *image: *\(livekit/livekit-server:.*\)$#\1#p' "$2")
+  kit=$(sed -n 's#^ *LIVEKIT_VERSION: *\([^ ]*\) *$#\1#p' "$3")
+  if [ -z "$prod" ] || [ "$prod" != "$dev" ]; then
+    echo "LiveKit image differs: prod '$prod', dev '$dev'" >&2
+    return 1
+  fi
+  if [[ $prod != "livekit/livekit-server:v$kit@sha256:"* ]] || [ -z "$kit" ]; then
+    echo "release-windows.yml LIVEKIT_VERSION '$kit' isn't the compose tag ($prod)" >&2
+    return 1
+  fi
+}
+root=$(cd "$here/.." && pwd)
+if livekit_pins_agree "$root/deploy/compose.yml" "$root/docker-compose.yml" "$root/.github/workflows/release-windows.yml"; then
+  echo "ok   LiveKit pinned alike in deploy/compose.yml, docker-compose.yml, release-windows.yml"
+else
+  echo "FAIL LiveKit pins drifted (bump all three together, see deploy/README.md)"
+  failed=1
+fi
+# and the check itself catches drift
+sed 's#livekit-server:v[0-9.]*@#livekit-server:v0.0.1@#' "$root/docker-compose.yml" >"$tmp/dev-compose.yml"
+sed 's#^\( *LIVEKIT_VERSION:\).*#\1 0.0.1#' "$root/.github/workflows/release-windows.yml" >"$tmp/release.yml"
+if livekit_pins_agree "$root/deploy/compose.yml" "$tmp/dev-compose.yml" "$root/.github/workflows/release-windows.yml" 2>/dev/null; then
+  echo "FAIL a dev LiveKit image that differs from prod passed"
+  failed=1
+elif livekit_pins_agree "$root/deploy/compose.yml" "$root/docker-compose.yml" "$tmp/release.yml" 2>/dev/null; then
+  echo "FAIL a release-windows LIVEKIT_VERSION that differs from the compose tag passed"
+  failed=1
+else
+  echo "ok   LiveKit drift is caught"
+fi
 exit "$failed"
