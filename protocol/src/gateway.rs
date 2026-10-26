@@ -9,7 +9,7 @@ use crate::rest::{
     StreamInfo, User,
 };
 
-/// `Debug` is written out by hand: `Hello` carries the session token.
+// `Debug` is written out by hand below: `Hello` carries the session token.
 #[derive(Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "op", content = "d")]
 pub enum ClientFrame {
