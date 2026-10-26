@@ -186,3 +186,131 @@ async fn hello(app: &TestApp, token: &str) -> Socket {
     }
     panic!("no Ready");
 }
+
+/// Open `/gateway` as if from `ip`; `Err(status)` if the upgrade was refused.
+async fn connect_from(app: &TestApp, ip: &str) -> Result<Socket, u16> {
+    use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+    let mut req = app.ws_url("/gateway").into_client_request().unwrap();
+    req.headers_mut()
+        .insert("x-forwarded-for", ip.parse().unwrap());
+    match tokio_tungstenite::connect_async(req).await {
+        Ok((ws, _)) => Ok(ws),
+        Err(tokio_tungstenite::tungstenite::Error::Http(r)) => Err(r.status().as_u16()),
+        Err(e) => panic!("connect failed: {e}"),
+    }
+}
+
+/// Send Hello and return the close code the server answered with (`None` if Ready came instead).
+async fn hello_close_code(ws: &mut Socket, token: &str) -> Option<u16> {
+    let f = serde_json::to_string(&ClientFrame::Hello {
+        token: token.into(),
+        client_version: pulse_protocol::PROTOCOL_VERSION,
+    })
+    .unwrap();
+    ws.send(Ws::text(f)).await.unwrap();
+    loop {
+        match tokio::time::timeout(Duration::from_secs(3), ws.next())
+            .await
+            .expect("no answer to Hello")
+        {
+            Some(Ok(Ws::Close(Some(f)))) => return Some(u16::from(f.code)),
+            Some(Ok(Ws::Text(t))) => {
+                if let Ok(ServerFrame::Ready(_)) = serde_json::from_str(&t) {
+                    return None;
+                }
+            }
+            Some(Ok(_)) => continue,
+            other => panic!("expected Ready or a close, got {other:?}"),
+        }
+    }
+}
+
+/// Heartbeat and expect the ack: the socket is still served.
+async fn alive(ws: &mut Socket) -> bool {
+    let f = serde_json::to_string(&ClientFrame::Heartbeat).unwrap();
+    if ws.send(Ws::text(f)).await.is_err() {
+        return false;
+    }
+    while let Ok(Some(Ok(m))) = tokio::time::timeout(Duration::from_secs(3), ws.next()).await {
+        match m {
+            Ws::Text(t) => {
+                if let Ok(ServerFrame::HeartbeatAck) = serde_json::from_str(&t) {
+                    return true;
+                }
+            }
+            Ws::Close(_) => return false,
+            _ => {}
+        }
+    }
+    false
+}
+
+#[tokio::test]
+async fn failed_gateway_auths_are_limited_per_ip() {
+    let app = spawn_limited(|l| l.gateway_ip = Rate::new(3, 0.0)).await;
+    let (_, a) = register(&app, "alex").await;
+    for _ in 0..3 {
+        let mut ws = connect_from(&app, "10.6.0.1").await.expect("upgrade");
+        assert_eq!(hello_close_code(&mut ws, "garbage").await, Some(4001));
+    }
+    assert_eq!(
+        connect_from(&app, "10.6.0.1").await.err(),
+        Some(429),
+        "refused before the upgrade"
+    );
+    let mut other = connect_from(&app, "10.6.0.2")
+        .await
+        .expect("other addresses unaffected");
+    assert_eq!(hello_close_code(&mut other, &a).await, None);
+}
+
+#[tokio::test]
+async fn successful_gateway_auths_do_not_use_up_the_bucket() {
+    let app = spawn_limited(|l| l.gateway_ip = Rate::new(2, 0.0)).await;
+    let (_, a) = register(&app, "alex").await;
+    for i in 0..6 {
+        let mut ws = connect_from(&app, "10.7.0.1")
+            .await
+            .unwrap_or_else(|s| panic!("connect {i} refused with {s}"));
+        assert_eq!(hello_close_code(&mut ws, &a).await, None, "connect {i}");
+    }
+}
+
+#[tokio::test]
+async fn ninth_gateway_connection_is_refused_and_the_first_eight_stay_up() {
+    let app = spawn_limited(|_| {}).await;
+    let (a_id, a) = register(&app, "alex").await;
+    let mut socks = vec![];
+    for _ in 0..8 {
+        socks.push(hello(&app, &a).await);
+    }
+    let mut ninth = connect_from(&app, "127.0.0.1").await.unwrap();
+    assert_eq!(hello_close_code(&mut ninth, &a).await, Some(4006));
+    assert_eq!(app.hub.connections_for(a_id), 8);
+    for (i, ws) in socks.iter_mut().enumerate() {
+        assert!(alive(ws).await, "connection {i} was kicked");
+    }
+    // another user has their own allowance
+    let (_, b) = register(&app, "sam").await;
+    let _sam = hello(&app, &b).await;
+}
+
+#[tokio::test]
+async fn a_gateway_slot_frees_when_a_connection_closes() {
+    let app = spawn_limited(|_| {}).await;
+    let (a_id, a) = register(&app, "alex").await;
+    let mut socks = vec![];
+    for _ in 0..8 {
+        socks.push(hello(&app, &a).await);
+    }
+    let mut gone = socks.pop().unwrap();
+    gone.close(None).await.unwrap();
+    drop(gone);
+    let deadline = std::time::Instant::now() + Duration::from_secs(3);
+    while app.hub.connections_for(a_id) > 7 {
+        assert!(std::time::Instant::now() < deadline, "slot never freed");
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    let mut again = connect_from(&app, "127.0.0.1").await.unwrap();
+    assert_eq!(hello_close_code(&mut again, &a).await, None);
+}

@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use axum::extract::State;
 use axum::extract::ws::{CloseFrame, Message as Ws, WebSocket, WebSocketUpgrade};
-use axum::response::Response;
+use axum::response::{IntoResponse, Response};
 use pulse_protocol::gateway::{
     ClientFrame, DmMembers, Event, Ready, ServerFrame, ServerMembers, VoiceMember, VoiceRoom,
 };
@@ -17,12 +17,15 @@ use crate::access::channel_for;
 use crate::auth::routes::load_user;
 use crate::auth::session;
 use crate::db::now;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
+use crate::limits::ClientIp;
 use crate::servers::routes::{all_servers, dms_of, server_channels, server_members};
 use crate::streams::state::StreamState;
 use crate::voice::VoiceState;
 
-pub use super::hub::{CLOSE_TOO_SLOW, CLOSE_UNAUTHORIZED, CLOSE_UPDATE_REQUIRED};
+pub use super::hub::{
+    CLOSE_TOO_MANY_CONNECTIONS, CLOSE_TOO_SLOW, CLOSE_UNAUTHORIZED, CLOSE_UPDATE_REQUIRED,
+};
 use super::hub::{ConnId, Hub};
 pub const CLOSE_TIMEOUT: u16 = 4002;
 /// Pre- and post-auth client frames are tiny; cap them so nobody can make us buffer megabytes.
@@ -30,10 +33,20 @@ const MAX_CLIENT_FRAME: usize = 64 * 1024;
 /// A socket write that cannot complete in this long belongs to a dead or stalled client.
 const SEND_TIMEOUT: Duration = Duration::from_secs(10);
 
-pub async fn handler(ws: WebSocketUpgrade, State(s): State<AppState>) -> Response {
+pub async fn handler(
+    ws: WebSocketUpgrade,
+    State(s): State<AppState>,
+    ClientIp(ip): ClientIp,
+) -> Response {
+    // Spend up front (like login) so a burst of attempts can't all slip past; the token comes
+    // back once the socket authenticates, so only failed or abandoned attempts keep the spend.
+    let ip_key = ip.to_string();
+    if !s.limits.gateway_ip.hit(&ip_key) {
+        return AppError::TooManyRequests.into_response();
+    }
     ws.max_message_size(MAX_CLIENT_FRAME)
         .max_frame_size(MAX_CLIENT_FRAME)
-        .on_upgrade(move |socket| run(socket, s))
+        .on_upgrade(move |socket| run(socket, s, ip_key))
 }
 
 async fn close(mut socket: WebSocket, code: u16, reason: &'static str) {
@@ -204,17 +217,29 @@ pub async fn build_ready(
     })
 }
 
-async fn run(mut socket: WebSocket, s: AppState) {
+async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
     let (me, token_hash) = match authenticate(&mut socket, &s).await {
-        Auth::Ok(u, h) => (u, h),
+        Auth::Ok(u, h) => {
+            s.limits.gateway_ip.refund(&ip_key);
+            (u, h)
+        }
         Auth::Denied => return close(socket, CLOSE_UNAUTHORIZED, "unauthorized").await,
         Auth::Outdated => {
             return close(socket, CLOSE_UPDATE_REQUIRED, "update required").await;
         }
-        Auth::Internal => return close(socket, 1011, "internal error").await,
+        Auth::Internal => {
+            s.limits.gateway_ip.refund(&ip_key); // our fault, not the client's
+            return close(socket, 1011, "internal error").await;
+        }
     };
     // Register before building Ready so no event between the snapshot and the stream is lost.
-    let reg = s.hub.register(me, token_hash);
+    // Over the per-user cap: refuse this one, never kick an existing connection.
+    let Some(reg) = s
+        .hub
+        .try_register(me, token_hash, s.limits.gateway_per_user)
+    else {
+        return close(socket, CLOSE_TOO_MANY_CONNECTIONS, "too many connections").await;
+    };
     let (conn, mut rx, mut kick) = (reg.id, reg.rx, reg.kick);
     let ready = match build_ready(&s.db, &s.voice, &s.streams, &s.hub, me).await {
         Ok(r) => r,

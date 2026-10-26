@@ -46,6 +46,11 @@ pub struct LimitsConfig {
     pub report_user: Rate,
     /// Media uploads per user.
     pub upload_user: Rate,
+    /// `/gateway` upgrades per client IP; refunded once the socket authenticates, so only
+    /// failed or abandoned attempts (bad token, no Hello) keep the spend.
+    pub gateway_ip: Rate,
+    /// Concurrent authenticated gateway connections per user.
+    pub gateway_per_user: usize,
 }
 
 impl Default for LimitsConfig {
@@ -58,6 +63,8 @@ impl Default for LimitsConfig {
             typing_user: Rate::new(1, 1.0),
             report_user: Rate::per_hour(5),
             upload_user: Rate::per_hour(30),
+            gateway_ip: Rate::per_minute(20),
+            gateway_per_user: 8,
         }
     }
 }
@@ -74,6 +81,8 @@ impl LimitsConfig {
             typing_user: r,
             report_user: r,
             upload_user: r,
+            gateway_ip: r,
+            gateway_per_user: usize::MAX,
         }
     }
 }
@@ -170,6 +179,8 @@ pub struct Limits {
     pub typing_user: Limiter,
     pub report_user: Limiter,
     pub upload_user: Limiter,
+    pub gateway_ip: Limiter,
+    pub gateway_per_user: usize,
 }
 
 impl Limits {
@@ -182,6 +193,8 @@ impl Limits {
             typing_user: Limiter::new(c.typing_user),
             report_user: Limiter::new(c.report_user),
             upload_user: Limiter::new(c.upload_user),
+            gateway_ip: Limiter::new(c.gateway_ip),
+            gateway_per_user: c.gateway_per_user,
         }
     }
 }

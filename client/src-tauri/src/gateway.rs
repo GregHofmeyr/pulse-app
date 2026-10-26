@@ -230,7 +230,8 @@ enum End {
     LoggedOut,
     /// The server is newer than us: stop until the app is updated.
     UpdateRequired,
-    /// Anything else: retry.
+    /// Anything else: retry, including 4006 (over the per-user connection cap) and an HTTP 429
+    /// at the upgrade (per-IP gateway limit).
     Retry(Went),
     Stop,
 }
@@ -602,6 +603,101 @@ mod tests {
             }
         }
         assert!(saw_reconnecting);
+    }
+
+    /// Collect connection states for `dur`; panics on anything terminal or a Ready.
+    async fn retrying_states(
+        rx: &mut mpsc::UnboundedReceiver<GatewayUpdate>,
+        dur: Duration,
+    ) -> Vec<ConnState> {
+        let mut states = vec![];
+        let until = tokio::time::Instant::now() + dur;
+        while let Ok(Some(u)) = tokio::time::timeout_at(until, rx.recv()).await {
+            match u {
+                GatewayUpdate::Connection(s) => {
+                    assert!(
+                        !matches!(s, ConnState::LoggedOut | ConnState::UpdateRequired),
+                        "a refused connect is not terminal: {s:?}"
+                    );
+                    states.push(s);
+                }
+                GatewayUpdate::Ready(_) => panic!("Ready while refused"),
+                GatewayUpdate::Event(_) => {}
+            }
+        }
+        states
+    }
+
+    /// 4006 (over the per-user connection cap) is retried with backoff, never a logout.
+    #[tokio::test]
+    async fn too_many_connections_is_retried_not_logged_out() {
+        use futures::{SinkExt, StreamExt};
+        let mut cfg = testing::test_config();
+        cfg.limits.gateway_per_user = 1;
+        let app = testing::spawn_with(cfg).await;
+        let (me, token) = testing::register(&app, "alex").await;
+        // another device holds the only slot
+        let (mut hog, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
+            .await
+            .unwrap();
+        let hello = serde_json::to_string(&ClientFrame::Hello {
+            token: token.clone(),
+            client_version: pulse_protocol::PROTOCOL_VERSION,
+        })
+        .unwrap();
+        hog.send(Ws::text(hello)).await.unwrap();
+        while let Some(Ok(m)) = hog.next().await {
+            if matches!(m, Ws::Text(t) if t.contains("Ready")) {
+                break;
+            }
+        }
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _gw = GatewayHandle::spawn_with(
+            format!("http://{}", app.addr),
+            token,
+            tx,
+            Duration::from_millis(20),
+        );
+        let states = retrying_states(&mut rx, Duration::from_millis(600)).await;
+        let retries = states
+            .iter()
+            .filter(|s| **s == ConnState::Reconnecting)
+            .count();
+        assert!(retries >= 2, "kept retrying: {states:?}");
+        assert_eq!(app.hub.connections_for(me), 1, "the hog was never kicked");
+        // the slot frees: the next retry gets in
+        drop(hog);
+        next_ready(&mut rx).await;
+    }
+
+    /// HTTP 429 at the upgrade (per-IP gateway limit) is retried with backoff, never a logout.
+    #[tokio::test]
+    async fn rate_limited_upgrade_is_retried_not_logged_out() {
+        let mut cfg = testing::test_config();
+        cfg.limits.gateway_ip = pulse_server::limits::Rate::new(1, 0.0);
+        let app = testing::spawn_with(cfg).await;
+        let (_, token) = testing::register(&app, "alex").await;
+        // an abandoned attempt (no Hello) keeps the address's only token
+        let (abandoned, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
+            .await
+            .unwrap();
+        drop(abandoned);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _gw = GatewayHandle::spawn_with(
+            format!("http://{}", app.addr),
+            token,
+            tx,
+            Duration::from_millis(20),
+        );
+        let states = retrying_states(&mut rx, Duration::from_millis(600)).await;
+        let retries = states
+            .iter()
+            .filter(|s| **s == ConnState::Reconnecting)
+            .count();
+        assert!(retries >= 2, "kept retrying: {states:?}");
+        // the bucket refills: the next retry gets in
+        app.limits.gateway_ip.refund("127.0.0.1");
+        next_ready(&mut rx).await;
     }
 
     #[test]

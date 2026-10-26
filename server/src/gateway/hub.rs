@@ -18,6 +18,8 @@ pub const CLOSE_TOO_SLOW: u16 = 4003;
 pub const CLOSE_UNAUTHORIZED: u16 = 4001;
 /// Close code for a client too old for this server ("plz update :)").
 pub const CLOSE_UPDATE_REQUIRED: u16 = 4005;
+/// Close code for a connection over the per-user cap (existing connections are never kicked).
+pub const CLOSE_TOO_MANY_CONNECTIONS: u16 = 4006;
 
 pub type ConnId = u64;
 
@@ -61,10 +63,26 @@ struct Inner {
 impl Hub {
     /// `token_hash` ties the socket to its session so logout can close it.
     pub fn register(&self, user: UserId, token_hash: String) -> Registration {
+        self.try_register(user, token_hash, usize::MAX)
+            .expect("no cap")
+    }
+
+    /// Register unless `user` already has `max` connections. The count and the insert happen
+    /// under one lock, so simultaneous connects can't both take the last slot.
+    pub fn try_register(
+        &self,
+        user: UserId,
+        token_hash: String,
+        max: usize,
+    ) -> Option<Registration> {
+        let mut conns = self.inner.conns.lock().unwrap();
+        if conns.values().filter(|c| c.user == user).count() >= max {
+            return None;
+        }
         let (tx, rx) = mpsc::channel(QUEUE);
         let (ktx, krx) = oneshot::channel();
         let id = self.inner.next.fetch_add(1, Ordering::Relaxed);
-        self.inner.conns.lock().unwrap().insert(
+        conns.insert(
             id,
             Conn {
                 user,
@@ -73,7 +91,7 @@ impl Hub {
                 kick: Some(ktx),
             },
         );
-        Registration { id, rx, kick: krx }
+        Some(Registration { id, rx, kick: krx })
     }
 
     /// Remove a connection; returns (user, whether it was their last connection). `None` if the
@@ -198,4 +216,37 @@ fn deliver(
             Err(mpsc::error::TrySendError::Closed(_)) => false,
         }
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn try_register_caps_connections_per_user_even_under_a_race() {
+        let hub = Hub::default();
+        let user = UserId::new();
+        let threads: Vec<_> = (0..32)
+            .map(|_| {
+                let hub = hub.clone();
+                std::thread::spawn(move || hub.try_register(user, String::new(), 8))
+            })
+            .collect();
+        let regs: Vec<Registration> = threads
+            .into_iter()
+            .filter_map(|t| t.join().unwrap())
+            .collect();
+        assert_eq!(regs.len(), 8, "exactly the cap got in");
+        assert_eq!(hub.connections_for(user), 8);
+        assert!(
+            hub.try_register(UserId::new(), String::new(), 8).is_some(),
+            "others have their own allowance"
+        );
+        hub.unregister(regs[0].id);
+        assert!(
+            hub.try_register(user, String::new(), 8).is_some(),
+            "a slot freed"
+        );
+        assert!(hub.try_register(user, String::new(), 8).is_none());
+    }
 }
