@@ -37,4 +37,14 @@ describe('Shell', () => {
     expect(document.querySelector('[role=dialog][aria-label="Server settings"]')).toBeNull()
     expect(document.querySelector('[role=menu]')).toBeNull()
   })
+
+  it('the top bar says why a refused connection is retrying', () => {
+    app.state = { ...emptyState(), conn: 'too_many_devices' }
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    flushSync()
+    expect(document.querySelector('.conn')!.textContent).toBe('Too many devices connected — close Pulse on another device')
+    app.state = { ...app.state, conn: { rate_limited: 4 } }
+    flushSync()
+    expect(document.querySelector('.conn')!.textContent).toBe('Too many attempts, retrying in 4s…')
+  })
 })

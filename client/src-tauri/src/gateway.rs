@@ -170,7 +170,9 @@ impl Boot {
             GatewayUpdate::Ready(r) => Boot::Ready(r.me.clone()),
             GatewayUpdate::Connection(ConnState::LoggedOut) => Boot::LoggedOut,
             GatewayUpdate::Connection(ConnState::UpdateRequired) => Boot::UpdateRequired,
-            GatewayUpdate::Connection(ConnState::Reconnecting) => {
+            GatewayUpdate::Connection(
+                ConnState::Reconnecting | ConnState::TooManyDevices | ConnState::RateLimited(_),
+            ) => {
                 let since = *failing_since.get_or_insert(now);
                 if now.saturating_duration_since(since) < *grace {
                     return; // keep retrying (the gateway's own backoff paces it)
@@ -188,6 +190,10 @@ pub enum ConnState {
     Connecting,
     Connected,
     Reconnecting,
+    /// Refused with 4006: this account is at its device cap. Still retrying.
+    TooManyDevices,
+    /// Refused with HTTP 429 at the upgrade: seconds until the next attempt. Still retrying.
+    RateLimited(u64),
     LoggedOut,
     /// The server is newer than this app: stopped until it's updated.
     UpdateRequired,
@@ -233,7 +239,18 @@ enum End {
     /// Anything else: retry, including 4006 (over the per-user connection cap) and an HTTP 429
     /// at the upgrade (per-IP gateway limit).
     Retry(Went),
+    /// Retry, but the server said why it refused us (shown to the user instead of "Reconnecting").
+    Refused(Refusal),
     Stop,
+}
+
+/// Why the gateway turned a connection away (both are retried with the normal backoff).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Refusal {
+    /// Closed with 4006: over the per-user connection cap.
+    TooManyDevices,
+    /// HTTP 429 at the upgrade: per-IP attempt limit.
+    RateLimited,
 }
 
 /// How far a session that's to be retried got.
@@ -333,14 +350,27 @@ impl GatewayHandle {
                         let _ = tx.send(GatewayUpdate::Connection(ConnState::UpdateRequired));
                         return;
                     }
-                    End::Retry(went) => {
+                    end @ (End::Retry(_) | End::Refused(_)) => {
+                        let (went, refusal) = match end {
+                            End::Retry(went) => (went, None),
+                            End::Refused(r) => (Went::Failed, Some(r)),
+                            _ => unreachable!(),
+                        };
                         if went != Went::Failed {
                             n = 0;
                             after_healthy = went == Went::Healthy;
                         }
-                        let _ = tx.send(GatewayUpdate::Connection(ConnState::Reconnecting));
                         let delay = reconnect_delay(n, after_healthy, rand::random::<f64>())
                             .mul_f64(t.unit.as_secs_f64());
+                        let state = match refusal {
+                            None => ConnState::Reconnecting,
+                            Some(Refusal::TooManyDevices) => ConnState::TooManyDevices,
+                            // the real wait, rounded up so it never reads "0s"
+                            Some(Refusal::RateLimited) => {
+                                ConnState::RateLimited(delay.as_secs_f64().ceil().max(1.0) as u64)
+                            }
+                        };
+                        let _ = tx.send(GatewayUpdate::Connection(state));
                         n = n.saturating_add(1);
                         // Wait out the backoff, unless told to reconnect now / probe, or stop.
                         let sleep = tokio::time::sleep(delay);
@@ -389,11 +419,17 @@ async fn session(
     t: &Tuning,
     after_ready: &AfterReady,
 ) -> End {
-    let Ok(Ok((mut ws, _))) =
-        tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(url)).await
-    else {
-        return End::Retry(Went::Failed);
-    };
+    let mut ws =
+        match tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(url)).await {
+            Ok(Ok((ws, _))) => ws,
+            Ok(Err(tokio_tungstenite::tungstenite::Error::Http(resp)))
+                if resp.status()
+                    == tokio_tungstenite::tungstenite::http::StatusCode::TOO_MANY_REQUESTS =>
+            {
+                return End::Refused(Refusal::RateLimited);
+            }
+            _ => return End::Retry(Went::Failed),
+        };
     crate::startup::mark("gateway_open");
     let hello = serde_json::to_string(&ClientFrame::Hello {
         token: token.into(),
@@ -424,6 +460,9 @@ async fn session(
         }
         Ok(Frame::Closed(Some(CloseCode::Library(4001)))) => return End::LoggedOut,
         Ok(Frame::Closed(Some(CloseCode::Library(4005)))) => return End::UpdateRequired,
+        Ok(Frame::Closed(Some(CloseCode::Library(4006)))) => {
+            return End::Refused(Refusal::TooManyDevices);
+        }
         _ => return End::Retry(Went::Failed),
     }
 
@@ -661,9 +700,10 @@ mod tests {
         let states = retrying_states(&mut rx, Duration::from_millis(600)).await;
         let retries = states
             .iter()
-            .filter(|s| **s == ConnState::Reconnecting)
+            .filter(|s| **s == ConnState::TooManyDevices)
             .count();
-        assert!(retries >= 2, "kept retrying: {states:?}");
+        assert!(retries >= 2, "kept retrying, saying why: {states:?}");
+        assert!(!states.contains(&ConnState::Reconnecting), "{states:?}");
         assert_eq!(app.hub.connections_for(me), 1, "the hog was never kicked");
         // the slot frees: the next retry gets in
         drop(hog);
@@ -692,12 +732,49 @@ mod tests {
         let states = retrying_states(&mut rx, Duration::from_millis(600)).await;
         let retries = states
             .iter()
-            .filter(|s| **s == ConnState::Reconnecting)
+            .filter(|s| matches!(s, ConnState::RateLimited(_)))
             .count();
-        assert!(retries >= 2, "kept retrying: {states:?}");
+        assert!(retries >= 2, "kept retrying, saying why: {states:?}");
+        assert!(!states.contains(&ConnState::Reconnecting), "{states:?}");
         // the bucket refills: the next retry gets in
         app.limits.gateway_ip.refund("127.0.0.1");
         next_ready(&mut rx).await;
+    }
+
+    /// The 429 message carries the real wait: the first backoff step (~1 s) at the 1 s unit.
+    #[tokio::test]
+    async fn rate_limited_reports_the_real_delay() {
+        let mut cfg = testing::test_config();
+        cfg.limits.gateway_ip = pulse_server::limits::Rate::new(1, 0.0);
+        let app = testing::spawn_with(cfg).await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let (abandoned, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
+            .await
+            .unwrap();
+        drop(abandoned);
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _gw = GatewayHandle::spawn(format!("http://{}", app.addr), token, tx);
+        let secs = loop {
+            if let GatewayUpdate::Connection(ConnState::RateLimited(s)) = next(&mut rx).await {
+                break s;
+            }
+        };
+        assert!(
+            (1..=2).contains(&secs),
+            "first backoff is 0.8-1.2 s: {secs}"
+        );
+    }
+
+    #[test]
+    fn refusals_serialize_for_the_ui() {
+        assert_eq!(
+            serde_json::to_string(&ConnState::TooManyDevices).unwrap(),
+            "\"too_many_devices\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ConnState::RateLimited(7)).unwrap(),
+            "{\"rate_limited\":7}"
+        );
     }
 
     #[test]

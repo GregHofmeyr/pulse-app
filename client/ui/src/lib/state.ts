@@ -14,7 +14,14 @@ import type { StreamInfo } from './protocol/StreamInfo'
 import type { User } from './protocol/User'
 import type { VoiceMember } from './protocol/VoiceMember'
 
-export type ConnState = 'connecting' | 'connected' | 'reconnecting' | 'logged_out' | 'update_required'
+export type ConnState =
+  | 'connecting'
+  | 'connected'
+  | 'reconnecting'
+  | 'too_many_devices'
+  | 'logged_out'
+  | 'update_required'
+  | { rate_limited: number } // seconds until the next attempt
 
 /** A message we've sent but the server hasn't confirmed yet (optimistic UI / offline outbox). */
 export type Pending = { nonce: string; content: string; reply_to_id: string | null; status: 'pending' | 'failed' }
