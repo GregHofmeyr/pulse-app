@@ -1,12 +1,16 @@
 //! Global binds (Windows; on Linux the compositor binds the CLI, see ipc.rs). Low-level keyboard and
 //! mouse hooks see every key and button system-wide and always pass it on: a bind toggles mute or
 //! deafen and the key still works in the focused app, like Discord. Which press fires what is
-//! decided by `bindmatch::Matcher`. Always on; paused while a bind is being recorded. Windows can
-//! drop the hooks silently; a watchdog notices (`hookwatch`) and reinstalls them.
+//! decided by `bindmatch::Matcher`. Paused while a bind is being recorded. Windows can drop the
+//! hooks silently; a watchdog notices (`hookwatch`) and reinstalls them.
+//!
+//! The user can switch global binds off: then both hooks are removed (not just ignored), the
+//! watchdog stands down and stops polling input, and at startup they're never installed. The hook
+//! thread (and the watchdog) still run, idle, so switching back on is instant.
 
 #[cfg(windows)]
 mod platform {
-    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
     use std::sync::{LazyLock, Mutex, OnceLock, mpsc};
     use std::time::{Duration, Instant};
 
@@ -36,7 +40,7 @@ mod platform {
     };
 
     use crate::bindmatch::{Matcher, key_code};
-    use crate::hookwatch::{Check, HookWatch};
+    use crate::hookwatch::{Check, HookStep, HookWatch, hook_step};
     use crate::keybinds::{Action, Keybinds};
 
     /// Locked by the hook procedures once per event and briefly by apply/pause; nothing else.
@@ -44,13 +48,24 @@ mod platform {
     /// Fired actions go to a forwarder thread: the hook procedure must return at once, or Windows
     /// silently drops the hook (LowLevelHooksTimeout).
     static FIRED: OnceLock<mpsc::Sender<Action>> = OnceLock::new();
-    /// Set if the hooks couldn't be installed; reported in Settings until restart.
-    static BROKEN: OnceLock<String> = OnceLock::new();
+    /// Set if the hooks couldn't be installed, cleared when they are (or switched off); reported
+    /// in Settings while the switch is on.
+    static BROKEN: Mutex<Option<String>> = Mutex::new(None);
+    /// The user's switch. Written by `install`/`set_enabled` (then a WM_SWITCH is posted), read by
+    /// the hook thread when it handles a message: the switch as it is then, not as it was.
+    static ENABLED: AtomicBool = AtomicBool::new(true);
+    /// Whether the hook thread holds hooks (it alone writes this). The watchdog only checks while
+    /// it's set, so it never polls input, nor asks for a reinstall, while switched off.
+    static HOOKED: AtomicBool = AtomicBool::new(false);
+    /// The hook thread, for posting to.
+    static HOOK_THREAD: OnceLock<u32> = OnceLock::new();
     /// `GetTickCount` when a hook last ran: the watchdog's evidence that they're still installed.
     static LAST_HOOK_TICK: AtomicU32 = AtomicU32::new(0);
 
     /// Posted to the hook thread to reinstall its hooks (hooks belong to the installing thread).
     const WM_REINSTALL: u32 = WM_APP + 1;
+    /// Posted to the hook thread after ENABLED changed: install or remove the hooks to match.
+    const WM_SWITCH: u32 = WM_APP + 2;
     /// How often the watchdog looks.
     const WATCH_EVERY: Duration = Duration::from_secs(3);
     /// System input this much newer than the hooks' last event means they're gone; less is the
@@ -186,9 +201,14 @@ mod platform {
             .map_err(|e| e.to_string())
     }
 
+    fn set_broken(problem: Option<String>) {
+        *BROKEN.lock().unwrap_or_else(|e| e.into_inner()) = problem;
+    }
+
     /// Hooks are delivered through the installing thread's message loop, so they get their own
-    /// thread that does nothing else (but reinstall them when the watchdog asks).
-    fn run_hooks(ready: mpsc::Sender<Result<u32, String>>) {
+    /// thread that does nothing else (but add, remove or reinstall them when asked). It starts
+    /// with no hooks and installs them only if the switch is on.
+    fn run_hooks(ready: mpsc::Sender<u32>) {
         if let Err(e) = raise_priority() {
             tracing::warn!(error = %e, "keybinds: hook thread priority couldn't be raised");
         }
@@ -196,55 +216,100 @@ mod platform {
         let mut msg = MSG::default();
         // SAFETY: msg is a valid MSG to write into.
         let _ = unsafe { PeekMessageW(&mut msg, None, 0, 0, PM_NOREMOVE) };
-        let mut hooks = match hook() {
-            Ok(h) => Some(h),
-            Err(e) => {
-                let _ = ready.send(Err(e));
-                return;
-            }
-        };
-        // SAFETY: GetTickCount has no preconditions.
-        LAST_HOOK_TICK.store(unsafe { GetTickCount() }, Ordering::Relaxed);
+        let mut hooks = step(None, false);
         // SAFETY: GetCurrentThreadId has no preconditions.
-        let _ = ready.send(Ok(unsafe { GetCurrentThreadId() }));
+        let _ = ready.send(unsafe { GetCurrentThreadId() });
         loop {
             // SAFETY: msg is a valid MSG to write into.
             let got = unsafe { GetMessageW(&mut msg, None, 0, 0) }.0;
             if got == 0 || got == -1 {
                 break;
             }
-            if msg.message != WM_REINSTALL {
-                continue;
-            }
-            if let Some(h) = hooks.take() {
-                unhook(h);
-            }
-            // LAST_HOOK_TICK is left alone: only a real event moving it tells the watchdog the
-            // new hooks work.
-            let mut failures = 0u32;
-            hooks = loop {
-                match hook() {
-                    Ok(h) => break Some(h),
-                    Err(e) => {
-                        if failures == 0 {
-                            tracing::warn!(error = %e, "keybinds: hooks couldn't be reinstalled; retrying");
-                        } else {
-                            tracing::debug!(error = %e, failures, "keybinds: hook reinstall failed again");
-                        }
-                        failures += 1;
-                        // No hooks to service, so blocking this thread is harmless.
-                        std::thread::sleep(REINSTALL_GAP);
-                    }
-                }
+            let reinstall_asked = match msg.message {
+                WM_REINSTALL => true,
+                WM_SWITCH => false,
+                _ => continue,
             };
-            // Key-ups missed while the hooks were gone: drop modifiers Windows says are up (a
-            // stale plain key is already treated as a fresh press, REPEAT_WINDOW).
-            matcher().forget_released(still_down);
-            tracing::info!("keybinds: hooks reinstalled");
+            hooks = step(hooks, reinstall_asked);
         }
         if let Some(h) = hooks {
             unhook(h);
         }
+        HOOKED.store(false, Ordering::SeqCst);
+    }
+
+    /// One message's worth of work on the hook thread: make the hooks match the switch, or
+    /// reinstall them for the watchdog (`hookwatch::hook_step` decides which).
+    fn step(hooks: Option<[HHOOK; 2]>, reinstall_asked: bool) -> Option<[HHOOK; 2]> {
+        let enabled = ENABLED.load(Ordering::SeqCst);
+        match hook_step(enabled, hooks.is_some(), reinstall_asked) {
+            HookStep::Nothing => hooks,
+            HookStep::Unhook => {
+                if let Some(h) = hooks {
+                    unhook(h);
+                }
+                HOOKED.store(false, Ordering::SeqCst);
+                tracing::info!("keybinds: switched off; hooks removed");
+                None
+            }
+            HookStep::Install => match hook() {
+                Ok(h) => {
+                    // Fresh hooks: their tick starts now (before HOOKED, which the watchdog reads
+                    // first), and keys released while there were none are forgotten.
+                    // SAFETY: GetTickCount has no preconditions.
+                    LAST_HOOK_TICK.store(unsafe { GetTickCount() }, Ordering::Relaxed);
+                    matcher().forget_released(still_down);
+                    set_broken(None);
+                    HOOKED.store(true, Ordering::SeqCst);
+                    tracing::info!("keybinds: hooks installed");
+                    Some(h)
+                }
+                Err(e) => {
+                    tracing::warn!(error = %e, "keybinds: hooks couldn't be installed");
+                    set_broken(Some(format!(
+                        "Keybinds couldn't start ({e}); switch them off and on, or restart Pulse, to try again"
+                    )));
+                    None
+                }
+            },
+            HookStep::Reinstall => reinstall(hooks),
+        }
+    }
+
+    /// The watchdog's reinstall: unhook, then hook again until it works or the switch goes off.
+    fn reinstall(hooks: Option<[HHOOK; 2]>) -> Option<[HHOOK; 2]> {
+        if let Some(h) = hooks {
+            unhook(h);
+        }
+        // LAST_HOOK_TICK is left alone: only a real event moving it tells the watchdog the
+        // new hooks work.
+        let mut failures = 0u32;
+        let hooks = loop {
+            match hook() {
+                Ok(h) => break h,
+                Err(e) => {
+                    if failures == 0 {
+                        tracing::warn!(error = %e, "keybinds: hooks couldn't be reinstalled; retrying");
+                    } else {
+                        tracing::debug!(error = %e, failures, "keybinds: hook reinstall failed again");
+                    }
+                    failures += 1;
+                    // No hooks to service, so blocking this thread is harmless.
+                    std::thread::sleep(REINSTALL_GAP);
+                    if !ENABLED.load(Ordering::SeqCst) {
+                        // switched off meanwhile: there are no hooks, and that's now right
+                        HOOKED.store(false, Ordering::SeqCst);
+                        tracing::info!("keybinds: switched off; hooks removed");
+                        return None;
+                    }
+                }
+            }
+        };
+        // Key-ups missed while the hooks were gone: drop modifiers Windows says are up (a
+        // stale plain key is already treated as a fresh press, REPEAT_WINDOW).
+        matcher().forget_released(still_down);
+        tracing::info!("keybinds: hooks reinstalled");
+        Some(hooks)
     }
 
     fn token_elevated(process: HANDLE) -> Option<bool> {
@@ -309,6 +374,12 @@ mod platform {
         let mut watch = HookWatch::new(DEAD_MARGIN_MS, REINSTALL_GAP);
         loop {
             std::thread::sleep(WATCH_EVERY);
+            if !HOOKED.load(Ordering::SeqCst) {
+                // switched off (or never started): nothing to watch, and the next hooks get a
+                // fresh watch
+                watch.reset();
+                continue;
+            }
             if !hooks_can_see_input(self_elevated) {
                 continue;
             }
@@ -345,9 +416,15 @@ mod platform {
         }
     }
 
-    /// Returns the binds' problems (only "couldn't start", if the hooks failed).
-    pub fn install(app: &tauri::App, binds: &Keybinds) -> tauri::Result<Vec<String>> {
+    /// Returns the binds' problems (only "couldn't start", if the hooks failed). With `enabled`
+    /// off the hooks aren't installed; the threads start idle so switching on later works.
+    pub fn install(
+        app: &tauri::App,
+        binds: &Keybinds,
+        enabled: bool,
+    ) -> tauri::Result<Vec<String>> {
         matcher().set_binds(binds);
+        ENABLED.store(enabled, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel::<Action>();
         let _ = FIRED.set(tx);
         let handle = app.handle().clone();
@@ -363,27 +440,33 @@ mod platform {
             .name("pulse-keys".into())
             .spawn(move || run_hooks(ready_tx))?;
         match ready.recv() {
-            Ok(Ok(hook_thread)) => {
-                tracing::info!("keybinds: hooks installed");
+            Ok(hook_thread) => {
+                let _ = HOOK_THREAD.set(hook_thread);
+                if !enabled {
+                    tracing::info!("keybinds: switched off; no hooks installed");
+                }
                 std::thread::Builder::new()
                     .name("pulse-keys-watch".into())
                     .spawn(move || watch_hooks(hook_thread))?;
             }
-            Ok(Err(e)) => {
-                tracing::warn!(error = %e, "keybinds: hooks couldn't be installed");
-                let _ = BROKEN.set(format!(
-                    "Keybinds couldn't start ({e}); restart Pulse to try again"
-                ));
-            }
-            Err(_) => {
-                let _ = BROKEN.set("Keybinds couldn't start; restart Pulse to try again".into());
-            }
+            Err(_) => set_broken(Some(
+                "Keybinds couldn't start; restart Pulse to try again".into(),
+            )),
         }
         Ok(problems())
     }
 
-    fn problems() -> Vec<String> {
-        BROKEN.get().cloned().into_iter().collect()
+    /// Why binds aren't working, if they aren't. Switched off isn't a problem.
+    pub fn problems() -> Vec<String> {
+        if !ENABLED.load(Ordering::SeqCst) {
+            return Vec::new();
+        }
+        BROKEN
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
+            .into_iter()
+            .collect()
     }
 
     pub fn apply(_app: &AppHandle, binds: &Keybinds) -> Vec<String> {
@@ -393,6 +476,29 @@ mod platform {
 
     pub fn pause(_app: &AppHandle, paused: bool) -> Vec<String> {
         matcher().set_paused(paused);
+        problems()
+    }
+
+    /// The master switch. The hook thread owns the hooks, so it's told to add or remove them;
+    /// it reads ENABLED when it gets to the message, so a burst of toggles ends where the last
+    /// one left the switch. Switching on retries a failed install, so the old failure is cleared
+    /// (a new one shows the next time Settings asks).
+    pub fn set_enabled(_app: &AppHandle, enabled: bool) -> Vec<String> {
+        if enabled {
+            set_broken(None);
+        }
+        ENABLED.store(enabled, Ordering::SeqCst);
+        let Some(&thread) = HOOK_THREAD.get() else {
+            return problems();
+        };
+        // SAFETY: posting a thread message with no pointers in it.
+        if let Err(e) = unsafe { PostThreadMessageW(thread, WM_SWITCH, WPARAM(0), LPARAM(0)) } {
+            tracing::warn!(error = %e, enabled, "keybinds: couldn't reach the hook thread");
+            return vec![format!(
+                "Couldn't switch keybinds {} ({e}); restart Pulse",
+                if enabled { "on" } else { "off" }
+            )];
+        }
         problems()
     }
 
@@ -420,8 +526,21 @@ mod platform {
 mod platform {
     use crate::keybinds::Keybinds;
 
-    pub fn install(_app: &tauri::App, _binds: &Keybinds) -> tauri::Result<Vec<String>> {
+    pub fn install(
+        _app: &tauri::App,
+        _binds: &Keybinds,
+        _enabled: bool,
+    ) -> tauri::Result<Vec<String>> {
         Ok(Vec::new())
+    }
+
+    pub fn problems() -> Vec<String> {
+        Vec::new()
+    }
+
+    /// Stored and shown, but nothing to switch: the compositor binds the CLI (ipc.rs).
+    pub fn set_enabled(_app: &tauri::AppHandle, _enabled: bool) -> Vec<String> {
+        Vec::new()
     }
 
     pub fn apply(_app: &tauri::AppHandle, _binds: &Keybinds) -> Vec<String> {
@@ -433,4 +552,4 @@ mod platform {
     }
 }
 
-pub use platform::{apply, install, pause};
+pub use platform::{apply, install, pause, problems, set_enabled};

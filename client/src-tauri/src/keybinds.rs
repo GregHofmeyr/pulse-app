@@ -1,6 +1,7 @@
 //! Keybinds: which key combination does what. Stored per profile as W3C key codes ("KeyM", "F13"):
 //! the physical key, so a bind survives a keyboard layout switch. Windows listens for them globally
-//! (hotkeys.rs); on Linux the compositor binds the CLI instead (ipc.rs).
+//! (hotkeys.rs); on Linux the compositor binds the CLI instead (ipc.rs). A master switch turns the
+//! Windows listening off entirely (no hooks at all); it's stored beside the binds.
 
 use std::path::Path;
 
@@ -160,20 +161,62 @@ pub fn validate(binds: &Keybinds) -> Result<(), String> {
 
 const FILE: &str = "keybinds.json";
 
-/// The profile's binds; none if nothing is saved yet (or the file is unusable).
-pub fn load(dir: &Path) -> Keybinds {
+/// What `keybinds.json` holds: the binds and, beside them, the master switch. Missing (a file from
+/// before the switch) means on; an older Pulse ignores the extra field.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Saved {
+    #[serde(flatten)]
+    pub binds: Keybinds,
+    /// Global binds on: on Windows, keyboard and mouse hooks run to match them. Off: no hooks.
+    #[serde(default = "on")]
+    pub enabled: bool,
+}
+
+fn on() -> bool {
+    true
+}
+
+impl Default for Saved {
+    fn default() -> Self {
+        Self {
+            binds: Keybinds::default(),
+            enabled: true,
+        }
+    }
+}
+
+impl From<Keybinds> for Saved {
+    fn from(binds: Keybinds) -> Self {
+        Self {
+            binds,
+            enabled: true,
+        }
+    }
+}
+
+/// The profile's binds (none if nothing is saved yet or the file is unusable) and the switch (on
+/// unless the file says off).
+pub fn load(dir: &Path) -> Saved {
     let Ok(text) = std::fs::read_to_string(dir.join(FILE)) else {
-        return Keybinds::default();
+        return Saved::default();
     };
-    let k = match serde_json::from_str::<Keybinds>(&text) {
-        Ok(k) => k.normalized(),
+    let saved = match serde_json::from_str::<Saved>(&text) {
+        Ok(s) => s,
         Err(e) => {
             tracing::warn!(error = %e, "keybinds file unreadable; nothing bound");
-            return Keybinds::default();
+            return Saved::default();
         }
     };
+    Saved {
+        binds: usable(saved.binds.normalized()),
+        enabled: saved.enabled,
+    }
+}
+
+/// `k` minus any bind this version can't use.
+fn usable(k: Keybinds) -> Keybinds {
     // a bind this version can't use drops only itself (v1 allowed keys v2 doesn't know)
-    let usable = |b: Option<Bind>| {
+    let keep = |b: Option<Bind>| {
         b.filter(|b| {
             let alone = Keybinds {
                 toggle_mute: Some(b.clone()),
@@ -185,8 +228,8 @@ pub fn load(dir: &Path) -> Keybinds {
         })
     };
     let mut k = Keybinds {
-        toggle_mute: usable(k.toggle_mute),
-        toggle_deafen: usable(k.toggle_deafen),
+        toggle_mute: keep(k.toggle_mute),
+        toggle_deafen: keep(k.toggle_deafen),
     };
     if validate(&k).is_err() {
         k.toggle_deafen = None; // both on one bind: the first keeps it
@@ -194,19 +237,20 @@ pub fn load(dir: &Path) -> Keybinds {
     k
 }
 
-pub fn save(dir: &Path, binds: &Keybinds) -> std::io::Result<()> {
+pub fn save(dir: &Path, saved: &Saved) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
-    let json = serde_json::to_string_pretty(binds).map_err(std::io::Error::other)?;
+    let json = serde_json::to_string_pretty(saved).map_err(std::io::Error::other)?;
     // write then rename: a crash mid-write can't leave a half file (which would reset the binds)
     let tmp = dir.join(format!("{FILE}.tmp"));
     std::fs::write(&tmp, json)?;
     std::fs::rename(tmp, dir.join(FILE))
 }
 
-/// The profile's binds, as the app is using them.
+/// The profile's binds and switch, as the app is using them.
 pub struct Store {
     dir: std::path::PathBuf,
-    binds: std::sync::Mutex<Keybinds>,
+    /// Held across a save, so two settings changes can't interleave their file writes.
+    saved: std::sync::Mutex<Saved>,
     /// Why binds aren't working (the Windows key hooks couldn't start), if they aren't.
     problems: std::sync::Mutex<Vec<String>>,
 }
@@ -215,7 +259,7 @@ impl Store {
     pub fn load(dir: &Path) -> Self {
         Self {
             dir: dir.to_path_buf(),
-            binds: std::sync::Mutex::new(load(dir)),
+            saved: std::sync::Mutex::new(load(dir)),
             problems: Default::default(),
         }
     }
@@ -227,8 +271,10 @@ impl Store {
     /// What the settings pane shows: the binds, what's wrong with them, and whether the user has
     /// ever chosen (if not, the app nudges them to).
     pub fn applied(&self) -> Applied {
+        let saved = self.get();
         Applied {
-            binds: self.get(),
+            binds: saved.binds,
+            enabled: saved.enabled,
             problems: self
                 .problems
                 .lock()
@@ -238,8 +284,12 @@ impl Store {
         }
     }
 
-    pub fn get(&self) -> Keybinds {
-        self.binds.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    pub fn get(&self) -> Saved {
+        self.lock().clone()
+    }
+
+    fn lock(&self) -> std::sync::MutexGuard<'_, Saved> {
+        self.saved.lock().unwrap_or_else(|e| e.into_inner())
     }
 }
 
@@ -247,12 +297,16 @@ impl Store {
 #[derive(Serialize)]
 pub struct Applied {
     pub binds: Keybinds,
+    /// The master switch (off: no global listening at all).
+    pub enabled: bool,
     pub problems: Vec<String>,
     pub chosen: bool,
 }
 
 #[tauri::command]
 pub fn get_keybinds(store: tauri::State<'_, Store>) -> Applied {
+    // the hooks may have failed (or recovered) since the last change: ask, don't remember
+    store.set_problems(crate::hotkeys::problems());
     store.applied()
 }
 
@@ -265,10 +319,41 @@ pub fn set_keybinds(
 ) -> Result<Applied, String> {
     let binds = binds.normalized();
     validate(&binds)?;
-    save(&store.dir, &binds).map_err(|e| format!("couldn't save keybinds: {e}"))?;
-    *store.binds.lock().unwrap_or_else(|e| e.into_inner()) = binds.clone();
-    let problems = crate::hotkeys::apply(&app, &binds);
+    let problems = {
+        let mut saved = store.lock();
+        let next = Saved {
+            binds,
+            enabled: saved.enabled,
+        };
+        save(&store.dir, &next).map_err(|e| format!("couldn't save keybinds: {e}"))?;
+        let problems = crate::hotkeys::apply(&app, &next.binds);
+        *saved = next;
+        problems
+    };
     tracing::info!(?problems, "keybinds changed");
+    store.set_problems(problems);
+    Ok(store.applied())
+}
+
+/// The master switch: save it, then add or remove the Windows hooks to match. Under the store's
+/// lock, so concurrent calls reach the hooks in the order they reached the file.
+#[tauri::command]
+pub fn set_keybinds_enabled(
+    app: tauri::AppHandle,
+    store: tauri::State<'_, Store>,
+    enabled: bool,
+) -> Result<Applied, String> {
+    let problems = {
+        let mut saved = store.lock();
+        let next = Saved {
+            binds: saved.binds.clone(),
+            enabled,
+        };
+        save(&store.dir, &next).map_err(|e| format!("couldn't save keybinds: {e}"))?;
+        *saved = next;
+        crate::hotkeys::set_enabled(&app, enabled)
+    };
+    tracing::info!(enabled, ?problems, "global keybinds switched");
     store.set_problems(problems);
     Ok(store.applied())
 }
@@ -309,9 +394,9 @@ mod tests {
     fn nothing_is_bound_until_the_user_chooses() {
         let dir = tempfile::tempdir().unwrap();
         let store = Store::load(dir.path());
-        assert!(store.get().bound().is_empty());
+        assert!(store.get().binds.bound().is_empty());
         assert!(!store.applied().chosen, "first run: nudge");
-        save(dir.path(), &Keybinds::default()).unwrap(); // dismissing the nudge saves 'none'
+        save(dir.path(), &Saved::default()).unwrap(); // dismissing the nudge saves 'none'
         assert!(Store::load(dir.path()).applied().chosen);
     }
 
@@ -372,8 +457,8 @@ mod tests {
             toggle_mute: Some(b("KeyM", "cs")),
             toggle_deafen: Some(b("F13", "ca")),
         };
-        save(dir.path(), &v1).unwrap();
-        assert_eq!(load(dir.path()), v1);
+        save(dir.path(), &v1.clone().into()).unwrap();
+        assert_eq!(load(dir.path()).binds, v1);
     }
 
     /// One bind this version can't use (v1 allowed MediaPlay) mustn't cost the other one.
@@ -385,7 +470,7 @@ mod tests {
             r#"{"toggle_mute":{"code":"MediaPlay"},"toggle_deafen":{"code":"F13"}}"#,
         )
         .unwrap();
-        let k = load(dir.path());
+        let k = load(dir.path()).binds;
         assert_eq!(k.toggle_mute, None);
         assert_eq!(k.toggle_deafen, Some(b("F13", "")));
         // two actions on one bind: the first keeps it
@@ -394,7 +479,7 @@ mod tests {
             r#"{"toggle_mute":{"code":"F13"},"toggle_deafen":{"code":"F13"}}"#,
         )
         .unwrap();
-        let k = load(dir.path());
+        let k = load(dir.path()).binds;
         assert_eq!((k.toggle_mute, k.toggle_deafen), (Some(b("F13", "")), None));
     }
 
@@ -449,28 +534,108 @@ mod tests {
         assert!(k.bound().is_empty());
     }
 
+    /// The master switch is on unless the user turned it off: a file from before the switch
+    /// existed (or no file at all) means on.
+    #[test]
+    fn global_binds_are_on_by_default() {
+        let dir = tempfile::tempdir().unwrap();
+        assert!(load(dir.path()).enabled, "nothing saved yet");
+        assert!(Store::load(dir.path()).applied().enabled);
+        std::fs::write(
+            dir.path().join(FILE),
+            r#"{"toggle_mute":{"code":"F13"},"toggle_deafen":null}"#,
+        )
+        .unwrap();
+        let k = load(dir.path());
+        assert!(k.enabled, "an older file has no switch: on");
+        assert_eq!(k.binds.toggle_mute, Some(b("F13", "")));
+    }
+
+    #[test]
+    fn the_switch_survives_a_restart_with_the_binds() {
+        let dir = tempfile::tempdir().unwrap();
+        let off = Saved {
+            binds: Keybinds {
+                toggle_mute: Some(b("KeyM", "cs")),
+                toggle_deafen: None,
+            },
+            enabled: false,
+        };
+        save(dir.path(), &off).unwrap();
+        assert_eq!(load(dir.path()), off);
+        assert!(!Store::load(dir.path()).applied().enabled);
+        let on = Saved {
+            enabled: true,
+            ..off.clone()
+        };
+        save(dir.path(), &on).unwrap();
+        assert_eq!(load(dir.path()), on);
+    }
+
+    /// The flag sits beside the binds in the same file, so an older Pulse (which ignores unknown
+    /// fields) still reads its binds after a downgrade.
+    #[test]
+    fn the_switch_is_a_sibling_of_the_binds_in_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        save(
+            dir.path(),
+            &Saved {
+                binds: Keybinds {
+                    toggle_mute: Some(b("F13", "")),
+                    toggle_deafen: None,
+                },
+                enabled: false,
+            },
+        )
+        .unwrap();
+        let text = std::fs::read_to_string(dir.path().join(FILE)).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(v["enabled"], false);
+        assert_eq!(v["toggle_mute"]["code"], "F13");
+        let old: Keybinds = serde_json::from_str(&text).unwrap();
+        assert_eq!(old.toggle_mute, Some(b("F13", "")));
+    }
+
+    /// Binds this version can't use are dropped, but the user's "off" is kept.
+    #[test]
+    fn off_survives_unusable_binds() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(FILE),
+            r#"{"toggle_mute":{"code":"Escape"},"enabled":false}"#,
+        )
+        .unwrap();
+        let k = load(dir.path());
+        assert!(!k.enabled);
+        assert_eq!(k.binds, Keybinds::default());
+    }
+
     #[test]
     fn binds_are_saved_per_profile_and_survive_a_restart() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(load(dir.path()), Keybinds::default(), "nothing saved yet");
+        assert_eq!(
+            load(dir.path()).binds,
+            Keybinds::default(),
+            "nothing saved yet"
+        );
         let mine = Keybinds {
             toggle_mute: Some(b("F13", "")),
             toggle_deafen: None,
         };
-        save(dir.path(), &mine).unwrap();
-        assert_eq!(load(dir.path()), mine);
+        save(dir.path(), &mine.clone().into()).unwrap();
+        assert_eq!(load(dir.path()).binds, mine);
         // a broken file means nothing bound (and a warning in the log)
         std::fs::write(dir.path().join(FILE), "{nope").unwrap();
-        assert_eq!(load(dir.path()), Keybinds::default());
+        assert_eq!(load(dir.path()).binds, Keybinds::default());
         // so does one that parses but can't be used
         std::fs::write(
             dir.path().join(FILE),
             r#"{"toggle_mute":{"code":"Escape"},"toggle_deafen":null}"#,
         )
         .unwrap();
-        assert_eq!(load(dir.path()), Keybinds::default());
+        assert_eq!(load(dir.path()).binds, Keybinds::default());
         // a missing action reads as unbound (an older file)
         std::fs::write(dir.path().join(FILE), r#"{"toggle_mute":{"code":"F13"}}"#).unwrap();
-        assert_eq!(load(dir.path()).toggle_deafen, None);
+        assert_eq!(load(dir.path()).binds.toggle_deafen, None);
     }
 }

@@ -133,7 +133,8 @@ pub fn run() {
                 });
             }
             let binds = keybinds::Store::load(&dir);
-            binds.set_problems(hotkeys::install(app, &binds.get())?);
+            let saved = binds.get();
+            binds.set_problems(hotkeys::install(app, &saved.binds, saved.enabled)?);
             app.manage(binds);
             let handle = app.handle().clone();
             app.manage(voice::VoiceManager::new(std::sync::Arc::new(
@@ -213,6 +214,7 @@ pub fn run() {
             startup::ui_painted,
             keybinds::get_keybinds,
             keybinds::set_keybinds,
+            keybinds::set_keybinds_enabled,
             keybinds::pause_keybinds,
             reports::submit_report,
             reports::save_report,

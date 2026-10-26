@@ -5,8 +5,36 @@
 //! Some input the hooks can never see (an elevated window in front, a remapper earlier in the
 //! chain eating keys), so a reinstall the hooks stay blind after isn't repeated until they see
 //! something again. The decision lives here, free of Windows, so it's tested everywhere.
+//!
+//! The user can switch global binds off (Settings → Keybinds): then the hooks are removed, not just
+//! ignored. `hook_step` is what the hook thread does with each message it gets, given the switch
+//! as it reads at that moment.
 
 use std::time::{Duration, Instant};
+
+/// What the hook thread does on a message: "the switch changed" or the watchdog's "reinstall".
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HookStep {
+    /// Switched on (or asked to reinstall while there are none): install them.
+    Install,
+    /// The watchdog thinks Windows dropped them: unhook and install again.
+    Reinstall,
+    /// Switched off: unhook both.
+    Unhook,
+    Nothing,
+}
+
+/// `enabled` is the switch as read when the message is handled (not when it was sent), so a burst
+/// of on/off ends with the hooks matching the switch, and a watchdog request that raced an "off"
+/// can't put the hooks back.
+pub fn hook_step(enabled: bool, installed: bool, reinstall_asked: bool) -> HookStep {
+    match (enabled, installed) {
+        (true, false) => HookStep::Install,
+        (true, true) if reinstall_asked => HookStep::Reinstall,
+        (false, true) => HookStep::Unhook,
+        _ => HookStep::Nothing,
+    }
+}
 
 /// Whether the system saw input more than `margin_ms` after the hooks last did. Ticks are
 /// `GetTickCount`-style milliseconds that wrap every ~49.7 days; the difference is read as signed,
@@ -56,6 +84,13 @@ impl HookWatch {
         }
     }
 
+    /// Forget the rate limit and backoff: the hooks were removed (switched off), and new ones
+    /// start with a clean slate.
+    pub fn reset(&mut self) {
+        self.last_reinstall = None;
+        self.pending = None;
+    }
+
     /// `last_hook_ms` must only move on real hook events (not on the reinstall itself), or
     /// the backoff can't tell a working reinstall from a blind one.
     pub fn check(&mut self, last_input_ms: u32, last_hook_ms: u32, now: Instant) -> Check {
@@ -97,6 +132,70 @@ mod tests {
 
     const MARGIN: u32 = 1000;
     const GAP: Duration = Duration::from_secs(10);
+
+    #[test]
+    fn on_with_no_hooks_installs_them() {
+        assert_eq!(hook_step(true, false, false), HookStep::Install);
+        // a reinstall asked for while they're gone (raced an off/on) installs too
+        assert_eq!(hook_step(true, false, true), HookStep::Install);
+    }
+
+    #[test]
+    fn on_with_hooks_only_reinstalls_when_asked() {
+        assert_eq!(hook_step(true, true, false), HookStep::Nothing);
+        assert_eq!(hook_step(true, true, true), HookStep::Reinstall);
+    }
+
+    #[test]
+    fn off_removes_hooks_and_a_watchdog_request_cant_bring_them_back() {
+        assert_eq!(hook_step(false, true, false), HookStep::Unhook);
+        // the watchdog saw hooks, then the switch went off before its request arrived
+        assert_eq!(hook_step(false, true, true), HookStep::Unhook);
+        assert_eq!(hook_step(false, false, true), HookStep::Nothing);
+        assert_eq!(hook_step(false, false, false), HookStep::Nothing);
+    }
+
+    /// Rapid on/off/on: each change posts a message and every message reads the switch as it is
+    /// when handled, so the last message leaves the hooks matching the last switch position.
+    #[test]
+    fn rapid_toggles_end_where_the_switch_ends() {
+        for flips in [
+            vec![true],
+            vec![false],
+            vec![true, false],
+            vec![false, true],
+            vec![true, false, true, false, true],
+        ] {
+            let last = *flips.last().unwrap();
+            // messages may be handled after any number of later flips: worst case, all after
+            let mut installed = false;
+            for _ in &flips {
+                match hook_step(last, installed, false) {
+                    HookStep::Install => installed = true,
+                    HookStep::Unhook => installed = false,
+                    HookStep::Reinstall | HookStep::Nothing => {}
+                }
+            }
+            assert_eq!(installed, last, "{flips:?}");
+        }
+    }
+
+    #[test]
+    fn a_reset_watch_forgets_its_backoff() {
+        let mut w = HookWatch::new(MARGIN, GAP);
+        let t = Instant::now();
+        assert_eq!(w.check(60_000, 50_000, t), Check::Reinstall);
+        assert_eq!(
+            w.check(63_000, 50_000, t + Duration::from_secs(3)),
+            Check::GaveUp
+        );
+        // switched off and on: fresh hooks get a fresh watch (no rate limit, no backoff)
+        w.reset();
+        assert_eq!(
+            w.check(90_000, 70_000, t + Duration::from_secs(4)),
+            Check::Reinstall
+        );
+    }
 
     #[test]
     fn hooks_that_saw_the_last_input_are_alive() {
