@@ -187,12 +187,17 @@ compose_service() {
 # check_compose_hardening FILE: every service drops all capabilities and has a pids and memory ceiling; all but
 # caddy set no-new-privileges; caddy gets back NET_BIND_SERVICE only.
 check_compose_hardening() {
-  local svc block bad=0
+  local svc block pids bad=0
   for svc in pulse-server livekit caddy; do
     block=$(compose_service "$1" "$svc")
     if [ -z "$block" ]; then echo "$svc: no such service" >&2; bad=1; continue; fi
     grep -Eq '^ +cap_drop: \[ALL\]$' <<<"$block" || { echo "$svc: cap_drop [ALL] missing" >&2; bad=1; }
     grep -Eq '^ +pids_limit: [0-9]+$' <<<"$block" || { echo "$svc: pids_limit missing" >&2; bad=1; }
+    # the server's tokio blocking pool alone can reach 512 threads; LiveKit runs many goroutine threads too
+    if [ "$svc" != caddy ]; then
+      pids=$(sed -n 's/^ *pids_limit: *\([0-9]*\)$/\1/p' <<<"$block")
+      [ "${pids:-0}" -ge 2048 ] || { echo "$svc: pids_limit ${pids:-?} is below 2048" >&2; bad=1; }
+    fi
     grep -Eq '^ +mem_limit: [0-9]+[mg]$' <<<"$block" || { echo "$svc: mem_limit missing" >&2; bad=1; }
     if [ "$svc" = caddy ]; then
       grep -Eq '^ +cap_add: \[NET_BIND_SERVICE\]$' <<<"$block" || { echo "caddy: cap_add [NET_BIND_SERVICE] missing" >&2; bad=1; }
@@ -239,6 +244,10 @@ sed '/^  pulse-server:/,/^  livekit:/{/security_opt/d}' "$compose" >"$drift"
 rc=0; check_compose_hardening "$drift" 2>/dev/null || rc=$?; refused "server without no-new-privileges"
 sed '/^  pulse-server:/,/^  livekit:/{/mem_limit/d}' "$compose" >"$drift"
 rc=0; check_compose_hardening "$drift" 2>/dev/null || rc=$?; refused "server without a memory limit"
+sed '/^  pulse-server:/,/^  livekit:/{s/pids_limit: .*/pids_limit: 512/}' "$compose" >"$drift"
+rc=0; check_compose_hardening "$drift" 2>/dev/null || rc=$?; refused "server pids limit back at 512"
+sed '/^  livekit:/,/^  caddy:/{s/pids_limit: .*/pids_limit: 512/}' "$compose" >"$drift"
+rc=0; check_compose_hardening "$drift" 2>/dev/null || rc=$?; refused "livekit pids limit back at 512"
 # caddy is the last service: its block runs to the end of the file
 sed '/^  caddy:/,/^NOMATCH/{/pids_limit/d}' "$compose" >"$drift"
 rc=0; check_compose_hardening "$drift" 2>/dev/null || rc=$?; refused "caddy without a pids limit"
@@ -246,4 +255,27 @@ sed '/^  caddy:/,/^NOMATCH/{/cap_add/d}' "$compose" >"$drift"
 rc=0; check_compose_hardening "$drift" 2>/dev/null || rc=$?; refused "caddy without NET_BIND_SERVICE"
 sed '/^  caddy:/,/^NOMATCH/{/caddy\/config:/d}' "$compose" >"$drift"
 rc=0; check_caddy_config_volume "$drift" || rc=$?; refused "caddy without its /config volume"
+# reload_caddy: a failed reload warns on stderr but doesn't stop the deploy; a good one prints nothing.
+# docker is stubbed: each case defines what `docker compose exec ... caddy reload` returns.
+# shellcheck disable=SC2329 # invoked by reload_caddy
+docker() { echo "docker output that must stay hidden"; echo "docker error that must stay hidden" >&2; return "$docker_rc"; }
+docker_rc=1
+rc=0; reload_caddy >"$tmp/out" 2>"$tmp/err" || rc=$?
+if [ "$rc" -eq 0 ] && [ ! -s "$tmp/out" ] && grep -q 'WARNING: caddy reload failed' "$tmp/err" &&
+  ! grep -q 'must stay hidden' "$tmp/err"; then
+  echo "ok   a failed caddy reload warns on stderr and the deploy goes on"
+else
+  echo "FAIL a failed caddy reload: rc=$rc, stdout '$(cat "$tmp/out")', stderr '$(cat "$tmp/err")'"
+  failed=1
+fi
+docker_rc=0
+rc=0; reload_caddy >"$tmp/out" 2>"$tmp/err" || rc=$?
+if [ "$rc" -eq 0 ] && [ ! -s "$tmp/out" ] && [ ! -s "$tmp/err" ]; then
+  echo "ok   a good caddy reload is quiet"
+else
+  echo "FAIL a good caddy reload: rc=$rc, stdout '$(cat "$tmp/out")', stderr '$(cat "$tmp/err")'"
+  failed=1
+fi
+unset -f docker
+
 exit "$failed"
