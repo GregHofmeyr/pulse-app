@@ -37,14 +37,55 @@ fn code_at(secret_b32: &str, offset: i64) -> String {
     t.generate((now as i64 + offset * 30) as u64).to_string()
 }
 
-/// A 6-digit code that is certainly not valid now: never one of the three in the window.
-fn wrong_code(secret_b32: &str) -> String {
-    let valid: Vec<String> = (-1..=1).map(|o| code_at(secret_b32, o)).collect();
-    ["000000", "000001"]
-        .into_iter()
-        .find(|c| !valid.iter().any(|v| v == c))
+/// The current 30 s TOTP step by this machine's clock (the server's clock in these tests).
+fn now_step() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    (SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap()
-        .to_string()
+        .as_secs()
+        / 30) as i64
+}
+
+/// A 6-digit code that cannot be valid when the server checks it. Every 6-digit string is the
+/// code for *some* step, so "wrong" only means something at a given time. This one differs from
+/// the codes for steps t-2..=t+2 (t = the step when it is made), and dropping it asserts the
+/// clock moved at most one step meanwhile. The server checks {s-1, s, s+1} for its own step s,
+/// read between the making and the drop, so s is t or t+1 and its whole window lies inside the
+/// five excluded steps: it can never collide, and a call slow enough to break that bound fails
+/// loudly here instead of flaking. Make one just before use rather than holding it for long.
+struct WrongCode {
+    code: String,
+    step: i64,
+}
+
+impl std::ops::Deref for WrongCode {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.code
+    }
+}
+
+impl Drop for WrongCode {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            let moved = now_step() - self.step;
+            assert!(
+                (0..=1).contains(&moved),
+                "a wrong code outlived its window ({moved} steps); it may have been valid"
+            );
+        }
+    }
+}
+
+fn wrong_code(secret_b32: &str) -> WrongCode {
+    let step = now_step();
+    let near: Vec<String> = (-2..=2).map(|o| code_at(secret_b32, o)).collect();
+    let code = (0..)
+        .map(|n| format!("{n:06}"))
+        .find(|c| !near.contains(c))
+        .unwrap();
+    WrongCode { code, step }
 }
 
 async fn setup(app: &TestApp, token: &str) -> reqwest::Response {
@@ -499,35 +540,35 @@ async fn wrong_codes_are_rate_limited_and_a_refused_attempt_costs_nothing() {
     let (_, a) = register(&app, "alex").await;
     let (_, s) = register(&app, "sam").await;
     // Successes are refunded, so setup is free.
-    let s_wrong = wrong_code(&setup_ok(&app, &s).await.secret);
-    let a_wrong = wrong_code(&setup_ok(&app, &a).await.secret);
+    let s_secret = setup_ok(&app, &s).await.secret;
+    let a_secret = setup_ok(&app, &a).await.secret;
     assert_eq!(
-        code_req(&app, &a, "/auth/2fa/enable", &a_wrong)
+        code_req(&app, &a, "/auth/2fa/enable", &wrong_code(&a_secret))
             .await
             .status(),
         403
     );
     assert_eq!(
-        code_req(&app, &a, "/auth/2fa/enable", &a_wrong)
+        code_req(&app, &a, "/auth/2fa/enable", &wrong_code(&a_secret))
             .await
             .status(),
         403
     );
     assert_eq!(
-        code_req(&app, &a, "/auth/2fa/enable", &a_wrong)
+        code_req(&app, &a, "/auth/2fa/enable", &wrong_code(&a_secret))
             .await
             .status(),
         429
     );
     // The refused attempt gave its address token back: sam still gets one try from it.
     assert_eq!(
-        code_req(&app, &s, "/auth/2fa/enable", &s_wrong)
+        code_req(&app, &s, "/auth/2fa/enable", &wrong_code(&s_secret))
             .await
             .status(),
         403
     );
     assert_eq!(
-        code_req(&app, &s, "/auth/2fa/enable", &s_wrong)
+        code_req(&app, &s, "/auth/2fa/enable", &wrong_code(&s_secret))
             .await
             .status(),
         429

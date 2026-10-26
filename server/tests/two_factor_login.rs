@@ -36,14 +36,55 @@ fn code_at(secret_b32: &str, offset: i64) -> String {
     t.generate((now as i64 + offset * 30) as u64).to_string()
 }
 
-/// A 6-digit code that is certainly not valid now: never one of the three in the window.
-fn wrong_code(secret_b32: &str) -> String {
-    let valid: Vec<String> = (-1..=1).map(|o| code_at(secret_b32, o)).collect();
-    ["000000", "000001"]
-        .into_iter()
-        .find(|c| !valid.iter().any(|v| v == c))
+/// The current 30 s TOTP step by this machine's clock (the server's clock in these tests).
+fn now_step() -> i64 {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    (SystemTime::now()
+        .duration_since(UNIX_EPOCH)
         .unwrap()
-        .to_string()
+        .as_secs()
+        / 30) as i64
+}
+
+/// A 6-digit code that cannot be valid when the server checks it. Every 6-digit string is the
+/// code for *some* step, so "wrong" only means something at a given time. This one differs from
+/// the codes for steps t-2..=t+2 (t = the step when it is made), and dropping it asserts the
+/// clock moved at most one step meanwhile. The server checks {s-1, s, s+1} for its own step s,
+/// read between the making and the drop, so s is t or t+1 and its whole window lies inside the
+/// five excluded steps: it can never collide, and a call slow enough to break that bound fails
+/// loudly here instead of flaking. Make one just before use rather than holding it for long.
+struct WrongCode {
+    code: String,
+    step: i64,
+}
+
+impl std::ops::Deref for WrongCode {
+    type Target = str;
+    fn deref(&self) -> &str {
+        &self.code
+    }
+}
+
+impl Drop for WrongCode {
+    fn drop(&mut self) {
+        if !std::thread::panicking() {
+            let moved = now_step() - self.step;
+            assert!(
+                (0..=1).contains(&moved),
+                "a wrong code outlived its window ({moved} steps); it may have been valid"
+            );
+        }
+    }
+}
+
+fn wrong_code(secret_b32: &str) -> WrongCode {
+    let step = now_step();
+    let near: Vec<String> = (-2..=2).map(|o| code_at(secret_b32, o)).collect();
+    let code = (0..)
+        .map(|n| format!("{n:06}"))
+        .find(|c| !near.contains(c))
+        .unwrap();
+    WrongCode { code, step }
 }
 
 /// Turn 2FA on for the registered user; returns the secret and recovery codes. Spends step 0.
@@ -245,9 +286,11 @@ async fn five_wrong_codes_burn_the_ticket() {
     let app = spawn().await;
     let (_, secret, _) = alex_with_2fa(&app).await;
     let t = ticket(&app, "alex").await;
-    let wrong = wrong_code(&secret);
     for _ in 0..5 {
-        assert_eq!(second_step(&app, &t, &wrong).await.status(), 401);
+        assert_eq!(
+            second_step(&app, &t, &wrong_code(&secret)).await.status(),
+            401
+        );
     }
     assert_eq!(count(&app, "mfa_tickets").await, 0);
     assert_eq!(
@@ -298,12 +341,10 @@ async fn a_ticket_only_works_for_its_own_user() {
     let (_, sam) = register(&app, "sam").await;
     let (sam_secret, _) = turn_on(&app, &sam).await;
     let t = ticket(&app, "alex").await;
-    // Sam's current code against alex's ticket: wrong (unless the codes collide).
+    // Sam's current code against alex's ticket: wrong, unless it happens to equal one of alex's
+    // codes near now (as in `WrongCode`, steps t-2..=t+2 cover the server's window a step later).
     let theirs = code_at(&sam_secret, 1);
-    if theirs != code_at(&secret, 1)
-        && theirs != code_at(&secret, 0)
-        && theirs != code_at(&secret, -1)
-    {
+    if (-2..=2).all(|o| theirs != code_at(&secret, o)) {
         assert_eq!(second_step(&app, &t, &theirs).await.status(), 401);
     }
 }
@@ -324,9 +365,14 @@ async fn the_user_limit_stops_guessing_even_with_the_right_code() {
     let app = spawn_with(limited_app(Rate::new(100, 0.0), Rate::new(2, 0.0))).await;
     let (_, secret, _) = alex_with_2fa(&app).await;
     let t = ticket(&app, "alex").await;
-    let wrong = wrong_code(&secret);
-    assert_eq!(second_step(&app, &t, &wrong).await.status(), 401);
-    assert_eq!(second_step(&app, &t, &wrong).await.status(), 401);
+    assert_eq!(
+        second_step(&app, &t, &wrong_code(&secret)).await.status(),
+        401
+    );
+    assert_eq!(
+        second_step(&app, &t, &wrong_code(&secret)).await.status(),
+        401
+    );
     assert_eq!(
         second_step(&app, &t, &code_at(&secret, 1)).await.status(),
         429
@@ -381,10 +427,14 @@ async fn concurrent_wrong_codes_cannot_outrun_the_failure_limit() {
     let app = spawn().await;
     let (_, secret, _) = alex_with_2fa(&app).await;
     let t = ticket(&app, "alex").await;
-    let wrong = wrong_code(&secret);
     for _ in 0..4 {
-        assert_eq!(second_step(&app, &t, &wrong).await.status(), 401);
+        assert_eq!(
+            second_step(&app, &t, &wrong_code(&secret)).await.status(),
+            401
+        );
     }
+    // One code for the concurrent burst; its drop after the burst checks the bound.
+    let wrong = wrong_code(&secret);
     let rs = futures::future::join_all((0..6).map(|_| second_step(&app, &t, &wrong))).await;
     let statuses: Vec<_> = rs.iter().map(|r| r.status().as_u16()).collect();
     assert_eq!(

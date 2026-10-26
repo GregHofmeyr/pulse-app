@@ -1261,14 +1261,55 @@ mod tests {
         t.generate((now as i64 + offset * 30) as u64).to_string()
     }
 
-    /// A 6-digit code that is certainly not valid now: never one of the three in the window.
-    fn wrong_code(secret_b32: &str) -> String {
-        let valid: Vec<String> = (-1..=1).map(|o| code_at(secret_b32, o)).collect();
-        ["000000", "000001"]
-            .into_iter()
-            .find(|c| !valid.iter().any(|v| v == c))
+    /// The current 30 s TOTP step by this machine's clock (the server's clock in these tests).
+    fn now_step() -> i64 {
+        use std::time::{SystemTime, UNIX_EPOCH};
+        (SystemTime::now()
+            .duration_since(UNIX_EPOCH)
             .unwrap()
-            .to_string()
+            .as_secs()
+            / 30) as i64
+    }
+
+    /// A 6-digit code that cannot be valid when the server checks it. Every 6-digit string is the
+    /// code for *some* step, so "wrong" only means something at a given time. This one differs from
+    /// the codes for steps t-2..=t+2 (t = the step when it is made), and dropping it asserts the
+    /// clock moved at most one step meanwhile. The server checks {s-1, s, s+1} for its own step s,
+    /// read between the making and the drop, so s is t or t+1 and its whole window lies inside the
+    /// five excluded steps: it can never collide, and a call slow enough to break that bound fails
+    /// loudly here instead of flaking. Make one just before use rather than holding it for long.
+    struct WrongCode {
+        code: String,
+        step: i64,
+    }
+
+    impl std::ops::Deref for WrongCode {
+        type Target = str;
+        fn deref(&self) -> &str {
+            &self.code
+        }
+    }
+
+    impl Drop for WrongCode {
+        fn drop(&mut self) {
+            if !std::thread::panicking() {
+                let moved = now_step() - self.step;
+                assert!(
+                    (0..=1).contains(&moved),
+                    "a wrong code outlived its window ({moved} steps); it may have been valid"
+                );
+            }
+        }
+    }
+
+    fn wrong_code(secret_b32: &str) -> WrongCode {
+        let step = now_step();
+        let near: Vec<String> = (-2..=2).map(|o| code_at(secret_b32, o)).collect();
+        let code = (0..)
+            .map(|n| format!("{n:06}"))
+            .find(|c| !near.contains(c))
+            .unwrap();
+        WrongCode { code, step }
     }
 
     /// A registered user with 2FA on (enabled with the current step's code, so the next code
@@ -1409,9 +1450,12 @@ mod tests {
             .two_factor_setup(&token, "hunter2hunter2")
             .await
             .unwrap();
-        let wrong = wrong_code(&setup.secret);
-        // Worded like the login screen's wrong-code message, still Forbidden.
-        let err = api.two_factor_enable(&token, &wrong).await.err().unwrap();
+        // A fresh wrong code at each use (see `WrongCode`). Worded like the login screen's wrong-code message, still Forbidden.
+        let err = api
+            .two_factor_enable(&token, &wrong_code(&setup.secret))
+            .await
+            .err()
+            .unwrap();
         assert!(
             matches!(&err, ApiError::Forbidden(m) if m == WRONG_CODE),
             "{err:?}"
@@ -1420,7 +1464,7 @@ mod tests {
             .await
             .unwrap();
         let err = api
-            .two_factor_regenerate(&token, &wrong)
+            .two_factor_regenerate(&token, &wrong_code(&setup.secret))
             .await
             .err()
             .unwrap();
@@ -1428,7 +1472,11 @@ mod tests {
             matches!(&err, ApiError::Forbidden(m) if m == WRONG_CODE),
             "{err:?}"
         );
-        let err = api.two_factor_disable(&token, &wrong).await.err().unwrap();
+        let err = api
+            .two_factor_disable(&token, &wrong_code(&setup.secret))
+            .await
+            .err()
+            .unwrap();
         assert!(
             matches!(&err, ApiError::Forbidden(m) if m == WRONG_CODE),
             "{err:?}"
