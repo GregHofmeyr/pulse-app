@@ -87,6 +87,11 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
   pulls (a mistyped sha fails here and changes nothing), pins the image (below), restarts in a few seconds, and prints the commit
   that's now live. Right after a merge, `latest` is still the previous build until the image workflow
   finishes (about ten minutes): check the printed commit. Clients reconnect on their own and voice keeps going.
+- One-time, for the deploy that first adds `0007_livekit_grant_ids`: deploy while nobody's in a call, or expect
+  them to rejoin once. Calls connected before it carry no grant id, so the next time LiveKit fully reconnects one
+  (a network change or a long drop, not a quick resume), or a token fetched just before the deploy is used, the
+  server removes that participant. The app shows the call as disconnected and does not rejoin by itself (it never
+  does after being removed); clicking the channel again joins normally.
 - Images are pinned by digest, so what runs is exactly what was pulled, even if a tag moves. `deploy.sh` looks up
   the digest of the pulled `pulse-server:<tag>` and writes `PULSE_IMAGE=…:<tag>@sha256:…` into `/srv/pulse/.env`
   (`PULSE_TAG` stays, for humans; an old `.env` without `PULSE_IMAGE` just gets the line appended). It prints

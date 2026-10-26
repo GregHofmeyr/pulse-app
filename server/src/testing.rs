@@ -216,16 +216,18 @@ pub async fn general(
         .unwrap()
 }
 
-/// Give `identity` (`<user>`, `<user>#v` or `<user>#a`) in `room` a grant through that user's
-/// newest session, as the voice-token and stream-ticket routes do. Tests that post LiveKit join
-/// webhooks directly need it: a join with no live grant behind it is removed, not recorded.
-pub async fn grant_livekit(app: &TestApp, room: &str, identity: &str) {
+/// Issue a LiveKit grant for `identity` (`<user>`, `<user>#v` or `<user>#a`) in `room` through
+/// that user's newest session, as the voice-token and stream-ticket routes do, and return its
+/// id. Tests that post LiveKit join webhooks directly put it in the participant's attributes
+/// (`pulse_grant`): a join without a live session's grant is removed, not recorded.
+pub async fn grant_livekit(app: &TestApp, room: &str, identity: &str) -> String {
     let user = identity.split('#').next().unwrap_or(identity);
+    let id = format!("test-{}", pulse_protocol::ids::next_ulid());
     let n = sqlx::query(
-        "INSERT INTO livekit_grants (room, identity, token_hash, issued_at)
-         SELECT ?, ?, token_hash, ? FROM sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1
-         ON CONFLICT (room, identity) DO UPDATE SET token_hash = excluded.token_hash",
+        "INSERT INTO livekit_grants (id, token_hash, room, identity, issued_at)
+         SELECT ?, token_hash, ?, ?, ? FROM sessions WHERE user_id = ? ORDER BY created_at DESC LIMIT 1",
     )
+    .bind(&id)
     .bind(room)
     .bind(identity)
     .bind(db::now())
@@ -235,4 +237,5 @@ pub async fn grant_livekit(app: &TestApp, room: &str, identity: &str) {
     .unwrap()
     .rows_affected();
     assert_eq!(n, 1, "{identity} has no session to grant through");
+    id
 }

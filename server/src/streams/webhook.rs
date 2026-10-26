@@ -43,7 +43,7 @@ pub async fn handle(s: &AppState, channel: &str, ev: &WebhookEvent) -> AppResult
     );
     // A join needs a live session behind it, `#a` included (see `voice::revoke::admit`).
     if ev.event == "participant_joined"
-        && !crate::voice::revoke::admit(s, &format!("{channel}~s"), &p.identity).await?
+        && !crate::voice::revoke::admit(s, &format!("{channel}~s"), p).await?
     {
         return Ok(());
     }

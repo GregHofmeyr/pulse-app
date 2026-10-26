@@ -77,8 +77,8 @@ fn signed(app: &TestApp, body: &str) -> String {
 }
 
 async fn joined(app: &TestApp, room: ChannelId, user: UserId) {
-    grant_livekit(app, &room.to_string(), &user.to_string()).await;
-    let body = json!({"event": "participant_joined", "id": "EV", "room": {"name": room.to_string()}, "participant": {"identity": user.to_string()}}).to_string();
+    let grant = grant_livekit(app, &room.to_string(), &user.to_string()).await;
+    let body = json!({"event": "participant_joined", "id": "EV", "room": {"name": room.to_string()}, "participant": {"identity": user.to_string(), "attributes": {"pulse_grant": grant}}}).to_string();
     let r = app
         .http
         .post(app.url("/livekit/webhook"))
@@ -92,10 +92,11 @@ async fn joined(app: &TestApp, room: ChannelId, user: UserId) {
 
 /// A participant webhook with LiveKit's per-connection `sid` (a rejoin gets a new one).
 async fn lk_event(app: &TestApp, event: &str, room: ChannelId, user: UserId, sid: &str) {
+    let mut grant = String::new();
     if event == "participant_joined" {
-        grant_livekit(app, &room.to_string(), &user.to_string()).await;
+        grant = grant_livekit(app, &room.to_string(), &user.to_string()).await;
     }
-    let body = json!({"event": event, "id": "EV", "room": {"name": room.to_string()}, "participant": {"identity": user.to_string(), "sid": sid}}).to_string();
+    let body = json!({"event": event, "id": "EV", "room": {"name": room.to_string()}, "participant": {"identity": user.to_string(), "sid": sid, "attributes": {"pulse_grant": grant}}}).to_string();
     let r = app
         .http
         .post(app.url("/livekit/webhook"))

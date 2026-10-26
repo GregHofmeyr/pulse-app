@@ -30,6 +30,22 @@ fn event_body(kind: &str, room: ChannelId, user: UserId) -> String {
     json!({"event": kind, "id": "EV_test", "room": {"name": room.to_string()}, "participant": {"identity": user.to_string()}}).to_string()
 }
 
+/// `participant_joined` as LiveKit sends it for a participant whose token carried `grant`.
+fn join_body(room: ChannelId, user: UserId, grant: &str) -> String {
+    json!({"event": "participant_joined", "id": "EV_test", "room": {"name": room.to_string()},
+        "participant": {"identity": user.to_string(), "attributes": {"pulse_grant": grant}}})
+    .to_string()
+}
+
+async fn grant_of(app: &TestApp, r: reqwest::Response) -> String {
+    let t: VoiceTokenResponse = r.json().await.unwrap();
+    TokenVerifier::with_api_key(&app.cfg.livekit_key, &app.cfg.livekit_secret)
+        .verify(&t.token)
+        .unwrap()
+        .attributes["pulse_grant"]
+        .clone()
+}
+
 async fn webhook(app: &TestApp, body: &str, auth: &str) -> reqwest::Response {
     app.http
         .post(app.url("/livekit/webhook"))
@@ -124,10 +140,10 @@ async fn webhook_join_server_channel_records_session_and_broadcasts() {
     let (a_id, a) = register(&app, "alex").await;
     let l = lounge(&app, &a).await;
     let mut rx = app.hub.register(a_id, String::new()).rx;
-    // the token route records the grant a join needs
+    // a join needs the grant id the token route put in the token's attributes
     let t = post_json(&app, &a, &format!("/voice/{}/token", l.id), json!({})).await;
     assert_eq!(t.status(), 200);
-    let body = event_body("participant_joined", l.id, a_id);
+    let body = join_body(l.id, a_id, &grant_of(&app, t).await);
     assert_eq!(
         webhook(&app, &body, &signed(&app, &body)).await.status(),
         200
@@ -168,10 +184,10 @@ async fn webhook_join_dm_call_writes_no_voice_session() {
     let (a_id, a) = register(&app, "alex").await;
     let (b_id, _) = register(&app, "sam").await;
     let dm = create_dm(&app, &a, &[b_id]).await;
-    // the token route records the grant a join needs
+    // a join needs the grant id the token route put in the token's attributes
     let t = post_json(&app, &a, &format!("/voice/{}/token", dm.id), json!({})).await;
     assert_eq!(t.status(), 200);
-    let body = event_body("participant_joined", dm.id, a_id);
+    let body = join_body(dm.id, a_id, &grant_of(&app, t).await);
     assert_eq!(
         webhook(&app, &body, &signed(&app, &body)).await.status(),
         200

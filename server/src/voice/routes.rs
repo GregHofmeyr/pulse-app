@@ -42,14 +42,15 @@ async fn token(
     {
         return Err(AppError::Forbidden);
     }
-    // Remember (server-side only) which session this identity was admitted through, so revoking
-    // that session can remove it from the room.
+    // A random grant id, mapped to this session server-side only: the join webhook checks it
+    // and revoking this session removes the participant that joined with it.
     let room = id.to_string();
-    if !crate::auth::session::record_grant(&s.db, &session, &room, &me.to_string()).await? {
-        return Err(AppError::Unauthorized);
-    }
+    let grant = crate::auth::session::record_grant(&s.db, &session, &room, &me.to_string())
+        .await?
+        .ok_or(AppError::Unauthorized)?;
     let jwt = AccessToken::with_api_key(&s.cfg.livekit_key, &s.cfg.livekit_secret)
         .with_identity(&me.to_string())
+        .with_attributes([(crate::auth::session::GRANT_ATTRIBUTE, grant)])
         .with_ttl(TOKEN_TTL)
         .with_grants(VideoGrants {
             room_join: true,
@@ -105,9 +106,7 @@ async fn webhook(
         return Ok(StatusCode::OK);
     };
     // A join needs a live session behind it (a revoked device's JWT still works at LiveKit).
-    if ev.event == "participant_joined"
-        && !crate::voice::revoke::admit(&s, &room.name, &p.identity).await?
-    {
+    if ev.event == "participant_joined" && !crate::voice::revoke::admit(&s, &room.name, p).await? {
         return Ok(StatusCode::OK);
     }
     let Some(ch) = load_channel(&s.db, channel_id).await? else {
