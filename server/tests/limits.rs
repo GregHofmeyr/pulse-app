@@ -711,7 +711,8 @@ fn voice_frame(muted: bool) -> Ws {
 
 #[tokio::test]
 async fn extra_voice_state_frames_are_dropped() {
-    let rate = LimitsConfig::default().voice_state_user;
+    // The default burst with no refill, so the bound is exact however slow the machine is.
+    let rate = Rate::new(LimitsConfig::default().voice_state_user.burst, 0.0);
     let app = spawn_only(|l| l.voice_state_user = rate).await;
     let (a_id, a) = register(&app, "alex").await;
     let (_, b) = register(&app, "sam").await;
@@ -730,10 +731,9 @@ async fn extra_voice_state_frames_are_dropped() {
         talker.send(voice_frame(i % 2 == 0)).await.unwrap();
     }
     let seen = count_voice_states(&mut watcher).await;
-    assert!(seen >= 1, "the first ones get through");
-    assert!(
-        seen <= rate.burst as usize + 3,
-        "{seen} VoiceStateChanged for 50 frames"
+    assert_eq!(
+        seen, rate.burst as usize,
+        "the burst gets through, the rest is dropped: {seen} VoiceStateChanged for 50 frames"
     );
     assert!(alive(&mut talker).await, "the sender is not disconnected");
     assert!(alive(&mut watcher).await, "the watcher is not disconnected");
@@ -782,11 +782,13 @@ async fn limited_voice_state_frames_still_land_in_a_trailing_publish() {
     let mut watcher = hello(&app, &b).await;
     let mut talker = hello(&app, &a).await;
     // 21 alternating frames: true, false, ..., true. The last one is over the limit.
+    let start = std::time::Instant::now();
     for i in 0..21 {
         talker.send(voice_frame(i % 2 == 0)).await.unwrap();
     }
     let mut seen = 0;
     let mut last = None;
+    let mut last_at = start;
     while let Ok(Some(Ok(m))) =
         tokio::time::timeout(Duration::from_millis(1000), watcher.next()).await
     {
@@ -796,14 +798,23 @@ async fn limited_voice_state_frames_still_land_in_a_trailing_publish() {
         {
             seen += 1;
             last = Some(flags);
+            last_at = std::time::Instant::now();
         }
     }
+    // Every publish (direct or trailing) spends a token, and the bucket was full at `start` at
+    // most: so by the last one received, at most burst + refill * elapsed went out. Derived from
+    // the measured time, the bound holds on a slow machine too.
+    let elapsed = last_at.duration_since(start).as_secs_f64();
+    let bound = (2.0 + 4.0 * elapsed).floor() as usize;
     let want = VoiceFlags {
         muted: true,
         deafened: false,
     };
     assert_eq!(last, Some(want), "peers see the final flags");
-    assert!(seen <= 6, "{seen} publishes for 21 frames");
+    assert!(
+        seen <= bound,
+        "{seen} publishes for 21 frames in {elapsed:.3}s (at most {bound})"
+    );
     let room = app
         .voice
         .rooms()

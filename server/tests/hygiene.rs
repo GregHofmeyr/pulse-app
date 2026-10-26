@@ -137,17 +137,36 @@ async fn prune_removes_expired_rows_and_keeps_fresh_ones() {
 
 #[tokio::test]
 async fn invite_cap_still_counts_after_prune() {
+    let cap = pulse_server::limits::caps::INVITES_PER_USER;
     let app = spawn().await;
     let (alex, token) = register(&app, "alex").await;
-    let r = post_json(&app, &token, "/invites", json!({})).await;
-    assert_eq!(r.status(), 200);
-    prune(&app.db, Utc::now()).await.unwrap();
-    let n = count(
-        &app,
-        &format!("SELECT COUNT(*) FROM invites WHERE created_by = '{alex}' AND used_by IS NULL"),
+    let create = || post_json(&app, &token, "/invites", json!({}));
+    for _ in 0..cap {
+        assert_eq!(create().await.status(), 200);
+    }
+    assert_eq!(create().await.status(), 400, "at the cap");
+    // Two of them expire, and the prune deletes them: two slots are free, no more.
+    sqlx::query(
+        "UPDATE invites SET created_at = ? WHERE code IN
+         (SELECT code FROM invites WHERE created_by = ? LIMIT 2)",
     )
-    .await;
-    assert_eq!(n, 1, "a fresh unused invite survives");
+    .bind((Utc::now() - Duration::hours(25)).to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
+    .bind(alex.to_string())
+    .execute(&app.db)
+    .await
+    .unwrap();
+    let pruned = prune(&app.db, Utc::now()).await.unwrap();
+    assert_eq!(pruned.invites, 2);
+    let mine = format!("SELECT COUNT(*) FROM invites WHERE created_by = '{alex}'");
+    assert_eq!(count(&app, &mine).await, cap - 2, "the fresh ones survive");
+    assert_eq!(create().await.status(), 200);
+    assert_eq!(create().await.status(), 200);
+    assert_eq!(
+        create().await.status(),
+        400,
+        "the cap still holds after a prune"
+    );
+    assert_eq!(count(&app, &mine).await, cap);
 }
 
 #[tokio::test]
