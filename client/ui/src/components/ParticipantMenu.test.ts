@@ -115,7 +115,7 @@ describe('ParticipantMenu', () => {
     expect(menu()).not.toBeNull()
   })
 
-  it('arrows_move_enter_picks_esc_closes_and_restores_focus', () => {
+  it('arrows_move_and_wrap_esc_closes_and_restores_focus', () => {
     mountPanel()
     const opener = q('[data-user="U2"] .avatar-btn')!
     opener.focus()
@@ -370,6 +370,24 @@ describe('ParticipantMenu', () => {
     btn.click()
     flushSync()
     expect(menu()).toBeNull()
+  })
+
+  it('clicking_a_full_view_strip_opener_again_closes_its_menu', async () => {
+    app.state = applyReady(emptyState(), { ...ready, streams: [{ channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false }, status: 'live', viewers: [], started_at: '2026-10-26T10:00:00Z' }] })
+    await streamApi.watch('V1', 'U2')
+    callView.full = { channelId: 'V1', streamer: 'U2' }
+    mountPanel()
+    await settle()
+    const btn = q('.full-view .strip [data-user="U2"] .avatar-btn')!
+    btn.click()
+    flushSync()
+    expect(menu()).not.toBeNull()
+    await new Promise((r) => setTimeout(r, 5))
+    btn.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    btn.click()
+    flushSync()
+    expect(menu()).toBeNull()
+    expect(q('.full-view')).not.toBeNull()
   })
 
   it('clicking_a_channel_list_row_again_closes_its_menu', async () => {

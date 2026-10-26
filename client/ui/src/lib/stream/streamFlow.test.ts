@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The stream store's lifecycle against a fake `#v` connection and a fake Tauri core.
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 type Handler = (args: Record<string, unknown> | undefined) => Promise<unknown>
 const core = vi.hoisted(() => ({
@@ -58,6 +58,14 @@ function fakeTrack(surface: 'monitor' | 'window' = 'monitor') {
 
 const calls = (cmd: string) => core.calls.filter(([c]) => c === cmd).map(([, a]) => a)
 const settle = () => new Promise((r) => setTimeout(r, 0))
+/** Settles until `done()` holds; a bounded wait that names what never happened instead of a test timeout. */
+async function until(done: () => boolean, what: string, max = 500) {
+  for (let i = 0; i < max; i++) {
+    if (done()) return
+    await settle()
+  }
+  throw new Error(`still waiting for ${what} after ${max} settles`)
+}
 const settings = (audio: boolean) => ({ res: 720 as const, fps: 60 as const, audio })
 
 async function load() {
@@ -78,6 +86,12 @@ async function goneLive(audio = false, surface: 'monitor' | 'window' = 'monitor'
   expect(mod.stream.live).not.toBeNull()
   return { ...mod, room, track }
 }
+
+// load() re-imports after resetModules: transform the module graph once up front, so the first test
+// doesn't pay the cold import inside its 5 s timeout on a loaded machine
+beforeAll(async () => {
+  await import('./stream.svelte')
+}, 60_000)
 
 beforeEach(() => {
   core.handlers = {}
@@ -113,7 +127,7 @@ describe('go live', () => {
     core.handlers.stream_audio_start = () => audioStarted.p
     const track = fakeTrack()
     const going = streamApi.goLive('c1', track as never, 'Game', settings(true))
-    while (!calls('stream_audio_start').length) await settle()
+    await until(() => calls('stream_audio_start').length > 0, 'stream_audio_start')
     track.end() // the shared window closed while stream audio was starting
     await settle()
     audioStarted.resolve(undefined)
@@ -144,7 +158,7 @@ describe('stream audio mute', () => {
     const started = deferred()
     core.handlers.stream_audio_start = () => started.p
     const going = streamApi.goLive('c1', fakeTrack() as never, 'Game', settings(true))
-    while (!calls('stream_audio_start').length) await settle()
+    await until(() => calls('stream_audio_start').length > 0, 'stream_audio_start')
     await streamApi.setAudioMuted(true) // reaches Rust before there is a track to mute
     core.calls = []
     started.resolve(undefined)
@@ -503,7 +517,7 @@ describe('the watch list', () => {
     const video = deferred<number>()
     room.watch.mockImplementationOnce(() => video.p)
     const first = streamApi.watch('c1', 'other')
-    while (!room.watch.mock.calls.length) await settle()
+    await until(() => room.watch.mock.calls.length > 0, 'room.watch')
     await streamApi.watch('c1', 'kim')
     room.setLayer.mockClear()
     core.calls = []
@@ -577,7 +591,7 @@ describe('several watches (the list past a cap of one)', () => {
     core.handlers.stream_watch = () => listed.p
     const info = (user: string) => ({ channel_id: 'c1', user_id: user, settings: { height: 720, fps: 60, audio: true }, status: 'live', viewers: [], started_at: 't' })
     const ready = streamApi.onReady({ me: { id: 'me' }, streams: [info('other'), info('kim')] } as never)
-    while (!calls('stream_watch').length) await settle()
+    await until(() => calls('stream_watch').length > 0, 'stream_watch')
     await streamApi.unwatch('c1', 'kim') // stopped while the first re-list is in flight
     listed.resolve(undefined)
     await ready
