@@ -14,7 +14,27 @@ pub const SESSION_MARKER: &str = "pulse-session-start";
 pub const SESSION_TARGET: &str = "pulse_session";
 
 pub fn session_start() {
-    tracing::info!(target: SESSION_TARGET, "{SESSION_MARKER}");
+    // A root event (no parent span), so the line has a fixed shape whatever span the caller is
+    // in: `<timestamp>  INFO pulse_session: pulse-session-start`. See `is_session_marker_line`.
+    tracing::info!(target: SESSION_TARGET, parent: None, "{SESSION_MARKER}");
+}
+
+/// Whether `line` (one log line, with or without its line ending) is the session marker exactly
+/// as the log writes it: an optional timestamp, then `INFO pulse_session: pulse-session-start`
+/// and nothing else. Any other line that merely contains the marker text is not.
+pub fn is_session_marker_line(line: &str) -> bool {
+    let line = line.strip_suffix('\n').unwrap_or(line);
+    let line = line.strip_suffix('\r').unwrap_or(line);
+    if line.contains(['\n', '\r']) {
+        return false;
+    }
+    let target = format!("{SESSION_TARGET}:");
+    let words: Vec<&str> = line.split_whitespace().collect();
+    let tail = ["INFO", target.as_str(), SESSION_MARKER];
+    match words.as_slice() {
+        [_, rest @ ..] if rest == tail => true, // with the timestamp
+        rest => rest == tail,
+    }
 }
 
 /// Libraries that must never log below info, whatever `PULSE_LOG` says: tungstenite trace-logs
@@ -51,7 +71,8 @@ fn is_capped(target: &str) -> bool {
         .any(|t| target == *t || target.strip_prefix(t).is_some_and(|r| r.starts_with("::")))
 }
 
-/// Rewrites a `PULSE_LOG` value so no capped library (or one of its modules) is above info.
+/// Rewrites a `PULSE_LOG` value so no capped library (or one of its modules) is above info, and
+/// no span/field directive is above info (see `cap_span_directive`).
 fn cap_libraries(spec: &str) -> String {
     use tracing_subscriber::filter::LevelFilter;
     let info = LevelFilter::INFO;
@@ -60,7 +81,7 @@ fn cap_libraries(spec: &str) -> String {
     let mut named: Vec<&str> = Vec::new();
     for part in spec.split(',').map(str::trim).filter(|p| !p.is_empty()) {
         if part.contains(['[', '{']) {
-            parts.push(part.to_string()); // span/field filters: left as written
+            parts.push(cap_span_directive(part));
             continue;
         }
         let (target, level) = match part.split_once('=') {
@@ -91,6 +112,26 @@ fn cap_libraries(spec: &str) -> String {
         }
     }
     parts.join(",")
+}
+
+/// A span/field directive (`target[span{field}]=level`) clamped to at most info. Inside a
+/// matching span such a directive enables events of *every* target (EnvFilter checks the span
+/// scope before the per-target directives), so a target cap can't hold against it: the only
+/// safe level is info. A malformed one is left as written (and the whole value is then rejected).
+fn cap_span_directive(part: &str) -> String {
+    use tracing_subscriber::filter::LevelFilter;
+    let Some(close) = part.rfind(']') else {
+        return part.to_string();
+    };
+    let (head, rest) = part.split_at(close + 1);
+    let level = match rest.trim() {
+        "" => Some(LevelFilter::TRACE), // no level means trace
+        r => r.strip_prefix('=').and_then(|l| l.trim().parse().ok()),
+    };
+    match level {
+        Some(l) if l > LevelFilter::INFO => format!("{head}=info"),
+        _ => part.to_string(),
+    }
 }
 
 /// `path` for a log line: the home directory prefix becomes `~`.
@@ -232,11 +273,7 @@ impl<W: std::io::Write> std::io::Write for Capped<W> {
             self.written = 0;
         }
         // the one-line session marker is always kept: report tails are cut at it
-        if buf.len() < 256
-            && buf
-                .windows(SESSION_MARKER.len())
-                .any(|w| w == SESSION_MARKER.as_bytes())
-        {
+        if buf.len() < 256 && std::str::from_utf8(buf).is_ok_and(is_session_marker_line) {
             self.inner.write_all(buf)?;
             return Ok(buf.len());
         }
@@ -370,6 +407,8 @@ mod tests {
             ("pulse_session", Level::INFO) => {
                 tracing::enabled!(target: "pulse_session", Level::INFO)
             }
+            ("hyper", Level::TRACE) => tracing::enabled!(target: "hyper", Level::TRACE),
+            ("hyper", Level::DEBUG) => tracing::enabled!(target: "hyper", Level::DEBUG),
             ("hyper", Level::INFO) => tracing::enabled!(target: "hyper", Level::INFO),
             ("hyper", Level::WARN) => tracing::enabled!(target: "hyper", Level::WARN),
             ("hyper_util", Level::TRACE) => tracing::enabled!(target: "hyper_util", Level::TRACE),
@@ -400,6 +439,78 @@ mod tests {
         assert!(!enabled(g, "tungstenite", Level::TRACE));
         let h = build_filter(Some("hyper_util::client=trace"));
         assert!(!enabled(h, "hyper_util::client", Level::TRACE));
+    }
+
+    /// Like `enabled`, but checked inside an entered span named `span` (target `span_target`),
+    /// so span directives (`[span]=level`, `target[span]=level`) take part.
+    fn enabled_in_span(
+        filter: EnvFilter,
+        span_target: &'static str,
+        target: &'static str,
+        level: Level,
+    ) -> bool {
+        let sub = tracing_subscriber::registry().with(filter);
+        tracing::subscriber::with_default(sub, || {
+            let span = match span_target {
+                "hyper" => tracing::info_span!(target: "hyper", "x"),
+                "pulse_client" => tracing::info_span!(target: "pulse_client", "gateway"),
+                _ => panic!("unprobed span target {span_target}"),
+            };
+            let _in = span.enter();
+            probe(target, level)
+        })
+    }
+
+    #[test]
+    fn span_directives_cannot_raise_library_targets_above_info() {
+        // A span directive naming a capped target: events inside its span stay at most info.
+        for spec in ["hyper[x]=trace", "hyper[x]", "hyper[x]=debug"] {
+            let f = || build_filter(Some(spec));
+            assert!(
+                !enabled_in_span(f(), "hyper", "hyper", Level::TRACE),
+                "{spec}"
+            );
+            assert!(
+                !enabled_in_span(f(), "hyper", "hyper", Level::DEBUG),
+                "{spec}"
+            );
+            assert!(
+                !enabled_in_span(f(), "hyper", "tungstenite", Level::TRACE),
+                "{spec}"
+            );
+        }
+        // Still honoured up to info.
+        let f = build_filter(Some("hyper[x]=trace"));
+        assert!(enabled_in_span(f, "hyper", "hyper", Level::INFO));
+        // A target-less span directive applies to every target inside the span: clamped too.
+        for spec in [
+            "[gateway]=trace",
+            "[gateway]",
+            "info,[gateway]=trace",
+            "[gateway{id}]=trace",
+        ] {
+            let f = || build_filter(Some(spec));
+            for (target, level) in [
+                ("tungstenite", Level::TRACE),
+                ("tungstenite", Level::DEBUG),
+                ("hyper", Level::TRACE),
+                ("hyper_util::client", Level::TRACE),
+                ("rustls", Level::DEBUG),
+            ] {
+                assert!(
+                    !enabled_in_span(f(), "pulse_client", target, level),
+                    "{spec}: {target} {level}"
+                );
+            }
+        }
+        // A stricter span level is kept.
+        let f = build_filter(Some("[gateway]=warn"));
+        assert!(!enabled_in_span(
+            f,
+            "pulse_client",
+            "tungstenite",
+            Level::INFO
+        ));
     }
 
     #[test]
@@ -442,18 +553,71 @@ mod tests {
         assert!(!SESSION_TARGET.contains(SESSION_MARKER));
     }
 
+    /// What `session_start` writes through the real fmt layer (as `init` sets it up), called
+    /// inside a span: the marker line must not depend on the caller's span context.
+    fn formatted_marker() -> String {
+        use std::sync::{Arc, Mutex};
+        let out = Arc::new(Mutex::new(Vec::new()));
+        let sink = out.clone();
+        let sub = tracing_subscriber::fmt()
+            .with_writer(move || Sink(sink.clone()))
+            .with_ansi(false)
+            .with_env_filter(build_filter(None))
+            .finish();
+        tracing::subscriber::with_default(sub, || {
+            let span = tracing::info_span!("sign_in", note = "pulse_session: x");
+            let _in = span.enter();
+            session_start();
+        });
+        String::from_utf8(out.lock().unwrap().clone()).unwrap()
+    }
+
+    struct Sink(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl Write for Sink {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
     #[test]
     fn the_size_cap_lets_the_session_marker_through() {
+        DAY.store(1, Ordering::SeqCst);
+        let marker = formatted_marker();
+        assert!(marker.contains(SESSION_MARKER), "{marker}");
+        let mut w = Capped::new(Vec::new(), 10, fake_day);
+        w.write_all(b"12345\n").unwrap();
+        w.write_all(b"67890\n").unwrap(); // cap reached
+        w.write_all(marker.as_bytes()).unwrap();
+        w.write_all(b"after\n").unwrap();
+        let text = String::from_utf8(w.inner.clone()).unwrap();
+        assert!(text.ends_with(&marker), "{text}");
+        assert!(!text.contains("after"), "{text}");
+    }
+
+    /// Any other short line that merely contains the marker text (a logged server message, a
+    /// file name, an error string) is capped like everything else.
+    #[test]
+    fn a_line_merely_containing_the_marker_does_not_bypass_the_cap() {
         DAY.store(1, Ordering::SeqCst);
         let mut w = Capped::new(Vec::new(), 10, fake_day);
         w.write_all(b"12345\n").unwrap();
         w.write_all(b"67890\n").unwrap(); // cap reached
-        w.write_all(b"INFO pulse_session: pulse-session-start\n")
-            .unwrap();
-        w.write_all(b"after\n").unwrap();
+        for spoof in [
+            "pulse-session-start\n",
+            "2026-10-26T10:00:00.000000Z  INFO pulse_client::gateway: pulse-session-start\n",
+            "2026-10-26T10:00:00.000000Z  INFO pulse_client: said pulse_session: pulse-session-start\n",
+            "2026-10-26T10:00:00.000000Z  WARN pulse_session: pulse-session-start\n",
+            "2026-10-26T10:00:00.000000Z  INFO pulse_session: pulse-session-start and more\n",
+            "x\n2026-10-26T10:00:00.000000Z  INFO pulse_session: pulse-session-start\n",
+        ] {
+            w.write_all(spoof.as_bytes()).unwrap();
+        }
         let text = String::from_utf8(w.inner.clone()).unwrap();
-        assert!(text.contains("pulse-session-start\n"), "{text}");
-        assert!(!text.contains("after"), "{text}");
+        assert!(!text.contains(SESSION_MARKER), "{text}");
     }
 
     const MARKER_CHILD: &str = "PULSE_TEST_MARKER_CHILD";

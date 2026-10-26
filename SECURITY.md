@@ -72,7 +72,7 @@ The client makes outbound connections only, all to the Pulse server and its Live
 
 | Purpose | Protocol / port | Notes |
 |---|---|---|
-| API and real-time events | HTTPS and WSS, TCP 443 | TLS. The client refuses plain `http://` for any server other than this machine (`localhost`). |
+| API and real-time events | HTTPS and WSS, TCP 443 | TLS. The client refuses plain `http://` for any server other than this machine (`localhost`). A stored session's server address is checked the same way at startup; one that fails is cleared and the login screen shown. |
 | Voice / screen-share signalling | WSS, TCP 443 (`voice.` subdomain) | Through the same TLS reverse proxy. |
 | Voice / screen-share media | UDP 7882, or TCP 7881 as a fallback | WebRTC (DTLS-SRTP) to the SFU. |
 | TURN relay | UDP 3478 | LiveKit's built-in TURN, for clients on restrictive networks. It also serves as the clients' STUN server. |
@@ -138,7 +138,9 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     redaction filter. By default the LiveKit and WebRTC libraries log at warning level and above; everything else logs
     at info level and above. A local `PULSE_LOG` environment variable can change these levels, but it can't raise
     the HTTP, WebSocket and TLS libraries (`tungstenite`, `tokio_tungstenite`, `hyper`, `hyper_util`, `h2`, `reqwest`,
-    `rustls`, `tower_http`) above info. Their debug and trace output can include request and frame contents.
+    `rustls`, `tower_http`) above info. Their debug and trace output can include request and frame contents. A span
+    filter in `PULSE_LOG` (such as `[gateway]=trace`) applies to every library inside that span, so it is lowered to
+    info too.
   - **No home paths.** Paths under the user's home folder are logged with the home part replaced by `~`.
   - **Crash files.** The log folder also holds:
     - a `running` marker, naming the server the current session belongs to;
@@ -147,7 +149,8 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     - `pending-report.json`, a crash report not yet sent, including its log tail.
   - **Report log tails.** A report's log tail is at most the last 256 KB of the newest log file, and it starts at the
     current session (the last app start, sign-in or restore, marked by a line that `PULSE_LOG` and the daily size cap
-    never drop). Older sessions in the same file are left out.
+    never drop). Only that exact marker line counts: another line that merely contains the marker text neither starts
+    a session nor gets past the size cap. Older sessions in the same file are left out.
 - **Image cache.** Custom emoji images are fetched from the server once and cached as WebP files, keyed by their
   SHA-256 hash.
   - **Where.** `%LOCALAPPDATA%\app.pulse.client\media\` on Windows.
