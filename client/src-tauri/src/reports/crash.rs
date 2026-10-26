@@ -90,6 +90,17 @@ pub fn write_panic_marker(dir: &Path, message: &str, location: &str) {
     let _ = std::fs::write(path, body.to_string()); // in a panic hook: never fail loudly
 }
 
+/// Replace `dir/name` whole: write a temp file beside it, then rename over it, so a crash or power
+/// loss mid-write leaves the old file or the new one, never half of one.
+fn write_atomic(dir: &Path, name: &str, contents: &str) -> std::io::Result<()> {
+    let tmp = dir.join(format!("{name}.tmp"));
+    let r = std::fs::write(&tmp, contents).and_then(|()| std::fs::rename(&tmp, dir.join(name)));
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
+}
+
 pub fn mark_running(dir: &Path) {
     write_running(dir, super::unix_now(), env!("CARGO_PKG_VERSION"));
 }
@@ -102,7 +113,7 @@ fn write_running(dir: &Path, at: u64, version: &str) {
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty());
     let body = serde_json::json!({ "at": at, "version": version, "server": server });
-    let _ = std::fs::write(dir.join(RUNNING), body.to_string());
+    let _ = write_atomic(dir, RUNNING, &body.to_string());
 }
 
 /// This session signed in to `server`: a crash from here on is reported to that server only.
@@ -116,8 +127,8 @@ pub fn note_server(dir: &Path, server: &str) {
         );
     m["server"] = serde_json::Value::String(server.to_string());
     let _ = std::fs::create_dir_all(dir);
-    let _ = std::fs::write(dir.join(RUNNING), m.to_string());
-    let _ = std::fs::write(dir.join(LAST_SERVER), server);
+    let _ = write_atomic(dir, RUNNING, &m.to_string());
+    let _ = write_atomic(dir, LAST_SERVER, server);
 }
 
 /// The server last session signed in to, from its `running` marker.
@@ -200,7 +211,7 @@ pub fn detect_with(dir: &Path, now: u64, version: &str, booted_at: Option<u64>) 
         server,
     };
     if let Ok(body) = serde_json::to_string(&pending) {
-        let _ = std::fs::write(dir.join(PENDING), body);
+        let _ = write_atomic(dir, PENDING, &body);
     }
     let _ = std::fs::remove_file(dir.join(CRASH));
     clear_running(dir);
@@ -234,14 +245,13 @@ pub fn hold_pending(dir: &Path) {
         return;
     }
     p.held = true;
-    if let Ok(body) = serde_json::to_string(&p) {
-        let tmp = dir.join(format!("{PENDING}.tmp"));
-        if std::fs::write(&tmp, body).is_err() || std::fs::rename(&tmp, dir.join(PENDING)).is_err()
-        {
-            // can't mark it held: delete it rather than risk an automatic send
-            let _ = std::fs::remove_file(tmp);
-            clear_pending(dir);
-        }
+    let saved = serde_json::to_string(&p).map_err(std::io::Error::other);
+    if saved
+        .and_then(|body| write_atomic(dir, PENDING, &body))
+        .is_err()
+    {
+        // can't mark it held: delete it rather than risk an automatic send
+        clear_pending(dir);
     }
 }
 
@@ -461,6 +471,29 @@ mod tests {
 
     fn log(dir: &Path, text: &str) {
         std::fs::write(dir.join("pulse.2026-10-12.log"), text).unwrap();
+    }
+
+    #[test]
+    fn state_files_are_replaced_whole_with_no_temp_left_behind() {
+        let d = tempfile::tempdir().unwrap();
+        write_atomic(d.path(), "x.json", "old").unwrap();
+        write_atomic(d.path(), "x.json", "new").unwrap();
+        assert_eq!(
+            std::fs::read_to_string(d.path().join("x.json")).unwrap(),
+            "new"
+        );
+        assert!(!d.path().join("x.json.tmp").exists());
+        // can't write: an error, and nothing half-written
+        assert!(write_atomic(&d.path().join("gone"), "x.json", "y").is_err());
+        mark_running(d.path());
+        note_server(d.path(), "https://pulse.example");
+        detect(d.path(), 1000);
+        let left: Vec<_> = std::fs::read_dir(d.path())
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|n| n.ends_with(".tmp"))
+            .collect();
+        assert!(left.is_empty(), "{left:?}");
     }
 
     #[test]
