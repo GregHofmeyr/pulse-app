@@ -6,6 +6,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: unknown) => invoke(cmd, args) }))
 
 import SoundSettings from './SoundSettings.svelte'
+import { SOUND_SETS } from '../lib/voiceui'
 
 const LABELS = ['Classic', 'Two-step · Bright', 'Two-step · Warm', 'Two-step · Deep', 'Minimal · Soft', 'Minimal · Wood', 'Minimal · Glass', 'Goofy']
 let cmp: ReturnType<typeof mount> | undefined
@@ -101,5 +102,42 @@ describe('SoundSettings', () => {
     cmp = undefined
     vi.advanceTimersByTime(5000)
     expect(plays().length).toBe(1)
+  })
+
+  it('is a roving-tabindex radiogroup: one tab stop, arrows select, save, focus and wrap', () => {
+    show()
+    expect(radios().filter((r) => r.tabIndex === 0).length).toBe(1)
+    expect(radio('Classic').tabIndex).toBe(0)
+    const key = (el: HTMLElement, k: string) => el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
+    key(radio('Classic'), 'ArrowDown')
+    flushSync()
+    expect(radio('Two-step · Bright').getAttribute('aria-checked')).toBe('true')
+    expect(stored().set).toBe('twostep-bright')
+    expect(document.activeElement).toBe(radio('Two-step · Bright'))
+    expect(radios().filter((r) => r.tabIndex === 0)).toEqual([radio('Two-step · Bright')])
+    key(radio('Two-step · Bright'), 'ArrowUp')
+    flushSync()
+    key(radio('Classic'), 'ArrowUp')
+    flushSync()
+    expect(stored().set).toBe('goofy')
+    expect(document.activeElement).toBe(radio('Goofy'))
+    key(radio('Goofy'), 'ArrowRight')
+    flushSync()
+    expect(stored().set).toBe('classic')
+  })
+
+  it('names each radio by its label and describes it with the blurb', () => {
+    show()
+    const r = radio('Goofy')
+    expect(r.getAttribute('aria-label')).toBe('Goofy')
+    const desc = document.getElementById(r.getAttribute('aria-describedby')!)
+    expect(desc?.textContent).toBe(SOUND_SETS.find((s) => s.id === 'goofy')!.blurb)
+    expect(new Set(radios().map((x) => x.getAttribute('aria-describedby'))).size).toBe(8)
+  })
+
+  it('keeps the volume hint outside the labelled control', () => {
+    show()
+    const input = document.querySelector('input[aria-label="Sound volume"]')!
+    expect(input.closest('label')).toBeNull()
   })
 })
