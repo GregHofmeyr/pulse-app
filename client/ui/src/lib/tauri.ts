@@ -11,6 +11,9 @@ import type { VoiceTokenResponse } from './protocol/VoiceTokenResponse'
 import type { MediaInfo } from './protocol/MediaInfo'
 import type { CustomEmoji } from './protocol/CustomEmoji'
 
+/** What startup found: signed in, show login, or signed in but the server refused the connection. */
+export type Restored = { status: 'ready'; user: User } | { status: 'logged_out' } | { status: 'refused' }
+
 export const api = {
   createDm: (userIds: string[]) => invoke<Channel>('create_dm', { userIds }),
   addMembers: (channelId: string, userIds: string[]) => invoke<void>('add_members', { channelId, userIds }),
@@ -24,7 +27,7 @@ export const api = {
     invoke<User>('login', { serverUrl, username, password }),
   register: (serverUrl: string, inviteCode: string, username: string, password: string) =>
     invoke<User>('register', { serverUrl, inviteCode, username, password }),
-  restoreSession: () => invoke<User | null>('restore_session'),
+  restoreSession: () => invoke<Restored>('restore_session'),
   logout: () => invoke<void>('logout'),
   /** Sign out every other device of this account; resolves to how many were signed out. */
   logoutOthers: () => invoke<number>('logout_others'),

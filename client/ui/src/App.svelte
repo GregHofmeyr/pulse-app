@@ -10,7 +10,6 @@
   import Shell from './routes/Shell.svelte'
   import UpdateRequired from './routes/UpdateRequired.svelte'
   import Waiting from './routes/Waiting.svelte'
-  import { isRefusal } from './lib/conn'
   import { screenFor } from './lib/screen'
 
   let user = $state<User | null>(null)
@@ -40,8 +39,9 @@
         unlistenVoice()
       }
       try {
-        user = await api.restoreSession()
-        restoreRefused = !user && isRefusal(app.state.conn)
+        const r = await api.restoreSession()
+        user = r.status === 'ready' ? r.user : null
+        restoreRefused = r.status === 'refused'
       } catch (e) {
         bootError = errorText(e)
       } finally {
@@ -61,8 +61,9 @@
 
   // The server ended our session (logout elsewhere, expiry): back to login.
   $effect(() => {
-    if (user && app.state.conn === 'logged_out') {
+    if ((user || restoreRefused) && app.state.conn === 'logged_out') {
       user = null
+      restoreRefused = false
       resetState()
       bootError = 'You were signed out. Please log in again.'
     }
@@ -76,9 +77,9 @@
 {:else if screen === 'waiting'}
   <Waiting />
 {:else if screen === 'shell' && user}
-  <Shell {user} onLogout={() => { user = null; resetState() }} />
+  <Shell {user} onLogout={() => { user = null; restoreRefused = false; resetState() }} />
 {:else}
-  <Login notice={bootError} onAuthed={(u) => { bootError = ''; user = u }} />
+  <Login notice={bootError} onAuthed={(u) => { bootError = ''; restoreRefused = false; user = u }} />
 {/if}
 
 <style>

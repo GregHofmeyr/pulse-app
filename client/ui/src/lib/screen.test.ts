@@ -13,6 +13,7 @@ describe('screenFor', () => {
     expect(screenFor({ ...v, conn: 'too_many_devices' })).toBe('waiting')
     expect(screenFor({ ...v, conn: 'connecting' })).toBe('waiting')
     expect(screenFor({ ...v, conn: 'logged_out' })).toBe('login')
+    expect(screenFor({ ...v, conn: 'update_required' })).toBe('update')
     expect(screenFor({ ...v, restoreRefused: false, conn: 'too_many_devices' })).toBe('login')
   })
 })
