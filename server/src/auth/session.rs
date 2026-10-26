@@ -76,15 +76,17 @@ pub async fn exists(db: &SqlitePool, token_hash: &str) -> anyhow::Result<bool> {
 /// The LiveKit participant attribute that carries a token's grant id.
 pub const GRANT_ATTRIBUTE: &str = "pulse_grant";
 
-/// Unused grants older than this are pruned. A LiveKit token lives 10 minutes, so only a grant
-/// whose join webhook was lost could still matter after a day.
-const GRANT_PRUNE_AFTER: Duration = Duration::days(1);
+/// A grant nobody is connected with is pruned after this: LiveKit tokens live 10 minutes, plus
+/// a margin for clock skew and a join webhook that's slow to arrive.
+const GRANT_UNUSED_FOR: Duration = Duration::minutes(15);
+/// Most stale grants one token request prunes (bounds the work; pruning outpaces issuing).
+const PRUNE_BATCH: i64 = 100;
 
-/// A participant (LiveKit room + identity) to remove from LiveKit.
+/// A grant of a revoked session: LiveKit participants carrying `id` in `room` are removed.
 #[derive(Clone, Debug, PartialEq, Eq, sqlx::FromRow)]
-pub struct LiveKitParticipant {
+pub struct RevokedGrant {
+    pub id: String,
     pub room: String,
-    pub identity: String,
 }
 
 /// What `revoke_others` took away.
@@ -92,14 +94,15 @@ pub struct LiveKitParticipant {
 pub struct Revoked {
     /// Sessions that were still live (unexpired); expired rows are deleted but not counted.
     pub live: u64,
-    /// The participants that joined LiveKit with those sessions' grants.
-    pub participants: Vec<LiveKitParticipant>,
+    /// Those sessions' LiveKit grants.
+    pub grants: Vec<RevokedGrant>,
 }
 
 /// Record a grant for a LiveKit token about to be issued to `token`'s session for `identity` in
 /// `room`; returns its id (128 random bits, base64url) for the token's `pulse_grant` attribute.
 /// `None` if the session is gone or expired, so no token is minted for a session that a
-/// concurrent revoke just deleted. Also prunes this session's old, never-joined grants.
+/// concurrent revoke just deleted. Also prunes a batch of anyone's grants that no participant
+/// holds any more (never joined, or left) once their token can't be used.
 pub async fn record_grant(
     db: &SqlitePool,
     token: &str,
@@ -109,7 +112,7 @@ pub async fn record_grant(
     let mut bytes = [0u8; 16];
     rand::rng().fill_bytes(&mut bytes);
     let id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
-    let (h, now) = (hash_token(token), Utc::now());
+    let now = Utc::now();
     let done = sqlx::query(
         "INSERT INTO livekit_grants (id, token_hash, room, identity, issued_at)
          SELECT ?, token_hash, ?, ?, ? FROM sessions WHERE token_hash = ? AND expires_at > ?",
@@ -118,19 +121,21 @@ pub async fn record_grant(
     .bind(room)
     .bind(identity)
     .bind(ts(now))
-    .bind(&h)
+    .bind(hash_token(token))
     .bind(ts(now))
     .execute(db)
     .await?;
     if done.rows_affected() == 0 {
         return Ok(None);
     }
+    let cutoff = ts(now - GRANT_UNUSED_FOR);
     sqlx::query(
-        "DELETE FROM livekit_grants WHERE token_hash = ? AND issued_at < ?
-         AND id NOT IN (SELECT grant_id FROM livekit_joined)",
+        "DELETE FROM livekit_grants WHERE id IN (SELECT id FROM livekit_grants
+         WHERE (joined_sid IS NULL AND issued_at < ?) OR left_at < ? LIMIT ?)",
     )
-    .bind(&h)
-    .bind(ts(now - GRANT_PRUNE_AFTER))
+    .bind(&cutoff)
+    .bind(&cutoff)
+    .bind(PRUNE_BATCH)
     .execute(db)
     .await?;
     Ok(Some(id))
@@ -138,51 +143,58 @@ pub async fn record_grant(
 
 /// A LiveKit join webhook: accept it only if `grant` (the participant's `pulse_grant`
 /// attribute) belongs to a live session and was issued for this very room + identity, and if
-/// so remember it as the grant this participant joined with.
+/// so note participant `sid` as the one connected with it.
 pub async fn admit_join(
     db: &SqlitePool,
     grant: Option<&str>,
     room: &str,
     identity: &str,
+    sid: &str,
 ) -> anyhow::Result<bool> {
     let Some(grant) = grant else {
         return Ok(false);
     };
-    let now = ts(Utc::now());
     let done = sqlx::query(
-        "INSERT INTO livekit_joined (room, identity, grant_id, joined_at)
-         SELECT g.room, g.identity, g.id, ? FROM livekit_grants g
-         JOIN sessions s ON s.token_hash = g.token_hash
-         WHERE g.id = ? AND g.room = ? AND g.identity = ? AND s.expires_at > ?
-         ON CONFLICT (room, identity) DO UPDATE SET grant_id = excluded.grant_id, joined_at = excluded.joined_at",
+        "UPDATE livekit_grants SET joined_sid = ?, left_at = NULL
+         WHERE id = ? AND room = ? AND identity = ?
+         AND token_hash IN (SELECT token_hash FROM sessions WHERE expires_at > ?)",
     )
-    .bind(&now)
+    .bind(sid)
     .bind(grant)
     .bind(room)
     .bind(identity)
-    .bind(&now)
+    .bind(ts(Utc::now()))
     .execute(db)
     .await?;
     Ok(done.rows_affected() > 0)
 }
 
-/// Delete this session; returns the LiveKit participants that joined with its grants.
-pub async fn revoke(db: &SqlitePool, token: &str) -> anyhow::Result<Vec<LiveKitParticipant>> {
+/// A LiveKit leave webhook: the grant is finished if `sid` is still the participant connected
+/// with it (a full reconnect's late leave for the old connection doesn't count).
+pub async fn note_left(db: &SqlitePool, grant: &str, sid: &str) -> anyhow::Result<()> {
+    sqlx::query("UPDATE livekit_grants SET left_at = ? WHERE id = ? AND joined_sid = ?")
+        .bind(ts(Utc::now()))
+        .bind(grant)
+        .bind(sid)
+        .execute(db)
+        .await?;
+    Ok(())
+}
+
+/// Delete this session; returns its LiveKit grants (they go with it).
+pub async fn revoke(db: &SqlitePool, token: &str) -> anyhow::Result<Vec<RevokedGrant>> {
     let h = hash_token(token);
     let mut tx = crate::db::begin_write(db).await?;
-    let participants = sqlx::query_as(
-        "SELECT j.room, j.identity FROM livekit_joined j JOIN livekit_grants g ON g.id = j.grant_id
-         WHERE g.token_hash = ?",
-    )
-    .bind(&h)
-    .fetch_all(&mut *tx)
-    .await?;
+    let grants = sqlx::query_as("SELECT id, room FROM livekit_grants WHERE token_hash = ?")
+        .bind(&h)
+        .fetch_all(&mut *tx)
+        .await?;
     sqlx::query("DELETE FROM sessions WHERE token_hash = ?")
         .bind(&h)
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
-    Ok(participants)
+    Ok(grants)
 }
 
 /// Delete every session of `user` except the one `keep` belongs to, expired ones included.
@@ -197,10 +209,8 @@ pub async fn revoke_others(db: &SqlitePool, user: UserId, keep: &str) -> anyhow:
     .bind(ts(Utc::now()))
     .fetch_one(&mut *tx)
     .await?;
-    let participants = sqlx::query_as(
-        "SELECT j.room, j.identity FROM livekit_joined j
-         JOIN livekit_grants g ON g.id = j.grant_id
-         JOIN sessions s ON s.token_hash = g.token_hash
+    let grants = sqlx::query_as(
+        "SELECT g.id, g.room FROM livekit_grants g JOIN sessions s ON s.token_hash = g.token_hash
          WHERE s.user_id = ? AND s.token_hash != ?",
     )
     .bind(&user)
@@ -215,6 +225,6 @@ pub async fn revoke_others(db: &SqlitePool, user: UserId, keep: &str) -> anyhow:
     tx.commit().await?;
     Ok(Revoked {
         live: u64::try_from(live).unwrap_or(0),
-        participants,
+        grants,
     })
 }

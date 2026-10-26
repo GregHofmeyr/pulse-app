@@ -314,3 +314,51 @@ async fn a_gateway_slot_frees_when_a_connection_closes() {
     let mut again = connect_from(&app, "127.0.0.1").await.unwrap();
     assert_eq!(hello_close_code(&mut again, &a).await, None);
 }
+
+/// Voice tokens and stream tickets share one per-user bucket (each records a grant row). The
+/// production allowance covers a hover-prefetch sweep down a long channel list at once.
+#[tokio::test]
+async fn livekit_tokens_are_limited_per_user() {
+    let app = spawn_limited(|_| {}).await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (_, b) = register(&app, "sam").await;
+    let srv = create_server(&app, &a, "Main").await;
+    let chans: Vec<pulse_protocol::rest::Channel> =
+        get_json(&app, &a, &format!("/servers/{}/channels", srv.id)).await;
+    let lounge = chans
+        .iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap()
+        .id;
+    app.voice.join(lounge, a_id, "PA_a");
+    let burst = LimitsConfig::default().livekit_token_user.burst;
+    assert!(burst >= 30, "a hover sweep fits: {burst}");
+    for i in 0..burst {
+        let path = if i % 2 == 0 {
+            format!("/voice/{lounge}/token")
+        } else {
+            format!("/streams/{lounge}/ticket")
+        };
+        let body = serde_json::json!({ "role": "v" });
+        assert_eq!(post_json(&app, &a, &path, body).await.status(), 200, "#{i}");
+    }
+    let path = format!("/voice/{lounge}/token");
+    let over = post_json(&app, &a, &path, serde_json::json!({})).await;
+    assert_eq!(over.status(), 429);
+    let other = create_server(&app, &b, "Theirs").await;
+    let theirs: Vec<pulse_protocol::rest::Channel> =
+        get_json(&app, &b, &format!("/servers/{}/channels", other.id)).await;
+    let their_lounge = theirs
+        .iter()
+        .find(|c| c.kind == pulse_protocol::rest::ChannelKind::Voice)
+        .unwrap()
+        .id;
+    let r = post_json(
+        &app,
+        &b,
+        &format!("/voice/{their_lounge}/token"),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "another user has their own allowance");
+}

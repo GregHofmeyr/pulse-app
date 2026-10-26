@@ -220,9 +220,9 @@ async fn logout(
     _: AuthUser,
     BearerToken(t): BearerToken,
 ) -> AppResult<StatusCode> {
-    let participants = session::revoke(&s.db, &t).await?;
+    let grants = session::revoke(&s.db, &t).await?;
     s.hub.drop_session(&session::hash_token(&t));
-    crate::voice::revoke::remove_participants(&s, &participants).await;
+    crate::voice::revoke::remove_revoked(&s, &grants).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -236,7 +236,7 @@ async fn logout_others(
 ) -> AppResult<Json<LogoutOthersResponse>> {
     let revoked = session::revoke_others(&s.db, u, &t).await?;
     s.hub.drop_other_sessions(u, &session::hash_token(&t));
-    crate::voice::revoke::remove_participants(&s, &revoked.participants).await;
+    crate::voice::revoke::remove_revoked(&s, &revoked.grants).await;
     Ok(Json(LogoutOthersResponse {
         revoked: u32::try_from(revoked.live).unwrap_or(u32::MAX),
     }))

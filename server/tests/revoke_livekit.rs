@@ -1,11 +1,12 @@
 //! Revoking a session also removes the LiveKit participants it admitted (voice room and stream
 //! rooms), and `logout-others` counts only sessions that were still live. LiveKit is a fake
-//! RoomService here (Twirp: POST /twirp/livekit.RoomService/RemoveParticipant, protobuf bodies).
+//! RoomService here (Twirp: POST /twirp/livekit.RoomService/<Method>, protobuf bodies) that keeps
+//! a participant list, like LiveKit, and checks the admin JWT on every call.
 //!
 //! Every voice token / stream ticket carries a random grant id (participant attribute
 //! `pulse_grant`). A join webhook is accepted only for a grant of a live session that matches
-//! the room + identity, and records which grant that participant joined with; revoking removes
-//! exactly the participants whose joined grant belonged to a revoked session.
+//! the room + identity. Revoking asks LiveKit who is in the rooms the revoked sessions hold
+//! grants for and removes exactly the participants carrying one of those grants.
 
 mod common;
 
@@ -15,6 +16,7 @@ use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::http::{HeaderMap, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use axum::routing::post;
 use base64::Engine;
 use common::*;
@@ -28,65 +30,184 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 
 type Removed = Arc<Mutex<Vec<(String, String)>>>;
+type Rooms = Arc<Mutex<Vec<(String, lkp::ParticipantInfo)>>>;
 
-/// A fake RoomService that records every RemoveParticipant; returns (base URL, calls). Like
-/// LiveKit it refuses (401, nothing recorded) a request that isn't protobuf or whose bearer JWT
-/// isn't signed with the test key or lacks `room_admin` for that room.
-async fn fake_livekit() -> (String, Removed) {
-    let removed: Removed = Arc::default();
-    let r = removed.clone();
+/// The fake LiveKit: its URL, every RemoveParticipant it was asked for (room, identity), and
+/// who is connected (room, participant).
+#[derive(Clone)]
+struct Lk {
+    url: String,
+    removed: Removed,
+    rooms: Rooms,
+}
+
+impl Lk {
+    /// LiveKit admitting a participant (a newer connection with the same identity replaces the
+    /// older one, as LiveKit's duplicate-identity rule does).
+    fn connect(&self, room: &str, identity: &str, sid: &str, grant: Option<&str>) {
+        let mut rooms = self.rooms.lock().unwrap();
+        rooms.retain(|(r, p)| !(r == room && p.identity == identity));
+        rooms.push((
+            room.to_owned(),
+            lkp::ParticipantInfo {
+                identity: identity.to_owned(),
+                sid: sid.to_owned(),
+                state: lkp::participant_info::State::Active as i32,
+                attributes: grant
+                    .map(|g| [(session::GRANT_ATTRIBUTE.to_owned(), g.to_owned())].into())
+                    .unwrap_or_default(),
+                ..Default::default()
+            },
+        ));
+    }
+
+    fn connected(&self, room: &str, identity: &str) -> bool {
+        self.rooms
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(r, p)| r == room && p.identity == identity)
+    }
+}
+
+/// The admin check LiveKit makes: protobuf body, and a bearer JWT signed with our key that
+/// grants `room_admin` for `room`.
+fn authorized(verifier: &TokenVerifier, headers: &HeaderMap, room: &str) -> bool {
+    let protobuf = headers
+        .get(header::CONTENT_TYPE)
+        .is_some_and(|v| v == "application/protobuf");
+    let claims = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "))
+        .and_then(|jwt| verifier.verify(jwt).ok());
+    protobuf && claims.is_some_and(|c| c.video.room_admin && c.video.room == room)
+}
+
+fn twirp_not_found() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        [(header::CONTENT_TYPE, "application/json")],
+        r#"{"code":"not_found","msg":"participant not found"}"#,
+    )
+        .into_response()
+}
+
+/// A fake RoomService (ListParticipants, GetParticipant, RemoveParticipant) over `Lk::rooms`.
+/// Refuses (401, nothing done) anything [`authorized`] rejects.
+async fn fake_livekit() -> Lk {
+    let lk = Lk {
+        url: String::new(),
+        removed: Arc::default(),
+        rooms: Arc::default(),
+    };
     let cfg = test_config();
     let verifier = Arc::new(TokenVerifier::with_api_key(
         &cfg.livekit_key,
         &cfg.livekit_secret,
     ));
-    let app = axum::Router::new().route(
-        "/twirp/livekit.RoomService/RemoveParticipant",
-        post(move |headers: HeaderMap, body: Bytes| {
-            let (r, verifier) = (r.clone(), verifier.clone());
-            async move {
-                let req = lkp::RoomParticipantIdentity::decode(body).unwrap();
-                let protobuf = headers
-                    .get(header::CONTENT_TYPE)
-                    .is_some_and(|v| v == "application/protobuf");
-                let claims = headers
-                    .get(header::AUTHORIZATION)
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(|v| v.strip_prefix("Bearer "))
-                    .and_then(|jwt| verifier.verify(jwt).ok());
-                let admin = claims.is_some_and(|c| c.video.room_admin && c.video.room == req.room);
-                if !(protobuf && admin) {
-                    return Err(StatusCode::UNAUTHORIZED);
-                }
-                r.lock().unwrap().push((req.room, req.identity));
-                Ok(lkp::RemoveParticipantResponse {}.encode_to_vec())
-            }
-        }),
+    let (v1, v2, v3) = (verifier.clone(), verifier.clone(), verifier);
+    let (r1, r2, r3, removed) = (
+        lk.rooms.clone(),
+        lk.rooms.clone(),
+        lk.rooms.clone(),
+        lk.removed.clone(),
     );
+    let app = axum::Router::new()
+        .route(
+            "/twirp/livekit.RoomService/ListParticipants",
+            post(move |headers: HeaderMap, body: Bytes| {
+                let (v, rooms) = (v1.clone(), r1.clone());
+                async move {
+                    let req = lkp::ListParticipantsRequest::decode(body).unwrap();
+                    if !authorized(&v, &headers, &req.room) {
+                        return StatusCode::UNAUTHORIZED.into_response();
+                    }
+                    let participants = rooms
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .filter(|(r, _)| *r == req.room)
+                        .map(|(_, p)| p.clone())
+                        .collect();
+                    lkp::ListParticipantsResponse { participants }
+                        .encode_to_vec()
+                        .into_response()
+                }
+            }),
+        )
+        .route(
+            "/twirp/livekit.RoomService/GetParticipant",
+            post(move |headers: HeaderMap, body: Bytes| {
+                let (v, rooms) = (v2.clone(), r2.clone());
+                async move {
+                    let req = lkp::RoomParticipantIdentity::decode(body).unwrap();
+                    if !authorized(&v, &headers, &req.room) {
+                        return StatusCode::UNAUTHORIZED.into_response();
+                    }
+                    let found = rooms
+                        .lock()
+                        .unwrap()
+                        .iter()
+                        .find(|(r, p)| *r == req.room && p.identity == req.identity)
+                        .map(|(_, p)| p.clone());
+                    match found {
+                        Some(p) => p.encode_to_vec().into_response(),
+                        None => twirp_not_found(),
+                    }
+                }
+            }),
+        )
+        .route(
+            "/twirp/livekit.RoomService/RemoveParticipant",
+            post(move |headers: HeaderMap, body: Bytes| {
+                let (v, rooms, removed) = (v3.clone(), r3.clone(), removed.clone());
+                async move {
+                    let req = lkp::RoomParticipantIdentity::decode(body).unwrap();
+                    if !authorized(&v, &headers, &req.room) {
+                        return StatusCode::UNAUTHORIZED.into_response();
+                    }
+                    let mut rooms = rooms.lock().unwrap();
+                    let before = rooms.len();
+                    rooms.retain(|(r, p)| !(*r == req.room && p.identity == req.identity));
+                    if rooms.len() == before {
+                        return twirp_not_found();
+                    }
+                    removed.lock().unwrap().push((req.room, req.identity));
+                    lkp::RemoveParticipantResponse {}
+                        .encode_to_vec()
+                        .into_response()
+                }
+            }),
+        );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    (format!("http://{addr}"), removed)
+    Lk {
+        url: format!("http://{addr}"),
+        ..lk
+    }
 }
 
 /// A RoomService that accepts the connection and never answers.
 async fn fake_livekit_hanging() -> String {
-    let app = axum::Router::new().route(
-        "/twirp/livekit.RoomService/RemoveParticipant",
-        post(|| async {
-            tokio::time::sleep(Duration::from_secs(60)).await;
-            Vec::<u8>::new()
-        }),
-    );
+    let hang = || async {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        Vec::<u8>::new()
+    };
+    let app = axum::Router::new()
+        .route("/twirp/livekit.RoomService/ListParticipants", post(hang))
+        .route("/twirp/livekit.RoomService/GetParticipant", post(hang))
+        .route("/twirp/livekit.RoomService/RemoveParticipant", post(hang));
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
     format!("http://{addr}")
 }
 
-async fn app_with_livekit(url: String) -> TestApp {
+async fn app_with_livekit(url: &str) -> TestApp {
     let mut cfg = test_config();
-    cfg.livekit_api_url = url;
+    cfg.livekit_api_url = url.to_owned();
     spawn_with(cfg).await
 }
 
@@ -160,8 +281,12 @@ async fn logout(app: &TestApp, token: &str) {
     assert_eq!(r.status(), 204);
 }
 
-fn calls(removed: &Removed) -> BTreeSet<(String, String)> {
-    removed.lock().unwrap().iter().cloned().collect()
+fn calls(lk: &Lk) -> BTreeSet<(String, String)> {
+    lk.removed.lock().unwrap().iter().cloned().collect()
+}
+
+fn removed_count(lk: &Lk) -> usize {
+    lk.removed.lock().unwrap().len()
 }
 
 fn set(items: &[(String, String)]) -> BTreeSet<(String, String)> {
@@ -198,14 +323,21 @@ fn signed(app: &TestApp, body: &str) -> String {
         .unwrap()
 }
 
-/// LiveKit's signed `participant_joined` webhook for `identity` in `room`, carrying `grant` as
-/// the participant's `pulse_grant` attribute (LiveKit copies a token's attributes onto it).
-async fn joined_raw(app: &TestApp, room: &str, identity: &str, grant: Option<&str>, sid: &str) {
+/// LiveKit's signed webhook (`participant_joined` / `participant_left`) for a participant
+/// carrying `grant` as its `pulse_grant` attribute (LiveKit copies a token's attributes onto it).
+async fn webhook(
+    app: &TestApp,
+    event: &str,
+    room: &str,
+    identity: &str,
+    grant: Option<&str>,
+    sid: &str,
+) {
     let attributes = match grant {
         Some(g) => json!({ session::GRANT_ATTRIBUTE: g }),
         None => json!({}),
     };
-    let body = json!({"event": "participant_joined", "id": "EV_join", "room": {"name": room},
+    let body = json!({"event": event, "id": "EV_test", "room": {"name": room},
         "participant": {"identity": identity, "sid": sid, "attributes": attributes}})
     .to_string();
     let r = app
@@ -220,51 +352,65 @@ async fn joined_raw(app: &TestApp, room: &str, identity: &str, grant: Option<&st
     assert_eq!(r.status(), 200);
 }
 
-/// A participant connecting with `jwt`: the room and identity are the ones the token names.
-async fn join_with(app: &TestApp, jwt: &str, sid: &str) {
-    let claims = TokenVerifier::with_api_key(&app.cfg.livekit_key, &app.cfg.livekit_secret)
-        .verify(jwt)
-        .unwrap();
-    joined_raw(
-        app,
-        &claims.video.room,
-        &claims.sub,
-        Some(&grant_of(app, jwt)),
-        sid,
-    )
-    .await;
+/// A participant connecting with any token LiveKit accepts: LiveKit admits it (when `lk` is
+/// given) and then sends the join webhook.
+async fn connect_raw(
+    app: &TestApp,
+    lk: Option<&Lk>,
+    room: &str,
+    identity: &str,
+    grant: Option<&str>,
+    sid: &str,
+) {
+    if let Some(lk) = lk {
+        lk.connect(room, identity, sid, grant);
+    }
+    webhook(app, "participant_joined", room, identity, grant, sid).await;
 }
 
-/// Wait (up to 3 s) until `removed` holds `n` calls; the webhook removes in the background.
-async fn wait_for(removed: &Removed, n: usize) {
+/// The room and identity a JWT names.
+fn names(app: &TestApp, jwt: &str) -> (String, String) {
+    let c = TokenVerifier::with_api_key(&app.cfg.livekit_key, &app.cfg.livekit_secret)
+        .verify(jwt)
+        .unwrap();
+    (c.video.room, c.sub)
+}
+
+/// A participant connecting with `jwt` (room and identity are the ones the token names).
+async fn connect(app: &TestApp, lk: Option<&Lk>, jwt: &str, sid: &str) {
+    let (room, identity) = names(app, jwt);
+    connect_raw(app, lk, &room, &identity, Some(&grant_of(app, jwt)), sid).await;
+}
+
+/// Wait (up to 3 s) until LiveKit was asked for `n` removals; webhooks remove in the background.
+async fn wait_for(lk: &Lk, n: usize) {
     let until = Instant::now() + Duration::from_secs(3);
-    while removed.lock().unwrap().len() < n && Instant::now() < until {
+    while removed_count(lk) < n && Instant::now() < until {
         tokio::time::sleep(Duration::from_millis(20)).await;
     }
 }
 
 struct Setup {
     app: TestApp,
-    removed: Removed,
+    lk: Lk,
     alex: UserId,
     sam: UserId,
     a1: String,
     a2: String,
     a3: String,
     /// the JWTs each participant below connected with
-    a2_voice: String,
     a2_video: String,
     a3_dm: String,
     lounge: Channel,
     dm: Channel,
 }
 
-/// alex on three devices (a1 = the caller), sam on one, each connected through LiveKit (join
-/// webhooks): a2 in Lounge voice and streaming video, a3 in a DM call with sam, a1 holding the
-/// stream-audio identity, sam in the DM call.
+/// alex on three devices (a1 = the caller), sam on one, each connected through LiveKit: a2 in
+/// Lounge voice and streaming video, a3 in a DM call with sam, a1 holding the stream-audio
+/// identity, sam in the DM call.
 async fn setup() -> Setup {
-    let (url, removed) = fake_livekit().await;
-    let app = app_with_livekit(url).await;
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
     let (alex, a1) = register(&app, "alex").await;
     let a2 = login(&app, "alex").await;
     let a3 = login(&app, "alex").await;
@@ -273,26 +419,25 @@ async fn setup() -> Setup {
     let dm = create_dm(&app, &a1, &[sam]).await;
 
     let a2_voice = voice_token(&app, &a2, &lounge).await;
-    join_with(&app, &a2_voice, "PA_a2").await; // now in Lounge voice: may stream
+    connect(&app, Some(&lk), &a2_voice, "PA_a2").await; // now in Lounge voice: may stream
     let a2_video = stream_ticket(&app, &a2, &lounge, "v").await;
-    join_with(&app, &a2_video, "PA_a2_v").await;
+    connect(&app, Some(&lk), &a2_video, "PA_a2_v").await;
     let a1_audio = stream_ticket(&app, &a1, &lounge, "a").await;
-    join_with(&app, &a1_audio, "PA_a1_a").await;
+    connect(&app, Some(&lk), &a1_audio, "PA_a1_a").await;
     let a3_dm = voice_token(&app, &a3, &dm).await;
-    join_with(&app, &a3_dm, "PA_a3").await;
+    connect(&app, Some(&lk), &a3_dm, "PA_a3").await;
     let sam_dm = voice_token(&app, &s, &dm).await;
-    join_with(&app, &sam_dm, "PA_sam").await;
+    connect(&app, Some(&lk), &sam_dm, "PA_sam").await;
     tokio::time::sleep(Duration::from_millis(100)).await;
-    assert!(removed.lock().unwrap().is_empty(), "all joins were valid");
+    assert_eq!(removed_count(&lk), 0, "all joins were valid");
     Setup {
         app,
-        removed,
+        lk,
         alex,
         sam,
         a1,
         a2,
         a3,
-        a2_voice,
         a2_video,
         a3_dm,
         lounge,
@@ -305,7 +450,7 @@ async fn logout_others_removes_exactly_the_revoked_sessions_participants() {
     let t = setup().await;
     assert_eq!(logout_others(&t.app, &t.a1).await, 2);
     assert_eq!(
-        calls(&t.removed),
+        calls(&t.lk),
         set(&[
             (t.lounge.id.to_string(), t.alex.to_string()),
             (format!("{}~s", t.lounge.id), format!("{}#v", t.alex)),
@@ -313,7 +458,9 @@ async fn logout_others_removes_exactly_the_revoked_sessions_participants() {
         ]),
         "a1's own stream audio and sam's DM call are untouched"
     );
-    assert_eq!(t.removed.lock().unwrap().len(), 3, "each removed once");
+    assert_eq!(removed_count(&t.lk), 3, "each removed once");
+    assert!(t.lk.connected(&format!("{}~s", t.lounge.id), &format!("{}#a", t.alex)));
+    assert!(t.lk.connected(&t.dm.id.to_string(), &t.sam.to_string()));
 }
 
 #[tokio::test]
@@ -321,67 +468,74 @@ async fn plain_logout_removes_only_that_sessions_participants() {
     let t = setup().await;
     logout(&t.app, &t.a2).await;
     assert_eq!(
-        calls(&t.removed),
+        calls(&t.lk),
         set(&[
             (t.lounge.id.to_string(), t.alex.to_string()),
             (format!("{}~s", t.lounge.id), format!("{}#v", t.alex)),
         ])
     );
     logout(&t.app, &t.a3).await;
-    assert_eq!(t.removed.lock().unwrap().len(), 3);
+    assert_eq!(removed_count(&t.lk), 3);
     assert!(
-        calls(&t.removed).contains(&(t.dm.id.to_string(), t.alex.to_string())),
+        calls(&t.lk).contains(&(t.dm.id.to_string(), t.alex.to_string())),
         "a3's DM call goes when a3 signs out"
     );
+}
+
+/// The join webhook never arrived (lost or late): LiveKit's own participant list still shows
+/// who joined with the revoked session's grant, so the revoke removes it anyway.
+#[tokio::test]
+async fn a_participant_whose_join_webhook_was_lost_is_still_removed() {
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
+    let (alex, a1) = register(&app, "alex").await;
+    let a2 = login(&app, "alex").await;
+    let l = lounge(&app, &a1).await;
+    let jwt = voice_token(&app, &a2, &l).await;
+    lk.connect(
+        &l.id.to_string(),
+        &alex.to_string(),
+        "PA_a2",
+        Some(&grant_of(&app, &jwt)),
+    );
+    assert_eq!(logout_others(&app, &a1).await, 1);
+    assert_eq!(calls(&lk), set(&[(l.id.to_string(), alex.to_string())]));
 }
 
 /// The review case: another device merely fetching a token (hover prefetch) for the room the
 /// caller is in must not get the caller removed when that device is signed out.
 #[tokio::test]
 async fn a_prefetch_by_the_revoked_device_does_not_remove_the_caller() {
-    let (url, removed) = fake_livekit().await;
-    let app = app_with_livekit(url).await;
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
     let (_, a) = register(&app, "alex").await;
     let b = login(&app, "alex").await;
     let l = lounge(&app, &a).await;
     let mine = voice_token(&app, &a, &l).await;
-    join_with(&app, &mine, "PA_a").await;
+    connect(&app, Some(&lk), &mine, "PA_a").await;
     voice_token(&app, &b, &l).await; // B hovers Lounge: a token, but never used
     assert_eq!(logout_others(&app, &a).await, 1);
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(removed.lock().unwrap().is_empty(), "{:?}", calls(&removed));
+    assert_eq!(removed_count(&lk), 0, "{:?}", calls(&lk));
 }
 
 /// Device B joined, then the caller's device A joined the same room (LiveKit drops B as a
 /// duplicate identity): the participant now in the room is A's, so revoking B removes nothing.
 #[tokio::test]
 async fn the_grant_a_participant_joined_with_decides_not_the_latest_token() {
-    let (url, removed) = fake_livekit().await;
-    let app = app_with_livekit(url).await;
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
     let (_, a) = register(&app, "alex").await;
     let b = login(&app, "alex").await;
     let l = lounge(&app, &a).await;
     let theirs = voice_token(&app, &b, &l).await;
-    join_with(&app, &theirs, "PA_b").await;
+    connect(&app, Some(&lk), &theirs, "PA_b").await;
     let mine = voice_token(&app, &a, &l).await;
-    join_with(&app, &mine, "PA_a").await;
+    connect(&app, Some(&lk), &mine, "PA_a").await;
     voice_token(&app, &b, &l).await; // and B fetches another, unused
     assert_eq!(logout_others(&app, &a).await, 1);
     tokio::time::sleep(Duration::from_millis(200)).await;
-    assert!(removed.lock().unwrap().is_empty(), "{:?}", calls(&removed));
-}
-
-#[tokio::test]
-async fn no_livekit_call_when_the_revoked_sessions_hold_no_participants() {
-    let (url, removed) = fake_livekit().await;
-    let app = app_with_livekit(url).await;
-    let (_, a1) = register(&app, "alex").await;
-    let _a2 = login(&app, "alex").await;
-    let l = lounge(&app, &a1).await;
-    let mine = voice_token(&app, &a1, &l).await;
-    join_with(&app, &mine, "PA_a1").await;
-    assert_eq!(logout_others(&app, &a1).await, 1);
-    assert!(removed.lock().unwrap().is_empty());
+    assert_eq!(removed_count(&lk), 0, "{:?}", calls(&lk));
 }
 
 #[tokio::test]
@@ -393,29 +547,29 @@ async fn livekit_down_does_not_fail_the_logout() {
     let a3 = login(&app, "alex").await;
     let l = lounge(&app, &a1).await;
     let t2 = voice_token(&app, &a2, &l).await;
-    join_with(&app, &t2, "PA_2").await;
+    connect(&app, None, &t2, "PA_2").await;
     let t3 = voice_token(&app, &a3, &l).await;
-    join_with(&app, &t3, "PA_3").await;
+    connect(&app, None, &t3, "PA_3").await;
     assert_eq!(logout_others(&app, &a1).await, 2);
     assert_eq!(session::authenticate(&app.db, &a2).await.unwrap(), None);
     assert_eq!(session::authenticate(&app.db, &a3).await.unwrap(), None);
     // and the caller's own plain logout still goes through while in a call
     let t1 = voice_token(&app, &a1, &l).await;
-    join_with(&app, &t1, "PA_1").await;
+    connect(&app, None, &t1, "PA_1").await;
     logout(&app, &a1).await;
     assert_eq!(session::authenticate(&app.db, &a1).await.unwrap(), None);
 }
 
 #[tokio::test]
 async fn a_hanging_livekit_delays_the_logout_only_briefly() {
-    let app = app_with_livekit(fake_livekit_hanging().await).await;
+    let app = app_with_livekit(&fake_livekit_hanging().await).await;
     let (_, a1) = register(&app, "alex").await;
     let a2 = login(&app, "alex").await;
     let l = lounge(&app, &a1).await;
     let voice = voice_token(&app, &a2, &l).await;
-    join_with(&app, &voice, "PA_2").await;
+    connect(&app, None, &voice, "PA_2").await;
     let video = stream_ticket(&app, &a2, &l, "v").await;
-    join_with(&app, &video, "PA_2v").await;
+    connect(&app, None, &video, "PA_2v").await;
     let started = Instant::now();
     assert_eq!(logout_others(&app, &a1).await, 1);
     assert!(
@@ -428,8 +582,8 @@ async fn a_hanging_livekit_delays_the_logout_only_briefly() {
 
 #[tokio::test]
 async fn session_hashes_never_reach_livekit_tokens() {
-    let (url, _) = fake_livekit().await;
-    let app = app_with_livekit(url).await;
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
     let (alex, a) = register(&app, "alex").await;
     let l = lounge(&app, &a).await;
     app.voice.join(l.id, alex, "PA_alex");
@@ -490,8 +644,8 @@ async fn revoked_counts_only_live_sessions_but_deletes_expired_ones() {
 
 #[tokio::test]
 async fn a_token_for_a_revoked_session_is_refused() {
-    let (url, _) = fake_livekit().await;
-    let app = app_with_livekit(url).await;
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
     let (_, a1) = register(&app, "alex").await;
     let a2 = login(&app, "alex").await;
     let l = lounge(&app, &a1).await;
@@ -505,67 +659,100 @@ async fn a_token_for_a_revoked_session_is_refused() {
 async fn a_revoked_device_rejoining_with_its_old_jwt_is_removed_again() {
     let t = setup().await;
     logout_others(&t.app, &t.a1).await;
-    t.removed.lock().unwrap().clear();
+    t.lk.removed.lock().unwrap().clear();
 
-    join_with(&t.app, &t.a3_dm, "PA_back").await;
-    join_with(&t.app, &t.a2_video, "PA_back_v").await;
-    wait_for(&t.removed, 2).await;
+    connect(&t.app, Some(&t.lk), &t.a3_dm, "PA_back").await;
+    connect(&t.app, Some(&t.lk), &t.a2_video, "PA_back_v").await;
+    wait_for(&t.lk, 2).await;
     assert_eq!(
-        calls(&t.removed),
+        calls(&t.lk),
         set(&[
             (t.dm.id.to_string(), t.alex.to_string()),
             (format!("{}~s", t.lounge.id), format!("{}#v", t.alex)),
         ])
     );
-    // (no-presence for refused joins: `a_join_without_a_known_grant_is_removed`)
-    let _ = (&t.a2_voice, &t.a2, &t.a3);
+    let _ = (&t.a2, &t.a3);
+}
+
+/// The background removal of a refused join checks LiveKit first: if a legitimate device has
+/// taken the identity over in the meantime, it is left alone.
+#[tokio::test]
+async fn a_refused_join_is_not_removed_once_a_valid_device_took_the_identity() {
+    let t = setup().await;
+    logout_others(&t.app, &t.a1).await;
+    t.lk.removed.lock().unwrap().clear();
+
+    // The caller's device is now the one in the DM call (as LiveKit sees it) when the late
+    // webhook for the revoked device's rejoin arrives.
+    let mine = voice_token(&t.app, &t.a1, &t.dm).await;
+    t.lk.connect(
+        &t.dm.id.to_string(),
+        &t.alex.to_string(),
+        "PA_a1",
+        Some(&grant_of(&t.app, &mine)),
+    );
+    webhook(
+        &t.app,
+        "participant_joined",
+        &t.dm.id.to_string(),
+        &t.alex.to_string(),
+        Some(&grant_of(&t.app, &t.a3_dm)),
+        "PA_back",
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+    assert_eq!(removed_count(&t.lk), 0, "{:?}", calls(&t.lk));
+    assert!(t.lk.connected(&t.dm.id.to_string(), &t.alex.to_string()));
 }
 
 #[tokio::test]
 async fn joins_backed_by_a_live_grant_are_left_alone() {
     let t = setup().await;
     logout_others(&t.app, &t.a1).await;
-    t.removed.lock().unwrap().clear();
+    t.lk.removed.lock().unwrap().clear();
 
     // The caller joins Lounge voice from this device, and LiveKit later does a full reconnect
     // of it (new participant, refreshed token with the same attributes).
     let mine = voice_token(&t.app, &t.a1, &t.lounge).await;
-    join_with(&t.app, &mine, "PA_a1").await;
-    join_with(&t.app, &mine, "PA_a1_again").await;
+    connect(&t.app, Some(&t.lk), &mine, "PA_a1").await;
+    connect(&t.app, Some(&t.lk), &mine, "PA_a1_again").await;
 
     tokio::time::sleep(Duration::from_millis(300)).await;
-    assert!(
-        t.removed.lock().unwrap().is_empty(),
-        "{:?}",
-        calls(&t.removed)
-    );
+    assert_eq!(removed_count(&t.lk), 0, "{:?}", calls(&t.lk));
     assert!(t.app.voice_members(t.lounge.id).contains(&t.alex));
     assert!(t.app.voice_members(t.dm.id).contains(&t.sam));
 }
 
 #[tokio::test]
 async fn a_live_grant_used_for_another_room_or_identity_is_removed() {
-    let (url, removed) = fake_livekit().await;
-    let app = app_with_livekit(url).await;
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
     let (alex, a) = register(&app, "alex").await;
     let (sam, _) = register(&app, "sam").await;
     let l = lounge(&app, &a).await;
     let dm = create_dm(&app, &a, &[sam]).await;
     let grant = grant_of(&app, &voice_token(&app, &a, &l).await);
     let (lounge_room, dm_room) = (l.id.to_string(), dm.id.to_string());
-    let video = format!("{alex}#v");
+    let (alex_id, video, sam_id) = (alex.to_string(), format!("{alex}#v"), sam.to_string());
     let stream_room = format!("{}~s", l.id);
-    let sam_id = sam.to_string();
-    let cases: [(&str, &str); 3] = [
-        (&dm_room, &alex.to_string()), // another room
-        (&stream_room, &video),        // another identity
-        (&lounge_room, &sam_id),       // another user
+    let cases = [
+        (&dm_room, &alex_id),    // another room
+        (&stream_room, &video),  // another identity
+        (&lounge_room, &sam_id), // another user
     ];
     for (i, (room, identity)) in cases.iter().enumerate() {
-        joined_raw(&app, room, identity, Some(&grant), &format!("PA_{i}")).await;
+        connect_raw(
+            &app,
+            Some(&lk),
+            room,
+            identity,
+            Some(&grant),
+            &format!("PA_{i}"),
+        )
+        .await;
     }
-    wait_for(&removed, 3).await;
-    assert_eq!(removed.lock().unwrap().len(), 3, "{:?}", calls(&removed));
+    wait_for(&lk, 3).await;
+    assert_eq!(removed_count(&lk), 3, "{:?}", calls(&lk));
     assert!(!app.voice_members(dm.id).contains(&alex));
     assert!(!app.voice_members(l.id).contains(&sam));
 }
@@ -573,15 +760,32 @@ async fn a_live_grant_used_for_another_room_or_identity_is_removed() {
 #[tokio::test]
 async fn a_join_without_a_known_grant_is_removed() {
     // e.g. a token minted before grants existed, or a made-up id
-    let (url, removed) = fake_livekit().await;
-    let app = app_with_livekit(url).await;
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
     let (alex, a) = register(&app, "alex").await;
+    let (sam, _) = register(&app, "sam").await;
     let l = lounge(&app, &a).await;
-    let room = l.id.to_string();
-    joined_raw(&app, &room, &alex.to_string(), None, "PA_x").await;
-    joined_raw(&app, &room, &alex.to_string(), Some("made-up"), "PA_y").await;
-    wait_for(&removed, 2).await;
-    assert_eq!(removed.lock().unwrap().len(), 2);
+    let dm = create_dm(&app, &a, &[sam]).await;
+    connect_raw(
+        &app,
+        Some(&lk),
+        &l.id.to_string(),
+        &alex.to_string(),
+        None,
+        "PA_x",
+    )
+    .await;
+    connect_raw(
+        &app,
+        Some(&lk),
+        &dm.id.to_string(),
+        &alex.to_string(),
+        Some("made-up"),
+        "PA_y",
+    )
+    .await;
+    wait_for(&lk, 2).await;
+    assert_eq!(removed_count(&lk), 2);
     assert!(!app.voice_members(l.id).contains(&alex));
     let open: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM voice_sessions")
         .fetch_one(&app.db)
@@ -592,8 +796,8 @@ async fn a_join_without_a_known_grant_is_removed() {
 
 #[tokio::test]
 async fn a_join_after_the_session_expired_is_removed() {
-    let (url, removed) = fake_livekit().await;
-    let app = app_with_livekit(url).await;
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
     let (alex, a) = register(&app, "alex").await;
     let l = lounge(&app, &a).await;
     let jwt = voice_token(&app, &a, &l).await;
@@ -601,8 +805,107 @@ async fn a_join_after_the_session_expired_is_removed() {
         .execute(&app.db)
         .await
         .unwrap();
-    join_with(&app, &jwt, "PA_x").await;
-    wait_for(&removed, 1).await;
-    assert_eq!(removed.lock().unwrap().len(), 1);
+    connect(&app, Some(&lk), &jwt, "PA_x").await;
+    wait_for(&lk, 1).await;
+    assert_eq!(removed_count(&lk), 1);
     assert!(!app.voice_members(l.id).contains(&alex));
+}
+
+async fn grant_ids(app: &TestApp) -> BTreeSet<String> {
+    sqlx::query_scalar::<_, String>("SELECT id FROM livekit_grants")
+        .fetch_all(&app.db)
+        .await
+        .unwrap()
+        .into_iter()
+        .collect()
+}
+
+async fn age_grant(app: &TestApp, id: &str, minutes: i64) {
+    let at = (chrono::Utc::now() - chrono::Duration::minutes(minutes))
+        .to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+    sqlx::query("UPDATE livekit_grants SET issued_at = ? WHERE id = ?")
+        .bind(at)
+        .bind(id)
+        .execute(&app.db)
+        .await
+        .unwrap();
+}
+
+/// Grants nobody connected with, or whose participant left, are pruned once their token can no
+/// longer be used (10-minute TTL + margin), by any user's next token request; grants of
+/// participants still connected stay.
+#[tokio::test]
+async fn unused_and_finished_grants_are_pruned_globally() {
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
+    let (_, a) = register(&app, "alex").await;
+    let (_, s) = register(&app, "sam").await;
+    let l = lounge(&app, &a).await;
+    let unused_old = grant_of(&app, &voice_token(&app, &a, &l).await);
+    let unused_new = grant_of(&app, &voice_token(&app, &a, &l).await);
+    let in_call = voice_token(&app, &a, &l).await;
+    connect(&app, Some(&lk), &in_call, "PA_call").await;
+    let left = stream_ticket(&app, &a, &l, "v").await;
+    connect(&app, Some(&lk), &left, "PA_left").await;
+    let (room, identity) = names(&app, &left);
+    webhook(
+        &app,
+        "participant_left",
+        &room,
+        &identity,
+        Some(&grant_of(&app, &left)),
+        "PA_left",
+    )
+    .await;
+    // a full reconnect's late leave for the old connection doesn't finish the grant
+    let (vroom, videntity) = names(&app, &in_call);
+    connect(&app, Some(&lk), &in_call, "PA_call2").await;
+    webhook(
+        &app,
+        "participant_left",
+        &vroom,
+        &videntity,
+        Some(&grant_of(&app, &in_call)),
+        "PA_call",
+    )
+    .await;
+    let (in_call, left) = (grant_of(&app, &in_call), grant_of(&app, &left));
+    let left_at = |id: String| {
+        let db = app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, Option<String>>(
+                "SELECT left_at FROM livekit_grants WHERE id = ?",
+            )
+            .bind(id)
+            .fetch_one(&db)
+            .await
+            .unwrap()
+        }
+    };
+    assert!(
+        left_at(left.clone()).await.is_some(),
+        "its participant left"
+    );
+    assert!(
+        left_at(in_call.clone()).await.is_none(),
+        "still connected (PA_call2)"
+    );
+    for g in [&unused_old, &in_call, &left] {
+        age_grant(&app, g, 20).await;
+    }
+    sqlx::query("UPDATE livekit_grants SET left_at = ? WHERE id = ?")
+        .bind("2026-01-01T00:00:00.000Z")
+        .bind(&left)
+        .execute(&app.db)
+        .await
+        .unwrap();
+    age_grant(&app, &unused_new, 5).await;
+
+    // sam's request (another user) prunes alex's stale ones
+    let sl = lounge(&app, &s).await;
+    let sams = grant_of(&app, &voice_token(&app, &s, &sl).await);
+    assert_eq!(
+        grant_ids(&app).await,
+        [unused_new, in_call, sams].into_iter().collect()
+    );
 }

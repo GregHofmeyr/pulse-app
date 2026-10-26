@@ -85,6 +85,9 @@ async fn ticket(
     };
     // A random grant id for this session, checked on join (see `voice/routes.rs`).
     let (room, identity) = (format!("{ch}~s"), format!("{me}#{suffix}"));
+    if !s.limits.livekit_token_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     let grant = crate::auth::session::record_grant(&s.db, &session, &room, &identity)
         .await?
         .ok_or(AppError::Unauthorized)?;

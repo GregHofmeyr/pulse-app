@@ -47,6 +47,9 @@ pub async fn handle(s: &AppState, channel: &str, ev: &WebhookEvent) -> AppResult
     {
         return Ok(());
     }
+    if ev.event == "participant_left" {
+        crate::voice::revoke::left(s, p).await?;
+    }
     if role != StreamRole::V {
         return Ok(());
     }

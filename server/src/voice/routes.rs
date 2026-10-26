@@ -45,6 +45,9 @@ async fn token(
     // A random grant id, mapped to this session server-side only: the join webhook checks it
     // and revoking this session removes the participant that joined with it.
     let room = id.to_string();
+    if !s.limits.livekit_token_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     let grant = crate::auth::session::record_grant(&s.db, &session, &room, &me.to_string())
         .await?
         .ok_or(AppError::Unauthorized)?;
@@ -108,6 +111,9 @@ async fn webhook(
     // A join needs a live session behind it (a revoked device's JWT still works at LiveKit).
     if ev.event == "participant_joined" && !crate::voice::revoke::admit(&s, &room.name, p).await? {
         return Ok(StatusCode::OK);
+    }
+    if ev.event == "participant_left" {
+        crate::voice::revoke::left(&s, p).await?;
     }
     let Some(ch) = load_channel(&s.db, channel_id).await? else {
         return Ok(StatusCode::OK);
