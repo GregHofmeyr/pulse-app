@@ -26,6 +26,8 @@ export const api = {
     invoke<User>('register', { serverUrl, inviteCode, username, password }),
   restoreSession: () => invoke<User | null>('restore_session'),
   logout: () => invoke<void>('logout'),
+  /** Sign out every other device of this account; resolves to how many were signed out. */
+  logoutOthers: () => invoke<number>('logout_others'),
   probe: () => invoke<void>('gateway_probe'),
   listServers: () => invoke<Server[]>('list_servers'),
   createServer: (name: string) => invoke<Server>('create_server', { name }),

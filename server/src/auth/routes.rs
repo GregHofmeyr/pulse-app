@@ -4,7 +4,9 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::UserId;
-use pulse_protocol::rest::{InviteResponse, LoginRequest, RegisterRequest, SessionResponse, User};
+use pulse_protocol::rest::{
+    InviteResponse, LoginRequest, LogoutOthersResponse, RegisterRequest, SessionResponse, User,
+};
 use sqlx::SqlitePool;
 
 use super::extractor::{AuthUser, BearerToken};
@@ -19,6 +21,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/register", post(register))
         .route("/auth/login", post(login))
         .route("/auth/logout", post(logout))
+        .route("/auth/logout-others", post(logout_others))
         .route("/me", get(me))
         .route("/invites", post(create_invite))
 }
@@ -220,6 +223,20 @@ async fn logout(
     session::revoke(&s.db, &t).await?;
     s.hub.drop_session(&session::hash_token(&t));
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Sign out every other device: revoke the caller's other sessions and close their sockets
+/// (4001, so those clients drop to the login screen). This device stays signed in.
+async fn logout_others(
+    State(s): State<AppState>,
+    AuthUser(u): AuthUser,
+    BearerToken(t): BearerToken,
+) -> AppResult<Json<LogoutOthersResponse>> {
+    let revoked = session::revoke_others(&s.db, u, &t).await?;
+    s.hub.drop_other_sessions(u, &session::hash_token(&t));
+    Ok(Json(LogoutOthersResponse {
+        revoked: u32::try_from(revoked).unwrap_or(u32::MAX),
+    }))
 }
 
 async fn me(State(s): State<AppState>, AuthUser(u): AuthUser) -> AppResult<Json<User>> {

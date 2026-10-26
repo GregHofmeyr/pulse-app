@@ -663,6 +663,19 @@ impl Api {
         Ok(())
     }
 
+    /// Sign out every other device of this account; returns how many sessions were revoked.
+    pub async fn logout_others(&self, token: &str) -> Result<u32, ApiError> {
+        let r: pulse_protocol::rest::LogoutOthersResponse = Self::parse(
+            self.http
+                .post(format!("{}/auth/logout-others", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await?;
+        Ok(r.revoked)
+    }
+
     /// Reports carry up to 256 KB of log: allow longer than the usual 15 s on a slow line.
     pub async fn create_report(
         &self,
@@ -960,6 +973,28 @@ mod tests {
             log: String::new(),
         };
         assert_eq!(api.create_report(&token, &req).await.unwrap().id.len(), 26);
+    }
+
+    #[tokio::test]
+    async fn logout_others_signs_out_the_other_sessions_and_reports_how_many() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let other = api.login("alex", "hunter2hunter2").await.unwrap().token;
+        assert_eq!(api.logout_others(&token).await.unwrap(), 1);
+        assert!(matches!(api.me(&other).await, Err(ApiError::Unauthorized)));
+        assert!(api.me(&token).await.is_ok(), "this device stays signed in");
+        assert_eq!(api.logout_others(&token).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn logout_others_with_a_dead_token_is_unauthorized() {
+        let app = testing::spawn().await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        assert!(matches!(
+            api.logout_others("garbage").await,
+            Err(ApiError::Unauthorized)
+        ));
     }
 
     #[test]

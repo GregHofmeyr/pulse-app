@@ -172,6 +172,7 @@ pub fn run() {
             commands::register,
             commands::restore_session,
             commands::logout,
+            commands::logout_others,
             commands::list_servers,
             commands::gateway_probe,
             commands::send_typing,

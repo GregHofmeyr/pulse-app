@@ -36,6 +36,12 @@ pub struct InviteResponse {
     pub code: String,
 }
 
+/// `POST /auth/logout-others`: how many of the caller's other sessions were signed out.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct LogoutOthersResponse {
+    pub revoked: u32,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct Server {
     pub id: ServerId,

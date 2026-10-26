@@ -71,3 +71,15 @@ pub async fn revoke(db: &SqlitePool, token: &str) -> anyhow::Result<()> {
         .await?;
     Ok(())
 }
+
+/// Delete every session of `user` except the one `keep` belongs to; returns how many went.
+pub async fn revoke_others(db: &SqlitePool, user: UserId, keep: &str) -> anyhow::Result<u64> {
+    Ok(
+        sqlx::query("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?")
+            .bind(user.to_string())
+            .bind(hash_token(keep))
+            .execute(db)
+            .await?
+            .rows_affected(),
+    )
+}

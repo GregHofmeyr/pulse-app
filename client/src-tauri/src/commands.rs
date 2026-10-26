@@ -458,6 +458,13 @@ pub async fn logout(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiErro
     Ok(())
 }
 
+/// Settings → Advanced: sign out every other device; this one stays signed in.
+#[tauri::command]
+pub async fn logout_others(app: AppHandle, core: State<'_, Core>) -> Result<u32, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.logout_others(&token).await)
+}
+
 /// The UI calls this when the network comes back (`online`); window focus probes from Rust.
 #[tauri::command]
 pub fn gateway_probe(core: State<'_, Core>) {

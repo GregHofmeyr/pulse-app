@@ -131,6 +131,19 @@ impl Hub {
         });
     }
 
+    /// Close `user`'s sockets opened with any session other than `keep_hash` ("sign out all
+    /// other devices"); the caller's own sockets and everyone else's stay open.
+    pub fn drop_other_sessions(&self, user: UserId, keep_hash: &str) {
+        self.inner.conns.lock().unwrap().retain(|_, c| {
+            if c.user == user && c.token_hash != keep_hash {
+                c.kick(CLOSE_UNAUTHORIZED);
+                false
+            } else {
+                true
+            }
+        });
+    }
+
     /// Close every socket with `code` (1012 = server restarting; clients reconnect).
     pub fn close_all(&self, code: u16) {
         for (_, mut c) in self.inner.conns.lock().unwrap().drain() {
@@ -248,5 +261,21 @@ mod tests {
             "a slot freed"
         );
         assert!(hub.try_register(user, String::new(), 8).is_none());
+    }
+
+    #[test]
+    fn drop_other_sessions_kicks_only_that_users_other_sessions() {
+        let hub = Hub::default();
+        let alex = UserId::new();
+        let sam = UserId::new();
+        let mut keep = hub.register(alex, "keep".into());
+        let mut other = hub.register(alex, "other".into());
+        let mut sams = hub.register(sam, "other".into());
+        hub.drop_other_sessions(alex, "keep");
+        assert_eq!(other.kick.try_recv(), Ok(CLOSE_UNAUTHORIZED));
+        assert!(keep.kick.try_recv().is_err(), "caller's socket stays");
+        assert!(sams.kick.try_recv().is_err(), "other users untouched");
+        assert_eq!(hub.connections_for(alex), 1);
+        assert_eq!(hub.connections_for(sam), 1);
     }
 }
