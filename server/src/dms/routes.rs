@@ -103,6 +103,9 @@ async fn add_members(
     Path(id): Path<ChannelId>,
     Json(req): Json<AddMembersRequest>,
 ) -> AppResult<StatusCode> {
+    if !s.limits.create_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     group_for(&s, me, id).await?;
     let current = members_of(&s.db, id).await?;
     let new: Vec<UserId> = req

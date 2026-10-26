@@ -58,6 +58,9 @@ async fn add(
     AuthUser(me): AuthUser,
     Path((id, emoji)): Path<(MessageId, String)>,
 ) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     toggle(&s, me, id, &emoji, true).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -67,6 +70,9 @@ async fn remove(
     AuthUser(me): AuthUser,
     Path((id, emoji)): Path<(MessageId, String)>,
 ) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     toggle(&s, me, id, &emoji, false).await?;
     Ok(StatusCode::NO_CONTENT)
 }

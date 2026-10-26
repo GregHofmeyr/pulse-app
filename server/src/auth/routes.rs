@@ -276,6 +276,9 @@ async fn create_invite(
     State(s): State<AppState>,
     AuthUser(u): AuthUser,
 ) -> AppResult<Json<InviteResponse>> {
+    if !s.limits.invite_user.hit(&u.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     Ok(Json(InviteResponse {
         code: invites::create(&s.db, Some(u)).await?,
     }))

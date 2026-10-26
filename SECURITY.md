@@ -291,10 +291,15 @@ ties each of those tokens to the session that asked for it:
 | Two-factor checks (sign-in code, and the password or code for turning it on or off or making new recovery codes) | 5/minute per IP, and 10/hour per account; spent up front, kept only for a wrong password or code or a bad ticket |
 | Real-time connection attempts | 20/minute per IP (refunded once the connection authenticates) |
 | Concurrent real-time connections | 8 per user; further connections are refused, and the client tells the user why |
-| New messages | burst of 20, then 5/second per user (edits, deletes and reactions are not rate-limited) |
+| New messages | burst of 20, then 5/second per user |
+| Message edits and deletes, reaction adds and removes, and Go Live, stop, watch and unwatch (together) | burst of 30, then 2/second per user |
 | Typing notifications | 1/second per user (extras dropped) |
+| Mute and deafen updates | burst of 10, then 2/second per user (extras dropped; an update that changes nothing is not sent on) |
+| New servers, server channels, DMs and groups, and members added to a group (together) | 20/hour per user (opening a DM that already exists is free) |
+| Invite codes | 10/hour per user |
 | Bug / crash reports | 5/hour per user |
 | Custom emoji uploads | 30/hour per user |
+| Custom emoji creates, renames and deletes (together) | 30/hour per user |
 | Go Live preview uploads | burst of 6, then one every 5 seconds per user |
 | Voice and stream tokens (together) | burst of 60, then 1/second per user |
 

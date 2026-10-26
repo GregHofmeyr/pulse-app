@@ -59,6 +59,19 @@ pub struct LimitsConfig {
     pub gateway_ip: Rate,
     /// Concurrent authenticated gateway connections per user.
     pub gateway_per_user: usize,
+    /// Servers, server channels, new DMs and groups, and members added to a group, together
+    /// per user (each one writes rows and fans out events). Reopening an existing DM is free.
+    pub create_user: Rate,
+    /// Custom emoji creates, renames and deletes, together per user (each one reaches every
+    /// member of the server).
+    pub emoji_user: Rate,
+    /// Invite codes minted per user.
+    pub invite_user: Rate,
+    /// Message edits and deletes, reaction adds and removes, and Go Live / stop / watch /
+    /// unwatch, together per user (each one fans out an event).
+    pub mutate_user: Rate,
+    /// Gateway `VoiceState` frames per user (extra ones are dropped).
+    pub voice_state_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -85,6 +98,11 @@ impl Default for LimitsConfig {
             preview_user: Rate::new(6, 0.2),
             gateway_ip: Rate::per_minute(20),
             gateway_per_user: 8,
+            create_user: Rate::per_hour(20),
+            emoji_user: Rate::per_hour(30),
+            invite_user: Rate::per_hour(10),
+            mutate_user: Rate::new(30, 2.0),
+            voice_state_user: Rate::new(10, 2.0),
         }
     }
 }
@@ -107,6 +125,11 @@ impl LimitsConfig {
             preview_user: r,
             gateway_ip: r,
             gateway_per_user: usize::MAX,
+            create_user: r,
+            emoji_user: r,
+            invite_user: r,
+            mutate_user: r,
+            voice_state_user: r,
         }
     }
 }
@@ -221,6 +244,11 @@ pub struct Limits {
     pub preview_user: Limiter,
     pub gateway_ip: Limiter,
     pub gateway_per_user: usize,
+    pub create_user: Limiter,
+    pub emoji_user: Limiter,
+    pub invite_user: Limiter,
+    pub mutate_user: Limiter,
+    pub voice_state_user: Limiter,
 }
 
 impl Limits {
@@ -239,6 +267,11 @@ impl Limits {
             preview_user: Limiter::new(c.preview_user),
             gateway_ip: Limiter::new(c.gateway_ip),
             gateway_per_user: c.gateway_per_user,
+            create_user: Limiter::new(c.create_user),
+            emoji_user: Limiter::new(c.emoji_user),
+            invite_user: Limiter::new(c.invite_user),
+            mutate_user: Limiter::new(c.mutate_user),
+            voice_state_user: Limiter::new(c.voice_state_user),
         }
     }
 }

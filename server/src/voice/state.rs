@@ -109,12 +109,16 @@ impl VoiceState {
             .unwrap_or_default()
     }
 
-    /// Update a user's flags; returns the room they are in (None if not in voice).
+    /// Update a user's flags; returns the room they are in, so the change can be published.
+    /// None if not in voice, or if the flags didn't change (nothing to publish).
     pub fn set_flags(&self, user: UserId, flags: VoiceFlags) -> Option<ChannelId> {
         self.declared.lock().unwrap().insert(user, flags);
         let mut rooms = self.rooms.lock().unwrap();
         for (channel, members) in rooms.iter_mut() {
             if let Some(m) = members.get_mut(&user) {
+                if m.flags == flags {
+                    return None;
+                }
                 m.flags = flags;
                 return Some(*channel);
             }

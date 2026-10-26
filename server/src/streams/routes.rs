@@ -121,6 +121,9 @@ async fn go_live(
     Path(ch): Path<ChannelId>,
     Json(req): Json<GoLiveRequest>,
 ) -> AppResult<Json<StreamInfo>> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     require_voice_member(&s, me, ch).await?;
     let st = &req.settings;
     if !HEIGHTS.contains(&st.height) || !FPS.contains(&st.fps) {
@@ -142,6 +145,9 @@ async fn stop(
     AuthUser(me): AuthUser,
     Path(ch): Path<ChannelId>,
 ) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     require_voice_member(&s, me, ch).await?;
     s.streams.end(ch, me).ok_or(AppError::NotFound)?;
     tracing::info!(user = %me, channel = %ch, reason = "stopped", "stream ended");
@@ -164,6 +170,9 @@ async fn watch(
     Path(ch): Path<ChannelId>,
     Json(req): Json<WatchRequest>,
 ) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     require_voice_member(&s, me, ch).await?;
     ensure_watchable(&s, me, ch, req.streamer)?;
     if let Some(viewers) = s.streams.add_viewer(ch, req.streamer, me) {
@@ -180,6 +189,9 @@ async fn unwatch(
     Path(ch): Path<ChannelId>,
     Json(req): Json<WatchRequest>,
 ) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     require_visible_member(&s, me, ch).await?;
     if let Some(viewers) = s.streams.remove_viewer(ch, req.streamer, me) {
         publish_viewers(&s, ch, req.streamer, viewers).await;

@@ -306,6 +306,9 @@ async fn edit(
     Path(id): Path<MessageId>,
     Json(req): Json<EditMessageRequest>,
 ) -> AppResult<Json<Message>> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     let mut msg = own_message(&s.db, me, id).await?;
     msg.content = clean(&req.content)?;
     msg.edited_at = Some(now());
@@ -339,6 +342,9 @@ async fn remove(
     AuthUser(me): AuthUser,
     Path(id): Path<MessageId>,
 ) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     let msg = own_message(&s.db, me, id).await?;
     let changed = sqlx::query(
         "UPDATE messages SET content = '', deleted_at = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",

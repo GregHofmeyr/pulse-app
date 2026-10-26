@@ -104,6 +104,9 @@ async fn create_server(
     AuthUser(me): AuthUser,
     Json(req): Json<CreateServerRequest>,
 ) -> AppResult<Json<Server>> {
+    if !s.limits.create_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     let name = clean_name(&req.name)?;
     let id = ServerId::new();
     let at = now();
@@ -246,6 +249,9 @@ async fn create_channel(
     Path(id): Path<ServerId>,
     Json(req): Json<CreateChannelRequest>,
 ) -> AppResult<Json<Channel>> {
+    if !s.limits.create_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     server_exists(&s.db, id).await?;
     if !is_server_member(&s.db, id, me).await? {
         return Err(AppError::Forbidden);
@@ -349,6 +355,10 @@ async fn create_dm(
             "pick 1-{MAX_GROUP_OTHERS} other people"
         )));
     }
+    // A group is always new, so it pays now; a 1:1 DM pays only if it doesn't exist yet.
+    if others.len() > 1 && !s.limits.create_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     for u in &others {
         let hit: Option<i64> = sqlx::query_scalar("SELECT 1 FROM users WHERE id = ?")
             .bind(u.to_string())
@@ -397,6 +407,9 @@ async fn create_dm(
             }
             let ch = crate::access::load_channel(&s.db, channel_id).await?;
             return ch.map(Json).ok_or(AppError::NotFound);
+        }
+        if !s.limits.create_user.hit(&me.to_string()) {
+            return Err(AppError::TooManyRequests); // dropping `tx` rolls back
         }
     }
     let kind = if others.len() == 1 {

@@ -57,6 +57,9 @@ async fn create(
     Path(server): Path<ServerId>,
     Json(req): Json<CreateEmojiRequest>,
 ) -> AppResult<Json<CustomEmoji>> {
+    if !s.limits.emoji_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     if !is_server_member(&s.db, server, me).await? {
         return Err(AppError::Forbidden);
     }
@@ -120,6 +123,9 @@ async fn rename(
     Path(id): Path<String>,
     Json(req): Json<RenameEmojiRequest>,
 ) -> AppResult<Json<CustomEmoji>> {
+    if !s.limits.emoji_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     let name = clean_name(&req.name)?;
     editable(&s, me, &id).await?;
     let changed =
@@ -150,6 +156,9 @@ async fn delete(
     AuthUser(me): AuthUser,
     Path(id): Path<String>,
 ) -> AppResult<Json<CustomEmoji>> {
+    if !s.limits.emoji_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     editable(&s, me, &id).await?;
     // Dropping the media reference lets cleanup reclaim the file; the row keeps its name.
     let changed = sqlx::query(

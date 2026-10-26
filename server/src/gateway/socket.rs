@@ -313,8 +313,11 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
                         }
                     }
                     Ok(ClientFrame::VoiceState { flags }) => {
-                        // Only meaningful while in a room; otherwise ignored.
-                        if let Some(channel_id) = s.voice.set_flags(me, flags) {
+                        // Only meaningful while in a room, and only a change is published.
+                        // Over the limit: silently ignored, like typing.
+                        if s.limits.voice_state_user.hit(&me.to_string())
+                            && let Some(channel_id) = s.voice.set_flags(me, flags)
+                        {
                             s.hub.publish(&s.db, Event::VoiceStateChanged { channel_id, user_id: me, flags }).await;
                         }
                     }
