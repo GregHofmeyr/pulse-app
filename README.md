@@ -25,5 +25,6 @@ just dev-client           # the app; "Got an invite?" to register
 | `just check` | fmt, clippy, all Rust tests, generated-type check, svelte-check, vitest (what CI runs) |
 | `just voice-smoke` | real LiveKit webhook → server records a voice session |
 | `just voice-it` | VoiceManager against real LiveKit; a fake peer rejoins 3× and audio must stay 1× real time |
+| `just voice-it-alt` | the same, with this checkout's LiveKit on 17880–17882 (beside another checkout's on 7880) |
 
-Ports: LiveKit 7880–7882, server 7890, Vite 1420. Linux hotkeys: [`docs/linux-hotkeys.md`](docs/linux-hotkeys.md).
+Ports: LiveKit 7880–7882 + TURN 3478/udp, server 7890, Vite 1420. Linux hotkeys: [`docs/linux-hotkeys.md`](docs/linux-hotkeys.md).

@@ -1,8 +1,16 @@
 services:
   livekit:
-    image: livekit/livekit-server:v1.13
+    # Same image as production (deploy/compose.yml), so `just voice-it` tests what ships.
+    image: livekit/livekit-server:v1.13.10@sha256:89ca9ce0791e18d6e03bf6e2c49ceb27e1c754eae8bd50c989386c1a5963791a
     # host networking so LiveKit can reach the server on 127.0.0.1:7890; bound to loopback in the config
     network_mode: host
     volumes:
       - ./docker/livekit.yaml:/livekit.yaml:ro
     command: --config /livekit.yaml
+    # Ports override docker/livekit.yaml, so a second checkout's dev LiveKit can run beside this one:
+    # `just voice-it-alt` sets them (and the tests read PULSE_DEV_LIVEKIT_PORT). Defaults = the yaml's.
+    environment:
+      LIVEKIT_PORT: ${PULSE_DEV_LIVEKIT_PORT:-7880}
+      LIVEKIT_RTC_TCP_PORT: ${PULSE_DEV_LIVEKIT_TCP_PORT:-7881}
+      UDP_PORT: ${PULSE_DEV_LIVEKIT_UDP_PORT:-7882}
+      LIVEKIT_TURN_UDP_PORT: ${PULSE_DEV_LIVEKIT_TURN_PORT:-3478}

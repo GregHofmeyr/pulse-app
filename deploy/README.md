@@ -72,9 +72,15 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
    Change visibility → Public.
 2. `ssh -t pulse@pulse 'TERM=xterm-256color nano /srv/pulse/.env'` → set `ACME_EMAIL` (your personal address)
    and `LIVEKIT_NODE_IP` (the VM's public IPv4, the one the A records point at; `dig +short voice.pulsechat.co.za`).
-   LiveKit advertises that address to clients; it does not look it up (no STUN at start-up), and `deploy.sh`
-   refuses to run without it. Clients are only ever given LiveKit's own TURN (`turn:<that IP>:3478`) as an ICE
-   server, never a third-party STUN server.
+   LiveKit advertises that address to clients; it does not look it up (no STUN at start-up). Clients are only
+   ever given LiveKit's own TURN (`turn:<that IP>:3478`) as an ICE server, never a third-party STUN server.
+   `just deploy` checks the value on the server before it copies anything, and stops if it is missing or not a
+   public IPv4 (private, loopback, link-local and CGNAT/Tailscale ranges are refused): `/srv/pulse` is then
+   left exactly as it was. Existing servers need this line added once before the first deploy that has it.
+   IPv6: the node IP only rewrites IPv4 candidates. If the VM has a global IPv6 address, LiveKit also offers it
+   to clients as-is (it did before this setting too). `ip -6 addr show scope global` on the server shows
+   whether there is one. If there is, the cloud firewall must allow the same ports over IPv6, or clients just
+   fall back to IPv4.
 3. `just deploy` → ends with `healthy: latest`. Caddy fetches the certificates on the first request.
 4. `just smoke` → every line `ok`.
 5. `just invite-prod` → a code for the first account.

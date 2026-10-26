@@ -44,6 +44,13 @@ voice-it: dev-livekit
     cargo test -p pulse-client --test voice_it --test voice_outage_it --test stream_it -- --ignored --nocapture
     cargo test -p pulse-server --test livekit_ice -- --ignored --nocapture
 
+# This checkout's dev LiveKit then listens on 17880-17882 and 13478 instead of 7880-7882 and 3478.
+# `docker compose down` afterwards; a plain `just dev-livekit` moves it back.
+# voice-it beside another checkout's dev LiveKit (alternate ports)
+voice-it-alt:
+    PULSE_DEV_LIVEKIT_PORT=17880 PULSE_DEV_LIVEKIT_TCP_PORT=17881 PULSE_DEV_LIVEKIT_UDP_PORT=17882 \
+        PULSE_DEV_LIVEKIT_TURN_PORT=13478 just voice-it
+
 # libwebrtc log lines per second in a two-person call (decides whether to filter at the source)
 webrtc-log-volume: dev-livekit
     cargo test -p pulse-client --test webrtc_log_volume -- --ignored --nocapture
@@ -59,6 +66,7 @@ deploy-check:
         docker run --rm -e PULSE_DOMAIN=example.com -e ACME_EMAIL=ci@example.com \
         -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" "$caddy_image" caddy validate --config /etc/caddy/Caddyfile
     docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh
+    bash deploy/deploy-selftest.sh
 
 # --- production (pulsechat.co.za); see deploy/README.md ---
 prod := "pulse@pulse"
@@ -77,6 +85,9 @@ close-public-ssh:
 
 # back up, then run image TAG (a 7-char commit or `latest`); prints the commit that's live
 deploy tag="latest":
+    # Checks the server's .env (LIVEKIT_NODE_IP) with this deploy.sh before anything is copied, so a refusal
+    # leaves /srv/pulse exactly as it was.
+    ssh {{prod}} 'bash -s -- --check-env' < deploy/deploy.sh
     scp deploy/compose.yml deploy/Caddyfile deploy/livekit.yaml deploy/backup.sh deploy/deploy.sh {{prod}}:/srv/pulse/
     ssh {{prod}} '/srv/pulse/deploy.sh {{tag}}'
 

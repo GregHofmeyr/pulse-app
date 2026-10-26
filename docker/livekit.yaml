@@ -1,5 +1,6 @@
 # Local dev LiveKit. Loopback only (never reachable from the LAN) and it sends webhooks to the
 # local pulse-app-server. The key/secret pair is a dev-only value, also in .env.example.
+# The ports can be moved by docker-compose.yml's environment (PULSE_DEV_LIVEKIT_*).
 port: 7880
 bind_addresses: ["127.0.0.1"]
 rtc:
@@ -7,6 +8,10 @@ rtc:
   udp_port: 7882
   use_external_ip: false
   node_ip: 127.0.0.1
+  # Media on loopback only too: without these the UDP/TCP media ports listen on every interface (LAN included).
+  enable_loopback_candidate: true
+  interfaces:
+    includes: [lo]
 # Same shape as production: the embedded TURN is the clients' only ICE server (no third-party STUN in the
 # join response; server/tests/livekit_ice.rs checks it). Loopback only, like everything else here.
 turn:

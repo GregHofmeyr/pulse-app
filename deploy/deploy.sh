@@ -18,19 +18,37 @@ set_env() {
   fi
 }
 
-# check_node_ip FILE: LIVEKIT_NODE_IP must be a plain IPv4. LiveKit silently ignores a malformed NODE_IP and
-# then advertises the VM's private address: calls would connect and carry no audio.
+# check_node_ip FILE: LIVEKIT_NODE_IP must be a public IPv4 in canonical dotted form. LiveKit silently ignores a
+# malformed NODE_IP and then advertises the VM's private address: calls would connect and carry no audio.
+# Private, loopback, link-local, CGNAT (Tailscale) and 0/8 addresses are refused for the same reason.
 check_node_ip() {
-  local ip
+  local ip a b
   ip=$(sed -n 's/^LIVEKIT_NODE_IP=//p' "$1" | tail -n1)
-  if ! [[ $ip =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
-    echo "LIVEKIT_NODE_IP in $1 must be the server's public IPv4 (deploy/README.md, section 6)" >&2
-    return 1
+  # each octet 0-255, no leading zeros
+  local octet='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])'
+  if [[ $ip =~ ^$octet\.$octet\.$octet\.$octet$ ]]; then
+    IFS=. read -r a b _ <<<"$ip"
+    if ! { [ "$a" -eq 0 ] || [ "$a" -eq 10 ] || [ "$a" -eq 127 ] ||
+      { [ "$a" -eq 169 ] && [ "$b" -eq 254 ]; } ||
+      { [ "$a" -eq 172 ] && [ "$b" -ge 16 ] && [ "$b" -le 31 ]; } ||
+      { [ "$a" -eq 192 ] && [ "$b" -eq 168 ]; } ||
+      { [ "$a" -eq 100 ] && [ "$b" -ge 64 ] && [ "$b" -le 127 ]; }; }; then
+      return 0
+    fi
   fi
+  echo "LIVEKIT_NODE_IP in $1 must be the server's public IPv4 (deploy/README.md, section 6); got '$ip'" >&2
+  return 1
 }
 
 # Sourced by the self-test with DEPLOY_SH_LIB=1: define the functions, run nothing.
 [ -n "${DEPLOY_SH_LIB:-}" ] && return 0
+
+# `just deploy` runs this first, piped over ssh, before it copies anything to the server: a missing or bad
+# LIVEKIT_NODE_IP stops the deploy while /srv/pulse is still exactly as it was.
+if [ "${1:-}" = --check-env ]; then
+  check_node_ip "${2:-/srv/pulse/.env}"
+  exit
+fi
 
 tag=${1:?usage: deploy.sh TAG}
 cd /srv/pulse

@@ -144,6 +144,8 @@ jobs:
             -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" "$caddy_image" caddy validate --config /etc/caddy/Caddyfile
       - name: shell scripts
         run: docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh
+      - name: deploy.sh self-test
+        run: bash deploy/deploy-selftest.sh
 
   # Dependency policy (deny.toml): advisories, licences, bans, sources. Also runs weekly.
   cargo-deny:

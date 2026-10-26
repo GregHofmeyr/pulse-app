@@ -14,6 +14,7 @@ use livekit_api::access_token::{AccessToken, VideoGrants};
 use livekit_protocol::{SignalResponse, signal_response};
 use prost::Message as _;
 use tokio_tungstenite::tungstenite::Message as Ws;
+use yaml_rust2::YamlLoader;
 
 const DEV_SECRET: &str = "pulse-dev-secret-0123456789abcdefghij";
 /// `rtc.node_ip` in docker/livekit.yaml.
@@ -39,33 +40,61 @@ fn ice_host_parses_turn_and_stun_urls() {
     );
 }
 
+/// The ICE-relevant settings of one LiveKit config file; panics with the file name on any violation.
+fn assert_only_own_turn(path: &str, yaml: &str) {
+    let docs = YamlLoader::load_from_str(yaml).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let conf = &docs[0];
+    let (rtc, turn) = (&conf["rtc"], &conf["turn"]);
+    // Every stun_servers entry is handed to every client (and used for IP discovery); we run no STUN server
+    // of our own, and an external TURN would be someone else's too.
+    assert!(
+        rtc["stun_servers"].is_badvalue(),
+        "{path}: rtc.stun_servers set"
+    );
+    assert!(
+        rtc["turn_servers"].is_badvalue(),
+        "{path}: rtc.turn_servers set"
+    );
+    // The embedded TURN's UDP port is what stops LiveKit adding its default (third-party) STUN servers.
+    assert_eq!(
+        turn["enabled"].as_bool(),
+        Some(true),
+        "{path}: turn.enabled"
+    );
+    assert!(
+        turn["udp_port"].as_i64().is_some_and(|p| p > 0),
+        "{path}: turn.udp_port"
+    );
+    // use_external_ip discovers the node's address by asking third-party STUN servers at start-up.
+    assert_eq!(
+        rtc["use_external_ip"].as_bool(),
+        Some(false),
+        "{path}: rtc.use_external_ip"
+    );
+}
+
 #[test]
 fn prod_and_dev_configs_offer_only_our_own_turn() {
     for path in ["../deploy/livekit.yaml", "../docker/livekit.yaml"] {
         let full = concat!(env!("CARGO_MANIFEST_DIR"), "/").to_string() + path;
-        let yaml = std::fs::read_to_string(&full).unwrap();
-        let lines: Vec<&str> = yaml
-            .lines()
-            .map(str::trim)
-            .filter(|l| !l.starts_with('#'))
-            .collect();
-        // Any stun_servers entry is handed to every client; none of ours run a STUN server of their own.
-        assert!(
-            !lines.iter().any(|l| l.starts_with("stun_servers")),
-            "{path}: stun_servers set"
-        );
-        // The embedded TURN's UDP port is what stops LiveKit adding its default (third-party) STUN servers.
-        assert!(lines.contains(&"turn:"), "{path}: no turn section");
-        assert!(lines.contains(&"enabled: true"), "{path}: turn not enabled");
-        assert!(
-            lines.iter().any(|l| l.starts_with("udp_port: 3478")),
-            "{path}: no turn udp_port"
-        );
-        // use_external_ip discovers the node's address by asking third-party STUN servers at start-up.
-        assert!(
-            lines.contains(&"use_external_ip: false"),
-            "{path}: use_external_ip not off"
-        );
+        assert_only_own_turn(path, &std::fs::read_to_string(&full).unwrap());
+    }
+}
+
+#[test]
+fn config_check_catches_each_violation() {
+    let good = "rtc:\n  use_external_ip: false\nturn:\n  enabled: true\n  udp_port: 3478\n";
+    assert_only_own_turn("good", good);
+    for bad in [
+        "rtc:\n  use_external_ip: true\nturn:\n  enabled: true\n  udp_port: 3478\n",
+        "rtc:\n  use_external_ip: false\n  stun_servers: [a:1]\nturn:\n  enabled: true\n  udp_port: 3478\n",
+        "rtc:\n  use_external_ip: false\nturn:\n  enabled: false\n  udp_port: 3478\n",
+        "rtc:\n  use_external_ip: false\nturn:\n  enabled: true\n",
+        // the right keys in the wrong section
+        "rtc:\n  enabled: true\n  udp_port: 3478\nturn:\n  use_external_ip: false\n",
+    ] {
+        let caught = std::panic::catch_unwind(|| assert_only_own_turn("bad", bad)).is_err();
+        assert!(caught, "not caught:\n{bad}");
     }
 }
 
@@ -73,7 +102,8 @@ fn prod_and_dev_configs_offer_only_our_own_turn() {
 #[ignore]
 async fn join_response_lists_only_our_own_ice_servers() {
     let env = |k: &str, dev: &str| std::env::var(k).unwrap_or_else(|_| dev.to_string());
-    let base = env("ICE_CHECK_URL", &format!("ws://{DEV_NODE_IP}:7880"));
+    let port = env("PULSE_DEV_LIVEKIT_PORT", "7880"); // docker-compose.yml; `just voice-it-alt` moves it
+    let base = env("ICE_CHECK_URL", &format!("ws://{DEV_NODE_IP}:{port}"));
     let node_ip = env("ICE_CHECK_NODE_IP", DEV_NODE_IP);
     let jwt = AccessToken::with_api_key(
         &env("ICE_CHECK_KEY", "devkey"),
