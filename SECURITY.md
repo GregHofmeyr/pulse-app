@@ -50,12 +50,13 @@ repository.
 
 **Process audio and process listing: Windows, only during Go Live with audio turned on.**
 - **Window share.** The client captures only the audio of the process that owns the shared window, using WASAPI process
-  loopback.
+  loopback. If no single process can be identified, it captures no audio and publishes no audio track.
 - **Screen share.** The client captures the machine's audio output except Pulse's own.
 - **Process list.** To choose these processes, the client lists the running processes and the processes with an active
   audio session. It reads process IDs and executable names.
-  - For a window share, it finds the window's process by going through the top-level windows and comparing their
-    titles with the shared window's title.
+  - For a window share, it finds the window's process by going through the visible top-level windows and comparing
+    their titles with the shared window's title. Pulse's own windows are skipped. If windows of two or more processes
+    have that title, it doesn't guess.
   - For a screen share, it repeats the process and audio-session scan every 2 seconds while the share lasts, to follow
     apps that start or stop playing audio.
   - All of this is used only on the machine.
@@ -93,8 +94,11 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
 
 **Local IPC.** Two local mechanisms exist. Neither is reachable over the network.
 - **Linux command line.** The client listens on a Unix domain socket with mode `0600`. The socket is in the user's
-  runtime directory (`$XDG_RUNTIME_DIR`), or, if that isn't set, at a per-user path in the system temp directory.
-  The `pulse-app --toggle-mute` / `--toggle-deafen` command uses it, and it accepts only those two commands.
+  runtime directory (`$XDG_RUNTIME_DIR`). If that isn't set, it is in `pulse-app-<uid>` in the system temp directory,
+  a directory with mode `0700`. If that directory already exists and isn't a real directory owned by the user with no
+  group or other access (for example, a symlink), the client doesn't open the socket and logs a warning.
+  The `pulse-app --toggle-mute` / `--toggle-deafen` command uses it, and it accepts only those two commands. The
+  command follows the same rules and refuses a socket that isn't owned by the user.
 - **Second launch.** When the app is started a second time, the single-instance plugin tells the copy already running
   to show its window.
 

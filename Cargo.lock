@@ -4931,6 +4931,7 @@ dependencies = [
  "futures",
  "image",
  "keyring",
+ "libc",
  "livekit",
  "log",
  "ndarray",

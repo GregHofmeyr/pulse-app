@@ -9,6 +9,13 @@ pub enum Capture {
     Exclude(u32),
 }
 
+/// What is being shared. A window share carries the window's process, if one was found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Source {
+    Screen,
+    Window(Option<u32>),
+}
+
 pub struct PlanInput<'a> {
     pub own_pid: u32,
     /// Every Pulse process, own included, with WebView2 children.
@@ -17,15 +24,19 @@ pub struct PlanInput<'a> {
     pub pulse_roots: &'a [u32],
     /// Processes with an active render session.
     pub session_pids: &'a [u32],
-    pub window_pid: Option<u32>,
+    pub source: Source,
 }
 
 /// The captures to run now.
 ///
 /// Another Pulse instance is a root in `pulse_roots` other than `own_pid`.
 pub fn capture_plan(i: &PlanInput) -> Vec<Capture> {
-    if let Some(p) = i.window_pid.filter(|p| !i.pulse_pids.contains(p)) {
-        return vec![Capture::Include(p)];
+    if let Source::Window(pid) = i.source {
+        // Only the window's own process, or nothing: never the rest of the machine.
+        return match pid.filter(|p| !i.pulse_pids.contains(p)) {
+            Some(p) => vec![Capture::Include(p)],
+            None => Vec::new(),
+        };
     }
     if i.pulse_roots.iter().all(|&p| p == i.own_pid) {
         // Alone: exclude our own tree, capture the rest of the machine.
@@ -63,49 +74,61 @@ mod tests {
         pulse: &[u32],
         roots: &[u32],
         sessions: &[u32],
-        window: Option<u32>,
+        source: Source,
     ) -> Vec<Capture> {
         capture_plan(&PlanInput {
             own_pid: own,
             pulse_pids: pulse,
             pulse_roots: roots,
             session_pids: sessions,
-            window_pid: window,
+            source,
         })
     }
 
+    const SCREEN: Source = Source::Screen;
+
     #[test]
     fn window_share_includes_the_window_process() {
-        assert_eq!(plan(10, &[10], &[10], &[30], Some(40)), vec![Include(40)]);
+        assert_eq!(
+            plan(10, &[10], &[10], &[30], Source::Window(Some(40))),
+            vec![Include(40)]
+        );
     }
 
     #[test]
-    fn window_owned_by_pulse_falls_back_to_screen_rules() {
-        assert_eq!(plan(10, &[10], &[10], &[30], Some(10)), vec![Exclude(10)]);
+    fn window_share_with_no_owner_captures_nothing() {
+        // Not everything-but-Pulse: a window share promises that app's audio only.
+        assert!(plan(10, &[10], &[10], &[30], Source::Window(None)).is_empty());
+        assert!(plan(10, &[10, 20], &[10, 20], &[30], Source::Window(None)).is_empty());
+    }
+
+    #[test]
+    fn window_owned_by_pulse_captures_nothing() {
+        assert!(plan(10, &[10], &[10], &[30], Source::Window(Some(10))).is_empty());
     }
 
     #[test]
     fn alone_excludes_own_tree() {
         assert_eq!(
-            plan(10, &[10, 11], &[10], &[10, 11, 30], None),
+            plan(10, &[10, 11], &[10], &[10, 11, 30], SCREEN),
             vec![Exclude(10)]
         );
     }
 
     #[test]
     fn another_pulse_switches_to_per_session_include() {
-        let got = plan(10, &[10, 20, 21], &[10, 20], &[21, 30, 31, 30], None);
+        let got = plan(10, &[10, 20, 21], &[10, 20], &[21, 30, 31, 30], SCREEN);
         assert_eq!(got, vec![Include(30), Include(31)]);
     }
 
     #[test]
     fn another_pulse_with_no_other_audio_is_an_empty_plan() {
-        assert!(plan(10, &[10, 20, 21], &[10, 20], &[10, 21], None).is_empty());
+        assert!(plan(10, &[10, 20, 21], &[10, 20], &[10, 21], SCREEN).is_empty());
     }
 
     #[test]
     fn own_child_session_is_not_included_next_to_another_instance() {
-        let got = plan(10, &[10, 11, 20], &[10, 20], &[11, 30], None);
+        let got = plan(10, &[10, 11, 20], &[10, 20], &[11, 30], SCREEN);
         assert_eq!(got, vec![Include(30)]);
     }
 

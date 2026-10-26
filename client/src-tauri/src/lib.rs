@@ -133,13 +133,17 @@ pub fn run() {
             #[cfg(unix)]
             {
                 let h = app.handle().clone();
-                let path = ipc::socket_path();
-                // Needs a runtime: run the listener on Tauri's.
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = ipc::serve(&path, move |c| commands::hotkey(&h, c)) {
-                        tracing::warn!(path = %logging::redact_home(&path), error = %e, "hotkey socket unavailable");
+                match ipc::socket_path() {
+                    // Needs a runtime: run the listener on Tauri's.
+                    Ok(path) => {
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = ipc::serve(&path, move |c| commands::hotkey(&h, c)) {
+                                tracing::warn!(path = %logging::redact_home(&path), error = %e, "hotkey socket unavailable");
+                            }
+                        });
                     }
-                });
+                    Err(e) => tracing::warn!(error = %e, "hotkey socket unavailable"),
+                }
             }
             let binds = keybinds::Store::load(&dir);
             let saved = binds.get();

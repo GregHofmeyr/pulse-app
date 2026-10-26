@@ -6,7 +6,7 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     if let Some(cmd) = pulse_client::ipc::Command::from_args(&args) {
         #[cfg(unix)]
-        match pulse_client::ipc::send(&pulse_client::ipc::socket_path(), cmd) {
+        match pulse_client::ipc::socket_path().and_then(|p| pulse_client::ipc::send(&p, cmd)) {
             Ok(()) => std::process::exit(0),
             Err(e) => {
                 eprintln!("Pulse isn't running ({e})");
