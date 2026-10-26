@@ -282,6 +282,23 @@ ties each of those tokens to the session that asked for it:
   that stays connected, so token expiry alone does not end a call. The join check above, not expiry, is what keeps a
   signed-out device out.
 
+**Calls follow access.** A LiveKit token is only as good as the access behind it, checked again at every join:
+- **Joins.** The join check above also needs current access. A voice join needs the user to still be allowed in that
+  call: a member of the DM or group, or of the server for a server voice channel (the same rule as getting a token). A
+  screen-share join needs that, and the user in that channel's voice call. A join that fails is removed like any other
+  refused join, with the same limits.
+  - **In the call** means the server's list of who is in voice, or else a voice connection the server admitted whose
+    leave hasn't been reported. That covers the list lagging behind LiveKit (just after a restart, or a screen-share
+    join reported before its voice join). A voice token that was fetched but never used doesn't count.
+- **Removed from a group.** Removing someone from a group (or leaving it) ends their part in its call. Their LiveKit
+  tokens for it are forgotten, LiveKit is asked to remove them (best-effort, at most 2 seconds, as on sign-out) and
+  they are taken off the call's member list. A rejoin with a token they kept fails the join check.
+- **Leaving voice.** When someone leaves a server voice channel's call (not a reconnect), LiveKit is asked to remove
+  their screen-share connections there too, in the background. This is skipped if they are back in the call by then.
+  Removal is by identity, so a new screen-share connection made in the same instant could be removed.
+- **No data messages.** Voice tokens can't send LiveKit data messages, like stream tokens. Calls carry the microphone
+  only.
+
 **Rate limits.** These are in-memory token buckets. Per-IP limits count an IPv6 client by its /64 prefix (one client can hold a whole /64), and an IPv4-mapped IPv6 address as its IPv4 address. Each limiter tracks at most 10,000 keys; past that, the least recently used bucket is dropped.
 
 | What | Limit |

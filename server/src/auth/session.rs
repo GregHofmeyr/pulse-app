@@ -221,6 +221,39 @@ pub async fn admit_join(
     Ok(done.rows_affected() > 0)
 }
 
+/// Whether `identity` is connected to `room` with a live session's grant: a join on record that
+/// hasn't left. Stands in for the voice state when that lags behind LiveKit (`revoke::admit`).
+pub async fn connected_grant(db: &SqlitePool, room: &str, identity: &str) -> anyhow::Result<bool> {
+    let hit: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM livekit_grants WHERE room = ? AND identity = ?
+         AND joined_sid IS NOT NULL AND left_at IS NULL
+         AND token_hash IN (SELECT token_hash FROM sessions WHERE expires_at > ?)",
+    )
+    .bind(room)
+    .bind(identity)
+    .bind(ts(Utc::now()))
+    .fetch_optional(db)
+    .await?;
+    Ok(hit.is_some())
+}
+
+/// Delete every grant `identity` holds for `room` (whichever session it was issued to), when
+/// they lose access to it; returns how many there were.
+pub async fn drop_grants(
+    conn: &mut SqliteConnection,
+    room: &str,
+    identity: &str,
+) -> anyhow::Result<u64> {
+    Ok(
+        sqlx::query("DELETE FROM livekit_grants WHERE room = ? AND identity = ?")
+            .bind(room)
+            .bind(identity)
+            .execute(conn)
+            .await?
+            .rows_affected(),
+    )
+}
+
 /// A LiveKit leave webhook: the grant is finished if `sid` is still the participant connected
 /// with it (a full reconnect's late leave for the old connection doesn't count).
 pub async fn note_left(db: &SqlitePool, grant: &str, sid: &str) -> anyhow::Result<()> {

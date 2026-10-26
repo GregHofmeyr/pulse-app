@@ -987,3 +987,187 @@ async fn a_lost_join_webhook_device_survives_its_next_full_reconnect() {
     assert_eq!(removed_count(&lk), 0, "{:?}", calls(&lk));
     assert!(app.voice_members(l.id).contains(&alex));
 }
+
+async fn remove_member(app: &TestApp, token: &str, group: &Channel, user: UserId) {
+    let r = app
+        .http
+        .delete(app.url(&format!("/channels/{}/members/{user}", group.id)))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+}
+
+/// Removing someone from a group ends their part in its call: LiveKit is asked to remove them,
+/// they leave the voice state, and the token they joined with is refused if replayed.
+#[tokio::test]
+async fn removing_a_group_member_ends_their_part_in_its_call() {
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
+    let (_, a) = register(&app, "alex").await;
+    let (sam, s) = register(&app, "sam").await;
+    let (riley, r) = register(&app, "riley").await;
+    let group = create_dm(&app, &a, &[sam, riley]).await;
+    let sams = voice_token(&app, &s, &group).await;
+    connect(&app, Some(&lk), &sams, "PA_sam").await;
+    let rileys = voice_token(&app, &r, &group).await;
+    connect(&app, Some(&lk), &rileys, "PA_riley").await;
+    assert!(app.voice_members(group.id).contains(&riley));
+    assert_eq!(removed_count(&lk), 0);
+
+    remove_member(&app, &a, &group, riley).await;
+    assert_eq!(
+        calls(&lk),
+        set(&[(group.id.to_string(), riley.to_string())])
+    );
+    assert!(!app.voice_members(group.id).contains(&riley));
+    assert!(app.voice_members(group.id).contains(&sam), "sam stays");
+    assert!(lk.connected(&group.id.to_string(), &sam.to_string()));
+
+    // LiveKit doesn't revoke the JWT: rejoining with it is removed again.
+    connect(&app, Some(&lk), &rileys, "PA_riley_back").await;
+    wait_for(&lk, 2).await;
+    assert_eq!(removed_count(&lk), 2, "{:?}", calls(&lk));
+    assert!(!lk.connected(&group.id.to_string(), &riley.to_string()));
+    assert!(!app.voice_members(group.id).contains(&riley));
+}
+
+/// A join is checked against current access, not just the grant: someone who lost access to the
+/// channel after getting their token is removed.
+#[tokio::test]
+async fn a_join_by_someone_who_lost_access_is_removed() {
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
+    let (_, a) = register(&app, "alex").await;
+    let (sam, _) = register(&app, "sam").await;
+    let (riley, r) = register(&app, "riley").await;
+    let group = create_dm(&app, &a, &[sam, riley]).await;
+    let rileys = voice_token(&app, &r, &group).await;
+    // access gone, the grant still on record
+    sqlx::query("DELETE FROM channel_members WHERE channel_id = ? AND user_id = ?")
+        .bind(group.id.to_string())
+        .bind(riley.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    connect(&app, Some(&lk), &rileys, "PA_riley").await;
+    wait_for(&lk, 1).await;
+    assert_eq!(
+        calls(&lk),
+        set(&[(group.id.to_string(), riley.to_string())])
+    );
+    assert!(!app.voice_members(group.id).contains(&riley));
+}
+
+/// alex in Lounge voice, with a stream video and a stream audio connection; returns the voice
+/// JWT and the video ticket.
+async fn streaming(app: &TestApp, lk: &Lk, a: &str, l: &Channel) -> (String, String) {
+    let voice = voice_token(app, a, l).await;
+    connect(app, Some(lk), &voice, "PA_voice").await;
+    let video = stream_ticket(app, a, l, "v").await;
+    connect(app, Some(lk), &video, "PA_v").await;
+    let audio = stream_ticket(app, a, l, "a").await;
+    connect(app, Some(lk), &audio, "PA_a").await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert_eq!(removed_count(lk), 0, "{:?}", calls(lk));
+    (voice, video)
+}
+
+/// Leaving voice ends stream-room access: both stream identities are removed, and rejoining the
+/// stream room with the old ticket is removed again.
+#[tokio::test]
+async fn leaving_voice_ends_stream_room_access() {
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
+    let (alex, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    let (voice, video) = streaming(&app, &lk, &a, &l).await;
+    let stream_room = format!("{}~s", l.id);
+
+    webhook(
+        &app,
+        "participant_left",
+        &l.id.to_string(),
+        &alex.to_string(),
+        Some(&grant_of(&app, &voice)),
+        "PA_voice",
+    )
+    .await;
+    wait_for(&lk, 2).await;
+    assert_eq!(
+        calls(&lk),
+        set(&[
+            (stream_room.clone(), format!("{alex}#v")),
+            (stream_room.clone(), format!("{alex}#a")),
+        ])
+    );
+
+    // a voice token fetched but not used (a hover prefetch) doesn't count as being in the call
+    voice_token(&app, &a, &l).await;
+    connect(&app, Some(&lk), &video, "PA_v_back").await;
+    wait_for(&lk, 3).await;
+    assert_eq!(removed_count(&lk), 3, "{:?}", calls(&lk));
+    assert!(!lk.connected(&stream_room, &format!("{alex}#v")));
+}
+
+/// A voice full reconnect whose old connection's leave arrives late (after the new join) is not
+/// leaving voice: the stream connections stay.
+#[tokio::test]
+async fn a_voice_reconnect_keeps_the_stream_connections() {
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
+    let (alex, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    let (voice, _) = streaming(&app, &lk, &a, &l).await;
+    connect(&app, Some(&lk), &voice, "PA_voice2").await;
+    webhook(
+        &app,
+        "participant_left",
+        &l.id.to_string(),
+        &alex.to_string(),
+        Some(&grant_of(&app, &voice)),
+        "PA_voice",
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(removed_count(&lk), 0, "{:?}", calls(&lk));
+    assert!(app.voice_members(l.id).contains(&alex));
+}
+
+/// The stream-room join can beat the voice state (a restart before presence is rebuilt from
+/// LiveKit): a live, joined voice grant for the channel is enough.
+#[tokio::test]
+async fn a_stream_join_is_admitted_while_the_voice_grant_is_connected() {
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
+    let (alex, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    let (_, video) = streaming(&app, &lk, &a, &l).await;
+    app.voice.leave(l.id, alex, ""); // voice state not rebuilt yet
+    connect(&app, Some(&lk), &video, "PA_v2").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(removed_count(&lk), 0, "{:?}", calls(&lk));
+}
+
+/// Voice tokens carry the microphone only: no data messages.
+#[tokio::test]
+async fn voice_tokens_cannot_publish_data() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let (sam, _) = register(&app, "sam").await;
+    let l = lounge(&app, &a).await;
+    let dm = create_dm(&app, &a, &[sam]).await;
+    for ch in [&l, &dm] {
+        let jwt = voice_token(&app, &a, ch).await;
+        let claims = TokenVerifier::with_api_key(&app.cfg.livekit_key, &app.cfg.livekit_secret)
+            .verify(&jwt)
+            .unwrap();
+        assert_eq!(claims.video.can_publish_data, Some(false));
+        assert!(
+            jwt_payload(&jwt).contains(r#""canPublishData":false"#),
+            "{}",
+            jwt_payload(&jwt)
+        );
+    }
+}

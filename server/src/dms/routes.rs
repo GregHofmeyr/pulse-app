@@ -20,6 +20,7 @@ use crate::auth::AuthUser;
 use crate::auth::routes::load_user;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
+use crate::voice::state::Left;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -257,7 +258,28 @@ async fn remove_member(
             .execute(&mut *tx)
             .await?;
     }
+    // Their LiveKit tokens for this call go with their membership (a rejoin with one is also
+    // refused by the join check, `voice::revoke::admit`).
+    let had_grants =
+        crate::auth::session::drop_grants(&mut tx, &id.to_string(), &user.to_string()).await?;
     tx.commit().await?;
+    // Out of the group, out of its call: LiveKit removes them (best-effort, bounded wait) and
+    // they leave the voice state. Their leave webhook then finds nothing to do.
+    let left_call = s.voice.leave(id, user, "") == Left::Removed;
+    if had_grants > 0 || left_call {
+        crate::voice::revoke::remove_identities(&s, &id.to_string(), &[user.to_string()]).await;
+    }
+    if left_call {
+        s.hub
+            .publish(
+                &s.db,
+                Event::VoiceLeft {
+                    channel_id: id,
+                    user_id: user,
+                },
+            )
+            .await;
+    }
     if unmuted > 0 {
         s.hub
             .publish(
