@@ -46,3 +46,10 @@ updates:
     groups:
       compose-minor-patch:
         update-types: [minor, patch]
+
+  # rust-toolchain.toml (exact version used by CI, the Windows release and local builds)
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 2

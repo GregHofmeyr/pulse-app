@@ -25,21 +25,26 @@ jobs:
   build:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      # Exact version and components come from rust-toolchain.toml (rustup >= 1.28 installs what the file names).
+      - name: Rust toolchain (pinned in rust-toolchain.toml)
+        shell: bash
+        run: |
+          rustup toolchain install --profile minimal
+          rustc --version
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v4.4.0
         with:
           version: 11
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: client/ui/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
         working-directory: client/ui
-      # Prebuilt CLI from npm: no ~5 min `cargo install tauri-cli` on every run.
-      - run: pnpm dlx @tauri-apps/cli@^2 build
+      # Prebuilt CLI from npm, pinned to the `tauri` crate version in Cargo.lock: no ~5 min `cargo install tauri-cli` on every run.
+      - run: pnpm dlx @tauri-apps/cli@2.12.1 build
         working-directory: client/src-tauri
       # Screen-share stream code has Windows-only paths (process discovery, open failures) that Linux CI
       # never compiles. --release reuses the build above.
@@ -70,7 +75,7 @@ jobs:
           Copy-Item lk/livekit-server.exe $kit
           Copy-Item lk/LICENSE "$kit/LICENSE-livekit.txt"
           Get-ChildItem $kit | Format-Table Name, Length
-      - uses: actions/upload-artifact@v5
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
         with:
           name: pulse-windows-kit
           path: pulse-windows-kit

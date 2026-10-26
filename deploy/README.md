@@ -96,6 +96,11 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
   the digest of the pulled `pulse-server:<tag>` and writes `PULSE_IMAGE=…:<tag>@sha256:…` into `/srv/pulse/.env`
   (`PULSE_TAG` stays, for humans; an old `.env` without `PULSE_IMAGE` just gets the line appended). It prints
   `pinned: …` and the digest on the final `healthy:` line. LiveKit and Caddy are pinned in `compose.yml`.
+- Build inputs are pinned too. When bumping the Rust version, change it in three places together: `rust-toolchain.toml`
+  (CI, the Windows release and local builds), the `rust:<version>-bookworm@sha256:…` line in `server.Dockerfile`, and, if
+  the `tauri` crate's minor changed, `@tauri-apps/cli@<version>` in `release-windows.yml`. Dependabot opens PRs for
+  each of these (rust-toolchain, docker, github-actions); the digest is the multi-arch index digest. GitHub Actions are
+  pinned to commit SHAs with a `# vX.Y.Z` comment, and `ci.yml` checks the LLVM apt key against its published fingerprint.
 - Bumping LiveKit or Caddy: Dependabot opens a PR for new tags (`.github/dependabot.yml`). To do it by hand,
   take the digest of the multi-arch **index**, not of one platform: `docker manifest inspect <image>:<tag> -v`, or
   `HEAD /v2/<repo>/manifests/<tag>` on the registry with the OCI index and manifest-list `Accept` headers and read
