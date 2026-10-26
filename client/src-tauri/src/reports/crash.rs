@@ -3,6 +3,8 @@
 //! Files in the profile's log dir:
 //! - `running`: written at startup, removed on a clean exit. Still there at startup → the last
 //!   session ended without one (native crash, force-close, power loss).
+//! - `last-server`: the server this profile last signed in to. `running` starts out bound to it
+//!   and is rebound at each sign-in; a report only ever goes to the server in its marker.
 //! - `crash.json`: written by the panic hook (first panic of a session).
 //! - `pending-report.json`: what startup made of the two above, plus the crashed session's log
 //!   tail; kept until it is sent (or rejected, or a week old). With "Send crash reports
@@ -21,6 +23,9 @@ use crate::api::ApiError;
 const RUNNING: &str = "running";
 const CRASH: &str = "crash.json";
 const PENDING: &str = "pending-report.json";
+/// The server this profile last signed in to (kept across sign-out): a session that crashes
+/// before it signs in is reported there.
+const LAST_SERVER: &str = "last-server";
 /// Panic messages can be huge (`assert_eq!` on a big value); the report keeps the start.
 pub const MAX_MESSAGE_BYTES: usize = 2048;
 pub const MAX_AGE_SECS: u64 = 7 * 86_400;
@@ -35,8 +40,9 @@ pub struct PendingFile {
     /// it. Never cleared once set, so turning the setting back on doesn't release it.
     #[serde(default)]
     pub held: bool,
-    /// The server the crashed session was signed in to (`None`: it never signed in, or the file is
-    /// from an older version). The report only ever goes to that server; any other gets nothing.
+    /// The server the crashed session was signed in to, or else the one the profile last signed in
+    /// to (`None`: this profile has never signed in, or the file is from an older version). The
+    /// report only ever goes to that server; any other gets nothing.
     #[serde(default)]
     pub server: Option<String>,
 }
@@ -90,7 +96,12 @@ pub fn mark_running(dir: &Path) {
 
 fn write_running(dir: &Path, at: u64, version: &str) {
     let _ = std::fs::create_dir_all(dir);
-    let body = serde_json::json!({ "at": at, "version": version });
+    // bound from the start to the last server this profile knew (none on a first run)
+    let server = std::fs::read_to_string(dir.join(LAST_SERVER))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+    let body = serde_json::json!({ "at": at, "version": version, "server": server });
     let _ = std::fs::write(dir.join(RUNNING), body.to_string());
 }
 
@@ -106,6 +117,7 @@ pub fn note_server(dir: &Path, server: &str) {
     m["server"] = serde_json::Value::String(server.to_string());
     let _ = std::fs::create_dir_all(dir);
     let _ = std::fs::write(dir.join(RUNNING), m.to_string());
+    let _ = std::fs::write(dir.join(LAST_SERVER), server);
 }
 
 /// The server last session signed in to, from its `running` marker.
@@ -906,8 +918,67 @@ mod tests {
         );
     }
 
+    /// An earlier session signed in to SRV and exited cleanly; this one crashes during startup,
+    /// before its restore (or a login) gets as far as signing in.
+    fn crashed_before_signing_in(dir: &Path) {
+        mark_running(dir);
+        note_server(dir, SRV);
+        clear_running(dir);
+        log(dir, "restoring session\n");
+        mark_running(dir);
+        write_panic_marker(dir, "boom", "x.rs:1");
+        detect(dir, 1000);
+    }
+
     #[tokio::test]
-    async fn a_report_from_a_session_that_never_signed_in_is_deleted_not_sent() {
+    async fn a_crash_during_startup_is_bound_to_the_last_server_and_sent_when_on() {
+        let d = tempfile::tempdir().unwrap();
+        crashed_before_signing_in(d.path());
+        assert_eq!(
+            load_pending(d.path(), 1000).unwrap().server.as_deref(),
+            Some(SRV)
+        );
+        let mut called = false;
+        let r = auto(d.path(), 1000, true, |_| {
+            called = true;
+            async { sent() }
+        })
+        .await;
+        assert!(called);
+        assert_eq!(r, AutoSend::Sent);
+    }
+
+    #[tokio::test]
+    async fn a_crash_during_startup_is_held_when_off() {
+        let d = tempfile::tempdir().unwrap();
+        crashed_before_signing_in(d.path());
+        let mut called = false;
+        let r = auto(d.path(), 1000, false, |_| {
+            called = true;
+            async { sent() }
+        })
+        .await;
+        assert!(!called);
+        assert_eq!(r, AutoSend::Held(ReportKind::Crash));
+    }
+
+    #[test]
+    fn the_latest_sign_in_decides_the_server() {
+        let d = tempfile::tempdir().unwrap();
+        mark_running(d.path());
+        note_server(d.path(), "https://first.example");
+        note_server(d.path(), SRV); // logged out, then in to another server
+        clear_running(d.path());
+        mark_running(d.path());
+        detect(d.path(), 1000);
+        assert_eq!(
+            load_pending(d.path(), 1000).unwrap().server.as_deref(),
+            Some(SRV)
+        );
+    }
+
+    #[tokio::test]
+    async fn a_first_run_crash_with_no_known_server_is_deleted_not_sent() {
         let d = tempfile::tempdir().unwrap();
         mark_running(d.path());
         detect(d.path(), 1000);
