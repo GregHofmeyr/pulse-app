@@ -42,6 +42,7 @@ sound_table!(
     "minimal-soft",
     "minimal-wood",
     "minimal-glass",
+    "goofy",
 );
 
 /// The events, in the order the settings list shows them.

@@ -9,3 +9,4 @@ spikes/**/*.wav
 .superpowers/
 client/ui/public/emoji/
 /data/
+__pycache__/
