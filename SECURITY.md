@@ -138,7 +138,8 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     - `crash.json`, written on a crash;
     - `pending-report.json`, a crash report not yet sent, including its log tail.
   - **Report log tails.** A report's log tail is at most the last 256 KB of the newest log file, and it starts at the
-    current session (the last sign-in or restore). Older sessions in the same file are left out.
+    current session (the last app start, sign-in or restore, marked by a line that `PULSE_LOG` and the daily size cap
+    never drop). Older sessions in the same file are left out.
 - **Image cache.** Custom emoji images are fetched from the server once and cached as WebP files, keyed by their
   SHA-256 hash.
   - **Where.** `%LOCALAPPDATA%\app.pulse.client\media\` on Windows.

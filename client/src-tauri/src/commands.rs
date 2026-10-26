@@ -119,8 +119,8 @@ impl Core {
     /// this attempt goes no further), then the address is checked.
     fn start_login(&self, server_url: &str) -> Result<Api, ApiError> {
         self.mfa.clear();
-        check_server_url(server_url)?;
-        Ok(Api::new(server_url))
+        // the checked, normalised address is the one used for requests and the gateway
+        Ok(Api::new(&check_server_url(server_url)?))
     }
 
     /// The login screen went back from the code step to the password.

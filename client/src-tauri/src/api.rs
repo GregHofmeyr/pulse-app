@@ -90,7 +90,8 @@ impl serde::Serialize for ApiError {
 }
 
 /// Plain http:// only for this machine; anything remote must be https (passwords + tokens).
-pub fn check_server_url(url: &str) -> Result<(), ApiError> {
+/// Returns the normalised address to use from here on.
+pub fn check_server_url(url: &str) -> Result<String, ApiError> {
     use reqwest::Url;
     use url::Host;
     let reject = |m: &str| Err(ApiError::Rejected(m.into()));
@@ -105,14 +106,19 @@ pub fn check_server_url(url: &str) -> Result<(), ApiError> {
     if u.query().is_some() || u.fragment().is_some() {
         return reject("the server address can't contain a ? or # part");
     }
-    match (u.scheme(), u.host()) {
-        ("https", Some(_)) => Ok(()),
-        ("http", Some(Host::Domain("localhost"))) => Ok(()),
-        ("http", Some(Host::Ipv4(ip))) if ip.is_loopback() => Ok(()),
-        ("http", Some(Host::Ipv6(ip))) if ip.is_loopback() => Ok(()),
-        ("http", Some(_)) => reject("use https:// for remote servers"),
-        _ => reject("server address must start with https://"),
+    let allowed = match (u.scheme(), u.host()) {
+        ("https", Some(_)) => true,
+        ("http", Some(Host::Domain("localhost"))) => true,
+        ("http", Some(Host::Ipv4(ip))) => ip.is_loopback(),
+        ("http", Some(Host::Ipv6(ip))) => ip.is_loopback(),
+        ("http", Some(_)) => false,
+        _ => return reject("server address must start with https://"),
+    };
+    if !allowed {
+        return reject("use https:// for remote servers");
     }
+    // The address as checked (and as the client will read it), without a trailing '/'.
+    Ok(u.as_str().trim_end_matches('/').to_string())
 }
 
 /// What a failed-request log line may show: the path only (no host, no query, never the token).
@@ -1570,11 +1576,12 @@ mod tests {
 
     /// The server's shipped login limits, which the slow-down message above is written for.
     #[test]
-    fn default_login_limits_are_five_a_minute_per_ip_and_ten_an_hour_per_user() {
+    fn default_login_limits_are_five_a_minute_per_ip_and_ten_an_hour_per_user_and_address() {
         use pulse_server::limits::{LimitsConfig, Rate};
         let d = LimitsConfig::default();
         assert_eq!(d.login_ip, Rate::per_minute(5));
-        assert_eq!(d.login_user, Rate::per_hour(10));
+        assert_eq!(d.login_user, Rate::per_hour(100));
+        assert_eq!(d.login_user_ip, Rate::per_hour(10));
     }
 
     #[tokio::test]
@@ -1879,6 +1886,22 @@ mod tests {
             check_server_url("ftp://x"),
             Err(ApiError::Rejected(_))
         ));
+    }
+
+    #[test]
+    fn accepted_url_comes_back_normalised() {
+        assert_eq!(
+            check_server_url("https://Example.COM/").unwrap(),
+            "https://example.com"
+        );
+        assert_eq!(
+            check_server_url("http://localhost:7890").unwrap(),
+            "http://localhost:7890"
+        );
+        assert_eq!(
+            check_server_url("https://example.com:8443/base/").unwrap(),
+            "https://example.com:8443/base"
+        );
     }
 
     #[test]
