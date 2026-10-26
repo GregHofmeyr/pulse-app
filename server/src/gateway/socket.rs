@@ -272,6 +272,11 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
 
     // Only inbound frames prove the client is alive; outbound traffic must not extend the deadline.
     let mut deadline = tokio::time::Instant::now() + s.cfg.heartbeat_timeout;
+    // VoiceState publishes held back by the limit: the flags are stored at once, and one
+    // trailing publish of the latest ones goes out when the bucket next allows it.
+    let mut voice_pending = false;
+    let mut voice_retry = tokio::time::Instant::now();
+    let voice_wait = voice_retry_wait(s.cfg.limits.voice_state_user);
     loop {
         tokio::select! {
             // A kick closes the queue too; check it first so the client gets the close code.
@@ -288,6 +293,19 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
             _ = tokio::time::sleep_until(deadline) => {
                 disconnected(&s, conn, me).await;
                 return close(socket, CLOSE_TIMEOUT, "heartbeat timeout").await;
+            }
+            _ = tokio::time::sleep_until(voice_retry), if voice_pending => {
+                match s.voice.room_flags(me) {
+                    Some((channel_id, flags)) => {
+                        if s.limits.voice_state_user.hit(&me.to_string()) {
+                            voice_pending = false;
+                            s.hub.publish(&s.db, Event::VoiceStateChanged { channel_id, user_id: me, flags }).await;
+                        } else {
+                            voice_retry = tokio::time::Instant::now() + voice_wait;
+                        }
+                    }
+                    None => voice_pending = false, // left voice; the leave event says it all
+                }
             }
             inc = socket.recv() => {
                 let msg = match inc {
@@ -312,12 +330,16 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
                         }
                     }
                     Ok(ClientFrame::VoiceState { flags }) => {
-                        // Only meaningful while in a room, and only a change is published.
-                        // Over the limit: silently ignored, like typing.
-                        if s.limits.voice_state_user.hit(&me.to_string())
-                            && let Some(channel_id) = s.voice.set_flags(me, flags)
-                        {
-                            s.hub.publish(&s.db, Event::VoiceStateChanged { channel_id, user_id: me, flags }).await;
+                        // Always stored; only a change made while in a room is published. Over the
+                        // limit, the publish waits for the trailing one above.
+                        if let Some(channel_id) = s.voice.set_flags(me, flags) {
+                            if s.limits.voice_state_user.hit(&me.to_string()) {
+                                voice_pending = false;
+                                s.hub.publish(&s.db, Event::VoiceStateChanged { channel_id, user_id: me, flags }).await;
+                            } else if !voice_pending {
+                                voice_pending = true;
+                                voice_retry = tokio::time::Instant::now() + voice_wait;
+                            }
                         }
                     }
                     Ok(ClientFrame::Hello { .. }) | Err(_) => {}
@@ -326,4 +348,10 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
         }
     }
     disconnected(&s, conn, me).await;
+}
+
+/// How long a held-back VoiceState publish waits before trying the bucket again: about one
+/// token's refill, kept between 50 ms and 5 s.
+fn voice_retry_wait(rate: crate::limits::Rate) -> std::time::Duration {
+    std::time::Duration::from_secs_f64((1.0 / rate.refill_per_sec).clamp(0.05, 5.0))
 }

@@ -83,10 +83,11 @@ pub struct LimitsConfig {
     pub emoji_user: Rate,
     /// Invite codes minted per user.
     pub invite_user: Rate,
-    /// Message edits and deletes, reaction adds and removes, and Go Live / stop / watch /
-    /// unwatch, together per user (each one fans out an event).
+    /// Message edits and deletes, reaction adds and removes, Go Live and watch, together per
+    /// user (each one fans out an event). Stop and unwatch are teardown and never limited.
     pub mutate_user: Rate,
-    /// Gateway `VoiceState` frames per user (extra ones are dropped).
+    /// Published `VoiceState` changes per user. Every frame is still stored; past the limit,
+    /// one trailing publish of the latest flags goes out when the bucket allows.
     pub voice_state_user: Rate,
 }
 

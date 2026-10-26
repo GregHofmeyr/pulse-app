@@ -435,6 +435,24 @@ async fn list_dms(
     Ok(Json(dms_of(&s.db, me).await?))
 }
 
+/// The 1:1 DM between `a` and `b`, if there is one.
+async fn existing_dm<'e>(
+    db: impl sqlx::SqliteExecutor<'e>,
+    a: UserId,
+    b: UserId,
+) -> AppResult<Option<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT c.id FROM channels c
+         JOIN channel_members a ON a.channel_id = c.id AND a.user_id = ?
+         JOIN channel_members b ON b.channel_id = c.id AND b.user_id = ?
+         WHERE c.kind = 'dm' LIMIT 1",
+    )
+    .bind(a.to_string())
+    .bind(b.to_string())
+    .fetch_optional(db)
+    .await?)
+}
+
 async fn create_dm(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -450,6 +468,16 @@ async fn create_dm(
     if others.len() > 1 && !s.limits.create_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests);
     }
+    // Out of creates: refuse a new 1:1 here, before the lookups and the write lock (a plain
+    // read; the spend below, under the lock, is what counts).
+    if others.len() == 1
+        && !s.limits.create_user.allowed(&me.to_string())
+        && existing_dm(&s.db, me, *others.iter().next().unwrap())
+            .await?
+            .is_none()
+    {
+        return Err(AppError::TooManyRequests);
+    }
     for u in &others {
         let hit: Option<i64> = sqlx::query_scalar("SELECT 1 FROM users WHERE id = ?")
             .bind(u.to_string())
@@ -462,17 +490,8 @@ async fn create_dm(
 
     let mut tx = crate::db::begin_write(&s.db).await?;
     if others.len() == 1 {
-        let other = others.iter().next().unwrap().to_string();
-        let existing: Option<String> = sqlx::query_scalar(
-            "SELECT c.id FROM channels c
-             JOIN channel_members a ON a.channel_id = c.id AND a.user_id = ?
-             JOIN channel_members b ON b.channel_id = c.id AND b.user_id = ?
-             WHERE c.kind = 'dm' LIMIT 1",
-        )
-        .bind(me.to_string())
-        .bind(&other)
-        .fetch_optional(&mut *tx)
-        .await?;
+        let other = *others.iter().next().unwrap();
+        let existing = existing_dm(&mut *tx, me, other).await?;
         if let Some(id) = existing {
             let channel_id: ChannelId = id.parse().map_err(anyhow::Error::from)?;
             // Starting a DM you had closed reopens it.

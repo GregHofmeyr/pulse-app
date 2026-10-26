@@ -126,6 +126,15 @@ impl VoiceState {
         None
     }
 
+    /// The room `user` is in and their current flags (None if not in voice).
+    pub fn room_flags(&self, user: UserId) -> Option<(ChannelId, VoiceFlags)> {
+        self.rooms
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|(c, members)| members.get(&user).map(|m| (*c, m.flags)))
+    }
+
     pub fn rooms(&self) -> Vec<(ChannelId, Vec<(UserId, VoiceFlags)>)> {
         self.rooms
             .lock()

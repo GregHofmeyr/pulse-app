@@ -551,7 +551,7 @@ async fn edits_deletes_and_reactions_share_a_limit() {
 }
 
 #[tokio::test]
-async fn going_live_and_watching_share_the_mutate_limit() {
+async fn going_live_and_watching_are_limited_but_stop_and_unwatch_are_not() {
     let app = spawn_only(|l| l.mutate_user = tiny(3)).await;
     let (a_id, a) = register(&app, "alex").await;
     let (b_id, b) = register(&app, "sam").await;
@@ -575,19 +575,23 @@ async fn going_live_and_watching_share_the_mutate_limit() {
     app.voice.join(lounge, b_id, "PA_b");
     let live = format!("/streams/{lounge}/live");
     let settings = || serde_json::json!({"settings": {"height": 1080, "fps": 60, "audio": true}});
-    assert_eq!(post_json(&app, &a, &live, settings()).await.status(), 200);
-    assert_eq!(status(app.http.delete(app.url(&live)), &a).await, 204);
-    assert_eq!(post_json(&app, &a, &live, settings()).await.status(), 200);
+    for _ in 0..3 {
+        assert_eq!(post_json(&app, &a, &live, settings()).await.status(), 200);
+    }
     assert_eq!(post_json(&app, &a, &live, settings()).await.status(), 429);
-    assert_eq!(status(app.http.delete(app.url(&live)), &a).await, 429);
-    // sam's watch/unwatch draw on sam's own bucket
+    // sam's watch draws on sam's own bucket
     let watch = format!("/streams/{lounge}/watch");
     let unwatch = format!("/streams/{lounge}/unwatch");
     let who = || serde_json::json!({ "streamer": a_id });
-    assert_eq!(post_json(&app, &b, &watch, who()).await.status(), 204);
-    assert_eq!(post_json(&app, &b, &unwatch, who()).await.status(), 204);
-    assert_eq!(post_json(&app, &b, &watch, who()).await.status(), 204);
-    assert_eq!(post_json(&app, &b, &unwatch, who()).await.status(), 429);
+    for _ in 0..3 {
+        assert_eq!(post_json(&app, &b, &watch, who()).await.status(), 204);
+    }
+    assert_eq!(post_json(&app, &b, &watch, who()).await.status(), 429);
+    // Teardown never spends or waits: both buckets are empty, yet these still go through.
+    for _ in 0..3 {
+        assert_eq!(post_json(&app, &b, &unwatch, who()).await.status(), 204);
+    }
+    assert_eq!(status(app.http.delete(app.url(&live)), &a).await, 204);
 }
 
 /// Count the `VoiceStateChanged` events `ws` receives until it has been quiet for 500 ms.
@@ -664,4 +668,79 @@ async fn unchanged_voice_flags_publish_nothing() {
         talker.send(voice_frame(true)).await.unwrap();
     }
     assert_eq!(count_voice_states(&mut watcher).await, 1, "only the change");
+}
+
+/// Frames over the limit still count: the flags are stored, and one trailing publish carries the
+/// latest ones once the bucket allows, so peers never keep a stale mute icon.
+#[tokio::test]
+async fn limited_voice_state_frames_still_land_in_a_trailing_publish() {
+    use pulse_protocol::gateway::VoiceFlags;
+    let app = spawn_only(|l| l.voice_state_user = Rate::new(2, 4.0)).await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (_, b) = register(&app, "sam").await;
+    let srv = create_server(&app, &a, "Main").await;
+    let chans: Vec<pulse_protocol::rest::Channel> =
+        get_json(&app, &a, &format!("/servers/{}/channels", srv.id)).await;
+    let lounge = chans
+        .iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap()
+        .id;
+    app.voice.join(lounge, a_id, "PA_a");
+    let mut watcher = hello(&app, &b).await;
+    let mut talker = hello(&app, &a).await;
+    // 21 alternating frames: true, false, ..., true. The last one is over the limit.
+    for i in 0..21 {
+        talker.send(voice_frame(i % 2 == 0)).await.unwrap();
+    }
+    let mut seen = 0;
+    let mut last = None;
+    while let Ok(Some(Ok(m))) =
+        tokio::time::timeout(Duration::from_millis(1000), watcher.next()).await
+    {
+        if let Ws::Text(t) = m
+            && let Ok(ServerFrame::Event(Event::VoiceStateChanged { flags, .. })) =
+                serde_json::from_str(&t)
+        {
+            seen += 1;
+            last = Some(flags);
+        }
+    }
+    let want = VoiceFlags {
+        muted: true,
+        deafened: false,
+    };
+    assert_eq!(last, Some(want), "peers see the final flags");
+    assert!(seen <= 6, "{seen} publishes for 21 frames");
+    let room = app
+        .voice
+        .rooms()
+        .into_iter()
+        .find(|r| r.0 == lounge)
+        .unwrap();
+    assert_eq!(room.1, vec![(a_id, want)], "stored flags are the latest");
+    assert!(alive(&mut talker).await);
+}
+
+/// A user out of creates is refused a new 1:1 DM before any lookup or write lock.
+#[tokio::test]
+async fn a_limited_new_dm_is_refused_before_any_lookup() {
+    let app = spawn_only(|l| l.create_user = tiny(1)).await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, _) = register(&app, "sam").await;
+    let dm = |ids: serde_json::Value| {
+        post_json(&app, &a, "/dms", serde_json::json!({ "user_ids": ids }))
+    };
+    assert_eq!(dm(serde_json::json!([b_id])).await.status(), 200);
+    let nobody = pulse_protocol::ids::UserId::new();
+    assert_eq!(
+        dm(serde_json::json!([nobody])).await.status(),
+        429,
+        "refused up front, not after looking the user up"
+    );
+    assert_eq!(
+        dm(serde_json::json!([b_id])).await.status(),
+        200,
+        "reopening is still free"
+    );
 }
