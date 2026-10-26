@@ -204,6 +204,21 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   limits the CPU and memory an attacker can make the server use.
 - **Unknown usernames.** A login for a username that doesn't exist still runs a hash, so response timing doesn't reveal
   whether the account exists.
+- **Changing the password.** Settings → Advanced → **Change password** asks for the current password, the new one twice,
+  and a code (TOTP or recovery code) if the account has 2FA on. The new password follows the same 8 to 256 byte rule. It
+  is checked under the two-factor limits (a wrong current password or code keeps its count). Setting the new hash,
+  **signing out every other device** and deleting pending sign-in tickets are one database transaction. The other
+  devices' real-time connections are then closed and their calls ended, as with **Sign out all other devices**. The
+  device doing it stays signed in. The client passes the passwords straight to the server and never stores or logs
+  them.
+- **Owner tools.** The server's owner can run these on the host, against the database:
+  - `reset-password <username>` sets a new password, read as one line from standard input (never a command-line
+    argument, so it doesn't show up in the process list or shell history). It signs out all of the account's sessions
+    and deletes its pending sign-in tickets. It leaves 2FA alone.
+  - `revoke-sessions <username>` deletes all of the account's sessions. The password is not changed.
+  - Both work with the server stopped or running. A running server is not told: its next request with a deleted
+    session fails, and a new real-time connection is refused, but real-time connections and calls already open stay
+    up until they drop. Restarting the server closes them.
 
 **Two-factor authentication.** Optional, per account, and off until the member turns it on in Settings → Advanced.
 - **Codes.** Time-based one-time passwords (TOTP): SHA-1, 6 digits, 30-second steps, with the previous and next step
@@ -238,17 +253,18 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
 - **Recovery codes.** Turning 2FA on gives 10 recovery codes, shown once. Each is 16 characters from a 31-character
   alphabet (about 79 bits), written `xxxx-xxxx-xxxx-xxxx`; spaces, dashes and case are ignored when one is entered.
   Only their SHA-256 hashes are stored. A code works once and is then deleted. Making new codes needs a current TOTP
-  code and replaces all the old ones. Signing in and turning 2FA off accept either a TOTP code or a recovery code.
-  In those two, anything that is not 6 digits is tried as a recovery code.
+  code and replaces all the old ones. Signing in, turning 2FA off and changing the password accept either a TOTP code
+  or a recovery code. In those three, anything that is not 6 digits is tried as a recovery code.
 - **Signing in.** A wrong password gets the same answer whether or not the account has 2FA. With the right password
   and 2FA on, the server returns no session, only a login ticket:
   - 256 random bits, valid for 5 minutes. Only its SHA-256 hash is stored; expired tickets are pruned whenever a
     new one is issued.
   - Spent by one successful code. The ticket is deleted when it succeeds, and also when the 5th wrong code is entered
     on it. Unknown, expired and used-up tickets all get the same "gone" answer.
-  - Turning 2FA off, or the owner reset, deletes the account's tickets.
-- **Limits on guessing.** Every 2FA check (the sign-in code, and the password or code asked for when turning it on or
-  off or making new recovery codes) is counted against two limits at once: 5 per minute per IP address and 10 per
+  - Turning 2FA off, the owner reset, changing the password and the owner's `reset-password` delete the account's
+    tickets.
+- **Limits on guessing.** Every 2FA check (the sign-in code, the password or code asked for when turning it on or
+  off or making new recovery codes, and the current password and code asked for when changing the password) is counted against two limits at once: 5 per minute per IP address and 10 per
   hour per account. The count is taken before the check, so parallel guesses cannot all slip past. A wrong password
   or code keeps its count, as does a guess at an unknown or dead ticket (that one counts against the address only);
   every other outcome is refunded, and a refused attempt costs nothing. A refused attempt gets 429. Like the other
@@ -268,7 +284,9 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
 - **Expiry.** A session expires after 90 days without use. Each use pushes the expiry back; the stored expiry is updated
   at most once an hour. There is no absolute maximum lifetime, so a session used regularly never expires.
 - **Sign-out.** Signing out deletes the session. Settings → Advanced → **Sign out all other devices** deletes every
-  other session of the account and closes those devices' real-time connections at once.
+  other session of the account and closes those devices' real-time connections at once. Changing the password does
+  the same. The owner's `revoke-sessions` and `reset-password` delete all of an account's sessions (see *Owner tools*
+  above for what that leaves open on a running server).
 - **Sending the token.** REST calls send the token in the `Authorization` header. The real-time connection sends it in
   its first message. It never appears in a URL.
 
@@ -277,9 +295,9 @@ ties each of those tokens to the session that asked for it:
 - **Grant IDs.** Every voice or stream token carries a random grant ID (a participant attribute participants can't
   change). The server records which session each grant ID belongs to. The token never contains the session token or
   its hash.
-- **On sign-out.** When a session is signed out, either directly or by **Sign out all other devices**, the server asks
-  LiveKit for the participants in the rooms that session holds grants for. It then removes every participant carrying
-  one of that session's grant IDs, from voice and screen share alike.
+- **On sign-out.** When a session is signed out, directly, by **Sign out all other devices** or by changing the
+  password, the server asks LiveKit for the participants in the rooms that session holds grants for. It then removes
+  every participant carrying one of that session's grant IDs, from voice and screen share alike.
   - This is best-effort and takes at most 2 seconds. If LiveKit can't be reached in that time, the sign-out still
     succeeds and the miss is logged. That device then stays in its call until it leaves.
 - **Rejoining.** Removing a participant does not invalidate the LiveKit token it holds (LiveKit v1.13.10 has no
@@ -326,7 +344,7 @@ ties each of those tokens to the session that asked for it:
 |---|---|
 | Failed logins | 5/minute per IP, 10/hour per username from one IP, and 100/hour per username from all IPs together. Once a username's 100/hour is used up, an IP that has failed for it recently is refused, but an IP with no recent failures for it can still try (see section 7) |
 | Failed registrations (wrong, used or expired invite) | 5/hour per IP |
-| Two-factor checks (sign-in code, and the password or code for turning it on or off or making new recovery codes) | 5/minute per IP, and 10/hour per account; spent up front, kept only for a wrong password or code or a bad ticket |
+| Two-factor checks (sign-in code, the password or code for turning it on or off or making new recovery codes, and the current password and code for changing the password) | 5/minute per IP, and 10/hour per account; spent up front, kept only for a wrong password or code or a bad ticket |
 | Real-time connection attempts | 20/minute per IP (refunded once the connection authenticates) |
 | Concurrent real-time connections | 8 per user; further connections are refused, and the client tells the user why |
 | New messages | burst of 20, then 5/second per user |

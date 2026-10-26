@@ -119,6 +119,16 @@ stored secret, recovery codes and any pending sign-in; existing sessions stay). 
 password and can set 2FA up again in settings. It runs in a one-off server container over SSH, so it works with the
 server stopped.
 
+### Password reset and signing someone out
+
+Someone forgot their password: `just reset-password <username>`. It asks for the new password twice (not echoed) and
+sends it over SSH on standard input, never in a command line. It sets the password and signs the account out
+everywhere (2FA stays as it was). `just revoke-sessions <username>` only signs the account out everywhere, for a lost
+or stolen device. Both run in a one-off server container, so they work with the server stopped or running. A running
+server isn't told: the next request from a signed-out device fails and it can't reconnect, but a real-time connection
+or call that is already open stays up until it drops. To close those at once, restart the server:
+`ssh pulse@pulse 'cd /srv/pulse && docker compose restart pulse-server'`.
+
 ## 7. Deploying and rolling back
 
 - Every push to `main` that passes CI builds `ghcr.io/greghofmeyr/pulse-server:<7-char commit>` and `:latest`

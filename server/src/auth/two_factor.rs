@@ -132,6 +132,40 @@ pub async fn consume_recovery(
     Ok(n == 1)
 }
 
+/// Spend `code` as a TOTP code if it is 6 digits, otherwise as a recovery code.
+async fn accept_code(
+    conn: &mut SqliteConnection,
+    key: &totp::TotpKey,
+    user: UserId,
+    code: &str,
+) -> AppResult<bool> {
+    if totp::is_totp_shaped(code) {
+        accept_totp(conn, key, user, code).await
+    } else {
+        consume_recovery(conn, user, code).await
+    }
+}
+
+/// For a change that needs the second factor when the account has it on (the password change):
+/// Ok if 2FA is off, or if `code` is a current TOTP code or an unused recovery code, which is
+/// spent. A missing or wrong code is the same "wrong code" (403) the 2FA routes give. Call it
+/// inside the write transaction that makes the change, so the code is only spent if it commits.
+pub(crate) async fn check_code_if_on(
+    conn: &mut SqliteConnection,
+    s: &AppState,
+    user: UserId,
+    code: Option<&str>,
+) -> AppResult<()> {
+    if state(conn, user).await? != Some(true) {
+        return Ok(());
+    }
+    let key = key(s)?;
+    match code {
+        Some(code) if accept_code(conn, key, user, code).await? => Ok(()),
+        _ => Err(wrong_code()),
+    }
+}
+
 /// Delete everything 2FA keeps for `user`: the secret, recovery codes and login tickets.
 async fn forget_two_factor(conn: &mut SqliteConnection, user: &str) -> sqlx::Result<()> {
     sqlx::query("DELETE FROM user_totp WHERE user_id = ?")
@@ -331,12 +365,7 @@ async fn disable(
                 "two-factor authentication is not on".into(),
             ));
         }
-        let ok = if totp::is_totp_shaped(&req.code) {
-            accept_totp(&mut tx, key, u, &req.code).await?
-        } else {
-            consume_recovery(&mut tx, u, &req.code).await?
-        };
-        if !ok {
+        if !accept_code(&mut tx, key, u, &req.code).await? {
             return Err(wrong_code());
         }
         forget_two_factor(&mut tx, &u.to_string()).await?;

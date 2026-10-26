@@ -5,7 +5,8 @@ use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::UserId;
 use pulse_protocol::rest::{
-    InviteResponse, LoginRequest, LogoutOthersResponse, RegisterRequest, SessionResponse, User,
+    ChangePasswordRequest, InviteResponse, LoginRequest, LogoutOthersResponse, RegisterRequest,
+    SessionResponse, User,
 };
 use sqlx::SqlitePool;
 
@@ -22,6 +23,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/login", post(login))
         .route("/auth/logout", post(logout))
         .route("/auth/logout-others", post(logout_others))
+        .route("/auth/password", post(change_password))
         .route("/me", get(me))
         .route("/invites", post(create_invite))
 }
@@ -35,6 +37,21 @@ fn valid_username(u: &str) -> bool {
     (2..=32).contains(&u.len())
         && u.bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'.')
+}
+
+/// The password rule for registering, changing and resetting: 8 to 256 bytes.
+fn check_password_rule(p: &str) -> AppResult<()> {
+    if p.len() < 8 {
+        return Err(AppError::BadRequest(
+            "password must be at least 8 characters".into(),
+        ));
+    }
+    if p.len() > 256 {
+        return Err(AppError::BadRequest(
+            "password must be at most 256 bytes".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub async fn load_user(db: &SqlitePool, id: UserId) -> AppResult<User> {
@@ -76,11 +93,7 @@ async fn register_with(s: &AppState, mut req: RegisterRequest) -> AppResult<Json
             "username must be 2-32 letters, numbers, _ or .".into(),
         ));
     }
-    if !(8..=256).contains(&req.password.len()) {
-        return Err(AppError::BadRequest(
-            "password must be at least 8 characters".into(),
-        ));
-    }
+    check_password_rule(&req.password)?;
     // Check the invite before anything expensive (and before revealing whether a username exists).
     let cutoff = invites::cutoff(chrono::Utc::now());
     let found: Option<(Option<String>, String)> =
@@ -270,6 +283,134 @@ async fn logout_others(
     Ok(Json(LogoutOthersResponse {
         revoked: sign_out_others(&s, u, &t).await?,
     }))
+}
+
+/// `POST /auth/password`: change the caller's password. Checked under the two-factor limits
+/// like the 2FA routes (a wrong password or code keeps the spend). With 2FA on, a code is needed
+/// too. The new hash, signing out every other session and dropping pending login tickets are
+/// one transaction; then the other devices' sockets close (4001) and their calls end.
+async fn change_password(
+    State(s): State<AppState>,
+    ClientIp(ip): ClientIp,
+    AuthUser(u): AuthUser,
+    BearerToken(t): BearerToken,
+    Json(req): Json<ChangePasswordRequest>,
+) -> AppResult<StatusCode> {
+    let revoked = super::two_factor::limited(&s, ip, u, async {
+        let old: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+            .bind(u.to_string())
+            .fetch_optional(&s.db)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        if !password::verify_async(req.current_password.clone(), old.clone()).await {
+            return Err(AppError::ForbiddenMsg("wrong password".into()));
+        }
+        check_password_rule(&req.new_password)?;
+        let new = password::hash_async(req.new_password.clone()).await?;
+        let mut tx = crate::db::begin_write(&s.db).await?;
+        super::two_factor::check_code_if_on(&mut tx, &s, u, req.code.as_deref()).await?;
+        // Only over the hash that was checked: a change that committed meanwhile (say, the owner
+        // who just changed it, racing someone with the old password) is not overwritten.
+        let changed =
+            sqlx::query("UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?")
+                .bind(&new)
+                .bind(u.to_string())
+                .bind(&old)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+        if changed != 1 {
+            return Err(AppError::Conflict(
+                "your password was just changed; try again".into(),
+            ));
+        }
+        let revoked = session::revoke_others_in(&mut tx, u, &t).await?;
+        sqlx::query("DELETE FROM mfa_tickets WHERE user_id = ?")
+            .bind(u.to_string())
+            .execute(&mut *tx)
+            .await?;
+        tx.commit().await?;
+        Ok(revoked)
+    })
+    .await?;
+    after_revoke_others(&s, u, &t, revoked).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The id of the user named `username` (normalised like login), for the owner's CLI tools.
+async fn user_named(
+    conn: &mut sqlx::SqliteConnection,
+    username: &str,
+) -> anyhow::Result<(String, String)> {
+    let name = normalize_username(username);
+    let id: Option<String> = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
+        .bind(&name)
+        .fetch_optional(&mut *conn)
+        .await?;
+    let id = id.ok_or_else(|| anyhow::anyhow!("no user named {name}"))?;
+    Ok((name, id))
+}
+
+/// Delete every session of user `id`; returns how many were still live.
+async fn revoke_all_in(conn: &mut sqlx::SqliteConnection, id: &str) -> anyhow::Result<u64> {
+    let live: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE user_id = ? AND expires_at > ?")
+            .bind(id)
+            .bind(now())
+            .fetch_one(&mut *conn)
+            .await?;
+    sqlx::query("DELETE FROM sessions WHERE user_id = ?")
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(u64::try_from(live).unwrap_or(0))
+}
+
+/// Owner reset (`reset-password`): set a user's password (same rule as registering) and sign
+/// out all of their sessions and pending login tickets, in one transaction. Leaves 2FA alone.
+/// Returns the normalised username and how many live sessions went.
+pub async fn reset_password(
+    db: &SqlitePool,
+    username: &str,
+    new_password: &str,
+) -> anyhow::Result<(String, u64)> {
+    check_password_rule(new_password).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let hash = password::hash_async(new_password.to_string()).await?;
+    let mut tx = crate::db::begin_write(db).await?;
+    let (name, id) = user_named(&mut tx, username).await?;
+    sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+        .bind(&hash)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    let revoked = revoke_all_in(&mut tx, &id).await?;
+    sqlx::query("DELETE FROM mfa_tickets WHERE user_id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok((name, revoked))
+}
+
+/// Owner tool (`revoke-sessions`): delete every session of a user. Returns the normalised
+/// username and how many live sessions went.
+pub async fn revoke_sessions(db: &SqlitePool, username: &str) -> anyhow::Result<(String, u64)> {
+    let mut tx = crate::db::begin_write(db).await?;
+    let (name, id) = user_named(&mut tx, username).await?;
+    let revoked = revoke_all_in(&mut tx, &id).await?;
+    tx.commit().await?;
+    Ok((name, revoked))
+}
+
+/// The new password for `reset-password`: the first line of `input`, without its line ending
+/// (spaces are kept). Empty input is an error.
+pub fn read_password_line(mut input: impl std::io::BufRead) -> anyhow::Result<String> {
+    let mut line = String::new();
+    if input.read_line(&mut line)? == 0 {
+        anyhow::bail!("no password on stdin");
+    }
+    let line = line.strip_suffix('\n').unwrap_or(&line);
+    Ok(line.strip_suffix('\r').unwrap_or(line).to_string())
 }
 
 async fn me(State(s): State<AppState>, AuthUser(u): AuthUser) -> AppResult<Json<User>> {
