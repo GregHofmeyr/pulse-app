@@ -1043,6 +1043,8 @@ impl VoiceManager {
                 Ok(())
             }
             Err(e) => {
+                // the room may have connected before a cancel: its server isn't ours any more
+                self.link.clear();
                 if rejoin_of.is_none() {
                     self.emit_state(None, Connection::Disconnected);
                 }
@@ -1321,8 +1323,12 @@ impl VoiceManager {
                         state.clone(),
                     );
                     async move {
-                        let Ok(s) = room.get_stats().await else {
-                            return;
+                        let s = match room.get_stats().await {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::debug!(error = %e, "voice: link stats unavailable");
+                                return;
+                            }
                         };
                         let now = tokio::time::Instant::now();
                         let (totals, last_codec, loss) = &mut *state.lock().unwrap();
@@ -2766,6 +2772,17 @@ mod tests {
             !tags.contains(&"stage:starting_audio".to_string()),
             "{tags:?}"
         );
+    }
+
+    /// A join that fails leaves no server or ping history of its own (or a previous call's).
+    #[tokio::test]
+    async fn a_failed_connect_leaves_the_link_clear() {
+        let app = testing::spawn_with(unreachable_livekit()).await;
+        let (token, api, lounge) = alex_and_a_voice_channel(&app).await;
+        let (vm, _) = collecting_manager();
+        stale_link(&vm);
+        assert!(join_null(&vm, &api, &token, lounge).await.is_err());
+        assert!(link_is_clear(&vm));
     }
 
     #[tokio::test]
