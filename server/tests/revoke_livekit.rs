@@ -831,16 +831,24 @@ async fn age_grant(app: &TestApp, id: &str, minutes: i64) {
         .unwrap();
 }
 
-/// Grants nobody connected with, or whose participant left, are pruned once their token can no
-/// longer be used (10-minute TTL + margin), by any user's next token request; grants of
-/// participants still connected stay.
+/// Grants whose participant left more than 15 min ago, and grants of expired sessions, are
+/// pruned by any user's next token request. Never-joined grants of a live session are kept,
+/// however old (a lost join webhook would make a connected one look never-joined).
 #[tokio::test]
 async fn unused_and_finished_grants_are_pruned_globally() {
     let lk = fake_livekit().await;
     let app = app_with_livekit(&lk.url).await;
     let (_, a) = register(&app, "alex").await;
     let (_, s) = register(&app, "sam").await;
+    let (jo_id, jo) = register(&app, "jo").await;
     let l = lounge(&app, &a).await;
+    let jl = lounge(&app, &jo).await;
+    let expired = grant_of(&app, &voice_token(&app, &jo, &jl).await);
+    sqlx::query("UPDATE sessions SET expires_at = '2026-01-01T00:00:00.000Z' WHERE user_id = ?")
+        .bind(jo_id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
     let unused_old = grant_of(&app, &voice_token(&app, &a, &l).await);
     let unused_new = grant_of(&app, &voice_token(&app, &a, &l).await);
     let in_call = voice_token(&app, &a, &l).await;
@@ -901,11 +909,81 @@ async fn unused_and_finished_grants_are_pruned_globally() {
         .unwrap();
     age_grant(&app, &unused_new, 5).await;
 
-    // sam's request (another user) prunes alex's stale ones
+    // sam's request (another user) prunes alex's finished one and jo's expired one
     let sl = lounge(&app, &s).await;
     let sams = grant_of(&app, &voice_token(&app, &s, &sl).await);
+    let got = grant_ids(&app).await;
+    assert!(!got.contains(&left) && !got.contains(&expired), "{got:?}");
     assert_eq!(
-        grant_ids(&app).await,
-        [unused_new, in_call, sams].into_iter().collect()
+        got,
+        [unused_old, unused_new, in_call, sams]
+            .into_iter()
+            .collect()
     );
+}
+
+/// Never-joined grants are capped per session (the newest are kept) instead of aged out.
+#[tokio::test]
+async fn never_joined_grants_are_capped_per_session() {
+    let app = spawn().await;
+    let (_, a) = register(&app, "alex").await;
+    let (_, s) = register(&app, "sam").await;
+    let l = lounge(&app, &a).await;
+    let sl = lounge(&app, &s).await;
+    let sams = grant_of(&app, &voice_token(&app, &s, &sl).await);
+    let cap = session::UNJOINED_GRANTS_KEPT;
+    let mut alex = Vec::new();
+    for _ in 0..cap + 5 {
+        alex.push(grant_of(&app, &voice_token(&app, &a, &l).await));
+    }
+    let got = grant_ids(&app).await;
+    assert_eq!(got.len(), cap + 1, "alex's newest {cap} plus sam's");
+    assert!(
+        got.contains(&sams),
+        "another session's grants aren't touched"
+    );
+    for (i, g) in alex.iter().enumerate() {
+        assert_eq!(got.contains(g), i >= 5, "grant #{i}");
+    }
+}
+
+/// The join webhook was lost (say, the server was restarting), and much later the session is
+/// revoked: the grant is still known, so LiveKit's list still shows who to remove.
+#[tokio::test]
+async fn a_lost_join_webhook_participant_is_removed_by_a_much_later_revoke() {
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
+    let (alex, a1) = register(&app, "alex").await;
+    let a2 = login(&app, "alex").await;
+    let l = lounge(&app, &a1).await;
+    let jwt = voice_token(&app, &a2, &l).await;
+    let grant = grant_of(&app, &jwt);
+    lk.connect(&l.id.to_string(), &alex.to_string(), "PA_a2", Some(&grant));
+    age_grant(&app, &grant, 120).await;
+    let (_, s) = register(&app, "sam").await;
+    let sl = lounge(&app, &s).await;
+    voice_token(&app, &s, &sl).await; // prunes whatever is prunable
+    assert_eq!(logout_others(&app, &a1).await, 1);
+    assert_eq!(calls(&lk), set(&[(l.id.to_string(), alex.to_string())]));
+}
+
+/// A device whose join webhook was lost is still admitted at its next full reconnect, long
+/// after its token's own lifetime (LiveKit refreshed it, keeping the grant).
+#[tokio::test]
+async fn a_lost_join_webhook_device_survives_its_next_full_reconnect() {
+    let lk = fake_livekit().await;
+    let app = app_with_livekit(&lk.url).await;
+    let (alex, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    let jwt = voice_token(&app, &a, &l).await;
+    let grant = grant_of(&app, &jwt);
+    lk.connect(&l.id.to_string(), &alex.to_string(), "PA_1", Some(&grant));
+    age_grant(&app, &grant, 120).await;
+    let (_, s) = register(&app, "sam").await;
+    let sl = lounge(&app, &s).await;
+    voice_token(&app, &s, &sl).await; // prunes whatever is prunable
+    connect(&app, Some(&lk), &jwt, "PA_2").await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert_eq!(removed_count(&lk), 0, "{:?}", calls(&lk));
+    assert!(app.voice_members(l.id).contains(&alex));
 }

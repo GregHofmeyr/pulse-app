@@ -7,6 +7,7 @@
   import { isMuted } from '../lib/conversations'
   import LiveBadge from './LiveBadge.svelte'
   import { voiceApi } from '../lib/voice.svelte'
+  import { hoverPrefetch } from '../lib/hoverPrefetch'
 
   let {
     serverId,
@@ -27,6 +28,10 @@
   const lists = $derived(channelsFor(app.state, serverId))
   // Who's in voice is only shown to people who've joined the server.
   const member = $derived(isMember(app.state, serverId))
+
+  // Join tokens are fetched when the pointer rests on a voice channel, not while it sweeps past.
+  const prefetch = hoverPrefetch((id) => voiceApi.prefetch(id))
+  $effect(() => () => prefetch.cancel())
 
   // inline "new channel" field
   let adding = $state<'text' | 'voice' | null>(null)
@@ -86,8 +91,9 @@
     {@const people = member ? voiceOccupants(app.state, serverId, c.id) : []}
     <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId}
       data-tip={c.id === voiceChannelId ? 'You’re here' : `Join ${c.name}`}
-      onmouseenter={() => { if (member && c.id !== voiceChannelId) voiceApi.prefetch(c.id) }}
-      onfocus={() => { if (member && c.id !== voiceChannelId) voiceApi.prefetch(c.id) }}
+      onmouseenter={() => { if (member && c.id !== voiceChannelId) prefetch.enter(c.id) }}
+      onfocus={() => { if (member && c.id !== voiceChannelId) prefetch.enter(c.id) }}
+      onmouseleave={() => prefetch.leave(c.id)} onblur={() => prefetch.leave(c.id)}
       onclick={() => onJoinVoice(c.id)} ondblclick={() => onSelect(c.id)}>
       <span class="ico"><Icon name="speaker" size={17} /></span><span class="grow">{c.name}</span>
       {#if people.length}<span class="count">{people.length}</span>{/if}

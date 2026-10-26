@@ -76,10 +76,16 @@ pub async fn exists(db: &SqlitePool, token_hash: &str) -> anyhow::Result<bool> {
 /// The LiveKit participant attribute that carries a token's grant id.
 pub const GRANT_ATTRIBUTE: &str = "pulse_grant";
 
-/// A grant nobody is connected with is pruned after this: LiveKit tokens live 10 minutes, plus
-/// a margin for clock skew and a join webhook that's slow to arrive.
-const GRANT_UNUSED_FOR: Duration = Duration::minutes(15);
-/// Most stale grants one token request prunes (bounds the work; pruning outpaces issuing).
+/// A grant whose participant left is pruned after this: LiveKit tokens live 10 minutes, plus a
+/// margin for a reconnect that rejoins with the same (refreshed) token.
+const GRANT_LEFT_FOR: Duration = Duration::minutes(15);
+/// Never-joined grants kept per session (the newest); older ones are pruned. They are not aged
+/// out: a lost join webhook makes a connected grant look never-joined, and it must stay known
+/// for a later revoke and for that device's next full reconnect. 100 is well above a hover
+/// sweep (the per-user limit allows 60 at once), and hundreds of token requests from that one
+/// device before such a grant is evicted. With the rate limit this bounds the table per session.
+pub const UNJOINED_GRANTS_KEPT: usize = 100;
+/// Most finished or expired-session grants one token request prunes (bounds the work).
 const PRUNE_BATCH: i64 = 100;
 
 /// A grant of a revoked session: LiveKit participants carrying `id` in `room` are removed.
@@ -101,8 +107,9 @@ pub struct Revoked {
 /// Record a grant for a LiveKit token about to be issued to `token`'s session for `identity` in
 /// `room`; returns its id (128 random bits, base64url) for the token's `pulse_grant` attribute.
 /// `None` if the session is gone or expired, so no token is minted for a session that a
-/// concurrent revoke just deleted. Also prunes a batch of anyone's grants that no participant
-/// holds any more (never joined, or left) once their token can't be used.
+/// concurrent revoke just deleted. Also prunes: this session's never-joined grants beyond the
+/// newest [`UNJOINED_GRANTS_KEPT`], and a batch of anyone's grants whose participant left more
+/// than 15 min ago or whose session expired (revoked sessions' grants go with the session).
 pub async fn record_grant(
     db: &SqlitePool,
     token: &str,
@@ -112,7 +119,7 @@ pub async fn record_grant(
     let mut bytes = [0u8; 16];
     rand::rng().fill_bytes(&mut bytes);
     let id = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
-    let now = Utc::now();
+    let (now, h) = (Utc::now(), hash_token(token));
     let done = sqlx::query(
         "INSERT INTO livekit_grants (id, token_hash, room, identity, issued_at)
          SELECT ?, token_hash, ?, ?, ? FROM sessions WHERE token_hash = ? AND expires_at > ?",
@@ -121,20 +128,29 @@ pub async fn record_grant(
     .bind(room)
     .bind(identity)
     .bind(ts(now))
-    .bind(hash_token(token))
+    .bind(&h)
     .bind(ts(now))
     .execute(db)
     .await?;
     if done.rows_affected() == 0 {
         return Ok(None);
     }
-    let cutoff = ts(now - GRANT_UNUSED_FOR);
     sqlx::query(
-        "DELETE FROM livekit_grants WHERE id IN (SELECT id FROM livekit_grants
-         WHERE (joined_sid IS NULL AND issued_at < ?) OR left_at < ? LIMIT ?)",
+        "DELETE FROM livekit_grants WHERE token_hash = ?1 AND joined_sid IS NULL AND id NOT IN (
+           SELECT id FROM livekit_grants WHERE token_hash = ?1 AND joined_sid IS NULL
+           ORDER BY issued_at DESC, rowid DESC LIMIT ?2)",
     )
-    .bind(&cutoff)
-    .bind(&cutoff)
+    .bind(&h)
+    .bind(i64::try_from(UNJOINED_GRANTS_KEPT).unwrap_or(i64::MAX))
+    .execute(db)
+    .await?;
+    sqlx::query(
+        "DELETE FROM livekit_grants WHERE id IN (SELECT g.id FROM livekit_grants g
+           JOIN sessions s ON s.token_hash = g.token_hash
+           WHERE g.left_at < ?1 OR s.expires_at <= ?2 LIMIT ?3)",
+    )
+    .bind(ts(now - GRANT_LEFT_FOR))
+    .bind(ts(now))
     .bind(PRUNE_BATCH)
     .execute(db)
     .await?;
