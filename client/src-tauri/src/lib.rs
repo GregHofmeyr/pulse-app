@@ -188,6 +188,7 @@ pub fn run() {
             commands::restore_session,
             commands::logout,
             commands::logout_others,
+            commands::change_password,
             commands::two_factor_status,
             commands::two_factor_setup,
             commands::two_factor_enable,

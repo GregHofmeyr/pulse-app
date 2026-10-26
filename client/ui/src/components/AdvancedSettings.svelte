@@ -3,6 +3,7 @@
   import { onMount } from 'svelte'
   import { api, errorText } from '../lib/tauri'
   import TwoFactorSettings from './TwoFactorSettings.svelte'
+  import ChangePassword from './ChangePassword.svelte'
 
   // null until the saved value is known: the box can't be changed before then
   let autoSend = $state<boolean | null>(null)
@@ -76,6 +77,8 @@
 {/if}
 {#if result}<p class="ok" role="status">{result}</p>{/if}
 {#if error}<p class="err" role="alert">{error}</p>{/if}
+
+<ChangePassword />
 
 <TwoFactorSettings />
 

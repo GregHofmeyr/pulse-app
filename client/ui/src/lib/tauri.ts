@@ -45,6 +45,9 @@ export const api = {
   logout: () => invoke<void>('logout'),
   /** Sign out every other device of this account; resolves to how many were signed out. */
   logoutOthers: () => invoke<number>('logout_others'),
+  /** Every other device is signed out on success. `code` only when two-factor is on. */
+  changePassword: (currentPassword: string, newPassword: string, code: string | null) =>
+    invoke<void>('change_password', { currentPassword, newPassword, code }),
   probe: () => invoke<void>('gateway_probe'),
   listServers: () => invoke<Server[]>('list_servers'),
   createServer: (name: string) => invoke<Server>('create_server', { name }),

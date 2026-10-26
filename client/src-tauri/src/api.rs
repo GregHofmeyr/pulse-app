@@ -4,13 +4,14 @@ use std::time::Duration;
 
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
-    AddMembersRequest, Channel, ChannelKind, CreateDmRequest, CreateEmojiRequest, CustomEmoji,
-    EditMessageRequest, GoLiveRequest, LoginMfaRequest, LoginRequest, MarkReadRequest, MediaInfo,
-    Member, Message, MfaRequired, MuteTarget, RecoveryCodesResponse, RegisterRequest,
-    RenameChannelRequest, RenameEmojiRequest, SendMessageRequest, Server, SessionResponse,
-    SetMuteRequest, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
-    TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse,
-    TwoFactorStatus, User, VoiceTokenResponse, WatchRequest,
+    AddMembersRequest, ChangePasswordRequest, Channel, ChannelKind, CreateDmRequest,
+    CreateEmojiRequest, CustomEmoji, EditMessageRequest, GoLiveRequest, LoginMfaRequest,
+    LoginRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired, MuteTarget,
+    RecoveryCodesResponse, RegisterRequest, RenameChannelRequest, RenameEmojiRequest,
+    SendMessageRequest, Server, SessionResponse, SetMuteRequest, StreamInfo, StreamRole,
+    StreamSettings, StreamTicketRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
+    TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, User, VoiceTokenResponse,
+    WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -824,6 +825,32 @@ impl Api {
         Ok(())
     }
 
+    /// Change this account's password (`code` only when two-factor is on). Every other device
+    /// is signed out; this one stays. The passwords go only into the request body.
+    pub async fn change_password(
+        &self,
+        token: &str,
+        current_password: &str,
+        new_password: &str,
+        code: Option<&str>,
+    ) -> Result<(), ApiError> {
+        friendly_wrong_code(
+            Self::ok_empty(
+                self.http
+                    .post(format!("{}/auth/password", self.base))
+                    .bearer_auth(token)
+                    .json(&ChangePasswordRequest {
+                        current_password: current_password.into(),
+                        new_password: new_password.into(),
+                        code: code.map(Into::into),
+                    })
+                    .send()
+                    .await,
+            )
+            .await,
+        )
+    }
+
     /// Sign out every other device of this account; returns how many sessions were revoked.
     pub async fn logout_others(&self, token: &str) -> Result<u32, ApiError> {
         let r: pulse_protocol::rest::LogoutOthersResponse = Self::parse(
@@ -1162,6 +1189,71 @@ mod tests {
         assert!(matches!(api.me(&other).await, Err(ApiError::Unauthorized)));
         assert!(api.me(&token).await.is_ok(), "this device stays signed in");
         assert_eq!(api.logout_others(&token).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn change_password_signs_out_the_other_devices() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let LoginOutcome::Session(other) = api.login("alex", "hunter2hunter2").await.unwrap()
+        else {
+            panic!("no 2FA here");
+        };
+        let err = api
+            .change_password(&token, "nopenopenope", "new password 1", None)
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, ApiError::Forbidden(_)), "{err:?}");
+        let err = api
+            .change_password(&token, "hunter2hunter2", "short", None)
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, ApiError::Rejected(_)), "{err:?}");
+        api.change_password(&token, "hunter2hunter2", "new password 1", None)
+            .await
+            .unwrap();
+        assert!(matches!(
+            api.me(&other.token).await,
+            Err(ApiError::Unauthorized)
+        ));
+        assert!(api.me(&token).await.is_ok(), "this device stays signed in");
+        assert!(matches!(
+            api.login("alex", "hunter2hunter2").await,
+            Err(ApiError::Unauthorized)
+        ));
+        assert!(matches!(
+            api.login("alex", "new password 1").await,
+            Ok(LoginOutcome::Session(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn change_password_with_two_factor_needs_a_code() {
+        let app = testing::spawn().await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let (secret, token, _) = two_factor_user(&app, &api).await;
+        for code in [None, Some("not-a-code")] {
+            let err = api
+                .change_password(&token, "hunter2hunter2", "new password 1", code)
+                .await
+                .err()
+                .unwrap();
+            assert!(
+                matches!(&err, ApiError::Forbidden(m) if m == WRONG_CODE),
+                "{err:?}"
+            );
+        }
+        api.change_password(
+            &token,
+            "hunter2hunter2",
+            "new password 1",
+            Some(&code_at(&secret, 1)),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]

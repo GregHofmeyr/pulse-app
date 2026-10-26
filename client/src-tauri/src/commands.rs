@@ -584,6 +584,25 @@ pub async fn logout_others(app: AppHandle, core: State<'_, Core>) -> Result<u32,
     core.check(&app, api.logout_others(&token).await)
 }
 
+/// Settings → Advanced: change the password (`code` when two-factor is on); every other device
+/// is signed out. The passwords are passed straight on: never stored or logged.
+#[tauri::command]
+pub async fn change_password(
+    app: AppHandle,
+    core: State<'_, Core>,
+    current_password: String,
+    new_password: String,
+    code: Option<String>,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    let code = code.as_deref().map(str::trim).filter(|c| !c.is_empty());
+    core.check(
+        &app,
+        api.change_password(&token, &current_password, &new_password, code)
+            .await,
+    )
+}
+
 /// Settings → Advanced: is two-factor on, and can this server do it at all.
 #[tauri::command]
 pub async fn two_factor_status(
