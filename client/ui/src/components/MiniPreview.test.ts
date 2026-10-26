@@ -166,7 +166,9 @@ describe('mini-preview', () => {
 
   /** A mouse click (detail 1); `el.click()` has detail 0, like a keyboard activation. */
   const mouseClick = (el: Element) => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
-  const ptr = (type: string, x: number, y: number) => new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y })
+  /** A pointer event with the primary button held (`buttons` 1) until the release. */
+  const ptr = (type: string, x: number, y: number) =>
+    new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, buttons: type === 'pointerup' ? 0 : 1, clientX: x, clientY: y })
   const area = () => vi.spyOn(document.body, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 1000, bottom: 600, width: 1000, height: 600, x: 0, y: 0, toJSON() {} } as DOMRect)
   /** The box under the pointer, with pointer capture (jsdom has none) recorded. */
   const box = () => {
@@ -196,8 +198,13 @@ describe('mini-preview', () => {
     area()
     const { mini, open, capture } = box()
     open.dispatchEvent(ptr('pointerdown', 900, 550))
-    expect(capture).toHaveBeenCalled()
+    // a press alone doesn't capture: capture would retarget a plain click away from the open button
+    expect(capture).not.toHaveBeenCalled()
+    mini.dispatchEvent(ptr('pointermove', 898, 551))
+    expect(capture).not.toHaveBeenCalled()
     mini.dispatchEvent(ptr('pointermove', 400, 300))
+    // past the threshold it's a drag: the box takes the pointer
+    expect(capture).toHaveBeenCalledTimes(1)
     mini.dispatchEvent(ptr('pointermove', 120, 80))
     mini.dispatchEvent(ptr('pointerup', 120, 80))
     // the click that ends a drag isn't a click on the preview
@@ -261,13 +268,28 @@ describe('mini-preview', () => {
     expect(callView.goTo).toBe('V1')
   })
 
-  it('a_plain_click_goes_to_the_call', async () => {
+  it('a_plain_click_does_not_capture_and_goes_to_the_call', async () => {
     await streamApi.watch('V1', 'U2')
     mountMini()
-    const { mini, open } = box()
+    const { mini, open, capture } = box()
     open.dispatchEvent(ptr('pointerdown', 900, 550))
+    mini.dispatchEvent(ptr('pointermove', 901, 550))
     mini.dispatchEvent(ptr('pointerup', 901, 550))
     mouseClick(open)
+    expect(capture).not.toHaveBeenCalled()
     expect(callView.goTo).toBe('V1')
+  })
+
+  it('a_press_released_off_the_box_does_not_start_a_drag_on_a_later_hover', async () => {
+    await streamApi.watch('V1', 'U2')
+    mountMini()
+    area()
+    const { mini, open, capture } = box()
+    open.dispatchEvent(ptr('pointerdown', 900, 550))
+    // released elsewhere (no capture yet, so the box never hears it); later the mouse passes over, no button held
+    mini.dispatchEvent(new MouseEvent('pointermove', { bubbles: true, buttons: 0, clientX: 100, clientY: 60 }))
+    flushSync()
+    expect(mini.classList.contains('dragging')).toBe(false)
+    expect(capture).not.toHaveBeenCalled()
   })
 })

@@ -76,6 +76,44 @@ describe('Shell', () => {
   })
 })
 
+describe('account menu', () => {
+  it('esc_closes_the_account_menu_and_focus_returns_to_its_toggle', async () => {
+    app.state = { ...emptyState() }
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    flushSync()
+    const toggle = document.querySelector<HTMLButtonElement>('.who-btn')!
+    toggle.click()
+    flushSync()
+    expect(document.querySelector('.me [role=menu]')).not.toBeNull()
+    await new Promise((r) => setTimeout(r, 0)) // armed after the opening click
+    const esc = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+    window.dispatchEvent(esc)
+    flushSync()
+    expect(document.querySelector('.me [role=menu]')).toBeNull()
+    expect(esc.defaultPrevented).toBe(true)
+    expect(document.activeElement).toBe(toggle)
+    // the toggle still toggles: a press on it isn't an outside press
+    toggle.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    toggle.click()
+    flushSync()
+    expect(document.querySelector('.me [role=menu]')).not.toBeNull()
+  })
+
+  it('esc_closes_the_server_mute_menu', async () => {
+    app.state = { ...emptyState(), servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }] }
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    flushSync()
+    const tab = [...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Alpha'))!
+    tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
+    flushSync()
+    expect(document.querySelector('.ctx[role=menu]')).not.toBeNull()
+    await new Promise((r) => setTimeout(r, 0))
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    flushSync()
+    expect(document.querySelector('.ctx[role=menu]')).toBeNull()
+  })
+})
+
 describe('watching from anywhere', () => {
   const me = { id: 'U1', username: 'alex', avatar_hash: null }
   const sam = { id: 'U2', username: 'sam', avatar_hash: null }

@@ -18,8 +18,8 @@
   const name = $derived(displayName(app.state, app.state.channels[channelId]?.server_id ?? null, streamer))
   let corner = $state<Corner>(loadMiniCorner())
   let box = $state<HTMLElement>()
-  /** While pressed: where the press started. */
-  let press: { x: number; y: number } | null = null
+  /** While pressed: where the press started, and which pointer. */
+  let press: { x: number; y: number; id: number } | null = null
   let offset = $state<{ x: number; y: number } | null>(null)
   /** The mouse click that ends a drag is not a click on the preview (cleared once that click has had its turn). */
   let dragged = false
@@ -31,20 +31,25 @@
 
   function down(e: PointerEvent) {
     if (e.button !== 0 || (e.target as Element).closest('.x')) return
-    press = { x: e.clientX, y: e.clientY }
+    // no capture yet: it would retarget a plain click's click event away from the open button
+    press = { x: e.clientX, y: e.clientY, id: e.pointerId }
     dragged = false
-    // moves and the release come here even off the box (or the window)
-    try {
-      box?.setPointerCapture?.(e.pointerId)
-    } catch {
-      /* no such pointer (synthetic events) */
-    }
   }
   function move(e: PointerEvent) {
     if (!press) return
+    // the button came up somewhere we didn't hear (released off the box before a drag began)
+    if (!offset && !(e.buttons & 1)) return abort()
     const dx = e.clientX - press.x
     const dy = e.clientY - press.y
-    if (!offset && Math.hypot(dx, dy) < DRAG_PX) return
+    if (!offset) {
+      if (Math.hypot(dx, dy) < DRAG_PX) return
+      // a drag: moves and the release come here even off the box (or the window)
+      try {
+        box?.setPointerCapture?.(press.id)
+      } catch {
+        /* no such pointer (synthetic events) */
+      }
+    }
     offset = { x: dx, y: dy }
   }
   function up(e: PointerEvent) {

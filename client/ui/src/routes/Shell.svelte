@@ -71,6 +71,12 @@
   }
   let reportOpen = $state(false)
   let menuOpen = $state(false)
+  let menuToggle = $state<HTMLButtonElement>()
+  /** An outside press or Esc closes the account menu; after Esc, focus goes back to its toggle. */
+  function closeAccountMenu(e: Event) {
+    menuOpen = false
+    if (e instanceof KeyboardEvent) menuToggle?.focus()
+  }
   let serverMenuOpen = $state(false)
   let serverSettingsOpen = $state(false)
   // Both belong to the server they were opened on.
@@ -331,7 +337,7 @@
       {/if}
       <VoiceStatus />
       <div class="me">
-        <button class="who-btn" data-tip="Account" aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
+        <button bind:this={menuToggle} class="who-btn" data-tip="Account" data-menu-toggle aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
           <span class="avatar" style:background={avatarColor(user.id)}>{initial(user.username)}</span>
           <span class="who">{user.username}<small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
         </button>
@@ -345,7 +351,7 @@
         {/if}
         <button class="me-btn" aria-label="Settings" onclick={() => openSettings()}><Icon name="gear" /></button>
         {#if menuOpen}
-          <div class="menu" role="menu">
+          <div class="menu" role="menu" use:clickOutside={closeAccountMenu}>
             <button role="menuitem" onclick={() => { menuOpen = false; openSettings() }}>Settings</button>
             <button role="menuitem" class="warn" onclick={() => { menuOpen = false; reportOpen = true }}>Report a bug</button>
             <button role="menuitem" class="danger" onclick={logout}>Log out</button>
@@ -413,7 +419,7 @@
 {#if serverMenu}
   {@const id = serverMenu.id}
   <div class="ctx-backdrop" role="presentation" onclick={() => (serverMenu = null)}></div>
-  <div class="ctx" role="menu" style:left="{serverMenu.x}px" style:top="{serverMenu.y}px">
+  <div class="ctx" role="menu" use:clickOutside={() => (serverMenu = null)} style:left="{serverMenu.x}px" style:top="{serverMenu.y}px">
     {#if serverMuted(id)}
       <button role="menuitem" onclick={() => muteServer(id, 'off')}>Unmute server</button>
     {:else}

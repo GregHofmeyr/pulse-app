@@ -1,18 +1,18 @@
 // Svelte actions shared by popovers and menus.
 
-/** Calls `onOutside` on any pointer press outside `node` (or Escape). Presses on a
- *  `[data-menu-toggle]` element are ignored: that button toggles the menu itself. */
-export function clickOutside(node: HTMLElement, onOutside: () => void) {
+/** Calls `onOutside` on any pointer press outside `node` (or Escape), with the event that did it.
+ *  Presses on a `[data-menu-toggle]` element are ignored: that button toggles the menu itself. */
+export function clickOutside(node: HTMLElement, onOutside: (e: Event) => void) {
   let cb = onOutside
   const down = (e: PointerEvent) => {
     const t = e.target as Element
-    if (!node.contains(t) && !t.closest?.('[data-menu-toggle]')) cb()
+    if (!node.contains(t) && !t.closest?.('[data-menu-toggle]')) cb(e)
   }
   const key = (e: KeyboardEvent) => {
     if (e.key !== 'Escape') return
     // handled: what sits under the menu (e.g. the full view) leaves it alone
     e.preventDefault()
-    cb()
+    cb(e)
   }
   // Defer so the click that opened the menu doesn't immediately close it.
   const t = setTimeout(() => {
@@ -20,7 +20,7 @@ export function clickOutside(node: HTMLElement, onOutside: () => void) {
     window.addEventListener('keydown', key)
   })
   return {
-    update(next: () => void) {
+    update(next: (e: Event) => void) {
       cb = next
     },
     destroy() {
