@@ -295,6 +295,8 @@ describe('reaction toggles', () => {
     await tick() // the optimistic flip lands; the add itself stays in flight
     shiftClick('🎉') // optimistic state already says mine: this one removes
     await tick()
+    await settle()
+    expect(calls('remove_reaction')).toHaveLength(0) // queued behind the add still in flight
     add.resolve(undefined)
     await settle()
     expect(invoke.mock.calls.map((c) => c[0]).filter((c) => c.endsWith('_reaction'))).toEqual(['add_reaction', 'remove_reaction'])
