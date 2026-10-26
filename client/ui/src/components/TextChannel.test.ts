@@ -126,3 +126,39 @@ describe('TextChannel: unsent messages', () => {
     unmount(c)
   })
 })
+
+describe('TextChannel: a failed delete', () => {
+  beforeEach(() => {
+    Element.prototype.scrollTo = () => {} // jsdom has none
+    localStorage.clear()
+    resetState()
+  })
+  afterEach(() => {
+    invoke.mockReset()
+    document.body.innerHTML = ''
+  })
+  const me = { id: 'U1', username: 'alex', avatar_hash: null }
+
+  it('shows_on_the_message_not_as_the_channel_banner', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'delete_message') throw 'cannot delete'
+      return undefined
+    })
+    app.state = applyReady(emptyState(), {
+      me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
+      channels: [{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }],
+      members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
+      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [],
+    })
+    app.state = markHistory(addHistory(app.state, 'C1', [{ ...msg(1), author_id: 'U1' }]), 'C1', true)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    document.querySelector<HTMLButtonElement>('button[aria-label="Delete"]')!.click()
+    for (let i = 0; i < 5; i++) await tick()
+    flushSync()
+    expect(invoke).toHaveBeenCalledWith('delete_message', { messageId: 'M0001' })
+    expect(document.querySelector('.error[role=alert]')).toBeNull()
+    expect(document.querySelector('.msg [role=alert]')?.textContent).toBe('cannot delete')
+    unmount(c)
+  })
+})

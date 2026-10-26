@@ -119,6 +119,62 @@ describe('MessageItem errors', () => {
     expect(vi.getTimerCount()).toBe(0)
   })
 
+  it('a_reaction_failing_after_unmount_starts_no_timer', async () => {
+    let refuse!: (e: unknown) => void
+    invoke.mockImplementation((cmd: string) => (cmd === 'add_reaction' || cmd === 'remove_reaction' ? new Promise((_, rej) => (refuse = rej)) : Promise.resolve(undefined)))
+    show()
+    document.querySelector<HTMLButtonElement>('.chip:not(.add)')!.click()
+    await settle()
+    expect(refuse).toBeDefined()
+    unmount(cmp!); cmp = undefined
+    refuse('reaction refused')
+    await settle()
+    expect(vi.getTimerCount()).toBe(0)
+  })
+
+  it('a_second_save_clears_the_old_error_while_in_flight', async () => {
+    onEdit.mockRejectedValueOnce('edit refused')
+    show()
+    btn('Edit').click(); flushSync()
+    type('changed text')
+    press('Enter'); await settle()
+    expect(alert()?.textContent).toBe('edit refused')
+    let finish!: () => void
+    onEdit.mockImplementationOnce(() => new Promise<void>((done) => (finish = done)))
+    press('Enter'); await settle(); flushSync()
+    expect(alert()).toBeNull()
+    finish(); await settle(); flushSync()
+    expect(box()).toBeNull()
+  })
+
+  it('reopening_the_edit_box_shows_no_old_error', async () => {
+    onEdit.mockRejectedValueOnce('edit refused')
+    show()
+    btn('Edit').click(); flushSync()
+    type('changed text')
+    press('Enter'); await settle()
+    expect(alert()?.textContent).toBe('edit refused')
+    // the Edit button is hidden while the box is open: reopening goes through Esc
+    press('Escape'); flushSync()
+    btn('Edit').click(); flushSync()
+    expect(alert()).toBeNull()
+    expect(box()!.value).toBe('hello')
+  })
+
+  it('a_double_enter_while_saving_sends_one_edit', async () => {
+    let finish!: () => void
+    onEdit.mockImplementation(() => new Promise<void>((done) => (finish = done)))
+    show()
+    btn('Edit').click(); flushSync()
+    type('changed text')
+    press('Enter')
+    press('Enter')
+    await settle()
+    expect(onEdit).toHaveBeenCalledTimes(1)
+    finish(); await settle(); flushSync()
+    expect(box()).toBeNull()
+  })
+
   it('failed_reaction_shows_inline_error_not_the_banner', async () => {
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === 'add_reaction' || cmd === 'remove_reaction') throw 'reaction refused'

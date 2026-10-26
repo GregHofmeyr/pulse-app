@@ -59,13 +59,19 @@
   let editError = $state('')
   let inlineError = $state('')
   let errTimer: ReturnType<typeof setTimeout> | undefined
+  // A reaction can fail after the message has gone from the screen: no timer for a component that's gone.
+  let alive = true
   // A failed delete or reaction shows on this message for a few seconds; a newer one restarts the clock.
   function showError(msg: string) {
+    if (!alive) return
     clearTimeout(errTimer)
     inlineError = msg
     errTimer = setTimeout(() => (inlineError = ''), INLINE_ERROR_MS)
   }
-  $effect(() => () => clearTimeout(errTimer))
+  $effect(() => () => {
+    alive = false
+    clearTimeout(errTimer)
+  })
   async function del() {
     try {
       await onDelete()
@@ -80,15 +86,21 @@
     editError = ''
     editing = true
   }
+  // a second Enter while the first save is in flight must not send the edit twice
+  let saving = false
   async function save() {
+    if (saving) return
     const d = draft.trim()
     editError = ''
     if (d && d !== message.content) {
+      saving = true
       try {
         await onEdit(d)
       } catch (e) {
         editError = errorText(e) // the box stays open with the text intact
         return
+      } finally {
+        saving = false
       }
     }
     editing = false
