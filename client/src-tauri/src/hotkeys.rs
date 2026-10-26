@@ -69,6 +69,9 @@ mod platform {
     static HOOKS: AtomicU8 = AtomicU8::new(Hooks::None as u8);
     /// The hook thread, for posting to.
     static HOOK_THREAD: OnceLock<u32> = OnceLock::new();
+    /// Failed attempts in the current reinstall (hook thread writes it; 0 outside one), so a
+    /// reinstall that keeps failing shows in Settings.
+    static REINSTALL_FAILURES: AtomicU32 = AtomicU32::new(0);
     /// The hook thread started and hasn't left its message loop. Nothing is posted to it
     /// otherwise, and while hooks are wanted Settings says so.
     static THREAD_ALIVE: AtomicBool = AtomicBool::new(false);
@@ -117,6 +120,7 @@ mod platform {
             hooks: hooks(),
             thread_alive: THREAD_ALIVE.load(Ordering::SeqCst),
             install_failed: broken.as_deref(),
+            reinstall_failures: REINSTALL_FAILURES.load(Ordering::SeqCst),
         })
     }
 
@@ -324,7 +328,7 @@ mod platform {
                 Err(e) => {
                     tracing::warn!(error = %e, "keybinds: hooks couldn't be installed");
                     set_broken(Some(format!(
-                        "Keybinds couldn't start ({e}); switch them off and on, or restart Pulse, to try again"
+                        "Keybinds couldn't start ({e}); change a bind, switch them off and on, or restart Pulse, to try again"
                     )));
                     None
                 }
@@ -344,6 +348,7 @@ mod platform {
         // LAST_HOOK_TICK is left alone: only a real event moving it tells the watchdog the
         // new hooks work.
         let mut failures = 0u32;
+        REINSTALL_FAILURES.store(0, Ordering::SeqCst);
         let hooks = loop {
             match hook() {
                 Ok(h) => break h,
@@ -354,9 +359,11 @@ mod platform {
                         tracing::debug!(error = %e, failures, "keybinds: hook reinstall failed again");
                     }
                     failures += 1;
+                    REINSTALL_FAILURES.store(failures, Ordering::SeqCst);
                     // No hooks to service, so blocking this thread is harmless; the wait ends
                     // within a slice of hooks no longer being wanted.
                     if !retry_wait(REINSTALL_GAP, RETRY_SLICE, wanted, std::thread::sleep) {
+                        REINSTALL_FAILURES.store(0, Ordering::SeqCst);
                         set_hooks(Hooks::None);
                         tracing::info!(
                             "keybinds: switched off or nothing bound; reinstall dropped"
@@ -366,6 +373,14 @@ mod platform {
                 }
             }
         };
+        REINSTALL_FAILURES.store(0, Ordering::SeqCst);
+        // Unwanted while hook() ran (after the last check): don't leave them in, even briefly.
+        if hook_step(wanted(), true, false) == HookStep::Unhook {
+            unhook(hooks);
+            set_hooks(Hooks::None);
+            tracing::info!("keybinds: switched off or nothing bound; reinstall dropped");
+            return None;
+        }
         // Key-ups missed while the hooks were gone: drop modifiers Windows says are up (a
         // stale plain key is already treated as a fresh press, REPEAT_WINDOW).
         matcher().forget_released(still_down);

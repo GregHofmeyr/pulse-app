@@ -6,29 +6,30 @@
 //! chain eating keys), so a reinstall the hooks stay blind after isn't repeated until they see
 //! something again. The decision lives here, free of Windows, so it's tested everywhere.
 //!
-//! The user can switch global binds off (Settings → Keybinds): then the hooks are removed, not just
-//! ignored. `hook_step` is what the hook thread does with each message it gets, given the switch
-//! as it reads at that moment.
+//! Hooks exist only while they're wanted (`hooks_wanted`): the user's switch (Settings → Keybinds)
+//! is on AND something is bound. Otherwise they're removed, not just ignored. `hook_step` is what
+//! the hook thread does with each message it gets, given what's wanted as it reads at that moment.
 
 use std::time::{Duration, Instant};
 
-/// What the hook thread does on a message: "the switch changed" or the watchdog's "reinstall".
+/// What the hook thread does on a message: "the switch or the binds changed" or the watchdog's
+/// "reinstall".
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HookStep {
-    /// Switched on (or asked to reinstall while there are none): install them.
+    /// Wanted with none in (or asked to reinstall while there are none): install them.
     Install,
     /// The watchdog thinks Windows dropped them: unhook and install again.
     Reinstall,
-    /// Switched off: unhook both.
+    /// Not wanted any more (switched off, last bind removed): unhook both.
     Unhook,
     Nothing,
 }
 
-/// `enabled` is the switch as read when the message is handled (not when it was sent), so a burst
-/// of on/off ends with the hooks matching the switch, and a watchdog request that raced an "off"
-/// can't put the hooks back.
-pub fn hook_step(enabled: bool, installed: bool, reinstall_asked: bool) -> HookStep {
-    match (enabled, installed) {
+/// `wanted` is `hooks_wanted` as read when the message is handled (not when it was sent), so a
+/// burst of changes ends with the hooks matching the last one, and a watchdog request that raced
+/// an "off" (or the last bind going) can't put the hooks back.
+pub fn hook_step(wanted: bool, installed: bool, reinstall_asked: bool) -> HookStep {
+    match (wanted, installed) {
         (true, false) => HookStep::Install,
         (true, true) if reinstall_asked => HookStep::Reinstall,
         (false, true) => HookStep::Unhook,
@@ -75,7 +76,13 @@ pub struct Seen<'a> {
     pub thread_alive: bool,
     /// Why the last install failed, if it did (cleared by the next attempt).
     pub install_failed: Option<&'a str>,
+    /// Failed attempts in the current watchdog reinstall (0 outside one).
+    pub reinstall_failures: u32,
 }
+
+/// A reinstall failing this many times in a row (10 s apart) is shown in Settings: by then it's
+/// not a blip, and the user's binds have been dead for a while.
+pub const SHOW_REINSTALL_FAILURES_AFTER: u32 = 3;
 
 /// What the watchdog does on a tick.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -121,7 +128,10 @@ pub fn switch_problem(s: &Seen, switch_on_its_way: bool) -> Option<String> {
             "Global keybinds are off but the keyboard and mouse hooks are still in; Pulse keeps trying to remove them (restart Pulse if this stays)".into(),
         ),
         (false, _) => None,
-        // the watchdog is putting them back
+        // the watchdog is putting them back; said so once it keeps failing
+        (true, Hooks::Retrying) if s.reinstall_failures >= SHOW_REINSTALL_FAILURES_AFTER => Some(
+            "Global keybinds stopped (Windows dropped the hooks) and couldn't be reinstalled; Pulse keeps retrying (restart Pulse if this stays)".into(),
+        ),
         (true, Hooks::Retrying) => None,
         (true, _) => s.install_failed.map(str::to_owned),
     }
@@ -227,7 +237,7 @@ impl HookWatch {
         }
     }
 
-    /// Forget the rate limit and backoff: the hooks were removed (switched off), and new ones
+    /// Forget the rate limit and backoff: the hooks were removed (not wanted, or gone), and new ones
     /// start with a clean slate.
     pub fn reset(&mut self) {
         self.last_reinstall = None;
@@ -391,6 +401,7 @@ mod tests {
             hooks,
             thread_alive: true,
             install_failed: None,
+            reinstall_failures: 0,
         }
     }
 
@@ -448,6 +459,7 @@ mod tests {
             hooks: Hooks::None,
             thread_alive: false,
             install_failed: None,
+            reinstall_failures: 0,
         };
         assert_eq!(watch_gate(&dead), Gate::Idle);
         assert!(
@@ -538,6 +550,30 @@ mod tests {
         assert!(e.succeeded(), "recovered: log that once too");
         assert!(!e.succeeded());
         assert!(e.failed(), "a new episode logs again");
+    }
+
+    /// A reinstall that keeps failing is shown once it's clearly not a blip; before that, and
+    /// once it works or hooks aren't wanted, it isn't.
+    #[test]
+    fn a_reinstall_that_keeps_failing_is_shown() {
+        let retrying = |wanted, n| Seen {
+            reinstall_failures: n,
+            ..seen(wanted, Hooks::Retrying)
+        };
+        for n in 0..SHOW_REINSTALL_FAILURES_AFTER {
+            assert_eq!(switch_problem(&retrying(true, n), false), None, "{n}");
+        }
+        let shown = switch_problem(&retrying(true, SHOW_REINSTALL_FAILURES_AFTER), false).unwrap();
+        assert!(shown.contains("couldn't be reinstalled"), "{shown}");
+        assert!(
+            switch_problem(&retrying(true, 50), true).is_some(),
+            "not 'on its way'"
+        );
+        assert_eq!(
+            switch_problem(&retrying(false, 50), false),
+            None,
+            "stopping"
+        );
     }
 
     #[test]
