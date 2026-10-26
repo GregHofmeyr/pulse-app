@@ -40,7 +40,7 @@ const ready: Ready = {
 
 let cmp: ReturnType<typeof mount> | undefined
 const mountPanel = () => {
-  cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1' } })
+  cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
   flushSync()
 }
 const q = (sel: string) => document.querySelector<HTMLElement>(sel)
@@ -89,7 +89,7 @@ describe('stream tiles', () => {
     expect(tile.querySelector('.viewers')).toBeNull()
     unmount(cmp!)
     app.state = applyEvent(app.state, { t: 'ViewersChanged', d: { channel_id: 'V1', user_id: 'U2', viewers: ['U1', 'U3'] } }, 0)
-    cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1' } })
+    cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
     flushSync()
     expect(q('[data-stream="U2"] .viewers')?.textContent?.trim()).toBe('2')
   })
@@ -216,7 +216,7 @@ describe('everyone toggle', () => {
     expect(q('[data-stream="U2"]')).not.toBeNull()
     expect(localStorage.getItem('pulse.callgrid.everyone.U1')).toContain('false')
     unmount(cmp!)
-    cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1' } })
+    cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
     flushSync()
     expect(toggle().getAttribute('aria-pressed')).toBe('false')
   })
@@ -258,31 +258,15 @@ describe('user tiles', () => {
     expect(mineTile.querySelector('[role=progressbar]')).not.toBeNull()
   })
 
-  it('the_avatar_still_opens_the_volume_control', () => {
-    mountPanel()
-    q('[data-user="U2"] .avatar-btn')!.click()
+  it('the_menu_key_works_on_a_joining_tile_without_opening_a_menu_yet', () => {
+    const onMenu = vi.fn()
+    cmp = mount(UserTile, { target: document.body, props: { entry: { userId: 'U1', name: 'alex', muted: false, deafened: false, pending: true }, channelId: 'V1', onMenu } })
     flushSync()
-    expect(q('[data-user="U2"] input[type=range]')).not.toBeNull()
-  })
-
-  it('right_click_asks_for_the_menu', () => {
-    // the menu itself arrives with the participant menu; the tile only reports the request
-    mountPanel()
-    const ev = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
-    q('[data-user="U2"]')!.dispatchEvent(ev)
-    expect(ev.defaultPrevented).toBe(true)
-  })
-
-  it('only_one_volume_popover_is_open_at_a_time', () => {
-    app.state = { ...app.state, voice: { V1: [{ user_id: 'U1', flags }, { user_id: 'U2', flags }, { user_id: 'U3', flags }] } }
-    app.state = { ...app.state, members: { S1: [{ user: me, nickname: null }, { user: sam, nickname: null }, { user: { id: 'U3', username: 'kim', avatar_hash: null }, nickname: null }] } }
-    mountPanel()
-    q('[data-user="U2"] .avatar-btn')!.click()
-    flushSync()
-    q('[data-user="U3"] .avatar-btn')!.click()
-    flushSync()
-    expect(document.querySelectorAll('[role=dialog]').length).toBe(1)
-    expect(q('[data-user="U3"] [role=dialog]')).not.toBeNull()
+    const btn = q('.avatar-btn')!
+    expect(btn.getAttribute('aria-disabled')).toBe('true')
+    expect((btn as HTMLButtonElement).disabled).toBe(false)
+    btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true, cancelable: true }))
+    expect(onMenu).not.toHaveBeenCalled()
   })
 
   it('the_menu_key_works_on_your_own_tile', () => {
@@ -290,9 +274,9 @@ describe('user tiles', () => {
     cmp = mount(UserTile, { target: document.body, props: { entry: { userId: 'U1', name: 'alex', muted: false, deafened: false, pending: false }, channelId: 'V1', onMenu } })
     flushSync()
     const btn = q('.avatar-btn')!
-    expect(btn.getAttribute('aria-disabled')).toBe('true')
-    expect((btn as HTMLButtonElement).disabled).toBe(false)
+    expect(btn.getAttribute('aria-disabled')).toBe('false')
     btn.dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true, cancelable: true }))
     expect(onMenu).toHaveBeenCalledTimes(1)
+    expect(onMenu.mock.calls[0][1]).toBe(btn)
   })
 })

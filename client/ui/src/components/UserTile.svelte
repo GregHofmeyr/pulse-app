@@ -1,55 +1,54 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
-  import { voice, voiceApi } from '../lib/voice.svelte'
+  import { voice } from '../lib/voice.svelte'
   import { app } from '../lib/store.svelte'
   import type { RosterEntry } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
-  import { clampVolume, volumeLabel } from '../lib/voiceui'
+  import { volumeLabel } from '../lib/voiceui'
 
   let {
     entry,
     compact = false,
-    volumeOpen = false,
-    onVolume,
     onMenu,
   }: {
     entry: RosterEntry
     channelId: string
     /** The small tile in the full view's strip. */
     compact?: boolean
-    /** Whether the volume popover is open: owned by the grid, so only one is open at a time. */
-    volumeOpen?: boolean
-    onVolume?: (open: boolean) => void
     onMenu: (e: MouseEvent | KeyboardEvent, anchor: HTMLElement) => void
   } = $props()
 
   const isMe = $derived(entry.userId === app.state.me?.id)
-  const volume = $derived(voice.volumes[entry.userId] ?? 100)
+  const volume = $derived(voice.localMutes[entry.userId] ? 0 : (voice.volumes[entry.userId] ?? 100))
   const bars = $derived.by(() => {
     const q = voice.quality[entry.userId]
     return q === 'excellent' ? 3 : q === 'good' ? 2 : q === 'poor' ? 1 : q === 'lost' ? 0 : 3
   })
-  let tile = $state<HTMLElement>()
-  // Until the participant menu replaces it, the avatar opens the per-person volume control.
-  const locked = $derived(isMe || entry.pending)
+  // the avatar button is what has focus, so it's what the menu opens from and hands focus back to
+  let avatar = $state<HTMLElement>()
+  // a joining entry (yours) has no menu yet
+  const locked = $derived(entry.pending)
 
+  function ask(e: MouseEvent | KeyboardEvent) {
+    if (avatar && !locked) onMenu(e, avatar)
+  }
   function contextMenu(e: MouseEvent) {
     e.preventDefault()
-    if (tile) onMenu(e, tile)
+    ask(e)
   }
   function key(e: KeyboardEvent) {
     if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
       e.preventDefault()
-      if (tile) onMenu(e, tile)
+      ask(e)
     }
   }
 </script>
 
 <!-- the context menu is a pointer shortcut; the keyboard route is the avatar button's ContextMenu / Shift+F10 -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div bind:this={tile} class="tile" class:compact class:pending={entry.pending} class:speaking={voice.speaking.has(entry.userId)} data-user={entry.userId} oncontextmenu={contextMenu}>
-  <button type="button" class="avatar-btn" aria-disabled={locked} aria-label={isMe ? entry.name : `Volume for ${entry.name}`} data-tip={isMe ? undefined : `Adjust ${entry.name}'s volume`}
-    onkeydown={key} onclick={() => !locked && onVolume?.(!volumeOpen)}>
+<div class="tile" class:compact class:pending={entry.pending} class:speaking={voice.speaking.has(entry.userId)} data-user={entry.userId} oncontextmenu={contextMenu}>
+  <button bind:this={avatar} type="button" class="avatar-btn" aria-disabled={locked} aria-haspopup="menu" aria-label={entry.name} data-tip={isMe ? undefined : `Options for ${entry.name}`}
+    onkeydown={key} onclick={ask}>
     <span class="av" style:background={avatarColor(entry.userId)}>{initial(entry.name)}</span>
     {#if entry.deafened}<span class="badge"><Icon name="headphonesOff" size={compact ? 11 : 14} label="Deafened" /></span>
     {:else if entry.muted}<span class="badge"><Icon name="micOff" size={compact ? 11 : 14} label="Muted" /></span>{/if}
@@ -65,15 +64,6 @@
     {/if}
   </div>
   {#if !entry.pending && volume !== 100}<span class="vol">{volumeLabel(volume)}</span>{/if}
-  {#if volumeOpen && !compact}
-    <div class="pop" role="dialog" aria-label="Volume for {entry.name}">
-      <label for="vol-{entry.userId}">User volume <strong>{volumeLabel(volume)}</strong></label>
-      <input id="vol-{entry.userId}" type="range" min="0" max="200" step="5" value={volume}
-        oninput={(e) => voiceApi.setVolume(entry.userId, clampVolume(+e.currentTarget.value))} />
-      <small>Only changes what you hear.</small>
-      <button type="button" class="ghost" onclick={() => voiceApi.setVolume(entry.userId, 100)}>Reset</button>
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -95,11 +85,6 @@
   .bar { width: 3px; border-radius: 1px; background: var(--bg-4); }
   .bar.on { background: var(--ok); }
   .vol { position: absolute; top: 10px; right: 12px; font-size: 11px; color: var(--text-3); }
-  .pop { position: absolute; top: calc(100% - 30px); left: calc(50% - 120px); z-index: 5; width: 240px; padding: 14px; background: #2e3037; border: 1px solid #3d4048; border-radius: 14px; box-shadow: 0 18px 48px rgba(8, 9, 12, .5); display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
-  .pop label { display: flex; justify-content: space-between; color: var(--text-2); }
-  .pop input { accent-color: var(--accent); }
-  .pop small { color: var(--text-3); }
-  .ghost { align-self: flex-start; height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
   .compact { gap: 4px; border-radius: 10px; }
   .compact .av { width: 36px; height: 36px; font-size: 15px; }
   .compact.speaking .av { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--ok); }

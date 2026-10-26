@@ -4,7 +4,7 @@ import { listen } from '@tauri-apps/api/event'
 import { streamApi } from './stream/stream.svelte'
 import type { SelfVoice } from './selectors'
 import { app } from './store.svelte'
-import { loadAudioConfig, loadVolumes, playSound, saveVolumes, transitionSounds, type AudioConfig, type Connection, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
+import { loadAudioConfig, loadLocalMutes, loadVolumes, playSound, saveLocalMutes, saveVolumes, transitionSounds, type AudioConfig, type Connection, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
 import { isJoining, reduceStage, type StageState } from './voicestage'
 
 export const voice = $state({
@@ -32,6 +32,8 @@ export const voice = $state({
   /** Latest link report (ping, jitter, loss...). */
   link: null as LinkReport | null,
   volumes: loadVolumes() as Record<string, number>,
+  /** People muted just for you: heard at 0 while the remembered volume is kept. */
+  localMutes: loadLocalMutes() as Record<string, true>,
 })
 
 /** You, for a roster: the channel being joined counts as yours from the click, the one being left stops at once. */
@@ -132,6 +134,8 @@ export const voiceApi = {
     try {
       // re-apply remembered per-user volumes
       for (const [userId, percent] of Object.entries(voice.volumes)) await invoke('set_peer_volume', { userId, percent })
+      // ...then the local mutes win over them
+      for (const userId of Object.keys(voice.localMutes)) await invoke('set_peer_volume', { userId, percent: 0 })
     } catch (e) {
       voice.error = errText(e)
     }
@@ -153,7 +157,23 @@ export const voiceApi = {
   async setVolume(userId: string, percent: number) {
     voice.volumes = { ...voice.volumes, [userId]: percent }
     saveVolumes(voice.volumes)
+    // moving the slider is unmuting them
+    if (voice.localMutes[userId]) {
+      const { [userId]: _, ...rest } = voice.localMutes
+      voice.localMutes = rest
+      saveLocalMutes(rest)
+    }
     await invoke('set_peer_volume', { userId, percent })
+  },
+  /** "Mute for me": silent for you only, and remembered. Off brings back the volume you'd set (default 100). */
+  async setLocalMute(userId: string, on: boolean) {
+    if (on) voice.localMutes = { ...voice.localMutes, [userId]: true }
+    else {
+      const { [userId]: _, ...rest } = voice.localMutes
+      voice.localMutes = rest
+    }
+    saveLocalMutes(voice.localMutes)
+    await invoke('set_peer_volume', { userId, percent: on ? 0 : (voice.volumes[userId] ?? 100) })
   },
   setAudioConfig: (config: AudioConfig) => invoke('set_audio_config', { config }),
   listDevices: () => invoke<{ inputs: { name: string; is_default: boolean }[]; outputs: { name: string; is_default: boolean }[] }>('list_audio_devices'),

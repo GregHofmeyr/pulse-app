@@ -111,3 +111,7 @@ export const saveAudioConfig = (c: AudioConfig) => save('pulse.audio', c)
 
 export const loadVolumes = () => load<Record<string, number>>('pulse.volumes', {})
 export const saveVolumes = (v: Record<string, number>) => save('pulse.volumes', v)
+
+/** People muted just for you ("Mute for me"): local only, remembered like volumes. */
+export const loadLocalMutes = () => load<Record<string, true>>('pulse.localmutes', {})
+export const saveLocalMutes = (m: Record<string, true>) => save('pulse.localmutes', m)

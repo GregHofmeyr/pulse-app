@@ -57,16 +57,24 @@
     e.preventDefault()
     if (tile) onMenu(e, tile)
   }
+  // the keyboard route: the menu key or Shift+F10 on anything focused in the tile; focus returns to that control
+  function menuKey(e: KeyboardEvent) {
+    if (e.key !== 'ContextMenu' && !(e.key === 'F10' && e.shiftKey)) return
+    e.preventDefault()
+    const from = e.target instanceof HTMLElement && tile?.contains(e.target) ? e.target : tile
+    if (from) onMenu(e, from)
+  }
 </script>
 
 {#if mine}
-  <div class="tile own" data-stream={streamer} bind:this={tile}>
+  <!-- svelte-ignore a11y_no_static_element_interactions -->
+  <div class="tile own" data-stream={streamer} bind:this={tile} tabindex="-1" oncontextmenu={contextMenu} onkeydown={menuKey}>
     <LiveCard {channelId} {serverId} tile />
     {#if !stream.live}<p class="reason">You're live from another device</p>{/if}
   </div>
 {:else if watch}
-  <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div class="tile watching" data-stream={streamer} bind:this={tile} oncontextmenu={contextMenu}>
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_static_element_interactions -->
+  <div class="tile watching" data-stream={streamer} bind:this={tile} tabindex="-1" oncontextmenu={contextMenu} onkeydown={menuKey}>
     <div class="host" role="button" tabindex="0" aria-label="Open {name}'s stream in full view" onclick={() => onFull({ channelId, streamer })} onkeydown={hostKey} {@attach hostVideo(channelId, streamer)}></div>
     <StreamDiagOverlay kind="in" />
     {#if info?.status === 'reconnecting'}<div class="overlay" role="status">Reconnecting…</div>{/if}
@@ -87,8 +95,8 @@
     </div>
   </div>
 {:else}
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="tile idle" class:blocked={!!reason} data-stream={streamer} bind:this={tile} onclick={clicked} oncontextmenu={contextMenu}>
+  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions, a11y_no_noninteractive_tabindex -->
+  <div class="tile idle" class:blocked={!!reason} data-stream={streamer} bind:this={tile} tabindex={windows ? -1 : 0} onclick={clicked} oncontextmenu={contextMenu} onkeydown={menuKey}>
     <div class="backdrop" style:background={avatarColor(streamer)}></div>
     <span class="live-tag">LIVE</span>
     {#if viewers > 0}<span class="viewers"><Icon name="eye" size={14} label="Viewers" /> {viewers}</span>{/if}
@@ -107,6 +115,7 @@
 
 <style>
   .tile { position: relative; aspect-ratio: 16 / 9; min-width: 0; border-radius: 16px; overflow: hidden; background: var(--bg-1); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 8px; }
+  .tile:focus { outline: none; }
   .idle { cursor: pointer; }
   .idle.blocked { cursor: default; }
   .backdrop { position: absolute; inset: 0; opacity: .22; }

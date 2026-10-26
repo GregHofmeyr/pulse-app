@@ -6,17 +6,22 @@
   import { gridTiles, nobodyStreaming } from '../lib/callgrid'
   import { stageLabel } from '../lib/voicestage'
   import FullView from './FullView.svelte'
-  import GoLiveDialog from './GoLiveDialog.svelte'
+  import ParticipantMenu from './ParticipantMenu.svelte'
   import StreamTile from './StreamTile.svelte'
   import UserTile from './UserTile.svelte'
   import { loadShowEveryone, saveShowEveryone } from '../lib/stream/prefs'
-  import { StreamRoom, type Picked } from '../lib/stream/room'
+  import { menuPoint } from '../lib/participantMenu'
+  import { goLiveUi, pickSource } from '../lib/stream/golive.svelte'
   import { isWindows } from '../lib/stream/platform'
   import { findWatch, stream } from '../lib/stream/stream.svelte'
   import { callView, openFull } from '../lib/stream/viewer.svelte'
-  import { errorText } from '../lib/tauri'
 
-  let { channelId, serverId }: { channelId: string; serverId: string | null } = $props()
+  let { channelId, serverId, onMessage, onVoiceSettings }: {
+    channelId: string
+    serverId: string | null
+    onMessage: (userId: string) => void
+    onVoiceSettings: () => void
+  } = $props()
 
   const channel = $derived(app.state.channels[channelId])
   const inHere = $derived(voice.channelId === channelId)
@@ -27,7 +32,7 @@
   $effect(() => {
     showEveryone = loadShowEveryone(meId)
   })
-  let volumeFor = $state<string | null>(null)
+  let menu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
   const myLive = $derived(stream.live?.channelId === channelId)
   const tiles = $derived(gridTiles({ roster, streams: liveIn(app.state, channelId), meId, showEveryone, myLive }))
 
@@ -35,42 +40,18 @@
     showEveryone = on
     if (meId) saveShowEveryone(meId, on)
   }
-  // The participant menu arrives with its own task; until then a right-click or menu key does nothing here.
-  const noMenu = () => {}
+  function openMenu(userId: string, e: MouseEvent | KeyboardEvent, anchor: HTMLElement) {
+    menu = { userId, ...menuPoint(e, anchor), opener: anchor }
+  }
   /** The watch in full view, when it's in this channel and still being watched. */
   const fullStreamer = $derived.by(() => {
     const f = callView.full
     return f && f.channelId === channelId && findWatch(f.channelId, f.streamer) ? f.streamer : null
   })
 
-  let picked = $state<Picked | null>(null)
-  let pickError = $state('')
   const inCall = $derived(inHere && voice.connection === 'connected')
   const canGoLive = $derived(inCall && !stream.live)
   const windows = isWindows()
-
-  async function pickSource() {
-    if (!windows) return
-    pickError = ''
-    try {
-      picked = await StreamRoom.pick()
-    } catch (e) {
-      // cancelling the picker is not an error
-      if ((e as Error)?.name !== 'NotAllowedError') pickError = errorText(e)
-    }
-  }
-
-  function closeDialog() {
-    picked = null
-  }
-
-  // Leaving voice (or losing the connection) while the dialog is open: drop the picked capture.
-  $effect(() => {
-    if (picked && !inCall) {
-      picked.track.stop()
-      picked = null
-    }
-  })
 </script>
 
 <div class="panel">
@@ -90,7 +71,7 @@
   {#if voice.stalled && inHere}<p class="error" role="alert">Your audio device stopped responding. Check it's connected, then rejoin.</p>{/if}
 
   {#if fullStreamer}
-    {#key fullStreamer}<FullView {channelId} streamer={fullStreamer} {serverId} />{/key}
+    {#key fullStreamer}<FullView {channelId} streamer={fullStreamer} {serverId} {onMessage} {onVoiceSettings} />{/key}
   {:else}
     <div class="grid-wrap">
       {#if nobodyStreaming(tiles, showEveryone)}
@@ -99,10 +80,9 @@
         <div class="grid">
           {#each tiles as t (t.kind === 'user' ? `u:${t.entry.userId}` : `s:${t.streamer}`)}
             {#if t.kind === 'user'}
-              <UserTile entry={t.entry} {channelId} onMenu={noMenu} volumeOpen={volumeFor === t.entry.userId}
-                onVolume={(open) => (volumeFor = open ? t.entry.userId : null)} />
+              <UserTile entry={t.entry} {channelId} onMenu={(e, a) => openMenu(t.entry.userId, e, a)} />
             {:else}
-              <StreamTile {channelId} {serverId} streamer={t.streamer} mine={t.mine} onMenu={noMenu} onFull={openFull} />
+              <StreamTile {channelId} {serverId} streamer={t.streamer} mine={t.mine} onMenu={(e, a) => openMenu(t.streamer, e, a)} onFull={openFull} />
             {/if}
           {:else}
             <p class="empty">Nobody's here yet.</p>
@@ -112,7 +92,7 @@
     </div>
   {/if}
 
-  {#if pickError}<p class="error" role="alert">{pickError}</p>{/if}
+  {#if goLiveUi.error && goLiveUi.channelId === channelId}<p class="error" role="alert">{goLiveUi.error}</p>{/if}
 
   <div class="bar-wrap">
     {#if inHere}
@@ -125,7 +105,7 @@
         </button>
         {#if canGoLive}
           <!-- aria-disabled, not disabled: a disabled button swallows the hover that shows the tooltip -->
-          <button class="golive" class:off={!windows} aria-disabled={!windows} data-tip={windows ? undefined : "Streaming from Linux isn't supported yet"} onclick={pickSource}>Go Live</button>
+          <button class="golive" class:off={!windows} aria-disabled={!windows} data-tip={windows ? undefined : "Streaming from Linux isn't supported yet"} onclick={() => pickSource(channelId)}>Go Live</button>
         {/if}
         <button class="leave" aria-label="Leave voice" onclick={() => voiceApi.leave()}><Icon name="hangup" size={22} /></button>
       </div>
@@ -135,7 +115,9 @@
   </div>
 </div>
 
-{#if picked}<GoLiveDialog {channelId} bind:picked onClose={closeDialog} />{/if}
+{#if menu}
+  {#key menu}<ParticipantMenu {channelId} {serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} {onVoiceSettings} onClose={() => (menu = null)} />{/key}
+{/if}
 
 <style>
   .panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }

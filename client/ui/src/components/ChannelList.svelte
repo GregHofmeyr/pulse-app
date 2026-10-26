@@ -6,6 +6,8 @@
   import { api, errorText } from '../lib/tauri'
   import { isMuted } from '../lib/conversations'
   import LiveBadge from './LiveBadge.svelte'
+  import ParticipantMenu from './ParticipantMenu.svelte'
+  import { menuPoint } from '../lib/participantMenu'
   import { selfVoice, voiceApi } from '../lib/voice.svelte'
 
   let {
@@ -15,6 +17,8 @@
     speaking,
     onSelect,
     onJoinVoice,
+    onMessage,
+    onVoiceSettings,
   }: {
     serverId: string
     activeChannelId: string | null
@@ -22,6 +26,8 @@
     speaking: Set<string>
     onSelect: (id: string) => void
     onJoinVoice: (id: string) => void
+    onMessage: (userId: string) => void
+    onVoiceSettings: () => void
   } = $props()
 
   const self = $derived(selfVoice())
@@ -55,6 +61,19 @@
     }
   }
   const focus = (el: HTMLInputElement) => el.focus()
+
+  // the participant menu for someone in a voice channel (right-click, click, or the menu key on the focused row)
+  let menu = $state<{ channelId: string; userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
+  function openMenu(channelId: string, userId: string, e: MouseEvent | KeyboardEvent, anchor: HTMLElement) {
+    menu = { channelId, userId, ...menuPoint(e, anchor), opener: anchor }
+  }
+  function occupantKey(e: KeyboardEvent, channelId: string, p: { userId: string; pending: boolean }) {
+    if (e.target !== e.currentTarget || p.pending) return
+    if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey) || e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault()
+      openMenu(channelId, p.userId, e, e.currentTarget as HTMLElement)
+    }
+  }
 </script>
 
 <div class="list">
@@ -94,7 +113,11 @@
       {#if people.length}<span class="count">{people.length}</span>{/if}
     </button>
     {#each people as p (p.userId)}
-      <div class="occupant" class:pending={p.pending}>
+      <!-- svelte-ignore a11y_click_events_have_key_events -->
+      <div class="occupant" class:pending={p.pending} role="button" tabindex="0" aria-haspopup="menu" aria-label={p.name} data-user={p.userId}
+        oncontextmenu={(e) => { e.preventDefault(); if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
+        onclick={(e) => { if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
+        onkeydown={(e) => occupantKey(e, c.id, p)}>
         <span class="av" class:speaking={speaking.has(p.userId)} style:background={avatarColor(p.userId)}>{initial(p.name)}</span>
         <span class="grow">{p.name}</span>
         {#if p.pending}
@@ -108,6 +131,9 @@
     {/each}
   {/each}
 </div>
+{#if menu}
+  {#key menu}<ParticipantMenu channelId={menu.channelId} {serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} {onVoiceSettings} onClose={() => (menu = null)} />{/key}
+{/if}
 
 <style>
   .list { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
@@ -125,9 +151,10 @@
   .ico { color: var(--text-3); display: flex; }
   .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { font-size: 11px; color: var(--text-3); }
-  .occupant { height: 30px; padding: 0 8px 0 38px; display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); }
+  .occupant { cursor: default; border-radius: 8px; height: 30px; padding: 0 8px 0 38px; display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); }
   .av { width: 22px; height: 22px; border-radius: 50%; color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; flex-shrink: 0; transition: box-shadow .12s; }
   .av.speaking { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--ok); }
+  .occupant:hover { background: var(--bg-2); }
   .occupant.pending { opacity: .6; }
   .joining { font-size: 11px; color: var(--text-2); }
   .spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--text-3); border-top-color: transparent; animation: spin .8s linear infinite; }

@@ -55,7 +55,7 @@ beforeEach(async () => {
   voice.micLive = false
   cmp = mount(ChannelList, {
     target: document.body,
-    props: { serverId: 'S1', activeChannelId: null, voiceChannelId: null, speaking: new Set<string>(), onSelect: () => {}, onJoinVoice: () => {} },
+    props: { serverId: 'S1', activeChannelId: null, voiceChannelId: null, speaking: new Set<string>(), onSelect: () => {}, onJoinVoice: () => {}, onMessage: () => {}, onVoiceSettings: () => {} },
   })
   flushSync()
 })

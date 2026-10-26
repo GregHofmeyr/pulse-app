@@ -13,6 +13,7 @@
   import { clickOutside } from '../lib/actions'
   import ReportBug from '../components/ReportBug.svelte'
   import ConversationList from '../components/ConversationList.svelte'
+  import GoLiveDialog from '../components/GoLiveDialog.svelte'
   import PeopleBoard from '../components/PeopleBoard.svelte'
   import PeoplePicker from '../components/PeoplePicker.svelte'
   import GroupMembers from '../components/GroupMembers.svelte'
@@ -21,6 +22,7 @@
   import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
   import { pendingWatchReady } from '../lib/stream/viewer'
   import { callView, openFull } from '../lib/stream/viewer.svelte'
+  import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
   import { api, errorText } from '../lib/tauri'
   import { app, clock, openDm, ui } from '../lib/store.svelte'
   import { applyEvent, trimHistory } from '../lib/state'
@@ -247,6 +249,15 @@
     })
   })
 
+  // Leaving voice (or losing the connection) while the Go Live dialog is open: drop the picked capture.
+  $effect(() => {
+    const p = goLiveUi.picked
+    if (p && !(voice.channelId === goLiveUi.channelId && voice.connection === 'connected')) {
+      p.track.stop()
+      closeGoLive()
+    }
+  })
+
   /** The voice channel the main area shows, if any: its watches show in the grid, the rest in the mini-preview. */
   const shownCall = $derived(activeChannel?.kind === 'voice' && (!activeServerId || member) ? activeChannel.id : null)
   const mini = $derived.by(() => {
@@ -330,7 +341,8 @@
       {#if activeServerId}
         <ChannelList serverId={activeServerId} {activeChannelId} voiceChannelId={voice.channelId} speaking={voice.speaking}
           onSelect={(id) => (activeChannelId = id)}
-          onJoinVoice={(id) => { activeChannelId = id; if (voice.channelId !== id && member) void voiceApi.join(id) }} />
+          onJoinVoice={(id) => { activeChannelId = id; if (voice.channelId !== id && member) void voiceApi.join(id) }}
+          onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />
       {:else}
         <ConversationList activeId={activeChannelId} onOpen={openConversation} onNew={() => (picker = { mode: 'new' })}
           onLeft={(id) => { if (activeChannelId === id) activeChannelId = null }} />
@@ -368,7 +380,7 @@
           {#if error}<p class="error">{error}</p>{/if}
         </div>
       {:else if activeChannel?.kind === 'voice'}
-        <VoicePanel channelId={activeChannel.id} serverId={activeServerId} />
+        <VoicePanel channelId={activeChannel.id} serverId={activeServerId} onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />
       {:else if activeChannel}
         {#key activeChannel.id}<TextChannel channelId={activeChannel.id} serverId={activeServerId}
           onAddPeople={() => (picker = { mode: 'add', channelId: activeChannel.id })}
@@ -388,6 +400,7 @@
 <StreamToast />
 {#if serverSettingsOpen && activeServer}<ServerSettings server={activeServer} onClose={() => (serverSettingsOpen = false)} />{/if}
 {#if settingsOpen}<Settings section={settingsSection} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
+{#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
 {#if creating}
   <div class="overlay">

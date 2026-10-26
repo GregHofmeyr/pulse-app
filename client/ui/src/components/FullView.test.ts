@@ -49,7 +49,7 @@ const settle = async () => {
 }
 /** The call view on V1, watching sam's stream in full view. */
 async function fullOnSam() {
-  cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1' } })
+  cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
   await streamApi.watch('V1', 'U2')
   openFull(SAM)
   await settle()
@@ -160,7 +160,7 @@ describe('full view', () => {
   })
 
   it('the_tiles_full_view_button_opens_it', async () => {
-    cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1' } })
+    cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
     await streamApi.watch('V1', 'U2')
     await settle()
     button('Full view')!.click()
@@ -227,7 +227,7 @@ describe('full view', () => {
   })
 
   it('stream_volume_is_one_value_the_tile_and_full_view_both_follow', async () => {
-    cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1' } })
+    cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
     await streamApi.watch('V1', 'U2')
     await settle()
     // set from elsewhere (e.g. a menu): the tile shows it

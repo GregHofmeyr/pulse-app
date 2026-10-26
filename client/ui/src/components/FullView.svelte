@@ -3,7 +3,9 @@
   import Icon from './Icon.svelte'
   import StreamDiagOverlay from './StreamDiagOverlay.svelte'
   import Select from './Select.svelte'
+  import ParticipantMenu from './ParticipantMenu.svelte'
   import UserTile from './UserTile.svelte'
+  import { menuPoint } from '../lib/participantMenu'
   import { app } from '../lib/store.svelte'
   import { callRoster, displayName, liveIn } from '../lib/selectors'
   import { selfVoice } from '../lib/voice.svelte'
@@ -13,7 +15,13 @@
   import { closeFull } from '../lib/stream/viewer.svelte'
 
   // The parent keys this on the stream, so the props never change for one instance.
-  let { channelId, streamer, serverId }: { channelId: string; streamer: string; serverId: string | null } = $props()
+  let { channelId, streamer, serverId, onMessage, onVoiceSettings }: {
+    channelId: string
+    streamer: string
+    serverId: string | null
+    onMessage: (userId: string) => void
+    onVoiceSettings: () => void
+  } = $props()
 
   const watch = $derived(findWatch(channelId, streamer))
   const name = $derived(displayName(app.state, serverId, streamer))
@@ -45,8 +53,7 @@
     if (document.querySelector(OVER)) return
     closeFull()
   }
-  // The participant menu arrives with its own task; until then a right-click in the strip does nothing.
-  const noMenu = () => {}
+  let menu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
 </script>
 
 <svelte:window onkeydown={key} />
@@ -74,10 +81,13 @@
   </div>
   <div class="strip">
     {#each roster as entry (entry.userId)}
-      <div class="slot"><UserTile {entry} {channelId} compact onMenu={noMenu} /></div>
+      <div class="slot"><UserTile {entry} {channelId} compact onMenu={(e, a) => (menu = { userId: entry.userId, ...menuPoint(e, a), opener: a })} /></div>
     {/each}
   </div>
 </div>
+{#if menu}
+  {#key menu}<ParticipantMenu {channelId} {serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} {onVoiceSettings} onClose={() => (menu = null)} />{/key}
+{/if}
 
 <style>
   .full-view { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: #000; }
