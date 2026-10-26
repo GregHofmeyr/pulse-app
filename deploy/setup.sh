@@ -13,11 +13,44 @@ CLOSE_SSH=false
 [[ $ID == ubuntu ]] || { echo "Ubuntu only" >&2; exit 1; }
 say() { printf '\n== %s\n' "$*"; }
 
+# Vendor apt repositories are trusted only through a signing key whose full fingerprint is pinned here, so
+# nothing from the vendors' install scripts runs as root. A key that doesn't match fails the run.
+# Docker: https://docs.docker.com/engine/install/ubuntu/ (key 0EBFCD88). Tailscale: the key served at
+# https://pkgs.tailscale.com/stable/ubuntu/<codename>.noarmor.gpg (identical for every codename).
+DOCKER_KEY_FPR=9DC858229FC7DD38854AE2D88D81803C0EBFCD88
+TAILSCALE_KEY_FPR=2596A99EAAB33821893C0A79458CA832957F5868
+CODENAME=${UBUNTU_CODENAME:-$VERSION_CODENAME}
+ARCH=$(dpkg --print-architecture)
+
+# primary_fprs FILE: the fingerprint of every primary key in a (binary or armored) key file, one per line.
+primary_fprs() {
+  gpg --show-keys --with-colons "$1" | awk -F: '$1 == "pub" { want = 1; next } $1 == "fpr" && want { print $10; want = 0 }'
+}
+# install_key URL DEST FPR: fetch a signing key, require it to be exactly the pinned one, install it as a
+# binary keyring at DEST. Does nothing if DEST already holds exactly that key.
+install_key() {
+  local url=$1 dest=$2 want=$3 tmp got
+  if [[ -f $dest ]] && [[ $(primary_fprs "$dest") == "$want" ]]; then return 0; fi
+  tmp=$(mktemp)
+  curl -fsSL "$url" -o "$tmp"
+  got=$(primary_fprs "$tmp")
+  if [[ $got != "$want" ]]; then
+    rm -f "$tmp"
+    echo "refusing: the key at $url has fingerprint '${got:-none}', expected $want" >&2
+    exit 1
+  fi
+  install -d -m 755 "$(dirname "$dest")"
+  gpg --dearmor <"$tmp" >"$dest.new" 2>/dev/null || cp "$tmp" "$dest.new" # armored (Docker) or already binary (Tailscale)
+  chmod 644 "$dest.new"
+  mv "$dest.new" "$dest"
+  rm -f "$tmp"
+}
+
 say "host basics"
 hostnamectl set-hostname pulse
 timedatectl set-timezone Africa/Johannesburg
 apt-get update -q
-DEBIAN_FRONTEND=noninteractive apt-get install -yq ca-certificates curl openssl age rclone sqlite3 unattended-upgrades
+DEBIAN_FRONTEND=noninteractive apt-get install -yq ca-certificates curl gnupg openssl age rclone sqlite3 unattended-upgrades
 
 say "automatic security updates (never an automatic reboot)"
 cat >/etc/apt/apt.conf.d/52pulse-unattended <<'EOF'
@@ -27,7 +60,13 @@ Unattended-Upgrade::Automatic-Reboot "false";
 EOF
 
 say "docker"
-command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh
+if ! command -v docker >/dev/null; then
+  install_key https://download.docker.com/linux/ubuntu/gpg /etc/apt/keyrings/docker.gpg "$DOCKER_KEY_FPR"
+  echo "deb [arch=$ARCH signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $CODENAME stable" \
+    >/etc/apt/sources.list.d/docker.list
+  apt-get update -q
+  DEBIAN_FRONTEND=noninteractive apt-get install -yq docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+fi
 systemctl enable --now docker
 
 say "pulse user and /srv/pulse"
@@ -77,7 +116,14 @@ else
 fi
 
 say "tailscale (SSH over your tailnet)"
-command -v tailscale >/dev/null || curl -fsSL https://tailscale.com/install.sh | sh
+if ! command -v tailscale >/dev/null; then
+  install_key "https://pkgs.tailscale.com/stable/ubuntu/$CODENAME.noarmor.gpg" /usr/share/keyrings/tailscale-archive-keyring.gpg "$TAILSCALE_KEY_FPR"
+  echo "deb [signed-by=/usr/share/keyrings/tailscale-archive-keyring.gpg] https://pkgs.tailscale.com/stable/ubuntu $CODENAME main" \
+    >/etc/apt/sources.list.d/tailscale.list
+  apt-get update -q
+  DEBIAN_FRONTEND=noninteractive apt-get install -yq tailscale
+fi
+systemctl enable --now tailscaled
 if tailscale status >/dev/null 2>&1; then
   tailscale set --ssh --hostname=pulse
 else

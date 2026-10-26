@@ -81,6 +81,49 @@ fn prod_and_dev_configs_offer_only_our_own_turn() {
     }
 }
 
+/// The HTTP/signalling listener (`port`) must be loopback-only: in production Caddy is the only way in,
+/// and with network_mode: host an unset `bind_addresses` would expose 7880 on every interface (tailnet
+/// included). In LiveKit v1.13.10 the top-level `bind_addresses` governs only that listener (plus the
+/// metrics/debug ones, unused here); RTC and TURN listeners are configured separately.
+fn assert_signalling_on_loopback(path: &str, yaml: &str) {
+    let docs = YamlLoader::load_from_str(yaml).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let addrs: Vec<_> = docs[0]["bind_addresses"]
+        .as_vec()
+        .unwrap_or_else(|| panic!("{path}: top-level bind_addresses missing"))
+        .iter()
+        .map(|a| a.as_str())
+        .collect();
+    assert_eq!(
+        addrs,
+        [Some("127.0.0.1")],
+        "{path}: bind_addresses must be exactly [127.0.0.1]"
+    );
+}
+
+#[test]
+fn prod_and_dev_signalling_binds_loopback_only() {
+    for path in ["../deploy/livekit.yaml", "../docker/livekit.yaml"] {
+        let full = concat!(env!("CARGO_MANIFEST_DIR"), "/").to_string() + path;
+        assert_signalling_on_loopback(path, &std::fs::read_to_string(&full).unwrap());
+    }
+}
+
+#[test]
+fn signalling_bind_check_catches_each_violation() {
+    assert_signalling_on_loopback("good", "bind_addresses: [\"127.0.0.1\"]\n");
+    for bad in [
+        "port: 7880\n",
+        "bind_addresses: [\"0.0.0.0\"]\n",
+        "bind_addresses: [\"127.0.0.1\", \"0.0.0.0\"]\n",
+        // right key, wrong section (the TURN one governs only TURN)
+        "turn:\n  bind_addresses: [\"127.0.0.1\"]\n",
+    ] {
+        let caught =
+            std::panic::catch_unwind(|| assert_signalling_on_loopback("bad", bad)).is_err();
+        assert!(caught, "not caught:\n{bad}");
+    }
+}
+
 #[test]
 fn config_check_catches_each_violation() {
     let good = "rtc:\n  use_external_ip: false\nturn:\n  enabled: true\n  udp_port: 3478\n";

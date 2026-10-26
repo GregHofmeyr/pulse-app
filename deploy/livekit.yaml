@@ -1,7 +1,11 @@
 # Production LiveKit. Clients reach signalling (7880) only through Caddy at voice.<domain>;
-# the firewall keeps 7880 closed. The API key "pulse" and its secret come from LIVEKIT_KEYS
+# 7880 itself listens on loopback only (compose uses host networking, so without bind_addresses it would also
+# answer on the tailnet and every other interface, bypassing Caddy), and the firewall keeps it closed too.
+# bind_addresses covers only that HTTP listener; the RTC and TURN ports are bound separately and stay public.
+# The API key "pulse" and its secret come from LIVEKIT_KEYS
 # (compose.yml); the Pulse server uses the same pair.
 port: 7880
+bind_addresses: ["127.0.0.1"]
 rtc:
   tcp_port: 7881
   udp_port: 7882

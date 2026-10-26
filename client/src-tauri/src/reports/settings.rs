@@ -28,11 +28,19 @@ impl Default for ReportSettings {
     }
 }
 
-/// No file (never changed) → on. A file that's there but unreadable → off: it only exists
-/// because the user changed the setting, and guessing "send" could upload what they said not to.
+/// No file (never changed) → on. A file that's there but can't be read or parsed → off: it only
+/// exists because the user changed the setting, and guessing "send" could upload what they said
+/// not to.
 pub fn load(dir: &Path) -> ReportSettings {
-    let Ok(text) = std::fs::read_to_string(dir.join(FILE)) else {
-        return ReportSettings::default();
+    let text = match std::fs::read_to_string(dir.join(FILE)) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ReportSettings::default(),
+        Err(e) => {
+            tracing::warn!(error = %e, "report settings unreadable; not sending automatically");
+            return ReportSettings {
+                auto_send_crashes: false,
+            };
+        }
     };
     match serde_json::from_str::<ReportSettings>(&text) {
         Ok(s) => s,
@@ -163,6 +171,36 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         std::fs::write(d.path().join(FILE), "{ not json").unwrap();
         assert!(!load(d.path()).auto_send_crashes);
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_read_means_off() {
+        // A directory where the file should be: read_to_string fails with something other than NotFound.
+        let d = tempfile::tempdir().unwrap();
+        std::fs::create_dir(d.path().join(FILE)).unwrap();
+        assert!(!load(d.path()).auto_send_crashes);
+        assert!(!Store::load(d.path()).auto_send_crashes());
+    }
+
+    #[test]
+    fn a_file_that_is_not_utf8_means_off() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(d.path().join(FILE), [0xff, 0xfe, 0x00]).unwrap();
+        assert!(!load(d.path()).auto_send_crashes);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_file_without_read_permission_means_off() {
+        use std::os::unix::fs::PermissionsExt;
+        let d = tempfile::tempdir().unwrap();
+        let f = d.path().join(FILE);
+        std::fs::write(&f, r#"{"auto_send_crashes":true}"#).unwrap();
+        std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o000)).unwrap();
+        // root ignores permission bits; then the read succeeds and there is nothing to assert
+        if std::fs::read_to_string(&f).is_err() {
+            assert!(!load(d.path()).auto_send_crashes);
+        }
     }
 
     #[test]
