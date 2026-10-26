@@ -6,13 +6,15 @@ use std::sync::{Arc, Mutex};
 use pulse_protocol::gateway::ClientFrame;
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
-    Channel, CustomEmoji, MediaInfo, Member, Message, MuteTarget, Server, SetMuteRequest, User,
+    Channel, CustomEmoji, MediaInfo, Member, Message, MuteTarget, RecoveryCodesResponse, Server,
+    SetMuteRequest, TwoFactorEnabledResponse, TwoFactorStatus, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
 
-use crate::api::{Api, ApiError, check_server_url};
+use crate::api::{Api, ApiError, LoginOutcome, MfaOutcome, check_server_url};
 use crate::gateway::{Boot, ConnState, GatewayHandle, GatewayUpdate};
+use crate::qr::QrMatrix;
 use crate::session::Store;
 use crate::stream::audio::StreamAudio;
 use crate::voice::devices::{AudioConfig, DeviceInfo};
@@ -30,6 +32,38 @@ struct Session {
 
 /// Runs on every sign-out: clears what the webview cached (see `media::clear_webview_cache`).
 pub type SignedOut = Box<dyn Fn() + Send + Sync>;
+
+/// A password login that still needs its second step: where, and the ticket to send with the
+/// code. Never logged or shown. A wrong code leaves it in place (the server counts the tries);
+/// success, an expired ticket, going back (`cancel_login`), `register` and `logout` clear it; a
+/// new login replaces it.
+#[derive(Default)]
+struct PendingMfa(Mutex<Option<(Api, String)>>);
+
+impl PendingMfa {
+    fn set(&self, api: Api, ticket: String) {
+        *self.0.lock().unwrap() = Some((api, ticket));
+    }
+
+    fn get(&self) -> Option<(Api, String)> {
+        self.0.lock().unwrap().clone()
+    }
+
+    fn clear(&self) {
+        self.0.lock().unwrap().take();
+    }
+
+    /// Clear it only if it is still `ticket`'s (a newer login may have replaced it while this
+    /// one's second step was in flight); returns whether it was.
+    fn take_if(&self, ticket: &str) -> bool {
+        let mut p = self.0.lock().unwrap();
+        let mine = p.as_ref().is_some_and(|(_, t)| t == ticket);
+        if mine {
+            p.take();
+        }
+        mine
+    }
+}
 
 pub struct Core {
     pub outbox: std::sync::Arc<crate::outbox::Outbox>,
@@ -54,6 +88,7 @@ pub struct Core {
     /// Where each account's `pulse-media` cache lives (`media::scope_dir`).
     media_root: std::path::PathBuf,
     signed_out: SignedOut,
+    mfa: PendingMfa,
 }
 
 impl Core {
@@ -76,7 +111,21 @@ impl Core {
             last: Mutex::new(None),
             media_root,
             signed_out,
+            mfa: PendingMfa::default(),
         }
+    }
+
+    /// A login or registration begins: whatever second step was pending is superseded (even if
+    /// this attempt goes no further), then the address is checked.
+    fn start_login(&self, server_url: &str) -> Result<Api, ApiError> {
+        self.mfa.clear();
+        check_server_url(server_url)?;
+        Ok(Api::new(server_url))
+    }
+
+    /// The login screen went back from the code step to the password.
+    fn cancel_login(&self) {
+        self.mfa.clear();
     }
 
     pub(crate) fn current(&self) -> Result<(Api, String), ApiError> {
@@ -353,6 +402,17 @@ async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>,
     }
 }
 
+/// What `login` and `login_mfa` tell the UI.
+#[derive(Debug, serde::Serialize, PartialEq)]
+#[serde(tag = "status", content = "user", rename_all = "snake_case")]
+pub enum LoginResult {
+    Ready(User),
+    /// Password accepted; ask for the 6-digit code (or a recovery code), then `login_mfa`.
+    MfaRequired,
+    /// The ticket is gone (`login_mfa` only): back to the password.
+    Expired,
+}
+
 #[tauri::command]
 pub async fn login(
     app: AppHandle,
@@ -360,12 +420,52 @@ pub async fn login(
     server_url: String,
     username: String,
     password: String,
-) -> Result<User, ApiError> {
-    check_server_url(&server_url)?;
-    let api = Api::new(&server_url);
-    let s = api.login(&username, &password).await?;
-    core.activate(&app, api, s.token, Some(s.user.id), true);
-    Ok(s.user)
+) -> Result<LoginResult, ApiError> {
+    let api = core.start_login(&server_url)?;
+    match api.login(&username, &password).await? {
+        LoginOutcome::Session(s) => {
+            core.activate(&app, api, s.token, Some(s.user.id), true);
+            Ok(LoginResult::Ready(s.user))
+        }
+        LoginOutcome::MfaRequired { ticket } => {
+            core.mfa.set(api, ticket);
+            Ok(LoginResult::MfaRequired)
+        }
+    }
+}
+
+/// The second login step, for the ticket `login` stored. No ticket (or a dead one) is `Expired`.
+#[tauri::command]
+pub async fn login_mfa(
+    app: AppHandle,
+    core: State<'_, Core>,
+    code: String,
+) -> Result<LoginResult, ApiError> {
+    let Some((api, ticket)) = core.mfa.get() else {
+        return Ok(LoginResult::Expired);
+    };
+    match api.login_mfa(&ticket, &code).await? {
+        MfaOutcome::Session(s) if core.mfa.take_if(&ticket) => {
+            core.activate(&app, api, s.token, Some(s.user.id), true);
+            Ok(LoginResult::Ready(s.user))
+        }
+        MfaOutcome::Session(s) => {
+            // The user went back or started another login meanwhile: that one wins, and this
+            // session is ended rather than left signed in somewhere unseen.
+            let _ = api.logout(&s.token).await;
+            Ok(LoginResult::Expired)
+        }
+        MfaOutcome::Expired => {
+            core.mfa.take_if(&ticket);
+            Ok(LoginResult::Expired)
+        }
+    }
+}
+
+/// The login screen's Back from the code step: drop the pending ticket now.
+#[tauri::command]
+pub fn cancel_login(core: State<'_, Core>) {
+    core.cancel_login();
 }
 
 #[tauri::command]
@@ -377,8 +477,7 @@ pub async fn register(
     username: String,
     password: String,
 ) -> Result<User, ApiError> {
-    check_server_url(&server_url)?;
-    let api = Api::new(&server_url);
+    let api = core.start_login(&server_url)?;
     let s = api.register(&invite_code, &username, &password).await?;
     core.activate(&app, api, s.token, Some(s.user.id), true);
     Ok(s.user)
@@ -469,6 +568,7 @@ async fn unrestored_reason(api: &Api, token: &str) -> ApiError {
 
 #[tauri::command]
 pub async fn logout(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiError> {
+    core.mfa.clear();
     if let Ok((api, token)) = core.current() {
         let _ = api.logout(&token).await;
     }
@@ -481,6 +581,82 @@ pub async fn logout(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiErro
 pub async fn logout_others(app: AppHandle, core: State<'_, Core>) -> Result<u32, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.logout_others(&token).await)
+}
+
+/// Settings → Advanced: is two-factor on, and can this server do it at all.
+#[tauri::command]
+pub async fn two_factor_status(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<TwoFactorStatus, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.two_factor_status(&token).await)
+}
+
+/// What the setup screen shows: the secret for typing in, and the QR code as a module matrix
+/// (the `otpauth://` URI stays here). Not `Debug`: it holds the secret.
+#[derive(serde::Serialize)]
+pub struct TwoFactorSetup {
+    pub secret: String,
+    pub qr: QrMatrix,
+}
+
+/// "ABCDEFGHIJ" -> "ABCD EFGH IJ": easier to read off a screen and type into an authenticator.
+fn group_secret(secret: &str) -> String {
+    secret
+        .as_bytes()
+        .chunks(4)
+        .map(|c| String::from_utf8_lossy(c).into_owned())
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+#[tauri::command]
+pub async fn two_factor_setup(
+    app: AppHandle,
+    core: State<'_, Core>,
+    password: String,
+) -> Result<TwoFactorSetup, ApiError> {
+    let (api, token) = core.current()?;
+    let r = core.check(&app, api.two_factor_setup(&token, &password).await)?;
+    let qr = crate::qr::qr_matrix(&r.otpauth_uri).ok_or_else(|| {
+        ApiError::Rejected("Couldn't draw the QR code; type the key in instead.".into())
+    })?;
+    Ok(TwoFactorSetup {
+        secret: group_secret(&r.secret),
+        qr,
+    })
+}
+
+/// Turns two-factor on; the response holds the recovery codes, shown once.
+#[tauri::command]
+pub async fn two_factor_enable(
+    app: AppHandle,
+    core: State<'_, Core>,
+    code: String,
+) -> Result<TwoFactorEnabledResponse, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.two_factor_enable(&token, &code).await)
+}
+
+#[tauri::command]
+pub async fn two_factor_disable(
+    app: AppHandle,
+    core: State<'_, Core>,
+    code: String,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.two_factor_disable(&token, &code).await)
+}
+
+#[tauri::command]
+pub async fn two_factor_regenerate(
+    app: AppHandle,
+    core: State<'_, Core>,
+    code: String,
+) -> Result<RecoveryCodesResponse, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.two_factor_regenerate(&token, &code).await)
 }
 
 /// The UI calls this when the network comes back (`online`); window focus probes from Rust.
@@ -977,6 +1153,80 @@ pub async fn list_reactors(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_pending_login_is_replaced_by_the_next_and_cleared_on_demand() {
+        let p = PendingMfa::default();
+        assert!(
+            p.get().is_none(),
+            "login_mfa with nothing pending is expired"
+        );
+        p.set(Api::new("https://a.example.com"), "t1".into());
+        p.set(Api::new("https://b.example.com"), "t2".into());
+        let (api, ticket) = p.get().unwrap();
+        assert_eq!(
+            (api.base(), ticket.as_str()),
+            ("https://b.example.com", "t2")
+        );
+        assert!(
+            p.get().is_some(),
+            "reading it does not spend it: a wrong code retries"
+        );
+        p.clear();
+        assert!(p.get().is_none());
+    }
+
+    #[test]
+    fn a_pending_login_is_only_taken_by_its_own_ticket() {
+        let p = PendingMfa::default();
+        assert!(!p.take_if("t1"), "nothing pending");
+        p.set(Api::new("https://a.example.com"), "t1".into());
+        p.set(Api::new("https://a.example.com"), "t2".into());
+        // A second step that finishes after a newer login started must not clear the newer one.
+        assert!(!p.take_if("t1"));
+        assert_eq!(p.get().unwrap().1, "t2");
+        assert!(p.take_if("t2"));
+        assert!(p.get().is_none());
+    }
+
+    #[test]
+    fn going_back_from_the_code_step_drops_the_ticket() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, _) = signed_in(root.path(), "https://pulse.example.com", None);
+        core.mfa
+            .set(Api::new("https://pulse.example.com"), "t1".into());
+        core.cancel_login();
+        assert!(core.mfa.get().is_none());
+    }
+
+    #[test]
+    fn a_new_login_drops_the_old_ticket_even_with_a_bad_server_url() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, _) = signed_in(root.path(), "https://pulse.example.com", None);
+        core.mfa
+            .set(Api::new("https://pulse.example.com"), "t1".into());
+        assert!(core.start_login("not a url").is_err());
+        assert!(core.mfa.get().is_none());
+        core.mfa
+            .set(Api::new("https://pulse.example.com"), "t1".into());
+        let api = core.start_login("https://other.example.com").unwrap();
+        assert_eq!(api.base(), "https://other.example.com");
+        assert!(core.mfa.get().is_none());
+    }
+
+    #[test]
+    fn login_results_tell_the_ui_apart() {
+        let j = |r: LoginResult| serde_json::to_string(&r).unwrap();
+        assert_eq!(j(LoginResult::MfaRequired), r#"{"status":"mfa_required"}"#);
+        assert_eq!(j(LoginResult::Expired), r#"{"status":"expired"}"#);
+    }
+
+    #[test]
+    fn the_secret_is_shown_in_groups_of_four() {
+        assert_eq!(group_secret("ABCDEFGHIJKL"), "ABCD EFGH IJKL");
+        assert_eq!(group_secret("ABCDEFGHIJ"), "ABCD EFGH IJ");
+        assert_eq!(group_secret(""), "");
+    }
 
     #[test]
     fn restore_results_tell_the_ui_apart() {

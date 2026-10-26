@@ -62,6 +62,7 @@ deploy-check:
     sed -e 's/^PULSE_UID=$/PULSE_UID=1000/' -e 's/^PULSE_GID=$/PULSE_GID=1000/' \
         -e 's/^ACME_EMAIL=$/ACME_EMAIL=ci@example.com/' -e 's/^LIVEKIT_SECRET=$/LIVEKIT_SECRET=x/' \
         -e 's/^LIVEKIT_NODE_IP=$/LIVEKIT_NODE_IP=203.0.113.10/' \
+        -e 's/^PULSE_TOTP_KEY=$/PULSE_TOTP_KEY=0000000000000000000000000000000000000000000000000000000000000000/' \
         deploy/env.example > /tmp/pulse-ci.env
     docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config -q
     caddy_image=$(docker compose --env-file /tmp/pulse-ci.env -f deploy/compose.yml config --images | grep '^caddy:') && \
@@ -87,8 +88,8 @@ close-public-ssh:
 
 # back up, then run image TAG (a 7-char commit or `latest`); prints the commit that's live
 deploy tag="latest":
-    # Checks the server's .env (LIVEKIT_NODE_IP) with this deploy.sh before anything is copied, so a refusal
-    # leaves /srv/pulse exactly as it was.
+    # Checks the server's .env (LIVEKIT_NODE_IP, PULSE_TOTP_KEY) with this deploy.sh before anything is copied, so a
+    # refusal leaves /srv/pulse exactly as it was.
     ssh {{prod}} 'bash -s -- --check-env' < deploy/deploy.sh
     scp deploy/compose.yml deploy/Caddyfile deploy/livekit.yaml deploy/backup.sh deploy/deploy.sh {{prod}}:/srv/pulse/
     ssh {{prod}} '/srv/pulse/deploy.sh {{tag}}'
@@ -100,6 +101,14 @@ smoke:
 # a single-use invite on the live server (valid 24 h)
 invite-prod:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server create-invite'
+
+# turn off two-factor for a locked-out user on the live server (the name goes into a remote shell, so it is checked here first; passed as $username, never pasted into the script)
+reset-2fa $username:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "$username" =~ ^[A-Za-z0-9_.]{2,32}$ ]] || { echo "reset-2fa: username must be 2-32 characters of letters, digits, _ or ." >&2; exit 1; }
+    # `run`, not `exec`: works with the server stopped (it refuses to start on a wrong key). The image's entrypoint is the binary.
+    ssh {{prod}} 'cd /srv/pulse && docker compose run --rm --no-deps -T pulse-server reset-2fa '"$username"
 
 # newest bug/crash reports on the live server (`new` = not looked at yet)
 reports:

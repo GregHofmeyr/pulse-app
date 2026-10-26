@@ -10,6 +10,17 @@ import type { StreamSettings } from './protocol/StreamSettings'
 import type { VoiceTokenResponse } from './protocol/VoiceTokenResponse'
 import type { MediaInfo } from './protocol/MediaInfo'
 import type { CustomEmoji } from './protocol/CustomEmoji'
+import type { TwoFactorStatus } from './protocol/TwoFactorStatus'
+import type { TwoFactorEnabledResponse } from './protocol/TwoFactorEnabledResponse'
+import type { RecoveryCodesResponse } from './protocol/RecoveryCodesResponse'
+
+/** `login` / `login_mfa`: signed in, waiting for the second step, or (second step only) the ticket is gone. */
+export type LoginResult = { status: 'ready'; user: User } | { status: 'mfa_required' } | { status: 'expired' }
+
+/** The QR code as a square module matrix, row by row (true = dark); the quiet zone is not included. */
+export type QrMatrix = { size: number; modules: boolean[] }
+/** The manual key (grouped in fours) and the QR for the authenticator app. */
+export type TwoFactorSetup = { secret: string; qr: QrMatrix }
 
 /** What startup found: signed in, show login, or signed in but the server refused the connection. */
 export type Restored = { status: 'ready'; user: User } | { status: 'logged_out' } | { status: 'refused' }
@@ -24,7 +35,10 @@ export const api = {
   clearMute: (targetKind: 'server' | 'channel', targetId: string) => invoke<void>('clear_mute', { targetKind, targetId }),
   closeConversation: (channelId: string) => invoke<void>('close_conversation', { channelId }),
   login: (serverUrl: string, username: string, password: string) =>
-    invoke<User>('login', { serverUrl, username, password }),
+    invoke<LoginResult>('login', { serverUrl, username, password }),
+  loginMfa: (code: string) => invoke<LoginResult>('login_mfa', { code }),
+  /** Back from the code step: the core forgets the pending ticket. */
+  cancelLogin: () => invoke<void>('cancel_login'),
   register: (serverUrl: string, inviteCode: string, username: string, password: string) =>
     invoke<User>('register', { serverUrl, inviteCode, username, password }),
   restoreSession: () => invoke<Restored>('restore_session'),
@@ -67,6 +81,14 @@ export const api = {
   discardHeldReport: () => invoke<void>('discard_held_report'),
   getReportSettings: () => invoke<ReportSettings>('get_report_settings'),
   setReportSettings: (settings: ReportSettings) => invoke<ReportSettings>('set_report_settings', { settings }),
+}
+
+export const twoFactor = {
+  status: () => invoke<TwoFactorStatus>('two_factor_status'),
+  setup: (password: string) => invoke<TwoFactorSetup>('two_factor_setup', { password }),
+  enable: (code: string) => invoke<TwoFactorEnabledResponse>('two_factor_enable', { code }),
+  disable: (code: string) => invoke<void>('two_factor_disable', { code }),
+  regenerate: (code: string) => invoke<RecoveryCodesResponse>('two_factor_regenerate', { code }),
 }
 
 /** Off: crash reports are saved on this computer and only sent if the user says so on the next launch. */

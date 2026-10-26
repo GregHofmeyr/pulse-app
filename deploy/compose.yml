@@ -26,6 +26,7 @@ services:
       PULSE_LIVEKIT_API_URL: http://127.0.0.1:7880
       PULSE_LIVEKIT_KEY: pulse
       PULSE_LIVEKIT_SECRET: ${LIVEKIT_SECRET:?}
+      PULSE_TOTP_KEY: ${PULSE_TOTP_KEY:?}
       RUST_LOG: info,sqlx=warn
     volumes:
       - ./data:/data

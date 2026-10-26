@@ -5,7 +5,7 @@ use chrono::{DateTime, Duration, SecondsFormat, Utc};
 use pulse_protocol::ids::UserId;
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 const LIFETIME_DAYS: i64 = 90;
 /// Only rewrite expiry when the last recorded use is older than this (avoids a write per request).
@@ -225,15 +225,27 @@ pub async fn revoke(db: &SqlitePool, token: &str) -> anyhow::Result<Vec<RevokedG
 
 /// Delete every session of `user` except the one `keep` belongs to, expired ones included.
 pub async fn revoke_others(db: &SqlitePool, user: UserId, keep: &str) -> anyhow::Result<Revoked> {
-    let (user, keep) = (user.to_string(), hash_token(keep));
     let mut tx = crate::db::begin_write(db).await?;
+    let revoked = revoke_others_in(&mut tx, user, keep).await?;
+    tx.commit().await?;
+    Ok(revoked)
+}
+
+/// [`revoke_others`] inside the caller's write transaction, so the sign-out commits (or rolls
+/// back) together with whatever else that transaction does.
+pub async fn revoke_others_in(
+    conn: &mut SqliteConnection,
+    user: UserId,
+    keep: &str,
+) -> anyhow::Result<Revoked> {
+    let (user, keep) = (user.to_string(), hash_token(keep));
     let live: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sessions WHERE user_id = ? AND token_hash != ? AND expires_at > ?",
     )
     .bind(&user)
     .bind(&keep)
     .bind(ts(Utc::now()))
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *conn)
     .await?;
     let grants = sqlx::query_as(
         "SELECT g.id, g.room FROM livekit_grants g JOIN sessions s ON s.token_hash = g.token_hash
@@ -241,14 +253,13 @@ pub async fn revoke_others(db: &SqlitePool, user: UserId, keep: &str) -> anyhow:
     )
     .bind(&user)
     .bind(&keep)
-    .fetch_all(&mut *tx)
+    .fetch_all(&mut *conn)
     .await?;
     sqlx::query("DELETE FROM sessions WHERE user_id = ? AND token_hash != ?")
         .bind(&user)
         .bind(&keep)
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await?;
-    tx.commit().await?;
     Ok(Revoked {
         live: u64::try_from(live).unwrap_or(0),
         grants,

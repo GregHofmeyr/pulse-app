@@ -2,6 +2,7 @@
   import { diagUi, setDiagOverlay } from '../lib/stream/diag.svelte'
   import { onMount } from 'svelte'
   import { api, errorText } from '../lib/tauri'
+  import TwoFactorSettings from './TwoFactorSettings.svelte'
 
   // null until the saved value is known: the box can't be changed before then
   let autoSend = $state<boolean | null>(null)
@@ -75,6 +76,8 @@
 {/if}
 {#if result}<p class="ok" role="status">{result}</p>{/if}
 {#if error}<p class="err" role="alert">{error}</p>{/if}
+
+<TwoFactorSettings />
 
 <style>
   h2 { margin: 0 0 16px; font-size: 20px; }

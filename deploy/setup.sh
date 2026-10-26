@@ -81,6 +81,16 @@ if [[ ! -f $APP/.env ]]; then
   install -o pulse -g pulse -m 600 "$HERE/env.example" "$APP/.env"
   sed -i "s/^LIVEKIT_SECRET=.*/LIVEKIT_SECRET=$(openssl rand -hex 32)/" "$APP/.env"
 fi
+# 2FA secrets are encrypted with this; fill it only when missing or blank, never replace a value (that would lock
+# out everyone with 2FA on). Appended when absent (older servers), like deploy.sh's set_env.
+if ! grep -q '^PULSE_TOTP_KEY=.*[^[:space:]]' "$APP/.env"; then
+  if grep -q '^PULSE_TOTP_KEY=' "$APP/.env"; then
+    sed -i "s/^PULSE_TOTP_KEY=.*/PULSE_TOTP_KEY=$(openssl rand -hex 32)/" "$APP/.env"
+  else
+    [[ -z $(tail -c1 "$APP/.env") ]] || echo >>"$APP/.env"
+    printf 'PULSE_TOTP_KEY=%s\n' "$(openssl rand -hex 32)" >>"$APP/.env"
+  fi
+fi
 sed -i "s/^PULSE_UID=.*/PULSE_UID=$(id -u pulse)/; s/^PULSE_GID=.*/PULSE_GID=$(id -g pulse)/" "$APP/.env"
 chown pulse:pulse "$APP/.env"; chmod 600 "$APP/.env"
 
@@ -158,4 +168,4 @@ if $CLOSE_SSH; then
 fi
 
 say "done"
-echo "Next: fill the blanks in $APP/.env (ACME_EMAIL and LIVEKIT_NODE_IP now, backups later), then 'just deploy' from your laptop."
+echo "Next: fill the blanks in $APP/.env (ACME_EMAIL and LIVEKIT_NODE_IP now, backups later), and keep a copy of PULSE_TOTP_KEY offline, then 'just deploy' from your laptop."

@@ -38,6 +38,10 @@ pub struct LimitsConfig {
     pub login_user: Rate,
     /// Failed registrations (unknown/used/expired invite) per client IP.
     pub register_ip: Rate,
+    /// Two-factor code checks per client IP (spent up front, refunded on success).
+    pub mfa_ip: Rate,
+    /// Two-factor code checks per user id.
+    pub mfa_user: Rate,
     /// Messages sent per user.
     pub send_user: Rate,
     /// Typing frames per user (extra ones are dropped).
@@ -63,6 +67,8 @@ impl Default for LimitsConfig {
             login_ip: Rate::per_minute(5),
             login_user: Rate::per_hour(10),
             register_ip: Rate::per_hour(5),
+            mfa_ip: Rate::per_minute(5),
+            mfa_user: Rate::per_hour(10),
             send_user: Rate::new(20, 5.0),
             typing_user: Rate::new(1, 1.0),
             report_user: Rate::per_hour(5),
@@ -91,6 +97,8 @@ impl LimitsConfig {
             login_ip: r,
             login_user: r,
             register_ip: r,
+            mfa_ip: r,
+            mfa_user: r,
             send_user: r,
             typing_user: r,
             report_user: r,
@@ -191,6 +199,8 @@ pub struct Limits {
     pub login_ip: Limiter,
     pub login_user: Limiter,
     pub register_ip: Limiter,
+    pub mfa_ip: Limiter,
+    pub mfa_user: Limiter,
     pub send_user: Limiter,
     pub typing_user: Limiter,
     pub report_user: Limiter,
@@ -207,6 +217,8 @@ impl Limits {
             login_ip: Limiter::new(c.login_ip),
             login_user: Limiter::new(c.login_user),
             register_ip: Limiter::new(c.register_ip),
+            mfa_ip: Limiter::new(c.mfa_ip),
+            mfa_user: Limiter::new(c.mfa_user),
             send_user: Limiter::new(c.send_user),
             typing_user: Limiter::new(c.typing_user),
             report_user: Limiter::new(c.report_user),

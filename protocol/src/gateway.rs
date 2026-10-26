@@ -9,7 +9,8 @@ use crate::rest::{
     StreamInfo, User,
 };
 
-#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+// `Debug` is written out by hand below: `Hello` carries the session token.
+#[derive(Clone, Serialize, Deserialize, TS)]
 #[serde(tag = "op", content = "d")]
 pub enum ClientFrame {
     Hello {
@@ -26,6 +27,26 @@ pub enum ClientFrame {
     VoiceState {
         flags: VoiceFlags,
     },
+}
+
+impl std::fmt::Debug for ClientFrame {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Hello { client_version, .. } => f
+                .debug_struct("Hello")
+                .field("token", &"<redacted>")
+                .field("client_version", client_version)
+                .finish(),
+            Self::Heartbeat => f.write_str("Heartbeat"),
+            Self::Typing { channel_id } => f
+                .debug_struct("Typing")
+                .field("channel_id", channel_id)
+                .finish(),
+            Self::VoiceState { flags } => {
+                f.debug_struct("VoiceState").field("flags", flags).finish()
+            }
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
@@ -281,6 +302,27 @@ impl Event {
 mod tests {
     use super::*;
     use crate::rest::{StreamRole, StreamSettings, StreamStatus};
+
+    /// Debug output can end up in logs: `Hello` never shows the session token.
+    #[test]
+    fn hello_debug_never_shows_the_token() {
+        let hello = format!(
+            "{:?}",
+            ClientFrame::Hello {
+                token: "SECRET-TOKEN".into(),
+                client_version: 7,
+            }
+        );
+        assert!(!hello.contains("SECRET"), "{hello}");
+        assert!(hello.contains("Hello") && hello.contains("7"), "{hello}");
+        let typing = format!(
+            "{:?}",
+            ClientFrame::Typing {
+                channel_id: ChannelId::new()
+            }
+        );
+        assert!(typing.contains("Typing"), "{typing}");
+    }
 
     #[test]
     fn hello_without_a_version_is_version_zero() {

@@ -15,6 +15,9 @@ enum Cmd {
     CreateInvite,
     /// Write a consistent snapshot of the database to PATH (must not exist yet)
     Backup { path: std::path::PathBuf },
+    /// Turn off two-factor authentication for a user who is locked out (needs no key)
+    #[command(name = "reset-2fa")]
+    Reset2fa { username: String },
     /// List the newest bug/crash reports
     Reports {
         #[arg(long, default_value_t = 20)]
@@ -48,6 +51,14 @@ async fn main() -> anyhow::Result<()> {
         Cmd::Backup { path } => {
             let db = pulse_server::db::connect(&cfg.db_url).await?;
             pulse_server::db::backup(&db, &path).await
+        }
+        Cmd::Reset2fa { username } => {
+            let db = pulse_server::db::connect(&cfg.db_url).await?;
+            let name = pulse_server::auth::two_factor::reset(&db, &username).await?;
+            println!(
+                "two-factor turned off for {name}: they can sign in with their password and set it up again"
+            );
+            Ok(())
         }
         Cmd::Reports { limit } => {
             let db = pulse_server::db::connect(&cfg.db_url).await?;

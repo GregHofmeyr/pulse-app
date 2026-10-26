@@ -45,19 +45,37 @@ check_node_ip() {
   return 1
 }
 
+# check_totp_key FILE: PULSE_TOTP_KEY must be exactly 64 hex characters. The server refuses to start without a
+# usable key once anyone has 2FA on, so catch it before anything is copied. The value is never printed.
+check_totp_key() {
+  local key
+  if [ ! -r "$1" ]; then
+    echo "$1 not found (or not readable): see deploy/README.md, \"First deploy after the two-factor push\"" >&2
+    return 1
+  fi
+  key=$(sed -n 's/^PULSE_TOTP_KEY=//p' "$1" | tail -n1)
+  if [[ $key =~ ^[0-9a-fA-F]{64}$ ]]; then
+    return 0
+  fi
+  echo "PULSE_TOTP_KEY in $1 must be 64 hex characters (deploy/README.md, \"First deploy after the two-factor push\")" >&2
+  return 1
+}
+
 # Sourced by the self-test with DEPLOY_SH_LIB=1: define the functions, run nothing.
 [ -n "${DEPLOY_SH_LIB:-}" ] && return 0
 
 # `just deploy` runs this first, piped over ssh, before it copies anything to the server: a missing or bad
-# LIVEKIT_NODE_IP stops the deploy while /srv/pulse is still exactly as it was.
+# LIVEKIT_NODE_IP or PULSE_TOTP_KEY stops the deploy while /srv/pulse is still exactly as it was.
 if [ "${1:-}" = --check-env ]; then
   check_node_ip "${2:-/srv/pulse/.env}"
+  check_totp_key "${2:-/srv/pulse/.env}"
   exit
 fi
 
 tag=${1:?usage: deploy.sh TAG}
 cd /srv/pulse
 check_node_ip .env
+check_totp_key .env
 ./backup.sh run
 # Pull first: a mistyped tag fails here and leaves .env and the running server untouched.
 # PULSE_IMAGE from the shell wins over .env, so this pulls TAG and not the previously pinned digest.

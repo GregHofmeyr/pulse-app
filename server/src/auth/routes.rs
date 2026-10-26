@@ -13,7 +13,7 @@ use super::extractor::{AuthUser, BearerToken};
 use super::{invites, password, session};
 use crate::AppState;
 use crate::db::now;
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, Ticket};
 use crate::limits::ClientIp;
 
 pub fn router() -> Router<AppState> {
@@ -27,7 +27,7 @@ pub fn router() -> Router<AppState> {
 }
 
 /// Names are stored lowercase; any case (and stray spaces) typed at register or login maps to it.
-fn normalize_username(u: &str) -> String {
+pub(crate) fn normalize_username(u: &str) -> String {
     u.trim().to_ascii_lowercase()
 }
 
@@ -204,6 +204,16 @@ async fn check_login(s: &AppState, req: LoginRequest) -> AppResult<Json<SessionR
         return Err(AppError::Unauthorized);
     }
     let id: UserId = id.parse().map_err(anyhow::Error::from)?;
+    let two_factor_on: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM user_totp WHERE user_id = ? AND enabled_at IS NOT NULL")
+            .bind(id.to_string())
+            .fetch_optional(&s.db)
+            .await?;
+    if two_factor_on.is_some() {
+        return Err(AppError::MfaRequired(Ticket(
+            super::two_factor::issue_ticket(&s.db, id).await?,
+        )));
+    }
     let token = session::create(&s.db, id).await?;
     Ok(Json(SessionResponse {
         token,
@@ -228,17 +238,33 @@ async fn logout(
 
 /// Sign out every other device: revoke the caller's other sessions and close their sockets
 /// (4001, so those clients drop to the login screen), then remove the LiveKit participants they
-/// admitted. This device stays signed in, calls included. `revoked` counts live sessions only.
+/// admitted. This device stays signed in, calls included. Returns how many live sessions went.
+pub(super) async fn sign_out_others(s: &AppState, user: UserId, token: &str) -> AppResult<u32> {
+    let revoked = session::revoke_others(&s.db, user, token).await?;
+    Ok(after_revoke_others(s, user, token, revoked).await)
+}
+
+/// The rest of signing out other devices once their sessions are deleted (committed): close
+/// their sockets and remove their LiveKit participants, both best effort. Returns how many live
+/// sessions went.
+pub(super) async fn after_revoke_others(
+    s: &AppState,
+    user: UserId,
+    token: &str,
+    revoked: session::Revoked,
+) -> u32 {
+    s.hub.drop_other_sessions(user, &session::hash_token(token));
+    crate::voice::revoke::remove_revoked(s, &revoked.grants).await;
+    u32::try_from(revoked.live).unwrap_or(u32::MAX)
+}
+
 async fn logout_others(
     State(s): State<AppState>,
     AuthUser(u): AuthUser,
     BearerToken(t): BearerToken,
 ) -> AppResult<Json<LogoutOthersResponse>> {
-    let revoked = session::revoke_others(&s.db, u, &t).await?;
-    s.hub.drop_other_sessions(u, &session::hash_token(&t));
-    crate::voice::revoke::remove_revoked(&s, &revoked.grants).await;
     Ok(Json(LogoutOthersResponse {
-        revoked: u32::try_from(revoked.live).unwrap_or(u32::MAX),
+        revoked: sign_out_others(&s, u, &t).await?,
     }))
 }
 
