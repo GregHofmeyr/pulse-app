@@ -53,6 +53,17 @@ afterEach(() => {
 })
 
 describe('EmojiPicker', () => {
+  it('shift_mousedown_on_a_cell_does_not_extend_a_text_selection', () => {
+    open()
+    const shift = new MouseEvent('mousedown', { bubbles: true, cancelable: true, shiftKey: true })
+    cells()[0].dispatchEvent(shift)
+    expect(shift.defaultPrevented).toBe(true)
+    // a plain press keeps its default (focus moves to the cell as usual)
+    const plain = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    cells()[0].dispatchEvent(plain)
+    expect(plain.defaultPrevented).toBe(false)
+  })
+
   it('search_filters_and_enter_picks_first', () => {
     open()
     type('thumbs')

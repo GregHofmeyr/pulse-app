@@ -173,6 +173,7 @@
   <button
     class="cell" class:active={navigated && idx === active} type="button" aria-label={`:${nameOf(e)}:`}
     data-key={reactionKey(e)} onclick={(ev) => pick(e, ev.shiftKey)}
+    onmousedown={(ev) => { if (ev.shiftKey) ev.preventDefault() /* a Shift pick must not extend a text selection */ }}
     onmouseenter={() => { hovered = e; active = idx }} onmouseleave={() => (hovered = null)}
   >
     <img src={imgSrc(e)} alt="" loading="lazy" draggable="false" {@attach isCustom(e) && animatedEmoji(e)} />

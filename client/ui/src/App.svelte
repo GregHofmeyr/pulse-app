@@ -5,6 +5,7 @@
   import { app, resetState, startListening } from './lib/store.svelte'
   import { startVoiceListening } from './lib/voice.svelte'
   import { installTooltips } from './lib/tooltip'
+  import { watchWindowFocus, windowFocus } from './lib/windowFocus.svelte'
   import type { User } from './lib/protocol/User'
   import Login from './routes/Login.svelte'
   import Shell from './routes/Shell.svelte'
@@ -17,6 +18,14 @@
   const screen = $derived(screenFor({ booting, signedIn: !!user, conn: app.state.conn }))
 
   onMount(() => installTooltips())
+  onMount(watchWindowFocus)
+
+  // While the window is unfocused (app.css `.unfocused`) nothing animates in the background, on any screen.
+  $effect(() => {
+    if (windowFocus.focused) return
+    document.body.classList.add('unfocused')
+    return () => document.body.classList.remove('unfocused')
+  })
 
   // Startup timeline: tell the core when the first real screen has painted (once).
   let painted = false

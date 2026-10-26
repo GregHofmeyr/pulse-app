@@ -32,17 +32,18 @@ describe('shouldAnimate', () => {
     expect(shouldAnimate({ ...base, streaming: true })).toBe(false)
   })
 
-  it('needs focus, on-screen and no reduced motion; then the mode decides', async () => {
+  it('needs focus, on-screen, no reduced motion and not streaming; then the mode decides', async () => {
     const { shouldAnimate } = await fresh()
     const modes = ['always', 'hover', 'never'] as const
     for (const mode of modes)
       for (const focused of [true, false])
         for (const visible of [true, false])
           for (const hovered of [true, false])
-            for (const reducedMotion of [true, false]) {
-              const want = focused && visible && !reducedMotion && (mode === 'always' || (mode === 'hover' && hovered))
-              expect(shouldAnimate({ mode, focused, visible, hovered, reducedMotion, streaming: false }), JSON.stringify({ mode, focused, visible, hovered, reducedMotion })).toBe(want)
-            }
+            for (const reducedMotion of [true, false])
+              for (const streaming of [true, false]) {
+                const want = focused && visible && !reducedMotion && !streaming && (mode === 'always' || (mode === 'hover' && hovered))
+                expect(shouldAnimate({ mode, focused, visible, hovered, reducedMotion, streaming }), JSON.stringify({ mode, focused, visible, hovered, reducedMotion, streaming })).toBe(want)
+              }
   })
 })
 
