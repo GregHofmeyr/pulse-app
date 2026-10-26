@@ -42,8 +42,8 @@ repository.
   it before they open the stream.
   - The server decodes each upload and re-encodes it as a new WebP of at most 480×270. Only the re-encoded image is
     kept and served, so the upload's metadata never reaches viewers.
-  - It accepts WebP, PNG or JPEG of at most 100 KB and 1920×1920. The bytes must match the declared type, and
-    animations are refused. An upload that can't be decoded within these limits is refused, and the previous preview
+  - It accepts WebP, PNG or JPEG of at most 100 KB and 1920×1920. The bytes must match the declared type. Animated
+    WebP is refused; an animated PNG keeps only its still default image. An upload that can't be decoded within these limits is refused, and the previous preview
     stays.
   - The server keeps only the latest image, in memory, and drops it when the stream ends.
   - Uploads are limited per user to a burst of 6, then one every 5 seconds.
@@ -107,7 +107,7 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     is created with a protected access list (nothing inherited from the folder) that grants only the current user, so
     it is never readable through the folder's permissions. A `session.json` left on disk is deleted the next time Pulse
     starts and finds its session in the credential store. Otherwise Pulse reads the file at startup, and on Windows
-    first tightens it to the same owner-only access list (also when the file turns out to be unusable).
+    tightens it to the same owner-only access list when it reads it (also when the file turns out to be unusable).
   - **Who can use it.** The token is held by the Rust core and never passed to the web UI.
   - **What it does not hold.** Passwords are never stored on the machine.
 - **Logs.**
@@ -148,8 +148,9 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     - **When it is off.** Nothing is sent automatically: not a new report, and not a retry of an earlier one. The
       setting is checked again before every attempt. The report is held, and the user is asked **Send** or **Don't
       send** in the main window. Don't send deletes it. Turning the setting back on does not release a held report,
-      so a held report is only ever sent when the user presses Send. If the settings file can't be read, the setting
-      counts as off.
+      so a held report is only ever sent when the user presses Send.
+    - **Settings file.** The setting is stored in `reports.json`. If that file, or the setting in it, is missing, the
+      setting is on. If the file exists but can't be read or parsed, the setting counts as off.
     - **Expiry.** A report older than 7 days is deleted instead of sent.
   - **What a report contains.** Each one contains:
     - the user's text, if any;
@@ -157,7 +158,7 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     - the OS name and version;
     - the server address;
     - the connection state;
-    - the voice channel and the names of the audio devices chosen, if set;
+    - the voice channel, the mute and deafen state, and the names of the audio devices chosen, if set;
     - the panic message and its location, for crashes (the message capped at 2 KB);
     - the last 256 KB of the local log.
 
@@ -194,7 +195,14 @@ ties each of those tokens to the session that asked for it:
   working way to revoke one). So every join is checked: LiveKit tells the server about each join, and a participant is
   removed again unless its grant ID belongs to a live session and was issued for that exact room and identity. This
   covers a signed-out device rejoining with a token it kept, and an expired session.
-- **Lifetime.** Voice and stream tokens are valid for 10 minutes for joining.
+  - **Limits of that check.** The removal happens after LiveKit reports the join, in the background, and takes at
+    most 2 seconds. Until then the refused device is briefly in the call, and its join response has already given it
+    TURN credentials. If LiveKit's join notification is lost, or LiveKit can't be reached for the removal, the device
+    is not removed, and the miss is logged. Removal is by identity, so a valid device of the same user that joins in
+    the same instant (one LiveKit round trip) could be removed instead.
+- **Lifetime.** Voice and stream tokens are valid for 10 minutes. LiveKit keeps refreshing the token of a participant
+  that stays connected, so token expiry alone does not end a call. The join check above, not expiry, is what keeps a
+  signed-out device out.
 
 **Rate limits.** These are in-memory token buckets:
 
@@ -226,11 +234,12 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   - two images processed at a time.
 - **Re-encoding.** Every image upload (custom emoji) is decoded and re-encoded server-side to a WebP of at most 128×128.
   The original bytes are never stored or served.
-- **Go Live previews** are image uploads too, and are re-encoded the same way. Their limits:
+- **Go Live previews** are image uploads too. They use the same decoding memory limit and the same WebP encoder, with
+  their own size limit and fitting:
   - at most 100 KB per upload;
   - at most 1920×1920, checked from the header before any decoding;
   - WebP, PNG or JPEG matching the declared type;
-  - no animations;
+  - animated WebP is refused; an animated PNG keeps only its still default image;
   - the output is a still WebP of at most 480×270;
   - processed in the same two slots as other image uploads;
   - per user, a burst of 6, then one every 5 seconds.
@@ -260,8 +269,12 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
 ## 5. Infrastructure
 
 - **TLS.** Caddy terminates TLS with automatically renewed certificates.
-- **Internal services.** The Pulse server listens on loopback only. LiveKit's signalling port is reachable only through
-  Caddy. The LiveKit webhook path is refused at the proxy.
+- **Internal services.** The Pulse server listens on loopback only. LiveKit's signalling port (7880) also listens on
+  loopback only, so it is reachable only through Caddy; the firewall keeps 7880 closed as well. LiveKit's media and
+  TURN ports are public (see *Firewall*). The LiveKit webhook path is refused at the proxy.
+- **Provisioning.** The setup script installs Docker and Tailscale from their vendors' signed apt repositories. It
+  checks each repository's signing key against a full fingerprint pinned in the script and stops if it differs. No
+  vendor install script is piped into a shell.
 - **Firewall.** It allows only TCP 80 and 443 (HTTPS, and redirects/certificate issuance), TCP 7881, UDP 7882 and
   UDP 3478 (media and TURN), and the port of the private VPN used for administration.
 - **SSH.**
@@ -278,12 +291,14 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   - Images are pinned by digest. LiveKit and Caddy are pinned in the compose file. The Pulse server image is pinned to
     the digest pulled at deploy time, so a moved tag cannot change what runs.
 - **Secrets.** The server's secrets live in a mode-`0600` file owned by the service user.
-- **Backups.** Every night, and before each deploy, the database and uploaded media are encrypted with `age` and stored
-  in an S3-compatible object store. That object store is with a different provider from the VM. The decryption key is
+- **Backups.** Provisioning leaves backups off until the operator sets the encryption key and object-store details.
+  Once configured, every night and before each deploy, the database and uploaded media are encrypted with `age` and
+  stored in an S3-compatible object store. That object store is with a different provider from the VM. The decryption key is
   not on the server, and the plaintext snapshot is deleted as soon as it has been encrypted.
 - **LiveKit's public address.** LiveKit is given the server's public IPv4 address in the deployment's configuration.
   It does not discover it, so it contacts no outside STUN server at start-up. A deploy stops before changing anything
-  if that address is missing or isn't a public IPv4 address.
+  if that address is missing or malformed, or is a private, loopback, link-local, carrier-grade NAT, multicast or
+  reserved address. (Documentation-only ranges such as TEST-NET pass this check.)
 - **TURN relay limits.** Pulse sets no TURN relay options of its own, so the defaults of the pinned LiveKit release
   (v1.13.10) apply. The following is LiveKit's code, not Pulse's (`pkg/service/turn.go` and
   `pkg/service/turnrelay.go` at tag `v1.13.10`), and it is not tested in this repository.
@@ -315,7 +330,6 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   - **Rust.** The toolchain is pinned to 1.98.1 in `rust-toolchain.toml`. CI and the release builds install exactly
     that version.
   - **Tauri CLI.** The Windows build uses the Tauri CLI at an exact version (2.12.1), installed from the UI's lockfile.
-  - **Linux runners.** CI and the server-image builds run on `ubuntu-24.04`.
   - **LLVM (CI only).** LLVM comes from apt.llvm.org's signed package repository. Before adding it, CI checks the
     repository key's fingerprint against a pinned value and fails if it differs. Nothing installed this way ships.
 - **Verified downloads.**
@@ -346,8 +360,11 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   root-equivalent on the host. Mitigation: public SSH is closed, so it can only be reached over the owner's private VPN
   (section 5).
 - **Floating build inputs.** These are not pinned:
-  - the Windows build's runner image (`windows-latest`);
+  - the GitHub runner images (`ubuntu-24.04`, `ubuntu-24.04-arm`, `windows-latest`): GitHub updates them, and only
+    the OS release is fixed (none for `windows-latest`);
   - the versions of apt packages installed on the CI runners (system build dependencies, and LLVM 21's patch level);
+  - `ca-certificates` in the server image's runtime stage, installed with apt on top of the pinned base image;
+  - the BuildKit (buildx) version used to build the server image, and the `just` version in CI;
   - the Node.js and pnpm versions in CI and the Windows build (latest 22.x and 11.x). The UI's own dependencies,
     including the Tauri CLI, are pinned by the lockfile.
 - **Code signing.** The Windows installer is not code-signed yet, so SmartScreen and endpoint tools will see an unsigned
