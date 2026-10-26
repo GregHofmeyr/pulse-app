@@ -1043,8 +1043,6 @@ impl VoiceManager {
                 Ok(())
             }
             Err(e) => {
-                // the room may have connected before a cancel: its server isn't ours any more
-                self.link.clear();
                 if rejoin_of.is_none() {
                     self.emit_state(None, Connection::Disconnected);
                 }
@@ -2774,9 +2772,11 @@ mod tests {
         );
     }
 
-    /// A join that fails leaves no server or ping history of its own (or a previous call's).
+    /// A join that fails leaves no server or ping history (the previous call's are cleared as the
+    /// join detaches that room; `connect` stores the host only once the room is up, with no
+    /// await after it, so a cancel can't land between the two).
     #[tokio::test]
-    async fn a_failed_connect_leaves_the_link_clear() {
+    async fn a_failed_join_leaves_the_link_clear() {
         let app = testing::spawn_with(unreachable_livekit()).await;
         let (token, api, lounge) = alex_and_a_voice_channel(&app).await;
         let (vm, _) = collecting_manager();
