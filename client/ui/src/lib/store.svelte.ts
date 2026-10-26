@@ -116,4 +116,7 @@ export async function startListening(): Promise<UnlistenFn> {
 
 export function resetState() {
   app.state = emptyState()
+  // a held crash report belongs to the session (and server) it was offered in: the next sign-in
+  // asks again if the core still has it for that server
+  ui.heldReport = null
 }

@@ -14,7 +14,7 @@ vi.mock('@tauri-apps/api/event', () => ({
 }))
 
 import CrashReportPrompt from './CrashReportPrompt.svelte'
-import { startListening, ui } from '../lib/store.svelte'
+import { resetState, startListening, ui } from '../lib/store.svelte'
 
 let cmp: ReturnType<typeof mount> | undefined
 const show = () => {
@@ -86,6 +86,15 @@ describe('held crash report prompt', () => {
     await settle()
     expect(calls('discard_held_report')).toHaveLength(1)
     expect(calls('send_held_report')).toHaveLength(0)
+    expect(ui.heldReport).toBeNull()
+    expect(button('Send')).toBeUndefined()
+  })
+
+  it('a sign-out (resetState) forgets it', () => {
+    ui.heldReport = 'crash'
+    show()
+    resetState()
+    flushSync()
     expect(ui.heldReport).toBeNull()
     expect(button('Send')).toBeUndefined()
   })

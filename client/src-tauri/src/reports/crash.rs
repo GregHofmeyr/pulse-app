@@ -35,6 +35,10 @@ pub struct PendingFile {
     /// it. Never cleared once set, so turning the setting back on doesn't release it.
     #[serde(default)]
     pub held: bool,
+    /// The server the crashed session was signed in to (`None`: it never signed in, or the file is
+    /// from an older version). The report only ever goes to that server; any other gets nothing.
+    #[serde(default)]
+    pub server: Option<String>,
 }
 
 /// What the automatic path did with last session's report.
@@ -46,6 +50,8 @@ pub enum AutoSend {
     Sent,
     Dropped,
     Kept,
+    /// Written for a different server than the one signed in to (or none): deleted, not sent.
+    OtherServer,
 }
 
 #[derive(Debug, PartialEq)]
@@ -86,6 +92,27 @@ fn write_running(dir: &Path, at: u64, version: &str) {
     let _ = std::fs::create_dir_all(dir);
     let body = serde_json::json!({ "at": at, "version": version });
     let _ = std::fs::write(dir.join(RUNNING), body.to_string());
+}
+
+/// This session signed in to `server`: a crash from here on is reported to that server only.
+pub fn note_server(dir: &Path, server: &str) {
+    let mut m = std::fs::read_to_string(dir.join(RUNNING))
+        .ok()
+        .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
+        .filter(|m| m.is_object())
+        .unwrap_or_else(
+            || serde_json::json!({ "at": super::unix_now(), "version": env!("CARGO_PKG_VERSION") }),
+        );
+    m["server"] = serde_json::Value::String(server.to_string());
+    let _ = std::fs::create_dir_all(dir);
+    let _ = std::fs::write(dir.join(RUNNING), m.to_string());
+}
+
+/// The server last session signed in to, from its `running` marker.
+fn running_server(dir: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(dir.join(RUNNING)).ok()?;
+    let m = serde_json::from_str::<serde_json::Value>(&raw).ok()?;
+    m["server"].as_str().map(str::to_string)
 }
 
 /// When the machine last booted (unix seconds), if we can tell.
@@ -143,6 +170,7 @@ pub fn detect_with(dir: &Path, now: u64, version: &str, booted_at: Option<u64>) 
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok());
     let ran = ended_unexpectedly(dir, version, booted_at);
+    let server = running_server(dir);
     let kind = match (&crash, ran) {
         (Some(_), _) => ReportKind::Crash,
         (None, true) => ReportKind::UnexpectedExit,
@@ -157,6 +185,7 @@ pub fn detect_with(dir: &Path, now: u64, version: &str, booted_at: Option<u64>) 
         crash,
         log: super::tail::log_tail(dir, super::TAIL_BYTES),
         held: false,
+        server,
     };
     if let Ok(body) = serde_json::to_string(&pending) {
         let _ = std::fs::write(dir.join(PENDING), body);
@@ -204,21 +233,50 @@ pub fn hold_pending(dir: &Path) {
     }
 }
 
-/// The automatic path: send last session's report only if automatic sending is on and the report
-/// was never held; otherwise hold it (nothing is sent). `send` is called at most once.
-pub async fn auto_send<F, Fut>(dir: &Path, now: u64, auto: bool, send: F) -> AutoSend
+/// The automatic path, for the session now signed in to `server`: send last session's report only
+/// if it was written for this server, automatic sending is `allowed()` and the report was never
+/// held; otherwise hold it (nothing is sent). One retry after `delay` for a request that certainly
+/// didn't arrive (as `send_with_retry`), and the setting and held flag are checked again first:
+/// switching the setting off while the first attempt fails stops the retry.
+pub async fn auto_send<A, F, Fut>(
+    dir: &Path,
+    now: u64,
+    server: &str,
+    allowed: A,
+    mut attempt: F,
+    delay: std::time::Duration,
+) -> AutoSend
 where
-    F: FnOnce(PendingFile) -> Fut,
+    A: Fn() -> bool,
+    F: FnMut(PendingFile) -> Fut,
     Fut: Future<Output = Result<CreateReportResponse, ApiError>>,
 {
     let Some(p) = load_pending(dir, now) else {
         return AutoSend::Nothing;
     };
-    if !auto || p.held {
+    if p.server.as_deref() != Some(server) {
+        clear_pending(dir);
+        tracing::info!("crash report written for another server (or none); deleted unsent");
+        return AutoSend::OtherServer;
+    }
+    // Re-read before every attempt: the setting can be switched off (which also holds the file)
+    // while an attempt is under way.
+    let may_send = || allowed() && load_pending(dir, now).is_some_and(|p| !p.held);
+    if !may_send() {
         hold_pending(dir);
         return AutoSend::Held(p.kind);
     }
-    let r = send(p).await;
+    let kind = p.kind;
+    let mut r = attempt(p.clone()).await;
+    // only when it certainly didn't arrive: a retry after a timeout could file it twice
+    if matches!(&r, Err(e) if e.never_arrived()) {
+        tokio::time::sleep(delay).await;
+        if !may_send() {
+            hold_pending(dir);
+            return AutoSend::Held(kind);
+        }
+        r = attempt(p).await;
+    }
     match outcome(&r) {
         Outcome::Sent => {
             clear_pending(dir);
@@ -239,7 +297,12 @@ where
 /// The user picked "Send" for a held report. Sent → deleted. Refused → deleted (resending won't
 /// change the answer) and the error says so. Not sent (network, server down, session expired) →
 /// kept, and the error says that too.
-pub async fn send_held<F, Fut>(dir: &Path, now: u64, send: F) -> Result<String, ApiError>
+pub async fn send_held<F, Fut>(
+    dir: &Path,
+    now: u64,
+    server: &str,
+    send: F,
+) -> Result<String, ApiError>
 where
     F: FnOnce(PendingFile) -> Fut,
     Fut: Future<Output = Result<CreateReportResponse, ApiError>>,
@@ -249,6 +312,14 @@ where
             "There's no saved crash report any more.".into(),
         ));
     };
+    if p.server.as_deref() != Some(server) {
+        clear_pending(dir);
+        tracing::info!("held crash report written for another server; deleted unsent");
+        return Err(ApiError::Rejected(
+            "This crash report was saved while signed in to a different server, so it was deleted instead of sent here."
+                .into(),
+        ));
+    }
     let r = send(p).await;
     match outcome(&r) {
         Outcome::Sent => {
@@ -308,23 +379,26 @@ async fn emit_when_listening<S: Serialize + Clone>(app: &AppHandle, event: &str,
     let _ = app.emit(event, payload);
 }
 
-/// After sign-in: send last session's crash/exit report, if any and if automatic sending is on.
-/// Off (or held): nothing is sent; the UI asks the user instead.
+/// After sign-in: send last session's crash/exit report, if any, if it was written for this server
+/// and if automatic sending is on. Off (or held): nothing is sent; the UI asks the user instead.
 pub async fn send_pending(app: AppHandle, api: crate::api::Api, token: String) {
     let dir = app.state::<super::LogDir>().0.clone();
-    let auto = app.state::<super::settings::Store>().auto_send_crashes();
-    let send = |p: PendingFile| {
-        let (app, api) = (app.clone(), api.clone());
+    // a crash in this session will be reported to this server only
+    note_server(&dir, api.base());
+    let allowed = {
+        let app = app.clone();
+        move || app.state::<super::settings::Store>().auto_send_crashes()
+    };
+    let attempt = |p: PendingFile| {
+        let (app, api, token) = (app.clone(), api.clone(), token.clone());
         async move {
             let req = request(&app, api.base(), p).await;
-            super::send_with_retry(
-                || api.create_report(&token, &req),
-                std::time::Duration::from_secs(2),
-            )
-            .await
+            api.create_report(&token, &req).await
         }
     };
-    match auto_send(&dir, super::unix_now(), auto, send).await {
+    let now = super::unix_now();
+    let delay = std::time::Duration::from_secs(2);
+    match auto_send(&dir, now, api.base(), allowed, attempt, delay).await {
         AutoSend::Sent => {
             tracing::info!("automatic report sent");
             emit_when_listening(&app, "pulse://auto-report-sent", ()).await;
@@ -338,7 +412,7 @@ pub async fn send_pending(app: AppHandle, api: crate::api::Api, token: String) {
             )
             .await;
         }
-        AutoSend::Nothing | AutoSend::Dropped | AutoSend::Kept => {}
+        AutoSend::Nothing | AutoSend::Dropped | AutoSend::Kept | AutoSend::OtherServer => {}
     }
 }
 
@@ -359,7 +433,7 @@ pub async fn send_held_report(app: AppHandle) -> Result<String, ApiError> {
             .await
         }
     };
-    send_held(&dir, super::unix_now(), send).await
+    send_held(&dir, super::unix_now(), api.base(), send).await
 }
 
 /// The user picked "Don't send": delete the held report.
@@ -500,12 +574,32 @@ mod tests {
         })
     }
 
-    /// A crashed session's report waiting at `dir` (as startup leaves it).
+    const SRV: &str = "https://pulse.example";
+
+    /// A crashed session's report waiting at `dir` (as startup leaves it), signed in to SRV.
     fn crashed(dir: &Path) {
         log(dir, "mixer underrun\n");
         mark_running(dir);
+        note_server(dir, SRV);
         write_panic_marker(dir, "boom", "x.rs:1");
         detect(dir, 1000);
+    }
+
+    /// The automatic path signed in to SRV, with the setting fixed at `on`.
+    async fn auto<F, Fut>(dir: &Path, now: u64, on: bool, attempt: F) -> AutoSend
+    where
+        F: FnMut(PendingFile) -> Fut,
+        Fut: Future<Output = Result<CreateReportResponse, ApiError>>,
+    {
+        auto_send(
+            dir,
+            now,
+            SRV,
+            || on,
+            attempt,
+            std::time::Duration::from_millis(1),
+        )
+        .await
     }
 
     #[tokio::test]
@@ -513,7 +607,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         crashed(d.path());
         let mut got = None;
-        let r = auto_send(d.path(), 1000, true, |p| {
+        let r = auto(d.path(), 1000, true, |p| {
             got = Some(p);
             async { sent() }
         })
@@ -532,7 +626,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         crashed(d.path());
         let mut called = false;
-        let r = auto_send(d.path(), 1000, false, |_| {
+        let r = auto(d.path(), 1000, false, |_| {
             called = true;
             async { sent() }
         })
@@ -548,9 +642,9 @@ mod tests {
     async fn a_held_report_is_not_sent_even_after_turning_it_back_on() {
         let d = tempfile::tempdir().unwrap();
         crashed(d.path());
-        auto_send(d.path(), 1000, false, |_| async { sent() }).await;
+        auto(d.path(), 1000, false, |_| async { sent() }).await;
         let mut called = false;
-        let r = auto_send(d.path(), 1001, true, |_| {
+        let r = auto(d.path(), 1001, true, |_| {
             called = true;
             async { sent() }
         })
@@ -564,7 +658,7 @@ mod tests {
     async fn a_report_whose_automatic_send_failed_is_not_retried_after_turning_it_off() {
         let d = tempfile::tempdir().unwrap();
         crashed(d.path());
-        let r = auto_send(d.path(), 1000, true, |_| async {
+        let r = auto(d.path(), 1000, true, |_| async {
             Err(ApiError::Network(crate::api::CONNECT_FAILED.into()))
         })
         .await;
@@ -573,7 +667,7 @@ mod tests {
         // the user turns it off before the next launch (set_report_settings holds it)
         hold_pending(d.path());
         let mut called = false;
-        let r = auto_send(d.path(), 2000, true, |_| {
+        let r = auto(d.path(), 2000, true, |_| {
             called = true;
             async { sent() }
         })
@@ -588,7 +682,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         crashed(d.path());
         let mut called = false;
-        auto_send(d.path(), 1000, false, |_| {
+        auto(d.path(), 1000, false, |_| {
             called = true;
             async { sent() }
         })
@@ -600,7 +694,7 @@ mod tests {
     async fn nothing_waiting_sends_nothing() {
         let d = tempfile::tempdir().unwrap();
         let mut called = false;
-        let r = auto_send(d.path(), 1000, true, |_| {
+        let r = auto(d.path(), 1000, true, |_| {
             called = true;
             async { sent() }
         })
@@ -644,7 +738,7 @@ mod tests {
         crashed(d.path());
         hold_pending(d.path());
         let mut got = None;
-        let r = send_held(d.path(), 1000, |p| {
+        let r = send_held(d.path(), 1000, SRV, |p| {
             got = Some(p);
             async { sent() }
         })
@@ -664,7 +758,7 @@ mod tests {
             ApiError::Server("502 Bad Gateway".into()),
             ApiError::Unauthorized,
         ] {
-            let r = send_held(d.path(), 1000, |_| async { Err(e) }).await;
+            let r = send_held(d.path(), 1000, SRV, |_| async { Err(e) }).await;
             let t = r.unwrap_err().to_string();
             assert!(t.contains("kept"), "{t}");
             let p = load_pending(d.path(), 1000).expect("kept");
@@ -680,7 +774,7 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         crashed(d.path());
         hold_pending(d.path());
-        let r = send_held(d.path(), 1000, |_| async {
+        let r = send_held(d.path(), 1000, SRV, |_| async {
             Err(ApiError::Rejected("report too large".into()))
         })
         .await;
@@ -693,7 +787,7 @@ mod tests {
     async fn choosing_send_with_nothing_saved_sends_nothing() {
         let d = tempfile::tempdir().unwrap();
         let mut called = false;
-        let r = send_held(d.path(), 1000, |_| {
+        let r = send_held(d.path(), 1000, SRV, |_| {
             called = true;
             async { sent() }
         })
@@ -710,6 +804,138 @@ mod tests {
         clear_pending(d.path());
         assert!(!d.path().join(PENDING).exists());
         assert_eq!(load_pending(d.path(), 1000), None);
+    }
+
+    use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
+
+    fn connect_failed() -> Result<CreateReportResponse, ApiError> {
+        Err(ApiError::Network(crate::api::CONNECT_FAILED.into()))
+    }
+
+    #[tokio::test]
+    async fn a_failed_first_attempt_is_retried_while_still_on() {
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        let calls = AtomicU32::new(0);
+        let r = auto(d.path(), 1000, true, |_| {
+            let n = calls.fetch_add(1, Ordering::SeqCst);
+            async move { if n == 0 { connect_failed() } else { sent() } }
+        })
+        .await;
+        assert_eq!(r, AutoSend::Sent);
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test]
+    async fn switching_it_off_during_the_first_attempt_stops_the_retry() {
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        let on = AtomicBool::new(true);
+        let calls = AtomicU32::new(0);
+        let r = auto_send(
+            d.path(),
+            1000,
+            SRV,
+            || on.load(Ordering::SeqCst),
+            |_| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                on.store(false, Ordering::SeqCst); // the user unticks it meanwhile
+                async { connect_failed() }
+            },
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1, "no retry once off");
+        assert_eq!(r, AutoSend::Held(ReportKind::Crash));
+        assert!(load_pending(d.path(), 1000).unwrap().held);
+    }
+
+    #[tokio::test]
+    async fn a_report_held_during_the_first_attempt_is_not_retried() {
+        // set_report_settings(off) holds the file; the in-memory setting is read separately
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        let calls = AtomicU32::new(0);
+        let r = auto(d.path(), 1000, true, |_| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            hold_pending(d.path());
+            async { connect_failed() }
+        })
+        .await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(r, AutoSend::Held(ReportKind::Crash));
+    }
+
+    #[test]
+    fn the_report_records_the_server_its_session_was_signed_in_to() {
+        let d = tempfile::tempdir().unwrap();
+        mark_running(d.path());
+        note_server(d.path(), SRV);
+        detect(d.path(), 1000);
+        let p = load_pending(d.path(), 1000).unwrap();
+        assert_eq!(
+            p.kind,
+            ReportKind::UnexpectedExit,
+            "noting the server keeps the marker valid"
+        );
+        assert_eq!(p.server.as_deref(), Some(SRV));
+    }
+
+    #[tokio::test]
+    async fn a_report_is_never_sent_to_a_different_server() {
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        let mut called = false;
+        let r = auto_send(
+            d.path(),
+            1000,
+            "https://elsewhere.example",
+            || true,
+            |_| {
+                called = true;
+                async { sent() }
+            },
+            std::time::Duration::from_millis(1),
+        )
+        .await;
+        assert!(!called);
+        assert_eq!(r, AutoSend::OtherServer);
+        assert!(
+            !d.path().join(PENDING).exists(),
+            "deleted on a server change"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_report_from_a_session_that_never_signed_in_is_deleted_not_sent() {
+        let d = tempfile::tempdir().unwrap();
+        mark_running(d.path());
+        detect(d.path(), 1000);
+        let mut called = false;
+        let r = auto(d.path(), 1000, true, |_| {
+            called = true;
+            async { sent() }
+        })
+        .await;
+        assert!(!called);
+        assert_eq!(r, AutoSend::OtherServer);
+        assert!(!d.path().join(PENDING).exists());
+    }
+
+    #[tokio::test]
+    async fn choosing_send_while_signed_in_elsewhere_deletes_it_and_sends_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        hold_pending(d.path());
+        let mut called = false;
+        let r = send_held(d.path(), 1000, "https://elsewhere.example", |_| {
+            called = true;
+            async { sent() }
+        })
+        .await;
+        assert!(!called);
+        assert!(r.unwrap_err().to_string().contains("different server"));
+        assert!(!d.path().join(PENDING).exists());
     }
 
     #[test]

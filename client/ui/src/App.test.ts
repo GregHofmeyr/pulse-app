@@ -18,7 +18,7 @@ vi.mock('@tauri-apps/api/window', () => ({
 }))
 
 import App from './App.svelte'
-import { app } from './lib/store.svelte'
+import { app, ui } from './lib/store.svelte'
 import { emptyState } from './lib/state'
 
 const alex = { id: 'U1', username: 'alex', avatar_hash: null }
@@ -93,5 +93,41 @@ describe('App: startup refused by the server', () => {
     conn('too_many_devices')
     expect(document.querySelector('.waiting')).toBeNull()
     expect(document.querySelector('form')).not.toBeNull()
+  })
+})
+
+describe('App: a held crash report', () => {
+  const held = (kind: string) => {
+    h.handlers['pulse://crash-report-held']({ payload: { kind } })
+    flushSync()
+  }
+  const prompt = () => [...document.querySelectorAll('button')].find((b) => b.textContent === "Don't send")
+
+  it('a restored session shows the Send / Don\'t send prompt in the main window', async () => {
+    await start({ status: 'ready', user: alex })
+    await vi.waitFor(() => expect(document.querySelector('nav')).not.toBeNull())
+    held('crash')
+    expect(text()).toContain('Pulse crashed last time')
+    expect(prompt()).toBeTruthy()
+  })
+
+  it('the event arriving before the main window still shows once it opens', async () => {
+    h.restore = { status: 'ready', user: alex }
+    app.state = emptyState()
+    cmp = mount(App, { target: document.body })
+    await vi.waitFor(() => expect(h.handlers['pulse://crash-report-held']).toBeDefined())
+    held('unexpected-exit') // emitted as soon as the UI listens, maybe before restore resolves
+    await vi.waitFor(() => expect(document.querySelector('nav')).not.toBeNull())
+    flushSync()
+    expect(text()).toContain('Pulse closed unexpectedly last time')
+  })
+
+  it('signing out forgets the prompt: the next sign-in (maybe another server) asks afresh', async () => {
+    await start({ status: 'ready', user: alex })
+    await vi.waitFor(() => expect(document.querySelector('nav')).not.toBeNull())
+    held('crash')
+    conn('logged_out')
+    expect(document.querySelector('form')).not.toBeNull()
+    expect(ui.heldReport).toBeNull()
   })
 })
