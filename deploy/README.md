@@ -115,8 +115,9 @@ set but not 64 hex characters stops every command, `reset-2fa` included: fix the
 ### Two-factor reset
 
 Someone lost their phone and their recovery codes: `just reset-2fa <username>`. It turns their 2FA off (drops the
-stored secret, recovery codes and any pending sign-in; existing sessions stay). They then sign in with just their password and can
-set 2FA up again in settings. It runs in a one-off server container over SSH, so it works with the server stopped.
+stored secret, recovery codes and any pending sign-in; existing sessions stay). They then sign in with just their
+password and can set 2FA up again in settings. It runs in a one-off server container over SSH, so it works with the
+server stopped.
 
 ## 7. Deploying and rolling back
 
@@ -178,7 +179,7 @@ uploaded media (`data/media`, e.g. custom emoji; skipped until something has bee
 encrypt but never decrypt. A plaintext copy never stays on the server, even if a step fails.
 
 **`PULSE_TOTP_KEY` is not in the backups.** The database holds the 2FA secrets only encrypted with it, so keep a
-copy of the key with the age key (NordPass). See "Lost key" below for what happens without it.
+copy of the key with the age key (NordPass). See "Lost key" in section 6 for what happens without it.
 
 Setup, once:
 
@@ -195,8 +196,8 @@ Setup, once:
    Do this now and then; an untested backup is a hope. `RCLONE_CONFIG_R2_NO_HEAD` in `backup.sh` drops rclone's post-upload check, so the drill is the integrity check of what reached R2.
 
 Restoring for real: `just restore daily/pulse-<time>.db.age`. The restored database needs the `PULSE_TOTP_KEY` it was
-written under (same server: already in `.env`; new server: section 11; otherwise see "Lost key"). The server stops for a few seconds; the old
-database is kept next to it as `data/pulse.db.pre-restore-<time>`.
+written under (same server: already in `.env`; new server: section 11; otherwise see "Lost key"). The server stops for
+a few seconds; the old database is kept next to it as `data/pulse.db.pre-restore-<time>`.
 
 Restoring the media (the database restore doesn't touch it; do this after a lost or rebuilt server, or to roll
 emoji back): `just restore-media-drill` downloads the newest media backup, decrypts it here and lists it

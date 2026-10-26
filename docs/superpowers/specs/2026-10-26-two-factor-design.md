@@ -97,8 +97,9 @@ session died" and signs out. Wrong password or code there is `403` with a messag
 
 `pulse-app-server reset-2fa <username>`: deletes that user's `user_totp` row, recovery codes and tickets; prints
 `two-factor turned off for <username>: they can sign in with their password and set it up again`. Unknown user → error,
-non-zero exit. It doesn't need the key and doesn't touch sessions. `just reset-2fa <username>` runs it in the
-production container like `just invite-prod`.
+non-zero exit. It doesn't need the key (an unset one is fine; one set but not 64 hex characters stops it, as it stops
+every command) and doesn't touch sessions. `just reset-2fa <username>` runs it in the production container like
+`just invite-prod`.
 
 ## 4. Client (builder)
 

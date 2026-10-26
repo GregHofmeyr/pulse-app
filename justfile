@@ -88,8 +88,8 @@ close-public-ssh:
 
 # back up, then run image TAG (a 7-char commit or `latest`); prints the commit that's live
 deploy tag="latest":
-    # Checks the server's .env (LIVEKIT_NODE_IP) with this deploy.sh before anything is copied, so a refusal
-    # leaves /srv/pulse exactly as it was.
+    # Checks the server's .env (LIVEKIT_NODE_IP, PULSE_TOTP_KEY) with this deploy.sh before anything is copied, so a
+    # refusal leaves /srv/pulse exactly as it was.
     ssh {{prod}} 'bash -s -- --check-env' < deploy/deploy.sh
     scp deploy/compose.yml deploy/Caddyfile deploy/livekit.yaml deploy/backup.sh deploy/deploy.sh {{prod}}:/srv/pulse/
     ssh {{prod}} '/srv/pulse/deploy.sh {{tag}}'

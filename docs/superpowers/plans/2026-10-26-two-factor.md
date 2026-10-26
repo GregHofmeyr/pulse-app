@@ -17,7 +17,7 @@ Svelte gets a login code step and a `TwoFactorSettings` component. Deploy gets `
 - Public repo: never commit IPs, secrets, email addresses, real people's names, or references to other projects.
   Test users are `alex` and `sam`. Placeholders use `example.com`.
 - Do not deploy, ssh anywhere, dispatch workflows, merge to `main`, or change GitHub settings. Never bare
-  `git stash`. Work only in `/home/greghofmeyr/Projects/pulse-app-2fa`; don't touch other worktrees or their
+  `git stash`. Work only in this worktree; don't touch other worktrees or their
   Docker containers.
 - TDD: a failing test first for every behaviour change (server, client core, UI). `just check` stays green after
   every task. Protocol changes: `just gen-types` and commit the regenerated `client/ui/src/lib/protocol` files.

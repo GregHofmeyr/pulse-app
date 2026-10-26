@@ -113,14 +113,15 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
 - **Two-factor material.**
   - **Login ticket.** When an account has 2FA, the password step returns a ticket (section 4). The Rust core keeps it in
     memory only: it is never written to disk, never passed to the web UI and never logged. It is dropped when the code
-    is accepted or the ticket is reported gone, and when the user registers, signs out or starts another login.
-    A wrong code leaves it in place, so the code can be re-entered until the server's own limits end it.
+    is accepted or the ticket is reported gone, and when the user goes back to the password step, registers, signs out
+    or starts another login. A wrong code leaves it in place, so the code can be re-entered until the server's own
+    limits end it.
   - **Setup secret and QR code.** The `otpauth://` link that carries the secret stays in the Rust core. The core draws
     the QR code itself from the link, locally, and gives the web UI only a grid of dark and light squares to paint.
     The web UI also receives the key as text, for typing in by hand.
   - **Recovery codes.** They are shown once after turning on 2FA or making new codes, and are kept only in the
-    Settings screen's memory until the user clicks **I've saved these**, starts another action or leaves the screen. Nothing is stored locally. **Copy** puts them on
-    the clipboard only when the user clicks it.
+    Settings screen's memory until the user clicks **I've saved these**, starts another action or leaves the screen.
+    Nothing is stored locally. **Copy** puts them on the clipboard only when the user clicks it.
 - **Logs.**
   - **Where and how much.** Logs are written to the app's log folder (`%LOCALAPPDATA%\app.pulse.client\logs` on
     Windows). There is one file per day, the last 7 are kept, and each day is capped at 50 MB.
@@ -204,13 +205,15 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   (counts only, never the key or a secret). Setups that were never finished are not checked. With no 2FA accounts, a
   missing key just means 2FA cannot be set up. A key that is set but is not exactly 64 hex characters stops every
   server command, not only `serve`. The deploy script refuses to go on without a well-formed key, and provisioning
-  fills the key in only when it is missing or empty, never replacing one.
+  fills the key in only when it is missing or blank, never replacing a value.
 - **Turning it on.** Settings asks for the account password, then shows a QR code and the key to type in. 2FA turns on
   only when the member enters one current code from the app, which proves the app works; a recovery code is not
-  accepted for this. Starting again before then replaces the unfinished secret. Turning it on **signs out every other
-  device**, the same way **Sign out all other devices** does (their real-time connections are closed and their calls
-  ended, with the limits described under *Signing out ends calls too*). The device doing it stays signed in, so
-  anyone who had only the password is out. Sessions are not touched otherwise: signing in with a code, turning 2FA
+  accepted for this. Starting again before then replaces the unfinished secret (and is what the member is told to do
+  if that secret can no longer be decrypted). Turning it on **signs out every other device**, the same way **Sign out
+  all other devices** does (their real-time connections are closed and their calls ended, with the limits described
+  under *Signing out ends calls too*); turning 2FA on and ending those sessions are one database transaction, so
+  neither happens without the other. The device doing it stays signed in, so anyone who had only the password is
+  out. Sessions are not touched otherwise: signing in with a code, turning 2FA
   off, regenerating recovery codes and the owner reset leave existing sessions alone.
 - **Recovery codes.** Turning 2FA on gives 10 recovery codes, shown once. Each is 16 characters from a 31-character
   alphabet (about 79 bits), written `xxxx-xxxx-xxxx-xxxx`; spaces, dashes and case are ignored when one is entered.
@@ -232,8 +235,8 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   limits, these are in memory.
 - **Lost app and recovery codes.** There is no self-service way back in. The server's owner turns 2FA off for the
   account from the host (`reset-2fa`, run in a one-off server container). It deletes the account's secret, recovery
-  codes and tickets, never uses the key, so any well-formed `PULSE_TOTP_KEY` in `.env` will do (it still works after the key is lost, once a new
-  one is set), and leaves sessions alone.
+  codes and tickets, never uses the key, so any well-formed `PULSE_TOTP_KEY` in `.env` will do (it still works after
+  the key is lost, once a new one is set), and leaves sessions alone.
 - **Who can see it.** Only the account itself can ask whether its 2FA is on, and how many recovery codes are left.
   Nothing in the member list, the real-time events or any other endpoint carries it. Someone who already has the
   password does learn it at sign-in, from the extra step.
@@ -441,8 +444,8 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   once, while the code and the 5-minute ticket are still valid. There is no WebAuthn or passkey support.
 - **The two-factor key is on the database's host.** `PULSE_TOTP_KEY` lives in the server's `.env`, next to the
   database. It protects the database files and backups, not a compromise of the host (section 4). If the key is lost
-  and the secrets can't be decrypted, the owner has to reset each affected account by hand. Restoring a backup onto a new host needs the same key too,
-  or every 2FA account has to be reset.
+  and the secrets can't be decrypted, the owner has to reset each affected account by hand. Restoring a backup onto a
+  new host needs the same key too, or every 2FA account has to be reset.
 - **Deploy user is root-equivalent.** The host user that runs the containers is in the `docker` group, which makes it
   root-equivalent on the host. Mitigation: public SSH is closed, so it can only be reached over the owner's private VPN
   (section 5).
