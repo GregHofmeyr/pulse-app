@@ -5,6 +5,7 @@
   import { avatarColor, initial } from '../lib/avatar'
   import { api, errorText } from '../lib/tauri'
   import { isMuted } from '../lib/conversations'
+  import LiveBadge from './LiveBadge.svelte'
   import { voiceApi } from '../lib/voice.svelte'
 
   let {
@@ -95,6 +96,7 @@
       <div class="occupant">
         <span class="av" class:speaking={speaking.has(p.userId)} style:background={avatarColor(p.userId)}>{initial(p.name)}</span>
         <span class="grow">{p.name}</span>
+        <LiveBadge channelId={c.id} userId={p.userId} />
         {#if p.deafened}<span class="flag"><Icon name="headphonesOff" size={14} label="Deafened" /></span>
         {:else if p.muted}<span class="flag"><Icon name="micOff" size={14} label="Muted" /></span>{/if}
       </div>

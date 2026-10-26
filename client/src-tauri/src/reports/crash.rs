@@ -165,7 +165,7 @@ pub fn clear_pending(dir: &Path) {
 pub fn outcome<T>(r: &Result<T, ApiError>) -> Outcome {
     match r {
         Ok(_) => Outcome::Sent,
-        Err(ApiError::Rejected(_)) => Outcome::Drop,
+        Err(ApiError::Rejected(_) | ApiError::Forbidden(_)) => Outcome::Drop,
         Err(_) => Outcome::Keep,
     }
 }

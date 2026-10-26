@@ -1,5 +1,6 @@
 // Derived views over AppState. Pure, so they're tested without the UI.
 import type { Channel } from './protocol/Channel'
+import type { StreamInfo } from './protocol/StreamInfo'
 import type { AppState } from './state'
 
 const byPosition = (a: Channel, b: Channel) => a.position - b.position || (a.name ?? '').localeCompare(b.name ?? '')
@@ -57,4 +58,15 @@ export function stableList<T>(prev: T[], next: T[]): T[] {
 export function nextTypingExpiry(s: AppState, channelId: string, now: number): number | null {
   const live = Object.values(s.typing[channelId] ?? {}).filter((until) => until > now)
   return live.length ? Math.min(...live) : null
+}
+
+const NONE: Record<string, StreamInfo> = {}
+
+/** The live streams in a voice channel, by streamer's user id. */
+export function liveIn(s: AppState, channelId: string): Record<string, StreamInfo> {
+  return s.streams[channelId] ?? NONE
+}
+
+export function isLive(s: AppState, channelId: string, userId: string): boolean {
+  return !!s.streams[channelId]?.[userId]
 }

@@ -3,8 +3,9 @@
   import Icon from './Icon.svelte'
   import VoiceSettings from './VoiceSettings.svelte'
   import KeybindSettings from './KeybindSettings.svelte'
+  import AdvancedSettings from './AdvancedSettings.svelte'
 
-  type Section = 'voice' | 'keybinds'
+  type Section = 'voice' | 'keybinds' | 'advanced'
   let { onClose, section = 'voice' }: { onClose: () => void; section?: Section } = $props()
 
   let current = $state<Section>('voice')
@@ -12,6 +13,7 @@
   const sections: { key: Section; label: string }[] = [
     { key: 'voice', label: 'Voice & Audio' },
     { key: 'keybinds', label: 'Keybinds' },
+    { key: 'advanced', label: 'Advanced' },
   ]
 </script>
 
@@ -27,7 +29,7 @@
   </nav>
   <div class="content">
     <button class="close" aria-label="Close settings" onclick={onClose}><Icon name="x" size={16} /></button>
-    {#if current === 'voice'}<VoiceSettings />{:else}<KeybindSettings />{/if}
+    {#if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else}<AdvancedSettings />{/if}
   </div>
 </div>
 </div>

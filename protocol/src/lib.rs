@@ -35,6 +35,14 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::ReportKind::export_all(&cfg)?;
     rest::CreateReportRequest::export_all(&cfg)?;
     rest::CreateReportResponse::export_all(&cfg)?;
+    rest::StreamSettings::export_all(&cfg)?;
+    rest::StreamStatus::export_all(&cfg)?;
+    rest::StreamInfo::export_all(&cfg)?;
+    rest::StreamEndReason::export_all(&cfg)?;
+    rest::StreamRole::export_all(&cfg)?;
+    rest::StreamTicketRequest::export_all(&cfg)?;
+    rest::GoLiveRequest::export_all(&cfg)?;
+    rest::WatchRequest::export_all(&cfg)?;
     Ok(())
 }
 

@@ -21,8 +21,8 @@ mod platform {
     };
     use windows::Win32::System::SystemInformation::GetTickCount;
     use windows::Win32::System::Threading::{
-        GetCurrentProcess, GetCurrentThreadId, OpenProcess, OpenProcessToken,
-        PROCESS_QUERY_LIMITED_INFORMATION,
+        GetCurrentProcess, GetCurrentThread, GetCurrentThreadId, OpenProcess, OpenProcessToken,
+        PROCESS_QUERY_LIMITED_INFORMATION, SetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
     };
     use windows::Win32::UI::Input::KeyboardAndMouse::{
         GetAsyncKeyState, GetLastInputInfo, LASTINPUTINFO, MAPVK_VK_TO_VSC_EX, MapVirtualKeyW,
@@ -174,9 +174,24 @@ mod platform {
         }
     }
 
+    /// Windows times a hook callback (LowLevelHooksTimeout) from the input event, waiting to be
+    /// scheduled included, so a normal-priority hook thread on a machine a game is loading can
+    /// overrun it and lose its hooks. TIME_CRITICAL is the top of the normal priority class (not
+    /// real-time): ahead of any app's own threads, ABOVE_NORMAL isn't, as games often raise
+    /// theirs. It costs nothing: the thread is blocked in GetMessageW but for a few microseconds
+    /// per event.
+    fn raise_priority() -> Result<(), String> {
+        // SAFETY: GetCurrentThread's pseudo-handle is always valid on the calling thread.
+        unsafe { SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL) }
+            .map_err(|e| e.to_string())
+    }
+
     /// Hooks are delivered through the installing thread's message loop, so they get their own
     /// thread that does nothing else (but reinstall them when the watchdog asks).
     fn run_hooks(ready: mpsc::Sender<Result<u32, String>>) {
+        if let Err(e) = raise_priority() {
+            tracing::warn!(error = %e, "keybinds: hook thread priority couldn't be raised");
+        }
         // Make sure this thread has a message queue before anyone posts to it.
         let mut msg = MSG::default();
         // SAFETY: msg is a valid MSG to write into.
@@ -379,6 +394,25 @@ mod platform {
     pub fn pause(_app: &AppHandle, paused: bool) -> Vec<String> {
         matcher().set_paused(paused);
         problems()
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use windows::Win32::System::Threading::{
+            GetCurrentThread, GetThreadPriority, THREAD_PRIORITY_TIME_CRITICAL,
+        };
+
+        #[test]
+        fn the_hook_thread_runs_time_critical() {
+            std::thread::spawn(|| {
+                super::raise_priority().unwrap();
+                // SAFETY: GetCurrentThread's pseudo-handle is always valid on its own thread.
+                let p = unsafe { GetThreadPriority(GetCurrentThread()) };
+                assert_eq!(p, THREAD_PRIORITY_TIME_CRITICAL.0);
+            })
+            .join()
+            .unwrap();
+        }
     }
 }
 

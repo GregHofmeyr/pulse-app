@@ -14,3 +14,23 @@ webhook:
   urls: ["http://127.0.0.1:7890/livekit/webhook"]
 logging:
   level: info
+# Codec list: LiveKit's full default plus two strict H.264 entries (profile-level-id 4d001f = Main, 42001f =
+# Constrained Baseline, level 3.1). Chromium skips NVIDIA's hardware encoder for the looser Constrained Baseline
+# offer (crbug 1088650), so screen shares need the strict entries. This must never be trimmed: dropping audio/red
+# breaks voice RED, dropping video/rtx breaks video retransmission.
+room:
+  enabled_codecs:
+    - mime: audio/PCMU
+    - mime: audio/PCMA
+    - mime: audio/opus
+    - mime: audio/red
+    - mime: video/VP8
+    - mime: video/H264
+    - mime: video/H264
+      fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=4d001f"
+    - mime: video/H264
+      fmtp_line: "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42001f"
+    - mime: video/VP9
+    - mime: video/AV1
+    - mime: video/H265
+    - mime: video/rtx

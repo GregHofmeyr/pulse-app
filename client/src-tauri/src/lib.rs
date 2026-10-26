@@ -13,6 +13,7 @@ pub mod reports;
 pub mod session;
 pub mod sounds;
 pub mod startup;
+pub mod stream;
 pub mod throttle;
 pub mod voice;
 pub mod webview_memory;
@@ -100,6 +101,17 @@ pub fn run() {
             ));
             app.manage(commands::Core::new(session::Store::new(dir.clone(), profile.as_deref()), outbox));
             app.manage(voice::mictest::MicTest::default());
+            app.manage(stream::PickerMemory::default());
+            let h = app.handle().clone();
+            app.manage(stream::audio::StreamAudio::new(std::sync::Arc::new(
+                move |channel_id| {
+                    use tauri::Emitter;
+                    let _ = h.emit(
+                        "stream://audio_closed",
+                        serde_json::json!({ "channel_id": channel_id }),
+                    );
+                },
+            )));
             #[cfg(unix)]
             {
                 let h = app.handle().clone();
@@ -187,6 +199,22 @@ pub fn run() {
             keybinds::pause_keybinds,
             reports::submit_report,
             reports::save_report,
+            stream::stream_ticket,
+            stream::stream_go_live,
+            stream::stream_reannounce,
+            stream::stream_stop,
+            stream::stream_watch,
+            stream::stream_unwatch,
+            stream::stream_preview_put,
+            stream::stream_preview_get,
+            stream::stream_log,
+            stream::stream_picker_window,
+            stream::stream_audio_start,
+            stream::stream_audio_stop,
+            stream::stream_audio_leave,
+            stream::stream_audio_mute,
+            stream::stream_audio_watch,
+            stream::set_stream_volume,
         ])
         .build(tauri::generate_context!())
         .expect("error while building Pulse")
@@ -196,8 +224,12 @@ pub fn run() {
             if let tauri::RunEvent::Exit = event {
                 use tauri::Manager;
                 let voice = app.state::<voice::VoiceManager>();
+                let stream_audio = app.state::<stream::audio::StreamAudio>();
                 tauri::async_runtime::block_on(async {
-                    let leave = voice.leave();
+                    // side by side: one slow close must not use up the other's budget
+                    let leave = async {
+                        tokio::join!(stream_audio.leave(), voice.leave());
+                    };
                     if tokio::time::timeout(std::time::Duration::from_secs(2), leave)
                         .await
                         .is_err()

@@ -11,6 +11,7 @@ use tokio::sync::{mpsc, watch};
 use crate::api::{Api, ApiError, check_server_url};
 use crate::gateway::{Boot, ConnState, GatewayHandle, GatewayUpdate};
 use crate::session::Store;
+use crate::stream::audio::StreamAudio;
 use crate::voice::devices::{AudioConfig, DeviceInfo};
 use crate::voice::{AudioMode, VoiceError, VoiceManager, controls::Controls};
 
@@ -470,11 +471,14 @@ pub async fn join_voice(
     app: AppHandle,
     core: State<'_, Core>,
     voice: State<'_, VoiceManager>,
+    stream_audio: State<'_, StreamAudio>,
     channel_id: ChannelId,
     config: AudioConfig,
 ) -> Result<(), VoiceError> {
     let (api, token) = core.current()?;
     tracing::info!(%channel_id, input = ?config.input, output = ?config.output, gain = config.input_gain_pct, "join_voice");
+    // a switch leaves the last channel's stream room (and ends our stream audio there)
+    stream_audio.leave().await;
     let r = voice
         .join(
             &api,
@@ -496,7 +500,11 @@ pub async fn join_voice(
 }
 
 #[tauri::command]
-pub async fn leave_voice(voice: State<'_, VoiceManager>) -> Result<(), VoiceError> {
+pub async fn leave_voice(
+    voice: State<'_, VoiceManager>,
+    stream_audio: State<'_, StreamAudio>,
+) -> Result<(), VoiceError> {
+    stream_audio.leave().await;
     voice.leave().await;
     Ok(())
 }

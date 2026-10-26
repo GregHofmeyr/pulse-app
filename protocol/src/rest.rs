@@ -221,6 +221,63 @@ pub struct VoiceTokenResponse {
     pub token: String,
 }
 
+/// Screen-share quality. `height` is 720, 1080 or 1440; `fps` is 15, 30 or 60.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct StreamSettings {
+    pub height: u16,
+    pub fps: u8,
+    pub audio: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamStatus {
+    Live,
+    Reconnecting,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct StreamInfo {
+    pub channel_id: ChannelId,
+    pub user_id: UserId,
+    pub settings: StreamSettings,
+    pub status: StreamStatus,
+    pub viewers: Vec<UserId>,
+    pub started_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamEndReason {
+    Stopped,
+    LeftVoice,
+    Crashed,
+    TimedOut,
+}
+
+/// Which stream-room identity a ticket is for: `v` is the video connection, `a` the audio one.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum StreamRole {
+    V,
+    A,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct StreamTicketRequest {
+    pub role: StreamRole,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct GoLiveRequest {
+    pub settings: StreamSettings,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct WatchRequest {
+    pub streamer: UserId,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct ApiError {
     pub code: String,

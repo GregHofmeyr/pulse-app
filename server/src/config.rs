@@ -19,6 +19,8 @@ pub struct Config {
     pub heartbeat_timeout: Duration,
     /// Rate limits (spec §3.1).
     pub limits: crate::limits::LimitsConfig,
+    /// How long a streamer's video connection may be gone before the stream ends.
+    pub stream_media_timeout: Duration,
 }
 
 impl Config {
@@ -40,6 +42,7 @@ impl Config {
             hello_timeout: Duration::from_secs(10),
             heartbeat_timeout: Duration::from_secs(60),
             limits: crate::limits::LimitsConfig::default(),
+            stream_media_timeout: Duration::from_secs(60),
         })
     }
 }

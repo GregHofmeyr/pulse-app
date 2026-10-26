@@ -5,6 +5,9 @@ import type { Server } from './protocol/Server'
 import type { Channel } from './protocol/Channel'
 import type { Member } from './protocol/Member'
 import type { Message } from './protocol/Message'
+import type { StreamInfo } from './protocol/StreamInfo'
+import type { StreamSettings } from './protocol/StreamSettings'
+import type { VoiceTokenResponse } from './protocol/VoiceTokenResponse'
 
 export const api = {
   createDm: (userIds: string[]) => invoke<Channel>('create_dm', { userIds }),
@@ -41,6 +44,32 @@ export const api = {
   submitReport: (text: string) => invoke<string>('submit_report', { text }),
   /** Writes a .txt to Downloads; returns its path. `serverUrl` when not signed in. */
   saveReport: (text: string, serverUrl: string | null) => invoke<string>('save_report', { text, serverUrl }),
+}
+
+/** Screen-share commands (the `#v` ticket, live/watch bookkeeping, previews, and the Rust `#a` audio side). */
+export const streamCmd = {
+  ticket: (channelId: string, role: 'v' | 'a') => invoke<VoiceTokenResponse>('stream_ticket', { channelId, role }),
+  goLive: (channelId: string, settings: StreamSettings) => invoke<StreamInfo>('stream_go_live', { channelId, settings }),
+  /** Announces a stream we are still sending, after a server restart; retries while the server catches up. */
+  reannounce: (channelId: string, settings: StreamSettings) => invoke<StreamInfo>('stream_reannounce', { channelId, settings }),
+  stop: (channelId: string) => invoke<void>('stream_stop', { channelId }),
+  watch: (channelId: string, streamer: string) => invoke<void>('stream_watch', { channelId, streamer }),
+  unwatch: (channelId: string, streamer: string) => invoke<void>('stream_unwatch', { channelId, streamer }),
+  /** `webpBase64` without the `data:` prefix. */
+  previewPut: (channelId: string, webpBase64: string) => invoke<void>('stream_preview_put', { channelId, webpBase64 }),
+  /** A `data:` URL, or null when the streamer hasn't sent one yet. */
+  previewGet: (channelId: string, userId: string) => invoke<string | null>('stream_preview_get', { channelId, userId }),
+  /** One JSON object, no newlines; Rust prefixes `share: `. */
+  log: (line: object) => invoke<void>('stream_log', { line: JSON.stringify(line) }).catch(() => {}),
+  pickerWindow: (open: boolean) => invoke<void>('stream_picker_window', { open }),
+  /** Publishes `muted` from the first frame (a separate mute would let a moment through). */
+  audioStart: (channelId: string, windowTitle: string | null, muted: boolean) => invoke<void>('stream_audio_start', { channelId, windowTitle, muted }),
+  audioStop: () => invoke<void>('stream_audio_stop'),
+  /** `#a` leaves unless it is in `keep` (the voice channel now; `null` = no voice). */
+  audioLeave: (keep: string | null) => invoke<void>('stream_audio_leave', { keep }),
+  audioMute: (muted: boolean) => invoke<void>('stream_audio_mute', { muted }),
+  audioWatch: (channelId: string, streamer: string, on: boolean) => invoke<void>('stream_audio_watch', { channelId, streamer, on }),
+  setVolume: (userId: string, pct: number) => invoke<void>('set_stream_volume', { userId, pct }),
 }
 
 /** Tauri rejects with the command's error string. */

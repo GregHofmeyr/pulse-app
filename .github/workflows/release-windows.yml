@@ -37,6 +37,14 @@ jobs:
       # Prebuilt CLI from npm: no ~5 min `cargo install tauri-cli` on every run.
       - run: pnpm dlx @tauri-apps/cli@^2 build
         working-directory: client/src-tauri
+      # Screen-share stream code has Windows-only paths (process discovery, open failures) that Linux CI
+      # never compiles. --release reuses the build above.
+      - run: cargo test --release -p pulse-client --lib 'stream::' -- --skip 'stream::loopback'
+      # Keybind hooks are Windows-only too (hook thread priority).
+      - run: cargo test --release -p pulse-client --lib 'hotkeys::'
+      # WASAPI process loopback: a runner with no audio endpoint can't activate it, so it doesn't block the kit.
+      - continue-on-error: true
+        run: cargo test --release -p pulse-client --lib 'stream::loopback'
       - run: cargo build --release -p pulse-server --bin pulse-app-server
       - name: Assemble test kit
         shell: pwsh

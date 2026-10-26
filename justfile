@@ -28,7 +28,7 @@ ui-check:
     cd client/ui && pnpm install --frozen-lockfile && pnpm check && pnpm test
 
 dev-client:
-    cd client/src-tauri && cargo tauri dev
+    cd client/src-tauri && cargo tauri dev --config tauri.dev.conf.json
 
 # print a single-use invite for the local dev server
 invite:
@@ -40,7 +40,7 @@ voice-smoke:
 
 # voice integration test against the dev LiveKit (real WebRTC, fake peer)
 voice-it: dev-livekit
-    cargo test -p pulse-client --test voice_it --test voice_outage_it -- --ignored --nocapture
+    cargo test -p pulse-client --test voice_it --test voice_outage_it --test stream_it -- --ignored --nocapture
 
 # libwebrtc log lines per second in a two-person call (decides whether to filter at the source)
 webrtc-log-volume: dev-livekit

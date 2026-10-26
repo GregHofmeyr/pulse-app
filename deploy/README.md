@@ -95,6 +95,7 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
   `just restore <the backup that deploy made>` and then `just deploy <previous sha7>`.
 - `just logs` (or `just logs caddy` / `just logs livekit`) follows the live logs.
 - After changing `livekit.yaml`: `just deploy`, then `ssh pulse@pulse 'cd /srv/pulse && docker compose restart livekit'`.
+  The codec list needs a LiveKit restart to apply; `just deploy` copies the file but does not restart LiveKit.
 
 ## 8. Backups
 

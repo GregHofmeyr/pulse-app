@@ -3,6 +3,8 @@
   import Icon from '../components/Icon.svelte'
   import ChannelList from '../components/ChannelList.svelte'
   import MemberList from '../components/MemberList.svelte'
+  import StreamViewer from '../components/StreamViewer.svelte'
+  import StreamToast from '../components/StreamToast.svelte'
   import VoicePanel from '../components/VoicePanel.svelte'
   import TextChannel from '../components/TextChannel.svelte'
   import Settings from '../components/Settings.svelte'
@@ -13,6 +15,8 @@
   import GroupMembers from '../components/GroupMembers.svelte'
   import { onMount, untrack } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
+  import { stream } from '../lib/stream/stream.svelte'
+  import { viewing } from '../lib/stream/viewer.svelte'
   import { api, errorText } from '../lib/tauri'
   import { app, clock, openDm, ui } from '../lib/store.svelte'
   import { applyEvent, trimHistory } from '../lib/state'
@@ -28,6 +32,13 @@
   let activeServerId = $state<string | null>(null)
   let activeChannelId = $state<string | null>(null)
   let settingsOpen = $state(false)
+
+  // The animation freeze while you stream (app.css `.streaming`); here so it outlives the voice panel.
+  $effect(() => {
+    if (!stream.live) return
+    document.body.classList.add('streaming')
+    return () => document.body.classList.remove('streaming')
+  })
   let settingsSection = $state<'voice' | 'keybinds'>('voice')
   // Nothing is bound by default: until they've chosen, nudge people to pick their keys (Windows;
   // on Linux the compositor binds them).
@@ -291,7 +302,9 @@
     </aside>
 
     <main class="panel content">
-      {#if activeServerId && !member}
+      {#if viewing.req}
+        <StreamViewer />
+      {:else if activeServerId && !member}
         <div class="join">
           <p>You're not in <strong>{activeServer?.name}</strong> yet.</p>
           <button class="primary" onclick={join}>Join server</button>
@@ -314,6 +327,7 @@
     {:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}
   </div>
 </div>
+<StreamToast />
 {#if settingsOpen}<Settings section={settingsSection} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
 {#if creating}

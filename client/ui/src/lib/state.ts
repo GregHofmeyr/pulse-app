@@ -9,6 +9,7 @@ import type { Person } from './protocol/Person'
 import type { ReadState } from './protocol/ReadState'
 import type { Ready } from './protocol/Ready'
 import type { Server } from './protocol/Server'
+import type { StreamInfo } from './protocol/StreamInfo'
 import type { User } from './protocol/User'
 import type { VoiceMember } from './protocol/VoiceMember'
 
@@ -35,12 +36,13 @@ export type AppState = {
   mutes: Mute[]
   hidden: Record<string, true> // closed conversations
   latest: Record<string, Message> // DM/group channelId -> newest message
+  streams: Record<string, Record<string, StreamInfo>> // channelId -> userId -> live stream
 }
 
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {} }
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -67,6 +69,7 @@ export function applyReady(s: AppState, r: Ready): AppState {
     mutes: r.mutes,
     hidden: Object.fromEntries(r.hidden.map((id) => [id, true as const])),
     latest: Object.fromEntries(r.latest.map((m) => [m.channel_id, m])),
+    streams: r.streams.reduce<AppState['streams']>((acc, x) => withStream(acc, x), {}),
   }
 }
 
@@ -228,7 +231,27 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const { [e.d.channel_id]: _x, ...rest } = s.hidden
       return { ...s, hidden: e.d.hidden ? { ...rest, [e.d.channel_id]: true } : rest }
     }
+    // VoiceLeft deliberately leaves streams alone: the server follows it with StreamEnded.
+    case 'StreamStarted':
+    case 'StreamUpdated':
+      return { ...s, streams: withStream(s.streams, e.d.stream) }
+    case 'StreamEnded': {
+      const { channel_id: c, user_id: u } = e.d
+      const { [u]: _gone, ...rest } = s.streams[c] ?? {}
+      if (!(u in (s.streams[c] ?? {}))) return s
+      const { [c]: _ch, ...others } = s.streams
+      return { ...s, streams: Object.keys(rest).length ? { ...others, [c]: rest } : others }
+    }
+    case 'ViewersChanged': {
+      const cur = s.streams[e.d.channel_id]?.[e.d.user_id]
+      if (!cur) return s
+      return { ...s, streams: withStream(s.streams, { ...cur, viewers: e.d.viewers }) }
+    }
   }
+}
+
+function withStream(streams: AppState['streams'], x: StreamInfo): AppState['streams'] {
+  return { ...streams, [x.channel_id]: { ...streams[x.channel_id], [x.user_id]: x } }
 }
 
 export function addPending(s: AppState, channel: string, p: Pending): AppState {

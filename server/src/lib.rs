@@ -11,6 +11,7 @@ pub mod reads;
 pub mod reports;
 pub mod servers;
 pub mod state;
+pub mod streams;
 pub mod voice;
 
 #[cfg(feature = "testing")]
@@ -31,6 +32,7 @@ pub fn router(state: AppState) -> Router {
         .merge(messages::routes::router())
         .merge(dms::routes::router())
         .merge(voice::routes::router())
+        .merge(streams::routes::router())
         .merge(reports::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
@@ -50,6 +52,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
         cfg: std::sync::Arc::new(cfg),
         hub: hub.clone(),
         voice: voice::VoiceState::default(),
+        streams: streams::state::StreamState::default(),
     };
     // Before serving (connections queue in the listen backlog), so the first Ready is right.
     voice::restore::on_startup(&state, &started_at).await?;

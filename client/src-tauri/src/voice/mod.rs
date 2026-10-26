@@ -1632,6 +1632,21 @@ impl VoiceManager {
         p.adopt(&cfg).await
     }
 
+    /// The live call's mixer input and its current generation, so stream audio received on the
+    /// `#a` connection plays through the same speakers. `None` outside a live call.
+    pub async fn mixer_input(&self) -> Option<(Arc<mixer::MixerInput>, u64)> {
+        self.session
+            .lock()
+            .await
+            .as_ref()
+            .filter(|s| s.alive.load(Ordering::SeqCst))
+            .map(|s| {
+                let m = s.pipeline.shared.mix_in.clone();
+                let g = m.generation();
+                (m, g)
+            })
+    }
+
     // --- diagnostics (tests) ---
     pub async fn mixer_pushed(&self) -> u64 {
         match self.session.lock().await.as_ref() {

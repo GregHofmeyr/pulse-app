@@ -7,6 +7,7 @@ import { applyEvent, applyReady, emptyState, setPendingStatus, type AppState, ty
 import { api } from './tauri'
 import { isMuted, messageSound } from './conversations'
 import { playSound } from './voiceui'
+import { streamApi } from './stream/stream.svelte'
 
 // The reducer (state.ts) is pure and never mutates: hold its output as-is (`$state.raw`) instead
 // of deep-proxying it. Reassigning `app.state` is the only way to change it, and the only way that
@@ -58,11 +59,18 @@ export async function openDm(userId: string): Promise<string> {
 /** Subscribe to the live connection. Returns an unsubscribe function. */
 export async function startListening(): Promise<UnlistenFn> {
   const offs: UnlistenFn[] = await Promise.all([
-    listen<Ready>('pulse://ready', (e) => (app.state = applyReady(app.state, e.payload))),
+    listen<Ready>('pulse://ready', (e) => {
+      const before = app.state.streams
+      app.state = applyReady(app.state, e.payload)
+      void streamApi.onReady(e.payload, before)
+    }),
     listen<Event>('pulse://event', (e) => {
       maybeSound(e.payload)
       app.state = applyEvent(app.state, e.payload, Date.now())
+      streamApi.onEvent(e.payload)
     }),
+    // LiveKit closed stream audio's connection under us
+    listen<{ channel_id: string }>('stream://audio_closed', (e) => void streamApi.onAudioClosed(e.payload.channel_id)),
     listen<ConnState>('pulse://conn', (e) => (app.state = { ...app.state, conn: e.payload })),
     // Last session crashed or quit unexpectedly and its report just went out: tell the user once.
     listen('pulse://auto-report-sent', () => (ui.autoReported = true)),

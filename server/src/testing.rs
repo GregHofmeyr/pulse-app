@@ -16,6 +16,7 @@ pub struct TestApp {
     pub cfg: Arc<Config>,
     pub hub: Hub,
     pub voice: crate::voice::VoiceState,
+    pub streams: crate::streams::state::StreamState,
     pub limits: Arc<crate::limits::Limits>,
     _dir: tempfile::TempDir,
 }
@@ -40,6 +41,7 @@ impl TestApp {
             cfg: self.cfg.clone(),
             hub: self.hub.clone(),
             voice: self.voice.clone(),
+            streams: self.streams.clone(),
             limits: self.limits.clone(),
         }
     }
@@ -56,6 +58,7 @@ pub fn test_config() -> Config {
         hello_timeout: Duration::from_millis(300),
         heartbeat_timeout: Duration::from_secs(5),
         limits: crate::limits::LimitsConfig::unlimited(),
+        stream_media_timeout: Duration::from_millis(300),
     }
 }
 
@@ -72,12 +75,14 @@ pub async fn spawn_with(mut cfg: Config) -> TestApp {
     let cfg = Arc::new(cfg);
     let hub = Hub::default();
     let voice = crate::voice::VoiceState::default();
+    let streams = crate::streams::state::StreamState::default();
     let limits = Arc::new(crate::limits::Limits::new(&cfg.limits));
     let state = AppState {
         db: db.clone(),
         cfg: cfg.clone(),
         hub: hub.clone(),
         voice: voice.clone(),
+        streams: streams.clone(),
         limits: limits.clone(),
     };
     tokio::spawn(async move {
@@ -95,6 +100,7 @@ pub async fn spawn_with(mut cfg: Config) -> TestApp {
         cfg,
         hub,
         voice,
+        streams,
         limits,
         _dir: dir,
     }

@@ -13,6 +13,8 @@ pub enum AppError {
     Unauthorized,
     #[error("gone")]
     Gone,
+    #[error("unsupported media type")]
+    UnsupportedMediaType,
     #[error("{0}")]
     BadRequest(String),
     #[error("{0}")]
@@ -36,6 +38,9 @@ impl IntoResponse for AppError {
             Self::Forbidden => (StatusCode::FORBIDDEN, "forbidden"),
             Self::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized"),
             Self::Gone => (StatusCode::GONE, "gone"),
+            Self::UnsupportedMediaType => {
+                (StatusCode::UNSUPPORTED_MEDIA_TYPE, "unsupported_media_type")
+            }
             Self::BadRequest(_) => (StatusCode::BAD_REQUEST, "bad_request"),
             Self::Conflict(_) => (StatusCode::CONFLICT, "conflict"),
             Self::TooManyRequests => (StatusCode::TOO_MANY_REQUESTS, "rate_limited"),
