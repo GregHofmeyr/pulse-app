@@ -1,5 +1,5 @@
 # The Pulse server image (built by .github/workflows/release-server.yml for amd64 + arm64).
-FROM rust:1.98.1-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e AS build
+FROM rust:1.99.1-bookworm@sha256:48b7f435b8fc6378ce43b44f15e3a47fd8919b2825f835c39bd4bd3da50af5b8 AS build
 WORKDIR /src
 COPY . .
 # Only the server is built here: drop the desktop client from the workspace so its heavy
