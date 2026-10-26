@@ -17,25 +17,36 @@ repository.
 **Keyboard and mouse: global keybinds, Windows only.**
 - **What it installs.** Mute and deafen work while another app has focus. For this, the client installs low-level
   keyboard and mouse hooks (`WH_KEYBOARD_LL`, `WH_MOUSE_LL`).
+- **Only while something is bound.** The hooks are installed only when the **Global keybinds** switch is on *and* at
+  least one keybind is set. Nothing is bound by default, so a fresh install runs no hooks. Adding the first bind
+  installs them; removing the last one removes them. Recording a bind in Settings doesn't need them: Settings reads
+  the keys from its own window.
 - **How events are used.** Each event is checked against the user's saved binds and then always passed on unchanged.
   Pulse does not block or alter input.
   - Key presses are never stored, logged or sent anywhere.
   - The mouse hook only acts on the middle button and the two side buttons. Moves and left/right clicks pass through
     untouched.
-- **Elevated windows.** The client checks whether the hooks can see input at the moment. Part of that check reads the
-  elevation flag of the process that owns the foreground window. That flag is the only thing it reads from that process.
-- **Switching it off.** The hooks are on by default. Settings → Keybinds → **Global keybinds** turns them off. When it
-  is off, the hooks are removed, not just ignored. Pulse also stays off at the next start, so no hooks are installed.
+- **Elevated windows.** While the hooks are installed, the client checks whether they can see input at the moment.
+  Part of that check reads the elevation flag of the process that owns the foreground window. That flag is the only
+  thing it reads from that process.
+- **Switching it off.** The switch is on by default. Settings → Keybinds → **Global keybinds** turns it off. When it is
+  off, the hooks are removed, not just ignored. The setting is kept, so no hooks are installed at the next start.
 - **Linux.** The client installs no hooks. Global binds come from the desktop's own shortcut settings, which run the
   Pulse command line (see *Local IPC* below).
 
 **Screen and window capture: only when the user clicks Go Live.**
 - **Choosing what to share.** Capture uses the webview's standard screen-capture API. The user chooses a screen or
   window in the system picker, and the capture stops when they stop sharing.
-- **Preview image.** While live, the client uploads a small preview image of the shared content (480×270 WebP) every
-  15 seconds. Other members who can see the channel see it before they open the stream. The server keeps only the
-  latest image, in memory, and drops it when the stream ends. The server does not re-encode it: it checks only the
-  declared content type (`image/webp`) and a 100 KB size cap, and passes the bytes on as they are (section 7).
+- **Preview image.** While live, the client uploads a small preview image of the shared content (480×270) every 15
+  seconds. The image is WebP, or JPEG where the webview can't encode WebP. Other members who can see the channel see
+  it before they open the stream.
+  - The server decodes each upload and re-encodes it as a new WebP of at most 480×270. Only the re-encoded image is
+    kept and served, so the upload's metadata never reaches viewers.
+  - It accepts WebP, PNG or JPEG of at most 100 KB and 1920×1920. The bytes must match the declared type, and
+    animations are refused. An upload that can't be decoded within these limits is refused, and the previous preview
+    stays.
+  - The server keeps only the latest image, in memory, and drops it when the stream ends.
+  - Uploads are limited per user to a burst of 6, then one every 5 seconds.
 
 **Process audio and process listing: Windows, only during Go Live with audio turned on.**
 - **Window share.** The client captures only the audio of the process that owns the shared window, using WASAPI process
@@ -63,13 +74,18 @@ The client makes outbound connections only, all to the Pulse server and its Live
 | API and real-time events | HTTPS and WSS, TCP 443 | TLS. The client refuses plain `http://` for any server other than this machine (`localhost`). |
 | Voice / screen-share signalling | WSS, TCP 443 (`voice.` subdomain) | Through the same TLS reverse proxy. |
 | Voice / screen-share media | UDP 7882, or TCP 7881 as a fallback | WebRTC (DTLS-SRTP) to the SFU. |
-| TURN relay | UDP 3478 | LiveKit's built-in TURN, for clients on restrictive networks. |
+| TURN relay | UDP 3478 | LiveKit's built-in TURN, for clients on restrictive networks. It also serves as the clients' STUN server. |
 
 - **No peer-to-peer media.** Media goes from each client to the SFU and from the SFU to the other members. Clients never
   exchange media directly.
-- **Public STUN.** The deployed LiveKit configuration names no STUN servers of its own. With that setting, LiveKit's
-  default also offers clients public STUN servers (Google's, UDP 19302). The client may send STUN binding requests there
-  to learn its own public address. No media or account data goes to them.
+- **No third-party STUN.** The only ICE server clients are given is the Pulse server's own TURN
+  (`turn:<server IP>:3478`).
+  - The client configures no ICE servers of its own. It uses the list LiveKit sends when it joins.
+  - LiveKit adds public STUN servers (Twilio's and Google's) to that list only when it has no UDP TURN and no STUN
+    servers configured. Ours has UDP TURN and no `stun_servers` (LiveKit v1.13.10, `pkg/service/roommanager.go`,
+    `iceServersForParticipant`).
+  - A test checks both LiveKit configurations (production and development) for this. Another test, run against a real
+    LiveKit, checks that the ICE servers in the join response are only our own.
 - **Webview limits.** The UI's Content Security Policy (section 4) also limits where the webview itself may connect.
 
 **No listening network ports.** The client opens no listening TCP or UDP port that another machine can connect to.
@@ -102,9 +118,10 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     redaction filter. By default the LiveKit and WebRTC libraries log at warning level and above; everything else logs
     at info level and above. A local `PULSE_LOG` environment variable can change these levels.
   - **Crash files.** The log folder also holds:
-    - a `running` marker;
+    - a `running` marker, naming the server the current session belongs to;
+    - `last-server`, the server address this profile last signed in to;
     - `crash.json`, written on a crash;
-    - `pending-report.json`, an automatic report not yet sent, including its log tail.
+    - `pending-report.json`, a crash report not yet sent, including its log tail.
 - **Image cache.** Custom emoji images are fetched from the server once and cached as WebP files, keyed by their
   SHA-256 hash.
   - **Where.** `%LOCALAPPDATA%\app.pulse.client\media\` on Windows.
@@ -113,15 +130,27 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   - **Sign-out.** Signing out deletes that account's cache, along with the webview's own copies.
 - **Other local files.** The client also stores:
   - keybinds and the global-keybinds switch (`keybinds.json`);
+  - the crash-report setting (`reports.json`);
   - a few UI preferences in the webview's local storage;
   - the webview's own profile data.
 
   The client does not write message history to disk.
 - **Bug and crash reports.** Reports go only to the Pulse server. They are stored in its database for the operator to
   read. No third-party crash or analytics service is used.
-  - **Bug reports.** The user writes a bug report and sends it, or saves it to a file instead.
-  - **Crash reports.** After a crash or an unexpected exit, a report is sent automatically at the next sign-in, and the
-    UI says so.
+  - **Bug reports.** The user writes a bug report and sends it, or saves it to a file instead. It is sent only when
+    the user presses Send.
+  - **Crash reports.** After a crash or an unexpected exit, the next launch saves a report on the machine.
+    - **Which server.** A report goes only to the server the crashed session was signed in to. If the session crashed
+      before signing in, that is the server this profile last signed in to. If the user next signs in to a different
+      server, or the profile has never signed in to any server, the report is deleted unsent.
+    - **The setting.** Settings → Advanced → **Send crash reports automatically** is on by default. When it is on, the
+      report is sent at the next sign-in, and the UI says so.
+    - **When it is off.** Nothing is sent automatically: not a new report, and not a retry of an earlier one. The
+      setting is checked again before every attempt. The report is held, and the user is asked **Send** or **Don't
+      send** in the main window. Don't send deletes it. Turning the setting back on does not release a held report,
+      so a held report is only ever sent when the user presses Send. If the settings file can't be read, the setting
+      counts as off.
+    - **Expiry.** A report older than 7 days is deleted instead of sent.
   - **What a report contains.** Each one contains:
     - the user's text, if any;
     - the app version and build commit;
@@ -129,7 +158,7 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     - the server address;
     - the connection state;
     - the voice channel and the names of the audio devices chosen, if set;
-    - the panic message and its location, for crashes;
+    - the panic message and its location, for crashes (the message capped at 2 KB);
     - the last 256 KB of the local log.
 
 ## 4. Server-side protections
@@ -151,6 +180,22 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
 - **Sending the token.** REST calls send the token in the `Authorization` header. The real-time connection sends it in
   its first message. It never appears in a URL.
 
+**Signing out ends calls too.** Voice and screen share go through LiveKit, which has its own short-lived tokens. Pulse
+ties each of those tokens to the session that asked for it:
+- **Grant IDs.** Every voice or stream token carries a random grant ID (a participant attribute participants can't
+  change). The server records which session each grant ID belongs to. The token never contains the session token or
+  its hash.
+- **On sign-out.** When a session is signed out, either directly or by **Sign out all other devices**, the server asks
+  LiveKit for the participants in the rooms that session holds grants for. It then removes every participant carrying
+  one of that session's grant IDs, from voice and screen share alike.
+  - This is best-effort and takes at most 2 seconds. If LiveKit can't be reached in that time, the sign-out still
+    succeeds and the miss is logged. That device then stays in its call until it leaves.
+- **Rejoining.** Removing a participant does not invalidate the LiveKit token it holds (LiveKit v1.13.10 has no
+  working way to revoke one). So every join is checked: LiveKit tells the server about each join, and a participant is
+  removed again unless its grant ID belongs to a live session and was issued for that exact room and identity. This
+  covers a signed-out device rejoining with a token it kept, and an expired session.
+- **Lifetime.** Voice and stream tokens are valid for 10 minutes for joining.
+
 **Rate limits.** These are in-memory token buckets:
 
 | What | Limit |
@@ -158,11 +203,13 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
 | Failed logins | 5/minute per IP, and 10/hour per username |
 | Failed registrations (wrong, used or expired invite) | 5/hour per IP |
 | Real-time connection attempts | 20/minute per IP (refunded once the connection authenticates) |
-| Concurrent real-time connections | 8 per user; further connections are refused |
+| Concurrent real-time connections | 8 per user; further connections are refused, and the client tells the user why |
 | New messages | burst of 20, then 5/second per user (edits, deletes and reactions are not rate-limited) |
 | Typing notifications | 1/second per user (extras dropped) |
 | Bug / crash reports | 5/hour per user |
-| Image uploads | 30/hour per user |
+| Custom emoji uploads | 30/hour per user |
+| Go Live preview uploads | burst of 6, then one every 5 seconds per user |
+| Voice and stream tokens (together) | burst of 60, then 1/second per user |
 
 Real-time frames from the client are capped at 64 KB, and messages at 4,000 characters.
 
@@ -179,7 +226,16 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   - two images processed at a time.
 - **Re-encoding.** Every image upload (custom emoji) is decoded and re-encoded server-side to a WebP of at most 128×128.
   The original bytes are never stored or served.
-- **Exception: Go Live previews.** These are not image uploads in this sense and are not re-encoded (section 1).
+- **Go Live previews** are image uploads too, and are re-encoded the same way. Their limits:
+  - at most 100 KB per upload;
+  - at most 1920×1920, checked from the header before any decoding;
+  - WebP, PNG or JPEG matching the declared type;
+  - no animations;
+  - the output is a still WebP of at most 480×270;
+  - processed in the same two slots as other image uploads;
+  - per user, a burst of 6, then one every 5 seconds.
+
+  The Go Live video itself goes through LiveKit as video and is not re-encoded by the server.
 
 **Message rendering.**
 - **Markdown.** Markdown is rendered in the client and then sanitised with DOMPurify, using a strict allow-list of tags
@@ -209,23 +265,39 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
 - **Firewall.** It allows only TCP 80 and 443 (HTTPS, and redirects/certificate issuance), TCP 7881, UDP 7882 and
   UDP 3478 (media and TURN), and the port of the private VPN used for administration.
 - **SSH.**
-  - Key-only, with root login disabled.
-  - The provisioning procedure closes public SSH. Administration happens over the private VPN.
+  - The OpenSSH server is key-only, with root login disabled.
+  - The provisioning procedure closes public SSH. After that, SSH is reachable only over the owner's private VPN
+    (Tailscale, using Tailscale's own SSH), so who may log in is decided by that VPN's access policy. That policy is
+    managed in the VPN, not in this repository.
 - **Updates.** Unattended security updates are enabled on the host.
 - **Containers.**
   - All three containers (Pulse server, LiveKit, Caddy) run as a dedicated host user, not root. The server image also
     defaults to a non-root user.
   - That host user is in the `docker` group so it can run deploys and backups, which makes it root-equivalent on the
-    host.
+    host (see the known gaps).
   - Images are pinned by digest. LiveKit and Caddy are pinned in the compose file. The Pulse server image is pinned to
     the digest pulled at deploy time, so a moved tag cannot change what runs.
 - **Secrets.** The server's secrets live in a mode-`0600` file owned by the service user.
 - **Backups.** Every night, and before each deploy, the database and uploaded media are encrypted with `age` and stored
   in an S3-compatible object store. That object store is with a different provider from the VM. The decryption key is
   not on the server, and the plaintext snapshot is deleted as soon as it has been encrypted.
-- **TURN relay limits.** Pulse configures no TURN relay restrictions of its own. It relies on the relay policy built
-  into the pinned LiveKit release (v1.13.10), which is intended to limit relayed traffic to the SFU itself. This is
-  upstream behaviour and is not verified by tests in this repository.
+- **LiveKit's public address.** LiveKit is given the server's public IPv4 address in the deployment's configuration.
+  It does not discover it, so it contacts no outside STUN server at start-up. A deploy stops before changing anything
+  if that address is missing or isn't a public IPv4 address.
+- **TURN relay limits.** Pulse sets no TURN relay options of its own, so the defaults of the pinned LiveKit release
+  (v1.13.10) apply. The following is LiveKit's code, not Pulse's (`pkg/service/turn.go` and
+  `pkg/service/turnrelay.go` at tag `v1.13.10`), and it is not tested in this repository.
+  - **Restricted peers are refused.** The TURN permission check refuses relaying to loopback, link-local unicast and
+    multicast, multicast, private (RFC 1918 and IPv6 unique-local) and unspecified addresses. It also refuses
+    `0.0.0.0/8`, `100.64.0.0/10` (carrier-grade NAT, which includes the VPN's addresses), `198.18.0.0/15`,
+    `240.0.0.0/4` and the NAT64 prefixes. Our configuration sets no allow-list (`allow_restricted_peer_cidrs`), so
+    none of these are let through.
+  - **The host itself only on media ports.** Relayed packets to the host's own addresses (its interfaces and the
+    public IP) are dropped unless they go to the SFU's media port (UDP 7882).
+  - **No TCP relays.** TCP relay allocations (RFC 6062) are refused.
+  - **Per-participant quota.** One participant's credentials may hold at most 12 relay allocations at once.
+  - **What it does allow.** TURN credentials are issued per participant by LiveKit, so only someone in a call has
+    them. A participant can relay UDP to public internet addresses outside the ranges above. That is how TURN works.
 
 ## 6. Build and supply chain
 
@@ -236,48 +308,54 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
     `packages: write`, to publish the image to GitHub's container registry. No other secrets are configured or used.
   - **Who can publish.** Only a successful CI run of a push to `main` in this repository, or a manual run by someone with write access,
     publishes a server image. Pull requests from forks cannot.
-- **Build inputs fetched at build time.** The client links a prebuilt `libwebrtc` that the build downloads from
-  LiveKit's GitHub releases. The download is not checksum-verified.
-  - The Windows build gets the Tauri CLI through a version range (`@tauri-apps/cli@^2`) and uses the current stable Rust
-    toolchain.
-  - The build output is a test kit zip containing the installer. The kit also includes a LiveKit server binary,
-    downloaded without hash verification, for running a local test server. The installer does not install it.
+- **Pinned build inputs.**
+  - **Actions.** Every GitHub Action is pinned to a full commit SHA.
+  - **Base images.** The server image's base images are pinned to an exact version and digest (`rust:1.98.1-bookworm`,
+    `debian:bookworm-20261020-slim`).
+  - **Rust.** The toolchain is pinned to 1.98.1 in `rust-toolchain.toml`. CI and the release builds install exactly
+    that version.
+  - **Tauri CLI.** The Windows build uses the Tauri CLI at an exact version (2.12.1), installed from the UI's lockfile.
+  - **Linux runners.** CI and the server-image builds run on `ubuntu-24.04`.
+  - **LLVM (CI only).** LLVM comes from apt.llvm.org's signed package repository. Before adding it, CI checks the
+    repository key's fingerprint against a pinned value and fails if it differs. Nothing installed this way ships.
+- **Verified downloads.**
+  - **libwebrtc.** The client links a prebuilt `libwebrtc` that the build downloads from LiveKit's GitHub releases
+    (tag `webrtc-89d790b`). Before extracting it, the build checks the archive's SHA-256 against a value pinned in the
+    repository (`vendor/webrtc-sys/libwebrtc_download.rs`, for Linux x64 and Windows x64). It fails on a mismatch, and
+    for any target without a pin. A libwebrtc built locally from source (`LK_CUSTOM_WEBRTC`) skips the download.
+  - **Test kit.** The build output is a test kit zip containing the installer. The kit also includes a LiveKit server
+    binary (v1.13.10), for running a local test server. The release job checks the downloaded archive against a
+    pinned SHA-256 before extracting it, and fails on a mismatch. The installer does not install it.
 - **Rust dependencies.** `cargo-deny` checks advisories, licences, wildcard version requirements and sources
   (`deny.toml`). Only crates.io and one pinned git dependency are allowed as sources.
   - **Ignored advisories.** Each ignored advisory is listed there with its reason.
   - **Licences.** Licences must be on an explicit allow-list.
 - **UI dependencies.** `pnpm audit --prod --audit-level high` checks the UI's production dependencies.
 - **When the checks run.** Both checks run in CI whenever dependencies change, and weekly.
-- **Dependabot.** It opens weekly update pull requests for Cargo, npm, GitHub Actions and the production compose
-  images (`deploy/compose.yml`). It is also configured for the server Dockerfile, but that file's base images use
-  floating tags, so it will rarely have anything to bump (see the known gaps).
+- **Dependabot.** It opens weekly update pull requests for Cargo, npm, GitHub Actions, the Rust toolchain, the server
+  Dockerfile's base images and the production compose images (`deploy/compose.yml`). This keeps the pins above from
+  going stale.
 
 ## 7. Known gaps
 
-- **Code signing.** The Windows installer is not code-signed yet, so SmartScreen and endpoint tools will see an unsigned
-  publisher.
-- **Updates.** There is no auto-updater. New versions are installed by hand.
-- **Signing out does not end an active call.** Revoking a session immediately stops REST access and closes the real-time
-  connection. It does not remove a device that is already in a voice channel or screen share: that media continues until
-  the device leaves or LiveKit disconnects it. Voice and stream tokens are valid for 10 minutes, but they only control
-  joining, not staying connected.
 - **Not end-to-end encrypted.** Voice and screen share are encrypted in transit (DTLS-SRTP) but not end to end: the SFU
   on the server can access the media. Messages are encrypted in transit (TLS) and stored unencrypted in the server's
   database. Backups are encrypted.
-- **Crash reports.** Crash and unexpected-exit reports are sent automatically, without an opt-out. They go only to the
-  Pulse server, and they include the last 256 KB of the local log.
+- **No multi-factor authentication.** Accounts are protected by a password only.
+- **Deploy user is root-equivalent.** The host user that runs the containers is in the `docker` group, which makes it
+  root-equivalent on the host. Mitigation: public SSH is closed, so it can only be reached over the owner's private VPN
+  (section 5).
+- **Floating build inputs.** These are not pinned:
+  - the Windows build's runner image (`windows-latest`);
+  - the versions of apt packages installed on the CI runners (system build dependencies, and LLVM 21's patch level);
+  - the Node.js and pnpm versions in CI and the Windows build (latest 22.x and 11.x). The UI's own dependencies,
+    including the Tauri CLI, are pinned by the lockfile.
+- **Code signing.** The Windows installer is not code-signed yet, so SmartScreen and endpoint tools will see an unsigned
+  publisher.
+- **Updates.** There is no auto-updater. New versions are installed by hand.
 - **Accounts.**
-  - There is no multi-factor authentication.
   - Any member can create invite codes.
   - Rate limits are held in memory, so they reset when the server restarts.
-- **Pinning and verification.**
-  - GitHub Actions in the workflows are referenced by version tag, not commit SHA.
-  - The server image's base images are referenced by floating tags (`rust:1-bookworm`, `debian:bookworm-slim`). The image that is actually deployed is pinned by digest.
-  - The prebuilt `libwebrtc` and the test kit's LiveKit binary are downloaded without checksum verification.
-  - The Windows build takes the Tauri CLI from a version range and Rust from the current stable toolchain.
-- **Preview images are relayed unmodified.** Go Live preview images are passed from the streamer to viewers byte for
-  byte. The server checks only the declared type and a 100 KB size cap, so viewers' webviews decode whatever the
-  streamer's client sent.
 - **No TURN over TLS.** There is no TURN over TLS/TCP 443, so voice may not work on networks that block UDP and allow
   nothing but 443.
 
