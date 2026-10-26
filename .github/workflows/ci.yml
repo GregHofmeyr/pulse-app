@@ -4,6 +4,10 @@ on:
   pull_request:
   push:
     branches: [main]
+  schedule:
+    # Weekly (Monday 06:00 UTC): new advisories appear without any code change. Only the
+    # dependency jobs run on a schedule; rust/ui/deploy need `changes`, which is skipped.
+    - cron: '0 6 * * 1'
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -14,6 +18,7 @@ permissions:
 
 jobs:
   changes:
+    if: github.event_name != 'schedule'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -22,6 +27,7 @@ jobs:
       rust: ${{ steps.filter.outputs.rust }}
       ui: ${{ steps.filter.outputs.ui }}
       deploy: ${{ steps.filter.outputs.deploy }}
+      deps: ${{ steps.filter.outputs.deps }}
     steps:
       - uses: actions/checkout@v5
       - uses: dorny/paths-filter@v3
@@ -42,10 +48,18 @@ jobs:
             deploy:
               - 'deploy/**'
               - '.github/workflows/ci.yml'
+            deps:
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - '**/Cargo.toml'
+              - 'deny.toml'
+              - 'client/ui/package.json'
+              - 'client/ui/pnpm-lock.yaml'
+              - '.github/workflows/ci.yml'
 
   rust:
     needs: changes
-    if: needs.changes.outputs.rust == 'true'
+    if: github.event_name != 'schedule' && needs.changes.outputs.rust == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -74,7 +88,7 @@ jobs:
 
   ui:
     needs: changes
-    if: needs.changes.outputs.ui == 'true'
+    if: github.event_name != 'schedule' && needs.changes.outputs.ui == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -95,7 +109,7 @@ jobs:
 
   deploy:
     needs: changes
-    if: needs.changes.outputs.deploy == 'true'
+    if: github.event_name != 'schedule' && needs.changes.outputs.deploy == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -111,3 +125,31 @@ jobs:
           -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" caddy:2.10 caddy validate --config /etc/caddy/Caddyfile
       - name: shell scripts
         run: docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh
+
+  # Dependency policy (deny.toml): advisories, licences, bans, sources. Also runs weekly.
+  cargo-deny:
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || needs.changes.outputs.deps == 'true') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check advisories licenses bans sources
+
+  pnpm-audit:
+    needs: changes
+    if: ${{ !cancelled() && (github.event_name == 'schedule' || needs.changes.outputs.deps == 'true') }}
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client/ui
+    steps:
+      - uses: actions/checkout@v5
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+      - run: pnpm audit --prod --audit-level high

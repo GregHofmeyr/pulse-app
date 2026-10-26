@@ -116,3 +116,7 @@ restore-media name:
 # live server logs
 logs service="pulse-server":
     ssh {{prod}} 'cd /srv/pulse && docker compose logs --tail 100 -f {{service}}'
+
+# dependency policy: advisories, licences, bans, sources (needs `cargo install cargo-deny --locked`)
+deny:
+    cargo deny check
