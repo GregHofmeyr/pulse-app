@@ -167,9 +167,9 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   `keybinds.json`, `reports.json` and the `session.json` fallback are in the app's data folder, which on Windows is
   roaming AppData (`%APPDATA%\app.pulse.client`).
 - **Unsent messages.** A message that failed to send, or is still queued, is kept in the webview's local storage for
-  that account (its text and the message it replies to). That lets the user retry it after signing back in, so it is
-  kept across sign-out. It stays until that account signs in and sends or discards it. Other than these, the client
-  does not write message history to disk.
+  that account: its text, and the id of the message it replies to (not that message's text). That lets the user retry
+  it after signing back in, so it is kept across sign-out. It stays until that account signs in and sends or discards
+  it. Other than these, the client does not write message history to disk.
 - **Bug and crash reports.** Reports go only to the Pulse server. They are stored in its database for the operator to
   read. No third-party crash or analytics service is used.
   - **Bug reports.** The user writes a bug report and sends it, or saves it to a file instead. It is sent only when
@@ -196,7 +196,7 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     - the connection state;
     - the voice channel, the mute and deafen state, and the names of the audio devices chosen, if set;
     - the panic message and its location, for crashes (the message capped at 2 KB);
-    - the last 256 KB of the local log.
+    - the last 256 KB of the local log, from the current session.
 
 ## 4. Server-side protections
 
@@ -254,8 +254,8 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   devices** does (their real-time connections are closed and their calls ended, with the limits described under *Signing
   out ends calls too*); turning 2FA on and ending those sessions are one database transaction, so neither happens
   without the other. The device doing it stays signed in, so anyone who had only the password is out. Sessions are not
-  touched otherwise: signing in with a code, turning 2FA off, regenerating recovery codes and the owner reset leave
-  existing sessions alone.
+  touched otherwise: signing in with a code, turning 2FA off, regenerating recovery codes and the owner's `reset-2fa`
+  leave existing sessions alone.
 - **Recovery codes.** Turning 2FA on gives 10 recovery codes, shown once. Each is 16 characters from a 31-character
   alphabet (about 79 bits), written `xxxx-xxxx-xxxx-xxxx`; spaces, dashes and case are ignored when one is entered.
   Only their SHA-256 hashes are stored. A code works once and is then deleted. Making new codes needs a current TOTP
@@ -267,14 +267,14 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     new one is issued.
   - Spent by one successful code. The ticket is deleted when it succeeds, and also when the 5th wrong code is entered
     on it. Unknown, expired and used-up tickets all get the same "gone" answer.
-  - Turning 2FA off, the owner reset, changing the password and the owner's `reset-password` delete the account's
-    tickets.
+  - Turning 2FA off, changing the password and the owner's `reset-2fa`, `reset-password` and `revoke-sessions` delete
+    the account's tickets.
 - **Limits on guessing.** Every 2FA check (the sign-in code, the password or code asked for when turning it on or
-  off or making new recovery codes, and the current password and code asked for when changing the password) is counted against two limits at once: 5 per minute per IP address and 10 per
-  hour per account. The count is taken before the check, so parallel guesses cannot all slip past. A wrong password
-  or code keeps its count, as does a guess at an unknown or dead ticket (that one counts against the address only);
-  every other outcome is refunded, and a refused attempt costs nothing. A refused attempt gets 429. Like the other
-  limits, these are in memory.
+  off or making new recovery codes, and the current password and code asked for when changing the password) is
+  counted against two limits at once: 5 per minute per IP address and 10 per hour per account. The count is taken
+  before the check, so parallel guesses cannot all slip past. A wrong password or code keeps its count, as does a guess
+  at an unknown or dead ticket (that one counts against the address only); every other outcome is refunded, and a
+  refused attempt costs nothing. A refused attempt gets 429. Like the other limits, these are in memory.
 - **Lost app and recovery codes.** There is no self-service way back in. The server's owner turns 2FA off for the
   account from the host (`reset-2fa`, run in a one-off server container). It deletes the account's secret, recovery
   codes and tickets, never uses the key, so any well-formed `PULSE_TOTP_KEY` in `.env` will do (it still works after
@@ -341,10 +341,15 @@ ties each of those tokens to the session that asked for it:
 - **Leaving voice.** When someone leaves a server voice channel's call (not a reconnect), LiveKit is asked to remove
   their screen-share connections there too, in the background. This is skipped if they are back in the call by then.
   Removal is by identity, so a new screen-share connection made in the same instant could be removed.
+- **Lost leave reports.** If LiveKit's report of a voice leave is lost, or a leave arrives before the server has rebuilt
+  its voice state after a restart, an existing screen-share connection can stay until its session ends. New
+  screen-share joins are still refused.
 - **No data messages.** Voice tokens can't send LiveKit data messages, like stream tokens. Calls carry the microphone
   only.
 
-**Rate limits.** These are in-memory token buckets. Per-IP limits count an IPv6 client by its /64 prefix (one client can hold a whole /64), and an IPv4-mapped IPv6 address as its IPv4 address. Each limiter tracks at most 10,000 keys; past that, the least recently used bucket is dropped.
+**Rate limits.** These are in-memory token buckets. Per-IP limits count an IPv6 client by its /64 prefix (one client
+can hold a whole /64), and an IPv4-mapped IPv6 address as its IPv4 address. Each limiter tracks at most 10,000 keys;
+past that, the least recently used bucket is dropped.
 
 | What | Limit |
 |---|---|
@@ -385,10 +390,9 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
 
 Unused media is cleaned up in the same hourly pass (see "Uploaded images").
 
-**Low disk.** Sending a message, renaming a group, submitting a report and adding a custom emoji are refused with a
-507 "server storage is full" when the free space on the database's volume or the media volume is below the configured minimum (2 GB by
-default). Image uploads were already refused the same way. The check comes after sign-in and the rate limit, before
-any work.
+**Low disk.** Sending a message, renaming a group, submitting a report, adding a custom emoji and uploading an image
+are refused with a 507 "server storage is full" when the free space on the database's volume or the media volume is
+below the configured minimum (2 GB by default). The check comes after sign-in and the rate limit, before any work.
 
 **Uploaded images.**
 - **Who can upload and read them.** Upload and download both need a signed-in session.
@@ -572,9 +576,9 @@ any work.
   - `ca-certificates` in the server image's runtime stage, installed with apt on top of the pinned base image;
   - the BuildKit (buildx) version used to build the server image, and the `just` version in CI.
 - **Backups can be destroyed from the host.** The server's object-store token can delete and overwrite backups (it
-  prunes the old ones), and the bucket has no object lock or retention. Someone who takes over the host could destroy
-  the backups. The fix is R2 bucket lock and lifecycle rules, which the operator sets in Cloudflare, not this
-  repository.
+  prunes the old ones), and this repository configures no object lock or retention. Someone who takes over the host
+  could destroy the backups. The fix is R2 bucket lock and lifecycle rules, which the operator sets in Cloudflare, not
+  this repository.
 - **The server image is not signed.** It has no signature and no build provenance. The deploy pins the digest it
   pulled, so a moved tag can't change what runs, but nothing proves where that image was built.
 - **Code signing.** The Windows installer is not code-signed yet, so SmartScreen and endpoint tools will see an unsigned
