@@ -135,8 +135,15 @@ export const voiceApi = {
     try {
       await invoke('join_voice', { channelId, config: loadAudioConfig() })
     } catch (e) {
-      // a newer join cancelled this one: not a failure
-      if (e === 'cancelled' || seq !== joinSeq) return
+      // a newer join (or a leave) replaced this one: that one owns the state now
+      if (seq !== joinSeq) return
+      // the core called it off by itself (e.g. signed out): not a failure, but the channel is free again
+      if (e === 'cancelled') {
+        voice.joining = null
+        voice.link = null
+        voice.stage = { stage: 'disconnected', attempt: null }
+        return
+      }
       // the status block shows it (with Retry and Dismiss): not voice.error too
       voice.joinFailed = { channelId, error: errText(e) }
       voice.joining = null

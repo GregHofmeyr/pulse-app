@@ -211,6 +211,18 @@ describe('stream tiles', () => {
     expect(q('[data-stream="U1"]')!.textContent).toContain("You're live from another device")
   })
 
+  it('stopping_a_share_with_audio_does_not_flash_the_note_while_audio_stops', async () => {
+    invoke.mockImplementation((c: string) => (c === 'stream_audio_stop' ? new Promise(() => {}) : Promise.resolve(undefined)))
+    app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1', settings: { height: 720, fps: 60, audio: true } } } }, 0)
+    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: true, audioMuted: false, label: 'Game', encoderWarning: false }
+    mountPanel()
+    void streamApi.stop()
+    await settle()
+    expect(invoke.mock.calls.some(([c]) => c === 'stream_audio_stop')).toBe(true)
+    expect(q('[data-stream="U1"]')).not.toBeNull()
+    expect(q('[data-stream="U1"]')!.textContent).not.toContain('another device')
+  })
+
   it('a_grid_tile_has_no_diagnostics_overlay', async () => {
     diagUi.on = true
     diag.in = { w: 1280, h: 720, fps: 30, kbps: 900, decoder: 'x', powerEfficient: null, freezes: 0, freezeMs: 0, stillLikely: false } as never

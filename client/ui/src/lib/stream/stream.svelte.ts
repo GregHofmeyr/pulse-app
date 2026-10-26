@@ -204,6 +204,8 @@ async function endLive(announce: boolean) {
   const live = stream.live
   if (!live) return
   stream.live = null
+  // from the moment the share is gone here: audio_stop below can take a while
+  if (announce) stream.stopping = live.channelId
   const track = liveTrack
   liveTrack = null
   track?.mediaStreamTrack.removeEventListener('ended', onTrackEnded)
@@ -212,7 +214,6 @@ async function endLive(announce: boolean) {
   stopPreview?.()
   stopPreview = null
   if (live.audio) await streamCmd.audioStop().catch(logError('audio_stop_error'))
-  if (announce) stream.stopping = live.channelId
   // the server call never holds up the local stop
   const server = announce
     ? streamCmd.stop(live.channelId).catch((e) => {

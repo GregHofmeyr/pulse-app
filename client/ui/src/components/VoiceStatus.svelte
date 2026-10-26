@@ -24,9 +24,12 @@
   let box = $state<HTMLDivElement>()
   let status = $state<HTMLSpanElement>()
   let refocus = false
-  // before the button and panel go: was focus in them? (afterwards it has already dropped to the body)
+  // before the trigger and panel go: was focus on them? (afterwards it has already dropped to the body)
+  // Focus elsewhere in the block (Leave) stays where it is.
   $effect.pre(() => {
-    if (!clickable && box?.contains(document.activeElement)) refocus = true
+    if (clickable) return
+    const at = document.activeElement
+    if (at && (trigger?.contains(at) || box?.querySelector('[role=dialog]')?.contains(at))) refocus = true
   })
   // the panel only exists while there is a connection to describe
   $effect(() => {

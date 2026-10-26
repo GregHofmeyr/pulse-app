@@ -145,6 +145,23 @@ describe('voice listener rules', () => {
     expect(voice.error).toBe('')
   })
 
+  it('a_join_the_core_cancels_on_its_own_frees_the_channel_for_another_click', async () => {
+    let cancel!: (e: unknown) => void
+    invoke.mockImplementation((c: string) => (c === 'join_voice' ? new Promise((_, rej) => (cancel = rej)) : Promise.resolve()))
+    const joining = voiceApi.join('V1')
+    await settle()
+    cancel('cancelled') // e.g. signed out: no newer join replaced it
+    await joining
+    await settle()
+    expect(voice.joining).toBeNull()
+    expect(voice.joinFailed).toBeNull()
+    expect(voice.stage).toEqual({ stage: 'disconnected', attempt: null })
+    expect(document.querySelectorAll('.occupant.pending')).toHaveLength(0)
+    void voiceApi.join('V1')
+    await settle()
+    expect(invoke.mock.calls.filter(([c]) => c === 'join_voice')).toHaveLength(2)
+  })
+
   it('a_link_sample_after_leaving_is_dropped', () => {
     const sample = { kind: 'link', rtt_ms: 40, jitter_ms: 2, loss_pct: 0, transport: 'udp', server: 'voice.example.test', version: '1.0.0', history: [] }
     emit(sample)

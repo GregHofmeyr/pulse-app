@@ -220,6 +220,15 @@ describe('VoiceStatus panel behaviour', () => {
     expect(document.activeElement).toBe(status)
   })
 
+  it('focus_on_leave_survives_reconnecting', () => {
+    connect()
+    const leave = document.querySelector<HTMLButtonElement>('button.vc-leave')!
+    leave.focus()
+    emit({ kind: 'stage', stage: 'reconnecting', attempt: 2 })
+    flushSync()
+    expect(document.activeElement).toBe(leave)
+  })
+
   it('reconnecting_does_not_take_focus_from_elsewhere', async () => {
     await open()
     const input = document.createElement('input')
