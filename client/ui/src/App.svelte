@@ -9,12 +9,16 @@
   import Login from './routes/Login.svelte'
   import Shell from './routes/Shell.svelte'
   import UpdateRequired from './routes/UpdateRequired.svelte'
+  import Waiting from './routes/Waiting.svelte'
+  import { isRefusal } from './lib/conn'
   import { screenFor } from './lib/screen'
 
   let user = $state<User | null>(null)
   let booting = $state(true)
   let bootError = $state('')
-  const screen = $derived(screenFor({ booting, signedIn: !!user, conn: app.state.conn }))
+  // restore found a stored session but the server turned the connection away: wait for Ready
+  let restoreRefused = $state(false)
+  const screen = $derived(screenFor({ booting, signedIn: !!user, conn: app.state.conn, restoreRefused }))
 
   onMount(() => installTooltips())
 
@@ -37,6 +41,7 @@
       }
       try {
         user = await api.restoreSession()
+        restoreRefused = !user && isRefusal(app.state.conn)
       } catch (e) {
         bootError = errorText(e)
       } finally {
@@ -44,6 +49,14 @@
       }
     })
     return () => off?.()
+  })
+
+  // The refused startup got in: Ready carries who we are.
+  $effect(() => {
+    if (restoreRefused && !user && app.state.me && app.state.conn === 'connected') {
+      user = app.state.me
+      restoreRefused = false
+    }
   })
 
   // The server ended our session (logout elsewhere, expiry): back to login.
@@ -60,6 +73,8 @@
   <div class="boot" aria-busy="true"></div>
 {:else if screen === 'update'}
   <UpdateRequired />
+{:else if screen === 'waiting'}
+  <Waiting />
 {:else if screen === 'shell' && user}
   <Shell {user} onLogout={() => { user = null; resetState() }} />
 {:else}

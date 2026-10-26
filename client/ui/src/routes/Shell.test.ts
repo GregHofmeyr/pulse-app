@@ -9,6 +9,7 @@ vi.mock('@tauri-apps/api/window', () => ({
 }))
 
 import Shell from './Shell.svelte'
+import Waiting from './Waiting.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 
@@ -43,8 +44,37 @@ describe('Shell', () => {
     cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
     flushSync()
     expect(document.querySelector('.conn')!.textContent).toBe('Too many devices connected — close Pulse on another device')
+    app.connAt = Date.now()
     app.state = { ...app.state, conn: { rate_limited: 4 } }
     flushSync()
     expect(document.querySelector('.conn')!.textContent).toBe('Too many attempts, retrying in 4s…')
+  })
+
+  it('the retry countdown ticks down and is replaced when the next attempt starts', () => {
+    vi.useFakeTimers()
+    try {
+      vi.setSystemTime(100_000)
+      app.connAt = Date.now()
+      app.state = { ...emptyState(), conn: { rate_limited: 3 } }
+      cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+      flushSync()
+      expect(document.querySelector('.conn')!.textContent).toBe('Too many attempts, retrying in 3s…')
+      vi.advanceTimersByTime(1000)
+      flushSync()
+      expect(document.querySelector('.conn')!.textContent).toBe('Too many attempts, retrying in 2s…')
+      vi.advanceTimersByTime(2000)
+      flushSync()
+      expect(document.querySelector('.conn')!.textContent).toBe('Connecting…')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a refused startup shows the message on the waiting screen', () => {
+    app.connAt = Date.now()
+    app.state = { ...emptyState(), conn: 'too_many_devices' }
+    cmp = mount(Waiting, { target: document.body })
+    flushSync()
+    expect(document.querySelector('[role=status]')!.textContent).toContain('Too many devices connected')
   })
 })

@@ -16,6 +16,8 @@ import { windowFocus } from './windowFocus.svelte'
 // re-renders; unchanged slices keep their identity, so deriveds over them stop there.
 class AppStore {
   state = $state.raw<AppState>(emptyState())
+  /** When the last connection state arrived (ms): the start of a "retrying in Ns" countdown. */
+  connAt = $state(0)
 }
 export const app = new AppStore()
 
@@ -74,7 +76,10 @@ export async function startListening(): Promise<UnlistenFn> {
     }),
     // LiveKit closed stream audio's connection under us
     listen<{ channel_id: string }>('stream://audio_closed', (e) => void streamApi.onAudioClosed(e.payload.channel_id)),
-    listen<ConnState>('pulse://conn', (e) => (app.state = { ...app.state, conn: e.payload })),
+    listen<ConnState>('pulse://conn', (e) => {
+      app.connAt = Date.now()
+      app.state = { ...app.state, conn: e.payload }
+    }),
     // Last session crashed or quit unexpectedly and its report just went out: tell the user once.
     listen('pulse://auto-report-sent', () => (ui.autoReported = true)),
     listen<{ nonce: string; status: 'sent' | 'failed'; message: Message | null }>('pulse://outbox', (e) => {

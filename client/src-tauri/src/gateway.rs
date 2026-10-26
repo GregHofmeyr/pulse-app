@@ -137,6 +137,9 @@ pub enum Boot {
     Ready(pulse_protocol::rest::User),
     LoggedOut,
     UpdateRequired,
+    /// The server turned us away (too many devices / attempts). It's reachable and we stay
+    /// signed in: the gateway keeps retrying and the app opens on Ready.
+    Refused(ConnState),
     /// Attempts before Ready kept failing for the whole grace period.
     Unreachable,
 }
@@ -171,8 +174,9 @@ impl Boot {
             GatewayUpdate::Connection(ConnState::LoggedOut) => Boot::LoggedOut,
             GatewayUpdate::Connection(ConnState::UpdateRequired) => Boot::UpdateRequired,
             GatewayUpdate::Connection(
-                ConnState::Reconnecting | ConnState::TooManyDevices | ConnState::RateLimited(_),
-            ) => {
+                c @ (ConnState::TooManyDevices | ConnState::RateLimited(_)),
+            ) => Boot::Refused(*c),
+            GatewayUpdate::Connection(ConnState::Reconnecting) => {
                 let since = *failing_since.get_or_insert(now);
                 if now.saturating_duration_since(since) < *grace {
                     return; // keep retrying (the gateway's own backoff paces it)
@@ -340,52 +344,52 @@ impl GatewayHandle {
             let (mut n, mut after_healthy) = (0u32, false);
             let _ = tx.send(GatewayUpdate::Connection(ConnState::Connecting));
             loop {
-                match session(&url, &token, &tx, &mut cmd_rx, &t, &after_ready).await {
-                    End::Stop => return,
-                    End::LoggedOut => {
-                        let _ = tx.send(GatewayUpdate::Connection(ConnState::LoggedOut));
-                        return;
-                    }
-                    End::UpdateRequired => {
-                        let _ = tx.send(GatewayUpdate::Connection(ConnState::UpdateRequired));
-                        return;
-                    }
-                    end @ (End::Retry(_) | End::Refused(_)) => {
-                        let (went, refusal) = match end {
-                            End::Retry(went) => (went, None),
-                            End::Refused(r) => (Went::Failed, Some(r)),
-                            _ => unreachable!(),
-                        };
-                        if went != Went::Failed {
-                            n = 0;
-                            after_healthy = went == Went::Healthy;
+                let (went, refusal) =
+                    match session(&url, &token, &tx, &mut cmd_rx, &t, &after_ready).await {
+                        End::Stop => return,
+                        End::LoggedOut => {
+                            let _ = tx.send(GatewayUpdate::Connection(ConnState::LoggedOut));
+                            return;
                         }
-                        let delay = reconnect_delay(n, after_healthy, rand::random::<f64>())
-                            .mul_f64(t.unit.as_secs_f64());
-                        let state = match refusal {
-                            None => ConnState::Reconnecting,
-                            Some(Refusal::TooManyDevices) => ConnState::TooManyDevices,
-                            // the real wait, rounded up so it never reads "0s"
-                            Some(Refusal::RateLimited) => {
-                                ConnState::RateLimited(delay.as_secs_f64().ceil().max(1.0) as u64)
-                            }
-                        };
-                        let _ = tx.send(GatewayUpdate::Connection(state));
-                        n = n.saturating_add(1);
-                        // Wait out the backoff, unless told to reconnect now / probe, or stop.
-                        let sleep = tokio::time::sleep(delay);
-                        tokio::pin!(sleep);
-                        loop {
-                            tokio::select! {
-                                _ = &mut sleep => break,
-                                c = cmd_rx.recv() => match c {
-                                    None | Some(Cmd::Stop) => return,
-                                    Some(Cmd::ReconnectNow | Cmd::Probe) => break,
-                                    Some(Cmd::Send(_)) => {} // dropped while offline
-                                },
-                            }
+                        End::UpdateRequired => {
+                            let _ = tx.send(GatewayUpdate::Connection(ConnState::UpdateRequired));
+                            return;
                         }
+                        End::Retry(went) => (went, None),
+                        End::Refused(r) => (Went::Failed, Some(r)),
+                    };
+                if went != Went::Failed {
+                    n = 0;
+                    after_healthy = went == Went::Healthy;
+                }
+                let delay = reconnect_delay(n, after_healthy, rand::random::<f64>())
+                    .mul_f64(t.unit.as_secs_f64());
+                let state = match refusal {
+                    None => ConnState::Reconnecting,
+                    Some(Refusal::TooManyDevices) => ConnState::TooManyDevices,
+                    // the real wait, rounded up so it never reads "0s"
+                    Some(Refusal::RateLimited) => {
+                        ConnState::RateLimited(delay.as_secs_f64().ceil().max(1.0) as u64)
                     }
+                };
+                let _ = tx.send(GatewayUpdate::Connection(state));
+                n = n.saturating_add(1);
+                // Wait out the backoff, unless told to reconnect now / probe, or stop.
+                let sleep = tokio::time::sleep(delay);
+                tokio::pin!(sleep);
+                loop {
+                    tokio::select! {
+                        _ = &mut sleep => break,
+                        c = cmd_rx.recv() => match c {
+                            None | Some(Cmd::Stop) => return,
+                            Some(Cmd::ReconnectNow | Cmd::Probe) => break,
+                            Some(Cmd::Send(_)) => {} // dropped while offline
+                        },
+                    }
+                }
+                // a countdown ("retrying in 8s") must not outlive the wait it counted down
+                if matches!(state, ConnState::RateLimited(_)) {
+                    let _ = tx.send(GatewayUpdate::Connection(ConnState::Connecting));
                 }
             }
         });
@@ -957,6 +961,35 @@ mod tests {
         assert!(b.is_waiting(), "{b:?}");
         b.observe(&failed, t0 + Duration::from_secs(10));
         assert!(matches!(b, Boot::Unreachable), "{b:?}");
+    }
+
+    #[test]
+    fn a_refusal_decides_startup_at_once() {
+        let t0 = std::time::Instant::now();
+        for c in [ConnState::TooManyDevices, ConnState::RateLimited(3)] {
+            let mut b = Boot::starting_with(Duration::from_secs(10));
+            b.observe(&GatewayUpdate::Connection(c), t0);
+            assert!(matches!(b, Boot::Refused(r) if r == c), "{b:?}");
+        }
+    }
+
+    /// Startup against a full account says so (not "unreachable"), and the gateway keeps going.
+    #[tokio::test]
+    async fn startup_over_the_device_cap_is_refused_not_unreachable() {
+        let mut cfg = testing::test_config();
+        cfg.limits.gateway_per_user = 0;
+        let app = testing::spawn_with(cfg).await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let b = boot_outcome(
+            format!("http://{}", app.addr),
+            &token,
+            Duration::from_secs(10),
+        )
+        .await;
+        assert!(
+            matches!(b, Boot::Refused(ConnState::TooManyDevices)),
+            "{b:?}"
+        );
     }
 
     /// Serves Ready on `listener`, then never says anything again (never acks, never closes): a

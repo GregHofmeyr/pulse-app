@@ -1,6 +1,6 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window'
-  import { connLabel } from '../lib/conn'
+  import ConnText from '../components/ConnText.svelte'
   import Icon from '../components/Icon.svelte'
   import ChannelList from '../components/ChannelList.svelte'
   import MemberList from '../components/MemberList.svelte'
@@ -248,7 +248,7 @@
     </nav>
     <div class="grow" data-tauri-drag-region></div>
     {#if app.state.conn !== 'connected'}
-      <span class="conn" role="status">{connLabel(app.state.conn)}</span>
+      <span class="conn" role="status"><ConnText /></span>
     {/if}
     {#if pickKeys}
       <span class="conn auto-report" role="status">Pick your mute and deafen keys. <button class="link" onclick={() => openSettings('keybinds')}>Choose</button> <button aria-label="Dismiss" onclick={dismissPickKeys}>×</button></span>

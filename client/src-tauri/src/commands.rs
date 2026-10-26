@@ -411,6 +411,10 @@ pub async fn restore_session(
     match decided {
         Some(Boot::Ready(user)) => Ok(Some(user)),
         Some(Boot::LoggedOut) => Ok(None), // forward() already cleared the stored session
+        // Turned away (too many devices / attempts) but signed in: leave the session and its
+        // gateway running. The UI sees the refusal in `pulse://conn`, shows it, and opens the
+        // app when Ready arrives.
+        Some(Boot::Refused(_)) => Ok(None),
         Some(Boot::UpdateRequired) => {
             // the update screen sits inside the signed-in shell: it needs the user (rare path)
             let (api, token) = core.current()?;
