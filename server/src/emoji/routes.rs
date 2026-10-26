@@ -10,6 +10,7 @@ use crate::AppState;
 use crate::auth::AuthUser;
 use crate::db::{begin_write, now};
 use crate::error::{AppError, AppResult};
+use crate::limits::caps;
 use crate::media::{MediaKind, valid_hash};
 use crate::servers::routes::is_server_member;
 
@@ -88,6 +89,18 @@ async fn create(
     if live >= MAX_PER_SERVER {
         return Err(AppError::BadRequest(format!(
             "this server has {MAX_PER_SERVER} emoji, the most it can hold; delete one first"
+        )));
+    }
+    // Deleted emoji keep their row (old messages keep their `:name:`), so create-and-delete
+    // would otherwise grow the table without bound.
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM custom_emoji WHERE server_id = ?")
+        .bind(server.to_string())
+        .fetch_one(&mut *tx)
+        .await?;
+    if rows >= caps::EMOJI_ROWS_PER_SERVER {
+        return Err(AppError::BadRequest(format!(
+            "this server has had {} emoji, the most it can ever add",
+            caps::EMOJI_ROWS_PER_SERVER
         )));
     }
     sqlx::query(

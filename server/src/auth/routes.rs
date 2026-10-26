@@ -279,7 +279,15 @@ async fn create_invite(
     if !s.limits.invite_user.hit(&u.to_string()) {
         return Err(AppError::TooManyRequests);
     }
-    Ok(Json(InviteResponse {
-        code: invites::create(&s.db, Some(u)).await?,
-    }))
+    // Counted and inserted under the write lock, so concurrent requests can't pass the cap.
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    if invites::outstanding(&mut tx, u).await? >= crate::limits::caps::INVITES_PER_USER {
+        return Err(AppError::BadRequest(format!(
+            "you have {} unused invite codes; use one or wait for it to expire",
+            crate::limits::caps::INVITES_PER_USER
+        )));
+    }
+    let code = invites::insert(&mut tx, Some(u)).await?;
+    tx.commit().await?;
+    Ok(Json(InviteResponse { code }))
 }

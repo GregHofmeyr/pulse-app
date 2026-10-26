@@ -1,5 +1,6 @@
 //! `GET /gateway`: Hello → Ready → events, with heartbeats.
 
+use std::collections::HashSet;
 use std::time::Duration;
 
 use axum::extract::State;
@@ -8,7 +9,7 @@ use axum::response::{IntoResponse, Response};
 use pulse_protocol::gateway::{
     ClientFrame, DmMembers, Event, Ready, ServerFrame, ServerMembers, VoiceMember, VoiceRoom,
 };
-use pulse_protocol::ids::UserId;
+use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::{Person, User};
 use sqlx::SqlitePool;
 
@@ -19,7 +20,7 @@ use crate::auth::session;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
 use crate::limits::ClientIp;
-use crate::servers::routes::{all_servers, dms_of, server_channels, server_members};
+use crate::servers::routes::{all_server_channels, all_server_members, all_servers, dms_of};
 use crate::streams::state::StreamState;
 use crate::voice::VoiceState;
 
@@ -151,38 +152,36 @@ pub async fn build_ready(
     hub: &Hub,
     me: UserId,
 ) -> AppResult<Ready> {
+    // A fixed number of queries however many servers and conversations there are: each table
+    // is read once and regrouped here.
     let servers = all_servers(db).await?;
+    let mut server_channels = all_server_channels(db).await?;
+    let mut server_members = all_server_members(db).await?;
     let mut channels = vec![];
     let mut members = vec![];
     for srv in &servers {
-        channels.extend(server_channels(db, srv.id).await?);
+        channels.extend(server_channels.remove(&srv.id).unwrap_or_default());
         members.push(ServerMembers {
             server_id: srv.id,
-            members: server_members(db, srv.id).await?,
+            members: server_members.remove(&srv.id).unwrap_or_default(),
         });
     }
+    let mut conversation_members = crate::dms::routes::members_of_my_conversations(db, me).await?;
     let mut dm_members = vec![];
     for dm in dms_of(db, me).await? {
-        let ids: Vec<String> = sqlx::query_scalar(
-            "SELECT user_id FROM channel_members WHERE channel_id = ? ORDER BY user_id",
-        )
-        .bind(dm.id.to_string())
-        .fetch_all(db)
-        .await?;
         dm_members.push(DmMembers {
             channel_id: dm.id,
-            user_ids: ids
-                .iter()
-                .map(|i| i.parse())
-                .collect::<Result<_, _>>()
-                .map_err(anyhow::Error::from)?,
+            user_ids: conversation_members.remove(&dm.id).unwrap_or_default(),
         });
         channels.push(dm);
     }
+    // Same rule as `channel_for`: every server channel, and the DMs/groups `me` is in, which is
+    // exactly the channel list above.
+    let visible: HashSet<ChannelId> = channels.iter().map(|c| c.id).collect();
     let mut voice = vec![];
     for (channel_id, members) in voice_state.rooms() {
         // Same rule as everything else: private rooms only for their members.
-        if channel_for(db, me, channel_id).await.is_ok() {
+        if visible.contains(&channel_id) {
             voice.push(VoiceRoom {
                 channel_id,
                 members: members
@@ -195,7 +194,7 @@ pub async fn build_ready(
     let mut live = vec![];
     for stream in streams.all() {
         // Same visibility rule as voice rooms.
-        if channel_for(db, me, stream.channel_id).await.is_ok() {
+        if visible.contains(&stream.channel_id) {
             live.push(stream);
         }
     }

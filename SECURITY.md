@@ -305,6 +305,15 @@ ties each of those tokens to the session that asked for it:
 
 Real-time frames from the client are capped at 64 KB, and messages at 4,000 characters.
 
+**Caps.** These hard limits on stored rows don't reset. Going over one is refused with an error.
+- Servers: 10 created per user.
+- Channels: 100 per server, text and voice together.
+- Groups: a user can be in 200 groups (1:1 DMs don't count). Creating a group or adding people fails if it would put
+  anyone over.
+- Invite codes: 20 unused, unexpired codes per user.
+- Custom emoji: 100 per server at a time, and 500 ever added per server (deleted emoji still count, because their
+  names are kept for old messages).
+
 **Uploaded images.**
 - **Who can upload and read them.** Upload and download both need a signed-in session.
 - **What is accepted.**

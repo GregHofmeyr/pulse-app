@@ -1,6 +1,6 @@
 //! Conversation management: groups, read points, mutes, closing.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -83,6 +83,30 @@ pub async fn members_of(db: &SqlitePool, channel: ChannelId) -> AppResult<Vec<Us
         .map_err(anyhow::Error::from)?)
 }
 
+/// The members of every DM and group `me` is in, in one query, each list ordered as
+/// [`members_of`] orders it.
+pub async fn members_of_my_conversations(
+    db: &SqlitePool,
+    me: UserId,
+) -> AppResult<HashMap<ChannelId, Vec<UserId>>> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT cm.channel_id, cm.user_id FROM channel_members cm
+         JOIN channel_members mine ON mine.channel_id = cm.channel_id AND mine.user_id = ?
+         ORDER BY cm.channel_id, cm.user_id",
+    )
+    .bind(me.to_string())
+    .fetch_all(db)
+    .await?;
+    let mut out: HashMap<ChannelId, Vec<UserId>> = HashMap::new();
+    for (ch, u) in rows {
+        let ch: ChannelId = ch.parse().map_err(anyhow::Error::from)?;
+        out.entry(ch)
+            .or_default()
+            .push(u.parse().map_err(anyhow::Error::from)?);
+    }
+    Ok(out)
+}
+
 async fn username(db: &SqlitePool, u: UserId) -> AppResult<String> {
     Ok(load_user(db, u).await?.username)
 }
@@ -135,6 +159,7 @@ async fn add_members(
     // Write first, then count, under the write lock: two adds racing past the check above
     // can't overfill the group.
     let mut tx = crate::db::begin_write(&s.db).await?;
+    crate::servers::routes::check_group_cap(&mut tx, &new).await?; // dropping `tx` rolls back
     for u in &new {
         sqlx::query("INSERT INTO channel_members (channel_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)")
             .bind(id.to_string()).bind(u.to_string()).bind(me.to_string()).bind(now())

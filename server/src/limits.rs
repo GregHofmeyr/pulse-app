@@ -30,6 +30,22 @@ impl Rate {
     }
 }
 
+/// Hard caps on rows a member can create. Each is checked inside the write transaction that
+/// inserts, so concurrent requests can't go past it; going over is a 400.
+pub mod caps {
+    /// Servers one user has created.
+    pub const SERVERS_PER_USER: i64 = 10;
+    /// Channels (text and voice together) in one server.
+    pub const CHANNELS_PER_SERVER: i64 = 100;
+    /// Group conversations one user is a member of (1:1 DMs don't count).
+    pub const GROUPS_PER_USER: i64 = 200;
+    /// Unused, unexpired invite codes one user has created.
+    pub const INVITES_PER_USER: i64 = 20;
+    /// Custom emoji rows in one server, deleted ones included (they are kept so old messages
+    /// keep their `:name:`). The live cap is `emoji::MAX_PER_SERVER`.
+    pub const EMOJI_ROWS_PER_SERVER: i64 = 500;
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct LimitsConfig {
     /// Failed logins per client IP.
