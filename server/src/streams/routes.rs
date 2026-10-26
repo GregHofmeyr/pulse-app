@@ -21,6 +21,7 @@ use super::state::Started;
 use crate::AppState;
 use crate::access::channel_for;
 use crate::auth::AuthUser;
+use crate::auth::extractor::BearerToken;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
 
@@ -73,6 +74,7 @@ async fn require_visible_member(s: &AppState, me: UserId, ch: ChannelId) -> AppR
 async fn ticket(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
+    BearerToken(session): BearerToken,
     Path(ch): Path<ChannelId>,
     Json(req): Json<StreamTicketRequest>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
@@ -81,12 +83,17 @@ async fn ticket(
         StreamRole::V => ("v", "screen_share"),
         StreamRole::A => ("a", "screen_share_audio"),
     };
+    // Server-side record of the session behind this identity (see `voice/routes.rs`).
+    let (room, identity) = (format!("{ch}~s"), format!("{me}#{suffix}"));
+    if !crate::auth::session::record_grant(&s.db, &session, &room, &identity).await? {
+        return Err(AppError::Unauthorized);
+    }
     let jwt = AccessToken::with_api_key(&s.cfg.livekit_key, &s.cfg.livekit_secret)
-        .with_identity(&format!("{me}#{suffix}"))
+        .with_identity(&identity)
         .with_ttl(TICKET_TTL)
         .with_grants(VideoGrants {
             room_join: true,
-            room: format!("{ch}~s"),
+            room,
             can_publish: Some(true),
             can_publish_sources: vec![source.into()],
             can_subscribe: Some(true),

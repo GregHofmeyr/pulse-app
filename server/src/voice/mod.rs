@@ -1,4 +1,5 @@
 pub mod restore;
+pub mod revoke;
 pub mod routes;
 pub mod state;
 

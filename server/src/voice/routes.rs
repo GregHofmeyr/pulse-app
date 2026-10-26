@@ -13,6 +13,7 @@ use pulse_protocol::rest::{ChannelKind, StreamEndReason, VoiceTokenResponse};
 use crate::AppState;
 use crate::access::{channel_for, load_channel};
 use crate::auth::AuthUser;
+use crate::auth::extractor::BearerToken;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
 use crate::voice::state::Left;
@@ -28,6 +29,7 @@ pub fn router() -> Router<AppState> {
 async fn token(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
+    BearerToken(session): BearerToken,
     Path(id): Path<ChannelId>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
     let ch = channel_for(&s.db, me, id).await?;
@@ -40,12 +42,18 @@ async fn token(
     {
         return Err(AppError::Forbidden);
     }
+    // Remember (server-side only) which session this identity was admitted through, so revoking
+    // that session can remove it from the room.
+    let room = id.to_string();
+    if !crate::auth::session::record_grant(&s.db, &session, &room, &me.to_string()).await? {
+        return Err(AppError::Unauthorized);
+    }
     let jwt = AccessToken::with_api_key(&s.cfg.livekit_key, &s.cfg.livekit_secret)
         .with_identity(&me.to_string())
         .with_ttl(TOKEN_TTL)
         .with_grants(VideoGrants {
             room_join: true,
-            room: id.to_string(),
+            room,
             can_publish: Some(true),
             // Voice rooms carry the microphone only: screen share has its own room (`<id>~s`).
             can_publish_sources: vec!["microphone".into()],
