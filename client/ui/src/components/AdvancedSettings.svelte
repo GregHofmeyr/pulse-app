@@ -1,6 +1,29 @@
 <script lang="ts">
   import { diagUi, setDiagOverlay } from '../lib/stream/diag.svelte'
+  import { onMount } from 'svelte'
   import { api, errorText } from '../lib/tauri'
+
+  // null until the saved value is known: the box can't be changed before then
+  let autoSend = $state<boolean | null>(null)
+  let reportError = $state('')
+  onMount(async () => {
+    try {
+      autoSend = (await api.getReportSettings()).auto_send_crashes
+    } catch (err) {
+      reportError = errorText(err)
+    }
+  })
+  async function setAutoSend(on: boolean) {
+    const before = autoSend
+    autoSend = on
+    reportError = ''
+    try {
+      autoSend = (await api.setReportSettings({ auto_send_crashes: on })).auto_send_crashes
+    } catch (err) {
+      autoSend = before
+      reportError = errorText(err)
+    }
+  }
 
   let confirming = $state(false)
   let busy = $state(false)
@@ -32,6 +55,14 @@
 </label>
 <p class="hint">Shows live numbers on streams you share or watch. They are always written to the log for bug reports.</p>
 
+<label class="row crash">
+  <input type="checkbox" checked={autoSend ?? false} disabled={autoSend === null}
+    onchange={(e) => setAutoSend(e.currentTarget.checked)} />
+  <span>Send crash reports automatically</span>
+</label>
+<p class="hint">If Pulse crashes or closes unexpectedly, a report with the app log goes to the server the next time you sign in. Off: it is saved on this computer and you're asked whether to send it.</p>
+{#if reportError}<p class="err" role="alert">{reportError}</p>{/if}
+
 <h3>Sessions</h3>
 {#if confirming}
   <p class="q">Are you sure? Every other device signed in to this account goes back to the login screen. This one stays signed in.</p>
@@ -48,6 +79,7 @@
 <style>
   h2 { margin: 0 0 16px; font-size: 20px; }
   h3 { margin: 28px 0 10px; font-size: 15px; }
+  .row.crash { margin-top: 20px; }
   .row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
   .hint { margin: 6px 0 0 26px; font-size: 13px; color: var(--text-3); }
   .q { margin: 0 0 10px; font-size: 13px; color: var(--text-2); }

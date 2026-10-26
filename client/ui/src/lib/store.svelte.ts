@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
 import type { Ready } from './protocol/Ready'
+import type { ReportKind } from './protocol/ReportKind'
 import { applyEvent, applyReady, emptyState, setPendingStatus, type AppState, type ConnState } from './state'
 import { api } from './tauri'
 import { isMuted, messageSound } from './conversations'
@@ -22,7 +23,12 @@ class AppStore {
 export const app = new AppStore()
 
 /** What the user is looking at: drives the message sound and read marking. */
-export const ui = $state({ openChannelId: null as string | null, autoReported: false })
+export const ui = $state({
+  openChannelId: null as string | null,
+  autoReported: false,
+  /** Last session's crash report, held because automatic sending is off: ask Send / Don't send. */
+  heldReport: null as ReportKind | null,
+})
 
 /** One shared clock for time-dependent UI (mute expiry, "5m ago"). Ticks every 30 s. */
 export const clock = $state({ nowIso: new Date().toISOString() })
@@ -82,6 +88,8 @@ export async function startListening(): Promise<UnlistenFn> {
     }),
     // Last session crashed or quit unexpectedly and its report just went out: tell the user once.
     listen('pulse://auto-report-sent', () => (ui.autoReported = true)),
+    // ...or it was kept back (automatic sending is off): ask the user.
+    listen<{ kind: ReportKind }>('pulse://crash-report-held', (e) => (ui.heldReport = e.payload.kind)),
     listen<{ nonce: string; status: 'sent' | 'failed'; message: Message | null }>('pulse://outbox', (e) => {
       const { nonce, status, message } = e.payload
       if (status === 'sent' && message) {

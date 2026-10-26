@@ -61,7 +61,16 @@ export const api = {
   submitReport: (text: string) => invoke<string>('submit_report', { text }),
   /** Writes a .txt to Downloads; returns its path. `serverUrl` when not signed in. */
   saveReport: (text: string, serverUrl: string | null) => invoke<string>('save_report', { text, serverUrl }),
+  /** "Send" on last session's held crash report; returns its short id. Fails (and keeps it) if not sent. */
+  sendHeldReport: () => invoke<string>('send_held_report'),
+  /** "Don't send": deletes the held crash report. */
+  discardHeldReport: () => invoke<void>('discard_held_report'),
+  getReportSettings: () => invoke<ReportSettings>('get_report_settings'),
+  setReportSettings: (settings: ReportSettings) => invoke<ReportSettings>('set_report_settings', { settings }),
 }
+
+/** Off: crash reports are saved on this computer and only sent if the user says so on the next launch. */
+export type ReportSettings = { auto_send_crashes: boolean }
 
 /** Screen-share commands (the `#v` ticket, live/watch bookkeeping, previews, and the Rust `#a` audio side). */
 export const streamCmd = {

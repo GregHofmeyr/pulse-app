@@ -16,6 +16,10 @@ const settle = () => new Promise((r) => setTimeout(r, 0))
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const button = (t: string) => [...document.querySelectorAll('button')].find((b) => b.textContent === t)
 const click = (t: string) => { button(t)!.click(); flushSync() }
+/** `logout_others` answers with `r` (other commands as usual). */
+const logoutOthers = (r: () => Promise<unknown>) =>
+  invoke.mockImplementation(async (cmd: string) =>
+    cmd === 'logout_others' ? r() : cmd === 'get_report_settings' ? { auto_send_crashes: true } : undefined)
 
 beforeEach(() => { invoke.mockReset(); invoke.mockResolvedValue(undefined) })
 afterEach(() => { if (cmp) unmount(cmp); cmp = undefined; document.body.innerHTML = '' })
@@ -38,7 +42,7 @@ describe('AdvancedSettings: sign out other devices', () => {
   })
 
   it('confirm calls the command and says how many went', async () => {
-    invoke.mockResolvedValueOnce(3)
+    logoutOthers(async () => 3)
     show()
     click('Sign out all other devices')
     click('Sign out')
@@ -48,7 +52,7 @@ describe('AdvancedSettings: sign out other devices', () => {
   })
 
   it('says one device, not one devices', async () => {
-    invoke.mockResolvedValueOnce(1)
+    logoutOthers(async () => 1)
     show()
     click('Sign out all other devices')
     click('Sign out')
@@ -58,7 +62,7 @@ describe('AdvancedSettings: sign out other devices', () => {
   })
 
   it('says so when there was nothing else signed in', async () => {
-    invoke.mockResolvedValueOnce(0)
+    logoutOthers(async () => 0)
     show()
     click('Sign out all other devices')
     click('Sign out')
@@ -67,11 +71,66 @@ describe('AdvancedSettings: sign out other devices', () => {
   })
 
   it('shows the error when it fails', async () => {
-    invoke.mockRejectedValueOnce("couldn't connect")
+    logoutOthers(async () => { throw "couldn't connect" })
     show()
     click('Sign out all other devices')
     click('Sign out')
     await settle(); flushSync()
     expect(document.querySelector('[role="alert"]')?.textContent).toContain("couldn't connect")
+  })
+})
+
+describe('AdvancedSettings: send crash reports automatically', () => {
+  const box = () => [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('Send crash reports automatically'))!
+    .querySelector('input') as HTMLInputElement
+  const answer = (auto: boolean) =>
+    invoke.mockImplementation(async (cmd: string, args?: unknown) =>
+      cmd === 'get_report_settings' ? { auto_send_crashes: auto }
+      : cmd === 'set_report_settings' ? (args as { settings: unknown }).settings
+      : undefined)
+
+  it('shows the saved setting (on by default)', async () => {
+    answer(true)
+    show()
+    await settle(); flushSync()
+    expect(box().checked).toBe(true)
+    expect(document.body.textContent).toMatch(/asked/i) // the hint says what off means
+  })
+
+  it('shows off when it was turned off', async () => {
+    answer(false)
+    show()
+    await settle(); flushSync()
+    expect(box().checked).toBe(false)
+  })
+
+  it('turning it off saves that', async () => {
+    answer(true)
+    show()
+    await settle(); flushSync()
+    box().click()
+    await settle(); flushSync()
+    expect(calls('set_report_settings')).toEqual([['set_report_settings', { settings: { auto_send_crashes: false } }]])
+    expect(box().checked).toBe(false)
+  })
+
+  it('a failed save puts it back and says why', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'get_report_settings') return { auto_send_crashes: true }
+      if (cmd === 'set_report_settings') throw "couldn't save the setting: disk full"
+      return undefined
+    })
+    show()
+    await settle(); flushSync()
+    box().click()
+    await settle(); flushSync()
+    expect(box().checked).toBe(true)
+    expect(document.querySelector('[role="alert"]')?.textContent).toContain('disk full')
+  })
+
+  it("can't be changed before the saved value is known", () => {
+    invoke.mockImplementation(() => new Promise(() => {}))
+    show()
+    expect(box().disabled).toBe(true)
   })
 })

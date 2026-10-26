@@ -1,6 +1,7 @@
 //! Bug and crash reports: gather diagnostics, send them, or save them to a file to pass on by hand.
 
 pub mod crash;
+pub mod settings;
 pub mod tail;
 
 use std::future::Future;

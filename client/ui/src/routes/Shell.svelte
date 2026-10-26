@@ -12,6 +12,7 @@
   import ServerSettings from '../components/ServerSettings.svelte'
   import { clickOutside } from '../lib/actions'
   import ReportBug from '../components/ReportBug.svelte'
+  import CrashReportPrompt from '../components/CrashReportPrompt.svelte'
   import ConversationList from '../components/ConversationList.svelte'
   import PeopleBoard from '../components/PeopleBoard.svelte'
   import PeoplePicker from '../components/PeoplePicker.svelte'
@@ -253,6 +254,7 @@
     {#if pickKeys}
       <span class="conn auto-report" role="status">Pick your mute and deafen keys. <button class="link" onclick={() => openSettings('keybinds')}>Choose</button> <button aria-label="Dismiss" onclick={dismissPickKeys}>×</button></span>
     {/if}
+    <CrashReportPrompt />
     {#if ui.autoReported}
       <span class="conn auto-report" role="status">Something went wrong in Pulse last time, so we sent Greg a report. <button aria-label="Dismiss" onclick={() => (ui.autoReported = false)}>×</button></span>
     {/if}

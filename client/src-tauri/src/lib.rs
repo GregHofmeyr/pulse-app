@@ -76,6 +76,12 @@ pub fn run() {
             // Last session's crash / unexpected exit, captured before this session writes to the log.
             reports::crash::detect(&log_dir, reports::unix_now());
             reports::crash::mark_running(&log_dir);
+            // "Send crash reports automatically" off: what was just captured waits for the user.
+            let report_settings = reports::settings::Store::load(&dir);
+            if !report_settings.auto_send_crashes() {
+                reports::crash::hold_pending(&log_dir);
+            }
+            app.manage(report_settings);
             app.manage(reports::LogDir(log_dir.clone()));
             match logging::init(&log_dir) {
                 Ok(guard) => {
@@ -219,6 +225,10 @@ pub fn run() {
             keybinds::pause_keybinds,
             reports::submit_report,
             reports::save_report,
+            reports::crash::send_held_report,
+            reports::crash::discard_held_report,
+            reports::settings::get_report_settings,
+            reports::settings::set_report_settings,
             stream::stream_ticket,
             stream::stream_go_live,
             stream::stream_reannounce,

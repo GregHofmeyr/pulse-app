@@ -5,11 +5,14 @@
 //!   session ended without one (native crash, force-close, power loss).
 //! - `crash.json`: written by the panic hook (first panic of a session).
 //! - `pending-report.json`: what startup made of the two above, plus the crashed session's log
-//!   tail; kept until it is sent (or rejected, or a week old).
+//!   tail; kept until it is sent (or rejected, or a week old). With "Send crash reports
+//!   automatically" off it is `held`: never sent on its own, only if the user picks "Send" when
+//!   asked (or deleted when they pick "Don't send").
 
+use std::future::Future;
 use std::path::Path;
 
-use pulse_protocol::rest::{CreateReportRequest, ReportKind};
+use pulse_protocol::rest::{CreateReportRequest, CreateReportResponse, ReportKind};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -28,6 +31,21 @@ pub struct PendingFile {
     pub kind: ReportKind,
     pub crash: Option<serde_json::Value>,
     pub log: String,
+    /// Captured (or still waiting) while automatic sending was off: only the user's "Send" sends
+    /// it. Never cleared once set, so turning the setting back on doesn't release it.
+    #[serde(default)]
+    pub held: bool,
+}
+
+/// What the automatic path did with last session's report.
+#[derive(Debug, PartialEq)]
+pub enum AutoSend {
+    Nothing,
+    /// Not sent: kept for the user to decide.
+    Held(ReportKind),
+    Sent,
+    Dropped,
+    Kept,
 }
 
 #[derive(Debug, PartialEq)]
@@ -138,6 +156,7 @@ pub fn detect_with(dir: &Path, now: u64, version: &str, booted_at: Option<u64>) 
         kind,
         crash,
         log: super::tail::log_tail(dir, super::TAIL_BYTES),
+        held: false,
     };
     if let Ok(body) = serde_json::to_string(&pending) {
         let _ = std::fs::write(dir.join(PENDING), body);
@@ -160,6 +179,106 @@ pub fn clear_pending(dir: &Path) {
     let _ = std::fs::remove_file(dir.join(PENDING));
 }
 
+/// Mark the waiting report (if any) as held: from now on only the user's "Send" sends it.
+pub fn hold_pending(dir: &Path) {
+    let Ok(raw) = std::fs::read_to_string(dir.join(PENDING)) else {
+        return;
+    };
+    let Ok(mut p) = serde_json::from_str::<PendingFile>(&raw) else {
+        // unreadable: it could never be sent anyway
+        clear_pending(dir);
+        return;
+    };
+    if p.held {
+        return;
+    }
+    p.held = true;
+    if let Ok(body) = serde_json::to_string(&p) {
+        let tmp = dir.join(format!("{PENDING}.tmp"));
+        if std::fs::write(&tmp, body).is_err() || std::fs::rename(&tmp, dir.join(PENDING)).is_err()
+        {
+            // can't mark it held: delete it rather than risk an automatic send
+            let _ = std::fs::remove_file(tmp);
+            clear_pending(dir);
+        }
+    }
+}
+
+/// The automatic path: send last session's report only if automatic sending is on and the report
+/// was never held; otherwise hold it (nothing is sent). `send` is called at most once.
+pub async fn auto_send<F, Fut>(dir: &Path, now: u64, auto: bool, send: F) -> AutoSend
+where
+    F: FnOnce(PendingFile) -> Fut,
+    Fut: Future<Output = Result<CreateReportResponse, ApiError>>,
+{
+    let Some(p) = load_pending(dir, now) else {
+        return AutoSend::Nothing;
+    };
+    if !auto || p.held {
+        hold_pending(dir);
+        return AutoSend::Held(p.kind);
+    }
+    let r = send(p).await;
+    match outcome(&r) {
+        Outcome::Sent => {
+            clear_pending(dir);
+            AutoSend::Sent
+        }
+        Outcome::Drop => {
+            clear_pending(dir);
+            tracing::warn!(error = ?r.err(), "automatic report refused; dropped");
+            AutoSend::Dropped
+        }
+        Outcome::Keep => {
+            tracing::warn!(error = ?r.err(), "automatic report not sent; will retry next launch");
+            AutoSend::Kept
+        }
+    }
+}
+
+/// The user picked "Send" for a held report. Sent → deleted. Refused → deleted (resending won't
+/// change the answer) and the error says so. Not sent (network, server down, session expired) →
+/// kept, and the error says that too.
+pub async fn send_held<F, Fut>(dir: &Path, now: u64, send: F) -> Result<String, ApiError>
+where
+    F: FnOnce(PendingFile) -> Fut,
+    Fut: Future<Output = Result<CreateReportResponse, ApiError>>,
+{
+    let Some(p) = load_pending(dir, now) else {
+        return Err(ApiError::Rejected(
+            "There's no saved crash report any more.".into(),
+        ));
+    };
+    let r = send(p).await;
+    match outcome(&r) {
+        Outcome::Sent => {
+            clear_pending(dir);
+            let id = r.map(|r| r.id).unwrap_or_default();
+            tracing::info!(id = %id, "held crash report sent by the user");
+            Ok(super::short(&id))
+        }
+        Outcome::Drop => {
+            clear_pending(dir);
+            let e = r.err().map(|e| e.to_string()).unwrap_or_default();
+            tracing::warn!(error = %e, "held crash report refused; deleted");
+            Err(ApiError::Rejected(format!(
+                "The server refused the report ({e}), so it was deleted."
+            )))
+        }
+        Outcome::Keep => {
+            let e = match r.err() {
+                Some(ApiError::Unauthorized) => "your session has expired".to_string(),
+                Some(e) => e.to_string(),
+                None => String::new(),
+            };
+            tracing::warn!(error = %e, "held crash report not sent; kept");
+            Err(ApiError::Rejected(format!(
+                "Couldn't send the report ({e}). It's kept on this computer: try again, or don't send it."
+            )))
+        }
+    }
+}
+
 /// Sent → delete. Refused (4xx) → delete too: resending won't change the answer. Otherwise keep it
 /// for the next launch.
 pub fn outcome<T>(r: &Result<T, ApiError>) -> Outcome {
@@ -170,42 +289,84 @@ pub fn outcome<T>(r: &Result<T, ApiError>) -> Outcome {
     }
 }
 
-/// After sign-in: send last session's crash/exit report, if any.
-pub async fn send_pending(app: AppHandle, api: crate::api::Api, token: String) {
-    let dir = app.state::<super::LogDir>().0.clone();
-    let Some(p) = load_pending(&dir, super::unix_now()) else {
-        return;
-    };
-    let mut meta = super::meta(&app, api.base()).await;
+/// The request for last session's report: its kind, crash details and log, with this session's meta.
+async fn request(app: &AppHandle, server: &str, p: PendingFile) -> CreateReportRequest {
+    let mut meta = super::meta(app, server).await;
     meta["crash"] = p.crash.clone().unwrap_or(serde_json::Value::Null);
-    let req = CreateReportRequest {
+    CreateReportRequest {
         kind: p.kind,
         text: String::new(),
         meta,
         log: p.log,
-    };
-    let r = super::send_with_retry(
-        || api.create_report(&token, &req),
-        std::time::Duration::from_secs(2),
-    )
-    .await;
-    match outcome(&r) {
-        Outcome::Sent => {
-            clear_pending(&dir);
-            tracing::info!(kind = req.kind.as_str(), "automatic report sent");
-            // Sign-in can now start before the UI listens: hold the notice until it does.
-            let mut listening = app.state::<crate::commands::Core>().ui_listening();
-            let _ = listening.wait_for(|l| *l).await;
-            let _ = app.emit("pulse://auto-report-sent", ());
-        }
-        Outcome::Drop => {
-            clear_pending(&dir);
-            tracing::warn!(error = ?r.err(), "automatic report refused; dropped");
-        }
-        Outcome::Keep => {
-            tracing::warn!(error = ?r.err(), "automatic report not sent; will retry next launch")
-        }
     }
+}
+
+/// Sign-in can start before the UI listens: hold a notice until it does.
+async fn emit_when_listening<S: Serialize + Clone>(app: &AppHandle, event: &str, payload: S) {
+    let mut listening = app.state::<crate::commands::Core>().ui_listening();
+    let _ = listening.wait_for(|l| *l).await;
+    let _ = app.emit(event, payload);
+}
+
+/// After sign-in: send last session's crash/exit report, if any and if automatic sending is on.
+/// Off (or held): nothing is sent; the UI asks the user instead.
+pub async fn send_pending(app: AppHandle, api: crate::api::Api, token: String) {
+    let dir = app.state::<super::LogDir>().0.clone();
+    let auto = app.state::<super::settings::Store>().auto_send_crashes();
+    let send = |p: PendingFile| {
+        let (app, api) = (app.clone(), api.clone());
+        async move {
+            let req = request(&app, api.base(), p).await;
+            super::send_with_retry(
+                || api.create_report(&token, &req),
+                std::time::Duration::from_secs(2),
+            )
+            .await
+        }
+    };
+    match auto_send(&dir, super::unix_now(), auto, send).await {
+        AutoSend::Sent => {
+            tracing::info!("automatic report sent");
+            emit_when_listening(&app, "pulse://auto-report-sent", ()).await;
+        }
+        AutoSend::Held(kind) => {
+            tracing::info!(kind = kind.as_str(), "crash report held: asking the user");
+            emit_when_listening(
+                &app,
+                "pulse://crash-report-held",
+                serde_json::json!({ "kind": kind }),
+            )
+            .await;
+        }
+        AutoSend::Nothing | AutoSend::Dropped | AutoSend::Kept => {}
+    }
+}
+
+/// The user picked "Send" for a held report.
+#[tauri::command]
+pub async fn send_held_report(app: AppHandle) -> Result<String, ApiError> {
+    let (api, token) = app.state::<crate::commands::Core>().current()?;
+    let dir = app.state::<super::LogDir>().0.clone();
+    let send = |p: PendingFile| {
+        let app = app.clone();
+        let api = api.clone();
+        async move {
+            let req = request(&app, api.base(), p).await;
+            super::send_with_retry(
+                || api.create_report(&token, &req),
+                std::time::Duration::from_secs(2),
+            )
+            .await
+        }
+    };
+    send_held(&dir, super::unix_now(), send).await
+}
+
+/// The user picked "Don't send": delete the held report.
+#[tauri::command]
+pub fn discard_held_report(log_dir: tauri::State<'_, super::LogDir>) {
+    clear_pending(&log_dir.0);
+    tracing::info!("held crash report deleted by the user");
 }
 
 #[cfg(test)]
@@ -331,6 +492,224 @@ mod tests {
         detect(b.path(), 1000);
         assert!(load_pending(a.path(), 1000).is_some());
         assert!(load_pending(b.path(), 1000).is_none());
+    }
+
+    fn sent() -> Result<CreateReportResponse, ApiError> {
+        Ok(CreateReportResponse {
+            id: "01JABCDEFGHJKMNPQRSTVWXYZ".into(),
+        })
+    }
+
+    /// A crashed session's report waiting at `dir` (as startup leaves it).
+    fn crashed(dir: &Path) {
+        log(dir, "mixer underrun\n");
+        mark_running(dir);
+        write_panic_marker(dir, "boom", "x.rs:1");
+        detect(dir, 1000);
+    }
+
+    #[tokio::test]
+    async fn on_sends_the_report_and_deletes_it() {
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        let mut got = None;
+        let r = auto_send(d.path(), 1000, true, |p| {
+            got = Some(p);
+            async { sent() }
+        })
+        .await;
+        assert_eq!(r, AutoSend::Sent);
+        let p = got.expect("sent");
+        assert_eq!(
+            (p.kind, p.log.as_str()),
+            (ReportKind::Crash, "mixer underrun\n")
+        );
+        assert_eq!(load_pending(d.path(), 1000), None);
+    }
+
+    #[tokio::test]
+    async fn off_sends_nothing_and_keeps_the_report_held() {
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        let mut called = false;
+        let r = auto_send(d.path(), 1000, false, |_| {
+            called = true;
+            async { sent() }
+        })
+        .await;
+        assert!(!called, "nothing may be uploaded while off");
+        assert_eq!(r, AutoSend::Held(ReportKind::Crash));
+        let p = load_pending(d.path(), 1000).expect("kept locally");
+        assert!(p.held);
+        assert_eq!(p.log, "mixer underrun\n");
+    }
+
+    #[tokio::test]
+    async fn a_held_report_is_not_sent_even_after_turning_it_back_on() {
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        auto_send(d.path(), 1000, false, |_| async { sent() }).await;
+        let mut called = false;
+        let r = auto_send(d.path(), 1001, true, |_| {
+            called = true;
+            async { sent() }
+        })
+        .await;
+        assert!(!called);
+        assert_eq!(r, AutoSend::Held(ReportKind::Crash));
+        assert!(load_pending(d.path(), 1001).is_some());
+    }
+
+    #[tokio::test]
+    async fn a_report_whose_automatic_send_failed_is_not_retried_after_turning_it_off() {
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        let r = auto_send(d.path(), 1000, true, |_| async {
+            Err(ApiError::Network(crate::api::CONNECT_FAILED.into()))
+        })
+        .await;
+        assert_eq!(r, AutoSend::Kept);
+        assert!(!load_pending(d.path(), 1000).unwrap().held);
+        // the user turns it off before the next launch (set_report_settings holds it)
+        hold_pending(d.path());
+        let mut called = false;
+        let r = auto_send(d.path(), 2000, true, |_| {
+            called = true;
+            async { sent() }
+        })
+        .await;
+        assert!(!called);
+        assert_eq!(r, AutoSend::Held(ReportKind::Crash));
+    }
+
+    #[tokio::test]
+    async fn the_setting_is_read_at_send_time_too() {
+        // captured while on (not held), but off by the time it would go: still not sent
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        let mut called = false;
+        auto_send(d.path(), 1000, false, |_| {
+            called = true;
+            async { sent() }
+        })
+        .await;
+        assert!(!called);
+    }
+
+    #[tokio::test]
+    async fn nothing_waiting_sends_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let mut called = false;
+        let r = auto_send(d.path(), 1000, true, |_| {
+            called = true;
+            async { sent() }
+        })
+        .await;
+        assert_eq!((r, called), (AutoSend::Nothing, false));
+    }
+
+    #[test]
+    fn holding_keeps_the_contents_and_needs_a_report() {
+        let d = tempfile::tempdir().unwrap();
+        hold_pending(d.path());
+        assert!(!d.path().join(PENDING).exists(), "nothing to hold: no file");
+        crashed(d.path());
+        let before = load_pending(d.path(), 1000).unwrap();
+        hold_pending(d.path());
+        let after = load_pending(d.path(), 1000).unwrap();
+        assert!(after.held);
+        assert_eq!(
+            PendingFile {
+                held: false,
+                ..after
+            },
+            before
+        );
+    }
+
+    #[test]
+    fn a_report_saved_by_an_older_version_is_not_held() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(
+            d.path().join(PENDING),
+            r#"{"at":1000,"kind":"crash","crash":null,"log":"x"}"#,
+        )
+        .unwrap();
+        assert!(!load_pending(d.path(), 1000).unwrap().held);
+    }
+
+    #[tokio::test]
+    async fn choosing_send_sends_it_and_deletes_it() {
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        hold_pending(d.path());
+        let mut got = None;
+        let r = send_held(d.path(), 1000, |p| {
+            got = Some(p);
+            async { sent() }
+        })
+        .await;
+        assert_eq!(r.unwrap(), "TVWXYZ");
+        assert_eq!(got.unwrap().kind, ReportKind::Crash);
+        assert!(!d.path().join(PENDING).exists());
+    }
+
+    #[tokio::test]
+    async fn choosing_send_when_it_fails_keeps_it_and_says_so() {
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        hold_pending(d.path());
+        for e in [
+            ApiError::Network(crate::api::CONNECT_FAILED.into()),
+            ApiError::Server("502 Bad Gateway".into()),
+            ApiError::Unauthorized,
+        ] {
+            let r = send_held(d.path(), 1000, |_| async { Err(e) }).await;
+            let t = r.unwrap_err().to_string();
+            assert!(t.contains("kept"), "{t}");
+            let p = load_pending(d.path(), 1000).expect("kept");
+            assert!(
+                p.held,
+                "still held: a failed choice doesn't make it automatic"
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn choosing_send_when_the_server_refuses_it_deletes_it_and_says_so() {
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        hold_pending(d.path());
+        let r = send_held(d.path(), 1000, |_| async {
+            Err(ApiError::Rejected("report too large".into()))
+        })
+        .await;
+        let t = r.unwrap_err().to_string();
+        assert!(t.contains("too large") && t.contains("deleted"), "{t}");
+        assert!(!d.path().join(PENDING).exists());
+    }
+
+    #[tokio::test]
+    async fn choosing_send_with_nothing_saved_sends_nothing() {
+        let d = tempfile::tempdir().unwrap();
+        let mut called = false;
+        let r = send_held(d.path(), 1000, |_| {
+            called = true;
+            async { sent() }
+        })
+        .await;
+        assert!(r.is_err());
+        assert!(!called);
+    }
+
+    #[test]
+    fn choosing_dont_send_deletes_it() {
+        let d = tempfile::tempdir().unwrap();
+        crashed(d.path());
+        hold_pending(d.path());
+        clear_pending(d.path());
+        assert!(!d.path().join(PENDING).exists());
+        assert_eq!(load_pending(d.path(), 1000), None);
     }
 
     #[test]
