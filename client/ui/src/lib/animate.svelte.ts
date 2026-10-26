@@ -9,8 +9,8 @@ import { watchWindowFocus, windowFocus } from './windowFocus.svelte'
 export type AnimateMode = 'always' | 'hover' | 'never'
 export const ANIMATE_MODES: AnimateMode[] = ['always', 'hover', 'never']
 
-export function shouldAnimate(s: { mode: AnimateMode; focused: boolean; visible: boolean; hovered: boolean; reducedMotion: boolean }): boolean {
-  if (!s.focused || !s.visible || s.reducedMotion) return false
+export function shouldAnimate(s: { mode: AnimateMode; focused: boolean; visible: boolean; hovered: boolean; reducedMotion: boolean; streaming: boolean }): boolean {
+  if (s.streaming || !s.focused || !s.visible || s.reducedMotion) return false
   return s.mode === 'always' || (s.mode === 'hover' && s.hovered)
 }
 
@@ -25,8 +25,8 @@ function savedMode(): AnimateMode {
   }
 }
 
-/** The setting and reduced motion; with `windowFocus`, the shared source every animated emoji follows. */
-export const motion = $state({ mode: savedMode(), reducedMotion: false })
+/** The setting, reduced motion and whether you are live (emoji hold their still frame then); with `windowFocus`, the shared source every animated emoji follows. */
+export const motion = $state({ mode: savedMode(), reducedMotion: false, streaming: false })
 
 /** The "Animate emoji" setting (this device only, like the skin tone). */
 export function setAnimateMode(m: AnimateMode): void {

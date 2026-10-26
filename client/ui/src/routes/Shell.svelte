@@ -30,7 +30,8 @@
   import { isMember, liveIn } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import { keybindsApi } from '../lib/keybinds'
-  import { watchWindowFocus } from '../lib/windowFocus.svelte'
+  import { motion } from '../lib/animate.svelte'
+  import { watchWindowFocus, windowFocus } from '../lib/windowFocus.svelte'
   import type { User } from '../lib/protocol/User'
 
   let { user, onLogout }: { user: User; onLogout: () => void } = $props()
@@ -44,7 +45,17 @@
   $effect(() => {
     if (!stream.live) return
     document.body.classList.add('streaming')
-    return () => document.body.classList.remove('streaming')
+    motion.streaming = true
+    return () => {
+      document.body.classList.remove('streaming')
+      motion.streaming = false
+    }
+  })
+  // And while the window is unfocused (app.css `.unfocused`): nothing animates in the background.
+  $effect(() => {
+    if (windowFocus.focused) return
+    document.body.classList.add('unfocused')
+    return () => document.body.classList.remove('unfocused')
   })
   let settingsSection = $state<'voice' | 'keybinds'>('voice')
   // Nothing is bound by default: until they've chosen, nudge people to pick their keys (Windows;

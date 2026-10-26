@@ -78,6 +78,22 @@ describe('Shell', () => {
   })
 })
 
+describe('animation freeze', () => {
+  it('body_is_unfocused_while_the_window_is_blurred', () => {
+    app.state = { ...emptyState() }
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    window.dispatchEvent(new Event('focus'))
+    flushSync()
+    expect(document.body.classList.contains('unfocused')).toBe(false)
+    window.dispatchEvent(new Event('blur'))
+    flushSync()
+    expect(document.body.classList.contains('unfocused')).toBe(true)
+    window.dispatchEvent(new Event('focus'))
+    flushSync()
+    expect(document.body.classList.contains('unfocused')).toBe(false)
+  })
+})
+
 describe('account menu', () => {
   it('esc_closes_the_account_menu_and_focus_returns_to_its_toggle', async () => {
     app.state = { ...emptyState() }

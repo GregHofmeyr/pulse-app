@@ -40,7 +40,8 @@ button { cursor: pointer; }
 .pulse-tooltip.show { opacity: 1; }
 
 /* While you stream, the UI stops animating so it doesn't cost game frames (spec 3.3). */
-.streaming *, .streaming *::before, .streaming *::after { animation-play-state: paused !important; transition: none !important; }
+.streaming *, .streaming *::before, .streaming *::after,
+.unfocused *, .unfocused *::before, .unfocused *::after { animation-play-state: paused !important; transition: none !important; }
 /* Settings panes (Voice & Audio, Chat): page layout, and a labelled field. */
 .settings-pane { display: flex; flex-direction: column; gap: 20px; }
 .settings-pane > h2 { margin: 0; font-size: 20px; font-weight: 600; }
