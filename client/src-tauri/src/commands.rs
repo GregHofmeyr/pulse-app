@@ -507,8 +507,9 @@ pub async fn restore_session(
     voice: State<'_, VoiceManager>,
 ) -> Result<Restored, ApiError> {
     crate::startup::mark("restore_begin");
-    // Runs once per page load: a reload (renderer crash) can't leave the old page's meters counted.
-    voice.reset_meters();
+    // Runs once per page load: a reload (renderer crash) can't leave the old page's meters
+    // counted or its status panel's 1 s link polling running.
+    voice.reset_page_views();
     // The UI listens before it calls this. Already attached = the webview reloaded.
     let reload = core.ui_attached.send_replace(true);
     let Some(server) = core.start_stored(&app, reload) else {
@@ -935,6 +936,12 @@ pub async fn stop_mic_test(
 #[tauri::command]
 pub fn watch_voice_meters(voice: State<'_, VoiceManager>, on: bool) {
     voice.watch_meters(on);
+}
+
+/// The status panel opened (`on`) or closed: ping, jitter and loss are sent only while it is open.
+#[tauri::command]
+pub fn watch_voice_link(voice: State<'_, VoiceManager>, on: bool) {
+    voice.watch_link(on);
 }
 
 /// Hotkey path (IPC on Linux, keyboard/mouse hooks on Windows): toggle + broadcast, same as the buttons.

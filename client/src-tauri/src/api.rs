@@ -1563,6 +1563,15 @@ mod tests {
         );
     }
 
+    /// The server's shipped login limits, which the slow-down message above is written for.
+    #[test]
+    fn default_login_limits_are_five_a_minute_per_ip_and_ten_an_hour_per_user() {
+        use pulse_server::limits::{LimitsConfig, Rate};
+        let d = LimitsConfig::default();
+        assert_eq!(d.login_ip, Rate::per_minute(5));
+        assert_eq!(d.login_user, Rate::per_hour(10));
+    }
+
     #[tokio::test]
     async fn wrong_password_maps_to_unauthorized() {
         let app = testing::spawn().await;

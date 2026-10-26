@@ -61,4 +61,16 @@ describe('GoLiveDialog capture ownership', () => {
     unmount(c) // Cancel after the failure: now the dialog stops it
     expect(track.stop).toHaveBeenCalledTimes(1)
   })
+
+  it('esc_cancels_and_is_marked_handled', () => {
+    const onClose = vi.fn()
+    const c = mount(GoLiveDialog, { target: document.body, props: { channelId: 'c1', picked: picked() as never, onClose } })
+    flushSync()
+    const esc = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+    window.dispatchEvent(esc)
+    expect(onClose).toHaveBeenCalledTimes(1)
+    // the full view under the dialog leaves it alone
+    expect(esc.defaultPrevented).toBe(true)
+    unmount(c)
+  })
 })

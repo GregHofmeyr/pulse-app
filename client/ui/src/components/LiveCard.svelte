@@ -5,7 +5,8 @@
   import { loadHidePreview, saveHidePreview } from '../lib/stream/prefs'
   import { liveMediaTrack, stream, streamApi } from '../lib/stream/stream.svelte'
 
-  let { channelId, serverId }: { channelId: string; serverId: string | null } = $props()
+  /** `tile`: fills a 16:9 grid tile, the preview behind a compact overlay of the controls. */
+  let { channelId, serverId, tile = false }: { channelId: string; serverId: string | null; tile?: boolean } = $props()
 
   const live = $derived(stream.live)
   const viewers = $derived(liveIn(app.state, channelId)[app.state.me?.id ?? '']?.viewers ?? [])
@@ -13,11 +14,13 @@
   let video = $state<HTMLVideoElement>()
 
   $effect(() => {
-    if (!video) return
+    // the element this run set up: by teardown the binding may already be cleared (the preview went with Stop)
+    const v = video
+    if (!v) return
     const t = liveMediaTrack()
-    video.srcObject = t ? new MediaStream([t]) : null
+    v.srcObject = t ? new MediaStream([t]) : null
     return () => {
-      video!.srcObject = null
+      v.srcObject = null
     }
   })
 
@@ -28,7 +31,7 @@
 </script>
 
 {#if live}
-  <section class="card" aria-label="You're live">
+  <section class="card" class:tile aria-label="You're live">
     <div class="row">
       <span class="dot"></span>
       <strong>You're live</strong>
@@ -70,4 +73,15 @@
   .warn { margin: 0; font-size: 13px; color: var(--warn); }
   .ghost { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
   .stop { height: 30px; padding: 0 16px; border: 0; border-radius: 8px; background: var(--danger); color: #fff; font-weight: 600; }
+  /* the tile variant: the preview fills the tile; the rows float over it as top and bottom bars */
+  .card.tile { position: absolute; inset: 0; margin: 0; padding: 0; max-width: none; width: auto; gap: 0; border: 0; border-radius: 0; background: #000; align-self: stretch; }
+  .tile .preview { position: absolute; inset: 0; }
+  .tile video { height: 100%; border-radius: 0; }
+  .tile .row, .tile .viewers, .tile .warn { position: relative; z-index: 1; padding: 6px 10px; background: rgba(0, 0, 0, .55); color: #fff; }
+  .tile .row:first-child { background: linear-gradient(rgba(0, 0, 0, .7), transparent); }
+  .tile .viewers { margin-top: auto; font-size: 12px; padding-bottom: 0; background: rgba(0, 0, 0, .55); }
+  .tile .warn { font-size: 12px; }
+  .tile .row:last-child { background: rgba(0, 0, 0, .55); }
+  .tile .ghost { color: #fff; border-color: rgba(255, 255, 255, .4); height: 26px; }
+  .tile .meta { color: rgba(255, 255, 255, .8); }
 </style>

@@ -53,3 +53,29 @@ describe('clampGoLive', () => {
     expect(clampGoLive(junk, 1440)).toEqual({ res: 720, fps: 60, audio: true })
   })
 })
+
+describe('call grid toggle', () => {
+  it('show_everyone_defaults_on_and_is_remembered_per_user', async () => {
+    const { loadShowEveryone, saveShowEveryone } = await import('./prefs')
+    expect(loadShowEveryone('U1')).toBe(true)
+    saveShowEveryone('U1', false)
+    expect(loadShowEveryone('U1')).toBe(false)
+    expect(loadShowEveryone('U2')).toBe(true)
+    expect(localStorage.getItem('pulse.callgrid.everyone.U1')).not.toBeNull()
+  })
+})
+
+describe('mini-preview corner', () => {
+  it('defaults_bottom_right_and_is_remembered', async () => {
+    const { loadMiniCorner, saveMiniCorner } = await import('./prefs')
+    expect(loadMiniCorner()).toBe('br')
+    saveMiniCorner('tl')
+    expect(loadMiniCorner()).toBe('tl')
+    expect(localStorage.getItem('pulse.stream.minicorner')).not.toBeNull()
+  })
+  it('junk_in_storage_falls_back_to_bottom_right', async () => {
+    const { loadMiniCorner } = await import('./prefs')
+    localStorage.setItem('pulse.stream.minicorner', JSON.stringify({ corner: 'middle' }))
+    expect(loadMiniCorner()).toBe('br')
+  })
+})

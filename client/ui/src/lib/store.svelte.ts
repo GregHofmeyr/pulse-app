@@ -4,8 +4,9 @@ import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
 import type { Ready } from './protocol/Ready'
 import type { ReportKind } from './protocol/ReportKind'
-import { applyEvent, applyReady, emptyState, setPendingStatus, type AppState, type ConnState } from './state'
+import { applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, type AppState, type ConnState } from './state'
 import { api } from './tauri'
+import { loadUnsent, saveUnsent } from './unsent'
 import { isMuted, messageSound } from './conversations'
 import { noteReactionEvent } from './reactions'
 import { playSound } from './voiceui'
@@ -66,14 +67,36 @@ export async function openDm(userId: string): Promise<string> {
   return ch.id
 }
 
+// Unsent messages: saved whenever the pending map changes, and restored (failed, never resent) on
+// the first Ready for each signed-in user. Saving waits for `me`, so a not-yet-restored empty map
+// never overwrites what an earlier run left.
+let restoredFor: string | null = null
+$effect.root(() => {
+  $effect(() => {
+    const me = app.state.me
+    const pending = app.state.pending
+    if (me && restoredFor === me.id) saveUnsent(me.id, pending)
+  })
+})
+
+/** The core's (re)connected snapshot. */
+export function handleReady(r: Ready) {
+  const before = app.state.streams
+  // A different user than the one on screen: nothing of theirs carries over (no sign-out was seen).
+  const prev = app.state.me
+  let next = applyReady(prev && prev.id !== r.me.id ? { ...app.state, pending: {} } : app.state, r)
+  if (restoredFor !== r.me.id) {
+    restoredFor = r.me.id
+    next = restoreUnsent(next, loadUnsent(r.me.id))
+  }
+  app.state = next
+  void streamApi.onReady(r, before)
+}
+
 /** Subscribe to the live connection. Returns an unsubscribe function. */
 export async function startListening(): Promise<UnlistenFn> {
   const offs: UnlistenFn[] = await Promise.all([
-    listen<Ready>('pulse://ready', (e) => {
-      const before = app.state.streams
-      app.state = applyReady(app.state, e.payload)
-      void streamApi.onReady(e.payload, before)
-    }),
+    listen<Ready>('pulse://ready', (e) => handleReady(e.payload)),
     listen<Event>('pulse://event', (e) => {
       maybeSound(e.payload)
       noteReactionEvent(e.payload, app.state.me?.id)
@@ -115,6 +138,7 @@ export async function startListening(): Promise<UnlistenFn> {
 }
 
 export function resetState() {
+  restoredFor = null // the next Ready restores again
   app.state = emptyState()
   // a held crash report belongs to the session (and server) it was offered in: the next sign-in
   // asks again if the core still has it for that server

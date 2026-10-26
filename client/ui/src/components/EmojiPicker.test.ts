@@ -53,6 +53,17 @@ afterEach(() => {
 })
 
 describe('EmojiPicker', () => {
+  it('shift_mousedown_on_a_cell_does_not_extend_a_text_selection', () => {
+    open()
+    const shift = new MouseEvent('mousedown', { bubbles: true, cancelable: true, shiftKey: true })
+    cells()[0].dispatchEvent(shift)
+    expect(shift.defaultPrevented).toBe(true)
+    // a plain press keeps its default (focus moves to the cell as usual)
+    const plain = new MouseEvent('mousedown', { bubbles: true, cancelable: true })
+    cells()[0].dispatchEvent(plain)
+    expect(plain.defaultPrevented).toBe(false)
+  })
+
   it('search_filters_and_enter_picks_first', () => {
     open()
     type('thumbs')
@@ -178,6 +189,26 @@ describe('EmojiPicker', () => {
     const e = new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true })
     search().dispatchEvent(e)
     expect(e.defaultPrevented).toBe(true)
+  })
+
+  it('shift_click_reports_keep', () => {
+    open()
+    const [a, b] = cells() as HTMLElement[]
+    a.dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))
+    b.click()
+    expect(onPick.mock.calls[0][1]).toEqual({ keep: true })
+    expect(onPick.mock.calls[1][1]).toEqual({ keep: false })
+  })
+
+  it('shift_enter_reports_keep_and_focuses_search', () => {
+    open()
+    const cell = cells()[3] as HTMLElement
+    cell.focus()
+    cell.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, shiftKey: true }))
+    flushSync()
+    expect(onPick).toHaveBeenCalledTimes(1)
+    expect(onPick.mock.calls[0][1]).toEqual({ keep: true })
+    expect(document.activeElement).toBe(search())
   })
 
   it('enter_on_a_tab_focused_cell_picks_that_cell', () => {

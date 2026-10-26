@@ -18,7 +18,7 @@ import EmojiPicker from './EmojiPicker.svelte'
 import Composer from './Composer.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
-import { setAnimateMode } from '../lib/animate.svelte'
+import { motion, setAnimateMode } from '../lib/animate.svelte'
 import { windowFocus } from '../lib/windowFocus.svelte'
 
 const A = 'a'.repeat(64) // animated
@@ -50,7 +50,7 @@ function showMessage(m = msg()) {
   load(m)
   cmp = mount(MessageItem, { target: document.body, props: {
     message: app.state.messages['C1'][0], name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false,
-    mine: false, onReply: () => {}, onEdit: async () => {}, onDelete: () => {}, meId: 'U1',
+    mine: false, onReply: () => {}, onEdit: async () => {}, onDelete: async () => {}, meId: 'U1',
   } })
   flushSync()
 }
@@ -66,6 +66,7 @@ const src = (el: Element | null) => el!.getAttribute('src')
 
 beforeEach(() => {
   setAnimateMode('always')
+  motion.streaming = false
   window.dispatchEvent(new Event('focus'))
   media.set(false)
   flushSync()
@@ -93,6 +94,19 @@ describe('animated emoji in a message', () => {
     expect(src(anim)).toBe(url(A))
     see(anim, false)
     expect(src(anim)).toBe(url(S))
+  })
+
+  it('going_live_freezes_and_stopping_resumes', () => {
+    showMessage()
+    const [anim] = imgs()
+    see(anim)
+    expect(src(anim)).toBe(url(A))
+    motion.streaming = true
+    flushSync()
+    expect(src(anim)).toBe(url(S))
+    motion.streaming = false
+    flushSync()
+    expect(src(anim)).toBe(url(A))
   })
 
   it('follows the setting and reduced motion', () => {
@@ -125,7 +139,7 @@ describe('animated emoji in a message', () => {
     unmount(cmp!)
     cmp = mount(MessageItem, { target: document.body, props: {
       message: app.state.messages['C1'][0], name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false,
-      mine: false, onReply: () => {}, onEdit: async () => {}, onDelete: () => {}, meId: 'U1',
+      mine: false, onReply: () => {}, onEdit: async () => {}, onDelete: async () => {}, meId: 'U1',
     } })
     flushSync()
     expect(FakeIntersectionObserver.watching()).toBe(2)

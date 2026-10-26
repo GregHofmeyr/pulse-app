@@ -153,3 +153,19 @@ describe('App: a held crash report', () => {
     expect(ui.heldReport).toBeNull()
   })
 })
+
+describe('animation freeze', () => {
+  it('body_is_unfocused_while_the_window_is_blurred_even_on_the_login_screen', async () => {
+    await start({ status: 'logged_out' })
+    expect(document.querySelector('form')).not.toBeNull() // past boot: the login screen
+    window.dispatchEvent(new Event('focus'))
+    flushSync()
+    expect(document.body.classList.contains('unfocused')).toBe(false)
+    window.dispatchEvent(new Event('blur'))
+    flushSync()
+    expect(document.body.classList.contains('unfocused')).toBe(true)
+    window.dispatchEvent(new Event('focus'))
+    flushSync()
+    expect(document.body.classList.contains('unfocused')).toBe(false)
+  })
+})

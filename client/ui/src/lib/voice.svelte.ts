@@ -2,18 +2,10 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import { streamApi } from './stream/stream.svelte'
-import { loadAudioConfig, loadVolumes, playSound, saveVolumes, transitionSounds, type AudioConfig, type Flags, type NsLevel } from './voiceui'
-
-type Connection = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
-type VoiceEvent =
-  | { kind: 'state'; channel_id: string | null; connection: Connection; controls: Flags }
-  | { kind: 'speaking'; user_ids: string[] }
-  | { kind: 'quality'; user_id: string; quality: string }
-  | { kind: 'levels'; mic: number; speaker: number; gate_open: boolean }
-  | { kind: 'noise_suppression'; active: NsLevel; note: string | null }
-  | { kind: 'device_stalled' }
-  | { kind: 'device_recovered' }
-  | { kind: 'mic'; live: boolean; error: string | null }
+import type { SelfVoice } from './selectors'
+import { app } from './store.svelte'
+import { loadAudioConfig, loadLocalMutes, loadVolumes, playSound, saveLocalMutes, saveVolumes, transitionSounds, type AudioConfig, type Connection, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
+import { isJoining, reduceStage, type StageState } from './voicestage'
 
 export const voice = $state({
   channelId: null as string | null,
@@ -30,15 +22,48 @@ export const voice = $state({
   /** Our mic is in the room (shows a moment after connected). */
   micLive: false,
   error: '',
+  /** Join progress, folded from the core's stage and state events. */
+  stage: { stage: 'disconnected', attempt: null } as StageState,
+  /** The channel being joined: set on click, cleared once audio starts or the join fails. */
+  joining: null as string | null,
+  /** The channel just left, until the server's list drops you. */
+  leaving: null as string | null,
+  joinFailed: null as { channelId: string; error: string } | null,
+  /** Latest link report (ping, jitter, loss...). */
+  link: null as LinkReport | null,
   volumes: loadVolumes() as Record<string, number>,
+  /** People muted just for you: heard at 0 while the remembered volume is kept. */
+  localMutes: loadLocalMutes() as Record<string, true>,
 })
+
+/** You, for a roster: the channel being joined counts as yours from the click, the one being left stops at once. */
+export const selfVoice = (): SelfVoice => ({
+  channelId: voice.joining ?? (voice.channelId === voice.leaving ? null : voice.channelId),
+  joining: voice.joining !== null,
+  leaving: voice.leaving,
+})
+
+// Forget `leaving` once the server's list no longer has you in that channel. The one settle path:
+// it follows app state wherever the update lands, whether or not any component is mounted.
+$effect.root(() => {
+  $effect(() => {
+    const ch = voice.leaving
+    if (ch && !(app.state.voice[ch] ?? []).some((m) => m.user_id === app.state.me?.id)) voice.leaving = null
+  })
+})
+
+/** The newest join; an older one's result is stale. */
+let joinSeq = 0
 
 export async function startVoiceListening() {
   return listen<VoiceEvent>('voice://event', ({ payload: e }) => {
+    voice.stage = reduceStage(voice.stage, e)
     switch (e.kind) {
       case 'state': {
         const prev = { channelId: voice.channelId, connection: voice.connection, controls: voice.controls }
         for (const snd of transitionSounds(prev, { channelId: e.channel_id, connection: e.connection, controls: e.controls })) playSound(snd)
+        // a report belongs to one call: the next one starts empty
+        if (prev.channelId !== e.channel_id) voice.link = null
         voice.channelId = e.channel_id
         voice.connection = e.connection
         voice.controls = e.controls
@@ -48,6 +73,10 @@ export async function startVoiceListening() {
         if (!e.channel_id) voice.micLive = false
         break
       }
+      case 'link':
+        // a late sample after leaving must not bring the old call's figures back
+        if (voice.channelId || voice.joining) voice.link = e
+        break
       case 'speaking':
         voice.speaking = new Set(e.user_ids)
         break
@@ -72,6 +101,9 @@ export async function startVoiceListening() {
         if (e.error) voice.error = e.error
         break
     }
+    // the optimistic join ends once audio is starting in the channel being joined: not on the audio stage
+    // alone, since a cancelled join's disconnect can land after it and leave channelId unset for a moment
+    if (voice.joining && voice.channelId === voice.joining && voice.stage.stage !== 'disconnected' && !isJoining(voice.stage.stage)) voice.joining = null
   })
 }
 
@@ -79,31 +111,97 @@ const errText = (e: unknown) => (typeof e === 'string' ? e : 'Voice error')
 
 export const voiceApi = {
   async join(channelId: string) {
+    // a second click on the channel already being joined: that join carries on (restarting it flashes Disconnected)
+    if (voice.joining === channelId) return
     voice.error = ''
     voice.stalled = false
+    // show the join at once, before the core has answered
+    voice.joinFailed = null
+    voice.leaving = voice.channelId ?? voice.leaving
+    voice.joining = channelId
+    voice.link = null
+    const seq = ++joinSeq
+    voice.stage = { stage: 'requesting_access', attempt: null }
     try {
-      await invoke('join_voice', { channelId, config: loadAudioConfig() })
-      // re-apply remembered per-user volumes
-      for (const [userId, percent] of Object.entries(voice.volumes)) await invoke('set_peer_volume', { userId, percent })
+      // remembered per-user volumes and local mutes go first: the core keeps them with or without a session,
+      // so nobody muted for you is heard on arrival (and they go straight to 0: no blip at their remembered volume)
+      for (const [userId, percent] of Object.entries(voice.volumes)) if (!voice.localMutes[userId]) await invoke('set_peer_volume', { userId, percent })
+      for (const userId of Object.keys(voice.localMutes)) await invoke('set_peer_volume', { userId, percent: 0 })
     } catch (e) {
       voice.error = errText(e)
     }
+    // a newer join, or a leave, came in meanwhile
+    if (seq !== joinSeq) return
+    try {
+      await invoke('join_voice', { channelId, config: loadAudioConfig() })
+    } catch (e) {
+      // a newer join (or a leave) replaced this one: that one owns the state now
+      if (seq !== joinSeq) return
+      // the core called it off by itself (e.g. signed out): not a failure, but the channel is free again
+      if (e === 'cancelled') {
+        voice.joining = null
+        voice.link = null
+        voice.stage = { stage: 'disconnected', attempt: null }
+        return
+      }
+      // the status block shows it (with Retry and Dismiss): not voice.error too
+      voice.joinFailed = { channelId, error: errText(e) }
+      voice.joining = null
+      voice.link = null
+      voice.stage = { stage: 'disconnected', attempt: null }
+    }
+  },
+  retry: async () => {
+    if (voice.joinFailed) await voiceApi.join(voice.joinFailed.channelId)
   },
   /** Hovering a voice channel: the core fetches its join token ahead of the click. Resolves once
    *  the core has taken the request (it fetches in the background and keeps the token). */
   prefetch: (channelId: string): Promise<void> => invoke('prefetch_voice', { channelId }),
-  leave: () => invoke('leave_voice'),
+  leave() {
+    // your row goes at once, not when the server's list catches up
+    voice.leaving = voice.channelId ?? voice.joining ?? voice.leaving
+    voice.joining = null
+    ++joinSeq
+    return invoke('leave_voice')
+  },
   toggleMute: () => invoke('toggle_mute'),
   toggleDeafen: () => invoke('toggle_deafen'),
   async setVolume(userId: string, percent: number) {
     voice.volumes = { ...voice.volumes, [userId]: percent }
     saveVolumes(voice.volumes)
+    // moving the slider is unmuting them
+    if (voice.localMutes[userId]) {
+      const { [userId]: _, ...rest } = voice.localMutes
+      voice.localMutes = rest
+      saveLocalMutes(rest)
+    }
     await invoke('set_peer_volume', { userId, percent })
+  },
+  /** "Mute for me": silent for you only, and remembered. Off brings back the volume you'd set (default 100). */
+  async setLocalMute(userId: string, on: boolean) {
+    if (on) voice.localMutes = { ...voice.localMutes, [userId]: true }
+    else {
+      const { [userId]: _, ...rest } = voice.localMutes
+      voice.localMutes = rest
+    }
+    saveLocalMutes(voice.localMutes)
+    await invoke('set_peer_volume', { userId, percent: on ? 0 : (voice.volumes[userId] ?? 100) })
   },
   setAudioConfig: (config: AudioConfig) => invoke('set_audio_config', { config }),
   listDevices: () => invoke<{ inputs: { name: string; is_default: boolean }[]; outputs: { name: string; is_default: boolean }[] }>('list_audio_devices'),
   startMicTest: (config: AudioConfig) => invoke('start_mic_test', { config }),
   stopMicTest: () => invoke('stop_mic_test'),
+  /** Link stats tick every second only while the connection panel is open and the window focused. */
+  async watchLink(on: boolean) {
+    try {
+      await invoke('watch_voice_link', { on })
+    } catch (e) {
+      console.warn('could not change link watching', e)
+    }
+  },
+  dismissFailure() {
+    voice.joinFailed = null
+  },
   /** Levels are only sent while something shows them: call with true when a meter appears, false when it goes. */
   watchMeters: (on: boolean) => invoke('watch_voice_meters', { on }),
 }

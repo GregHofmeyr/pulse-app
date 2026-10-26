@@ -7,6 +7,10 @@ const MAX_NAMES = 10
 /** The server's `list_reactors` page size. */
 const REACTOR_CAP = 100
 
+/** Whether picking `key` adds it: a plain pick always adds; a Shift (`keep`) pick toggles, so one you already have is removed. */
+export const pickAdds = (reactions: ReactionSummary[], key: string, keep: boolean): boolean =>
+  !keep || !reactions.some((r) => r.emoji === key && r.me)
+
 /** "A, B and C"; past ten names "A, B, … J and 3 others". `total` counts everyone, named or not. */
 export function tooltipText(names: string[], total: number): string {
   const others = total - Math.min(names.length, MAX_NAMES)

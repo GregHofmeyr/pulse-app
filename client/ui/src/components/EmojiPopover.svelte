@@ -12,7 +12,7 @@
   let { anchor, onPick, onClose }: {
     /** The button that opened it; give it `data-menu-toggle` so a press on it toggles instead. */
     anchor: HTMLElement
-    onPick: (e: Std | CustomEmoji) => void
+    onPick: (e: Std | CustomEmoji, opts: { keep: boolean }) => void
     onClose: () => void
   } = $props()
 

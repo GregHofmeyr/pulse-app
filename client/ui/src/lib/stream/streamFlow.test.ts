@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The stream store's lifecycle against a fake `#v` connection and a fake Tauri core.
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 type Handler = (args: Record<string, unknown> | undefined) => Promise<unknown>
 const core = vi.hoisted(() => ({
@@ -16,7 +16,8 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 const fake = vi.hoisted(() => ({ connect: null as null | (() => Promise<unknown>) }))
 vi.mock('./room', () => ({ StreamRoom: { connect: () => fake.connect!() }, STREAM_UNAVAILABLE: 'unavailable' }))
-vi.mock('./diag.svelte', () => ({ startDiagnostics: () => () => {} }))
+const dg = vi.hoisted(() => ({ diag: { firstFrameMs: null as number | null, connectMs: null as number | null } }))
+vi.mock('./diag.svelte', () => ({ startDiagnostics: () => () => {}, diag: dg.diag }))
 
 function deferred<T = unknown>() {
   let resolve!: (v: T) => void
@@ -31,9 +32,9 @@ function fakeRoom() {
     publish: vi.fn(async () => {}),
     unpublish: vi.fn(async () => {}),
     disconnect: vi.fn(async () => {}),
-    watch: vi.fn(async () => {}),
+    watch: vi.fn(async (_streamer: string, _el: HTMLVideoElement): Promise<number> => 0),
     unwatch: vi.fn(),
-    setQuality: vi.fn(),
+    setLayer: vi.fn(),
     localStats: async () => undefined,
     remoteStats: async () => undefined,
   }
@@ -57,6 +58,14 @@ function fakeTrack(surface: 'monitor' | 'window' = 'monitor') {
 
 const calls = (cmd: string) => core.calls.filter(([c]) => c === cmd).map(([, a]) => a)
 const settle = () => new Promise((r) => setTimeout(r, 0))
+/** Settles until `done()` holds; a bounded wait that names what never happened instead of a test timeout. */
+async function until(done: () => boolean, what: string, max = 500) {
+  for (let i = 0; i < max; i++) {
+    if (done()) return
+    await settle()
+  }
+  throw new Error(`still waiting for ${what} after ${max} settles`)
+}
 const settings = (audio: boolean) => ({ res: 720 as const, fps: 60 as const, audio })
 
 async function load() {
@@ -77,6 +86,12 @@ async function goneLive(audio = false, surface: 'monitor' | 'window' = 'monitor'
   expect(mod.stream.live).not.toBeNull()
   return { ...mod, room, track }
 }
+
+// load() re-imports after resetModules: transform the module graph once up front, so the first test
+// doesn't pay the cold import inside its 5 s timeout on a loaded machine
+beforeAll(async () => {
+  await import('./stream.svelte')
+}, 60_000)
 
 beforeEach(() => {
   core.handlers = {}
@@ -112,7 +127,7 @@ describe('go live', () => {
     core.handlers.stream_audio_start = () => audioStarted.p
     const track = fakeTrack()
     const going = streamApi.goLive('c1', track as never, 'Game', settings(true))
-    while (!calls('stream_audio_start').length) await settle()
+    await until(() => calls('stream_audio_start').length > 0, 'stream_audio_start')
     track.end() // the shared window closed while stream audio was starting
     await settle()
     audioStarted.resolve(undefined)
@@ -143,7 +158,7 @@ describe('stream audio mute', () => {
     const started = deferred()
     core.handlers.stream_audio_start = () => started.p
     const going = streamApi.goLive('c1', fakeTrack() as never, 'Game', settings(true))
-    while (!calls('stream_audio_start').length) await settle()
+    await until(() => calls('stream_audio_start').length > 0, 'stream_audio_start')
     await streamApi.setAudioMuted(true) // reaches Rust before there is a track to mute
     core.calls = []
     started.resolve(undefined)
@@ -227,7 +242,7 @@ describe('streams back after a server restart', () => {
     // the streamer got back to the restarted server first: no StreamStarted reaches us
     const { streamApi } = await inVoice()
     fake.connect = async () => fakeRoom()
-    await streamApi.watch('c1', 'other', document.createElement('video'))
+    await streamApi.watch('c1', 'other')
     core.calls = []
     await streamApi.onReady({ me: { id: 'me' }, streams: [info('other')] } as never, before)
     expect(calls('stream_watch')).toEqual([{ channelId: 'c1', streamer: 'other' }])
@@ -239,7 +254,7 @@ describe('streams back after a server restart', () => {
   it('the_stream_we_watch_lists_us_again', async () => {
     const { streamApi } = await inVoice()
     fake.connect = async () => fakeRoom()
-    await streamApi.watch('c1', 'other', document.createElement('video'))
+    await streamApi.watch('c1', 'other')
     await streamApi.onReady(ready, before)
     core.calls = []
     streamApi.onEvent(started('other'))
@@ -334,7 +349,7 @@ describe('stream audio closed by LiveKit', () => {
   it('watches_the_stream_audio_again', async () => {
     const { streamApi } = await load()
     fake.connect = async () => fakeRoom()
-    await streamApi.watch('c1', 'other', document.createElement('video'))
+    await streamApi.watch('c1', 'other')
     core.calls = []
     await streamApi.onAudioClosed('c1')
     expect(calls('stream_audio_watch')).toEqual([{ channelId: 'c1', streamer: 'other', on: true }])
@@ -356,6 +371,231 @@ describe('voice changes', () => {
     expect(calls('stream_audio_leave')).toEqual([{ keep: null }])
     await streamApi.onVoiceChanged('c2')
     expect(calls('stream_audio_leave')).toEqual([{ keep: null }, { keep: 'c2' }])
+  })
+})
+
+describe('the watch list', () => {
+  async function watching() {
+    const mod = await load()
+    const room = fakeRoom()
+    fake.connect = async () => room
+    await mod.streamApi.watch('c1', 'other')
+    return { ...mod, room }
+  }
+
+  it('watching_a_second_stream_at_the_cap_stops_the_first', async () => {
+    const { streamApi, stream, room, MAX_WATCHED, videoOf } = await watching()
+    expect(MAX_WATCHED).toBe(1)
+    const first = videoOf('c1', 'other')!
+    document.body.append(first) // hosted somewhere
+    core.calls = []
+    await streamApi.watch('c1', 'kim')
+    expect(first.isConnected).toBe(false)
+    expect(first.srcObject).toBeNull()
+    expect(videoOf('c1', 'other')).toBeNull()
+    expect(room.unwatch).toHaveBeenCalledWith('other')
+    expect(calls('stream_audio_watch')).toContainEqual({ channelId: 'c1', streamer: 'other', on: false })
+    expect(calls('stream_unwatch')).toEqual([{ channelId: 'c1', streamer: 'other' }])
+    expect(stream.watching.length).toBe(1)
+    expect(stream.watching[0].streamer).toBe('kim')
+  })
+
+  it('a_second_watch_of_the_same_stream_is_a_no_op', async () => {
+    const { streamApi, room } = await watching()
+    core.calls = []
+    await streamApi.watch('c1', 'other')
+    expect(room.watch).toHaveBeenCalledTimes(1)
+    expect(calls('stream_watch')).toEqual([])
+  })
+
+  it('a_new_watch_starts_on_the_low_layer', async () => {
+    const { room, findWatch } = await watching()
+    expect(room.setLayer).toHaveBeenCalledWith('other', 'low')
+    expect(findWatch('c1', 'other')).toMatchObject({ quality: 'auto', view: 'preview' })
+  })
+
+  it('full_view_asks_for_high_under_auto_and_low_under_saver', async () => {
+    const { streamApi, room, findWatch } = await watching()
+    room.setLayer.mockClear()
+    streamApi.setView('c1', 'other', 'full')
+    expect(room.setLayer).toHaveBeenLastCalledWith('other', 'high')
+    streamApi.setQuality('c1', 'other', 'saver')
+    expect(room.setLayer).toHaveBeenLastCalledWith('other', 'low')
+    streamApi.setView('c1', 'other', 'preview')
+    streamApi.setQuality('c1', 'other', 'auto')
+    expect(room.setLayer).toHaveBeenLastCalledWith('other', 'low') // previews stay low
+    expect(findWatch('c1', 'other')).toMatchObject({ quality: 'auto', view: 'preview' })
+  })
+
+  it('the_watch_owns_one_video_element_until_it_ends', async () => {
+    const { streamApi, room, videoOf } = await watching()
+    const el = videoOf('c1', 'other')
+    expect(el).toBeInstanceOf(HTMLVideoElement)
+    expect(el!.muted && el!.autoplay && el!.playsInline).toBe(true)
+    expect(room.watch).toHaveBeenCalledWith('other', el)
+    streamApi.setView('c1', 'other', 'full')
+    expect(videoOf('c1', 'other')).toBe(el)
+    document.body.append(el!)
+    await streamApi.unwatch('c1', 'other')
+    expect(videoOf('c1', 'other')).toBeNull()
+    expect(el!.srcObject).toBeNull()
+    expect(el!.isConnected).toBe(false) // no orphan <video> left in the DOM
+  })
+
+  it('a_watch_ends_with_the_voice_channel', async () => {
+    const { streamApi, stream, room, videoOf } = await watching()
+    core.calls = []
+    await streamApi.onVoiceChanged('c2')
+    expect(stream.watching).toEqual([])
+    expect(videoOf('c1', 'other')).toBeNull()
+    expect(calls('stream_audio_watch')).toEqual([{ channelId: 'c1', streamer: 'other', on: false }])
+    expect(room.disconnect).toHaveBeenCalled()
+  })
+
+  it('a_watch_cancelled_while_connecting_never_starts', async () => {
+    const { streamApi, stream } = await load()
+    const room = fakeRoom()
+    const connecting = deferred<typeof room>()
+    fake.connect = () => connecting.p
+    const going = streamApi.watch('c1', 'other')
+    await streamApi.onVoiceChanged(null) // left voice while the connection came up
+    connecting.resolve(room)
+    await going
+    expect(stream.watching).toEqual([])
+    expect(room.watch).not.toHaveBeenCalled()
+  })
+
+  it('an_unrelated_stream_end_leaves_the_watch_alone', async () => {
+    const { streamApi, stream } = await watching()
+    await streamApi.onStreamEnded('c1', 'kim', 'stopped' as never)
+    expect(stream.watching.map((w) => w.streamer)).toEqual(['other'])
+    await streamApi.onStreamEnded('c1', 'other', 'stopped' as never)
+    expect(stream.watching).toEqual([])
+    expect(stream.notice).toMatch(/stopped streaming/)
+    expect(calls('stream_unwatch')).toEqual([]) // already gone on the server
+  })
+
+  it('the_remembered_stream_volume_applies_once_the_watch_is_up_and_saves', async () => {
+    const { saveStreamVolumes, loadStreamVolumes } = await import('./prefs')
+    saveStreamVolumes({ other: 60 })
+    const { streamApi, stream } = await watching()
+    expect(stream.volumes).toEqual({ other: 60 })
+    expect(calls('set_stream_volume')).toEqual([{ userId: 'other', pct: 60 }])
+    core.calls = []
+    streamApi.setStreamVolume('other', 135)
+    expect(calls('set_stream_volume')).toEqual([{ userId: 'other', pct: 135 }])
+    expect(stream.volumes).toEqual({ other: 135 })
+    expect(loadStreamVolumes()).toEqual({ other: 135 })
+  })
+
+  it('unwatch_all_ends_every_watch_and_lets_the_connection_go', async () => {
+    const { streamApi, stream, room } = await watching()
+    await streamApi.unwatchAll()
+    expect(stream.watching).toEqual([])
+    expect(room.disconnect).toHaveBeenCalled()
+  })
+
+  it('a_watch_dropped_at_the_cap_while_connecting_never_starts', async () => {
+    const { streamApi, stream } = await load()
+    const room = fakeRoom()
+    const connecting = deferred<typeof room>()
+    fake.connect = () => connecting.p
+    const first = streamApi.watch('c1', 'other')
+    const second = streamApi.watch('c1', 'kim') // at the cap while the first is still connecting
+    connecting.resolve(room)
+    await Promise.all([first, second])
+    expect(room.watch.mock.calls.map(([s]) => s)).toEqual(['kim'])
+    expect(calls('stream_watch')).toEqual([{ channelId: 'c1', streamer: 'kim' }])
+    expect(calls('stream_audio_watch').filter((a) => a?.streamer === 'other')).toEqual([{ channelId: 'c1', streamer: 'other', on: false }])
+    expect(stream.watching.map((w) => w.streamer)).toEqual(['kim'])
+  })
+
+  it('a_watch_dropped_at_the_cap_while_its_video_comes_up_never_starts', async () => {
+    const { streamApi, stream } = await load()
+    const room = fakeRoom()
+    fake.connect = async () => room
+    const video = deferred<number>()
+    room.watch.mockImplementationOnce(() => video.p)
+    const first = streamApi.watch('c1', 'other')
+    await until(() => room.watch.mock.calls.length > 0, 'room.watch')
+    await streamApi.watch('c1', 'kim')
+    room.setLayer.mockClear()
+    core.calls = []
+    video.resolve(0) // the first's video comes up late
+    await first
+    expect(room.setLayer).not.toHaveBeenCalled()
+    expect(calls('set_stream_volume')).toEqual([])
+    expect(stream.watching.map((w) => w.streamer)).toEqual(['kim'])
+  })
+
+  it('a_stale_watch_of_the_same_stream_does_not_clobber_the_new_one', async () => {
+    const { streamApi, stream, videoOf } = await load()
+    const room = fakeRoom()
+    const connecting = deferred<typeof room>()
+    fake.connect = () => connecting.p
+    const old = streamApi.watch('c1', 'other')
+    const oldEl = videoOf('c1', 'other')
+    await streamApi.unwatch('c1', 'other')
+    const fresh = streamApi.watch('c1', 'other') // watched again while the old call is in flight
+    const el = videoOf('c1', 'other')
+    expect(el).not.toBe(oldEl)
+    streamApi.setView('c1', 'other', 'full')
+    connecting.resolve(room)
+    await Promise.all([old, fresh])
+    expect(room.watch.mock.calls).toEqual([['other', el]])
+    expect(calls('stream_watch')).toEqual([{ channelId: 'c1', streamer: 'other' }])
+    expect(stream.watching).toEqual([{ channelId: 'c1', streamer: 'other', quality: 'auto', view: 'full' }])
+    expect(videoOf('c1', 'other')).toBe(el)
+    expect(room.setLayer.mock.calls).toEqual([['other', 'high']])
+  })
+
+  it('first_frame_time_is_the_full_views_not_a_previews', async () => {
+    const { streamApi } = await load()
+    const room = fakeRoom()
+    room.watch.mockResolvedValue(120)
+    fake.connect = async () => room
+    dg.diag.firstFrameMs = null
+    await streamApi.watch('c1', 'other') // a preview coming up publishes nothing
+    expect(dg.diag.firstFrameMs).toBeNull()
+    streamApi.setView('c1', 'other', 'full')
+    expect(dg.diag.firstFrameMs).toBe(120)
+    streamApi.setView('c1', 'other', 'preview')
+    expect(dg.diag.firstFrameMs).toBeNull()
+  })
+})
+
+describe('several watches (the list past a cap of one)', () => {
+  // MAX_WATCHED is 1, so two entries are put in place directly: the per-entry paths must not
+  // assume a single watch for the day the cap rises
+  const entry = (streamer: string, channelId = 'c1') => ({ channelId, streamer, quality: 'auto' as const, view: 'preview' as const })
+
+  it('a_stream_end_ends_only_its_own_entry', async () => {
+    const { streamApi, stream } = await load()
+    stream.watching = [entry('other'), entry('kim')]
+    await streamApi.onStreamEnded('c1', 'kim', 'stopped' as never)
+    expect(stream.watching.map((w) => w.streamer)).toEqual(['other'])
+    expect(calls('stream_audio_watch')).toEqual([{ channelId: 'c1', streamer: 'kim', on: false }])
+  })
+
+  it('a_voice_change_ends_only_the_other_channels_watches', async () => {
+    const { streamApi, stream } = await load()
+    stream.watching = [entry('other', 'c1'), entry('kim', 'c2')]
+    await streamApi.onVoiceChanged('c2')
+    expect(stream.watching.map((w) => w.streamer)).toEqual(['kim'])
+  })
+
+  it('a_ready_does_not_relist_a_watch_that_ended_meanwhile', async () => {
+    const { streamApi, stream } = await load()
+    stream.watching = [entry('other'), entry('kim')]
+    const listed = deferred()
+    core.handlers.stream_watch = () => listed.p
+    const info = (user: string) => ({ channel_id: 'c1', user_id: user, settings: { height: 720, fps: 60, audio: true }, status: 'live', viewers: [], started_at: 't' })
+    const ready = streamApi.onReady({ me: { id: 'me' }, streams: [info('other'), info('kim')] } as never)
+    await until(() => calls('stream_watch').length > 0, 'stream_watch')
+    await streamApi.unwatch('c1', 'kim') // stopped while the first re-list is in flight
+    listed.resolve(undefined)
+    await ready
+    expect(calls('stream_watch')).toEqual([{ channelId: 'c1', streamer: 'other' }])
   })
 })
 

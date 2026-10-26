@@ -5,6 +5,7 @@ pub mod controls;
 pub mod denoise;
 pub mod devices;
 pub mod gate;
+pub mod linkstats;
 pub mod meter;
 pub mod mictest;
 pub mod mixer;
@@ -254,6 +255,10 @@ async fn report_publish<R: CloseRoom>(
         Ok(()) => {
             w.retries.store(0, Ordering::SeqCst);
             if w.alive.load(Ordering::SeqCst) {
+                (w.events)(VoiceEvent::Stage {
+                    stage: JoinStage::Connected,
+                    attempt: None,
+                });
                 (w.events)(VoiceEvent::Mic {
                     live: true,
                     error: None,
@@ -646,9 +651,28 @@ pub enum Connection {
     Disconnected,
 }
 
+/// Where a join is, for the UI's progress copy. `Disconnected` and LiveKit's own reconnecting
+/// stay `State` events.
+#[derive(Clone, Copy, Debug, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum JoinStage {
+    RequestingAccess,
+    Connecting,
+    StartingAudio,
+    Connected,
+    Reconnecting,
+}
+
 #[derive(Clone, Debug, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum VoiceEvent {
+    /// A join stage; `attempt` numbers a rejoin (1-based).
+    Stage {
+        stage: JoinStage,
+        attempt: Option<u32>,
+    },
+    /// Ping, jitter, loss and connection type, while the status panel is open.
+    Link(linkstats::LinkReport),
     State {
         channel_id: Option<ChannelId>,
         connection: Connection,
@@ -842,6 +866,8 @@ pub struct VoiceManager {
     reconnect_give_up: Duration,
     /// Audio pipelines built so far (a switch reuses the one it has).
     built: AtomicU64,
+    /// Link figures for the status panel (reported only while it is open).
+    link: Arc<linkstats::LinkState>,
 }
 
 impl VoiceManager {
@@ -866,6 +892,7 @@ impl VoiceManager {
             rejoin_unit: Duration::from_secs(1),
             reconnect_give_up: rejoin::RECONNECT_GIVE_UP,
             built: Default::default(),
+            link: Default::default(),
         }
     }
 
@@ -898,6 +925,10 @@ impl VoiceManager {
     /// Signed out: no token of this session may be used by the next.
     pub fn forget_tokens(&self) {
         self.tokens.clear();
+    }
+
+    fn emit_stage(&self, stage: JoinStage, attempt: Option<u32>) {
+        (self.events)(VoiceEvent::Stage { stage, attempt });
     }
 
     fn emit_state(&self, channel: Option<ChannelId>, connection: Connection) {
@@ -980,6 +1011,9 @@ impl VoiceManager {
             Connection::Connecting
         };
         self.emit_state(Some(channel), trying);
+        if rejoin_of.is_none() {
+            self.emit_stage(JoinStage::RequestingAccess, None);
+        }
         let started = Instant::now();
         // the room stays guarded until the session holding it is stored
         let outcome = tokio::select! {
@@ -999,6 +1033,7 @@ impl VoiceManager {
                 *self.live.lock().unwrap() = Some(session.alive.clone());
                 *self.session.lock().await = Some(session);
                 open_room.disarm();
+                self.emit_stage(JoinStage::StartingAudio, None);
                 self.emit_state(Some(channel), Connection::Connected);
                 if stalled {
                     (self.events)(VoiceEvent::DeviceStalled);
@@ -1064,6 +1099,7 @@ impl VoiceManager {
                 return Rejoined::Superseded;
             };
             self.rejoin_count.fetch_add(1, Ordering::Relaxed);
+            self.emit_stage(JoinStage::Reconnecting, Some(attempt + 1));
             tracing::info!(attempt, channel = %a.channel, "voice: rejoining (connection lost)");
             match self
                 .join_inner(
@@ -1140,6 +1176,9 @@ impl VoiceManager {
             None => api.voice_token(token, channel).await?,
         };
         let token_ms = ms(started);
+        if !rejoin {
+            self.emit_stage(JoinStage::Connecting, None);
+        }
 
         self.keep_runtime();
         let (controls, events) = (self.controls.clone(), self.events.clone());
@@ -1179,6 +1218,11 @@ impl VoiceManager {
             ((pipeline, pipeline_reused), devices_ms),
             (open_room, mut room_events, room_connect_ms),
         ) = side_by_side(pipeline, room, |(room, _, _)| room.close()).await?;
+        // the panel's "voice server": the host only
+        self.link.clear();
+        *self.link.server.lock().unwrap() = reqwest::Url::parse(&vt.url)
+            .ok()
+            .and_then(|u| u.host_str().map(str::to_owned));
         let room = open_room.room().clone();
         let shared = pipeline.shared.clone();
         shared.mix_in.clear(); // the last room's people
@@ -1260,23 +1304,52 @@ impl VoiceManager {
         {
             let room = room.clone();
             let shared = shared.clone();
+            let (events, link) = (self.events.clone(), self.link.clone());
             tasks.push(tokio::spawn(async move {
-                let mut totals = netstats::Totals::default();
-                let mut last_codec = None;
-                let mut tick = tokio::time::interval(netstats::WINDOW);
-                loop {
-                    tick.tick().await;
-                    if let Ok(s) = room.get_stats().await {
+                // per-task counters, shared into each tick's future (never held across an await)
+                let state = Arc::new(Mutex::new((
+                    netstats::Totals::default(),
+                    None::<String>,
+                    linkstats::LossWindow::default(),
+                )));
+                linkstats::run_ticks(link.clone(), |tick| {
+                    let (room, shared, events, link, state) = (
+                        room.clone(),
+                        shared.clone(),
+                        events.clone(),
+                        link.clone(),
+                        state.clone(),
+                    );
+                    async move {
+                        let s = match room.get_stats().await {
+                            Ok(s) => s,
+                            Err(e) => {
+                                tracing::debug!(error = %e, "voice: link stats unavailable");
+                                return;
+                            }
+                        };
+                        let now = tokio::time::Instant::now();
+                        let (totals, last_codec, loss) = &mut *state.lock().unwrap();
+                        let sample = linkstats::sample(&s.publisher_stats, loss, now);
+                        if let Some(rtt) = sample.rtt_ms {
+                            link.history.lock().unwrap().push(now, rtt);
+                        }
+                        if tick.report {
+                            events(VoiceEvent::Link(link.report(sample, now)));
+                        }
+                        if !tick.log {
+                            return;
+                        }
                         // which codec our mic is sent with (stereo? FEC/DTX?), once per change
                         if let Some(c) = netstats::send_codec(&s.publisher_stats)
                             && last_codec.as_ref() != Some(&c)
                         {
                             tracing::info!(codec = %c, "voice: send codec");
-                            last_codec = Some(c);
+                            *last_codec = Some(c);
                         }
                         let (line, t) =
-                            netstats::summarize(&s.publisher_stats, &s.subscriber_stats, &totals);
-                        totals = t;
+                            netstats::summarize(&s.publisher_stats, &s.subscriber_stats, totals);
+                        *totals = t;
                         // ours: worst send backlog this window, and the pipeline's counters
                         let send_ms = shared.mic_queue.take_worst();
                         let underrun = shared.mix_in.take_underrun_samples();
@@ -1285,7 +1358,8 @@ impl VoiceManager {
                         let ours = shared.stats.take(underrun * 1000 / INTERNAL_RATE as u64);
                         tracing::info!(%line, send_ms, adjust, mix_busy, %ours, "voice: path");
                     }
-                }
+                })
+                .await;
             }));
         }
 
@@ -1497,6 +1571,7 @@ impl VoiceManager {
     /// "disconnected" (a plain Leave and a rejoin wait for the close: `leave_locked`). Returns
     /// its pipeline for the next room.
     async fn detach_locked(&self) -> Option<Arc<Pipeline>> {
+        self.link.clear();
         let s = self.session.lock().await.take()?;
         Some(s.detach().await)
     }
@@ -1504,6 +1579,8 @@ impl VoiceManager {
     /// Tear down the session, if any (true if there was one). `announce`: tell the UI
     /// "disconnected" (a rejoin replaces the dead session without saying so).
     async fn leave_locked(&self, announce: bool) -> bool {
+        // also after a join that never got a session
+        self.link.clear();
         let Some(s) = self.session.lock().await.take() else {
             return false;
         };
@@ -1593,9 +1670,16 @@ impl VoiceManager {
         self.controls.lock().unwrap().watch_meters(on);
     }
 
-    /// A fresh page: meters shown by the previous one are gone.
-    pub fn reset_meters(&self) {
+    /// The status panel opened (`true`) or closed: link figures are sent only while it is open.
+    pub fn watch_link(&self, on: bool) {
+        self.link.set_watching(on);
+    }
+
+    /// A fresh page (first load or a webview reload): the meters and status panel the previous
+    /// page showed are gone, and their close calls will never come.
+    pub fn reset_page_views(&self) {
         self.controls.lock().unwrap().reset_meters();
+        self.link.set_watching(false);
     }
 
     pub async fn set_peer_volume(&self, user_id: String, pct: u16) {
@@ -2282,10 +2366,16 @@ mod tests {
         assert!(
             matches!(
                 &seen[..],
-                [VoiceEvent::Mic {
-                    live: true,
-                    error: None
-                }]
+                [
+                    VoiceEvent::Stage {
+                        stage: JoinStage::Connected,
+                        attempt: None
+                    },
+                    VoiceEvent::Mic {
+                        live: true,
+                        error: None
+                    }
+                ]
             ),
             "{seen:?}"
         );
@@ -2532,6 +2622,225 @@ mod tests {
             _ => None,
         });
         assert_eq!(last, Some(Connection::Disconnected));
+    }
+
+    /// `Stage`/`State` events as tags (`stage:connecting`, `stage:reconnecting:2`,
+    /// `state:disconnected`), by their wire names.
+    fn tags_of(seen: &Mutex<Vec<VoiceEvent>>) -> Vec<String> {
+        fn wire(v: &impl Serialize) -> String {
+            serde_json::to_value(v)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        }
+        seen.lock()
+            .unwrap()
+            .iter()
+            .filter_map(|e| match e {
+                VoiceEvent::Stage { stage, attempt } => Some(match attempt {
+                    Some(n) => format!("stage:{}:{n}", wire(stage)),
+                    None => format!("stage:{}", wire(stage)),
+                }),
+                VoiceEvent::State { connection, .. } => Some(format!("state:{}", wire(connection))),
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn position(tags: &[String], tag: &str) -> usize {
+        tags.iter()
+            .position(|t| t == tag)
+            .unwrap_or_else(|| panic!("no {tag} in {tags:?}"))
+    }
+
+    /// A manager whose events land in the returned list.
+    fn collecting_manager() -> (VoiceManager, Arc<Mutex<Vec<VoiceEvent>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let vm = VoiceManager::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
+        (vm, seen)
+    }
+
+    fn stale_link(vm: &VoiceManager) {
+        *vm.link.server.lock().unwrap() = Some("voice.example.test".into());
+        vm.link
+            .history
+            .lock()
+            .unwrap()
+            .push(tokio::time::Instant::now(), 40.0);
+    }
+
+    fn link_is_clear(vm: &VoiceManager) -> bool {
+        vm.link.server.lock().unwrap().is_none()
+            && vm
+                .link
+                .history
+                .lock()
+                .unwrap()
+                .points(tokio::time::Instant::now())
+                .is_empty()
+    }
+
+    /// A webview reload with the status panel open: the old page's close never comes, so the
+    /// 1 s link polling must stop with it (the new page reopens it if it shows the panel).
+    #[test]
+    fn a_reloaded_page_stops_link_watching() {
+        let (vm, _) = collecting_manager();
+        vm.watch_link(true);
+        vm.watch_meters(true);
+        vm.reset_page_views();
+        assert!(!vm.link.is_watching(), "link polling outlived the page");
+        assert!(!vm.controls.lock().unwrap().meters_shown());
+    }
+
+    /// A join that never got a session (failed or cancelled) must not leave the last call's
+    /// server and ping history behind.
+    #[tokio::test]
+    async fn leave_without_a_session_still_clears_the_link() {
+        let (vm, _) = collecting_manager();
+        stale_link(&vm);
+        vm.leave().await;
+        assert!(link_is_clear(&vm));
+    }
+
+    /// A channel switch detaches the old room: its server and history go with it.
+    #[tokio::test]
+    async fn detach_clears_the_link() {
+        let (vm, _) = collecting_manager();
+        stale_link(&vm);
+        assert!(vm.detach_locked().await.is_none());
+        assert!(link_is_clear(&vm));
+    }
+
+    /// alex's token, a client for `app`, and the voice channel of alex's new server.
+    async fn alex_and_a_voice_channel(app: &testing::TestApp) -> (String, Api, ChannelId) {
+        let (_, token) = testing::register(app, "alex").await;
+        let s = testing::create_server(app, &token, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let lounge = api
+            .channels(&token, s.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.kind == pulse_protocol::rest::ChannelKind::Voice)
+            .unwrap();
+        (token, api, lounge.id)
+    }
+
+    /// A config whose LiveKit refuses connections at once.
+    fn unreachable_livekit() -> pulse_server::config::Config {
+        let mut cfg = testing::test_config();
+        cfg.livekit_url = "ws://127.0.0.1:1".into();
+        cfg
+    }
+
+    async fn join_null(
+        vm: &VoiceManager,
+        api: &Api,
+        token: &str,
+        channel: ChannelId,
+    ) -> Result<(), VoiceError> {
+        vm.join(
+            api,
+            token,
+            channel,
+            AudioConfig::default(),
+            AudioMode::Null(48_000),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_failed_token_request_stops_after_requesting_access() {
+        let app = testing::spawn().await;
+        let (_, api, lounge) = alex_and_a_voice_channel(&app).await;
+        let (_, sam) = testing::register(&app, "sam").await;
+        let (vm, seen) = collecting_manager();
+        assert!(join_null(&vm, &api, &sam, lounge).await.is_err());
+        assert_eq!(
+            tags_of(&seen),
+            [
+                "state:connecting",
+                "stage:requesting_access",
+                "state:disconnected"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn a_failed_connect_stops_after_connecting() {
+        let app = testing::spawn_with(unreachable_livekit()).await;
+        let (token, api, lounge) = alex_and_a_voice_channel(&app).await;
+        let (vm, seen) = collecting_manager();
+        assert!(join_null(&vm, &api, &token, lounge).await.is_err());
+        let tags = tags_of(&seen);
+        assert!(
+            position(&tags, "stage:requesting_access") < position(&tags, "stage:connecting")
+                && position(&tags, "stage:connecting") < position(&tags, "state:disconnected"),
+            "{tags:?}"
+        );
+        assert!(
+            !tags.contains(&"stage:starting_audio".to_string()),
+            "{tags:?}"
+        );
+    }
+
+    /// A join that fails leaves no server or ping history (the previous call's are cleared as the
+    /// join detaches that room; `connect` stores the host only once the room is up, with no
+    /// await after it, so a cancel can't land between the two).
+    #[tokio::test]
+    async fn a_failed_join_leaves_the_link_clear() {
+        let app = testing::spawn_with(unreachable_livekit()).await;
+        let (token, api, lounge) = alex_and_a_voice_channel(&app).await;
+        let (vm, _) = collecting_manager();
+        stale_link(&vm);
+        assert!(join_null(&vm, &api, &token, lounge).await.is_err());
+        assert!(link_is_clear(&vm));
+    }
+
+    #[tokio::test]
+    async fn rejoin_attempts_are_numbered() {
+        let app = testing::spawn_with(unreachable_livekit()).await;
+        let (token, api, lounge) = alex_and_a_voice_channel(&app).await;
+        let (mut vm, seen) = collecting_manager();
+        vm.rejoin_unit = Duration::from_millis(1);
+        let vm = Arc::new(vm);
+        let runner = {
+            let vm = vm.clone();
+            tokio::spawn(async move { vm.run_rejoins().await })
+        };
+        vm.simulate_drop(&api, &token, lounge).await;
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while vm.rejoins() < rejoin::MAX_ATTEMPTS || vm.rejoining().is_some() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("rejoin never finished");
+        let tags = tags_of(&seen);
+        let numbered: Vec<&String> = tags
+            .iter()
+            .filter(|t| t.starts_with("stage:reconnecting"))
+            .collect();
+        let expected: Vec<String> = (1..=rejoin::MAX_ATTEMPTS)
+            .map(|n| format!("stage:reconnecting:{n}"))
+            .collect();
+        assert_eq!(numbered, expected.iter().collect::<Vec<_>>());
+        assert_eq!(tags.last().map(String::as_str), Some("state:disconnected"));
+        runner.abort();
+    }
+
+    #[test]
+    fn stage_event_serialises_for_the_ui() {
+        let e = VoiceEvent::Stage {
+            stage: JoinStage::Reconnecting,
+            attempt: Some(2),
+        };
+        assert_eq!(
+            serde_json::to_string(&e).unwrap(),
+            r#"{"kind":"stage","stage":"reconnecting","attempt":2}"#
+        );
     }
 
     async fn states_of(seen: &Mutex<Vec<VoiceEvent>>) -> Vec<(Option<ChannelId>, Connection)> {

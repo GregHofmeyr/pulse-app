@@ -4,8 +4,9 @@
   import Icon from '../components/Icon.svelte'
   import ChannelList from '../components/ChannelList.svelte'
   import MemberList from '../components/MemberList.svelte'
-  import StreamViewer from '../components/StreamViewer.svelte'
+  import MiniPreview from '../components/MiniPreview.svelte'
   import StreamToast from '../components/StreamToast.svelte'
+  import VoiceStatus from '../components/VoiceStatus.svelte'
   import VoicePanel from '../components/VoicePanel.svelte'
   import TextChannel from '../components/TextChannel.svelte'
   import Settings from '../components/Settings.svelte'
@@ -14,20 +15,24 @@
   import ReportBug from '../components/ReportBug.svelte'
   import CrashReportPrompt from '../components/CrashReportPrompt.svelte'
   import ConversationList from '../components/ConversationList.svelte'
+  import GoLiveDialog from '../components/GoLiveDialog.svelte'
   import PeopleBoard from '../components/PeopleBoard.svelte'
   import PeoplePicker from '../components/PeoplePicker.svelte'
   import GroupMembers from '../components/GroupMembers.svelte'
   import { onMount, untrack } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
-  import { stream } from '../lib/stream/stream.svelte'
-  import { viewing } from '../lib/stream/viewer.svelte'
+  import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
+  import { pendingWatchReady } from '../lib/stream/viewer'
+  import { callView, openFull } from '../lib/stream/viewer.svelte'
+  import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
   import { api, errorText } from '../lib/tauri'
   import { app, clock, openDm, ui } from '../lib/store.svelte'
   import { applyEvent, trimHistory } from '../lib/state'
   import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
-  import { isMember } from '../lib/selectors'
+  import { isMember, liveIn } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import { keybindsApi } from '../lib/keybinds'
+  import { motion } from '../lib/animate.svelte'
   import { watchWindowFocus } from '../lib/windowFocus.svelte'
   import type { User } from '../lib/protocol/User'
 
@@ -42,7 +47,11 @@
   $effect(() => {
     if (!stream.live) return
     document.body.classList.add('streaming')
-    return () => document.body.classList.remove('streaming')
+    motion.streaming = true
+    return () => {
+      document.body.classList.remove('streaming')
+      motion.streaming = false
+    }
   })
   let settingsSection = $state<'voice' | 'keybinds'>('voice')
   // Nothing is bound by default: until they've chosen, nudge people to pick their keys (Windows;
@@ -71,6 +80,12 @@
   }
   let reportOpen = $state(false)
   let menuOpen = $state(false)
+  let menuToggle = $state<HTMLButtonElement>()
+  /** An outside press or Esc closes the account menu; after Esc, focus goes back to its toggle. */
+  function closeAccountMenu(e: Event) {
+    menuOpen = false
+    if (e instanceof KeyboardEvent) menuToggle?.focus()
+  }
   let serverMenuOpen = $state(false)
   let serverSettingsOpen = $state(false)
   // Both belong to the server they were opened on.
@@ -195,12 +210,69 @@
     }
   }
   let error = $state('')
-  const voiceChannel = $derived(voice.channelId ? app.state.channels[voice.channelId] : null)
 
   const servers = $derived(app.state.servers)
   const activeServer = $derived(servers.find((s) => s.id === activeServerId) ?? null)
   const member = $derived(activeServerId ? isMember(app.state, activeServerId) : false)
   const activeChannel = $derived(activeChannelId ? app.state.channels[activeChannelId] : null)
+
+  // The call view asked to be shown (a Watch from a toast or popover, Join & watch, the mini-preview).
+  $effect(() => {
+    const id = callView.goTo
+    if (!id) return
+    untrack(() => {
+      const ch = app.state.channels[id]
+      if (ch) {
+        activeServerId = ch.server_id
+        activeChannelId = id
+      }
+      callView.goTo = null
+    })
+  })
+
+  // The watch in full view ended (stopped, the stream ended, voice left): no full view to go back to.
+  $effect(() => {
+    const f = callView.full
+    if (f && !findWatch(f.channelId, f.streamer)) callView.full = null
+  })
+
+  // Join & watch: watch once the join has connected in that channel. A failed join, a join elsewhere
+  // meanwhile, or the stream ending first drops it.
+  $effect(() => {
+    const p = callView.joinThenWatch
+    if (!p) return
+    const v = { channelId: voice.channelId, connection: voice.connection }
+    const live = !!liveIn(app.state, p.channelId)[p.streamer]
+    const stillJoining = voice.joining === p.channelId || v.channelId === p.channelId
+    if (!live || !stillJoining || voice.joinFailed) {
+      callView.joinThenWatch = null
+      return
+    }
+    if (!pendingWatchReady(p, v)) return
+    untrack(() => {
+      callView.joinThenWatch = null
+      void streamApi.watch(p.channelId, p.streamer)
+      openFull(p)
+    })
+  })
+
+  // Leaving voice (or losing the connection) while the Go Live dialog is open: drop the picked capture.
+  $effect(() => {
+    const p = goLiveUi.picked
+    const here = voice.channelId === goLiveUi.channelId && voice.connection === 'connected'
+    if (!here && (p || goLiveUi.channelId)) {
+      // a picker error or capture from a call you've left must not come back later
+      p?.track.stop()
+      closeGoLive()
+    }
+  })
+
+  /** The voice channel the main area shows, if any: its watches show in the grid, the rest in the mini-preview. */
+  const shownCall = $derived(activeChannel?.kind === 'voice' && (!activeServerId || member) ? activeChannel.id : null)
+  const mini = $derived.by(() => {
+    const w = stream.watching.find((x) => x.channelId !== shownCall)
+    return w ? { channelId: w.channelId, streamer: w.streamer, key: `${w.channelId}/${w.streamer}` } : null
+  })
 
   // Launch lands on Home (a clean slate); only the person who creates a server is moved into it.
 
@@ -279,20 +351,15 @@
       {#if activeServerId}
         <ChannelList serverId={activeServerId} {activeChannelId} voiceChannelId={voice.channelId} speaking={voice.speaking}
           onSelect={(id) => (activeChannelId = id)}
-          onJoinVoice={(id) => { activeChannelId = id; if (voice.channelId !== id && member) void voiceApi.join(id) }} />
+          onJoinVoice={(id) => { activeChannelId = id; if (voice.channelId !== id && member) void voiceApi.join(id) }}
+          onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />
       {:else}
         <ConversationList activeId={activeChannelId} onOpen={openConversation} onNew={() => (picker = { mode: 'new' })}
           onLeft={(id) => { if (activeChannelId === id) activeChannelId = null }} />
       {/if}
-      {#if voiceChannel}
-        <div class="vc">
-          <span class="vc-bars" class:warn={voice.connection !== 'connected'}><span></span><span></span><span></span></span>
-          <span class="vc-text"><strong class:warn={voice.connection !== 'connected'}>{voice.connection === 'connected' ? 'Voice connected' : voice.connection === 'reconnecting' ? 'Reconnecting…' : 'Connecting…'}</strong><small>{voiceChannel.name}</small></span>
-          <button class="vc-leave" aria-label="Leave voice" onclick={() => voiceApi.leave()}><Icon name="hangup" size={17} /></button>
-        </div>
-      {/if}
+      <VoiceStatus />
       <div class="me">
-        <button class="who-btn" data-tip="Account" aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
+        <button bind:this={menuToggle} class="who-btn" data-tip="Account" data-menu-toggle aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
           <span class="avatar" style:background={avatarColor(user.id)}>{initial(user.username)}</span>
           <span class="who">{user.username}<small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
         </button>
@@ -306,7 +373,7 @@
         {/if}
         <button class="me-btn" aria-label="Settings" onclick={() => openSettings()}><Icon name="gear" /></button>
         {#if menuOpen}
-          <div class="menu" role="menu">
+          <div class="menu" role="menu" use:clickOutside={closeAccountMenu}>
             <button role="menuitem" onclick={() => { menuOpen = false; openSettings() }}>Settings</button>
             <button role="menuitem" class="warn" onclick={() => { menuOpen = false; reportOpen = true }}>Report a bug</button>
             <button role="menuitem" class="danger" onclick={logout}>Log out</button>
@@ -316,16 +383,14 @@
     </aside>
 
     <main class="panel content">
-      {#if viewing.req}
-        <StreamViewer />
-      {:else if activeServerId && !member}
+      {#if activeServerId && !member}
         <div class="join">
           <p>You're not in <strong>{activeServer?.name}</strong> yet.</p>
           <button class="primary" onclick={join}>Join server</button>
           {#if error}<p class="error">{error}</p>{/if}
         </div>
       {:else if activeChannel?.kind === 'voice'}
-        <VoicePanel channelId={activeChannel.id} serverId={activeServerId} />
+        <VoicePanel channelId={activeChannel.id} serverId={activeServerId} onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />
       {:else if activeChannel}
         {#key activeChannel.id}<TextChannel channelId={activeChannel.id} serverId={activeServerId}
           onAddPeople={() => (picker = { mode: 'add', channelId: activeChannel.id })}
@@ -335,6 +400,7 @@
       {:else}
         <p class="empty">Pick a channel.</p>
       {/if}
+      {#each mini ? [mini] : [] as m (m.key)}<MiniPreview channelId={m.channelId} streamer={m.streamer} />{/each}
     </main>
 
     {#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />
@@ -344,6 +410,7 @@
 <StreamToast />
 {#if serverSettingsOpen && activeServer}<ServerSettings server={activeServer} onClose={() => (serverSettingsOpen = false)} />{/if}
 {#if settingsOpen}<Settings section={settingsSection} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
+{#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
 {#if creating}
   <div class="overlay">
@@ -375,7 +442,7 @@
 {#if serverMenu}
   {@const id = serverMenu.id}
   <div class="ctx-backdrop" role="presentation" onclick={() => (serverMenu = null)}></div>
-  <div class="ctx" role="menu" style:left="{serverMenu.x}px" style:top="{serverMenu.y}px">
+  <div class="ctx" role="menu" use:clickOutside={() => (serverMenu = null)} style:left="{serverMenu.x}px" style:top="{serverMenu.y}px">
     {#if serverMuted(id)}
       <button role="menuitem" onclick={() => muteServer(id, 'off')}>Unmute server</button>
     {:else}
@@ -435,18 +502,8 @@
   .me-btn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .me-btn:hover { background: var(--bg-2); }
   .me-btn.on { color: #f2616b; }
-  .vc { margin: 0 8px 8px; padding: 10px 10px 10px 14px; background: #232429; border-radius: 12px; display: flex; align-items: center; gap: 10px; }
-  .vc-bars { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
-  .vc-bars span { width: 3px; border-radius: 1px; background: var(--ok); }
-  .vc-bars span:nth-child(1) { height: 5px; } .vc-bars span:nth-child(2) { height: 9px; } .vc-bars span:nth-child(3) { height: 14px; }
-  .vc-bars.warn span { background: #e8b04a; }
-  .vc-text { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .vc-text strong { font-size: 13px; color: var(--ok); }
-  .vc-text strong.warn { color: #e8b04a; }
-  .vc-text small { font-size: 12px; color: var(--text-3); }
-  .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 9px; background: #2e3037; color: #f2616b; display: grid; place-items: center; }
   .ghost { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
-  .content { flex: 1; min-width: 0; background: var(--bg-2); display: flex; flex-direction: column; }
+  .content { position: relative; flex: 1; min-width: 0; background: var(--bg-2); display: flex; flex-direction: column; }
   .empty { margin: auto; color: var(--text-3); }
   .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .primary { height: 40px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }

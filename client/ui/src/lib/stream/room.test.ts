@@ -93,7 +93,7 @@ describe('StreamRoom watching', () => {
   it('resubscribes_when_the_streamer_republishes', async () => {
     const { sr, room, el, t1, pub1 } = await watching()
     expect(t1.attach).toHaveBeenCalledWith(el)
-    sr.setQuality('saver')
+    sr.setLayer('other', 'high')
 
     // the streamer's `#v` reconnected in full: a new participant object and publication
     const t2 = track()
@@ -101,7 +101,7 @@ describe('StreamRoom watching', () => {
     const p2 = join(room, 'other#v', pub2)
     room.emit(RoomEvent.TrackPublished, pub2, p2)
     expect(pub2.setSubscribed).toHaveBeenCalledWith(true)
-    expect(pub2.setVideoQuality).toHaveBeenCalledWith(VideoQuality.LOW) // the chosen quality carries over
+    expect(pub2.setVideoQuality).toHaveBeenLastCalledWith(VideoQuality.HIGH) // the chosen layer carries over
     expect(t1.detach).toHaveBeenCalledWith(el)
     expect(pub1.setSubscribed).toHaveBeenLastCalledWith(false)
     expect(logged.some((l) => JSON.parse(l).ev === 'resubscribe')).toBe(true)
@@ -127,6 +127,41 @@ describe('StreamRoom watching', () => {
     room.emit(RoomEvent.Reconnected)
     expect(pub1.setSubscribed).toHaveBeenLastCalledWith(true)
     expect(pub1.setSubscribed).toHaveBeenCalledTimes(2)
+  })
+
+  it('watch_returns_its_first_frame_time_and_leaves_the_overlay_to_the_store', async () => {
+    const { diag } = await import('./diag.svelte')
+    diag.firstFrameMs = null
+    const sr = await StreamRoom.connect('c1')
+    const room = rooms.at(-1) as FakeRoom
+    join(room, 'other#v', publication(track()))
+    const ms = await sr.watch('other', videoEl())
+    expect(typeof ms).toBe('number')
+    expect(diag.firstFrameMs).toBeNull() // a preview coming up must not overwrite the full view's
+  })
+
+  it('a_new_watch_starts_on_the_low_layer', async () => {
+    const { pub1 } = await watching()
+    expect(pub1.setVideoQuality).toHaveBeenLastCalledWith(VideoQuality.LOW)
+  })
+
+  it('a_second_streamer_does_not_unwatch_the_first', async () => {
+    const { sr, room, el, t1, pub1 } = await watching()
+    const t2 = track()
+    const pub2 = publication(t2)
+    join(room, 'kim#v', pub2)
+    const el2 = videoEl()
+    await sr.watch('kim', el2)
+    expect(pub1.setSubscribed).toHaveBeenLastCalledWith(true)
+    expect(t1.detach).not.toHaveBeenCalled()
+    sr.setLayer('kim', 'high')
+    expect(pub2.setVideoQuality).toHaveBeenLastCalledWith(VideoQuality.HIGH)
+    expect(pub1.setVideoQuality).toHaveBeenLastCalledWith(VideoQuality.LOW)
+    sr.unwatch('kim')
+    expect(t2.detach).toHaveBeenCalledWith(el2)
+    expect(t1.detach).not.toHaveBeenCalled()
+    sr.unwatch()
+    expect(t1.detach).toHaveBeenCalledWith(el)
   })
 
   it('nothing_after_unwatch', async () => {

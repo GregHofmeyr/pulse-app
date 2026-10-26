@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyReady, emptyState, addPending } from './state'
+import { applyEvent, applyReady, emptyState, addPending, pendingMessage, removePending, restoreUnsent, type Pending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 import type { Channel } from './protocol/Channel'
@@ -68,7 +68,7 @@ describe('applyEvent', () => {
   })
 
   it('replaces a pending optimistic message with the same nonce', () => {
-    let s = addPending(base(), 'C1', { nonce: 'n1', content: 'hi', reply_to_id: null, status: 'pending' })
+    let s = addPending(base(), 'C1', { nonce: 'n1', content: 'hi', reply_to_id: null, status: 'pending', created_at: '2026-10-01T00:00:00.000Z' })
     expect(s.pending['C1']).toHaveLength(1)
     s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M1', 'C1', 'hi', 'U1'), nonce: 'n1' } }, 0)
     expect(s.pending['C1']).toHaveLength(0)
@@ -194,7 +194,7 @@ it('an edit to the latest message keeps the preview\'s reactions (counts and me)
 
 it('removal from a conversation forgets everything about it, unsent messages included', () => {
   let s = applyReady(emptyState(), ready({ channels: [ch('G1', 'group', null)], dm_members: [{ channel_id: 'G1', user_ids: ['U1', 'U2', 'U3'] }] }))
-  s = addPending(s, 'G1', { nonce: 'n1', content: 'are you there?', reply_to_id: null, status: 'failed' })
+  s = addPending(s, 'G1', { nonce: 'n1', content: 'are you there?', reply_to_id: null, status: 'failed', created_at: '2026-10-01T00:00:00.000Z' })
   s = applyEvent(s, { t: 'Typing', d: { channel_id: 'G1', user_id: 'U2' } }, 0)
   s = applyEvent(s, { t: 'ChannelRemoved', d: { channel_id: 'G1', user_id: 'U1' } }, 0)
   expect(s.pending['G1']).toBeUndefined()
@@ -414,5 +414,34 @@ describe('reactions and custom emoji', () => {
     const s0 = applyReady(emptyState(), ready({ frequent_emoji: ['👍', '😂'] }))
     const s = applyEvent(s0, { t: 'FrequentEmoji', d: { user_id: 'U1', frequent_emoji: ['🎉', '👍'] } }, 0)
     expect(s.frequentEmoji).toEqual(['🎉', '👍'])
+  })
+})
+
+describe('unsent messages', () => {
+  const unsent = (nonce: string, status: Pending['status'] = 'pending'): Pending => ({ nonce, content: `text ${nonce}`, reply_to_id: null, status, created_at: '2026-10-01T00:00:00.000Z' })
+
+  it('restore_marks_everything_failed', () => {
+    const s = restoreUnsent(applyReady(emptyState(), ready()), { C1: [unsent('a'), unsent('b', 'pending')] })
+    expect(s.pending['C1'].map((p) => p.status)).toEqual(['failed', 'failed'])
+  })
+
+  it('restore_drops_gone_channels_and_known_nonces', () => {
+    let s = applyReady(emptyState(), ready())
+    s = addPending(s, 'C1', unsent('a'))
+    s = restoreUnsent(s, { C1: [unsent('a'), unsent('b')], GONE: [unsent('c')] })
+    expect(s.pending['C1'].map((p) => p.nonce)).toEqual(['a', 'b'])
+    expect(s.pending['GONE']).toBeUndefined()
+  })
+
+  it('remove_pending_drops_one', () => {
+    let s = applyReady(emptyState(), ready())
+    s = addPending(addPending(s, 'C1', unsent('a')), 'C1', unsent('b'))
+    expect(removePending(s, 'C1', 'a').pending['C1'].map((p) => p.nonce)).toEqual(['b'])
+    expect(removePending(removePending(s, 'C1', 'a'), 'C1', 'b').pending['C1']).toBeUndefined()
+  })
+
+  it('pending_message_renders_as_you', () => {
+    const m = pendingMessage(unsent('a'), 'C1', 'U1')
+    expect(m).toMatchObject({ author_id: 'U1', channel_id: 'C1', kind: 'normal', content: 'text a', deleted: false, created_at: '2026-10-01T00:00:00.000Z' })
   })
 })

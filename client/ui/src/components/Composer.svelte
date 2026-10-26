@@ -75,21 +75,22 @@
     pick = 0
   }
 
-  async function setText(r: { text: string; caret: number }) {
+  async function setText(r: { text: string; caret: number }, focus = true) {
     text = r.text
     caret = r.caret
     await Promise.resolve()
     box.setSelectionRange(r.caret, r.caret)
-    box.focus()
+    if (focus) box.focus()
   }
 
   const choose = (name: string) => setText(applyMention(text, caret, name))
   const chooseEmoji = (e: Std | CustomEmoji) => setText(applyEmoji(text, caret, emojiText(e)))
 
   // The textarea keeps its selection while the picker has focus: insert there.
-  function pickEmoji(e: Std | CustomEmoji) {
-    picking = false
-    void setText(insertAt(text, box.selectionStart, box.selectionEnd, emojiText(e)))
+  // A `keep` pick (Shift) leaves the picker open and the textarea unfocused, with the caret advanced.
+  function pickEmoji(e: Std | CustomEmoji, { keep }: { keep: boolean }) {
+    if (!keep) picking = false
+    void setText(insertAt(text, box.selectionStart, box.selectionEnd, emojiText(e)), !keep)
   }
 
   function key(e: KeyboardEvent) {

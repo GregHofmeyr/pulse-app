@@ -8,7 +8,7 @@
   import { app, clock } from '../lib/store.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
-  import { addHistory, addOlder, addPending, markHistory } from '../lib/state'
+  import { addHistory, addOlder, addPending, markHistory, pendingMessage, removePending } from '../lib/state'
   import { displayName, nextTypingExpiry, stableList, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
@@ -174,7 +174,7 @@
 
   function send(text: string) {
     const nonce = crypto.randomUUID()
-    app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyTo?.id ?? null, status: 'pending' })
+    app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyTo?.id ?? null, status: 'pending', created_at: new Date().toISOString() })
     const r = replyTo?.id ?? null
     replyTo = null
     void api.sendMessage(channelId, text, r, nonce)
@@ -244,17 +244,16 @@
       <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={grouped(i)}
         replyTo={m.reply_to_id ? (byId.get(m.reply_to_id) ?? null) : null}
         mine={m.author_id === app.state.me?.id}
-        {mentionNames} meId={app.state.me?.id ?? ''} onError={(text) => (error = text)}
+        {mentionNames} meId={app.state.me?.id ?? ''}
         onReply={() => (replyTo = m)}
-        onEdit={async (c) => { try { await api.editMessage(m.id, c) } catch (e) { error = errorText(e) } }}
-        onDelete={async () => { try { await api.deleteMessage(m.id) } catch (e) { error = errorText(e) } }} />
+        onEdit={async (c) => { await api.editMessage(m.id, c) }}
+        onDelete={() => api.deleteMessage(m.id)} />
     {/each}
     {#each pending as p (p.nonce)}
-      <div class="pending" class:failed={p.status === 'failed'}>
-        <span>{p.content}</span>
-        {#if p.status === 'failed'}<button onclick={() => retry(p.nonce)}>Failed to send · Retry</button>
-        {:else}<small>sending…</small>{/if}
-      </div>
+      <MessageItem message={pendingMessage(p, channelId, app.state.me?.id ?? '')} name={nameOf(app.state.me?.id ?? null)} {nameOf} grouped={false}
+        replyTo={p.reply_to_id ? (byId.get(p.reply_to_id) ?? null) : null} mine
+        {mentionNames} meId={app.state.me?.id ?? ''} pending={p} onReply={() => {}} onEdit={async () => {}} onDelete={async () => {}}
+        onRetry={() => retry(p.nonce)} onDiscard={() => (app.state = removePending(app.state, channelId, p.nonce))} />
     {/each}
   </div>
   {#if unreadBelow > 0}<button class="jump" onclick={jump}>{unreadBelow} new · Jump</button>{/if}
@@ -285,10 +284,6 @@
   .jump { align-self: center; margin-top: -40px; position: relative; z-index: 2; padding: 6px 12px; border: 0; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; box-shadow: 0 4px 14px rgba(0, 0, 0, .35); }
   .list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 0 8px; display: flex; flex-direction: column; }
   .start { padding: 16px 18px; color: var(--text-3); font-size: 13px; }
-  .pending { padding: 4px 18px 4px 72px; color: var(--text-3); display: flex; gap: 10px; align-items: baseline; }
-  .pending.failed { color: #f2616b; }
-  .pending button { border: 0; background: none; color: #f2616b; text-decoration: underline; font-size: 12px; padding: 0; }
-  .pending small { font-size: 11px; }
   .typing { height: 22px; padding: 0 18px; font-size: 12px; color: var(--text-3); }
   .typing strong { color: var(--text); }
   .error { margin: 0 18px 4px; color: #f2616b; font-size: 13px; }

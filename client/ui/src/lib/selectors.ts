@@ -42,6 +42,21 @@ export function voiceOccupants(s: AppState, serverId: string | null, channelId: 
   }))
 }
 
+export type SelfVoice = { channelId: string | null; joining: boolean; leaving: string | null }
+export type RosterEntry = Occupant & { pending: boolean }
+
+/** Who to show in a voice channel: the server's list, plus you straight away while joining and
+ * minus you straight away after leaving. */
+export function callRoster(s: AppState, serverId: string | null, channelId: string, me: SelfVoice): RosterEntry[] {
+  const myId = s.me?.id
+  let list: RosterEntry[] = voiceOccupants(s, serverId, channelId).map((o) => ({ ...o, pending: o.userId === myId && channelId === me.channelId && me.joining }))
+  if (channelId === me.leaving && channelId !== me.channelId) list = list.filter((o) => o.userId !== myId)
+  if (myId && s.me && channelId === me.channelId && !list.some((o) => o.userId === myId)) {
+    list.push({ userId: myId, name: displayName(s, serverId, myId), muted: false, deafened: false, pending: me.joining })
+  }
+  return list
+}
+
 export function typingNames(s: AppState, serverId: string | null, channelId: string, now: number): string[] {
   return Object.entries(s.typing[channelId] ?? {})
     .filter(([user, until]) => until > now && user !== s.me?.id)

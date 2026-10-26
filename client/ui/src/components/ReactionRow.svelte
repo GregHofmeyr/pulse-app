@@ -5,7 +5,7 @@
   import type { Std } from '../lib/emoji'
   import { reactionKey, twemojiUrl } from '../lib/emoji'
   import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
-  import { memberServers, react, tooltipText } from '../lib/reactions'
+  import { memberServers, pickAdds, react, tooltipText } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import { api } from '../lib/tauri'
   import EmojiPopover from './EmojiPopover.svelte'
@@ -22,7 +22,10 @@
   let tipFor = $state<string | null>(null)
   let tipText = $state('')
   let picking = $state(false)
-  let addBtn: HTMLButtonElement | undefined = $state()
+  // The chip that opened the picker. Kept apart from the row's markup: a Shift-pick can remove your
+  // only reaction, which empties the row and unmounts the chip, but the picker must stay open.
+  let anchor: HTMLElement | undefined = $state()
+  $effect(() => { if (message.deleted) picking = false })
 
   const customOf = (key: string): CustomEmoji | undefined => app.state.customEmoji[key.slice(7)]
 
@@ -106,9 +109,10 @@
   const tipId = (key: string) =>
     `reactors-${message.id}-${key.startsWith('custom:') ? 'custom-' + key.slice(7) : [...key].map((c) => c.codePointAt(0)!.toString(16)).join('-')}`
 
-  function pick(e: Std | CustomEmoji) {
-    picking = false
-    toggle(reactionKey(e), true)
+  function pick(e: Std | CustomEmoji, { keep }: { keep: boolean }) {
+    if (!keep) picking = false
+    const key = reactionKey(e)
+    toggle(key, pickAdds(message.reactions, key, keep))
   }
 </script>
 
@@ -141,13 +145,13 @@
         {#if tipFor === r.emoji && tipText}<span class="tip" id={tipId(r.emoji)} role="tooltip">{tipText}{#if why}<span class="why">{why}</span>{/if}</span>{/if}
       </span>
     {/each}
-    <button bind:this={addBtn} class="chip add" type="button" aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}>
+    <button class="chip add" type="button" aria-label="Add reaction" data-menu-toggle onclick={(ev) => { anchor = ev.currentTarget; picking = !picking }}>
       <Icon name="smile" size={15} />
     </button>
   </div>
-  {#if picking && addBtn}
-    <EmojiPopover anchor={addBtn} onPick={pick} onClose={() => (picking = false)} />
-  {/if}
+{/if}
+{#if picking && anchor}
+  <EmojiPopover {anchor} onPick={pick} onClose={() => (picking = false)} />
 {/if}
 
 <style>
