@@ -380,21 +380,23 @@ fn hash_ticket(ticket: &str) -> String {
 }
 
 /// Start a login ticket for `user` (the password was right): returns the secret half, which is
-/// only ever sent to the client. Expired tickets are pruned on the way.
-pub async fn issue_ticket(db: &SqlitePool, user: UserId) -> AppResult<String> {
+/// only ever sent to the client. Expired tickets are pruned on the way. Runs on the caller's
+/// connection, so the ticket can share a transaction with the 2FA check
+/// (`session::create_unless_2fa`).
+pub async fn issue_ticket_in(conn: &mut SqliteConnection, user: UserId) -> AppResult<String> {
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     let ticket = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
     let expires = chrono::Utc::now() + chrono::Duration::minutes(TICKET_MINUTES);
     sqlx::query("DELETE FROM mfa_tickets WHERE expires_at <= ?")
         .bind(now())
-        .execute(db)
+        .execute(&mut *conn)
         .await?;
     sqlx::query("INSERT INTO mfa_tickets (ticket_hash, user_id, expires_at) VALUES (?, ?, ?)")
         .bind(hash_ticket(&ticket))
         .bind(user.to_string())
         .bind(expires.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
-        .execute(db)
+        .execute(&mut *conn)
         .await?;
     Ok(ticket)
 }

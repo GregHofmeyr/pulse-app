@@ -165,27 +165,36 @@ async fn login(
     req.username = normalize_username(&req.username);
     // A name that can't exist gets no bucket of its own (keys stay small); the address still pays.
     let user_key = Some(req.username.clone()).filter(|u| valid_username(u));
+    let pair_key = user_key.as_deref().map(|u| format!("{u} {ip_key}"));
+    let l = &s.limits;
     // Spend up front so parallel guesses can't all slip past before any pays. Only a failed
     // login keeps the spend: friends logging in together from one network are fine.
-    let ip_ok = s.limits.login_ip.hit(&ip_key);
-    let user_ok = user_key
+    let ip_ok = l.login_ip.hit(&ip_key);
+    // Per (username, address), and per username across all addresses. When the username's
+    // bucket is empty, an address with no recent failures for it (its pair bucket is full)
+    // may still try, so guessing from elsewhere can't lock the owner out.
+    let (pair_ok, pair_fresh) = pair_key
         .as_deref()
-        .is_none_or(|u| s.limits.login_user.hit(u));
-    let refund = |ip: bool, user: bool| {
+        .map_or((true, true), |k| l.login_user_ip.hit_noting_full(k));
+    let user_ok = user_key.as_deref().is_none_or(|u| l.login_user.hit(u));
+    let refund = |ip: bool, pair: bool, user: bool| {
         if ip {
-            s.limits.login_ip.refund(&ip_key);
+            l.login_ip.refund(&ip_key);
+        }
+        if let Some(k) = pair_key.as_deref().filter(|_| pair) {
+            l.login_user_ip.refund(k);
         }
         if let Some(u) = user_key.as_deref().filter(|_| user) {
-            s.limits.login_user.refund(u);
+            l.login_user.refund(u);
         }
     };
-    if !ip_ok || !user_ok {
-        refund(ip_ok, user_ok); // a refused attempt costs nothing
+    if !ip_ok || !pair_ok || !(user_ok || pair_fresh) {
+        refund(ip_ok, pair_ok, user_ok); // a refused attempt costs nothing
         return Err(AppError::TooManyRequests);
     }
     let res = check_login(&s, req).await;
     if !matches!(res, Err(AppError::Unauthorized)) {
-        refund(true, true);
+        refund(true, true, user_ok);
     }
     res
 }
@@ -204,17 +213,12 @@ async fn check_login(s: &AppState, req: LoginRequest) -> AppResult<Json<SessionR
         return Err(AppError::Unauthorized);
     }
     let id: UserId = id.parse().map_err(anyhow::Error::from)?;
-    let two_factor_on: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM user_totp WHERE user_id = ? AND enabled_at IS NOT NULL")
-            .bind(id.to_string())
-            .fetch_optional(&s.db)
-            .await?;
-    if two_factor_on.is_some() {
-        return Err(AppError::MfaRequired(Ticket(
-            super::two_factor::issue_ticket(&s.db, id).await?,
-        )));
-    }
-    let token = session::create(&s.db, id).await?;
+    let token = match session::create_unless_2fa(&s.db, id).await? {
+        session::PasswordLogin::Session(token) => token,
+        session::PasswordLogin::TwoFactor(ticket) => {
+            return Err(AppError::MfaRequired(Ticket(ticket)));
+        }
+    };
     Ok(Json(SessionResponse {
         token,
         user: User {

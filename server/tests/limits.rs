@@ -54,25 +54,112 @@ async fn failed_logins_are_limited_per_ip_but_good_ones_are_not() {
 
 #[tokio::test]
 async fn failed_logins_are_limited_per_username_across_addresses() {
-    let app = spawn_limited(|_| {}).await;
+    let app = spawn_limited(|l| l.login_user = Rate::new(10, 0.0)).await;
     register(&app, "alex").await;
     register(&app, "sam").await;
     for i in 0..10 {
         assert_eq!(
-            login(&app, "alex", "wrong-password", &format!("10.1.0.{i}")).await,
+            login(&app, "alex", "wrong-password", &format!("203.0.113.{i}")).await,
             401
         );
     }
-    assert_eq!(login(&app, "alex", "wrong-password", "10.1.1.1").await, 429);
+    // The username's bucket is empty: addresses that have failed for it are refused.
+    for i in 0..10 {
+        assert_eq!(
+            login(&app, "alex", "wrong-password", &format!("203.0.113.{i}")).await,
+            429
+        );
+    }
     assert_eq!(
-        login(&app, "ALEX", "hunter2hunter2", "10.1.1.2").await,
+        login(&app, "ALEX", "hunter2hunter2", "203.0.113.3").await,
         429,
         "case doesn't dodge it"
     );
+    // A fresh address gets one try, and once it has failed it is refused too.
     assert_eq!(
-        login(&app, "sam", "hunter2hunter2", "10.1.1.1").await,
+        login(&app, "alex", "wrong-password", "198.51.100.1").await,
+        401
+    );
+    assert_eq!(
+        login(&app, "alex", "wrong-password", "198.51.100.1").await,
+        429
+    );
+    assert_eq!(
+        login(&app, "sam", "hunter2hunter2", "203.0.113.1").await,
         200,
         "other accounts unaffected"
+    );
+}
+
+#[tokio::test]
+async fn failed_logins_elsewhere_cannot_lock_the_owner_out() {
+    let app = spawn_limited(|l| {
+        l.login_user = Rate::new(4, 0.0);
+        l.login_user_ip = Rate::new(2, 0.0);
+    })
+    .await;
+    register(&app, "alex").await;
+    // An attacker drains alex's username bucket from two addresses.
+    for ip in ["203.0.113.1", "203.0.113.2"] {
+        for _ in 0..2 {
+            assert_eq!(login(&app, "alex", "wrong-password", ip).await, 401);
+        }
+        assert_eq!(
+            login(&app, "alex", "wrong-password", ip).await,
+            429,
+            "this address has used its tries for alex"
+        );
+    }
+    assert_eq!(
+        login(&app, "alex", "hunter2hunter2", "203.0.113.1").await,
+        429,
+        "the attacking address stays refused, even with the right password"
+    );
+    // The owner, from an address with no failures for alex, still gets in.
+    assert_eq!(
+        login(&app, "alex", "hunter2hunter2", "198.51.100.4").await,
+        200
+    );
+    assert_eq!(
+        login(&app, "alex", "hunter2hunter2", "198.51.100.4").await,
+        200
+    );
+    // A wrong password from it while the username bucket is empty blocks it too.
+    assert_eq!(
+        login(&app, "alex", "wrong-password", "198.51.100.4").await,
+        401
+    );
+    assert_eq!(
+        login(&app, "alex", "hunter2hunter2", "198.51.100.4").await,
+        429
+    );
+}
+
+#[tokio::test]
+async fn a_refused_login_spends_nothing() {
+    let app = spawn_limited(|l| {
+        l.login_user = Rate::new(1, 0.0);
+        l.login_user_ip = Rate::new(2, 0.0);
+    })
+    .await;
+    register(&app, "alex").await;
+    assert_eq!(
+        login(&app, "alex", "wrong-password", "203.0.113.1").await,
+        401
+    );
+    // Username bucket empty, this address not full: refused, many times over...
+    for _ in 0..5 {
+        assert_eq!(
+            login(&app, "alex", "wrong-password", "203.0.113.1").await,
+            429
+        );
+    }
+    // ...and none of those refusals spent the address's last (username, IP) token or the
+    // per-IP one, so once the username bucket has a token again this address can try.
+    app.limits.login_user.refund("alex");
+    assert_eq!(
+        login(&app, "alex", "hunter2hunter2", "203.0.113.1").await,
+        200
     );
 }
 
@@ -154,6 +241,11 @@ async fn oversized_usernames_never_become_limiter_keys() {
         app.limits.login_user.len(),
         0,
         "no key for a name that can't exist"
+    );
+    assert_eq!(
+        app.limits.login_user_ip.len(),
+        0,
+        "nor a (name, address) key"
     );
     assert_eq!(
         app.limits.login_ip.len(),

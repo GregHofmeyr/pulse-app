@@ -471,3 +471,42 @@ async fn unknown_tickets_spend_no_user_bucket() {
         200
     );
 }
+
+#[tokio::test]
+async fn the_session_step_rechecks_2fa_so_enabling_it_mid_login_wins() {
+    let app = spawn().await;
+    // alex's password was checked while 2FA was still off; then enable commits before the
+    // login issues its session. The session step must see 2FA on and give no session.
+    let (id, _, _) = alex_with_2fa(&app).await;
+    let sessions = count(&app, "sessions").await;
+    let out = session::create_unless_2fa(&app.db, id).await.unwrap();
+    assert!(
+        matches!(out, session::PasswordLogin::TwoFactor(_)),
+        "a session was issued past 2FA: {out:?}"
+    );
+    assert_eq!(
+        count(&app, "sessions").await,
+        sessions,
+        "no session row added"
+    );
+    assert_eq!(
+        count(&app, "mfa_tickets").await,
+        1,
+        "a login ticket instead"
+    );
+}
+
+#[tokio::test]
+async fn the_session_step_without_2fa_issues_a_session() {
+    let app = spawn().await;
+    let (id, _) = register(&app, "alex").await;
+    let out = session::create_unless_2fa(&app.db, id).await.unwrap();
+    let session::PasswordLogin::Session(token) = out else {
+        panic!("expected a session: {out:?}");
+    };
+    assert_eq!(
+        session::authenticate(&app.db, &token).await.unwrap(),
+        Some(id)
+    );
+    assert_eq!(count(&app, "mfa_tickets").await, 0);
+}

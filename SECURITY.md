@@ -286,7 +286,7 @@ ties each of those tokens to the session that asked for it:
 
 | What | Limit |
 |---|---|
-| Failed logins | 5/minute per IP, and 10/hour per username |
+| Failed logins | 5/minute per IP, 10/hour per username from one IP, and 100/hour per username from all IPs together. Once a username's 100/hour is used up, an IP that has failed for it recently is refused, but an IP with no recent failures for it can still try (see section 7) |
 | Failed registrations (wrong, used or expired invite) | 5/hour per IP |
 | Two-factor checks (sign-in code, and the password or code for turning it on or off or making new recovery codes) | 5/minute per IP, and 10/hour per account; spent up front, kept only for a wrong password or code or a bad ticket |
 | Real-time connection attempts | 20/minute per IP (refunded once the connection authenticates) |
@@ -489,6 +489,10 @@ any work.
 - **Accounts.**
   - Any member can create invite codes.
   - Rate limits, including the two-factor limits, are held in memory, so they reset when the server restarts.
+  - Login limits trade guessing against lockout. Guesses at one username from many IPs can use up its 100/hour, but
+    that doesn't lock its owner out: an IP with no recent failed logins for that username can still sign in. The cost
+    is that past 100/hour, each further IP still gets a guess, about one every 6 minutes per IP. An owner who shares
+    an IP with the attacker (the same network or NAT) can be refused until either limit refills.
 - **No TURN over TLS.** There is no TURN over TLS/TCP 443, so voice may not work on networks that block UDP and allow
   nothing but 443.
 

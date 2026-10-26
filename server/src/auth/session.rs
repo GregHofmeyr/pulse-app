@@ -20,6 +20,12 @@ pub fn hash_token(token: &str) -> String {
 }
 
 pub async fn create(db: &SqlitePool, user: UserId) -> anyhow::Result<String> {
+    let mut conn = db.acquire().await?;
+    create_in(&mut conn, user).await
+}
+
+/// [`create`] on the caller's connection (or inside its transaction).
+pub async fn create_in(conn: &mut SqliteConnection, user: UserId) -> anyhow::Result<String> {
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
@@ -32,9 +38,39 @@ pub async fn create(db: &SqlitePool, user: UserId) -> anyhow::Result<String> {
     .bind(ts(now))
     .bind(ts(now))
     .bind(ts(now + Duration::days(LIFETIME_DAYS)))
-    .execute(db)
+    .execute(conn)
     .await?;
     Ok(token)
+}
+
+/// What the password step of a login hands back.
+#[derive(Debug)]
+pub enum PasswordLogin {
+    /// No two-factor: a new session token.
+    Session(String),
+    /// Two-factor is on: a login ticket for the code step, and no session.
+    TwoFactor(String),
+}
+
+/// After the password verified: issue a session, or a login ticket if 2FA is on. The 2FA check
+/// and the insert share one write transaction, so turning 2FA on can't commit between them.
+pub async fn create_unless_2fa(
+    db: &SqlitePool,
+    user: UserId,
+) -> crate::error::AppResult<PasswordLogin> {
+    let mut tx = crate::db::begin_write(db).await?;
+    let two_factor_on: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM user_totp WHERE user_id = ? AND enabled_at IS NOT NULL")
+            .bind(user.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+    let out = if two_factor_on.is_some() {
+        PasswordLogin::TwoFactor(super::two_factor::issue_ticket_in(&mut tx, user).await?)
+    } else {
+        PasswordLogin::Session(create_in(&mut tx, user).await?)
+    };
+    tx.commit().await?;
+    Ok(out)
 }
 
 /// Returns the user for a valid, unexpired token and slides its expiry forward.

@@ -50,8 +50,11 @@ pub mod caps {
 pub struct LimitsConfig {
     /// Failed logins per client IP.
     pub login_ip: Rate,
-    /// Failed logins per username.
+    /// Failed logins per username, from all addresses together. When it is empty, an address
+    /// with no recent failures for that username may still try (see `login_user_ip`).
     pub login_user: Rate,
+    /// Failed logins per (username, client IP).
+    pub login_user_ip: Rate,
     /// Failed registrations (unknown/used/expired invite) per client IP.
     pub register_ip: Rate,
     /// Two-factor code checks per client IP (spent up front, refunded on success).
@@ -95,7 +98,8 @@ impl Default for LimitsConfig {
     fn default() -> Self {
         Self {
             login_ip: Rate::per_minute(5),
-            login_user: Rate::per_hour(10),
+            login_user: Rate::per_hour(100),
+            login_user_ip: Rate::per_hour(10),
             register_ip: Rate::per_hour(5),
             mfa_ip: Rate::per_minute(5),
             mfa_user: Rate::per_hour(10),
@@ -131,6 +135,7 @@ impl LimitsConfig {
         Self {
             login_ip: r,
             login_user: r,
+            login_user_ip: r,
             register_ip: r,
             mfa_ip: r,
             mfa_user: r,
@@ -180,6 +185,27 @@ impl Limiter {
     /// Spend a token for `key`; false if there was none.
     pub fn hit(&self, key: &str) -> bool {
         self.hit_at(key, Instant::now())
+    }
+
+    /// Spend a token for `key` like [`Limiter::hit`], and also say whether the bucket was full
+    /// just before (nothing spent from it recently): `(spent, was_full)`.
+    pub fn hit_noting_full(&self, key: &str) -> (bool, bool) {
+        self.hit_noting_full_at(key, Instant::now())
+    }
+
+    pub fn hit_noting_full_at(&self, key: &str, now: Instant) -> (bool, bool) {
+        let burst = self.rate.burst as f64;
+        let mut was_full = false;
+        let spent = self.with(key, now, |t| {
+            was_full = *t >= burst;
+            if *t >= 1.0 {
+                *t -= 1.0;
+                true
+            } else {
+                false
+            }
+        });
+        (spent, was_full)
     }
 
     pub fn allowed_at(&self, key: &str, now: Instant) -> bool {
@@ -250,6 +276,7 @@ fn refilled(b: &Bucket, now: Instant, rate: Rate) -> f64 {
 pub struct Limits {
     pub login_ip: Limiter,
     pub login_user: Limiter,
+    pub login_user_ip: Limiter,
     pub register_ip: Limiter,
     pub mfa_ip: Limiter,
     pub mfa_user: Limiter,
@@ -273,6 +300,7 @@ impl Limits {
         Self {
             login_ip: Limiter::new(c.login_ip),
             login_user: Limiter::new(c.login_user),
+            login_user_ip: Limiter::new(c.login_user_ip),
             register_ip: Limiter::new(c.register_ip),
             mfa_ip: Limiter::new(c.mfa_ip),
             mfa_user: Limiter::new(c.mfa_user),
@@ -387,6 +415,31 @@ mod tests {
         );
         l.refund("never-seen");
         assert_eq!(l.len(), 1, "refunding an unknown key creates nothing");
+    }
+
+    #[test]
+    fn hit_noting_full_reports_whether_the_bucket_was_untouched() {
+        let l = Limiter::new(Rate::new(2, 1.0));
+        let t0 = Instant::now();
+        assert_eq!(
+            l.hit_noting_full_at("a", t0),
+            (true, true),
+            "a new key is full"
+        );
+        assert_eq!(l.hit_noting_full_at("a", t0), (true, false));
+        assert_eq!(l.hit_noting_full_at("a", t0), (false, false), "empty");
+        l.refund("a");
+        l.refund("a");
+        assert_eq!(
+            l.hit_noting_full_at("a", t0),
+            (true, true),
+            "refunded to full"
+        );
+        assert_eq!(
+            l.hit_noting_full_at("a", t0 + Duration::from_secs(5)),
+            (true, true),
+            "refilled to full"
+        );
     }
 
     #[test]
