@@ -1283,9 +1283,20 @@ mod tests {
         app.voice.join(ch, uid, "PA_test");
         api.go_live(&token, ch, settings()).await.unwrap();
         assert_eq!(api.get_preview(&token, ch, uid).await.unwrap(), None);
-        let webp = b"RIFF....WEBPfake".to_vec();
-        api.put_preview(&token, ch, webp.clone()).await.unwrap();
-        assert_eq!(api.get_preview(&token, ch, uid).await.unwrap(), Some(webp));
+        // A real 1×1 WebP: the server decodes and re-encodes previews, refusing anything else.
+        use base64::Engine;
+        let webp = base64::engine::general_purpose::STANDARD
+            .decode("UklGRhoAAABXRUJQVlA4TA0AAAAvAAAAEAcQERGIiP4HAA==")
+            .unwrap();
+        api.put_preview(&token, ch, webp).await.unwrap();
+        let got = api.get_preview(&token, ch, uid).await.unwrap().unwrap();
+        assert_eq!((&got[..4], &got[8..12]), (&b"RIFF"[..], &b"WEBP"[..]));
+        // and junk is refused
+        assert!(
+            api.put_preview(&token, ch, b"RIFF....WEBPfake".to_vec())
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

@@ -4,12 +4,15 @@ use std::time::Duration;
 
 use base64::Engine;
 use common::*;
+use image::codecs::webp::WebPEncoder;
+use image::{ExtendedColorType, ImageFormat, Rgba, RgbaImage};
 use livekit_api::access_token::{AccessToken, TokenVerifier};
 use pulse_protocol::gateway::{Event, ServerFrame};
 use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::{
     Channel, StreamEndReason, StreamInfo, StreamSettings, StreamStatus, VoiceTokenResponse,
 };
+use pulse_server::limits::{LimitsConfig, Rate};
 use serde_json::json;
 use sha2::{Digest, Sha256};
 use tokio::sync::mpsc::Receiver;
@@ -722,6 +725,93 @@ async fn get_preview(
     req.send().await.unwrap()
 }
 
+fn rgba(w: u32, h: u32, rgb: [u8; 3]) -> RgbaImage {
+    RgbaImage::from_pixel(w, h, Rgba([rgb[0], rgb[1], rgb[2], 255]))
+}
+
+/// A real (lossless) WebP of `w`×`h` in one colour.
+fn webp(w: u32, h: u32, rgb: [u8; 3]) -> Vec<u8> {
+    let mut out = Vec::new();
+    WebPEncoder::new_lossless(&mut out)
+        .encode(rgba(w, h, rgb).as_raw(), w, h, ExtendedColorType::Rgba8)
+        .unwrap();
+    out
+}
+
+fn png(w: u32, h: u32) -> Vec<u8> {
+    let mut out = std::io::Cursor::new(Vec::new());
+    rgba(w, h, [200, 30, 30])
+        .write_to(&mut out, ImageFormat::Png)
+        .unwrap();
+    out.into_inner()
+}
+
+fn riff(body: Vec<u8>) -> Vec<u8> {
+    let mut out = b"RIFF".to_vec();
+    out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+    out.extend_from_slice(&body);
+    out
+}
+
+fn chunk(fourcc: &[u8; 4], data: &[u8]) -> Vec<u8> {
+    let mut out = fourcc.to_vec();
+    out.extend_from_slice(&(data.len() as u32).to_le_bytes());
+    out.extend_from_slice(data);
+    if data.len() % 2 == 1 {
+        out.push(0);
+    }
+    out
+}
+
+/// A WebP in the extended format carrying an EXIF chunk with `marker` in it (as a camera or
+/// editor would leave location or device data).
+fn webp_with_exif(w: u32, h: u32, marker: &[u8]) -> Vec<u8> {
+    let simple = webp(w, h, [10, 120, 200]);
+    let image_chunk = &simple[12..]; // after RIFF <size> WEBP
+    let mut vp8x = vec![0x18, 0, 0, 0]; // alpha + EXIF flags, 3 reserved bytes
+    vp8x.extend_from_slice(&(w - 1).to_le_bytes()[..3]);
+    vp8x.extend_from_slice(&(h - 1).to_le_bytes()[..3]);
+    let mut exif = b"Exif\0\0".to_vec();
+    exif.extend_from_slice(marker);
+    let mut body = b"WEBP".to_vec();
+    body.extend(chunk(b"VP8X", &vp8x));
+    body.extend_from_slice(image_chunk);
+    body.extend(chunk(b"EXIF", &exif));
+    riff(body)
+}
+
+/// A few dozen bytes claiming a 16384×16384 lossless image: decoding it would need 1 GiB.
+fn dimension_bomb() -> Vec<u8> {
+    let (w, h) = (16384u32, 16384u32);
+    let bits: u32 = (w - 1) | ((h - 1) << 14) | (1 << 28);
+    let mut vp8l = vec![0x2f];
+    vp8l.extend_from_slice(&bits.to_le_bytes());
+    vp8l.extend_from_slice(&[0u8; 64]);
+    let mut body = b"WEBP".to_vec();
+    body.extend(chunk(b"VP8L", &vp8l));
+    riff(body)
+}
+
+fn animated_webp() -> Vec<u8> {
+    let mut enc = webp_animation::Encoder::new((32, 18)).unwrap();
+    enc.add_frame(rgba(32, 18, [255, 0, 0]).as_raw(), 0)
+        .unwrap();
+    enc.add_frame(rgba(32, 18, [0, 0, 255]).as_raw(), 100)
+        .unwrap();
+    enc.finalize(200).unwrap().to_vec()
+}
+
+/// The served preview, decoded: (bytes, width, height).
+async fn served(app: &TestApp, tok: &str, ch: ChannelId, streamer: UserId) -> (Vec<u8>, u32, u32) {
+    let r = get_preview(app, tok, ch, streamer, None).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["content-type"], "image/webp");
+    let bytes = r.bytes().await.unwrap().to_vec();
+    assert_eq!(image::guess_format(&bytes).unwrap(), ImageFormat::WebP);
+    let img = image::load_from_memory_with_format(&bytes, ImageFormat::WebP).unwrap();
+    (bytes, img.width(), img.height())
+}
+
 #[tokio::test]
 async fn preview_round_trips_with_etag() {
     let app = spawn().await;
@@ -730,7 +820,7 @@ async fn preview_round_trips_with_etag() {
     // live but no image yet
     assert_eq!(get_preview(&app, &b, l.id, a_id, None).await.status(), 404);
 
-    let img = b"RIFF....WEBPfake".to_vec();
+    let img = webp(480, 270, [20, 200, 90]);
     assert_eq!(
         put_preview(&app, &a, l.id, "image/webp", img.clone())
             .await
@@ -743,17 +833,111 @@ async fn preview_round_trips_with_etag() {
     assert_eq!(r.status(), 200);
     assert_eq!(r.headers()["content-type"], "image/webp");
     let etag = r.headers()["etag"].to_str().unwrap().to_string();
-    assert_eq!(r.bytes().await.unwrap().to_vec(), img);
+    let (_, w, h) = served(&app, &b, l.id, a_id).await;
+    assert_eq!((w, h), (480, 270));
 
     let r = get_preview(&app, &b, l.id, a_id, Some(&etag)).await;
     assert_eq!(r.status(), 304);
     assert_eq!(r.headers()["etag"].to_str().unwrap(), etag);
 
     // a new image changes the etag
-    put_preview(&app, &a, l.id, "image/webp", b"other".to_vec()).await;
+    put_preview(&app, &a, l.id, "image/webp", webp(480, 270, [250, 250, 0])).await;
     let r = get_preview(&app, &b, l.id, a_id, Some(&etag)).await;
     assert_eq!(r.status(), 200);
     assert_ne!(r.headers()["etag"].to_str().unwrap(), etag);
+}
+
+#[tokio::test]
+async fn preview_is_re_encoded_without_metadata() {
+    let app = spawn().await;
+    let (l, (a_id, a), (_, b), _rx) = pair(&app).await;
+    go_live(&app, &a, l.id, settings()).await;
+    let marker = b"GPS 51.5007N 0.1246W secret-device-serial";
+    let upload = webp_with_exif(480, 270, marker);
+    assert!(upload.windows(marker.len()).any(|w| w == marker));
+    assert_eq!(
+        put_preview(&app, &a, l.id, "image/webp", upload.clone())
+            .await
+            .status(),
+        204
+    );
+    let (bytes, w, h) = served(&app, &b, l.id, a_id).await;
+    assert_eq!((w, h), (480, 270));
+    assert_ne!(bytes, upload);
+    assert!(!bytes.windows(marker.len()).any(|w| w == marker));
+    assert!(!bytes.windows(4).any(|w| w == b"EXIF"));
+}
+
+#[tokio::test]
+async fn preview_is_fitted_within_480x270_and_never_upscaled() {
+    let app = spawn().await;
+    let (l, (a_id, a), (_, b), _rx) = pair(&app).await;
+    go_live(&app, &a, l.id, settings()).await;
+    for ((iw, ih), want) in [
+        ((1920, 1080), (480, 270)),
+        ((1000, 1000), (270, 270)),
+        ((960, 200), (480, 100)),
+        ((100, 50), (100, 50)),
+    ] {
+        let r = put_preview(&app, &a, l.id, "image/webp", webp(iw, ih, [9, 99, 199])).await;
+        assert_eq!(r.status(), 204, "{iw}x{ih}");
+        let (_, w, h) = served(&app, &b, l.id, a_id).await;
+        assert_eq!((w, h), want, "{iw}x{ih}");
+    }
+}
+
+#[tokio::test]
+async fn a_png_labelled_webp_is_served_as_a_real_webp() {
+    let app = spawn().await;
+    let (l, (a_id, a), (_, b), _rx) = pair(&app).await;
+    go_live(&app, &a, l.id, settings()).await;
+    let upload = png(480, 270);
+    assert_eq!(
+        put_preview(&app, &a, l.id, "image/webp", upload.clone())
+            .await
+            .status(),
+        204
+    );
+    let (bytes, w, h) = served(&app, &b, l.id, a_id).await;
+    assert_eq!((w, h), (480, 270));
+    assert_ne!(bytes, upload);
+}
+
+#[tokio::test]
+async fn preview_rejects_unusable_images_and_stores_nothing() {
+    let app = spawn().await;
+    let (l, (a_id, a), (_, b), _rx) = pair(&app).await;
+    go_live(&app, &a, l.id, settings()).await;
+    let good = webp(480, 270, [1, 2, 3]);
+    let truncated = good[..good.len() / 2].to_vec();
+    let bad: [(&str, Vec<u8>); 7] = [
+        ("garbage", b"RIFF....WEBPfake".to_vec()),
+        ("text", b"hello, this is not an image".to_vec()),
+        ("empty", Vec::new()),
+        ("truncated", truncated),
+        ("dimension bomb", dimension_bomb()),
+        ("over the side limit", webp(2000, 100, [1, 2, 3])),
+        ("animated", animated_webp()),
+    ];
+    for (what, body) in &bad {
+        assert!(body.len() <= 100 * 1024, "{what}");
+        let r = put_preview(&app, &a, l.id, "image/webp", body.clone()).await;
+        assert_eq!(r.status(), 400, "{what}");
+        // nothing stored
+        assert_eq!(
+            get_preview(&app, &b, l.id, a_id, None).await.status(),
+            404,
+            "{what}"
+        );
+    }
+    // A rejected upload leaves the last good preview in place, untouched.
+    put_preview(&app, &a, l.id, "image/webp", good).await;
+    let before = served(&app, &b, l.id, a_id).await.0;
+    for (what, body) in bad {
+        let r = put_preview(&app, &a, l.id, "image/webp", body).await;
+        assert_eq!(r.status(), 400, "{what}");
+        assert_eq!(served(&app, &b, l.id, a_id).await.0, before, "{what}");
+    }
 }
 
 #[tokio::test]
@@ -762,7 +946,7 @@ async fn preview_needs_you_live() {
     let (l, (_, a), (_, b), _rx) = pair(&app).await;
     // in voice but not live
     assert_eq!(
-        put_preview(&app, &a, l.id, "image/webp", vec![1, 2, 3])
+        put_preview(&app, &a, l.id, "image/webp", webp(48, 27, [0, 0, 0]))
             .await
             .status(),
         404
@@ -770,7 +954,7 @@ async fn preview_needs_you_live() {
     // someone else live does not make it yours
     go_live(&app, &a, l.id, settings()).await;
     assert_eq!(
-        put_preview(&app, &b, l.id, "image/webp", vec![1, 2, 3])
+        put_preview(&app, &b, l.id, "image/webp", webp(48, 27, [0, 0, 0]))
             .await
             .status(),
         404
@@ -783,7 +967,7 @@ async fn preview_rejects_big_or_non_webp() {
     let (l, (a_id, a), _, _rx) = pair(&app).await;
     go_live(&app, &a, l.id, settings()).await;
     assert_eq!(
-        put_preview(&app, &a, l.id, "image/png", vec![1, 2, 3])
+        put_preview(&app, &a, l.id, "image/png", webp(48, 27, [0, 0, 0]))
             .await
             .status(),
         415
@@ -795,13 +979,38 @@ async fn preview_rejects_big_or_non_webp() {
         413
     );
     assert_eq!(get_preview(&app, &a, l.id, a_id, None).await.status(), 404);
-    // exactly the cap is fine
+    // exactly the cap gets past the size check (and is then refused as not an image)
     assert_eq!(
         put_preview(&app, &a, l.id, "image/webp", vec![0; 100 * 1024])
             .await
             .status(),
-        204
+        400
     );
+}
+
+#[tokio::test]
+async fn preview_uploads_are_rate_limited_per_user() {
+    let mut cfg = test_config();
+    cfg.limits.preview_user = Rate::new(2, 0.0);
+    let app = spawn_with(cfg).await;
+    let (l, (_, a), _, _rx) = pair(&app).await;
+    go_live(&app, &a, l.id, settings()).await;
+    for _ in 0..2 {
+        let r = put_preview(&app, &a, l.id, "image/webp", webp(48, 27, [0, 0, 0])).await;
+        assert_eq!(r.status(), 204);
+    }
+    let r = put_preview(&app, &a, l.id, "image/webp", webp(48, 27, [0, 0, 0])).await;
+    assert_eq!(r.status(), 429);
+}
+
+#[test]
+fn default_preview_limit_allows_the_client_cadence() {
+    // The client sends one 1 s after going live, then one every 15 s; a few restarts in a row
+    // must not trip it.
+    let r = LimitsConfig::default().preview_user;
+    assert!(r.burst >= 4);
+    assert!(r.refill_per_sec >= 1.0 / 15.0);
+    assert!(r.refill_per_sec <= 1.0);
 }
 
 #[tokio::test]
@@ -809,7 +1018,7 @@ async fn preview_is_gone_after_stop() {
     let app = spawn().await;
     let (l, (a_id, a), (_, b), _rx) = pair(&app).await;
     go_live(&app, &a, l.id, settings()).await;
-    put_preview(&app, &a, l.id, "image/webp", vec![1, 2, 3]).await;
+    put_preview(&app, &a, l.id, "image/webp", webp(48, 27, [0, 0, 0])).await;
     assert_eq!(get_preview(&app, &b, l.id, a_id, None).await.status(), 200);
     assert_eq!(stop(&app, &a, l.id).await.status(), 204);
     assert_eq!(get_preview(&app, &b, l.id, a_id, None).await.status(), 404);
@@ -823,7 +1032,7 @@ async fn preview_needs_server_membership() {
     let app = spawn().await;
     let (l, (a_id, a), _, _rx) = pair(&app).await;
     go_live(&app, &a, l.id, settings()).await;
-    put_preview(&app, &a, l.id, "image/webp", vec![1, 2, 3]).await;
+    put_preview(&app, &a, l.id, "image/webp", webp(48, 27, [0, 0, 0])).await;
     let (_, outsider) = register(&app, "kai").await;
     assert_eq!(
         get_preview(&app, &outsider, l.id, a_id, None)

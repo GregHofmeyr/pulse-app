@@ -25,6 +25,14 @@ const PROCESS_PARALLELISM: usize = 2;
 static PROCESS_SLOTS: std::sync::LazyLock<Arc<Semaphore>> =
     std::sync::LazyLock::new(|| Arc::new(Semaphore::new(PROCESS_PARALLELISM)));
 
+/// Run CPU-bound image work (emoji uploads, Go Live previews) on the blocking pool, sharing the
+/// same [`PROCESS_PARALLELISM`] slots.
+pub(crate) async fn run_processing<T: Send + 'static>(
+    job: impl FnOnce() -> T + Send + 'static,
+) -> AppResult<T> {
+    run_in_slot(PROCESS_SLOTS.clone(), job).await
+}
+
 /// Run `job` on the blocking pool once one of `slots` is free. The slot moves into the task, so it
 /// is held while the work runs even if the client goes away.
 async fn run_in_slot<T: Send + 'static>(
@@ -40,7 +48,7 @@ async fn run_in_slot<T: Send + 'static>(
         job()
     })
     .await
-    .map_err(|e| anyhow::anyhow!("emoji processing panicked: {e}").into())
+    .map_err(|e| anyhow::anyhow!("image processing panicked: {e}").into())
 }
 
 pub fn router() -> Router<AppState> {
@@ -73,7 +81,7 @@ async fn upload_emoji(
         .await
         .map_err(|e| anyhow::anyhow!("create {}: {e}", dir.display()))?;
     super::disk_ok(dir, s.cfg.media_min_free_bytes)?;
-    let processed = run_in_slot(PROCESS_SLOTS.clone(), move || process::emoji(&body))
+    let processed = run_processing(move || process::emoji(&body))
         .await?
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
     let info = super::put(&s.db, dir, MediaKind::Emoji, &processed, me).await?;

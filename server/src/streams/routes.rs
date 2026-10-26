@@ -28,7 +28,7 @@ use crate::error::{AppError, AppResult};
 const TICKET_TTL: Duration = Duration::from_secs(10 * 60);
 const HEIGHTS: [u16; 3] = [720, 1080, 1440];
 const FPS: [u8; 3] = [15, 30, 60];
-const PREVIEW_MAX_BYTES: usize = 100 * 1024;
+const PREVIEW_MAX_BYTES: usize = crate::media::process::PREVIEW_MAX_INPUT;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -206,7 +206,9 @@ pub async fn publish_viewers(s: &AppState, ch: ChannelId, streamer: UserId, view
         .await;
 }
 
-/// The streamer uploads their latest preview frame (480x270 WebP, sent every 15 s).
+/// The streamer uploads their latest preview frame (480x270 WebP, sent every 15 s). It is decoded
+/// and re-encoded (see [`crate::media::process::preview`]): only the fresh WebP is kept and served,
+/// and an upload that can't be decoded within the limits leaves the last preview as it was.
 async fn put_preview(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -222,7 +224,17 @@ async fn put_preview(
     if !is_webp {
         return Err(AppError::UnsupportedMediaType);
     }
-    if !s.streams.set_preview(ch, me, body) {
+    if !s.limits.preview_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
+    // Not live: refuse before spending any decoding on it.
+    if s.streams.get(ch, me).is_none() {
+        return Err(AppError::NotFound);
+    }
+    let webp = crate::media::routes::run_processing(move || crate::media::process::preview(&body))
+        .await?
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    if !s.streams.set_preview(ch, me, Bytes::from(webp)) {
         return Err(AppError::NotFound);
     }
     Ok(StatusCode::NO_CONTENT)
