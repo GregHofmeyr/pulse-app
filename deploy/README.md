@@ -171,6 +171,13 @@ server stopped.
   (A changed `LIVEKIT_NODE_IP` needs no restart: `just deploy` recreates LiveKit with it.)
   The codec list needs a LiveKit restart to apply; `just deploy` copies the file but does not restart LiveKit.
 
+### Patching and reboots
+
+Unattended upgrades install security updates but never reboot (`Automatic-Reboot "false"`). Reboot the VM
+now and then (for kernel and libc fixes), ideally while nobody is in a call; containers come back on their own.
+Docker and Tailscale come from vendor repositories that unattended upgrades don't cover, so run
+`apt-get update && apt-get upgrade` on the host yourself every so often.
+
 ## 8. Backups
 
 Nightly at about 03:00 (and before every deploy): a consistent snapshot of the database and a tarball of the

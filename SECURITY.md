@@ -112,6 +112,10 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     it is never readable through the folder's permissions. A `session.json` left on disk is deleted the next time Pulse
     starts and finds its session in the credential store. Otherwise Pulse reads the file at startup, and on Windows
     tightens it to the same owner-only access list when it reads it (also when the file turns out to be unusable).
+  - **Windows roaming.** On Windows the credential is stored with Windows' enterprise persistence. Where roaming
+    profiles or credential roaming are enabled, it roams to the user's other machines. The `session.json` fallback is
+    in roaming AppData (`%APPDATA%\app.pulse.client`), but it is almost never used on Windows, because Credential
+    Manager is always present.
   - **Who can use it.** The token is held by the Rust core and never passed to the web UI.
   - **What it does not hold.** Passwords are never stored on the machine.
 - **Two-factor material.**
@@ -153,10 +157,16 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
 - **Other local files.** The client also stores:
   - keybinds and the global-keybinds switch (`keybinds.json`);
   - the crash-report setting (`reports.json`);
+  - unsent messages, in the webview's local storage (see below);
   - a few UI preferences in the webview's local storage;
-  - the webview's own profile data.
+  - the webview's own profile data (under `%LOCALAPPDATA%` on Windows).
 
-  The client does not write message history to disk.
+  `keybinds.json`, `reports.json` and the `session.json` fallback are in the app's data folder, which on Windows is
+  roaming AppData (`%APPDATA%\app.pulse.client`).
+- **Unsent messages.** A message that failed to send, or is still queued, is kept in the webview's local storage for
+  that account (its text and the message it replies to). That lets the user retry it after signing back in, so it is
+  kept across sign-out. It stays until that account signs in and sends or discards it. Other than these, the client
+  does not write message history to disk.
 - **Bug and crash reports.** Reports go only to the Pulse server. They are stored in its database for the operator to
   read. No third-party crash or analytics service is used.
   - **Bug reports.** The user writes a bug report and sends it, or saves it to a file instead. It is sent only when
@@ -431,7 +441,12 @@ any work.
   - The provisioning procedure closes public SSH. After that, SSH is reachable only over the owner's private VPN
     (Tailscale, using Tailscale's own SSH), so who may log in is decided by that VPN's access policy. That policy is
     managed in the VPN, not in this repository.
-- **Updates.** Unattended security updates are enabled on the host.
+- **Updates.** Unattended security updates are enabled on the host, but it does not reboot by itself, so kernel and
+  libc fixes only apply after the operator reboots it. Docker and Tailscale come from their vendors' apt
+  repositories, which are not in the automatic update origins: the operator updates them by hand. Container images
+  are not covered by host updates (they are pinned and change only on a deploy).
+- **Client address.** The server takes the client's IP from the right-most `X-Forwarded-For` entry, the one Caddy
+  writes. It must therefore be reachable only through Caddy. It binds `127.0.0.1` for that reason.
 - **Containers.**
   - All three containers (Pulse server, LiveKit, Caddy) run as a dedicated host user, not root. The server image also
     defaults to a non-root user.
@@ -532,6 +547,12 @@ any work.
   - the versions of apt packages installed on the CI runners (system build dependencies, and LLVM 21's patch level);
   - `ca-certificates` in the server image's runtime stage, installed with apt on top of the pinned base image;
   - the BuildKit (buildx) version used to build the server image, and the `just` version in CI.
+- **Backups can be destroyed from the host.** The server's object-store token can delete and overwrite backups (it
+  prunes the old ones), and the bucket has no object lock or retention. Someone who takes over the host could destroy
+  the backups. The fix is R2 bucket lock and lifecycle rules, which the operator sets in Cloudflare, not this
+  repository.
+- **The server image is not signed.** It has no signature and no build provenance. The deploy pins the digest it
+  pulled, so a moved tag can't change what runs, but nothing proves where that image was built.
 - **Code signing.** The Windows installer is not code-signed yet, so SmartScreen and endpoint tools will see an unsigned
   publisher.
 - **Updates.** There is no auto-updater. New versions are installed by hand.
@@ -542,6 +563,10 @@ any work.
     that doesn't lock its owner out: an IP with no recent failed logins for that username can still sign in. The cost
     is that past 100/hour, each further IP still gets a guess, about one every 6 minutes per IP. An owner who shares
     an IP with the attacker (the same network or NAT) can be refused until either limit refills.
+- **Server design.**
+  - Any member of a server can rename or delete any custom emoji in it.
+  - Every account can read the history of server channels.
+  - There are no server roles, kicks or bans.
 - **No TURN over TLS.** There is no TURN over TLS/TCP 443, so voice may not work on networks that block UDP and allow
   nothing but 443.
 
