@@ -44,12 +44,14 @@ voice-it: dev-livekit
     cargo test -p pulse-client --test voice_it --test voice_outage_it --test stream_it -- --ignored --nocapture
     cargo test -p pulse-server --test livekit_ice -- --ignored --nocapture
 
-# This checkout's dev LiveKit then listens on 17880-17882 and 13478 instead of 7880-7882 and 3478.
+# This checkout's dev LiveKit then listens on 17880-17882 and 13478 instead of 7880-7882 and 3478, and sends its
+# webhooks to 17890, where nothing listens (the tests' servers use ephemeral ports and don't need them), not to
+# the other checkout's dev server on 7890.
 # `docker compose down` afterwards; a plain `just dev-livekit` moves it back.
 # voice-it beside another checkout's dev LiveKit (alternate ports)
 voice-it-alt:
     PULSE_DEV_LIVEKIT_PORT=17880 PULSE_DEV_LIVEKIT_TCP_PORT=17881 PULSE_DEV_LIVEKIT_UDP_PORT=17882 \
-        PULSE_DEV_LIVEKIT_TURN_PORT=13478 just voice-it
+        PULSE_DEV_LIVEKIT_TURN_PORT=13478 PULSE_DEV_WEBHOOK_PORT=17890 just voice-it
 
 # libwebrtc log lines per second in a two-person call (decides whether to filter at the source)
 webrtc-log-volume: dev-livekit

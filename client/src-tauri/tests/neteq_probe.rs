@@ -27,6 +27,13 @@ use pulse_server::testing;
 use tokio::sync::mpsc;
 
 const DEV_SECRET: &str = "pulse-dev-secret-0123456789abcdefghij";
+
+/// The dev LiveKit's address: `PULSE_DEV_LIVEKIT_PORT` when set (`just voice-it-alt`, beside another
+/// checkout's LiveKit), else 7880 as in docker/livekit.yaml.
+fn dev_livekit(scheme: &str) -> String {
+    let port = std::env::var("PULSE_DEV_LIVEKIT_PORT").unwrap_or_else(|_| "7880".into());
+    format!("{scheme}://127.0.0.1:{port}")
+}
 const RATE: u32 = 48_000;
 const FRAME: usize = 480;
 const SECONDS: u64 = 30;
@@ -265,7 +272,7 @@ async fn run(
 #[ignore]
 async fn neteq_buffer_vs_measured_lag() {
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, alex) = testing::register(&app, "alex").await;

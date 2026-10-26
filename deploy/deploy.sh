@@ -20,15 +20,20 @@ set_env() {
 
 # check_node_ip FILE: LIVEKIT_NODE_IP must be a public IPv4 in canonical dotted form. LiveKit silently ignores a
 # malformed NODE_IP and then advertises the VM's private address: calls would connect and carry no audio.
-# Private, loopback, link-local, CGNAT (Tailscale) and 0/8 addresses are refused for the same reason.
+# Private, loopback, link-local, CGNAT (Tailscale), 0/8, multicast and reserved (224/3: 224/4, 240/4 and
+# 255.255.255.255) addresses are refused for the same reason.
 check_node_ip() {
   local ip a b
+  if [ ! -r "$1" ]; then
+    echo "$1 not found (or not readable): create it with LIVEKIT_NODE_IP set (deploy/README.md, section 6)" >&2
+    return 1
+  fi
   ip=$(sed -n 's/^LIVEKIT_NODE_IP=//p' "$1" | tail -n1)
   # each octet 0-255, no leading zeros
   local octet='(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])'
   if [[ $ip =~ ^$octet\.$octet\.$octet\.$octet$ ]]; then
     IFS=. read -r a b _ <<<"$ip"
-    if ! { [ "$a" -eq 0 ] || [ "$a" -eq 10 ] || [ "$a" -eq 127 ] ||
+    if ! { [ "$a" -eq 0 ] || [ "$a" -eq 10 ] || [ "$a" -eq 127 ] || [ "$a" -ge 224 ] ||
       { [ "$a" -eq 169 ] && [ "$b" -eq 254 ]; } ||
       { [ "$a" -eq 172 ] && [ "$b" -ge 16 ] && [ "$b" -le 31 ]; } ||
       { [ "$a" -eq 192 ] && [ "$b" -eq 168 ]; } ||

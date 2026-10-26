@@ -37,9 +37,13 @@ async fn libwebrtc_log_lines_per_second_in_a_call() {
     log::set_logger(&LOGGER).expect("logger");
     log::set_max_level(log::LevelFilter::Trace);
 
-    // The dev LiveKit from .env (`cp .env.example .env`); `just` loads it (dotenv-load).
+    // The dev LiveKit from .env (`cp .env.example .env`); `just` loads it (dotenv-load). PULSE_DEV_LIVEKIT_PORT
+    // (docker-compose.yml) wins when set: this checkout's LiveKit on alternate ports.
     let mut cfg = testing::test_config();
-    cfg.livekit_url = std::env::var("PULSE_LIVEKIT_URL").expect("PULSE_LIVEKIT_URL: run via just");
+    cfg.livekit_url = match std::env::var("PULSE_DEV_LIVEKIT_PORT") {
+        Ok(port) => format!("ws://127.0.0.1:{port}"),
+        Err(_) => std::env::var("PULSE_LIVEKIT_URL").expect("PULSE_LIVEKIT_URL: run via just"),
+    };
     cfg.livekit_secret =
         std::env::var("PULSE_LIVEKIT_SECRET").expect("PULSE_LIVEKIT_SECRET: run via just");
     let app = testing::spawn_with(cfg).await;

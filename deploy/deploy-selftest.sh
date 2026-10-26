@@ -46,7 +46,21 @@ expect refused 'LIVEKIT_NODE_IP=172.31.255.255'
 expect refused 'LIVEKIT_NODE_IP=192.168.1.1'
 expect refused 'LIVEKIT_NODE_IP=100.64.0.1'
 expect refused 'LIVEKIT_NODE_IP=100.127.255.255'
+expect ok 'LIVEKIT_NODE_IP=223.255.255.254'
+expect refused 'LIVEKIT_NODE_IP=224.0.0.1'
+expect refused 'LIVEKIT_NODE_IP=239.255.255.255'
+expect refused 'LIVEKIT_NODE_IP=240.0.0.1'
+expect refused 'LIVEKIT_NODE_IP=255.255.255.255'
 # --check-env mode (what `just deploy` runs over ssh before copying anything): exit status only.
+if out=$(bash "$here/deploy.sh" --check-env "$tmp/missing.env" 2>&1); then
+  echo "FAIL --check-env accepted a missing .env"
+  failed=1
+elif [[ $out != *"not found"* || $out == *"No such file"* ]]; then
+  echo "FAIL --check-env on a missing .env should say so in its own words, said: $out"
+  failed=1
+else
+  echo "ok   --check-env on a missing .env: $out"
+fi
 printf 'LIVEKIT_NODE_IP=203.0.113.10\n' >"$tmp/good.env"
 printf 'LIVEKIT_NODE_IP=\n' >"$tmp/bad.env"
 if bash "$here/deploy.sh" --check-env "$tmp/good.env"; then
