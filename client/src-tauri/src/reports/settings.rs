@@ -32,34 +32,37 @@ impl Default for ReportSettings {
 /// exists because the user changed the setting, and guessing "send" could upload what they said
 /// not to.
 pub fn load(dir: &Path) -> ReportSettings {
-    let text = match std::fs::read_to_string(dir.join(FILE)) {
-        Ok(t) => t,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return ReportSettings::default(),
-        Err(e) => {
-            tracing::warn!(error = %e, "report settings unreadable; not sending automatically");
-            return ReportSettings {
-                auto_send_crashes: false,
-            };
-        }
-    };
-    match serde_json::from_str::<ReportSettings>(&text) {
-        Ok(s) => s,
-        Err(e) => {
-            tracing::warn!(error = %e, "report settings unreadable; not sending automatically");
+    read(dir).0
+}
+
+/// [`load`], plus why it fell back to off (the file is there but unreadable). Nothing is logged
+/// here: at startup this runs before logging is up ([`Store::log_loaded`] reports it later).
+fn read(dir: &Path) -> (ReportSettings, Option<String>) {
+    let off = |e: String| {
+        (
             ReportSettings {
                 auto_send_crashes: false,
-            }
+            },
+            Some(e),
+        )
+    };
+    let text = match std::fs::read_to_string(dir.join(FILE)) {
+        Ok(t) => t,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return (ReportSettings::default(), None);
         }
+        Err(e) => return off(e.to_string()),
+    };
+    match serde_json::from_str::<ReportSettings>(&text) {
+        Ok(s) => (s, None),
+        Err(e) => off(e.to_string()),
     }
 }
 
 pub fn save(dir: &Path, s: &ReportSettings) -> std::io::Result<()> {
     std::fs::create_dir_all(dir)?;
     let json = serde_json::to_string_pretty(s).map_err(std::io::Error::other)?;
-    // write then rename: a crash mid-write can't leave a half file
-    let tmp = dir.join(format!("{FILE}.tmp"));
-    std::fs::write(&tmp, json)?;
-    std::fs::rename(tmp, dir.join(FILE))
+    super::write_atomic(dir, FILE, json.as_bytes())
 }
 
 /// The profile's report settings, as the app is using them.
@@ -67,13 +70,35 @@ pub struct Store {
     dir: PathBuf,
     /// Held across a save, so two changes can't interleave their file writes.
     saved: Mutex<ReportSettings>,
+    /// Why loading fell back to off, if it did.
+    problem: Option<String>,
 }
 
 impl Store {
     pub fn load(dir: &Path) -> Self {
+        let (settings, problem) = read(dir);
         Self {
             dir: dir.to_path_buf(),
-            saved: Mutex::new(load(dir)),
+            saved: Mutex::new(settings),
+            problem,
+        }
+    }
+
+    /// Why loading fell back to off (the file was there but unreadable), if it did.
+    pub fn load_problem(&self) -> Option<&str> {
+        self.problem.as_deref()
+    }
+
+    /// Log how loading went; called once logging is up (the store is loaded before it).
+    pub fn log_loaded(&self) {
+        match &self.problem {
+            Some(e) => {
+                tracing::warn!(error = %e, "report settings unreadable; not sending automatically")
+            }
+            None => tracing::info!(
+                auto_send_crashes = self.auto_send_crashes(),
+                "report settings"
+            ),
         }
     }
 
@@ -164,6 +189,18 @@ mod tests {
         })
         .unwrap();
         assert!(Store::load(d.path()).auto_send_crashes());
+    }
+
+    /// The store is loaded before logging is up, so it keeps why it fell back to off for
+    /// [`Store::log_loaded`] to report once it is.
+    #[test]
+    fn the_store_keeps_why_it_fell_back_to_off() {
+        let d = tempfile::tempdir().unwrap();
+        assert_eq!(Store::load(d.path()).load_problem(), None);
+        std::fs::write(d.path().join(FILE), "{ not json").unwrap();
+        let s = Store::load(d.path());
+        assert!(!s.auto_send_crashes());
+        assert!(s.load_problem().is_some_and(|p| !p.is_empty()));
     }
 
     #[test]

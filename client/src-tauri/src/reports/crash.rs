@@ -90,15 +90,8 @@ pub fn write_panic_marker(dir: &Path, message: &str, location: &str) {
     let _ = std::fs::write(path, body.to_string()); // in a panic hook: never fail loudly
 }
 
-/// Replace `dir/name` whole: write a temp file beside it, then rename over it, so a crash or power
-/// loss mid-write leaves the old file or the new one, never half of one.
 fn write_atomic(dir: &Path, name: &str, contents: &str) -> std::io::Result<()> {
-    let tmp = dir.join(format!("{name}.tmp"));
-    let r = std::fs::write(&tmp, contents).and_then(|()| std::fs::rename(&tmp, dir.join(name)));
-    if r.is_err() {
-        let _ = std::fs::remove_file(&tmp);
-    }
-    r
+    super::write_atomic(dir, name, contents.as_bytes())
 }
 
 pub fn mark_running(dir: &Path) {

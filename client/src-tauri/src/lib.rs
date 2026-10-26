@@ -90,6 +90,8 @@ pub fn run() {
                 Err(e) => eprintln!("logging unavailable ({}): {e}", log_dir.display()),
             }
             tracing::info!(profile = ?profile, data = %dir.display(), "profile");
+            // Loaded (and acted on) above, before logging was up: report how that went now.
+            app.state::<reports::settings::Store>().log_loaded();
             startup::mark("logging_ready"); // (since process start: covers crash checks + log setup)
             let webview_dir = session::profile_dir(&app.path().app_local_data_dir()?, profile.as_deref());
             create_main_window(app, &webview_dir)?;
