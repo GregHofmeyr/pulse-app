@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState } from './state'
-import { channelsFor, displayName, isLive, isMember, liveIn, typingNames, voiceOccupants } from './selectors'
+import { callRoster, channelsFor, displayName, isLive, isMember, liveIn, typingNames, voiceOccupants } from './selectors'
 import type { Ready } from './protocol/Ready'
 import type { StreamInfo } from './protocol/StreamInfo'
 
@@ -93,5 +93,31 @@ describe('stream selectors', () => {
     expect(isLive(s, 'V1', 'U2')).toBe(true)
     expect(isLive(s, 'V1', 'U3')).toBe(false)
     expect(isLive(s, 'V9', 'U2')).toBe(false)
+  })
+
+  describe('callRoster', () => {
+    const none = { channelId: null, joining: false, leaving: null }
+    it('roster_adds_you_greyed_while_joining', () => {
+      const r = callRoster(s, 'S1', 'V1', { ...none, channelId: 'V1', joining: true })
+      expect(r.map((x) => [x.userId, x.pending])).toEqual([['U2', false], ['U1', true]])
+      expect(r[1].name).toBe('alex')
+      expect(callRoster(s, 'S1', 'V1', none).map((x) => x.userId)).toEqual(['U2'])
+    })
+    it('roster_marks_you_pending_when_the_server_already_lists_you', () => {
+      const listed = applyEvent(s, { t: 'VoiceJoined', d: { channel_id: 'V1', user_id: 'U1', flags: { muted: false, deafened: false } } }, 0)
+      const r = callRoster(listed, 'S1', 'V1', { ...none, channelId: 'V1', joining: true })
+      expect(r.filter((x) => x.userId === 'U1')).toHaveLength(1)
+      expect(r.find((x) => x.userId === 'U1')!.pending).toBe(true)
+      expect(callRoster(listed, 'S1', 'V1', { ...none, channelId: 'V1' }).find((x) => x.userId === 'U1')!.pending).toBe(false)
+    })
+    it('roster_drops_you_from_the_channel_you_are_leaving', () => {
+      const listed = applyEvent(s, { t: 'VoiceJoined', d: { channel_id: 'V1', user_id: 'U1', flags: { muted: false, deafened: false } } }, 0)
+      const r = callRoster(listed, 'S1', 'V1', { ...none, leaving: 'V1' })
+      expect(r.map((x) => x.userId)).toEqual(['U2'])
+    })
+    it('roster_never_marks_others_pending', () => {
+      const r = callRoster(s, 'S1', 'V1', { ...none, channelId: 'V1', joining: true })
+      expect(r.filter((x) => x.userId !== 'U1').every((x) => !x.pending)).toBe(true)
+    })
   })
 })

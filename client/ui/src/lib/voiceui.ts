@@ -4,6 +4,37 @@ import { invoke } from '@tauri-apps/api/core'
 export type Flags = { muted: boolean; deafened: boolean }
 export type SoundName = 'join' | 'leave' | 'mute' | 'unmute' | 'deafen' | 'undeafen' | 'message'
 
+export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
+export type NsLevel = 'off' | 'standard' | 'strong'
+
+/** One report from the core's link sampler (`LinkReport` in voice/linkstats.rs). Hand-written: the
+ * client's events are not part of the generated protocol bindings. */
+export type LinkReport = {
+  rtt_ms: number | null
+  jitter_ms: number | null
+  loss_pct: number | null
+  transport: 'udp' | 'tcp' | 'turn' | null
+  server: string | null
+  version: string
+  /** [ms ago, rtt ms], oldest first. */
+  history: [number, number][]
+}
+
+/** The core's join progress; the UI folds these into a `StageState` (voicestage.ts). */
+export type StageName = 'requesting_access' | 'connecting' | 'starting_audio' | 'connected' | 'reconnecting'
+
+export type VoiceEvent =
+  | { kind: 'state'; channel_id: string | null; connection: Connection; controls: Flags }
+  | { kind: 'stage'; stage: StageName; attempt: number | null }
+  | ({ kind: 'link' } & LinkReport)
+  | { kind: 'speaking'; user_ids: string[] }
+  | { kind: 'quality'; user_id: string; quality: string }
+  | { kind: 'levels'; mic: number; speaker: number; gate_open: boolean }
+  | { kind: 'noise_suppression'; active: NsLevel; note: string | null }
+  | { kind: 'device_stalled' }
+  | { kind: 'device_recovered' }
+  | { kind: 'mic'; live: boolean; error: string | null }
+
 export const clampVolume = (pct: number) => Math.round(Math.min(200, Math.max(0, pct)))
 
 export function volumeLabel(pct: number): string {
@@ -54,7 +85,6 @@ function save(key: string, value: unknown) {
   }
 }
 
-export type NsLevel = 'off' | 'standard' | 'strong'
 export type AudioConfig = {
   input: string | null
   output: string | null
