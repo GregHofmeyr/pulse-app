@@ -37,6 +37,8 @@ export const api = {
   login: (serverUrl: string, username: string, password: string) =>
     invoke<LoginResult>('login', { serverUrl, username, password }),
   loginMfa: (code: string) => invoke<LoginResult>('login_mfa', { code }),
+  /** Back from the code step: the core forgets the pending ticket. */
+  cancelLogin: () => invoke<void>('cancel_login'),
   register: (serverUrl: string, inviteCode: string, username: string, password: string) =>
     invoke<User>('register', { serverUrl, inviteCode, username, password }),
   restoreSession: () => invoke<Restored>('restore_session'),

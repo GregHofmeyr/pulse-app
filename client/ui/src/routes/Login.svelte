@@ -20,6 +20,8 @@
   const EXPIRED = 'That sign-in expired. Log in again.'
 
   function back(msg = '') {
+    // the core drops the ticket too; nothing to wait for (or show) if that fails
+    api.cancelLogin().catch(() => {})
     step = 'password'
     code = ''
     password = ''

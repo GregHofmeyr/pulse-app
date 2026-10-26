@@ -86,11 +86,25 @@ describe('Login', () => {
     expect(onAuthed).not.toHaveBeenCalled()
   })
 
-  it('Back returns to the password step', async () => {
+  it('Back returns to the password step and drops the pending ticket', async () => {
     await toCodeStep()
+    expect(calls('cancel_login')).toHaveLength(0)
     ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Back')!.click()
     flushSync()
     expect(document.querySelector('input[type=password]')).not.toBeNull()
+    expect(calls('cancel_login')).toHaveLength(1)
+  })
+
+  it('Back still goes back if dropping the ticket fails', async () => {
+    await toCodeStep()
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'cancel_login') throw new Error('core gone')
+      return undefined
+    })
+    ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Back')!.click()
+    await settle(); flushSync()
+    expect(document.querySelector('input[type=password]')).not.toBeNull()
+    expect(document.querySelector('[role=alert]')).toBeNull()
   })
 
   it('Back is disabled while the code is being verified', async () => {

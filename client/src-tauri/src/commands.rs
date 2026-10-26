@@ -35,7 +35,8 @@ pub type SignedOut = Box<dyn Fn() + Send + Sync>;
 
 /// A password login that still needs its second step: where, and the ticket to send with the
 /// code. Never logged or shown. A wrong code leaves it in place (the server counts the tries);
-/// success, an expired ticket, `register` and `logout` clear it; a new login replaces it.
+/// success, an expired ticket, going back (`cancel_login`), `register` and `logout` clear it; a
+/// new login replaces it.
 #[derive(Default)]
 struct PendingMfa(Mutex<Option<(Api, String)>>);
 
@@ -50,6 +51,17 @@ impl PendingMfa {
 
     fn clear(&self) {
         self.0.lock().unwrap().take();
+    }
+
+    /// Clear it only if it is still `ticket`'s (a newer login may have replaced it while this
+    /// one's second step was in flight); returns whether it was.
+    fn take_if(&self, ticket: &str) -> bool {
+        let mut p = self.0.lock().unwrap();
+        let mine = p.as_ref().is_some_and(|(_, t)| t == ticket);
+        if mine {
+            p.take();
+        }
+        mine
     }
 }
 
@@ -101,6 +113,19 @@ impl Core {
             signed_out,
             mfa: PendingMfa::default(),
         }
+    }
+
+    /// A login or registration begins: whatever second step was pending is superseded (even if
+    /// this attempt goes no further), then the address is checked.
+    fn start_login(&self, server_url: &str) -> Result<Api, ApiError> {
+        self.mfa.clear();
+        check_server_url(server_url)?;
+        Ok(Api::new(server_url))
+    }
+
+    /// The login screen went back from the code step to the password.
+    fn cancel_login(&self) {
+        self.mfa.clear();
     }
 
     pub(crate) fn current(&self) -> Result<(Api, String), ApiError> {
@@ -396,10 +421,7 @@ pub async fn login(
     username: String,
     password: String,
 ) -> Result<LoginResult, ApiError> {
-    check_server_url(&server_url)?;
-    let api = Api::new(&server_url);
-    // whatever came before is superseded, even if this attempt fails
-    core.mfa.clear();
+    let api = core.start_login(&server_url)?;
     match api.login(&username, &password).await? {
         LoginOutcome::Session(s) => {
             core.activate(&app, api, s.token, Some(s.user.id), true);
@@ -423,16 +445,27 @@ pub async fn login_mfa(
         return Ok(LoginResult::Expired);
     };
     match api.login_mfa(&ticket, &code).await? {
-        MfaOutcome::Session(s) => {
-            core.mfa.clear();
+        MfaOutcome::Session(s) if core.mfa.take_if(&ticket) => {
             core.activate(&app, api, s.token, Some(s.user.id), true);
             Ok(LoginResult::Ready(s.user))
         }
+        MfaOutcome::Session(s) => {
+            // The user went back or started another login meanwhile: that one wins, and this
+            // session is ended rather than left signed in somewhere unseen.
+            let _ = api.logout(&s.token).await;
+            Ok(LoginResult::Expired)
+        }
         MfaOutcome::Expired => {
-            core.mfa.clear();
+            core.mfa.take_if(&ticket);
             Ok(LoginResult::Expired)
         }
     }
+}
+
+/// The login screen's Back from the code step: drop the pending ticket now.
+#[tauri::command]
+pub fn cancel_login(core: State<'_, Core>) {
+    core.cancel_login();
 }
 
 #[tauri::command]
@@ -444,9 +477,7 @@ pub async fn register(
     username: String,
     password: String,
 ) -> Result<User, ApiError> {
-    check_server_url(&server_url)?;
-    core.mfa.clear();
-    let api = Api::new(&server_url);
+    let api = core.start_login(&server_url)?;
     let s = api.register(&invite_code, &username, &password).await?;
     core.activate(&app, api, s.token, Some(s.user.id), true);
     Ok(s.user)
@@ -562,8 +593,8 @@ pub async fn two_factor_status(
 }
 
 /// What the setup screen shows: the secret for typing in, and the QR code as a module matrix
-/// (the `otpauth://` URI stays here).
-#[derive(Debug, serde::Serialize)]
+/// (the `otpauth://` URI stays here). Not `Debug`: it holds the secret.
+#[derive(serde::Serialize)]
 pub struct TwoFactorSetup {
     pub secret: String,
     pub qr: QrMatrix,
@@ -1130,6 +1161,44 @@ mod tests {
         );
         p.clear();
         assert!(p.get().is_none());
+    }
+
+    #[test]
+    fn a_pending_login_is_only_taken_by_its_own_ticket() {
+        let p = PendingMfa::default();
+        assert!(!p.take_if("t1"), "nothing pending");
+        p.set(Api::new("https://a.example.com"), "t1".into());
+        p.set(Api::new("https://a.example.com"), "t2".into());
+        // A second step that finishes after a newer login started must not clear the newer one.
+        assert!(!p.take_if("t1"));
+        assert_eq!(p.get().unwrap().1, "t2");
+        assert!(p.take_if("t2"));
+        assert!(p.get().is_none());
+    }
+
+    #[test]
+    fn going_back_from_the_code_step_drops_the_ticket() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, _) = signed_in(root.path(), "https://pulse.example.com", None);
+        core.mfa
+            .set(Api::new("https://pulse.example.com"), "t1".into());
+        core.cancel_login();
+        assert!(core.mfa.get().is_none());
+    }
+
+    #[test]
+    fn a_new_login_drops_the_old_ticket_even_with_a_bad_server_url() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, _) = signed_in(root.path(), "https://pulse.example.com", None);
+        core.mfa
+            .set(Api::new("https://pulse.example.com"), "t1".into());
+        assert!(core.start_login("not a url").is_err());
+        assert!(core.mfa.get().is_none());
+        core.mfa
+            .set(Api::new("https://pulse.example.com"), "t1".into());
+        let api = core.start_login("https://other.example.com").unwrap();
+        assert_eq!(api.base(), "https://other.example.com");
+        assert!(core.mfa.get().is_none());
     }
 
     #[test]

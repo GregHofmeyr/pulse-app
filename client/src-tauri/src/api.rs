@@ -30,7 +30,8 @@ pub enum MfaOutcome {
     Expired,
 }
 
-/// What the login screen says for a wrong code (401 from `/auth/login/2fa`).
+/// What the login screen and Settings say for a wrong code (401 from `/auth/login/2fa`, 403
+/// "wrong code" from the signed-in `/auth/2fa/*` calls).
 const WRONG_CODE: &str = "That code didn't work. Check the time on your phone and try again.";
 
 #[derive(Debug, thiserror::Error)]
@@ -165,6 +166,17 @@ fn note_version(r: &reqwest::Response) {
     static ONCE: std::sync::Once = std::sync::Once::new();
     let version = r.version();
     ONCE.call_once(|| tracing::info!(?version, "rest: connected"));
+}
+
+/// The server's terse "wrong code" (403) in the login screen's words; still `Forbidden`, which
+/// a signed-in caller must get (never `Unauthorized`). Other refusals keep the server's text.
+fn friendly_wrong_code<T>(r: Result<T, ApiError>) -> Result<T, ApiError> {
+    match r {
+        Err(ApiError::Forbidden(m)) if m == "wrong code" => {
+            Err(ApiError::Forbidden(WRONG_CODE.into()))
+        }
+        other => other,
+    }
 }
 
 #[derive(Clone)]
@@ -678,6 +690,7 @@ impl Api {
         // ordinary refusal, and `checked` would flatten both to a message: look first.
         let r = match r {
             Ok(resp) if resp.status() == reqwest::StatusCode::FORBIDDEN => {
+                note_version(&resp);
                 let path = path_only(resp.url());
                 let bytes = resp.bytes().await.map_err(|e| {
                     let text = failure_text(e);
@@ -715,6 +728,7 @@ impl Api {
         if let Ok(resp) = &r
             && resp.status() == reqwest::StatusCode::GONE
         {
+            note_version(resp);
             log_failure(Some(path_only(resp.url())), "410");
             return Ok(MfaOutcome::Expired);
         }
@@ -759,12 +773,12 @@ impl Api {
         token: &str,
         code: &str,
     ) -> Result<TwoFactorEnabledResponse, ApiError> {
-        Self::parse(self.code_post(token, "enable", code).await).await
+        friendly_wrong_code(Self::parse(self.code_post(token, "enable", code).await).await)
     }
 
     /// A TOTP or a recovery code turns it off.
     pub async fn two_factor_disable(&self, token: &str, code: &str) -> Result<(), ApiError> {
-        Self::ok_empty(self.code_post(token, "disable", code).await).await
+        friendly_wrong_code(Self::ok_empty(self.code_post(token, "disable", code).await).await)
     }
 
     pub async fn two_factor_regenerate(
@@ -772,7 +786,7 @@ impl Api {
         token: &str,
         code: &str,
     ) -> Result<RecoveryCodesResponse, ApiError> {
-        Self::parse(self.code_post(token, "recovery-codes", code).await).await
+        friendly_wrong_code(Self::parse(self.code_post(token, "recovery-codes", code).await).await)
     }
 
     async fn code_post(
@@ -1247,8 +1261,18 @@ mod tests {
         t.generate((now as i64 + offset * 30) as u64).to_string()
     }
 
-    /// A registered user with 2FA on (enabled with the previous step's code); returns the
-    /// secret, the signed-in token and the recovery codes.
+    /// A 6-digit code that is certainly not valid now: never one of the three in the window.
+    fn wrong_code(secret_b32: &str) -> String {
+        let valid: Vec<String> = (-1..=1).map(|o| code_at(secret_b32, o)).collect();
+        ["000000", "000001"]
+            .into_iter()
+            .find(|c| !valid.iter().any(|v| v == c))
+            .unwrap()
+            .to_string()
+    }
+
+    /// A registered user with 2FA on (enabled with the current step's code, so the next code
+    /// to use is offset +1); returns the secret, the signed-in token and the recovery codes.
     async fn two_factor_user(app: &testing::TestApp, api: &Api) -> (String, String, Vec<String>) {
         let (_, token) = testing::register(app, "alex").await;
         let setup = api
@@ -1256,7 +1280,7 @@ mod tests {
             .await
             .unwrap();
         let on = api
-            .two_factor_enable(&token, &code_at(&setup.secret, -1))
+            .two_factor_enable(&token, &code_at(&setup.secret, 0))
             .await
             .unwrap();
         (setup.secret, token, on.recovery_codes)
@@ -1286,7 +1310,7 @@ mod tests {
     #[tokio::test]
     async fn a_403_that_is_not_mfa_required_stays_forbidden() {
         // a login 403 whose body is a plain api error (not the mfa_required one)
-        let (base, _) = canned_server(
+        let base = canned_server(
             "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: 49\r\nConnection: close\r\n\r\n{\"code\":\"forbidden\",\"message\":\"not allowed here\"}",
         )
         .await;
@@ -1307,8 +1331,9 @@ mod tests {
         else {
             panic!("expected a ticket");
         };
-        let out = api.login_mfa(&ticket, &code_at(&secret, 0)).await.unwrap();
+        let out = api.login_mfa(&ticket, &code_at(&secret, 1)).await.unwrap();
         assert!(matches!(out, MfaOutcome::Session(s) if s.user.username == "alex"));
+        // The ticket is checked before the code, so any code shows it is spent.
         let again = api.login_mfa(&ticket, &code_at(&secret, 1)).await.unwrap();
         assert!(matches!(again, MfaOutcome::Expired));
     }
@@ -1323,12 +1348,16 @@ mod tests {
         else {
             panic!("expected a ticket");
         };
-        let err = api.login_mfa(&ticket, "000000").await.err().unwrap();
+        let err = api
+            .login_mfa(&ticket, &wrong_code(&secret))
+            .await
+            .err()
+            .unwrap();
         assert!(
             matches!(&err, ApiError::Rejected(m) if m == "That code didn't work. Check the time on your phone and try again."),
             "{err:?}"
         );
-        let out = api.login_mfa(&ticket, &code_at(&secret, 0)).await.unwrap();
+        let out = api.login_mfa(&ticket, &code_at(&secret, 1)).await.unwrap();
         assert!(matches!(out, MfaOutcome::Session(_)));
     }
 
@@ -1346,14 +1375,14 @@ mod tests {
             .unwrap();
         assert!(setup.otpauth_uri.starts_with("otpauth://totp/Pulse:alex?"));
         let on = api
-            .two_factor_enable(&token, &code_at(&setup.secret, -1))
+            .two_factor_enable(&token, &code_at(&setup.secret, 0))
             .await
             .unwrap();
         assert_eq!(on.recovery_codes.len(), 10);
         assert!(api.two_factor_status(&token).await.unwrap().enabled);
 
         let fresh = api
-            .two_factor_regenerate(&token, &code_at(&setup.secret, 0))
+            .two_factor_regenerate(&token, &code_at(&setup.secret, 1))
             .await
             .unwrap();
         assert_eq!(fresh.recovery_codes.len(), 10);
@@ -1376,15 +1405,75 @@ mod tests {
             .err()
             .unwrap();
         assert!(matches!(err, ApiError::Forbidden(_)), "{err:?}");
-        api.two_factor_setup(&token, "hunter2hunter2")
+        let setup = api
+            .two_factor_setup(&token, "hunter2hunter2")
             .await
             .unwrap();
-        let err = api.two_factor_enable(&token, "000000").await.err().unwrap();
-        assert!(matches!(err, ApiError::Forbidden(_)), "{err:?}");
+        let wrong = wrong_code(&setup.secret);
+        // Worded like the login screen's wrong-code message, still Forbidden.
+        let err = api.two_factor_enable(&token, &wrong).await.err().unwrap();
+        assert!(
+            matches!(&err, ApiError::Forbidden(m) if m == WRONG_CODE),
+            "{err:?}"
+        );
+        api.two_factor_enable(&token, &code_at(&setup.secret, 0))
+            .await
+            .unwrap();
+        let err = api
+            .two_factor_regenerate(&token, &wrong)
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            matches!(&err, ApiError::Forbidden(m) if m == WRONG_CODE),
+            "{err:?}"
+        );
+        let err = api.two_factor_disable(&token, &wrong).await.err().unwrap();
+        assert!(
+            matches!(&err, ApiError::Forbidden(m) if m == WRONG_CODE),
+            "{err:?}"
+        );
+        // Other refusals keep the server's words.
+        let err = api
+            .two_factor_setup(&token, "hunter2hunter2")
+            .await
+            .err()
+            .unwrap();
+        assert!(
+            matches!(&err, ApiError::Rejected(m) if m.contains("already on")),
+            "{err:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn early_login_answers_note_the_http_version_too() {
+        let (forbidden, mfa, gone) = (
+            canned_server(
+                "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: 49\r\nConnection: close\r\n\r\n{\"code\":\"forbidden\",\"message\":\"not allowed here\"}",
+            )
+            .await,
+            canned_server(
+                "HTTP/1.1 403 Forbidden\r\nContent-Type: application/json\r\nContent-Length: 55\r\nConnection: close\r\n\r\n{\"code\":\"mfa_required\",\"message\":\"code\",\"ticket\":\"tkt\"}",
+            )
+            .await,
+            canned_server(
+                "HTTP/1.1 410 Gone\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            )
+            .await,
+        );
+        let before = noted();
+        let _ = Api::new(&forbidden).login("alex", "x").await;
+        assert_eq!(noted(), before + 1);
+        let out = Api::new(&mfa).login("alex", "x").await.unwrap();
+        assert!(matches!(out, LoginOutcome::MfaRequired { ticket } if ticket == "tkt"));
+        assert_eq!(noted(), before + 2);
+        let out = Api::new(&gone).login_mfa("tkt", "123456").await.unwrap();
+        assert!(matches!(out, MfaOutcome::Expired));
+        assert_eq!(noted(), before + 3);
     }
 
     /// Answers every request with `reply` verbatim, then closes.
-    async fn canned_server(reply: &'static str) -> (String, ()) {
+    async fn canned_server(reply: &'static str) -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let l = tokio::net::TcpListener::bind("localhost:0").await.unwrap();
         let base = format!("http://localhost:{}", l.local_addr().unwrap().port());
@@ -1397,7 +1486,7 @@ mod tests {
                 });
             }
         });
-        (base, ())
+        base
     }
 
     #[tokio::test]

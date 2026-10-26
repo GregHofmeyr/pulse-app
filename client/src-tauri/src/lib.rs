@@ -179,6 +179,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             commands::login,
             commands::login_mfa,
+            commands::cancel_login,
             commands::register,
             commands::restore_session,
             commands::logout,

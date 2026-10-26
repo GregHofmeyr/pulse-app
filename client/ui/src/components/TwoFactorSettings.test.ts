@@ -35,6 +35,8 @@ const answers = (status: Status, more: Record<string, () => unknown> = {}) =>
 const OFF = { enabled: false, available: true, recovery_codes_left: 0 }
 const ON = { enabled: true, available: true, recovery_codes_left: 7 }
 const CODES = ['aaaa-bbbb-cccc-dddd', 'eeee-ffff-gggg-hhhh']
+// what the core says for a wrong code here, worded as on the login screen
+const WRONG = "That code didn't work. Check the time on your phone and try again."
 
 beforeEach(() => { invoke.mockReset(); invoke.mockResolvedValue(undefined) })
 const realClipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
@@ -109,12 +111,12 @@ describe('TwoFactorSettings', () => {
   it('a wrong setup code shows the error and stays on the code step', async () => {
     answers(OFF, {
       two_factor_setup: () => ({ secret: 'K', qr: { size: 1, modules: [true] } }),
-      two_factor_enable: () => { throw "That code didn't work." },
+      two_factor_enable: () => { throw WRONG },
     })
     await show()
     click('Set up'); type('input', 'pw'); await submit()
     type('input', '000000'); await submit()
-    expect(document.querySelector('[role=alert]')?.textContent).toBe("That code didn't work.")
+    expect(document.querySelector('[role=alert]')?.textContent).toBe(WRONG)
     expect(document.querySelector('svg')).not.toBeNull()
   })
 
@@ -161,10 +163,10 @@ describe('TwoFactorSettings', () => {
   })
 
   it('turn off with a wrong code shows the error and stays on', async () => {
-    answers(ON, { two_factor_disable: () => { throw "That code didn't work." } })
+    answers(ON, { two_factor_disable: () => { throw WRONG } })
     await show()
     click('Turn off'); type('input', '111111'); await submit()
-    expect(document.querySelector('[role=alert]')?.textContent).toBe("That code didn't work.")
+    expect(document.querySelector('[role=alert]')?.textContent).toBe(WRONG)
     expect(document.querySelector('input')).not.toBeNull()
   })
 
@@ -195,6 +197,18 @@ describe('TwoFactorSettings', () => {
     click('Copy'); await settle(); flushSync()
     expect(text()).toContain("Couldn't copy: select and copy them by hand.")
     expect(button('Copy')).toBeTruthy()
+  })
+
+  it('says it is checking while the status loads', async () => {
+    let answer: (s: Status) => void = () => {}
+    invoke.mockImplementation((cmd: string) =>
+      cmd === 'two_factor_status' ? new Promise((r) => { answer = r }) : Promise.resolve(undefined))
+    await show()
+    expect(document.querySelector('h3')).not.toBeNull()
+    expect(document.querySelector('[role=status]')?.textContent).toBe('Checking…')
+    answer(OFF); await settle(); flushSync()
+    expect(text()).not.toContain('Checking…')
+    expect(button('Set up')).toBeTruthy()
   })
 
   it('a failed status call keeps the heading, shows the error and Try again', async () => {
@@ -242,10 +256,10 @@ describe('TwoFactorSettings', () => {
   })
 
   it('new recovery codes with a wrong code shows the error and shows no codes', async () => {
-    answers(ON, { two_factor_regenerate: () => { throw "That code didn't work." } })
+    answers(ON, { two_factor_regenerate: () => { throw WRONG } })
     await show()
     click('New recovery codes'); type('input', '111111'); await submit()
-    expect(document.querySelector('[role=alert]')?.textContent).toBe("That code didn't work.")
+    expect(document.querySelector('[role=alert]')?.textContent).toBe(WRONG)
     expect(document.querySelector('ul')).toBeNull()
   })
 

@@ -128,6 +128,8 @@
 {#if view === 'status' && !status && error}
   <p class="err" role="alert">{error}</p>
   <button onclick={refresh}>Try again</button>
+{:else if view === 'status' && !status}
+  <p class="hint" role="status">Checking…</p>
 {:else if view === 'status' && status}
   {#if !status.available}
     <p class="hint">Two-factor authentication isn't set up on this server yet.</p>
