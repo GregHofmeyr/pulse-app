@@ -13,7 +13,7 @@ use super::extractor::{AuthUser, BearerToken};
 use super::{invites, password, session};
 use crate::AppState;
 use crate::db::now;
-use crate::error::{AppError, AppResult};
+use crate::error::{AppError, AppResult, Ticket};
 use crate::limits::ClientIp;
 
 pub fn router() -> Router<AppState> {
@@ -210,9 +210,9 @@ async fn check_login(s: &AppState, req: LoginRequest) -> AppResult<Json<SessionR
             .fetch_optional(&s.db)
             .await?;
     if two_factor_on.is_some() {
-        return Err(AppError::MfaRequired(
+        return Err(AppError::MfaRequired(Ticket(
             super::two_factor::issue_ticket(&s.db, id).await?,
-        ));
+        )));
     }
     let token = session::create(&s.db, id).await?;
     Ok(Json(SessionResponse {

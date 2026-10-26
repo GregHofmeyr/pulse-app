@@ -367,14 +367,14 @@ pub async fn issue_ticket(db: &SqlitePool, user: UserId) -> AppResult<String> {
 }
 
 /// The ticket's user, if it exists, is unexpired and has failures left.
-async fn live_ticket(conn: &mut SqliteConnection, hash: &str) -> AppResult<Option<UserId>> {
+async fn live_ticket(db: impl sqlx::SqliteExecutor<'_>, hash: &str) -> AppResult<Option<UserId>> {
     let row: Option<(String,)> = sqlx::query_as(
         "SELECT user_id FROM mfa_tickets WHERE ticket_hash = ? AND expires_at > ? AND failures < ?",
     )
     .bind(hash)
     .bind(now())
     .bind(TICKET_MAX_FAILURES)
-    .fetch_optional(&mut *conn)
+    .fetch_optional(db)
     .await?;
     row.map(|(u,)| u.parse().map_err(anyhow::Error::from).map_err(Into::into))
         .transpose()
@@ -390,20 +390,20 @@ async fn login_second_step(
 ) -> AppResult<Json<SessionResponse>> {
     let key = key(&s)?;
     let hash = hash_ticket(&req.ticket);
-    let user = {
-        let mut conn = s.db.acquire().await?;
-        live_ticket(&mut conn, &hash).await?
-    };
+    let user = live_ticket(&s.db, &hash).await?;
     let Some(user) = user else {
         return limited_by(&s, ip, None, |e| matches!(e, AppError::Gone), async {
             Err(AppError::Gone)
         })
         .await;
     };
-    limited(&s, ip, user, async {
+    // A ticket that dies between the read above and the write lock (used or burnt by a racing
+    // request) is still a 410 guess, so it keeps the spend like a wrong code does.
+    let keeps = |e: &AppError| matches!(e, AppError::Unauthorized | AppError::Gone);
+    limited_by(&s, ip, Some(user), keeps, async {
         let mut tx = crate::db::begin_write(&s.db).await?;
         // Re-read under the write lock: a racing request may have used or burnt the ticket.
-        if live_ticket(&mut tx, &hash).await? != Some(user) {
+        if live_ticket(&mut *tx, &hash).await? != Some(user) {
             return Err(AppError::Gone);
         }
         let ok = if totp::is_totp_shaped(&req.code) {
@@ -412,16 +412,18 @@ async fn login_second_step(
             consume_recovery(&mut tx, user, &req.code).await?
         };
         if !ok {
-            tx.rollback().await?;
+            // The code checks write nothing on failure, so counting the miss in this same
+            // transaction keeps the limit atomic: racing wrong guesses can't all see failures < 5.
             sqlx::query("UPDATE mfa_tickets SET failures = failures + 1 WHERE ticket_hash = ?")
                 .bind(&hash)
-                .execute(&s.db)
+                .execute(&mut *tx)
                 .await?;
             sqlx::query("DELETE FROM mfa_tickets WHERE ticket_hash = ? AND failures >= ?")
                 .bind(&hash)
                 .bind(TICKET_MAX_FAILURES)
-                .execute(&s.db)
+                .execute(&mut *tx)
                 .await?;
+            tx.commit().await?;
             return Err(AppError::Unauthorized);
         }
         let gone = sqlx::query("DELETE FROM mfa_tickets WHERE ticket_hash = ?")

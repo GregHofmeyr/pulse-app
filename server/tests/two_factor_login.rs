@@ -375,3 +375,49 @@ async fn the_password_step_refunds_its_login_limits() {
         429
     );
 }
+
+#[tokio::test]
+async fn concurrent_wrong_codes_cannot_outrun_the_failure_limit() {
+    let app = spawn().await;
+    let (_, secret, _) = alex_with_2fa(&app).await;
+    let t = ticket(&app, "alex").await;
+    let wrong = wrong_code(&secret);
+    for _ in 0..4 {
+        assert_eq!(second_step(&app, &t, &wrong).await.status(), 401);
+    }
+    let rs = futures::future::join_all((0..6).map(|_| second_step(&app, &t, &wrong))).await;
+    let statuses: Vec<_> = rs.iter().map(|r| r.status().as_u16()).collect();
+    assert_eq!(
+        statuses.iter().filter(|s| **s == 401).count(),
+        1,
+        "{statuses:?}"
+    );
+    assert!(
+        statuses.iter().all(|s| [401, 410].contains(s)),
+        "{statuses:?}"
+    );
+    assert_eq!(count(&app, "mfa_tickets").await, 0);
+    assert_eq!(
+        second_step(&app, &t, &code_at(&secret, 1)).await.status(),
+        410
+    );
+}
+
+#[tokio::test]
+async fn unknown_tickets_spend_no_user_bucket() {
+    let app = spawn_with(limited_app(Rate::new(100, 0.0), Rate::new(1, 0.0))).await;
+    let (_, secret, _) = alex_with_2fa(&app).await;
+    for i in 0..4 {
+        assert_eq!(
+            second_step(&app, &format!("guess-{i}"), "123456")
+                .await
+                .status(),
+            410
+        );
+    }
+    let t = ticket(&app, "alex").await;
+    assert_eq!(
+        second_step(&app, &t, &code_at(&secret, 1)).await.status(),
+        200
+    );
+}
