@@ -89,8 +89,9 @@ export const voiceApi = {
       voice.error = errText(e)
     }
   },
-  /** Hovering a voice channel: the core fetches its join token ahead of the click. */
-  prefetch: (channelId: string) => void invoke('prefetch_voice', { channelId }).catch(() => {}),
+  /** Hovering a voice channel: the core fetches its join token ahead of the click. Resolves once
+   *  the core has taken the request (it fetches in the background and keeps the token). */
+  prefetch: (channelId: string): Promise<void> => invoke('prefetch_voice', { channelId }),
   leave: () => invoke('leave_voice'),
   toggleMute: () => invoke('toggle_mute'),
   toggleDeafen: () => invoke('toggle_deafen'),

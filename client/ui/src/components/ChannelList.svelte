@@ -94,7 +94,7 @@
       onmouseenter={() => { if (member && c.id !== voiceChannelId) prefetch.enter(c.id) }}
       onfocus={() => { if (member && c.id !== voiceChannelId) prefetch.enter(c.id) }}
       onmouseleave={() => prefetch.leave(c.id)} onblur={() => prefetch.leave(c.id)}
-      onclick={() => onJoinVoice(c.id)} ondblclick={() => onSelect(c.id)}>
+      onclick={() => { prefetch.cancel(); onJoinVoice(c.id) }} ondblclick={() => onSelect(c.id)}>
       <span class="ico"><Icon name="speaker" size={17} /></span><span class="grow">{c.name}</span>
       {#if people.length}<span class="count">{people.length}</span>{/if}
     </button>

@@ -6,7 +6,7 @@ describe('hoverPrefetch', () => {
   afterEach(() => vi.useRealTimers())
 
   const setup = () => {
-    const fetch = vi.fn()
+    const fetch = vi.fn((_id: string) => Promise.resolve())
     const p = hoverPrefetch(fetch, { now: () => Date.now() })
     return { fetch, p }
   }
@@ -41,10 +41,10 @@ describe('hoverPrefetch', () => {
     expect(fetch).not.toHaveBeenCalled()
   })
 
-  it('does not ask again for a channel prefetched while that token is still fresh', () => {
+  it('does not ask again for a channel prefetched while that token is still fresh', async () => {
     const { fetch, p } = setup()
     p.enter('a')
-    vi.advanceTimersByTime(HOVER_DELAY_MS)
+    await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
     p.leave('a')
     p.enter('a') // hover and focus both fire, or the pointer comes back
     vi.advanceTimersByTime(HOVER_DELAY_MS)
@@ -70,6 +70,44 @@ describe('hoverPrefetch', () => {
     vi.advanceTimersByTime(150)
     p.enter('a')
     vi.advanceTimersByTime(50)
+    expect(fetch).toHaveBeenCalledTimes(1)
+  })
+
+  it('a click cancels the pending prefetch (the join fetches its own token)', () => {
+    const { fetch, p } = setup()
+    p.enter('a')
+    vi.advanceTimersByTime(150)
+    p.cancel() // the row was clicked
+    vi.advanceTimersByTime(1000)
+    expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('a failed prefetch is not remembered: the next rest on the channel asks again', async () => {
+    const fetch = vi.fn((_id: string) => Promise.reject(new Error('offline')))
+    const p = hoverPrefetch(fetch, { now: () => Date.now() })
+    p.enter('a')
+    await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
+    p.leave('a')
+    p.enter('a')
+    await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
+    expect(fetch).toHaveBeenCalledTimes(2)
+  })
+
+  it('a prefetch still in flight is not asked for again', async () => {
+    let done!: () => void
+    const fetch = vi.fn((_id: string) => new Promise<void>((r) => (done = r)))
+    const p = hoverPrefetch(fetch, { now: () => Date.now() })
+    p.enter('a')
+    await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
+    p.leave('a')
+    p.enter('a')
+    await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
+    expect(fetch).toHaveBeenCalledTimes(1)
+    done()
+    await vi.advanceTimersByTimeAsync(0)
+    p.leave('a')
+    p.enter('a')
+    await vi.advanceTimersByTimeAsync(HOVER_DELAY_MS)
     expect(fetch).toHaveBeenCalledTimes(1)
   })
 })
