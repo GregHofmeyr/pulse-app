@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte'
   import Select from './Select.svelte'
   import Segmented from './Segmented.svelte'
+  import SoundSettings from './SoundSettings.svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { loadAudioConfig, saveAudioConfig, type AudioConfig, type NsLevel } from '../lib/voiceui'
 
@@ -137,6 +138,8 @@
     </div>
   {/each}
 </div>
+
+<SoundSettings />
 </section>
 
 <style>
@@ -159,9 +162,5 @@
   .toggles { display: flex; flex-direction: column; }
   .row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid #26282e; }
   .row > div { flex: 1; display: flex; flex-direction: column; gap: 2px; }
-  .switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; border: 0; border-radius: 12px; padding: 0; background: #3a3c44; }
-  .switch span { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #b9bcc6; transition: left .12s; }
-  .switch.on { background: var(--accent); }
-  .switch.on span { left: 23px; background: var(--on-accent); }
   .row.auto { padding: 0; border: 0; }
 </style>

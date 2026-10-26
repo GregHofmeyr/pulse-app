@@ -2,7 +2,63 @@ import { invoke } from '@tauri-apps/api/core'
 // Pure helpers for the voice UI (tested in voiceui.test.ts).
 
 export type Flags = { muted: boolean; deafened: boolean }
-export type SoundName = 'join' | 'leave' | 'mute' | 'unmute' | 'deafen' | 'undeafen' | 'message'
+export type SoundName =
+  | 'join' | 'leave' | 'mute' | 'unmute' | 'deafen' | 'undeafen' | 'message' | 'live' | 'live_end'
+
+/** The events, in display order. */
+export const SOUND_NAMES: readonly SoundName[] = [
+  'join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'message', 'live', 'live_end',
+]
+export const SOUND_LABELS: Record<SoundName, string> = {
+  join: 'Join a call',
+  leave: 'Leave a call',
+  mute: 'Mute',
+  unmute: 'Unmute',
+  deafen: 'Deafen',
+  undeafen: 'Undeafen',
+  message: 'New message',
+  live: 'Someone goes live',
+  live_end: 'A stream ends',
+}
+
+export type SoundSetId =
+  | 'classic' | 'twostep-bright' | 'twostep-warm' | 'twostep-deep'
+  | 'minimal-soft' | 'minimal-wood' | 'minimal-glass' | 'goofy'
+export const SOUND_SETS: readonly { id: SoundSetId; label: string; blurb: string }[] = [
+  { id: 'classic', label: 'Classic', blurb: 'Soft sine chirps, the original sounds.' },
+  { id: 'twostep-bright', label: 'Two-step · Bright', blurb: 'Two quick high notes, rising for on and falling for off.' },
+  { id: 'twostep-warm', label: 'Two-step · Warm', blurb: 'The same two-note shape, mid register with a rounder tone.' },
+  { id: 'twostep-deep', label: 'Two-step · Deep', blurb: 'The same two-note shape, low and full.' },
+  { id: 'minimal-soft', label: 'Minimal · Soft', blurb: 'One short, soft note per event.' },
+  { id: 'minimal-wood', label: 'Minimal · Wood', blurb: 'One short plucked, woody note.' },
+  { id: 'minimal-glass', label: 'Minimal · Glass', blurb: 'One short, bell-like note.' },
+  { id: 'goofy', label: 'Goofy', blurb: "Playful bleeps and zaps from Kenney's free packs." },
+]
+
+export type SoundPrefs = { set: SoundSetId; volume_pct: number; off: SoundName[] }
+export const defaultSoundPrefs: SoundPrefs = { set: 'classic', volume_pct: 100, off: [] }
+
+/** Clean whatever is in storage: anything unexpected falls back to the default for that field. */
+export function normalizeSoundPrefs(raw: unknown): SoundPrefs {
+  if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) return { ...defaultSoundPrefs, off: [] }
+  const r = raw as Record<string, unknown>
+  const set = SOUND_SETS.find((s) => s.id === r.set)?.id ?? defaultSoundPrefs.set
+  const volume_pct =
+    typeof r.volume_pct === 'number' && Number.isFinite(r.volume_pct)
+      ? Math.round(Math.min(100, Math.max(0, r.volume_pct)))
+      : defaultSoundPrefs.volume_pct
+  const off = Array.isArray(r.off) ? SOUND_NAMES.filter((n) => (r.off as unknown[]).includes(n)) : []
+  return { set, volume_pct, off }
+}
+export function loadSoundPrefs(): SoundPrefs {
+  try {
+    const raw = localStorage.getItem('pulse.sounds')
+    return normalizeSoundPrefs(raw ? JSON.parse(raw) : null)
+  } catch {
+    return normalizeSoundPrefs(null)
+  }
+}
+export const saveSoundPrefs = (p: SoundPrefs) => save('pulse.sounds', p)
 
 export type Connection = 'connecting' | 'connected' | 'reconnecting' | 'disconnected'
 export type NsLevel = 'off' | 'standard' | 'strong'
@@ -62,10 +118,37 @@ export function transitionSounds(prev: VoiceSnap, next: VoiceSnap): SoundName[] 
   return out
 }
 
+function invokeSound(name: SoundName, set: SoundSetId, volume_pct: number) {
+  // on the output chosen in settings, like voice (null = system default)
+  void invoke('play_sound', { name, set, volume: volume_pct / 100, output: loadAudioConfig().output }).catch(() => {})
+}
+
 /** Played by the Rust core (never an <audio> element: WebKitGTK + missing GStreamer sink aborts the renderer). */
 export function playSound(name: SoundName) {
-  // on the output chosen in settings, like voice (null = system default)
-  void invoke('play_sound', { name, output: loadAudioConfig().output }).catch(() => {})
+  const { set, volume_pct, off } = loadSoundPrefs()
+  if (volume_pct === 0 || off.includes(name)) return
+  invokeSound(name, set, volume_pct)
+}
+
+/** What "Preview" plays: a few events, in a row. */
+export const PREVIEW: readonly SoundName[] = ['join', 'mute', 'unmute', 'live', 'leave']
+export const PREVIEW_GAP_MS = 450
+let previewTimers: ReturnType<typeof setTimeout>[] = []
+
+export function stopPreview() {
+  previewTimers.forEach(clearTimeout)
+  previewTimers = []
+}
+
+/** Plays PREVIEW in `set` at the current volume, ignoring the per-event switches. Replaces a running preview. */
+export function previewSet(set: SoundSetId) {
+  stopPreview()
+  const { volume_pct } = loadSoundPrefs()
+  if (volume_pct === 0) return
+  PREVIEW.forEach((name, i) => {
+    if (i === 0) invokeSound(name, set, volume_pct)
+    else previewTimers.push(setTimeout(() => invokeSound(name, set, volume_pct), i * PREVIEW_GAP_MS))
+  })
 }
 
 // Per-machine preferences (not shared state): safe in localStorage, guarded for private modes.

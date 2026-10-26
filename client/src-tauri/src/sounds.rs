@@ -8,18 +8,53 @@ pub struct Sound {
     pub samples: Vec<f32>,
 }
 
-fn bytes(name: &str) -> Option<&'static [u8]> {
-    Some(match name {
-        "join" => include_bytes!("../sounds/join.wav"),
-        "leave" => include_bytes!("../sounds/leave.wav"),
-        "mute" => include_bytes!("../sounds/mute.wav"),
-        "unmute" => include_bytes!("../sounds/unmute.wav"),
-        "deafen" => include_bytes!("../sounds/deafen.wav"),
-        "undeafen" => include_bytes!("../sounds/undeafen.wav"),
-        "message" => include_bytes!("../sounds/message.wav"),
-        _ => return None,
-    })
+/// Every set × event is embedded from `sounds/<set>/<name>.wav`. `SETS` and `NAMES` come from the
+/// same invocation as the lookup table, so the lists and the table cannot drift.
+macro_rules! sound_table {
+    (sets: [$($set:literal),+ $(,)?]; names: $names:tt) => {
+        pub const SETS: &[&str] = &[$($set),+];
+
+        sound_table!(@names $names);
+
+        fn bytes(set: &str, name: &str) -> Option<&'static [u8]> {
+            sound_table!(@set set, name; $($set),+; $names)
+        }
+    };
+    (@names [$($name:literal),+ $(,)?]) => {
+        /// The events, in the order the settings list shows them.
+        pub const NAMES: &[&str] = &[$($name),+];
+    };
+    (@set $s:ident, $n:ident; $($set:literal),+; $names:tt) => {
+        match $s {
+            $($set => sound_table!(@name $set, $n; $names),)+
+            _ => None,
+        }
+    };
+    (@name $set:literal, $n:ident; [$($name:literal),+ $(,)?]) => {
+        match $n {
+            $($name => Some(include_bytes!(concat!("../sounds/", $set, "/", $name, ".wav")) as &[u8]),)+
+            _ => None,
+        }
+    };
 }
+
+sound_table!(
+    sets: [
+        "classic",
+        "twostep-bright",
+        "twostep-warm",
+        "twostep-deep",
+        "minimal-soft",
+        "minimal-wood",
+        "minimal-glass",
+        "goofy",
+    ];
+    names: [
+        "join", "leave", "mute", "unmute", "deafen", "undeafen", "message", "live", "live_end",
+    ]
+);
+
+pub const DEFAULT_SET: &str = "classic";
 
 /// Minimal PCM16 WAV reader (our own generated files: RIFF/WAVE, fmt, data; mono or stereo).
 pub fn decode_wav(b: &[u8]) -> Option<Sound> {
@@ -66,8 +101,11 @@ pub fn decode_wav(b: &[u8]) -> Option<Sound> {
 /// hundred ms to wake, and would swallow the short ping otherwise.
 pub const LEAD_IN_MS: u32 = 450;
 
-pub fn load(name: &str) -> Option<Sound> {
-    let mut s = bytes(name).and_then(decode_wav)?;
+/// An unknown set plays as `DEFAULT_SET`; an unknown name is `None`.
+pub fn load(set: &str, name: &str) -> Option<Sound> {
+    let mut s = bytes(set, name)
+        .or_else(|| bytes(DEFAULT_SET, name))
+        .and_then(decode_wav)?;
     if name == "message" {
         let lead = (s.rate as usize * LEAD_IN_MS as usize) / 1000;
         s.samples.splice(0..0, std::iter::repeat_n(0.0, lead));
@@ -76,6 +114,14 @@ pub fn load(name: &str) -> Option<Sound> {
 }
 
 const VOLUME: f32 = 0.6;
+
+/// The user's sound volume (0.0-1.0) from a command argument: missing or NaN is full, the rest is clamped.
+pub fn gain(volume: Option<f32>) -> f32 {
+    match volume {
+        Some(v) if !v.is_nan() => v.clamp(0.0, 1.0),
+        _ => 1.0,
+    }
+}
 
 /// The last device looked up by name: finding one by name enumerates every device (~20 ms on
 /// ALSA), per sound. The system default isn't cached: it can change under us.
@@ -112,8 +158,13 @@ static DEVICES: std::sync::LazyLock<NameCache<cpal::Device>> =
 
 /// Fire-and-forget on a short-lived thread (cpal streams are !Send). Failures are silent: sounds are a nicety.
 /// On `output` (a device name from settings; missing or unplugged = the system default).
-pub fn play(name: &str, output: Option<String>) {
-    let Some(sound) = load(name) else { return };
+/// `volume` (0.0-1.0, clamped) scales the fixed gain; 0 plays nothing.
+pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
+    let volume = gain(Some(volume));
+    if volume <= 0.0 {
+        return;
+    }
+    let Some(sound) = load(set, name) else { return };
     let _ = std::thread::Builder::new()
         .name("pulse-sound".into())
         .spawn(move || {
@@ -129,7 +180,7 @@ pub fn play(name: &str, output: Option<String>) {
                 .get(output.as_deref(), exact)
                 .or_else(|| find_device(false, None).ok());
             if let Some(dev) = chosen
-                && play_on(&dev, &sound)
+                && play_on(&dev, &sound, volume)
             {
                 return;
             }
@@ -138,13 +189,13 @@ pub fn play(name: &str, output: Option<String>) {
             if output.is_some()
                 && let Ok(dev) = find_device(false, None)
             {
-                play_on(&dev, &sound);
+                play_on(&dev, &sound, volume);
             }
         });
 }
 
 /// Play `sound` on `dev` to the end (blocking). False if the device wouldn't open.
-fn play_on(dev: &cpal::Device, sound: &Sound) -> bool {
+fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32) -> bool {
     let Ok(cfg) = dev.default_output_config() else {
         return false;
     };
@@ -162,7 +213,7 @@ fn play_on(dev: &cpal::Device, sound: &Sound) -> bool {
         let a = samples[j.min(samples.len() - 1)];
         let b = samples[(j + 1).min(samples.len() - 1)];
         pos += 1;
-        Some((a + (b - a) * frac) * VOLUME)
+        Some((a + (b - a) * frac) * VOLUME * volume)
     };
     let stream = crate::voice::devices::build_output(dev, &cfg, move |d: &mut [f32], _| {
         for f in d.chunks_mut(ch) {
@@ -210,16 +261,158 @@ mod tests {
     }
 
     #[test]
-    fn every_bundled_sound_decodes() {
-        for name in [
-            "join", "leave", "mute", "unmute", "deafen", "undeafen", "message",
-        ] {
-            let s = load(name).unwrap_or_else(|| panic!("{name} missing"));
-            assert_eq!(s.rate, 22_050);
-            assert!(s.samples.len() > 1000, "{name} too short");
-            assert!(s.samples.iter().any(|v| v.abs() > 0.1), "{name} silent");
+    fn every_set_has_every_event() {
+        for set in SETS {
+            for name in NAMES {
+                let s = load(set, name).unwrap_or_else(|| panic!("{set}/{name} missing"));
+                assert_eq!(s.rate, 22_050, "{set}/{name}");
+                assert!(
+                    s.samples.iter().any(|v| v.abs() > 0.1),
+                    "{set}/{name} silent"
+                );
+            }
         }
-        assert!(load("nope").is_none());
+    }
+
+    fn sounds_dir() -> std::path::PathBuf {
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("sounds")
+    }
+
+    /// (set dir name, sorted file names without extension) for every set on disk.
+    fn sets_on_disk() -> Vec<(String, Vec<String>)> {
+        let mut sets: Vec<_> = std::fs::read_dir(sounds_dir())
+            .unwrap()
+            .map(|e| e.unwrap())
+            .map(|e| {
+                assert!(e.path().is_dir(), "stray file {:?} in sounds/", e.path());
+                let mut files: Vec<String> = std::fs::read_dir(e.path())
+                    .unwrap()
+                    .map(|f| f.unwrap().file_name().into_string().unwrap())
+                    .collect();
+                files.sort();
+                (e.file_name().into_string().unwrap(), files)
+            })
+            .collect();
+        sets.sort();
+        sets
+    }
+
+    /// (channels, sample rate, bits per sample) from the `fmt ` chunk, found by walking the chunks
+    /// (it need not sit at a fixed offset).
+    fn wav_format(b: &[u8]) -> Option<(u16, u32, u16)> {
+        if b.len() < 12 || &b[0..4] != b"RIFF" || &b[8..12] != b"WAVE" {
+            return None;
+        }
+        let mut i = 12;
+        while i + 8 <= b.len() {
+            let len = u32::from_le_bytes(b[i + 4..i + 8].try_into().ok()?) as usize;
+            let body = b.get(i + 8..i + 8 + len)?;
+            if &b[i..i + 4] == b"fmt " && len >= 16 {
+                return Some((
+                    u16::from_le_bytes(body[2..4].try_into().ok()?),
+                    u32::from_le_bytes(body[4..8].try_into().ok()?),
+                    u16::from_le_bytes(body[14..16].try_into().ok()?),
+                ));
+            }
+            i += 8 + len + (len & 1);
+        }
+        None
+    }
+
+    #[test]
+    fn wav_format_finds_fmt_after_another_chunk() {
+        let mut fmt = Vec::new();
+        fmt.extend_from_slice(&1u16.to_le_bytes()); // PCM
+        fmt.extend_from_slice(&2u16.to_le_bytes()); // channels
+        fmt.extend_from_slice(&44_100u32.to_le_bytes());
+        fmt.extend_from_slice(&176_400u32.to_le_bytes());
+        fmt.extend_from_slice(&4u16.to_le_bytes());
+        fmt.extend_from_slice(&16u16.to_le_bytes());
+        let mut b = b"RIFF\0\0\0\0WAVE".to_vec();
+        b.extend_from_slice(b"LIST");
+        b.extend_from_slice(&3u32.to_le_bytes());
+        b.extend_from_slice(b"abc\0"); // odd length + pad byte
+        b.extend_from_slice(b"fmt ");
+        b.extend_from_slice(&16u32.to_le_bytes());
+        b.extend_from_slice(&fmt);
+        assert_eq!(wav_format(&b), Some((2, 44_100, 16)));
+        assert_eq!(wav_format(b"RIFF\0\0\0\0WAVE"), None, "no fmt chunk");
+    }
+
+    #[test]
+    fn wav_files_are_mono_pcm16_22050() {
+        let mut n = 0;
+        for (set, files) in sets_on_disk() {
+            for f in files {
+                let b = std::fs::read(sounds_dir().join(&set).join(&f)).unwrap();
+                let (channels, rate, bits) =
+                    wav_format(&b).unwrap_or_else(|| panic!("{set}/{f}: no RIFF/WAVE fmt chunk"));
+                assert_eq!((channels, bits, rate), (1, 16, 22_050), "{set}/{f} header");
+                n += 1;
+            }
+        }
+        assert_eq!(n, SETS.len() * NAMES.len(), "every file checked");
+    }
+
+    #[test]
+    fn every_sound_dir_is_a_set_and_holds_exactly_the_events() {
+        let on_disk = sets_on_disk();
+        let names: Vec<&str> = on_disk.iter().map(|(s, _)| s.as_str()).collect();
+        let mut want: Vec<&str> = SETS.to_vec();
+        want.sort();
+        assert_eq!(names, want, "sets on disk vs SETS");
+        let mut events: Vec<String> = NAMES.iter().map(|n| format!("{n}.wav")).collect();
+        events.sort();
+        for (set, files) in on_disk {
+            assert_eq!(files, events, "files in {set}");
+        }
+    }
+
+    #[test]
+    fn durations_are_within_bounds() {
+        for set in SETS {
+            let max = if set.starts_with("minimal-") {
+                0.2
+            } else if *set == "goofy" {
+                0.5
+            } else {
+                0.35 // classic, twostep-*
+            };
+            for name in NAMES {
+                // measure the file itself, not the message lead-in
+                let s = bytes(set, name).and_then(decode_wav).unwrap();
+                let secs = s.samples.len() as f32 / s.rate as f32;
+                assert!(secs >= 0.03, "{set}/{name} is {secs}s, under 0.03s");
+                assert!(secs <= max, "{set}/{name} is {secs}s, over {max}s");
+            }
+        }
+    }
+
+    #[test]
+    fn sounds_fit_the_size_budget() {
+        let total: u64 = sets_on_disk()
+            .iter()
+            .flat_map(|(s, fs)| fs.iter().map(move |f| sounds_dir().join(s).join(f)))
+            .map(|p| std::fs::metadata(p).unwrap().len())
+            .sum();
+        assert!(total <= 1_200_000, "sounds total {total} bytes");
+    }
+
+    #[test]
+    fn unknown_set_falls_back_to_classic() {
+        let a = load("nope", "join").unwrap();
+        let b = load(DEFAULT_SET, "join").unwrap();
+        assert_eq!(a.samples, b.samples);
+        assert!(load("classic", "nope").is_none());
+    }
+
+    #[test]
+    fn gain_clamps() {
+        assert_eq!(gain(None), 1.0);
+        assert_eq!(gain(Some(2.0)), 1.0);
+        assert_eq!(gain(Some(-1.0)), 0.0);
+        assert_eq!(gain(Some(f32::NAN)), 1.0);
+        assert_eq!(gain(Some(0.5)), 0.5);
     }
 
     #[test]
@@ -237,21 +430,148 @@ mod tests {
     /// voice keeps the device awake).
     #[test]
     fn message_sound_starts_with_wake_up_silence() {
-        let m = load("message").unwrap();
-        let lead = (m.rate as usize * LEAD_IN_MS as usize) / 1000;
-        assert!(
-            m.samples[..lead].iter().all(|v| *v == 0.0),
-            "lead-in must be silent"
-        );
-        assert!(
-            m.samples[lead..].iter().any(|v| v.abs() > 0.1),
-            "the ping follows"
-        );
-        let j = load("join").unwrap();
-        assert!(
-            j.samples[..200].iter().any(|v| v.abs() > 0.0001) || j.samples.len() < lead,
-            "join has no lead-in"
-        );
+        for set in SETS {
+            let m = load(set, "message").unwrap();
+            let lead = (m.rate as usize * LEAD_IN_MS as usize) / 1000;
+            assert!(
+                m.samples[..lead].iter().all(|v| *v == 0.0),
+                "{set}: lead-in must be silent"
+            );
+            assert!(
+                m.samples[lead..].iter().any(|v| v.abs() > 0.1),
+                "{set}: the ping follows"
+            );
+            let j = load(set, "join").unwrap();
+            assert!(
+                j.samples[..200].iter().any(|v| v.abs() > 0.0001) || j.samples.len() < lead,
+                "{set}: join has no lead-in"
+            );
+        }
+    }
+
+    /// The file's samples, without the message lead-in.
+    fn raw(set: &str, name: &str) -> Vec<f32> {
+        bytes(set, name).and_then(decode_wav).unwrap().samples
+    }
+
+    /// The samples from the first to the last one with |s| >= 2 % of the peak.
+    fn active(s: &[f32]) -> &[f32] {
+        let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
+        let on = |v: &&f32| v.abs() >= 0.02 * peak;
+        let first = s.iter().position(|v| on(&v)).unwrap();
+        let last = s.iter().rposition(|v| on(&v)).unwrap();
+        &s[first..=last]
+    }
+
+    fn active_rms(s: &[f32]) -> f32 {
+        let a = active(s);
+        (a.iter().map(|v| v * v).sum::<f32>() / a.len() as f32).sqrt()
+    }
+
+    /// Sign changes per sample (exact zeros don't count as a sign).
+    fn zcr(s: &[f32]) -> f32 {
+        let (mut last, mut n) = (0f32, 0u32);
+        for v in s.iter().filter(|v| **v != 0.0) {
+            if last != 0.0 && (*v > 0.0) != (last > 0.0) {
+                n += 1;
+            }
+            last = *v;
+        }
+        n as f32 / s.len() as f32
+    }
+
+    fn db(a: f32, b: f32) -> f32 {
+        20.0 * (a / b).log10()
+    }
+
+    #[test]
+    fn loudness_matches_classic() {
+        for set in SETS.iter().filter(|s| **s != "classic") {
+            // (offset from Classic in dB, tolerance in dB)
+            let (offset, tol) = if set.starts_with("minimal-") {
+                (-6.0, 1.5)
+            } else if *set == "goofy" {
+                (0.0, 3.0)
+            } else {
+                (0.0, 1.5)
+            };
+            for name in NAMES {
+                let s = raw(set, name);
+                let delta = db(active_rms(&s), active_rms(&raw("classic", name)));
+                assert!(
+                    (delta - offset).abs() <= tol,
+                    "{set}/{name} is {delta:.2} dB vs Classic, want {offset} +/- {tol}"
+                );
+                let peak = s.iter().fold(0f32, |m, v| m.max(v.abs()));
+                assert!(peak <= 0.98, "{set}/{name} peaks at {peak}");
+            }
+        }
+    }
+
+    #[test]
+    fn twostep_rises_for_on_and_falls_for_off() {
+        for set in SETS.iter().filter(|s| s.starts_with("twostep-")) {
+            for (name, rises) in [
+                ("join", true),
+                ("unmute", true),
+                ("undeafen", true),
+                ("live", true),
+                ("leave", false),
+                ("mute", false),
+                ("deafen", false),
+                ("live_end", false),
+            ] {
+                let s = raw(set, name);
+                let a = active(&s);
+                let k = a.len() * 2 / 5;
+                let (first, last) = (zcr(&a[..k]), zcr(&a[a.len() - k..]));
+                if rises {
+                    assert!(
+                        last > first * 1.1,
+                        "{set}/{name} should rise: {first} -> {last}"
+                    );
+                } else {
+                    assert!(
+                        first > last * 1.1,
+                        "{set}/{name} should fall: {first} -> {last}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn minimal_on_events_are_higher_than_off() {
+        for set in SETS.iter().filter(|s| s.starts_with("minimal-")) {
+            for (on, off) in [
+                ("join", "leave"),
+                ("unmute", "mute"),
+                ("undeafen", "deafen"),
+                ("live", "live_end"),
+            ] {
+                let (a, b) = (raw(set, on), raw(set, off));
+                let (a, b) = (zcr(active(&a)), zcr(active(&b)));
+                assert!(
+                    a > b * 1.05,
+                    "{set}: {on} ({a}) should be above {off} ({b})"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_two_events_in_a_set_are_identical() {
+        for set in SETS {
+            for (i, a) in NAMES.iter().enumerate() {
+                for b in &NAMES[i + 1..] {
+                    assert_ne!(
+                        bytes(set, a),
+                        bytes(set, b),
+                        "{set}: {a} and {b} are identical"
+                    );
+                }
+            }
+        }
     }
 
     #[test]

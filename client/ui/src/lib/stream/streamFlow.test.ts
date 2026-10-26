@@ -632,3 +632,83 @@ describe('preview encoding', () => {
     expect(await previewBlob(canvas)).toBeNull()
   })
 })
+
+describe('live sounds', () => {
+  const info = (user: string, channel = 'c1') => ({ channel_id: channel, user_id: user, settings: { height: 720, fps: 60, audio: true }, status: 'live', viewers: [], started_at: 't' })
+  const started = (user: string, channel = 'c1') => ({ t: 'StreamStarted', d: { stream: info(user, channel) } }) as never
+  const ended = (user: string, reason: string, channel = 'c1') => ({ t: 'StreamEnded', d: { channel_id: channel, user_id: user, reason } }) as never
+  const played = (name: string) => calls('play_sound').filter((a) => a?.name === name)
+
+  async function inVoice() {
+    const mod = await load()
+    const { voice } = await import('../voice.svelte')
+    voice.channelId = 'c1'
+    return mod
+  }
+
+  it('someone_going_live_in_my_channel_plays_live_once', async () => {
+    const { streamApi } = await inVoice()
+    streamApi.onEvent(started('sam'))
+    expect(played('live')).toHaveLength(1)
+  })
+
+  it('a_restart_re_announce_is_silent', async () => {
+    const { streamApi } = await inVoice()
+    await streamApi.onReady({ me: { id: 'me' }, streams: [] } as never, { c1: { sam: info('sam') } } as never)
+    streamApi.onEvent(started('sam'))
+    expect(played('live')).toEqual([])
+  })
+
+  it('my_own_start_is_silent', async () => {
+    const { streamApi } = await inVoice()
+    streamApi.onEvent(started('me'))
+    expect(played('live')).toEqual([])
+  })
+
+  it('a_start_in_another_channel_is_silent', async () => {
+    const { streamApi } = await inVoice()
+    streamApi.onEvent(started('sam', 'c2'))
+    expect(played('live')).toEqual([])
+  })
+
+  it('a_watched_stream_ending_in_my_channel_plays_live_end_once', async () => {
+    const { streamApi } = await inVoice()
+    fake.connect = async () => fakeRoom()
+    await streamApi.watch('c1', 'sam')
+    streamApi.onEvent(ended('sam', 'stopped'))
+    await settle()
+    expect(played('live_end')).toHaveLength(1)
+  })
+
+  it('a_watched_stream_ending_in_another_channel_plays_live_end_once', async () => {
+    // only `watching` makes it audible: it must be read before onStreamEnded drops the watch
+    const { streamApi, stream } = await inVoice()
+    stream.watching = [{ channelId: 'c2', streamer: 'sam', quality: 'auto', view: 'preview' }]
+    streamApi.onEvent(ended('sam', 'stopped', 'c2'))
+    await settle()
+    expect(stream.watching).toEqual([])
+    expect(played('live_end')).toHaveLength(1)
+  })
+
+  it('an_unwatched_stream_ending_in_another_channel_is_silent', async () => {
+    const { streamApi } = await inVoice()
+    streamApi.onEvent(ended('sam', 'stopped', 'c2'))
+    await settle()
+    expect(played('live_end')).toEqual([])
+  })
+
+  it('my_own_stop_is_silent_but_a_server_end_plays', async () => {
+    const { streamApi } = await inVoice()
+    streamApi.onEvent(ended('me', 'stopped'))
+    expect(played('live_end')).toEqual([])
+    streamApi.onEvent(ended('me', 'timed_out'))
+    expect(played('live_end')).toHaveLength(1)
+  })
+
+  it('live_end_off_in_the_prefs_is_silent', async () => {
+    localStorage.setItem('pulse.sounds', JSON.stringify({ set: 'classic', volume_pct: 100, off: ['live_end'] }))
+    const { streamApi } = await inVoice()
+    streamApi.onEvent(ended('sam', 'stopped'))
+    expect(played('live_end')).toEqual([])
+  })
+})

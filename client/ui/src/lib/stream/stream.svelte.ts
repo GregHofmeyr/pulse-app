@@ -10,12 +10,12 @@ import type { AppState } from '../state'
 import { app } from '../store.svelte'
 import { errorText, streamCmd } from '../tauri'
 import { voice } from '../voice.svelte'
-import { clampVolume } from '../voiceui'
+import { clampVolume, playSound } from '../voiceui'
 import { diag, startDiagnostics } from './diag.svelte'
 import type { Fps, Res } from './encodings'
 import { loadAudioMuted, loadStreamVolumes, saveAudioMuted, saveStreamVolumes, type GoLive } from './prefs'
 import { StreamRoom } from './room'
-import { admit, layerFor, toastFor, type Quality, type View } from './viewer'
+import { admit, layerFor, liveEndSound, toastFor, type Quality, type View } from './viewer'
 import { removeToast, showToast } from './viewer.svelte'
 
 type Live = { channelId: string; res: Res; fps: Fps; audio: boolean; audioMuted: boolean; label: string; encoderWarning: boolean }
@@ -546,12 +546,19 @@ export const streamApi = {
       const back = Date.now() - (vanished.get(k) ?? -Infinity) < BACK_WITHIN_MS
       vanished.delete(k)
       // a stream re-announced after a server restart isn't news
-      if (!back && toastFor({ channelId, streamer }, voice.channelId, meId())) showToast({ channelId, streamer, name: nameOf(channelId, streamer) })
+      if (!back && toastFor({ channelId, streamer }, voice.channelId, meId())) {
+        showToast({ channelId, streamer, name: nameOf(channelId, streamer) })
+        playSound('live')
+      }
       // only a restart re-starts a stream we watch (a real stop ends the watch first): the
       // restarted server lost its viewers, so list us again
       if (findWatch(channelId, streamer)) void streamCmd.watch(channelId, streamer).catch(logError('rewatch_error'))
     } else if (e.t === 'StreamEnded') {
       removeToast(e.d.channel_id, e.d.user_id)
+      // before onStreamEnded ends the watch
+      const watching = !!findWatch(e.d.channel_id, e.d.user_id)
+      const ending = { channelId: e.d.channel_id, userId: e.d.user_id, reason: e.d.reason }
+      if (liveEndSound(ending, { voiceChannelId: voice.channelId, meId: meId(), watching })) playSound('live_end')
       void streamApi.onStreamEnded(e.d.channel_id, e.d.user_id, e.d.reason)
     }
   },

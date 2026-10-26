@@ -177,11 +177,6 @@
   .key:disabled { opacity: .4; }
   .master > div { flex: 1; display: flex; flex-direction: column; gap: 2px; }
   .master small { line-height: 1.4; }
-  .switch { position: relative; width: 44px; height: 24px; flex-shrink: 0; border: 0; border-radius: 12px; padding: 0; background: #3a3c44; }
-  .switch span { position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: #b9bcc6; transition: left .12s; }
-  .switch.on { background: var(--accent); }
-  .switch.on span { left: 23px; background: var(--on-accent); }
-  .switch:disabled { opacity: .5; }
   .clear { width: 32px; height: 32px; border-radius: 50%; border: 0; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .clear:disabled { opacity: .3; }
   small { font-size: 12px; color: var(--text-3); }

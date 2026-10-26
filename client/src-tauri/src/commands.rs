@@ -1004,8 +1004,14 @@ pub fn hotkey(app: &AppHandle, c: crate::ipc::Command) {
 
 /// UI sound, played natively (see sounds.rs for why not in the webview).
 #[tauri::command]
-pub async fn play_sound(name: String, output: Option<String>) {
-    crate::sounds::play(&name, output);
+pub async fn play_sound(
+    name: String,
+    set: Option<String>,
+    volume: Option<f32>,
+    output: Option<String>,
+) {
+    let set = set.as_deref().unwrap_or(crate::sounds::DEFAULT_SET);
+    crate::sounds::play(set, &name, crate::sounds::gain(volume), output);
 }
 
 #[tauri::command]

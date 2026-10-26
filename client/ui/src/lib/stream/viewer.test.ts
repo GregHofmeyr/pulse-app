@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { admit, dropToast, layerFor, MAX_TOASTS, pendingWatchReady, pushToast, toastFor, watchDisabledReason, type Toast } from './viewer'
+import { admit, dropToast, layerFor, liveEndSound, MAX_TOASTS, pendingWatchReady, pushToast, toastFor, watchDisabledReason, type Toast } from './viewer'
 
 describe('toastFor', () => {
   it('only_people_in_that_voice_channel_get_the_toast', () => {
@@ -69,5 +69,29 @@ describe('pendingWatchReady', () => {
     expect(pendingWatchReady(k, { channelId: 'c2', connection: 'connected' })).toBe(false)
     expect(pendingWatchReady(k, { channelId: null, connection: 'disconnected' })).toBe(false)
     expect(pendingWatchReady(null, { channelId: 'c1', connection: 'connected' })).toBe(false)
+  })
+})
+
+describe('liveEndSound', () => {
+  const end = (userId: string, reason: 'stopped' | 'left_voice' | 'crashed' | 'timed_out' = 'stopped', channelId = 'c1') => ({ channelId, userId, reason })
+  const st = (voiceChannelId: string | null, watching: boolean) => ({ voiceChannelId, meId: 'me', watching })
+
+  it('someone_elses_stream_in_my_channel_plays', () => {
+    expect(liveEndSound(end('sam'), st('c1', false))).toBe(true)
+  })
+  it('someone_elses_stream_elsewhere_plays_only_when_watched', () => {
+    expect(liveEndSound(end('sam'), st('c2', false))).toBe(false)
+    expect(liveEndSound(end('sam'), st(null, false))).toBe(false)
+    expect(liveEndSound(end('sam'), st('c2', true))).toBe(true)
+  })
+  it('my_own_stream_plays_only_when_the_server_ended_it', () => {
+    expect(liveEndSound(end('me', 'timed_out'), st('c1', false))).toBe(true)
+    expect(liveEndSound(end('me', 'crashed'), st('c1', false))).toBe(true)
+    expect(liveEndSound(end('me', 'stopped'), st('c1', false))).toBe(false)
+    expect(liveEndSound(end('me', 'left_voice'), st('c1', false))).toBe(false)
+  })
+  it('my_own_stream_in_another_channel_is_silent', () => {
+    expect(liveEndSound(end('me', 'timed_out'), st('c2', false))).toBe(false)
+    expect(liveEndSound(end('me', 'crashed'), st(null, false))).toBe(false)
   })
 })

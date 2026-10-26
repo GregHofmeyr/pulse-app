@@ -48,3 +48,15 @@ describe('VoiceSettings noise suppression', () => {
     document.body.innerHTML = ''
   })
 })
+
+describe('VoiceSettings sounds', () => {
+  it('renders the Sounds section', () => {
+    const c = mount(VoiceSettings, { target: document.body })
+    flushSync()
+    expect(document.querySelectorAll('h2').length).toBe(1)
+    expect([...document.querySelectorAll('h3')].map((h) => h.textContent)).toContain('Sounds')
+    expect(document.querySelector('[role=radiogroup][aria-label="Sound set"]')).not.toBeNull()
+    unmount(c)
+    document.body.innerHTML = ''
+  })
+})
