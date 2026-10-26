@@ -539,6 +539,10 @@ async fn stages_arrive_in_order() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     let seen = seen.lock().unwrap().clone();
+    assert!(
+        seen.iter().any(|t| t == "stage:connected"),
+        "stage:connected never arrived: {seen:?}"
+    );
     assert_eq!(
         seen,
         [

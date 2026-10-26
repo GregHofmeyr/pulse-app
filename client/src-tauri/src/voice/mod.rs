@@ -2573,21 +2573,25 @@ mod tests {
         assert_eq!(last, Some(Connection::Disconnected));
     }
 
-    /// `Stage`/`State` events as tags (`stage:connecting`, `stage:reconnecting:2`, `state:disconnected`).
+    /// `Stage`/`State` events as tags (`stage:connecting`, `stage:reconnecting:2`,
+    /// `state:disconnected`), by their wire names.
     fn tags_of(seen: &Mutex<Vec<VoiceEvent>>) -> Vec<String> {
-        let tag = |c: &Connection| format!("{c:?}").to_lowercase();
+        fn wire(v: &impl Serialize) -> String {
+            serde_json::to_value(v)
+                .unwrap()
+                .as_str()
+                .unwrap()
+                .to_string()
+        }
         seen.lock()
             .unwrap()
             .iter()
             .filter_map(|e| match e {
-                VoiceEvent::Stage { stage, attempt } => {
-                    let s = serde_json::to_value(stage).unwrap();
-                    Some(match attempt {
-                        Some(n) => format!("stage:{}:{n}", s.as_str().unwrap()),
-                        None => format!("stage:{}", s.as_str().unwrap()),
-                    })
-                }
-                VoiceEvent::State { connection, .. } => Some(format!("state:{}", tag(connection))),
+                VoiceEvent::Stage { stage, attempt } => Some(match attempt {
+                    Some(n) => format!("stage:{}:{n}", wire(stage)),
+                    None => format!("stage:{}", wire(stage)),
+                }),
+                VoiceEvent::State { connection, .. } => Some(format!("state:{}", wire(connection))),
                 _ => None,
             })
             .collect()
@@ -2599,33 +2603,59 @@ mod tests {
             .unwrap_or_else(|| panic!("no {tag} in {tags:?}"))
     }
 
-    #[tokio::test]
-    async fn a_failed_token_request_stops_after_requesting_access() {
-        let app = testing::spawn().await;
-        let (_, alex) = testing::register(&app, "alex").await;
-        let s = testing::create_server(&app, &alex, "Main").await;
+    /// A manager whose events land in the returned list.
+    fn collecting_manager() -> (VoiceManager, Arc<Mutex<Vec<VoiceEvent>>>) {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let vm = VoiceManager::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
+        (vm, seen)
+    }
+
+    /// alex's token, a client for `app`, and the voice channel of alex's new server.
+    async fn alex_and_a_voice_channel(app: &testing::TestApp) -> (String, Api, ChannelId) {
+        let (_, token) = testing::register(app, "alex").await;
+        let s = testing::create_server(app, &token, "Main").await;
         let api = Api::new(&format!("http://{}", app.addr));
         let lounge = api
-            .channels(&alex, s.id)
+            .channels(&token, s.id)
             .await
             .unwrap()
             .into_iter()
             .find(|c| c.kind == pulse_protocol::rest::ChannelKind::Voice)
             .unwrap();
+        (token, api, lounge.id)
+    }
+
+    /// A config whose LiveKit refuses connections at once.
+    fn unreachable_livekit() -> pulse_server::config::Config {
+        let mut cfg = testing::test_config();
+        cfg.livekit_url = "ws://127.0.0.1:1".into();
+        cfg
+    }
+
+    async fn join_null(
+        vm: &VoiceManager,
+        api: &Api,
+        token: &str,
+        channel: ChannelId,
+    ) -> Result<(), VoiceError> {
+        vm.join(
+            api,
+            token,
+            channel,
+            AudioConfig::default(),
+            AudioMode::Null(48_000),
+        )
+        .await
+    }
+
+    #[tokio::test]
+    async fn a_failed_token_request_stops_after_requesting_access() {
+        let app = testing::spawn().await;
+        let (_, api, lounge) = alex_and_a_voice_channel(&app).await;
         let (_, sam) = testing::register(&app, "sam").await;
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let sink = seen.clone();
-        let vm = VoiceManager::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
-        let r = vm
-            .join(
-                &api,
-                &sam,
-                lounge.id,
-                AudioConfig::default(),
-                AudioMode::Null(48_000),
-            )
-            .await;
-        assert!(r.is_err());
+        let (vm, seen) = collecting_manager();
+        assert!(join_null(&vm, &api, &sam, lounge).await.is_err());
         assert_eq!(
             tags_of(&seen),
             [
@@ -2638,32 +2668,10 @@ mod tests {
 
     #[tokio::test]
     async fn a_failed_connect_stops_after_connecting() {
-        let mut cfg = testing::test_config();
-        cfg.livekit_url = "ws://127.0.0.1:1".into();
-        let app = testing::spawn_with(cfg).await;
-        let (_, token) = testing::register(&app, "alex").await;
-        let s = testing::create_server(&app, &token, "Main").await;
-        let api = Api::new(&format!("http://{}", app.addr));
-        let lounge = api
-            .channels(&token, s.id)
-            .await
-            .unwrap()
-            .into_iter()
-            .find(|c| c.kind == pulse_protocol::rest::ChannelKind::Voice)
-            .unwrap();
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let sink = seen.clone();
-        let vm = VoiceManager::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
-        let r = vm
-            .join(
-                &api,
-                &token,
-                lounge.id,
-                AudioConfig::default(),
-                AudioMode::Null(48_000),
-            )
-            .await;
-        assert!(r.is_err());
+        let app = testing::spawn_with(unreachable_livekit()).await;
+        let (token, api, lounge) = alex_and_a_voice_channel(&app).await;
+        let (vm, seen) = collecting_manager();
+        assert!(join_null(&vm, &api, &token, lounge).await.is_err());
         let tags = tags_of(&seen);
         assert!(
             position(&tags, "stage:requesting_access") < position(&tags, "stage:connecting")
@@ -2678,29 +2686,16 @@ mod tests {
 
     #[tokio::test]
     async fn rejoin_attempts_are_numbered() {
-        let mut cfg = testing::test_config();
-        cfg.livekit_url = "ws://127.0.0.1:1".into();
-        let app = testing::spawn_with(cfg).await;
-        let (_, token) = testing::register(&app, "alex").await;
-        let s = testing::create_server(&app, &token, "Main").await;
-        let api = Api::new(&format!("http://{}", app.addr));
-        let lounge = api
-            .channels(&token, s.id)
-            .await
-            .unwrap()
-            .into_iter()
-            .find(|c| c.kind == pulse_protocol::rest::ChannelKind::Voice)
-            .unwrap();
-        let seen = Arc::new(Mutex::new(Vec::new()));
-        let sink = seen.clone();
-        let mut vm = VoiceManager::new(Arc::new(move |e| sink.lock().unwrap().push(e)));
+        let app = testing::spawn_with(unreachable_livekit()).await;
+        let (token, api, lounge) = alex_and_a_voice_channel(&app).await;
+        let (mut vm, seen) = collecting_manager();
         vm.rejoin_unit = Duration::from_millis(1);
         let vm = Arc::new(vm);
         let runner = {
             let vm = vm.clone();
             tokio::spawn(async move { vm.run_rejoins().await })
         };
-        vm.simulate_drop(&api, &token, lounge.id).await;
+        vm.simulate_drop(&api, &token, lounge).await;
         tokio::time::timeout(Duration::from_secs(10), async {
             while vm.rejoins() < rejoin::MAX_ATTEMPTS || vm.rejoining().is_some() {
                 tokio::time::sleep(Duration::from_millis(10)).await;
