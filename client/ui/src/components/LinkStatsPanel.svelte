@@ -1,13 +1,36 @@
 <script lang="ts">
-  import { clickOutside } from '../lib/actions'
+  import { onMount } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
-  import { detailsText, jitterLevel, lossLevel, pingLevel, sparklinePath, transportLabel } from '../lib/voicelink'
+  import { detailsText, jitterLevel, lossLevel, pingLevel, reading, sparklinePath, transportLabel } from '../lib/voicelink'
 
-  let { channelName, onClose }: { channelName: string; onClose: () => void } = $props()
+  let { channelName, onClose, triggerSelector }: { channelName: string; onClose: (refocus: boolean) => void; triggerSelector: string } = $props()
 
   const link = $derived(voice.link)
   let copied = $state(false)
+  let panel: HTMLElement
+
+  const ping = $derived(reading(link?.rtt_ms ?? null, 0, pingLevel, ' ms'))
+  const jitter = $derived(reading(link?.jitter_ms ?? null, 0, jitterLevel, ' ms'))
+  const loss = $derived(reading(link?.loss_pct ?? null, 1, lossLevel, '%'))
+
+  // a dialog takes focus when it opens; a press outside closes it without stealing focus
+  onMount(() => {
+    panel.focus()
+    const down = (e: PointerEvent) => {
+      const t = e.target as Element
+      if (!panel.contains(t) && !t.closest?.(triggerSelector)) onClose(false)
+    }
+    window.addEventListener('pointerdown', down, true)
+    return () => window.removeEventListener('pointerdown', down, true)
+  })
+
+  // Escape is handled where the focus is, so it never closes the panel for a key meant for another widget
+  function onkeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || e.defaultPrevented) return
+    e.preventDefault()
+    onClose(true)
+  }
 
   // Polling runs only while the panel exists and the window is focused; the cleanup stops it on blur and on close.
   $effect(() => {
@@ -32,14 +55,14 @@
   }
 </script>
 
-<div class="panel" role="dialog" aria-label="Connection details" use:clickOutside={onClose}>
+<div class="panel" role="dialog" aria-label="Connection details" tabindex="-1" bind:this={panel} {onkeydown}>
   <dl>
     <dt>Ping</dt>
-    <dd class="ping {link?.rtt_ms != null ? pingLevel(link.rtt_ms) : ''}">{link?.rtt_ms != null ? `${Math.round(link.rtt_ms)} ms` : '—'}</dd>
+    <dd class="ping {ping.level}">{ping.text}</dd>
     <dt>Jitter</dt>
-    <dd class="jitter {link?.jitter_ms != null ? jitterLevel(link.jitter_ms) : ''}">{link?.jitter_ms != null ? `${Math.round(link.jitter_ms)} ms` : '—'}</dd>
+    <dd class="jitter {jitter.level}">{jitter.text}</dd>
     <dt>Packet loss</dt>
-    <dd class="loss {link?.loss_pct != null ? lossLevel(link.loss_pct) : ''}">{link?.loss_pct != null ? `${Math.round(link.loss_pct * 10) / 10}%` : '—'}</dd>
+    <dd class="loss {loss.level}">{loss.text}</dd>
   </dl>
   <svg class="spark" viewBox="0 0 {W} {H}" role="img" aria-label="Ping over the last 60 seconds" preserveAspectRatio="none">
     {#if path}<path d={path} fill="none" stroke="currentColor" stroke-width="1.5" vector-effect="non-scaling-stroke" />{/if}
@@ -55,7 +78,7 @@
 </div>
 
 <style>
-  .panel { position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 15; padding: 14px; background: var(--bg-1); border: 1px solid var(--bg-4); border-radius: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
+  .panel { outline: none; position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 15; padding: 14px; background: var(--bg-1); border: 1px solid var(--bg-4); border-radius: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
   dl { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 13px; }
   dt { color: var(--text-3); }
   dd { margin: 0; font-weight: 600; text-align: right; overflow-wrap: anywhere; }

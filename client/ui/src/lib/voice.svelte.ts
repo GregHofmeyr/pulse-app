@@ -52,6 +52,8 @@ export async function startVoiceListening() {
       case 'state': {
         const prev = { channelId: voice.channelId, connection: voice.connection, controls: voice.controls }
         for (const snd of transitionSounds(prev, { channelId: e.channel_id, connection: e.connection, controls: e.controls })) playSound(snd)
+        // a report belongs to one call: the next one starts empty
+        if (prev.channelId !== e.channel_id) voice.link = null
         voice.channelId = e.channel_id
         voice.connection = e.connection
         voice.controls = e.controls
@@ -104,6 +106,7 @@ export const voiceApi = {
     voice.joinFailed = null
     voice.leaving = voice.channelId ?? voice.leaving
     voice.joining = channelId
+    voice.link = null
     const seq = ++joinSeq
     voice.stage = { stage: 'requesting_access', attempt: null }
     try {
@@ -114,6 +117,7 @@ export const voiceApi = {
       voice.error = errText(e)
       voice.joinFailed = { channelId, error: errText(e) }
       voice.joining = null
+      voice.link = null
       voice.stage = { stage: 'disconnected', attempt: null }
       return
     }
@@ -148,7 +152,16 @@ export const voiceApi = {
   startMicTest: (config: AudioConfig) => invoke('start_mic_test', { config }),
   stopMicTest: () => invoke('stop_mic_test'),
   /** Link stats tick every second only while the connection panel is open and the window focused. */
-  watchLink: (on: boolean) => invoke('watch_voice_link', { on }),
+  async watchLink(on: boolean) {
+    try {
+      await invoke('watch_voice_link', { on })
+    } catch (e) {
+      console.warn('could not change link watching', e)
+    }
+  },
+  dismissFailure() {
+    voice.joinFailed = null
+  },
   /** Levels are only sent while something shows them: call with true when a meter appears, false when it goes. */
   watchMeters: (on: boolean) => invoke('watch_voice_meters', { on }),
 }

@@ -99,11 +99,11 @@ describe('VoiceStatus', () => {
   it('closing_the_panel_stops_link_polling', async () => {
     await open()
     invoke.mockClear()
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    document.querySelector('[role=dialog]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     flushSync()
     await tick()
     expect(document.querySelector('[role=dialog]')).toBeNull()
-    expect(invoke).toHaveBeenCalledWith('watch_voice_link', { on: false })
+    expect(watchCalls()).toEqual([{ on: false }])
   })
 
   it('unfocused_window_stops_link_polling', async () => {
@@ -144,6 +144,103 @@ describe('VoiceStatus', () => {
     flushSync()
     ;[...document.querySelectorAll('button')].find((b) => b.textContent?.includes('Copy details'))!.click()
     expect(writeText).toHaveBeenCalledWith(expect.stringContaining('Ping: 150 ms'))
+  })
+})
+
+const esc = (el: Element, init: KeyboardEventInit = {}) => el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, ...init }))
+
+describe('VoiceStatus panel behaviour', () => {
+  it('opening_moves_focus_into_the_panel_and_escape_returns_it_to_the_trigger', async () => {
+    await open()
+    const dlg = document.querySelector<HTMLElement>('[role=dialog]')!
+    expect(dlg.contains(document.activeElement)).toBe(true)
+    esc(document.activeElement!)
+    flushSync()
+    expect(document.querySelector('[role=dialog]')).toBeNull()
+    expect(document.activeElement).toBe(trigger())
+  })
+
+  it('escape_meant_for_something_else_does_not_close_the_panel', async () => {
+    await open()
+    esc(document.body)
+    flushSync()
+    expect(document.querySelector('[role=dialog]')).not.toBeNull()
+    const dlg = document.querySelector('[role=dialog]')!
+    const ev = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true })
+    const input = document.createElement('input')
+    dlg.appendChild(input)
+    input.addEventListener('keydown', (e) => e.preventDefault())
+    input.dispatchEvent(ev)
+    flushSync()
+    expect(document.querySelector('[role=dialog]')).not.toBeNull()
+  })
+
+  it('clicking_the_trigger_again_closes_the_panel', async () => {
+    await open()
+    invoke.mockClear()
+    trigger()!.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    trigger()!.click()
+    flushSync()
+    expect(document.querySelector('[role=dialog]')).toBeNull()
+    expect(watchCalls()).toEqual([{ on: false }])
+  })
+
+  it('closing_while_unfocused_emits_no_extra_false', async () => {
+    await open()
+    windowFocus.focused = false
+    flushSync()
+    invoke.mockClear()
+    trigger()!.click()
+    flushSync()
+    expect(document.querySelector('[role=dialog]')).toBeNull()
+    expect(watchCalls()).toEqual([])
+  })
+
+  it('reconnecting_while_open_closes_the_panel_and_stops_polling', async () => {
+    await open()
+    invoke.mockClear()
+    emit({ kind: 'stage', stage: 'reconnecting', attempt: 2 })
+    flushSync()
+    expect(document.querySelector('[role=dialog]')).toBeNull()
+    expect(trigger()).toBeNull()
+    expect(document.body.textContent).toContain('Reconnecting… (attempt 2)')
+    expect(watchCalls()).toEqual([{ on: false }])
+  })
+
+  it('leaving_clears_the_report_so_the_next_call_starts_empty', async () => {
+    await open()
+    emit(link)
+    flushSync()
+    expect(document.querySelector('.ping')?.textContent).toContain('150')
+    emit({ kind: 'state', channel_id: null, connection: 'disconnected', controls: { muted: false, deafened: false } })
+    flushSync()
+    expect(voice.link).toBeNull()
+    await open()
+    expect(document.querySelector('.ping')?.textContent).toBe('—')
+    expect(document.querySelector('.copy')?.hasAttribute('disabled')).toBe(true)
+    expect(document.body.textContent).not.toContain('voice.example.test')
+  })
+
+  it('a_failed_watch_command_is_not_an_unhandled_rejection', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const unhandled = vi.fn()
+    process.on('unhandledRejection', unhandled)
+    invoke.mockImplementation((c: string) => (c === 'watch_voice_link' ? Promise.reject('boom') : Promise.resolve()))
+    await open()
+    await new Promise((r) => setTimeout(r, 10))
+    process.off('unhandledRejection', unhandled)
+    expect(unhandled).not.toHaveBeenCalled()
+    expect(warn).toHaveBeenCalled()
+    warn.mockRestore()
+  })
+
+  it('the_failed_state_can_be_dismissed', () => {
+    voice.joinFailed = { channelId: 'V1', error: 'nope' }
+    flushSync()
+    document.querySelector<HTMLButtonElement>('button[aria-label=Dismiss]')!.click()
+    flushSync()
+    expect(voice.joinFailed).toBeNull()
+    expect(document.querySelector('.vc')).toBeNull()
   })
 })
 
