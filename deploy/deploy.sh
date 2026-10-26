@@ -10,6 +10,10 @@ set_env() {
     # '|' as the sed delimiter: image references contain '/', never '|'
     sed -i "s|^${key}=.*|${key}=${value}|" "$file"
   else
+    # a file without a trailing newline would glue KEY onto its last line
+    if [ -s "$file" ] && [ -n "$(tail -c1 "$file")" ]; then
+      echo >>"$file"
+    fi
     printf '%s=%s\n' "$key" "$value" >>"$file"
   fi
 }
@@ -24,7 +28,7 @@ cd /srv/pulse
 # PULSE_IMAGE from the shell wins over .env, so this pulls TAG and not the previously pinned digest.
 PULSE_IMAGE=$repo:$tag docker compose pull -q
 # Pin to the digest of what was just pulled, so compose runs exactly this image even if the tag moves.
-digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$repo:$tag" | grep "^$repo@sha256:" | head -n1)
+digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$repo:$tag" | grep "^$repo@sha256:" | head -n1 || true)
 if [ -z "$digest" ]; then
   echo "no registry digest for $repo:$tag; refusing to deploy an unpinned image" >&2
   exit 1
