@@ -8,8 +8,7 @@
   import { callRoster, displayName, liveIn } from '../lib/selectors'
   import { selfVoice } from '../lib/voice.svelte'
   import { volumeLabel } from '../lib/voiceui'
-  import { loadStreamVolumes } from '../lib/stream/prefs'
-  import { findWatch, streamApi } from '../lib/stream/stream.svelte'
+  import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
   import { hostVideo } from '../lib/stream/videoHost'
   import { closeFull } from '../lib/stream/viewer.svelte'
 
@@ -20,9 +19,7 @@
   const name = $derived(displayName(app.state, serverId, streamer))
   const reconnecting = $derived(liveIn(app.state, channelId)[streamer]?.status === 'reconnecting')
   const roster = $derived(callRoster(app.state, serverId, channelId, selfVoice()))
-  /** The remembered volume (prefs are the one copy; the store writes them). */
-  const remembered = () => loadStreamVolumes()[streamer] ?? 100
-  let volume = $state(untrack(remembered))
+  const volume = $derived(stream.volumes[streamer] ?? 100)
   let quality = $state<string | null>(untrack(() => findWatch(channelId, streamer)?.quality ?? 'auto'))
 
   // Shown here: the full layer (under Auto) and the diagnostics, also when coming back from the
@@ -32,22 +29,20 @@
     untrack(() => streamApi.setView(channelId, streamer, 'full'))
   })
 
-  function setVolume(pct: number) {
-    streamApi.setStreamVolume(streamer, pct)
-    volume = remembered()
-  }
-
   function stop() {
     // first: closing full view unmounts this, and the props go with it
     void streamApi.unwatch(channelId, streamer)
     closeFull()
   }
 
-  /** Esc goes back to the grid, unless it's meant for a text field or an open menu or list. */
+  /** Esc goes back to the grid, unless it's meant for a text field, or something open over this view. */
   const TYPING = 'textarea, select, [contenteditable="true"], [role="menu"], [role="listbox"], input:not([type="range"], [type="checkbox"], [type="radio"], [type="button"])'
+  const OVER = '[role="dialog"], [aria-modal="true"], [role="menu"], [role="listbox"]'
   function key(e: KeyboardEvent) {
     if (e.key !== 'Escape' || e.defaultPrevented) return
     if (document.activeElement?.closest(TYPING)) return
+    // a dialog, popover or menu over this view takes Esc first (its own listener may run after this one)
+    if (document.querySelector(OVER)) return
     closeFull()
   }
   // The participant menu arrives with its own task; until then a right-click in the strip does nothing.
@@ -68,7 +63,7 @@
     </div>
     <label class="ctl">
       Volume <strong>{volumeLabel(volume)}</strong>
-      <input type="range" min="0" max="200" step="5" value={volume} aria-label="Stream volume" oninput={(e) => setVolume(+e.currentTarget.value)} />
+      <input type="range" min="0" max="200" step="5" value={volume} aria-label="Stream volume" oninput={(e) => streamApi.setStreamVolume(streamer, +e.currentTarget.value)} />
     </label>
     <button type="button" class="stop" onclick={stop}>Stop watching</button>
   </div>

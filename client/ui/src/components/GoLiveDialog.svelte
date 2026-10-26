@@ -77,7 +77,7 @@
   }
 </script>
 
-<svelte:window onkeydown={(e) => e.key === 'Escape' && cancel()} />
+<svelte:window onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); cancel() } }} />
 
 <div class="overlay">
   <div class="backdrop" role="presentation" onclick={cancel}></div>

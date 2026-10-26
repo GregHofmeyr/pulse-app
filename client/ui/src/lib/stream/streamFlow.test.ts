@@ -464,11 +464,13 @@ describe('the watch list', () => {
   it('the_remembered_stream_volume_applies_once_the_watch_is_up_and_saves', async () => {
     const { saveStreamVolumes, loadStreamVolumes } = await import('./prefs')
     saveStreamVolumes({ other: 60 })
-    const { streamApi } = await watching()
+    const { streamApi, stream } = await watching()
+    expect(stream.volumes).toEqual({ other: 60 })
     expect(calls('set_stream_volume')).toEqual([{ userId: 'other', pct: 60 }])
     core.calls = []
     streamApi.setStreamVolume('other', 135)
     expect(calls('set_stream_volume')).toEqual([{ userId: 'other', pct: 135 }])
+    expect(stream.volumes).toEqual({ other: 135 })
     expect(loadStreamVolumes()).toEqual({ other: 135 })
   })
 

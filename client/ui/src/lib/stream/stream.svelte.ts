@@ -34,6 +34,8 @@ export const stream = $state({
   watchError: '',
   /** A neutral one-liner for the viewer, e.g. "<name> stopped streaming". */
   notice: '',
+  /** Stream playback volume per streamer (percent), remembered on this device: tiles and full view read it. */
+  volumes: loadStreamVolumes() as Record<string, number>,
 })
 
 /** After a server restart Ready lacks our stream (streams live in server memory): announce it again. */
@@ -302,7 +304,7 @@ async function watch(channelId: string, streamer: string): Promise<void> {
     up.set(k, firstFrameMs)
     const w = findWatch(channelId, streamer)
     if (w) applyLayer(w)
-    void streamCmd.setVolume(streamer, loadStreamVolumes()[streamer] ?? 100).catch(logError('stream_volume_error'))
+    void streamCmd.setVolume(streamer, stream.volumes[streamer] ?? 100).catch(logError('stream_volume_error'))
     syncInDiag()
   } catch (e) {
     if (!current()) return
@@ -437,7 +439,8 @@ export const streamApi = {
   /** Remembered per streamer, and applied now (and each time a watch of them is up). */
   setStreamVolume(streamer: string, pct: number) {
     const v = clampVolume(pct)
-    saveStreamVolumes({ ...loadStreamVolumes(), [streamer]: v })
+    stream.volumes = { ...stream.volumes, [streamer]: v }
+    saveStreamVolumes(stream.volumes)
     void streamCmd.setVolume(streamer, v).catch(logError('stream_volume_error'))
   },
 

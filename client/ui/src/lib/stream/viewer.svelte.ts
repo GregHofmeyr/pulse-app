@@ -36,6 +36,9 @@ export function removeToast(channelId: string, streamer: string) {
 
 /** Puts `k` in full view (the high layer under Auto). */
 export function openFull(k: WatchKey) {
+  const prev = callView.full
+  // one stream in full view: the one there before goes back to a preview
+  if (prev && (prev.channelId !== k.channelId || prev.streamer !== k.streamer)) streamApi.setView(prev.channelId, prev.streamer, 'preview')
   callView.full = { channelId: k.channelId, streamer: k.streamer }
   streamApi.setView(k.channelId, k.streamer, 'full')
 }
@@ -61,5 +64,6 @@ export function joinAndWatch(channelId: string, streamer: string) {
   removeToast(channelId, streamer)
   callView.joinThenWatch = { channelId, streamer }
   callView.goTo = channelId
-  void voiceApi.join(channelId)
+  // a second click while that join is in flight doesn't restart it
+  if (voice.joining !== channelId) void voiceApi.join(channelId)
 }

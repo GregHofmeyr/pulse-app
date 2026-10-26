@@ -9,7 +9,10 @@ export function clickOutside(node: HTMLElement, onOutside: () => void) {
     if (!node.contains(t) && !t.closest?.('[data-menu-toggle]')) cb()
   }
   const key = (e: KeyboardEvent) => {
-    if (e.key === 'Escape') cb()
+    if (e.key !== 'Escape') return
+    // handled: what sits under the menu (e.g. the full view) leaves it alone
+    e.preventDefault()
+    cb()
   }
   // Defer so the click that opened the menu doesn't immediately close it.
   const t = setTimeout(() => {

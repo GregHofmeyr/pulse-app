@@ -16,6 +16,8 @@ const room = vi.hoisted(() => ({
 vi.mock('../lib/stream/room', () => ({ StreamRoom: { connect: async () => room, pick: async () => null }, STREAM_UNAVAILABLE: 'unavailable' }))
 
 import VoicePanel from './VoicePanel.svelte'
+import LivePopover from './LivePopover.svelte'
+import { clickOutside } from '../lib/actions'
 import { app } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { voice } from '../lib/voice.svelte'
@@ -68,6 +70,7 @@ beforeEach(() => {
   voice.speaking = new Set()
   stream.live = null
   stream.watching = []
+  stream.volumes = {}
   callView.full = null
   room.setLayer.mockClear()
 })
@@ -134,7 +137,7 @@ describe('full view', () => {
   })
 
   it('stream_volume_is_the_remembered_one_and_saves', async () => {
-    localStorage.setItem('pulse.stream.volumes', JSON.stringify({ U2: 150 }))
+    stream.volumes = { U2: 150 }
     await fullOnSam()
     const slider = q('.full-view input[aria-label="Stream volume"]') as HTMLInputElement
     expect(slider.value).toBe('150')
@@ -164,5 +167,79 @@ describe('full view', () => {
     flushSync()
     expect(callView.full).toEqual(SAM)
     expect(q('.full-view')).not.toBeNull()
+  })
+
+  it('esc_closes_a_popover_over_full_view_not_the_full_view', async () => {
+    await fullOnSam()
+    const anchor = document.createElement('span')
+    document.body.append(anchor)
+    const onClose = vi.fn()
+    const pop = mount(LivePopover, { target: document.body, props: { channelId: 'V1', userId: 'U2', anchor, onClose } })
+    flushSync()
+    let seen: KeyboardEvent | undefined
+    const last = (e: KeyboardEvent) => (seen = e)
+    window.addEventListener('keydown', last)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    window.removeEventListener('keydown', last)
+    flushSync()
+    expect(onClose).toHaveBeenCalled()
+    expect(seen?.defaultPrevented).toBe(true)
+    expect(callView.full).toEqual(SAM)
+    unmount(pop)
+  })
+
+  it('esc_closes_a_menu_over_full_view_not_the_full_view', async () => {
+    await fullOnSam()
+    const menu = document.createElement('div')
+    menu.setAttribute('role', 'menu')
+    document.body.append(menu)
+    const close = vi.fn(() => menu.remove())
+    const a = clickOutside(menu, close)
+    await new Promise((r) => setTimeout(r, 0)) // armed after the opening click
+    let seen: KeyboardEvent | undefined
+    const last = (e: KeyboardEvent) => (seen = e)
+    window.addEventListener('keydown', last)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    window.removeEventListener('keydown', last)
+    expect(close).toHaveBeenCalled()
+    expect(seen?.defaultPrevented).toBe(true)
+    expect(callView.full).toEqual(SAM)
+    a.destroy()
+    // nothing over it any more: Esc is the full view's again
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    flushSync()
+    expect(callView.full).toBeNull()
+  })
+
+  it('opening_another_stream_in_full_view_sets_the_old_one_back_to_preview', () => {
+    stream.watching = [
+      { channelId: 'V1', streamer: 'U2', quality: 'auto', view: 'full' },
+      { channelId: 'V1', streamer: 'U3', quality: 'auto', view: 'preview' },
+    ]
+    callView.full = SAM
+    openFull({ channelId: 'V1', streamer: 'U3' })
+    expect(stream.watching.map((w) => w.view)).toEqual(['preview', 'full'])
+    expect(callView.full).toEqual({ channelId: 'V1', streamer: 'U3' })
+    // the same stream again changes nothing
+    openFull({ channelId: 'V1', streamer: 'U3' })
+    expect(stream.watching.map((w) => w.view)).toEqual(['preview', 'full'])
+    stream.watching = []
+  })
+
+  it('stream_volume_is_one_value_the_tile_and_full_view_both_follow', async () => {
+    cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1' } })
+    await streamApi.watch('V1', 'U2')
+    await settle()
+    // set from elsewhere (e.g. a menu): the tile shows it
+    streamApi.setStreamVolume('U2', 40)
+    flushSync()
+    expect((q('[data-stream="U2"] input[aria-label="Stream volume"]') as HTMLInputElement).value).toBe('40')
+    openFull(SAM)
+    flushSync()
+    expect((q('.full-view input[aria-label="Stream volume"]') as HTMLInputElement).value).toBe('40')
+    streamApi.setStreamVolume('U2', 170)
+    flushSync()
+    expect((q('.full-view input[aria-label="Stream volume"]') as HTMLInputElement).value).toBe('170')
+    expect(stream.volumes).toEqual({ U2: 170 })
   })
 })

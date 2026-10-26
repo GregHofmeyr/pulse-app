@@ -18,10 +18,10 @@
   const name = $derived(displayName(app.state, app.state.channels[channelId]?.server_id ?? null, streamer))
   let corner = $state<Corner>(loadMiniCorner())
   let box = $state<HTMLElement>()
-  /** While pressed: where the press started, and how far it has moved. */
+  /** While pressed: where the press started. */
   let press: { x: number; y: number } | null = null
   let offset = $state<{ x: number; y: number } | null>(null)
-  /** The click that ends a drag is not a click on the preview. */
+  /** The mouse click that ends a drag is not a click on the preview (cleared once that click has had its turn). */
   let dragged = false
 
   // A preview takes the low layer, even when you left from full view (which comes back on return).
@@ -33,8 +33,12 @@
     if (e.button !== 0 || (e.target as Element).closest('.x')) return
     press = { x: e.clientX, y: e.clientY }
     dragged = false
-    window.addEventListener('pointermove', move)
-    window.addEventListener('pointerup', up)
+    // moves and the release come here even off the box (or the window)
+    try {
+      box?.setPointerCapture?.(e.pointerId)
+    } catch {
+      /* no such pointer (synthetic events) */
+    }
   }
   function move(e: PointerEvent) {
     if (!press) return
@@ -44,8 +48,7 @@
     offset = { x: dx, y: dy }
   }
   function up(e: PointerEvent) {
-    window.removeEventListener('pointermove', move)
-    window.removeEventListener('pointerup', up)
+    if (!press) return
     const area = box?.parentElement?.getBoundingClientRect()
     if (offset && area) {
       // snap to the corner nearest where it was let go
@@ -54,51 +57,55 @@
       corner = `${v}${h}` as Corner
       saveMiniCorner(corner)
       dragged = true
+      // released off the open button, no click follows: don't swallow a later one
+      setTimeout(() => (dragged = false))
     }
     press = null
     offset = null
   }
-  // dropped mid-drag (the watch ended): stop listening
-  $effect(() => () => {
-    window.removeEventListener('pointermove', move)
-    window.removeEventListener('pointerup', up)
-  })
+  /** The drag was taken away (cancelled, capture lost): back where it was, nothing saved. */
+  function abort() {
+    press = null
+    offset = null
+  }
 
   /** Back to the call view, in full view if that's where you left from (`callView.full` is kept). */
-  function open() {
-    if (dragged) {
+  function open(e: MouseEvent) {
+    // detail 0: Enter/Space on the button, never the end of a drag
+    if (dragged && e.detail !== 0) {
       dragged = false
       return
     }
     callView.goTo = channelId
   }
-  function key(e: KeyboardEvent) {
-    if (e.target !== e.currentTarget || (e.key !== 'Enter' && e.key !== ' ')) return
-    e.preventDefault()
-    open()
-  }
 </script>
 
-<div bind:this={box} class="mini-preview {corner}" class:dragging={!!offset} role="button" tabindex="0" aria-label="Back to {name}'s stream"
+<!-- a plain box: dragging is a pointer shortcut; the controls are the open button and the ✕ -->
+<div bind:this={box} class="mini-preview {corner}" class:dragging={!!offset} role="group" aria-label="{name}'s stream"
   style:translate={offset ? `${offset.x}px ${offset.y}px` : undefined}
-  onpointerdown={down} onclick={open} onkeydown={key}>
+  onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={abort} onlostpointercapture={abort}>
   {#if watch}<div class="host" {@attach hostVideo(channelId, streamer)}></div>{/if}
+  <button type="button" class="open" aria-label="Back to {name}'s stream" onclick={open}></button>
   <span class="name">{name}</span>
-  <button type="button" class="x" aria-label="Stop watching" onclick={(e) => { e.stopPropagation(); void streamApi.unwatch(channelId, streamer) }}>
+  <button type="button" class="x" aria-label="Stop watching" onclick={() => void streamApi.unwatch(channelId, streamer)}>
     <Icon name="x" size={14} />
   </button>
 </div>
 
 <style>
   .mini-preview { position: absolute; z-index: 20; width: 320px; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #000; box-shadow: 0 12px 32px rgba(8, 9, 12, .5); cursor: pointer; touch-action: none; user-select: none; }
-  .tl { top: 16px; left: 16px; }
-  .tr { top: 16px; right: 16px; }
-  .bl { bottom: 16px; left: 16px; }
-  .br { bottom: 16px; right: 16px; }
+  /* bottom corners sit above a text channel's composer; toasts (z 40) stay on top */
+  .tl { top: 68px; left: 16px; }
+  .tr { top: 68px; right: 16px; }
+  .bl { bottom: 96px; left: 16px; }
+  .br { bottom: 96px; right: 16px; }
   .dragging { cursor: grabbing; opacity: .9; }
   .host { position: absolute; inset: 0; pointer-events: none; }
+  .open { position: absolute; inset: 0; padding: 0; border: 0; background: transparent; cursor: pointer; }
+  .open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   .name { position: absolute; left: 8px; bottom: 6px; padding: 1px 7px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }
   .x { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .6); color: #fff; display: grid; place-items: center; opacity: 0; transition: opacity .12s; }
   .mini-preview:hover .x, .mini-preview:focus-within .x { opacity: 1; }
+  .dragging .open { cursor: grabbing; }
 </style>

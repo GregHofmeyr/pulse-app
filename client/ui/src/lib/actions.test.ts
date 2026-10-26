@@ -14,8 +14,11 @@ describe('clickOutside', () => {
     expect(cb).not.toHaveBeenCalled()
     outside.dispatchEvent(new Event('pointerdown', { bubbles: true }))
     expect(cb).toHaveBeenCalledTimes(1)
-    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    const esc = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
+    window.dispatchEvent(esc)
     expect(cb).toHaveBeenCalledTimes(2)
+    // consumed: whatever sits under the menu leaves it alone
+    expect(esc.defaultPrevented).toBe(true)
     const toggle = document.createElement('button')
     toggle.dataset.menuToggle = ''
     document.body.append(toggle)

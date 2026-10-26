@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { joinAndWatch, toasts, watchStream, removeToast } from '../lib/stream/viewer.svelte'
+  import { toasts, watchStream, removeToast } from '../lib/stream/viewer.svelte'
   import { isWindows } from '../lib/stream/platform'
   import { voice } from '../lib/voice.svelte'
   import { stream } from '../lib/stream/stream.svelte'
@@ -24,11 +24,9 @@
       {#if !isWindows()}
         <!-- watching from Linux isn't supported yet -->
         <button type="button" class="watch" disabled>Watch</button>
-      {:else if voice.channelId === t.channelId}
-        <button type="button" class="watch" onclick={() => watchStream(t.channelId, t.streamer)}>Watch</button>
       {:else}
-        <!-- you've left that call since: join it again, then watch -->
-        <button type="button" class="watch" onclick={() => joinAndWatch(t.channelId, t.streamer)}>Join &amp; watch</button>
+        <!-- out of that call (you've left since), this joins it again first -->
+        <button type="button" class="watch" onclick={() => watchStream(t.channelId, t.streamer)}>{voice.channelId === t.channelId ? 'Watch' : 'Join & watch'}</button>
       {/if}
       <button type="button" class="x" aria-label="Dismiss" onclick={() => removeToast(t.channelId, t.streamer)}>×</button>
     </div>

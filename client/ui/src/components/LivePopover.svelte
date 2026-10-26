@@ -5,7 +5,7 @@
   import { voice } from '../lib/voice.svelte'
   import { isWindows } from '../lib/stream/platform'
   import { watchDisabledReason } from '../lib/stream/viewer'
-  import { joinAndWatch, watchStream } from '../lib/stream/viewer.svelte'
+  import { watchStream } from '../lib/stream/viewer.svelte'
   import { streamCmd } from '../lib/tauri'
 
   let { channelId, userId, anchor, onClose }: { channelId: string; userId: string; anchor: HTMLElement; onClose: () => void } = $props()
@@ -42,14 +42,14 @@
 
   function watch() {
     if (reason) return
-    if (inChannel) watchStream(channelId, userId)
-    else joinAndWatch(channelId, userId)
+    // out of the call, this joins first
+    watchStream(channelId, userId)
     onClose()
   }
 </script>
 
 <svelte:window
-  onkeydown={(e) => e.key === 'Escape' && onClose()}
+  onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); onClose() } }}
   onpointerdown={(e) => !pop?.contains(e.target as Node) && !anchor.contains(e.target as Node) && onClose()} />
 
 {#if info}

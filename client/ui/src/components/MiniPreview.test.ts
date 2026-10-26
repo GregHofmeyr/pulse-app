@@ -126,7 +126,7 @@ describe('mini-preview in the shell', () => {
     // away from the call, the mini-preview takes the low layer
     expect(room.setLayer).toHaveBeenLastCalledWith('U2', 'low')
 
-    q('.mini-preview')!.click()
+    q('.mini-preview .open')!.click()
     await settle()
     expect(q('.mini-preview')).toBeNull()
     expect(q('.full-view .stage video')).not.toBeNull()
@@ -140,7 +140,7 @@ describe('mini-preview in the shell', () => {
     await settle()
     goTo('T1')
     await settle()
-    q('.mini-preview')!.click()
+    q('.mini-preview .open')!.click()
     await settle()
     expect(q('.full-view')).toBeNull()
     expect(q('[data-stream="U2"] video')).not.toBeNull()
@@ -164,17 +164,44 @@ describe('mini-preview', () => {
     expect(callView.goTo).toBeNull()
   })
 
-  it('drag_snaps_and_remembers_the_corner', async () => {
+  /** A mouse click (detail 1); `el.click()` has detail 0, like a keyboard activation. */
+  const mouseClick = (el: Element) => el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, detail: 1 }))
+  const ptr = (type: string, x: number, y: number) => new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, clientX: x, clientY: y })
+  const area = () => vi.spyOn(document.body, 'getBoundingClientRect').mockReturnValue({ left: 0, top: 0, right: 1000, bottom: 600, width: 1000, height: 600, x: 0, y: 0, toJSON() {} } as DOMRect)
+  /** The box under the pointer, with pointer capture (jsdom has none) recorded. */
+  const box = () => {
+    const mini = q('.mini-preview')!
+    const capture = vi.fn()
+    Object.assign(mini, { setPointerCapture: capture, releasePointerCapture: vi.fn(), hasPointerCapture: () => true })
+    return { mini, open: mini.querySelector<HTMLElement>('.open')!, capture }
+  }
+
+  it('the_preview_is_a_plain_box_with_an_open_button_and_a_separate_x', async () => {
     await streamApi.watch('V1', 'U2')
     mountMini()
     const mini = q('.mini-preview')!
-    document.body.getBoundingClientRect = () => ({ left: 0, top: 0, right: 1000, bottom: 600, width: 1000, height: 600, x: 0, y: 0, toJSON() {} })
-    mini.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 900, clientY: 550 }))
-    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 400, clientY: 300 }))
-    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 120, clientY: 80 }))
-    window.dispatchEvent(new MouseEvent('pointerup', { clientX: 120, clientY: 80 }))
+    expect(mini.getAttribute('role')).not.toBe('button')
+    const open = mini.querySelector('button.open')!
+    expect(open.getAttribute('aria-label')).toBe("Back to sam's stream")
+    // no control inside another
+    expect(open.querySelector('button, [role="button"]')).toBeNull()
+    expect(mini.querySelector('button[aria-label="Stop watching"]')!.closest('.open')).toBeNull()
+    ;(open as HTMLElement).click() // keyboard activation (Enter/Space on a button)
+    expect(callView.goTo).toBe('V1')
+  })
+
+  it('drag_snaps_and_remembers_the_corner', async () => {
+    await streamApi.watch('V1', 'U2')
+    mountMini()
+    area()
+    const { mini, open, capture } = box()
+    open.dispatchEvent(ptr('pointerdown', 900, 550))
+    expect(capture).toHaveBeenCalled()
+    mini.dispatchEvent(ptr('pointermove', 400, 300))
+    mini.dispatchEvent(ptr('pointermove', 120, 80))
+    mini.dispatchEvent(ptr('pointerup', 120, 80))
     // the click that ends a drag isn't a click on the preview
-    mini.click()
+    mouseClick(open)
     flushSync()
     expect(mini.classList.contains('tl')).toBe(true)
     expect(callView.goTo).toBeNull()
@@ -185,13 +212,62 @@ describe('mini-preview', () => {
     expect(q('.mini-preview')!.classList.contains('tl')).toBe(true)
   })
 
+  it('a_cancelled_drag_goes_back_and_saves_nothing', async () => {
+    await streamApi.watch('V1', 'U2')
+    mountMini()
+    area()
+    for (const end of ['pointercancel', 'lostpointercapture']) {
+      const { mini, open } = box()
+      open.dispatchEvent(ptr('pointerdown', 900, 550))
+      mini.dispatchEvent(ptr('pointermove', 120, 80))
+      flushSync()
+      expect(mini.classList.contains('dragging')).toBe(true)
+      mini.dispatchEvent(ptr(end, 120, 80))
+      flushSync()
+      expect(mini.classList.contains('dragging')).toBe(false)
+      expect(mini.classList.contains('br')).toBe(true)
+      // a later move or release does nothing
+      mini.dispatchEvent(ptr('pointermove', 100, 60))
+      mini.dispatchEvent(ptr('pointerup', 100, 60))
+      flushSync()
+      expect(mini.classList.contains('br')).toBe(true)
+    }
+    expect(localStorage.getItem('pulse.stream.minicorner')).toBeNull()
+  })
+
+  it('keyboard_open_works_right_after_a_drag', async () => {
+    await streamApi.watch('V1', 'U2')
+    mountMini()
+    area()
+    const { mini, open } = box()
+    open.dispatchEvent(ptr('pointerdown', 900, 550))
+    mini.dispatchEvent(ptr('pointermove', 120, 80))
+    mini.dispatchEvent(ptr('pointerup', 120, 80))
+    // released off the preview: no click came to clear the drag
+    open.click() // Enter on the focused button
+    expect(callView.goTo).toBe('V1')
+  })
+
+  it('a_drag_released_off_the_preview_does_not_swallow_the_next_click', async () => {
+    await streamApi.watch('V1', 'U2')
+    mountMini()
+    area()
+    const { mini, open } = box()
+    open.dispatchEvent(ptr('pointerdown', 900, 550))
+    mini.dispatchEvent(ptr('pointermove', 120, 80))
+    mini.dispatchEvent(ptr('pointerup', 120, 80))
+    await new Promise((r) => setTimeout(r, 0))
+    mouseClick(open)
+    expect(callView.goTo).toBe('V1')
+  })
+
   it('a_plain_click_goes_to_the_call', async () => {
     await streamApi.watch('V1', 'U2')
     mountMini()
-    const mini = q('.mini-preview')!
-    mini.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 900, clientY: 550 }))
-    window.dispatchEvent(new MouseEvent('pointerup', { clientX: 901, clientY: 550 }))
-    mini.click()
+    const { mini, open } = box()
+    open.dispatchEvent(ptr('pointerdown', 900, 550))
+    mini.dispatchEvent(ptr('pointerup', 901, 550))
+    mouseClick(open)
     expect(callView.goTo).toBe('V1')
   })
 })

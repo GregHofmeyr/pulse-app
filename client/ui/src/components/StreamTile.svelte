@@ -7,9 +7,8 @@
   import { app } from '../lib/store.svelte'
   import { displayName, liveIn } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
-  import { clampVolume, volumeLabel } from '../lib/voiceui'
+  import { volumeLabel } from '../lib/voiceui'
   import { voice } from '../lib/voice.svelte'
-  import { loadStreamVolumes } from '../lib/stream/prefs'
   import { isWindows } from '../lib/stream/platform'
   import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
   import { hostVideo } from '../lib/stream/videoHost'
@@ -41,17 +40,13 @@
   const inChannel = $derived(voice.channelId === channelId)
   let tile = $state<HTMLElement>()
   // seeded once: the grid keys tiles by streamer, so these props never change for a tile
-  let volume = $state(untrack(() => loadStreamVolumes()[streamer] ?? 100))
+  const volume = $derived(stream.volumes[streamer] ?? 100)
   let quality = $state<string | null>(untrack(() => findWatch(channelId, streamer)?.quality ?? 'auto'))
 
   // A click anywhere on a not-watching tile watches; the Watch button is the keyboard route into the same click.
   function clicked() {
     if (watch || reason) return
     void streamApi.watch(channelId, streamer)
-  }
-  function setVolume(pct: number) {
-    volume = clampVolume(pct)
-    streamApi.setStreamVolume(streamer, volume)
   }
   function hostKey(e: KeyboardEvent) {
     if (e.key !== 'Enter' && e.key !== ' ') return
@@ -79,7 +74,7 @@
     <div class="toolbar">
       <label class="vol">
         <Icon name="speaker" size={14} label="Stream volume" />
-        <input type="range" min="0" max="200" step="5" value={volume} aria-label="Stream volume" oninput={(e) => setVolume(+e.currentTarget.value)} />
+        <input type="range" min="0" max="200" step="5" value={volume} aria-label="Stream volume" oninput={(e) => streamApi.setStreamVolume(streamer, +e.currentTarget.value)} />
         <span class="pct">{volumeLabel(volume)}</span>
       </label>
       <div class="quality">

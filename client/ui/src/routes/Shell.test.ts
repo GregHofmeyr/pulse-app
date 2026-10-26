@@ -31,7 +31,7 @@ import { app, startListening } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { startVoiceListening, voice } from '../lib/voice.svelte'
 import { stream, streamApi } from '../lib/stream/stream.svelte'
-import { callView, openFull, showToast } from '../lib/stream/viewer.svelte'
+import { callView, joinAndWatch, openFull, showToast } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 
 let cmp: ReturnType<typeof mount> | undefined
@@ -254,5 +254,15 @@ describe('watching from anywhere', () => {
     expect(invoke).toHaveBeenCalledWith('join_voice', expect.objectContaining({ channelId: 'V1' }))
     expect(callView.joinThenWatch).toEqual(SAM)
     unmount(pop2)
+  })
+
+  it('join_and_watch_twice_joins_once', async () => {
+    voice.channelId = null
+    voice.connection = 'disconnected'
+    joinAndWatch('V1', 'U2')
+    joinAndWatch('V1', 'U2')
+    await settle()
+    expect(invoke.mock.calls.filter(([c]) => c === 'join_voice')).toHaveLength(1)
+    expect(callView.joinThenWatch).toEqual(SAM)
   })
 })
