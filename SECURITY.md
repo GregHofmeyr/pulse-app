@@ -351,7 +351,7 @@ ties each of those tokens to the session that asked for it:
 | Real-time connection attempts | 20/minute per IP (refunded once the connection authenticates) |
 | Concurrent real-time connections | 8 per user; further connections are refused, and the client tells the user why |
 | New messages | burst of 20, then 5/second per user |
-| Message edits and deletes, reaction adds and removes, Go Live and watching a stream (together) | burst of 30, then 2/second per user (stopping a stream and unwatching are never limited) |
+| Message edits and deletes, reaction adds and removes, renaming a group, Go Live and watching a stream (together) | burst of 30, then 2/second per user (stopping a stream and unwatching are never limited) |
 | Typing notifications | 1/second per user (extras dropped) |
 | Mute and deafen updates sent to others | burst of 10, then 2/second per user. Every update is still stored; past the limit, others get one update with the latest state once the limit allows. An update that changes nothing is not sent on. |
 | New servers, server channels, DMs and groups, and members added to a group (together) | 20/hour per user (opening a DM that already exists is free) |
@@ -382,8 +382,8 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
 
 Unused media is cleaned up in the same hourly pass (see "Uploaded images").
 
-**Low disk.** Sending a message, submitting a report and adding a custom emoji are refused with a 507 "server storage
-is full" when the free space on the database's volume or the media volume is below the configured minimum (2 GB by
+**Low disk.** Sending a message, renaming a group, submitting a report and adding a custom emoji are refused with a
+507 "server storage is full" when the free space on the database's volume or the media volume is below the configured minimum (2 GB by
 default). Image uploads were already refused the same way. The check comes after sign-in and the rate limit, before
 any work.
 

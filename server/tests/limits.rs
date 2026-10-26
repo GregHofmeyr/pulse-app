@@ -836,3 +836,33 @@ async fn a_limited_new_dm_is_refused_before_any_lookup() {
         "reopening is still free"
     );
 }
+
+#[tokio::test]
+async fn renaming_a_group_is_limited_per_user() {
+    let app = spawn_only(|l| l.mutate_user = tiny(3)).await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let (c_id, _) = register(&app, "riley").await;
+    let g = create_dm(&app, &a, &[b_id, c_id]).await;
+    let rename = |name: &str| {
+        app.http
+            .patch(app.url(&format!("/channels/{}", g.id)))
+            .json(&serde_json::json!({ "name": name }))
+    };
+    let messages = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM messages WHERE channel_id = ?")
+            .bind(g.id.to_string())
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    let before = messages().await;
+    for i in 0..3 {
+        assert_eq!(status(rename(&format!("squad {i}")), &a).await, 200);
+    }
+    assert_eq!(status(rename("one too many"), &a).await, 429);
+    // Refused renames add no system message.
+    assert_eq!(messages().await, before + 3);
+    // sam has a bucket of his own.
+    assert_eq!(status(rename("sam's turn"), &b).await, 200);
+}

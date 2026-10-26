@@ -183,6 +183,26 @@ async fn writes_refused_with_507_when_disk_is_low() {
     )
     .await;
     assert_eq!(r.status(), 507, "emoji");
-    assert_eq!(count(&app, "SELECT COUNT(*) FROM messages").await, 0);
+    let (sam, _) = register(&app, "sam").await;
+    let (riley, _) = register(&app, "riley").await;
+    let g = create_dm(&app, &token, &[sam, riley]).await;
+    let before = count(&app, "SELECT COUNT(*) FROM messages").await;
+    let r = app
+        .http
+        .patch(app.url(&format!("/channels/{}", g.id)))
+        .bearer_auth(&token)
+        .json(&json!({ "name": "squad" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 507, "group rename");
+    // Nothing but what creating the group itself posted.
+    assert_eq!(count(&app, "SELECT COUNT(*) FROM messages").await, before);
+    let name: Option<String> = sqlx::query_scalar("SELECT name FROM channels WHERE id = ?")
+        .bind(g.id.to_string())
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(name, None, "not renamed");
     assert_eq!(count(&app, "SELECT COUNT(*) FROM bug_reports").await, 0);
 }

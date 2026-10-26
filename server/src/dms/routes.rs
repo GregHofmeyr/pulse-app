@@ -337,6 +337,11 @@ async fn rename(
     Path(id): Path<ChannelId>,
     Json(req): Json<RenameChannelRequest>,
 ) -> AppResult<Json<Channel>> {
+    // Each rename reaches every member and adds a system message: limited and disk-guarded.
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
+    crate::media::writes_ok(&s.cfg)?;
     group_for(&s, me, id).await?;
     let name = req
         .name
