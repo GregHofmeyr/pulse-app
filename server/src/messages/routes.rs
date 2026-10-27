@@ -341,8 +341,8 @@ async fn send(
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
     // The same hold orders the absolute mention counts of the read-state events below with every
-    // message that may mention someone.
-    let order = s.hub.in_order().await;
+    // message that may mention someone (and the frequent-emoji publish at the end).
+    let _order = s.hub.in_order().await;
     // One transaction: the message, its mentions and your read point land together or not at all.
     let mut tx = crate::db::begin_write(&s.db).await?;
     // Under the write lock the id is minted in commit order, so a seen point can never pass a
@@ -444,8 +444,7 @@ async fn send(
             .await;
     }
     if !used.is_empty() {
-        // A reply already holds the order lock (tokio's mutex isn't reentrant).
-        let _order = order;
+        // Still under this send's `in_order` guard (tokio's mutex isn't reentrant).
         crate::emoji::publish_frequent(&s, me).await;
     }
     Ok(Json(msg))
@@ -520,9 +519,10 @@ async fn remove(
     }
     let (msg, _) = own_message(&s.db, me, id).await?;
     let is_quote = msg.quote.is_some();
-    // A quote's delete drops counts (reactions, awards) and a reply's changes mention counts that
-    // ThreadSeen deltas are measured against: publish in commit order.
-    let _order = if is_quote || msg.thread_root_id.is_some() {
+    // A quote's delete drops counts (reactions, awards), and a reply's or a mentioning message's
+    // changes mention counts that absolute read-state counts are measured against: publish in
+    // commit order.
+    let _order = if is_quote || msg.thread_root_id.is_some() || !msg.mentions.is_empty() {
         Some(s.hub.in_order().await)
     } else {
         None

@@ -30,7 +30,7 @@ const ready = (over: Partial<Ready> = {}): Ready => ({
   latest: [],
   streams: [],
   custom_emoji: [],
-  frequent_emoji: [], qoty: [], speaker_links: [],
+  frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [],
   ...over,
 })
 
@@ -565,6 +565,42 @@ describe('quotes', () => {
     const del = (id: string): Event => ({ t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: id, author_id: 'U2', mentions: ['U1'], thread_root_id: 'M1' } })
     expect(applyEvent(s, del('R1'), 0).reads['Q1'].mentions).toBe(1) // already seen: not in the count
     expect(applyEvent(s, del('R3'), 0).reads['Q1'].mentions).toBe(0) // unseen: leaves it
+  })
+
+  it('Ready seeds the thread seen points, and a delete of an unknown one does not lower the count', () => {
+    let s = applyReady(emptyState(), ready({
+      channels: [ch('Q1', 'quotes')],
+      read_states: [{ channel_id: 'Q1', last_read_message_id: null, unread: 0, mentions: 2 }],
+      thread_seen: [{ root_id: 'M1', last_seen_id: 'R1' }, { root_id: 'M2', last_seen_id: null }],
+    }))
+    expect(s.threadSeen).toEqual({ M1: 'R1', M2: '' })
+    const del = (root: string, id: string): Event => ({ t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: id, author_id: 'U2', mentions: ['U1'], thread_root_id: root } })
+    // M3 is not listed: no counted mention there, so a deleted mention was not in the count.
+    expect(applyEvent(s, del('M3', 'R5'), 0).reads['Q1'].mentions).toBe(2)
+    // M2 was never seen: any reply is counted.
+    expect(applyEvent(s, del('M2', 'R5'), 0).reads['Q1'].mentions).toBe(1)
+    // M1 seen up to R1: R1 is not counted, R2 is.
+    expect(applyEvent(s, del('M1', 'R1'), 0).reads['Q1'].mentions).toBe(2)
+    expect(applyEvent(s, del('M1', 'R2'), 0).reads['Q1'].mentions).toBe(1)
+    // Another Ready resets them.
+    s = applyReady(s, ready({ channels: [ch('Q1', 'quotes')] }))
+    expect(s.threadSeen).toEqual({})
+    expect(s.goneReplies).toEqual({})
+  })
+
+  it('a live mention in a thread whose seen point is unknown is counted, and so is its delete', () => {
+    let s = created(qready(), reply('R1', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    expect(s.reads['Q1'].mentions).toBe(1)
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: 'R1', author_id: 'U2', mentions: ['U1'], thread_root_id: 'M1' } }, 0)
+    expect(s.reads['Q1'].mentions).toBe(0)
+  })
+
+  it('removing a channel prunes its gone replies too', () => {
+    let s = created(withQuote(), reply('R1', 'M1'))
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: 'R1', author_id: 'U2', mentions: [], thread_root_id: 'M1' } }, 0)
+    expect(s.goneReplies['R1']).toBeDefined()
+    s = applyEvent(s, { t: 'ChannelRemoved', d: { channel_id: 'Q1', user_id: 'U1' } }, 0)
+    expect(s.goneReplies).toEqual({})
   })
 
   it('a delete seen twice for a reply that is not loaded lowers the count once', () => {

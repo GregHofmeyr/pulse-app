@@ -100,6 +100,17 @@ pub struct Ready {
     /// Every server's plain-name speaker links.
     #[serde(default)]
     pub speaker_links: Vec<SpeakerLink>,
+    /// Your seen point in each quote thread where you currently have a counted reply mention, so
+    /// clients can tell whether a deleted reply's mention was still in your count.
+    #[serde(default)]
+    pub thread_seen: Vec<ThreadSeenPoint>,
+}
+
+/// How far into a quote's thread you have read (`None`: not at all).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ThreadSeenPoint {
+    pub root_id: MessageId,
+    pub last_seen_id: Option<MessageId>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -446,6 +457,7 @@ mod tests {
             frequent_emoji: vec![],
             qoty: vec![],
             speaker_links: vec![],
+            thread_seen: vec![],
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");
@@ -510,13 +522,17 @@ mod tests {
             frequent_emoji: vec![],
             qoty: vec![],
             speaker_links: vec![],
+            thread_seen: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
         o.remove("qoty");
         o.remove("speaker_links");
+        o.remove("thread_seen");
         let ready: Ready = serde_json::from_value(v).unwrap();
-        assert!(ready.qoty.is_empty() && ready.speaker_links.is_empty());
+        assert!(
+            ready.qoty.is_empty() && ready.speaker_links.is_empty() && ready.thread_seen.is_empty()
+        );
 
         let (c, m_id) = (ChannelId::new(), MessageId::new());
         let m: Message = serde_json::from_str(&format!(

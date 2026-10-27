@@ -215,6 +215,7 @@ pub async fn build_ready(
         frequent_emoji: crate::emoji::frequent(db, me, crate::emoji::FREQUENT).await?,
         qoty: crate::qoty::for_ready(db).await?,
         speaker_links: crate::quotes::links::for_ready(db).await?,
+        thread_seen: crate::reads::thread_seen_for(db, me).await?,
     })
 }
 

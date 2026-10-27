@@ -36,7 +36,7 @@ function ready(over: Partial<Ready> = {}): Ready {
     latest: [msg('M3', 'DM1', 'U1'), msg('M9', 'G1', 'U2')],
     streams: [],
     custom_emoji: [],
-    frequent_emoji: [], qoty: [], speaker_links: [],
+    frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [],
     ...over,
   }
 }

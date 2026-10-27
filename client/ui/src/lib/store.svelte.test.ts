@@ -48,7 +48,7 @@ describe('unsent messages in the store', () => {
     me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
     channels: [{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }],
     members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [],
+    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [],
   })
   const unsent = (nonce: string, status: Pending['status'] = 'pending'): Pending => ({ nonce, content: `text ${nonce}`, reply_to_id: null, thread_root_id: null, status, created_at: '2026-10-01T00:00:00.000Z' })
   const stored = (id: string) => JSON.parse(localStorage.getItem(`pulse.unsent.${id}`) ?? 'null')

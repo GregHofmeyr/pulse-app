@@ -12,6 +12,7 @@ import type { Server } from "./Server";
 import type { ServerMembers } from "./ServerMembers";
 import type { SpeakerLink } from "./SpeakerLink";
 import type { StreamInfo } from "./StreamInfo";
+import type { ThreadSeenPoint } from "./ThreadSeenPoint";
 import type { User } from "./User";
 import type { VoiceRoom } from "./VoiceRoom";
 
@@ -55,4 +56,9 @@ qoty: Array<QotyEvent>,
 /**
  * Every server's plain-name speaker links.
  */
-speaker_links: Array<SpeakerLink>, };
+speaker_links: Array<SpeakerLink>, 
+/**
+ * Your seen point in each quote thread where you currently have a counted reply mention, so
+ * clients can tell whether a deleted reply's mention was still in your count.
+ */
+thread_seen: Array<ThreadSeenPoint>, };

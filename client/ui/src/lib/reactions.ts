@@ -57,7 +57,7 @@ function setEntry(s: AppState, channel: string, id: string, key: string, e: Reac
   return mapMessage(s, channel, id, (m) => ({ ...m, reactions: put(m.reactions) }))
 }
 
-type Toggle = { add: boolean; landed: boolean }
+type Toggle = { add: boolean; landed: boolean; /** Any user's reaction event for this emoji arrived meanwhile. */ touched?: boolean }
 // Per (message, emoji) -- per message for a one-per-person one -- the last queued toggle; per (message, emoji), the one talking to the server now.
 const queued = new Map<string, Promise<void>>()
 const inFlight = new Map<string, Toggle>()
@@ -66,9 +66,11 @@ const toggleKey = (id: string, key: string) => `${id}\u0000${key}`
 /** Feed every gateway event through here (before the reducer): it notes when the server has
  * already applied the toggle in flight, so a failed response doesn't undo a committed change. */
 export function noteReactionEvent(e: Event, meId: string | undefined): void {
-  if ((e.t !== 'ReactionAdded' && e.t !== 'ReactionRemoved') || e.d.user_id !== meId) return
+  if (e.t !== 'ReactionAdded' && e.t !== 'ReactionRemoved') return
   const t = inFlight.get(toggleKey(e.d.message_id, e.d.emoji))
-  if (t && t.add === (e.t === 'ReactionAdded')) t.landed = true
+  if (!t) return
+  t.touched = true
+  if (e.d.user_id === meId && t.add === (e.t === 'ReactionAdded')) t.landed = true
 }
 
 /**
@@ -137,7 +139,9 @@ async function toggle(
       for (const [emoji, d] of displaced) {
         if (d.landed) continue
         const cur = entry(get(), channel, id, emoji)
-        if (!cur?.me) set(setEntry(get(), channel, id, emoji, { emoji, count: (cur?.count ?? 0) + 1, me: true }))
+        // Someone else's event meanwhile carried the absolute count, which still includes me.
+        const count = d.touched ? Math.max(cur?.count ?? 0, 1) : (cur?.count ?? 0) + 1
+        if (!cur?.me) set(setEntry(get(), channel, id, emoji, { emoji, count, me: true }))
       }
     }
     onError(errorText(e))

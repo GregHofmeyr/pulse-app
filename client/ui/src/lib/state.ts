@@ -57,7 +57,7 @@ export type AppState = {
   /** Quote id -> the newest reply you've seen, from ThreadSeen events (the root may not be loaded). */
   threadSeen: Record<string, string>
   /** Replies known deleted, so a repeated delete event can't lower a count twice. */
-  goneReplies: Record<string, true>
+  goneReplies: Record<string, string> // reply id -> its channel
   qoty: Record<string, QotyEvent> // serverId -> its latest Quote of the Year vote (open, or ended and reopenable)
   speakerLinks: Record<string, SpeakerLink[]> // serverId -> plain names linked to members
 }
@@ -98,6 +98,9 @@ export function applyReady(s: AppState, r: Ready): AppState {
     // Replies may have changed while we were away: a panel refetches its thread.
     threads: {},
     threadStart: {},
+    // Where you stand in each thread that has a counted mention for you ('' = nothing seen).
+    threadSeen: Object.fromEntries(r.thread_seen.map((p) => [p.root_id, p.last_seen_id ?? ''])),
+    goneReplies: {},
     qoty: latestQoty(r.qoty),
     speakerLinks: groupLinks(r.speaker_links),
   }
@@ -231,11 +234,15 @@ function replyDeleted(s: AppState, e: Extract<Event, { t: 'MessageDeleted' }>['d
   const read = s.reads[c]
   const mentioned = !!s.me && mentions.includes(s.me.id) && author_id !== s.me.id
   // Only a mention not yet cleared by opening the thread is still in the count.
+  // Where the user's seen point is: from Ready or a ThreadSeen, the loaded quote, or (a reply that
+  // arrived live this session) nothing seen yet. Unknown: Ready lists every thread with a counted
+  // mention, so this one had none and the deleted mention was not in the count.
+  const known = s.threadSeen[root!] !== undefined || !!rootMsg?.quote || !!list?.some((x) => x.id === id)
   const seen = [s.threadSeen[root!], rootMsg?.quote?.replies_seen].reduce<string>((a, b) => (b && b > a ? b : a), '')
-  const counted = mentioned && !!read && id > seen
+  const counted = mentioned && !!read && known && id > seen
   const next: AppState = {
     ...s,
-    goneReplies: { ...s.goneReplies, [id]: true },
+    goneReplies: { ...s.goneReplies, [id]: c },
     threads: list ? { ...s.threads, [root!]: list.map((x) => (x.id === id ? { ...x, deleted: true, content: '' } : x)) } : s.threads,
     reads: counted ? { ...s.reads, [c]: { ...read, mentions: Math.max(0, read.mentions - 1) } } : s.reads,
   }
@@ -381,6 +388,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         threads: without(s.threads),
         threadStart: without(s.threadStart),
         threadSeen: without(s.threadSeen),
+        goneReplies: Object.fromEntries(Object.entries(s.goneReplies).filter(([, channel]) => channel !== c)),
         channels: drop(s.channels),
         messages: drop(s.messages),
         dmMembers: drop(s.dmMembers),

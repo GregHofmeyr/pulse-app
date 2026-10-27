@@ -3447,3 +3447,69 @@ async fn read_state_and_thread_seen_carry_the_absolute_mention_count() {
         "{e:?}"
     );
 }
+
+#[tokio::test]
+async fn ready_lists_the_seen_point_of_threads_with_a_counted_mention() {
+    let f = fixture().await;
+    let (a, b, c) = (f.quote().await, f.quote().await, f.quote().await);
+    let ra1 = f.reply(&f.sam_t, a.id, "one @alex").await;
+    let ra2 = f.reply(&f.sam_t, a.id, "two @alex").await;
+    f.reply(&f.sam_t, b.id, "two @alex").await;
+    f.reply(&f.sam_t, c.id, "no mention").await;
+    let (_ws, ready) = hello_ready(&f.app, &f.alex_t).await;
+    // Thread b was never seen; c has no mention at all.
+    let mut got: Vec<_> = ready
+        .thread_seen
+        .iter()
+        .map(|p| (p.root_id, p.last_seen_id))
+        .collect();
+    got.sort();
+    let mut want = vec![(a.id, None), (b.id, None)];
+    want.sort();
+    assert_eq!(got, want);
+    // A partial seen point is listed with its id; a full one drops the thread.
+    assert_eq!(f.seen(&f.alex_t, a.id, ra1.id).await.status(), 204);
+    let (_ws, ready) = hello_ready(&f.app, &f.alex_t).await;
+    assert!(
+        ready
+            .thread_seen
+            .iter()
+            .any(|p| p.root_id == a.id && p.last_seen_id == Some(ra1.id))
+    );
+    assert_eq!(f.seen(&f.alex_t, a.id, ra2.id).await.status(), 204);
+    let (_ws, ready) = hello_ready(&f.app, &f.alex_t).await;
+    assert_eq!(
+        ready
+            .thread_seen
+            .iter()
+            .map(|p| p.root_id)
+            .collect::<Vec<_>>(),
+        vec![b.id]
+    );
+}
+
+#[tokio::test]
+async fn a_channel_count_ignores_other_channels_reply_mentions() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    f.reply(&f.sam_t, q.id, "hey @alex").await;
+    let mut ws = hello(&f.app, &f.alex_t).await;
+    f.quote().await; // moves alex's point in this channel
+    let e = loop {
+        if let ServerFrame::Event(e @ Event::ReadStateUpdated { .. }) =
+            next_frame(&mut ws).await.expect("ReadStateUpdated")
+        {
+            break e;
+        }
+    };
+    assert!(
+        matches!(
+            e,
+            Event::ReadStateUpdated {
+                mentions: Some(1),
+                ..
+            }
+        ),
+        "{e:?}"
+    );
+}

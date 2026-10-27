@@ -1,5 +1,6 @@
 //! Private read points: where each user stopped reading each channel. Never visible to others.
 
+use pulse_protocol::gateway::ThreadSeenPoint;
 use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{Message, ReadState};
 use sqlx::{SqliteConnection, SqlitePool};
@@ -62,12 +63,22 @@ pub async fn mentions_for(db: &SqlitePool, user: UserId, channel: ChannelId) -> 
         .map_or(0, |r| r.mentions))
 }
 
+/// The reply mentions still counted for a user: a mention in a live reply of a live quote, after the
+/// user's seen point for that quote. Shared by the per-channel counts and the seen-point list, so
+/// the two can never disagree. Binds: user, channel (or NULL for all), channel.
+const COUNTED_REPLY_MENTIONS: &str = "FROM mentions mn JOIN messages m ON m.id = mn.message_id
+    JOIN messages root ON root.id = m.thread_root_id
+    LEFT JOIN thread_reads tr ON tr.user_id = mn.user_id AND tr.root_id = m.thread_root_id
+    WHERE mn.user_id = ? AND (? IS NULL OR m.channel_id = ?) AND m.thread_root_id IS NOT NULL
+      AND m.deleted_at IS NULL AND root.deleted_at IS NULL
+      AND m.id > COALESCE(tr.last_seen_id, '')";
+
 async fn read_states(
     db: &SqlitePool,
     me: UserId,
     only: Option<ChannelId>,
 ) -> AppResult<Vec<ReadState>> {
-    let rows: Vec<(String, Option<String>, i64, i64)> = sqlx::query_as(
+    let sql = format!(
         "SELECT rs.channel_id, rs.last_read_message_id,
             (SELECT COUNT(*) FROM messages m WHERE m.channel_id = rs.channel_id
                AND m.id > COALESCE(rs.last_read_message_id, '') AND m.kind = 'normal'
@@ -79,22 +90,21 @@ async fn read_states(
          FROM read_states rs
          LEFT JOIN (
             SELECT m.channel_id AS channel_id, COUNT(*) AS n
-            FROM mentions mn JOIN messages m ON m.id = mn.message_id
-            JOIN messages root ON root.id = m.thread_root_id
-            LEFT JOIN thread_reads tr ON tr.user_id = mn.user_id AND tr.root_id = m.thread_root_id
-            WHERE mn.user_id = ? AND m.thread_root_id IS NOT NULL
-              AND m.deleted_at IS NULL AND root.deleted_at IS NULL
-              AND m.id > COALESCE(tr.last_seen_id, '')
+            {COUNTED_REPLY_MENTIONS}
             GROUP BY m.channel_id
          ) tm ON tm.channel_id = rs.channel_id
-         WHERE rs.user_id = ? AND (? IS NULL OR rs.channel_id = ?)",
-    )
-    .bind(me.to_string())
-    .bind(me.to_string())
-    .bind(only.map(|c| c.to_string()))
-    .bind(only.map(|c| c.to_string()))
-    .fetch_all(db)
-    .await?;
+         WHERE rs.user_id = ? AND (? IS NULL OR rs.channel_id = ?)"
+    );
+    let only = only.map(|c| c.to_string());
+    let rows: Vec<(String, Option<String>, i64, i64)> = sqlx::query_as(&sql)
+        .bind(me.to_string())
+        .bind(&only)
+        .bind(&only)
+        .bind(me.to_string())
+        .bind(&only)
+        .bind(&only)
+        .fetch_all(db)
+        .await?;
     rows.into_iter()
         .map(|(c, last, unread, mentions)| {
             Ok(ReadState {
@@ -105,6 +115,30 @@ async fn read_states(
                     .map_err(anyhow::Error::from)?,
                 unread: unread as u32,
                 mentions: mentions as u32,
+            })
+        })
+        .collect()
+}
+
+/// `me`'s seen point in every quote thread where a reply mention of theirs is still counted.
+pub async fn thread_seen_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<ThreadSeenPoint>> {
+    let sql = format!(
+        "SELECT DISTINCT m.thread_root_id, tr.last_seen_id {COUNTED_REPLY_MENTIONS} ORDER BY m.thread_root_id"
+    );
+    let rows: Vec<(String, Option<String>)> = sqlx::query_as(&sql)
+        .bind(me.to_string())
+        .bind(None::<String>)
+        .bind(None::<String>)
+        .fetch_all(db)
+        .await?;
+    rows.into_iter()
+        .map(|(root, seen)| {
+            Ok(ThreadSeenPoint {
+                root_id: root.parse().map_err(anyhow::Error::from)?,
+                last_seen_id: seen
+                    .map(|l| l.parse())
+                    .transpose()
+                    .map_err(anyhow::Error::from)?,
             })
         })
         .collect()

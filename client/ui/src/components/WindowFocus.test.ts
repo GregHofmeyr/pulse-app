@@ -41,7 +41,7 @@ function ready() {
   app.state = applyReady(emptyState(), {
     me, servers: [], channels: [{ id: 'D1', server_id: null, kind: 'dm', name: '', position: 0 }],
     members: [], dm_members: [{ channel_id: 'D1', members: [me, sam] }], voice: [], people: [], read_states: [], mutes: [],
-    hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [],
+    hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [],
   } as never)
 }
 const sounds = () => invoke.mock.calls.filter((c) => c[0] === 'play_sound').length

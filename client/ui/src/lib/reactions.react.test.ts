@@ -73,6 +73,20 @@ describe('react on a quote (one per person)', () => {
     expect(reactions(st.get()).find((r) => r.emoji === 'b')).toEqual({ emoji: 'b', count: 1, me: true })
   })
 
+  it('another user removing the displaced emoji meanwhile: restored with the event\'s count, not +1', async () => {
+    const st = store(start())
+    vi.mocked(api.addReaction).mockImplementation(async () => {
+      // someone else took their "a" back: the server's count (still including me) is 1
+      const e = { t: 'ReactionRemoved', d: { channel_id: 'Q1', message_id: 'M1', emoji: 'a', user_id: 'U3', count: 1 } } as const
+      noteReactionEvent(e, 'U1')
+      st.set(applyEvent(st.get(), e, 0))
+      throw new Error('no')
+    })
+    vi.mocked(api.listReactors).mockRejectedValue(new Error('no'))
+    await react(st.get, st.set, 'Q1', 'M1', 'b', true, 'U1', () => {}, true)
+    expect(reactions(st.get()).find((r) => r.emoji === 'a')).toEqual({ emoji: 'a', count: 1, me: true })
+  })
+
   it('toggles of one quote share a queue, so a swap and its follow-up reach the server in order', async () => {
     const calls: string[] = []
     let release!: () => void

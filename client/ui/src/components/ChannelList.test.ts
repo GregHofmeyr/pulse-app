@@ -29,7 +29,7 @@ const ready: Ready = {
     { id: 'V2', server_id: 'S1', kind: 'voice', name: 'Games', position: 1 },
   ],
   members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: null }] }],
-  dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [],
+  dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [],
 }
 
 let cmp: ReturnType<typeof mount> | undefined
