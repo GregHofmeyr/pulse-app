@@ -8,7 +8,7 @@ pub mod routes;
 use std::collections::{HashMap, HashSet};
 
 use pulse_protocol::gateway::Event;
-use pulse_protocol::ids::{LineId, MessageId, ServerId, UserId};
+use pulse_protocol::ids::{LineId, MessageId, QotyEventId, ServerId, UserId};
 use pulse_protocol::rest::{LineMedia, Message, NewQuoteLine, Quote, QuoteLine};
 use sqlx::{SqliteConnection, SqlitePool};
 
@@ -241,21 +241,33 @@ pub async fn insert_line(
     Ok(())
 }
 
-/// Whether the quote's speakers are frozen: it is a live Quote of the Year option, so changing a
-/// speaker or adding or removing a line would change what people vote on. Never, until QotY exists.
-pub async fn speakers_locked(
-    _tx: &mut SqliteConnection,
-    _message_id: MessageId,
-) -> AppResult<bool> {
-    Ok(false)
+/// Whether the quote's speakers are frozen: it is an option of a live Quote of the Year, so
+/// changing a speaker or adding or removing a line would change what people vote on. Linking a
+/// plain name is not an edit and is never locked.
+pub async fn speakers_locked(tx: &mut SqliteConnection, message_id: MessageId) -> AppResult<bool> {
+    let hit: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM qoty_options o JOIN qoty_events e ON e.id = o.event_id
+         WHERE o.message_id = ? AND e.ended_at IS NULL LIMIT 1",
+    )
+    .bind(message_id.to_string())
+    .fetch_optional(tx)
+    .await?;
+    Ok(hit.is_some())
+}
+
+/// What a quote's delete leaves to publish once committed.
+pub struct Deleted {
+    /// One `MessageDeleted` per reply that was live, carrying `thread_root_id`.
+    pub replies: Vec<Event>,
+    /// Live Quote of the Year events that lost the quote as an option.
+    pub qoty: Vec<QotyEventId>,
 }
 
 /// Everything a deleted quote leaves behind, in the caller's transaction (the quote's own soft
 /// delete is the caller's): its reactions and awards go, its replies are soft-deleted, and its
 /// Quote of the Year options and votes in a live event go; an ended event keeps its own
-/// (and `qoty_winners` rows stay). The events to publish
-/// once committed: one `MessageDeleted` per reply that was live, carrying `thread_root_id`.
-pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppResult<Vec<Event>> {
+/// (and `qoty_winners` rows stay). Returns what to publish once committed.
+pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppResult<Deleted> {
     let id = message_id.to_string();
     sqlx::query("DELETE FROM reactions WHERE message_id = ?")
         .bind(&id)
@@ -270,6 +282,12 @@ pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppR
     // Only a live event loses the quote; an ended one keeps its options and votes as history.
     // Votes go with their option (foreign key cascade), but not by luck: say so.
     const LIVE: &str = "event_id IN (SELECT id FROM qoty_events WHERE ended_at IS NULL)";
+    let qoty: Vec<String> = sqlx::query_scalar(&format!(
+        "SELECT event_id FROM qoty_options WHERE message_id = ? AND {LIVE}"
+    ))
+    .bind(&id)
+    .fetch_all(&mut *tx)
+    .await?;
     sqlx::query(&format!(
         "DELETE FROM qoty_votes WHERE message_id = ? AND {LIVE}"
     ))
@@ -306,7 +324,7 @@ pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppR
             .or_default()
             .push(user.parse().map_err(anyhow::Error::from)?);
     }
-    replies
+    let replies = replies
         .into_iter()
         .map(|(reply, channel, author)| {
             Ok(Event::MessageDeleted {
@@ -321,7 +339,11 @@ pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppR
                 thread_root_id: Some(message_id),
             })
         })
-        .collect()
+        .collect::<AppResult<_>>()?;
+    Ok(Deleted {
+        replies,
+        qoty: qoty.iter().map(|e| parse_id(e)).collect::<AppResult<_>>()?,
+    })
 }
 
 /// The plain rendering stored in `messages.content`: `“text” — speaker` per line, `[image]` for pictures.
@@ -376,7 +398,7 @@ pub(crate) fn counted(
 }
 
 /// `name_key` to member for every speaker link of `servers`.
-async fn links_for<'e, E>(
+pub(crate) async fn links_for<'e, E>(
     db: E,
     servers: &[String],
 ) -> AppResult<HashMap<String, HashMap<String, UserId>>>

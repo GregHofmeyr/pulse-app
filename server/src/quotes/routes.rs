@@ -393,7 +393,7 @@ async fn leaderboard(
         }
         qb.push(")");
         let rows: Vec<Row> = qb.build_query_as().fetch_all(&s.db).await?;
-        for m in fill(&s.db, me, rows).await? {
+        for m in fill(&s.db, Some(me), rows).await? {
             messages.insert(m.id.to_string(), m);
         }
     }
@@ -503,5 +503,5 @@ async fn search(
     }
     qb.push(") ORDER BY id DESC");
     let rows: Vec<Row> = qb.build_query_as().fetch_all(&s.db).await?;
-    Ok(Json(fill(&s.db, me, rows).await?))
+    Ok(Json(fill(&s.db, Some(me), rows).await?))
 }

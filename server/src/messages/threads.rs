@@ -112,7 +112,7 @@ async fn list(
     .bind(limit)
     .fetch_all(&s.db)
     .await?;
-    Ok(Json(fill(&s.db, me, rows).await?))
+    Ok(Json(fill(&s.db, Some(me), rows).await?))
 }
 
 /// `204` also when the point was already at or past `message_id`: a no-op that publishes nothing.

@@ -10,6 +10,7 @@ pub mod hygiene;
 pub mod limits;
 pub mod media;
 pub mod messages;
+pub mod qoty;
 pub mod quotes;
 pub mod reads;
 pub mod reports;
@@ -38,6 +39,7 @@ pub fn router(state: AppState) -> Router {
         .merge(messages::reactions::router())
         .merge(messages::threads::router())
         .merge(quotes::routes::router())
+        .merge(qoty::router())
         .merge(dms::routes::router())
         .merge(voice::routes::router())
         .merge(streams::routes::router())
@@ -78,6 +80,9 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     };
     // Before serving (connections queue in the listen backlog), so the first Ready is right.
     voice::restore::on_startup(&state, &started_at).await?;
+    // Votes whose time ran out while the server was down end now, before anyone connects.
+    qoty::end_overdue(&state, &db::now()).await?;
+    qoty::spawn_sweeper(state.clone());
     axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),

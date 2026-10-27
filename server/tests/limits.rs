@@ -939,3 +939,27 @@ async fn speaker_links_share_the_mutate_limit() {
     assert_eq!(status(app.http.put(&url).json(&body), &a).await, 429);
     assert_eq!(status(app.http.delete(format!("{url}/x")), &a).await, 429);
 }
+
+#[tokio::test]
+async fn qoty_routes_share_the_mutate_limit() {
+    let app = spawn_only(|l| l.mutate_user = tiny(5)).await;
+    let (_, a) = register(&app, "alex").await;
+    let srv = create_server(&app, &a, "Main").await;
+    let e = pulse_protocol::ids::QotyEventId::new();
+    let pick = serde_json::json!({ "message_id": pulse_protocol::ids::MessageId::new() });
+    let vote = app.url(&format!("/qoty/{e}/vote"));
+    let start = app.url(&format!("/servers/{}/qoty", srv.id));
+    let year = serde_json::json!({ "year": 1999, "minutes": null });
+    assert_eq!(status(app.http.put(&vote).json(&pick), &a).await, 404);
+    assert_eq!(status(app.http.delete(&vote), &a).await, 404);
+    let options = app.url(&format!("/qoty/{e}/options"));
+    assert_eq!(status(app.http.post(&options).json(&pick), &a).await, 404);
+    let end = app.url(&format!("/qoty/{e}/end"));
+    assert_eq!(status(app.http.post(&end), &a).await, 404);
+    assert_eq!(status(app.http.post(&start).json(&year), &a).await, 400);
+    let reopen = app.url(&format!("/qoty/{e}/reopen"));
+    let minutes = serde_json::json!({ "minutes": null });
+    assert_eq!(status(app.http.post(&reopen).json(&minutes), &a).await, 429);
+    assert_eq!(status(app.http.post(&start).json(&year), &a).await, 429);
+    assert_eq!(status(app.http.put(&vote).json(&pick), &a).await, 429);
+}

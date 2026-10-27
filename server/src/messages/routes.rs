@@ -36,8 +36,9 @@ pub(crate) type Row = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
 );
-pub(crate) const COLS: &str = "id, channel_id, author_id, kind, content, reply_to_id, created_at, edited_at, deleted_at, thread_root_id";
+pub(crate) const COLS: &str = "id, channel_id, author_id, kind, content, reply_to_id, created_at, edited_at, deleted_at, thread_root_id, system_payload";
 
 fn parse<T: std::str::FromStr>(s: &str) -> AppResult<T>
 where
@@ -58,12 +59,14 @@ fn from_row(r: Row) -> AppResult<Message> {
         edited_at,
         deleted_at,
         thread_root_id,
+        system_payload,
     ) = r;
+    let system = kind == "system";
     Ok(Message {
         id: parse(&id)?,
         channel_id: parse(&channel_id)?,
         author_id: author_id.as_deref().map(parse).transpose()?,
-        kind: if kind == "system" {
+        kind: if system {
             MessageKind::System
         } else {
             MessageKind::Normal
@@ -82,7 +85,10 @@ fn from_row(r: Row) -> AppResult<Message> {
         reactions: vec![],
         thread_root_id: thread_root_id.as_deref().map(parse).transpose()?,
         quote: None,
-        qoty_card: None,
+        qoty_card: match system_payload {
+            Some(p) if system && deleted_at.is_none() => super::system::qoty_card(&p),
+            _ => None,
+        },
     })
 }
 
@@ -148,19 +154,24 @@ impl Page {
     }
 }
 
-/// Turn rows into messages with mentions, reactions and the quote part, as `me` sees them.
-pub(crate) async fn fill(db: &SqlitePool, me: UserId, rows: Vec<Row>) -> AppResult<Vec<Message>> {
+/// Turn rows into messages with mentions, reactions and the quote part, as `me` sees them
+/// (`None`: as events show them, with nothing marked as yours).
+pub(crate) async fn fill(
+    db: &SqlitePool,
+    me: Option<UserId>,
+    rows: Vec<Row>,
+) -> AppResult<Vec<Message>> {
     let mut page: Vec<Message> = rows.into_iter().map(from_row).collect::<AppResult<_>>()?;
     let ids: Vec<MessageId> = page.iter().map(|m| m.id).collect();
     let mut map = mentions::for_messages(db, &ids).await?;
     // A deleted message shows no reactions, like no content.
     let live: Vec<MessageId> = page.iter().filter(|m| !m.deleted).map(|m| m.id).collect();
-    let mut reacted = reactions::summaries(db, Some(me), &live).await?;
+    let mut reacted = reactions::summaries(db, me, &live).await?;
     for m in &mut page {
         m.mentions = map.remove(&m.id).unwrap_or_default();
         m.reactions = reacted.remove(&m.id).unwrap_or_default();
     }
-    crate::quotes::attach(db, Some(me), &mut page).await?;
+    crate::quotes::attach(db, me, &mut page).await?;
     Ok(page)
 }
 
@@ -244,7 +255,7 @@ async fn list(
     } else {
         slice(&s.db, id, &page.bounds().1, false, limit).await?
     };
-    Ok(Json(fill(&s.db, me, rows).await?))
+    Ok(Json(fill(&s.db, Some(me), rows).await?))
 }
 
 async fn send(
@@ -530,10 +541,10 @@ async fn remove(
     if changed == 0 {
         return Err(AppError::NotFound);
     }
-    let replies = if is_quote {
-        crate::quotes::on_delete(&mut tx, id).await?
+    let deleted = if is_quote {
+        Some(crate::quotes::on_delete(&mut tx, id).await?)
     } else {
-        vec![]
+        None
     };
     tx.commit().await?;
     s.hub
@@ -551,8 +562,14 @@ async fn remove(
             },
         )
         .await;
-    for event in replies {
-        s.hub.publish(&s.db, event).await;
+    if let Some(deleted) = deleted {
+        for event in deleted.replies {
+            s.hub.publish(&s.db, event).await;
+        }
+        // Still under this delete's `in_order` guard (taken because it is a quote).
+        for event in deleted.qoty {
+            crate::qoty::publish_updated(&s, event).await;
+        }
     }
     Ok(StatusCode::NO_CONTENT)
 }

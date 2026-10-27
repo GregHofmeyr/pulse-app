@@ -953,14 +953,15 @@ async fn reading_counts_awards_replies_and_wins() {
     assert_eq!((q.reply_count, q.replies_seen), (2, None));
 
     // Wins come from qoty_winners.
+    let e1 = pulse_protocol::ids::QotyEventId::new();
     exec(format!(
         "INSERT INTO qoty_events (id, server_id, year, started_by, started_at, ended_at, end_reason)
-         VALUES ('e1', '{}', 2025, '{}', '2025-12-01T00:00:00.000Z', '2025-12-02T00:00:00.000Z', 'early')",
+         VALUES ('{e1}', '{}', 2025, '{}', '2025-12-01T00:00:00.000Z', '2025-12-02T00:00:00.000Z', 'early')",
         f.server, f.alex
     ))
     .await;
     exec(format!(
-        "INSERT INTO qoty_winners (event_id, message_id, votes) VALUES ('e1', '{mid}', 3)"
+        "INSERT INTO qoty_winners (event_id, message_id, votes) VALUES ('{e1}', '{mid}', 3)"
     ))
     .await;
     assert_eq!(read(f.alex_t.clone()).await.wins, vec![2025]);
@@ -1323,27 +1324,33 @@ async fn deleting_a_quote_clears_reactions_awards_and_replies() {
         .await
         .unwrap();
     // A QotY option with a vote, and a past win.
+    let (e1, e0) = (
+        pulse_protocol::ids::QotyEventId::new(),
+        pulse_protocol::ids::QotyEventId::new(),
+    );
     for q in [
         format!(
-            "INSERT INTO qoty_events (id, server_id, year, started_by, started_at) VALUES ('e1', '{}', 2026, '{}', '2026-12-01T00:00:00.000Z')",
+            "INSERT INTO qoty_events (id, server_id, year, started_by, started_at) VALUES ('{e1}', '{}', 2026, '{}', '2026-12-01T00:00:00.000Z')",
             f.server, f.alex
         ),
         format!(
-            "INSERT INTO qoty_events (id, server_id, year, started_by, started_at, ended_at, end_reason) VALUES ('e0', '{}', 2025, '{}', '2025-12-01T00:00:00.000Z', '2025-12-02T00:00:00.000Z', 'early')",
+            "INSERT INTO qoty_events (id, server_id, year, started_by, started_at, ended_at, end_reason) VALUES ('{e0}', '{}', 2025, '{}', '2025-12-01T00:00:00.000Z', '2025-12-02T00:00:00.000Z', 'early')",
             f.server, f.alex
         ),
         format!(
-            "INSERT INTO qoty_options (event_id, message_id, added_by) VALUES ('e1', '{mid}', '{}')",
+            "INSERT INTO qoty_options (event_id, message_id, added_by) VALUES ('{e1}', '{mid}', '{}')",
             f.alex
         ),
         format!(
-            "INSERT INTO qoty_votes (event_id, user_id, message_id) VALUES ('e1', '{}', '{mid}')",
+            "INSERT INTO qoty_votes (event_id, user_id, message_id) VALUES ('{e1}', '{}', '{mid}')",
             f.sam
         ),
-        format!("INSERT INTO qoty_winners (event_id, message_id, votes) VALUES ('e0', '{mid}', 3)"),
-        format!("INSERT INTO qoty_options (event_id, message_id) VALUES ('e0', '{mid}')"),
         format!(
-            "INSERT INTO qoty_votes (event_id, user_id, message_id) VALUES ('e0', '{}', '{mid}')",
+            "INSERT INTO qoty_winners (event_id, message_id, votes) VALUES ('{e0}', '{mid}', 3)"
+        ),
+        format!("INSERT INTO qoty_options (event_id, message_id) VALUES ('{e0}', '{mid}')"),
+        format!(
+            "INSERT INTO qoty_votes (event_id, user_id, message_id) VALUES ('{e0}', '{}', '{mid}')",
             f.alex
         ),
     ] {
@@ -1385,23 +1392,32 @@ async fn deleting_a_quote_clears_reactions_awards_and_replies() {
     );
     assert_eq!(
         count(format!(
-            "SELECT COUNT(*) FROM qoty_options WHERE message_id = '{mid}' AND event_id = 'e1'"
+            "SELECT COUNT(*) FROM qoty_options WHERE message_id = '{mid}' AND event_id = '{e1}'"
         ))
         .await,
         0,
         "the live event loses it"
     );
     assert_eq!(
-        count("SELECT COUNT(*) FROM qoty_votes WHERE event_id = 'e1'".into()).await,
+        count(format!(
+            "SELECT COUNT(*) FROM qoty_votes WHERE event_id = '{e1}'"
+        ))
+        .await,
         0
     );
     assert_eq!(
-        count("SELECT COUNT(*) FROM qoty_options WHERE event_id = 'e0'".into()).await,
+        count(format!(
+            "SELECT COUNT(*) FROM qoty_options WHERE event_id = '{e0}'"
+        ))
+        .await,
         1,
         "an ended event keeps its option"
     );
     assert_eq!(
-        count("SELECT COUNT(*) FROM qoty_votes WHERE event_id = 'e0'".into()).await,
+        count(format!(
+            "SELECT COUNT(*) FROM qoty_votes WHERE event_id = '{e0}'"
+        ))
+        .await,
         1,
         "and its votes"
     );
