@@ -168,3 +168,11 @@ export function memberServers(s: AppState): Set<string> {
   const me = s.me?.id
   return new Set(s.servers.filter((x) => (s.members[x.id] ?? []).some((m) => m.user.id === me)).map((x) => x.id))
 }
+
+/** Why you can't add this reaction (the server would refuse), or null. Removing your own is always allowed. */
+export function blockedReason(s: AppState, key: string): string | null {
+  if (!key.startsWith('custom:')) return null
+  const c = s.customEmoji[key.slice(7)]
+  if (!c?.hash) return 'This emoji was deleted'
+  return memberServers(s).has(c.server_id) ? null : "From a server you're not in"
+}

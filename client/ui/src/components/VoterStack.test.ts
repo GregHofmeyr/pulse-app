@@ -30,4 +30,17 @@ describe('VoterStack', () => {
     show([])
     expect(document.body.innerHTML.replace(/<!--.*?-->/g, '').trim()).toBe('')
   })
+
+  it('names every voter past ten, in the tip and the label, and can be focused', () => {
+    const ids = Array.from({ length: 13 }, (_, n) => `V${n}`)
+    cmp = mount(VoterStack, { target: document.body, props: { userIds: ids, nameOf: (id: string | null) => `name${id}` } })
+    flushSync()
+    const stack = document.querySelector('.stack')!
+    for (const a of ['data-tip', 'aria-label']) {
+      const t = stack.getAttribute(a)!
+      for (const id of ids) expect(t).toContain(`name${id}`)
+      expect(t).not.toContain('other')
+    }
+    expect(stack.getAttribute('tabindex')).toBe('0')
+  })
 })

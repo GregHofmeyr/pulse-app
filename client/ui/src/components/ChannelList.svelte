@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
+  import type { Channel } from '../lib/protocol/Channel'
   import { app, clock } from '../lib/store.svelte'
   import { callRoster, channelsFor, isMember } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
@@ -87,6 +88,16 @@
   }
 </script>
 
+{#snippet channelRow(c: Channel, icon: string)}
+  {@const read = app.state.reads[c.id]}
+  {@const muted = isMuted(app.state, c, clock.nowIso)}
+  <button class="row" class:active={c.id === activeChannelId} class:unread={(read?.unread ?? 0) > 0 && !muted} class:muted
+    onclick={() => onSelect(c.id)}>
+    <span class="ico"><Icon name={icon} size={17} /></span><span class="grow">{c.name}</span>
+    {#if muted}<span class="mic"><Icon name="bellOff" size={13} /></span>{/if}
+    {#if read?.mentions}<span class="pill">{read.mentions}</span>{/if}
+  </button>
+{/snippet}
 <div class="list">
   <div class="label">TEXT CHANNELS
     {#if member}<button class="add" aria-label="Create text channel" onclick={() => startAdd('text')}><Icon name="plus" size={14} /></button>{/if}
@@ -95,16 +106,7 @@
     <input class="new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-channel" maxlength="64" aria-label="New text channel name" />
     {#if addError}<small class="err">{addError}</small>{/if}
   {/if}
-  {#each lists.text as c (c.id)}
-    {@const read = app.state.reads[c.id]}
-    {@const muted = isMuted(app.state, c, clock.nowIso)}
-    <button class="row" class:active={c.id === activeChannelId} class:unread={(read?.unread ?? 0) > 0 && !muted} class:muted
-      onclick={() => onSelect(c.id)}>
-      <span class="ico"><Icon name="hash" size={17} /></span><span class="grow">{c.name}</span>
-      {#if muted}<span class="mic"><Icon name="bellOff" size={13} /></span>{/if}
-      {#if read?.mentions}<span class="pill">{read.mentions}</span>{/if}
-    </button>
-  {/each}
+  {#each lists.text as c (c.id)}{@render channelRow(c, "hash")}{/each}
 
   <div class="label voice">QUOTES
     {#if member}<button class="add" aria-label="Create quotes channel" onclick={() => startAdd('quotes')}><Icon name="quote" size={14} /></button>{/if}
@@ -113,16 +115,7 @@
     <input class="new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-quotes" maxlength="64" aria-label="New quotes channel name" />
     {#if addError}<small class="err">{addError}</small>{/if}
   {/if}
-  {#each lists.quotes as c (c.id)}
-    {@const read = app.state.reads[c.id]}
-    {@const muted = isMuted(app.state, c, clock.nowIso)}
-    <button class="row" class:active={c.id === activeChannelId} class:unread={(read?.unread ?? 0) > 0 && !muted} class:muted
-      onclick={() => onSelect(c.id)}>
-      <span class="ico"><Icon name="quote" size={17} /></span><span class="grow">{c.name}</span>
-      {#if muted}<span class="mic"><Icon name="bellOff" size={13} /></span>{/if}
-      {#if read?.mentions}<span class="pill">{read.mentions}</span>{/if}
-    </button>
-  {/each}
+  {#each lists.quotes as c (c.id)}{@render channelRow(c, "quote")}{/each}
 
   <div class="label voice">VOICE CHANNELS
     {#if member}<button class="add" aria-label="Create voice channel" onclick={() => startAdd('voice')}><Icon name="plus" size={14} /></button>{/if}

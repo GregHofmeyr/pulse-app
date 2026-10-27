@@ -1,6 +1,5 @@
 <script lang="ts" module>
-  /** How long a failed delete/reaction error stays on its message. */
-  export const INLINE_ERROR_MS = 5_000
+  export { INLINE_ERROR_MS } from '../lib/inlineError.svelte'
 </script>
 
 <script lang="ts">
@@ -13,6 +12,7 @@
   import { untrack } from 'svelte'
   import { app } from '../lib/store.svelte'
   import { errorText } from '../lib/tauri'
+  import { InlineError } from '../lib/inlineError.svelte'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import { renderMessage } from '../lib/markdown'
   import { animateEmojiIn } from '../lib/animate.svelte'
@@ -58,26 +58,15 @@
   } = $props()
   const uid = $props.id()
 
+  let focusIn = $state(false)
   let picking = $state(false)
   let smileBtn: HTMLButtonElement | undefined = $state()
   let editing = $state(false)
   let draft = $state('')
   let editError = $state('')
-  let inlineError = $state('')
-  let errTimer: ReturnType<typeof setTimeout> | undefined
-  // A reaction can fail after the message has gone from the screen: no timer for a component that's gone.
-  let alive = true
-  // A failed delete or reaction shows on this message for a few seconds; a newer one restarts the clock.
-  function showError(msg: string) {
-    if (!alive) return
-    clearTimeout(errTimer)
-    inlineError = msg
-    errTimer = setTimeout(() => (inlineError = ''), INLINE_ERROR_MS)
-  }
-  $effect(() => () => {
-    alive = false
-    clearTimeout(errTimer)
-  })
+  const inlineError = new InlineError()
+  const showError = inlineError.show
+  $effect(() => inlineError.stop)
   async function del() {
     try {
       await onDelete()
@@ -146,7 +135,8 @@
 {#if message.kind === 'system'}
   <div class="system">{message.content} <span class="time">{time}</span></div>
 {:else}
-  <div class="msg" class:grouped class:mentioned={!!meId && message.mentions.includes(meId)}>
+  <!-- focus anywhere inside shows the action bar (hover alone left keyboard users without it) -->
+  <div class="msg" onfocusin={() => (focusIn = true)} onfocusout={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focusIn = false }} class:grouped class:mentioned={!!meId && message.mentions.includes(meId)}>
     {#if replyTo}
       <div class="reply"><span class="hook"></span><strong>{nameOf(replyTo.author_id)}</strong>
         <span class="snippet">{replyTo.deleted ? 'original message deleted' : replyTo.content.slice(0, 120)}</span></div>
@@ -174,10 +164,10 @@
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
         {#if !pending}<ReactionRow {message} {meId} {nameOf} onError={showError} />{/if}
-        {#if inlineError}<p class="err" role="alert">{inlineError}</p>{/if}
+        {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
       </div>
       {#if !pending && !message.deleted && !editing}
-        <div class="actions" class:open={picking}>
+        <div class="actions" class:open={picking || focusIn}>
           <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={15} /></button>
           <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>
           {#if mine}
@@ -238,8 +228,8 @@
   .reply strong { color: var(--text-2); }
   .hook { width: 28px; height: 10px; margin-top: 10px; border-left: 2px solid #3a3c44; border-top: 2px solid #3a3c44; border-top-left-radius: 6px; flex-shrink: 0; }
   .snippet { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .actions { position: absolute; top: -10px; right: 18px; display: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: 8px; }
-  .msg:hover .actions, .actions:focus-within, .actions.open { display: flex; }
+  .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: 8px; }
+  .msg:hover .actions, .actions.open { opacity: 1; pointer-events: auto; }
   .actions button { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .actions button:hover { color: var(--text); }
   /* about two lines to start, grows with what's in it (images included) up to 200px, then scrolls */

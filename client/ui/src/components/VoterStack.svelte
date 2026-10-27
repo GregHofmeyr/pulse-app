@@ -1,6 +1,5 @@
 <script lang="ts">
   import Avatar from './Avatar.svelte'
-  import { tooltipText } from '../lib/reactions'
 
   let { userIds, nameOf, max = 5 }: {
     userIds: string[]
@@ -11,11 +10,16 @@
 
   const shown = $derived(userIds.slice(0, max))
   const extra = $derived(userIds.length - shown.length)
-  const tip = $derived(tooltipText(userIds.map((id) => nameOf(id)), userIds.length))
+  // every name, however many (the avatars stop at `max`, the tip does not)
+  const tip = $derived.by(() => {
+    const names = userIds.map((id) => nameOf(id))
+    return names.length < 2 ? (names[0] ?? '') : `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
+  })
 </script>
 
 {#if userIds.length > 0}
-  <span class="stack" data-tip={tip} role="img" aria-label={tip}>
+  <!-- svelte-ignore a11y_no_noninteractive_tabindex -->
+  <span class="stack" data-tip={tip} role="img" aria-label={tip} tabindex="0">
     {#each shown as id (id)}<Avatar {id} name={nameOf(id)} size={18} />{/each}
     {#if extra > 0}<span class="more">+{extra}</span>{/if}
   </span>

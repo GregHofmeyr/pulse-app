@@ -27,7 +27,8 @@
     /** Who a plain name can be linked to. */
     members?: Mentionable[]
     onAward: () => unknown
-    onCopy: () => unknown
+    /** Null where there is nothing to copy (an image without a caption). */
+    onCopy: (() => unknown) | null
     onLink: (userId: string) => unknown
     onUnlink: () => unknown
     onClose: () => void
@@ -89,8 +90,9 @@
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); focusItem(at + 1); break
       case 'ArrowUp': e.preventDefault(); focusItem(at < 0 ? -1 : at - 1); break
-      case 'Home': e.preventDefault(); focusItem(0); break
-      case 'End': e.preventDefault(); focusItem(-1); break
+      // in the search box Home/End move the caret
+      case 'Home': if (!(e.target instanceof HTMLInputElement)) { e.preventDefault(); focusItem(0) } break
+      case 'End': if (!(e.target instanceof HTMLInputElement)) { e.preventDefault(); focusItem(-1) } break
       case 'Escape': e.preventDefault(); close(true); break
       case 'Tab': e.preventDefault(); close(true); break
       case 'Enter': {
@@ -111,19 +113,19 @@
 <div bind:this={el} class="menu" role="menu" aria-label="Line actions" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px"
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
   {#if picking}
-    <input type="text" class="find" aria-label="Find a member" placeholder="Find a member" autocomplete="off" bind:value={query} />
-    <div role="listbox" aria-label="Members">
+    <input type="text" class="find" data-item aria-label="Find a member" placeholder="Find a member" autocomplete="off" bind:value={query} />
+    <div role="group" aria-label="Members">
       {#each matches as m (m.id)}
-        <button type="button" role="option" aria-selected="false" data-item onclick={() => pick(() => onLink(m.id))}>{m.name}</button>
+        <button type="button" role="menuitem" data-item onclick={() => pick(() => onLink(m.id))}>{m.name}</button>
       {:else}
-        <span class="none">{query ? 'No one by that name' : 'Type a name'}</span>
+        <span class="none">No one by that name</span>
       {/each}
     </div>
   {:else}
     {#if award}
       <button type="button" role="menuitem" data-item onclick={() => pick(onAward)}>{award === 'give' ? 'Give quote award' : 'Take back award'}</button>
     {/if}
-    <button type="button" role="menuitem" data-item onclick={() => pick(onCopy)}>Copy</button>
+    {#if onCopy}<button type="button" role="menuitem" data-item onclick={() => pick(onCopy)}>Copy</button>{/if}
     {#if link === 'link'}
       <button type="button" role="menuitem" data-item onclick={startPicking}>Link to a member…</button>
     {:else if link === 'unlink'}
@@ -137,6 +139,6 @@
   .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font: inherit; display: flex; align-items: center; gap: 8px; }
   .menu button:hover, .menu button:focus-visible { background: var(--bg-3); }
   .find { height: 32px; margin-bottom: 2px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg-2); color: var(--text); font: inherit; outline: none; }
-  [role='listbox'] { display: flex; flex-direction: column; gap: 2px; }
+  [role='group'] { display: flex; flex-direction: column; gap: 2px; }
   .none { padding: 6px 10px; color: var(--text-3); }
 </style>

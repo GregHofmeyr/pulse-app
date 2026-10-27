@@ -223,7 +223,7 @@ describe('QuoteItem', () => {
     input.value = 'sa'
     input.dispatchEvent(new Event('input', { bubbles: true }))
     flushSync()
-    const opts = [...document.querySelectorAll<HTMLElement>('[role=option]')]
+    const opts = [...document.querySelectorAll<HTMLElement>('[role=menuitem]')]
     expect(opts.map((o) => o.textContent?.trim())).toEqual(['sam'])
     opts[0].click()
     await settle()
@@ -261,5 +261,68 @@ describe('QuoteItem', () => {
   it('suggests the first 3 frequent emoji not already on the quote', () => {
     show(quote([line()], { reactions: [{ emoji: '👍', count: 1, me: false }] }))
     expect([...document.querySelectorAll('.chip.suggest')].map((b) => b.getAttribute('aria-label'))).toEqual(['React with 🎉', 'React with ❤️', 'React with 😂'])
+  })
+
+  it('focusing into a quote exposes its action buttons', () => {
+    show(quote([line()]))
+    const actions = document.querySelector<HTMLElement>('.actions')!
+    expect(actions.classList.contains('open')).toBe(false)
+    actions.querySelector<HTMLElement>('button')!.focus(); flushSync()
+    expect(actions.classList.contains('open')).toBe(true)
+  })
+
+  it('the line label carries the award count', () => {
+    show(quote([line({ awards: 2, awarders: ['U1', 'U3'] }), line({ id: 'L2', awards: 1, awarders: ['U1'] }), line({ id: 'L3' })]))
+    const labels = [...document.querySelectorAll('.line')].map((l) => l.getAttribute('aria-label'))
+    expect(labels[0]).toContain('2 awards')
+    expect(labels[1]).toContain('1 award')
+    expect(labels[1]).not.toContain('1 awards')
+    expect(labels[2]).not.toContain('award')
+  })
+
+  it('the line actions button says whether its menu is open', () => {
+    show(quote([line()]))
+    const b = document.querySelector<HTMLButtonElement>('button[aria-label="Line actions"]')!
+    expect(b.getAttribute('aria-expanded')).toBe('false')
+    b.click(); flushSync()
+    expect(b.getAttribute('aria-expanded')).toBe('true')
+  })
+
+  it('an image line without a caption has nothing to copy; with one it copies the caption', async () => {
+    show(quote([line({ text: null, media: { hash: P, still_hash: null, width: 10, height: 10 } })]))
+    openMenu(0)
+    expect(items()).not.toContain('Copy')
+    unmount(cmp!); cmp = undefined; document.body.innerHTML = ''
+    show(quote([line({ text: null, media: { hash: P, still_hash: null, width: 10, height: 10 }, caption: 'a cat' })]))
+    openMenu(0)
+    item('Copy').click()
+    await settle()
+    expect(navigator.clipboard.writeText).toHaveBeenCalledWith('a cat')
+  })
+
+  it('the full-size image has alt text and the dialog carries the caption', () => {
+    show(quote([line({ text: null, media: { hash: P, still_hash: null, width: 10, height: 10 }, caption: 'a cat' })]))
+    document.querySelector<HTMLElement>('.line .picbtn')!.click(); flushSync()
+    expect(document.querySelector('[role=dialog] img')!.getAttribute('alt')).toBe('a cat')
+    expect(document.querySelector('[role=dialog]')!.getAttribute('aria-label')).toBe('a cat')
+  })
+
+  it('suggestions skip emoji you cannot use before taking three', () => {
+    show(quote([line()]))
+    app.state = { ...app.state, frequentEmoji: ['custom:GONE', '🎉', '❤️', '😂', '👍'] }
+    flushSync()
+    expect([...document.querySelectorAll('.chip.suggest')].map((b) => b.getAttribute('aria-label'))).toEqual(['React with 🎉', 'React with ❤️', 'React with 😂'])
+  })
+
+  it('in the member picker ArrowUp from the first option returns to the input, and an empty box lists members', () => {
+    show(quote([line({ speaker_id: null, speaker_name: 'Grandpa' })]))
+    openMenu(0)
+    item('Link to a member…').click(); flushSync()
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Find a member"]')!
+    expect(document.querySelectorAll('[role=menuitem]').length).toBeGreaterThan(0)
+    const first = document.querySelector<HTMLElement>('[role=menuitem]')!
+    first.focus()
+    first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
+    expect(document.activeElement).toBe(input)
   })
 })

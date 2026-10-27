@@ -5,7 +5,7 @@
   import type { Std } from '../lib/emoji'
   import { reactionKey, twemojiUrl } from '../lib/emoji'
   import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
-  import { memberServers, pickAdds, react, tooltipText } from '../lib/reactions'
+  import { blockedReason, pickAdds, react, tooltipText } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import { api } from '../lib/tauri'
   import EmojiPopover from './EmojiPopover.svelte'
@@ -33,14 +33,7 @@
 
   const customOf = (key: string): CustomEmoji | undefined => app.state.customEmoji[key.slice(7)]
 
-  const members = $derived(memberServers(app.state))
-  // Why you can't add this reaction (the server would refuse), or null. Removing your own is always allowed.
-  function blocked(key: string): string | null {
-    if (!key.startsWith('custom:')) return null
-    const c = customOf(key)
-    if (!c?.hash) return 'This emoji was deleted'
-    return members.has(c.server_id) ? null : "From a server you're not in"
-  }
+  const blocked = (key: string) => blockedReason(app.state, key)
 
   function toggle(key: string, add: boolean) {
     void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, add, meId, onError, onePerPerson)

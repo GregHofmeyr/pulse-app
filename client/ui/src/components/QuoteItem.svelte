@@ -10,14 +10,14 @@
   import { mediaUrl, reactionKey, type Std } from '../lib/emoji'
   import { menuPoint } from '../lib/participantMenu'
   import { hasNewReplies, nameKey, speakerOf } from '../lib/quotes'
-  import { pickAdds, react } from '../lib/reactions'
+  import { blockedReason, pickAdds, react } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { LineMedia } from '../lib/protocol/LineMedia'
   import type { Message } from '../lib/protocol/Message'
   import type { QuoteLine } from '../lib/protocol/QuoteLine'
-  import { INLINE_ERROR_MS } from './MessageItem.svelte'
+  import { InlineError } from '../lib/inlineError.svelte'
 
   let {
     message,
@@ -44,24 +44,14 @@
   const mine = $derived(message.author_id === meId)
   const when = $derived(new Date(message.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))
   // A quote carries one reaction per person: suggest the first three of your usual picks it doesn't have yet.
-  const suggest = $derived(app.state.frequentEmoji.filter((k) => !message.reactions.some((r) => r.emoji === k)).slice(0, 3))
+  const suggest = $derived(app.state.frequentEmoji.filter((k) => !message.reactions.some((r) => r.emoji === k) && !blockedReason(app.state, k)).slice(0, 3))
   const members = $derived(
     (app.state.members[serverId] ?? []).map((m) => ({ id: m.user.id, name: m.nickname ?? m.user.username })),
   )
 
-  let inlineError = $state('')
-  let errTimer: ReturnType<typeof setTimeout> | undefined
-  let alive = true
-  function showError(msg: string) {
-    if (!alive) return
-    clearTimeout(errTimer)
-    inlineError = msg
-    errTimer = setTimeout(() => (inlineError = ''), INLINE_ERROR_MS)
-  }
-  $effect(() => () => {
-    alive = false
-    clearTimeout(errTimer)
-  })
+  const inlineError = new InlineError()
+  const showError = inlineError.show
+  $effect(() => inlineError.stop)
   async function attempt(f: () => Promise<unknown>) {
     try {
       await f()
@@ -84,17 +74,20 @@
       openMenu(line, e, e.currentTarget as HTMLElement)
     }
   }
+  const awardNote = (n: number) => (n > 0 ? `, ${n} ${n === 1 ? 'award' : 'awards'}` : '')
   const speaker = (line: QuoteLine) => speakerOf(app.state, serverId, line)
   const awardOf = (line: QuoteLine): 'give' | 'take' | null =>
     speaker(line).userId === meId ? null : line.awarded ? 'take' : 'give'
   const linkOf = (line: QuoteLine): 'link' | 'unlink' | null =>
     line.speaker_id ? null : speaker(line).userId ? 'unlink' : 'link'
   const toggleAward = (line: QuoteLine) => attempt(() => (line.awarded ? api.takeAward(line.id) : api.giveAward(line.id)))
+  const copyable = (line: QuoteLine) => !!(line.text ?? line.caption)
   const copy = (line: QuoteLine) => attempt(() => navigator.clipboard.writeText(line.text ?? line.caption ?? ''))
   const link = (line: QuoteLine, userId: string) => attempt(() => api.linkSpeaker(serverId, { name: line.speaker_name ?? '', user_id: userId }))
   const unlink = (line: QuoteLine) => attempt(() => api.unlinkSpeaker(serverId, nameKey(line.speaker_name ?? '')))
 
   // --- reacting (one reaction per person) ---
+  let focusIn = $state(false)
   let picking = $state(false)
   let smileBtn: HTMLButtonElement | undefined = $state()
   function pick(e: Std | CustomEmoji, { keep }: { keep: boolean }) {
@@ -104,11 +97,12 @@
   }
 
   // --- the full-size image ---
-  let open = $state<LineMedia | null>(null)
+  let open = $state<{ media: LineMedia; caption: string | null } | null>(null)
 </script>
 
 {#if quote}
-  <div class="quote">
+  <!-- focus anywhere inside shows the action bar (hover alone left keyboard users without it) -->
+  <div class="quote" onfocusin={() => (focusIn = true)} onfocusout={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focusIn = false }}>
     <div class="row">
       <Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={40} />
       <div class="body">
@@ -120,12 +114,12 @@
             {#each quote.lines as line (line.id)}
               {@const who = speaker(line)}
               <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
-              <div class="line" role="group" tabindex="0" aria-label="{who.name}: {line.text ?? line.caption ?? 'image'}"
+              <div class="line" role="group" tabindex="0" aria-label="{who.name}: {line.text ?? line.caption ?? 'image'}{awardNote(line.awards)}"
                 oncontextmenu={(e) => { e.preventDefault(); openMenu(line, e, e.currentTarget) }}
                 onkeydown={(e) => lineKey(e, line)}>
                 <div class="said">
                   {#if line.media}
-                    <button type="button" class="picbtn" aria-label="Open image full size" onclick={() => (open = line.media)}>
+                    <button type="button" class="picbtn" aria-label="Open image full size" onclick={() => (open = { media: line.media!, caption: line.caption })}>
                       <img class="pic" src={stillSrc(line.media)} alt={line.caption ?? 'Quoted image'} draggable="false"
                         width={line.media.width} height={line.media.height} {@attach animatedEmoji(line.media)} />
                     </button>
@@ -140,7 +134,7 @@
                     <span class="trophy" aria-hidden="true">🏆 {line.awards}</span>
                     <VoterStack userIds={line.awarders} {nameOf} />
                   {/if}
-                  <button type="button" class="lbtn" aria-label="Line actions" aria-haspopup="menu" data-menu-toggle
+                  <button type="button" class="lbtn" aria-label="Line actions" aria-haspopup="menu" aria-expanded={menu?.line.id === line.id} data-menu-toggle
                     onclick={(e) => openMenu(line, e, e.currentTarget)}><Icon name="dots" size={15} /></button>
                 </div>
               </div>
@@ -158,10 +152,10 @@
             {#if hasNewReplies(message)}<span class="new">new</span>{/if}
           </button>
         {/if}
-        {#if inlineError}<p class="err" role="alert">{inlineError}</p>{/if}
+        {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
       </div>
       {#if !message.deleted}
-        <div class="actions" class:open={picking}>
+        <div class="actions" class:open={picking || focusIn}>
           <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={15} /></button>
           {#if onReply}<button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>{/if}
           {#if mine}
@@ -180,14 +174,14 @@
     {@const line = m.line}
     {#key m}
       <LineMenu x={m.x} y={m.y} opener={m.opener} award={awardOf(line)} link={linkOf(line)} {members}
-        onAward={() => toggleAward(line)} onCopy={() => copy(line)} onLink={(id) => link(line, id)} onUnlink={() => unlink(line)}
+        onAward={() => toggleAward(line)} onCopy={copyable(line) ? () => copy(line) : null} onLink={(id) => link(line, id)} onUnlink={() => unlink(line)}
         onClose={() => (menu = null)} />
     {/key}
   {/if}
   {#if open}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="lightbox" role="dialog" aria-modal="true" aria-label="Image" tabindex="-1" use:modal={() => (open = null)} onclick={() => (open = null)}>
-      <img src={stillSrc(open)} alt="" draggable="false" {@attach animatedEmoji(open)} />
+    <div class="lightbox" role="dialog" aria-modal="true" aria-label={open.caption ?? 'Quoted image'} tabindex="-1" use:modal={() => (open = null)} onclick={() => (open = null)}>
+      <img src={stillSrc(open.media)} alt={open.caption ?? 'Quoted image'} draggable="false" {@attach animatedEmoji(open.media)} />
       <button type="button" class="close" aria-label="Close" onclick={() => (open = null)}><Icon name="x" size={18} /></button>
     </div>
   {/if}
@@ -222,8 +216,8 @@
   .replies:hover { text-decoration: underline; }
   .new { padding: 0 6px; border-radius: 8px; background: var(--quote-green); color: var(--on-quote-green); font-size: 10px; font-weight: 700; text-transform: uppercase; }
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger); }
-  .actions { position: absolute; top: -10px; right: 18px; display: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: 8px; }
-  .quote:hover .actions, .actions:focus-within, .actions.open { display: flex; }
+  .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: 8px; }
+  .quote:hover .actions, .actions.open { opacity: 1; pointer-events: auto; }
   .actions button { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .actions button:hover { color: var(--text); }
   .lightbox { position: fixed; inset: 0; z-index: 70; background: rgba(10, 11, 13, .85); display: grid; place-items: center; cursor: zoom-out; outline: none; }

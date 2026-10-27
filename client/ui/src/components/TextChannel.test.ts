@@ -7,7 +7,6 @@ import type { Message } from '../lib/protocol/Message'
 let releaseOlder: (page: Message[]) => void = () => {}
 const invoke = vi.fn(async (cmd: string, args?: { before?: string | null }): Promise<unknown> => {
   if (cmd === 'list_messages' && args?.before) return new Promise((done) => (releaseOlder = done))
-  if (cmd === 'list_messages') return []
   return undefined
 })
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
@@ -201,7 +200,11 @@ describe('TextChannel: quotes channel', () => {
     localStorage.clear()
     resetState()
   })
-  afterEach(() => (document.body.innerHTML = ''))
+  const mounted: ReturnType<typeof mount>[] = []
+  afterEach(() => {
+    while (mounted.length) unmount(mounted.pop()!)
+    document.body.innerHTML = ''
+  })
   const me = { id: 'U1', username: 'alex', avatar_hash: null }
   const ready = (kind: 'quotes' | 'text') => ({
     me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
@@ -217,6 +220,7 @@ describe('TextChannel: quotes channel', () => {
   const show = (kind: 'quotes' | 'text', list: Message[]) => {
     app.state = markHistory(addHistory(applyReady(emptyState(), ready(kind)), 'C1', list), 'C1', true)
     const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    mounted.push(c)
     flushSync()
     return c
   }
@@ -234,7 +238,7 @@ describe('TextChannel: quotes channel', () => {
     app.state = markHistory(addHistory(applyReady(emptyState(), ready('quotes')), 'C1', []), 'C1', true)
     const onLeaderboard = vi.fn()
     const onStartQoty = vi.fn()
-    mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1', onLeaderboard, onStartQoty } })
+    mounted.push(mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1', onLeaderboard, onStartQoty } }))
     flushSync()
     document.querySelector<HTMLButtonElement>('button[aria-label="Leaderboard"]')!.click()
     ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Start Quote of the Year')!.click()
@@ -245,6 +249,7 @@ describe('TextChannel: quotes channel', () => {
   it('has no message composer, and a text channel has no quote header', () => {
     show('quotes', [])
     expect(document.querySelector('.composer, [contenteditable]')).toBeNull()
+    while (mounted.length) unmount(mounted.pop()!)
     document.body.innerHTML = ''
     show('text', [msg(3)])
     expect(document.querySelector('button[aria-label="Leaderboard"]')).toBeNull()

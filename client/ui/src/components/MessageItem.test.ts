@@ -409,4 +409,12 @@ describe('MessageItem edit box', () => {
     expect(onEditClosed).not.toHaveBeenCalled()
     expect(document.activeElement).toBe(other)
   })
+
+  it('focusing into a message exposes its action buttons', () => {
+    show()
+    const actions = document.querySelector<HTMLElement>('.actions')!
+    expect(actions.classList.contains('open')).toBe(false)
+    actions.querySelector<HTMLElement>('button')!.focus(); flushSync()
+    expect(actions.classList.contains('open')).toBe(true)
+  })
 })
