@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use pulse_protocol::ids::{ChannelId, UserId};
@@ -14,6 +15,9 @@ struct Stream {
     info: StreamInfo,
     preview: Option<(Bytes, String)>,
     epoch: u64,
+    /// Since when LiveKit has said the streamer's `#v` isn't in the stream room (the liveness
+    /// check, `liveness.rs`); cleared whenever it's seen, rejoins or the stream is re-announced.
+    video_missing_since: Option<Instant>,
 }
 
 #[derive(Default)]
@@ -59,6 +63,7 @@ impl StreamState {
         if let Some(s) = inner.streams.get_mut(&(channel, user)) {
             s.info.settings = settings;
             s.info.status = StreamStatus::Live;
+            s.video_missing_since = None;
             return Started::Updated(s.info.clone());
         }
         let info = StreamInfo {
@@ -76,6 +81,7 @@ impl StreamState {
                 info: info.clone(),
                 preview: None,
                 epoch,
+                video_missing_since: None,
             },
         );
         Started::New(info)
@@ -199,6 +205,55 @@ impl StreamState {
     pub fn video_joined(&self, channel: ChannelId, user: UserId, sid: &str) {
         let mut inner = self.inner.lock().unwrap();
         inner.video_sids.insert((channel, user), sid.to_owned());
+        if let Some(s) = inner.streams.get_mut(&(channel, user)) {
+            s.video_missing_since = None;
+        }
+    }
+
+    /// The `Live` streams, for the liveness check (a `Reconnecting` one already has its timer).
+    pub fn live_streams(&self) -> Vec<(ChannelId, UserId)> {
+        let inner = self.inner.lock().unwrap();
+        let mut out: Vec<_> = inner
+            .streams
+            .iter()
+            .filter(|(_, s)| s.info.status == StreamStatus::Live)
+            .map(|(k, _)| *k)
+            .collect();
+        out.sort();
+        out
+    }
+
+    /// LiveKit's answer, at `now`, to whether a `Live` stream's `#v` is in the stream room.
+    /// There: the clock stops. Missing: the first miss starts it, and a miss `grace` or more
+    /// after that ends the stream (returned). A rejoin or re-announce meanwhile restarts it, so
+    /// an answer from before them can't end the stream. Not live (or no stream): nothing.
+    pub fn video_seen(
+        &self,
+        channel: ChannelId,
+        user: UserId,
+        present: bool,
+        now: Instant,
+        grace: Duration,
+    ) -> Option<StreamInfo> {
+        let mut inner = self.inner.lock().unwrap();
+        let s = inner.streams.get_mut(&(channel, user))?;
+        if s.info.status != StreamStatus::Live {
+            return None;
+        }
+        if present {
+            s.video_missing_since = None;
+            return None;
+        }
+        match s.video_missing_since {
+            Some(since) if now.saturating_duration_since(since) >= grace => {
+                inner.streams.remove(&(channel, user)).map(|s| s.info)
+            }
+            Some(_) => None,
+            None => {
+                s.video_missing_since = Some(now);
+                None
+            }
+        }
     }
 
     /// `user`'s `#v` connection `sid` left; false if a rejoin already replaced it (a late leave
@@ -236,6 +291,7 @@ impl StreamState {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::{Duration, Instant};
 
     fn ch(n: i64) -> ChannelId {
         format!("{n:026}").parse().unwrap()
@@ -389,5 +445,105 @@ mod tests {
         s.start(ch(1), u(1), settings(30), "t".into());
         let e2 = s.epoch(ch(1), u(1)).unwrap();
         assert!(e2 != e0 && e2 != e1, "a restarted stream is a new episode");
+    }
+
+    const GRACE: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn video_missing_for_the_grace_ends_the_stream() {
+        let s = StreamState::default();
+        let t0 = Instant::now();
+        s.start(ch(1), u(1), settings(30), "t".into());
+        assert_eq!(s.live_streams(), vec![(ch(1), u(1))]);
+        assert!(
+            s.video_seen(ch(1), u(1), false, t0, GRACE).is_none(),
+            "first miss starts the clock"
+        );
+        assert!(
+            s.video_seen(
+                ch(1),
+                u(1),
+                false,
+                t0 + GRACE - Duration::from_millis(1),
+                GRACE
+            )
+            .is_none()
+        );
+        let ended = s.video_seen(ch(1), u(1), false, t0 + GRACE, GRACE).unwrap();
+        assert_eq!(ended.user_id, u(1));
+        assert!(s.get(ch(1), u(1)).is_none());
+        assert!(s.live_streams().is_empty());
+    }
+
+    #[test]
+    fn video_seen_again_restarts_the_clock() {
+        let s = StreamState::default();
+        let t0 = Instant::now();
+        s.start(ch(1), u(1), settings(30), "t".into());
+        s.video_seen(ch(1), u(1), false, t0, GRACE);
+        assert!(
+            s.video_seen(ch(1), u(1), true, t0 + GRACE / 2, GRACE)
+                .is_none()
+        );
+        assert!(
+            s.video_seen(ch(1), u(1), false, t0 + GRACE, GRACE)
+                .is_none(),
+            "a new clock"
+        );
+        assert!(
+            s.video_seen(ch(1), u(1), false, t0 + GRACE * 2, GRACE)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn a_rejoin_or_a_reannounce_while_asking_restarts_the_clock() {
+        // LiveKit's "not there" can be older than a join or go-live that landed meanwhile
+        let s = StreamState::default();
+        let t0 = Instant::now();
+        s.start(ch(1), u(1), settings(30), "t".into());
+        s.video_seen(ch(1), u(1), false, t0, GRACE);
+        s.video_joined(ch(1), u(1), "PA_1");
+        assert!(
+            s.video_seen(ch(1), u(1), false, t0 + GRACE, GRACE)
+                .is_none()
+        );
+        s.start(ch(1), u(1), settings(60), "t".into()); // re-announce: an update
+        assert!(
+            s.video_seen(ch(1), u(1), false, t0 + GRACE * 2, GRACE)
+                .is_none()
+        );
+        assert!(
+            s.video_seen(ch(1), u(1), false, t0 + GRACE * 3, GRACE)
+                .is_some()
+        );
+    }
+
+    #[test]
+    fn only_live_streams_are_checked() {
+        let s = StreamState::default();
+        let t0 = Instant::now();
+        assert!(
+            s.video_seen(ch(1), u(1), false, t0, GRACE).is_none(),
+            "no stream"
+        );
+        s.start(ch(1), u(1), settings(30), "t".into());
+        s.start(ch(2), u(2), settings(30), "t".into());
+        s.video_seen(ch(1), u(1), false, t0, GRACE);
+        // the leave webhook got there: its own timer ends it, not this
+        s.set_status(ch(1), u(1), StreamStatus::Reconnecting);
+        assert_eq!(s.live_streams(), vec![(ch(2), u(2))]);
+        assert!(
+            s.video_seen(ch(1), u(1), false, t0 + GRACE, GRACE)
+                .is_none()
+        );
+        assert!(s.get(ch(1), u(1)).is_some());
+        // back (join webhook): a fresh clock
+        s.video_joined(ch(1), u(1), "PA_2");
+        s.set_status(ch(1), u(1), StreamStatus::Live);
+        assert!(
+            s.video_seen(ch(1), u(1), false, t0 + GRACE * 2, GRACE)
+                .is_none()
+        );
     }
 }

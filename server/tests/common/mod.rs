@@ -2,6 +2,8 @@
 #[allow(unused_imports)] // shutdown.rs only needs the real-binary harness below
 pub use pulse_server::testing::*;
 
+pub mod livekit;
+
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
