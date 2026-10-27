@@ -279,9 +279,79 @@ impl HookWatch {
     }
 }
 
+/// Windows runs low-level hooks in turn and holds each input event until they've all answered,
+/// for the whole PC: input reaching our hook late means everyone's mouse and keyboard were late
+/// (waiting on us, or on a hook ahead of ours, or the machine stalled). The delay is measured from
+/// the event's own timestamp (GetTickCount based) when our procedure runs.
+pub struct LateInput {
+    max_ms: std::sync::atomic::AtomicU32,
+}
+
+impl Default for LateInput {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl LateInput {
+    pub const fn new() -> Self {
+        Self {
+            max_ms: std::sync::atomic::AtomicU32::new(0),
+        }
+    }
+
+    /// From a hook procedure: one atomic, nothing that can block. Ticks wrap; an event stamped
+    /// after `now_ms` counts as on time.
+    pub fn note(&self, event_ms: u32, now_ms: u32) {
+        let late = now_ms.wrapping_sub(event_ms);
+        if late < 1 << 31 {
+            self.max_ms
+                .fetch_max(late, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
+
+    /// The worst delay since the last take, and start over.
+    pub fn take(&self) -> u32 {
+        self.max_ms.swap(0, std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+/// A delay people feel as a stuck mouse or keyboard.
+pub const LATE_INPUT_MS: u32 = 250;
+
+/// The worst delay of a watchdog tick, if it's worth a log line.
+pub fn late_report(max_ms: u32) -> Option<u32> {
+    (max_ms >= LATE_INPUT_MS).then_some(max_ms)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn late_input_keeps_the_worst_delay_until_taken() {
+        let late = LateInput::new();
+        assert_eq!(late.take(), 0);
+        late.note(1_000, 1_040); // 40 ms
+        late.note(2_000, 2_900); // 900 ms
+        late.note(3_000, 3_100); // 100 ms
+        assert_eq!(late.take(), 900);
+        assert_eq!(late.take(), 0); // taken: starts over
+        // the tick count wraps after ~49.7 days
+        late.note(u32::MAX - 10, 290);
+        assert_eq!(late.take(), 301);
+        // an event stamped a moment after "now" (clock read before the stamp) isn't a huge delay
+        late.note(5_000, 4_990);
+        assert_eq!(late.take(), 0);
+    }
+
+    #[test]
+    fn only_a_delay_people_would_feel_is_reported() {
+        assert_eq!(late_report(0), None);
+        assert_eq!(late_report(LATE_INPUT_MS - 1), None);
+        assert_eq!(late_report(LATE_INPUT_MS), Some(LATE_INPUT_MS));
+        assert_eq!(late_report(4_000), Some(4_000));
+    }
 
     const MARGIN: u32 = 1000;
     const GAP: Duration = Duration::from_secs(10);

@@ -44,8 +44,8 @@ mod platform {
 
     use crate::bindmatch::{Matcher, key_code};
     use crate::hookwatch::{
-        Check, Episode, Gate, HookStep, HookWatch, Hooks, Seen, hook_step, hooks_wanted,
-        retry_wait, settled, switch_problem, watch_gate,
+        Check, Episode, Gate, HookStep, HookWatch, Hooks, LateInput, Seen, hook_step, hooks_wanted,
+        late_report, retry_wait, settled, switch_problem, watch_gate,
     };
     use crate::keybinds::{Action, Keybinds};
 
@@ -124,10 +124,16 @@ mod platform {
         })
     }
 
-    /// Called first thing in each hook procedure: one atomic store, nothing that can block.
-    fn saw_input() {
+    /// The worst delay between an input event and our hook seeing it, per watchdog tick.
+    static LATE: LateInput = LateInput::new();
+
+    /// Called first thing in each hook procedure with the event's own timestamp: two atomics,
+    /// nothing that can block.
+    fn saw_input(event_ms: u32) {
         // SAFETY: GetTickCount has no preconditions.
-        LAST_HOOK_TICK.store(unsafe { GetTickCount() }, Ordering::Relaxed);
+        let now = unsafe { GetTickCount() };
+        LAST_HOOK_TICK.store(now, Ordering::Relaxed);
+        LATE.note(event_ms, now);
     }
 
     fn matcher() -> std::sync::MutexGuard<'static, Matcher> {
@@ -171,9 +177,9 @@ mod platform {
     /// doesn't.
     unsafe extern "system" fn keyboard(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
         if n >= 0 {
-            saw_input();
             // SAFETY: for WH_KEYBOARD_LL with n >= 0, lParam points to a KBDLLHOOKSTRUCT.
             let k = unsafe { &*(l.0 as *const KBDLLHOOKSTRUCT) };
+            saw_input(k.time);
             let ext = k.flags.0 & LLKHF_EXTENDED.0 != 0;
             // SAFETY: MapVirtualKeyW only reads its arguments.
             let to_scan = |vk| unsafe { MapVirtualKeyW(vk, MAPVK_VK_TO_VSC_EX) };
@@ -191,20 +197,18 @@ mod platform {
     /// Wheel click and the side buttons; everything else (moves, left/right clicks) passes untouched.
     unsafe extern "system" fn mouse(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
         if n >= 0 {
+            // SAFETY: for WH_MOUSE_LL with n >= 0, lParam points to an MSLLHOOKSTRUCT.
+            let m = unsafe { &*(l.0 as *const MSLLHOOKSTRUCT) };
             // every event, moves included: they update the system's last-input tick too
-            saw_input();
+            saw_input(m.time);
             let msg = w.0 as u32;
             let button = match msg {
                 WM_MBUTTONDOWN | WM_MBUTTONUP => Some("Mouse3"),
-                WM_XBUTTONDOWN | WM_XBUTTONUP => {
-                    // SAFETY: for WH_MOUSE_LL with n >= 0, lParam points to an MSLLHOOKSTRUCT.
-                    let m = unsafe { &*(l.0 as *const MSLLHOOKSTRUCT) };
-                    match (m.mouseData >> 16) & 0xFFFF {
-                        1 => Some("Mouse4"),
-                        2 => Some("Mouse5"),
-                        _ => None,
-                    }
-                }
+                WM_XBUTTONDOWN | WM_XBUTTONUP => match (m.mouseData >> 16) & 0xFFFF {
+                    1 => Some("Mouse4"),
+                    2 => Some("Mouse5"),
+                    _ => None,
+                },
                 _ => None,
             };
             if let Some(code) = button {
@@ -471,6 +475,11 @@ mod platform {
         };
         loop {
             std::thread::sleep(WATCH_EVERY);
+            if let Some(max_ms) = late_report(LATE.take()) {
+                // the whole PC's input waited this long on the hook chain (ours, one ahead of it,
+                // or a stalled machine): what a "my PC froze" report needs
+                tracing::warn!(max_ms, "keybinds: input reached the hooks late");
+            }
             match with_seen(watch_gate) {
                 Gate::Watch => {}
                 Gate::Resend => {
