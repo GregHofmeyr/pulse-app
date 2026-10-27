@@ -1,6 +1,7 @@
 //! The stream liveness check against the dev LiveKit (`just voice-it`; `just voice-it-alt` moves
 //! it): a streamer's `#v` connection that LiveKit has keeps the stream, and once the client dies
-//! (its connection dropped without a goodbye) the stream ends after the grace. The check's own
+//! (its connection dropped without a goodbye) and LiveKit closes the empty room, the stream ends
+//! after the grace. The check's own
 //! rules are covered against a fake RoomService in streams.rs; this is the real API's answers.
 
 mod common;
@@ -9,8 +10,9 @@ use std::time::{Duration, Instant};
 
 use common::*;
 use livekit_api::access_token::{AccessToken, VideoGrants};
+use livekit_api::services::room::RoomClient;
 use pulse_protocol::rest::Channel;
-use pulse_server::streams::liveness::{Checked, LiveKitRooms, StreamRooms, check};
+use pulse_server::streams::liveness::{LiveKitRooms, StreamRooms, check};
 use serde_json::json;
 
 /// docker/livekit.yaml's dev key pair.
@@ -95,9 +97,10 @@ async fn a_stream_lives_while_livekit_has_its_video_connection_and_ends_after_th
     let s = app.state();
     let t0 = Instant::now();
     for n in 0..3 {
+        let c = check(&s, &rooms, t0 + GRACE * n, GRACE).await;
         assert_eq!(
-            check(&s, &rooms, t0 + GRACE * n, GRACE).await,
-            Checked::default()
+            (c.ended, c.answered, c.unknown),
+            (0, vec![lounge.id], vec![])
         );
     }
     assert!(app.streams.get(lounge.id, a_id).is_some());
@@ -105,14 +108,29 @@ async fn a_stream_lives_while_livekit_has_its_video_connection_and_ends_after_th
     // the client dies: the connection drops with no leave
     drop(ws);
     until_listed(&rooms, &room, &identity, false, Duration::from_secs(60)).await;
+    // and LiveKit closes the now-empty room (after its departure timeout): a room it doesn't
+    // have must read as nobody there, not as an error
+    let admin = RoomClient::with_api_key(&app.cfg.livekit_api_url, DEV_KEY, DEV_SECRET);
+    let start = Instant::now();
+    while admin
+        .list_rooms(vec![room.clone()])
+        .await
+        .unwrap()
+        .iter()
+        .any(|r| r.name == room)
+    {
+        assert!(
+            start.elapsed() < Duration::from_secs(90),
+            "room never closed"
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    println!("room closed after {:?}", start.elapsed());
+    assert!(rooms.connected(&room).await.unwrap().is_empty());
     let t1 = t0 + GRACE * 3;
-    assert_eq!(check(&s, &rooms, t1, GRACE).await, Checked::default());
-    assert_eq!(
-        check(&s, &rooms, t1 + GRACE, GRACE).await,
-        Checked {
-            ended: 1,
-            unknown: 0
-        }
-    );
+    let c = check(&s, &rooms, t1, GRACE).await;
+    assert_eq!((c.ended, c.unknown.len()), (0, 0), "{c:?}");
+    let c = check(&s, &rooms, t1 + GRACE, GRACE).await;
+    assert_eq!((c.ended, c.unknown.len()), (1, 0), "{c:?}");
     assert!(app.streams.get(lounge.id, a_id).is_none());
 }

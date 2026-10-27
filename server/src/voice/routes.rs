@@ -186,16 +186,13 @@ async fn webhook(
                 // end a stream the user has since started elsewhere.
                 if s.streams.end(channel_id, user_id).is_some() {
                     tracing::info!(user = %user_id, channel = %channel_id, reason = "left_voice", "stream ended");
-                    s.hub
-                        .publish(
-                            &s.db,
-                            Event::StreamEnded {
-                                channel_id,
-                                user_id,
-                                reason: StreamEndReason::LeftVoice,
-                            },
-                        )
-                        .await;
+                    crate::streams::routes::publish_ended(
+                        &s,
+                        channel_id,
+                        user_id,
+                        StreamEndReason::LeftVoice,
+                    )
+                    .await;
                 }
                 for (streamer, viewers) in s.streams.remove_viewer_everywhere(channel_id, user_id) {
                     crate::streams::routes::publish_viewers(&s, channel_id, streamer, viewers)

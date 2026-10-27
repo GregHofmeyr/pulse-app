@@ -28,13 +28,19 @@ pub async fn fake_livekit_logged(rooms: Rooms) -> (String, Removed) {
 
 /// A RoomService that accepts the connection and never answers (overloaded or mid-restart).
 pub async fn fake_livekit_hanging() -> String {
-    let app = axum::Router::new().route(
-        "/twirp/livekit.RoomService/ListRooms",
-        post(|| async {
-            tokio::time::sleep(Duration::from_secs(30)).await;
-            Vec::<u8>::new()
-        }),
-    );
+    let hang = || async {
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        Vec::<u8>::new()
+    };
+    let mut app = axum::Router::new();
+    for method in [
+        "ListRooms",
+        "ListParticipants",
+        "GetParticipant",
+        "RemoveParticipant",
+    ] {
+        app = app.route(&format!("/twirp/livekit.RoomService/{method}"), post(hang));
+    }
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
@@ -99,19 +105,15 @@ pub fn serve_fake_shared(listener: tokio::net::TcpListener, rooms: SharedRooms) 
                 let rooms = r2.clone();
                 async move {
                     let req = lkp::ListParticipantsRequest::decode(body).unwrap();
-                    let found = rooms
+                    // as LiveKit v1.13.10: a room it doesn't have lists nobody (no error)
+                    let participants = rooms
                         .lock()
                         .unwrap()
                         .iter()
                         .find(|(name, _)| *name == req.room)
-                        .map(|(_, p)| p.clone());
-                    // as LiveKit: a room it doesn't have is an error
-                    match found {
-                        Some(participants) => lkp::ListParticipantsResponse { participants }
-                            .encode_to_vec()
-                            .into_response(),
-                        None => twirp_not_found(),
-                    }
+                        .map(|(_, p)| p.clone())
+                        .unwrap_or_default();
+                    lkp::ListParticipantsResponse { participants }.encode_to_vec()
                 }
             }),
         )
@@ -168,7 +170,7 @@ pub fn twirp_not_found() -> Response {
     (
         StatusCode::NOT_FOUND,
         [(header::CONTENT_TYPE, "application/json")],
-        r#"{"code":"not_found","msg":"not found"}"#,
+        r#"{"code":"not_found","msg":"participant not found"}"#,
     )
         .into_response()
 }

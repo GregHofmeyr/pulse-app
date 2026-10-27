@@ -246,6 +246,8 @@ impl StreamState {
         }
         match s.video_missing_since {
             Some(since) if now.saturating_duration_since(since) >= grace => {
+                // LiveKit says that connection is gone: its sid can't make a later one's leave stale
+                inner.video_sids.remove(&(channel, user));
                 inner.streams.remove(&(channel, user)).map(|s| s.info)
             }
             Some(_) => None,
@@ -545,5 +547,49 @@ mod tests {
             s.video_seen(ch(1), u(1), false, t0 + GRACE * 2, GRACE)
                 .is_none()
         );
+    }
+
+    #[test]
+    fn a_stream_ended_and_started_again_meanwhile_gets_a_fresh_clock() {
+        let s = StreamState::default();
+        let t0 = Instant::now();
+        s.start(ch(1), u(1), settings(30), "t".into());
+        s.video_seen(ch(1), u(1), false, t0, GRACE);
+        s.end(ch(1), u(1));
+        s.start(ch(1), u(1), settings(30), "t".into()); // a new stream, not an update
+        assert!(
+            s.video_seen(ch(1), u(1), false, t0 + GRACE, GRACE)
+                .is_none()
+        );
+        assert!(s.get(ch(1), u(1)).is_some());
+    }
+
+    #[test]
+    fn a_reconnecting_stream_with_a_running_clock_is_not_ended() {
+        let s = StreamState::default();
+        let t0 = Instant::now();
+        s.start(ch(1), u(1), settings(30), "t".into());
+        s.video_seen(ch(1), u(1), false, t0, GRACE);
+        s.set_status(ch(1), u(1), StreamStatus::Reconnecting);
+        assert!(
+            s.video_seen(ch(1), u(1), false, t0 + GRACE * 2, GRACE)
+                .is_none()
+        );
+        assert!(s.get(ch(1), u(1)).is_some());
+    }
+
+    #[test]
+    fn ending_for_a_gone_video_connection_forgets_its_sid() {
+        let s = StreamState::default();
+        let t0 = Instant::now();
+        s.start(ch(1), u(1), settings(30), "t".into());
+        s.video_joined(ch(1), u(1), "PA_old"); // its leave webhook never came
+        s.video_seen(ch(1), u(1), false, t0, GRACE);
+        assert!(
+            s.video_seen(ch(1), u(1), false, t0 + GRACE, GRACE)
+                .is_some()
+        );
+        // a later connection (whose join was missed too) leaving is current, not stale
+        assert!(s.video_left(ch(1), u(1), "PA_new"));
     }
 }

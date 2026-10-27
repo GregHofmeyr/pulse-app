@@ -16,9 +16,10 @@ use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::http::{HeaderMap, StatusCode, header};
-use axum::response::{IntoResponse, Response};
+use axum::response::IntoResponse;
 use axum::routing::post;
 use base64::Engine;
+use common::livekit::{fake_livekit_hanging, twirp_not_found};
 use common::*;
 use livekit_api::access_token::{AccessToken, TokenVerifier};
 use livekit_protocol as lkp;
@@ -82,15 +83,6 @@ fn authorized(verifier: &TokenVerifier, headers: &HeaderMap, room: &str) -> bool
         .and_then(|v| v.strip_prefix("Bearer "))
         .and_then(|jwt| verifier.verify(jwt).ok());
     protobuf && claims.is_some_and(|c| c.video.room_admin && c.video.room == room)
-}
-
-fn twirp_not_found() -> Response {
-    (
-        StatusCode::NOT_FOUND,
-        [(header::CONTENT_TYPE, "application/json")],
-        r#"{"code":"not_found","msg":"participant not found"}"#,
-    )
-        .into_response()
 }
 
 /// A fake RoomService (ListParticipants, GetParticipant, RemoveParticipant) over `Lk::rooms`.
@@ -187,22 +179,6 @@ async fn fake_livekit() -> Lk {
         url: format!("http://{addr}"),
         ..lk
     }
-}
-
-/// A RoomService that accepts the connection and never answers.
-async fn fake_livekit_hanging() -> String {
-    let hang = || async {
-        tokio::time::sleep(Duration::from_secs(60)).await;
-        Vec::<u8>::new()
-    };
-    let app = axum::Router::new()
-        .route("/twirp/livekit.RoomService/ListParticipants", post(hang))
-        .route("/twirp/livekit.RoomService/GetParticipant", post(hang))
-        .route("/twirp/livekit.RoomService/RemoveParticipant", post(hang));
-    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    format!("http://{addr}")
 }
 
 async fn app_with_livekit(url: &str) -> TestApp {

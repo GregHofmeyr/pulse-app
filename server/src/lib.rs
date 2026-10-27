@@ -75,7 +75,11 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     };
     // Before serving (connections queue in the listen backlog), so the first Ready is right.
     voice::restore::on_startup(&state, &started_at).await?;
-    streams::liveness::spawn(state.clone());
+    streams::liveness::spawn(
+        state.clone(),
+        streams::liveness::CHECK_EVERY,
+        state.cfg.stream_media_timeout,
+    );
     axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),

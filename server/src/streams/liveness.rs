@@ -4,32 +4,35 @@
 //! the stream would stay "live" for everyone.
 //!
 //! Every [`CHECK_EVERY`], LiveKit is asked who is in each stream room with a `Live` stream
-//! (RoomService ListParticipants). A streamer whose `#v` connection isn't there starts a clock;
-//! seen again (or rejoined, or re-announced) stops it; still missing `stream_media_timeout`
-//! after the first miss ends the stream (and the watches on it, and theirs on others: watching
-//! rides the same connection), as the webhook path's timeout would.
+//! (RoomService ListParticipants, all rooms at once). A streamer whose `#v` connection isn't
+//! there starts a clock; seen again (or rejoined, or re-announced) stops it; still missing
+//! `stream_media_timeout` after the first miss ends the stream, as the leave webhook and its
+//! timeout would: the stream (and so the watches on it) and the streamer's own watches (watching
+//! rides the same connection).
 //!
 //! Only LiveKit's answer counts. After a pulse-server restart the stream state starts empty and
 //! clients re-announce: their `#v` is still in LiveKit (a deploy doesn't restart it), so nothing
-//! ends. A LiveKit that can't be asked is "don't know": nothing ends on an error.
+//! ends. A LiveKit that can't be asked is "don't know": nothing ends on an error. A room LiveKit
+//! doesn't have (closed once the last connection left) lists nobody: LiveKit v1.13.10 answers an
+//! empty list (checked against the dev LiveKit, `tests/stream_liveness_it.rs`), and a `not_found`
+//! error is taken the same way.
 
 use std::collections::{BTreeMap, HashSet};
 use std::time::{Duration, Instant};
 
 use livekit_api::services::room::RoomClient;
-use livekit_api::services::{ServerError, ServiceError};
 use livekit_protocol::participant_info::State;
-use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::StreamEndReason;
 
 use crate::AppState;
 use crate::config::Config;
+use crate::voice::revoke::not_found;
 
 /// How often stream rooms are checked.
 pub const CHECK_EVERY: Duration = Duration::from_secs(15);
-/// Upper bound on one room's question to LiveKit.
-const BUDGET: Duration = Duration::from_secs(5);
+/// Upper bound on each of a round's questions to LiveKit (rooms are asked in parallel).
+pub const BUDGET: Duration = Duration::from_secs(5);
 
 /// Who LiveKit says is connected to a room.
 pub trait StreamRooms {
@@ -40,29 +43,39 @@ pub trait StreamRooms {
 }
 
 /// [`StreamRooms`] from LiveKit's RoomService, with the server's API URL and credentials.
-pub struct LiveKitRooms(RoomClient);
+pub struct LiveKitRooms {
+    client: RoomClient,
+    budget: Duration,
+}
 
 impl LiveKitRooms {
     pub fn new(cfg: &Config) -> Self {
-        Self(
-            RoomClient::with_api_key(&cfg.livekit_api_url, &cfg.livekit_key, &cfg.livekit_secret)
-                .with_failover(false)
-                .with_request_timeout(BUDGET),
-        )
+        Self::with_budget(cfg, BUDGET)
+    }
+
+    /// Each question given up on (an error: "don't know") after `budget`.
+    pub fn with_budget(cfg: &Config, budget: Duration) -> Self {
+        Self {
+            client: RoomClient::with_api_key(
+                &cfg.livekit_api_url,
+                &cfg.livekit_key,
+                &cfg.livekit_secret,
+            )
+            .with_failover(false)
+            .with_request_timeout(budget),
+            budget,
+        }
     }
 }
 
 impl StreamRooms for LiveKitRooms {
     async fn connected(&self, room: &str) -> anyhow::Result<HashSet<String>> {
-        let participants = match tokio::time::timeout(BUDGET, self.0.list_participants(room)).await
-        {
-            Err(_) => anyhow::bail!("LiveKit didn't answer in time"),
-            // the room closed: nobody is in it
-            Ok(Err(ServiceError::Twirp(ServerError::Twirp(e)))) if e.code == "not_found" => {
-                return Ok(HashSet::new());
-            }
-            Ok(r) => r?,
-        };
+        let participants =
+            match tokio::time::timeout(self.budget, self.client.list_participants(room)).await {
+                Err(_) => anyhow::bail!("LiveKit didn't answer in time"),
+                Ok(Err(e)) if not_found(&e) => return Ok(HashSet::new()),
+                Ok(r) => r?,
+            };
         Ok(participants
             .into_iter()
             .filter(|p| p.state != State::Disconnected as i32)
@@ -76,8 +89,10 @@ impl StreamRooms for LiveKitRooms {
 pub struct Checked {
     /// Streams ended because their streamer's video connection was gone for the grace.
     pub ended: usize,
-    /// Rooms LiveKit couldn't be asked about (their streams left as they were).
-    pub unknown: usize,
+    /// Rooms LiveKit answered about.
+    pub answered: Vec<ChannelId>,
+    /// Rooms LiveKit couldn't be asked about, with why (their streams left as they were).
+    pub unknown: Vec<(ChannelId, String)>,
 }
 
 fn room_of(channel: ChannelId) -> String {
@@ -88,8 +103,18 @@ fn video_identity(user: UserId) -> String {
     format!("{user}#v")
 }
 
-/// One round: ask `rooms` about every room with a `Live` stream and act on the answers at `now`.
-/// A stream ends once its `#v` has been missing for `grace` (see [`super::state::StreamState::video_seen`]).
+/// A line in the `share` log, beside the stream-room webhook's.
+fn share_log(what: &str, channel: ChannelId, user: UserId) {
+    tracing::info!(
+        target: "share",
+        "share: {}",
+        serde_json::json!({ "what": what, "channel": channel.to_string(), "user": user.to_string() })
+    );
+}
+
+/// One round: ask `rooms` about every room with a `Live` stream (in parallel) and act on the
+/// answers at `now`. A stream ends once its `#v` has been missing for `grace` (see
+/// [`super::state::StreamState::video_seen`]).
 pub async fn check(
     s: &AppState,
     rooms: &impl StreamRooms,
@@ -100,20 +125,26 @@ pub async fn check(
     for (channel, user) in s.streams.live_streams() {
         per_room.entry(channel).or_default().push(user);
     }
+    let answers = futures::future::join_all(
+        per_room
+            .keys()
+            .map(|&channel| async move { (channel, rooms.connected(&room_of(channel)).await) }),
+    )
+    .await;
     let mut out = Checked::default();
-    for (channel, streamers) in per_room {
-        let connected = match rooms.connected(&room_of(channel)).await {
+    for (channel, answer) in answers {
+        let connected = match answer {
             Ok(c) => c,
             Err(e) => {
-                tracing::debug!(error = %e, channel = %channel, "couldn't ask LiveKit about a stream room; left as it is");
-                out.unknown += 1;
+                out.unknown.push((channel, format!("{e:#}")));
                 continue;
             }
         };
-        for user in streamers {
+        out.answered.push(channel);
+        for &user in &per_room[&channel] {
             let present = connected.contains(&video_identity(user));
             if !present {
-                tracing::info!(user = %user, channel = %channel, "LiveKit has no video connection for a live stream");
+                share_log("stream_video_missing", channel, user);
             }
             if s.streams
                 .video_seen(channel, user, present, now, grace)
@@ -129,42 +160,39 @@ pub async fn check(
 
 /// Tell everyone the stream ended, and drop the streamer's own watches (same connection).
 async fn ended(s: &AppState, channel: ChannelId, user: UserId) {
+    // the leave webhook's timeout gives the same reason: the video connection didn't come back
     tracing::info!(user = %user, channel = %channel, reason = "video_gone", "stream ended");
-    s.hub
-        .publish(
-            &s.db,
-            Event::StreamEnded {
-                channel_id: channel,
-                user_id: user,
-                reason: StreamEndReason::TimedOut,
-            },
-        )
-        .await;
+    share_log("stream_ended_video_gone", channel, user);
+    super::routes::publish_ended(s, channel, user, StreamEndReason::TimedOut).await;
     for (streamer, viewers) in s.streams.remove_viewer_everywhere(channel, user) {
         super::routes::publish_viewers(s, channel, streamer, viewers).await;
     }
 }
 
-/// Check every [`CHECK_EVERY`] for as long as the server runs, with `stream_media_timeout` as
-/// the grace. A LiveKit that stops answering is logged once (and again when it's back).
-pub fn spawn(s: AppState) {
+/// Check every `every` for as long as the server runs, ending streams whose video connection
+/// has been gone `grace`. Each room LiveKit can't be asked about is logged (with why) when it
+/// starts failing, and again when it answers.
+pub fn spawn(s: AppState, every: Duration, grace: Duration) {
     tokio::spawn(async move {
         let rooms = LiveKitRooms::new(&s.cfg);
-        let mut tick = tokio::time::interval(CHECK_EVERY);
+        let mut tick = tokio::time::interval(every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let mut failing = false;
+        let mut failing: HashSet<ChannelId> = HashSet::new();
         loop {
             tick.tick().await;
-            let c = check(&s, &rooms, Instant::now(), s.cfg.stream_media_timeout).await;
-            match (c.unknown > 0, failing) {
-                (true, false) => tracing::warn!(
-                    rooms = c.unknown,
-                    "LiveKit can't be asked about stream rooms; their streams are left as they are"
-                ),
-                (false, true) => tracing::info!("LiveKit answers about stream rooms again"),
-                _ => {}
+            let c = check(&s, &rooms, Instant::now(), grace).await;
+            for (channel, error) in &c.unknown {
+                if !failing.contains(channel) {
+                    tracing::warn!(channel = %channel, error = %error, "LiveKit can't be asked about a stream room; its streams are left as they are");
+                }
             }
-            failing = c.unknown > 0;
+            for channel in &c.answered {
+                if failing.contains(channel) {
+                    tracing::info!(channel = %channel, "LiveKit answers about a stream room again");
+                }
+            }
+            // rooms no longer checked (their streams ended) are forgotten
+            failing = c.unknown.iter().map(|(ch, _)| *ch).collect();
         }
     });
 }

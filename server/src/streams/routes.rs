@@ -148,16 +148,7 @@ async fn stop(
     require_voice_member(&s, me, ch).await?;
     s.streams.end(ch, me).ok_or(AppError::NotFound)?;
     tracing::info!(user = %me, channel = %ch, reason = "stopped", "stream ended");
-    s.hub
-        .publish(
-            &s.db,
-            Event::StreamEnded {
-                channel_id: ch,
-                user_id: me,
-                reason: StreamEndReason::Stopped,
-            },
-        )
-        .await;
+    publish_ended(&s, ch, me, StreamEndReason::Stopped).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -199,6 +190,26 @@ fn ensure_watchable(s: &AppState, me: UserId, ch: ChannelId, streamer: UserId) -
     }
     s.streams.get(ch, streamer).ok_or(AppError::NotFound)?;
     Ok(())
+}
+
+/// Announce a stream that was just removed from the state. A go-live from the same person can
+/// land between that removal and this publish, and its `StreamStarted` then reach clients before
+/// the `StreamEnded`: if there is a stream again once ours has gone out, it's sent once more (as an
+/// update: no "went live" toast), so clients end up with what the server has.
+pub async fn publish_ended(s: &AppState, ch: ChannelId, user: UserId, reason: StreamEndReason) {
+    s.hub
+        .publish(
+            &s.db,
+            Event::StreamEnded {
+                channel_id: ch,
+                user_id: user,
+                reason,
+            },
+        )
+        .await;
+    if let Some(stream) = s.streams.get(ch, user) {
+        s.hub.publish(&s.db, Event::StreamUpdated { stream }).await;
+    }
 }
 
 pub async fn publish_viewers(s: &AppState, ch: ChannelId, streamer: UserId, viewers: Vec<UserId>) {
