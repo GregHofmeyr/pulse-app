@@ -75,7 +75,7 @@
   let error = $state('')
   let busy = $state(false)
   // One id per quote being posted: kept across retries (a failed attempt may have reached the server) and renewed after success.
-  let nonce: string | null = null
+  let nonce: { id: string; sig: string } | null = null
   // Edit mode: the lines whose speaker changed while holding awards, waiting for a yes.
   let confirming = $state<{ key: number; awards: number; what: string }[]>([])
   let root = $state<HTMLElement>()
@@ -281,8 +281,10 @@
     try {
       if (editing) await api.editQuote(editing.id, { lines })
       else {
-        nonce ??= crypto.randomUUID()
-        await api.postQuote(channelId, { lines, today: today(), nonce })
+        // a retry of the same content keeps its id; changed content is a different request and gets its own
+        const sig = JSON.stringify(lines)
+        if (nonce?.sig !== sig) nonce = { id: crypto.randomUUID(), sig }
+        await api.postQuote(channelId, { lines, today: today(), nonce: nonce.id })
       }
       nonce = null
       rows = [blank()]

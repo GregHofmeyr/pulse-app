@@ -314,4 +314,15 @@ describe('QuoteComposer', () => {
     expect(t).toContain('“first” This line has 2 awards. Changing who said it removes them.')
     expect(t).toContain('“second” This line has 1 award. Changing who said it removes them.')
   })
+
+  it('a retry after changing the text gets a new nonce', async () => {
+    let n = 0
+    invoke.mockImplementation(async (cmd) => { if (cmd === 'post_quote' && n++ === 0) throw 'network down'; return undefined })
+    show()
+    type(textOf(0), 'hi'); pickMember(0, 'sam'); enter(textOf(0)); await settle()
+    type(textOf(0), 'hi there'); enter(textOf(0)); await settle()
+    const ns = calls('post_quote').map((c) => (c[1] as { body: { nonce: string } }).body.nonce)
+    expect(ns).toHaveLength(2)
+    expect(ns[0]).not.toBe(ns[1])
+  })
 })
