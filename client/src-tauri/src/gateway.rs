@@ -1024,6 +1024,7 @@ mod tests {
                         frequent_emoji: vec![],
                         qoty: vec![],
                         speaker_links: vec![],
+                        thread_seen: vec![],
                     });
                     ws.send(tokio_tungstenite::tungstenite::Message::text(
                         serde_json::to_string(&ready).unwrap(),
