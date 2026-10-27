@@ -119,8 +119,8 @@ impl Core {
     /// this attempt goes no further), then the address is checked.
     fn start_login(&self, server_url: &str) -> Result<Api, ApiError> {
         self.mfa.clear();
-        check_server_url(server_url)?;
-        Ok(Api::new(server_url))
+        // the checked, normalised address is the one used for requests and the gateway
+        Ok(Api::new(&check_server_url(server_url)?))
     }
 
     /// The login screen went back from the code step to the password.
@@ -171,6 +171,7 @@ impl Core {
         persist: bool,
     ) {
         self.boot.send_replace(Boot::starting());
+        crate::logging::session_start(); // report log tails start here
         if persist {
             self.store.save(api.base(), &token);
         }
@@ -272,9 +273,32 @@ impl Core {
             }
             return Some(server);
         }
-        let (server, token) = self.store.load()?;
-        self.activate(app, Api::new(&server), token, None, false);
+        let (api, token) = self.load_stored()?;
+        let server = api.base().to_string();
+        self.activate(app, api, token, None, false);
         Some(server)
+    }
+
+    /// The stored session to restore, if there is one. Its server address goes through the same
+    /// check as a login's and is used as checked (normalised). An address the check refuses (a
+    /// hand-edited store, or one saved by an older version) can't be restored: the stored session
+    /// is cleared, as for a dead token, and startup shows the login screen.
+    fn load_stored(&self) -> Option<(Api, String)> {
+        let (stored, token) = self.store.load()?;
+        let server = match check_server_url(&stored) {
+            Ok(s) => s,
+            Err(e) => {
+                tracing::warn!(error = %e, "stored session's server address refused; signed out");
+                self.store.clear(&stored);
+                return None;
+            }
+        };
+        if server != stored {
+            // Re-key it under the address used from now on, so sign-out clears the right entry.
+            self.store.clear(&stored);
+            self.store.save(&server, &token);
+        }
+        Some((Api::new(&server), token))
     }
 
     /// The stored session's server didn't answer at startup: stop trying, but keep it stored
@@ -581,6 +605,25 @@ pub async fn logout(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiErro
 pub async fn logout_others(app: AppHandle, core: State<'_, Core>) -> Result<u32, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.logout_others(&token).await)
+}
+
+/// Settings → Advanced: change the password (`code` when two-factor is on); every other device
+/// is signed out. The passwords are passed straight on: never stored or logged.
+#[tauri::command]
+pub async fn change_password(
+    app: AppHandle,
+    core: State<'_, Core>,
+    current_password: String,
+    new_password: String,
+    code: Option<String>,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    let code = code.as_deref().map(str::trim).filter(|c| !c.is_empty());
+    core.check(
+        &app,
+        api.change_password(&token, &current_password, &new_password, code)
+            .await,
+    )
 }
 
 /// Settings → Advanced: is two-factor on, and can this server do it at all.
@@ -1281,6 +1324,36 @@ mod tests {
         // account's); the tests count from here
         assert_eq!(cleared.swap(0, Ordering::SeqCst), 1);
         (core, cleared)
+    }
+
+    /// A stored server address the login check would refuse (a hand-edited store, or one saved
+    /// by an older version) is not restored: the stored session is cleared, as for a dead token.
+    #[test]
+    fn a_stored_server_address_is_rechecked_before_restoring() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, _) = signed_in(root.path(), "https://pulse.example.com", None);
+        let dir = root.path().join("session");
+        for bad in [
+            "http://pulse.example.com",
+            "https://user:pw@pulse.example.com",
+            "https://pulse.example.com/?x=1",
+            "file:///etc/passwd",
+            "not a url",
+        ] {
+            crate::session::file::save(&dir, bad, "tok").unwrap();
+            assert!(core.load_stored().is_none(), "{bad} was restored");
+            assert!(
+                !dir.join(crate::session::file::NAME).exists(),
+                "{bad}: the stored session is cleared"
+            );
+        }
+        crate::session::file::save(&dir, "https://pulse.example.com", "tok").unwrap();
+        let (api, token) = core.load_stored().expect("a good address restores");
+        assert_eq!(
+            (api.base(), token.as_str()),
+            ("https://pulse.example.com", "tok")
+        );
+        assert!(dir.join(crate::session::file::NAME).exists());
     }
 
     #[test]

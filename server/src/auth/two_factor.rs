@@ -61,7 +61,7 @@ pub async fn limited_by<T>(
     keeps_spend: fn(&AppError) -> bool,
     check: impl Future<Output = AppResult<T>>,
 ) -> AppResult<T> {
-    let ip_key = ip.to_string();
+    let ip_key = crate::limits::rate_key(ip).to_string();
     let user_key = user.map(|u| u.to_string());
     let ip_ok = s.limits.mfa_ip.hit(&ip_key);
     let user_ok = user_key.as_deref().is_none_or(|u| s.limits.mfa_user.hit(u));
@@ -130,6 +130,40 @@ pub async fn consume_recovery(
         .await?
         .rows_affected();
     Ok(n == 1)
+}
+
+/// Spend `code` as a TOTP code if it is 6 digits, otherwise as a recovery code.
+async fn accept_code(
+    conn: &mut SqliteConnection,
+    key: &totp::TotpKey,
+    user: UserId,
+    code: &str,
+) -> AppResult<bool> {
+    if totp::is_totp_shaped(code) {
+        accept_totp(conn, key, user, code).await
+    } else {
+        consume_recovery(conn, user, code).await
+    }
+}
+
+/// For a change that needs the second factor when the account has it on (the password change):
+/// Ok if 2FA is off, or if `code` is a current TOTP code or an unused recovery code, which is
+/// spent. A missing or wrong code is the same "wrong code" (403) the 2FA routes give. Call it
+/// inside the write transaction that makes the change, so the code is only spent if it commits.
+pub(crate) async fn check_code_if_on(
+    conn: &mut SqliteConnection,
+    s: &AppState,
+    user: UserId,
+    code: Option<&str>,
+) -> AppResult<()> {
+    if state(conn, user).await? != Some(true) {
+        return Ok(());
+    }
+    let key = key(s)?;
+    match code {
+        Some(code) if accept_code(conn, key, user, code).await? => Ok(()),
+        _ => Err(wrong_code()),
+    }
 }
 
 /// Delete everything 2FA keeps for `user`: the secret, recovery codes and login tickets.
@@ -331,12 +365,7 @@ async fn disable(
                 "two-factor authentication is not on".into(),
             ));
         }
-        let ok = if totp::is_totp_shaped(&req.code) {
-            accept_totp(&mut tx, key, u, &req.code).await?
-        } else {
-            consume_recovery(&mut tx, u, &req.code).await?
-        };
-        if !ok {
+        if !accept_code(&mut tx, key, u, &req.code).await? {
             return Err(wrong_code());
         }
         forget_two_factor(&mut tx, &u.to_string()).await?;
@@ -380,21 +409,23 @@ fn hash_ticket(ticket: &str) -> String {
 }
 
 /// Start a login ticket for `user` (the password was right): returns the secret half, which is
-/// only ever sent to the client. Expired tickets are pruned on the way.
-pub async fn issue_ticket(db: &SqlitePool, user: UserId) -> AppResult<String> {
+/// only ever sent to the client. Expired tickets are pruned on the way. Runs on the caller's
+/// connection, so the ticket can share a transaction with the 2FA check
+/// (`session::create_unless_2fa`).
+pub async fn issue_ticket_in(conn: &mut SqliteConnection, user: UserId) -> AppResult<String> {
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     let ticket = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
     let expires = chrono::Utc::now() + chrono::Duration::minutes(TICKET_MINUTES);
     sqlx::query("DELETE FROM mfa_tickets WHERE expires_at <= ?")
         .bind(now())
-        .execute(db)
+        .execute(&mut *conn)
         .await?;
     sqlx::query("INSERT INTO mfa_tickets (ticket_hash, user_id, expires_at) VALUES (?, ?, ?)")
         .bind(hash_ticket(&ticket))
         .bind(user.to_string())
         .bind(expires.to_rfc3339_opts(chrono::SecondsFormat::Millis, true))
-        .execute(db)
+        .execute(&mut *conn)
         .await?;
     Ok(ticket)
 }

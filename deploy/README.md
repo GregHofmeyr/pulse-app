@@ -119,6 +119,16 @@ stored secret, recovery codes and any pending sign-in; existing sessions stay). 
 password and can set 2FA up again in settings. It runs in a one-off server container over SSH, so it works with the
 server stopped.
 
+### Password reset and signing someone out
+
+Someone forgot their password: `just reset-password <username>`. It asks for the new password twice (not echoed) and
+sends it over SSH on standard input, never in a command line. It sets the password and signs the account out
+everywhere (2FA stays as it was). `just revoke-sessions <username>` only signs the account out everywhere, for a lost
+or stolen device. Both run in a one-off server container, so they work with the server stopped or running. A running
+server isn't told: the next request from a signed-out device fails and it can't reconnect, but a real-time connection
+or call that is already open stays up until it drops. To close those at once, restart the server:
+`ssh pulse@pulse 'cd /srv/pulse && docker compose restart pulse-server'`.
+
 ## 7. Deploying and rolling back
 
 - Every push to `main` that passes CI builds `ghcr.io/greghofmeyr/pulse-server:<7-char commit>` and `:latest`
@@ -157,10 +167,10 @@ server stopped.
   isn't their tag; it can't check the SHA-256.
 - Order for a release: deploy the server first, then send friends the new installer. Clients older than the
   server see "plz update :)".
-- Building a branch: running `release-server` by hand (workflow dispatch) also tags it `:latest`, as every
-  CI run on `main` does. Deploy a branch build only as `just deploy <sha7>`, never `just deploy`, and merge
-  that branch before anything else lands on `main`: the next `main` build moves `latest` back to code
-  without it.
+- Building a branch: running `release-server` by hand (workflow dispatch) on a branch other than `main` tags
+  only `:<sha7>`. `:latest` moves only on a `main` build (after CI passes on `main`, or a manual run on `main`).
+  Deploy a branch build as `just deploy <sha7>`: a bare `just deploy` pulls `:latest`, which is `main`. Merge
+  that branch before anything else lands on `main`, or the next deploy of `main` drops it.
 - Roll back: `just deploy <previous sha7>`. If a database migration went wrong, also `just restore <backup>`
   (section 8) with the backup the deploy made.
 - A deploy that ran a new migration can't be rolled back by image alone: an older image refuses to start
@@ -170,6 +180,13 @@ server stopped.
 - After changing `livekit.yaml`: `just deploy`, then `ssh pulse@pulse 'cd /srv/pulse && docker compose restart livekit'`.
   (A changed `LIVEKIT_NODE_IP` needs no restart: `just deploy` recreates LiveKit with it.)
   The codec list needs a LiveKit restart to apply; `just deploy` copies the file but does not restart LiveKit.
+
+### Patching and reboots
+
+Unattended upgrades install security updates but never reboot (`Automatic-Reboot "false"`). Reboot the VM
+now and then (for kernel and libc fixes), ideally while nobody is in a call; containers come back on their own.
+Docker and Tailscale come from vendor repositories that unattended upgrades don't cover, so run
+`apt-get update && apt-get upgrade` on the host yourself every so often.
 
 ## 8. Backups
 

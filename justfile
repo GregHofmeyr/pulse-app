@@ -110,6 +110,24 @@ reset-2fa $username:
     # `run`, not `exec`: works with the server stopped (it refuses to start on a wrong key). The image's entrypoint is the binary.
     ssh {{prod}} 'cd /srv/pulse && docker compose run --rm --no-deps -T pulse-server reset-2fa '"$username"
 
+# set a new password for a user on the live server and sign them out everywhere (the password is typed here, not echoed, and goes over ssh on stdin, never in a command line)
+reset-password $username:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "$username" =~ ^[A-Za-z0-9_.]{2,32}$ ]] || { echo "reset-password: username must be 2-32 characters of letters, digits, _ or ." >&2; exit 1; }
+    read -rsp "New password for $username: " pw; echo
+    read -rsp "Again: " again; echo
+    [[ "$pw" == "$again" ]] || { echo "reset-password: the passwords don't match" >&2; exit 1; }
+    # printf is a shell builtin, so the password is never in a process's arguments.
+    printf '%s\n' "$pw" | ssh {{prod}} 'cd /srv/pulse && docker compose run --rm --no-deps -T pulse-server reset-password '"$username"
+
+# sign a user out everywhere on the live server (deletes all their sessions; their password stays)
+revoke-sessions $username:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    [[ "$username" =~ ^[A-Za-z0-9_.]{2,32}$ ]] || { echo "revoke-sessions: username must be 2-32 characters of letters, digits, _ or ." >&2; exit 1; }
+    ssh {{prod}} 'cd /srv/pulse && docker compose run --rm --no-deps -T pulse-server revoke-sessions '"$username"
+
 # newest bug/crash reports on the live server (`new` = not looked at yet)
 reports:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server reports'

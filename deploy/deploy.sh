@@ -61,6 +61,17 @@ check_totp_key() {
   return 1
 }
 
+# reload_caddy: apply the Caddyfile just copied. Quiet when it works. A failure doesn't stop the deploy (the
+# running Caddy keeps its previous config, and the server update is what matters), but it says so on stderr.
+# reload finds the admin API (a unix socket, see the Caddyfile's global block) from --config.
+reload_caddy() {
+  if ! docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1; then
+    echo "WARNING: caddy reload failed; Caddy is still running its previous config." >&2
+    echo "  Check it with: docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile" >&2
+  fi
+  return 0
+}
+
 # Sourced by the self-test with DEPLOY_SH_LIB=1: define the functions, run nothing.
 [ -n "${DEPLOY_SH_LIB:-}" ] && return 0
 
@@ -91,7 +102,7 @@ set_env .env PULSE_TAG "$tag"
 set_env .env PULSE_IMAGE "$image"
 echo "pinned: $image"
 docker compose up -d --remove-orphans
-docker compose exec -T caddy caddy reload --config /etc/caddy/Caddyfile >/dev/null 2>&1 || true
+reload_caddy
 for _ in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:7890/health >/dev/null; then
     rev=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \

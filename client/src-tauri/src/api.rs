@@ -4,13 +4,14 @@ use std::time::Duration;
 
 use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
-    AddMembersRequest, Channel, ChannelKind, CreateDmRequest, CreateEmojiRequest, CustomEmoji,
-    EditMessageRequest, GoLiveRequest, LoginMfaRequest, LoginRequest, MarkReadRequest, MediaInfo,
-    Member, Message, MfaRequired, MuteTarget, RecoveryCodesResponse, RegisterRequest,
-    RenameChannelRequest, RenameEmojiRequest, SendMessageRequest, Server, SessionResponse,
-    SetMuteRequest, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
-    TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse,
-    TwoFactorStatus, User, VoiceTokenResponse, WatchRequest,
+    AddMembersRequest, ChangePasswordRequest, Channel, ChannelKind, CreateDmRequest,
+    CreateEmojiRequest, CustomEmoji, EditMessageRequest, GoLiveRequest, LoginMfaRequest,
+    LoginRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired, MuteTarget,
+    RecoveryCodesResponse, RegisterRequest, RenameChannelRequest, RenameEmojiRequest,
+    SendMessageRequest, Server, SessionResponse, SetMuteRequest, StreamInfo, StreamRole,
+    StreamSettings, StreamTicketRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
+    TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, User, VoiceTokenResponse,
+    WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -90,24 +91,35 @@ impl serde::Serialize for ApiError {
 }
 
 /// Plain http:// only for this machine; anything remote must be https (passwords + tokens).
-pub fn check_server_url(url: &str) -> Result<(), ApiError> {
+/// Returns the normalised address to use from here on.
+pub fn check_server_url(url: &str) -> Result<String, ApiError> {
+    use reqwest::Url;
+    use url::Host;
     let reject = |m: &str| Err(ApiError::Rejected(m.into()));
-    if url.starts_with("https://") {
-        return Ok(());
-    }
-    let Some(rest) = url.strip_prefix("http://") else {
-        return reject("server address must start with https://");
+    let Ok(u) = Url::parse(url) else {
+        return reject("not a valid server address");
     };
-    let authority = rest.split('/').next().unwrap_or_default();
-    let host = match authority.strip_prefix('[') {
-        Some(v6) => v6.split(']').next().unwrap_or_default(),
-        None => authority.split(':').next().unwrap_or_default(),
-    };
-    if matches!(host, "localhost" | "127.0.0.1" | "::1") {
-        Ok(())
-    } else {
-        reject("use https:// for remote servers")
+    // Judge the URL the way the HTTP client reads it: the host it connects to is `u.host()`
+    // (userinfo ends at the last '@'), so anything that could disguise it is refused.
+    if !u.username().is_empty() || u.password().is_some() {
+        return reject("the server address can't contain a user name or password");
     }
+    if u.query().is_some() || u.fragment().is_some() {
+        return reject("the server address can't contain a ? or # part");
+    }
+    let allowed = match (u.scheme(), u.host()) {
+        ("https", Some(_)) => true,
+        ("http", Some(Host::Domain("localhost"))) => true,
+        ("http", Some(Host::Ipv4(ip))) => ip.is_loopback(),
+        ("http", Some(Host::Ipv6(ip))) => ip.is_loopback(),
+        ("http", Some(_)) => false,
+        _ => return reject("server address must start with https://"),
+    };
+    if !allowed {
+        return reject("use https:// for remote servers");
+    }
+    // The address as checked (and as the client will read it), without a trailing '/'.
+    Ok(u.as_str().trim_end_matches('/').to_string())
 }
 
 /// What a failed-request log line may show: the path only (no host, no query, never the token).
@@ -813,6 +825,32 @@ impl Api {
         Ok(())
     }
 
+    /// Change this account's password (`code` only when two-factor is on). Every other device
+    /// is signed out; this one stays. The passwords go only into the request body.
+    pub async fn change_password(
+        &self,
+        token: &str,
+        current_password: &str,
+        new_password: &str,
+        code: Option<&str>,
+    ) -> Result<(), ApiError> {
+        friendly_wrong_code(
+            Self::ok_empty(
+                self.http
+                    .post(format!("{}/auth/password", self.base))
+                    .bearer_auth(token)
+                    .json(&ChangePasswordRequest {
+                        current_password: current_password.into(),
+                        new_password: new_password.into(),
+                        code: code.map(Into::into),
+                    })
+                    .send()
+                    .await,
+            )
+            .await,
+        )
+    }
+
     /// Sign out every other device of this account; returns how many sessions were revoked.
     pub async fn logout_others(&self, token: &str) -> Result<u32, ApiError> {
         let r: pulse_protocol::rest::LogoutOthersResponse = Self::parse(
@@ -1151,6 +1189,71 @@ mod tests {
         assert!(matches!(api.me(&other).await, Err(ApiError::Unauthorized)));
         assert!(api.me(&token).await.is_ok(), "this device stays signed in");
         assert_eq!(api.logout_others(&token).await.unwrap(), 0);
+    }
+
+    #[tokio::test]
+    async fn change_password_signs_out_the_other_devices() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let LoginOutcome::Session(other) = api.login("alex", "hunter2hunter2").await.unwrap()
+        else {
+            panic!("no 2FA here");
+        };
+        let err = api
+            .change_password(&token, "nopenopenope", "new password 1", None)
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, ApiError::Forbidden(_)), "{err:?}");
+        let err = api
+            .change_password(&token, "hunter2hunter2", "short", None)
+            .await
+            .err()
+            .unwrap();
+        assert!(matches!(err, ApiError::Rejected(_)), "{err:?}");
+        api.change_password(&token, "hunter2hunter2", "new password 1", None)
+            .await
+            .unwrap();
+        assert!(matches!(
+            api.me(&other.token).await,
+            Err(ApiError::Unauthorized)
+        ));
+        assert!(api.me(&token).await.is_ok(), "this device stays signed in");
+        assert!(matches!(
+            api.login("alex", "hunter2hunter2").await,
+            Err(ApiError::Unauthorized)
+        ));
+        assert!(matches!(
+            api.login("alex", "new password 1").await,
+            Ok(LoginOutcome::Session(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn change_password_with_two_factor_needs_a_code() {
+        let app = testing::spawn().await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let (secret, token, _) = two_factor_user(&app, &api).await;
+        for code in [None, Some("not-a-code")] {
+            let err = api
+                .change_password(&token, "hunter2hunter2", "new password 1", code)
+                .await
+                .err()
+                .unwrap();
+            assert!(
+                matches!(&err, ApiError::Forbidden(m) if m == WRONG_CODE),
+                "{err:?}"
+            );
+        }
+        api.change_password(
+            &token,
+            "hunter2hunter2",
+            "new password 1",
+            Some(&code_at(&secret, 1)),
+        )
+        .await
+        .unwrap();
     }
 
     #[tokio::test]
@@ -1565,11 +1668,12 @@ mod tests {
 
     /// The server's shipped login limits, which the slow-down message above is written for.
     #[test]
-    fn default_login_limits_are_five_a_minute_per_ip_and_ten_an_hour_per_user() {
+    fn default_login_limits_are_five_a_minute_per_ip_and_ten_an_hour_per_user_and_address() {
         use pulse_server::limits::{LimitsConfig, Rate};
         let d = LimitsConfig::default();
         assert_eq!(d.login_ip, Rate::per_minute(5));
-        assert_eq!(d.login_user, Rate::per_hour(10));
+        assert_eq!(d.login_user, Rate::per_hour(100));
+        assert_eq!(d.login_user_ip, Rate::per_hour(10));
     }
 
     #[tokio::test]
@@ -1874,6 +1978,55 @@ mod tests {
             check_server_url("ftp://x"),
             Err(ApiError::Rejected(_))
         ));
+    }
+
+    #[test]
+    fn accepted_url_comes_back_normalised() {
+        assert_eq!(
+            check_server_url("https://Example.COM/").unwrap(),
+            "https://example.com"
+        );
+        assert_eq!(
+            check_server_url("http://localhost:7890").unwrap(),
+            "http://localhost:7890"
+        );
+        assert_eq!(
+            check_server_url("https://example.com:8443/base/").unwrap(),
+            "https://example.com:8443/base"
+        );
+    }
+
+    #[test]
+    fn server_url_check_parses_like_the_http_client() {
+        // The url crate ends userinfo at the last '@': these connect to evil.example.com.
+        for bad in [
+            "http://localhost:1@evil.example.com",
+            "http://[::1]@evil.example.com",
+            "http://127.0.0.1:x@evil.example.com/",
+            "https://user:pw@example.com",
+            "https://example.com/?a=b",
+            "https://example.com/#x",
+            "http://localhost:7890/?a=b",
+            "http://localhost.evil.example.com",
+            "https://",
+            "",
+        ] {
+            assert!(
+                matches!(check_server_url(bad), Err(ApiError::Rejected(_))),
+                "{bad} must be rejected"
+            );
+        }
+        for ok in [
+            "http://localhost:7890",
+            "http://127.0.0.1:7890",
+            "http://127.5.6.7:7890",
+            "http://[::1]:7890",
+            "https://example.com",
+            "https://example.com/",
+            "https://example.com:8443/base",
+        ] {
+            assert!(check_server_url(ok).is_ok(), "{ok} must be accepted");
+        }
     }
 
     #[tokio::test]

@@ -93,6 +93,15 @@ export function handleReady(r: Ready) {
   void streamApi.onReady(r, before)
 }
 
+/** Called with each live event after it is applied. Modules that react to events register here
+ *  (this store can't import them: they import it). */
+const eventHooks = new Set<(e: Event) => void>()
+/** Register `hook`; returns its unregister function. */
+export function onAppEvent(hook: (e: Event) => void): () => void {
+  eventHooks.add(hook)
+  return () => void eventHooks.delete(hook)
+}
+
 /** Subscribe to the live connection. Returns an unsubscribe function. */
 export async function startListening(): Promise<UnlistenFn> {
   const offs: UnlistenFn[] = await Promise.all([
@@ -102,6 +111,7 @@ export async function startListening(): Promise<UnlistenFn> {
       noteReactionEvent(e.payload, app.state.me?.id)
       app.state = applyEvent(app.state, e.payload, Date.now())
       streamApi.onEvent(e.payload)
+      for (const hook of eventHooks) hook(e.payload)
     }),
     // LiveKit closed stream audio's connection under us
     listen<{ channel_id: string }>('stream://audio_closed', (e) => void streamApi.onAudioClosed(e.payload.channel_id)),

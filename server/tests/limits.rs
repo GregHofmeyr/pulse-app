@@ -54,25 +54,112 @@ async fn failed_logins_are_limited_per_ip_but_good_ones_are_not() {
 
 #[tokio::test]
 async fn failed_logins_are_limited_per_username_across_addresses() {
-    let app = spawn_limited(|_| {}).await;
+    let app = spawn_limited(|l| l.login_user = Rate::new(10, 0.0)).await;
     register(&app, "alex").await;
     register(&app, "sam").await;
     for i in 0..10 {
         assert_eq!(
-            login(&app, "alex", "wrong-password", &format!("10.1.0.{i}")).await,
+            login(&app, "alex", "wrong-password", &format!("203.0.113.{i}")).await,
             401
         );
     }
-    assert_eq!(login(&app, "alex", "wrong-password", "10.1.1.1").await, 429);
+    // The username's bucket is empty: addresses that have failed for it are refused.
+    for i in 0..10 {
+        assert_eq!(
+            login(&app, "alex", "wrong-password", &format!("203.0.113.{i}")).await,
+            429
+        );
+    }
     assert_eq!(
-        login(&app, "ALEX", "hunter2hunter2", "10.1.1.2").await,
+        login(&app, "ALEX", "hunter2hunter2", "203.0.113.3").await,
         429,
         "case doesn't dodge it"
     );
+    // A fresh address gets one try, and once it has failed it is refused too.
     assert_eq!(
-        login(&app, "sam", "hunter2hunter2", "10.1.1.1").await,
+        login(&app, "alex", "wrong-password", "198.51.100.1").await,
+        401
+    );
+    assert_eq!(
+        login(&app, "alex", "wrong-password", "198.51.100.1").await,
+        429
+    );
+    assert_eq!(
+        login(&app, "sam", "hunter2hunter2", "203.0.113.1").await,
         200,
         "other accounts unaffected"
+    );
+}
+
+#[tokio::test]
+async fn failed_logins_elsewhere_cannot_lock_the_owner_out() {
+    let app = spawn_limited(|l| {
+        l.login_user = Rate::new(4, 0.0);
+        l.login_user_ip = Rate::new(2, 0.0);
+    })
+    .await;
+    register(&app, "alex").await;
+    // An attacker drains alex's username bucket from two addresses.
+    for ip in ["203.0.113.1", "203.0.113.2"] {
+        for _ in 0..2 {
+            assert_eq!(login(&app, "alex", "wrong-password", ip).await, 401);
+        }
+        assert_eq!(
+            login(&app, "alex", "wrong-password", ip).await,
+            429,
+            "this address has used its tries for alex"
+        );
+    }
+    assert_eq!(
+        login(&app, "alex", "hunter2hunter2", "203.0.113.1").await,
+        429,
+        "the attacking address stays refused, even with the right password"
+    );
+    // The owner, from an address with no failures for alex, still gets in.
+    assert_eq!(
+        login(&app, "alex", "hunter2hunter2", "198.51.100.4").await,
+        200
+    );
+    assert_eq!(
+        login(&app, "alex", "hunter2hunter2", "198.51.100.4").await,
+        200
+    );
+    // A wrong password from it while the username bucket is empty blocks it too.
+    assert_eq!(
+        login(&app, "alex", "wrong-password", "198.51.100.4").await,
+        401
+    );
+    assert_eq!(
+        login(&app, "alex", "hunter2hunter2", "198.51.100.4").await,
+        429
+    );
+}
+
+#[tokio::test]
+async fn a_refused_login_spends_nothing() {
+    let app = spawn_limited(|l| {
+        l.login_user = Rate::new(1, 0.0);
+        l.login_user_ip = Rate::new(2, 0.0);
+    })
+    .await;
+    register(&app, "alex").await;
+    assert_eq!(
+        login(&app, "alex", "wrong-password", "203.0.113.1").await,
+        401
+    );
+    // Username bucket empty, this address not full: refused, many times over...
+    for _ in 0..5 {
+        assert_eq!(
+            login(&app, "alex", "wrong-password", "203.0.113.1").await,
+            429
+        );
+    }
+    // ...and none of those refusals spent the address's last (username, IP) token or the
+    // per-IP one, so once the username bucket has a token again this address can try.
+    app.limits.login_user.refund("alex");
+    assert_eq!(
+        login(&app, "alex", "hunter2hunter2", "203.0.113.1").await,
+        200
     );
 }
 
@@ -154,6 +241,11 @@ async fn oversized_usernames_never_become_limiter_keys() {
         app.limits.login_user.len(),
         0,
         "no key for a name that can't exist"
+    );
+    assert_eq!(
+        app.limits.login_user_ip.len(),
+        0,
+        "nor a (name, address) key"
     );
     assert_eq!(
         app.limits.login_ip.len(),
@@ -361,4 +453,427 @@ async fn livekit_tokens_are_limited_per_user() {
     )
     .await;
     assert_eq!(r.status(), 200, "another user has their own allowance");
+}
+
+/// Everything unlimited except what `f` sets (so one limit is tested at a time).
+async fn spawn_only(f: impl FnOnce(&mut LimitsConfig)) -> TestApp {
+    let mut cfg = test_config();
+    cfg.limits = LimitsConfig::unlimited();
+    f(&mut cfg.limits);
+    spawn_with(cfg).await
+}
+
+/// A small bucket that doesn't refill during the test.
+fn tiny(burst: u32) -> Rate {
+    Rate::new(burst, 0.0)
+}
+
+async fn status(r: reqwest::RequestBuilder, token: &str) -> u16 {
+    r.bearer_auth(token).send().await.unwrap().status().as_u16()
+}
+
+#[tokio::test]
+async fn creating_servers_is_limited_per_user() {
+    let app = spawn_only(|l| l.create_user = tiny(2)).await;
+    let (_, a) = register(&app, "alex").await;
+    let (_, b) = register(&app, "sam").await;
+    let body = || serde_json::json!({ "name": "Main" });
+    assert_eq!(post_json(&app, &a, "/servers", body()).await.status(), 200);
+    assert_eq!(post_json(&app, &a, "/servers", body()).await.status(), 200);
+    assert_eq!(post_json(&app, &a, "/servers", body()).await.status(), 429);
+    assert_eq!(
+        post_json(&app, &b, "/servers", body()).await.status(),
+        200,
+        "another user has their own allowance"
+    );
+}
+
+#[tokio::test]
+async fn creating_channels_shares_the_create_bucket() {
+    let app = spawn_only(|l| l.create_user = tiny(3)).await;
+    let (_, a) = register(&app, "alex").await;
+    let srv = create_server(&app, &a, "Main").await; // 1
+    let path = format!("/servers/{}/channels", srv.id);
+    let body = || serde_json::json!({ "name": "more", "kind": "text" });
+    assert_eq!(post_json(&app, &a, &path, body()).await.status(), 200); // 2
+    assert_eq!(post_json(&app, &a, &path, body()).await.status(), 200); // 3
+    assert_eq!(post_json(&app, &a, &path, body()).await.status(), 429);
+}
+
+#[tokio::test]
+async fn new_dms_and_groups_are_limited_but_reopening_a_dm_is_not() {
+    let app = spawn_only(|l| l.create_user = tiny(2)).await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, _) = register(&app, "sam").await;
+    let (c_id, _) = register(&app, "riley").await;
+    let dm = |ids: Vec<pulse_protocol::ids::UserId>| {
+        post_json(&app, &a, "/dms", serde_json::json!({ "user_ids": ids }))
+    };
+    assert_eq!(dm(vec![b_id]).await.status(), 200, "new 1:1 DM");
+    assert_eq!(dm(vec![b_id, c_id]).await.status(), 200, "new group");
+    assert_eq!(dm(vec![b_id, c_id]).await.status(), 429, "another group");
+    assert_eq!(
+        dm(vec![b_id]).await.status(),
+        200,
+        "the existing DM is free"
+    );
+    assert_eq!(dm(vec![c_id]).await.status(), 429, "a new 1:1 DM is not");
+}
+
+#[tokio::test]
+async fn adding_group_members_is_limited_per_user() {
+    let app = spawn_only(|l| l.create_user = tiny(2)).await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (_, b) = register(&app, "sam").await;
+    let (c_id, _) = register(&app, "riley").await;
+    let g = create_dm(&app, &b, &[a_id, c_id]).await; // sam's allowance, not alex's
+    let members = format!("/channels/{}/members", g.id);
+    let kick = format!("/channels/{}/members/{c_id}", g.id);
+    let add = || {
+        post_json(
+            &app,
+            &a,
+            &members,
+            serde_json::json!({ "user_ids": [c_id] }),
+        )
+    };
+    for i in 0..2 {
+        assert_eq!(
+            status(app.http.delete(app.url(&kick)), &a).await,
+            204,
+            "#{i}"
+        );
+        assert_eq!(add().await.status(), 204, "#{i}");
+    }
+    assert_eq!(status(app.http.delete(app.url(&kick)), &a).await, 204);
+    assert_eq!(add().await.status(), 429);
+}
+
+#[tokio::test]
+async fn invites_are_limited_per_user() {
+    let app = spawn_only(|l| l.invite_user = tiny(2)).await;
+    let (_, a) = register(&app, "alex").await;
+    let (_, b) = register(&app, "sam").await;
+    let mint = || app.http.post(app.url("/invites"));
+    assert_eq!(status(mint(), &a).await, 200);
+    assert_eq!(status(mint(), &a).await, 200);
+    assert_eq!(status(mint(), &a).await, 429);
+    assert_eq!(
+        status(mint(), &b).await,
+        200,
+        "another user has their own allowance"
+    );
+}
+
+fn png() -> Vec<u8> {
+    use image::{ImageFormat, Rgba, RgbaImage};
+    let img = RgbaImage::from_pixel(64, 32, Rgba([10, 120, 240, 255]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+async fn upload_emoji(app: &TestApp, token: &str) -> String {
+    let r = app
+        .http
+        .post(app.url("/media/emoji"))
+        .bearer_auth(token)
+        .body(png())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    r.json::<pulse_protocol::rest::MediaInfo>()
+        .await
+        .unwrap()
+        .hash
+}
+
+#[tokio::test]
+async fn emoji_create_rename_and_delete_share_a_limit() {
+    let app = spawn_only(|l| l.emoji_user = tiny(2)).await;
+    let (_, a) = register(&app, "alex").await;
+    let srv = create_server(&app, &a, "Main").await;
+    let hash = upload_emoji(&app, &a).await;
+    let path = format!("/servers/{}/emoji", srv.id);
+    let create = |name: &str| {
+        post_json(
+            &app,
+            &a,
+            &path,
+            serde_json::json!({ "name": name, "media_hash": hash }),
+        )
+    };
+    let r = create("pog").await;
+    assert_eq!(r.status(), 200);
+    let e: pulse_protocol::rest::CustomEmoji = r.json().await.unwrap();
+    let rename = app
+        .http
+        .patch(app.url(&format!("/emoji/{}", e.id)))
+        .json(&serde_json::json!({ "name": "poggers" }));
+    assert_eq!(status(rename, &a).await, 200);
+    assert_eq!(create("kek").await.status(), 429);
+    let del = app.http.delete(app.url(&format!("/emoji/{}", e.id)));
+    assert_eq!(status(del, &a).await, 429);
+}
+
+#[tokio::test]
+async fn edits_deletes_and_reactions_share_a_limit() {
+    let app = spawn_only(|l| l.mutate_user = tiny(3)).await;
+    let (_, a) = register(&app, "alex").await;
+    let srv = create_server(&app, &a, "Main").await;
+    let ch = general(&app, &a, srv.id).await;
+    let msg = send(&app, &a, ch.id, "hello").await;
+    let edit = app
+        .http
+        .patch(app.url(&format!("/messages/{}", msg.id)))
+        .json(&serde_json::json!({ "content": "hello!" }));
+    assert_eq!(status(edit, &a).await, 200);
+    let reaction = app.url(&format!("/messages/{}/reactions/👍", msg.id));
+    assert_eq!(status(app.http.put(&reaction), &a).await, 204);
+    assert_eq!(status(app.http.delete(&reaction), &a).await, 204);
+    assert_eq!(status(app.http.put(&reaction), &a).await, 429);
+    let del = app.http.delete(app.url(&format!("/messages/{}", msg.id)));
+    assert_eq!(status(del, &a).await, 429);
+    let edit = app
+        .http
+        .patch(app.url(&format!("/messages/{}", msg.id)))
+        .json(&serde_json::json!({ "content": "again" }));
+    assert_eq!(status(edit, &a).await, 429);
+}
+
+#[tokio::test]
+async fn going_live_and_watching_are_limited_but_stop_and_unwatch_are_not() {
+    let app = spawn_only(|l| l.mutate_user = tiny(3)).await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let srv = create_server(&app, &a, "Main").await;
+    let joined = post_json(
+        &app,
+        &b,
+        &format!("/servers/{}/join", srv.id),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(joined.status(), 204);
+    let chans: Vec<pulse_protocol::rest::Channel> =
+        get_json(&app, &a, &format!("/servers/{}/channels", srv.id)).await;
+    let lounge = chans
+        .iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap()
+        .id;
+    app.voice.join(lounge, a_id, "PA_a");
+    app.voice.join(lounge, b_id, "PA_b");
+    let live = format!("/streams/{lounge}/live");
+    let settings = || serde_json::json!({"settings": {"height": 1080, "fps": 60, "audio": true}});
+    for _ in 0..3 {
+        assert_eq!(post_json(&app, &a, &live, settings()).await.status(), 200);
+    }
+    assert_eq!(post_json(&app, &a, &live, settings()).await.status(), 429);
+    // sam's watch draws on sam's own bucket
+    let watch = format!("/streams/{lounge}/watch");
+    let unwatch = format!("/streams/{lounge}/unwatch");
+    let who = || serde_json::json!({ "streamer": a_id });
+    for _ in 0..3 {
+        assert_eq!(post_json(&app, &b, &watch, who()).await.status(), 204);
+    }
+    assert_eq!(post_json(&app, &b, &watch, who()).await.status(), 429);
+    // Teardown never spends or waits: both buckets are empty, yet these still go through.
+    for _ in 0..3 {
+        assert_eq!(post_json(&app, &b, &unwatch, who()).await.status(), 204);
+    }
+    assert_eq!(status(app.http.delete(app.url(&live)), &a).await, 204);
+}
+
+/// Count the `VoiceStateChanged` events `ws` receives until it has been quiet for 500 ms.
+async fn count_voice_states(ws: &mut Socket) -> usize {
+    let mut n = 0;
+    while let Ok(Some(Ok(m))) = tokio::time::timeout(Duration::from_millis(500), ws.next()).await {
+        if let Ws::Text(t) = m
+            && let Ok(ServerFrame::Event(Event::VoiceStateChanged { .. })) =
+                serde_json::from_str(&t)
+        {
+            n += 1;
+        }
+    }
+    n
+}
+
+fn voice_frame(muted: bool) -> Ws {
+    use pulse_protocol::gateway::VoiceFlags;
+    let flags = VoiceFlags {
+        muted,
+        deafened: false,
+    };
+    Ws::text(serde_json::to_string(&ClientFrame::VoiceState { flags }).unwrap())
+}
+
+#[tokio::test]
+async fn extra_voice_state_frames_are_dropped() {
+    // The default burst with no refill, so the bound is exact however slow the machine is.
+    let rate = Rate::new(LimitsConfig::default().voice_state_user.burst, 0.0);
+    let app = spawn_only(|l| l.voice_state_user = rate).await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (_, b) = register(&app, "sam").await;
+    let srv = create_server(&app, &a, "Main").await;
+    let chans: Vec<pulse_protocol::rest::Channel> =
+        get_json(&app, &a, &format!("/servers/{}/channels", srv.id)).await;
+    let lounge = chans
+        .iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap()
+        .id;
+    app.voice.join(lounge, a_id, "PA_a");
+    let mut watcher = hello(&app, &b).await;
+    let mut talker = hello(&app, &a).await;
+    for i in 0..50 {
+        talker.send(voice_frame(i % 2 == 0)).await.unwrap();
+    }
+    let seen = count_voice_states(&mut watcher).await;
+    assert_eq!(
+        seen, rate.burst as usize,
+        "the burst gets through, the rest is dropped: {seen} VoiceStateChanged for 50 frames"
+    );
+    assert!(alive(&mut talker).await, "the sender is not disconnected");
+    assert!(alive(&mut watcher).await, "the watcher is not disconnected");
+}
+
+#[tokio::test]
+async fn unchanged_voice_flags_publish_nothing() {
+    let app = spawn_only(|_| {}).await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (_, b) = register(&app, "sam").await;
+    let srv = create_server(&app, &a, "Main").await;
+    let chans: Vec<pulse_protocol::rest::Channel> =
+        get_json(&app, &a, &format!("/servers/{}/channels", srv.id)).await;
+    let lounge = chans
+        .iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap()
+        .id;
+    app.voice.join(lounge, a_id, "PA_a");
+    let mut watcher = hello(&app, &b).await;
+    let mut talker = hello(&app, &a).await;
+    talker.send(voice_frame(false)).await.unwrap(); // same as the join default
+    for _ in 0..5 {
+        talker.send(voice_frame(true)).await.unwrap();
+    }
+    assert_eq!(count_voice_states(&mut watcher).await, 1, "only the change");
+}
+
+/// Frames over the limit still count: the flags are stored, and one trailing publish carries the
+/// latest ones once the bucket allows, so peers never keep a stale mute icon.
+#[tokio::test]
+async fn limited_voice_state_frames_still_land_in_a_trailing_publish() {
+    use pulse_protocol::gateway::VoiceFlags;
+    let app = spawn_only(|l| l.voice_state_user = Rate::new(2, 4.0)).await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (_, b) = register(&app, "sam").await;
+    let srv = create_server(&app, &a, "Main").await;
+    let chans: Vec<pulse_protocol::rest::Channel> =
+        get_json(&app, &a, &format!("/servers/{}/channels", srv.id)).await;
+    let lounge = chans
+        .iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap()
+        .id;
+    app.voice.join(lounge, a_id, "PA_a");
+    let mut watcher = hello(&app, &b).await;
+    let mut talker = hello(&app, &a).await;
+    // 21 alternating frames: true, false, ..., true. The last one is over the limit.
+    let start = std::time::Instant::now();
+    for i in 0..21 {
+        talker.send(voice_frame(i % 2 == 0)).await.unwrap();
+    }
+    let mut seen = 0;
+    let mut last = None;
+    let mut last_at = start;
+    while let Ok(Some(Ok(m))) =
+        tokio::time::timeout(Duration::from_millis(1000), watcher.next()).await
+    {
+        if let Ws::Text(t) = m
+            && let Ok(ServerFrame::Event(Event::VoiceStateChanged { flags, .. })) =
+                serde_json::from_str(&t)
+        {
+            seen += 1;
+            last = Some(flags);
+            last_at = std::time::Instant::now();
+        }
+    }
+    // Every publish (direct or trailing) spends a token, and the bucket was full at `start` at
+    // most: so by the last one received, at most burst + refill * elapsed went out. Derived from
+    // the measured time, the bound holds on a slow machine too.
+    let elapsed = last_at.duration_since(start).as_secs_f64();
+    let bound = (2.0 + 4.0 * elapsed).floor() as usize;
+    let want = VoiceFlags {
+        muted: true,
+        deafened: false,
+    };
+    assert_eq!(last, Some(want), "peers see the final flags");
+    assert!(
+        seen <= bound,
+        "{seen} publishes for 21 frames in {elapsed:.3}s (at most {bound})"
+    );
+    let room = app
+        .voice
+        .rooms()
+        .into_iter()
+        .find(|r| r.0 == lounge)
+        .unwrap();
+    assert_eq!(room.1, vec![(a_id, want)], "stored flags are the latest");
+    assert!(alive(&mut talker).await);
+}
+
+/// A user out of creates is refused a new 1:1 DM before any lookup or write lock.
+#[tokio::test]
+async fn a_limited_new_dm_is_refused_before_any_lookup() {
+    let app = spawn_only(|l| l.create_user = tiny(1)).await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, _) = register(&app, "sam").await;
+    let dm = |ids: serde_json::Value| {
+        post_json(&app, &a, "/dms", serde_json::json!({ "user_ids": ids }))
+    };
+    assert_eq!(dm(serde_json::json!([b_id])).await.status(), 200);
+    let nobody = pulse_protocol::ids::UserId::new();
+    assert_eq!(
+        dm(serde_json::json!([nobody])).await.status(),
+        429,
+        "refused up front, not after looking the user up"
+    );
+    assert_eq!(
+        dm(serde_json::json!([b_id])).await.status(),
+        200,
+        "reopening is still free"
+    );
+}
+
+#[tokio::test]
+async fn renaming_a_group_is_limited_per_user() {
+    let app = spawn_only(|l| l.mutate_user = tiny(3)).await;
+    let (_, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let (c_id, _) = register(&app, "riley").await;
+    let g = create_dm(&app, &a, &[b_id, c_id]).await;
+    let rename = |name: &str| {
+        app.http
+            .patch(app.url(&format!("/channels/{}", g.id)))
+            .json(&serde_json::json!({ "name": name }))
+    };
+    let messages = || async {
+        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM messages WHERE channel_id = ?")
+            .bind(g.id.to_string())
+            .fetch_one(&app.db)
+            .await
+            .unwrap()
+    };
+    let before = messages().await;
+    for i in 0..3 {
+        assert_eq!(status(rename(&format!("squad {i}")), &a).await, 200);
+    }
+    assert_eq!(status(rename("one too many"), &a).await, 429);
+    // Refused renames add no system message.
+    assert_eq!(messages().await, before + 3);
+    // sam has a bucket of his own.
+    assert_eq!(status(rename("sam's turn"), &b).await, 200);
 }

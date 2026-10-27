@@ -1,6 +1,6 @@
 //! Conversation management: groups, read points, mutes, closing.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -20,6 +20,7 @@ use crate::auth::AuthUser;
 use crate::auth::routes::load_user;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
+use crate::voice::state::Left;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -83,6 +84,30 @@ pub async fn members_of(db: &SqlitePool, channel: ChannelId) -> AppResult<Vec<Us
         .map_err(anyhow::Error::from)?)
 }
 
+/// The members of every DM and group `me` is in, in one query, each list ordered as
+/// [`members_of`] orders it.
+pub async fn members_of_my_conversations(
+    db: &SqlitePool,
+    me: UserId,
+) -> AppResult<HashMap<ChannelId, Vec<UserId>>> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT cm.channel_id, cm.user_id FROM channel_members cm
+         JOIN channel_members mine ON mine.channel_id = cm.channel_id AND mine.user_id = ?
+         ORDER BY cm.channel_id, cm.user_id",
+    )
+    .bind(me.to_string())
+    .fetch_all(db)
+    .await?;
+    let mut out: HashMap<ChannelId, Vec<UserId>> = HashMap::new();
+    for (ch, u) in rows {
+        let ch: ChannelId = ch.parse().map_err(anyhow::Error::from)?;
+        out.entry(ch)
+            .or_default()
+            .push(u.parse().map_err(anyhow::Error::from)?);
+    }
+    Ok(out)
+}
+
 async fn username(db: &SqlitePool, u: UserId) -> AppResult<String> {
     Ok(load_user(db, u).await?.username)
 }
@@ -103,6 +128,9 @@ async fn add_members(
     Path(id): Path<ChannelId>,
     Json(req): Json<AddMembersRequest>,
 ) -> AppResult<StatusCode> {
+    if !s.limits.create_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     group_for(&s, me, id).await?;
     let current = members_of(&s.db, id).await?;
     let new: Vec<UserId> = req
@@ -132,6 +160,7 @@ async fn add_members(
     // Write first, then count, under the write lock: two adds racing past the check above
     // can't overfill the group.
     let mut tx = crate::db::begin_write(&s.db).await?;
+    crate::servers::routes::check_group_cap(&mut tx, &new).await?; // dropping `tx` rolls back
     for u in &new {
         sqlx::query("INSERT INTO channel_members (channel_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)")
             .bind(id.to_string()).bind(u.to_string()).bind(me.to_string()).bind(now())
@@ -229,7 +258,28 @@ async fn remove_member(
             .execute(&mut *tx)
             .await?;
     }
+    // Their LiveKit tokens for this call go with their membership (a rejoin with one is also
+    // refused by the join check, `voice::revoke::admit`).
+    let had_grants =
+        crate::auth::session::drop_grants(&mut tx, &id.to_string(), &user.to_string()).await?;
     tx.commit().await?;
+    // Out of the group, out of its call: LiveKit removes them (best-effort, bounded wait) and
+    // they leave the voice state. Their leave webhook then finds nothing to do.
+    let left_call = s.voice.leave(id, user, "") == Left::Removed;
+    if had_grants > 0 || left_call {
+        crate::voice::revoke::remove_identities(&s, &id.to_string(), &[user.to_string()]).await;
+    }
+    if left_call {
+        s.hub
+            .publish(
+                &s.db,
+                Event::VoiceLeft {
+                    channel_id: id,
+                    user_id: user,
+                },
+            )
+            .await;
+    }
     if unmuted > 0 {
         s.hub
             .publish(
@@ -287,6 +337,11 @@ async fn rename(
     Path(id): Path<ChannelId>,
     Json(req): Json<RenameChannelRequest>,
 ) -> AppResult<Json<Channel>> {
+    // Each rename reaches every member and adds a system message: limited and disk-guarded.
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
+    crate::media::writes_ok(&s.cfg)?;
     group_for(&s, me, id).await?;
     let name = req
         .name

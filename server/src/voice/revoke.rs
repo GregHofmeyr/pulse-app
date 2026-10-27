@@ -20,8 +20,10 @@ use std::time::Duration;
 use livekit_api::services::room::RoomClient;
 use livekit_api::services::{ServerError, ServiceError};
 use livekit_protocol::ParticipantInfo;
+use pulse_protocol::ids::{ChannelId, UserId};
 
 use crate::AppState;
+use crate::access::load_channel;
 use crate::auth::session::{self, GRANT_ATTRIBUTE, RevokedGrant};
 
 /// Upper bound on how long a logout waits for LiveKit (all rooms are handled in parallel).
@@ -50,14 +52,21 @@ fn not_found(e: &ServiceError) -> bool {
 /// participant is removed in the background and false is returned (record nothing). Covers a
 /// revoked device rejoining with its old JWT, a token whose session went away between minting
 /// and joining, an expired session, and a grant used for another room or identity.
+///
+/// The grant alone isn't enough: the user must still be allowed in ([`may_be_in`]), so a token
+/// minted before they lost access (removed from a group, left voice for a stream room) is
+/// refused too.
 pub async fn admit(s: &AppState, room: &str, p: &ParticipantInfo) -> anyhow::Result<bool> {
-    if session::admit_join(&s.db, grant_of(p), room, &p.identity, &p.sid).await? {
+    // Access first: a refused join must not be recorded as the grant's connection.
+    if may_be_in(s, room, &p.identity).await?
+        && session::admit_join(&s.db, grant_of(p), room, &p.identity, &p.sid).await?
+    {
         return Ok(true);
     }
     tracing::warn!(
         room,
         identity = %p.identity,
-        "LiveKit join without a live session's grant; removing"
+        "LiveKit join without a live session's grant or current access; removing"
     );
     let (s, room, p) = (s.clone(), room.to_owned(), p.clone());
     tokio::spawn(async move {
@@ -69,6 +78,74 @@ pub async fn admit(s: &AppState, room: &str, p: &ParticipantInfo) -> anyhow::Res
         }
     });
     Ok(false)
+}
+
+/// Whether `identity` may be in `room` right now. A voice room (`<channel>`, identity = user
+/// id): the user may join that channel's call (`voice::routes::may_join`). A stream room
+/// (`<channel>~s`, identity `<user>#v` / `<user>#a`): that, and the user is in the channel's
+/// call.
+///
+/// "In the call" is the voice state, or else a connected voice grant for the channel. The voice
+/// state can lag behind LiveKit: after a restart it is rebuilt from LiveKit only after the
+/// startup join check (`voice::restore`) has run over the stream rooms too, and a stream
+/// connection's webhook can beat its voice connection's. A connected grant is a voice join we
+/// admitted whose leave hasn't come in, so this doesn't let in anyone who left voice (their
+/// leave marks the grant left) or who never joined it (a fetched but unused token has no join).
+async fn may_be_in(s: &AppState, room: &str, identity: &str) -> anyhow::Result<bool> {
+    let (channel, user, stream) = match room.strip_suffix("~s") {
+        Some(channel) => match crate::streams::webhook::parse_identity(identity) {
+            Some((user, _)) => (channel, user, true),
+            None => return Ok(false),
+        },
+        None => match identity.parse::<UserId>() {
+            Ok(user) => (room, user, false),
+            Err(_) => return Ok(false),
+        },
+    };
+    let Ok(channel) = channel.parse::<ChannelId>() else {
+        return Ok(false);
+    };
+    let Some(ch) = load_channel(&s.db, channel).await? else {
+        return Ok(false);
+    };
+    if !crate::voice::routes::may_join(&s.db, user, &ch).await? {
+        return Ok(false);
+    }
+    if !stream || s.voice.members(channel).contains(&user) {
+        return Ok(true);
+    }
+    session::connected_grant(&s.db, &channel.to_string(), &user.to_string()).await
+}
+
+/// Remove `identities` from `room` in LiveKit (in parallel, within [`BUDGET`]). Never fails;
+/// problems are logged.
+pub async fn remove_identities(s: &AppState, room: &str, identities: &[String]) {
+    let client = client(s);
+    let all = identities.iter().map(|i| remove(&client, room, i));
+    if tokio::time::timeout(BUDGET, futures::future::join_all(all))
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            room,
+            "LiveKit didn't answer in time; participants may still be connected"
+        );
+    }
+}
+
+/// `user` left `channel`'s call: remove their stream-room connections (`#v`, `#a`) in the
+/// background. Skipped if they are back in the call by then (a quick rejoin with a new ticket
+/// must not be hit); removal is by identity, so that check narrows the race to one API round
+/// trip, as for refused joins.
+pub fn end_stream_access(s: &AppState, channel: ChannelId, user: UserId) {
+    let s = s.clone();
+    tokio::spawn(async move {
+        if s.voice.members(channel).contains(&user) {
+            return;
+        }
+        let identities = [format!("{user}#v"), format!("{user}#a")];
+        remove_identities(&s, &format!("{channel}~s"), &identities).await;
+    });
 }
 
 /// Remove the refused participant `p` only if LiveKit still has that very connection (same sid

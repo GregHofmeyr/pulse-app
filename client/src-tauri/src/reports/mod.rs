@@ -211,7 +211,7 @@ pub async fn save_report(
         &file_text(ReportKind::Bug, &text, &meta, &log),
     )
     .map_err(|e| e.to_string())?;
-    tracing::info!(path = %path.display(), "bug report saved");
+    tracing::info!(path = %crate::logging::redact_home(&path), "bug report saved");
     Ok(path.display().to_string())
 }
 

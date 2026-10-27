@@ -121,6 +121,9 @@ async fn go_live(
     Path(ch): Path<ChannelId>,
     Json(req): Json<GoLiveRequest>,
 ) -> AppResult<Json<StreamInfo>> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     require_voice_member(&s, me, ch).await?;
     let st = &req.settings;
     if !HEIGHTS.contains(&st.height) || !FPS.contains(&st.fps) {
@@ -164,6 +167,9 @@ async fn watch(
     Path(ch): Path<ChannelId>,
     Json(req): Json<WatchRequest>,
 ) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     require_voice_member(&s, me, ch).await?;
     ensure_watchable(&s, me, ch, req.streamer)?;
     if let Some(viewers) = s.streams.add_viewer(ch, req.streamer, me) {

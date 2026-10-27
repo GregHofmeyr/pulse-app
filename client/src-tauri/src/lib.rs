@@ -90,7 +90,7 @@ pub fn run() {
                 }
                 Err(e) => eprintln!("logging unavailable ({}): {e}", log_dir.display()),
             }
-            tracing::info!(profile = ?profile, data = %dir.display(), "profile");
+            tracing::info!(profile = ?profile, data = %logging::redact_home(&dir), "profile");
             // Loaded (and acted on) above, before logging was up: report how that went now.
             app.state::<reports::settings::Store>().log_loaded();
             startup::mark("logging_ready"); // (since process start: covers crash checks + log setup)
@@ -133,13 +133,17 @@ pub fn run() {
             #[cfg(unix)]
             {
                 let h = app.handle().clone();
-                let path = ipc::socket_path();
-                // Needs a runtime: run the listener on Tauri's.
-                tauri::async_runtime::spawn(async move {
-                    if let Err(e) = ipc::serve(&path, move |c| commands::hotkey(&h, c)) {
-                        tracing::warn!(path = %path.display(), error = %e, "hotkey socket unavailable");
+                match ipc::socket_path() {
+                    // Needs a runtime: run the listener on Tauri's.
+                    Ok(path) => {
+                        tauri::async_runtime::spawn(async move {
+                            if let Err(e) = ipc::serve(&path, move |c| commands::hotkey(&h, c)) {
+                                tracing::warn!(path = %logging::redact_home(&path), error = %e, "hotkey socket unavailable");
+                            }
+                        });
                     }
-                });
+                    Err(e) => tracing::warn!(error = %e, "hotkey socket unavailable"),
+                }
             }
             let binds = keybinds::Store::load(&dir);
             let saved = binds.get();
@@ -184,6 +188,7 @@ pub fn run() {
             commands::restore_session,
             commands::logout,
             commands::logout_others,
+            commands::change_password,
             commands::two_factor_status,
             commands::two_factor_setup,
             commands::two_factor_enable,

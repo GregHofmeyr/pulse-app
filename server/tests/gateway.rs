@@ -421,3 +421,166 @@ async fn outdated_client_is_told_to_update() {
     };
     assert_eq!(code, 4005);
 }
+
+/// Ready loads every server's channels and members, and every conversation's members, in a
+/// few bulk queries regrouped in Rust: each server and conversation must get exactly its own.
+#[tokio::test]
+async fn ready_groups_channels_and_members_per_server_and_conversation() {
+    use pulse_protocol::rest::{Channel, Member};
+    use pulse_server::servers::routes::{all_servers, dms_of, server_channels, server_members};
+
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (sam_id, sam) = register(&app, "sam").await;
+    let (riley_id, riley) = register(&app, "riley").await;
+
+    let s1 = create_server(&app, &alex, "One").await;
+    let s2 = create_server(&app, &sam, "Two").await;
+    let s3 = create_server(&app, &riley, "Three").await; // only riley
+    for (tok, srv) in [(&sam, s1.id), (&riley, s1.id), (&alex, s2.id)] {
+        let r = post_json(&app, tok, &format!("/servers/{srv}/join"), json!({})).await;
+        assert!(r.status().is_success());
+    }
+    nickname_and_channels(&app, &alex, s1.id, &["b", "a", "c"]).await;
+    nickname_and_channels(&app, &sam, s2.id, &["z"]).await;
+
+    let dm = create_dm(&app, &alex, &[sam_id]).await;
+    let g3 = create_dm(&app, &alex, &[sam_id, riley_id]).await;
+    let g2 = create_dm(&app, &sam, &[alex_id, riley_id]).await;
+    let r = app
+        .http
+        .delete(app.url(&format!("/channels/{}/members/{riley_id}", g2.id)))
+        .bearer_auth(&riley)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    let not_mine = create_dm(&app, &sam, &[riley_id]).await;
+
+    let ready = pulse_server::gateway::socket::build_ready(
+        &app.db,
+        &app.voice,
+        &app.streams,
+        &app.hub,
+        alex_id,
+    )
+    .await
+    .unwrap();
+
+    // Same order and content as the per-server / per-conversation queries.
+    let servers = all_servers(&app.db).await.unwrap();
+    assert_eq!(ready.servers, servers);
+    let mut want_channels: Vec<Channel> = vec![];
+    let mut want_members: Vec<(ServerId, Vec<Member>)> = vec![];
+    for srv in &servers {
+        want_channels.extend(server_channels(&app.db, srv.id).await.unwrap());
+        want_members.push((srv.id, server_members(&app.db, srv.id).await.unwrap()));
+    }
+    want_channels.extend(dms_of(&app.db, alex_id).await.unwrap());
+    assert_eq!(ready.channels, want_channels);
+    let got_members: Vec<(ServerId, Vec<Member>)> = ready
+        .members
+        .iter()
+        .map(|m| (m.server_id, m.members.clone()))
+        .collect();
+    assert_eq!(got_members, want_members);
+
+    // Spot-check the regrouping against what was actually set up.
+    let names = |srv: ServerId| -> Vec<String> {
+        let mut n: Vec<String> = ready
+            .channels
+            .iter()
+            .filter(|c| c.server_id == Some(srv))
+            .filter_map(|c| c.name.clone())
+            .collect();
+        n.sort();
+        n
+    };
+    assert_eq!(names(s1.id), ["Lounge", "a", "b", "c", "general"]);
+    assert_eq!(names(s2.id), ["Lounge", "general", "z"]);
+    assert_eq!(names(s3.id), ["Lounge", "general"]);
+    let member_ids = |srv: ServerId| -> Vec<pulse_protocol::ids::UserId> {
+        let mut v: Vec<_> = ready
+            .members
+            .iter()
+            .find(|m| m.server_id == srv)
+            .unwrap()
+            .members
+            .iter()
+            .map(|m| m.user.id)
+            .collect();
+        v.sort();
+        v
+    };
+    let sorted = |mut v: Vec<pulse_protocol::ids::UserId>| {
+        v.sort();
+        v
+    };
+    assert_eq!(member_ids(s1.id), sorted(vec![alex_id, sam_id, riley_id]));
+    assert_eq!(member_ids(s2.id), sorted(vec![alex_id, sam_id]));
+    assert_eq!(member_ids(s3.id), vec![riley_id]);
+    let nick = ready
+        .members
+        .iter()
+        .find(|m| m.server_id == s1.id)
+        .unwrap()
+        .members
+        .iter()
+        .find(|m| m.user.id == alex_id)
+        .unwrap()
+        .nickname
+        .clone();
+    let want_nick: Option<String> = sqlx::query_scalar(
+        "SELECT nickname FROM server_members WHERE server_id = ? AND user_id = ?",
+    )
+    .bind(s1.id.to_string())
+    .bind(alex_id.to_string())
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(nick, want_nick);
+
+    let mut dms: Vec<_> = ready
+        .dm_members
+        .iter()
+        .map(|d| (d.channel_id, d.user_ids.clone()))
+        .collect();
+    dms.sort();
+    let mut want_dms = vec![
+        (dm.id, sorted(vec![alex_id, sam_id])),
+        (g3.id, sorted(vec![alex_id, sam_id, riley_id])),
+        (g2.id, sorted(vec![alex_id, sam_id])),
+    ];
+    want_dms.sort();
+    assert_eq!(dms, want_dms);
+    assert!(ready.channels.iter().all(|c| c.id != not_mine.id));
+    let private: Vec<_> = ready
+        .channels
+        .iter()
+        .filter(|c| c.server_id.is_none())
+        .map(|c| c.id)
+        .collect();
+    assert_eq!(private.len(), 3);
+}
+
+/// Give `token`'s user a nickname in `srv` (straight in the DB) and add text channels.
+async fn nickname_and_channels(app: &TestApp, token: &str, srv: ServerId, names: &[&str]) {
+    let me: pulse_protocol::rest::User = get_json(app, token, "/me").await;
+    sqlx::query("UPDATE server_members SET nickname = ? WHERE server_id = ? AND user_id = ?")
+        .bind(format!("nick-{}", me.username))
+        .bind(srv.to_string())
+        .bind(me.id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    for n in names {
+        let r = post_json(
+            app,
+            token,
+            &format!("/servers/{srv}/channels"),
+            json!({ "name": n, "kind": "text" }),
+        )
+        .await;
+        assert_eq!(r.status(), 200);
+    }
+}

@@ -18,6 +18,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::SessionResponse::export_all(&cfg)?;
     rest::InviteResponse::export_all(&cfg)?;
     rest::LogoutOthersResponse::export_all(&cfg)?;
+    rest::ChangePasswordRequest::export_all(&cfg)?;
     rest::TwoFactorStatus::export_all(&cfg)?;
     rest::TwoFactorSetupRequest::export_all(&cfg)?;
     rest::TwoFactorSetupResponse::export_all(&cfg)?;

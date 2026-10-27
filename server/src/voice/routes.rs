@@ -8,10 +8,11 @@ use livekit_api::access_token::{AccessToken, TokenVerifier, VideoGrants};
 use livekit_api::webhooks::WebhookReceiver;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
-use pulse_protocol::rest::{ChannelKind, StreamEndReason, VoiceTokenResponse};
+use pulse_protocol::rest::{Channel, ChannelKind, StreamEndReason, VoiceTokenResponse};
+use sqlx::SqlitePool;
 
 use crate::AppState;
-use crate::access::{channel_for, load_channel};
+use crate::access::{channel_for, is_channel_member, load_channel};
 use crate::auth::AuthUser;
 use crate::auth::extractor::BearerToken;
 use crate::db::now;
@@ -36,10 +37,7 @@ async fn token(
     if ch.kind == ChannelKind::Text {
         return Err(AppError::BadRequest("text channels have no voice".into()));
     }
-    // Server voice: join the server first (same rule as posting).
-    if let Some(server) = ch.server_id
-        && !crate::servers::routes::is_server_member(&s.db, server, me).await?
-    {
+    if !may_join(&s.db, me, &ch).await? {
         return Err(AppError::Forbidden);
     }
     // A random grant id, mapped to this session server-side only: the join webhook checks it
@@ -62,6 +60,9 @@ async fn token(
             // Voice rooms carry the microphone only: screen share has its own room (`<id>~s`).
             can_publish_sources: vec!["microphone".into()],
             can_subscribe: Some(true),
+            // Nothing in a call uses data messages; refusing them keeps a client from sending
+            // arbitrary payloads to everyone in the room.
+            can_publish_data: Some(false),
             ..Default::default()
         })
         .to_jwt()
@@ -70,6 +71,22 @@ async fn token(
         url: s.cfg.livekit_url.clone(),
         token: jwt,
     }))
+}
+
+/// Who may be in a channel's call: members only for DMs and groups, and server members for a
+/// server's voice channels (same rule as posting). Checked when a token is issued and again on
+/// every LiveKit join (`revoke::admit`), so a token stops working once access is lost.
+pub async fn may_join(db: &SqlitePool, user: UserId, ch: &Channel) -> AppResult<bool> {
+    if ch.kind == ChannelKind::Text {
+        return Ok(false);
+    }
+    if ch.kind.is_private() && !is_channel_member(db, user, ch.id).await? {
+        return Ok(false);
+    }
+    match ch.server_id {
+        Some(server) => crate::servers::routes::is_server_member(db, server, user).await,
+        None => Ok(true),
+    }
 }
 
 async fn webhook(
@@ -183,6 +200,10 @@ async fn webhook(
                 for (streamer, viewers) in s.streams.remove_viewer_everywhere(channel_id, user_id) {
                     crate::streams::routes::publish_viewers(&s, channel_id, streamer, viewers)
                         .await;
+                }
+                // Stream rooms exist only for server voice channels; access to one ends here.
+                if record {
+                    crate::voice::revoke::end_stream_access(&s, channel_id, user_id);
                 }
             }
             if in_memory || closed {

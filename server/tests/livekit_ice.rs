@@ -2,7 +2,8 @@
 //! (Twilio, Google) in the join response unless the node offers its own TURN/STUN, so a client
 //! would contact them on every call. Only the node itself may appear.
 //!
-//! `prod_and_dev_configs_offer_only_our_own_turn` reads the config files and always runs;
+//! `prod_and_dev_configs_offer_only_our_own_turn` reads the config files (production, dev and the Windows test
+//! kit's) and always runs;
 //! `join_response_lists_only_our_own_ice_servers` needs the dev LiveKit (`just voice-it`). Pointed at another
 //! LiveKit with ICE_CHECK_URL / ICE_CHECK_KEY / ICE_CHECK_SECRET / ICE_CHECK_NODE_IP (e.g. the production
 //! livekit.yaml in a throwaway container) it checks that one instead.
@@ -73,11 +74,21 @@ fn assert_only_own_turn(path: &str, yaml: &str) {
     );
 }
 
+/// Every LiveKit config in the repository: production, dev (docker-compose.yml) and the Windows test kit.
+const CONFIGS: [&str; 3] = [
+    "../deploy/livekit.yaml",
+    "../docker/livekit.yaml",
+    "../kit/windows/livekit.yaml",
+];
+
 #[test]
 fn prod_and_dev_configs_offer_only_our_own_turn() {
-    for path in ["../deploy/livekit.yaml", "../docker/livekit.yaml"] {
+    for path in CONFIGS {
         let full = concat!(env!("CARGO_MANIFEST_DIR"), "/").to_string() + path;
-        assert_only_own_turn(path, &std::fs::read_to_string(&full).unwrap());
+        assert_only_own_turn(
+            path,
+            &std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{path}: {e}")),
+        );
     }
 }
 
@@ -102,9 +113,12 @@ fn assert_signalling_on_loopback(path: &str, yaml: &str) {
 
 #[test]
 fn prod_and_dev_signalling_binds_loopback_only() {
-    for path in ["../deploy/livekit.yaml", "../docker/livekit.yaml"] {
+    for path in CONFIGS {
         let full = concat!(env!("CARGO_MANIFEST_DIR"), "/").to_string() + path;
-        assert_signalling_on_loopback(path, &std::fs::read_to_string(&full).unwrap());
+        assert_signalling_on_loopback(
+            path,
+            &std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{path}: {e}")),
+        );
     }
 }
 
@@ -120,6 +134,74 @@ fn signalling_bind_check_catches_each_violation() {
     ] {
         let caught =
             std::panic::catch_unwind(|| assert_signalling_on_loopback("bad", bad)).is_err();
+        assert!(caught, "not caught:\n{bad}");
+    }
+}
+
+/// The Windows test kit runs everything on one PC: UDP media and TURN stay on loopback. Interface names differ on
+/// Windows ("Loopback Pseudo-Interface 1", not `lo`), so the kit filters candidates by address (`rtc.ips`).
+/// The ICE-TCP port (rtc.tcp_port) can't be restricted; LiveKit binds it on every interface.
+fn assert_media_on_loopback(path: &str, yaml: &str) {
+    let docs = YamlLoader::load_from_str(yaml).unwrap_or_else(|e| panic!("{path}: {e}"));
+    let (rtc, turn) = (&docs[0]["rtc"], &docs[0]["turn"]);
+    let strs = |v: &yaml_rust2::Yaml| -> Option<Vec<String>> {
+        v.as_vec()?
+            .iter()
+            .map(|s| s.as_str().map(str::to_string))
+            .collect()
+    };
+    assert_eq!(
+        rtc["node_ip"].as_str(),
+        Some("127.0.0.1"),
+        "{path}: rtc.node_ip"
+    );
+    assert_eq!(
+        rtc["enable_loopback_candidate"].as_bool(),
+        Some(true),
+        "{path}: rtc.enable_loopback_candidate"
+    );
+    assert_eq!(
+        strs(&rtc["ips"]["includes"]),
+        Some(vec!["127.0.0.1/32".to_string()]),
+        "{path}: rtc.ips.includes must be exactly [127.0.0.1/32]"
+    );
+    assert_eq!(
+        strs(&turn["bind_addresses"]),
+        Some(vec!["127.0.0.1".to_string()]),
+        "{path}: turn.bind_addresses must be exactly [127.0.0.1]"
+    );
+}
+
+#[test]
+fn kit_media_and_turn_on_loopback_only() {
+    let path = "../kit/windows/livekit.yaml";
+    let full = concat!(env!("CARGO_MANIFEST_DIR"), "/").to_string() + path;
+    assert_media_on_loopback(
+        path,
+        &std::fs::read_to_string(&full).unwrap_or_else(|e| panic!("{path}: {e}")),
+    );
+}
+
+#[test]
+fn kit_loopback_check_catches_each_violation() {
+    let good = "rtc:\n  node_ip: 127.0.0.1\n  enable_loopback_candidate: true\n  ips:\n    includes: [127.0.0.1/32]\n\
+                turn:\n  bind_addresses: [\"127.0.0.1\"]\n";
+    assert_media_on_loopback("good", good);
+    for bad in [
+        good.replace("  node_ip: 127.0.0.1\n", "  node_ip: 192.0.2.1\n"),
+        good.replace(
+            "enable_loopback_candidate: true",
+            "enable_loopback_candidate: false",
+        ),
+        good.replace("includes: [127.0.0.1/32]", "includes: [0.0.0.0/0]"),
+        good.replace("includes: [127.0.0.1/32]", "excludes: [192.0.2.0/24]"),
+        good.replace("[\"127.0.0.1\"]", "[\"0.0.0.0\"]"),
+        good.replace(
+            "turn:\n  bind_addresses: [\"127.0.0.1\"]\n",
+            "turn:\n  enabled: true\n",
+        ),
+    ] {
+        let caught = std::panic::catch_unwind(|| assert_media_on_loopback("bad", &bad)).is_err();
         assert!(caught, "not caught:\n{bad}");
     }
 }

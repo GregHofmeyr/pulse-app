@@ -10,6 +10,7 @@ use crate::AppState;
 use crate::auth::AuthUser;
 use crate::db::{begin_write, now};
 use crate::error::{AppError, AppResult};
+use crate::limits::caps;
 use crate::media::{MediaKind, valid_hash};
 use crate::servers::routes::is_server_member;
 
@@ -57,6 +58,10 @@ async fn create(
     Path(server): Path<ServerId>,
     Json(req): Json<CreateEmojiRequest>,
 ) -> AppResult<Json<CustomEmoji>> {
+    if !s.limits.emoji_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
+    crate::media::writes_ok(&s.cfg)?;
     if !is_server_member(&s.db, server, me).await? {
         return Err(AppError::Forbidden);
     }
@@ -85,6 +90,18 @@ async fn create(
     if live >= MAX_PER_SERVER {
         return Err(AppError::BadRequest(format!(
             "this server has {MAX_PER_SERVER} emoji, the most it can hold; delete one first"
+        )));
+    }
+    // Deleted emoji keep their row (old messages keep their `:name:`), so create-and-delete
+    // would otherwise grow the table without bound.
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM custom_emoji WHERE server_id = ?")
+        .bind(server.to_string())
+        .fetch_one(&mut *tx)
+        .await?;
+    if rows >= caps::EMOJI_ROWS_PER_SERVER {
+        return Err(AppError::BadRequest(format!(
+            "this server has had {} emoji, the most it can ever add",
+            caps::EMOJI_ROWS_PER_SERVER
         )));
     }
     sqlx::query(
@@ -120,6 +137,9 @@ async fn rename(
     Path(id): Path<String>,
     Json(req): Json<RenameEmojiRequest>,
 ) -> AppResult<Json<CustomEmoji>> {
+    if !s.limits.emoji_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     let name = clean_name(&req.name)?;
     editable(&s, me, &id).await?;
     let changed =
@@ -150,6 +170,9 @@ async fn delete(
     AuthUser(me): AuthUser,
     Path(id): Path<String>,
 ) -> AppResult<Json<CustomEmoji>> {
+    if !s.limits.emoji_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     editable(&s, me, &id).await?;
     // Dropping the media reference lets cleanup reclaim the file; the row keeps its name.
     let changed = sqlx::query(

@@ -5,7 +5,8 @@ use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::UserId;
 use pulse_protocol::rest::{
-    InviteResponse, LoginRequest, LogoutOthersResponse, RegisterRequest, SessionResponse, User,
+    ChangePasswordRequest, InviteResponse, LoginRequest, LogoutOthersResponse, RegisterRequest,
+    SessionResponse, User,
 };
 use sqlx::SqlitePool;
 
@@ -22,6 +23,7 @@ pub fn router() -> Router<AppState> {
         .route("/auth/login", post(login))
         .route("/auth/logout", post(logout))
         .route("/auth/logout-others", post(logout_others))
+        .route("/auth/password", post(change_password))
         .route("/me", get(me))
         .route("/invites", post(create_invite))
 }
@@ -35,6 +37,21 @@ fn valid_username(u: &str) -> bool {
     (2..=32).contains(&u.len())
         && u.bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'.')
+}
+
+/// The password rule for registering, changing and resetting: 8 to 256 bytes.
+fn check_password_rule(p: &str) -> AppResult<()> {
+    if p.len() < 8 {
+        return Err(AppError::BadRequest(
+            "password must be at least 8 characters".into(),
+        ));
+    }
+    if p.len() > 256 {
+        return Err(AppError::BadRequest(
+            "password must be at most 256 bytes".into(),
+        ));
+    }
+    Ok(())
 }
 
 pub async fn load_user(db: &SqlitePool, id: UserId) -> AppResult<User> {
@@ -58,7 +75,7 @@ async fn register(
 ) -> AppResult<Json<SessionResponse>> {
     // Spend up front so parallel guesses can't all slip past before any pays. Only a wrong,
     // used or expired invite code (guessing) keeps the spend; every other outcome is refunded.
-    let ip_key = ip.to_string();
+    let ip_key = crate::limits::rate_key(ip).to_string();
     if !s.limits.register_ip.hit(&ip_key) {
         return Err(AppError::TooManyRequests);
     }
@@ -76,11 +93,7 @@ async fn register_with(s: &AppState, mut req: RegisterRequest) -> AppResult<Json
             "username must be 2-32 letters, numbers, _ or .".into(),
         ));
     }
-    if !(8..=256).contains(&req.password.len()) {
-        return Err(AppError::BadRequest(
-            "password must be at least 8 characters".into(),
-        ));
-    }
+    check_password_rule(&req.password)?;
     // Check the invite before anything expensive (and before revealing whether a username exists).
     let cutoff = invites::cutoff(chrono::Utc::now());
     let found: Option<(Option<String>, String)> =
@@ -161,31 +174,40 @@ async fn login(
     ClientIp(ip): ClientIp,
     Json(mut req): Json<LoginRequest>,
 ) -> AppResult<Json<SessionResponse>> {
-    let ip_key = ip.to_string();
+    let ip_key = crate::limits::rate_key(ip).to_string();
     req.username = normalize_username(&req.username);
     // A name that can't exist gets no bucket of its own (keys stay small); the address still pays.
     let user_key = Some(req.username.clone()).filter(|u| valid_username(u));
+    let pair_key = user_key.as_deref().map(|u| format!("{u} {ip_key}"));
+    let l = &s.limits;
     // Spend up front so parallel guesses can't all slip past before any pays. Only a failed
     // login keeps the spend: friends logging in together from one network are fine.
-    let ip_ok = s.limits.login_ip.hit(&ip_key);
-    let user_ok = user_key
+    let ip_ok = l.login_ip.hit(&ip_key);
+    // Per (username, address), and per username across all addresses. When the username's
+    // bucket is empty, an address with no recent failures for it (its pair bucket is full)
+    // may still try, so guessing from elsewhere can't lock the owner out.
+    let (pair_ok, pair_fresh) = pair_key
         .as_deref()
-        .is_none_or(|u| s.limits.login_user.hit(u));
-    let refund = |ip: bool, user: bool| {
+        .map_or((true, true), |k| l.login_user_ip.hit_noting_full(k));
+    let user_ok = user_key.as_deref().is_none_or(|u| l.login_user.hit(u));
+    let refund = |ip: bool, pair: bool, user: bool| {
         if ip {
-            s.limits.login_ip.refund(&ip_key);
+            l.login_ip.refund(&ip_key);
+        }
+        if let Some(k) = pair_key.as_deref().filter(|_| pair) {
+            l.login_user_ip.refund(k);
         }
         if let Some(u) = user_key.as_deref().filter(|_| user) {
-            s.limits.login_user.refund(u);
+            l.login_user.refund(u);
         }
     };
-    if !ip_ok || !user_ok {
-        refund(ip_ok, user_ok); // a refused attempt costs nothing
+    if !ip_ok || !pair_ok || !(user_ok || pair_fresh) {
+        refund(ip_ok, pair_ok, user_ok); // a refused attempt costs nothing
         return Err(AppError::TooManyRequests);
     }
     let res = check_login(&s, req).await;
     if !matches!(res, Err(AppError::Unauthorized)) {
-        refund(true, true);
+        refund(true, true, user_ok);
     }
     res
 }
@@ -200,21 +222,16 @@ async fn check_login(s: &AppState, req: LoginRequest) -> AppResult<Json<SessionR
         let _ = password::verify_async(req.password, DUMMY_HASH.clone()).await;
         return Err(AppError::Unauthorized);
     };
-    if !password::verify_async(req.password.clone(), hash).await {
+    if !password::verify_async(req.password.clone(), hash.clone()).await {
         return Err(AppError::Unauthorized);
     }
     let id: UserId = id.parse().map_err(anyhow::Error::from)?;
-    let two_factor_on: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM user_totp WHERE user_id = ? AND enabled_at IS NOT NULL")
-            .bind(id.to_string())
-            .fetch_optional(&s.db)
-            .await?;
-    if two_factor_on.is_some() {
-        return Err(AppError::MfaRequired(Ticket(
-            super::two_factor::issue_ticket(&s.db, id).await?,
-        )));
-    }
-    let token = session::create(&s.db, id).await?;
+    let token = match session::create_unless_2fa(&s.db, id, &hash).await? {
+        session::PasswordLogin::Session(token) => token,
+        session::PasswordLogin::TwoFactor(ticket) => {
+            return Err(AppError::MfaRequired(Ticket(ticket)));
+        }
+    };
     Ok(Json(SessionResponse {
         token,
         user: User {
@@ -268,6 +285,153 @@ async fn logout_others(
     }))
 }
 
+/// `POST /auth/password`: change the caller's password. Checked under the two-factor limits
+/// like the 2FA routes (a wrong password or code keeps the spend). With 2FA on, a code is needed
+/// too. The new hash, signing out every other session and dropping pending login tickets are
+/// one transaction; then the other devices' sockets close (4001) and their calls end.
+async fn change_password(
+    State(s): State<AppState>,
+    ClientIp(ip): ClientIp,
+    AuthUser(u): AuthUser,
+    BearerToken(t): BearerToken,
+    Json(req): Json<ChangePasswordRequest>,
+) -> AppResult<StatusCode> {
+    let revoked = super::two_factor::limited(&s, ip, u, async {
+        let old: String = sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+            .bind(u.to_string())
+            .fetch_optional(&s.db)
+            .await?
+            .ok_or(AppError::NotFound)?;
+        if !password::verify_async(req.current_password.clone(), old.clone()).await {
+            return Err(AppError::ForbiddenMsg("wrong password".into()));
+        }
+        check_password_rule(&req.new_password)?;
+        let new = password::hash_async(req.new_password.clone()).await?;
+        replace_password_hash(&s, u, &t, &old, &new, req.code.as_deref()).await
+    })
+    .await?;
+    after_revoke_others(&s, u, &t, revoked).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The write half of a password change, once `old_hash` (the stored hash the current password
+/// was checked against) and `new_hash` are known: check the 2FA code if 2FA is on, swap the hash
+/// only if it is still `old_hash` (else 409), revoke the caller's other sessions and drop pending
+/// login tickets, in one transaction. Returns what was revoked; the caller closes the sockets.
+pub async fn replace_password_hash(
+    s: &AppState,
+    u: UserId,
+    token: &str,
+    old_hash: &str,
+    new_hash: &str,
+    code: Option<&str>,
+) -> AppResult<session::Revoked> {
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    super::two_factor::check_code_if_on(&mut tx, s, u, code).await?;
+    // Only over the hash that was checked: a change that committed meanwhile (say, the owner
+    // who just changed it, racing someone with the old password) is not overwritten.
+    let changed =
+        sqlx::query("UPDATE users SET password_hash = ? WHERE id = ? AND password_hash = ?")
+            .bind(new_hash)
+            .bind(u.to_string())
+            .bind(old_hash)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+    if changed != 1 {
+        return Err(AppError::Conflict(
+            "your password was just changed; try again".into(),
+        ));
+    }
+    let revoked = session::revoke_others_in(&mut tx, u, token).await?;
+    sqlx::query("DELETE FROM mfa_tickets WHERE user_id = ?")
+        .bind(u.to_string())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok(revoked)
+}
+
+/// The id of the user named `username` (normalised like login), for the owner's CLI tools.
+async fn user_named(
+    conn: &mut sqlx::SqliteConnection,
+    username: &str,
+) -> anyhow::Result<(String, String)> {
+    let name = normalize_username(username);
+    let id: Option<String> = sqlx::query_scalar("SELECT id FROM users WHERE username = ?")
+        .bind(&name)
+        .fetch_optional(&mut *conn)
+        .await?;
+    let id = id.ok_or_else(|| anyhow::anyhow!("no user named {name}"))?;
+    Ok((name, id))
+}
+
+/// Delete every session of user `id`; returns how many were still live.
+async fn revoke_all_in(conn: &mut sqlx::SqliteConnection, id: &str) -> anyhow::Result<u64> {
+    let live: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM sessions WHERE user_id = ? AND expires_at > ?")
+            .bind(id)
+            .bind(now())
+            .fetch_one(&mut *conn)
+            .await?;
+    sqlx::query("DELETE FROM sessions WHERE user_id = ?")
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(u64::try_from(live).unwrap_or(0))
+}
+
+/// Owner reset (`reset-password`): set a user's password (same rule as registering) and sign
+/// out all of their sessions and pending login tickets, in one transaction. Leaves 2FA alone.
+/// Returns the normalised username and how many live sessions went.
+pub async fn reset_password(
+    db: &SqlitePool,
+    username: &str,
+    new_password: &str,
+) -> anyhow::Result<(String, u64)> {
+    check_password_rule(new_password).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let hash = password::hash_async(new_password.to_string()).await?;
+    let mut tx = crate::db::begin_write(db).await?;
+    let (name, id) = user_named(&mut tx, username).await?;
+    sqlx::query("UPDATE users SET password_hash = ? WHERE id = ?")
+        .bind(&hash)
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    let revoked = revoke_all_in(&mut tx, &id).await?;
+    sqlx::query("DELETE FROM mfa_tickets WHERE user_id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok((name, revoked))
+}
+
+/// Owner tool (`revoke-sessions`): delete every session and pending login ticket of a user,
+/// in one transaction. Returns the normalised username and how many live sessions went.
+pub async fn revoke_sessions(db: &SqlitePool, username: &str) -> anyhow::Result<(String, u64)> {
+    let mut tx = crate::db::begin_write(db).await?;
+    let (name, id) = user_named(&mut tx, username).await?;
+    let revoked = revoke_all_in(&mut tx, &id).await?;
+    sqlx::query("DELETE FROM mfa_tickets WHERE user_id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    Ok((name, revoked))
+}
+
+/// The new password for `reset-password`: the first line of `input`, without its line ending
+/// (spaces are kept). Empty input is an error.
+pub fn read_password_line(mut input: impl std::io::BufRead) -> anyhow::Result<String> {
+    let mut line = String::new();
+    if input.read_line(&mut line)? == 0 {
+        anyhow::bail!("no password on stdin");
+    }
+    let line = line.strip_suffix('\n').unwrap_or(&line);
+    Ok(line.strip_suffix('\r').unwrap_or(line).to_string())
+}
+
 async fn me(State(s): State<AppState>, AuthUser(u): AuthUser) -> AppResult<Json<User>> {
     Ok(Json(load_user(&s.db, u).await?))
 }
@@ -276,7 +440,18 @@ async fn create_invite(
     State(s): State<AppState>,
     AuthUser(u): AuthUser,
 ) -> AppResult<Json<InviteResponse>> {
-    Ok(Json(InviteResponse {
-        code: invites::create(&s.db, Some(u)).await?,
-    }))
+    if !s.limits.invite_user.hit(&u.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
+    // Counted and inserted under the write lock, so concurrent requests can't pass the cap.
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    if invites::outstanding(&mut tx, u).await? >= crate::limits::caps::INVITES_PER_USER {
+        return Err(AppError::BadRequest(format!(
+            "you have {} unused invite codes; use one or wait for it to expire",
+            crate::limits::caps::INVITES_PER_USER
+        )));
+    }
+    let code = invites::insert(&mut tx, Some(u)).await?;
+    tx.commit().await?;
+    Ok(Json(InviteResponse { code }))
 }

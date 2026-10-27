@@ -1,5 +1,9 @@
 {
 	email {$ACME_EMAIL}
+	# The admin API on a unix socket in Caddy's own /config volume (compose.yml), not the default TCP
+	# localhost:2019: every container here shares the host's network, so any of them could reconfigure Caddy
+	# through that. deploy.sh's `caddy reload --config` reads this address from the same file.
+	admin unix//config/caddy-admin.sock
 	# Clients keep their HTTPS connection for 55 min between requests (client api.rs POOL_IDLE):
 	# a new one costs two round trips. Caddy's default would close it after 5 min.
 	servers {
@@ -16,5 +20,7 @@
 }
 
 voice.{$PULSE_DOMAIN} {
+	# LiveKit's server API (room and participant admin); the Pulse server calls it over loopback, clients never do.
+	respond /twirp/* 404
 	reverse_proxy 127.0.0.1:7880
 }

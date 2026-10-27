@@ -1,7 +1,9 @@
 Pulse - Windows test kit
 ========================
 
-Runs everything on this PC, reachable only from this PC (127.0.0.1).
+Runs everything on this PC, reachable only from this PC (127.0.0.1), except LiveKit's
+ICE-TCP port 7881: LiveKit always listens on it on every interface (Windows Firewall may ask
+about it; "Cancel" is fine, everything here works over loopback).
 
 1. Unzip this folder somewhere (e.g. Documents\pulse-kit).
 2. Double-click start.cmd.

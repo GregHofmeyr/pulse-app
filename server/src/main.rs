@@ -18,6 +18,11 @@ enum Cmd {
     /// Turn off two-factor authentication for a user who is locked out (needs no key)
     #[command(name = "reset-2fa")]
     Reset2fa { username: String },
+    /// Set a user's password, read as one line from stdin (never an argument), and sign out all
+    /// of their sessions
+    ResetPassword { username: String },
+    /// Sign a user out everywhere: delete all of their sessions
+    RevokeSessions { username: String },
     /// List the newest bug/crash reports
     Reports {
         #[arg(long, default_value_t = 20)]
@@ -58,6 +63,22 @@ async fn main() -> anyhow::Result<()> {
             println!(
                 "two-factor turned off for {name}: they can sign in with their password and set it up again"
             );
+            Ok(())
+        }
+        // The running server isn't told: REST calls with a deleted session fail at once, but its
+        // open real-time connections and calls stay until they drop (restarting it ends them).
+        Cmd::ResetPassword { username } => {
+            let password = pulse_server::auth::routes::read_password_line(std::io::stdin().lock())?;
+            let db = pulse_server::db::connect(&cfg.db_url).await?;
+            let (name, n) =
+                pulse_server::auth::routes::reset_password(&db, &username, &password).await?;
+            println!("password reset for {name}; signed out {n} {}", sessions(n));
+            Ok(())
+        }
+        Cmd::RevokeSessions { username } => {
+            let db = pulse_server::db::connect(&cfg.db_url).await?;
+            let (name, n) = pulse_server::auth::routes::revoke_sessions(&db, &username).await?;
+            println!("signed out {n} {} of {name}", sessions(n));
             Ok(())
         }
         Cmd::Reports { limit } => {
@@ -105,4 +126,8 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
     }
+}
+
+fn sessions(n: u64) -> &'static str {
+    if n == 1 { "session" } else { "sessions" }
 }

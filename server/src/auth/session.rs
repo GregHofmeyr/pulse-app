@@ -20,6 +20,12 @@ pub fn hash_token(token: &str) -> String {
 }
 
 pub async fn create(db: &SqlitePool, user: UserId) -> anyhow::Result<String> {
+    let mut conn = db.acquire().await?;
+    create_in(&mut conn, user).await
+}
+
+/// [`create`] on the caller's connection (or inside its transaction).
+pub async fn create_in(conn: &mut SqliteConnection, user: UserId) -> anyhow::Result<String> {
     let mut bytes = [0u8; 32];
     rand::rng().fill_bytes(&mut bytes);
     let token = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes);
@@ -32,9 +38,50 @@ pub async fn create(db: &SqlitePool, user: UserId) -> anyhow::Result<String> {
     .bind(ts(now))
     .bind(ts(now))
     .bind(ts(now + Duration::days(LIFETIME_DAYS)))
-    .execute(db)
+    .execute(conn)
     .await?;
     Ok(token)
+}
+
+/// What the password step of a login hands back.
+#[derive(Debug)]
+pub enum PasswordLogin {
+    /// No two-factor: a new session token.
+    Session(String),
+    /// Two-factor is on: a login ticket for the code step, and no session.
+    TwoFactor(String),
+}
+
+/// After the password verified against `verified_hash`: issue a session, or a login ticket if
+/// 2FA is on. The checks and the insert share one write transaction, so neither turning 2FA on
+/// nor a password change (or owner reset) can commit between them: if the stored hash is no
+/// longer the one that was verified, the login is refused (`Unauthorized`) and nothing is added.
+pub async fn create_unless_2fa(
+    db: &SqlitePool,
+    user: UserId,
+    verified_hash: &str,
+) -> crate::error::AppResult<PasswordLogin> {
+    let mut tx = crate::db::begin_write(db).await?;
+    let current: Option<String> =
+        sqlx::query_scalar("SELECT password_hash FROM users WHERE id = ?")
+            .bind(user.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+    if current.as_deref() != Some(verified_hash) {
+        return Err(crate::error::AppError::Unauthorized);
+    }
+    let two_factor_on: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM user_totp WHERE user_id = ? AND enabled_at IS NOT NULL")
+            .bind(user.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+    let out = if two_factor_on.is_some() {
+        PasswordLogin::TwoFactor(super::two_factor::issue_ticket_in(&mut tx, user).await?)
+    } else {
+        PasswordLogin::Session(create_in(&mut tx, user).await?)
+    };
+    tx.commit().await?;
+    Ok(out)
 }
 
 /// Returns the user for a valid, unexpired token and slides its expiry forward.
@@ -183,6 +230,39 @@ pub async fn admit_join(
     .execute(db)
     .await?;
     Ok(done.rows_affected() > 0)
+}
+
+/// Whether `identity` is connected to `room` with a live session's grant: a join on record that
+/// hasn't left. Stands in for the voice state when that lags behind LiveKit (`revoke::admit`).
+pub async fn connected_grant(db: &SqlitePool, room: &str, identity: &str) -> anyhow::Result<bool> {
+    let hit: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM livekit_grants WHERE room = ? AND identity = ?
+         AND joined_sid IS NOT NULL AND left_at IS NULL
+         AND token_hash IN (SELECT token_hash FROM sessions WHERE expires_at > ?)",
+    )
+    .bind(room)
+    .bind(identity)
+    .bind(ts(Utc::now()))
+    .fetch_optional(db)
+    .await?;
+    Ok(hit.is_some())
+}
+
+/// Delete every grant `identity` holds for `room` (whichever session it was issued to), when
+/// they lose access to it; returns how many there were.
+pub async fn drop_grants(
+    conn: &mut SqliteConnection,
+    room: &str,
+    identity: &str,
+) -> anyhow::Result<u64> {
+    Ok(
+        sqlx::query("DELETE FROM livekit_grants WHERE room = ? AND identity = ?")
+            .bind(room)
+            .bind(identity)
+            .execute(conn)
+            .await?
+            .rows_affected(),
+    )
 }
 
 /// A LiveKit leave webhook: the grant is finished if `sid` is still the participant connected

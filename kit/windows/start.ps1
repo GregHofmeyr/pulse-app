@@ -1,4 +1,5 @@
-# Pulse local test kit: LiveKit + pulse-app-server + the app, all on this machine (loopback only).
+# Pulse local test kit: LiveKit + pulse-app-server + the app, all on this machine. Everything listens on loopback
+# except LiveKit's ICE-TCP port (7881), which LiveKit always binds on every interface (see livekit.yaml).
 #   .\start.ps1           start everything, open the app
 #   .\start.ps1 -Second   also open a second app on its own profile (log in as a second user)
 param([switch]$Second)
@@ -20,23 +21,6 @@ if (-not (Test-Path $secretFile)) {
 }
 $secret = (Get-Content $secretFile -Raw).Trim()
 
-@"
-port: 7880
-bind_addresses: ["127.0.0.1"]
-rtc:
-  tcp_port: 7881
-  udp_port: 7882
-  use_external_ip: false
-  node_ip: 127.0.0.1
-keys:
-  pulse: $secret
-webhook:
-  api_key: pulse
-  urls: ["http://127.0.0.1:7890/livekit/webhook"]
-logging:
-  level: info
-"@ | Set-Content (Join-Path $data 'livekit.yaml')
-
 $env:PULSE_DB_URL = 'sqlite://data/pulse.db'
 $env:PULSE_BIND = '127.0.0.1:7890'
 $env:PULSE_LIVEKIT_URL = 'ws://127.0.0.1:7880'
@@ -46,9 +30,12 @@ $env:PULSE_LIVEKIT_SECRET = $secret
 $firstRun = -not (Test-Path (Join-Path $data 'pulse.db'))
 
 Write-Host 'Starting LiveKit...'
+# livekit.yaml (next to this script) is fixed; the key pair comes from the environment, only for LiveKit.
+$env:LIVEKIT_KEYS = "pulse: $secret"
 $lk = Start-Process -PassThru -WindowStyle Hidden '.\livekit-server.exe' `
-    -ArgumentList '--config', 'data\livekit.yaml' `
+    -ArgumentList '--config', 'livekit.yaml' `
     -RedirectStandardOutput 'data\livekit.log' -RedirectStandardError 'data\livekit.err.log'
+Remove-Item Env:LIVEKIT_KEYS
 Write-Host 'Starting server...'
 $srv = Start-Process -PassThru -WindowStyle Hidden '.\pulse-app-server.exe' -ArgumentList 'serve' `
     -RedirectStandardOutput 'data\server.log' -RedirectStandardError 'data\server.err.log'

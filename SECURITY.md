@@ -50,12 +50,13 @@ repository.
 
 **Process audio and process listing: Windows, only during Go Live with audio turned on.**
 - **Window share.** The client captures only the audio of the process that owns the shared window, using WASAPI process
-  loopback.
+  loopback. If no single process can be identified, it captures no audio and publishes no audio track.
 - **Screen share.** The client captures the machine's audio output except Pulse's own.
 - **Process list.** To choose these processes, the client lists the running processes and the processes with an active
   audio session. It reads process IDs and executable names.
-  - For a window share, it finds the window's process by going through the top-level windows and comparing their
-    titles with the shared window's title.
+  - For a window share, it finds the window's process by going through the visible top-level windows and comparing
+    their titles with the shared window's title. Pulse's own windows are skipped. If windows of two or more processes
+    have that title, it doesn't guess.
   - For a screen share, it repeats the process and audio-session scan every 2 seconds while the share lasts, to follow
     apps that start or stop playing audio.
   - All of this is used only on the machine.
@@ -71,7 +72,7 @@ The client makes outbound connections only, all to the Pulse server and its Live
 
 | Purpose | Protocol / port | Notes |
 |---|---|---|
-| API and real-time events | HTTPS and WSS, TCP 443 | TLS. The client refuses plain `http://` for any server other than this machine (`localhost`). |
+| API and real-time events | HTTPS and WSS, TCP 443 | TLS. The client refuses plain `http://` for any server other than this machine (`localhost`). A stored session's server address is checked the same way at startup; one that fails is cleared and the login screen shown. |
 | Voice / screen-share signalling | WSS, TCP 443 (`voice.` subdomain) | Through the same TLS reverse proxy. |
 | Voice / screen-share media | UDP 7882, or TCP 7881 as a fallback | WebRTC (DTLS-SRTP) to the SFU. |
 | TURN relay | UDP 3478 | LiveKit's built-in TURN, for clients on restrictive networks. It also serves as the clients' STUN server. |
@@ -93,8 +94,11 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
 
 **Local IPC.** Two local mechanisms exist. Neither is reachable over the network.
 - **Linux command line.** The client listens on a Unix domain socket with mode `0600`. The socket is in the user's
-  runtime directory (`$XDG_RUNTIME_DIR`), or, if that isn't set, at a per-user path in the system temp directory.
-  The `pulse-app --toggle-mute` / `--toggle-deafen` command uses it, and it accepts only those two commands.
+  runtime directory (`$XDG_RUNTIME_DIR`). If that isn't set, it is in `pulse-app-<uid>` in the system temp directory,
+  a directory with mode `0700`. If that directory already exists and isn't a real directory owned by the user with no
+  group or other access (for example, a symlink), the client doesn't open the socket and logs a warning.
+  The `pulse-app --toggle-mute` / `--toggle-deafen` command uses it, and it accepts only those two commands. The
+  command follows the same rules and refuses a socket that isn't owned by the user.
 - **Second launch.** When the app is started a second time, the single-instance plugin tells the copy already running
   to show its window.
 
@@ -108,6 +112,10 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     it is never readable through the folder's permissions. A `session.json` left on disk is deleted the next time Pulse
     starts and finds its session in the credential store. Otherwise Pulse reads the file at startup, and on Windows
     tightens it to the same owner-only access list when it reads it (also when the file turns out to be unusable).
+  - **Windows roaming.** On Windows the credential is stored with Windows' enterprise persistence. Where roaming
+    profiles or credential roaming are enabled, it roams to the user's other machines. The `session.json` fallback is
+    in roaming AppData (`%APPDATA%\app.pulse.client`), but it is almost never used on Windows, because Credential
+    Manager is always present.
   - **Who can use it.** The token is held by the Rust core and never passed to the web UI.
   - **What it does not hold.** Passwords are never stored on the machine.
 - **Two-factor material.**
@@ -128,12 +136,21 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   - **No tokens or passwords.** Pulse never writes session tokens or passwords to the log. They are never given to the
     logger, and a failed request is logged with its URL path only (no host, no query string). There is no separate
     redaction filter. By default the LiveKit and WebRTC libraries log at warning level and above; everything else logs
-    at info level and above. A local `PULSE_LOG` environment variable can change these levels.
+    at info level and above. A local `PULSE_LOG` environment variable can change these levels, but it can't raise
+    the HTTP, WebSocket and TLS libraries (`tungstenite`, `tokio_tungstenite`, `hyper`, `hyper_util`, `h2`, `reqwest`,
+    `rustls`, `tower_http`) above info. Their debug and trace output can include request and frame contents. A span
+    filter in `PULSE_LOG` (such as `[gateway]=trace`) applies to every library inside that span, so it is lowered to
+    info too.
+  - **No home paths.** Paths under the user's home folder are logged with the home part replaced by `~`.
   - **Crash files.** The log folder also holds:
     - a `running` marker, naming the server the current session belongs to;
     - `last-server`, the server address this profile last signed in to;
     - `crash.json`, written on a crash;
     - `pending-report.json`, a crash report not yet sent, including its log tail.
+  - **Report log tails.** A report's log tail is at most the last 256 KB of the newest log file, and it starts at the
+    current session (the last app start, sign-in or restore, marked by a line that `PULSE_LOG` and the daily size cap
+    never drop). Only that exact marker line counts: another line that merely contains the marker text neither starts
+    a session nor gets past the size cap. Older sessions in the same file are left out.
 - **Image cache.** Custom emoji images are fetched from the server once and cached as WebP files, keyed by their
   SHA-256 hash.
   - **Where.** `%LOCALAPPDATA%\app.pulse.client\media\` on Windows.
@@ -143,10 +160,16 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
 - **Other local files.** The client also stores:
   - keybinds and the global-keybinds switch (`keybinds.json`);
   - the crash-report setting (`reports.json`);
+  - unsent messages, in the webview's local storage (see below);
   - a few UI preferences in the webview's local storage;
-  - the webview's own profile data.
+  - the webview's own profile data (under `%LOCALAPPDATA%` on Windows).
 
-  The client does not write message history to disk.
+  `keybinds.json`, `reports.json` and the `session.json` fallback are in the app's data folder, which on Windows is
+  roaming AppData (`%APPDATA%\app.pulse.client`).
+- **Unsent messages.** A message that failed to send, or is still queued, is kept in the webview's local storage for
+  that account: its text, and the id of the message it replies to (not that message's text). That lets the user retry
+  it after signing back in, so it is kept across sign-out. It stays until that account signs in and sends or discards
+  it. Other than these, the client does not write message history to disk.
 - **Bug and crash reports.** Reports go only to the Pulse server. They are stored in its database for the operator to
   read. No third-party crash or analytics service is used.
   - **Bug reports.** The user writes a bug report and sends it, or saves it to a file instead. It is sent only when
@@ -173,7 +196,7 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
     - the connection state;
     - the voice channel, the mute and deafen state, and the names of the audio devices chosen, if set;
     - the panic message and its location, for crashes (the message capped at 2 KB);
-    - the last 256 KB of the local log.
+    - the last 256 KB of the local log, from the current session.
 
 ## 4. Server-side protections
 
@@ -184,6 +207,24 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   limits the CPU and memory an attacker can make the server use.
 - **Unknown usernames.** A login for a username that doesn't exist still runs a hash, so response timing doesn't reveal
   whether the account exists.
+- **Changing the password.** Settings → Advanced → **Change password** asks for the current password, the new one twice,
+  and a code (TOTP or recovery code) if the account has 2FA on. The new password follows the same 8 to 256 byte rule. It
+  is checked under the two-factor limits (a wrong current password or code keeps its count). Setting the new hash,
+  **signing out every other device** and deleting pending sign-in tickets are one database transaction. The other
+  devices' real-time connections are then closed and their calls ended, as with **Sign out all other devices**. The
+  device doing it stays signed in. A sign-in that checked the old password but had not finished when the change
+  committed gets no session or sign-in ticket: issuing one re-checks, in the same transaction, that the stored hash is
+  still the one the password was checked against. The same holds after the owner's `reset-password`. The client passes
+  the passwords straight to the server and never stores or logs them.
+- **Owner tools.** The server's owner can run these on the host, against the database:
+  - `reset-password <username>` sets a new password, read as one line from standard input (never a command-line
+    argument, so it doesn't show up in the process list or shell history). It signs out all of the account's sessions
+    and deletes its pending sign-in tickets. It leaves 2FA alone.
+  - `revoke-sessions <username>` deletes all of the account's sessions and pending sign-in tickets. The password is
+    not changed.
+  - Both work with the server stopped or running. A running server is not told: its next request with a deleted
+    session fails, and a new real-time connection is refused, but real-time connections and calls already open stay
+    up until they drop. Restarting the server closes them.
 
 **Two-factor authentication.** Optional, per account, and off until the member turns it on in Settings → Advanced.
 - **Codes.** Time-based one-time passwords (TOTP): SHA-1, 6 digits, 30-second steps, with the previous and next step
@@ -213,26 +254,27 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
   devices** does (their real-time connections are closed and their calls ended, with the limits described under *Signing
   out ends calls too*); turning 2FA on and ending those sessions are one database transaction, so neither happens
   without the other. The device doing it stays signed in, so anyone who had only the password is out. Sessions are not
-  touched otherwise: signing in with a code, turning 2FA off, regenerating recovery codes and the owner reset leave
-  existing sessions alone.
+  touched otherwise: signing in with a code, turning 2FA off, regenerating recovery codes and the owner's `reset-2fa`
+  leave existing sessions alone.
 - **Recovery codes.** Turning 2FA on gives 10 recovery codes, shown once. Each is 16 characters from a 31-character
   alphabet (about 79 bits), written `xxxx-xxxx-xxxx-xxxx`; spaces, dashes and case are ignored when one is entered.
   Only their SHA-256 hashes are stored. A code works once and is then deleted. Making new codes needs a current TOTP
-  code and replaces all the old ones. Signing in and turning 2FA off accept either a TOTP code or a recovery code.
-  In those two, anything that is not 6 digits is tried as a recovery code.
+  code and replaces all the old ones. Signing in, turning 2FA off and changing the password accept either a TOTP code
+  or a recovery code. In those three, anything that is not 6 digits is tried as a recovery code.
 - **Signing in.** A wrong password gets the same answer whether or not the account has 2FA. With the right password
   and 2FA on, the server returns no session, only a login ticket:
   - 256 random bits, valid for 5 minutes. Only its SHA-256 hash is stored; expired tickets are pruned whenever a
     new one is issued.
   - Spent by one successful code. The ticket is deleted when it succeeds, and also when the 5th wrong code is entered
     on it. Unknown, expired and used-up tickets all get the same "gone" answer.
-  - Turning 2FA off, or the owner reset, deletes the account's tickets.
-- **Limits on guessing.** Every 2FA check (the sign-in code, and the password or code asked for when turning it on or
-  off or making new recovery codes) is counted against two limits at once: 5 per minute per IP address and 10 per
-  hour per account. The count is taken before the check, so parallel guesses cannot all slip past. A wrong password
-  or code keeps its count, as does a guess at an unknown or dead ticket (that one counts against the address only);
-  every other outcome is refunded, and a refused attempt costs nothing. A refused attempt gets 429. Like the other
-  limits, these are in memory.
+  - Turning 2FA off, changing the password and the owner's `reset-2fa`, `reset-password` and `revoke-sessions` delete
+    the account's tickets.
+- **Limits on guessing.** Every 2FA check (the sign-in code, the password or code asked for when turning it on or
+  off or making new recovery codes, and the current password and code asked for when changing the password) is
+  counted against two limits at once: 5 per minute per IP address and 10 per hour per account. The count is taken
+  before the check, so parallel guesses cannot all slip past. A wrong password or code keeps its count, as does a guess
+  at an unknown or dead ticket (that one counts against the address only); every other outcome is refunded, and a
+  refused attempt costs nothing. A refused attempt gets 429. Like the other limits, these are in memory.
 - **Lost app and recovery codes.** There is no self-service way back in. The server's owner turns 2FA off for the
   account from the host (`reset-2fa`, run in a one-off server container). It deletes the account's secret, recovery
   codes and tickets, never uses the key, so any well-formed `PULSE_TOTP_KEY` in `.env` will do (it still works after
@@ -248,7 +290,9 @@ WebRTC uses ephemeral UDP sockets for its own connection to the SFU.
 - **Expiry.** A session expires after 90 days without use. Each use pushes the expiry back; the stored expiry is updated
   at most once an hour. There is no absolute maximum lifetime, so a session used regularly never expires.
 - **Sign-out.** Signing out deletes the session. Settings → Advanced → **Sign out all other devices** deletes every
-  other session of the account and closes those devices' real-time connections at once.
+  other session of the account and closes those devices' real-time connections at once. Changing the password does
+  the same. The owner's `revoke-sessions` and `reset-password` delete all of an account's sessions (see *Owner tools*
+  above for what that leaves open on a running server).
 - **Sending the token.** REST calls send the token in the `Authorization` header. The real-time connection sends it in
   its first message. It never appears in a URL.
 
@@ -257,9 +301,9 @@ ties each of those tokens to the session that asked for it:
 - **Grant IDs.** Every voice or stream token carries a random grant ID (a participant attribute participants can't
   change). The server records which session each grant ID belongs to. The token never contains the session token or
   its hash.
-- **On sign-out.** When a session is signed out, either directly or by **Sign out all other devices**, the server asks
-  LiveKit for the participants in the rooms that session holds grants for. It then removes every participant carrying
-  one of that session's grant IDs, from voice and screen share alike.
+- **On sign-out.** When a session is signed out, directly, by **Sign out all other devices** or by changing the
+  password, the server asks LiveKit for the participants in the rooms that session holds grants for. It then removes
+  every participant carrying one of that session's grant IDs, from voice and screen share alike.
   - This is best-effort and takes at most 2 seconds. If LiveKit can't be reached in that time, the sign-out still
     succeeds and the miss is logged. That device then stays in its call until it leaves.
 - **Rejoining.** Removing a participant does not invalidate the LiveKit token it holds (LiveKit v1.13.10 has no
@@ -282,23 +326,73 @@ ties each of those tokens to the session that asked for it:
   that stays connected, so token expiry alone does not end a call. The join check above, not expiry, is what keeps a
   signed-out device out.
 
-**Rate limits.** These are in-memory token buckets:
+**Calls follow access.** A LiveKit token is only as good as the access behind it, checked again at every join:
+- **Joins.** The join check above also needs current access. A voice join needs the user to still be allowed in that
+  call: a member of the DM or group, or of the server for a server voice channel (the same rule as getting a token). A
+  screen-share join needs that, and the user in that channel's voice call. A join that fails is removed like any other
+  refused join, with the same limits.
+  - **In the call** means the server's list of who is in voice, or else a voice connection the server admitted whose
+    leave hasn't been reported. That covers the list lagging behind LiveKit (just after a restart, or a screen-share
+    join reported before its voice join). A voice token that was fetched but never used doesn't count.
+- **Removed from a group.** Removing someone from a group (or leaving it) ends their part in its call. Their LiveKit
+  tokens for it are forgotten, LiveKit is asked to remove them (best-effort, at most 2 seconds, as on sign-out) and
+  they are taken off the call's member list. A rejoin with a token they kept fails the join check. Their client also
+  leaves the call when it is told the group is gone.
+- **Leaving voice.** When someone leaves a server voice channel's call (not a reconnect), LiveKit is asked to remove
+  their screen-share connections there too, in the background. This is skipped if they are back in the call by then.
+  Removal is by identity, so a new screen-share connection made in the same instant could be removed.
+- **Lost leave reports.** If LiveKit's report of a voice leave is lost, or a leave arrives before the server has rebuilt
+  its voice state after a restart, an existing screen-share connection can stay until its session ends. New
+  screen-share joins are still refused.
+- **No data messages.** Voice tokens can't send LiveKit data messages, like stream tokens. Calls carry the microphone
+  only.
+
+**Rate limits.** These are in-memory token buckets. Per-IP limits count an IPv6 client by its /64 prefix (one client
+can hold a whole /64), and an IPv4-mapped IPv6 address as its IPv4 address. Each limiter tracks at most 10,000 keys;
+past that, the least recently used bucket is dropped.
 
 | What | Limit |
 |---|---|
-| Failed logins | 5/minute per IP, and 10/hour per username |
+| Failed logins | 5/minute per IP, 10/hour per username from one IP, and 100/hour per username from all IPs together. Once a username's 100/hour is used up, an IP that has failed for it recently is refused, but an IP with no recent failures for it can still try (see section 7) |
 | Failed registrations (wrong, used or expired invite) | 5/hour per IP |
-| Two-factor checks (sign-in code, and the password or code for turning it on or off or making new recovery codes) | 5/minute per IP, and 10/hour per account; spent up front, kept only for a wrong password or code or a bad ticket |
+| Two-factor checks (sign-in code, the password or code for turning it on or off or making new recovery codes, and the current password and code for changing the password) | 5/minute per IP, and 10/hour per account; spent up front, kept only for a wrong password or code or a bad ticket |
 | Real-time connection attempts | 20/minute per IP (refunded once the connection authenticates) |
 | Concurrent real-time connections | 8 per user; further connections are refused, and the client tells the user why |
-| New messages | burst of 20, then 5/second per user (edits, deletes and reactions are not rate-limited) |
+| New messages | burst of 20, then 5/second per user |
+| Message edits and deletes, reaction adds and removes, renaming a group, Go Live and watching a stream (together) | burst of 30, then 2/second per user (stopping a stream and unwatching are never limited) |
 | Typing notifications | 1/second per user (extras dropped) |
+| Mute and deafen updates sent to others | burst of 10, then 2/second per user. Every update is still stored; past the limit, others get one update with the latest state once the limit allows. An update that changes nothing is not sent on. |
+| New servers, server channels, DMs and groups, and members added to a group (together) | 20/hour per user (opening a DM that already exists is free) |
+| Invite codes | 10/hour per user |
 | Bug / crash reports | 5/hour per user |
 | Custom emoji uploads | 30/hour per user |
+| Custom emoji creates, renames and deletes (together) | 30/hour per user |
 | Go Live preview uploads | burst of 6, then one every 5 seconds per user |
 | Voice and stream tokens (together) | burst of 60, then 1/second per user |
 
 Real-time frames from the client are capped at 64 KB, and messages at 4,000 characters.
+
+**Caps.** These hard limits on stored rows don't reset. Going over one is refused with an error.
+- Servers: 10 created per user.
+- Channels: 100 per server, text and voice together.
+- Groups: a user can be in 200 groups (1:1 DMs don't count). Creating a group or adding people fails if it would put
+  anyone over.
+- Invite codes: 20 unused, unexpired codes per user.
+- Custom emoji: 100 per server at a time, and 500 ever added per server (deleted emoji still count, because their
+  names are kept for old messages).
+
+**Database cleanup.** Once an hour the server deletes, one statement per table and logging the counts:
+- sessions past their expiry (their LiveKit grants go with them);
+- invite codes older than their 24 hours, used or not (nothing refers to an invite row, and an expired code is already
+  refused as unknown);
+- expired two-factor login tickets;
+- bug and crash reports older than 90 days (the report retention).
+
+Unused media is cleaned up in the same hourly pass (see "Uploaded images").
+
+**Low disk.** Sending a message, renaming a group, submitting a report, adding a custom emoji and uploading an image
+are refused with a 507 "server storage is full" when the free space on the database's volume or the media volume is
+below the configured minimum (2 GB by default). The check comes after sign-in and the rate limit, before any work.
 
 **Uploaded images.**
 - **Who can upload and read them.** Upload and download both need a signed-in session.
@@ -338,8 +432,19 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   - no `unsafe-eval` and no inline scripts (inline styles are allowed: `style-src 'self' 'unsafe-inline'`);
   - images only from the app itself, `data:` and the app's emoji cache;
   - `connect-src` limited to the app's own IPC and the voice server.
-- **Tauri capabilities.** The capability set is the Tauri core defaults plus four window controls (minimize, maximize,
-  close, drag). No file-system, shell, HTTP or opener plugins are included.
+- **Tauri capabilities.** The main window gets an explicit list, not `core:default`. It is exactly:
+  - `core:event:allow-listen` and `core:event:allow-unlisten` (the UI listens to events from the Rust core);
+  - `core:window:allow-is-focused` (focus state);
+  - `core:window:allow-minimize`, `core:window:allow-toggle-maximize` and `core:window:allow-close` (the title-bar
+    buttons);
+  - `core:window:allow-start-dragging` and `core:window:allow-internal-toggle-maximize` (dragging the title bar, and
+    double-clicking it to maximise).
+  - The page cannot emit events, use the app, path, image, menu or tray APIs, or open devtools. It reaches the Rust core
+    only through the app's own commands.
+  - No file-system, shell, HTTP or opener plugins are included. There is one capability file and one window (`main`).
+  - A test (`client/src-tauri/tests/capabilities.rs`) fails if the list changes.
+- **DNS prefetch.** `index.html` sets `x-dns-prefetch-control: off`, so the webview does not resolve hostnames it has
+  not been told to connect to.
 - **Where network access happens.**
   - Most network and file access goes through the Rust core's own commands.
   - The exception is screen-share video. The webview publishes and watches it directly with the LiveKit JavaScript SDK
@@ -350,7 +455,10 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
 - **TLS.** Caddy terminates TLS with automatically renewed certificates.
 - **Internal services.** The Pulse server listens on loopback only. LiveKit's signalling port (7880) also listens on
   loopback only, so it is reachable only through Caddy; the firewall keeps 7880 closed as well. LiveKit's media and
-  TURN ports are public (see *Firewall*). The LiveKit webhook path is refused at the proxy.
+  TURN ports are public (see *Firewall*). The LiveKit webhook path is refused at the proxy. So is LiveKit's server API
+  (`/twirp/*`, room and participant admin); the Pulse server calls it over loopback.
+- **Caddy admin API.** Caddy's admin API listens on a unix socket in Caddy's own config volume, not on TCP. The
+  containers share the host's network, so a TCP admin port on loopback would be open to all of them.
 - **Provisioning.** The setup script installs Docker and Tailscale from their vendors' signed apt repositories. It
   checks each repository's signing key against a full fingerprint pinned in the script and stops if it differs. No
   vendor install script is piped into a shell.
@@ -361,10 +469,19 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   - The provisioning procedure closes public SSH. After that, SSH is reachable only over the owner's private VPN
     (Tailscale, using Tailscale's own SSH), so who may log in is decided by that VPN's access policy. That policy is
     managed in the VPN, not in this repository.
-- **Updates.** Unattended security updates are enabled on the host.
+- **Updates.** Unattended security updates are enabled on the host, but it does not reboot by itself, so kernel and
+  libc fixes only apply after the operator reboots it. Docker and Tailscale come from their vendors' apt
+  repositories, which are not in the automatic update origins: the operator updates them by hand. Container images
+  are not covered by host updates (they are pinned and change only on a deploy).
+- **Client address.** The server takes the client's IP from the right-most `X-Forwarded-For` entry, the one Caddy
+  writes. It must therefore be reachable only through Caddy. It binds `127.0.0.1` for that reason.
 - **Containers.**
   - All three containers (Pulse server, LiveKit, Caddy) run as a dedicated host user, not root. The server image also
     defaults to a non-root user.
+  - Every container drops all Linux capabilities and has a process-count and memory ceiling. Caddy keeps one: binding
+    ports 80 and 443. The server and LiveKit also run with `no-new-privileges`. Caddy can't: it binds those ports
+    through a file capability on its binary, which `no-new-privileges` would ignore.
+  - Root filesystems are not read-only: each image's write paths have not been checked.
   - That host user is in the `docker` group so it can run deploys and backups, which makes it root-equivalent on the
     host (see the known gaps).
   - Images are pinned by digest. LiveKit and Caddy are pinned in the compose file. The Pulse server image is pinned to
@@ -422,6 +539,9 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   - **Test kit.** The build output is a test kit zip containing the installer. The kit also includes a LiveKit server
     binary (v1.13.10), for running a local test server. The release job checks the downloaded archive against a
     pinned SHA-256 before extracting it, and fails on a mismatch. The installer does not install it.
+  - **Test kit LiveKit.** The kit's LiveKit config keeps signalling, UDP media and TURN on loopback, and its own
+    TURN means clients are given no third-party STUN server. LiveKit's ICE-TCP port (7881) still listens on every
+    interface; LiveKit gives no way to restrict it. A test checks this config like the production and dev ones.
 - **Rust dependencies.** `cargo-deny` checks advisories, licences, wildcard version requirements and sources
   (`deny.toml`). Only crates.io and one pinned git dependency are allowed as sources.
   - **Ignored advisories.** Each ignored advisory is listed there with its reason.
@@ -455,12 +575,26 @@ Real-time frames from the client are capped at 64 KB, and messages at 4,000 char
   - the versions of apt packages installed on the CI runners (system build dependencies, and LLVM 21's patch level);
   - `ca-certificates` in the server image's runtime stage, installed with apt on top of the pinned base image;
   - the BuildKit (buildx) version used to build the server image, and the `just` version in CI.
+- **Backups can be destroyed from the host.** The server's object-store token can delete and overwrite backups (it
+  prunes the old ones), and this repository configures no object lock or retention. Someone who takes over the host
+  could destroy the backups. The fix is R2 bucket lock and lifecycle rules, which the operator sets in Cloudflare, not
+  this repository.
+- **The server image is not signed.** It has no signature and no build provenance. The deploy pins the digest it
+  pulled, so a moved tag can't change what runs, but nothing proves where that image was built.
 - **Code signing.** The Windows installer is not code-signed yet, so SmartScreen and endpoint tools will see an unsigned
   publisher.
 - **Updates.** There is no auto-updater. New versions are installed by hand.
 - **Accounts.**
   - Any member can create invite codes.
   - Rate limits, including the two-factor limits, are held in memory, so they reset when the server restarts.
+  - Login limits trade guessing against lockout. Guesses at one username from many IPs can use up its 100/hour, but
+    that doesn't lock its owner out: an IP with no recent failed logins for that username can still sign in. The cost
+    is that past 100/hour, each further IP still gets a guess, about one every 6 minutes per IP. An owner who shares
+    an IP with the attacker (the same network or NAT) can be refused until either limit refills.
+- **Server design.**
+  - Any member of a server can rename or delete any custom emoji in it.
+  - Every account can read the history of server channels.
+  - There are no server roles, kicks or bans.
 - **No TURN over TLS.** There is no TURN over TLS/TCP 443, so voice may not work on networks that block UDP and allow
   nothing but 443.
 

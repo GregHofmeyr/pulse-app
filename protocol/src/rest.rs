@@ -65,6 +65,17 @@ pub struct LogoutOthersResponse {
     pub revoked: u32,
 }
 
+/// `POST /auth/password`: change the caller's password. `code` (a TOTP or recovery code) is
+/// needed only when the account has two-factor on. Success signs out every other session.
+#[derive(Clone, Serialize, Deserialize, TS)]
+pub struct ChangePasswordRequest {
+    pub current_password: String,
+    pub new_password: String,
+    #[serde(default)]
+    pub code: Option<String>,
+}
+redacting_debug!(ChangePasswordRequest { ; current_password, new_password, code });
+
 /// `GET /auth/2fa`: the caller's own two-factor state. `available` is false when the server has
 /// no encryption key, so the UI can say so instead of offering a setup that would fail.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
@@ -557,6 +568,14 @@ mod tests {
                 "{:?}",
                 InviteResponse {
                     code: s("SECRET-INVITE"),
+                }
+            ),
+            format!(
+                "{:?}",
+                ChangePasswordRequest {
+                    current_password: s("SECRET-PW"),
+                    new_password: s("SECRET-NEW"),
+                    code: Some(s("SECRET-CODE")),
                 }
             ),
         ];

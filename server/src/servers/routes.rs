@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
@@ -18,6 +18,7 @@ use crate::auth::AuthUser;
 use crate::auth::routes::load_user;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
+use crate::limits::caps;
 
 const MAX_GROUP_OTHERS: usize = 9;
 
@@ -85,6 +86,27 @@ async fn insert_channel(
     })
 }
 
+/// 400 if any of `users` is already in [`caps::GROUPS_PER_USER`] groups. Run it in the write
+/// transaction that adds them, so concurrent creates and adds can't push anyone past it.
+pub async fn check_group_cap(tx: &mut sqlx::SqliteConnection, users: &[UserId]) -> AppResult<()> {
+    for u in users {
+        let n: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM channel_members cm JOIN channels c ON c.id = cm.channel_id
+             WHERE cm.user_id = ? AND c.kind = 'group'",
+        )
+        .bind(u.to_string())
+        .fetch_one(&mut *tx)
+        .await?;
+        if n >= caps::GROUPS_PER_USER {
+            return Err(AppError::BadRequest(format!(
+                "someone here is already in {} groups, the most allowed",
+                caps::GROUPS_PER_USER
+            )));
+        }
+    }
+    Ok(())
+}
+
 pub async fn member_of(db: &SqlitePool, server: ServerId, user: UserId) -> AppResult<Member> {
     let nickname: Option<String> = sqlx::query_scalar(
         "SELECT nickname FROM server_members WHERE server_id = ? AND user_id = ?",
@@ -104,10 +126,23 @@ async fn create_server(
     AuthUser(me): AuthUser,
     Json(req): Json<CreateServerRequest>,
 ) -> AppResult<Json<Server>> {
+    if !s.limits.create_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     let name = clean_name(&req.name)?;
     let id = ServerId::new();
     let at = now();
     let mut tx = crate::db::begin_write(&s.db).await?;
+    let mine: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM servers WHERE created_by = ?")
+        .bind(me.to_string())
+        .fetch_one(&mut *tx)
+        .await?;
+    if mine >= caps::SERVERS_PER_USER {
+        return Err(AppError::BadRequest(format!(
+            "you can create up to {} servers",
+            caps::SERVERS_PER_USER
+        )));
+    }
     sqlx::query("INSERT INTO servers (id, name, created_by, created_at) VALUES (?, ?, ?, ?)")
         .bind(id.to_string())
         .bind(&name)
@@ -231,6 +266,24 @@ pub async fn server_channels(db: &SqlitePool, id: ServerId) -> AppResult<Vec<Cha
     rows.into_iter().map(channel_from_row).collect()
 }
 
+/// Every server's channels in one query, each list ordered as [`server_channels`] orders it.
+pub async fn all_server_channels(db: &SqlitePool) -> AppResult<HashMap<ServerId, Vec<Channel>>> {
+    let rows = sqlx::query_as(&format!(
+        "SELECT {CHANNEL_COLS} FROM channels WHERE server_id IS NOT NULL
+         ORDER BY server_id, kind, position, id"
+    ))
+    .fetch_all(db)
+    .await?;
+    let mut out: HashMap<ServerId, Vec<Channel>> = HashMap::new();
+    for row in rows {
+        let ch = channel_from_row(row)?;
+        if let Some(sid) = ch.server_id {
+            out.entry(sid).or_default().push(ch);
+        }
+    }
+    Ok(out)
+}
+
 async fn list_channels(
     State(s): State<AppState>,
     _: AuthUser,
@@ -246,6 +299,9 @@ async fn create_channel(
     Path(id): Path<ServerId>,
     Json(req): Json<CreateChannelRequest>,
 ) -> AppResult<Json<Channel>> {
+    if !s.limits.create_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
     server_exists(&s.db, id).await?;
     if !is_server_member(&s.db, id, me).await? {
         return Err(AppError::Forbidden);
@@ -257,6 +313,16 @@ async fn create_channel(
     }
     let name = clean_name(&req.name)?;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE server_id = ?")
+        .bind(id.to_string())
+        .fetch_one(&mut *tx)
+        .await?;
+    if count >= caps::CHANNELS_PER_SERVER {
+        return Err(AppError::BadRequest(format!(
+            "a server can have up to {} channels",
+            caps::CHANNELS_PER_SERVER
+        )));
+    }
     let pos: i64 = sqlx::query_scalar(
         "SELECT COALESCE(MAX(position) + 1, 0) FROM channels WHERE server_id = ? AND kind = ?",
     )
@@ -289,26 +355,57 @@ async fn create_channel(
     Ok(Json(ch))
 }
 
+fn member_from_row(
+    uid: String,
+    username: String,
+    avatar_hash: Option<String>,
+    nickname: Option<String>,
+) -> AppResult<Member> {
+    Ok(Member {
+        user: User {
+            id: uid.parse().map_err(anyhow::Error::from)?,
+            username,
+            avatar_hash,
+        },
+        nickname,
+    })
+}
+
 pub async fn server_members(db: &SqlitePool, id: ServerId) -> AppResult<Vec<Member>> {
     let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
         "SELECT u.id, u.username, u.avatar_hash, m.nickname FROM server_members m JOIN users u ON u.id = m.user_id
-         WHERE m.server_id = ? ORDER BY m.joined_at",
+         WHERE m.server_id = ? ORDER BY m.joined_at, m.user_id",
     )
     .bind(id.to_string())
     .fetch_all(db)
     .await?;
     rows.into_iter()
         .map(|(uid, username, avatar_hash, nickname)| {
-            Ok(Member {
-                user: User {
-                    id: uid.parse().map_err(anyhow::Error::from)?,
-                    username,
-                    avatar_hash,
-                },
-                nickname,
-            })
+            member_from_row(uid, username, avatar_hash, nickname)
         })
         .collect()
+}
+
+/// server id, user id, username, avatar hash, nickname.
+type ServerMemberRow = (String, String, String, Option<String>, Option<String>);
+
+/// Every server's members in one query, each list ordered as [`server_members`] orders it.
+pub async fn all_server_members(db: &SqlitePool) -> AppResult<HashMap<ServerId, Vec<Member>>> {
+    let rows: Vec<ServerMemberRow> = sqlx::query_as(
+        "SELECT m.server_id, u.id, u.username, u.avatar_hash, m.nickname
+         FROM server_members m JOIN users u ON u.id = m.user_id
+         ORDER BY m.server_id, m.joined_at, m.user_id",
+    )
+    .fetch_all(db)
+    .await?;
+    let mut out: HashMap<ServerId, Vec<Member>> = HashMap::new();
+    for (sid, uid, username, avatar_hash, nickname) in rows {
+        let sid: ServerId = sid.parse().map_err(anyhow::Error::from)?;
+        out.entry(sid)
+            .or_default()
+            .push(member_from_row(uid, username, avatar_hash, nickname)?);
+    }
+    Ok(out)
 }
 
 async fn list_members(
@@ -338,6 +435,24 @@ async fn list_dms(
     Ok(Json(dms_of(&s.db, me).await?))
 }
 
+/// The 1:1 DM between `a` and `b`, if there is one.
+async fn existing_dm<'e>(
+    db: impl sqlx::SqliteExecutor<'e>,
+    a: UserId,
+    b: UserId,
+) -> AppResult<Option<String>> {
+    Ok(sqlx::query_scalar(
+        "SELECT c.id FROM channels c
+         JOIN channel_members a ON a.channel_id = c.id AND a.user_id = ?
+         JOIN channel_members b ON b.channel_id = c.id AND b.user_id = ?
+         WHERE c.kind = 'dm' LIMIT 1",
+    )
+    .bind(a.to_string())
+    .bind(b.to_string())
+    .fetch_optional(db)
+    .await?)
+}
+
 async fn create_dm(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -348,6 +463,20 @@ async fn create_dm(
         return Err(AppError::BadRequest(format!(
             "pick 1-{MAX_GROUP_OTHERS} other people"
         )));
+    }
+    // A group is always new, so it pays now; a 1:1 DM pays only if it doesn't exist yet.
+    if others.len() > 1 && !s.limits.create_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
+    // Out of creates: refuse a new 1:1 here, before the lookups and the write lock (a plain
+    // read; the spend below, under the lock, is what counts).
+    if others.len() == 1
+        && !s.limits.create_user.allowed(&me.to_string())
+        && existing_dm(&s.db, me, *others.iter().next().unwrap())
+            .await?
+            .is_none()
+    {
+        return Err(AppError::TooManyRequests);
     }
     for u in &others {
         let hit: Option<i64> = sqlx::query_scalar("SELECT 1 FROM users WHERE id = ?")
@@ -361,17 +490,8 @@ async fn create_dm(
 
     let mut tx = crate::db::begin_write(&s.db).await?;
     if others.len() == 1 {
-        let other = others.iter().next().unwrap().to_string();
-        let existing: Option<String> = sqlx::query_scalar(
-            "SELECT c.id FROM channels c
-             JOIN channel_members a ON a.channel_id = c.id AND a.user_id = ?
-             JOIN channel_members b ON b.channel_id = c.id AND b.user_id = ?
-             WHERE c.kind = 'dm' LIMIT 1",
-        )
-        .bind(me.to_string())
-        .bind(&other)
-        .fetch_optional(&mut *tx)
-        .await?;
+        let other = *others.iter().next().unwrap();
+        let existing = existing_dm(&mut *tx, me, other).await?;
         if let Some(id) = existing {
             let channel_id: ChannelId = id.parse().map_err(anyhow::Error::from)?;
             // Starting a DM you had closed reopens it.
@@ -398,12 +518,19 @@ async fn create_dm(
             let ch = crate::access::load_channel(&s.db, channel_id).await?;
             return ch.map(Json).ok_or(AppError::NotFound);
         }
+        if !s.limits.create_user.hit(&me.to_string()) {
+            return Err(AppError::TooManyRequests); // dropping `tx` rolls back
+        }
     }
     let kind = if others.len() == 1 {
         ChannelKind::Dm
     } else {
         ChannelKind::Group
     };
+    if kind == ChannelKind::Group {
+        let everyone: Vec<UserId> = std::iter::once(me).chain(others.iter().copied()).collect();
+        check_group_cap(&mut tx, &everyone).await?; // dropping `tx` rolls back
+    }
     let ch = insert_channel(&mut tx, None, kind, None, 0).await?;
     let at = now();
     for u in std::iter::once(me).chain(others.iter().copied()) {

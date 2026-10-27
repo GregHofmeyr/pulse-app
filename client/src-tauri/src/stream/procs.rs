@@ -26,15 +26,35 @@ pub fn audio_session_pids() -> Vec<u32> {
     Vec::new()
 }
 
-/// The process owning the top-level window titled exactly `title`.
-pub fn window_pid(title: &str) -> Option<u32> {
+/// The one process, not one of `pulse`, owning a visible top-level window titled exactly
+/// `title`; `None` when there is none or more than one (see `unique_owner`).
+pub fn window_pid(title: &str, pulse: &[u32]) -> Option<u32> {
     #[cfg(windows)]
-    return win::window_pid(title);
+    return unique_owner(&win::windows_titled(title), title, pulse);
     #[cfg(not(windows))]
     {
-        let _ = title;
+        let _ = (title, pulse);
         None
     }
+}
+
+/// From (title, pid, visible) rows for top-level windows: the pid owning a visible window titled
+/// exactly `title`, if exactly one process outside `pulse` does. Hidden windows don't count,
+/// and two processes with the same title are ambiguous: guessing could capture the wrong app.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn unique_owner(rows: &[(String, u32, bool)], title: &str, pulse: &[u32]) -> Option<u32> {
+    let mut owner = None;
+    for &(_, pid, _) in rows
+        .iter()
+        .filter(|r| r.2 && r.0 == title && !pulse.contains(&r.1))
+    {
+        match owner {
+            None => owner = Some(pid),
+            Some(p) if p != pid => return None,
+            Some(_) => {}
+        }
+    }
+    owner
 }
 
 /// (roots, roots plus all their descendants) from (pid, parent pid, exe name) rows. Exe names
@@ -69,7 +89,7 @@ mod win {
         TH32CS_SNAPPROCESS,
     };
     use windows::Win32::UI::WindowsAndMessaging::{
-        EnumWindows, GetWindowTextW, GetWindowThreadProcessId,
+        EnumWindows, GetWindowTextW, GetWindowThreadProcessId, IsWindowVisible,
     };
     use windows::core::BOOL;
 
@@ -149,31 +169,35 @@ mod win {
         Ok(out)
     }
 
-    pub fn window_pid(title: &str) -> Option<u32> {
+    /// (title, pid, visible) for each top-level window titled exactly `title`.
+    pub fn windows_titled(title: &str) -> Vec<(String, u32, bool)> {
         struct Ctx<'a> {
             want: &'a str,
-            found: Option<u32>,
+            rows: Vec<(String, u32, bool)>,
         }
         unsafe extern "system" fn each(hwnd: HWND, lp: LPARAM) -> BOOL {
             let ctx = unsafe { &mut *(lp.0 as *mut Ctx) };
             let mut buf = [0u16; 512];
             let n = unsafe { GetWindowTextW(hwnd, &mut buf) } as usize;
-            if n > 0 && String::from_utf16_lossy(&buf[..n]) == ctx.want {
-                let mut pid = 0u32;
-                unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
-                ctx.found = Some(pid);
-                return BOOL(0);
+            if n > 0 {
+                let t = String::from_utf16_lossy(&buf[..n]);
+                if t == ctx.want {
+                    let mut pid = 0u32;
+                    unsafe { GetWindowThreadProcessId(hwnd, Some(&mut pid)) };
+                    let visible = unsafe { IsWindowVisible(hwnd) }.as_bool();
+                    ctx.rows.push((t, pid, visible));
+                }
             }
-            BOOL(1)
+            BOOL(1) // every window: a second match makes the title ambiguous
         }
         let mut ctx = Ctx {
             want: title,
-            found: None,
+            rows: Vec::new(),
         };
         unsafe {
             let _ = EnumWindows(Some(each), LPARAM(&mut ctx as *mut Ctx as isize));
         }
-        ctx.found
+        ctx.rows
     }
 }
 
@@ -212,6 +236,46 @@ mod tests {
         assert_eq!(all, vec![10, 11]);
     }
 
+    fn win(title: &str, pid: u32, visible: bool) -> (String, u32, bool) {
+        (title.to_string(), pid, visible)
+    }
+
+    #[test]
+    fn unique_owner_finds_the_one_visible_match() {
+        let rows = [
+            win("Other", 30, true),
+            win("Game", 40, true),
+            win("Game", 40, true), // a second window of the same process
+            win("Game - Settings", 50, true),
+        ];
+        assert_eq!(unique_owner(&rows, "Game", &[10]), Some(40));
+        assert_eq!(unique_owner(&rows, "Nope", &[10]), None);
+    }
+
+    #[test]
+    fn unique_owner_skips_invisible_windows() {
+        let rows = [win("Game", 66, false), win("Game", 40, true)];
+        assert_eq!(unique_owner(&rows, "Game", &[10]), Some(40));
+        assert_eq!(unique_owner(&[win("Game", 66, false)], "Game", &[10]), None);
+    }
+
+    #[test]
+    fn unique_owner_is_none_when_two_processes_share_the_title() {
+        let rows = [win("Game", 66, true), win("Game", 40, true)];
+        assert_eq!(unique_owner(&rows, "Game", &[10]), None);
+    }
+
+    #[test]
+    fn unique_owner_ignores_pulse_windows() {
+        let rows = [
+            win("Game", 10, true),
+            win("Game", 11, true),
+            win("Game", 40, true),
+        ];
+        assert_eq!(unique_owner(&rows, "Game", &[10, 11]), Some(40));
+        assert_eq!(unique_owner(&rows[..2], "Game", &[10, 11]), None);
+    }
+
     #[cfg(windows)]
     #[test]
     fn pulse_pids_includes_ourselves() {
@@ -226,6 +290,6 @@ mod tests {
         assert!(pulse_roots().is_empty());
         assert!(pulse_pids().is_empty());
         assert!(audio_session_pids().is_empty());
-        assert_eq!(window_pid("anything"), None);
+        assert_eq!(window_pid("anything", &[]), None);
     }
 }

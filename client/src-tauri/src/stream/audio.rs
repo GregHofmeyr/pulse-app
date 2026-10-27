@@ -20,7 +20,7 @@ use serde_json::json;
 use tokio::task::JoinHandle;
 
 use super::loopback::Engine;
-use super::plan::{Capture, PlanInput, capture_plan};
+use super::plan::{Capture, PlanInput, Source, capture_plan};
 use super::procs;
 use crate::api::{Api, ApiError};
 use crate::voice::devices::INTERNAL_RATE;
@@ -378,16 +378,18 @@ fn plan_now(window_title: Option<&str>) -> (Vec<Capture>, bool) {
     let pulse_pids = procs::pulse_pids();
     let pulse_roots = procs::pulse_roots();
     let session_pids = procs::audio_session_pids();
-    let window_pid = window_title.and_then(procs::window_pid);
-    let from_window = window_pid.is_some_and(|p| !pulse_pids.contains(&p));
+    let source = match window_title {
+        Some(t) => Source::Window(procs::window_pid(t, &pulse_pids)),
+        None => Source::Screen,
+    };
     let plan = capture_plan(&PlanInput {
         own_pid: std::process::id(),
         pulse_pids: &pulse_pids,
         pulse_roots: &pulse_roots,
         session_pids: &session_pids,
-        window_pid,
+        source,
     });
-    (plan, !from_window)
+    (plan, source == Source::Screen)
 }
 
 /// What the ticker rescans: the capture engine (a fake in tests). Dropping it stops capture
@@ -550,9 +552,10 @@ impl StreamAudio {
         self.state.lock().await.conn.as_ref().map(|c| c.channel)
     }
 
-    /// Publishes this machine's stream audio: `window_title`'s process when it names a window
-    /// that isn't Pulse's, else everything but Pulse. Replaces a stream already publishing.
-    /// `muted` holds from the first frame.
+    /// Publishes this machine's stream audio: for a window share (`window_title`), that window's
+    /// process, or nothing when it can't be told apart (`procs::window_pid`); for a screen share,
+    /// everything but Pulse. Replaces a stream already publishing. `muted` holds from the first
+    /// frame.
     pub async fn start_publishing(
         &self,
         window_title: Option<String>,
@@ -567,6 +570,11 @@ impl StreamAudio {
         let (plan, rescan) = tokio::task::spawn_blocking(move || plan_now(title.as_deref()))
             .await
             .map_err(|e| e.to_string())?;
+        if window_title.is_some() && plan.is_empty() {
+            // no title: titles are never logged
+            tracing::warn!(target: "share", "share: no single process owns the shared window; no stream audio");
+            return Ok(());
+        }
         let (track, sid, outlet, counts) = Self::publish_locked(&st).await?;
         if muted {
             track.mute(); // before any capture feeds it

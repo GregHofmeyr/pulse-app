@@ -1,7 +1,7 @@
 //! Rate limits: in-memory token buckets (one node, so no shared store is needed).
 
 use std::collections::HashMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::sync::Mutex;
 use std::time::Instant;
 
@@ -30,12 +30,31 @@ impl Rate {
     }
 }
 
+/// Hard caps on rows a member can create. Each is checked inside the write transaction that
+/// inserts, so concurrent requests can't go past it; going over is a 400.
+pub mod caps {
+    /// Servers one user has created.
+    pub const SERVERS_PER_USER: i64 = 10;
+    /// Channels (text and voice together) in one server.
+    pub const CHANNELS_PER_SERVER: i64 = 100;
+    /// Group conversations one user is a member of (1:1 DMs don't count).
+    pub const GROUPS_PER_USER: i64 = 200;
+    /// Unused, unexpired invite codes one user has created.
+    pub const INVITES_PER_USER: i64 = 20;
+    /// Custom emoji rows in one server, deleted ones included (they are kept so old messages
+    /// keep their `:name:`). The live cap is `emoji::MAX_PER_SERVER`.
+    pub const EMOJI_ROWS_PER_SERVER: i64 = 500;
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct LimitsConfig {
     /// Failed logins per client IP.
     pub login_ip: Rate,
-    /// Failed logins per username.
+    /// Failed logins per username, from all addresses together. When it is empty, an address
+    /// with no recent failures for that username may still try (see `login_user_ip`).
     pub login_user: Rate,
+    /// Failed logins per (username, client IP).
+    pub login_user_ip: Rate,
     /// Failed registrations (unknown/used/expired invite) per client IP.
     pub register_ip: Rate,
     /// Two-factor code checks per client IP (spent up front, refunded on success).
@@ -59,13 +78,28 @@ pub struct LimitsConfig {
     pub gateway_ip: Rate,
     /// Concurrent authenticated gateway connections per user.
     pub gateway_per_user: usize,
+    /// Servers, server channels, new DMs and groups, and members added to a group, together
+    /// per user (each one writes rows and fans out events). Reopening an existing DM is free.
+    pub create_user: Rate,
+    /// Custom emoji creates, renames and deletes, together per user (each one reaches every
+    /// member of the server).
+    pub emoji_user: Rate,
+    /// Invite codes minted per user.
+    pub invite_user: Rate,
+    /// Message edits and deletes, reaction adds and removes, Go Live and watch, together per
+    /// user (each one fans out an event). Stop and unwatch are teardown and never limited.
+    pub mutate_user: Rate,
+    /// Published `VoiceState` changes per user. Every frame is still stored; past the limit,
+    /// one trailing publish of the latest flags goes out when the bucket allows.
+    pub voice_state_user: Rate,
 }
 
 impl Default for LimitsConfig {
     fn default() -> Self {
         Self {
             login_ip: Rate::per_minute(5),
-            login_user: Rate::per_hour(10),
+            login_user: Rate::per_hour(100),
+            login_user_ip: Rate::per_hour(10),
             register_ip: Rate::per_hour(5),
             mfa_ip: Rate::per_minute(5),
             mfa_user: Rate::per_hour(10),
@@ -85,6 +119,11 @@ impl Default for LimitsConfig {
             preview_user: Rate::new(6, 0.2),
             gateway_ip: Rate::per_minute(20),
             gateway_per_user: 8,
+            create_user: Rate::per_hour(20),
+            emoji_user: Rate::per_hour(30),
+            invite_user: Rate::per_hour(10),
+            mutate_user: Rate::new(30, 2.0),
+            voice_state_user: Rate::new(10, 2.0),
         }
     }
 }
@@ -96,6 +135,7 @@ impl LimitsConfig {
         Self {
             login_ip: r,
             login_user: r,
+            login_user_ip: r,
             register_ip: r,
             mfa_ip: r,
             mfa_user: r,
@@ -107,6 +147,11 @@ impl LimitsConfig {
             preview_user: r,
             gateway_ip: r,
             gateway_per_user: usize::MAX,
+            create_user: r,
+            emoji_user: r,
+            invite_user: r,
+            mutate_user: r,
+            voice_state_user: r,
         }
     }
 }
@@ -142,6 +187,27 @@ impl Limiter {
         self.hit_at(key, Instant::now())
     }
 
+    /// Spend a token for `key` like [`Limiter::hit`], and also say whether the bucket was full
+    /// just before (nothing spent from it recently): `(spent, was_full)`.
+    pub fn hit_noting_full(&self, key: &str) -> (bool, bool) {
+        self.hit_noting_full_at(key, Instant::now())
+    }
+
+    pub fn hit_noting_full_at(&self, key: &str, now: Instant) -> (bool, bool) {
+        let burst = self.rate.burst as f64;
+        let mut was_full = false;
+        let spent = self.with(key, now, |t| {
+            was_full = *t >= burst;
+            if *t >= 1.0 {
+                *t -= 1.0;
+                true
+            } else {
+                false
+            }
+        });
+        (spent, was_full)
+    }
+
     pub fn allowed_at(&self, key: &str, now: Instant) -> bool {
         self.with(key, now, |t| *t >= 1.0)
     }
@@ -162,6 +228,18 @@ impl Limiter {
         let mut map = self.buckets.lock().unwrap();
         if map.len() >= MAX_KEYS && !map.contains_key(key) {
             map.retain(|_, b| refilled(b, now, rate) < rate.burst as f64);
+        }
+        if map.len() >= MAX_KEYS && !map.contains_key(key) {
+            // Still full of busy buckets (a flood of distinct keys): drop the least recently
+            // updated. That resets a partly drained bucket to full, which only happens past
+            // MAX_KEYS distinct keys at once.
+            while map.len() >= MAX_KEYS {
+                let Some(oldest) = map.iter().min_by_key(|(_, b)| b.at).map(|(k, _)| k.clone())
+                else {
+                    break;
+                };
+                map.remove(&oldest);
+            }
         }
         let b = map.entry(key.to_owned()).or_insert(Bucket {
             tokens: rate.burst as f64,
@@ -198,6 +276,7 @@ fn refilled(b: &Bucket, now: Instant, rate: Rate) -> f64 {
 pub struct Limits {
     pub login_ip: Limiter,
     pub login_user: Limiter,
+    pub login_user_ip: Limiter,
     pub register_ip: Limiter,
     pub mfa_ip: Limiter,
     pub mfa_user: Limiter,
@@ -209,6 +288,11 @@ pub struct Limits {
     pub preview_user: Limiter,
     pub gateway_ip: Limiter,
     pub gateway_per_user: usize,
+    pub create_user: Limiter,
+    pub emoji_user: Limiter,
+    pub invite_user: Limiter,
+    pub mutate_user: Limiter,
+    pub voice_state_user: Limiter,
 }
 
 impl Limits {
@@ -216,6 +300,7 @@ impl Limits {
         Self {
             login_ip: Limiter::new(c.login_ip),
             login_user: Limiter::new(c.login_user),
+            login_user_ip: Limiter::new(c.login_user_ip),
             register_ip: Limiter::new(c.register_ip),
             mfa_ip: Limiter::new(c.mfa_ip),
             mfa_user: Limiter::new(c.mfa_user),
@@ -227,6 +312,11 @@ impl Limits {
             preview_user: Limiter::new(c.preview_user),
             gateway_ip: Limiter::new(c.gateway_ip),
             gateway_per_user: c.gateway_per_user,
+            create_user: Limiter::new(c.create_user),
+            emoji_user: Limiter::new(c.emoji_user),
+            invite_user: Limiter::new(c.invite_user),
+            mutate_user: Limiter::new(c.mutate_user),
+            voice_state_user: Limiter::new(c.voice_state_user),
         }
     }
 }
@@ -240,6 +330,22 @@ pub fn client_ip(forwarded_for: Option<&str>, peer: Option<IpAddr>) -> IpAddr {
         .and_then(|s| s.trim().parse().ok())
         .or(peer)
         .unwrap_or(IpAddr::V4(Ipv4Addr::UNSPECIFIED))
+}
+
+/// The address a per-IP limiter counts: IPv4-mapped IPv6 becomes the IPv4 address, and other
+/// IPv6 addresses collapse to their /64 prefix (one client can hold a whole /64).
+pub fn rate_key(ip: IpAddr) -> IpAddr {
+    match ip {
+        IpAddr::V4(_) => ip,
+        IpAddr::V6(v6) => match v6.to_ipv4_mapped() {
+            Some(v4) => IpAddr::V4(v4),
+            None => {
+                let mut o = v6.octets();
+                o[8..].fill(0);
+                IpAddr::V6(Ipv6Addr::from(o))
+            }
+        },
+    }
 }
 
 /// Extractor for [`client_ip`]. Never rejects.
@@ -312,6 +418,31 @@ mod tests {
     }
 
     #[test]
+    fn hit_noting_full_reports_whether_the_bucket_was_untouched() {
+        let l = Limiter::new(Rate::new(2, 1.0));
+        let t0 = Instant::now();
+        assert_eq!(
+            l.hit_noting_full_at("a", t0),
+            (true, true),
+            "a new key is full"
+        );
+        assert_eq!(l.hit_noting_full_at("a", t0), (true, false));
+        assert_eq!(l.hit_noting_full_at("a", t0), (false, false), "empty");
+        l.refund("a");
+        l.refund("a");
+        assert_eq!(
+            l.hit_noting_full_at("a", t0),
+            (true, true),
+            "refunded to full"
+        );
+        assert_eq!(
+            l.hit_noting_full_at("a", t0 + Duration::from_secs(5)),
+            (true, true),
+            "refilled to full"
+        );
+    }
+
+    #[test]
     fn idle_buckets_are_swept_when_the_map_is_full() {
         let l = Limiter::new(Rate::new(2, 1.0));
         let t0 = Instant::now();
@@ -338,5 +469,45 @@ mod tests {
         assert_eq!(client_ip(Some("garbage"), peer), ip("127.0.0.1"));
         assert_eq!(client_ip(None, peer), ip("127.0.0.1"));
         assert_eq!(client_ip(None, None), ip("0.0.0.0"));
+    }
+
+    #[test]
+    fn rate_key_groups_ipv6_by_slash_64_and_unmaps_ipv4() {
+        let ip = |s: &str| s.parse::<IpAddr>().unwrap();
+        let l = Limiter::new(Rate::new(2, 0.0));
+        let t0 = Instant::now();
+        let key = |s: &str| rate_key(ip(s)).to_string();
+        assert!(l.hit_at(&key("2001:db8::1"), t0));
+        assert!(l.hit_at(&key("2001:db8::1"), t0));
+        assert!(
+            !l.hit_at(&key("2001:db8::2"), t0),
+            "same /64 shares the bucket"
+        );
+        assert!(
+            l.hit_at(&key("2001:db8:0:1::1"), t0),
+            "a different /64 has its own"
+        );
+        assert_eq!(rate_key(ip("::ffff:203.0.113.5")), ip("203.0.113.5"));
+        assert_eq!(rate_key(ip("203.0.113.5")), ip("203.0.113.5"));
+        assert!(l.hit_at(&key("203.0.113.5"), t0));
+        assert!(l.hit_at(&key("::ffff:203.0.113.5"), t0));
+        assert!(
+            !l.hit_at(&key("203.0.113.5"), t0),
+            "mapped and plain IPv4 share a bucket"
+        );
+    }
+
+    #[test]
+    fn the_map_never_exceeds_max_keys_even_when_no_bucket_is_idle() {
+        let l = Limiter::new(Rate::new(2, 0.0));
+        let t0 = Instant::now();
+        for i in 0..=MAX_KEYS {
+            l.hit_at(&format!("k{i}"), t0 + Duration::from_millis(i as u64));
+        }
+        assert!(l.len() <= MAX_KEYS, "len {} > {MAX_KEYS}", l.len());
+        // The oldest key was evicted, so it comes back full (2 hits); a kept one would have 1 left.
+        let t = t0 + Duration::from_secs(1);
+        assert!(l.hit_at("k0", t) && l.hit_at("k0", t), "k0 was evicted");
+        assert!(l.len() <= MAX_KEYS);
     }
 }

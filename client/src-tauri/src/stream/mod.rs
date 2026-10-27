@@ -259,7 +259,8 @@ fn app_mixer(app: &AppHandle) -> audio::MixerSource {
 }
 
 /// Connects `#a` to the stream room (if it isn't) and publishes stream audio: `window_title`'s
-/// app for a window share, everything but Pulse otherwise; `muted` from the first frame.
+/// app for a window share (none when no single app owns it), everything but Pulse otherwise;
+/// `muted` from the first frame.
 #[tauri::command]
 pub async fn stream_audio_start(
     app: AppHandle,
