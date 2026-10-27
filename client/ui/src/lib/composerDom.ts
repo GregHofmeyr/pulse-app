@@ -15,6 +15,10 @@ export function tokenSpans(text: string): { start: number; end: number; id: stri
   return out
 }
 
+/** Whether `renderInto` shows this emoji as an image: as markdown.ts, only a stored-media hash is
+ * ever put in a URL (a deleted emoji has none). */
+export const renderable = (e: Emoji): boolean => !!e.hash && isMediaHash(e.hash) && (!e.still_hash || isMediaHash(e.still_hash))
+
 /** Replace `el`'s content with `text`: known custom emoji as images (an unknown or deleted one stays
  * as its text). Returns the images made, for the caller to animate. */
 export function renderInto(el: HTMLElement, text: string, lookup: (id: string) => Emoji | undefined): HTMLImageElement[] {
@@ -23,17 +27,16 @@ export function renderInto(el: HTMLElement, text: string, lookup: (id: string) =
   let at = 0
   for (const t of tokenSpans(text)) {
     const e = lookup(t.id)
-    // as markdown.ts: only a stored-media hash is ever put in a URL
-    if (!e?.hash || !isMediaHash(e.hash) || (e.still_hash && !isMediaHash(e.still_hash))) continue
+    if (!e || !renderable(e)) continue
     if (t.start > at) nodes.push(document.createTextNode(text.slice(at, t.start)))
     const img = document.createElement('img')
-    img.src = mediaUrl(e.still_hash ?? e.hash)
+    img.src = mediaUrl(e.still_hash ?? e.hash!)
     img.alt = `:${e.name}:`
     img.className = 'emoji'
     img.draggable = false
     img.dataset.token = text.slice(t.start, t.end)
     // as animate.svelte.ts: animated means a separate still to stop on
-    if (e.animated && e.still_hash && e.still_hash !== e.hash) img.dataset.anim = e.hash
+    if (e.animated && e.still_hash && e.still_hash !== e.hash) img.dataset.anim = e.hash!
     img.setAttribute('contenteditable', 'false')
     nodes.push(img)
     imgs.push(img)

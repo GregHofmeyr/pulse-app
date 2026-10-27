@@ -177,6 +177,7 @@ async fn read_tail(app: &AppHandle) -> String {
     tokio::task::spawn_blocking(move || tail::log_tail(&dir, TAIL_BYTES))
         .await
         .unwrap_or_else(|e| {
+            // a panic in the read (the reading itself logs its own failures)
             tracing::warn!(error = %e, "report: couldn't read the log tail; sending without it");
             String::new()
         })

@@ -388,9 +388,9 @@ pub enum Emit {
         since_last: Stall,
         lasted: Duration,
     },
-    /// Over: the worst since the last line, and how long it lasted.
+    /// Over: the worst of the whole episode, and how long it lasted.
     Ended {
-        since_last: Stall,
+        worst: Stall,
         lasted: Duration,
     },
 }
@@ -409,6 +409,8 @@ struct StallEpisode {
     started: Instant,
     last_line: Instant,
     since_last: Stall,
+    /// The worst of every bad tick, for the end line.
+    worst: Stall,
     /// The last bad tick (what "lasted" runs to) and the quiet ticks since it.
     last_bad: Instant,
     quiet: u32,
@@ -426,6 +428,7 @@ impl StallLog {
                     started: now,
                     last_line: now,
                     since_last: Stall::default(),
+                    worst: s,
                     last_bad: now,
                     quiet: 0,
                 });
@@ -435,6 +438,7 @@ impl StallLog {
                 e.quiet = 0;
                 e.last_bad = now;
                 e.since_last.merge(s);
+                e.worst.merge(s);
                 if now.saturating_duration_since(e.last_line) < STALL_SUMMARY_EVERY {
                     return Emit::Nothing;
                 }
@@ -451,7 +455,7 @@ impl StallLog {
                 }
                 let e = self.episode.take().expect("matched Some");
                 Emit::Ended {
-                    since_last: e.since_last,
+                    worst: e.worst,
                     lasted: e.last_bad.saturating_duration_since(e.started),
                 }
             }
@@ -555,19 +559,22 @@ mod tests {
         // more of it: quiet until a minute after the first line
         assert_eq!(log.tick(stall(900), at(6)), Emit::Nothing);
         assert_eq!(log.tick(stall(300), at(9)), Emit::Nothing);
-        let mut both = stall(900);
         // regular hitches don't start and end an episode every few seconds: it ends after three
         // quiet ticks in a row, lasting until the last bad one
         assert_eq!(log.tick(Stall::default(), at(12)), Emit::Nothing);
         assert_eq!(log.tick(Stall::default(), at(15)), Emit::Nothing);
         assert_eq!(log.tick(stall(300), at(18)), Emit::Nothing); // a hitch: the quiet count starts over
-        both.late_events = 3;
         assert_eq!(log.tick(Stall::default(), at(21)), Emit::Nothing);
         assert_eq!(log.tick(Stall::default(), at(24)), Emit::Nothing);
         assert_eq!(
             log.tick(Stall::default(), at(27)),
             Emit::Ended {
-                since_last: both,
+                // every bad tick of it, the first included
+                worst: Stall {
+                    input_late_ms: 900,
+                    late_events: 4,
+                    ..Stall::default()
+                },
                 lasted: Duration::from_secs(15)
             }
         );
@@ -580,6 +587,18 @@ mod tests {
             Emit::Ongoing { since_last, lasted } => {
                 assert_eq!(since_last.input_late_ms, 300);
                 assert_eq!(since_last.late_events, 20);
+                assert_eq!(lasted, Duration::from_secs(60));
+            }
+            other => panic!("{other:?}"),
+        }
+        // its end line has the worst of the whole episode, not just since the last line
+        for s in [163, 166] {
+            assert_eq!(log.tick(Stall::default(), at(s)), Emit::Nothing);
+        }
+        match log.tick(Stall::default(), at(169)) {
+            Emit::Ended { worst, lasted } => {
+                assert_eq!(worst.input_late_ms, 500);
+                assert_eq!(worst.late_events, 21);
                 assert_eq!(lasted, Duration::from_secs(60));
             }
             other => panic!("{other:?}"),

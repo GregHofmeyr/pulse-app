@@ -136,7 +136,13 @@ pub fn ui_log(line: String, info: Option<bool>) {
                 tracing::warn!(target: "ui", "ui: {line}")
             }
         },
-        |n| tracing::warn!(target: "ui", "ui: {n} lines dropped (too many)"),
+        |n| {
+            if info {
+                tracing::info!(target: "ui", "ui: {n} lines dropped (too many)")
+            } else {
+                tracing::warn!(target: "ui", "ui: {n} lines dropped (too many)")
+            }
+        },
     );
 }
 

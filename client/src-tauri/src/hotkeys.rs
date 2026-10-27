@@ -359,8 +359,9 @@ mod platform {
                     LAST_HOOK_TICK.store(unsafe { GetTickCount() }, Ordering::Relaxed);
                     matcher().forget_released(still_down);
                     set_broken(None);
-                    set_hooks(Hooks::In);
+                    // before HOOKS says In (SeqCst), so the watchdog never reads an older time
                     note_hooked();
+                    set_hooks(Hooks::In);
                     tracing::info!("keybinds: hooks installed");
                     Some(h)
                 }
@@ -423,8 +424,8 @@ mod platform {
         // Key-ups missed while the hooks were gone: drop modifiers Windows says are up (a
         // stale plain key is already treated as a fresh press, REPEAT_WINDOW).
         matcher().forget_released(still_down);
-        set_hooks(Hooks::In);
         note_hooked();
+        set_hooks(Hooks::In);
         tracing::info!("keybinds: hooks reinstalled");
         Some(hooks)
     }
@@ -527,8 +528,12 @@ mod platform {
                 "keybinds: input stalled (the whole PC waits on low-level hooks)"
             ),
             Emit::Started(s) => tracing::warn!(
+                input_late_ms = s.input_late_ms,
+                late_events = s.late_events,
+                hook_proc_us = s.own_us,
+                hook_thread_ms = s.hook_thread_ms,
                 overslept_ms = s.overslept_ms,
-                "keybinds: the PC stalled (no keybind hooks in, so not them)"
+                "keybinds: the PC stalled (no keybind hooks in by the end of it, so likely not them)"
             ),
             Emit::Ongoing {
                 since_last: s,
@@ -543,10 +548,7 @@ mod platform {
                 hooks_in,
                 "keybinds: input still stalling (worst in the last minute)"
             ),
-            Emit::Ended {
-                since_last: s,
-                lasted,
-            } => tracing::info!(
+            Emit::Ended { worst: s, lasted } => tracing::info!(
                 input_late_ms = s.input_late_ms,
                 late_events = s.late_events,
                 hook_proc_us = s.own_us,
@@ -583,8 +585,9 @@ mod platform {
             let slept_from = Instant::now();
             std::thread::sleep(WATCH_EVERY);
             let overslept = slept_from.elapsed().saturating_sub(WATCH_EVERY);
-            let emit = stalls.tick(take_stall(overslept), Instant::now());
+            // read before the tick's numbers: they're from the hooks as they were during it
             let hooks_in = hooks() == Hooks::In;
+            let emit = stalls.tick(take_stall(overslept), Instant::now());
             let since_hooked_s = hooks_in.then(|| {
                 // a plain difference (wrapping): not tick_delay, which drops anything past a minute
                 // SAFETY: GetTickCount has no preconditions.

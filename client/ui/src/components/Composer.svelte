@@ -10,7 +10,7 @@
   import { customToken, savedTone, search, twemojiUrl, withSkin, type Std } from '../lib/emoji'
   import { applyEmoji, emojiQuery, insertAt } from '../lib/emojiComplete'
   import { animatedEmoji, stillSrc, wireEmoji } from '../lib/animate.svelte'
-  import { offsetOf, positionAt, renderInto, serialize, tokenSpans } from '../lib/composerDom'
+  import { offsetOf, positionAt, renderable, renderInto, serialize, tokenSpans } from '../lib/composerDom'
   import { mediaUrl } from '../lib/emoji'
   import { typingThrottle } from '../lib/markdown'
   import { applyMention, mentionQuery, suggest, type Mentionable } from '../lib/mentions'
@@ -123,10 +123,13 @@
 
   // A draft's emoji the app learns about after it showed (Ready came later): show them now. Only
   // when there's one to show, so ordinary updates leave the box (and its caret) alone.
+  // (the emoji map alone: app.state is replaced on every event, the map only when emoji change)
+  const knownEmoji = $derived(app.state.customEmoji)
   $effect(() => {
-    const known = app.state.customEmoji
+    const known = knownEmoji
     untrack(() => {
-      const waiting = tokenSpans(text).some((t) => known[t.id]?.hash && ![...box.querySelectorAll<HTMLImageElement>('img')].some((i) => i.dataset.token === text.slice(t.start, t.end)))
+      const shownTokens = new Set([...box.querySelectorAll<HTMLImageElement>('img')].map((i) => i.dataset.token))
+      const waiting = tokenSpans(text).some((t) => known[t.id] && renderable(known[t.id]) && !shownTokens.has(text.slice(t.start, t.end)))
       if (!waiting) return
       const at = readSel()?.start
       render(text)
@@ -226,11 +229,22 @@
     if (r && box.contains(r.startContainer)) return offsetOf(box, r.startContainer, r.startOffset)
     return null
   }
+  /** Marks a drag that started in this box (a dragFrom left by a lost dragend can't pass for one). */
+  const OWN_DRAG = 'application/x-pulse-composer'
+  function dragStart(e: DragEvent) {
+    const r = readSel()
+    dragFrom = r && r.start !== r.end ? r : null
+    if (!dragFrom) return
+    // the text itself, tokens included (the browser would give the images' alt text)
+    e.dataTransfer?.setData('text/plain', text.slice(dragFrom.start, dragFrom.end))
+    e.dataTransfer?.setData(OWN_DRAG, '1')
+  }
   function drop(e: DragEvent) {
     e.preventDefault()
-    const from = dragFrom
+    const from = e.dataTransfer?.getData(OWN_DRAG) ? dragFrom : null
     dragFrom = null
-    const t = plain(e.dataTransfer?.getData('text/plain') ?? '')
+    // a move takes the box's own text; anything else, what was dropped
+    const t = from ? text.slice(from.start, from.end) : plain(e.dataTransfer?.getData('text/plain') ?? '')
     if (!t) return
     let at = offsetAtPoint(e.clientX, e.clientY) ?? (readSel() ?? sel).start
     let base = text
@@ -379,8 +393,8 @@
     aria-multiline="true" aria-label={placeholder} aria-placeholder={placeholder} data-placeholder={placeholder}
     onkeydown={key} onbeforeinput={beforeInput} oninput={input} onpaste={paste} oncopy={copy} oncut={(e) => copy(e, true)}
     onfocus={focused} onpointerdown={() => (pressed = document.activeElement !== box)}
-    onpointerup={() => (pressed = false)} onpointercancel={() => (pressed = false)}
-    ondragstart={() => (dragFrom = readSel())} ondragend={() => (dragFrom = null)} ondrop={drop} onclick={syncCaret}
+    onpointerup={(e) => { if (e.pointerType === 'mouse') pressed = false }} onpointercancel={() => (pressed = false)}
+    ondragstart={dragStart} ondragend={() => (dragFrom = null)} ondrop={drop} onclick={() => { pressed = false; syncCaret() }}
     onkeyup={(e) => { if (e.key.startsWith('Arrow') && !shown) syncCaret() }}></div>
   <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={20} /></button>
   {#if picking && emojiBtn}

@@ -480,9 +480,14 @@ describe('Composer emoji', () => {
       r.setEnd(p3.node, p3.offset)
       getSelection()!.removeAllRanges()
       getSelection()!.addRange(r)
-      box.dispatchEvent(new Event('dragstart', { bubbles: true }))
+      const own = new Map<string, string>()
+      const start = new Event('dragstart', { bubbles: true }) as DragEvent
+      Object.defineProperty(start, 'dataTransfer', { value: { setData: (t: string, v: string) => own.set(t, v) } })
+      box.dispatchEvent(start)
       pointAt.mockReturnValue(at(8))
-      drop('abc')
+      const e = new Event('drop', { bubbles: true, cancelable: true }) as DragEvent
+      Object.defineProperty(e, 'dataTransfer', { value: { getData: (t: string) => own.get(t) ?? '' } })
+      box.dispatchEvent(e)
       await tick()
       expect(value(box)).toBe('X defabc')
     } finally {
@@ -520,5 +525,80 @@ describe('Composer emoji', () => {
     flushSync()
     expect(box.querySelector('img')).not.toBeNull()
     expect(value(box)).toBe('hi <:pog:1> ')
+  })
+
+  it('dragging emoji within the box moves them as emoji, and a drag carries the tokens', async () => {
+    const box = show()
+    type(box, 'ab :po')
+    press(box, 'Enter')
+    await tick()
+    expect(value(box)).toBe('ab <:pog:1> ')
+    const pointAt = vi.fn()
+    Object.assign(document, { caretPositionFromPoint: pointAt })
+    try {
+      const r = document.createRange()
+      const p0 = positionAt(box, 3), p1 = positionAt(box, 12)
+      r.setStart(p0.node, p0.offset)
+      r.setEnd(p1.node, p1.offset)
+      getSelection()!.removeAllRanges()
+      getSelection()!.addRange(r)
+      const data = new Map<string, string>()
+      const dt = { setData: (t: string, v: string) => data.set(t, v), getData: (t: string) => (t === 'text/plain' ? ':pog: ' : data.get(t) ?? '') }
+      const start = new Event('dragstart', { bubbles: true }) as DragEvent
+      Object.defineProperty(start, 'dataTransfer', { value: dt })
+      box.dispatchEvent(start)
+      expect(data.get('text/plain')).toBe('<:pog:1> ')
+      const p = positionAt(box, 0)
+      pointAt.mockReturnValue({ offsetNode: p.node, offset: p.offset })
+      const drop = new Event('drop', { bubbles: true, cancelable: true }) as DragEvent
+      Object.defineProperty(drop, 'dataTransfer', { value: dt })
+      box.dispatchEvent(drop)
+      await tick()
+      expect(value(box)).toBe('<:pog:1> ab ')
+    } finally {
+      delete (document as { caretPositionFromPoint?: unknown }).caretPositionFromPoint
+    }
+  })
+
+  it('a drag that never ended here is not taken for a move by a later drop from outside', async () => {
+    const box = show()
+    type(box, 'abc def')
+    const r = document.createRange()
+    const p0 = positionAt(box, 0), p3 = positionAt(box, 3)
+    r.setStart(p0.node, p0.offset)
+    r.setEnd(p3.node, p3.offset)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(r)
+    box.dispatchEvent(new Event('dragstart', { bubbles: true })) // its dragend got lost
+    caretAt(box, 7)
+    const drop = new Event('drop', { bubbles: true, cancelable: true }) as DragEvent
+    Object.defineProperty(drop, 'dataTransfer', { value: { getData: (t: string) => (t === 'text/plain' ? 'XYZ' : '') } })
+    box.dispatchEvent(drop)
+    await tick()
+    expect(value(box)).toBe('abc defXYZ') // nothing cut
+  })
+
+  it('a touch tap keeps its own caret (focus comes after the finger lifts)', async () => {
+    const box = show()
+    type(box, 'hello')
+    caretAt(box, 4)
+    ;(document.querySelector('[aria-label="Emoji"]') as HTMLButtonElement).focus()
+    box.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, pointerType: 'touch' }))
+    box.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerType: 'touch' }))
+    caretAt(box, 2) // the tap put it here, as focus arrived
+    await tick()
+    expect(caret(box)).toBe(2)
+  })
+
+  it('an emoji that can never be shown does not make every update rebuild the box', async () => {
+    const box = show()
+    app.state = { ...app.state, customEmoji: { ...app.state.customEmoji, '7': { ...ce('7', 'S1', 'bad'), hash: 'not-a-hash' } } }
+    type(box, 'x <:bad:7> y')
+    const node = box.firstChild
+    app.state = { ...app.state, customEmoji: { ...app.state.customEmoji } } // the emoji map changes
+    flushSync()
+    app.state = { ...app.state } // and any other event
+    flushSync()
+    expect(box.firstChild).toBe(node) // left alone
   })
 })
