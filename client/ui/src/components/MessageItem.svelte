@@ -5,10 +5,12 @@
 
 <script lang="ts">
   import Icon from './Icon.svelte'
+  import EmojiBox from './EmojiBox.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
   import ReactionRow from './ReactionRow.svelte'
   import { reactionKey, type Std } from '../lib/emoji'
   import { pickAdds, react } from '../lib/reactions'
+  import { untrack } from 'svelte'
   import { app } from '../lib/store.svelte'
   import { errorText } from '../lib/tauri'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
@@ -81,11 +83,16 @@
   }
   const time = $derived(new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
 
+  let editBox: EmojiBox | undefined = $state()
   function startEdit() {
     draft = message.content
     editError = ''
     editing = true
   }
+  // the box opens focused, the caret after the text
+  $effect(() => {
+    if (editBox) untrack(() => editBox!.focus(draft.length))
+  })
   // a second Enter while the first save is in flight must not send the edit twice
   let saving = false
   async function save() {
@@ -110,11 +117,13 @@
     const key = reactionKey(e)
     void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, pickAdds(message.reactions, key, keep), meId, showError)
   }
+  // after the edit box's own keys (IME, undo/redo); Shift+Enter, not taken here, adds a line
   function key(e: KeyboardEvent) {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault()
       void save()
     } else if (e.key === 'Escape') {
+      e.preventDefault()
       editing = false
       editError = ''
     }
@@ -143,7 +152,7 @@
         {#if message.deleted}
           <p class="deleted">message deleted</p>
         {:else if editing}
-          <textarea bind:value={draft} onkeydown={key} rows="2" aria-label="Edit message"></textarea>
+          <EmojiBox bind:this={editBox} bind:text={draft} class="edit" label="Edit message" onkeydown={key} />
           <small class="hint">Enter to save · Esc to cancel</small>
           {#if editError}<p class="err" role="alert">{editError}</p>{/if}
         {:else}
@@ -221,7 +230,8 @@
   .msg:hover .actions, .actions:focus-within, .actions.open { display: flex; }
   .actions button { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .actions button:hover { color: var(--text); }
-  textarea { width: 100%; resize: vertical; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; font: inherit; }
+  /* about two lines to start, grows with what's in it (images included) up to 200px, then scrolls */
+  .body :global(.edit) { min-height: 58px; max-height: 200px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; font: inherit; }
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger); }
   .hint { font-size: 11px; color: var(--text-3); }
   .system { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }

@@ -2,6 +2,7 @@
 import { flushSync, mount, tick, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
+import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
@@ -9,6 +10,11 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 import MessageItem, { INLINE_ERROR_MS } from './MessageItem.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
+import { offsetOf, positionAt, serialize } from '../lib/composerDom'
+
+const ce = (id: string, name: string): CustomEmoji => ({
+  id, server_id: 'S1', name, hash: id.repeat(64).slice(0, 64), still_hash: null, animated: false, added_by: null, created_at: '2026-10-01T00:00:00Z',
+})
 
 const msg = (over: Partial<Message> = {}): Message => ({
   id: 'M1', channel_id: 'C1', author_id: 'U1', kind: 'normal', content: 'hello',
@@ -19,9 +25,9 @@ const msg = (over: Partial<Message> = {}): Message => ({
 let cmp: ReturnType<typeof mount> | undefined
 const onEdit = vi.fn(async (_c: string) => {})
 const onDelete = vi.fn(async () => {})
-function show() {
-  const m = msg()
-  app.state = { ...emptyState(), messages: { C1: [m] } }
+function show(content = 'hello') {
+  const m = msg({ content })
+  app.state = { ...emptyState(), messages: { C1: [m] }, customEmoji: { '1': ce('1', 'pog') } }
   cmp = mount(MessageItem, { target: document.body, props: {
     message: app.state.messages['C1'][0], name: 'alex', nameOf: (id: string | null) => id ?? '', replyTo: null,
     grouped: false, mine: true, onReply: () => {}, onEdit, onDelete, meId: 'U1',
@@ -30,15 +36,32 @@ function show() {
 }
 const alert = () => document.querySelector('[role="alert"]')
 const btn = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
-const box = () => document.querySelector<HTMLTextAreaElement>('textarea')
+const box = () => document.querySelector<HTMLElement>('[role="textbox"][aria-label="Edit message"]')
+/** The text the edit box holds (what a save would send). */
+const value = () => serialize(box()!)
+function caretAt(at: number) {
+  const p = positionAt(box()!, at)
+  const r = document.createRange()
+  r.setStart(p.node, p.offset)
+  r.collapse(true)
+  getSelection()!.removeAllRanges()
+  getSelection()!.addRange(r)
+  document.dispatchEvent(new Event('selectionchange'))
+}
+const caret = () => offsetOf(box()!, getSelection()!.anchorNode!, getSelection()!.anchorOffset)
+/** Typing that leaves the box holding plain `text`, the caret at its end (as the browser would). */
 function type(text: string) {
   const t = box()!
-  t.value = text
-  t.dispatchEvent(new Event('input', { bubbles: true }))
+  t.focus()
+  t.replaceChildren(document.createTextNode(text))
+  caretAt(text.length)
+  t.dispatchEvent(new InputEvent('input', { bubbles: true }))
   flushSync()
 }
-const press = (key: string) => {
-  box()!.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true }))
+const press = (key: string, init: KeyboardEventInit = {}) => {
+  const e = new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true, ...init })
+  box()!.dispatchEvent(e)
+  return e
 }
 async function settle() { for (let i = 0; i < 5; i++) await Promise.resolve(); await tick() }
 
@@ -64,7 +87,7 @@ describe('MessageItem errors', () => {
     press('Enter')
     await settle()
     expect(box()).not.toBeNull()
-    expect(box()!.value).toBe('changed text')
+    expect(value()).toBe('changed text')
     expect(alert()?.textContent).toBe('edit refused')
     // The error stays (no timer) until the next save or Esc.
     vi.advanceTimersByTime(INLINE_ERROR_MS * 3)
@@ -158,7 +181,7 @@ describe('MessageItem errors', () => {
     press('Escape'); flushSync()
     btn('Edit').click(); flushSync()
     expect(alert()).toBeNull()
-    expect(box()!.value).toBe('hello')
+    expect(value()).toBe('hello')
   })
 
   it('a_double_enter_while_saving_sends_one_edit', async () => {
@@ -186,5 +209,129 @@ describe('MessageItem errors', () => {
     expect(alert()?.textContent).toBe('reaction refused')
     vi.advanceTimersByTime(INLINE_ERROR_MS); flushSync()
     expect(alert()).toBeNull()
+  })
+})
+
+describe('MessageItem edit box', () => {
+  const edit = async (content: string) => {
+    show(content)
+    btn('Edit').click(); flushSync()
+    await settle()
+  }
+
+  it('shows custom emoji as images, keeping the tokens as the text', async () => {
+    await edit('hi <:pog:1> there')
+    const b = box()!
+    expect(b.tagName).not.toBe('TEXTAREA')
+    expect(b.getAttribute('contenteditable')).toBe('plaintext-only')
+    const img = b.querySelector('img')!
+    expect(img.alt).toBe(':pog:')
+    expect(b.textContent).not.toContain('<:pog:1>')
+    expect(value()).toBe('hi <:pog:1> there')
+  })
+
+  it('opens focused with the caret at the end', async () => {
+    await edit('hi <:pog:1> there')
+    expect(document.activeElement).toBe(box())
+    expect(caret()).toBe('hi <:pog:1> there'.length)
+  })
+
+  it('enter saves the wire text, emoji tokens included', async () => {
+    await edit('hi <:pog:1>')
+    box()!.append(document.createTextNode(' more'))
+    caretAt(value().length)
+    box()!.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    flushSync()
+    expect(press('Enter').defaultPrevented).toBe(true)
+    await settle()
+    expect(onEdit).toHaveBeenCalledWith('hi <:pog:1> more')
+    expect(box()).toBeNull()
+  })
+
+  it('shift_enter_adds_a_line_and_does_not_save', async () => {
+    await edit('one')
+    caretAt(3)
+    press('Enter', { shiftKey: true })
+    await settle(); flushSync()
+    expect(value()).toBe('one\n')
+    expect(onEdit).not.toHaveBeenCalled()
+    expect(box()).not.toBeNull()
+  })
+
+  it('esc_cancels_without_saving', async () => {
+    await edit('hello')
+    type('changed')
+    // taken here (full view's Esc doesn't also go back to the grid)
+    expect(press('Escape').defaultPrevented).toBe(true)
+    flushSync()
+    expect(box()).toBeNull()
+    expect(onEdit).not.toHaveBeenCalled()
+  })
+
+  it('an_enter_meant_for_an_ime_does_not_save', async () => {
+    await edit('hello')
+    type('changed')
+    expect(press('Enter', { isComposing: true }).defaultPrevented).toBe(false)
+    await settle()
+    expect(onEdit).not.toHaveBeenCalled()
+    expect(box()).not.toBeNull()
+  })
+
+  it('undo and redo work in the edit box', async () => {
+    await edit('hello')
+    type('changed')
+    press('z', { ctrlKey: true }); await settle(); flushSync()
+    expect(value()).toBe('hello')
+    press('y', { ctrlKey: true }); await settle(); flushSync()
+    expect(value()).toBe('changed')
+  })
+
+  it('copy carries the tokens and a paste comes in as plain text', async () => {
+    await edit('hi <:pog:1>')
+    const r = document.createRange()
+    r.selectNodeContents(box()!)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(r)
+    const data = new Map<string, string>()
+    const clip = (kind: string, from?: Map<string, string>) => {
+      const e = new Event(kind, { bubbles: true, cancelable: true }) as ClipboardEvent
+      Object.defineProperty(e, 'clipboardData', { value: { setData: (t: string, v: string) => data.set(t, v), getData: (t: string) => (from ?? data).get(t) ?? '' } })
+      box()!.dispatchEvent(e)
+      return e
+    }
+    expect(clip('copy').defaultPrevented).toBe(true)
+    expect(data.get('text/plain')).toBe('hi <:pog:1>')
+    caretAt(value().length)
+    expect(clip('paste', new Map([['text/plain', ' <:pog:1>'], ['text/html', '<b>x</b>']])).defaultPrevented).toBe(true)
+    await settle(); flushSync()
+    expect(value()).toBe('hi <:pog:1> <:pog:1>')
+    expect(box()!.querySelectorAll('img')).toHaveLength(2)
+    expect(box()!.querySelector('b')).toBeNull()
+  })
+
+  it('refuses input past the 4000 limit, never the text already there', async () => {
+    await edit('x'.repeat(3998))
+    const before = (data: string) => {
+      const e = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType: 'insertText', data })
+      box()!.dispatchEvent(e)
+      return e
+    }
+    expect(before('abc').defaultPrevented).toBe(true)
+    expect(before('ab').defaultPrevented).toBe(false)
+    expect(value()).toBe('x'.repeat(3998))
+  })
+
+  it('a double enter on an emoji edit sends one edit', async () => {
+    let finish!: () => void
+    onEdit.mockImplementation(() => new Promise<void>((done) => (finish = done)))
+    await edit('hi <:pog:1>')
+    type('hi')
+    press('Enter')
+    press('Enter')
+    await settle()
+    expect(onEdit).toHaveBeenCalledTimes(1)
+    expect(onEdit).toHaveBeenCalledWith('hi')
+    finish(); await settle(); flushSync()
+    expect(box()).toBeNull()
   })
 })
