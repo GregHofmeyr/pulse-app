@@ -68,8 +68,7 @@ async fn insert_channel(
     position: i64,
 ) -> AppResult<Channel> {
     let id = ChannelId::new();
-    // Quotes channels hold one reaction per person per quote (replies and cards are exempt: see
-    // `reactions::toggle`); everything else reacts freely.
+    // Quotes channels start in one-reaction-per-person mode; everything else reacts freely.
     let reaction_mode = if kind == ChannelKind::Quotes {
         "one_per_person"
     } else {

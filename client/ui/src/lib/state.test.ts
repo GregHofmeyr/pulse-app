@@ -3,6 +3,7 @@ import { applyEvent, applyReady, emptyState, addPending, pendingMessage, removeP
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 import type { Event } from './protocol/Event'
+import type { QotyEvent } from './protocol/QotyEvent'
 import type { Channel } from './protocol/Channel'
 import type { StreamInfo } from './protocol/StreamInfo'
 
@@ -450,10 +451,17 @@ describe('unsent messages', () => {
 describe('quotes events (handled by the quotes UI later)', () => {
   it('leave the state alone', () => {
     const s = applyReady(emptyState(), ready())
+    const qotyEvent: QotyEvent = {
+      id: 'Q1', server_id: 'S1', year: 2026, started_by: 'U1', started_at: '2026-10-01T00:00:00.000Z', ends_at: null,
+      ended_at: null, ended_by: null, end_reason: null, reopen_until: null, options: [], voters: 0, members: 2,
+    }
     const events: Event[] = [
       { t: 'QuoteAwardChanged', d: { channel_id: 'C1', message_id: 'M1', line_id: 'L1', user_id: 'U2', given: true, count: 1, awarders: ['U2'] } },
       { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'C1', root_id: 'M1', last_seen_id: 'M2', mentions_cleared: 0 } },
       { t: 'SpeakerLinksChanged', d: { server_id: 'S1', links: [] } },
+      { t: 'QotyStarted', d: { event: qotyEvent } },
+      { t: 'QotyUpdated', d: { event: qotyEvent } },
+      { t: 'QotyEnded', d: { event: qotyEvent } },
     ]
     for (const e of events) expect(applyEvent(s, e, 0)).toBe(s)
   })

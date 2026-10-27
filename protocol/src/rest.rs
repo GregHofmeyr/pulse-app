@@ -496,122 +496,6 @@ pub struct LoginMfaRequest {
 }
 redacting_debug!(LoginMfaRequest { ; ticket, code });
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    /// Debug output can end up in logs, so it never shows passwords, codes or tickets.
-    #[test]
-    fn debug_never_shows_secrets() {
-        let s = |v: &str| v.to_string();
-        let shown = [
-            format!(
-                "{:?}",
-                RegisterRequest {
-                    invite_code: s("SECRET-INVITE"),
-                    username: s("alex"),
-                    password: s("SECRET-PW"),
-                }
-            ),
-            format!(
-                "{:?}",
-                LoginRequest {
-                    username: s("alex"),
-                    password: s("SECRET-PW"),
-                }
-            ),
-            format!(
-                "{:?}",
-                TwoFactorSetupRequest {
-                    password: s("SECRET-PW"),
-                }
-            ),
-            format!(
-                "{:?}",
-                TwoFactorSetupResponse {
-                    secret: s("SECRET-B32"),
-                    otpauth_uri: s("otpauth://totp/Pulse:alex?secret=SECRET-B32"),
-                }
-            ),
-            format!(
-                "{:?}",
-                TwoFactorCodeRequest {
-                    code: s("SECRET-CODE")
-                }
-            ),
-            format!(
-                "{:?}",
-                TwoFactorEnabledResponse {
-                    recovery_codes: vec![s("SECRET-RC")],
-                    signed_out: 2,
-                }
-            ),
-            format!(
-                "{:?}",
-                RecoveryCodesResponse {
-                    recovery_codes: vec![s("SECRET-RC")],
-                }
-            ),
-            format!(
-                "{:?}",
-                MfaRequired {
-                    code: s("mfa_required"),
-                    message: s("enter your code"),
-                    ticket: s("SECRET-TICKET"),
-                }
-            ),
-            format!(
-                "{:?}",
-                LoginMfaRequest {
-                    ticket: s("SECRET-TICKET"),
-                    code: s("SECRET-CODE"),
-                }
-            ),
-            format!(
-                "{:?}",
-                SessionResponse {
-                    token: s("SECRET-TOKEN"),
-                    user: User {
-                        id: UserId::new(),
-                        username: s("alex"),
-                        avatar_hash: None,
-                    },
-                }
-            ),
-            format!(
-                "{:?}",
-                VoiceTokenResponse {
-                    url: s("wss://livekit.example"),
-                    token: s("SECRET-JWT"),
-                }
-            ),
-            format!(
-                "{:?}",
-                InviteResponse {
-                    code: s("SECRET-INVITE"),
-                }
-            ),
-            format!(
-                "{:?}",
-                ChangePasswordRequest {
-                    current_password: s("SECRET-PW"),
-                    new_password: s("SECRET-NEW"),
-                    code: Some(s("SECRET-CODE")),
-                }
-            ),
-        ];
-        for d in &shown {
-            assert!(!d.contains("SECRET"), "{d}");
-        }
-        assert!(shown[9].contains("alex"), "{}", shown[9]);
-        assert!(shown[10].contains("livekit.example"), "{}", shown[10]);
-        // The harmless fields are still there to debug with.
-        assert!(shown[1].contains("alex"), "{}", shown[1]);
-        assert!(shown[5].contains("signed_out: 2"), "{}", shown[5]);
-        assert!(shown[7].contains("mfa_required"), "{}", shown[7]);
-    }
-}
-
 // ---------- Quotes ----------
 
 /// The quote part of a message in a quotes channel.
@@ -798,4 +682,120 @@ pub struct LeaderboardWin {
     pub message: Message,
     pub votes: u32,
     pub voters: Vec<UserId>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Debug output can end up in logs, so it never shows passwords, codes or tickets.
+    #[test]
+    fn debug_never_shows_secrets() {
+        let s = |v: &str| v.to_string();
+        let shown = [
+            format!(
+                "{:?}",
+                RegisterRequest {
+                    invite_code: s("SECRET-INVITE"),
+                    username: s("alex"),
+                    password: s("SECRET-PW"),
+                }
+            ),
+            format!(
+                "{:?}",
+                LoginRequest {
+                    username: s("alex"),
+                    password: s("SECRET-PW"),
+                }
+            ),
+            format!(
+                "{:?}",
+                TwoFactorSetupRequest {
+                    password: s("SECRET-PW"),
+                }
+            ),
+            format!(
+                "{:?}",
+                TwoFactorSetupResponse {
+                    secret: s("SECRET-B32"),
+                    otpauth_uri: s("otpauth://totp/Pulse:alex?secret=SECRET-B32"),
+                }
+            ),
+            format!(
+                "{:?}",
+                TwoFactorCodeRequest {
+                    code: s("SECRET-CODE")
+                }
+            ),
+            format!(
+                "{:?}",
+                TwoFactorEnabledResponse {
+                    recovery_codes: vec![s("SECRET-RC")],
+                    signed_out: 2,
+                }
+            ),
+            format!(
+                "{:?}",
+                RecoveryCodesResponse {
+                    recovery_codes: vec![s("SECRET-RC")],
+                }
+            ),
+            format!(
+                "{:?}",
+                MfaRequired {
+                    code: s("mfa_required"),
+                    message: s("enter your code"),
+                    ticket: s("SECRET-TICKET"),
+                }
+            ),
+            format!(
+                "{:?}",
+                LoginMfaRequest {
+                    ticket: s("SECRET-TICKET"),
+                    code: s("SECRET-CODE"),
+                }
+            ),
+            format!(
+                "{:?}",
+                SessionResponse {
+                    token: s("SECRET-TOKEN"),
+                    user: User {
+                        id: UserId::new(),
+                        username: s("alex"),
+                        avatar_hash: None,
+                    },
+                }
+            ),
+            format!(
+                "{:?}",
+                VoiceTokenResponse {
+                    url: s("wss://livekit.example"),
+                    token: s("SECRET-JWT"),
+                }
+            ),
+            format!(
+                "{:?}",
+                InviteResponse {
+                    code: s("SECRET-INVITE"),
+                }
+            ),
+            format!(
+                "{:?}",
+                ChangePasswordRequest {
+                    current_password: s("SECRET-PW"),
+                    new_password: s("SECRET-NEW"),
+                    code: Some(s("SECRET-CODE")),
+                }
+            ),
+        ];
+        for d in &shown {
+            assert!(!d.contains("SECRET"), "{d}");
+        }
+        assert!(shown[9].contains("alex"), "{}", shown[9]);
+        assert!(shown[10].contains("livekit.example"), "{}", shown[10]);
+        // The harmless fields are still there to debug with.
+        assert!(shown[1].contains("alex"), "{}", shown[1]);
+        assert!(shown[5].contains("signed_out: 2"), "{}", shown[5]);
+        assert!(shown[7].contains("mfa_required"), "{}", shown[7]);
+    }
 }

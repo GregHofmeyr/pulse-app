@@ -200,6 +200,7 @@ async fn migration_keeps_every_channel_row() {
     migrator.run(&pool).await.unwrap();
 
     let ts = "2026-10-01T00:00:00.000Z";
+    let dm = "01J000000000000000000000DM";
     let (user, server, channel, voice, message) = (
         "01J0000000000000000000USER",
         "01J000000000000000000SERVER",
@@ -232,6 +233,12 @@ async fn migration_keeps_every_channel_row() {
         format!(
             "INSERT INTO read_states (user_id, channel_id, last_read_message_id) VALUES ('{user}', '{channel}', '{message}')"
         ),
+        format!(
+            "INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('{dm}', NULL, 'dm', NULL, 0, '{ts}')"
+        ),
+        format!(
+            "INSERT INTO channel_members (channel_id, user_id, added_at) VALUES ('{dm}', '{user}', '{ts}')"
+        ),
     ] {
         sqlx::query(&q)
             .execute(&pool)
@@ -254,7 +261,8 @@ async fn migration_keeps_every_channel_row() {
                 .unwrap()
         }
     };
-    assert_eq!(count("channels").await, 2);
+    assert_eq!(count("channels").await, 3);
+    assert_eq!(count("channel_members").await, 1, "the dm kept its member");
     assert_eq!(count("messages").await, 1);
     assert_eq!(count("reactions").await, 1);
     assert_eq!(count("read_states").await, 1);
@@ -267,6 +275,7 @@ async fn migration_keeps_every_channel_row() {
     assert_eq!(
         modes,
         vec![
+            (dm.into(), "normal".into()),
             (voice.into(), "one_per_person".into()),
             (channel.into(), "normal".into())
         ]
@@ -317,11 +326,49 @@ async fn migration_refuses_to_run_with_foreign_keys_on() {
     let all = migrator.migrations.clone();
     migrator.migrations = Cow::Owned(all.iter().filter(|m| m.version <= 7).cloned().collect());
     migrator.run(&mut conn).await.unwrap();
+    let ts = "2026-10-01T00:00:00.000Z";
+    for q in [
+        format!(
+            "INSERT INTO users (id, username, password_hash, created_at) VALUES ('U', 'alex', 'x', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO servers (id, name, created_by, created_at) VALUES ('S', 'Main', 'U', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('C', 'S', 'text', 'general', 0, '{ts}')"
+        ),
+        format!(
+            "INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES ('M', 'C', 'U', 'hi', '{ts}')"
+        ),
+    ] {
+        sqlx::query(&q).execute(&mut conn).await.unwrap();
+    }
     migrator.migrations = all;
-    assert!(migrator.run(&mut conn).await.is_err());
+    let err = migrator.run(&mut conn).await.unwrap_err().to_string();
+    assert!(
+        err.contains("CHECK constraint failed"),
+        "refused by the guard: {err}"
+    );
+    let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(kept, 1, "nothing was lost");
     let v: i64 = sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
         .fetch_one(&mut conn)
         .await
         .unwrap();
     assert_eq!(v, 7, "0008 rolled back");
+}
+
+/// An in-memory database lives only while a connection is open: `connect` must hand back the
+/// migrated one, not a fresh empty one.
+#[tokio::test]
+async fn connect_works_for_an_in_memory_database() {
+    let pool = pulse_server::db::connect("sqlite::memory:").await.unwrap();
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM channels")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
 }

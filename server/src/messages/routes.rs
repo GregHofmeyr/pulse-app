@@ -184,7 +184,7 @@ async fn send(
     }
     if ch.kind == ChannelKind::Quotes {
         return Err(AppError::BadRequest(
-            "post a quote here; replies go in its thread".into(),
+            "only quotes can be posted here".into(),
         ));
     }
     let content = clean(&req.content)?;

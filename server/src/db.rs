@@ -19,14 +19,29 @@ pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
         .busy_timeout(std::time::Duration::from_secs(5));
     // Migrations get their own connection with foreign keys OFF: rebuilding a table (0008 does)
     // means dropping it, and with them on that would cascade-delete everything pointing at it.
-    // Each migration checks `foreign_key_check` itself where it matters.
+    // Nothing is FK-checked while they are off, so check the whole database afterwards.
     let mut migrator = opts.clone().foreign_keys(false).connect().await?;
     sqlx::migrate!("./migrations").run(&mut migrator).await?;
-    migrator.close().await?;
+    let broken: Vec<(String, Option<i64>, String, i64)> =
+        sqlx::query_as("PRAGMA foreign_key_check")
+            .fetch_all(&mut migrator)
+            .await?;
+    if !broken.is_empty() {
+        let mut tables: Vec<&str> = broken.iter().map(|b| b.0.as_str()).collect();
+        tables.sort_unstable();
+        tables.dedup();
+        anyhow::bail!(
+            "foreign key violations after migrating, in: {}",
+            tables.join(", ")
+        );
+    }
+    // The pool opens before the migration connection closes: an in-memory database lives only
+    // while a connection to it is open.
     let pool = SqlitePoolOptions::new()
         .max_connections(8)
         .connect_with(opts)
         .await?;
+    migrator.close().await?;
     Ok(pool)
 }
 

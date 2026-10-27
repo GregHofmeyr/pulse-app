@@ -26,8 +26,18 @@ DROP TABLE channels;
 ALTER TABLE channels_new RENAME TO channels;
 CREATE INDEX channels_server ON channels(server_id);
 
--- Nothing may reference a channel row that is gone: any violation fails the migration.
-INSERT INTO migration_guard SELECT 1 FROM pragma_foreign_key_check LIMIT 1;
+-- Nothing may reference a channel row that is gone, and the new table must be sound: any
+-- violation in `channels` or the tables that reference it fails the migration. Scoped on purpose:
+-- an unrelated orphan row elsewhere must not stop the server booting.
+INSERT INTO migration_guard
+    SELECT 1 FROM (
+        SELECT 1 FROM pragma_foreign_key_check('channels')
+        UNION ALL SELECT 1 FROM pragma_foreign_key_check('channel_members')
+        UNION ALL SELECT 1 FROM pragma_foreign_key_check('messages')
+        UNION ALL SELECT 1 FROM pragma_foreign_key_check('read_states')
+        UNION ALL SELECT 1 FROM pragma_foreign_key_check('dm_hidden')
+        UNION ALL SELECT 1 FROM pragma_foreign_key_check('voice_sessions')
+    ) LIMIT 1;
 DROP TABLE migration_guard;
 
 -- A quote is a message of a quotes channel with one row here. `posted_on` is the day it was
