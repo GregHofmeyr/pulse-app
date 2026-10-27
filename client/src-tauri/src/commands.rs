@@ -1002,9 +1002,10 @@ pub fn hotkey(app: &AppHandle, c: crate::ipc::Command) {
     });
 }
 
-/// UI sound, played natively (see sounds.rs for why not in the webview).
 static SOUND_LOG_BUDGET: std::sync::Mutex<Option<crate::logging::LineBudget>> =
     std::sync::Mutex::new(None);
+
+/// UI sound, played natively (see sounds.rs for why not in the webview).
 
 #[tauri::command]
 pub async fn play_sound(

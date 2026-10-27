@@ -339,7 +339,7 @@ pub fn tick_delay(stamp_ms: u32, now_ms: u32) -> Option<u32> {
 }
 
 /// How long a sleep overran, in ms; an overrun past `MAX_PLAUSIBLE_MS` was the PC suspending,
-/// not stalling.
+/// not stalling. (A suspend shorter than that reads as a stall: rare, and the line says so plainly.)
 pub fn overslept_ms(over: Duration) -> u32 {
     let ms = u32::try_from(over.as_millis()).unwrap_or(u32::MAX);
     if ms > MAX_PLAUSIBLE_MS { 0 } else { ms }
@@ -409,7 +409,13 @@ struct StallEpisode {
     started: Instant,
     last_line: Instant,
     since_last: Stall,
+    /// The last bad tick (what "lasted" runs to) and the quiet ticks since it.
+    last_bad: Instant,
+    quiet: u32,
 }
+
+/// Quiet ticks in a row that end an episode (~9 s): regular hitches stay one episode.
+pub const STALL_ENDS_AFTER_QUIET: u32 = 3;
 
 impl StallLog {
     pub fn tick(&mut self, s: Stall, now: Instant) -> Emit {
@@ -420,10 +426,14 @@ impl StallLog {
                     started: now,
                     last_line: now,
                     since_last: Stall::default(),
+                    last_bad: now,
+                    quiet: 0,
                 });
                 Emit::Started(s)
             }
             (Some(e), true) => {
+                e.quiet = 0;
+                e.last_bad = now;
                 e.since_last.merge(s);
                 if now.saturating_duration_since(e.last_line) < STALL_SUMMARY_EVERY {
                     return Emit::Nothing;
@@ -434,11 +444,15 @@ impl StallLog {
                     lasted: now.saturating_duration_since(e.started),
                 }
             }
-            (Some(_), false) => {
+            (Some(e), false) => {
+                e.quiet += 1;
+                if e.quiet < STALL_ENDS_AFTER_QUIET {
+                    return Emit::Nothing;
+                }
                 let e = self.episode.take().expect("matched Some");
                 Emit::Ended {
                     since_last: e.since_last,
-                    lasted: now.saturating_duration_since(e.started),
+                    lasted: e.last_bad.saturating_duration_since(e.started),
                 }
             }
         }
@@ -542,12 +556,19 @@ mod tests {
         assert_eq!(log.tick(stall(900), at(6)), Emit::Nothing);
         assert_eq!(log.tick(stall(300), at(9)), Emit::Nothing);
         let mut both = stall(900);
-        both.late_events = 2;
+        // regular hitches don't start and end an episode every few seconds: it ends after three
+        // quiet ticks in a row, lasting until the last bad one
+        assert_eq!(log.tick(Stall::default(), at(12)), Emit::Nothing);
+        assert_eq!(log.tick(Stall::default(), at(15)), Emit::Nothing);
+        assert_eq!(log.tick(stall(300), at(18)), Emit::Nothing); // a hitch: the quiet count starts over
+        both.late_events = 3;
+        assert_eq!(log.tick(Stall::default(), at(21)), Emit::Nothing);
+        assert_eq!(log.tick(Stall::default(), at(24)), Emit::Nothing);
         assert_eq!(
-            log.tick(Stall::default(), at(12)),
+            log.tick(Stall::default(), at(27)),
             Emit::Ended {
                 since_last: both,
-                lasted: Duration::from_secs(9)
+                lasted: Duration::from_secs(15)
             }
         );
         // a long one: a summary each minute

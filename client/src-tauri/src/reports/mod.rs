@@ -176,7 +176,10 @@ async fn read_tail(app: &AppHandle) -> String {
     let dir = app.state::<LogDir>().0.clone();
     tokio::task::spawn_blocking(move || tail::log_tail(&dir, TAIL_BYTES))
         .await
-        .unwrap_or_default()
+        .unwrap_or_else(|e| {
+            tracing::warn!(error = %e, "report: couldn't read the log tail; sending without it");
+            String::new()
+        })
 }
 
 #[tauri::command]

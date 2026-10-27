@@ -6,8 +6,8 @@
 //!
 //! The hooks exist only while they're wanted: the user's switch is on AND something is bound
 //! (`hookwatch::hooks_wanted`). Switched off, or with nothing bound (first run included), both hooks
-//! are removed (not just ignored), the watchdog stands down and stops polling input, and at startup
-//! they're never installed. Recording a bind doesn't need them: Settings records it from the
+//! are removed (not just ignored), the watchdog stops checking them (it still measures PC stalls,
+//! saying no hooks were in), and at startup they're never installed. Recording a bind doesn't need them: Settings records it from the
 //! window's own key events. The hook thread (and the watchdog) still run, idle, so switching back
 //! on, or adding the first bind, is instant.
 
@@ -143,6 +143,14 @@ mod platform {
         if !injected && let Some(late) = tick_delay(event_ms, now) {
             INPUT_LATE.note(late);
         }
+    }
+
+    /// When the current hooks went in (GetTickCount ms): each install puts ours first in the chain.
+    static HOOKED_AT: AtomicU32 = AtomicU32::new(0);
+    /// Hook thread, after an install or reinstall that worked.
+    fn note_hooked() {
+        // SAFETY: GetTickCount has no preconditions.
+        HOOKED_AT.store(unsafe { GetTickCount() }, Ordering::Relaxed);
     }
 
     /// Called last in each hook procedure, before passing the event on.
@@ -352,6 +360,7 @@ mod platform {
                     matcher().forget_released(still_down);
                     set_broken(None);
                     set_hooks(Hooks::In);
+                    note_hooked();
                     tracing::info!("keybinds: hooks installed");
                     Some(h)
                 }
@@ -415,6 +424,7 @@ mod platform {
         // stale plain key is already treated as a fresh press, REPEAT_WINDOW).
         matcher().forget_released(still_down);
         set_hooks(Hooks::In);
+        note_hooked();
         tracing::info!("keybinds: hooks reinstalled");
         Some(hooks)
     }
@@ -502,19 +512,23 @@ mod platform {
         }
     }
 
-    fn log_stall(e: Emit, since_reinstall: Option<Duration>) {
-        // whether our hooks were just put back (first in the chain) or have sat behind others
-        let since_reinstall_s = since_reinstall.map(|d| d.as_secs());
+    /// `hooks_in`: whether ours were in (if not, the stall wasn't them). `since_hooked_s`: how long
+    /// ours have been in (just put in = first in Windows' chain; long = behind newer ones).
+    fn log_stall(e: Emit, hooks_in: bool, since_hooked_s: Option<u32>) {
         match e {
             Emit::Nothing => {}
-            Emit::Started(s) => tracing::warn!(
+            Emit::Started(s) if hooks_in => tracing::warn!(
                 input_late_ms = s.input_late_ms,
                 late_events = s.late_events,
                 hook_proc_us = s.own_us,
                 hook_thread_ms = s.hook_thread_ms,
                 overslept_ms = s.overslept_ms,
-                ?since_reinstall_s,
+                ?since_hooked_s,
                 "keybinds: input stalled (the whole PC waits on low-level hooks)"
+            ),
+            Emit::Started(s) => tracing::warn!(
+                overslept_ms = s.overslept_ms,
+                "keybinds: the PC stalled (no keybind hooks in, so not them)"
             ),
             Emit::Ongoing {
                 since_last: s,
@@ -526,6 +540,7 @@ mod platform {
                 hook_thread_ms = s.hook_thread_ms,
                 overslept_ms = s.overslept_ms,
                 lasted_s = lasted.as_secs(),
+                hooks_in,
                 "keybinds: input still stalling (worst in the last minute)"
             ),
             Emit::Ended {
@@ -538,6 +553,7 @@ mod platform {
                 hook_thread_ms = s.hook_thread_ms,
                 overslept_ms = s.overslept_ms,
                 lasted_s = lasted.as_secs(),
+                hooks_in,
                 "keybinds: input stall over"
             ),
         }
@@ -563,14 +579,22 @@ mod platform {
             }
         };
         let mut stalls = StallLog::default();
-        let mut reinstalled_at: Option<Instant> = None;
         loop {
             let slept_from = Instant::now();
             std::thread::sleep(WATCH_EVERY);
             let overslept = slept_from.elapsed().saturating_sub(WATCH_EVERY);
             let emit = stalls.tick(take_stall(overslept), Instant::now());
-            log_stall(emit, reinstalled_at.map(|t| t.elapsed()));
-            ping(hook_thread);
+            let hooks_in = hooks() == Hooks::In;
+            let since_hooked_s = hooks_in.then(|| {
+                // a plain difference (wrapping): not tick_delay, which drops anything past a minute
+                // SAFETY: GetTickCount has no preconditions.
+                unsafe { GetTickCount() }.wrapping_sub(HOOKED_AT.load(Ordering::Relaxed)) / 1000
+            });
+            log_stall(emit, hooks_in, since_hooked_s);
+            // the hook thread's scheduling delay only matters while it's serving hooks
+            if hooks_in {
+                ping(hook_thread);
+            }
             match with_seen(watch_gate) {
                 Gate::Watch => {}
                 Gate::Resend => {
@@ -618,7 +642,6 @@ mod platform {
                     "keybinds: hooks stopped seeing input (dropped by Windows?); reinstalling"
                 ),
             }
-            reinstalled_at = Some(Instant::now());
             send(WM_REINSTALL);
         }
     }

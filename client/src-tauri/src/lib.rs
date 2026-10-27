@@ -25,6 +25,9 @@ struct LogGuard(
     #[allow(dead_code)] std::sync::Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>,
 );
 
+static FOCUS_LOG_BUDGET: std::sync::Mutex<Option<logging::LineBudget>> =
+    std::sync::Mutex::new(None);
+
 /// The main window is built here rather than in tauri.conf.json so each profile gets its own
 /// webview storage (settings, per-user volumes) and so we can recover if the renderer dies.
 fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri::Result<()> {
@@ -50,7 +53,14 @@ fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri:
     // apart from a focus the window never lost.
     win.on_window_event(|e| {
         if let tauri::WindowEvent::Focused(focused) = e {
-            tracing::info!(focused, "window focus");
+            // budgeted: focus can flip often (alt-tabbing, focus moving inside the window)
+            logging::log_budgeted(
+                &FOCUS_LOG_BUDGET,
+                20,
+                1.0,
+                || tracing::info!(focused, "window focus"),
+                |n| tracing::info!("window focus: {n} changes not logged (too many)"),
+            );
         }
     });
     // WebView2: the Low memory target while minimised or in the background.

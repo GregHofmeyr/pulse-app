@@ -156,7 +156,7 @@ impl<D: Clone> NameCache<D> {
 static DEVICES: std::sync::LazyLock<NameCache<cpal::Device>> =
     std::sync::LazyLock::new(NameCache::default);
 
-/// Fire-and-forget on a short-lived thread (cpal streams are !Send). Failures are silent: sounds are a nicety.
+/// Fire-and-forget on a short-lived thread (cpal streams are !Send). A failure only logs a line: sounds are a nicety.
 /// On `output` (a device name from settings; missing or unplugged = the system default).
 /// `volume` (0.0-1.0, clamped) scales the fixed gain; 0 plays nothing.
 pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
