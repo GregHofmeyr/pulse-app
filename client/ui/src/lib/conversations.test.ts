@@ -107,7 +107,7 @@ describe('conversations', () => {
 
   it('sound: DMs, groups and mentions; never own/system/open-and-focused/muted (mentions ping through mute); 2 s limit', () => {
     const s = applyReady(emptyState(), ready())
-    const base = { me: 'ME', open: false, focused: true, muted: false, lastPlayedAt: 0, now: 10_000 }
+    const base = { me: 'ME', open: false, openThread: null, focused: true, muted: false, lastPlayedAt: 0, now: 10_000 }
     const dm = s.channels['DM1'], text = s.channels['T1']
     expect(messageSound({ ...base, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(true)
     expect(messageSound({ ...base, message: msg('A', 'T1', 'U1'), channel: text })).toBe(false)
@@ -118,6 +118,21 @@ describe('conversations', () => {
     expect(messageSound({ ...base, muted: true, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(false)
     expect(messageSound({ ...base, muted: true, message: msg('A', 'DM1', 'U1', { mentions: ['ME'] }), channel: dm })).toBe(true)
     expect(messageSound({ ...base, lastPlayedAt: 9_000, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(false)
+  })
+
+  it('no sound for a reply while its panel is open and focused', () => {
+    const s = applyReady(emptyState(), ready())
+    const base = { me: 'ME', open: false, openThread: null, focused: true, muted: false, lastPlayedAt: 0, now: 10_000 }
+    const text = s.channels['T1']
+    const reply = msg('R', 'T1', 'U1', { mentions: ['ME'], thread_root_id: 'Q1' })
+    expect(messageSound({ ...base, message: reply, channel: text })).toBe(true)
+    // its panel is open in the focused window: you're reading it
+    expect(messageSound({ ...base, openThread: 'Q1', message: reply, channel: text })).toBe(false)
+    // open but the window is unfocused, or another quote's panel is open: it still pings
+    expect(messageSound({ ...base, openThread: 'Q1', focused: false, message: reply, channel: text })).toBe(true)
+    expect(messageSound({ ...base, openThread: 'Q2', message: reply, channel: text })).toBe(true)
+    // the channel open without the panel doesn't show the reply: it pings
+    expect(messageSound({ ...base, open: true, message: reply, channel: text })).toBe(true)
   })
 
   it('presence and new users update the people map; group membership updates', () => {

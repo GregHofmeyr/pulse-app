@@ -60,12 +60,17 @@ export const shouldMarkRead = (v: { open: boolean; focused: boolean; atBottom: b
 
 export const SOUND_GAP_MS = 2000
 
+/** Whether `message` is on screen: `open` says its channel is shown, `openThread` names the quote whose
+ *  replies panel is open. A reply shows only in its panel (the channel's list never has it). */
+export const onScreen = (v: { message: Message; open: boolean; openThread: string | null }) =>
+  v.message.thread_root_id ? v.openThread === v.message.thread_root_id : v.open
+
 export function messageSound(v: {
-  message: Message; me: string; channel: Channel; open: boolean; focused: boolean; muted: boolean; lastPlayedAt: number; now: number
+  message: Message; me: string; channel: Channel; open: boolean; openThread: string | null; focused: boolean; muted: boolean; lastPlayedAt: number; now: number
 }): boolean {
   const m = v.message
   if (m.kind !== 'normal' || m.author_id === v.me) return false
-  if (v.open && v.focused) return false
+  if (onScreen(v) && v.focused) return false
   const mentioned = m.mentions.includes(v.me)
   const isPrivate = v.channel.server_id === null
   if (!isPrivate && !mentioned) return false

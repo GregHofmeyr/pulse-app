@@ -7,7 +7,7 @@ import type { ReportKind } from './protocol/ReportKind'
 import { applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, type AppState, type ConnState } from './state'
 import { api } from './tauri'
 import { loadUnsent, saveUnsent } from './unsent'
-import { isMuted, messageSound, SOUND_GAP_MS } from './conversations'
+import { isMuted, messageSound, onScreen, SOUND_GAP_MS } from './conversations'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { noteReactionEvent } from './reactions'
 import { loadSoundPrefs, playSound } from './voiceui'
@@ -31,6 +31,8 @@ export type JumpRequest = { channelId: string; messageId: string; seq: number; m
 /** What the user is looking at: drives the message sound and read marking. */
 export const ui = $state({
   openChannelId: null as string | null,
+  /** The quote whose replies panel is open (its replies are on screen). */
+  openThreadId: null as string | null,
   /** A request to switch to this channel (the shell does it and clears it). */
   goTo: null as string | null,
   jump: null as JumpRequest | null,
@@ -60,7 +62,7 @@ function logSoundDecision(v: Parameters<typeof messageSound>[0], play: boolean) 
   // switched off in settings looks nothing like a sound that got lost
   const prefs = p.volume_pct === 0 ? 'vol0' : p.off.includes('message') ? 'off' : 'on'
   const line = `sound: message private=${isPrivate} mentioned=${mentioned} open=${v.open} focused=${v.focused} muted=${v.muted} gap_ok=${gapOk} sound=${prefs} play=${play}`
-  if (play || !v.open || !v.focused) return void api.uiLog(line, 'info')
+  if (play || !onScreen(v) || !v.focused) return void api.uiLog(line, 'info')
   getCurrentWindow().isFocused().then(
     (f) => {
       if (!f) void api.uiLog(`${line}; the OS says focused=false`, 'info')
@@ -81,6 +83,7 @@ function maybeSound(e: Event) {
     me: me.id,
     channel: ch,
     open: ui.openChannelId === m.channel_id,
+    openThread: ui.openThreadId,
     focused: windowFocus.focused,
     muted: isMuted(app.state, ch, new Date(now).toISOString()),
     lastPlayedAt,

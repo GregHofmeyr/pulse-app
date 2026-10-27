@@ -2,9 +2,12 @@
   import Icon from './Icon.svelte'
   import { modal } from '../lib/actions'
   import EmojiSettings from './EmojiSettings.svelte'
+  import SpeakerLinkSettings from './SpeakerLinkSettings.svelte'
   import type { Server } from '../lib/protocol/Server'
 
   let { server, onClose }: { server: Server; onClose: () => void } = $props()
+  const sections = ['Emoji', 'Quote speakers'] as const
+  let section = $state<(typeof sections)[number]>('Emoji')
 </script>
 
 <div class="overlay">
@@ -12,11 +15,13 @@
 <div class="modal" role="dialog" aria-modal="true" aria-label="Server settings" tabindex="-1" use:modal={onClose}>
   <nav aria-label="Server settings sections">
     <h1>{server.name}</h1>
-    <button class="on" aria-current="page">Emoji</button>
+    {#each sections as s (s)}
+      <button class:on={section === s} aria-current={section === s ? 'page' : undefined} onclick={() => (section = s)}>{s}</button>
+    {/each}
   </nav>
   <div class="content">
     <button class="close" aria-label="Close server settings" onclick={onClose}><Icon name="x" size={16} /></button>
-    <EmojiSettings {server} />
+    {#if section === 'Emoji'}<EmojiSettings {server} />{:else}<SpeakerLinkSettings {server} />{/if}
   </div>
 </div>
 </div>

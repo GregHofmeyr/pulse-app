@@ -12,7 +12,7 @@ const invoke = vi.fn(async (cmd: string, args?: { before?: string | null }): Pro
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import TextChannel from './TextChannel.svelte'
-import { app, handleReady, resetState } from '../lib/store.svelte'
+import { app, handleReady, resetState, ui } from '../lib/store.svelte'
 import { addHistory, applyReady, emptyState, markHistory, trimHistory } from '../lib/state'
 
 const msg = (n: number): Message => ({
@@ -199,6 +199,8 @@ describe('TextChannel: quotes channel', () => {
     Element.prototype.scrollTo = () => {}
     localStorage.clear()
     resetState()
+    invoke.mockReset()
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_replies' ? [] : undefined))
   })
   const mounted: ReturnType<typeof mount>[] = []
   afterEach(() => {
@@ -234,16 +236,55 @@ describe('TextChannel: quotes channel', () => {
     expect([...document.querySelectorAll('button')].some((b) => b.textContent === 'Start Quote of the Year')).toBe(true)
   })
 
-  it('header buttons call their callbacks', () => {
+  it('header buttons: the leaderboard opens its popover, Start calls back', () => {
     app.state = markHistory(addHistory(applyReady(emptyState(), ready('quotes')), 'C1', []), 'C1', true)
-    const onLeaderboard = vi.fn()
     const onStartQoty = vi.fn()
-    mounted.push(mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1', onLeaderboard, onStartQoty } }))
+    mounted.push(mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1', onStartQoty } }))
     flushSync()
     document.querySelector<HTMLButtonElement>('button[aria-label="Leaderboard"]')!.click()
+    flushSync()
+    expect(document.querySelector('.leaderboard')).toBeTruthy()
+    expect(invoke).toHaveBeenCalledWith('leaderboard', { serverId: 'S1', year: null })
     ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Start Quote of the Year')!.click()
-    expect(onLeaderboard).toHaveBeenCalled()
     expect(onStartQoty).toHaveBeenCalled()
+  })
+
+  it('a leaderboard entry closes the popover and jumps to the quote in its channel', async () => {
+    const other: Message = { ...quoteMsg, id: 'Q9', channel_id: 'C2' }
+    const board = { winners: [], top_year: [], top_all_time: [other], most_quoted: [], most_awarded: [] }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'leaderboard' ? board : undefined))
+    const r = ready('quotes')
+    app.state = markHistory(addHistory(applyReady(emptyState(), { ...r, channels: [...r.channels, { id: 'C2', server_id: 'S1', kind: 'quotes', name: 'more', position: 1 }] }), 'C1', []), 'C1', true)
+    mounted.push(mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } }))
+    flushSync()
+    document.querySelector<HTMLButtonElement>('button[aria-label="Leaderboard"]')!.click()
+    flushSync()
+    await new Promise((r) => setTimeout(r, 0))
+    flushSync()
+    document.querySelector<HTMLButtonElement>('.leaderboard button.entry')!.click()
+    flushSync()
+    expect(document.querySelector('.leaderboard')).toBeNull()
+    expect(ui.goTo).toBe('C2')
+    expect(invoke).toHaveBeenCalledWith('list_messages_around', { channelId: 'C2', messageId: 'Q9' })
+  })
+
+  it('Reply and View N replies open the replies panel, one at a time; Escape closes it', async () => {
+    const q2: Message = { ...quoteMsg, id: 'M0002', quote: { ...quoteMsg.quote!, reply_count: 1, last_reply_id: 'R1' } }
+    show('quotes', [quoteMsg, q2])
+    expect(document.querySelector('.replies-panel')).toBeNull()
+    document.querySelector<HTMLButtonElement>('.list .quote button[aria-label="Reply"]')!.click()
+    flushSync()
+    expect(document.querySelectorAll('.replies-panel')).toHaveLength(1)
+    expect(document.querySelector('.replies-panel .quote')?.getAttribute('data-message-id')).toBe('M0001')
+    expect(invoke).toHaveBeenCalledWith('list_replies', { messageId: 'M0001', before: null })
+    ;[...document.querySelectorAll<HTMLButtonElement>('.list button.replies')].find((b) => b.textContent?.includes('View 1 reply'))!.click()
+    flushSync()
+    expect(document.querySelectorAll('.replies-panel')).toHaveLength(1)
+    expect(document.querySelector('.replies-panel .quote')?.getAttribute('data-message-id')).toBe('M0002')
+    await new Promise((r) => setTimeout(r, 0))
+    document.querySelector('.replies-panel [role="textbox"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.querySelector('.replies-panel')).toBeNull()
   })
 
   it('has no message composer, and a text channel has no quote header', () => {

@@ -4,6 +4,8 @@
   import MessageItem from './MessageItem.svelte'
   import QuoteComposer from './QuoteComposer.svelte'
   import QuoteItem from './QuoteItem.svelte'
+  import RepliesPanel from './RepliesPanel.svelte'
+  import Leaderboard from './Leaderboard.svelte'
   import Composer from './Composer.svelte'
   import Avatar from './Avatar.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
@@ -12,20 +14,19 @@
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
   import { addHistory, addOlder, addPending, appendNewer, markHistory, PAGE, pendingMessage, removePending } from '../lib/state'
-  import { jumpToPresent } from '../lib/jump'
+  import { jumpTo, jumpToPresent } from '../lib/jump'
   import { displayName, nextTypingExpiry, stableList, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
-  let { channelId, serverId, onAddPeople = () => {}, onLeft = () => {}, onLeaderboard = () => {}, onStartQoty = () => {} }: {
+  let { channelId, serverId, onAddPeople = () => {}, onLeft = () => {}, onStartQoty = () => {} }: {
     channelId: string
     serverId: string | null
     /** DMs/groups: open the people picker. */
     onAddPeople?: () => void
     /** After leaving/closing this conversation. */
     onLeft?: () => void
-    /** Quotes channels: open the leaderboard / start Quote of the Year (wired by the leaderboard and vote tasks). */
-    onLeaderboard?: () => void
+    /** Quotes channels: start Quote of the Year (wired by the vote task). */
     onStartQoty?: () => void
   } = $props()
 
@@ -276,6 +277,15 @@
     editingQuote = null
   })
 
+  // The replies panel (one at a time: opening another replaces it) and the leaderboard popover.
+  let repliesOpen = $state<Message | null>(null)
+  const repliesRoot = $derived(repliesOpen ? (byId.get(repliesOpen.id) ?? repliesOpen) : null) // kept current
+  let leaderboardOpen = $state(false)
+  function openLeaderboardEntry(m: Message) {
+    leaderboardOpen = false
+    void jumpTo(m.channel_id, m.id)
+  }
+
   const nameOf = (userId: string | null) => (userId ? displayName(app.state, serverId, userId) : 'Pulse')
 
   function send(text: string) {
@@ -305,7 +315,7 @@
   }
 </script>
 
-<div class="chan">
+<div class="chan" class:with-replies={!!repliesRoot}>
   <div class="head">
     {#if isPrivate && channel?.kind === 'dm' && others[0]}
       <Avatar id={others[0]} name={title} size={26} online={app.state.people[others[0]]?.online ?? false} />
@@ -327,7 +337,8 @@
     {/if}
     <span class="grow"></span>
     {#if isQuotes}
-      <button class="hbtn" aria-label="Leaderboard" data-tip="Leaderboard" onclick={onLeaderboard}><Icon name="trophy" size={17} /></button>
+      <button class="hbtn" class:on={leaderboardOpen} aria-label="Leaderboard" data-tip="Leaderboard" data-menu-toggle aria-haspopup="dialog" aria-expanded={leaderboardOpen}
+        onclick={() => (leaderboardOpen = !leaderboardOpen)}><Icon name="trophy" size={17} /></button>
       <button class="qoty" onclick={onStartQoty}>Start Quote of the Year</button>
     {/if}
     {#if isPrivate}
@@ -339,6 +350,9 @@
     {#if isPrivate}
       <button class="hbtn" aria-label="More" aria-haspopup="menu" aria-expanded={menu === 'manage'} data-tip="More" data-menu-toggle
         onclick={() => (menu = menu === 'manage' ? null : 'manage')}><Icon name="dots" size={17} /></button>
+    {/if}
+    {#if leaderboardOpen && serverId}
+      <Leaderboard {serverId} onOpen={openLeaderboardEntry} onClose={() => (leaderboardOpen = false)} />
     {/if}
     {#if menu && channel}
       <ConversationMenu {channel} {muted} show={menu} onClose={() => (menu = null)} onRename={startRename} {onLeft} />
@@ -353,8 +367,8 @@
     {#each messages as m, i (m.id)}
       {#if i === newIndex}<div class="newline" role="separator" aria-label="New messages">NEW</div>{/if}
       {#if isQuotes && m.quote}
-        <!-- no onReply yet: the replies panel supplies it -->
         <QuoteItem message={m} serverId={serverId ?? ''} meId={app.state.me?.id ?? ''} {nameOf}
+          onReply={() => (repliesOpen = m)} onOpenReplies={() => (repliesOpen = m)}
           onEdit={() => (editingQuote = m)} onDelete={() => api.deleteMessage(m.id)} />
       {:else}
       <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={grouped(i)}
@@ -394,10 +408,18 @@
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
     onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} />
   {/if}
+  {#if repliesRoot}
+    {#key repliesRoot.id}
+      <RepliesPanel root={repliesRoot} serverId={serverId ?? ''} onClose={() => (repliesOpen = null)} onEditQuote={() => (editingQuote = repliesRoot)} />
+    {/key}
+  {/if}
 </div>
 
 <style>
   .chan { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+  /* the replies panel sits on the right (RepliesPanel, absolutely placed); the channel keeps the rest */
+  .chan { position: relative; --replies-w: min(380px, 45%); }
+  .chan.with-replies { padding-right: var(--replies-w); }
   .head { height: 52px; flex-shrink: 0; padding: 0 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--text-3); }
   .head { position: relative; }
   .title { color: var(--text); font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

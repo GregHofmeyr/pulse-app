@@ -85,4 +85,49 @@ describe('ServerSettings dialog', () => {
     esc(document.body)
     expect(onClose).toHaveBeenCalledTimes(1)
   })
+
+  it('lists links and undo calls unlink_speaker', async () => {
+    invoke.mockReset()
+    invoke.mockResolvedValue(undefined)
+    const me = { id: 'U1', username: 'alex', avatar_hash: null }
+    const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+    const kim = { id: 'U3', username: 'kim', avatar_hash: null }
+    app.state = {
+      ...emptyState(), me,
+      members: { S1: [{ user: me, nickname: null }, { user: sam, nickname: null }, { user: kim, nickname: null }] },
+      speakerLinks: { S1: [{ server_id: 'S1', name_key: 'big dave', name: 'Big Dave', user_id: 'U2', linked_by: 'U1', linked_at: '2026-10-01T00:00:00Z' }] },
+    }
+    cmp = mount(ServerSettings, { target: document.body, props: { server: { id: 'S1', name: 'Home', icon_hash: null }, onClose: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('nav button')].find((b) => b.textContent === 'Quote speakers')!.click()
+    flushSync()
+    const row = document.querySelector('.link')!
+    expect(row.textContent).toContain('Big Dave')
+    expect(row.textContent).toContain('sam')
+    expect(row.textContent).toContain('linked by alex')
+
+    // Change: pick another member by typing
+    ;[...row.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent === 'Change')!.click()
+    flushSync()
+    const find = document.querySelector<HTMLInputElement>('input[aria-label="Find a member"]')!
+    find.value = 'ki'
+    find.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.link button')].find((b) => b.textContent === 'kim')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('link_speaker', { serverId: 'S1', body: { name: 'Big Dave', user_id: 'U3' } })
+
+    ;[...document.querySelectorAll<HTMLButtonElement>('.link button')].find((b) => b.textContent === 'Undo')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('unlink_speaker', { serverId: 'S1', nameKey: 'big dave' })
+  })
+
+  it('says when no names are linked', () => {
+    app.state = emptyState()
+    cmp = mount(ServerSettings, { target: document.body, props: { server: { id: 'S1', name: 'Home', icon_hash: null }, onClose: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('nav button')].find((b) => b.textContent === 'Quote speakers')!.click()
+    flushSync()
+    expect(document.querySelector('.content')!.textContent).toContain('No names are linked yet')
+  })
 })

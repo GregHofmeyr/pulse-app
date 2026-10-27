@@ -102,9 +102,10 @@ export const api = {
   editQuote: (messageId: string, body: EditQuoteRequest) => invoke<Message>('edit_quote', { messageId, body }),
   /** Newest first; `before` pages back. */
   listReplies: (messageId: string, before?: string) => invoke<Message[]>('list_replies', { messageId, before: before ?? null }),
-  /** Queued in the Rust outbox like `sendMessage` (retry, failed state); the confirmed reply arrives on `pulse://outbox` and as a MessageCreated event, with `thread_root_id` set. */
-  sendReply: (channelId: string, rootId: string, content: string, nonce: string) =>
-    invoke<void>('send_reply', { channelId, rootId, content, nonce }),
+  /** Queued in the Rust outbox like `sendMessage` (retry, failed state); the confirmed reply arrives on `pulse://outbox` and as a MessageCreated event, with `thread_root_id` set.
+   *  `replyToId`: an inline "replying to" inside the same thread. */
+  sendReply: (channelId: string, rootId: string, content: string, replyToId: string | null, nonce: string) =>
+    invoke<void>('send_reply', { channelId, rootId, content, replyToId, nonce }),
   markRepliesSeen: (rootId: string, messageId: string) => invoke<void>('mark_replies_seen', { rootId, messageId }),
   giveAward: (lineId: string) => invoke<void>('give_award', { lineId }),
   takeAward: (lineId: string) => invoke<void>('take_award', { lineId }),

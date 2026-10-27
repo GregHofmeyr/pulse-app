@@ -1224,18 +1224,19 @@ pub async fn upload_quote_media(
 }
 
 /// A reply in a quote's thread: queued in the outbox like `send_message` (retry, failed state),
-/// carrying the quote it answers. Confirmation arrives as a `pulse://outbox` event whose message
-/// has `thread_root_id` set.
+/// carrying the quote it answers (and an inline reply-to inside that thread, if any). Confirmation
+/// arrives as a `pulse://outbox` event whose message has `thread_root_id` set.
 #[tauri::command]
 pub async fn send_reply(
     core: State<'_, Core>,
     channel_id: ChannelId,
     root_id: MessageId,
     content: String,
+    reply_to_id: Option<MessageId>,
     nonce: String,
 ) -> Result<(), ApiError> {
     core.outbox
-        .enqueue(nonce, channel_id, content, None, Some(root_id));
+        .enqueue(nonce, channel_id, content, reply_to_id, Some(root_id));
     if let Ok((api, token)) = core.current() {
         core.outbox.flush(&api, &token, false).await;
     }

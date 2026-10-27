@@ -28,7 +28,7 @@
     onReply,
     onEdit,
     onDelete,
-    onOpenReplies = () => {},
+    onOpenReplies,
   }: {
     message: Message
     serverId: string
@@ -38,6 +38,7 @@
     onReply?: () => void
     onEdit: () => void
     onDelete: () => Promise<void>
+    /** Absent where the replies panel pins the quote: no "View N replies" there. */
     onOpenReplies?: () => void
   } = $props()
 
@@ -147,7 +148,7 @@
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
         <ReactionRow {message} {meId} {nameOf} onError={showError} onePerPerson {suggest} />
-        {#if quote.reply_count > 0}
+        {#if quote.reply_count > 0 && onOpenReplies}
           <button type="button" class="replies" onclick={onOpenReplies}>
             View {quote.reply_count} {quote.reply_count === 1 ? 'reply' : 'replies'}
             {#if hasNewReplies(message)}<span class="new">new</span>{/if}

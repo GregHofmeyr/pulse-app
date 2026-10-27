@@ -122,7 +122,10 @@
       lastTyping = null
       return
     }
-    if (e.key === 'Escape' && replyingTo) onCancelReply()
+    if (e.key === 'Escape' && replyingTo) {
+      e.preventDefault() // taken: a panel around the box doesn't close too
+      onCancelReply()
+    }
   }
 
   function input(now: number) {
