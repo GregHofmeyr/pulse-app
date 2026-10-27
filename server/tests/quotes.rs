@@ -375,7 +375,7 @@ async fn connect_works_for_an_in_memory_database() {
 
 // ---------- posting and reading ----------
 
-use pulse_protocol::ids::{ServerId, UserId};
+use pulse_protocol::ids::{LineId, ServerId, UserId};
 use pulse_protocol::rest::{MediaInfo, Message};
 
 struct Fixture {
@@ -960,4 +960,420 @@ async fn reading_counts_awards_replies_and_wins() {
     ))
     .await;
     assert_eq!(read(f.alex_t.clone()).await.wins, vec![2025]);
+}
+
+// ---- editing and deleting ----
+
+impl Fixture {
+    async fn put(&self, token: &str, id: MessageId, body: serde_json::Value) -> reqwest::Response {
+        self.app
+            .http
+            .put(self.app.url(&format!("/quotes/{id}")))
+            .bearer_auth(token)
+            .json(&body)
+            .send()
+            .await
+            .unwrap()
+    }
+    async fn delete(&self, token: &str, id: MessageId) -> reqwest::Response {
+        self.app
+            .http
+            .delete(self.app.url(&format!("/messages/{id}")))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+    }
+    async fn award(&self, line: LineId, giver: UserId) {
+        sqlx::query("INSERT INTO quote_awards (line_id, giver_id, created_at) VALUES (?, ?, '2026-01-01T00:00:00.000Z')")
+            .bind(line.to_string())
+            .bind(giver.to_string())
+            .execute(&self.app.db)
+            .await
+            .unwrap();
+    }
+    async fn awards_on(&self, line: LineId) -> i64 {
+        sqlx::query_scalar("SELECT COUNT(*) FROM quote_awards WHERE line_id = ?")
+            .bind(line.to_string())
+            .fetch_one(&self.app.db)
+            .await
+            .unwrap()
+    }
+    /// A two-line quote by alex: sam says "one", a plain name says "two"; each line has one award.
+    async fn awarded_quote(&self) -> Message {
+        let m: Message = self
+            .post_lines(json!([
+                self.say(self.sam, "one"),
+                { "speaker_name": "A Friend", "text": "two" },
+            ]))
+            .await
+            .json()
+            .await
+            .unwrap();
+        for l in &m.quote.as_ref().unwrap().lines {
+            self.award(l.id, self.alex).await;
+        }
+        m
+    }
+}
+
+/// The edit body that changes nothing about `m`'s lines, as the client would send it back.
+fn same_lines(m: &Message) -> Vec<serde_json::Value> {
+    m.quote
+        .as_ref()
+        .unwrap()
+        .lines
+        .iter()
+        .map(|l| {
+            json!({
+                "id": l.id,
+                "speaker_id": l.speaker_id,
+                "speaker_name": l.speaker_name,
+                "text": l.text,
+            })
+        })
+        .collect()
+}
+
+#[tokio::test]
+async fn editing_text_keeps_awards() {
+    let f = fixture().await;
+    let m = f.awarded_quote().await;
+    let mut ws = hello(&f.app, &f.sam_t).await;
+    let mut lines = same_lines(&m);
+    lines[0]["text"] = json!("“one, edited”");
+    let r = f.put(&f.alex_t, m.id, json!({ "lines": lines })).await;
+    assert_eq!(r.status(), 200);
+    let edited: Message = r.json().await.unwrap();
+    let q = edited.quote.clone().unwrap();
+    assert_eq!(q.lines[0].id, m.quote.as_ref().unwrap().lines[0].id);
+    assert_eq!(q.lines[0].text.as_deref(), Some("one, edited"));
+    assert_eq!((q.lines[0].awards, q.lines[1].awards), (1, 1));
+    assert!(edited.edited_at.is_some());
+    assert_eq!(
+        edited.content, "“one, edited” — sam\n“two” — A Friend",
+        "content is re-rendered"
+    );
+    for l in &q.lines {
+        assert_eq!(f.awards_on(l.id).await, 1);
+    }
+    loop {
+        match next_frame(&mut ws).await.expect("MessageUpdated") {
+            ServerFrame::Event(Event::MessageUpdated { message }) => {
+                assert_eq!(message.id, m.id);
+                assert_eq!(
+                    message.quote.unwrap().lines[0].text.as_deref(),
+                    Some("one, edited")
+                );
+                assert!(message.edited_at.is_some());
+                break;
+            }
+            _ => continue,
+        }
+    }
+}
+
+#[tokio::test]
+async fn changing_a_speaker_drops_that_lines_awards() {
+    let f = fixture().await;
+    let m = f.awarded_quote().await;
+    let ids: Vec<LineId> = m
+        .quote
+        .as_ref()
+        .unwrap()
+        .lines
+        .iter()
+        .map(|l| l.id)
+        .collect();
+    let mut lines = same_lines(&m);
+    // Line 1: sam -> alex (a raw change). Line 2: the same plain name, only recased by the client.
+    lines[0]["speaker_id"] = json!(f.alex);
+    lines[1]["speaker_name"] = json!("  A Friend ");
+    let r = f.put(&f.alex_t, m.id, json!({ "lines": lines })).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(f.awards_on(ids[0]).await, 0);
+    assert_eq!(
+        f.awards_on(ids[1]).await,
+        1,
+        "an unchanged speaker keeps its awards"
+    );
+
+    // A plain name changed to another plain name drops them too.
+    let mut lines = same_lines(&r.json::<Message>().await.unwrap());
+    lines[1]["speaker_name"] = json!("Someone Else");
+    assert_eq!(
+        f.put(&f.alex_t, m.id, json!({ "lines": lines }))
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(f.awards_on(ids[1]).await, 0);
+}
+
+#[tokio::test]
+async fn removing_a_line_takes_its_awards() {
+    let f = fixture().await;
+    let m = f.awarded_quote().await;
+    let ids: Vec<LineId> = m
+        .quote
+        .as_ref()
+        .unwrap()
+        .lines
+        .iter()
+        .map(|l| l.id)
+        .collect();
+    let mut lines = same_lines(&m);
+    lines.remove(0);
+    // And a new line (no id) joins at the end.
+    lines.push(f.say(f.alex, "three"));
+    let r = f.put(&f.alex_t, m.id, json!({ "lines": lines })).await;
+    assert_eq!(r.status(), 200);
+    let q = r.json::<Message>().await.unwrap().quote.unwrap();
+    assert_eq!(q.lines.len(), 2);
+    assert_eq!(q.lines[0].id, ids[1]);
+    assert_eq!(q.lines[1].text.as_deref(), Some("three"));
+    assert!(!ids.contains(&q.lines[1].id));
+    assert_eq!(f.awards_on(ids[0]).await, 0);
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM quote_lines WHERE id = ?")
+        .bind(ids[0].to_string())
+        .fetch_one(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+    assert_eq!(q.lines[0].awards, 1);
+}
+
+#[tokio::test]
+async fn lines_can_be_reordered() {
+    let f = fixture().await;
+    let m = f.awarded_quote().await;
+    let mut lines = same_lines(&m);
+    lines.reverse();
+    let q = f
+        .put(&f.alex_t, m.id, json!({ "lines": lines }))
+        .await
+        .json::<Message>()
+        .await
+        .unwrap()
+        .quote
+        .unwrap();
+    assert_eq!(q.lines[0].text.as_deref(), Some("two"));
+    assert_eq!(q.lines[1].text.as_deref(), Some("one"));
+}
+
+#[tokio::test]
+async fn only_the_poster_edits() {
+    let f = fixture().await;
+    let m = f.awarded_quote().await;
+    let body = json!({ "lines": same_lines(&m) });
+    assert_eq!(f.put(&f.sam_t, m.id, body.clone()).await.status(), 403);
+    let (_, robin_t) = register(&f.app, "robin").await;
+    assert_eq!(
+        f.put(&robin_t, m.id, body.clone()).await.status(),
+        403,
+        "not the poster"
+    );
+    // Not a quote at all.
+    let msg_id = MessageId::new();
+    sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES (?, ?, ?, 'x', '2026-01-01T00:00:00.000Z')")
+        .bind(msg_id.to_string())
+        .bind(f.ch.id.to_string())
+        .bind(f.alex.to_string())
+        .execute(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(f.put(&f.alex_t, msg_id, body.clone()).await.status(), 400);
+    // A deleted quote is gone.
+    assert_eq!(f.delete(&f.alex_t, m.id).await.status(), 204);
+    assert_eq!(f.put(&f.alex_t, m.id, body).await.status(), 404);
+}
+
+#[tokio::test]
+async fn an_unknown_line_id_is_refused() {
+    let f = fixture().await;
+    let m = f.awarded_quote().await;
+    let other = f.awarded_quote().await;
+    let before = m.content.clone();
+    for bad in [LineId::new(), other.quote.as_ref().unwrap().lines[0].id] {
+        let mut lines = same_lines(&m);
+        lines[0]["id"] = json!(bad);
+        assert_eq!(
+            f.put(&f.alex_t, m.id, json!({ "lines": lines }))
+                .await
+                .status(),
+            400
+        );
+    }
+    // The same id twice is refused too.
+    let mut lines = same_lines(&m);
+    lines[1]["id"] = lines[0]["id"].clone();
+    assert_eq!(
+        f.put(&f.alex_t, m.id, json!({ "lines": lines }))
+            .await
+            .status(),
+        400
+    );
+    // Line rules apply to edits (no lines, a speaker outside the server) and change nothing.
+    assert_eq!(
+        f.put(&f.alex_t, m.id, json!({ "lines": [] }))
+            .await
+            .status(),
+        400
+    );
+    let (stranger, _) = register(&f.app, "robin").await;
+    let mut lines = same_lines(&m);
+    lines[0]["speaker_id"] = json!(stranger);
+    assert_eq!(
+        f.put(&f.alex_t, m.id, json!({ "lines": lines }))
+            .await
+            .status(),
+        400
+    );
+    let (content, edited): (String, Option<String>) =
+        sqlx::query_as("SELECT content, edited_at FROM messages WHERE id = ?")
+            .bind(m.id.to_string())
+            .fetch_one(&f.app.db)
+            .await
+            .unwrap();
+    assert_eq!((content, edited), (before, None));
+}
+
+#[tokio::test]
+async fn deleting_a_quote_clears_reactions_awards_and_replies() {
+    let f = fixture().await;
+    let m = f.awarded_quote().await;
+    let ids: Vec<LineId> = m
+        .quote
+        .as_ref()
+        .unwrap()
+        .lines
+        .iter()
+        .map(|l| l.id)
+        .collect();
+    let db = &f.app.db;
+    let mid = m.id.to_string();
+    sqlx::query("INSERT INTO reactions (message_id, user_id, emoji, created_at) VALUES (?, ?, '👍', '2026-01-01T00:00:00.000Z')")
+        .bind(&mid)
+        .bind(f.sam.to_string())
+        .execute(db)
+        .await
+        .unwrap();
+    let (r1, r2) = (MessageId::new(), MessageId::new());
+    for id in [r1, r2] {
+        sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, created_at, thread_root_id) VALUES (?, ?, ?, 'r', '2026-01-03T00:00:00.000Z', ?)")
+            .bind(id.to_string())
+            .bind(f.ch.id.to_string())
+            .bind(f.sam.to_string())
+            .bind(&mid)
+            .execute(db)
+            .await
+            .unwrap();
+    }
+    // An already-deleted reply gets no event.
+    let gone = MessageId::new();
+    sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, created_at, thread_root_id, deleted_at) VALUES (?, ?, ?, '', '2026-01-03T00:00:00.000Z', ?, '2026-01-04T00:00:00.000Z')")
+        .bind(gone.to_string())
+        .bind(f.ch.id.to_string())
+        .bind(f.sam.to_string())
+        .bind(&mid)
+        .execute(db)
+        .await
+        .unwrap();
+    // A QotY option with a vote, and a past win.
+    for q in [
+        format!(
+            "INSERT INTO qoty_events (id, server_id, year, started_by, started_at) VALUES ('e1', '{}', 2026, '{}', '2026-12-01T00:00:00.000Z')",
+            f.server, f.alex
+        ),
+        format!(
+            "INSERT INTO qoty_events (id, server_id, year, started_by, started_at, ended_at, end_reason) VALUES ('e0', '{}', 2025, '{}', '2025-12-01T00:00:00.000Z', '2025-12-02T00:00:00.000Z', 'early')",
+            f.server, f.alex
+        ),
+        format!(
+            "INSERT INTO qoty_options (event_id, message_id, added_by) VALUES ('e1', '{mid}', '{}')",
+            f.alex
+        ),
+        format!(
+            "INSERT INTO qoty_votes (event_id, user_id, message_id) VALUES ('e1', '{}', '{mid}')",
+            f.sam
+        ),
+        format!("INSERT INTO qoty_winners (event_id, message_id, votes) VALUES ('e0', '{mid}', 3)"),
+    ] {
+        sqlx::query(&q).execute(db).await.unwrap();
+    }
+
+    let mut ws = hello(&f.app, &f.sam_t).await;
+    assert_eq!(f.delete(&f.alex_t, m.id).await.status(), 204);
+
+    let count = |q: String| async move {
+        sqlx::query_scalar::<_, i64>(&q)
+            .fetch_one(db)
+            .await
+            .unwrap()
+    };
+    assert_eq!(
+        count(format!(
+            "SELECT COUNT(*) FROM reactions WHERE message_id = '{mid}'"
+        ))
+        .await,
+        0
+    );
+    for l in &ids {
+        assert_eq!(f.awards_on(*l).await, 0);
+    }
+    assert_eq!(
+        count(format!(
+            "SELECT COUNT(*) FROM messages WHERE thread_root_id = '{mid}' AND deleted_at IS NULL"
+        ))
+        .await,
+        0
+    );
+    assert_eq!(
+        count(format!(
+            "SELECT COUNT(*) FROM messages WHERE thread_root_id = '{mid}' AND content = ''"
+        ))
+        .await,
+        3
+    );
+    assert_eq!(
+        count(format!(
+            "SELECT COUNT(*) FROM qoty_options WHERE message_id = '{mid}'"
+        ))
+        .await,
+        0
+    );
+    assert_eq!(count("SELECT COUNT(*) FROM qoty_votes".into()).await, 0);
+    assert_eq!(
+        count(format!(
+            "SELECT COUNT(*) FROM qoty_winners WHERE message_id = '{mid}'"
+        ))
+        .await,
+        1,
+        "wins stay"
+    );
+
+    let mut deleted: Vec<(MessageId, Option<MessageId>)> = vec![];
+    while deleted.len() < 3 {
+        match next_frame(&mut ws).await.expect("MessageDeleted") {
+            ServerFrame::Event(Event::MessageDeleted {
+                message_id,
+                thread_root_id,
+                channel_id,
+                ..
+            }) => {
+                assert_eq!(channel_id, f.ch.id);
+                deleted.push((message_id, thread_root_id));
+            }
+            _ => continue,
+        }
+    }
+    deleted.sort_by_key(|d| d.0.to_string());
+    let mut want = vec![(m.id, None), (r1, Some(m.id)), (r2, Some(m.id))];
+    want.sort_by_key(|d| d.0.to_string());
+    assert_eq!(deleted, want);
+    // The quote reads back as deleted, without lines.
+    let page: Vec<Message> =
+        get_json(&f.app, &f.sam_t, &format!("/channels/{}/messages", f.ch.id)).await;
+    let read = page.iter().find(|p| p.id == m.id).unwrap();
+    assert!(read.deleted && read.quote.is_none());
 }

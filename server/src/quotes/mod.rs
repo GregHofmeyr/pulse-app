@@ -4,10 +4,12 @@ pub mod routes;
 
 use std::collections::{HashMap, HashSet};
 
+use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{LineId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{LineMedia, Message, NewQuoteLine, Quote, QuoteLine};
 use sqlx::{SqliteConnection, SqlitePool};
 
+use crate::db::now;
 use crate::error::{AppError, AppResult};
 use crate::messages::MAX_LEN;
 
@@ -66,13 +68,9 @@ fn bad(msg: &str) -> AppError {
     AppError::BadRequest(msg.into())
 }
 
-/// Check a client's lines against the rules and the server they are posted in. Run on the write
-/// transaction, so a picture can't be swept between the check and the insert.
-pub async fn validate_lines(
-    db: &mut SqliteConnection,
-    server: ServerId,
-    lines: &[NewQuoteLine],
-) -> AppResult<Vec<CleanLine>> {
+/// The rules that need no database: shape, lengths and text cleaning. Run before taking the write
+/// lock; [`check_lines`] does the rest on the write transaction.
+pub fn clean_lines(lines: &[NewQuoteLine]) -> AppResult<Vec<CleanLine>> {
     if lines.is_empty() || lines.len() > MAX_LINES {
         return Err(AppError::BadRequest(format!(
             "a quote has 1-{MAX_LINES} lines"
@@ -127,9 +125,20 @@ pub async fn validate_lines(
         });
     }
 
+    Ok(out)
+}
+
+/// The rules that read the database: speakers must be members of `server` (their labels are filled
+/// in) and pictures must be usable. Run on the write transaction, so a picture can't be swept
+/// between the check and the insert.
+pub async fn check_lines(
+    db: &mut SqliteConnection,
+    server: ServerId,
+    out: &mut [CleanLine],
+) -> AppResult<()> {
     // Members and pictures are checked together: one query each, however many lines.
-    let members = member_names(db, server, &out).await?;
-    for l in &mut out {
+    let members = member_names(db, server, out).await?;
+    for l in out.iter_mut() {
         if let Some(who) = l.speaker_id {
             l.speaker_label = members
                 .get(&who)
@@ -137,7 +146,7 @@ pub async fn validate_lines(
                 .ok_or_else(|| bad("the speaker isn't in this server"))?;
         }
     }
-    let usable = usable_media(db, &out).await?;
+    let usable = usable_media(db, out).await?;
     if out
         .iter()
         .filter_map(|l| l.media_hash.as_ref())
@@ -145,7 +154,7 @@ pub async fn validate_lines(
     {
         return Err(bad("unknown picture"));
     }
-    Ok(out)
+    Ok(())
 }
 
 /// Usernames of the lines' member speakers who are in `server`.
@@ -196,6 +205,85 @@ async fn usable_media(
     in_list(&mut q, &hashes);
     let rows: Vec<String> = q.build_query_scalar().fetch_all(db).await?;
     Ok(rows.into_iter().collect())
+}
+
+/// Whether the quote's speakers are frozen: it is a live Quote of the Year option, so changing a
+/// speaker or adding or removing a line would change what people vote on. Never, until QotY exists.
+pub async fn speakers_locked(
+    _tx: &mut SqliteConnection,
+    _message_id: MessageId,
+) -> AppResult<bool> {
+    Ok(false)
+}
+
+/// Everything a deleted quote leaves behind, in the caller's transaction (the quote's own soft
+/// delete is the caller's): its reactions and awards go, its replies are soft-deleted, and its
+/// Quote of the Year options and their votes go. `qoty_winners` rows stay. The events to publish
+/// once committed: one `MessageDeleted` per reply that was live, carrying `thread_root_id`.
+pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppResult<Vec<Event>> {
+    let id = message_id.to_string();
+    sqlx::query("DELETE FROM reactions WHERE message_id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    sqlx::query(
+        "DELETE FROM quote_awards WHERE line_id IN (SELECT id FROM quote_lines WHERE message_id = ?)",
+    )
+    .bind(&id)
+    .execute(&mut *tx)
+    .await?;
+    // Votes go with their option (foreign key cascade), but not by luck: say so.
+    sqlx::query(
+        "DELETE FROM qoty_votes WHERE message_id = ? AND event_id IN (SELECT event_id FROM qoty_options WHERE message_id = ?)",
+    )
+    .bind(&id)
+    .bind(&id)
+    .execute(&mut *tx)
+    .await?;
+    sqlx::query("DELETE FROM qoty_options WHERE message_id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+
+    let replies: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "UPDATE messages SET content = '', deleted_at = ?
+         WHERE thread_root_id = ? AND deleted_at IS NULL
+         RETURNING id, channel_id, author_id",
+    )
+    .bind(now())
+    .bind(&id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut mentioned: HashMap<String, Vec<UserId>> = HashMap::new();
+    for (msg, user) in sqlx::query_as::<_, (String, String)>(
+        "SELECT mt.message_id, mt.user_id FROM mentions mt JOIN messages m ON m.id = mt.message_id
+         WHERE m.thread_root_id = ? ORDER BY mt.rowid",
+    )
+    .bind(&id)
+    .fetch_all(&mut *tx)
+    .await?
+    {
+        mentioned
+            .entry(msg)
+            .or_default()
+            .push(user.parse().map_err(anyhow::Error::from)?);
+    }
+    replies
+        .into_iter()
+        .map(|(reply, channel, author)| {
+            Ok(Event::MessageDeleted {
+                channel_id: channel.parse().map_err(anyhow::Error::from)?,
+                author_id: author
+                    .as_deref()
+                    .map(str::parse)
+                    .transpose()
+                    .map_err(anyhow::Error::from)?,
+                mentions: mentioned.remove(&reply).unwrap_or_default(),
+                message_id: reply.parse().map_err(anyhow::Error::from)?,
+                thread_root_id: Some(message_id),
+            })
+        })
+        .collect()
 }
 
 /// The plain rendering stored in `messages.content`: `“text” — speaker` per line, `[image]` for pictures.

@@ -298,7 +298,7 @@ async fn send(
 }
 
 /// Load a live message the caller can see and authored. Outsiders get 404, others' messages 403.
-async fn own_message(db: &SqlitePool, me: UserId, id: MessageId) -> AppResult<Message> {
+pub(crate) async fn own_message(db: &SqlitePool, me: UserId, id: MessageId) -> AppResult<Message> {
     let msg = load(db, Some(me), id).await?.ok_or(AppError::NotFound)?;
     channel_for(db, me, msg.channel_id).await?;
     if msg.deleted {
@@ -361,18 +361,32 @@ async fn remove(
         return Err(AppError::TooManyRequests);
     }
     let msg = own_message(&s.db, me, id).await?;
+    let is_quote = msg.quote.is_some();
+    // A quote's delete also drops counts (reactions, awards): publish in commit order.
+    let _order = if is_quote {
+        Some(s.hub.in_order().await)
+    } else {
+        None
+    };
+    let mut tx = crate::db::begin_write(&s.db).await?;
     let changed = sqlx::query(
         "UPDATE messages SET content = '', deleted_at = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
     )
     .bind(now())
     .bind(id.to_string())
     .bind(me.to_string())
-    .execute(&s.db)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
     if changed == 0 {
         return Err(AppError::NotFound);
     }
+    let replies = if is_quote {
+        crate::quotes::on_delete(&mut tx, id).await?
+    } else {
+        vec![]
+    };
+    tx.commit().await?;
     s.hub
         .publish(
             &s.db,
@@ -388,5 +402,8 @@ async fn remove(
             },
         )
         .await;
+    for event in replies {
+        s.hub.publish(&s.db, event).await;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
