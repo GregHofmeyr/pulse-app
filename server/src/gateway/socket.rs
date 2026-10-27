@@ -215,7 +215,7 @@ pub async fn build_ready(
         frequent_emoji: crate::emoji::frequent(db, me, crate::emoji::FREQUENT).await?,
         // Filled in with the quotes routes.
         qoty: vec![],
-        speaker_links: vec![],
+        speaker_links: crate::quotes::links::for_ready(db).await?,
     })
 }
 

@@ -2,6 +2,7 @@
 
 pub mod awards;
 pub use awards::award_totals;
+pub mod links;
 pub mod routes;
 
 use std::collections::{HashMap, HashSet};

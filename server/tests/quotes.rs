@@ -2468,3 +2468,244 @@ async fn taking_back_an_award_the_speaker_left_removes_it() {
         );
     }
 }
+
+// ---- speaker links ----
+
+impl Fixture {
+    async fn link_req(&self, token: &str, name: &str, user: UserId) -> reqwest::Response {
+        self.app
+            .http
+            .put(
+                self.app
+                    .url(&format!("/servers/{}/speaker-links", self.server)),
+            )
+            .bearer_auth(token)
+            .json(&json!({ "name": name, "user_id": user }))
+            .send()
+            .await
+            .unwrap()
+    }
+    async fn link(&self, token: &str, name: &str, user: UserId) -> u16 {
+        self.link_req(token, name, user).await.status().as_u16()
+    }
+    async fn unlink(&self, token: &str, key: &str) -> u16 {
+        self.app
+            .http
+            .delete(
+                self.app
+                    .url(&format!("/servers/{}/speaker-links/{key}", self.server)),
+            )
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16()
+    }
+    /// A quote by alex with plain-name lines "A Friend" and "a  friend".
+    async fn friend_quote(&self) -> Message {
+        self.post_lines(json!([
+            { "speaker_name": "A Friend", "text": "one" },
+            { "speaker_name": "a  friend", "text": "two" },
+        ]))
+        .await
+        .json()
+        .await
+        .unwrap()
+    }
+}
+
+/// The `SpeakerLinksChanged` lists the socket delivers until it goes quiet.
+async fn link_events(ws: &mut Socket) -> Vec<Vec<pulse_protocol::rest::SpeakerLink>> {
+    let mut out = Vec::new();
+    while let Some(fr) = next_frame(ws).await {
+        if let ServerFrame::Event(Event::SpeakerLinksChanged { links, .. }) = fr {
+            out.push(links);
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn linking_counts_lines_for_the_member() {
+    let f = fixture().await;
+    let m = f.friend_quote().await;
+    for i in 0..2 {
+        assert_eq!(f.award_status(&f.alex_t, f.line_of(&m, i), true).await, 204);
+    }
+    assert_eq!(f.link(&f.alex_t, " A  Friend ", f.sam).await, 204);
+    let totals = pulse_server::quotes::award_totals(&f.app.db, f.server)
+        .await
+        .unwrap();
+    assert_eq!(
+        totals,
+        vec![pulse_protocol::rest::SpeakerCount {
+            user_id: Some(f.sam),
+            name: None,
+            count: 2
+        }]
+    );
+}
+
+#[tokio::test]
+async fn undo_returns_lines_to_the_name() {
+    let f = fixture().await;
+    let m = f.friend_quote().await;
+    let line = f.line_of(&m, 0);
+    assert_eq!(f.award_status(&f.alex_t, line, true).await, 204);
+    assert_eq!(f.link(&f.alex_t, "a friend", f.sam).await, 204);
+    assert_eq!(f.link(&f.alex_t, "A FRIEND", f.alex).await, 204);
+    assert_eq!(f.unlink(&f.sam_t, "a friend").await, 204);
+    let l = f.line_on_page(&f.alex_t, &m, 0).await;
+    assert_eq!(l.speaker_name.as_deref(), Some("A Friend"));
+    assert_eq!(l.speaker_id, None);
+    let totals = pulse_server::quotes::award_totals(&f.app.db, f.server)
+        .await
+        .unwrap();
+    assert_eq!(totals[0].name.as_deref(), Some("A Friend"));
+    assert_eq!(totals[0].count, 1);
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM speaker_links")
+        .fetch_one(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+}
+
+#[tokio::test]
+async fn anyone_can_repoint() {
+    let f = fixture().await;
+    f.friend_quote().await;
+    assert_eq!(f.link(&f.alex_t, "a friend", f.sam).await, 204);
+    let mut ws = hello(&f.app, &f.alex_t).await;
+    // Same target again: nothing changes, nothing is published.
+    assert_eq!(f.link(&f.sam_t, "A Friend", f.sam).await, 204);
+    assert!(link_events(&mut ws).await.is_empty());
+    // sam moves it to alex.
+    assert_eq!(f.link(&f.sam_t, "A Friend", f.alex).await, 204);
+    let events = link_events(&mut ws).await;
+    assert_eq!(events.len(), 1);
+    let [l] = events[0].as_slice() else {
+        panic!("one link")
+    };
+    assert_eq!(
+        (l.server_id, l.name_key.as_str(), l.name.as_str()),
+        (f.server, "a friend", "A Friend")
+    );
+    assert_eq!((l.user_id, l.linked_by), (f.alex, f.sam));
+}
+
+#[tokio::test]
+async fn self_awards_via_a_link_are_not_counted() {
+    let f = fixture().await;
+    let m = f
+        .post_lines(json!([
+            { "speaker_name": "A Friend", "text": "one" },
+            { "speaker_name": "Other", "text": "two" },
+        ]))
+        .await
+        .json::<Message>()
+        .await
+        .unwrap();
+    let line = f.line_of(&m, 0);
+    assert_eq!(f.award_status(&f.sam_t, line, true).await, 204);
+    assert_eq!(f.link(&f.alex_t, "a friend", f.sam).await, 204);
+    let l = f.line_on_page(&f.sam_t, &m, 0).await;
+    assert_eq!((l.awards, l.awarders.len(), l.awarded), (0, 0, false));
+    // The line is sam's own now, so sam can't award it again or another by the same name.
+    assert_eq!(f.award_status(&f.sam_t, line, true).await, 403);
+    let m2 = f
+        .post_lines(json!([{ "speaker_name": "a friend", "text": "three" }]))
+        .await
+        .json::<Message>()
+        .await
+        .unwrap();
+    assert_eq!(f.award_status(&f.sam_t, f.line_of(&m2, 0), true).await, 403);
+    assert_eq!(f.unlink(&f.alex_t, "a friend").await, 204);
+    let l = f.line_on_page(&f.sam_t, &m, 0).await;
+    assert_eq!((l.awards, l.awarders), (1, vec![f.sam]));
+}
+
+#[tokio::test]
+async fn link_rules() {
+    let f = fixture().await;
+    f.friend_quote().await;
+    let (outsider, out_t) = register(&f.app, "outsider").await;
+    // Not a member of the server.
+    assert_eq!(f.link(&out_t, "a friend", f.sam).await, 403);
+    assert_eq!(f.unlink(&out_t, "a friend").await, 403);
+    // The user must be a member.
+    assert_eq!(f.link(&f.alex_t, "a friend", outsider).await, 400);
+    // The name must be on a live line in this server, and not empty.
+    assert_eq!(f.link(&f.alex_t, "nobody", f.sam).await, 400);
+    assert_eq!(f.link(&f.alex_t, "   ", f.sam).await, 400);
+    // A deleted quote's names don't count.
+    let gone = f
+        .post_lines(json!([{ "speaker_name": "Ghost", "text": "boo" }]))
+        .await
+        .json::<Message>()
+        .await
+        .unwrap();
+    assert_eq!(f.delete(&f.alex_t, gone.id).await.status(), 204);
+    assert_eq!(f.link(&f.alex_t, "ghost", f.sam).await, 400);
+    // Unlinking what isn't linked.
+    assert_eq!(f.unlink(&f.alex_t, "a friend").await, 404);
+    // The name is kept as the request spelled it, trimmed.
+    assert_eq!(f.link(&f.alex_t, "  A   FRIEND ", f.sam).await, 204);
+    let name: String = sqlx::query_scalar("SELECT name FROM speaker_links")
+        .fetch_one(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(name, "A   FRIEND");
+    // Unauthenticated.
+    let r = f
+        .app
+        .http
+        .put(f.app.url(&format!("/servers/{}/speaker-links", f.server)))
+        .json(&json!({ "name": "a friend", "user_id": f.sam }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+}
+
+#[tokio::test]
+async fn links_are_in_ready_and_events() {
+    let f = fixture().await;
+    f.friend_quote().await;
+    let mut ws = hello(&f.app, &f.sam_t).await;
+    assert_eq!(f.link(&f.alex_t, "a friend", f.sam).await, 204);
+    let events = link_events(&mut ws).await;
+    assert_eq!(events.len(), 1);
+    assert_eq!(events[0].len(), 1);
+    let (_ws, ready) = hello_ready(&f.app, &f.sam_t).await;
+    assert_eq!(ready.speaker_links, events[0]);
+    assert_eq!(f.unlink(&f.alex_t, "a friend").await, 204);
+    let (_ws, ready) = hello_ready(&f.app, &f.sam_t).await;
+    assert!(ready.speaker_links.is_empty());
+}
+
+#[tokio::test]
+async fn linking_publishes_under_the_order_lock() {
+    let f = fixture().await;
+    f.friend_quote().await;
+    let guard = f.app.hub.in_order().await;
+    let (http, url, token, sam) = (
+        f.app.http.clone(),
+        f.app.url(&format!("/servers/{}/speaker-links", f.server)),
+        f.alex_t.clone(),
+        f.sam,
+    );
+    let put = tokio::spawn(async move {
+        http.put(url)
+            .bearer_auth(token)
+            .json(&json!({ "name": "a friend", "user_id": sam }))
+            .send()
+            .await
+            .unwrap()
+            .status()
+    });
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(!put.is_finished(), "linking should wait on in_order");
+    drop(guard);
+    assert_eq!(put.await.unwrap(), 204);
+}
