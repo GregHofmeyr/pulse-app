@@ -287,9 +287,15 @@
   </div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if isQuotes}
-    {#key editingQuote?.id}
-      <QuoteComposer {channelId} serverId={serverId ?? ''} editing={editingQuote ?? undefined} onDone={() => (editingQuote = null)} />
+    <!-- the new-quote composer stays mounted (hidden) while one is edited, so its draft survives -->
+    {#key channelId}
+      <div hidden={!!editingQuote}><QuoteComposer {channelId} serverId={serverId ?? ''} /></div>
     {/key}
+    {#if editingQuote}
+      {#key editingQuote.id}
+        <QuoteComposer {channelId} serverId={serverId ?? ''} editing={editingQuote} onDone={() => (editingQuote = null)} />
+      {/key}
+    {/if}
   {:else}
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
     onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} />

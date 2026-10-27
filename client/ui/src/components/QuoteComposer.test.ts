@@ -174,4 +174,144 @@ describe('QuoteComposer', () => {
     textOf(0).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); flushSync()
     expect(onDone).toHaveBeenCalled()
   })
+
+  it('retries a failed post with the same nonce, then uses a fresh one', async () => {
+    let n = 0
+    invoke.mockImplementation(async (cmd) => { if (cmd === 'post_quote' && n++ === 0) throw 'network down'; return undefined })
+    show()
+    type(textOf(0), 'hi'); pickMember(0, 'sam'); enter(textOf(0)); await settle()
+    expect(document.body.textContent).toContain('network down')
+    enter(textOf(0)); await settle()
+    const ns = calls('post_quote').map((c) => (c[1] as { body: { nonce: string } }).body.nonce)
+    expect(ns).toHaveLength(2)
+    expect(ns[0]).toBe(ns[1])
+    type(textOf(0), 'again'); pickMember(0, 'sam'); enter(textOf(0)); await settle()
+    expect((calls('post_quote')[2][1] as { body: { nonce: string } }).body.nonce).not.toBe(ns[0])
+  })
+
+  it('the picker is keyboard driven: ArrowDown reaches the plain-name option', async () => {
+    show()
+    type(textOf(0), 'hi')
+    const w = whoOf(0); w.focus(); type(w, 'sa')
+    const key = (k: string) => { w.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })); flushSync() }
+    const opts = () => [...rows()[0].querySelectorAll<HTMLElement>('[role=option]')]
+    expect(opts().map((o) => o.getAttribute('aria-selected'))).toEqual(['true', 'false'])
+    key('ArrowDown')
+    expect(opts().map((o) => o.getAttribute('aria-selected'))).toEqual(['false', 'true'])
+    expect(w.getAttribute('aria-activedescendant')).toBe(opts()[1].id)
+    key('Enter')
+    expect(rows()[0].querySelector('.chip')!.textContent).toContain('sa')
+    expect(rows()[0].querySelector('.chip')!.textContent).not.toContain('sam')
+  })
+
+  it('the image button is a real button that opens the file chooser', () => {
+    show()
+    const b = rows()[0].querySelector<HTMLElement>('[aria-label="Add image"]')!
+    expect(b.tagName).toBe('BUTTON')
+    const input = rows()[0].querySelector<HTMLInputElement>('input[type=file]')!
+    const click = vi.spyOn(input, 'click')
+    b.click()
+    expect(click).toHaveBeenCalled()
+  })
+
+  it('refocuses the text box after posting', async () => {
+    show()
+    type(textOf(0), 'hi'); pickMember(0, 'sam'); enter(textOf(0)); await settle()
+    expect(document.activeElement).toBe(textOf(0))
+    expect(textOf(0).value).toBe('')
+  })
+
+  const uploaded = { hash: H, content_type: 'image/webp', width: 10, height: 10, frames: 1, animated: false, still_hash: null }
+  it('a dropped image uploads', async () => {
+    invoke.mockImplementation(async (cmd) => (cmd === 'upload_quote_media' ? uploaded : undefined))
+    show()
+    const ev = Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer: { files: [imageFile()], types: ['Files'] } })
+    rows()[0].dispatchEvent(ev); await settle(); flushSync()
+    expect(calls('upload_quote_media')).toHaveLength(1)
+    expect(rows()[0].querySelector('img.thumb')).not.toBeNull()
+  })
+
+  it('a picked file uploads', async () => {
+    invoke.mockImplementation(async (cmd) => (cmd === 'upload_quote_media' ? uploaded : undefined))
+    show()
+    const input = rows()[0].querySelector<HTMLInputElement>('input[type=file]')!
+    Object.defineProperty(input, 'files', { value: [imageFile()], configurable: true })
+    input.dispatchEvent(new Event('change', { bubbles: true })); await settle(); flushSync()
+    expect(calls('upload_quote_media')).toHaveLength(1)
+    expect(rows()[0].querySelector('img.thumb')).not.toBeNull()
+  })
+
+  it('typed words become the caption when an image arrives; too long keeps them and converts nothing', async () => {
+    invoke.mockImplementation(async (cmd) => (cmd === 'upload_quote_media' ? uploaded : undefined))
+    show()
+    type(textOf(0), '  a cat  ')
+    paste(textOf(0), imageFile()); await settle(); flushSync()
+    expect(rows()[0].querySelector<HTMLInputElement>('input.caption')!.value).toBe('a cat')
+    unmount(cmp!); document.body.innerHTML = ''; invoke.mockClear()
+    show()
+    type(textOf(0), 'x'.repeat(201))
+    paste(textOf(0), imageFile()); await settle(); flushSync()
+    expect(calls('upload_quote_media')).toHaveLength(0)
+    expect(textOf(0).value).toHaveLength(201)
+    expect(rows()[0].textContent).toContain('too long for a caption')
+  })
+
+  it('Enter while an image uploads says to wait and Post is disabled', async () => {
+    let done: (v: unknown) => void = () => {}
+    invoke.mockImplementation((cmd) => (cmd === 'upload_quote_media' ? new Promise((r) => (done = r)) : Promise.resolve(undefined)))
+    show()
+    addLine()
+    type(textOf(0), 'hi'); pickMember(0, 'sam')
+    paste(textOf(1), imageFile()); await settle(); flushSync()
+    expect(document.querySelector<HTMLButtonElement>('button.post')!.disabled).toBe(true)
+    enter(textOf(0)); await settle()
+    expect(document.body.textContent).toContain('Wait for the image to finish uploading.')
+    expect(calls('post_quote')).toHaveLength(0)
+    done(uploaded); await settle()
+  })
+
+  it('a typed but unpicked name resolves to the member it names, else stays a plain name', async () => {
+    show()
+    type(textOf(0), 'hi')
+    const w = whoOf(0); w.focus(); type(w, ' SAM ')
+    enter(textOf(0)); await settle()
+    expect((calls('post_quote')[0][1] as { body: { lines: { speaker_id: string | null }[] } }).body.lines[0].speaker_id).toBe('U2')
+    type(textOf(0), 'yo')
+    const w2 = whoOf(0); w2.focus(); type(w2, 'sa')
+    enter(textOf(0)); await settle()
+    const l = (calls('post_quote')[1][1] as { body: { lines: { speaker_id: string | null; speaker_name: string | null }[] } }).body.lines[0]
+    expect(l).toMatchObject({ speaker_id: null, speaker_name: 'sa' })
+  })
+
+  it('counts a name in characters, not UTF-16 units', async () => {
+    show()
+    type(textOf(0), 'hi')
+    const name = '😀'.repeat(32)
+    const w = whoOf(0); w.focus(); type(w, name)
+    enter(textOf(0)); await settle()
+    expect((calls('post_quote')[0][1] as { body: { lines: { speaker_name: string }[] } }).body.lines[0].speaker_name).toBe(name)
+    type(textOf(0), 'yo')
+    const w2 = whoOf(0); w2.focus(); type(w2, '😀'.repeat(33))
+    enter(textOf(0)); await settle()
+    expect(calls('post_quote')).toHaveLength(1)
+    expect(document.body.textContent).toContain('at most 32')
+  })
+
+  it('saving an edit with every line cleared says so', async () => {
+    show({ editing: quoteMsg([eline()]) })
+    type(textOf(0), '')
+    rows()[0].querySelector<HTMLElement>('.chip')!.click(); flushSync()
+    enter(textOf(0)); await settle()
+    expect(document.body.textContent).toContain('Add the words or an image.')
+    expect(calls('edit_quote')).toHaveLength(0)
+  })
+
+  it('several awarded changes name their lines', async () => {
+    show({ editing: quoteMsg([eline({ awards: 2, awarders: ['U1', 'U3'], text: 'first' }), eline({ id: 'L2', awards: 1, awarders: ['U1'], text: 'second' })]) })
+    for (const n of [0, 1]) { rows()[n].querySelector<HTMLElement>('.chip')!.click(); flushSync(); pickMember(n, 'kim') }
+    enter(textOf(0)); await settle()
+    const t = document.querySelector('.warn')!.textContent!
+    expect(t).toContain('“first” This line has 2 awards. Changing who said it removes them.')
+    expect(t).toContain('“second” This line has 1 award. Changing who said it removes them.')
+  })
 })

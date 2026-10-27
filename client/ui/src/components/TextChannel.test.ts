@@ -255,4 +255,17 @@ describe('TextChannel: quotes channel', () => {
     expect(document.querySelector('button[aria-label="Leaderboard"]')).toBeNull()
     expect(document.querySelector('[contenteditable]')).toBeTruthy()
   })
+
+  it('opening an edit keeps the new-quote draft', () => {
+    show('quotes', [quoteMsg])
+    const box = () => document.querySelector<HTMLTextAreaElement>('.qc:not([hidden] .qc) textarea.qtext')
+    const draft = document.querySelector<HTMLTextAreaElement>('textarea.qtext')!
+    draft.value = 'half written'; draft.dispatchEvent(new Event('input', { bubbles: true })); flushSync()
+    document.querySelector<HTMLButtonElement>('button[aria-label="Edit"]')!.click(); flushSync()
+    expect(box()!.value).toBe('hi')
+    expect(document.querySelectorAll('textarea.qtext')).toHaveLength(2)
+    ;[...document.querySelectorAll<HTMLButtonElement>('.foot button')].find((b) => b.textContent === 'Cancel')!.click(); flushSync()
+    expect(document.querySelectorAll('textarea.qtext')).toHaveLength(1)
+    expect(document.querySelector<HTMLTextAreaElement>('textarea.qtext')!.value).toBe('half written')
+  })
 })

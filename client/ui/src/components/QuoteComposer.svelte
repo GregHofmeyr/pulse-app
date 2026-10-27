@@ -50,12 +50,14 @@
     awards: number
     query: string
     open: boolean
+    /** The highlighted entry of the picker list. */
+    hi: number
     uploading: boolean
     error: string
   }
 
   let nextKey = 0
-  const blank = (): Row => ({ key: nextKey++, id: null, text: '', caption: '', pic: null, speaker: null, was: null, awards: 0, query: '', open: false, uploading: false, error: '' })
+  const blank = (): Row => ({ key: nextKey++, id: null, text: '', caption: '', pic: null, speaker: null, was: null, awards: 0, query: '', open: false, hi: 0, uploading: false, error: '' })
   const speakerKey = (s: Speaker | null) => (s ? (s.id ? `u:${s.id}` : `n:${nameKey(s.name)}`) : null)
 
   function initial(): Row[] {
@@ -72,8 +74,10 @@
   let rows = $state<Row[]>(initial())
   let error = $state('')
   let busy = $state(false)
+  // One id per quote being posted: kept across retries (a failed attempt may have reached the server) and renewed after success.
+  let nonce: string | null = null
   // Edit mode: the lines whose speaker changed while holding awards, waiting for a yes.
-  let confirming = $state<{ key: number; awards: number }[]>([])
+  let confirming = $state<{ key: number; awards: number; what: string }[]>([])
   let root = $state<HTMLElement>()
 
   const members = $derived((app.state.members[serverId] ?? []).map((m) => ({ id: m.user.id, name: m.nickname ?? m.user.username })))
@@ -116,15 +120,35 @@
     r.open = true
     void focusWho(r.key)
   }
-  const matches = (r: Row) => suggest(members, r.query.trim())
-  const typed = (r: Row) => r.query.trim().slice(0, MAX_NAME)
+  const typed = (r: Row) => r.query.trim()
+  /** The picker list: matching members, then the typed name as it is. */
+  function options(r: Row): Speaker[] {
+    const out: Speaker[] = suggest(members, typed(r)).map((m) => ({ id: m.id, name: m.name }))
+    if (typed(r)) out.push({ id: null, name: typed(r) })
+    return out
+  }
+  const label = (s: Speaker) => (s.id ? s.name : `Use “${s.name}” (not on Pulse yet)`)
+  /** A typed name nobody picked: the member it exactly names (case and spacing aside), else that plain name. */
+  function resolveTyped(r: Row) {
+    const q = typed(r)
+    if (r.speaker || !q) return
+    const key = nameKey(q)
+    const m = (app.state.members[serverId] ?? []).find((x) => nameKey(x.user.username) === key || nameKey(x.nickname ?? x.user.username) === key)
+    r.speaker = m ? { id: m.user.id, name: m.nickname ?? m.user.username } : { id: null, name: q }
+    r.query = ''
+    r.open = false
+  }
   function whyKey(e: KeyboardEvent, r: Row) {
-    if (e.key === 'Enter') {
+    const list = options(r)
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault()
+      r.open = true
+      if (list.length) r.hi = (r.hi + (e.key === 'ArrowDown' ? 1 : -1) + list.length) % list.length
+    } else if (e.key === 'Enter') {
       e.preventDefault()
       e.stopPropagation()
-      const m = matches(r)[0]
-      if (m) choose(r, { id: m.id, name: m.name })
-      else if (typed(r)) choose(r, { id: null, name: typed(r) })
+      const pick = list[Math.min(r.hi, list.length - 1)]
+      if (pick) choose(r, pick)
     } else if (e.key === 'Escape' && r.open) {
       e.stopPropagation()
       r.open = false
@@ -144,11 +168,18 @@
   }
   async function upload(r: Row, f: File) {
     if (r.uploading) return
-    r.uploading = true
     r.error = ''
+    // typed words become the caption; if they don't fit, nothing is converted or thrown away
+    const words = r.text.trim()
+    if ([...words].length > MAX_CAPTION) {
+      r.error = `That text is too long for a caption (${MAX_CAPTION} characters at most). Shorten it, or clear it first.`
+      return
+    }
+    r.uploading = true
     try {
       const info = await api.uploadQuoteMedia(await bytes(f))
       r.pic = { hash: info.hash, still_hash: info.still_hash }
+      r.caption = words
       r.text = ''
       void focusText(r.key)
     } catch (e) {
@@ -183,12 +214,15 @@
     const p = (n: number) => String(n).padStart(2, '0')
     return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`
   }
-  const isEmpty = (r: Row) => !r.pic && !r.text.trim() && !r.speaker && !r.query.trim()
+  const isEmpty = (r: Row) => !r.pic && !r.text.trim() && !r.speaker && !r.query.trim() && !r.caption.trim()
 
   /** The lines to send, or null with `error` set. Wholly blank rows are skipped. */
   function build(): NewQuoteLine[] | null {
     const used = rows.filter((r) => !isEmpty(r))
-    if (!used.length) return null
+    if (!used.length) {
+      if (editing) error = 'Add the words or an image.'
+      return null
+    }
     const out: NewQuoteLine[] = []
     for (const r of used) {
       if (!r.speaker) {
@@ -196,14 +230,14 @@
         void focusWho(r.key)
         return null
       }
-      if (r.speaker.id === null && (r.speaker.name.length < 1 || r.speaker.name.length > MAX_NAME)) {
-        error = `A name can be 1 to ${MAX_NAME} characters.`
+      if (r.speaker.id === null && ([...r.speaker.name].length > MAX_NAME)) {
+        error = `A name can be at most ${MAX_NAME} characters.`
         return null
       }
       const speaker = { speaker_id: r.speaker.id, speaker_name: r.speaker.id ? null : r.speaker.name }
       if (r.pic) {
         const caption = r.caption.trim()
-        if (caption.length > MAX_CAPTION) {
+        if ([...caption].length > MAX_CAPTION) {
           error = `A caption can be at most ${MAX_CAPTION} characters.`
           return null
         }
@@ -226,14 +260,19 @@
   }
 
   async function submit(confirmed = false) {
-    if (busy || rows.some((r) => r.uploading)) return
+    if (busy) return
     error = ''
+    if (rows.some((r) => r.uploading)) {
+      error = 'Wait for the image to finish uploading.'
+      return
+    }
+    for (const r of rows) resolveTyped(r)
     const lines = build()
     if (!lines) return
     if (editing && !confirmed) {
       const hit = rows.filter((r) => r.id && r.awards > 0 && speakerKey(r.speaker) !== r.was)
       if (hit.length) {
-        confirming = hit.map((r) => ({ key: r.key, awards: r.awards }))
+        confirming = hit.map((r) => ({ key: r.key, awards: r.awards, what: r.pic ? 'Image' : `“${[...r.text.trim()].slice(0, 30).join('')}”` }))
         return
       }
     }
@@ -241,9 +280,14 @@
     busy = true
     try {
       if (editing) await api.editQuote(editing.id, { lines })
-      else await api.postQuote(channelId, { lines, today: today(), nonce: crypto.randomUUID() })
+      else {
+        nonce ??= crypto.randomUUID()
+        await api.postQuote(channelId, { lines, today: today(), nonce })
+      }
+      nonce = null
       rows = [blank()]
       onDone?.()
+      if (!editing) void focusText(rows[0].key)
     } catch (e) {
       error = errorText(e)
     } finally {
@@ -276,7 +320,7 @@
             <img class="thumb" src={stillSrc({ hash: r.pic.hash, still_hash: r.pic.still_hash })} alt="" />
             <button type="button" class="x" aria-label="Remove image" onclick={() => (r.pic = null)}><Icon name="x" size={12} /></button>
           </div>
-          <input class="caption" type="text" maxlength={MAX_CAPTION} placeholder="Caption (optional)" aria-label="Caption" bind:value={r.caption} onkeydown={textKey} />
+          <input class="caption" type="text" placeholder="Caption (optional)" aria-label="Caption" bind:value={r.caption} onkeydown={textKey} />
         {:else}
           <textarea class="qtext" rows="1" placeholder={rows.length > 1 ? 'What they said' : 'Paste or type the quote'} aria-label="Quote text" bind:value={r.text}
             onkeydown={textKey} onpaste={(e) => onPaste(e, r)}></textarea>
@@ -285,24 +329,21 @@
           {#if r.speaker}
             <button type="button" class="chip" title="Change who said it" onclick={() => clearSpeaker(r)}>— {r.speaker.name}</button>
           {:else}
-            <input class="who" type="text" role="combobox" aria-expanded={r.open} aria-controls="opts-{r.key}" aria-label="Who said it?" placeholder="who said it?" autocomplete="off"
-              maxlength={MAX_NAME} bind:value={r.query} onfocus={() => (r.open = true)} onblur={() => (r.open = false)} oninput={() => (r.open = true)} onkeydown={(e) => whyKey(e, r)} />
+            <input class="who" type="text" role="combobox" aria-expanded={r.open} aria-controls="opts-{r.key}" aria-activedescendant={r.open ? `opt-${r.key}-${r.hi}` : undefined}
+              aria-autocomplete="list" aria-label="Who said it?" placeholder="who said it?" autocomplete="off" bind:value={r.query}
+              onfocus={() => (r.open = true)} onblur={() => { r.open = false; resolveTyped(r) }} oninput={() => { r.open = true; r.hi = 0 }} onkeydown={(e) => whyKey(e, r)} />
             {#if r.open}
               <div class="opts" id="opts-{r.key}" role="listbox" aria-label="Members">
-                {#each matches(r) as m (m.id)}
-                  <button type="button" role="option" aria-selected="false" tabindex="-1" onmousedown={(e) => e.preventDefault()} onclick={() => choose(r, { id: m.id, name: m.name })}>{m.name}</button>
+                {#each options(r) as o, i (o.id ?? 'plain')}
+                  <button type="button" id="opt-{r.key}-{i}" role="option" aria-selected={i === r.hi} class:hi={i === r.hi} tabindex="-1"
+                    onmousedown={(e) => e.preventDefault()} onclick={() => choose(r, o)}>{label(o)}</button>
                 {/each}
-                {#if typed(r)}
-                  <button type="button" role="option" aria-selected="false" tabindex="-1" onmousedown={(e) => e.preventDefault()} onclick={() => choose(r, { id: null, name: typed(r) })}>Use “{typed(r)}” (not on Pulse yet)</button>
-                {/if}
               </div>
             {/if}
           {/if}
         </div>
-        <label class="ibtn" title="Add an image" aria-label="Add image">
-          <Icon name="image" size={16} />
-          <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onchange={(e) => onPick(e, r)} />
-        </label>
+        <button type="button" class="ibtn" title="Add an image" aria-label="Add image" onclick={() => rowEl(r.key)?.querySelector<HTMLInputElement>('input[type=file]')?.click()}><Icon name="image" size={16} /></button>
+        <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onchange={(e) => onPick(e, r)} />
         {#if rows.length > 1}
           <button type="button" class="ibtn" aria-label="Remove line" onclick={() => removeLine(r.key)}><Icon name="x" size={14} /></button>
         {/if}
@@ -314,7 +355,7 @@
   {#if confirming.length}
     <div class="warn" role="alertdialog" aria-label="Change who said it?">
       {#each confirming as c (c.key)}
-        <p>This line has {c.awards} {c.awards === 1 ? 'award' : 'awards'}. Changing who said it removes them.</p>
+        <p><strong>{c.what}</strong> This line has {c.awards} {c.awards === 1 ? 'award' : 'awards'}. Changing who said it removes them.</p>
       {/each}
       <button type="button" class="confirm" onclick={() => void submit(true)}>Save anyway</button>
       <button type="button" onclick={() => (confirming = [])}>Keep editing</button>
@@ -325,7 +366,7 @@
     {#if rows.length < MAX_LINES}<button type="button" class="addline" onclick={addLine}>+ line</button>{/if}
     <span class="spacer"></span>
     {#if editing}<button type="button" onclick={() => onDone?.()}>Cancel</button>{/if}
-    <button type="button" class="post" disabled={busy} onclick={() => void submit()}>{editing ? 'Save' : 'Post'}</button>
+    <button type="button" class="post" disabled={busy || rows.some((r) => r.uploading)} onclick={() => void submit()}>{editing ? 'Save' : 'Post'}</button>
   </div>
 </div>
 
@@ -339,7 +380,7 @@
   .chip { max-width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--quote-green-deep); color: var(--text); font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .opts { position: absolute; bottom: calc(100% + 4px); left: 0; right: 0; z-index: 20; padding: 4px; background: #2e3037; border: 1px solid #3d4048; border-radius: 10px; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
   .opts button { min-height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; font: inherit; }
-  .opts button:hover { background: var(--bg-3); }
+  .opts button:hover, .opts button.hi { background: var(--bg-3); }
   .ibtn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); cursor: pointer; }
   .ibtn:hover { background: var(--bg-2); color: var(--text); }
   .pic { position: relative; flex-shrink: 0; }
