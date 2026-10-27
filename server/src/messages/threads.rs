@@ -7,7 +7,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, UserId};
-use pulse_protocol::rest::{Message, ThreadSeenRequest};
+use pulse_protocol::rest::{Channel, Message, ThreadSeenRequest};
 use sqlx::{SqliteConnection, SqlitePool};
 
 use super::routes::{COLS, Page, Row, fill};
@@ -25,7 +25,7 @@ pub fn router() -> Router<AppState> {
 
 /// Is `root` a live quote in `channel`?
 pub(crate) async fn is_live_quote(
-    db: &SqlitePool,
+    db: impl sqlx::SqliteExecutor<'_>,
     root: MessageId,
     channel: ChannelId,
 ) -> AppResult<bool> {
@@ -41,7 +41,7 @@ pub(crate) async fn is_live_quote(
 }
 
 /// The channel of a live quote the caller may see, else 404.
-async fn visible_quote(db: &SqlitePool, me: UserId, root: MessageId) -> AppResult<ChannelId> {
+async fn visible_quote(db: &SqlitePool, me: UserId, root: MessageId) -> AppResult<Channel> {
     let channel: String = sqlx::query_scalar(
         "SELECT m.channel_id FROM quotes q JOIN messages m ON m.id = q.message_id
          WHERE m.id = ? AND m.deleted_at IS NULL",
@@ -51,8 +51,7 @@ async fn visible_quote(db: &SqlitePool, me: UserId, root: MessageId) -> AppResul
     .await?
     .ok_or(AppError::NotFound)?;
     let channel: ChannelId = channel.parse().map_err(anyhow::Error::from)?;
-    channel_for(db, me, channel).await?;
-    Ok(channel)
+    channel_for(db, me, channel).await
 }
 
 /// Move `user`'s seen point in `root`'s thread forward to `upto` (never backwards). `None` if it
@@ -127,7 +126,7 @@ async fn seen(
         return Err(AppError::TooManyRequests);
     }
     let channel = visible_quote(&s.db, me, root).await?;
-    if let Some(server) = channel_for(&s.db, me, channel).await?.server_id
+    if let Some(server) = channel.server_id
         && !is_server_member(&s.db, server, me).await?
     {
         return Err(AppError::Forbidden);
@@ -153,7 +152,7 @@ async fn seen(
                 &s.db,
                 Event::ThreadSeen {
                     user_id: me,
-                    channel_id: channel,
+                    channel_id: channel.id,
                     root_id: root,
                     last_seen_id: req.message_id,
                     mentions_cleared,

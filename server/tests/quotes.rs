@@ -1609,8 +1609,9 @@ async fn a_reply_mention_counts_until_the_panel_is_seen() {
     // Only to alex.
     let leaked = tokio::time::timeout(Duration::from_millis(300), async {
         loop {
-            if let Some(ServerFrame::Event(Event::ThreadSeen { .. })) =
+            if let Some(ServerFrame::Event(Event::ThreadSeen { user_id, .. })) =
                 next_frame(&mut sam_ws).await
+                && user_id == f.alex
             {
                 return;
             }
@@ -1679,12 +1680,20 @@ async fn seen_only_moves_forward_and_validates() {
 async fn a_reply_needs_a_live_quote_in_this_channel() {
     let f = fixture().await;
     let q = f.quote().await;
-    // A system/plain message root.
+    // A plain message.
     let plain = MessageId::new();
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES (?, ?, ?, 'p', '2026-01-01T00:00:00.000Z')")
         .bind(plain.to_string())
         .bind(f.ch.id.to_string())
         .bind(f.sam.to_string())
+        .execute(&f.app.db)
+        .await
+        .unwrap();
+    // A system card.
+    let system = MessageId::new();
+    sqlx::query("INSERT INTO messages (id, channel_id, kind, content, created_at) VALUES (?, ?, 'system', 'card', '2026-01-01T00:00:00.000Z')")
+        .bind(system.to_string())
+        .bind(f.ch.id.to_string())
         .execute(&f.app.db)
         .await
         .unwrap();
@@ -1701,7 +1710,7 @@ async fn a_reply_needs_a_live_quote_in_this_channel() {
     )
     .await;
     let elsewhere: Message = r.json().await.unwrap();
-    for root in [plain, dead.id, elsewhere.id, MessageId::new()] {
+    for root in [plain, system, dead.id, elsewhere.id, MessageId::new()] {
         let r = f
             .reply_raw(&f.sam_t, json!({ "content": "x", "thread_root_id": root }))
             .await;
@@ -1901,4 +1910,85 @@ async fn replying_covers_earlier_mentions() {
             break;
         }
     }
+}
+
+#[tokio::test]
+async fn a_main_list_post_does_not_clear_a_reply_mention() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    f.reply(&f.sam_t, q.id, "hey @alex").await;
+    assert_eq!(f.state(&f.alex_t).await.mentions, 1);
+    // alex posts a newer quote: his channel read point passes the reply's id.
+    let newer = f.quote().await;
+    let st = f.state(&f.alex_t).await;
+    assert_eq!(st.last_read_message_id, Some(newer.id));
+    assert_eq!(st.mentions, 1, "only opening the thread clears it");
+}
+
+#[tokio::test]
+async fn replies_under_a_deleted_quote_count_for_nothing() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    assert_eq!(f.delete(&f.alex_t, q.id).await.status(), 204);
+    // A live reply with a mention under the deleted root (as a racing send could have left).
+    let id = MessageId::new();
+    sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, created_at, thread_root_id) VALUES (?, ?, ?, 'r', '2026-01-03T00:00:00.000Z', ?)")
+        .bind(id.to_string())
+        .bind(f.ch.id.to_string())
+        .bind(f.sam.to_string())
+        .bind(q.id.to_string())
+        .execute(&f.app.db)
+        .await
+        .unwrap();
+    sqlx::query("INSERT INTO mentions (message_id, user_id) VALUES (?, ?)")
+        .bind(id.to_string())
+        .bind(f.alex.to_string())
+        .execute(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(f.state(&f.alex_t).await.mentions, 0);
+}
+
+#[tokio::test]
+async fn deleting_a_quote_races_replies_without_orphans() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let sends = futures::future::join_all((0..8).map(|i| {
+        let (f, q) = (&f, &q);
+        async move {
+            f.reply_raw(
+                &f.sam_t,
+                json!({ "content": format!("r{i} @alex"), "thread_root_id": q.id }),
+            )
+            .await
+            .status()
+            .as_u16()
+        }
+    }));
+    let (codes, del) = tokio::join!(sends, f.delete(&f.alex_t, q.id));
+    assert_eq!(del.status(), 204);
+    assert!(codes.iter().all(|c| *c == 200 || *c == 400), "{codes:?}");
+    let live: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM messages WHERE thread_root_id = ? AND deleted_at IS NULL",
+    )
+    .bind(q.id.to_string())
+    .fetch_one(&f.app.db)
+    .await
+    .unwrap();
+    assert_eq!(live, 0, "no live reply under a deleted quote");
+    assert_eq!(f.state(&f.alex_t).await.mentions, 0);
+}
+
+#[tokio::test]
+async fn seen_needs_server_membership() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let r = f.reply(&f.sam_t, q.id, "hi").await;
+    sqlx::query("DELETE FROM server_members WHERE server_id = ? AND user_id = ?")
+        .bind(f.server.to_string())
+        .bind(f.sam.to_string())
+        .execute(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(f.seen(&f.sam_t, q.id, r.id).await.status(), 403);
 }

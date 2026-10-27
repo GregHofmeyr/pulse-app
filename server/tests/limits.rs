@@ -877,3 +877,52 @@ async fn renaming_a_group_is_limited_per_user() {
     // sam has a bucket of his own.
     assert_eq!(status(rename("sam's turn"), &b).await, 200);
 }
+
+#[tokio::test]
+async fn marking_replies_seen_is_limited() {
+    let app = spawn_only(|l| l.mutate_user = tiny(2)).await;
+    let (_, a) = register(&app, "alex").await;
+    let srv = create_server(&app, &a, "Main").await;
+    let ch: pulse_protocol::rest::Channel = post_json(
+        &app,
+        &a,
+        &format!("/servers/{}/channels", srv.id),
+        serde_json::json!({ "kind": "quotes", "name": "quotes" }),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let q: pulse_protocol::rest::Message = post_json(
+        &app,
+        &a,
+        &format!("/channels/{}/quotes", ch.id),
+        serde_json::json!({ "lines": [{ "speaker_name": "A Friend", "text": "x" }] }),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let r: pulse_protocol::rest::Message = post_json(
+        &app,
+        &a,
+        &format!("/channels/{}/messages", ch.id),
+        serde_json::json!({ "content": "r", "thread_root_id": q.id }),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let seen = || async {
+        post_json(
+            &app,
+            &a,
+            &format!("/messages/{}/replies/seen", q.id),
+            serde_json::json!({ "message_id": r.id }),
+        )
+        .await
+    };
+    assert_eq!(seen().await.status(), 204);
+    assert_eq!(seen().await.status(), 204);
+    assert_eq!(seen().await.status(), 429);
+}

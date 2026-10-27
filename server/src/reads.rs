@@ -56,14 +56,22 @@ pub async fn states_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<ReadState>
                AND m.deleted_at IS NULL AND m.thread_root_id IS NULL AND COALESCE(m.author_id, '') != rs.user_id),
             (SELECT COUNT(*) FROM mentions mn JOIN messages m ON m.id = mn.message_id
                WHERE mn.user_id = rs.user_id AND m.channel_id = rs.channel_id
-               AND m.deleted_at IS NULL
-               AND CASE WHEN m.thread_root_id IS NULL
-                   THEN m.id > COALESCE(rs.last_read_message_id, '')
-                   ELSE m.id > COALESCE((SELECT tr.last_seen_id FROM thread_reads tr
-                        WHERE tr.user_id = rs.user_id AND tr.root_id = m.thread_root_id), '')
-                   END)
-         FROM read_states rs WHERE rs.user_id = ?",
+               AND m.deleted_at IS NULL AND m.thread_root_id IS NULL
+               AND m.id > COALESCE(rs.last_read_message_id, '')) + COALESCE(tm.n, 0)
+         FROM read_states rs
+         LEFT JOIN (
+            SELECT m.channel_id AS channel_id, COUNT(*) AS n
+            FROM mentions mn JOIN messages m ON m.id = mn.message_id
+            JOIN messages root ON root.id = m.thread_root_id
+            LEFT JOIN thread_reads tr ON tr.user_id = mn.user_id AND tr.root_id = m.thread_root_id
+            WHERE mn.user_id = ? AND m.thread_root_id IS NOT NULL
+              AND m.deleted_at IS NULL AND root.deleted_at IS NULL
+              AND m.id > COALESCE(tr.last_seen_id, '')
+            GROUP BY m.channel_id
+         ) tm ON tm.channel_id = rs.channel_id
+         WHERE rs.user_id = ?",
     )
+    .bind(me.to_string())
     .bind(me.to_string())
     .fetch_all(db)
     .await?;

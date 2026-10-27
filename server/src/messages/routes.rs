@@ -245,7 +245,7 @@ async fn send(
             }
         }
     }
-    let msg = Message {
+    let mut msg = Message {
         id: MessageId::new(),
         channel_id: id,
         author_id: Some(me),
@@ -261,8 +261,27 @@ async fn send(
         quote: None,
         qoty_card: None,
     };
+    // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
+    // MessageCreated of the replies around it: hold the publish order across both.
+    let _order = if req.thread_root_id.is_some() {
+        Some(s.hub.in_order().await)
+    } else {
+        None
+    };
     // One transaction: the message, its mentions and your read point land together or not at all.
     let mut tx = crate::db::begin_write(&s.db).await?;
+    // Under the write lock the id is minted in commit order, so a seen point can never pass a
+    // reply that hasn't committed yet.
+    msg.id = MessageId::new();
+    msg.created_at = now();
+    // A delete of the quote may have committed since the early check: the root must still be live.
+    if let Some(root) = req.thread_root_id
+        && !super::threads::is_live_quote(&mut *tx, root, id).await?
+    {
+        return Err(AppError::BadRequest(
+            "replies go to a quote in this channel".into(),
+        ));
+    }
     // An outbox retry of a send that already landed (e.g. the proxy said 502 after we committed):
     // hand back the original instead of posting twice. Under the write lock, check-then-insert is
     // atomic; the unique index is the backstop.
@@ -317,8 +336,9 @@ async fn send(
             },
         )
         .await;
-    // Replying covers earlier mentions of you in the thread: tell your other sessions.
-    if let (Some(root), Some(mentions_cleared @ 1..)) = (req.thread_root_id, thread_cleared) {
+    // Replying moves your place in the thread (and covers earlier mentions of you): tell your
+    // other sessions.
+    if let (Some(root), Some(mentions_cleared)) = (req.thread_root_id, thread_cleared) {
         s.hub
             .publish(
                 &s.db,
