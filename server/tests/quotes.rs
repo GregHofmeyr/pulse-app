@@ -3509,6 +3509,7 @@ async fn a_channel_count_ignores_other_channels_reply_mentions() {
             e,
             Event::ReadStateUpdated {
                 mentions: Some(1),
+                unread: Some(0),
                 ..
             }
         ),

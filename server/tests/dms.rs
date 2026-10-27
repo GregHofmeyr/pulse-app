@@ -65,6 +65,7 @@ async fn owner_only_events_reach_only_their_owner() {
         channel_id: dm.id,
         last_read_message_id: None,
         mentions: None,
+        unread: None,
     };
     assert_eq!(
         audience_for(&app.db, &e).await.unwrap(),
@@ -811,6 +812,56 @@ async fn a_reply_mentions_the_author_it_replies_to() {
         204
     );
     assert!(reply(&a, from_jo.id, "she left").await.mentions.is_empty());
+}
+
+#[tokio::test]
+async fn read_state_events_carry_the_absolute_unread_count() {
+    let app = spawn().await;
+    let (_a_id, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let dm = create_dm(&app, &a, &[b_id]).await;
+    let first = send(&app, &a, dm.id, "one").await;
+    send(&app, &a, dm.id, "two").await;
+    send(&app, &a, dm.id, "three").await;
+    let (mut sam_other_device, _) = hello(&app, &b).await;
+    // Reading up to the first leaves two unread (a client holding an older slice can't count them).
+    post_json(
+        &app,
+        &b,
+        &format!("/channels/{}/read", dm.id),
+        serde_json::json!({"message_id": first.id}),
+    )
+    .await;
+    let e = wait_for(&mut sam_other_device, |e| {
+        matches!(e, Event::ReadStateUpdated { .. })
+    })
+    .await;
+    assert!(
+        matches!(
+            e,
+            Event::ReadStateUpdated {
+                unread: Some(2),
+                ..
+            }
+        ),
+        "{e:?}"
+    );
+    // Sending moves the point past everything: none left.
+    send(&app, &b, dm.id, "caught up").await;
+    let e = wait_for(&mut sam_other_device, |e| {
+        matches!(e, Event::ReadStateUpdated { .. })
+    })
+    .await;
+    assert!(
+        matches!(
+            e,
+            Event::ReadStateUpdated {
+                unread: Some(0),
+                ..
+            }
+        ),
+        "{e:?}"
+    );
 }
 
 #[tokio::test]

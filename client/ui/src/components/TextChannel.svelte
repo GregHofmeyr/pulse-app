@@ -11,7 +11,8 @@
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
-  import { addHistory, addOlder, addPending, appendNewer, loadWindow, markHistory, pendingMessage, removePending } from '../lib/state'
+  import { addHistory, addOlder, addPending, appendNewer, markHistory, PAGE, pendingMessage, removePending } from '../lib/state'
+  import { jumpToPresent } from '../lib/jump'
   import { displayName, nextTypingExpiry, stableList, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
@@ -70,7 +71,7 @@
         fetching = null
         // A jump's window got there first: merging the latest page into it would leave a gap.
         if (app.state.history[c]?.loaded) return
-        app.state = markHistory(addHistory(app.state, c, page), c, page.length < 50)
+        app.state = markHistory(addHistory(app.state, c, page), c, page.length < PAGE)
         await tick()
         list?.scrollTo({ top: list.scrollHeight })
       },
@@ -153,7 +154,8 @@
   let wasWatching = false
   $effect(() => {
     const now = windowFocus.focused && atBottom
-    const newest = untrack(() => messages.at(-1)?.id ?? null)
+    // A detached window's newest isn't the latest: moving the line there would mark read messages new.
+    const newest = untrack(() => (detached ? null : (messages.at(-1)?.id ?? null)))
     const next = reanchor(untrack(() => anchor), { was: wasWatching, now, newest })
     if (next !== untrack(() => anchor)) {
       anchor = next
@@ -190,24 +192,28 @@
   async function maybeLoadNewer() {
     if (loadingNewer || !detached || !messages.length) return
     loadingNewer = true
+    let more = false
     try {
       const newest = messages[messages.length - 1].id
       const page = await api.listMessagesAfter(channelId, newest)
       app.state = appendNewer(app.state, channelId, newest, page)
       await tick() // with loadingNewer still set, the view stays where it was
+      // Still at the bottom (measured now: atBottom is from the last scroll), e.g. a short page that
+      // stopped before a missed live message: fetch on.
+      more = detached && !!list && list.scrollHeight - list.scrollTop - list.clientHeight < 40
     } catch (e) {
       error = errorText(e)
     } finally {
       loadingNewer = false
     }
+    if (more) void maybeLoadNewer()
   }
   let loadingPresent = false
-  async function jumpToPresent() {
+  async function toPresent() {
     if (loadingPresent) return
     loadingPresent = true
     try {
-      const page = await api.listMessages(channelId)
-      app.state = loadWindow(app.state, channelId, page)
+      if (!(await jumpToPresent(channelId))) return // a jump took over
       await tick()
       list?.scrollTo({ top: list.scrollHeight })
     } catch (e) {
@@ -240,9 +246,9 @@
   $effect(() => {
     const j = ui.jump
     if (!j || j.channelId !== channelId) return
-    if (j.missing) {
+    if (j.missing || j.error) {
       ui.jump = null
-      jumpNotice = "Couldn't find that message"
+      jumpNotice = j.error ?? "Couldn't find that message"
       clearTimeout(noticeTimer)
       noticeTimer = setTimeout(() => (jumpNotice = ''), 4000)
       return
@@ -255,6 +261,10 @@
   $effect(() => () => {
     clearFlash()
     clearTimeout(noticeTimer)
+    // a request for this channel that never got handled must not fire when it's next opened
+    untrack(() => {
+      if (ui.jump?.channelId === channelId) ui.jump = null
+    })
   })
 
   // --- quotes channels ---
@@ -275,7 +285,7 @@
     replyTo = null
     void api.sendMessage(channelId, text, r, nonce)
     // Sending from higher up takes you to the latest (your message lands there).
-    if (detached) void jumpToPresent()
+    if (detached) void toPresent()
     else void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   }
 
@@ -363,7 +373,7 @@
         onRetry={() => retry(p.nonce)} onDiscard={() => (app.state = removePending(app.state, channelId, p.nonce))} />
     {/each}
   </div>
-  {#if detached}<button class="jump" onclick={jumpToPresent}>Jump to present</button>
+  {#if detached}<button class="jump" onclick={toPresent}>Jump to present</button>
   {:else if unreadBelow > 0}<button class="jump" onclick={jump}>{unreadBelow} new · Jump</button>{/if}
   {#if jumpNotice}<p class="jump-notice" role="status">{jumpNotice}</p>{/if}
   <div class="typing" aria-live="polite">

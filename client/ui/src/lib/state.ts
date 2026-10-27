@@ -38,9 +38,11 @@ export type AppState = {
   messages: Record<string, Message[]> // channelId -> oldest..newest
   pending: Record<string, Pending[]> // channelId -> unsent
   typing: Record<string, Record<string, number>> // channelId -> userId -> expiresAt (ms)
-  /** Which channels have had their latest page fetched (cleared on every Ready so we backfill).
-   * `end`: the list reaches the latest message (always true until a quote view detaches one). */
-  history: Record<string, { loaded: boolean; start: boolean; end: boolean }>
+  /** Which channels have had their latest page fetched (cleared on every Ready so we backfill,
+   * except a detached window's). `end`: the list reaches the latest message (false for a window
+   * into the past, from a jump). `missed`: the newest live message a detached list didn't take in;
+   * the list isn't at the latest until it holds that one. */
+  history: Record<string, History>
   conn: ConnState
   people: Record<string, Person> // userId -> person (presence)
   reads: Record<string, ReadState> // channelId -> your private read point + counts
@@ -62,6 +64,8 @@ export type AppState = {
   speakerLinks: Record<string, SpeakerLink[]> // serverId -> plain names linked to members
 }
 
+export type History = { loaded: boolean; start: boolean; end: boolean; missed?: string }
+
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
@@ -70,9 +74,11 @@ export function emptyState(): AppState {
 
 export function applyReady(s: AppState, r: Ready): AppState {
   const channels = Object.fromEntries(r.channels.map((c) => [c.id, c]))
-  // Keep history we've already paged in, for channels that still exist. A detached window goes: with
-  // its marker cleared it would look attached, and the latest page would be merged in with a gap.
-  const messages = Object.fromEntries(Object.entries(s.messages).filter(([id]) => id in channels && s.history[id]?.end !== false))
+  // Keep history we've already paged in, for channels that still exist.
+  const messages = Object.fromEntries(Object.entries(s.messages).filter(([id]) => id in channels))
+  // A detached window (a jump into the past) stays as it is: it pages forward to the latest from its
+  // bottom. Clearing its marker would merge the latest page into it, leaving a gap.
+  const history = Object.fromEntries(Object.entries(s.history).filter(([id, h]) => id in channels && h.end === false))
   const pending = Object.fromEntries(Object.entries(s.pending).filter(([id]) => id in channels))
   return {
     ...s,
@@ -86,7 +92,7 @@ export function applyReady(s: AppState, r: Ready): AppState {
     pending,
     typing: {},
     // Anything may have happened while we were away: refetch the latest page when a channel is viewed.
-    history: {},
+    history,
     conn: 'connected',
     people: Object.fromEntries(r.people.map((p) => [p.user.id, p])),
     reads: Object.fromEntries(r.read_states.map((x) => [x.channel_id, x])),
@@ -292,8 +298,10 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const { [c]: _h, ...hidden } = s.hidden
       return {
         ...s,
-        // A detached window shows the past: the message waits for the latest to be reloaded (no gap).
+        // A detached window shows the past: the message waits for the latest to be reloaded (no gap),
+        // and is noted so paging forward doesn't stop short of it.
         messages: detached(s, c) ? s.messages : { ...s.messages, [c]: upsertMessage(s.messages[c], withMyQuoteState(m, undefined, s.me?.id)) },
+        history: detached(s, c) ? { ...s.history, [c]: { ...s.history[c], missed: maxId(s.history[c].missed ?? null, m.id) } } : s.history,
         pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
         typing: withoutTyping(s, c, m.author_id),
         latest: s.channels[c]?.server_id === null ? { ...s.latest, [c]: m } : s.latest,
@@ -417,9 +425,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         ...s,
         reads: {
           ...s.reads,
-          // The server's absolute count includes mentions in quote replies; an older server sends none,
-          // and then only what is loaded can be counted.
-          [c]: { channel_id: c, last_read_message_id: point, unread: after.length, mentions: e.d.mentions ?? after.filter((m) => m.mentions.includes(me)).length },
+          // The server's absolute counts include mentions in quote replies and messages that aren't
+          // loaded (a detached window); an older server sends none, and then only what is loaded can be counted.
+          [c]: { channel_id: c, last_read_message_id: point, unread: e.d.unread ?? after.length, mentions: e.d.mentions ?? after.filter((m) => m.mentions.includes(me)).length },
         },
       }
     }
@@ -538,8 +546,8 @@ export function trimHistory(s: AppState, channel: string, keep = KEEP_ON_LEAVE):
   const list = s.messages[channel]
   // A detached window is never trimmed: its newest messages aren't the channel's latest.
   if (!list || list.length <= keep || detached(s, channel)) return s
-  // Never drop unread messages: ReadStateUpdated recounts unread from what's loaded, and the NEW
-  // line needs them. A channel with a read state but no read point is all unread: keep it whole.
+  // Never drop unread messages: the NEW line needs them (and an older server's ReadStateUpdated
+  // carries no counts, so they're recounted from what's loaded). A channel with a read state but no read point is all unread: keep it whole.
   const read = s.reads[channel]
   const firstUnread = !read
     ? -1
@@ -558,12 +566,12 @@ export function trimHistory(s: AppState, channel: string, keep = KEEP_ON_LEAVE):
 
 /** Add an older page fetched with `before` = the channel's oldest message at the time. Dropped if
  * the list was trimmed meanwhile (adding it would leave a hole that scroll-up never fills), with
- * history untouched. A page shorter than 50 marks the channel start as reached. */
+ * history untouched. A page shorter than a full one marks the channel start as reached. */
 export function addOlder(s: AppState, channel: string, before: string, older: Message[]): AppState {
   // Only prepends and trims change messages[0], so a different head means a trim (or newer page) intervened.
   if (s.messages[channel]?.[0]?.id !== before) return s
   // The start marker is set here, with the add, so a dropped page can't mark a trimmed list as "start reached".
-  return markHistory(addHistory(s, channel, older), channel, older.length < 50)
+  return markHistory(addHistory(s, channel, older), channel, older.length < PAGE)
 }
 
 /** Prepend an older page of history (from scroll-up). */
@@ -590,24 +598,47 @@ const AROUND_NEWER = PAGE - 1 - PAGE / 2
 
 const detached = (s: AppState, channel: string) => s.history[channel]?.end === false
 
-/** Replace `channel`'s list with a fetched page: the window `around` a message, or (no target) the
- * latest page. A side shorter than its share reached the channel's start or the latest. */
-export function loadWindow(s: AppState, channel: string, page: Message[], around?: string): AppState {
+/** The newest list position: `end` unless a live message newer than `list` was missed meanwhile
+ * (then it's fetched with one more `after` page). */
+function reached(list: Message[], h: History | undefined, end: boolean): History {
+  const newest = list[list.length - 1]?.id ?? ''
+  const missed = h?.missed !== undefined && h.missed > newest ? h.missed : undefined
+  const at = end && missed === undefined
+  return { loaded: true, start: false, end: at, ...(at || missed === undefined ? {} : { missed }) }
+}
+
+function sorted(page: Message[]): Message[] {
   let list: Message[] = []
   for (const m of page) list = upsertMessage(list, m)
-  const older = around === undefined ? list.length : list.filter((m) => m.id < around).length
-  const newer = around === undefined ? 0 : list.filter((m) => m.id > around).length
-  const start = older < (around === undefined ? PAGE : AROUND_OLDER)
-  const end = around === undefined || newer < AROUND_NEWER
-  return { ...s, messages: { ...s.messages, [channel]: list }, history: { ...s.history, [channel]: { loaded: true, start, end } } }
+  return list
+}
+
+/** Replace `channel`'s list with the window `around` a message (a jump). A side shorter than its
+ * share reached the channel's start or the latest. */
+export function loadWindow(s: AppState, channel: string, page: Message[], around: string): AppState {
+  const list = sorted(page)
+  const start = list.filter((m) => m.id < around).length < AROUND_OLDER
+  const end = list.filter((m) => m.id > around).length < AROUND_NEWER
+  const h = { ...reached(list, s.history[channel], end), start }
+  return { ...s, messages: { ...s.messages, [channel]: list }, history: { ...s.history, [channel]: h } }
+}
+
+/** Replace `channel`'s list with its latest page ("Jump to present"): attached again, unless a live
+ * message newer than the page arrived meanwhile (then one `after` page fetches it). */
+export function loadLatest(s: AppState, channel: string, page: Message[]): AppState {
+  const list = sorted(page)
+  const h = { ...reached(list, s.history[channel], true), start: list.length < PAGE }
+  return { ...s, messages: { ...s.messages, [channel]: list }, history: { ...s.history, [channel]: h } }
 }
 
 /** Add a newer page fetched with `after` = the channel's newest message at the time (paging a
- * detached window forward). Dropped if the list changed meanwhile; a short page reaches the latest. */
+ * detached window forward). Dropped if the list changed meanwhile; a short page reaches the latest
+ * (unless a live message it doesn't hold was missed meanwhile). */
 export function appendNewer(s: AppState, channel: string, after: string, page: Message[]): AppState {
   const list = s.messages[channel]
   if (!list?.length || list[list.length - 1].id !== after) return s
   const h = s.history[channel]
   const next = addHistory(s, channel, page)
-  return { ...next, history: { ...s.history, [channel]: { loaded: true, start: !!h?.start, end: page.length < PAGE } } }
+  const at = { ...reached(next.messages[channel], h, page.length < PAGE), start: !!h?.start }
+  return { ...next, history: { ...s.history, [channel]: at } }
 }

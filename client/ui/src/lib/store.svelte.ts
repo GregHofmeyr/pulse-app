@@ -26,7 +26,7 @@ export const app = new AppStore()
 
 /** A request to show a message (lib/jump.ts): the open channel scrolls to it, flashes it, then clears
  * this. `seq` makes a repeat of the same target a new request; `missing`: it couldn't be found. */
-export type JumpRequest = { channelId: string; messageId: string; seq: number; missing?: boolean }
+export type JumpRequest = { channelId: string; messageId: string; seq: number; missing?: boolean; error?: string }
 
 /** What the user is looking at: drives the message sound and read marking. */
 export const ui = $state({

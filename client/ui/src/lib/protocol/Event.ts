@@ -35,7 +35,13 @@ flags: VoiceFlags, } } | { "t": "VoiceLeft", "d": { channel_id: ChannelId, user_
  * The user's absolute mention count in the channel after this change (main list and
  * quote replies, as the ready snapshot counts it). Absent from older servers.
  */
-mentions: number | null, } } | { "t": "MutesChanged", "d": { user_id: UserId, mutes: Array<Mute>, } } | { "t": "ConversationVisibility", "d": { user_id: UserId, channel_id: ChannelId, hidden: boolean, } } | { "t": "StreamStarted", "d": { stream: StreamInfo, } } | { "t": "StreamUpdated", "d": { stream: StreamInfo, } } | { "t": "StreamEnded", "d": { channel_id: ChannelId, user_id: UserId, reason: StreamEndReason, } } | { "t": "ViewersChanged", "d": { channel_id: ChannelId, user_id: UserId, viewers: Array<UserId>, } } | { "t": "EmojiCreated", "d": { emoji: CustomEmoji, } } | { "t": "EmojiUpdated", "d": { emoji: CustomEmoji, } } | { "t": "EmojiDeleted", "d": { emoji: CustomEmoji, } } | { "t": "ReactionAdded", "d": { channel_id: ChannelId, message_id: MessageId, emoji: string, user_id: UserId, count: number, } } | { "t": "ReactionRemoved", "d": { channel_id: ChannelId, message_id: MessageId, emoji: string, user_id: UserId, count: number, } } | { "t": "FrequentEmoji", "d": { user_id: UserId, frequent_emoji: Array<string>, } } | { "t": "QuoteAwardChanged", "d": { channel_id: ChannelId, message_id: MessageId, line_id: LineId, user_id: UserId, given: boolean, count: number, 
+mentions: number | null, 
+/**
+ * The user's absolute unread count in the channel after this change, counted as the ready
+ * snapshot counts it (a client can't count it from a list that doesn't reach the latest).
+ * Absent from older servers.
+ */
+unread: number | null, } } | { "t": "MutesChanged", "d": { user_id: UserId, mutes: Array<Mute>, } } | { "t": "ConversationVisibility", "d": { user_id: UserId, channel_id: ChannelId, hidden: boolean, } } | { "t": "StreamStarted", "d": { stream: StreamInfo, } } | { "t": "StreamUpdated", "d": { stream: StreamInfo, } } | { "t": "StreamEnded", "d": { channel_id: ChannelId, user_id: UserId, reason: StreamEndReason, } } | { "t": "ViewersChanged", "d": { channel_id: ChannelId, user_id: UserId, viewers: Array<UserId>, } } | { "t": "EmojiCreated", "d": { emoji: CustomEmoji, } } | { "t": "EmojiUpdated", "d": { emoji: CustomEmoji, } } | { "t": "EmojiDeleted", "d": { emoji: CustomEmoji, } } | { "t": "ReactionAdded", "d": { channel_id: ChannelId, message_id: MessageId, emoji: string, user_id: UserId, count: number, } } | { "t": "ReactionRemoved", "d": { channel_id: ChannelId, message_id: MessageId, emoji: string, user_id: UserId, count: number, } } | { "t": "FrequentEmoji", "d": { user_id: UserId, frequent_emoji: Array<string>, } } | { "t": "QuoteAwardChanged", "d": { channel_id: ChannelId, message_id: MessageId, line_id: LineId, user_id: UserId, given: boolean, count: number, 
 /**
  * The counted awarders, oldest first.
  */

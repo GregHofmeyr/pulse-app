@@ -251,30 +251,28 @@
   const member = $derived(activeServerId ? isMember(app.state, activeServerId) : false)
   const activeChannel = $derived(activeChannelId ? app.state.channels[activeChannelId] : null)
 
+  /** Show channel `id` (with its server), if it exists. */
+  function showChannel(id: string) {
+    const ch = app.state.channels[id]
+    if (!ch) return
+    activeServerId = ch.server_id
+    activeChannelId = id
+  }
   // The call view asked to be shown (a Watch from a toast or popover, Join & watch, the mini-preview).
   $effect(() => {
     const id = callView.goTo
     if (!id) return
     untrack(() => {
-      const ch = app.state.channels[id]
-      if (ch) {
-        activeServerId = ch.server_id
-        activeChannelId = id
-      }
+      showChannel(id)
       callView.goTo = null
     })
   })
-
   // A jump to a message (lib/jump.ts) asked for its channel.
   $effect(() => {
     const id = ui.goTo
     if (!id) return
     untrack(() => {
-      const ch = app.state.channels[id]
-      if (ch) {
-        activeServerId = ch.server_id
-        activeChannelId = id
-      }
+      showChannel(id)
       ui.goTo = null
     })
   })

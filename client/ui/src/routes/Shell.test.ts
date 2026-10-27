@@ -554,13 +554,8 @@ describe('Go Live cleanup', () => {
 describe('jump to a message', () => {
   it('a jump request switches to its channel', async () => {
     const { ui } = await import('../lib/store.svelte')
-    const me = { id: 'U1', username: 'alex', avatar_hash: null }
-    app.state = applyReady(emptyState(), {
-      me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
-      channels: [{ id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 0 }],
-      members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [],
-    })
+    const { testMe: me, testReady } = await import('../lib/testReady')
+    app.state = applyReady(emptyState(), testReady([{ id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 0 }]))
     cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
     flushSync()
     expect(document.querySelector('.chan .head .title')).toBeNull()

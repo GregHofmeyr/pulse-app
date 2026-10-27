@@ -256,7 +256,7 @@ describe('trimming keeps unread messages', () => {
   const page = (from: number, n: number) =>
     Array.from({ length: n }, (_, i) => msg(`M${String(from + i).padStart(4, '0')}`))
   const readAt = (point: string | null) =>
-    ({ t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: point, mentions: null } }) as const
+    ({ t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: point, mentions: null, unread: null } }) as const
 
   it('never trims past your read point, so unread counts survive a trim', async () => {
     const { addHistory, trimHistory } = await import('./state')
@@ -535,11 +535,11 @@ describe('quotes', () => {
   it('a read-state update takes the server\'s absolute mention count, replies included', () => {
     // A quotes channel read elsewhere, never loaded here: two reply mentions stay counted.
     let s = applyReady(emptyState(), ready({ channels: [ch('Q1', 'quotes')], read_states: [{ channel_id: 'Q1', last_read_message_id: null, unread: 3, mentions: 5 }] }))
-    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'Q1', last_read_message_id: 'M9', mentions: 2 } }, 0)
+    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'Q1', last_read_message_id: 'M9', mentions: 2, unread: null } }, 0)
     expect(s.reads['Q1']).toMatchObject({ last_read_message_id: 'M9', unread: 0, mentions: 2 })
     // A text channel read elsewhere and never opened here: everything is read.
     s = applyReady(emptyState(), ready({ read_states: [{ channel_id: 'C1', last_read_message_id: null, unread: 4, mentions: 4 }] }))
-    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: 'M9', mentions: 0 } }, 0)
+    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: 'M9', mentions: 0, unread: null } }, 0)
     expect(s.reads['C1']).toMatchObject({ unread: 0, mentions: 0 })
   })
 
@@ -547,7 +547,7 @@ describe('quotes', () => {
     let s = applyReady(emptyState(), ready({ read_states: [{ channel_id: 'C1', last_read_message_id: null, unread: 0, mentions: 0 }] }))
     s = applyEvent(s, { t: 'MessageCreated', d: { message: { ...msg('M1'), mentions: ['U1'] }, nonce: null } }, 0)
     s = applyEvent(s, { t: 'MessageCreated', d: { message: { ...msg('M2'), mentions: ['U1'] }, nonce: null } }, 0)
-    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: 'M1', mentions: null } }, 0)
+    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: 'M1', mentions: null, unread: null } }, 0)
     expect(s.reads['C1']).toMatchObject({ unread: 1, mentions: 1 })
   })
 
@@ -786,9 +786,39 @@ describe('detached windows (jump to a message)', () => {
     // near the channel start (only 3 older) and near the latest (only 2 newer)
     expect(loadWindow(s, 'C1', newestFirst(ids(0, 28)), 'M0003').history['C1']).toEqual({ loaded: true, start: true, end: false })
     expect(loadWindow(s, 'C1', newestFirst(ids(975, 28)), 'M1000').history['C1']).toEqual({ loaded: true, start: false, end: true })
-    // without a target it is the latest page: attached again
-    expect(loadWindow(w, 'C1', newestFirst(ids(900, 50))).history['C1']).toEqual({ loaded: true, start: false, end: true })
-    expect(loadWindow(w, 'C1', newestFirst(ids(900, 50))).messages['C1'].map((m) => m.id)).toEqual(ids(900, 50))
+  })
+
+  it('loading the latest page attaches the list again', async () => {
+    const { loadWindow, loadLatest } = await import('./state')
+    const w = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')
+    const s = loadLatest(w, 'C1', newestFirst(ids(900, 50)))
+    expect(s.history['C1']).toEqual({ loaded: true, start: false, end: true })
+    expect(s.messages['C1'].map((m) => m.id)).toEqual(ids(900, 50))
+    expect(loadLatest(w, 'C1', newestFirst(ids(0, 7))).history['C1']).toEqual({ loaded: true, start: true, end: true })
+  })
+
+  it('a live message missed while paging forward is fetched before the present is reached', async () => {
+    const { loadWindow, appendNewer, loadLatest } = await import('./state')
+    let s = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')
+    // M2000 arrives live after the server answered the last `after` request, before it's applied
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M2000'), nonce: null } }, 0)
+    s = appendNewer(s, 'C1', 'M0149', newestFirst(ids(150, 10))) // short, but without M2000
+    expect(s.history['C1'].end).toBe(false) // one more page to fetch
+    s = appendNewer(s, 'C1', 'M0159', [msg('M2000')])
+    expect(s.messages['C1'].at(-1)!.id).toBe('M2000')
+    expect(s.history['C1']).toEqual({ loaded: true, start: false, end: true })
+    // the same for a latest page fetched before the live message
+    let p = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')
+    p = applyEvent(p, { t: 'MessageCreated', d: { message: msg('M2000'), nonce: null } }, 0)
+    p = loadLatest(p, 'C1', newestFirst(ids(900, 50)))
+    expect(p.history['C1'].end).toBe(false)
+  })
+
+  it("a detached window takes the server's unread count", async () => {
+    const { loadWindow } = await import('./state')
+    const w = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')
+    const s = applyEvent(w, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: 'M0950', mentions: 0, unread: 7 } }, 0)
+    expect(s.reads['C1']).toMatchObject({ last_read_message_id: 'M0950', unread: 7 })
   })
 
   it('appending newer pages reaches the present without duplicates', async () => {
@@ -830,9 +860,11 @@ describe('detached windows (jump to a message)', () => {
     expect(trimHistory(s, 'C1')).toBe(s)
   })
 
-  it('a reconnect drops a detached window, so the latest page is fetched again', async () => {
+  it('a detached window survives a reconnect', async () => {
     const { loadWindow } = await import('./state')
     const w = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')
-    expect(applyReady(w, ready()).messages['C1']).toBeUndefined()
+    const s = applyReady(w, ready())
+    expect(s.messages['C1']).toBe(w.messages['C1'])
+    expect(s.history['C1']).toEqual({ loaded: true, start: false, end: false })
   })
 })

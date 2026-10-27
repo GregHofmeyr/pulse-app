@@ -110,7 +110,7 @@ async fn post_quote(
             .await;
     }
     if moved {
-        let mentions = crate::reads::mentions_for(&s.db, me, id).await?;
+        let (unread, mentions) = crate::reads::counts_for(&s.db, me, id).await?;
         s.hub
             .publish(
                 &s.db,
@@ -119,6 +119,7 @@ async fn post_quote(
                     channel_id: id,
                     last_read_message_id: Some(msg_id),
                     mentions: Some(mentions),
+                    unread: Some(unread),
                 },
             )
             .await;

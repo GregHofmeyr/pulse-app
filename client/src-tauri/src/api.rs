@@ -1093,14 +1093,25 @@ impl Api {
 
     // ---------- Quotes ----------
 
-    /// A slice of the channel's main list centred on `message`.
+    /// A slice of the channel's main list centred on `message`; `None` when the server has no such
+    /// message there (deleted, a reply, another channel's), so the UI can tell that from a failure.
     pub async fn messages_around(
         &self,
         token: &str,
         channel: ChannelId,
         message: MessageId,
-    ) -> Result<Vec<Message>, ApiError> {
-        self.messages_near(token, channel, "around", message).await
+    ) -> Result<Option<Vec<Message>>, ApiError> {
+        let r = self
+            .http
+            .get(self.url(&["channels", &channel.to_string(), "messages"])?)
+            .query(&[("around", message.to_string())])
+            .bearer_auth(token)
+            .send()
+            .await;
+        if matches!(&r, Ok(resp) if resp.status() == reqwest::StatusCode::NOT_FOUND) {
+            return Ok(None);
+        }
+        Self::parse(r).await.map(Some)
     }
 
     /// The messages just newer than `message`, newest first (like every list).
@@ -2690,7 +2701,14 @@ mod tests {
             )
             .await
             .unwrap();
-        let around = api.messages_around(&alex, ch.id, quote.id).await.unwrap();
+        let around = api
+            .messages_around(&alex, ch.id, quote.id)
+            .await
+            .unwrap()
+            .expect("found");
+        // a message that isn't there (deleted, another channel's, never existed) isn't an error
+        let missing = api.messages_around(&alex, ch.id, MessageId::new()).await;
+        assert!(matches!(missing, Ok(None)), "{missing:?}");
         assert!(around.iter().any(|m| m.id == quote.id));
         assert!(around.iter().any(|m| m.id == later.id));
         let after = api.messages_after(&alex, ch.id, quote.id).await.unwrap();

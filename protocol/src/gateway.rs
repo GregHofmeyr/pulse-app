@@ -212,6 +212,11 @@ pub enum Event {
         /// quote replies, as the ready snapshot counts it). Absent from older servers.
         #[serde(default)]
         mentions: Option<u32>,
+        /// The user's absolute unread count in the channel after this change, counted as the ready
+        /// snapshot counts it (a client can't count it from a list that doesn't reach the latest).
+        /// Absent from older servers.
+        #[serde(default)]
+        unread: Option<u32>,
     },
     MutesChanged {
         user_id: UserId,

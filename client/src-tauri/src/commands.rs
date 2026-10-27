@@ -1248,7 +1248,7 @@ pub async fn list_messages_around(
     core: State<'_, Core>,
     channel_id: ChannelId,
     message_id: MessageId,
-) -> Result<Vec<Message>, ApiError> {
+) -> Result<Option<Vec<Message>>, ApiError> {
     let (api, token) = core.current()?;
     core.check(
         &app,

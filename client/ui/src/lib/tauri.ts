@@ -93,7 +93,8 @@ export const api = {
   getReportSettings: () => invoke<ReportSettings>('get_report_settings'),
   setReportSettings: (settings: ReportSettings) => invoke<ReportSettings>('set_report_settings', { settings }),
   // Quotes and Quote of the Year.
-  listMessagesAround: (channelId: string, messageId: string) => invoke<Message[]>('list_messages_around', { channelId, messageId }),
+  /** `null`: no such message in that channel's list (deleted, a reply, another channel's). */
+  listMessagesAround: (channelId: string, messageId: string) => invoke<Message[] | null>('list_messages_around', { channelId, messageId }),
   listMessagesAfter: (channelId: string, messageId: string) => invoke<Message[]>('list_messages_after', { channelId, messageId }),
   /** The raw file goes as the request body, as for `uploadEmojiMedia`. */
   uploadQuoteMedia: (bytes: Uint8Array) => invoke<MediaInfo>('upload_quote_media', bytes),

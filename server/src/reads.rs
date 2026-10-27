@@ -53,14 +53,19 @@ pub async fn states_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<ReadState>
     read_states(db, me, None).await
 }
 
-/// `user`'s absolute mention count in `channel`, counted exactly as [`states_for`] does (0 for a
-/// channel without a read point). Events carry it so clients needn't infer it from what they
-/// happen to have loaded; call it under the same `Hub::in_order` guard the event is published under.
-pub async fn mentions_for(db: &SqlitePool, user: UserId, channel: ChannelId) -> AppResult<u32> {
+/// `user`'s absolute (unread, mentions) counts in `channel`, counted exactly as [`states_for`] does
+/// ((0, 0) for a channel without a read point). Events carry them so clients needn't infer them from
+/// what they happen to have loaded; call it under the same `Hub::in_order` guard the event is
+/// published under.
+pub async fn counts_for(
+    db: &SqlitePool,
+    user: UserId,
+    channel: ChannelId,
+) -> AppResult<(u32, u32)> {
     Ok(read_states(db, user, Some(channel))
         .await?
         .first()
-        .map_or(0, |r| r.mentions))
+        .map_or((0, 0), |r| (r.unread, r.mentions)))
 }
 
 /// The reply mentions still counted for a user: a mention in a live reply of a live quote, after the
