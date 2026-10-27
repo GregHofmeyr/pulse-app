@@ -2,6 +2,7 @@
   import { tick, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import MessageItem from './MessageItem.svelte'
+  import QuoteComposer from './QuoteComposer.svelte'
   import QuoteItem from './QuoteItem.svelte'
   import Composer from './Composer.svelte'
   import Avatar from './Avatar.svelte'
@@ -286,7 +287,9 @@
   </div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   {#if isQuotes}
-    <!-- the quote composer goes here (it opens on `editingQuote` when set) -->
+    {#key editingQuote?.id}
+      <QuoteComposer {channelId} serverId={serverId ?? ''} editing={editingQuote ?? undefined} onDone={() => (editingQuote = null)} />
+    {/key}
   {:else}
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
     onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} />

@@ -1,0 +1,177 @@
+// @vitest-environment jsdom
+import { flushSync, mount, unmount } from 'svelte'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { Message } from '../lib/protocol/Message'
+import type { QuoteLine } from '../lib/protocol/QuoteLine'
+import { fakeMatchMedia, FakeIntersectionObserver } from '../lib/testMotion'
+
+const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
+vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
+vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
+
+import QuoteComposer from './QuoteComposer.svelte'
+import { app } from '../lib/store.svelte'
+import { emptyState } from '../lib/state'
+
+const alex = { id: 'U1', username: 'alex', avatar_hash: null }
+const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+const kim = { id: 'U3', username: 'kim', avatar_hash: null }
+const H = 'a'.repeat(64)
+const S = 'b'.repeat(64)
+
+let cmp: ReturnType<typeof mount> | undefined
+const onDone = vi.fn()
+function show(props: Record<string, unknown> = {}) {
+  app.state = {
+    ...emptyState(), me: alex, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
+    members: { S1: [{ user: alex, nickname: null }, { user: sam, nickname: null }, { user: kim, nickname: null }] },
+    people: { U1: { user: alex, online: true, last_seen_at: null }, U2: { user: sam, online: true, last_seen_at: null }, U3: { user: kim, online: true, last_seen_at: null } },
+  }
+  cmp = mount(QuoteComposer, { target: document.body, props: { channelId: 'C1', serverId: 'S1', onDone, ...props } })
+  flushSync()
+}
+const settle = () => new Promise((r) => setTimeout(r, 0))
+const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
+const rows = () => [...document.querySelectorAll<HTMLElement>('.qline')]
+const type = (el: HTMLInputElement | HTMLTextAreaElement, v: string) => { el.value = v; el.dispatchEvent(new Event('input', { bubbles: true })); flushSync() }
+const textOf = (n: number) => rows()[n].querySelector<HTMLTextAreaElement>('textarea.qtext')!
+const whoOf = (n: number) => rows()[n].querySelector<HTMLInputElement>('input.who')!
+const pickMember = (n: number, name: string) => {
+  const w = whoOf(n)
+  w.focus(); type(w, name)
+  ;[...rows()[n].querySelectorAll<HTMLElement>('[role=option]')].find((o) => o.textContent?.trim() === name)!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+  ;[...rows()[n].querySelectorAll<HTMLElement>('[role=option]')].find((o) => o.textContent?.trim() === name)?.click()
+  flushSync()
+}
+const enter = (el: HTMLElement) => { el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true })); flushSync() }
+const addLine = () => { document.querySelector<HTMLButtonElement>('button.addline')!.click(); flushSync() }
+const imageFile = () => new File([new Uint8Array([1, 2, 3])], 'p.png', { type: 'image/png' })
+const paste = (el: HTMLElement, f: File) => {
+  const ev = Object.assign(new Event('paste', { bubbles: true, cancelable: true }), { clipboardData: { files: [f], items: [], getData: () => '' } })
+  el.dispatchEvent(ev); flushSync()
+}
+
+beforeEach(() => { invoke.mockReset(); invoke.mockResolvedValue(undefined); onDone.mockClear() })
+afterEach(() => { if (cmp) unmount(cmp); cmp = undefined; document.body.innerHTML = '' })
+
+const eline = (over: Partial<QuoteLine> = {}): QuoteLine => ({
+  id: 'L1', speaker_id: 'U2', speaker_name: null, text: 'hello', media: null, caption: null, awards: 0, awarders: [], awarded: false, ...over,
+})
+const quoteMsg = (lines: QuoteLine[]): Message => ({
+  id: 'M1', channel_id: 'C1', author_id: 'U1', kind: 'normal', content: '', reply_to_id: null,
+  created_at: '2026-10-01T10:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null,
+  quote: { lines, year: 2026, said_on: null, reply_count: 0, last_reply_id: null, replies_seen: null, wins: [] }, qoty_card: null,
+})
+
+describe('QuoteComposer', () => {
+  it("won't post without a speaker and says Who said it?", async () => {
+    show()
+    type(textOf(0), 'hello')
+    enter(textOf(0))
+    await settle()
+    expect(calls('post_quote')).toHaveLength(0)
+    expect(document.body.textContent).toContain('Who said it?')
+  })
+
+  it('adds and removes layers up to 10', () => {
+    show()
+    for (let i = 0; i < 12; i++) if (document.querySelector('button.addline')) addLine()
+    expect(rows()).toHaveLength(10)
+    expect(document.querySelector('button.addline')).toBeNull()
+    rows()[3].querySelector<HTMLButtonElement>('button[aria-label="Remove line"]')!.click(); flushSync()
+    expect(rows()).toHaveLength(9)
+    expect(document.querySelector('button.addline')).not.toBeNull()
+  })
+
+  it('posts lines with speaker ids and plain names', async () => {
+    show()
+    type(textOf(0), 'hello there'); pickMember(0, 'sam')
+    addLine()
+    type(textOf(1), 'back in my day')
+    const w = whoOf(1); w.focus(); type(w, 'Grandpa')
+    const use = [...rows()[1].querySelectorAll<HTMLElement>('[role=option]')].find((o) => o.textContent?.includes('not on Pulse yet'))!
+    expect(use.textContent).toContain('Use “Grandpa”')
+    use.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); use.click(); flushSync()
+    enter(textOf(1))
+    await settle()
+    const [c] = calls('post_quote')
+    const a = c[1] as { channelId: string; body: { lines: unknown[]; today: string; nonce: string } }
+    expect(a.channelId).toBe('C1')
+    expect(a.body.lines).toEqual([
+      { id: null, speaker_id: 'U2', speaker_name: null, text: 'hello there', media_hash: null, caption: null },
+      { id: null, speaker_id: null, speaker_name: 'Grandpa', text: 'back in my day', media_hash: null, caption: null },
+    ])
+    expect(a.body.today).toMatch(/^\d{4}-\d{2}-\d{2}$/)
+    expect(a.body.nonce).toBeTruthy()
+    expect(onDone).toHaveBeenCalled()
+  })
+
+  it('strips typed quote marks', async () => {
+    show()
+    type(textOf(0), '“hello”'); pickMember(0, 'sam'); enter(textOf(0))
+    await settle()
+    const body = (calls('post_quote')[0][1] as { body: { lines: { text: string }[] } }).body
+    expect(body.lines[0].text).toBe('hello')
+  })
+
+  it('pasting an image makes an image line', async () => {
+    invoke.mockImplementation(async (cmd) => (cmd === 'upload_quote_media' ? { hash: H, content_type: 'image/webp', width: 10, height: 10, frames: 4, animated: true, still_hash: S } : undefined))
+    show()
+    paste(textOf(0), imageFile())
+    await settle(); flushSync()
+    expect(calls('upload_quote_media')).toHaveLength(1)
+    expect(rows()[0].querySelector('textarea.qtext')).toBeNull()
+    expect(rows()[0].querySelector<HTMLImageElement>('img.thumb')!.getAttribute('src')).toContain(S)
+    pickMember(0, 'sam')
+    type(rows()[0].querySelector<HTMLInputElement>('input.caption')!, 'a cat')
+    enter(rows()[0].querySelector<HTMLInputElement>('input.caption')!)
+    await settle()
+    const body = (calls('post_quote')[0][1] as { body: { lines: unknown[] } }).body
+    expect(body.lines).toEqual([{ id: null, speaker_id: 'U2', speaker_name: null, text: null, media_hash: H, caption: 'a cat' }])
+  })
+
+  it('a_rejected_image_keeps_the_line', async () => {
+    invoke.mockImplementation(async (cmd) => { if (cmd === 'upload_quote_media') throw 'That image is too big (2 MB max).'; return undefined })
+    show()
+    type(textOf(0), 'keep me')
+    paste(textOf(0), imageFile())
+    await settle(); flushSync()
+    expect(rows()[0].textContent).toContain('too big')
+    expect(textOf(0).value).toBe('keep me')
+    expect(rows()).toHaveLength(1)
+    expect(calls('post_quote')).toHaveLength(0)
+  })
+
+  it('edit warns before a speaker change on an awarded line', async () => {
+    show({ editing: quoteMsg([eline({ awards: 3, awarders: ['U1', 'U3', 'U2'] })]) })
+    expect(textOf(0).value).toBe('hello')
+    rows()[0].querySelector<HTMLElement>('.chip')!.click(); flushSync()
+    pickMember(0, 'kim')
+    enter(textOf(0)); await settle()
+    expect(document.body.textContent).toContain('This line has 3 awards. Changing who said it removes them.')
+    expect(calls('edit_quote')).toHaveLength(0)
+    document.querySelector<HTMLButtonElement>('button.confirm')!.click(); await settle()
+    const [c] = calls('edit_quote')
+    expect(c[1]).toEqual({ messageId: 'M1', body: { lines: [{ id: 'L1', speaker_id: 'U3', speaker_name: null, text: 'hello', media_hash: null, caption: null }] } })
+  })
+
+  it('says 1 award in the singular', async () => {
+    show({ editing: quoteMsg([eline({ awards: 1, awarders: ['U1'] })]) })
+    rows()[0].querySelector<HTMLElement>('.chip')!.click(); flushSync()
+    pickMember(0, 'kim'); enter(textOf(0)); await settle()
+    expect(document.body.textContent).toContain('This line has 1 award. Changing who said it removes them.')
+  })
+
+  it('does not warn for a plain-name recase and Escape cancels', async () => {
+    show({ editing: quoteMsg([eline({ speaker_id: null, speaker_name: 'Grandpa Joe', awards: 2, awarders: ['U1', 'U3'] })]) })
+    const w = rows()[0].querySelector<HTMLElement>('.chip')!; w.click(); flushSync()
+    const who = whoOf(0); who.focus(); type(who, 'grandpa  JOE')
+    ;[...rows()[0].querySelectorAll<HTMLElement>('[role=option]')].find((o) => o.textContent?.includes('not on Pulse yet'))!.click(); flushSync()
+    enter(textOf(0)); await settle()
+    expect(document.body.textContent).not.toContain('Changing who said it')
+    expect(calls('edit_quote')).toHaveLength(1)
+    textOf(0).dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true })); flushSync()
+    expect(onDone).toHaveBeenCalled()
+  })
+})
