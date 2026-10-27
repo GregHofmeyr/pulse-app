@@ -80,6 +80,12 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
+/** jsdom never reports :focus-visible; say what a browser would for this element. */
+function stubFocusVisible(el: HTMLElement, visible: boolean) {
+  const real = el.matches.bind(el) as (s: string) => boolean
+  vi.spyOn(el, 'matches').mockImplementation(((sel: string) => (sel === ':focus-visible' ? visible : real(sel))) as never)
+}
+
 describe('MessageItem errors', () => {
   it('failed_edit_keeps_the_box_and_text_with_the_error', async () => {
     onEdit.mockRejectedValue('edit refused')
@@ -414,7 +420,17 @@ describe('MessageItem edit box', () => {
     show()
     const actions = document.querySelector<HTMLElement>('.actions')!
     expect(actions.classList.contains('open')).toBe(false)
-    actions.querySelector<HTMLElement>('button')!.focus(); flushSync()
+    const b = actions.querySelector<HTMLElement>('button')!
+    stubFocusVisible(b, true) // jsdom has no keyboard-focus heuristic
+    b.focus(); flushSync()
     expect(actions.classList.contains('open')).toBe(true)
+  })
+
+  it('a mouse-style focus does not open the action bar', () => {
+    show()
+    const chip = document.querySelector<HTMLElement>('.chip')!
+    stubFocusVisible(chip, false)
+    chip.focus(); flushSync()
+    expect(document.querySelector('.actions')!.classList.contains('open')).toBe(false)
   })
 })

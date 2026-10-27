@@ -73,6 +73,12 @@ beforeEach(() => {
 })
 afterEach(() => { if (cmp) unmount(cmp); cmp = undefined; document.body.innerHTML = '' })
 
+/** jsdom never reports :focus-visible; say what a browser would for this element. */
+function stubFocusVisible(el: HTMLElement, visible: boolean) {
+  const real = el.matches.bind(el) as (s: string) => boolean
+  vi.spyOn(el, 'matches').mockImplementation(((sel: string) => (sel === ':focus-visible' ? visible : real(sel))) as never)
+}
+
 describe('QuoteItem', () => {
   it('renders lines with speakers and curly marks', () => {
     show(quote([line(), line({ id: 'L2', speaker_id: null, speaker_name: 'Grandpa', text: 'back in my day' })]))
@@ -267,7 +273,9 @@ describe('QuoteItem', () => {
     show(quote([line()]))
     const actions = document.querySelector<HTMLElement>('.actions')!
     expect(actions.classList.contains('open')).toBe(false)
-    actions.querySelector<HTMLElement>('button')!.focus(); flushSync()
+    const b = actions.querySelector<HTMLElement>('button')!
+    stubFocusVisible(b, true) // jsdom has no keyboard-focus heuristic
+    b.focus(); flushSync()
     expect(actions.classList.contains('open')).toBe(true)
   })
 
@@ -324,5 +332,13 @@ describe('QuoteItem', () => {
     first.focus()
     first.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true }))
     expect(document.activeElement).toBe(input)
+  })
+
+  it('a mouse-style focus does not open the action bar', () => {
+    show(quote([line()], { reactions: [{ emoji: '👍', count: 1, me: false }] }))
+    const chip = document.querySelector<HTMLElement>('.chip')!
+    stubFocusVisible(chip, false)
+    chip.focus(); flushSync()
+    expect(document.querySelector('.actions')!.classList.contains('open')).toBe(false)
   })
 })
