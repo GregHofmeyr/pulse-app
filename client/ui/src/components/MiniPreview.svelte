@@ -54,11 +54,11 @@
   }
   function up(e: PointerEvent) {
     if (!press) return
-    const area = box?.parentElement?.getBoundingClientRect()
-    if (offset && area) {
+    const panel = box?.parentElement?.getBoundingClientRect()
+    if (offset && panel) {
       // snap to the corner nearest where it was let go
-      const v = e.clientY < area.top + area.height / 2 ? 't' : 'b'
-      const h = e.clientX < area.left + area.width / 2 ? 'l' : 'r'
+      const v = e.clientY < panel.top + panel.height / 2 ? 't' : 'b'
+      const h = e.clientX < panel.left + panel.width / 2 ? 'l' : 'r'
       corner = `${v}${h}` as Corner
       saveMiniCorner(corner)
       dragged = true
@@ -71,23 +71,24 @@
   // Fixed to the window, so no panel's overflow can clip it and it floats over the side panels when
   // dragged there; its corners still follow the area it belongs to (the call or chat panel), which
   // moves when the window resizes or full view hides the side panels.
+  // Watching the area's size is enough: in the shell, everything that moves it (a side panel hiding
+  // or showing) also resizes it, and a window resize doesn't move it (the header and gutters are fixed).
   let area = $state({ top: 0, left: 0, right: 0, bottom: 0 })
   function measure() {
     const r = box?.parentElement?.getBoundingClientRect()
     if (!r) return
-    area = { top: r.top, left: r.left, right: window.innerWidth - r.right, bottom: window.innerHeight - r.bottom }
+    const next = { top: r.top, left: r.left, right: window.innerWidth - r.right, bottom: window.innerHeight - r.bottom }
+    // untracked: the effect that first calls this must not re-run (and observe again) on its own write
+    const now = untrack(() => area)
+    if (next.top !== now.top || next.left !== now.left || next.right !== now.right || next.bottom !== now.bottom) area = next
   }
   $effect(() => {
     const parent = box?.parentElement
     if (!parent) return
     measure()
-    window.addEventListener('resize', measure)
     const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null
     ro?.observe(parent)
-    return () => {
-      window.removeEventListener('resize', measure)
-      ro?.disconnect()
-    }
+    return () => ro?.disconnect()
   })
 
   /** The drag was taken away (cancelled, capture lost): back where it was, nothing saved. */

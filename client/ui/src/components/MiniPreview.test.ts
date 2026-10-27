@@ -191,30 +191,54 @@ describe('mini-preview', () => {
     style.textContent = css
     document.head.append(style)
     try {
-      document.body.innerHTML = '<div class="mini-preview tl svelte-test" id="m"></div>'
-      const cs = getComputedStyle(document.getElementById('m')!)
-      expect(cs.position).toBe('fixed')
-      expect(cs.zIndex).toBe('4')
-      expect(cs.top).toBe('calc(var(--area-top) + 68px)')
-      expect(cs.left).toBe('calc(var(--area-left) + 16px)')
+      const corners: Record<string, [string, string, string]> = {
+        tl: ['top', 'left', 'calc(var(--area-top) + 68px)|calc(var(--area-left) + 16px)'],
+        tr: ['top', 'right', 'calc(var(--area-top) + 68px)|calc(var(--area-right) + 16px)'],
+        bl: ['bottom', 'left', 'calc(var(--area-bottom) + 96px)|calc(var(--area-left) + 16px)'],
+        br: ['bottom', 'right', 'calc(var(--area-bottom) + 96px)|calc(var(--area-right) + 16px)'],
+      }
+      for (const [corner, [v, h, want]] of Object.entries(corners)) {
+        document.body.innerHTML = `<div class="mini-preview ${corner} svelte-test" id="m"></div>`
+        const cs = getComputedStyle(document.getElementById('m')!)
+        expect(cs.position, corner).toBe('fixed')
+        expect(cs.zIndex, corner).toBe('4')
+        expect(`${cs.getPropertyValue(v)}|${cs.getPropertyValue(h)}`, corner).toBe(want)
+      }
     } finally {
       style.remove()
       document.body.innerHTML = ''
     }
-    // the corners follow the area (the call or chat panel), on mount and as the window resizes
-    await streamApi.watch('V1', 'U2')
-    let rect = { left: 280, top: 52, right: 1024, bottom: 792 }
-    vi.spyOn(document.body, 'getBoundingClientRect').mockImplementation(() => ({ ...rect, width: rect.right - rect.left, height: rect.bottom - rect.top, x: rect.left, y: rect.top, toJSON() {} }) as DOMRect)
-    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1280)
-    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800)
-    mountMini()
-    const mini = q('.mini-preview')!
-    const v = (n: string) => mini.style.getPropertyValue(n)
-    expect([v('--area-top'), v('--area-left'), v('--area-right'), v('--area-bottom')]).toEqual(['52px', '280px', '256px', '8px'])
-    rect = { left: 8, top: 52, right: 1272, bottom: 792 } // full view hid the side panels
-    window.dispatchEvent(new Event('resize'))
-    flushSync()
-    expect([v('--area-left'), v('--area-right')]).toEqual(['8px', '8px'])
+    // the corners follow the area (the call or chat panel) as it changes size (full view hiding the
+    // side panels, the member list coming and going): a ResizeObserver on that area
+    const observers: { cb: () => void; observed: Element[]; disconnect: ReturnType<typeof vi.fn> }[] = []
+    vi.stubGlobal('ResizeObserver', class {
+      observed: Element[] = []
+      disconnect = vi.fn()
+      constructor(public cb: () => void) { observers.push(this as never) }
+      observe(el: Element) { this.observed.push(el) }
+    })
+    try {
+      await streamApi.watch('V1', 'U2')
+      let rect = { left: 280, top: 52, right: 1024, bottom: 792 }
+      vi.spyOn(document.body, 'getBoundingClientRect').mockImplementation(() => ({ ...rect, width: rect.right - rect.left, height: rect.bottom - rect.top, x: rect.left, y: rect.top, toJSON() {} }) as DOMRect)
+      vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1280)
+      vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800)
+      mountMini()
+      const mini = q('.mini-preview')!
+      const v = (n: string) => mini.style.getPropertyValue(n)
+      expect([v('--area-top'), v('--area-left'), v('--area-right'), v('--area-bottom')]).toEqual(['52px', '280px', '256px', '8px'])
+      expect(observers).toHaveLength(1)
+      expect(observers[0].observed).toEqual([mini.parentElement])
+      rect = { left: 8, top: 52, right: 1272, bottom: 792 } // full view hid the side panels
+      observers[0].cb()
+      flushSync()
+      expect([v('--area-left'), v('--area-right')]).toEqual(['8px', '8px'])
+      unmount(cmp!)
+      cmp = undefined
+      expect(observers[0].disconnect).toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('the_preview_is_a_plain_box_with_an_open_button_and_a_separate_x', async () => {
