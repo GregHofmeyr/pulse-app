@@ -132,11 +132,15 @@ pub(super) struct Page {
 }
 
 impl Page {
+    pub(super) fn limit(&self) -> i64 {
+        self.limit.unwrap_or(50).clamp(1, 100)
+    }
+
     /// (limit, "before" bound). ULIDs sort by time, so "before" is a plain string comparison;
     /// "~" sorts after every ULID.
     pub(super) fn bounds(&self) -> (i64, String) {
         (
-            self.limit.unwrap_or(50).clamp(1, 100),
+            self.limit(),
             self.before
                 .map(|b| b.to_string())
                 .unwrap_or_else(|| "~".into()),
@@ -212,11 +216,11 @@ async fn list(
             "use only one of before, after and around".into(),
         ));
     }
-    let (limit, before) = Page {
+    let page = Page {
         before: q.before,
         limit: q.limit,
-    }
-    .bounds();
+    };
+    let limit = page.limit();
     let rows = if let Some(after) = q.after {
         slice(&s.db, id, &after.to_string(), true, limit).await?
     } else if let Some(target) = q.around {
@@ -230,13 +234,15 @@ async fn list(
         .await?;
         let anchor = anchor.ok_or(AppError::NotFound)?;
         let bound = target.to_string();
+        // Three plain queries, no transaction: the table is append-only and deletes are soft, so a
+        // concurrent write can only shift the window's edges.
         // Each side gets its share; one running out doesn't give its room to the other.
         let mut rows = slice(&s.db, id, &bound, true, limit - 1 - limit / 2).await?;
         rows.push(anchor);
         rows.extend(slice(&s.db, id, &bound, false, limit / 2).await?);
         rows
     } else {
-        slice(&s.db, id, &before, false, limit).await?
+        slice(&s.db, id, &page.bounds().1, false, limit).await?
     };
     Ok(Json(fill(&s.db, me, rows).await?))
 }

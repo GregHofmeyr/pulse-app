@@ -255,6 +255,22 @@ async fn fetch(
     get_json(app, token, &format!("/channels/{ch}/messages?{q}")).await
 }
 
+async fn general_of_new_server(app: &TestApp, token: &str) -> pulse_protocol::ids::ChannelId {
+    let s = create_server(app, token, "Other").await;
+    general(app, token, s.id).await.id
+}
+
+async fn status_of(app: &TestApp, token: &str, path: &str) -> u16 {
+    app.http
+        .get(app.url(path))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
 fn contents(v: &[Message]) -> Vec<String> {
     v.iter().map(|m| m.content.clone()).collect()
 }
@@ -329,14 +345,12 @@ async fn around_refuses_a_reply_a_foreign_or_unknown_id() {
         pulse_protocol::ids::MessageId::new().to_string(),
     ] {
         for param in ["around", "after"] {
-            let status = app
-                .http
-                .get(app.url(&format!("/channels/{}/messages?{param}={id}", g.id)))
-                .bearer_auth(&a)
-                .send()
-                .await
-                .unwrap()
-                .status();
+            let status = status_of(
+                &app,
+                &a,
+                &format!("/channels/{}/messages?{param}={id}", g.id),
+            )
+            .await;
             // `after` is only a cursor, so it never needs the id to exist.
             let want = if param == "around" { 404 } else { 200 };
             assert_eq!(status, want, "{param}={id}");
@@ -344,14 +358,10 @@ async fn around_refuses_a_reply_a_foreign_or_unknown_id() {
     }
 }
 
-async fn general_of_new_server(app: &TestApp, token: &str) -> pulse_protocol::ids::ChannelId {
-    let s = create_server(app, token, "Other").await;
-    general(app, token, s.id).await.id
-}
-
 #[tokio::test]
 async fn around_accepts_system_and_deleted_anchors() {
     let (app, a, g, all) = seeded(3).await;
+    // Minted after the sends; ids are monotonic (see `next_ulid`), so this sorts above all of them.
     let sys = pulse_protocol::ids::MessageId::new();
     sqlx::query("INSERT INTO messages (id, channel_id, kind, content, created_at) VALUES (?, ?, 'system', 'card', '2026-01-01T00:00:00.000Z')")
         .bind(sys.to_string())
@@ -381,14 +391,11 @@ async fn one_cursor_only() {
         format!("before={x}&around={y}"),
         format!("after={x}&around={y}"),
     ] {
-        let r = app
-            .http
-            .get(app.url(&format!("/channels/{}/messages?{q}", g.id)))
-            .bearer_auth(&a)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(r.status(), 400, "{q}");
+        assert_eq!(
+            status_of(&app, &a, &format!("/channels/{}/messages?{q}", g.id)).await,
+            400,
+            "{q}"
+        );
     }
 }
 
@@ -400,14 +407,8 @@ async fn around_needs_access() {
     let (_, jo) = register(&app, "jo").await;
     let dm = create_dm(&app, &a, &[sam]).await;
     let m = send(&app, &a, dm.id, "psst").await;
-    let r = app
-        .http
-        .get(app.url(&format!("/channels/{}/messages?around={}", dm.id, m.id)))
-        .bearer_auth(&jo)
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(r.status(), 404);
+    let path = format!("/channels/{}/messages?around={}", dm.id, m.id);
+    assert_eq!(status_of(&app, &jo, &path).await, 404);
 }
 
 #[tokio::test]
