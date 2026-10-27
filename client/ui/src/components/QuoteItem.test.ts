@@ -210,6 +210,17 @@ describe('QuoteItem', () => {
     expect(document.querySelector('button[aria-label="Reply"]')).toBeNull()
   })
 
+  it('compact shows the lines and their speakers only', () => {
+    show(quote([line({ awards: 1, awarders: ['U3'] })], { reactions: [{ emoji: '😂', count: 2, me: false }] }, { reply_count: 2 }), { compact: true })
+    expect(document.querySelector('.line .text')?.textContent).toBe('“hello there”')
+    expect(document.querySelector('.line .speaker')?.textContent?.trim()).toBe('sam')
+    expect(document.querySelector('.line .trophy')).toBeTruthy()
+    expect(document.querySelector('.meta')).toBeNull() // no poster header
+    expect(document.querySelector('.reactions, .reaction-row, button[aria-label="Add reaction"]')).toBeNull()
+    expect(document.body.textContent).not.toContain('View 2 replies')
+    for (const a of ['Reply', 'Edit', 'Delete']) expect(document.querySelector(`button[aria-label="${a}"]`)).toBeNull()
+  })
+
   it('a failed delete shows on the quote', async () => {
     onDelete.mockRejectedValueOnce(new Error('nope'))
     show(quote([line()]))

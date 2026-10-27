@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { defaultQotyYear, hasNewReplies, leader, liveQoty, myVote, nameKey, score, speakerOf, stripMarks, timeLeft, voteAction } from './quotes'
+import { canReopen, defaultQotyYear, hasNewReplies, leader, leftLabel, liveQoty, myVote, nameKey, quotePreview, score, speakersOf, speakerOf, stripMarks, timeLeft, voteAction } from './quotes'
 import { applyEvent, applyReady, emptyState } from './state'
 import type { Message } from './protocol/Message'
 import type { QotyEvent } from './protocol/QotyEvent'
@@ -116,5 +116,35 @@ describe('Quote of the Year helpers', () => {
     expect(liveQoty(s, 'S1', now)).toBeNull()
     s = applyEvent(s, { t: 'QotyEnded', d: { event: qoty({ ended_at: '2026-10-01T00:00:00Z', end_reason: 'early' }) } }, 0)
     expect(liveQoty(s, 'S1', now)).toBeNull()
+  })
+})
+
+describe('Quote of the Year labels', () => {
+  const s = applyReady(emptyState(), ready())
+  it('speakersOf names each speaker once, in line order', () => {
+    const m = msg({ quote: quote({ lines: [line({ speaker_id: 'U2', speaker_name: null }), line({ id: 'L2' }), line({ id: 'L3', speaker_id: 'U2', speaker_name: null })] }) })
+    expect(speakersOf(s, 'S1', m)).toBe('Big Dog & Sam B')
+    expect(speakersOf(s, 'S1', msg())).toBe('')
+  })
+  it('quotePreview is the first line and its speaker, with an ellipsis for more', () => {
+    expect(quotePreview(s, 'S1', msg({ quote: quote() }))).toEqual({ said: '“hi”', by: 'Sam B' })
+    expect(quotePreview(s, 'S1', msg({ quote: quote({ lines: [line(), line({ id: 'L2' })] }) }))).toEqual({ said: '“hi” …', by: 'Sam B' })
+    expect(quotePreview(s, 'S1', msg({ quote: quote({ lines: [line({ text: null, caption: 'the chat' })] }) }))).toEqual({ said: 'the chat', by: 'Sam B' })
+    expect(quotePreview(s, 'S1', msg({ content: 'plain' }))).toEqual({ said: 'plain', by: '' })
+  })
+  it('leftLabel says how long is left, or until ended', () => {
+    const now = Date.parse('2026-10-01T00:00:00Z')
+    expect(leftLabel('2026-10-01T03:00:00Z', now)).toBe('3h left')
+    expect(leftLabel(null, now)).toBe('until ended')
+  })
+  it('canReopen: the same event, ended, within its window', () => {
+    const now = Date.parse('2026-10-01T00:00:00Z')
+    const ended = qoty({ ended_at: '2026-09-30T23:00:00Z', end_reason: 'early', reopen_until: '2026-10-01T23:00:00Z' })
+    expect(canReopen(ended, 'E1', now)).toBe(true)
+    expect(canReopen(ended, 'E2', now)).toBe(false)
+    expect(canReopen(undefined, 'E1', now)).toBe(false)
+    expect(canReopen({ ...ended, reopen_until: '2026-09-30T23:59:00Z' }, 'E1', now)).toBe(false)
+    expect(canReopen({ ...ended, reopen_until: null }, 'E1', now)).toBe(false)
+    expect(canReopen({ ...ended, ended_at: null }, 'E1', now)).toBe(false)
   })
 })

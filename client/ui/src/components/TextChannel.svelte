@@ -4,6 +4,7 @@
   import MessageItem from './MessageItem.svelte'
   import QuoteComposer from './QuoteComposer.svelte'
   import QuoteItem from './QuoteItem.svelte'
+  import QotyCard from './QotyCard.svelte'
   import RepliesPanel from './RepliesPanel.svelte'
   import Leaderboard from './Leaderboard.svelte'
   import Composer from './Composer.svelte'
@@ -15,6 +16,7 @@
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
   import { addHistory, addOlder, addPending, appendNewer, markHistory, PAGE, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
+  import { liveQoty } from '../lib/quotes'
   import { groupedWith, mentionablesFor, nameOfIn, nextTypingExpiry, stableList, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
@@ -26,7 +28,7 @@
     onAddPeople?: () => void
     /** After leaving/closing this conversation. */
     onLeft?: () => void
-    /** Quotes channels: start Quote of the Year (wired by the vote task). */
+    /** Quotes channels: start Quote of the Year (the button hides while a vote is live). */
     onStartQoty?: () => void
   } = $props()
 
@@ -275,6 +277,7 @@
   let repliesOpen = $state<Message | null>(null)
   const repliesRoot = $derived(repliesOpen ? (byId.get(repliesOpen.id) ?? repliesOpen) : null) // kept current
   let leaderboardOpen = $state(false)
+  const qotyLive = $derived(!!serverId && !!liveQoty(app.state, serverId, Date.parse(clock.nowIso)))
   function openLeaderboardEntry(m: Message) {
     leaderboardOpen = false
     void jumpTo(m.channel_id, m.id)
@@ -326,7 +329,7 @@
     {#if isQuotes}
       <button class="hbtn" class:on={leaderboardOpen} aria-label="Leaderboard" data-tip="Leaderboard" data-menu-toggle aria-haspopup="dialog" aria-expanded={leaderboardOpen}
         onclick={() => (leaderboardOpen = !leaderboardOpen)}><Icon name="trophy" size={17} /></button>
-      <button class="qoty" onclick={onStartQoty}>Start Quote of the Year</button>
+      {#if !qotyLive}<button class="qoty" onclick={onStartQoty}>Start Quote of the Year</button>{/if}
     {/if}
     {#if isPrivate}
       <button class="hbtn" aria-label="Add people" data-tip="Add people" onclick={onAddPeople}><Icon name="userPlus" size={17} /></button>
@@ -353,7 +356,9 @@
     </div>{/if}
     {#each messages as m, i (m.id)}
       {#if i === newIndex}<div class="newline" role="separator" aria-label="New messages">NEW</div>{/if}
-      {#if isQuotes && m.quote}
+      {#if m.qoty_card && serverId}
+        <QotyCard message={m} {serverId} quote={m.qoty_card.message_id ? (byId.get(m.qoty_card.message_id) ?? null) : null} />
+      {:else if isQuotes && m.quote}
         <QuoteItem message={m} serverId={serverId ?? ''} meId={app.state.me?.id ?? ''} {nameOf}
           onReply={() => (repliesOpen = m)} onOpenReplies={() => (repliesOpen = m)}
           onEdit={() => (editingQuote = m)} onDelete={() => api.deleteMessage(m.id)} />

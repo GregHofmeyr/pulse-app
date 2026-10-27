@@ -31,6 +31,12 @@ export function clickOutside(node: HTMLElement, onOutside: (e: Event) => void) {
   }
 }
 
+/** Open modals, oldest first: only the newest still on the page answers keys. */
+const openModals: HTMLElement[] = []
+function topModal(): HTMLElement | undefined {
+  for (let i = openModals.length - 1; i >= 0; i--) if (openModals[i].isConnected) return openModals[i]
+}
+
 const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([type=hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
 
 /**
@@ -38,7 +44,8 @@ const FOCUSABLE = 'a[href], button:not([disabled]), input:not([disabled]):not([t
  * inside, Escape calls `onClose` (unless an inner control already took it), and focus returns to
  * what had it before when the modal goes away. Everything beside the modal's ancestor chain is
  * `inert` while it's open (mark a click-to-close backdrop `data-backdrop` to spare it); popovers
- * rendered inside the modal stay usable.
+ * rendered inside the modal stay usable. A modal opened over another (e.g. an image inside a dialog)
+ * takes Escape and Tab until it goes.
  */
 export function modal(node: HTMLElement, onClose: () => void) {
   let cb = onClose
@@ -59,7 +66,9 @@ export function modal(node: HTMLElement, onClose: () => void) {
   ;(items()[0] ?? node).focus()
   // On window, in the bubble phase: Svelte delegates onkeydown to the mount root, so inner
   // handlers (an input's or Select's own Esc) have run, and can mark the event handled, by now.
+  openModals.push(node)
   const key = (e: KeyboardEvent) => {
+    if (topModal() !== node) return
     if (e.key === 'Escape') {
       if (!e.defaultPrevented) {
         e.preventDefault()
@@ -92,6 +101,7 @@ export function modal(node: HTMLElement, onClose: () => void) {
     },
     destroy() {
       window.removeEventListener('keydown', key)
+      openModals.splice(openModals.indexOf(node), 1)
       for (const el of inerted) el.removeAttribute('inert')
       // After clearing inert: an inert element can't take focus.
       if (before?.isConnected) before.focus()

@@ -7,6 +7,7 @@
   import { gridTiles, nobodyStreaming } from '../lib/callgrid'
   import { stageLabel } from '../lib/voicestage'
   import FullView from './FullView.svelte'
+  import QotyStrip from './QotyStrip.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
   import StreamTile from './StreamTile.svelte'
   import UserTile from './UserTile.svelte'
@@ -108,6 +109,8 @@
       {/if}
     </div>
   {/if}
+
+  {#if serverId}<QotyStrip {serverId} />{/if}
 
   {#if goLiveUi.error && goLiveUi.channelId === channelId}<p class="error" role="alert">{goLiveUi.error}</p>{/if}
 

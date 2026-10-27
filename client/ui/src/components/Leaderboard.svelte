@@ -3,7 +3,7 @@
   // entry opens that quote in its channel (the caller jumps to it).
   import VoterStack from './VoterStack.svelte'
   import { clickOutside } from '../lib/actions'
-  import { score, speakerOf } from '../lib/quotes'
+  import { quotePreview, score } from '../lib/quotes'
   import { nameOfIn } from '../lib/selectors'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
@@ -32,14 +32,7 @@
 
   const nameOf = nameOfIn(() => app.state, serverId)
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
-  /** The quote's first line as the entry's text (more lines get an ellipsis). */
-  function preview(m: Message): { said: string; by: string } {
-    const lines = m.quote?.lines ?? []
-    const first = lines[0]
-    if (!first) return { said: m.content, by: '' }
-    const said = first.text ? `“${first.text}”` : (first.caption ?? 'Image')
-    return { said: lines.length > 1 ? `${said} …` : said, by: speakerOf(app.state, serverId, first).name }
-  }
+  const preview = (m: Message) => quotePreview(app.state, serverId, m)
   const who = (c: SpeakerCount) => (c.user_id ? nameOf(c.user_id) : (c.name ?? ''))
   const empty = $derived(!!board && !board.winners.length && !board.top_year.length && !board.top_all_time.length
     && !board.most_quoted.length && !board.most_awarded.length)

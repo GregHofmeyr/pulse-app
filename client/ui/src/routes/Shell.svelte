@@ -16,6 +16,8 @@
   import CrashReportPrompt from '../components/CrashReportPrompt.svelte'
   import ConversationList from '../components/ConversationList.svelte'
   import GoLiveDialog from '../components/GoLiveDialog.svelte'
+  import QotyBanner from '../components/QotyBanner.svelte'
+  import QotyStart from '../components/QotyStart.svelte'
   import PeopleBoard from '../components/PeopleBoard.svelte'
   import PeoplePicker from '../components/PeoplePicker.svelte'
   import GroupMembers from '../components/GroupMembers.svelte'
@@ -41,6 +43,8 @@
   let activeServerId = $state<string | null>(null)
   let activeChannelId = $state<string | null>(null)
   let settingsOpen = $state(false)
+  /** The server a Quote of the Year is being started for (its start dialog is open). */
+  let qotyStart = $state<string | null>(null)
 
   // The animation freeze while you stream; here so it outlives the voice panel. Returning the stop
   // is what ends it with the shell: a `{ followLiveFreeze() }` body would leak it.
@@ -434,6 +438,7 @@
         <button type="button" class="edge left" bind:this={leftEdge} aria-label={leftName} aria-controls="channels-panel" aria-expanded={panels.left}
           data-tip="{panels.left ? 'Hide' : 'Show'} {leftName.toLowerCase()}" onclick={() => (panels.left = !panels.left)}><Icon name={panels.left ? 'chevronLeft' : 'chevronRight'} size={14} /></button>
       {/if}
+      {#if activeServerId && member && !fullShown}<QotyBanner serverId={activeServerId} />{/if}
       {#if activeServerId && !member}
         <div class="join">
           <p>You're not in <strong>{activeServer?.name}</strong> yet.</p>
@@ -445,7 +450,7 @@
       {:else if activeChannel}
         {#key activeChannel.id}<TextChannel channelId={activeChannel.id} serverId={activeServerId}
           onAddPeople={() => (picker = { mode: 'add', channelId: activeChannel.id })}
-          onLeft={() => (activeChannelId = null)} />{/key}
+          onLeft={() => (activeChannelId = null)} onStartQoty={() => (qotyStart = activeServerId)} />{/key}
       {:else if activeServerId === null}
         <PeopleBoard onOpen={openConversation} onJoinVoice={(ch, srv) => { selectServer(srv); activeChannelId = ch; if (voice.channelId !== ch) void voiceApi.join(ch) }} />
       {:else}
@@ -466,6 +471,7 @@
 {#if serverSettingsOpen && activeServer}<ServerSettings server={activeServer} onClose={() => (serverSettingsOpen = false)} />{/if}
 {#if settingsOpen}<Settings section={settingsSection} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
+{#if qotyStart}<QotyStart serverId={qotyStart} onClose={() => (qotyStart = null)} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
 {#if creating}
   <div class="overlay">

@@ -87,3 +87,28 @@ export function leader(e: QotyEvent): { option: QotyOption; votes: number } | nu
   for (const o of e.options) if (o.votes > (best?.votes ?? 0)) best = o
   return best ? { option: best, votes: best.votes } : null
 }
+
+/** Who said a quote: each speaker once, in line order ("sam & kim"). */
+export function speakersOf(s: AppState, serverId: string, m: Message): string {
+  return [...new Set((m.quote?.lines ?? []).map((l) => speakerOf(s, serverId, l).name))].join(' & ')
+}
+
+/** A quote in one line: its first line (an ellipsis when there are more) and that line's speaker. */
+export function quotePreview(s: AppState, serverId: string, m: Message): { said: string; by: string } {
+  const lines = m.quote?.lines ?? []
+  const first = lines[0]
+  if (!first) return { said: m.content, by: '' }
+  const said = first.text ? `“${first.text}”` : (first.caption ?? 'Image')
+  return { said: lines.length > 1 ? `${said} …` : said, by: speakerOf(s, serverId, first).name }
+}
+
+/** "2h 5m left", or "until ended" for a vote without an end time. */
+export function leftLabel(endsAt: string | null, nowMs: number): string {
+  const t = timeLeft(endsAt, nowMs)
+  return endsAt === null ? t : `${t} left`
+}
+
+/** Whether the ended vote `eventId` can still be reopened (`e` is the server's latest event). */
+export function canReopen(e: QotyEvent | undefined, eventId: string, nowMs: number): boolean {
+  return !!e && e.id === eventId && e.ended_at !== null && e.reopen_until !== null && Date.parse(e.reopen_until) > nowMs
+}

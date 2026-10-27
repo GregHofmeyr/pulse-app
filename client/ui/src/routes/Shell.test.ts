@@ -565,3 +565,46 @@ describe('jump to a message', () => {
     expect(ui.goTo).toBeNull()
   })
 })
+
+describe('Quote of the Year', () => {
+  const liveVote = (over = {}) => ({
+    id: 'E1', server_id: 'S1', year: 2026, started_by: 'U1', started_at: '2026-10-27T10:00:00Z', ends_at: null, ended_at: null,
+    ended_by: null, end_reason: null, reopen_until: null, options: [], voters: 0, members: 1, ...over,
+  })
+
+  it('a live vote shows its banner over every channel of its server', async () => {
+    const { ui } = await import('../lib/store.svelte')
+    const { testMe: me, testReady } = await import('../lib/testReady')
+    app.state = applyReady(emptyState(), testReady([
+      { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },
+      { id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 1 },
+    ], { qoty: [liveVote()] }))
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+    flushSync()
+    ui.goTo = 'T1'
+    flushSync()
+    expect(document.querySelector('main .qoty-banner')?.textContent).toContain('Quote of the Year 2026')
+    ui.goTo = 'Q1'
+    flushSync()
+    expect(document.querySelector('main .qoty-banner')).toBeTruthy()
+    app.state = { ...app.state, qoty: { S1: liveVote({ ended_at: '2026-10-27T11:00:00Z', end_reason: 'early' }) } }
+    flushSync()
+    expect(document.querySelector('.qoty-banner')).toBeNull()
+  })
+
+  it('Start Quote of the Year opens the start dialog for the server', async () => {
+    const { ui } = await import('../lib/store.svelte')
+    const { testMe: me, testReady } = await import('../lib/testReady')
+    app.state = applyReady(emptyState(), testReady([{ id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 0 }]))
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+    flushSync()
+    ui.goTo = 'Q1'
+    flushSync()
+    ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Start Quote of the Year')!.click()
+    flushSync()
+    expect(document.querySelector('[role=dialog][aria-label="Start Quote of the Year"]')).toBeTruthy()
+    document.querySelector<HTMLButtonElement>('[role=dialog] button[aria-label="Cancel"]')!.click()
+    flushSync()
+    expect(document.querySelector('[role=dialog][aria-label="Start Quote of the Year"]')).toBeNull()
+  })
+})

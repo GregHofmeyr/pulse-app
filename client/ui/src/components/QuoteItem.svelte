@@ -29,6 +29,7 @@
     onEdit,
     onDelete,
     onOpenReplies,
+    compact = false,
   }: {
     message: Message
     serverId: string
@@ -36,10 +37,13 @@
     nameOf: (userId: string | null) => string
     /** Absent where the replies panel pins the quote itself: no Reply entry then. */
     onReply?: () => void
-    onEdit: () => void
-    onDelete: () => Promise<void>
+    /** Absent (with onDelete) where the quote can't be changed: no Edit or Delete then. */
+    onEdit?: () => void
+    onDelete?: () => Promise<void>
     /** Absent where the replies panel pins the quote: no "View N replies" there. */
     onOpenReplies?: () => void
+    /** Just the lines (Quote of the Year's options): no poster, reactions, replies or actions. */
+    compact?: boolean
   } = $props()
 
   const quote = $derived(message.quote)
@@ -104,11 +108,11 @@
 
 {#if quote}
   <!-- focus anywhere inside shows the action bar (hover alone left keyboard users without it) -->
-  <div class="quote" data-message-id={message.id} onfocusin={(e) => { if (keyboardFocused(e.target)) focusIn = true }} onfocusout={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focusIn = false }}>
+  <div class="quote" class:compact data-message-id={message.id} onfocusin={(e) => { if (keyboardFocused(e.target)) focusIn = true }} onfocusout={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focusIn = false }}>
     <div class="row">
-      <Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={40} />
+      {#if !compact}<Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={40} />{/if}
       <div class="body">
-        <div class="meta"><strong>{nameOf(message.author_id)}</strong><span class="time">{when}</span></div>
+        {#if !compact}<div class="meta"><strong>{nameOf(message.author_id)}</strong><span class="time">{when}</span></div>{/if}
         {#if message.deleted}
           <p class="deleted">quote deleted</p>
         {:else}
@@ -147,8 +151,8 @@
           {/each}
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
-        <ReactionRow {message} {meId} {nameOf} onError={showError} onePerPerson {suggest} />
-        {#if quote.reply_count > 0 && onOpenReplies}
+        {#if !compact}<ReactionRow {message} {meId} {nameOf} onError={showError} onePerPerson {suggest} />{/if}
+        {#if quote.reply_count > 0 && onOpenReplies && !compact}
           <button type="button" class="replies" onclick={onOpenReplies}>
             View {quote.reply_count} {quote.reply_count === 1 ? 'reply' : 'replies'}
             {#if hasNewReplies(message)}<span class="new">new</span>{/if}
@@ -156,14 +160,12 @@
         {/if}
         {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
       </div>
-      {#if !message.deleted}
+      {#if !message.deleted && !compact}
         <div class="actions" class:open={picking || focusIn}>
           <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={15} /></button>
           {#if onReply}<button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>{/if}
-          {#if mine}
-            <button aria-label="Edit" onclick={onEdit}><Icon name="pencil" size={15} /></button>
-            <button aria-label="Delete" onclick={() => void attempt(onDelete)}><Icon name="trash" size={15} /></button>
-          {/if}
+          {#if mine && onEdit}<button aria-label="Edit" onclick={onEdit}><Icon name="pencil" size={15} /></button>{/if}
+          {#if mine && onDelete}<button aria-label="Delete" onclick={() => void attempt(onDelete)}><Icon name="trash" size={15} /></button>{/if}
         </div>
         {#if picking && smileBtn}
           <EmojiPopover anchor={smileBtn} onPick={pick} onClose={() => (picking = false)} />
@@ -192,6 +194,8 @@
 <style>
   .quote { padding: 8px 18px 2px; position: relative; }
   .quote:hover { background: rgba(255, 255, 255, .02); }
+  .quote.compact { padding: 0; }
+  .quote.compact:hover { background: none; }
   .row { display: flex; gap: 14px; }
   .body { flex: 1; min-width: 0; }
   .meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 4px; }

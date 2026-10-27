@@ -13,7 +13,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 
 import TextChannel from './TextChannel.svelte'
 import { app, handleReady, resetState, ui } from '../lib/store.svelte'
-import { addHistory, applyReady, emptyState, markHistory, trimHistory } from '../lib/state'
+import { addHistory, applyEvent, applyReady, emptyState, markHistory, trimHistory } from '../lib/state'
 
 const msg = (n: number): Message => ({
   id: `M${String(n).padStart(4, '0')}`, channel_id: 'C1', author_id: 'U2', kind: 'normal', content: `m${n}`,
@@ -234,6 +234,36 @@ describe('TextChannel: quotes channel', () => {
     expect(document.body.textContent).toContain('Nobody voted this year.')
     expect(document.querySelector('button[aria-label="Leaderboard"]')).toBeTruthy()
     expect([...document.querySelectorAll('button')].some((b) => b.textContent === 'Start Quote of the Year')).toBe(true)
+  })
+
+  it('renders a Quote of the Year result as its card, and drops it when the card is removed', () => {
+    const card: Message = {
+      ...msg(2), author_id: null, kind: 'system', content: 'Quote of the Year 2026: “hi” — alex',
+      qoty_card: { event_id: 'E1', year: 2026, message_id: quoteMsg.id, votes: 1, voters: ['U1'], reason: 'time' },
+    }
+    show('quotes', [quoteMsg, card])
+    const c = document.querySelector('.qoty-card')!
+    expect(c.textContent).toContain('hi')
+    expect(c.textContent).toContain('Quote of the Year 2026')
+    expect(c.textContent).toContain('ended by time')
+    // a reopen hard-deletes the card
+    app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: card.id, thread_root_id: null, author_id: null, mentions: [] } }, Date.now())
+    flushSync()
+    expect(document.querySelector('.qoty-card')).toBeNull()
+    expect(document.body.textContent).not.toContain('Quote of the Year 2026')
+  })
+
+  it('offers Start only while no vote is live', () => {
+    show('quotes', [])
+    const start = () => [...document.querySelectorAll('button')].find((b) => b.textContent === 'Start Quote of the Year')
+    expect(start()).toBeTruthy()
+    const event = {
+      id: 'E1', server_id: 'S1', year: 2026, started_by: 'U1', started_at: '2026-10-27T10:00:00Z', ends_at: null, ended_at: null,
+      ended_by: null, end_reason: null, reopen_until: null, options: [], voters: 0, members: 1,
+    }
+    app.state = applyEvent(app.state, { t: 'QotyStarted', d: { event } }, Date.now())
+    flushSync()
+    expect(start()).toBeUndefined()
   })
 
   it('header buttons: the leaderboard opens its popover, Start calls back', () => {

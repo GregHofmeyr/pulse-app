@@ -15,8 +15,9 @@
   --warn: #e8b04a;
   --ok: #4fd18b;
   --radius: 14px;
-  /* Quotes: the award and Quote of the Year green, its deep shade, and the text that sits on the green. */
+  /* Quotes: the award and Quote of the Year green, its mid and deep shades (the pixel spill), and the text that sits on the green. */
   --quote-green: #39d98a;
+  --quote-green-mid: #22a865;
   --quote-green-deep: #14713f;
   --on-quote-green: #0b1f14;
   color-scheme: dark;

@@ -105,4 +105,27 @@ describe('modal', () => {
     expect(document.activeElement).toBe($('opener'))
     document.body.innerHTML = ''
   })
+
+  it('a modal opened over another takes Escape and Tab first', () => {
+    const { dialog } = setup()
+    const outer = vi.fn()
+    const a = modal(dialog, outer)
+    const inner = document.createElement('div')
+    inner.tabIndex = -1
+    inner.innerHTML = '<button id="x">x</button>'
+    dialog.append(inner)
+    const innerClose = vi.fn()
+    const b = modal(inner, innerClose)
+    key(inner, 'Escape')
+    expect(innerClose).toHaveBeenCalledTimes(1)
+    expect(outer).not.toHaveBeenCalled()
+    // Tab wraps inside the top one
+    key(inner.querySelector('#x')!, 'Tab')
+    expect(document.activeElement).toBe(inner.querySelector('#x'))
+    b.destroy()
+    key(dialog, 'Escape')
+    expect(outer).toHaveBeenCalledTimes(1)
+    a.destroy()
+    document.body.innerHTML = ''
+  })
 })

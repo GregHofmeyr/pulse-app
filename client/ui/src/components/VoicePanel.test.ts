@@ -396,3 +396,21 @@ describe('user tiles', () => {
     expect(onMenu.mock.calls[0][1]).toBe(btn)
   })
 })
+
+describe('Quote of the Year', () => {
+  it('a live vote shows its strip under the tiles', () => {
+    mountPanel()
+    expect(q('.qoty-strip')).toBeNull()
+    const event = {
+      id: 'E1', server_id: 'S1', year: 2026, started_by: 'U1', started_at: '2026-10-27T10:00:00Z', ends_at: null, ended_at: null,
+      ended_by: null, end_reason: null, reopen_until: null, options: [], voters: 0, members: 2,
+    }
+    app.state = applyEvent(app.state, { t: 'QotyStarted', d: { event } }, Date.now())
+    flushSync()
+    const strip = q('.qoty-strip')!
+    expect(strip.textContent).toContain('Quote of the Year')
+    // under the tiles, above the call controls
+    expect(q('.grid-wrap')!.compareDocumentPosition(strip) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+    expect(strip.compareDocumentPosition(q('.bar-wrap')!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+})
