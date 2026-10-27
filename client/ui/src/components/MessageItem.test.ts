@@ -393,4 +393,20 @@ describe('MessageItem edit box', () => {
     await settle(); flushSync()
     expect(value()).toBe('x'.repeat(3998) + 'ab')
   })
+
+  it('a save that lands after focus moved on leaves focus where it is', async () => {
+    let finish!: () => void
+    onEdit.mockImplementation(() => new Promise<void>((done) => (finish = done)))
+    await edit('hello')
+    type('changed')
+    press('Enter')
+    await settle()
+    const other = document.createElement('input')
+    document.body.append(other)
+    other.focus() // e.g. another message's edit box, or a search field
+    finish(); await settle(); flushSync()
+    expect(box()).toBeNull()
+    expect(onEditClosed).not.toHaveBeenCalled()
+    expect(document.activeElement).toBe(other)
+  })
 })

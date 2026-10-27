@@ -176,10 +176,13 @@
   /** Focus the box, the caret at `at` (where it was, if not given). */
   export function focus(at?: number) {
     if (at !== undefined) sel = { start: at, end: at }
+    const had = hasFocus()
     box?.focus()
-    // focus() above restores the kept caret (a microtask); this covers a box that already had focus
-    if (at !== undefined && document.activeElement === box) placeCaret(at)
+    // focus arriving puts the kept caret back itself (`focused`); a box that had it gets no event
+    if (had && at !== undefined) placeCaret(at)
   }
+  /** Whether focus is in the box. */
+  export const hasFocus = () => !!box && box.contains(document.activeElement)
 
   /** Characters free for something replacing `r`. */
   const room = (r: { start: number; end: number }) => max - (text.length - (r.end - r.start))

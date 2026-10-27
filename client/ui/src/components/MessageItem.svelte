@@ -117,9 +117,12 @@
     closeEdit()
   }
   function closeEdit() {
+    // only focus the box had (or nobody has): a save landing after the person moved on leaves
+    // their focus where it is
+    const handBack = !!editBox?.hasFocus() || document.activeElement === document.body || !document.activeElement
     editing = false
     editError = ''
-    onEditClosed()
+    if (handBack) onEditClosed()
   }
   function pick(e: Std | CustomEmoji, { keep }: { keep: boolean }) {
     if (!keep) picking = false
@@ -240,7 +243,7 @@
   .actions button { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .actions button:hover { color: var(--text); }
   /* about two lines to start, grows with what's in it (images included) up to 200px, then scrolls */
-  .body :global(.edit) { min-height: 58px; max-height: 200px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; font: inherit; }
+  .body :global(.edit) { min-height: 58px; max-height: 200px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; }
   .body :global(.edit:focus-visible) { border-color: var(--accent); }
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger); }
   .hint { font-size: 11px; color: var(--text-3); }

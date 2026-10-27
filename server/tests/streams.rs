@@ -1340,27 +1340,61 @@ mod liveness {
         );
     }
 
-    #[tokio::test]
-    async fn a_stream_already_reconnecting_is_left_to_its_own_timer() {
-        let app = spawn().await;
-        let (l, (a_id, a), _, _rx) = pair(&app).await;
+    /// alex live in the lounge, then the leave webhook: `Reconnecting`, with `media_timeout` to
+    /// come back.
+    async fn reconnecting(
+        media_timeout: Duration,
+    ) -> (TestApp, ChannelId, UserId, Receiver<ServerFrame>) {
+        let mut cfg = test_config();
+        cfg.stream_media_timeout = media_timeout;
+        let app = spawn_with(cfg).await;
+        let (l, (a_id, a), _, mut rx) = pair(&app).await;
         assert_eq!(go_live(&app, &a, l.id, settings()).await.status(), 200);
-        // the leave webhook got there: Reconnecting, stream_media_timeout to come back
         stream_webhook(&app, "participant_left", l.id, &v(a_id)).await;
-        assert_eq!(
-            app.streams.get(l.id, a_id).unwrap().status,
-            StreamStatus::Reconnecting
-        );
+        assert!(matches!(
+            next_stream_event(&mut rx).await,
+            Event::StreamStarted { .. }
+        ));
+        assert!(matches!(
+            next_stream_event(&mut rx).await,
+            Event::StreamUpdated { stream } if stream.status == StreamStatus::Reconnecting
+        ));
+        (app, l.id, a_id, rx)
+    }
+
+    #[tokio::test]
+    async fn a_reconnecting_stream_missing_from_the_room_is_left_to_its_own_timer() {
+        let (app, ch, a_id, mut rx) = reconnecting(Duration::from_secs(600)).await;
         let rooms = FakeRooms::default();
         let t0 = Instant::now();
-        let first = check(&app.state(), &rooms, t0, GRACE).await;
-        let second = check(&app.state(), &rooms, t0 + GRACE, GRACE).await;
-        assert!(
-            app.streams.get(l.id, a_id).is_some(),
-            "still there (its own timer ends it)"
+        for n in 0..3 {
+            let c = check(&app.state(), &rooms, t0 + GRACE * n, GRACE).await;
+            assert_eq!(counts(&c), (0, 0));
+        }
+        assert_eq!(
+            app.streams.get(ch, a_id).unwrap().status,
+            StreamStatus::Reconnecting
         );
-        assert_eq!(first, Checked::default(), "not even asked about");
-        assert_eq!(second, Checked::default());
+        assert!(queued(&mut rx).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_reconnecting_stream_livekit_lists_again_is_live_again_and_its_timer_stands_down() {
+        // the leave webhook came, the rejoin's join webhook didn't
+        let (app, ch, a_id, mut rx) = reconnecting(Duration::from_millis(300)).await;
+        let rooms = FakeRooms::default();
+        rooms.set(ch, Some(&[v(a_id)]));
+        check(&app.state(), &rooms, Instant::now(), GRACE).await;
+        assert!(matches!(
+            next_stream_event(&mut rx).await,
+            Event::StreamUpdated { stream } if stream.user_id == a_id && stream.status == StreamStatus::Live
+        ));
+        tokio::time::sleep(Duration::from_millis(500)).await; // past the leave's timer
+        assert_eq!(
+            app.streams.get(ch, a_id).unwrap().status,
+            StreamStatus::Live
+        );
+        assert!(queued(&mut rx).is_empty(), "no end, no second update");
     }
 
     fn participant(identity: String, state: lkp::participant_info::State) -> lkp::ParticipantInfo {
@@ -1385,7 +1419,9 @@ mod liveness {
     #[tokio::test]
     async fn after_a_server_restart_reannounced_streams_are_kept_by_livekits_answer() {
         // A restarted server knows no streams and no `#v` connections; LiveKit (not restarted)
-        // still has them, and the clients re-announce.
+        // still has them, and the clients re-announce. A fresh app's empty state is that
+        // restart: what's checked here is that LiveKit's answer, through the real API client,
+        // keeps the re-announced streams.
         let app = spawn().await;
         let (l, (a_id, a), (b_id, b), mut rx) = pair(&app).await;
         let room = format!("{}~s", l.id);

@@ -385,6 +385,18 @@ async function watch(channelId: string, streamer: string): Promise<void> {
 
 const CAPTURE_ENDED = 'The shared window or screen closed'
 
+/** The server lists a stream of ours, in the call this client is in, that we aren't sending and
+ *  aren't starting: e.g. its end reached us after a re-announce had overtaken it, so we stopped,
+ *  and the server (rightly) sends the stream again. Nobody would ever see it end: stop it. (Not in
+ *  that call: another of our devices may be the one streaming.) */
+function stopGhost(info: StreamInfo) {
+  const { channel_id: channelId, user_id: user } = info
+  if (user !== meId() || voice.channelId !== channelId) return
+  if (stream.live?.channelId === channelId || pendingLive) return
+  streamCmd.log({ ev: 'ghost_stop' })
+  void streamCmd.stop(channelId).catch(logError('ghost_stop_error'))
+}
+
 async function goLive(token: number, channelId: string, track: LocalVideoTrack, label: string, settings: GoLive) {
   stream.error = ''
   const { res, fps, audio } = settings
@@ -588,6 +600,7 @@ export const streamApi = {
 
   /** Every gateway event: stream starts toast the people in that voice channel, ends close the viewer. */
   onEvent(e: Event) {
+    if (e.t === 'StreamStarted' || e.t === 'StreamUpdated') stopGhost(e.d.stream)
     if (e.t === 'StreamStarted') {
       const { channel_id: channelId, user_id: streamer } = e.d.stream
       const k = streamKey(channelId, streamer)

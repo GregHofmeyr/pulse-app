@@ -8,7 +8,9 @@
 //! there starts a clock; seen again (or rejoined, or re-announced) stops it; still missing
 //! `stream_media_timeout` after the first miss ends the stream, as the leave webhook and its
 //! timeout would: the stream (and so the watches on it) and the streamer's own watches (watching
-//! rides the same connection).
+//! rides the same connection). The mirror case is covered too: a `Reconnecting` stream (the leave
+//! webhook came) whose `#v` LiveKit lists again (the join webhook was missed) is `Live` again, so
+//! its timer doesn't end a healthy stream.
 //!
 //! Only LiveKit's answer counts. After a pulse-server restart the stream state starts empty and
 //! clients re-announce: their `#v` is still in LiveKit (a deploy doesn't restart it), so nothing
@@ -22,11 +24,13 @@ use std::time::{Duration, Instant};
 
 use livekit_api::services::room::RoomClient;
 use livekit_protocol::participant_info::State;
+use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
-use pulse_protocol::rest::StreamEndReason;
+use pulse_protocol::rest::{StreamEndReason, StreamStatus};
 
 use crate::AppState;
 use crate::config::Config;
+use crate::streams::state::{Seen, ToCheck};
 use crate::voice::revoke::not_found;
 
 /// How often stream rooms are checked.
@@ -70,6 +74,8 @@ impl LiveKitRooms {
 
 impl StreamRooms for LiveKitRooms {
     async fn connected(&self, room: &str) -> anyhow::Result<HashSet<String>> {
+        // The client's request timeout gives the precise error; this one bounds the whole call,
+        // whatever the client does inside it.
         let participants =
             match tokio::time::timeout(self.budget, self.client.list_participants(room)).await {
                 Err(_) => anyhow::bail!("LiveKit didn't answer in time"),
@@ -112,18 +118,19 @@ fn share_log(what: &str, channel: ChannelId, user: UserId) {
     );
 }
 
-/// One round: ask `rooms` about every room with a `Live` stream (in parallel) and act on the
-/// answers at `now`. A stream ends once its `#v` has been missing for `grace` (see
-/// [`super::state::StreamState::video_seen`]).
+/// One round: ask `rooms` (in parallel) about every room with a stream, and act on the answers
+/// at `now`. A `Live` stream ends once its `#v` has been missing for `grace` (see
+/// [`super::state::StreamState::video_seen`]); a `Reconnecting` one whose `#v` is listed again is `Live` again
+/// (see [`super::state::StreamState::video_back`]; missing, it's left to the leave webhook's timer).
 pub async fn check(
     s: &AppState,
     rooms: &impl StreamRooms,
     now: Instant,
     grace: Duration,
 ) -> Checked {
-    let mut per_room: BTreeMap<ChannelId, Vec<UserId>> = BTreeMap::new();
-    for (channel, user) in s.streams.live_streams() {
-        per_room.entry(channel).or_default().push(user);
+    let mut per_room: BTreeMap<ChannelId, Vec<ToCheck>> = BTreeMap::new();
+    for c in s.streams.streams_to_check() {
+        per_room.entry(c.channel).or_default().push(c);
     }
     let answers = futures::future::join_all(
         per_room
@@ -141,30 +148,41 @@ pub async fn check(
             }
         };
         out.answered.push(channel);
-        for &user in &per_room[&channel] {
-            let present = connected.contains(&video_identity(user));
-            if !present {
-                share_log("stream_video_missing", channel, user);
+        for c in &per_room[&channel] {
+            let present = connected.contains(&video_identity(c.user));
+            if c.status == StreamStatus::Reconnecting {
+                if present && let Some(stream) = s.streams.video_back(channel, c.user, c.epoch) {
+                    share_log("stream_video_back", channel, c.user);
+                    s.hub.publish(&s.db, Event::StreamUpdated { stream }).await;
+                }
+                continue;
             }
-            if s.streams
-                .video_seen(channel, user, present, now, grace)
-                .is_some()
-            {
-                out.ended += 1;
-                ended(s, channel, user).await;
+            match s.streams.video_seen(channel, c.user, present, now, grace) {
+                Seen::FirstMiss => share_log("stream_video_missing", channel, c.user),
+                Seen::Ended { viewers, .. } => {
+                    out.ended += 1;
+                    ended(s, channel, c.user, viewers).await;
+                }
+                Seen::Ignored | Seen::Present | Seen::StillMissing => {}
             }
         }
     }
     out
 }
 
-/// Tell everyone the stream ended, and drop the streamer's own watches (same connection).
-async fn ended(s: &AppState, channel: ChannelId, user: UserId) {
+/// Tell everyone the stream ended, and about the watches of the streamer's that ended with it
+/// (same connection; `viewers`: those streams' new viewer lists).
+async fn ended(
+    s: &AppState,
+    channel: ChannelId,
+    user: UserId,
+    viewers: Vec<(UserId, Vec<UserId>)>,
+) {
     // the leave webhook's timeout gives the same reason: the video connection didn't come back
     tracing::info!(user = %user, channel = %channel, reason = "video_gone", "stream ended");
     share_log("stream_ended_video_gone", channel, user);
     super::routes::publish_ended(s, channel, user, StreamEndReason::TimedOut).await;
-    for (streamer, viewers) in s.streams.remove_viewer_everywhere(channel, user) {
+    for (streamer, viewers) in viewers {
         super::routes::publish_viewers(s, channel, streamer, viewers).await;
     }
 }

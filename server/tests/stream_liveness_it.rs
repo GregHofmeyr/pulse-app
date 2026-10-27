@@ -1,8 +1,8 @@
 //! The stream liveness check against the dev LiveKit (`just voice-it`; `just voice-it-alt` moves
 //! it): a streamer's `#v` connection that LiveKit has keeps the stream, and once the client dies
 //! (its connection dropped without a goodbye) and LiveKit closes the empty room, the stream ends
-//! after the grace. The check's own
-//! rules are covered against a fake RoomService in streams.rs; this is the real API's answers.
+//! after the grace. The check's own rules are covered against a fake RoomService in streams.rs;
+//! this pins the real API's answers.
 
 mod common;
 
@@ -126,6 +126,9 @@ async fn a_stream_lives_while_livekit_has_its_video_connection_and_ends_after_th
         tokio::time::sleep(Duration::from_millis(500)).await;
     }
     println!("room closed after {:?}", start.elapsed());
+    // LiveKit's own answer, not just ours: an empty list, no error (a LiveKit upgrade that
+    // changes this needs a look at liveness.rs and voice/restore.rs)
+    assert!(admin.list_participants(&room).await.unwrap().is_empty());
     assert!(rooms.connected(&room).await.unwrap().is_empty());
     let t1 = t0 + GRACE * 3;
     let c = check(&s, &rooms, t1, GRACE).await;
