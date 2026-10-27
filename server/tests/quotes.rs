@@ -40,14 +40,22 @@ async fn hello_ready(app: &TestApp, token: &str) -> (Socket, pulse_protocol::gat
     }
 }
 
+/// The next frame, or `None` once the socket has been quiet for 3 s (or is gone). It heartbeats
+/// first, as a real client does, so a socket idling across several drains outlives the server's
+/// heartbeat timeout (5 s in tests); the acks are skipped.
 async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
+    let beat = serde_json::to_string(&ClientFrame::Heartbeat).unwrap();
+    ws.send(Ws::text(beat)).await.ok()?;
     loop {
         let m = tokio::time::timeout(Duration::from_secs(3), ws.next())
             .await
             .ok()??
             .ok()?;
         if let Ws::Text(t) = m {
-            return Some(serde_json::from_str(&t).unwrap());
+            match serde_json::from_str(&t).unwrap() {
+                ServerFrame::HeartbeatAck => continue,
+                frame => return Some(frame),
+            }
         }
     }
 }
@@ -2793,7 +2801,7 @@ async fn link_changes_republish_quotes_whose_counts_moved() {
 
     // Re-pointing from sam to alex moves it back (alex has no award there) and then forth again.
     assert_eq!(f.link(&f.alex_t, "a friend", f.sam).await, 204);
-    let mut ws = hello(&f.app, &f.alex_t).await;
+    assert_eq!(updated_quotes(&mut ws).await.len(), 1);
     assert_eq!(f.link(&f.alex_t, "a friend", f.alex).await, 204);
     let ev = updated_quotes(&mut ws).await;
     assert_eq!(ev.len(), 1);

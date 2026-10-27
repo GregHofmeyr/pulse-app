@@ -38,14 +38,22 @@ async fn hello(app: &TestApp, token: &str) -> Socket {
     hello_ready(app, token).await.0
 }
 
+/// The next frame, or `None` once the socket has been quiet for 2 s (or is gone). It heartbeats
+/// first, as a real client does, so a socket idling across several drains outlives the server's
+/// heartbeat timeout (5 s in tests); the acks are skipped.
 async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
+    let beat = serde_json::to_string(&ClientFrame::Heartbeat).unwrap();
+    ws.send(Ws::text(beat)).await.ok()?;
     loop {
         let m = tokio::time::timeout(Duration::from_secs(2), ws.next())
             .await
             .ok()??
             .ok()?;
         if let Ws::Text(t) = m {
-            return Some(serde_json::from_str(&t).unwrap());
+            match serde_json::from_str(&t).unwrap() {
+                ServerFrame::HeartbeatAck => continue,
+                frame => return Some(frame),
+            }
         }
     }
 }
