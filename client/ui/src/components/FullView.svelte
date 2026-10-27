@@ -39,9 +39,9 @@
   })
   // on screen: the shell hides its side panels for it (and shows them again when this goes)
   $effect(() => {
-    callView.fullShown = true
+    untrack(() => callView.fullViews++)
     return () => {
-      callView.fullShown = false
+      untrack(() => callView.fullViews--)
     }
   })
 

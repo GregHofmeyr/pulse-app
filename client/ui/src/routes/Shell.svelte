@@ -19,7 +19,7 @@
   import PeopleBoard from '../components/PeopleBoard.svelte'
   import PeoplePicker from '../components/PeoplePicker.svelte'
   import GroupMembers from '../components/GroupMembers.svelte'
-  import { onMount, untrack } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { findWatch, followLiveFreeze, stream, streamApi } from '../lib/stream/stream.svelte'
   import { pendingWatchReady } from '../lib/stream/viewer'
@@ -79,17 +79,42 @@
     if (e instanceof KeyboardEvent) menuToggle?.focus()
   }
   // Full view takes the whole window: both side panels hide, and an edge toggle brings each back.
-  // Every full view starts with both hidden; nothing is remembered.
+  // Every full view starts with both hidden (nothing is remembered); swapping its stream or coming
+  // back to it from the mini-preview is the same full view, so what you opened stays open.
   const panels = $state({ left: false, right: false })
+  const fullShown = $derived(callView.fullViews > 0)
+  let hadFull = false
   $effect(() => {
-    if (!callView.fullShown) return
+    const has = !!callView.full
     untrack(() => {
-      panels.left = false
-      panels.right = false
+      if (has && !hadFull) {
+        panels.left = false
+        panels.right = false
+      }
+      hadFull = has
     })
   })
-  const hideLeft = $derived(callView.fullShown && !panels.left)
-  const hideRight = $derived(callView.fullShown && !panels.right)
+  const hideLeft = $derived(fullShown && !panels.left)
+  const hideRight = $derived(fullShown && !panels.right)
+  let sidePanel = $state<HTMLElement>()
+  let rightPanel = $state<HTMLElement>()
+  let leftEdge = $state<HTMLButtonElement>()
+  let rightEdge = $state<HTMLButtonElement>()
+  // Before a panel hides: a menu open in it closes (an unseen menu would take Esc first), and focus in
+  // it moves to the toggle that brings it back (or it would fall to the top of the page).
+  $effect.pre(() => {
+    const [left, right] = [hideLeft, hideRight]
+    untrack(() => {
+      if (left) {
+        menuOpen = false
+        serverMenuOpen = false
+      }
+      const at = document.activeElement
+      const to = left && sidePanel?.contains(at) ? 'left' : right && rightPanel?.contains(at) ? 'right' : null
+      if (to) void tick().then(() => (to === 'left' ? leftEdge : rightEdge)?.focus())
+    })
+  })
+  const leftName = $derived(activeServerId ? 'Channels' : 'Conversations')
   let serverMenuOpen = $state(false)
   let serverToggle = $state<HTMLButtonElement>()
   /** The same for the server menu. */
@@ -346,7 +371,7 @@
   </header>
 
   <div class="body">
-    <aside class="panel side" hidden={hideLeft}>
+    <aside id="channels-panel" class="panel side" hidden={hideLeft} bind:this={sidePanel}>
       <div class="panel-head">
         {#if activeServer}
           <button bind:this={serverToggle} class="head-btn" data-menu-toggle aria-haspopup="menu" aria-expanded={serverMenuOpen}
@@ -393,6 +418,10 @@
     </aside>
 
     <main class="panel content">
+      {#if fullShown}
+        <button type="button" class="edge left" bind:this={leftEdge} aria-label={leftName} aria-controls="channels-panel" aria-expanded={panels.left}
+          data-tip="{panels.left ? 'Hide' : 'Show'} {leftName.toLowerCase()}" onclick={() => (panels.left = !panels.left)}><Icon name={panels.left ? 'chevronLeft' : 'chevronRight'} size={14} /></button>
+      {/if}
       {#if activeServerId && !member}
         <div class="join">
           <p>You're not in <strong>{activeServer?.name}</strong> yet.</p>
@@ -411,17 +440,13 @@
         <p class="empty">Pick a channel.</p>
       {/if}
       {#each mini ? [mini] : [] as m (m.key)}<MiniPreview channelId={m.channelId} streamer={m.streamer} />{/each}
-      {#if callView.fullShown}
-        <button type="button" class="edge left" aria-label={panels.left ? 'Hide channels' : 'Show channels'} data-tip={panels.left ? 'Hide channels' : 'Show channels'}
-          aria-expanded={panels.left} onclick={() => (panels.left = !panels.left)}><Icon name={panels.left ? 'chevronLeft' : 'chevronRight'} size={14} /></button>
-        {#if activeServerId || activeChannel?.kind === 'group'}
-          <button type="button" class="edge right" aria-label={panels.right ? 'Hide members' : 'Show members'} data-tip={panels.right ? 'Hide members' : 'Show members'}
-            aria-expanded={panels.right} onclick={() => (panels.right = !panels.right)}><Icon name={panels.right ? 'chevronRight' : 'chevronLeft'} size={14} /></button>
-        {/if}
+      {#if fullShown && (activeServerId || activeChannel?.kind === 'group')}
+        <button type="button" class="edge right" bind:this={rightEdge} aria-label="Members" aria-controls="members-panel" aria-expanded={panels.right}
+          data-tip="{panels.right ? 'Hide' : 'Show'} members" onclick={() => (panels.right = !panels.right)}><Icon name={panels.right ? 'chevronRight' : 'chevronLeft'} size={14} /></button>
       {/if}
     </main>
 
-    <div class="right-panel" hidden={hideRight}>
+    <div id="members-panel" class="right-panel" hidden={hideRight} bind:this={rightPanel}>
       {#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />
       {:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}
     </div>
@@ -498,6 +523,7 @@
   /* full view's edge toggles: small tabs on the stream's left and right edges */
   .edge { position: absolute; top: 50%; z-index: 3; width: 18px; height: 56px; margin-top: -28px; padding: 0; border: 0; background: rgba(30, 31, 36, .85); color: var(--text-2); display: grid; place-items: center; opacity: .7; }
   .edge:hover, .edge:focus-visible { opacity: 1; color: var(--text); }
+  .edge:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .edge.left { left: 0; border-radius: 0 8px 8px 0; }
   .edge.right { right: 0; border-radius: 8px 0 0 8px; }
   .panel-head { position: relative; height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid #26282e; }

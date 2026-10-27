@@ -13,8 +13,9 @@ export const callView = $state({
   goTo: null as string | null,
   /** A Join & watch whose join hasn't connected yet: the shell watches once it has. */
   joinThenWatch: null as WatchKey | null,
-  /** The full view is on screen (not just remembered for the mini-preview): the shell makes room for it. */
-  fullShown: false,
+  /** Full views on screen (not just remembered for the mini-preview): the shell makes room while > 0. A count,
+   *  so swapping the stream (one unmounts as the next mounts, in one flush) never reads as leaving. */
+  fullViews: 0,
 })
 
 export const toasts = $state({ list: [] as Toast[] })

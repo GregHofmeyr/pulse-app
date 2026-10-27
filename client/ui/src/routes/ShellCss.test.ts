@@ -40,3 +40,12 @@ describe('the server name menu', () => {
     expect(getComputedStyle(menu).bottom).toBe('calc(100% + 6px)')
   })
 })
+
+describe('the side panels in full view', () => {
+  it('hidden really hides them; shown, the member list wrapper adds no box', () => {
+    expect(getComputedStyle(el('<div><aside data-probe hidden class="panel side $s"></aside></div>')).display).toBe('none')
+    expect(getComputedStyle(el('<div><aside data-probe class="panel side $s"></aside></div>')).display).toBe('flex')
+    expect(getComputedStyle(el('<div><div data-probe hidden class="right-panel $s"></div></div>')).display).toBe('none')
+    expect(getComputedStyle(el('<div><div data-probe class="right-panel $s"></div></div>')).display).toBe('contents')
+  })
+})
