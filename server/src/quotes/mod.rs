@@ -471,21 +471,13 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
         q.push(" ").push(AWARD_ORDER);
         let given: Vec<(String, String)> = q.build_query_as().fetch_all(db).await?;
         for (line, giver) in given {
-            awards
-                .entry(line)
-                .or_default()
-                .push(giver.parse().map_err(anyhow::Error::from)?);
+            awards.entry(line).or_default().push(parse_id(&giver)?);
         }
     }
 
     let mut by_msg: HashMap<String, Vec<QuoteLine>> = HashMap::new();
     for r in rows {
-        let speaker_id: Option<UserId> = r
-            .speaker_id
-            .as_deref()
-            .map(str::parse)
-            .transpose()
-            .map_err(anyhow::Error::from)?;
+        let speaker_id: Option<UserId> = parse_opt(r.speaker_id.as_deref())?;
         let speaker = effective_speaker(
             speaker_id,
             r.speaker_key.as_deref(),
@@ -496,7 +488,7 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
         );
         let awarders = counted(awards.remove(&r.id).unwrap_or_default(), speaker);
         by_msg.entry(r.message_id).or_default().push(QuoteLine {
-            id: r.id.parse().map_err(anyhow::Error::from)?,
+            id: parse_id(&r.id)?,
             speaker_id,
             speaker_name: r.speaker_name,
             text: r.text,
@@ -554,9 +546,6 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
         wins.entry(msg).or_default().push(year as i32);
     }
 
-    let parse_id = |s: &String| -> AppResult<MessageId> {
-        Ok(s.parse::<MessageId>().map_err(anyhow::Error::from)?)
-    };
     let index: HashMap<String, usize> = msgs
         .iter()
         .enumerate()
@@ -577,7 +566,7 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
             said_on,
             reply_count,
             last_reply_id,
-            replies_seen: seen.get(&msg_id).map(parse_id).transpose()?,
+            replies_seen: seen.get(&msg_id).map(|s| parse_id(s)).transpose()?,
             wins: wins.remove(&msg_id).unwrap_or_default(),
         });
     }

@@ -64,16 +64,11 @@ async fn target(db: &mut SqliteConnection, line: LineId) -> AppResult<Option<Tar
     let Some((message, channel, server, speaker, key)) = row else {
         return Ok(None);
     };
-    let parse = |e| AppError::Internal(anyhow::Error::from(e));
     Ok(Some(Target {
-        message_id: message.parse().map_err(parse)?,
-        channel_id: channel.parse().map_err(parse)?,
-        server_id: server.parse().map_err(parse)?,
-        speaker: speaker
-            .as_deref()
-            .map(str::parse)
-            .transpose()
-            .map_err(parse)?,
+        message_id: parse_id(&message)?,
+        channel_id: parse_id(&channel)?,
+        server_id: parse_id(&server)?,
+        speaker: parse_opt(speaker.as_deref())?,
         speaker_key: key,
     }))
 }
@@ -81,12 +76,11 @@ async fn target(db: &mut SqliteConnection, line: LineId) -> AppResult<Option<Tar
 /// The line's effective speaker right now.
 async fn speaker_of(db: &mut SqliteConnection, t: &Target) -> AppResult<Option<UserId>> {
     let links = links_for(db, &[t.server_id.to_string()]).await?;
+    let no_links = HashMap::new();
     Ok(effective_speaker(
         t.speaker,
         t.speaker_key.as_deref(),
-        links
-            .get(&t.server_id.to_string())
-            .unwrap_or(&HashMap::new()),
+        links.get(&t.server_id.to_string()).unwrap_or(&no_links),
     ))
 }
 
