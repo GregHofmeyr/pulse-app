@@ -1,6 +1,7 @@
 <script lang="ts" module>
   /** A text and where its caret goes. */
   export type Snap = { text: string; caret: number }
+  let boxes = 0
 </script>
 
 <script lang="ts">
@@ -24,6 +25,8 @@
     onkeyup,
     onclick,
     oninput,
+    oncaret,
+    describedby,
   }: {
     text?: string
     /** The box's accessible name. */
@@ -40,7 +43,16 @@
     onclick?: () => void
     /** After typing changed `text` (`now` is when). */
     oninput?: (now: number) => void
+    /** After the box changed `text` itself (`setText`: a paste, cut, drop, undo, a new line), with
+     *  where the caret went (typing reports through `oninput`). */
+    oncaret?: (caret: number) => void
+    /** Id of what describes the box (e.g. its keys). */
+    describedby?: string
   } = $props()
+
+  // Marks a drag that started in this box (module-wide counter: each box's own, so a drag from
+  // another box, or a dragFrom left by a lost dragend, can't pass for one).
+  const dragId = String(++boxes)
 
   let box: HTMLElement
   /** Where the selection was in the text, kept while focus is elsewhere (e.g. in the emoji picker). */
@@ -148,6 +160,7 @@
     const caret = Math.min(r.caret, text.length)
     sel = { start: caret, end: caret }
     render(text)
+    oncaret?.(caret)
     void Promise.resolve().then(() => {
       if (!focus || !box?.isConnected) return
       box.focus()
@@ -181,7 +194,7 @@
     if (fit) setText({ text: text.slice(0, r.start) + fit + text.slice(r.end), caret: r.start + fit.length })
   }
   /** Only text comes in (a paste or drop of HTML would put markup in the box); a no-break space is a space. */
-  const plain = (t: string) => t.replace(/\r\n?/g, '\n').replace(/ /g, ' ')
+  const plain = (t: string) => t.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ')
   function paste(e: ClipboardEvent) {
     e.preventDefault()
     const t = e.clipboardData?.getData('text/plain') ?? ''
@@ -201,19 +214,18 @@
     if (r && box.contains(r.startContainer)) return offsetOf(box, r.startContainer, r.startOffset)
     return null
   }
-  /** Marks a drag that started in this box (a dragFrom left by a lost dragend can't pass for one). */
-  const OWN_DRAG = 'application/x-pulse-composer'
+  const OWN_DRAG = 'application/x-pulse-emojibox'
   function dragStart(e: DragEvent) {
     const r = readSel()
     dragFrom = r && r.start !== r.end ? r : null
     if (!dragFrom) return
     // the text itself, tokens included (the browser would give the images' alt text)
     e.dataTransfer?.setData('text/plain', text.slice(dragFrom.start, dragFrom.end))
-    e.dataTransfer?.setData(OWN_DRAG, '1')
+    e.dataTransfer?.setData(OWN_DRAG, dragId)
   }
   function drop(e: DragEvent) {
     e.preventDefault()
-    const from = e.dataTransfer?.getData(OWN_DRAG) ? dragFrom : null
+    const from = e.dataTransfer?.getData(OWN_DRAG) === dragId ? dragFrom : null
     dragFrom = null
     // a move takes the box's own text; anything else, what was dropped
     const t = from ? text.slice(from.start, from.end) : plain(e.dataTransfer?.getData('text/plain') ?? '')
@@ -297,8 +309,8 @@
   }
 </script>
 
-<div bind:this={box} class="box {cls}" class:empty={!text} contenteditable="plaintext-only" role="textbox" tabindex="0" dir="auto"
-  aria-multiline="true" aria-label={label} aria-placeholder={placeholder || undefined} data-placeholder={placeholder}
+<div bind:this={box} class="box {cls}" class:empty={!text && !!placeholder} contenteditable="plaintext-only" role="textbox" tabindex="0" dir="auto"
+  aria-multiline="true" aria-label={label} aria-describedby={describedby} aria-placeholder={placeholder || undefined} data-placeholder={placeholder}
   onkeydown={key} onbeforeinput={beforeInput} oninput={input} onpaste={paste} oncopy={copy} oncut={(e) => copy(e, true)}
   onfocus={focused} onpointerdown={() => (pressed = document.activeElement !== box)}
   onpointerup={(e) => { if (e.pointerType === 'mouse') pressed = false }} onpointercancel={() => (pressed = false)}

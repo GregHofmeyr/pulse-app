@@ -25,12 +25,13 @@ const msg = (over: Partial<Message> = {}): Message => ({
 let cmp: ReturnType<typeof mount> | undefined
 const onEdit = vi.fn(async (_c: string) => {})
 const onDelete = vi.fn(async () => {})
+const onEditClosed = vi.fn()
 function show(content = 'hello') {
   const m = msg({ content })
   app.state = { ...emptyState(), messages: { C1: [m] }, customEmoji: { '1': ce('1', 'pog') } }
   cmp = mount(MessageItem, { target: document.body, props: {
     message: app.state.messages['C1'][0], name: 'alex', nameOf: (id: string | null) => id ?? '', replyTo: null,
-    grouped: false, mine: true, onReply: () => {}, onEdit, onDelete, meId: 'U1',
+    grouped: false, mine: true, onReply: () => {}, onEdit, onDelete, meId: 'U1', onEditClosed,
   } })
   flushSync()
 }
@@ -70,6 +71,7 @@ beforeEach(() => {
   invoke.mockReset(); invoke.mockResolvedValue(undefined)
   onEdit.mockReset(); onEdit.mockResolvedValue(undefined)
   onDelete.mockReset(); onDelete.mockResolvedValue(undefined)
+  onEditClosed.mockReset()
 })
 afterEach(() => {
   if (cmp) unmount(cmp)
@@ -321,17 +323,74 @@ describe('MessageItem edit box', () => {
     expect(value()).toBe('x'.repeat(3998))
   })
 
-  it('a double enter on an emoji edit sends one edit', async () => {
+  it('a double enter on an emoji edit sends one edit, tokens kept', async () => {
     let finish!: () => void
     onEdit.mockImplementation(() => new Promise<void>((done) => (finish = done)))
     await edit('hi <:pog:1>')
-    type('hi')
+    box()!.prepend(document.createTextNode('oh '))
+    caretAt(3)
+    box()!.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    flushSync()
     press('Enter')
     press('Enter')
     await settle()
     expect(onEdit).toHaveBeenCalledTimes(1)
-    expect(onEdit).toHaveBeenCalledWith('hi')
+    expect(onEdit).toHaveBeenCalledWith('oh hi <:pog:1>')
     finish(); await settle(); flushSync()
     expect(box()).toBeNull()
+  })
+
+  it('esc while a save is in flight keeps the box until it lands', async () => {
+    let fail!: (e: unknown) => void
+    onEdit.mockImplementation(() => new Promise<void>((_, rej) => (fail = rej)))
+    await edit('hello')
+    type('changed')
+    press('Enter')
+    await settle()
+    expect(press('Escape').defaultPrevented).toBe(true)
+    flushSync()
+    expect(box()).not.toBeNull()
+    expect(onEditClosed).not.toHaveBeenCalled()
+    fail('edit refused'); await settle(); flushSync()
+    expect(alert()?.textContent).toBe('edit refused') // the reason shows, the text is still there
+    expect(value()).toBe('changed')
+    expect(document.activeElement).toBe(box()) // focus stays to fix it
+  })
+
+  it('closing hands focus back to the caller, saved or cancelled', async () => {
+    await edit('hello')
+    press('Escape'); flushSync()
+    expect(onEditClosed).toHaveBeenCalledTimes(1)
+    btn('Edit').click(); flushSync(); await settle()
+    type('changed')
+    press('Enter'); await settle(); flushSync()
+    expect(onEditClosed).toHaveBeenCalledTimes(2)
+  })
+
+  it('the keys hint describes the box', async () => {
+    await edit('hello')
+    const hint = document.getElementById(box()!.getAttribute('aria-describedby')!)!
+    expect(hint.textContent).toContain('Enter to save')
+    expect(hint.textContent).toContain('Shift+Enter')
+  })
+
+  it('emoji the app learns about after the box opened show as images', async () => {
+    show('hi <:zap:9>')
+    btn('Edit').click(); flushSync(); await settle()
+    expect(box()!.querySelector('img')).toBeNull()
+    app.state = { ...app.state, customEmoji: { ...app.state.customEmoji, '9': ce('9', 'zap') } }
+    flushSync()
+    expect(box()!.querySelector('img')!.alt).toBe(':zap:')
+    expect(value()).toBe('hi <:zap:9>')
+  })
+
+  it('a paste past the limit is cut to what fits', async () => {
+    await edit('x'.repeat(3998))
+    caretAt(3998)
+    const e = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(e, 'clipboardData', { value: { getData: (t: string) => (t === 'text/plain' ? 'abcdef' : '') } })
+    box()!.dispatchEvent(e)
+    await settle(); flushSync()
+    expect(value()).toBe('x'.repeat(3998) + 'ab')
   })
 })

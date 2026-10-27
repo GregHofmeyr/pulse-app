@@ -601,4 +601,68 @@ describe('Composer emoji', () => {
     flushSync()
     expect(box.firstChild).toBe(node) // left alone
   })
+
+  it('after an undo the popups follow where the caret went', async () => {
+    const box = show()
+    type(box, ':pog')
+    press(box, 'Escape') // dismissed
+    caretAt(box, 0)
+    // typed at the start, as its own undo step
+    vi.spyOn(Date, 'now').mockReturnValue(Date.now() + 5000)
+    try {
+      box.replaceChildren(document.createTextNode('xyz :pog'))
+      // the browser has moved the selection by the input event; its selectionchange comes later
+      const p = positionAt(box, 4)
+      getSelection()!.collapse(p.node, p.offset)
+      box.dispatchEvent(new InputEvent('input', { bubbles: true }))
+      flushSync()
+    } finally {
+      vi.restoreAllMocks()
+    }
+    expect(options()).toHaveLength(0) // no query before the caret
+    press(box, 'z', { ctrlKey: true })
+    await tick()
+    expect(value(box)).toBe(':pog')
+    expect(options()).toHaveLength(0) // the caret went to 0, not left at 4 over ":pog"
+    press(box, 'Enter')
+    expect(onSend).toHaveBeenCalledWith(':pog')
+  })
+
+  it('a paste mid-text opens the emoji popup where it ends', async () => {
+    const box = show()
+    type(box, 'a b')
+    caretAt(box, 1)
+    const e = new Event('paste', { bubbles: true, cancelable: true }) as ClipboardEvent
+    Object.defineProperty(e, 'clipboardData', { value: { getData: (t: string) => (t === 'text/plain' ? ' :po' : '') } })
+    box.dispatchEvent(e)
+    flushSync()
+    expect(value(box)).toBe('a :po b')
+    expect(options()[0]).toContain(':pog:')
+    press(box, 'Enter')
+    await tick()
+    expect(value(box)).toBe('a <:pog:1>  b')
+  })
+
+  it('a drag from another box is not taken for a move here', async () => {
+    const box = show()
+    type(box, 'abc def')
+    const r = document.createRange()
+    const p0 = positionAt(box, 0), p3 = positionAt(box, 3)
+    r.setStart(p0.node, p0.offset)
+    r.setEnd(p3.node, p3.offset)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(r)
+    const own = new Map<string, string>()
+    const start = new Event('dragstart', { bubbles: true }) as DragEvent
+    Object.defineProperty(start, 'dataTransfer', { value: { setData: (t: string, v: string) => own.set(t, v) } })
+    box.dispatchEvent(start) // its dragend got lost
+    caretAt(box, 7)
+    // another box's drag: same marker type, its own id
+    const other = new Map([['text/plain', 'XYZ'], ...[...own.keys()].filter((k) => k !== 'text/plain').map((k) => [k, 'other'] as [string, string])])
+    const drop = new Event('drop', { bubbles: true, cancelable: true }) as DragEvent
+    Object.defineProperty(drop, 'dataTransfer', { value: { getData: (t: string) => other.get(t) ?? '' } })
+    box.dispatchEvent(drop)
+    await tick()
+    expect(value(box)).toBe('abc defXYZ') // nothing cut
+  })
 })

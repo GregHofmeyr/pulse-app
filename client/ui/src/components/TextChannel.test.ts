@@ -162,3 +162,34 @@ describe('TextChannel: a failed delete', () => {
     unmount(c)
   })
 })
+
+describe('TextChannel: the edit box', () => {
+  beforeEach(() => {
+    Element.prototype.scrollTo = () => {} // jsdom has none
+    resetState()
+  })
+  afterEach(() => (document.body.innerHTML = ''))
+
+  it('closing it puts focus back in the message box', async () => {
+    const me = { id: 'U1', username: 'alex', avatar_hash: null }
+    const s = applyReady(emptyState(), {
+      me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
+      channels: [{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }],
+      members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
+      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [],
+    })
+    app.state = markHistory(addHistory(s, 'C1', [{ ...msg(1), author_id: 'U1' }]), 'C1', true)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    document.querySelector<HTMLButtonElement>('button[aria-label="Edit"]')!.click()
+    flushSync()
+    await tick()
+    const edit = document.querySelector<HTMLElement>('[aria-label="Edit message"]')!
+    expect(document.activeElement).toBe(edit)
+    edit.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.querySelector('[aria-label="Edit message"]')).toBeNull()
+    expect(document.activeElement).toBe(document.querySelector('[aria-label="Message #general"]'))
+    unmount(c)
+  })
+})

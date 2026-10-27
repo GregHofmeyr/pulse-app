@@ -35,6 +35,7 @@
     pending,
     onRetry = () => {},
     onDiscard = () => {},
+    onEditClosed = () => {},
   }: {
     message: Message
     name: string
@@ -52,7 +53,10 @@
     pending?: Pending
     onRetry?: () => void
     onDiscard?: () => void
+    /** The edit box closed (saved or cancelled): its focus has nowhere to go, so the caller gives it some. */
+    onEditClosed?: () => void
   } = $props()
+  const uid = $props.id()
 
   let picking = $state(false)
   let smileBtn: HTMLButtonElement | undefined = $state()
@@ -110,7 +114,12 @@
         saving = false
       }
     }
+    closeEdit()
+  }
+  function closeEdit() {
     editing = false
+    editError = ''
+    onEditClosed()
   }
   function pick(e: Std | CustomEmoji, { keep }: { keep: boolean }) {
     if (!keep) picking = false
@@ -124,8 +133,8 @@
       void save()
     } else if (e.key === 'Escape') {
       e.preventDefault()
-      editing = false
-      editError = ''
+      // a save in flight lands anyway: the box stays until it has (or shows why not)
+      if (!saving) closeEdit()
     }
   }
 </script>
@@ -152,8 +161,8 @@
         {#if message.deleted}
           <p class="deleted">message deleted</p>
         {:else if editing}
-          <EmojiBox bind:this={editBox} bind:text={draft} class="edit" label="Edit message" onkeydown={key} />
-          <small class="hint">Enter to save · Esc to cancel</small>
+          <EmojiBox bind:this={editBox} bind:text={draft} class="edit" label="Edit message" describedby="{uid}-hint" onkeydown={key} />
+          <small class="hint" id="{uid}-hint">Enter to save · Esc to cancel · Shift+Enter for a new line</small>
           {#if editError}<p class="err" role="alert">{editError}</p>{/if}
         {:else}
           <!-- renderMessage output is DOMPurify-sanitised (allow-list, cached per message); the only {@html} in the app. -->
@@ -232,6 +241,7 @@
   .actions button:hover { color: var(--text); }
   /* about two lines to start, grows with what's in it (images included) up to 200px, then scrolls */
   .body :global(.edit) { min-height: 58px; max-height: 200px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; font: inherit; }
+  .body :global(.edit:focus-visible) { border-color: var(--accent); }
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger); }
   .hint { font-size: 11px; color: var(--text-3); }
   .system { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }

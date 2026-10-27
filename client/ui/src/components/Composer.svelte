@@ -77,21 +77,19 @@
     pick = 0
   }
 
-  /** Replace the text (an emoji or mention picked) and put the caret at `r.caret`. Without `focus`
-   *  (a Shift-pick in the picker) focus stays where it is and the caret waits in the box. */
-  function setText(r: Snap, focus = true) {
-    if (box.setText(r, focus)) caret = Math.min(r.caret, r.text.length)
-  }
+  /** Replace the text (an emoji or mention picked) and put the caret at `r.caret` (the box reports it).
+   *  Without `focus` (a Shift-pick in the picker) focus stays where it is and the caret waits in the box. */
+  const setText = (r: Snap, focus = true) => void box.setText(r, focus)
 
   const choose = (name: string) => setText(applyMention(text, caret, name))
   const chooseEmoji = (e: Std | CustomEmoji) => setText(applyEmoji(text, caret, emojiText(e)))
 
-  // The box keeps its selection while the picker has focus: insert there.
+  // `sel` keeps the box's selection while the picker has focus: insert there.
   // A `keep` pick (Shift) leaves the picker open and the box unfocused, with the caret advanced.
   function pickEmoji(e: Std | CustomEmoji, { keep }: { keep: boolean }) {
     if (!keep) picking = false
     const sel = box.selection()
-    setText(insertAt(text, sel.start, sel.end, emojiText(e)), !keep)
+    void setText(insertAt(text, sel.start, sel.end, emojiText(e)), !keep)
   }
 
   // after the box's own keys (IME, undo/redo); Shift+Enter not taken here adds a line
@@ -104,7 +102,7 @@
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault()
-        // a pick that doesn't fit isn't made (the box refuses it)
+        // a pick that doesn't fit isn't made (setText refuses it)
         void (open ? choose(options[pick].name) : chooseEmoji(emojiOptions[pick]))
         return
       }
@@ -121,7 +119,6 @@
       onSend(t)
       box.setText({ text: '', caret: 0 }, true, false)
       box.forget()
-      caret = 0
       lastTyping = null
       return
     }
@@ -170,7 +167,7 @@
       <button aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={13} /></button></div>
   {/if}
   <EmojiBox bind:this={box} bind:text class="input" label={placeholder} {placeholder}
-    onkeydown={key} oninput={input} onclick={syncCaret}
+    onkeydown={key} oninput={input} onclick={syncCaret} oncaret={(at) => (caret = at)}
     onkeyup={(e) => { if (e.key.startsWith('Arrow') && !shown) syncCaret() }} />
   <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={20} /></button>
   {#if picking && emojiBtn}
