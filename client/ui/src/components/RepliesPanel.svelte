@@ -8,8 +8,9 @@
   import QuoteItem from './QuoteItem.svelte'
   import { app, ui } from '../lib/store.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
-  import { addPending, addReplies, PAGE, pendingMessage, removePending, type Pending } from '../lib/state'
-  import { displayName, stableList } from '../lib/selectors'
+  import { addPending, addReplies, maxIdOf, PAGE, pendingMessage, removePending, type Pending } from '../lib/state'
+  import { overlayShown } from '../lib/escape'
+  import { groupedWith, mentionablesFor, nameOfIn, stableList } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -38,7 +39,7 @@
   let list: HTMLDivElement | undefined = $state()
   let composer: Composer | undefined = $state()
 
-  const nameOf = (userId: string | null) => (userId ? displayName(app.state, serverId, userId) : 'Pulse')
+  const nameOf = nameOfIn(() => app.state, serverId)
 
   // Its replies are on screen while it's open (the message sound skips them).
   $effect(() => {
@@ -104,8 +105,8 @@
   })
 
   // Seen: up to the newest reply, on opening and as replies arrive, while the window is focused.
-  const newest = $derived([replies.at(-1)?.id, root.quote?.last_reply_id].reduce<string>((a, b) => (b && b > a ? b : a), ''))
-  const seen = $derived([root.quote?.replies_seen, app.state.threadSeen[rootId]].reduce<string>((a, b) => (b && b > a ? b : a), ''))
+  const newest = $derived(maxIdOf(replies.at(-1)?.id, root.quote?.last_reply_id))
+  const seen = $derived(maxIdOf(root.quote?.replies_seen, app.state.threadSeen[rootId]))
   let asked = ''
   $effect(() => {
     const n = newest
@@ -117,12 +118,7 @@
   })
 
   // Everyone in the server can be @mentioned (as in its text channels).
-  const mentionables = $derived(
-    Object.keys(app.state.people)
-      .filter((id) => id !== meId)
-      .map((id) => ({ id, name: app.state.people[id]?.user.username ?? '' }))
-      .filter((p) => p.name),
-  )
+  const mentionables = $derived(mentionablesFor(app.state, channelId))
   let lastNames: string[] = []
   const mentionNames = $derived((lastNames = stableList(lastNames, mentionables.map((p) => p.name))))
 
@@ -139,22 +135,14 @@
     send(p.content, p.reply_to_id)
   }
 
-  const grouped = (i: number) => {
-    const m = replies[i]
-    const prev = replies[i - 1]
-    return !!prev && prev.author_id === m.author_id && prev.kind === 'normal' && !m.reply_to_id
-      && new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() < 5 * 60_000
-  }
-
   // Escape closes the panel, unless something else takes it: a field outside the panel, or a menu,
   // popover or dialog that's showing (some of them listen on the window after this does).
   const TYPING = 'textarea, select, input, [contenteditable="true"], [contenteditable="plaintext-only"]'
-  const OVER = '[role="dialog"], [aria-modal="true"], [role="menu"], [role="listbox"], .emoji-popover'
   function key(e: KeyboardEvent) {
     if (e.key !== 'Escape' || e.defaultPrevented) return
     const at = document.activeElement
     if (at && !panel.contains(at) && at.closest(TYPING)) return
-    if ([...document.querySelectorAll(OVER)].some((el) => !el.closest('[hidden]'))) return
+    if (overlayShown()) return
     e.preventDefault()
     onClose()
   }
@@ -176,7 +164,7 @@
       <p class="empty">No replies yet. Say something about it.</p>
     {/if}
     {#each replies as m, i (m.id)}
-      <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={grouped(i)}
+      <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={groupedWith(replies, i)}
         replyTo={m.reply_to_id ? (byId.get(m.reply_to_id) ?? (m.reply_to_id === rootId ? root : null)) : null}
         mine={m.author_id === meId} {mentionNames} {meId}
         onReply={() => (replyTo = m)}

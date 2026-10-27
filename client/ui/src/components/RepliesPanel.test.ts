@@ -177,6 +177,19 @@ describe('RepliesPanel', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 
+  it('Escape is left to an open dialog, but not to one hidden by CSS', async () => {
+    await show()
+    const dlg = document.createElement('div')
+    dlg.setAttribute('role', 'dialog')
+    document.body.append(dlg)
+    press(panel().querySelector('[role="textbox"]')!, 'Escape')
+    expect(onClose).not.toHaveBeenCalled()
+    dlg.style.display = 'none'
+    press(panel().querySelector('[role="textbox"]')!, 'Escape')
+    expect(onClose).toHaveBeenCalledTimes(1)
+    dlg.remove()
+  })
+
   it('pages older replies on scroll up and stops at the start', async () => {
     const full = Array.from({ length: 50 }, (_, i) => reply(100 - i)) // R0100..R0051, a full page
     pages = { '': full, R0051: [reply(50), reply(49)] }

@@ -18,7 +18,8 @@
   // The link being re-pointed, with the same type-ahead as the line menu's "Link to a member…".
   let changing = $state<string | null>(null)
   let query = $state('')
-  const matches = $derived(suggest(members, query))
+  // Not the member it's already linked to: picking them would change nothing.
+  const matches = $derived(suggest(members.filter((m) => m.id !== links.find((l) => l.name_key === changing)?.user_id), query))
 
   async function attempt(f: () => Promise<unknown>) {
     error = ''

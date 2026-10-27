@@ -15,7 +15,7 @@
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
   import { addHistory, addOlder, addPending, appendNewer, markHistory, PAGE, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
-  import { displayName, nextTypingExpiry, stableList, typingNames } from '../lib/selectors'
+  import { groupedWith, mentionablesFor, nameOfIn, nextTypingExpiry, stableList, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -111,13 +111,7 @@
   }
 
   // Who can be @mentioned here: a DM/group's members, or everyone for server channels.
-  const mentionables = $derived.by(() => {
-    const ids = channel?.server_id === null ? (app.state.dmMembers[channelId] ?? []) : Object.keys(app.state.people)
-    return ids
-      .filter((id) => id !== app.state.me?.id)
-      .map((id) => ({ id, name: app.state.people[id]?.user.username ?? '' }))
-      .filter((p) => p.name)
-  })
+  const mentionables = $derived(mentionablesFor(app.state, channelId))
   // Same names → same array, so an unrelated event (typing, presence) doesn't re-render every message.
   let lastNames: string[] = []
   const mentionNames = $derived((lastNames = stableList(lastNames, mentionables.map((p) => p.name))))
@@ -286,7 +280,7 @@
     void jumpTo(m.channel_id, m.id)
   }
 
-  const nameOf = (userId: string | null) => (userId ? displayName(app.state, serverId, userId) : 'Pulse')
+  const nameOf = nameOfIn(() => app.state, serverId)
 
   function send(text: string) {
     const nonce = crypto.randomUUID()
@@ -305,13 +299,6 @@
     app.state = removePending(app.state, channelId, nonce)
     replyTo = p.reply_to_id ? (byId.get(p.reply_to_id) ?? null) : null
     send(p.content)
-  }
-
-  const grouped = (i: number) => {
-    const m = messages[i]
-    const prev = messages[i - 1]
-    return !!prev && prev.author_id === m.author_id && prev.kind === 'normal' && !m.reply_to_id
-      && new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() < 5 * 60_000
   }
 </script>
 
@@ -371,7 +358,7 @@
           onReply={() => (repliesOpen = m)} onOpenReplies={() => (repliesOpen = m)}
           onEdit={() => (editingQuote = m)} onDelete={() => api.deleteMessage(m.id)} />
       {:else}
-      <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={grouped(i)}
+      <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={groupedWith(messages, i)}
         replyTo={m.reply_to_id ? (byId.get(m.reply_to_id) ?? null) : null}
         mine={m.author_id === app.state.me?.id}
         {mentionNames} meId={app.state.me?.id ?? ''}

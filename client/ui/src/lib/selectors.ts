@@ -2,6 +2,7 @@
 import type { Channel } from './protocol/Channel'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { AppState } from './state'
+import type { Message } from './protocol/Message'
 
 const byPosition = (a: Channel, b: Channel) => a.position - b.position || (a.name ?? '').localeCompare(b.name ?? '')
 
@@ -85,4 +86,26 @@ export function liveIn(s: AppState, channelId: string): Record<string, StreamInf
 
 export function isLive(s: AppState, channelId: string, userId: string): boolean {
   return !!s.streams[channelId]?.[userId]
+}
+
+/** Whether message `i` continues the previous one's group (same author, within 5 minutes, no inline reply). */
+export function groupedWith(list: Message[], i: number): boolean {
+  const m = list[i]
+  const prev = list[i - 1]
+  return !!prev && prev.author_id === m.author_id && prev.kind === 'normal' && !m.reply_to_id
+    && new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() < 5 * 60_000
+}
+
+/** Who can be @mentioned in a channel: a DM/group's members, or everyone for a server's channels (never me). */
+export function mentionablesFor(s: AppState, channelId: string): { id: string; name: string }[] {
+  const ids = s.channels[channelId]?.server_id === null ? (s.dmMembers[channelId] ?? []) : Object.keys(s.people)
+  return ids
+    .filter((id) => id !== s.me?.id)
+    .map((id) => ({ id, name: s.people[id]?.user.username ?? '' }))
+    .filter((p) => p.name)
+}
+
+/** A name lookup for one server's views (`state` reads the current state); no author is "Pulse". */
+export function nameOfIn(state: () => AppState, serverId: string | null): (userId: string | null) => string {
+  return (userId) => (userId ? displayName(state(), serverId, userId) : 'Pulse')
 }

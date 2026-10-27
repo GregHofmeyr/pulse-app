@@ -211,6 +211,11 @@ export function addReplies(s: AppState, root: string, replies: Message[], reache
 
 const maxId = (a: string | null, b: string) => (a !== null && a > b ? a : b)
 
+/** The greatest of some ids (`''` when there are none). */
+export function maxIdOf(...ids: (string | null | undefined)[]): string {
+  return ids.reduce<string>((a, b) => (b && b > a ? b : a), '')
+}
+
 /** A reply was created. Seen before (the outbox and the gateway both deliver it) it only refreshes the copy. */
 function replyCreated(s: AppState, m: Message, nonce: string | null): AppState {
   const root = m.thread_root_id!

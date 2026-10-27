@@ -4,7 +4,7 @@
   import VoterStack from './VoterStack.svelte'
   import { clickOutside } from '../lib/actions'
   import { score, speakerOf } from '../lib/quotes'
-  import { displayName } from '../lib/selectors'
+  import { nameOfIn } from '../lib/selectors'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import type { Leaderboard } from '../lib/protocol/Leaderboard'
@@ -30,7 +30,7 @@
     )
   })
 
-  const nameOf = (userId: string | null) => (userId ? displayName(app.state, serverId, userId) : 'Pulse')
+  const nameOf = nameOfIn(() => app.state, serverId)
   const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
   /** The quote's first line as the entry's text (more lines get an ellipsis). */
   function preview(m: Message): { said: string; by: string } {

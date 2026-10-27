@@ -5,6 +5,7 @@
   import Select from './Select.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
   import UserTile from './UserTile.svelte'
+  import { overlayShown } from '../lib/escape'
   import { menuPoint } from '../lib/participantMenu'
   import { app } from '../lib/store.svelte'
   import { callRoster, displayName, liveIn } from '../lib/selectors'
@@ -53,10 +54,6 @@
 
   /** Esc goes back to the grid, unless it's meant for a text field, or something open over this view. */
   const TYPING = 'textarea, select, [contenteditable="true"], [contenteditable="plaintext-only"], [role="menu"], [role="listbox"], input:not([type="range"], [type="checkbox"], [type="radio"], [type="button"])'
-  const OVER = '[role="dialog"], [aria-modal="true"], [role="menu"], [role="listbox"]'
-  /** A dialog, popover or menu that's actually showing (one left open in a panel full view hid isn't). */
-  const overlayShown = () =>
-    [...document.querySelectorAll<HTMLElement>(OVER)].some((el) => !el.closest('[hidden]') && (el.checkVisibility?.() ?? true))
   function key(e: KeyboardEvent) {
     if (e.key !== 'Escape' || e.defaultPrevented) return
     if (document.activeElement?.closest(TYPING)) return

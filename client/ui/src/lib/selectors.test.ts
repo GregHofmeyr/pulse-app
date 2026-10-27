@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState } from './state'
-import { callRoster, channelsFor, displayName, isLive, isMember, liveIn, typingNames, voiceOccupants } from './selectors'
+import { callRoster, channelsFor, displayName, groupedWith, isLive, isMember, liveIn, mentionablesFor, nameOfIn, typingNames, voiceOccupants } from './selectors'
+import type { Message } from './protocol/Message'
 import type { Ready } from './protocol/Ready'
 import type { StreamInfo } from './protocol/StreamInfo'
 
@@ -127,5 +128,48 @@ describe('stream selectors', () => {
       const r = callRoster(s, 'S1', 'V1', { ...none, channelId: 'V1', joining: true })
       expect(r.filter((x) => x.userId !== 'U1').every((x) => !x.pending)).toBe(true)
     })
+  })
+})
+
+describe('groupedWith', () => {
+  const msg = (id: string, author: string, at: string, extra: Partial<Message> = {}) =>
+    ({ id, author_id: author, kind: 'normal', reply_to_id: null, created_at: at, ...extra }) as Message
+  const list = [
+    msg('1', 'U1', '2026-10-01T10:00:00Z'),
+    msg('2', 'U1', '2026-10-01T10:02:00Z'),
+    msg('3', 'U1', '2026-10-01T10:09:00Z'),
+    msg('4', 'U2', '2026-10-01T10:09:30Z'),
+    msg('5', 'U2', '2026-10-01T10:10:00Z', { reply_to_id: '1' }),
+    msg('6', 'U2', '2026-10-01T10:10:30Z'),
+  ]
+  it('groups the same author within five minutes', () => {
+    expect(groupedWith(list, 0)).toBe(false)
+    expect(groupedWith(list, 1)).toBe(true)
+  })
+  it('starts a group after five minutes, another author, or an inline reply', () => {
+    expect(groupedWith(list, 2)).toBe(false)
+    expect(groupedWith(list, 3)).toBe(false)
+    expect(groupedWith(list, 4)).toBe(false)
+    expect(groupedWith(list, 5)).toBe(true)
+  })
+  it('does not group after a system message', () => {
+    const l = [msg('1', 'U1', '2026-10-01T10:00:00Z', { kind: 'system' }), msg('2', 'U1', '2026-10-01T10:01:00Z')]
+    expect(groupedWith(l, 1)).toBe(false)
+  })
+})
+
+describe('mentionablesFor', () => {
+  it('is everyone but me for a server channel, and the members for a DM', () => {
+    const st = { ...s, people: { U1: { user: me, online: true }, U2: { user: sam, online: false } }, dmMembers: { D1: ['U1', 'U2'] } } as unknown as typeof s
+    expect(mentionablesFor(st, 'C1')).toEqual([{ id: 'U2', name: 'sam' }])
+    expect(mentionablesFor(st, 'D1')).toEqual([{ id: 'U2', name: 'sam' }])
+  })
+})
+
+describe('nameOfIn', () => {
+  it('names a user by the server, and no author as Pulse', () => {
+    const nameOf = nameOfIn(() => s, 'S1')
+    expect(nameOf('U2')).toBe('Big Dog')
+    expect(nameOf(null)).toBe('Pulse')
   })
 })

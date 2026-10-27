@@ -61,7 +61,7 @@ function logSoundDecision(v: Parameters<typeof messageSound>[0], play: boolean) 
   const p = loadSoundPrefs()
   // switched off in settings looks nothing like a sound that got lost
   const prefs = p.volume_pct === 0 ? 'vol0' : p.off.includes('message') ? 'off' : 'on'
-  const line = `sound: message private=${isPrivate} mentioned=${mentioned} open=${v.open} focused=${v.focused} muted=${v.muted} gap_ok=${gapOk} sound=${prefs} play=${play}`
+  const line = `sound: message private=${isPrivate} mentioned=${mentioned} open=${v.open} thread=${m.thread_root_id ?? '-'} open_thread=${v.openThread ?? '-'} focused=${v.focused} muted=${v.muted} gap_ok=${gapOk} sound=${prefs} play=${play}`
   if (play || !onScreen(v) || !v.focused) return void api.uiLog(line, 'info')
   getCurrentWindow().isFocused().then(
     (f) => {
