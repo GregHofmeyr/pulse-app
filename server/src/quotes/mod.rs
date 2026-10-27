@@ -1,5 +1,7 @@
 //! Quotes: lines said by members (or plain names), read back with awards, replies and wins.
 
+pub mod awards;
+pub use awards::award_totals;
 pub mod routes;
 
 use std::collections::{HashMap, HashSet};
@@ -335,10 +337,13 @@ pub fn effective_speaker(
 }
 
 /// `name_key` to member for every speaker link of `servers`.
-async fn links_for(
-    db: &SqlitePool,
+async fn links_for<'e, E>(
+    db: E,
     servers: &[String],
-) -> AppResult<HashMap<String, HashMap<String, UserId>>> {
+) -> AppResult<HashMap<String, HashMap<String, UserId>>>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
     let mut out: HashMap<String, HashMap<String, UserId>> = HashMap::new();
     if servers.is_empty() {
         return Ok(out);

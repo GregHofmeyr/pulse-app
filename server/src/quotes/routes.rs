@@ -18,6 +18,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/channels/{id}/quotes", post(post_quote))
         .route("/quotes/{message_id}", put(edit_quote))
+        .merge(super::awards::router())
 }
 
 /// The day a quote counts for: the client's own date if it is within a day of UTC's, else UTC's.

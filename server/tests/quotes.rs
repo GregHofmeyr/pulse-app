@@ -2056,3 +2056,383 @@ async fn deleting_a_reply_publishes_under_the_order_lock() {
         }
     }
 }
+
+// ---- one reaction per person, and awards ----
+
+impl Fixture {
+    async fn award_req(&self, token: &str, line: LineId, give: bool) -> reqwest::Response {
+        let url = self.app.url(&format!("/quote-lines/{line}/award"));
+        let r = if give {
+            self.app.http.put(url)
+        } else {
+            self.app.http.delete(url)
+        };
+        r.bearer_auth(token).send().await.unwrap()
+    }
+    async fn award_status(&self, token: &str, line: LineId, give: bool) -> u16 {
+        self.award_req(token, line, give).await.status().as_u16()
+    }
+    async fn unreact(&self, token: &str, msg: MessageId, emoji: &str) -> u16 {
+        self.app
+            .http
+            .delete(self.app.url(&format!("/messages/{msg}/reactions/{emoji}")))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16()
+    }
+    async fn line_of(&self, m: &Message, i: usize) -> LineId {
+        m.quote.as_ref().unwrap().lines[i].id
+    }
+    async fn line_on_page(
+        &self,
+        token: &str,
+        m: &Message,
+        i: usize,
+    ) -> pulse_protocol::rest::QuoteLine {
+        let page: Vec<Message> = get_json(
+            &self.app,
+            token,
+            &format!("/channels/{}/messages", self.ch.id),
+        )
+        .await;
+        page.into_iter()
+            .find(|p| p.id == m.id)
+            .unwrap()
+            .quote
+            .unwrap()
+            .lines
+            .remove(i)
+    }
+}
+
+/// What the socket says for a while, as short strings for reactions and award events.
+async fn reaction_events(ws: &mut Socket) -> Vec<String> {
+    let mut out = Vec::new();
+    while let Some(f) = next_frame(ws).await {
+        match f {
+            ServerFrame::Event(Event::ReactionAdded { emoji, count, .. }) => {
+                out.push(format!("+{emoji}{count}"))
+            }
+            ServerFrame::Event(Event::ReactionRemoved { emoji, count, .. }) => {
+                out.push(format!("-{emoji}{count}"))
+            }
+            _ => {}
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn one_reaction_per_quote() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let mut ws = hello(&f.app, &f.sam_t).await;
+    assert_eq!(f.react(&f.alex_t, q.id, "😂").await, 204);
+    assert_eq!(f.react(&f.alex_t, q.id, "🔥").await, 204);
+    assert_eq!(f.unreact(&f.alex_t, q.id, "🔥").await, 204);
+    assert_eq!(f.unreact(&f.alex_t, q.id, "🔥").await, 204, "idempotent");
+    assert_eq!(
+        reaction_events(&mut ws).await,
+        vec!["+😂1", "-😂0", "+🔥1", "-🔥0"]
+    );
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM reactions WHERE message_id = ?")
+        .bind(q.id.to_string())
+        .fetch_one(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 0);
+}
+
+#[tokio::test]
+async fn awards_follow_the_rules() {
+    let f = fixture().await;
+    let q = f.quote().await; // alex posts, sam is the speaker
+    let line = f.line_of(&q, 0).await;
+    let alex_ws = hello(&f.app, &f.alex_t).await;
+
+    assert_eq!(f.award_status(&f.alex_t, line, true).await, 204);
+    let events = |ws: Socket| async move {
+        let mut ws = ws;
+        let mut out = Vec::new();
+        while let Some(fr) = next_frame(&mut ws).await {
+            if let ServerFrame::Event(Event::QuoteAwardChanged {
+                line_id,
+                user_id,
+                given,
+                count,
+                awarders,
+                ..
+            }) = fr
+            {
+                out.push((line_id, user_id, given, count, awarders));
+            }
+        }
+        out
+    };
+    // sam (the speaker) can't award their own line.
+    let r = f.award_req(&f.sam_t, line, true).await;
+    assert_eq!(r.status(), 403);
+    let body: serde_json::Value = r.json().await.unwrap();
+    assert!(
+        body.to_string().contains("You can't award your own line."),
+        "{body}"
+    );
+    // Awarding again changes nothing.
+    assert_eq!(f.award_status(&f.alex_t, line, true).await, 204);
+    let l = f.line_on_page(&f.alex_t, &q, 0).await;
+    assert_eq!(
+        (l.awards, l.awarders.clone(), l.awarded),
+        (1, vec![f.alex], true)
+    );
+
+    assert_eq!(f.award_status(&f.alex_t, line, false).await, 204);
+    assert_eq!(
+        f.award_status(&f.alex_t, line, false).await,
+        204,
+        "idempotent"
+    );
+    let l = f.line_on_page(&f.alex_t, &q, 0).await;
+    assert_eq!((l.awards, l.awarders, l.awarded), (0, vec![], false));
+    assert_eq!(
+        events(alex_ws).await,
+        vec![
+            (line, f.alex, true, 1, vec![f.alex]),
+            (line, f.alex, false, 0, vec![]),
+        ]
+    );
+
+    // Two awarders, oldest first, absolute in the event.
+    let (robin, robin_t) = register(&f.app, "robin").await;
+    let r = post_json(
+        &f.app,
+        &robin_t,
+        &format!("/servers/{}/join", f.server),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 204);
+    let ws = hello(&f.app, &f.sam_t).await;
+    assert_eq!(f.award_status(&robin_t, line, true).await, 204);
+    assert_eq!(f.award_status(&f.alex_t, line, true).await, 204);
+    assert_eq!(
+        events(ws).await.last().cloned(),
+        Some((line, f.alex, true, 2, vec![robin, f.alex]))
+    );
+}
+
+#[tokio::test]
+async fn award_refusals() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let line = f.line_of(&q, 0).await;
+    // Not a member of the server.
+    let (_, out_t) = register(&f.app, "outsider").await;
+    assert_eq!(f.award_status(&out_t, line, true).await, 403);
+    // Unknown line.
+    assert_eq!(f.award_status(&f.alex_t, LineId::new(), true).await, 404);
+    // Deleted quote.
+    assert_eq!(f.delete(&f.alex_t, q.id).await.status(), 204);
+    assert_eq!(f.award_status(&f.sam_t, line, true).await, 404);
+    assert_eq!(f.award_status(&f.sam_t, line, false).await, 404);
+}
+
+#[tokio::test]
+async fn a_linked_name_is_its_members_own_line() {
+    let f = fixture().await;
+    let m: Message = f
+        .post_lines(json!([{ "speaker_name": "Sammy", "text": "hi" }]))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let line = f.line_of(&m, 0).await;
+    sqlx::query(
+        "INSERT INTO speaker_links (server_id, name_key, name, user_id, linked_by, linked_at)
+         VALUES (?, 'sammy', 'Sammy', ?, ?, '2026-01-02T00:00:00.000Z')",
+    )
+    .bind(f.server.to_string())
+    .bind(f.sam.to_string())
+    .bind(f.alex.to_string())
+    .execute(&f.app.db)
+    .await
+    .unwrap();
+    assert_eq!(f.award_status(&f.sam_t, line, true).await, 403);
+    assert_eq!(f.award_status(&f.alex_t, line, true).await, 204);
+}
+
+#[tokio::test]
+async fn a_plain_name_line_can_be_awarded() {
+    let f = fixture().await;
+    let m: Message = f
+        .post_lines(json!([
+            { "speaker_name": "A Friend", "text": "one" },
+            { "speaker_name": "a  FRIEND", "text": "two" },
+            f.say(f.sam, "three"),
+        ]))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let (l1, l2, l3) = (
+        f.line_of(&m, 0).await,
+        f.line_of(&m, 1).await,
+        f.line_of(&m, 2).await,
+    );
+    for l in [l1, l2] {
+        assert_eq!(f.award_status(&f.sam_t, l, true).await, 204);
+    }
+    assert_eq!(f.award_status(&f.alex_t, l1, true).await, 204);
+    assert_eq!(f.award_status(&f.alex_t, l3, true).await, 204);
+    assert_eq!(f.awards_on(l1).await, 2);
+    let totals = pulse_server::quotes::award_totals(&f.app.db, f.server)
+        .await
+        .unwrap();
+    assert_eq!(
+        totals,
+        vec![
+            pulse_protocol::rest::SpeakerCount {
+                user_id: None,
+                name: Some("a  FRIEND".into()),
+                count: 3
+            },
+            pulse_protocol::rest::SpeakerCount {
+                user_id: Some(f.sam),
+                name: None,
+                count: 1
+            },
+        ],
+        "plain names count under the most recent spelling"
+    );
+    // A link moves the name's awards to the member and drops the member's own.
+    sqlx::query(
+        "INSERT INTO speaker_links (server_id, name_key, name, user_id, linked_by, linked_at)
+         VALUES (?, 'a friend', 'A Friend', ?, ?, '2026-01-02T00:00:00.000Z')",
+    )
+    .bind(f.server.to_string())
+    .bind(f.sam.to_string())
+    .bind(f.alex.to_string())
+    .execute(&f.app.db)
+    .await
+    .unwrap();
+    let totals = pulse_server::quotes::award_totals(&f.app.db, f.server)
+        .await
+        .unwrap();
+    assert_eq!(
+        totals,
+        vec![pulse_protocol::rest::SpeakerCount {
+            user_id: Some(f.sam),
+            name: None,
+            count: 2
+        }]
+    );
+    // Deleted quotes count for nothing.
+    assert_eq!(f.delete(&f.alex_t, m.id).await.status(), 204);
+    assert!(
+        pulse_server::quotes::award_totals(&f.app.db, f.server)
+            .await
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn concurrent_awards_end_on_the_true_count() {
+    let f = fixture().await;
+    let q = f.quote().await; // sam is the speaker
+    let line = f.line_of(&q, 0).await;
+    let mut tokens = vec![f.alex_t.clone()];
+    for n in 0..4 {
+        let (_, t) = register(&f.app, &format!("user{n}")).await;
+        let r = post_json(
+            &f.app,
+            &t,
+            &format!("/servers/{}/join", f.server),
+            json!({}),
+        )
+        .await;
+        assert_eq!(r.status(), 204);
+        tokens.push(t);
+    }
+    let mut ws = hello(&f.app, &f.sam_t).await;
+    let calls = tokens.iter().map(|t| f.award_status(t, line, true));
+    for s in futures::future::join_all(calls).await {
+        assert_eq!(s, 204);
+    }
+    let mut counts = Vec::new();
+    while let Some(fr) = next_frame(&mut ws).await {
+        if let ServerFrame::Event(Event::QuoteAwardChanged {
+            count, awarders, ..
+        }) = fr
+        {
+            assert_eq!(awarders.len() as u32, count);
+            counts.push(count);
+        }
+    }
+    assert_eq!(counts, vec![1, 2, 3, 4, 5], "published in commit order");
+    assert_eq!(f.awards_on(line).await, 5);
+}
+
+#[tokio::test]
+async fn everyone_sees_awards_live() {
+    let f = fixture().await;
+    let (robin, robin_t) = register(&f.app, "robin").await;
+    let r = post_json(
+        &f.app,
+        &robin_t,
+        &format!("/servers/{}/join", f.server),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 204);
+    let q = f.quote().await;
+    let line = f.line_of(&q, 0).await;
+    let mut ws = hello(&f.app, &robin_t).await;
+    assert_eq!(f.award_status(&f.alex_t, line, true).await, 204);
+    loop {
+        if let ServerFrame::Event(Event::QuoteAwardChanged {
+            message_id,
+            line_id,
+            user_id,
+            given,
+            count,
+            awarders,
+            ..
+        }) = next_frame(&mut ws).await.expect("QuoteAwardChanged")
+        {
+            assert_eq!(
+                (message_id, line_id, user_id, given, count, awarders),
+                (q.id, line, f.alex, true, 1, vec![f.alex])
+            );
+            break;
+        }
+    }
+    let _ = robin;
+}
+
+#[tokio::test]
+async fn awarding_publishes_under_the_order_lock() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let line = f.line_of(&q, 0).await;
+    let guard = f.app.hub.in_order().await;
+    let (http, url, token) = (
+        f.app.http.clone(),
+        f.app.url(&format!("/quote-lines/{line}/award")),
+        f.alex_t.clone(),
+    );
+    let put = tokio::spawn(async move {
+        http.put(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status()
+    });
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(!put.is_finished(), "the award should wait on in_order");
+    drop(guard);
+    assert_eq!(put.await.unwrap(), 204);
+}
