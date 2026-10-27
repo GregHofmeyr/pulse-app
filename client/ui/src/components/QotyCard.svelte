@@ -44,6 +44,7 @@
       gone = true
     }
   })
+  // The loaded (live) message whenever the channel has it; the fetched one is a snapshot, only for until then.
   const shown = $derived(quote ?? fetched)
   const lines = $derived(shown?.quote && !shown.deleted ? shown.quote.lines : null)
   /** While the quote loads (or if it can't be): the text the server wrote ("Quote of the Year 2026: “…” — sam"). */

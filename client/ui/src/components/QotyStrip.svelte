@@ -10,11 +10,11 @@
 
   const now = $derived(Date.parse(clock.nowIso))
   const e = $derived(liveQoty(app.state, serverId, now))
-  // A tie names every leader: "sam & kim lead with 2".
+  // A tie names every leader, each person once: "sam & kim lead with 2".
   const lead = $derived.by(() => {
     const top = e ? leaders(e) : []
     if (!top.length) return 'no votes yet'
-    const names = [...new Set(top.map((o) => speakersOf(app.state, serverId, o.message)))].join(' & ')
+    const names = speakersOf(app.state, serverId, top.map((o) => o.message))
     return `${names} ${top.length > 1 ? 'lead' : 'leads'} with ${top[0].votes}`
   })
   let voting = $state(false)

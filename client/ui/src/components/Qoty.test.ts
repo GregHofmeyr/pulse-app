@@ -321,6 +321,11 @@ describe('Quote of the Year voice strip', () => {
     // a tie names every leader
     set(event({ options: [opt(quote('Q1', 'first one', 'U2'), ['U1']), opt(quote('Q2', 'second one', 'U3'), ['U2']), opt(quote('Q3', 'third', 'U1'))], voters: 2 }))
     expect(text(document.querySelector('.qoty-strip'))).toContain('Quote of the Year · sam & kim lead with 1 · 2h 5m left')
+    // each person once across the tied quotes: a "sam & kim" quote tied with a "sam" one
+    const both = quote('Q4', 'together', 'U2')
+    both.quote!.lines.push({ ...both.quote!.lines[0], id: 'LQ4b', speaker_id: 'U3', text: 'yes' })
+    set(event({ options: [opt(both, ['U1']), opt(quote('Q5', 'alone', 'U2'), ['U3'])], voters: 2 }))
+    expect(text(document.querySelector('.qoty-strip'))).toContain('Quote of the Year · sam & kim lead with 1 · 2h 5m left')
     set(event({ ends_at: null }))
     expect(text(document.querySelector('.qoty-strip'))).toContain('Quote of the Year · no votes yet · until ended')
     button('Open voting')!.click()

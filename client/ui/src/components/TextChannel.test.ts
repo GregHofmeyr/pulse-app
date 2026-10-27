@@ -254,6 +254,24 @@ describe('TextChannel: quotes channel', () => {
     expect(document.body.textContent).not.toContain('Quote of the Year 2026')
   })
 
+  it('a fetched winner gives way to the live quote once the channel loads it', async () => {
+    const card: Message = {
+      ...msg(2), author_id: null, kind: 'system', content: 'Quote of the Year 2026: “hi” — alex',
+      qoty_card: { event_id: 'E1', year: 2026, message_id: quoteMsg.id, votes: 1, voters: ['U1'], reason: 'time' },
+    }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages_around' ? [quoteMsg] : undefined))
+    show('quotes', [card])
+    for (let i = 0; i < 3; i++) await tick()
+    await new Promise((r) => setTimeout(r, 0))
+    flushSync()
+    expect(document.querySelector('.qoty-card .q p')?.textContent).toBe('“hi”')
+    // the channel loads the quote, since edited: the card follows the live one, not its snapshot
+    const live: Message = { ...quoteMsg, quote: { ...quoteMsg.quote!, lines: [{ ...quoteMsg.quote!.lines[0], text: 'hi there' }] } }
+    app.state = { ...app.state, messages: { ...app.state.messages, C1: [live, card] } }
+    flushSync()
+    expect(document.querySelector('.qoty-card .q p')?.textContent).toBe('“hi there”')
+  })
+
   it('offers Start only while no vote is live', () => {
     show('quotes', [])
     const start = () => [...document.querySelectorAll('button')].find((b) => b.textContent === 'Start Quote of the Year')

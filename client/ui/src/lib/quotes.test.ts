@@ -119,6 +119,9 @@ describe('Quote of the Year labels', () => {
     const m = msg({ quote: quote({ lines: [line({ speaker_id: 'U2', speaker_name: null }), line({ id: 'L2' }), line({ id: 'L3', speaker_id: 'U2', speaker_name: null })] }) })
     expect(speakersOf(s, 'S1', m)).toBe('Big Dog & Sam B')
     expect(speakersOf(s, 'S1', msg())).toBe('')
+    // several quotes: each person once across all of them
+    const other = msg({ id: 'M2', quote: quote({ lines: [line({ speaker_id: 'U2', speaker_name: null })] }) })
+    expect(speakersOf(s, 'S1', [other, m])).toBe('Big Dog & Sam B')
   })
   it('quotePreview is the first line and its speaker, with an ellipsis for more', () => {
     expect(quotePreview(s, 'S1', msg({ quote: quote() }))).toEqual({ said: '“hi”', by: 'Sam B' })

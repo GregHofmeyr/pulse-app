@@ -81,10 +81,10 @@ export function voteAction(myVote: string | null, clicked: string): 'vote' | 'mo
   return myVote === null ? 'vote' : myVote === clicked ? 'unvote' : 'move'
 }
 
-
-/** Who said a quote: each speaker once, in line order ("sam & kim"). */
-export function speakersOf(s: AppState, serverId: string, m: Message): string {
-  return [...new Set((m.quote?.lines ?? []).map((l) => speakerOf(s, serverId, l).name))].join(' & ')
+/** Who said a quote (or several): each person once, in line order ("sam & kim"). */
+export function speakersOf(s: AppState, serverId: string, m: Message | Message[]): string {
+  const lines = (Array.isArray(m) ? m : [m]).flatMap((q) => q.quote?.lines ?? [])
+  return [...new Set(lines.map((l) => speakerOf(s, serverId, l).name))].join(' & ')
 }
 
 /** A quote in one line: its first line (an ellipsis when there are more) and that line's speaker. */
