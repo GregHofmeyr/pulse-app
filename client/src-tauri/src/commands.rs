@@ -1011,6 +1011,8 @@ pub async fn play_sound(
     output: Option<String>,
 ) {
     let set = set.as_deref().unwrap_or(crate::sounds::DEFAULT_SET);
+    // with `window focus`, shows whether a message sound was asked for (a name from a fixed list)
+    tracing::info!(name = %crate::logging::one_line(&name, 32), "sound");
     crate::sounds::play(set, &name, crate::sounds::gain(volume), output);
 }
 

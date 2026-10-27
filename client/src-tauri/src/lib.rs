@@ -45,11 +45,16 @@ fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri:
             view.reload();
         });
     })?;
+    // What the page believes about focus decides message sounds and read marking: log each change,
+    // so a missed sound can be told apart from a focus the window never lost.
+    win.on_window_event(|e| {
+        if let tauri::WindowEvent::Focused(focused) = e {
+            tracing::info!(focused, "window focus");
+        }
+    });
     // WebView2: the Low memory target while minimised or in the background.
     #[cfg(windows)]
     webview_memory::install(&win);
-    #[cfg(not(any(target_os = "linux", windows)))]
-    let _ = win;
     Ok(())
 }
 
