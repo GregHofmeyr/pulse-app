@@ -825,6 +825,32 @@ describe('detached windows (jump to a message)', () => {
     expect(loadLatest(s, 'C1', newestFirst(ids(900, 50))).history['C1'].end).toBe(true)
   })
 
+  it('with two missed messages, deleting the newer still waits for the older', async () => {
+    const { loadWindow, appendNewer } = await import('./state')
+    let s = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M2000'), nonce: null } }, 0)
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M2001'), nonce: null } }, 0)
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M2001', author_id: 'U2', mentions: [], thread_root_id: null } }, 0)
+    s = appendNewer(s, 'C1', 'M0149', newestFirst(ids(150, 10))) // short, without M2000
+    expect(s.history['C1'].end).toBe(false)
+    s = appendNewer(s, 'C1', 'M0159', [msg('M2000')])
+    expect(s.history['C1']).toEqual({ loaded: true, start: false, end: true })
+  })
+
+  it('more missed messages than are kept cost one more page', async () => {
+    const { loadWindow, appendNewer, MISSED_CAP } = await import('./state')
+    let s = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')
+    const live = ids(2000, MISSED_CAP + 1)
+    for (const id of live) s = applyEvent(s, { t: 'MessageCreated', d: { message: msg(id), nonce: null } }, 0)
+    expect(s.history['C1'].missed).toHaveLength(MISSED_CAP)
+    // every kept one deleted: the dropped oldest may still be out there
+    for (const id of live.slice(1)) s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: id, author_id: 'U2', mentions: [], thread_root_id: null } }, 0)
+    s = appendNewer(s, 'C1', 'M0149', [])
+    expect(s.history['C1'].end).toBe(false) // one more page, to be sure
+    s = appendNewer(s, 'C1', 'M0149', [msg('M2000')])
+    expect(s.history['C1']).toEqual({ loaded: true, start: false, end: true })
+  })
+
   it("a detached window takes the server's unread count", async () => {
     const { loadWindow } = await import('./state')
     const w = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')

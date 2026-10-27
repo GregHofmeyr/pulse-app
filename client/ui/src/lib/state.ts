@@ -40,8 +40,9 @@ export type AppState = {
   typing: Record<string, Record<string, number>> // channelId -> userId -> expiresAt (ms)
   /** Which channels have had their latest page fetched (cleared on every Ready so we backfill,
    * except a detached window's). `end`: the list reaches the latest message (false for a window
-   * into the past, from a jump). `missed`: the newest live message a detached list didn't take in;
-   * the list isn't at the latest until it holds that one. */
+   * into the past, from a jump). `missed`: live messages a detached list didn't take in (oldest
+   * first, the newest MISSED_CAP); the list isn't at the latest until it holds those still there.
+   * `missedMore`: older ones were dropped from `missed`, so one more page is fetched to be sure. */
   history: Record<string, History>
   conn: ConnState
   people: Record<string, Person> // userId -> person (presence)
@@ -64,7 +65,11 @@ export type AppState = {
   speakerLinks: Record<string, SpeakerLink[]> // serverId -> plain names linked to members
 }
 
-export type History = { loaded: boolean; start: boolean; end: boolean; missed?: string }
+export type History = { loaded: boolean; start: boolean; end: boolean; missed?: string[]; missedMore?: true }
+
+/** Most missed live messages a detached list keeps track of. Pages are contiguous, so a list that
+ * holds a kept one holds every older one too; the oldest are dropped first. */
+export const MISSED_CAP = 200
 
 export const TYPING_TTL_MS = 6000
 
@@ -301,7 +306,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         // A detached window shows the past: the message waits for the latest to be reloaded (no gap),
         // and is noted so paging forward doesn't stop short of it.
         messages: detached(s, c) ? s.messages : { ...s.messages, [c]: upsertMessage(s.messages[c], withMyQuoteState(m, undefined, s.me?.id)) },
-        history: detached(s, c) ? { ...s.history, [c]: { ...s.history[c], missed: maxId(s.history[c].missed ?? null, m.id) } } : s.history,
+        history: detached(s, c) ? { ...s.history, [c]: withMissed(s.history[c], m.id) } : s.history,
         pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
         typing: withoutTyping(s, c, m.author_id),
         latest: s.channels[c]?.server_id === null ? { ...s.latest, [c]: m } : s.latest,
@@ -335,11 +340,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const mentioned = !!s.me && mentions.includes(s.me.id)
       // A missed message that's gone (a hard delete, like a reopened vote's winner card) may never
       // come back in a page: stop waiting for it.
-      let history = s.history
-      if (s.history[c]?.missed === id) {
-        const { missed: _gone, ...waiting } = s.history[c]
-        history = { ...s.history, [c]: waiting }
-      }
+      const h = s.history[c]
+      const history = h?.missed?.includes(id) ? { ...s.history, [c]: missing(h, h.missed.filter((x) => x !== id)) } : s.history
       return {
         ...s,
         history,
@@ -606,13 +608,32 @@ const AROUND_NEWER = PAGE - 1 - PAGE / 2
 
 const detached = (s: AppState, channel: string) => s.history[channel]?.end === false
 
-/** The newest list position: `end` unless a live message newer than `list` was missed meanwhile
- * (then it's fetched with one more `after` page). */
+/** `h` waiting for `ids` (none: the field goes). */
+function missing(h: History, ids: string[]): History {
+  const { missed: _old, ...rest } = h
+  return ids.length ? { ...rest, missed: ids } : rest
+}
+
+function withMissed(h: History, id: string): History {
+  const ids = [...new Set([...(h.missed ?? []), id])].sort()
+  if (ids.length <= MISSED_CAP) return missing(h, ids)
+  return { ...missing(h, ids.slice(-MISSED_CAP)), missedMore: true }
+}
+
+/** Where `list` stands: at the latest when `end` and no missed live message newer than its newest
+ * remains (a missed id it doesn't hold but is older than its newest is gone: pages are contiguous).
+ * With older missed ids dropped, the first time it would be at the latest it fetches one more page. */
 function reached(list: Message[], h: History | undefined, end: boolean): History {
   const newest = list[list.length - 1]?.id ?? ''
-  const missed = h?.missed !== undefined && h.missed > newest ? h.missed : undefined
-  const at = end && missed === undefined
-  return { loaded: true, start: false, end: at, ...(at || missed === undefined ? {} : { missed }) }
+  const waiting = (h?.missed ?? []).filter((id) => id > newest)
+  const more = !!h?.missedMore
+  const at = end && !waiting.length && !more
+  const base: History = { loaded: true, start: false, end: at }
+  if (at) return base
+  const next = missing(base, waiting)
+  // Nothing else waiting at the end: the extra page is the next one asked for, so the flag goes.
+  const extraNow = end && !waiting.length
+  return more && !extraNow ? { ...next, missedMore: true } : next
 }
 
 function sorted(page: Message[]): Message[] {
