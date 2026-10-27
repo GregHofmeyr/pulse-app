@@ -45,8 +45,9 @@ fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri:
             view.reload();
         });
     })?;
-    // What the page believes about focus decides message sounds and read marking: log each change,
-    // so a missed sound can be told apart from a focus the window never lost.
+    // Focus decides message sounds and read marking: log each change the window reports (the page
+    // logs what it holds, and why each message did or didn't ding), so a missed sound can be told
+    // apart from a focus the window never lost.
     win.on_window_event(|e| {
         if let tauri::WindowEvent::Focused(focused) = e {
             tracing::info!(focused, "window focus");

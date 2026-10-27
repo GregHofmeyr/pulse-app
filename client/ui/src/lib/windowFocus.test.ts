@@ -11,6 +11,9 @@ const onFocusChanged = vi.fn(async (h: Handler) => {
 let currentlyFocused: () => Promise<boolean>
 const isFocused = vi.fn(() => currentlyFocused())
 vi.mock('@tauri-apps/api/window', () => ({ getCurrentWindow: () => ({ onFocusChanged, isFocused }) }))
+const invoke = vi.hoisted(() => vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined))
+vi.mock('@tauri-apps/api/core', () => ({ invoke }))
+const logged = () => invoke.mock.calls.filter((c) => c[0] === 'ui_log').map((c) => (c[1] as { line: string }).line)
 
 type Mod = typeof import('./windowFocus.svelte')
 // The watcher installs once per module: each test gets a fresh one.
@@ -28,6 +31,7 @@ beforeEach(() => {
   currentlyFocused = async () => true
   onFocusChanged.mockClear()
   isFocused.mockClear()
+  invoke.mockClear()
 })
 afterEach(() => {
   vi.restoreAllMocks()
@@ -137,5 +141,25 @@ describe('window focus in Tauri (C8: the OS window is the authority)', () => {
     m.watchWindowFocus()
     await settle()
     expect(m.windowFocus.focused).toBe(true)
+  })
+})
+
+describe('what the log says about focus', () => {
+  it('the focus the page starts from', async () => {
+    inTauri()
+    currentlyFocused = async () => false
+    const m = await fresh()
+    m.watchWindowFocus()
+    for (let i = 0; i < 20 && !logged().length; i++) await settle()
+    expect(logged()).toEqual(['focus: at start focused=false'])
+  })
+
+  it('that window focus events are missing', async () => {
+    inTauri()
+    subscribe = async () => Promise.reject(new Error('no permission'))
+    const m = await fresh()
+    m.watchWindowFocus()
+    for (let i = 0; i < 20 && !logged().length; i++) await settle()
+    expect(logged()).toEqual(['focus: no window focus events; following the page instead'])
   })
 })

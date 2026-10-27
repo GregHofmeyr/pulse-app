@@ -15,10 +15,11 @@ vi.mock('@tauri-apps/api/event', () => ({
   },
 }))
 let tauriFocus: ((e: { payload: boolean }) => void) | undefined
+const os = vi.hoisted(() => ({ focused: true }))
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
     onFocusChanged: async (h: (e: { payload: boolean }) => void) => ((tauriFocus = h), () => {}),
-    isFocused: async () => true,
+    isFocused: async () => os.focused,
   }),
 }))
 
@@ -74,6 +75,35 @@ describe('one window-focus source', () => {
     expect(sounds()).toBe(1)
     tauriFocus!({ payload: true })
   })
+
+  it('each sound decision for a DM or mention is logged, with the OS focus when it was skipped as focused', async () => {
+    await new Promise((r) => setTimeout(r, 0))
+    ready()
+    await startListening()
+    ui.openChannelId = 'D1'
+    const event = (id: string): Event => ({ t: 'MessageCreated', d: { message: msg(id, 'D1'), nonce: null } }) as Event
+    const logs = () => invoke.mock.calls.filter((c) => c[0] === 'ui_log').map((c) => (c[1] as { line: string; info: boolean }))
+    tauriFocus!({ payload: true })
+    os.focused = false // the page thinks it's focused; the OS says not: the log must show both
+    await new Promise((r) => setTimeout(r, 2100)) // past the gap from the previous test's sound
+    invoke.mockClear()
+    listeners.get('pulse://event')!({ payload: event('M10') })
+    await new Promise((r) => setTimeout(r, 0))
+    const lines = logs()
+    expect(lines.every((l) => l.info)).toBe(true)
+    expect(lines.map((l) => l.line)).toEqual([
+      'sound: message private=true mentioned=false open=true focused=true muted=false gap_ok=true play=false',
+      'sound: skipped as focused; the OS says focused=false',
+    ])
+    // nothing about who or what
+    expect(lines.every((l) => !l.line.includes('U2') && !l.line.includes('hi') && !l.line.includes('D1'))).toBe(true)
+    os.focused = true
+    tauriFocus!({ payload: false })
+    invoke.mockClear()
+    listeners.get('pulse://event')!({ payload: event('M11') })
+    expect(logs().map((l) => l.line)).toEqual(['sound: message private=true mentioned=false open=true focused=false muted=false gap_ok=true play=true'])
+    tauriFocus!({ payload: true })
+  }, 10_000)
 
   it('read marking follows it', async () => {
     vi.useFakeTimers()

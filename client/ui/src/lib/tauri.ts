@@ -70,8 +70,8 @@ export const api = {
     invoke<CustomEmoji>('create_emoji', { serverId, name, mediaHash }),
   renameEmoji: (id: string, name: string) => invoke<CustomEmoji>('rename_emoji', { id, name }),
   deleteEmoji: (id: string) => invoke<void>('delete_emoji', { id }),
-  /** One line in the app log (what failed and why, never what the user typed); best effort. */
-  uiLog: (line: string) => invoke<void>('ui_log', { line }).catch(() => {}),
+  /** One line in the app log (what happened and why, never what the user typed); best effort. A failure is `warn`. */
+  uiLog: (line: string, level: 'warn' | 'info' = 'warn') => invoke<void>('ui_log', { line, info: level === 'info' }).catch(() => {}),
   /** `emoji`: a Unicode emoji or `custom:<id>`. */
   addReaction: (messageId: string, emoji: string) => invoke<void>('add_reaction', { messageId, emoji }),
   removeReaction: (messageId: string, emoji: string) => invoke<void>('remove_reaction', { messageId, emoji }),

@@ -105,15 +105,23 @@ pub fn log_budgeted(
 
 static UI_BUDGET: std::sync::Mutex<Option<LineBudget>> = std::sync::Mutex::new(None);
 
-/// A failure the UI handled on its own (e.g. a refused emoji name), so the log shows it too. The
-/// page says why, never what was typed. Up to 20 at once, then 2 a second.
+/// Something the UI decided or handled on its own (a refused emoji name at warn, why a message
+/// did or didn't ding at `info`), so the log shows it too. The page says why, never what was
+/// typed. Up to 20 at once, then 2 a second.
 #[tauri::command]
-pub fn ui_log(line: String) {
+pub fn ui_log(line: String, info: Option<bool>) {
+    let line = one_line(&line, UI_LINE_MAX);
     log_budgeted(
         &UI_BUDGET,
         20,
         2.0,
-        || tracing::warn!(target: "ui", "ui: {}", one_line(&line, UI_LINE_MAX)),
+        || {
+            if info == Some(true) {
+                tracing::info!(target: "ui", "ui: {line}")
+            } else {
+                tracing::warn!(target: "ui", "ui: {line}")
+            }
+        },
         |n| tracing::warn!(target: "ui", "ui: {n} lines dropped (too many)"),
     );
 }
