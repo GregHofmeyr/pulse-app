@@ -254,6 +254,7 @@ pub fn run() {
             stream::stream_preview_put,
             stream::stream_preview_get,
             stream::stream_log,
+            logging::ui_log,
             stream::stream_picker_window,
             stream::stream_audio_start,
             stream::stream_audio_stop,

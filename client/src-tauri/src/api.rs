@@ -263,11 +263,14 @@ impl Api {
     async fn parse<T: DeserializeOwned>(
         r: Result<reqwest::Response, reqwest::Error>,
     ) -> Result<T, ApiError> {
-        Self::checked(r)
-            .await?
-            .json()
-            .await
-            .map_err(|e| ApiError::Network(failure_text(e)))
+        let resp = Self::checked(r).await?;
+        let path = path_only(resp.url());
+        resp.json().await.map_err(|e| {
+            // a 2xx we couldn't read: checked() logged nothing, yet the caller sees a failure
+            let text = failure_text(e);
+            log_failure(Some(path), &text);
+            ApiError::Network(text)
+        })
     }
 
     /// For endpoints that answer 204.
@@ -2128,6 +2131,48 @@ mod tests {
             api.media("t", hash).await,
             Err(ApiError::Network(_))
         ));
+    }
+
+    /// Everything logged (at any level) while `f` runs, on this thread.
+    async fn logged<F: std::future::Future>(f: F) -> (F::Output, String) {
+        use std::sync::{Arc, Mutex};
+        let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let w = buf.clone();
+        let sub = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(move || Writer(w.clone()))
+            .finish();
+        let out = {
+            let _g = tracing::subscriber::set_default(sub);
+            f.await
+        };
+        let text = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        (out, text)
+    }
+    struct Writer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Writer {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_answer_that_wont_decode_is_logged() {
+        // a 200 whose body isn't what we expected: the UI shows an error, so the log must say why
+        let resp = reqwest::Response::from(
+            tauri::http::Response::builder()
+                .status(200)
+                .body("<html>not json</html>")
+                .unwrap(),
+        );
+        let (r, log) = logged(Api::parse::<MediaInfo>(Ok(resp))).await;
+        assert!(matches!(r, Err(ApiError::Network(_))), "{r:?}");
+        assert!(log.contains("request failed"), "{log}");
+        assert!(log.contains("decod"), "{log}");
     }
 
     #[tokio::test]

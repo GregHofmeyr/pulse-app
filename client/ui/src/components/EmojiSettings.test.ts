@@ -3,7 +3,11 @@ import { flushSync, mount, tick, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
-vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
+// ui_log apart, so a logged failure doesn't use up the next queued reply
+const uiLog = vi.fn((_args: unknown) => {})
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: (cmd: string, args?: never) => (cmd === 'ui_log' ? Promise.resolve(uiLog(args)) : invoke(cmd, args)),
+}))
 
 import EmojiSettings from './EmojiSettings.svelte'
 import { app } from '../lib/store.svelte'
@@ -38,7 +42,7 @@ async function upload(name = 'Big Pog!.gif') {
   flushSync()
 }
 
-beforeEach(() => { invoke.mockReset(); invoke.mockResolvedValue(undefined) })
+beforeEach(() => { invoke.mockReset(); invoke.mockResolvedValue(undefined); uiLog.mockClear() })
 afterEach(() => { if (cmp) unmount(cmp); cmp = undefined; document.body.innerHTML = '' })
 
 describe('EmojiSettings', () => {
@@ -163,21 +167,104 @@ describe('EmojiSettings', () => {
     expect(e.defaultPrevented).toBe(true)
   })
 
-  it('Save is disabled for an empty or invalid name and enter does not submit it', async () => {
+  const uiLogs = () => uiLog.mock.calls.map((c) => (c[0] as { line: string }).line)
+
+  it('an invalid name says why on Save and on Enter, logs it, and sends nothing', async () => {
     invoke.mockResolvedValueOnce(info)
     show()
     await upload()
-    const save = text('Save') as HTMLButtonElement
-    expect(save.disabled).toBe(false)
-    for (const bad of ['', 'a', 'bad name', 'x'.repeat(33), 'caf\u00e9']) {
+    for (const bad of ['', 'a', 'bad name', 'cat-loaf', 'x'.repeat(33), 'caf\u00e9']) {
       typeName(bad)
-      expect(save.disabled, JSON.stringify(bad)).toBe(true)
+      // the reason shows while typing, not only after a click
+      expect(document.querySelector('.name-hint')?.textContent, JSON.stringify(bad)).toMatch(/letters, numbers or underscores/)
     }
+    typeName('cat loaf')
+    text('Save').click()
+    await settle()
+    flushSync()
+    expect(document.querySelector('[role=alert]')!.textContent).toMatch(/no spaces or dashes/)
     nameInput().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     await settle()
     expect(calls('create_emoji')).toHaveLength(0)
+    expect(uiLogs().some((l) => l.includes('emoji: name refused'))).toBe(true)
     typeName(' ok_1 ')
-    expect(save.disabled).toBe(false)
+    expect(document.querySelector('.name-hint')).toBeNull()
+    text('Save').click()
+    await settle()
+    expect(calls('create_emoji')).toHaveLength(1)
+  })
+
+  it('a preview that will not load says so and logs it', async () => {
+    invoke.mockResolvedValueOnce(info)
+    show()
+    await upload()
+    document.querySelector('img')!.dispatchEvent(new Event('error'))
+    flushSync()
+    expect(document.querySelector('[role=alert]')!.textContent).toMatch(/preview couldn.t be shown/)
+    expect(uiLogs().some((l) => l.includes('emoji: preview failed'))).toBe(true)
+  })
+
+  it('a failed upload says why, logs it, and the next uploads still work', async () => {
+    invoke.mockRejectedValueOnce('Only PNG, JPEG, GIF or WebP images')
+    show()
+    await upload('cat.webp')
+    expect(document.querySelector('[role=alert]')!.textContent).toBe('Only PNG, JPEG, GIF or WebP images')
+    expect(uiLogs().some((l) => l.includes('emoji: upload failed'))).toBe(true)
+    // second: uploads, but the save is refused by the server
+    invoke.mockResolvedValueOnce(info).mockRejectedValueOnce('this server already has an emoji with that name')
+    await upload('cat2.webp')
+    expect(document.querySelector('[role=alert]')).toBeNull() // a new attempt clears the old error
+    text('Save').click()
+    await settle()
+    flushSync()
+    expect(document.querySelector('[role=alert]')!.textContent).toBe('this server already has an emoji with that name')
+    expect(uiLogs().some((l) => l.includes('emoji: save failed'))).toBe(true)
+    text('Cancel').click()
+    flushSync()
+    // third: works end to end
+    invoke.mockResolvedValueOnce({ ...info, hash: 'third' }).mockResolvedValueOnce(emoji('X9', 'cat3'))
+    await upload('cat3.webp')
+    text('Save').click()
+    await settle()
+    flushSync()
+    expect(calls('create_emoji').at(-1)![1]).toEqual({ serverId: 'S1', name: 'cat3', mediaHash: 'third' })
+    expect(document.querySelector('[role=alert]')).toBeNull()
+    const file = document.querySelector<HTMLInputElement>('input[type=file]')!
+    expect(file.disabled).toBe(false)
+  })
+
+  it('rename and delete failures, and an invalid rename, say why and are logged', async () => {
+    show([emoji('X1', 'pog')])
+    btn('Rename :pog:').click()
+    await tick()
+    const input = () => document.querySelector<HTMLInputElement>('input[aria-label="Rename emoji"]')!
+    input().value = 'pog dog'
+    input().dispatchEvent(new Event('input', { bubbles: true }))
+    input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await settle()
+    flushSync()
+    expect(document.querySelector('[role=alert]')!.textContent).toMatch(/no spaces or dashes/)
+    expect(calls('rename_emoji')).toHaveLength(0)
+    invoke.mockRejectedValueOnce('slow down a little, then try again')
+    input().value = 'pogdog'
+    input().dispatchEvent(new Event('input', { bubbles: true }))
+    input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await settle()
+    flushSync()
+    expect(document.querySelector('[role=alert]')!.textContent).toBe('slow down a little, then try again')
+    input().dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    flushSync()
+    invoke.mockRejectedValueOnce("can't reach the server: couldn't connect")
+    btn('Delete :pog:').click()
+    await tick()
+    text('Delete').click()
+    await settle()
+    flushSync()
+    expect(document.querySelector('[role=alert]')!.textContent).toBe("can't reach the server: couldn't connect")
+    const logs = uiLogs()
+    for (const what of ['emoji: name refused', 'emoji: rename failed', 'emoji: delete failed']) {
+      expect(logs.some((l) => l.includes(what)), what).toBe(true)
+    }
   })
 
   it('enter twice on a rename renames once', async () => {

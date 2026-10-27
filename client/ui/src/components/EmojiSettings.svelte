@@ -22,6 +22,12 @@
   let uploaded = $state<MediaInfo | null>(null)
   let newName = $state('')
 
+  /** Shown, and logged (the reason, not the file or name): a failure must never be silent. */
+  function fail(what: string, message: string) {
+    error = message
+    void api.uiLog(`emoji: ${what}: ${message}`)
+  }
+
   async function pick(e: Event) {
     const input = e.currentTarget as HTMLInputElement
     const file = input.files?.[0]
@@ -34,12 +40,13 @@
       newName = defaultName(file.name)
     } catch (err) {
       uploaded = null
-      error = errorText(err)
+      fail('upload failed', errorText(err))
     } finally {
       busy = false
     }
   }
 
+  const NAME_RULE = 'Emoji names are 2-32 letters, numbers or underscores (no spaces or dashes).'
   const validName = $derived(isValidEmojiName(newName.trim()))
   function cancelAdd() {
     uploaded = null
@@ -47,14 +54,15 @@
   }
 
   async function save() {
-    if (!uploaded || busy || !validName) return
+    if (!uploaded || busy) return
+    if (!validName) return fail('name refused', NAME_RULE)
     error = ''
     busy = true
     try {
       await api.createEmoji(server.id, newName.trim(), uploaded.hash)
       uploaded = null
     } catch (err) {
-      error = errorText(err)
+      fail('save failed', errorText(err))
     } finally {
       busy = false
     }
@@ -63,7 +71,8 @@
   let renameBusy = false // apart from `busy`, so a rename and an upload/save don't block each other
   let renaming = $state<{ id: string; name: string } | null>(null)
   async function commitRename() {
-    if (!renaming || renameBusy || !isValidEmojiName(renaming.name.trim())) return
+    if (!renaming || renameBusy) return
+    if (!isValidEmojiName(renaming.name.trim())) return fail('name refused', NAME_RULE)
     const { id, name } = renaming
     error = ''
     renameBusy = true
@@ -71,7 +80,7 @@
       await api.renameEmoji(id, name.trim())
       renaming = null
     } catch (err) {
-      error = errorText(err)
+      fail('rename failed', errorText(err))
     } finally {
       renameBusy = false
     }
@@ -85,7 +94,7 @@
       await api.deleteEmoji(id)
       confirming = null
     } catch (err) {
-      error = errorText(err)
+      fail('delete failed', errorText(err))
     }
   }
 
@@ -104,15 +113,17 @@
   {#if uploaded}
     <div class="add">
       <div class="previews">
-        <img src={mediaUrl(uploaded.hash)} alt="Preview at 128 pixels" width="128" height="128" />
+        <img src={mediaUrl(uploaded.hash)} alt="Preview at 128 pixels" width="128" height="128"
+          onerror={() => fail('preview failed', "The image uploaded, but its preview couldn't be shown. Cancel and try again, or try another image.")} />
         <img src={mediaUrl(uploaded.hash)} alt="Preview at 32 pixels" width="32" height="32" />
       </div>
       <label>Name
         <input bind:value={newName} maxlength="32" aria-label="Emoji name"
           onkeydown={(e) => { if (e.key === 'Enter') void save(); else if (e.key === 'Escape') { e.preventDefault(); cancelAdd() } }} />
       </label>
+      {#if !validName}<small class="name-hint" aria-live="polite">{NAME_RULE}</small>{/if}
       <div class="row">
-        <button class="primary" disabled={busy || !validName} onclick={save}>Save</button>
+        <button class="primary" disabled={busy} onclick={save}>Save</button>
         <button onclick={cancelAdd}>Cancel</button>
       </div>
     </div>
@@ -173,6 +184,7 @@
   .add label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-3); }
   input:not([type='file']) { height: 34px; padding: 0 10px; border: 1px solid var(--bg-4); border-radius: 8px; background: var(--bg-0); color: var(--text); }
   .row { display: flex; gap: 8px; }
+  .name-hint { margin-top: -6px; color: #f2616b; font-size: 12px; }
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   li { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; background: var(--bg-0); }
   li img { object-fit: contain; }

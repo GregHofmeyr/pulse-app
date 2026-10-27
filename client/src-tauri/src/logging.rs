@@ -19,6 +19,29 @@ pub fn session_start() {
     tracing::info!(target: SESSION_TARGET, parent: None, "{SESSION_MARKER}");
 }
 
+/// How long one `ui_log` line can be (bytes).
+pub const UI_LINE_MAX: usize = 1024;
+
+/// `line` as one log line: control characters (newlines included, which could forge a line) become
+/// spaces, and it's cut to `UI_LINE_MAX` bytes on a char boundary.
+pub fn ui_line(line: &str) -> String {
+    let mut out = String::with_capacity(line.len().min(UI_LINE_MAX));
+    for c in line.chars() {
+        let c = if c.is_control() { ' ' } else { c };
+        if out.len() + c.len_utf8() > UI_LINE_MAX {
+            break;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// A failure the UI handled on its own (e.g. a refused emoji name), so the log shows it too.
+#[tauri::command]
+pub fn ui_log(line: String) {
+    tracing::warn!(target: "ui", "ui: {}", ui_line(&line));
+}
+
 /// Whether `line` (one log line, with or without its line ending) is the session marker exactly
 /// as the log writes it: an optional timestamp, then `INFO pulse_session: pulse-session-start`
 /// and nothing else. Any other line that merely contains the marker text is not.
@@ -297,6 +320,20 @@ impl<W: std::io::Write> std::io::Write for Capped<W> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_ui_line_is_one_capped_line() {
+        // a newline could forge a line (even the session marker that report tails cut at)
+        assert_eq!(
+            super::ui_line(
+                "emoji: save failed\n2026 INFO pulse_session: pulse-session-start\r\x1b[31m"
+            ),
+            "emoji: save failed 2026 INFO pulse_session: pulse-session-start  [31m"
+        );
+        let long = "é".repeat(super::UI_LINE_MAX);
+        let cut = super::ui_line(&long);
+        assert!(cut.len() <= super::UI_LINE_MAX && cut.chars().all(|c| c == 'é'));
+    }
+
     use super::*;
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
