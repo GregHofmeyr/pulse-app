@@ -69,20 +69,32 @@ afterEach(() => {
 })
 
 describe('muted for you', () => {
-  it('a_person_you_muted_for_yourself_is_marked_in_the_voice_channel_list', () => {
-    const lounge = Object.values(app.state.channels).find((c) => c.kind === 'voice')!
-    app.state = applyEvent(app.state, { t: 'VoiceJoined', d: { channel_id: lounge.id, user_id: 'U2', flags: { muted: false, deafened: false } } } as never, Date.now())
+  const lounge = () => Object.values(app.state.channels).find((c) => c.kind === 'voice')!
+  const join = (u: string) => {
+    app.state = applyEvent(app.state, { t: 'VoiceJoined', d: { channel_id: lounge().id, user_id: u, flags: { muted: false, deafened: false } } } as never, Date.now())
     flushSync()
-    const row = () => document.querySelector<HTMLElement>('.occupant[data-user="U2"]')!
-    expect(row().querySelector('[aria-label="Muted for you"]')).toBeNull()
+  }
+  const row = (u: string) => document.querySelector<HTMLElement>(`.occupant[data-user="${u}"]`)!
+
+  it('a_person_you_muted_for_yourself_is_marked_in_the_voice_channel_list_and_says_so_to_screen_readers', () => {
+    join('U2')
+    expect(row('U2').querySelector('.for-me')).toBeNull()
+    expect(row('U2').getAttribute('aria-label')).toBe('sam')
     voice.localMutes = { U2: true }
     flushSync()
-    expect(row().querySelector('.for-me [aria-label="Muted for you"]')).not.toBeNull()
-    // their own mute still shows beside it
-    app.state = applyEvent(app.state, { t: 'VoiceStateChanged', d: { channel_id: lounge.id, user_id: 'U2', flags: { muted: true, deafened: false } } } as never, Date.now())
+    expect(row('U2').querySelector('.for-me svg')).not.toBeNull()
+    // their own mute still shows beside it, and the row's name carries both (its content isn't read)
+    app.state = applyEvent(app.state, { t: 'VoiceStateChanged', d: { channel_id: lounge().id, user_id: 'U2', flags: { muted: true, deafened: false } } } as never, Date.now())
     flushSync()
-    expect(row().querySelector('[aria-label="Muted"]')).not.toBeNull()
-    expect(row().querySelector('[aria-label="Muted for you"]')).not.toBeNull()
+    expect(row('U2').querySelector('.flag:not(.for-me) svg')).not.toBeNull()
+    expect(row('U2').getAttribute('aria-label')).toBe('sam, muted for you, muted')
+  })
+
+  it('you_are_never_marked_muted_for_yourself', () => {
+    join('U1')
+    voice.localMutes = { U1: true }
+    flushSync()
+    expect(row('U1').querySelector('.for-me')).toBeNull()
   })
 })
 
