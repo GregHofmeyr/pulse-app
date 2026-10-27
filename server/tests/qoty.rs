@@ -1483,17 +1483,32 @@ async fn an_overdue_vote_does_not_block_the_next_start() {
 #[tokio::test]
 async fn an_overdue_vote_does_not_block_a_reopen() {
     let f = fixture().await;
-    let (early, _, _) = two_options(&f).await;
+    let (early, a, b) = two_options(&f).await;
+    f.voted(&f.sam_t, early.id, a).await;
     f.ended(&f.alex_t, early.id).await;
+    let early_cards: Vec<MessageId> = f.cards(f.ch.id).await.iter().map(|m| m.id).collect();
+    assert_eq!(early_cards.len(), 1);
+    // Last year's timed vote, which b wins, runs past its deadline without a sweep.
     let r = f.start(&f.alex_t, this_year() - 1, Some(60)).await;
     assert_eq!(r.status(), 200);
     let timed: QotyEvent = r.json().await.unwrap();
+    assert_eq!(f.add(&f.alex_t, timed.id, b).await.status(), 200);
+    f.voted(&f.alex_t, timed.id, b).await;
     f.sql(&format!(
         "UPDATE qoty_events SET ends_at = '2000-01-01T00:00:00.000Z' WHERE id = '{}'",
         timed.id
     ))
     .await;
-    assert_eq!(f.reopen(&f.sam_t, early.id, None).await.status(), 200);
+    let mut ws = hello(&f.app, &f.alex_t).await;
+
+    let r = f.reopen(&f.sam_t, early.id, None).await;
+    assert_eq!(r.status(), 200);
+    let back: QotyEvent = r.json().await.unwrap();
+    assert_eq!(
+        option_ids(&back),
+        vec![a],
+        "b won the overdue vote, so it's dropped"
+    );
     let reason: Option<String> =
         sqlx::query_scalar("SELECT end_reason FROM qoty_events WHERE id = ?")
             .bind(timed.id.to_string())
@@ -1501,4 +1516,29 @@ async fn an_overdue_vote_does_not_block_a_reopen() {
             .await
             .unwrap();
     assert_eq!(reason.as_deref(), Some("time"));
+    // The overdue vote's card stands (the early vote's went with the reopen).
+    let cards = f.cards(f.ch.id).await;
+    assert_eq!(cards.len(), 1);
+    let card = cards[0].qoty_card.as_ref().unwrap();
+    assert_eq!((card.event_id, card.message_id), (timed.id, Some(b)));
+    assert_eq!(card.reason, QotyEndReason::Time);
+    // Everyone hears the ending (card, then QotyEnded) before the reopen's own events.
+    let got = seen(&mut ws).await;
+    assert_eq!(got.len(), 4, "{got:?}");
+    assert!(
+        matches!(&got[0], Seen::Card(m) if m.id == cards[0].id),
+        "{got:?}"
+    );
+    assert!(
+        matches!(&got[1], Seen::Ended(e) if e.id == timed.id),
+        "{got:?}"
+    );
+    assert!(
+        matches!(&got[2], Seen::Deleted(id) if *id == early_cards[0]),
+        "{got:?}"
+    );
+    assert!(
+        matches!(&got[3], Seen::Started(e) if e.id == early.id && option_ids(e) == vec![a]),
+        "{got:?}"
+    );
 }
