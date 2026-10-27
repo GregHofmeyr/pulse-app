@@ -7,16 +7,16 @@ use axum::http::StatusCode;
 use axum::routing::{delete, put};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
-use pulse_protocol::ids::{ServerId, UserId};
+use pulse_protocol::ids::{MessageId, ServerId, UserId};
 use pulse_protocol::rest::{LinkSpeakerRequest, SpeakerLink};
 use sqlx::{SqliteConnection, SqlitePool};
 
-use super::{MAX_NAME, name_key, parse_id};
+use super::{clean_name, name_key, parse_id};
 use crate::AppState;
 use crate::auth::AuthUser;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
-use crate::servers::routes::is_server_member;
+use crate::messages::routes::load;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -32,23 +32,16 @@ async fn link(
     Path(server): Path<ServerId>,
     Json(req): Json<LinkSpeakerRequest>,
 ) -> AppResult<StatusCode> {
-    if !s.limits.mutate_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
-    }
-    if !is_server_member(&s.db, server, me).await? {
-        return Err(AppError::Forbidden);
-    }
-    let name = req.name.trim();
+    limit(&s, me)?;
+    let name = clean_name(&req.name)?;
     let key = name_key(name);
-    if key.is_empty() || name.chars().count() > MAX_NAME {
-        return Err(AppError::BadRequest(format!(
-            "a name must be 1-{MAX_NAME} characters"
-        )));
-    }
 
     // Events carry absolute state, so publish in commit order (in_order, then the write lock).
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    if !member_in(&mut tx, server, me).await? {
+        return Err(AppError::Forbidden);
+    }
     let on_a_line: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM quote_lines l
          JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
@@ -64,13 +57,7 @@ async fn link(
             "no quote in this server has that name".into(),
         ));
     }
-    let member: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?")
-            .bind(server.to_string())
-            .bind(req.user_id.to_string())
-            .fetch_optional(&mut *tx)
-            .await?;
-    if member.is_none() {
+    if !member_in(&mut tx, server, req.user_id).await? {
         return Err(AppError::BadRequest(
             "that person isn't in this server".into(),
         ));
@@ -82,7 +69,8 @@ async fn link(
     .bind(&key)
     .fetch_optional(&mut *tx)
     .await?;
-    if current.as_deref() == Some(req.user_id.to_string().as_str()) {
+    let new = req.user_id.to_string();
+    if current.as_deref() == Some(new.as_str()) {
         return Ok(StatusCode::NO_CONTENT);
     }
     sqlx::query(
@@ -102,7 +90,8 @@ async fn link(
     .await?;
     let links = links_of(&mut tx, server).await?;
     tx.commit().await?;
-    publish(&s, server, links).await;
+    let moved: Vec<String> = current.into_iter().chain([new]).collect();
+    publish(&s, server, links, &key, &moved).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -112,30 +101,74 @@ async fn unlink(
     AuthUser(me): AuthUser,
     Path((server, key)): Path<(ServerId, String)>,
 ) -> AppResult<StatusCode> {
-    if !s.limits.mutate_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
-    }
-    if !is_server_member(&s.db, server, me).await? {
-        return Err(AppError::Forbidden);
-    }
+    limit(&s, me)?;
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
-    let removed = sqlx::query("DELETE FROM speaker_links WHERE server_id = ? AND name_key = ?")
-        .bind(server.to_string())
-        .bind(name_key(&key))
-        .execute(&mut *tx)
-        .await?
-        .rows_affected();
-    if removed == 0 {
-        return Err(AppError::NotFound);
+    if !member_in(&mut tx, server, me).await? {
+        return Err(AppError::Forbidden);
     }
+    let key = name_key(&key);
+    let removed: Option<String> = sqlx::query_scalar(
+        "DELETE FROM speaker_links WHERE server_id = ? AND name_key = ? RETURNING user_id",
+    )
+    .bind(server.to_string())
+    .bind(&key)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(removed) = removed else {
+        return Err(AppError::NotFound);
+    };
     let links = links_of(&mut tx, server).await?;
     tx.commit().await?;
-    publish(&s, server, links).await;
+    publish(&s, server, links, &key, &[removed]).await?;
     Ok(StatusCode::NO_CONTENT)
 }
 
-async fn publish(s: &AppState, server: ServerId, links: Vec<SpeakerLink>) {
+fn limit(s: &AppState, me: UserId) -> AppResult<()> {
+    if s.limits.mutate_user.hit(&me.to_string()) {
+        Ok(())
+    } else {
+        Err(AppError::TooManyRequests)
+    }
+}
+
+async fn member_in(db: &mut SqliteConnection, server: ServerId, user: UserId) -> AppResult<bool> {
+    let hit: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM server_members WHERE server_id = ? AND user_id = ?")
+            .bind(server.to_string())
+            .bind(user.to_string())
+            .fetch_optional(db)
+            .await?;
+    Ok(hit.is_some())
+}
+
+/// Publish the server's links, then a fresh copy of every live quote with a line under `key` that
+/// one of `users` awarded: its counted awards moved with the link and clients can't derive that.
+/// Called after commit, under the caller's `in_order` guard.
+async fn publish(
+    s: &AppState,
+    server: ServerId,
+    links: Vec<SpeakerLink>,
+    key: &str,
+    users: &[String],
+) -> AppResult<()> {
+    let mut q = sqlx::QueryBuilder::new(
+        "SELECT DISTINCT msg.id FROM quote_lines l
+         JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
+         JOIN channels c ON c.id = msg.channel_id
+         JOIN quote_awards a ON a.line_id = l.id
+         WHERE c.server_id = ",
+    );
+    q.push_bind(server.to_string());
+    q.push(" AND l.speaker_key = ").push_bind(key);
+    q.push(" AND a.giver_id IN (");
+    let mut list = q.separated(", ");
+    for u in users {
+        list.push_bind(u);
+    }
+    q.push(") ORDER BY msg.id");
+    let ids: Vec<String> = q.build_query_scalar().fetch_all(&s.db).await?;
+
     s.hub
         .publish(
             &s.db,
@@ -145,6 +178,14 @@ async fn publish(s: &AppState, server: ServerId, links: Vec<SpeakerLink>) {
             },
         )
         .await;
+    for id in ids {
+        if let Some(message) = load(&s.db, None, parse_id::<MessageId>(&id)?).await? {
+            s.hub
+                .publish(&s.db, Event::MessageUpdated { message })
+                .await;
+        }
+    }
+    Ok(())
 }
 
 type Row = (String, String, String, String, String, String);
@@ -173,8 +214,8 @@ async fn links_of(db: &mut SqliteConnection, server: ServerId) -> AppResult<Vec<
     rows.into_iter().map(link_of).collect()
 }
 
-/// Every server's links, for Ready. Same audience as the event: server-wide, so everyone gets them
-/// (Ready also lists every server).
+/// Every server's links, for Ready: it returns all servers' links, matching `Audience::Everyone`
+/// for `SpeakerLinksChanged` (Ready lists every server to every user too).
 pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<SpeakerLink>> {
     let rows: Vec<Row> = sqlx::query_as(&format!("{COLUMNS} ORDER BY server_id, name_key"))
         .fetch_all(db)

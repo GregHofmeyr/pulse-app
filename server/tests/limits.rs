@@ -926,3 +926,16 @@ async fn marking_replies_seen_is_limited() {
     assert_eq!(seen().await.status(), 204);
     assert_eq!(seen().await.status(), 429);
 }
+
+#[tokio::test]
+async fn speaker_links_share_the_mutate_limit() {
+    let app = spawn_only(|l| l.mutate_user = tiny(2)).await;
+    let (_, a) = register(&app, "alex").await;
+    let srv = create_server(&app, &a, "Main").await;
+    let url = app.url(&format!("/servers/{}/speaker-links", srv.id));
+    let body = serde_json::json!({ "name": "x", "user_id": pulse_protocol::ids::UserId::new() });
+    assert_eq!(status(app.http.put(&url).json(&body), &a).await, 400);
+    assert_eq!(status(app.http.delete(format!("{url}/x")), &a).await, 404);
+    assert_eq!(status(app.http.put(&url).json(&body), &a).await, 429);
+    assert_eq!(status(app.http.delete(format!("{url}/x")), &a).await, 429);
+}

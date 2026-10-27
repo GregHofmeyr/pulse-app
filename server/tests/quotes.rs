@@ -2638,6 +2638,7 @@ async fn link_rules() {
     // The name must be on a live line in this server, and not empty.
     assert_eq!(f.link(&f.alex_t, "nobody", f.sam).await, 400);
     assert_eq!(f.link(&f.alex_t, "   ", f.sam).await, 400);
+    assert_eq!(f.link(&f.alex_t, &"a".repeat(33), f.sam).await, 400);
     // A deleted quote's names don't count.
     let gone = f
         .post_lines(json!([{ "speaker_name": "Ghost", "text": "boo" }]))
@@ -2708,4 +2709,96 @@ async fn linking_publishes_under_the_order_lock() {
     assert!(!put.is_finished(), "linking should wait on in_order");
     drop(guard);
     assert_eq!(put.await.unwrap(), 204);
+}
+
+/// `MessageUpdated` quotes the socket delivers until it goes quiet.
+async fn updated_quotes(ws: &mut Socket) -> Vec<Message> {
+    let mut out = Vec::new();
+    while let Some(fr) = next_frame(ws).await {
+        if let ServerFrame::Event(Event::MessageUpdated { message }) = fr {
+            out.push(message);
+        }
+    }
+    out
+}
+
+#[tokio::test]
+async fn link_changes_republish_quotes_whose_counts_moved() {
+    let f = fixture().await;
+    let m = f
+        .post_lines(json!([{ "speaker_name": "A Friend", "text": "one" }]))
+        .await
+        .json::<Message>()
+        .await
+        .unwrap();
+    let other = f
+        .post_lines(json!([{ "speaker_name": "Other", "text": "two" }]))
+        .await
+        .json::<Message>()
+        .await
+        .unwrap();
+    assert_eq!(f.award_status(&f.sam_t, f.line_of(&m, 0), true).await, 204);
+    assert_eq!(
+        f.award_status(&f.sam_t, f.line_of(&other, 0), true).await,
+        204
+    );
+    let mut ws = hello(&f.app, &f.alex_t).await;
+
+    assert_eq!(f.link(&f.alex_t, "a friend", f.sam).await, 204);
+    let ev = updated_quotes(&mut ws).await;
+    assert_eq!(ev.len(), 1, "only the quote whose count moved");
+    assert_eq!(ev[0].id, m.id);
+    assert_eq!(ev[0].quote.as_ref().unwrap().lines[0].awards, 0);
+
+    assert_eq!(f.unlink(&f.alex_t, "a friend").await, 204);
+    let ev = updated_quotes(&mut ws).await;
+    assert_eq!(ev.len(), 1);
+    assert_eq!(ev[0].id, m.id);
+    assert_eq!(ev[0].quote.as_ref().unwrap().lines[0].awards, 1);
+
+    // Re-pointing from sam to alex moves it back (alex has no award there) and then forth again.
+    assert_eq!(f.link(&f.alex_t, "a friend", f.sam).await, 204);
+    let mut ws = hello(&f.app, &f.alex_t).await;
+    assert_eq!(f.link(&f.alex_t, "a friend", f.alex).await, 204);
+    let ev = updated_quotes(&mut ws).await;
+    assert_eq!(ev.len(), 1);
+    assert_eq!(ev[0].quote.as_ref().unwrap().lines[0].awards, 1);
+}
+
+#[tokio::test]
+async fn a_refused_link_changes_and_publishes_nothing() {
+    let f = fixture().await;
+    f.friend_quote().await;
+    let (outsider, out_t) = register(&f.app, "outsider").await;
+    assert_eq!(f.link(&f.alex_t, "a friend", f.sam).await, 204);
+    let mut ws = hello(&f.app, &f.alex_t).await;
+    assert_eq!(f.link(&f.alex_t, "a friend", outsider).await, 400);
+    assert_eq!(f.link(&f.alex_t, "nobody", f.alex).await, 400);
+    assert_eq!(f.link(&out_t, "a friend", f.alex).await, 403);
+    assert_eq!(f.unlink(&out_t, "a friend").await, 403);
+    assert_eq!(f.unlink(&f.alex_t, "nobody").await, 404);
+    let users: Vec<String> = sqlx::query_scalar("SELECT user_id FROM speaker_links")
+        .fetch_all(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(users, vec![f.sam.to_string()]);
+    assert!(link_events(&mut ws).await.is_empty());
+}
+
+#[tokio::test]
+async fn unlinking_one_leaves_the_other_in_the_event() {
+    let f = fixture().await;
+    f.post_lines(json!([
+        { "speaker_name": "A Friend", "text": "one" },
+        { "speaker_name": "Other", "text": "two" },
+    ]))
+    .await;
+    assert_eq!(f.link(&f.alex_t, "a friend", f.sam).await, 204);
+    assert_eq!(f.link(&f.alex_t, "other", f.alex).await, 204);
+    let mut ws = hello(&f.app, &f.alex_t).await;
+    assert_eq!(f.unlink(&f.sam_t, "a friend").await, 204);
+    let events = link_events(&mut ws).await;
+    assert_eq!(events.len(), 1);
+    let keys: Vec<&str> = events[0].iter().map(|l| l.name_key.as_str()).collect();
+    assert_eq!(keys, vec!["other"]);
 }

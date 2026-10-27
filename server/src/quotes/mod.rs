@@ -21,6 +21,17 @@ pub const MAX_LINES: usize = 10;
 pub const MAX_CAPTION: usize = 200;
 pub const MAX_NAME: usize = 32;
 
+/// A plain speaker name as stored: trimmed, 1..=[`MAX_NAME`] characters.
+pub fn clean_name(name: &str) -> AppResult<&str> {
+    let name = name.trim();
+    if name.is_empty() || name.chars().count() > MAX_NAME {
+        return Err(AppError::BadRequest(format!(
+            "a name must be 1-{MAX_NAME} characters"
+        )));
+    }
+    Ok(name)
+}
+
 const QUOTE_MARKS: [char; 8] = ['"', '“', '”', '\'', '‘', '’', '«', '»'];
 
 /// What a plain speaker name is matched on: Unicode lowercase, trimmed, whitespace runs as one space.
@@ -84,12 +95,7 @@ pub fn clean_lines(lines: &[NewQuoteLine]) -> AppResult<Vec<CleanLine>> {
         let (speaker_name, speaker_key, speaker_label) = match (&l.speaker_id, &l.speaker_name) {
             (Some(_), None) => (None, None, String::new()),
             (None, Some(name)) => {
-                let name = name.trim();
-                if name.is_empty() || name.chars().count() > MAX_NAME {
-                    return Err(AppError::BadRequest(format!(
-                        "a name must be 1-{MAX_NAME} characters"
-                    )));
-                }
+                let name = clean_name(name)?;
                 (
                     Some(name.to_string()),
                     Some(name_key(name)),
