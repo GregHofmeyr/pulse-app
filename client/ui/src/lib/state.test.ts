@@ -256,7 +256,7 @@ describe('trimming keeps unread messages', () => {
   const page = (from: number, n: number) =>
     Array.from({ length: n }, (_, i) => msg(`M${String(from + i).padStart(4, '0')}`))
   const readAt = (point: string | null) =>
-    ({ t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: point } }) as const
+    ({ t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: point, mentions: null } }) as const
 
   it('never trims past your read point, so unread counts survive a trim', async () => {
     const { addHistory, trimHistory } = await import('./state')
@@ -516,18 +516,18 @@ describe('quotes', () => {
   it('ThreadSeen clears the reply mentions', () => {
     let s = created(withQuote(), reply('R1', 'M1', { author_id: 'U2', mentions: ['U1'] }))
     s = created(s, reply('R2', 'M1', { author_id: 'U2', mentions: ['U1'] }))
-    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R2', mentions_cleared: 2 } }, 0)
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R2', mentions_cleared: 2, mentions: null } }, 0)
     expect(s.reads['Q1'].mentions).toBe(0)
     expect(quoteOf(s).replies_seen).toBe('R2')
     // floors at zero, and the seen point never moves back
-    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R1', mentions_cleared: 3 } }, 0)
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R1', mentions_cleared: 3, mentions: null } }, 0)
     expect(s.reads['Q1'].mentions).toBe(0)
     expect(quoteOf(s).replies_seen).toBe('R2')
   })
 
   it('ThreadSeen without a cleared mention only moves the seen point', () => {
     let s = created(withQuote(), reply('R1', 'M1', { author_id: 'U2', mentions: ['U1'] }))
-    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R1', mentions_cleared: 0 } }, 0)
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R1', mentions_cleared: 0, mentions: null } }, 0)
     expect(s.reads['Q1'].mentions).toBe(1)
     expect(quoteOf(s).replies_seen).toBe('R1')
   })
@@ -547,7 +547,7 @@ describe('quotes', () => {
     let s = applyReady(emptyState(), ready({ read_states: [{ channel_id: 'C1', last_read_message_id: null, unread: 0, mentions: 0 }] }))
     s = applyEvent(s, { t: 'MessageCreated', d: { message: { ...msg('M1'), mentions: ['U1'] }, nonce: null } }, 0)
     s = applyEvent(s, { t: 'MessageCreated', d: { message: { ...msg('M2'), mentions: ['U1'] }, nonce: null } }, 0)
-    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: 'M1' } }, 0)
+    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: 'M1', mentions: null } }, 0)
     expect(s.reads['C1']).toMatchObject({ unread: 1, mentions: 1 })
   })
 
@@ -559,7 +559,7 @@ describe('quotes', () => {
 
   it('the seen point is kept even when the quote is not loaded, and a later delete uses it', () => {
     let s = qready()
-    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R2', mentions_cleared: 0 } }, 0)
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R2', mentions_cleared: 0, mentions: null } }, 0)
     expect(s.threadSeen['M1']).toBe('R2')
     s = { ...s, reads: { ...s.reads, Q1: { ...s.reads['Q1'], mentions: 1 } } }
     const del = (id: string): Event => ({ t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: id, author_id: 'U2', mentions: ['U1'], thread_root_id: 'M1' } })
@@ -602,7 +602,7 @@ describe('quotes', () => {
     s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: 'R1', author_id: 'U2', mentions: ['U1'], thread_root_id: 'M1' } }, 0)
     expect(s.reads['Q1'].mentions).toBe(0)
     s = created(s, reply('R2', 'M1', { author_id: 'U2', mentions: ['U1'] }))
-    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R2', mentions_cleared: 1 } }, 0)
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R2', mentions_cleared: 1, mentions: null } }, 0)
     s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: 'R2', author_id: 'U2', mentions: ['U1'], thread_root_id: 'M1' } }, 0)
     expect(s.reads['Q1'].mentions).toBe(0)
   })
@@ -680,7 +680,7 @@ describe('quotes', () => {
 
   it('removing a channel drops its threads even when their quotes are not loaded', () => {
     let s = created(qready(), reply('R1', 'M1')) // M1 itself is not loaded
-    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R1', mentions_cleared: 0 } }, 0)
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R1', mentions_cleared: 0, mentions: null } }, 0)
     s = applyEvent(s, { t: 'ChannelRemoved', d: { channel_id: 'Q1', user_id: 'U1' } }, 0)
     expect(s.threads['M1']).toBeUndefined()
     expect(s.threadSeen['M1']).toBeUndefined()

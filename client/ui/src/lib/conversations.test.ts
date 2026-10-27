@@ -73,7 +73,7 @@ describe('conversations', () => {
     let s = applyReady(emptyState(), ready())
     s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M20', 'T1', 'U1', { mentions: ['ME'] }), nonce: null } }, 0)
     expect(s.reads['T1']).toMatchObject({ unread: 5, mentions: 1 })
-    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'ME', channel_id: 'T1', last_read_message_id: 'M20' } }, 0)
+    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'ME', channel_id: 'T1', last_read_message_id: 'M20', mentions: null } }, 0)
     expect(s.reads['T1']).toMatchObject({ unread: 0, mentions: 0, last_read_message_id: 'M20' })
   })
 
@@ -194,7 +194,7 @@ describe('review fixes', () => {
     let s = applyReady(emptyState(), ready())
     s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M70', 'DM1', 'ME'), nonce: null } }, 0)
     s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M71', 'DM1', 'U1', { mentions: ['ME'] }), nonce: null } }, 0)
-    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'ME', channel_id: 'DM1', last_read_message_id: 'M70' } }, 0)
+    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'ME', channel_id: 'DM1', last_read_message_id: 'M70', mentions: null } }, 0)
     expect(s.reads['DM1']).toMatchObject({ unread: 1, mentions: 1, last_read_message_id: 'M70' })
   })
 
