@@ -190,6 +190,39 @@ describe('full view', () => {
     expect(callView.full).toBeNull()
   })
 
+  it('the_activation_click_is_ignored_even_if_the_window_focus_event_comes_late', async () => {
+    await fullOnSam()
+    // the DOM's own focus event (in the page, before the press) is enough on its own
+    window.dispatchEvent(new FocusEvent('focus'))
+    clickStream()
+    expect(callView.full).toEqual(SAM)
+    await new Promise((r) => setTimeout(r, 350))
+    // and the click is checked again: activation noticed between the press and the click
+    unfocus().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100, clientY: 100, button: 0 }))
+    window.dispatchEvent(new FocusEvent('focus'))
+    unfocus().dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1, clientX: 100, clientY: 100 }))
+    flushSync()
+    expect(callView.full).toEqual(SAM)
+  })
+
+  it('a_menu_left_open_in_a_hidden_panel_does_not_block_esc_or_the_click', async () => {
+    await fullOnSam()
+    const panel = document.createElement('aside')
+    panel.hidden = true
+    panel.innerHTML = '<div role="menu"></div>'
+    document.body.append(panel)
+    await new Promise((r) => setTimeout(r, 350))
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    flushSync()
+    expect(callView.full).toBeNull()
+    panel.remove()
+  })
+
+  it('the_stream_menu_can_hand_focus_back_to_the_stage', async () => {
+    await fullOnSam()
+    expect(q('.full-view .stage')!.getAttribute('tabindex')).toBe('-1')
+  })
+
   it('keyboard_focus_lands_on_the_streams_grid_tile_after_leaving', async () => {
     await fullOnSam()
     button('Back')!.focus()

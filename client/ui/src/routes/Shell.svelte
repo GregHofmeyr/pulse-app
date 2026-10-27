@@ -446,10 +446,8 @@
       {/if}
     </main>
 
-    <div id="members-panel" class="right-panel" hidden={hideRight} bind:this={rightPanel}>
-      {#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />
-      {:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}
-    </div>
+    <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap -->
+    <div id="members-panel" class="right-panel" hidden={hideRight} bind:this={rightPanel}>{#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}</div>
   </div>
 </div>
 <StreamToast />
@@ -518,10 +516,11 @@
   .side { width: 264px; flex-shrink: 0; background: var(--bg-1); display: flex; flex-direction: column; }
   /* hidden, not removed: what the panels hold (an open menu, a draft) survives full view */
   .side[hidden] { display: none; }
-  .right-panel { display: contents; }
-  .right-panel[hidden] { display: none; }
+  /* a real box (aria-controls points at it; a display:contents one leaves the accessibility tree) */
+  .right-panel { display: flex; flex-shrink: 0; min-height: 0; }
+  .right-panel[hidden], .right-panel:empty { display: none; }
   /* full view's edge toggles: small tabs on the stream's left and right edges */
-  .edge { position: absolute; top: 50%; z-index: 3; width: 18px; height: 56px; margin-top: -28px; padding: 0; border: 0; background: rgba(30, 31, 36, .85); color: var(--text-2); display: grid; place-items: center; opacity: .7; }
+  .edge { position: absolute; top: 50%; z-index: 3; width: 18px; height: 56px; margin-top: -28px; padding: 0; border: 0; background: color-mix(in srgb, var(--bg-2) 85%, transparent); color: var(--text-2); display: grid; place-items: center; opacity: .7; }
   .edge:hover, .edge:focus-visible { opacity: 1; color: var(--text); }
   .edge:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .edge.left { left: 0; border-radius: 0 8px 8px 0; }

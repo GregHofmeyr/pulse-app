@@ -154,12 +154,14 @@ async function roomLost(mine: number) {
   roomChannel = null
   streamCmd.log({ ev: 'room_lost', live: !!stream.live, watching: stream.watching.length })
   if (!stream.live && !stream.watching.length) return
-  stream.notice = 'Streaming stopped: the connection was lost'
+  stream.notice = stream.live ? 'Streaming stopped: the connection was lost' : 'Stopped watching: the connection was lost'
+  // only what was on the lost connection: a watch started on a new one meanwhile stays
+  const lost = new Set(stream.watching.map((w) => streamKey(w.channelId, w.streamer)))
   if (stream.live) {
     liveGen.cancel()
     await endLive(true)
   }
-  await endWatches(() => true, true)
+  await endWatches((w) => lost.has(streamKey(w.channelId, w.streamer)), true)
 }
 
 /** Nothing to publish or watch: let the connection go. */

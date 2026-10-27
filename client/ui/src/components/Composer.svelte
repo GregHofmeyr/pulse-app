@@ -10,7 +10,7 @@
   import { customToken, savedTone, search, twemojiUrl, withSkin, type Std } from '../lib/emoji'
   import { applyEmoji, emojiQuery, insertAt } from '../lib/emojiComplete'
   import { animatedEmoji, stillSrc, wireEmoji } from '../lib/animate.svelte'
-  import { offsetOf, positionAt, renderInto, serialize } from '../lib/composerDom'
+  import { offsetOf, positionAt, renderInto, serialize, tokenSpans } from '../lib/composerDom'
   import { mediaUrl } from '../lib/emoji'
   import { typingThrottle } from '../lib/markdown'
   import { applyMention, mentionQuery, suggest, type Mentionable } from '../lib/mentions'
@@ -72,6 +72,7 @@
     future = []
   }
   function undo(back: boolean) {
+    typedAt = 0 // typing after this is a step of its own
     const from = back ? history : future
     const to = back ? future : history
     const snap = from.pop()
@@ -120,6 +121,19 @@
     }
   })
 
+  // A draft's emoji the app learns about after it showed (Ready came later): show them now. Only
+  // when there's one to show, so ordinary updates leave the box (and its caret) alone.
+  $effect(() => {
+    const known = app.state.customEmoji
+    untrack(() => {
+      const waiting = tokenSpans(text).some((t) => known[t.id]?.hash && ![...box.querySelectorAll<HTMLImageElement>('img')].some((i) => i.dataset.token === text.slice(t.start, t.end)))
+      if (!waiting) return
+      const at = readSel()?.start
+      render(text)
+      if (at !== undefined) placeCaret(at)
+    })
+  })
+
   // @-mention popup: open while the caret sits right after an @token that matches someone.
   let caret = $state(0)
   let pick = $state(0)
@@ -158,6 +172,7 @@
   async function setText(r: Snap, focus = true, remember = true) {
     if (r.text.length > MAX) return // callers check; a change that doesn't fit isn't made
     if (remember) record({ text, caret: sel.start })
+    typedAt = 0
     text = r.text
     caret = Math.min(r.caret, text.length)
     sel = { start: caret, end: caret }
@@ -171,8 +186,8 @@
   const choose = (name: string) => setText(applyMention(text, caret, name))
   const chooseEmoji = (e: Std | CustomEmoji) => setText(applyEmoji(text, caret, emojiText(e)))
 
-  // The textarea keeps its selection while the picker has focus: insert there.
-  // A `keep` pick (Shift) leaves the picker open and the textarea unfocused, with the caret advanced.
+  // `sel` keeps the box's selection while the picker has focus: insert there.
+  // A `keep` pick (Shift) leaves the picker open and the box unfocused, with the caret advanced.
   function pickEmoji(e: Std | CustomEmoji, { keep }: { keep: boolean }) {
     if (!keep) picking = false
     void setText(insertAt(text, sel.start, sel.end, emojiText(e)), !keep)
@@ -197,12 +212,37 @@
     const t = e.clipboardData?.getData('text/plain') ?? ''
     if (t) insertRaw(plain(t))
   }
+  /** Text being dragged from inside the box: a drop back in moves it. */
+  let dragFrom: { start: number; end: number } | null = null
+  /** The text offset under the pointer, where the browser can say. */
+  function offsetAtPoint(x: number, y: number): number | null {
+    const d = document as Document & {
+      caretPositionFromPoint?: (x: number, y: number) => { offsetNode: Node; offset: number } | null
+      caretRangeFromPoint?: (x: number, y: number) => Range | null
+    }
+    const p = d.caretPositionFromPoint?.(x, y)
+    if (p && box.contains(p.offsetNode)) return offsetOf(box, p.offsetNode, p.offset)
+    const r = d.caretRangeFromPoint?.(x, y)
+    if (r && box.contains(r.startContainer)) return offsetOf(box, r.startContainer, r.startOffset)
+    return null
+  }
   function drop(e: DragEvent) {
     e.preventDefault()
-    const t = e.dataTransfer?.getData('text/plain') ?? ''
+    const from = dragFrom
+    dragFrom = null
+    const t = plain(e.dataTransfer?.getData('text/plain') ?? '')
     if (!t) return
-    box.focus()
-    insertRaw(plain(t))
+    let at = offsetAtPoint(e.clientX, e.clientY) ?? (readSel() ?? sel).start
+    let base = text
+    if (from) {
+      // a move: out of where it was (unless dropped back inside it), then in where it lands
+      if (at >= from.start && at <= from.end) return
+      base = text.slice(0, from.start) + text.slice(from.end)
+      if (at > from.end) at -= from.end - from.start
+    } else if (t.length > MAX - text.length) {
+      return
+    }
+    void setText({ text: base.slice(0, at) + t + base.slice(at), caret: at + t.length })
   }
   /** The clipboard gets the text itself, tokens included: the browser would give an image's alt. */
   function copy(e: ClipboardEvent, cut = false) {
@@ -338,7 +378,9 @@
   <div bind:this={box} class="input" class:empty={!text} contenteditable="plaintext-only" role="textbox" tabindex="0" dir="auto"
     aria-multiline="true" aria-label={placeholder} aria-placeholder={placeholder} data-placeholder={placeholder}
     onkeydown={key} onbeforeinput={beforeInput} oninput={input} onpaste={paste} oncopy={copy} oncut={(e) => copy(e, true)}
-    onfocus={focused} onpointerdown={() => (pressed = document.activeElement !== box)} ondrop={drop} onclick={syncCaret}
+    onfocus={focused} onpointerdown={() => (pressed = document.activeElement !== box)}
+    onpointerup={() => (pressed = false)} onpointercancel={() => (pressed = false)}
+    ondragstart={() => (dragFrom = readSel())} ondragend={() => (dragFrom = null)} ondrop={drop} onclick={syncCaret}
     onkeyup={(e) => { if (e.key.startsWith('Arrow') && !shown) syncCaret() }}></div>
   <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={20} /></button>
   {#if picking && emojiBtn}
@@ -360,7 +402,8 @@
   .replying button { margin-left: auto; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   /* grows with what's in it (images included), up to 200px, then scrolls */
   .input { width: 100%; box-sizing: border-box; min-height: 48px; max-height: 200px; overflow-y: auto; padding: 14px 48px 14px 14px; color: var(--text); outline: none; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 20px; cursor: text; }
-  /* the alt text after the slash keeps the placeholder out of the box's accessible content */
-  .input.empty::before { content: attr(data-placeholder) / ''; color: var(--text-3); pointer-events: none; }
+  /* the alt text after the slash keeps the placeholder out of the box's accessible content; the
+     line before it is for engines without that syntax (they drop the second line) */
+  .input.empty::before { content: attr(data-placeholder); content: attr(data-placeholder) / ''; color: var(--text-3); pointer-events: none; }
   .input :global(img.emoji) { width: 22px; height: 22px; vertical-align: -5px; margin: 0 1px; object-fit: contain; }
 </style>

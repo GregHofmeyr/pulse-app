@@ -4,7 +4,9 @@
 // shown with `white-space: pre-wrap`).
 import { isMediaHash, mediaUrl, TOKEN_RE } from './emoji'
 
-type Emoji = { id: string; name: string; hash: string | null; still_hash: string | null; animated: boolean }
+import type { CustomEmoji } from './protocol/CustomEmoji'
+
+type Emoji = Pick<CustomEmoji, 'id' | 'name' | 'hash' | 'still_hash' | 'animated'>
 
 /** Where each custom emoji token is in `text`. */
 export function tokenSpans(text: string): { start: number; end: number; id: string }[] {

@@ -436,4 +436,89 @@ describe('Composer emoji', () => {
     await tick()
     expect(box.isConnected).toBe(false)
   })
+
+  it('typing right after an undo is a step of its own (and drops the redo)', async () => {
+    const box = show()
+    type(box, 'gg :po')
+    press(box, 'Enter')
+    await tick()
+    press(box, 'z', { ctrlKey: true })
+    await tick()
+    expect(value(box)).toBe('gg :po')
+    type(box, 'gg :pox') // within a second of the undo
+    press(box, 'y', { ctrlKey: true }) // nothing to redo now
+    await tick()
+    expect(value(box)).toBe('gg :pox')
+    press(box, 'z', { ctrlKey: true })
+    await tick()
+    expect(value(box)).toBe('gg :po')
+  })
+
+  it('a drop goes where it was dropped, and a drag inside the box moves the text', async () => {
+    const box = show()
+    type(box, 'abc def')
+    const at = (n: number) => {
+      const p = positionAt(box, n)
+      return { offsetNode: p.node, offset: p.offset }
+    }
+    const pointAt = vi.fn()
+    Object.assign(document, { caretPositionFromPoint: pointAt })
+    const drop = (text: string) => {
+      const e = new Event('drop', { bubbles: true, cancelable: true }) as DragEvent
+      Object.defineProperty(e, 'dataTransfer', { value: { getData: (t: string) => (t === 'text/plain' ? text : '') } })
+      box.dispatchEvent(e)
+    }
+    try {
+      pointAt.mockReturnValue(at(3))
+      drop('X')
+      await tick()
+      expect(value(box)).toBe('abcX def')
+      // drag "abc" from the start to the end
+      const r = document.createRange()
+      const p0 = positionAt(box, 0), p3 = positionAt(box, 3)
+      r.setStart(p0.node, p0.offset)
+      r.setEnd(p3.node, p3.offset)
+      getSelection()!.removeAllRanges()
+      getSelection()!.addRange(r)
+      box.dispatchEvent(new Event('dragstart', { bubbles: true }))
+      pointAt.mockReturnValue(at(8))
+      drop('abc')
+      await tick()
+      expect(value(box)).toBe('X defabc')
+    } finally {
+      delete (document as { caretPositionFromPoint?: unknown }).caretPositionFromPoint
+    }
+  })
+
+  it('a press that does not end in focus does not count as a click later', async () => {
+    const box = show()
+    type(box, 'hello')
+    caretAt(box, 4)
+    ;(document.querySelector('[aria-label="Emoji"]') as HTMLButtonElement).focus()
+    box.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    box.dispatchEvent(new PointerEvent('pointerup', { bubbles: true })) // dragged away: no focus
+    getSelection()!.removeAllRanges()
+    box.focus() // later, by Tab
+    await tick()
+    expect(caret(box)).toBe(4)
+  })
+
+  it('a draft whose emoji arrive after it shows them once they do', async () => {
+    const key = `K${Math.random()}`
+    let box = show(key)
+    type(box, 'hi :po')
+    press(box, 'Enter')
+    await tick()
+    unmount(cmp!)
+    const { '1': pog, ...rest } = app.state.customEmoji
+    app.state = { ...app.state, customEmoji: rest }
+    cmp = mount(Composer, { target: document.body, props: { placeholder: 'Message', draftKey: key, replyingTo: null, onCancelReply: () => {}, onSend, onTyping: () => {} } })
+    flushSync()
+    box = document.querySelector<HTMLElement>('[role="textbox"]')!
+    expect(box.querySelector('img')).toBeNull() // not known yet: its text
+    app.state = { ...app.state, customEmoji: { ...rest, '1': pog } }
+    flushSync()
+    expect(box.querySelector('img')).not.toBeNull()
+    expect(value(box)).toBe('hi <:pog:1> ')
+  })
 })

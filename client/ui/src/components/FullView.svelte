@@ -54,11 +54,14 @@
   /** Esc goes back to the grid, unless it's meant for a text field, or something open over this view. */
   const TYPING = 'textarea, select, [contenteditable="true"], [contenteditable="plaintext-only"], [role="menu"], [role="listbox"], input:not([type="range"], [type="checkbox"], [type="radio"], [type="button"])'
   const OVER = '[role="dialog"], [aria-modal="true"], [role="menu"], [role="listbox"]'
+  /** A dialog, popover or menu that's actually showing (one left open in a panel full view hid isn't). */
+  const overlayShown = () =>
+    [...document.querySelectorAll<HTMLElement>(OVER)].some((el) => !el.closest('[hidden]') && (el.checkVisibility?.() ?? true))
   function key(e: KeyboardEvent) {
     if (e.key !== 'Escape' || e.defaultPrevented) return
     if (document.activeElement?.closest(TYPING)) return
     // a dialog, popover or menu over this view takes Esc first (its own listener may run after this one)
-    if (document.querySelector(OVER)) return
+    if (overlayShown()) return
     closeFull()
   }
   let menu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
@@ -69,6 +72,8 @@
   const DRAG_PX = 5
   const ACTIVATION_MS = 300
   watchWindowFocus()
+  // Two signals of the window coming to the front: the app's focus (from the OS, which can arrive
+  // after the press, across processes) and the page's own focus event (in the page, before it).
   let activatedAt = 0
   let wasFocused = untrack(() => windowFocus.focused)
   $effect(() => {
@@ -76,15 +81,17 @@
     if (f && !wasFocused) activatedAt = performance.now()
     wasFocused = f
   })
+  const justActivated = () => performance.now() - activatedAt <= ACTIVATION_MS
   let press: { x: number; y: number; armed: boolean } | null = null
   function pressStream(e: PointerEvent) {
-    const armed = e.button === 0 && !document.querySelector(OVER) && document.hasFocus() && performance.now() - activatedAt > ACTIVATION_MS
+    const armed = e.button === 0 && !overlayShown() && document.hasFocus() && !justActivated()
     press = { x: e.clientX, y: e.clientY, armed }
   }
   function clickStream(e: MouseEvent) {
     const p = press
     press = null
-    if (!p?.armed || e.detail > 1 || Math.hypot(e.clientX - p.x, e.clientY - p.y) > DRAG_PX) return
+    // checked again at the click: an activation noticed after the press still counts
+    if (!p?.armed || justActivated() || e.detail > 1 || Math.hypot(e.clientX - p.x, e.clientY - p.y) > DRAG_PX) return
     closeFull()
   }
   let stage = $state<HTMLElement>()
@@ -95,7 +102,7 @@
   }
 </script>
 
-<svelte:window onkeydown={key} />
+<svelte:window onkeydown={key} onfocus={() => (activatedAt = performance.now())} />
 
 <div class="full-view">
   <div class="bar">
@@ -113,7 +120,8 @@
     </label>
     <button type="button" class="stop" onclick={stop}>Stop watching</button>
   </div>
-  <div class="stage" bind:this={stage}>
+  <!-- focusable from script only: the stream's menu hands focus back here when it closes -->
+  <div class="stage" bind:this={stage} tabindex="-1">
     {#if watch}<div class="host" {@attach hostVideo(channelId, streamer)}></div>{/if}
     <!-- the focused stream itself: a mouse shortcut back to every tile (Back and Esc are the keyboard's) -->
     <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->

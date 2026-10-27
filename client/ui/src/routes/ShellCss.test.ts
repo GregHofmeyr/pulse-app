@@ -42,10 +42,13 @@ describe('the server name menu', () => {
 })
 
 describe('the side panels in full view', () => {
-  it('hidden really hides them; shown, the member list wrapper adds no box', () => {
+  it('hidden really hides them; shown, the member list wrapper is a real box', () => {
     expect(getComputedStyle(el('<div><aside data-probe hidden class="panel side $s"></aside></div>')).display).toBe('none')
     expect(getComputedStyle(el('<div><aside data-probe class="panel side $s"></aside></div>')).display).toBe('flex')
     expect(getComputedStyle(el('<div><div data-probe hidden class="right-panel $s"></div></div>')).display).toBe('none')
-    expect(getComputedStyle(el('<div><div data-probe class="right-panel $s"></div></div>')).display).toBe('contents')
+    // a real box (a display:contents one is dropped from the accessibility tree, and aria-controls points at it)
+    expect(getComputedStyle(el('<div><div data-probe class="right-panel $s"><aside></aside></div></div>')).display).toBe('flex')
+    // nothing in it (Home): no box, so no extra gap
+    expect(getComputedStyle(el('<div><div data-probe class="right-panel $s"></div></div>')).display).toBe('none')
   })
 })

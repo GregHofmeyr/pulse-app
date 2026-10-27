@@ -794,7 +794,8 @@ describe('the stream connection lost for good', () => {
     expect(mod.stream.watching).toHaveLength(1)
     room.lose()
     await until(() => mod.stream.watching.length === 0, 'the watch to end')
-    expect(mod.stream.notice).toMatch(/connection was lost/)
+    // watching only: it's the watching that stopped, not a share of yours
+    expect(mod.stream.notice).toBe('Stopped watching: the connection was lost')
   })
 
   it('our own disconnect is not a loss', async () => {
