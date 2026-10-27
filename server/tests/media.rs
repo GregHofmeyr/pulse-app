@@ -18,8 +18,12 @@ fn png() -> Vec<u8> {
 }
 
 async fn upload(app: &TestApp, token: &str, body: Vec<u8>) -> reqwest::Response {
+    upload_to(app, "/media/emoji", token, body).await
+}
+
+async fn upload_to(app: &TestApp, path: &str, token: &str, body: Vec<u8>) -> reqwest::Response {
     app.http
-        .post(app.url("/media/emoji"))
+        .post(app.url(path))
         .bearer_auth(token)
         .header("content-type", "application/octet-stream")
         .body(body)
@@ -282,5 +286,110 @@ async fn oversize_body_is_a_json_413() {
     let e: ApiError = r.json().await.unwrap();
     assert_eq!(e.code, "payload_too_large");
     assert!(e.message.contains("2 MB at most"), "{}", e.message);
+    assert_eq!(media_rows(&app).await, 0);
+}
+
+fn sized_png(w: u32, h: u32) -> Vec<u8> {
+    let img = RgbaImage::from_pixel(w, h, Rgba([10, 120, 240, 255]));
+    let mut out = Cursor::new(Vec::new());
+    img.write_to(&mut out, ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+async fn media_kind(app: &TestApp, hash: &str) -> String {
+    sqlx::query_scalar("SELECT kind FROM media WHERE hash = ?")
+        .bind(hash)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn uploads_a_quote_image() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let r = upload_to(&app, "/media/quote", &token, sized_png(3000, 1000)).await;
+    assert_eq!(r.status(), 200);
+    let info: MediaInfo = r.json().await.unwrap();
+    assert_eq!((info.width, info.height, info.animated), (1600, 533, false));
+    assert_eq!(info.still_hash, None);
+    assert_eq!(media_kind(&app, &info.hash).await, "quote");
+    assert!(
+        media::path_for(&app.cfg.media_dir, &info.hash)
+            .unwrap()
+            .is_file()
+    );
+    // Same rules as emoji: junk is a clear 400, and it needs a login.
+    let r = upload_to(&app, "/media/quote", &token, b"hello".to_vec()).await;
+    assert_eq!(r.status(), 400);
+    let r = app
+        .http
+        .post(app.url("/media/quote"))
+        .body(png())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
+}
+
+#[tokio::test]
+async fn uploads_an_animated_quote_image() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let r = upload_to(&app, "/media/quote", &token, gif(3)).await;
+    assert_eq!(r.status(), 200);
+    let info: MediaInfo = r.json().await.unwrap();
+    assert_eq!((info.frames, info.animated), (3, true));
+    let still = info.still_hash.clone().unwrap();
+    assert_eq!(media_kind(&app, &still).await, "quote");
+    assert_eq!(media_kind(&app, &info.hash).await, "quote");
+    assert!(
+        media::path_for(&app.cfg.media_dir, &still)
+            .unwrap()
+            .is_file()
+    );
+}
+
+#[tokio::test]
+async fn cleanup_keeps_media_used_by_a_quote_line() {
+    let app = spawn().await;
+    let (alex, token) = register(&app, "alex").await;
+    let r = upload_to(&app, "/media/quote", &token, gif(3)).await;
+    let info: MediaInfo = r.json().await.unwrap();
+    let dir = &app.cfg.media_dir;
+    let server = create_server(&app, &token, "home").await;
+    for sql in [
+        format!(
+            "INSERT INTO channels (id, server_id, kind, name, position, created_at)
+             VALUES ('c1', '{}', 'quotes', 'quotes', 0, '2026-01-01T00:00:00.000Z')",
+            server.id
+        ),
+        format!(
+            "INSERT INTO messages (id, channel_id, author_id, content, created_at)
+             VALUES ('m1', 'c1', '{alex}', '', '2026-01-01T00:00:00.000Z')"
+        ),
+        format!(
+            "INSERT INTO quote_lines (id, message_id, position, speaker_id, media_hash)
+             VALUES ('l1', 'm1', 0, '{alex}', '{}')",
+            info.hash
+        ),
+    ] {
+        sqlx::query(&sql).execute(&app.db).await.unwrap();
+    }
+    // In use by a line: neither the animation nor its still goes.
+    assert_eq!(
+        media::cleanup(&app.db, dir, Duration::ZERO).await.unwrap(),
+        0
+    );
+    assert_eq!(media_rows(&app).await, 2);
+
+    sqlx::query("DELETE FROM quote_lines")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        media::cleanup(&app.db, dir, Duration::ZERO).await.unwrap(),
+        2
+    );
     assert_eq!(media_rows(&app).await, 0);
 }

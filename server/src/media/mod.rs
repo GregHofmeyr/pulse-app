@@ -23,17 +23,20 @@ const WARN_FREE_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum MediaKind {
     Emoji,
+    Quote,
 }
 
 impl MediaKind {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Emoji => "emoji",
+            Self::Quote => "quote",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "emoji" => Some(Self::Emoji),
+            "quote" => Some(Self::Quote),
             _ => None,
         }
     }
@@ -209,10 +212,14 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
          WHERE created_at <= ?1
            AND hash NOT IN (SELECT media_hash FROM custom_emoji
                          WHERE media_hash IS NOT NULL)
+           AND hash NOT IN (SELECT media_hash FROM quote_lines
+                         WHERE media_hash IS NOT NULL)
            AND hash NOT IN (SELECT p.still_hash FROM media p
                             WHERE p.still_hash IS NOT NULL
                               AND (p.created_at > ?1
                                    OR p.hash IN (SELECT media_hash FROM custom_emoji
+                                                  WHERE media_hash IS NOT NULL)
+                                   OR p.hash IN (SELECT media_hash FROM quote_lines
                                                   WHERE media_hash IS NOT NULL)))
          RETURNING hash",
     )
@@ -269,6 +276,10 @@ mod tests {
         assert_eq!(
             MediaKind::parse(MediaKind::Emoji.as_str()),
             Some(MediaKind::Emoji)
+        );
+        assert_eq!(
+            MediaKind::parse(MediaKind::Quote.as_str()),
+            Some(MediaKind::Quote)
         );
         assert_eq!(MediaKind::parse("avatar"), None);
     }

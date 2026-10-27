@@ -57,6 +57,10 @@ pub fn router() -> Router<AppState> {
             "/media/emoji",
             post(upload_emoji).layer(DefaultBodyLimit::max(BODY_LIMIT)),
         )
+        .route(
+            "/media/quote",
+            post(upload_quote).layer(DefaultBodyLimit::max(BODY_LIMIT)),
+        )
         .route("/media/{hash}", get(fetch))
 }
 
@@ -86,6 +90,36 @@ async fn upload_emoji(
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
     let info = super::put(&s.db, dir, MediaKind::Emoji, &processed, me).await?;
     tracing::info!(%me, hash = %info.hash, frames = info.frames, "emoji media stored");
+    Ok(Json(info))
+}
+
+/// Same checks and limits as an emoji upload; see [`process::quote_image`] for what comes out.
+async fn upload_quote(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    body: Result<Bytes, BytesRejection>,
+) -> AppResult<Json<MediaInfo>> {
+    // Past the body limit axum would answer in plain text; keep to the API's JSON error shape.
+    let body = body.map_err(|e| {
+        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            AppError::PayloadTooLarge(process::ProcessError::TooBig.to_string())
+        } else {
+            AppError::BadRequest("the upload couldn't be read".into())
+        }
+    })?;
+    if !s.limits.upload_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests);
+    }
+    let dir = &s.cfg.media_dir;
+    tokio::fs::create_dir_all(dir)
+        .await
+        .map_err(|e| anyhow::anyhow!("create {}: {e}", dir.display()))?;
+    super::disk_ok(dir, s.cfg.media_min_free_bytes)?;
+    let processed = run_processing(move || process::quote_image(&body))
+        .await?
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    let info = super::put(&s.db, dir, MediaKind::Quote, &processed, me).await?;
+    tracing::info!(%me, hash = %info.hash, frames = info.frames, "quote media stored");
     Ok(Json(info))
 }
 

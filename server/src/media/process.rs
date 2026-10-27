@@ -27,6 +27,13 @@ const MAX_ALLOC: u64 = 256 * 1024 * 1024;
 const MAX_DECODED_PIXELS: u64 = 100_000_000;
 const QUALITY: f32 = 80.0;
 
+/// Quote image: a still is fitted within this on its long side (never enlarged)...
+pub const QUOTE_MAX_SIDE: u32 = 1600;
+pub const QUOTE_MAX_OUTPUT: usize = 1024 * 1024;
+/// ...and an animation within this, since every frame is kept.
+pub const QUOTE_ANIM_MAX_SIDE: u32 = 640;
+pub const QUOTE_ANIM_MAX_OUTPUT: usize = 4 * 1024 * 1024;
+
 /// Largest Go Live preview upload accepted.
 pub const PREVIEW_MAX_INPUT: usize = 100 * 1024;
 /// Box a preview is fitted into (the client sends exactly this).
@@ -58,6 +65,8 @@ pub enum ProcessError {
     TooManyFrames,
     #[error("that animation is too big once converted (512 KB at most); try a shorter one")]
     OutputTooBig,
+    #[error("that image is too big once converted; try a smaller or shorter one")]
+    QuoteOutputTooBig,
     #[error("that image's dimensions are too large (4096×4096 at most)")]
     TooLarge,
     #[error("this animation is too large to convert; try a smaller or shorter one")]
@@ -156,13 +165,59 @@ pub fn preview(input: &[u8], declared: ImageFormat) -> Result<Vec<u8>, PreviewEr
     encode(&[(fitted, 0)]).map_err(|_| PreviewError::Encode)
 }
 
+/// How an upload is fitted and bounded: the per-frame `fit` (given the side to fit to) and, for a
+/// still and for an animation, the side and the largest processed file.
+struct Profile {
+    fit: fn(&RgbaImage, u32) -> RgbaImage,
+    still_side: u32,
+    still_max: usize,
+    anim_side: u32,
+    anim_max: usize,
+}
+
+/// Emoji: a transparent square, still or animated.
+const EMOJI: Profile = Profile {
+    fit: |img, _| fit(img),
+    still_side: SIZE,
+    still_max: MAX_OUTPUT,
+    anim_side: SIZE,
+    anim_max: MAX_OUTPUT,
+};
+
+/// Quote images: aspect kept, never enlarged.
+const QUOTE: Profile = Profile {
+    fit: fit_long_side,
+    still_side: QUOTE_MAX_SIDE,
+    still_max: QUOTE_MAX_OUTPUT,
+    anim_side: QUOTE_ANIM_MAX_SIDE,
+    anim_max: QUOTE_ANIM_MAX_OUTPUT,
+};
+
 /// Process an emoji upload. CPU-bound: call it off the async runtime.
 pub fn emoji(input: &[u8]) -> Result<Processed, ProcessError> {
     emoji_with_budget(input, MAX_DECODED_PIXELS)
 }
 
+/// Process a quote image upload (same input rules as [`emoji`]). CPU-bound: call it off the async
+/// runtime.
+pub fn quote_image(input: &[u8]) -> Result<Processed, ProcessError> {
+    convert(input, MAX_DECODED_PIXELS, &QUOTE).map_err(|e| match e {
+        ProcessError::OutputTooBig => ProcessError::QuoteOutputTooBig,
+        e => e,
+    })
+}
+
 /// [`emoji`] with the animation pixel budget injected, so tests needn't decode 100 Mpx.
 fn emoji_with_budget(input: &[u8], max_decoded_pixels: u64) -> Result<Processed, ProcessError> {
+    convert(input, max_decoded_pixels, &EMOJI)
+}
+
+/// The pipeline [`emoji`] and [`quote_image`] share: sniff, bound, decode, fit, re-encode.
+fn convert(
+    input: &[u8],
+    max_decoded_pixels: u64,
+    profile: &Profile,
+) -> Result<Processed, ProcessError> {
     if input.len() > MAX_INPUT {
         return Err(ProcessError::TooBig);
     }
@@ -195,8 +250,12 @@ fn emoji_with_budget(input: &[u8], max_decoded_pixels: u64) -> Result<Processed,
     match frames {
         Some(frames) => {
             let mut decoded = 0u64;
+            let mut n = 0u32;
+            // The first frame waits for the second: only then is it known to be an animation,
+            // which is fitted differently from a still.
+            let mut first: Option<(RgbaImage, i32)> = None;
             for f in frames {
-                if fitted.len() as u32 == MAX_FRAMES {
+                if n == MAX_FRAMES {
                     return Err(ProcessError::TooManyFrames);
                 }
                 let f = f?;
@@ -209,14 +268,27 @@ fn emoji_with_budget(input: &[u8], max_decoded_pixels: u64) -> Result<Processed,
                 if decoded > max_decoded_pixels {
                     return Err(ProcessError::AnimationTooLarge);
                 }
-                let (n, d) = f.delay().numer_denom_ms();
-                fitted.push((fit(f.buffer()), frame_ms(n, d)));
+                let (num, den) = f.delay().numer_denom_ms();
+                let ms = frame_ms(num, den);
+                n += 1;
+                if n == 1 {
+                    first = Some((f.into_buffer(), ms));
+                    continue;
+                }
+                if let Some((img, ms)) = first.take() {
+                    fitted.push(((profile.fit)(&img, profile.anim_side), ms));
+                }
+                fitted.push(((profile.fit)(f.buffer(), profile.anim_side), ms));
+            }
+            if let Some((img, ms)) = first {
+                fitted.push(((profile.fit)(&img, profile.still_side), ms));
             }
         }
         None => {
             let mut reader = ImageReader::with_format(Cursor::new(input), format);
             reader.limits(limits());
-            fitted.push((fit(&reader.decode()?.into_rgba8()), 0));
+            let img = reader.decode()?.into_rgba8();
+            fitted.push(((profile.fit)(&img, profile.still_side), 0));
         }
     }
     if fitted.is_empty() {
@@ -226,14 +298,20 @@ fn emoji_with_budget(input: &[u8], max_decoded_pixels: u64) -> Result<Processed,
     let frames = fitted.len() as u32;
     let webp = encode(&fitted)?;
     let still = (frames > 1).then(|| encode(&fitted[..1])).transpose()?;
-    if webp.len() > MAX_OUTPUT {
+    let max_output = if frames > 1 {
+        profile.anim_max
+    } else {
+        profile.still_max
+    };
+    if webp.len() > max_output {
         return Err(ProcessError::OutputTooBig);
     }
+    let (width, height) = fitted[0].0.dimensions();
     Ok(Processed {
         webp,
         still,
-        width: SIZE,
-        height: SIZE,
+        width,
+        height,
         frames,
     })
 }
@@ -260,6 +338,18 @@ fn fit(img: &RgbaImage) -> RgbaImage {
         ((SIZE - nh) / 2).into(),
     );
     canvas
+}
+
+/// Scale to fit `side` on the long side, keeping the aspect ratio and never enlarging.
+fn fit_long_side(img: &RgbaImage, side: u32) -> RgbaImage {
+    let (w, h) = img.dimensions();
+    if w.max(h) <= side {
+        return img.clone();
+    }
+    let scale = side as f64 / w.max(h) as f64;
+    let nw = ((w as f64 * scale).round() as u32).clamp(1, side);
+    let nh = ((h as f64 * scale).round() as u32).clamp(1, side);
+    resize(img, nw, nh)
 }
 
 /// Scale `img` to `nw`×`nh`.
@@ -485,6 +575,77 @@ mod tests {
         assert!(is_webp(webp));
         let i = image::load_from_memory_with_format(webp, ImageFormat::WebP).unwrap();
         (i.width(), i.height())
+    }
+
+    fn gif_sized(frames: usize, w: u32, h: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut enc = GifEncoder::new(&mut out);
+            for i in 0..frames {
+                let shade = (i * 60 % 256) as u8;
+                let img = RgbaImage::from_pixel(w, h, Rgba([shade, 0, 255 - shade, 255]));
+                let delay = Delay::from_numer_denom_ms(50, 1);
+                enc.encode_frame(Frame::from_parts(img, 0, 0, delay))
+                    .unwrap();
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn quote_image_fits_long_side_and_never_enlarges() {
+        let p = quote_image(&png(3000, 1000)).unwrap();
+        assert_eq!((p.width, p.height, p.frames), (1600, 533, 1));
+        assert!(p.still.is_none());
+        assert_eq!(dims(&p.webp), (1600, 533));
+        let p = quote_image(&png(200, 100)).unwrap();
+        assert_eq!((p.width, p.height), (200, 100));
+        assert_eq!(dims(&p.webp), (200, 100));
+    }
+
+    #[test]
+    fn quote_image_keeps_an_animation_with_a_still() {
+        let p = quote_image(&gif_sized(3, 1000, 500)).unwrap();
+        assert_eq!((p.frames, p.width, p.height), (3, 640, 320));
+        let dec = WebPDecoder::new(Cursor::new(&p.webp)).unwrap();
+        assert!(dec.has_animation());
+        let frames = dec.into_frames().collect_frames().unwrap();
+        assert_eq!(frames.len(), 3);
+        for f in &frames {
+            assert_eq!(f.delay().numer_denom_ms(), (50, 1));
+            assert_eq!(f.buffer().dimensions(), (640, 320));
+        }
+        let still = p.still.as_deref().unwrap();
+        assert_eq!(dims(still), (640, 320));
+        let dec = WebPDecoder::new(Cursor::new(still)).unwrap();
+        assert!(!dec.has_animation());
+    }
+
+    #[test]
+    fn a_single_frame_gif_quote_is_still() {
+        let p = quote_image(&gif_sized(1, 1000, 500)).unwrap();
+        assert_eq!((p.frames, p.width, p.height), (1, 1000, 500));
+        assert!(p.still.is_none());
+    }
+
+    #[test]
+    fn quote_image_refuses_what_emoji_refuse() {
+        assert!(matches!(
+            quote_image(&gif_of(&[(5000, 1)])),
+            Err(ProcessError::TooLarge)
+        ));
+        assert!(matches!(
+            quote_image(b"hello"),
+            Err(ProcessError::UnsupportedType)
+        ));
+        assert!(matches!(
+            quote_image(&vec![0u8; MAX_INPUT + 1]),
+            Err(ProcessError::TooBig)
+        ));
+        assert!(matches!(
+            quote_image(&gif(301, 1)),
+            Err(ProcessError::TooManyFrames)
+        ));
     }
 
     #[test]
