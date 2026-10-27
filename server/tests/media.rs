@@ -393,3 +393,35 @@ async fn cleanup_keeps_media_used_by_a_quote_line() {
     );
     assert_eq!(media_rows(&app).await, 0);
 }
+
+/// Incompressible pixels as a JPEG: under the 2 MB input cap, yet well over the 1 MB a still quote
+/// may be once converted.
+fn noisy_jpeg(size: u32) -> Vec<u8> {
+    let mut x = 0x9E37_79B9u32;
+    let img = image::RgbImage::from_fn(size, size, |_, _| {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        image::Rgb([x as u8, (x >> 8) as u8, (x >> 16) as u8])
+    });
+    let mut out = Cursor::new(Vec::new());
+    img.write_to(&mut out, ImageFormat::Jpeg).unwrap();
+    out.into_inner()
+}
+
+#[tokio::test]
+async fn a_quote_image_too_big_once_converted_is_a_clear_400() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let body = noisy_jpeg(1250);
+    assert!(body.len() < media::process::MAX_INPUT, "{}", body.len());
+    let r = upload_to(&app, "/media/quote", &token, body).await;
+    assert_eq!(r.status(), 400);
+    let e: ApiError = r.json().await.unwrap();
+    assert!(
+        e.message.contains("too big once converted") && !e.message.contains("512"),
+        "{}",
+        e.message
+    );
+    assert_eq!(media_rows(&app).await, 0);
+}

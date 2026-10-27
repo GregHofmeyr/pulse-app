@@ -33,6 +33,9 @@ pub const QUOTE_MAX_OUTPUT: usize = 1024 * 1024;
 /// ...and an animation within this, since every frame is kept.
 pub const QUOTE_ANIM_MAX_SIDE: u32 = 640;
 pub const QUOTE_ANIM_MAX_OUTPUT: usize = 4 * 1024 * 1024;
+/// Most pixels an animated quote's fitted frames may total (all are held until encoded): about
+/// 128 MB of RGBA per upload being processed.
+pub const QUOTE_ANIM_MAX_FITTED_PIXELS: u64 = 32_000_000;
 
 /// Largest Go Live preview upload accepted.
 pub const PREVIEW_MAX_INPUT: usize = 100 * 1024;
@@ -173,6 +176,8 @@ struct Profile {
     still_max: usize,
     anim_side: u32,
     anim_max: usize,
+    /// Most pixels the fitted frames of an animation may total.
+    anim_max_pixels: u64,
 }
 
 /// Emoji: a transparent square, still or animated.
@@ -182,6 +187,8 @@ const EMOJI: Profile = Profile {
     still_max: MAX_OUTPUT,
     anim_side: SIZE,
     anim_max: MAX_OUTPUT,
+    // 300 frames of 128², already its natural bound.
+    anim_max_pixels: u64::MAX,
 };
 
 /// Quote images: aspect kept, never enlarged.
@@ -191,6 +198,7 @@ const QUOTE: Profile = Profile {
     still_max: QUOTE_MAX_OUTPUT,
     anim_side: QUOTE_ANIM_MAX_SIDE,
     anim_max: QUOTE_ANIM_MAX_OUTPUT,
+    anim_max_pixels: QUOTE_ANIM_MAX_FITTED_PIXELS,
 };
 
 /// Process an emoji upload. CPU-bound: call it off the async runtime.
@@ -201,7 +209,12 @@ pub fn emoji(input: &[u8]) -> Result<Processed, ProcessError> {
 /// Process a quote image upload (same input rules as [`emoji`]). CPU-bound: call it off the async
 /// runtime.
 pub fn quote_image(input: &[u8]) -> Result<Processed, ProcessError> {
-    convert(input, MAX_DECODED_PIXELS, &QUOTE).map_err(|e| match e {
+    quote_with(input, &QUOTE)
+}
+
+/// [`quote_image`] with the profile injected, so tests can use small caps.
+fn quote_with(input: &[u8], profile: &Profile) -> Result<Processed, ProcessError> {
+    convert(input, MAX_DECODED_PIXELS, profile).map_err(|e| match e {
         ProcessError::OutputTooBig => ProcessError::QuoteOutputTooBig,
         e => e,
     })
@@ -251,6 +264,7 @@ fn convert(
         Some(frames) => {
             let mut decoded = 0u64;
             let mut n = 0u32;
+            let mut fitted_pixels = 0u64;
             // The first frame waits for the second: only then is it known to be an animation,
             // which is fitted differently from a still.
             let mut first: Option<(RgbaImage, i32)> = None;
@@ -275,10 +289,19 @@ fn convert(
                     first = Some((f.into_buffer(), ms));
                     continue;
                 }
+                // All fitted frames are held until encoding, so their total is bounded too.
+                let mut push = |img: RgbaImage, ms| {
+                    fitted_pixels += u64::from(img.width()) * u64::from(img.height());
+                    fitted.push((img, ms));
+                    if fitted_pixels > profile.anim_max_pixels {
+                        return Err(ProcessError::AnimationTooLarge);
+                    }
+                    Ok(())
+                };
                 if let Some((img, ms)) = first.take() {
-                    fitted.push(((profile.fit)(&img, profile.anim_side), ms));
+                    push((profile.fit)(&img, profile.anim_side), ms)?;
                 }
-                fitted.push(((profile.fit)(f.buffer(), profile.anim_side), ms));
+                push((profile.fit)(f.buffer(), profile.anim_side), ms)?;
             }
             if let Some((img, ms)) = first {
                 fitted.push(((profile.fit)(&img, profile.still_side), ms));
@@ -619,6 +642,101 @@ mod tests {
         assert_eq!(dims(still), (640, 320));
         let dec = WebPDecoder::new(Cursor::new(still)).unwrap();
         assert!(!dec.has_animation());
+        // The still is the first frame: its colour is frame 1's (0,0,255), not frame 2's (60,0,195).
+        let px = image::load_from_memory_with_format(still, ImageFormat::WebP)
+            .unwrap()
+            .to_rgba8()
+            .get_pixel(320, 160)
+            .0;
+        assert!(px[0].abs_diff(0) < 20 && px[2].abs_diff(255) < 20, "{px:?}");
+        assert!(px[2].abs_diff(195) > 40, "{px:?}");
+    }
+
+    /// Incompressible pixels, so the encoded size is predictable enough for a tiny cap.
+    fn noise(w: u32, h: u32, seed: u32) -> RgbaImage {
+        let mut x = seed.wrapping_mul(2654435761).wrapping_add(1);
+        RgbaImage::from_fn(w, h, |_, _| {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            Rgba([x as u8, (x >> 8) as u8, (x >> 16) as u8, 255])
+        })
+    }
+
+    fn noisy_gif(frames: u32, size: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut enc = GifEncoder::new(&mut out);
+            for i in 0..frames {
+                let delay = Delay::from_numer_denom_ms(50, 1);
+                enc.encode_frame(Frame::from_parts(noise(size, size, i), 0, 0, delay))
+                    .unwrap();
+            }
+        }
+        out
+    }
+
+    fn noisy_png(size: u32) -> Vec<u8> {
+        let mut out = Cursor::new(Vec::new());
+        noise(size, size, 7)
+            .write_to(&mut out, ImageFormat::Png)
+            .unwrap();
+        out.into_inner()
+    }
+
+    #[test]
+    fn quote_output_caps_depend_on_still_or_animation() {
+        let tiny = 2_000;
+        // A still obeys the still cap (not the animation one), and says so in quote terms.
+        let still_capped = Profile {
+            still_max: tiny,
+            ..QUOTE
+        };
+        assert!(matches!(
+            quote_with(&noisy_png(64), &still_capped),
+            Err(ProcessError::QuoteOutputTooBig)
+        ));
+        let anim_capped = Profile {
+            anim_max: tiny,
+            ..QUOTE
+        };
+        assert!(quote_with(&noisy_png(64), &anim_capped).is_ok());
+        // An animation obeys the animation cap (not the still one).
+        assert!(matches!(
+            quote_with(&noisy_gif(3, 64), &anim_capped),
+            Err(ProcessError::QuoteOutputTooBig)
+        ));
+        assert!(quote_with(&noisy_gif(3, 64), &still_capped).is_ok());
+        // Emoji keep their own error.
+        assert!(matches!(
+            convert(
+                &noisy_png(64),
+                MAX_DECODED_PIXELS,
+                &Profile {
+                    still_max: tiny,
+                    ..EMOJI
+                }
+            ),
+            Err(ProcessError::OutputTooBig)
+        ));
+    }
+
+    #[test]
+    fn quote_animation_over_the_fitted_pixel_budget_is_refused() {
+        // 3 frames of 64² = 12 288 fitted pixels.
+        let gif = gif_sized(3, 64, 64);
+        let at = |max| Profile {
+            anim_max_pixels: max,
+            ..QUOTE
+        };
+        assert!(quote_with(&gif, &at(12_288)).is_ok());
+        assert!(matches!(
+            quote_with(&gif, &at(12_287)),
+            Err(ProcessError::AnimationTooLarge)
+        ));
+        // A still isn't an animation: the budget doesn't apply to it.
+        assert!(quote_with(&png(64, 64), &at(1)).is_ok());
+        assert!(quote_with(&gif_sized(1, 64, 64), &at(1)).is_ok());
     }
 
     #[test]

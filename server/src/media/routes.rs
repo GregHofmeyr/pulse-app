@@ -65,39 +65,29 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn upload_emoji(
-    State(s): State<AppState>,
-    AuthUser(me): AuthUser,
+    state: State<AppState>,
+    user: AuthUser,
     body: Result<Bytes, BytesRejection>,
 ) -> AppResult<Json<MediaInfo>> {
-    // Past the body limit axum would answer in plain text; keep to the API's JSON error shape.
-    let body = body.map_err(|e| {
-        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
-            AppError::PayloadTooLarge(process::ProcessError::TooBig.to_string())
-        } else {
-            AppError::BadRequest("the upload couldn't be read".into())
-        }
-    })?;
-    if !s.limits.upload_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
-    }
-    let dir = &s.cfg.media_dir;
-    tokio::fs::create_dir_all(dir)
-        .await
-        .map_err(|e| anyhow::anyhow!("create {}: {e}", dir.display()))?;
-    super::disk_ok(dir, s.cfg.media_min_free_bytes)?;
-    let processed = run_processing(move || process::emoji(&body))
-        .await?
-        .map_err(|e| AppError::BadRequest(e.to_string()))?;
-    let info = super::put(&s.db, dir, MediaKind::Emoji, &processed, me).await?;
-    tracing::info!(%me, hash = %info.hash, frames = info.frames, "emoji media stored");
-    Ok(Json(info))
+    upload(state, user, body, MediaKind::Emoji, process::emoji).await
 }
 
 /// Same checks and limits as an emoji upload; see [`process::quote_image`] for what comes out.
 async fn upload_quote(
+    state: State<AppState>,
+    user: AuthUser,
+    body: Result<Bytes, BytesRejection>,
+) -> AppResult<Json<MediaInfo>> {
+    upload(state, user, body, MediaKind::Quote, process::quote_image).await
+}
+
+/// What every image upload does: size, rate limit, disk guard, a processing slot, then store.
+async fn upload(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
     body: Result<Bytes, BytesRejection>,
+    kind: MediaKind,
+    process: fn(&[u8]) -> Result<process::Processed, process::ProcessError>,
 ) -> AppResult<Json<MediaInfo>> {
     // Past the body limit axum would answer in plain text; keep to the API's JSON error shape.
     let body = body.map_err(|e| {
@@ -115,11 +105,11 @@ async fn upload_quote(
         .await
         .map_err(|e| anyhow::anyhow!("create {}: {e}", dir.display()))?;
     super::disk_ok(dir, s.cfg.media_min_free_bytes)?;
-    let processed = run_processing(move || process::quote_image(&body))
+    let processed = run_processing(move || process(&body))
         .await?
         .map_err(|e| AppError::BadRequest(e.to_string()))?;
-    let info = super::put(&s.db, dir, MediaKind::Quote, &processed, me).await?;
-    tracing::info!(%me, hash = %info.hash, frames = info.frames, "quote media stored");
+    let info = super::put(&s.db, dir, kind, &processed, me).await?;
+    tracing::info!(%me, hash = %info.hash, frames = info.frames, kind = kind.as_str(), "media stored");
     Ok(Json(info))
 }
 
