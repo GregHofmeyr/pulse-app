@@ -199,8 +199,8 @@
       app.state = appendNewer(app.state, channelId, newest, page)
       await tick() // with loadingNewer still set, the view stays where it was
       // Still at the bottom (measured now: atBottom is from the last scroll), e.g. a short page that
-      // stopped before a missed live message: fetch on.
-      more = detached && !!list && list.scrollHeight - list.scrollTop - list.clientHeight < 40
+      // stopped before a missed live message: fetch on, but only while pages bring something.
+      more = page.length > 0 && detached && !!list && list.scrollHeight - list.scrollTop - list.clientHeight < 40
     } catch (e) {
       error = errorText(e)
     } finally {

@@ -814,6 +814,17 @@ describe('detached windows (jump to a message)', () => {
     expect(p.history['C1'].end).toBe(false)
   })
 
+  it('a missed live message that is deleted again no longer holds the list back', async () => {
+    const { loadWindow, loadLatest, appendNewer } = await import('./state')
+    let s = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')
+    // e.g. a winner card hard-deleted when the vote is reopened: no page will ever bring it
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M2000'), nonce: null } }, 0)
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M2000', author_id: 'U2', mentions: [], thread_root_id: null } }, 0)
+    expect(s.history['C1'].missed).toBeUndefined()
+    expect(appendNewer(s, 'C1', 'M0149', newestFirst(ids(150, 10))).history['C1'].end).toBe(true)
+    expect(loadLatest(s, 'C1', newestFirst(ids(900, 50))).history['C1'].end).toBe(true)
+  })
+
   it("a detached window takes the server's unread count", async () => {
     const { loadWindow } = await import('./state')
     const w = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')

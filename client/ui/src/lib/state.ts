@@ -333,8 +333,16 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const read = s.reads[c]
       const wasUnread = read && author_id !== s.me?.id && id > (read.last_read_message_id ?? '')
       const mentioned = !!s.me && mentions.includes(s.me.id)
+      // A missed message that's gone (a hard delete, like a reopened vote's winner card) may never
+      // come back in a page: stop waiting for it.
+      let history = s.history
+      if (s.history[c]?.missed === id) {
+        const { missed: _gone, ...waiting } = s.history[c]
+        history = { ...s.history, [c]: waiting }
+      }
       return {
         ...s,
+        history,
         messages: s.messages[c] ? { ...s.messages, [c]: s.messages[c].map(gone) } : s.messages,
         latest: s.latest[c] ? { ...s.latest, [c]: gone(s.latest[c]) } : s.latest,
         reads: wasUnread

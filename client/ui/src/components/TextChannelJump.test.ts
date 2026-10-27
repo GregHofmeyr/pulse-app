@@ -221,4 +221,28 @@ describe('TextChannel: jump to a message', () => {
     expect(app.state.messages['C1'].at(-1)!.id).toBe('M2000')
     expect(app.state.history['C1'].end).toBe(true)
   })
+
+  it('an empty forward page stops paging', async () => {
+    app.state = loadWindow(ready('text'), 'C1', newestFirst(100, 50), 'M0125')
+    // a missed message nothing can fetch (only a hard delete event could tell us it's gone)
+    app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: msg(2000), nonce: null } }, 0)
+    invoke.mockImplementation(async (cmd) => (cmd === 'list_messages_after' ? [] : undefined))
+    show()
+    document.querySelector('.list')!.dispatchEvent(new Event('scroll')) // jsdom: always at the bottom
+    for (let i = 0; i < 4; i++) await settle()
+    expect(invoke.mock.calls.filter(([c]) => c === 'list_messages_after')).toHaveLength(1)
+  })
+
+  it('Jump to present attaches after a missed message was deleted', async () => {
+    app.state = loadWindow(ready('text'), 'C1', newestFirst(100, 50), 'M0125')
+    app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: msg(2000), nonce: null } }, 0)
+    app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M2000', author_id: 'U2', mentions: [], thread_root_id: null } }, 0)
+    invoke.mockImplementation(async (cmd, args) => (cmd === 'list_messages' && !(args as { before: string | null }).before ? newestFirst(900, 50) : cmd === 'list_messages_after' ? [] : undefined))
+    show()
+    ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Jump to present')!.click()
+    await settle()
+    expect(app.state.history['C1'].end).toBe(true)
+    expect(invoke.mock.calls.filter(([c]) => c === 'list_messages_after')).toHaveLength(0)
+    expect([...document.querySelectorAll('button')].some((b) => b.textContent === 'Jump to present')).toBe(false)
+  })
 })
