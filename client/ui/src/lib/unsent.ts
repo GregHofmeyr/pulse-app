@@ -5,7 +5,7 @@ const key = (userId: string) => `pulse.unsent.${userId}`
 
 const isPending = (p: unknown): p is Pending => {
   const x = p as Partial<Pending> | null
-  return !!x && typeof x.nonce === 'string' && typeof x.content === 'string' && (x.reply_to_id === null || typeof x.reply_to_id === 'string')
+  return !!x && typeof x.nonce === 'string' && typeof x.content === 'string' && (x.reply_to_id === null || typeof x.reply_to_id === 'string') && (x.thread_root_id == null || typeof x.thread_root_id === 'string')
 }
 
 /** What an earlier run left unsent. Storage is untrusted: anything malformed gives `{}`. */
@@ -18,7 +18,7 @@ export function loadUnsent(userId: string): Record<string, Pending[]> {
     for (const [channel, list] of Object.entries(parsed)) {
       if (channel === '__proto__' || !Array.isArray(list)) continue
       const ok = list.filter(isPending).map((p): Pending => ({
-        nonce: p.nonce, content: p.content, reply_to_id: p.reply_to_id, status: 'failed', created_at: typeof p.created_at === 'string' ? p.created_at : '',
+        nonce: p.nonce, content: p.content, reply_to_id: p.reply_to_id, thread_root_id: p.thread_root_id ?? null, status: 'failed', created_at: typeof p.created_at === 'string' ? p.created_at : '',
       }))
       if (ok.length) out[channel] = ok
     }

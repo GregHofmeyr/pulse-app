@@ -7,8 +7,8 @@ use pulse_protocol::gateway::ClientFrame;
 use pulse_protocol::ids::{ChannelId, LineId, MessageId, QotyEventId, ServerId, UserId};
 use pulse_protocol::rest::{
     Channel, CustomEmoji, EditQuoteRequest, Leaderboard, LinkSpeakerRequest, MediaInfo, Member,
-    Message, MuteTarget, PostQuoteRequest, QotyEvent, RecoveryCodesResponse, SendMessageRequest,
-    Server, SetMuteRequest, StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus, User,
+    Message, MuteTarget, PostQuoteRequest, QotyEvent, RecoveryCodesResponse, Server,
+    SetMuteRequest, StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -790,7 +790,8 @@ pub async fn send_message(
     nonce: String,
 ) -> Result<(), ApiError> {
     // Queue first, then try: offline sends survive until the connection is back (or fail visibly).
-    core.outbox.enqueue(nonce, channel_id, content, reply_to_id);
+    core.outbox
+        .enqueue(nonce, channel_id, content, reply_to_id, None);
     if let Ok((api, token)) = core.current() {
         core.outbox.flush(&api, &token, false).await;
     }
@@ -1222,25 +1223,23 @@ pub async fn upload_quote_media(
     core.check(&app, api.upload_quote_media(&token, bytes.clone()).await)
 }
 
-/// A reply in a quote's thread. Sent at once rather than queued in the outbox (which has no
-/// threads): the answer is the stored reply, a failure reaches the UI.
+/// A reply in a quote's thread: queued in the outbox like `send_message` (retry, failed state),
+/// carrying the quote it answers. Confirmation arrives as a `pulse://outbox` event whose message
+/// has `thread_root_id` set.
 #[tauri::command]
 pub async fn send_reply(
-    app: AppHandle,
     core: State<'_, Core>,
     channel_id: ChannelId,
     root_id: MessageId,
     content: String,
     nonce: String,
-) -> Result<Message, ApiError> {
-    let (api, token) = core.current()?;
-    let body = SendMessageRequest {
-        content,
-        reply_to_id: None,
-        nonce: Some(nonce),
-        thread_root_id: Some(root_id),
-    };
-    core.check(&app, api.send_message(&token, channel_id, &body).await)
+) -> Result<(), ApiError> {
+    core.outbox
+        .enqueue(nonce, channel_id, content, None, Some(root_id));
+    if let Ok((api, token)) = core.current() {
+        core.outbox.flush(&api, &token, false).await;
+    }
+    Ok(())
 }
 
 #[tauri::command]

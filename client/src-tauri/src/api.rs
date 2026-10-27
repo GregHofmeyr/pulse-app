@@ -1103,7 +1103,7 @@ impl Api {
         self.messages_near(token, channel, "around", message).await
     }
 
-    /// The messages just newer than `message`, oldest first.
+    /// The messages just newer than `message`, newest first (like every list).
     pub async fn messages_after(
         &self,
         token: &str,
@@ -2631,15 +2631,37 @@ mod tests {
             .unwrap();
         let thread = api.replies(&alex, quote.id, None).await.unwrap();
         assert_eq!(thread.iter().map(|m| m.id).collect::<Vec<_>>(), [reply.id]);
+        let seen_before = api.messages(&alex, ch.id, None).await.unwrap();
+        assert_eq!(seen_before.len(), 1, "the reply is not in the main list");
+        assert_eq!(seen_before[0].quote.as_ref().unwrap().replies_seen, None);
         api.mark_replies_seen(&alex, quote.id, reply.id)
             .await
             .unwrap();
-        assert_eq!(api.messages(&alex, ch.id, None).await.unwrap().len(), 1);
+        let seen_after = api.messages(&alex, ch.id, None).await.unwrap();
+        assert_eq!(
+            seen_after[0].quote.as_ref().unwrap().replies_seen,
+            Some(reply.id)
+        );
+        assert!(
+            api.replies(&alex, quote.id, Some(reply.id))
+                .await
+                .unwrap()
+                .is_empty(),
+            "nothing older than the only reply"
+        );
 
         // the board ranks by reactions; the search finds it by its words
         api.add_reaction(&jo, quote.id, "🔥").await.unwrap();
         let board = api.leaderboard(&sam, s.id, None).await.unwrap();
         assert_eq!(board.top_all_time[0].id, quote.id);
+        let this_year = quote.quote.as_ref().unwrap().year;
+        let board_year = api.leaderboard(&sam, s.id, Some(this_year)).await.unwrap();
+        assert_eq!(board_year.top_year[0].id, quote.id);
+        let board_other = api
+            .leaderboard(&sam, s.id, Some(this_year - 1))
+            .await
+            .unwrap();
+        assert!(board_other.top_year.is_empty());
         let found = api.search_quotes(&sam, s.id, "honest").await.unwrap();
         assert_eq!(found[0].id, quote.id);
 
@@ -2656,11 +2678,27 @@ mod tests {
             )
             .await
             .unwrap();
+        let latest = api
+            .post_quote(
+                &alex,
+                ch.id,
+                &PostQuoteRequest {
+                    lines: vec![line("and one more")],
+                    today: None,
+                    nonce: None,
+                },
+            )
+            .await
+            .unwrap();
         let around = api.messages_around(&alex, ch.id, quote.id).await.unwrap();
         assert!(around.iter().any(|m| m.id == quote.id));
         assert!(around.iter().any(|m| m.id == later.id));
         let after = api.messages_after(&alex, ch.id, quote.id).await.unwrap();
-        assert_eq!(after.iter().map(|m| m.id).collect::<Vec<_>>(), [later.id]);
+        assert_eq!(
+            after.iter().map(|m| m.id).collect::<Vec<_>>(),
+            [latest.id, later.id],
+            "newest first"
+        );
 
         // a plain-name speaker can be linked and unlinked
         let named = api
@@ -2709,11 +2747,13 @@ mod tests {
             )
             .await
             .unwrap();
-        let ev = if ev.options.iter().any(|o| o.message.id == quote.id) {
-            ev
-        } else {
-            api.add_qoty_option(&alex, ev.id, quote.id).await.unwrap()
-        };
+        assert!(
+            ev.options.iter().any(|o| o.message.id == quote.id),
+            "the reacted-to quote is a starting option"
+        );
+        assert!(!ev.options.iter().any(|o| o.message.id == later.id));
+        let ev = api.add_qoty_option(&alex, ev.id, later.id).await.unwrap();
+        assert!(ev.options.iter().any(|o| o.message.id == later.id));
         let voted = api.vote_qoty(&sam, ev.id, quote.id).await.unwrap();
         let option = voted
             .options
@@ -2728,6 +2768,10 @@ mod tests {
         assert!(ended.ended_at.is_some());
         let reopened = api.reopen_qoty(&alex, ev.id, Some(60)).await.unwrap();
         assert!(reopened.ended_at.is_none());
+        assert!(reopened.ends_at.is_some());
+        api.end_qoty(&alex, ev.id).await.unwrap();
+        let open_ended = api.reopen_qoty(&alex, ev.id, None).await.unwrap();
+        assert!(open_ended.ended_at.is_none() && open_ended.ends_at.is_none());
     }
 
     #[tokio::test]

@@ -70,7 +70,7 @@ describe('applyEvent', () => {
   })
 
   it('replaces a pending optimistic message with the same nonce', () => {
-    let s = addPending(base(), 'C1', { nonce: 'n1', content: 'hi', reply_to_id: null, status: 'pending', created_at: '2026-10-01T00:00:00.000Z' })
+    let s = addPending(base(), 'C1', { nonce: 'n1', content: 'hi', reply_to_id: null, thread_root_id: null, status: 'pending', created_at: '2026-10-01T00:00:00.000Z' })
     expect(s.pending['C1']).toHaveLength(1)
     s = applyEvent(s, { t: 'MessageCreated', d: { message: msg('M1', 'C1', 'hi', 'U1'), nonce: 'n1' } }, 0)
     expect(s.pending['C1']).toHaveLength(0)
@@ -196,7 +196,7 @@ it('an edit to the latest message keeps the preview\'s reactions (counts and me)
 
 it('removal from a conversation forgets everything about it, unsent messages included', () => {
   let s = applyReady(emptyState(), ready({ channels: [ch('G1', 'group', null)], dm_members: [{ channel_id: 'G1', user_ids: ['U1', 'U2', 'U3'] }] }))
-  s = addPending(s, 'G1', { nonce: 'n1', content: 'are you there?', reply_to_id: null, status: 'failed', created_at: '2026-10-01T00:00:00.000Z' })
+  s = addPending(s, 'G1', { nonce: 'n1', content: 'are you there?', reply_to_id: null, thread_root_id: null, status: 'failed', created_at: '2026-10-01T00:00:00.000Z' })
   s = applyEvent(s, { t: 'Typing', d: { channel_id: 'G1', user_id: 'U2' } }, 0)
   s = applyEvent(s, { t: 'ChannelRemoved', d: { channel_id: 'G1', user_id: 'U1' } }, 0)
   expect(s.pending['G1']).toBeUndefined()
@@ -420,7 +420,7 @@ describe('reactions and custom emoji', () => {
 })
 
 describe('unsent messages', () => {
-  const unsent = (nonce: string, status: Pending['status'] = 'pending'): Pending => ({ nonce, content: `text ${nonce}`, reply_to_id: null, status, created_at: '2026-10-01T00:00:00.000Z' })
+  const unsent = (nonce: string, status: Pending['status'] = 'pending'): Pending => ({ nonce, content: `text ${nonce}`, reply_to_id: null, thread_root_id: null, status, created_at: '2026-10-01T00:00:00.000Z' })
 
   it('restore_marks_everything_failed', () => {
     const s = restoreUnsent(applyReady(emptyState(), ready()), { C1: [unsent('a'), unsent('b', 'pending')] })

@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { loadUnsent, saveUnsent } from './unsent'
 import type { Pending } from './state'
 
-const p = (nonce: string): Pending => ({ nonce, content: 'hello', reply_to_id: null, status: 'failed', created_at: '2026-10-01T00:00:00.000Z' })
+const p = (nonce: string): Pending => ({ nonce, content: 'hello', reply_to_id: null, thread_root_id: null, status: 'failed', created_at: '2026-10-01T00:00:00.000Z' })
 
 beforeEach(() => localStorage.clear())
 
@@ -35,5 +35,18 @@ describe('unsent storage', () => {
     const got = loadUnsent('U1')
     expect(Object.keys(got)).toEqual(['C1'])
     expect(Object.getPrototypeOf(got)).toBe(Object.prototype)
+  })
+
+  it('keeps_the_quote_a_reply_belongs_to', () => {
+    const reply: Pending = { ...p('r'), thread_root_id: 'Q1' }
+    saveUnsent('U1', { C1: [reply] })
+    expect(loadUnsent('U1')).toEqual({ C1: [reply] })
+  })
+
+  it('older_storage_without_a_thread_root_is_a_plain_message', () => {
+    localStorage.setItem('pulse.unsent.U1', '{"C1":[{"nonce":"a","content":"x","reply_to_id":null}]}')
+    expect(loadUnsent('U1').C1[0].thread_root_id).toBeNull()
+    localStorage.setItem('pulse.unsent.U1', '{"C1":[{"nonce":"a","content":"x","reply_to_id":null,"thread_root_id":5}]}')
+    expect(loadUnsent('U1')).toEqual({})
   })
 })

@@ -64,7 +64,7 @@ describe('TextChannel: unsent messages', () => {
     dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [],
   }
   const unsent = (nonce: string, status: 'pending' | 'failed', content = 'hello **world**') =>
-    ({ nonce, content, reply_to_id: null, status, created_at: '2026-10-01T00:00:00.000Z' })
+    ({ nonce, content, reply_to_id: null, thread_root_id: null, status, created_at: '2026-10-01T00:00:00.000Z' })
   const show = (pendingList: ReturnType<typeof unsent>[]) => {
     app.state = { ...applyReady(emptyState(), ready), pending: { C1: pendingList } }
     app.state = markHistory(addHistory(app.state, 'C1', []), 'C1', true)

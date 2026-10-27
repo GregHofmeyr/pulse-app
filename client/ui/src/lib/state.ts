@@ -24,7 +24,7 @@ export type ConnState =
   | { rate_limited: number } // seconds until the next attempt
 
 /** A message we've sent but the server hasn't confirmed yet (optimistic UI / offline outbox). */
-export type Pending = { nonce: string; content: string; reply_to_id: string | null; status: 'pending' | 'failed'; created_at: string }
+export type Pending = { nonce: string; content: string; reply_to_id: string | null; /** The quote this answers (a reply lives in that quote's thread, not the channel list). */ thread_root_id: string | null; status: 'pending' | 'failed'; created_at: string }
 
 export type AppState = {
   me: User | null
@@ -346,7 +346,7 @@ export function pendingMessage(p: Pending, channelId: string, meId: string): Mes
   return {
     id: `pending:${p.nonce}`, channel_id: channelId, author_id: meId, kind: 'normal', content: p.content,
     reply_to_id: p.reply_to_id, created_at: p.created_at, edited_at: null, deleted: false, mentions: [], reactions: [],
-    thread_root_id: null, quote: null, qoty_card: null,
+    thread_root_id: p.thread_root_id, quote: null, qoty_card: null,
   }
 }
 

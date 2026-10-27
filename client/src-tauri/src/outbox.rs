@@ -35,6 +35,8 @@ struct Item {
     channel: ChannelId,
     content: String,
     reply_to: Option<MessageId>,
+    /// The quote this is a reply to (it then lives in that quote's thread).
+    thread_root: Option<MessageId>,
     attempts: u32,
 }
 
@@ -60,12 +62,14 @@ impl Outbox {
         channel: ChannelId,
         content: String,
         reply_to: Option<MessageId>,
+        thread_root: Option<MessageId>,
     ) {
         self.items.lock().unwrap().push(Item {
             nonce,
             channel,
             content,
             reply_to,
+            thread_root,
             attempts: 0,
         });
     }
@@ -93,7 +97,7 @@ impl Outbox {
                 content: item.content.clone(),
                 reply_to_id: item.reply_to,
                 nonce: Some(item.nonce.clone()),
-                thread_root_id: None,
+                thread_root_id: item.thread_root,
             };
             match api.send_message(token, item.channel, &body).await {
                 Ok(m) => {
@@ -156,7 +160,7 @@ mod tests {
         let g = testing::general(&app, &token, s.id).await;
         let (status, _) = sink();
         let ob = Outbox::new(status);
-        ob.enqueue("n1".into(), g.id, "queued while offline".into(), None);
+        ob.enqueue("n1".into(), g.id, "queued while offline".into(), None, None);
 
         // "offline": nothing is listening here
         ob.flush(&Api::new("http://127.0.0.1:9"), &token, true)
@@ -185,6 +189,7 @@ mod tests {
             "n1".into(),
             pulse_protocol::ids::ChannelId::new(),
             "x".into(),
+            None,
             None,
         );
         let dead = Api::new("http://127.0.0.1:9");
@@ -215,6 +220,7 @@ mod tests {
             pulse_protocol::ids::ChannelId::new(),
             "x".into(),
             None,
+            None,
         );
         ob.flush(&Api::new(&format!("http://{}", app.addr)), &token, true)
             .await;
@@ -239,7 +245,7 @@ mod tests {
         ) {}
         let (status, _) = sink();
         let ob = Outbox::new(status);
-        ob.enqueue("my-nonce".into(), g.id, "hello".into(), None);
+        ob.enqueue("my-nonce".into(), g.id, "hello".into(), None, None);
         ob.flush(&Api::new(&format!("http://{}", app.addr)), &token, true)
             .await;
         loop {
@@ -261,11 +267,13 @@ mod tests {
             pulse_protocol::ids::ChannelId::new(),
             "x".into(),
             None,
+            None,
         );
         ob.enqueue(
             "b".into(),
             pulse_protocol::ids::ChannelId::new(),
             "y".into(),
+            None,
             None,
         );
         ob.clear();
@@ -286,6 +294,7 @@ mod tests {
             "n1".into(),
             pulse_protocol::ids::ChannelId::new(),
             "x".into(),
+            None,
             None,
         );
         let dead = Api::new("http://127.0.0.1:9");
@@ -312,13 +321,66 @@ mod tests {
                 }
             },
         ));
-        ob.enqueue("n1".into(), g.id, "hello".into(), None);
+        ob.enqueue("n1".into(), g.id, "hello".into(), None, None);
         ob.flush(&Api::new(&format!("http://{}", app.addr)), &token, false)
             .await;
         assert_eq!(
             got.lock().unwrap().as_ref().map(|m| m.content.as_str()),
             Some("hello")
         );
+    }
+
+    /// A reply waits in the outbox while the server is unreachable, then lands in its quote's
+    /// thread (not the channel's list); a second send with the same nonce does not duplicate it.
+    #[tokio::test]
+    async fn a_queued_reply_lands_in_its_quotes_thread() {
+        use pulse_protocol::rest::{ChannelKind, NewQuoteLine, PostQuoteRequest};
+        let app = testing::spawn().await;
+        let (alex_id, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let ch = api
+            .create_channel(&token, s.id, ChannelKind::Quotes, "quotes")
+            .await
+            .unwrap();
+        let quote = api
+            .post_quote(
+                &token,
+                ch.id,
+                &PostQuoteRequest {
+                    lines: vec![NewQuoteLine {
+                        id: None,
+                        speaker_id: Some(alex_id),
+                        speaker_name: None,
+                        text: Some("hello".into()),
+                        media_hash: None,
+                        caption: None,
+                    }],
+                    today: None,
+                    nonce: None,
+                },
+            )
+            .await
+            .unwrap();
+
+        let (status, seen) = sink();
+        let ob = Outbox::new(status);
+        ob.enqueue("r1".into(), ch.id, "a reply".into(), None, Some(quote.id));
+        ob.flush(&Api::new("http://127.0.0.1:9"), &token, false)
+            .await;
+        assert_eq!(ob.pending_len(), 1, "offline: still queued");
+
+        ob.flush(&api, &token, false).await;
+        assert_eq!(ob.pending_len(), 0);
+        assert_eq!(*seen.lock().unwrap(), [("r1".to_string(), Status::Sent)]);
+        let thread = api.replies(&token, quote.id, None).await.unwrap();
+        assert_eq!(thread.len(), 1);
+        assert_eq!(thread[0].thread_root_id, Some(quote.id));
+        assert_eq!(api.messages(&token, ch.id, None).await.unwrap().len(), 1);
+
+        ob.enqueue("r1".into(), ch.id, "a reply".into(), None, Some(quote.id));
+        ob.flush(&api, &token, false).await;
+        assert_eq!(api.replies(&token, quote.id, None).await.unwrap().len(), 1);
     }
 
     #[test]

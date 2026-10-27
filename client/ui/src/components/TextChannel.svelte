@@ -175,7 +175,7 @@
 
   function send(text: string) {
     const nonce = crypto.randomUUID()
-    app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyTo?.id ?? null, status: 'pending', created_at: new Date().toISOString() })
+    app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyTo?.id ?? null, thread_root_id: null, status: 'pending', created_at: new Date().toISOString() })
     const r = replyTo?.id ?? null
     replyTo = null
     void api.sendMessage(channelId, text, r, nonce)
