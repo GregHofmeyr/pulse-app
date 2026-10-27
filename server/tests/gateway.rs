@@ -361,8 +361,16 @@ async fn slow_client_does_not_block_others() {
     let (_slow, _) = hello(&app, &a).await; // never read again
     let (mut fast, _) = hello(&app, &b).await;
 
+    // The fast client heartbeats like a real one: under load the run can outlast the test
+    // server's 5 s heartbeat timeout, which would close it for the wrong reason.
+    let beat = serde_json::to_string(&ClientFrame::Heartbeat).unwrap();
     let reader = tokio::spawn(async move {
+        let mut last_beat = std::time::Instant::now();
         loop {
+            if last_beat.elapsed() > Duration::from_secs(1) {
+                fast.send(Ws::text(beat.clone())).await.unwrap();
+                last_beat = std::time::Instant::now();
+            }
             if let Event::MessageCreated { message, .. } = next_event(&mut fast).await
                 && message.content.starts_with("last")
             {
@@ -391,7 +399,8 @@ async fn slow_client_does_not_block_others() {
             },
         )
         .await;
-    tokio::time::timeout(Duration::from_secs(5), reader)
+    // A blocked fan-out would starve it for good; the margin only absorbs a loaded machine.
+    tokio::time::timeout(Duration::from_secs(20), reader)
         .await
         .expect("fast client starved")
         .unwrap();

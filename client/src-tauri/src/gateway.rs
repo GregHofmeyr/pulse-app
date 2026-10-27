@@ -1202,8 +1202,10 @@ mod tests {
     }
 
     /// Resume from sleep: the network isn't back yet, so the first tries fail and the backoff
-    /// grows (1 s, then 2 s: production schedule). When the network returns, the `online` / focus
-    /// probe reconnects at once instead of waiting the backoff out.
+    /// grows. When the network returns, the `online` / focus probe reconnects at once instead of
+    /// waiting the backoff out. The schedule is stretched (×10: 8-12 s, then 16-24 s) so "at once"
+    /// and "waited it out" stay far apart even on a loaded machine; the first wait is probed
+    /// through as well, so the test needn't sit it out.
     #[tokio::test]
     async fn a_probe_cuts_a_grown_backoff_short() {
         // a free port with nobody listening yet: connects are refused
@@ -1216,13 +1218,20 @@ mod tests {
             format!("http://{addr}"),
             "t".into(),
             tx,
-            Tuning::default(),
+            Tuning {
+                unit: Duration::from_secs(10),
+                ..Tuning::default()
+            },
         );
-        // two failed tries: now waiting out the 2 s step
+        // two failed tries (the second one probed out of the first wait): now waiting out the
+        // grown, 16-24 s step
         let mut failures = 0;
         while failures < 2 {
             if let GatewayUpdate::Connection(ConnState::Reconnecting) = next(&mut rx).await {
                 failures += 1;
+                if failures == 1 {
+                    gw.probe();
+                }
             }
         }
         silent_server_on(tokio::net::TcpListener::bind(addr).await.unwrap()); // network back
@@ -1230,7 +1239,7 @@ mod tests {
         gw.probe();
         next_ready(&mut rx).await;
         assert!(
-            t.elapsed() < Duration::from_millis(500),
+            t.elapsed() < Duration::from_secs(4),
             "waited {:?}",
             t.elapsed()
         );
