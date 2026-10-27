@@ -160,25 +160,85 @@ pub(crate) async fn fill(db: &SqlitePool, me: UserId, rows: Vec<Row>) -> AppResu
     Ok(page)
 }
 
+/// The list's query: at most one of `before` (older than an id, the default is the newest),
+/// `after` (newer than an id) and `around` (a window centred on an id).
+#[derive(Deserialize)]
+struct ListQuery {
+    before: Option<MessageId>,
+    after: Option<MessageId>,
+    around: Option<MessageId>,
+    limit: Option<i64>,
+}
+
+/// One bounded slice of a channel's main list, on the `messages_channel (channel_id, id)` index.
+/// Replies live in their quote's thread, not in the list. `newer` takes the rows just above
+/// `bound` (returned newest first, so every slice reads the same way), otherwise the rows just below.
+async fn slice(
+    db: &SqlitePool,
+    channel: ChannelId,
+    bound: &str,
+    newer: bool,
+    n: i64,
+) -> AppResult<Vec<Row>> {
+    let (cmp, order) = if newer { (">", "ASC") } else { ("<", "DESC") };
+    let mut rows: Vec<Row> = sqlx::query_as(&format!(
+        "SELECT {COLS} FROM messages WHERE channel_id = ? AND id {cmp} ? AND thread_root_id IS NULL ORDER BY id {order} LIMIT ?"
+    ))
+    .bind(channel.to_string())
+    .bind(bound)
+    .bind(n)
+    .fetch_all(db)
+    .await?;
+    if newer {
+        rows.reverse();
+    }
+    Ok(rows)
+}
+
 async fn list(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
     Path(id): Path<ChannelId>,
-    Query(p): Query<Page>,
+    Query(q): Query<ListQuery>,
 ) -> AppResult<Json<Vec<Message>>> {
     channel_for(&s.db, me, id).await?;
-    let (limit, before) = p.bounds();
-    // Replies live in their quote's thread, not in the list.
-    let rows: Vec<Row> = sqlx::query_as(&format!(
-        "SELECT {COLS} FROM messages WHERE channel_id = ? AND id < ? AND thread_root_id IS NULL ORDER BY id DESC LIMIT ?"
-    ))
-    .bind(id.to_string())
-    .bind(before)
-    .bind(limit)
-    .fetch_all(&s.db)
-    .await?;
-    let page = fill(&s.db, me, rows).await?;
-    Ok(Json(page))
+    if [q.before.is_some(), q.after.is_some(), q.around.is_some()]
+        .iter()
+        .filter(|set| **set)
+        .count()
+        > 1
+    {
+        return Err(AppError::BadRequest(
+            "use only one of before, after and around".into(),
+        ));
+    }
+    let (limit, before) = Page {
+        before: q.before,
+        limit: q.limit,
+    }
+    .bounds();
+    let rows = if let Some(after) = q.after {
+        slice(&s.db, id, &after.to_string(), true, limit).await?
+    } else if let Some(target) = q.around {
+        // The target must be a main-list message of this channel (deleted and system ones count).
+        let anchor: Option<Row> = sqlx::query_as(&format!(
+            "SELECT {COLS} FROM messages WHERE id = ? AND channel_id = ? AND thread_root_id IS NULL"
+        ))
+        .bind(target.to_string())
+        .bind(id.to_string())
+        .fetch_optional(&s.db)
+        .await?;
+        let anchor = anchor.ok_or(AppError::NotFound)?;
+        let bound = target.to_string();
+        // Each side gets its share; one running out doesn't give its room to the other.
+        let mut rows = slice(&s.db, id, &bound, true, limit - 1 - limit / 2).await?;
+        rows.push(anchor);
+        rows.extend(slice(&s.db, id, &bound, false, limit / 2).await?);
+        rows
+    } else {
+        slice(&s.db, id, &before, false, limit).await?
+    };
+    Ok(Json(fill(&s.db, me, rows).await?))
 }
 
 async fn send(
