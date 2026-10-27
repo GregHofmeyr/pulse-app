@@ -246,6 +246,64 @@ describe('watching from anywhere', () => {
     flushSync()
   })
 
+  it('full_view_hides_both_side_panels_with_edge_toggles_to_bring_each_back', async () => {
+    const side = () => q('aside.side')!
+    const members = () => q('.right-panel')!
+    expect(side().hidden).toBe(false)
+    expect(members().hidden).toBe(false)
+    goTo('V1')
+    await streamApi.watch('V1', 'U2')
+    openFull(SAM)
+    await settle()
+    expect(q('.full-view')).not.toBeNull()
+    expect(side().hidden).toBe(true)
+    expect(members().hidden).toBe(true)
+    const left = button('Show channels')!
+    const right = button('Show members')!
+    expect(left.getAttribute('aria-expanded')).toBe('false')
+    left.click()
+    flushSync()
+    expect(side().hidden).toBe(false)
+    expect(members().hidden).toBe(true) // each on its own
+    expect(button('Hide channels')!.getAttribute('aria-expanded')).toBe('true')
+    right.click()
+    flushSync()
+    expect(members().hidden).toBe(false)
+    button('Hide members')!.click()
+    flushSync()
+    expect(members().hidden).toBe(true)
+
+    // Esc leaves full view: everything is back, the toggles go
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    flushSync()
+    expect(q('.full-view')).toBeNull()
+    expect(side().hidden).toBe(false)
+    expect(members().hidden).toBe(false)
+    expect(button('Show channels')).toBeUndefined()
+    expect(button('Hide channels')).toBeUndefined()
+
+    // next time: hidden again by default (nothing remembered)
+    openFull(SAM)
+    await settle()
+    expect(side().hidden).toBe(true)
+    expect(members().hidden).toBe(true)
+    expect(Object.keys(localStorage).filter((k) => /panel|side|member/i.test(k))).toEqual([])
+  })
+
+  it('full_view_away_from_the_call_view_hides_nothing', async () => {
+    // full view kept for the mini-preview while you read a text channel: the panels stay
+    goTo('V1')
+    await streamApi.watch('V1', 'U2')
+    openFull(SAM)
+    await settle()
+    goTo('T1')
+    await settle()
+    expect(q('.mini-preview')).not.toBeNull()
+    expect(q('aside.side')!.hidden).toBe(false)
+    expect(q('.right-panel')!.hidden).toBe(false)
+    expect(button('Show channels')).toBeUndefined()
+  })
+
   it('stream_end_closes_full_view_and_mini_preview', async () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')

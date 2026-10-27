@@ -12,7 +12,7 @@
   import { volumeLabel } from '../lib/voiceui'
   import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
   import { hostVideo } from '../lib/stream/videoHost'
-  import { closeFull } from '../lib/stream/viewer.svelte'
+  import { callView, closeFull } from '../lib/stream/viewer.svelte'
 
   // The parent keys this on the stream, so the props never change for one instance.
   let { channelId, streamer, serverId, onMessage, onVoiceSettings }: {
@@ -35,6 +35,13 @@
   // here (state read in a teardown is the old value).
   $effect(() => {
     untrack(() => streamApi.setView(channelId, streamer, 'full'))
+  })
+  // on screen: the shell hides its side panels for it (and shows them again when this goes)
+  $effect(() => {
+    callView.fullShown = true
+    return () => {
+      callView.fullShown = false
+    }
   })
 
   function stop() {

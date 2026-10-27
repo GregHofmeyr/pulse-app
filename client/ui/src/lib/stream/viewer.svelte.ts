@@ -13,6 +13,8 @@ export const callView = $state({
   goTo: null as string | null,
   /** A Join & watch whose join hasn't connected yet: the shell watches once it has. */
   joinThenWatch: null as WatchKey | null,
+  /** The full view is on screen (not just remembered for the mini-preview): the shell makes room for it. */
+  fullShown: false,
 })
 
 export const toasts = $state({ list: [] as Toast[] })

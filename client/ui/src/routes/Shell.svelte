@@ -78,6 +78,18 @@
     menuOpen = false
     if (e instanceof KeyboardEvent) menuToggle?.focus()
   }
+  // Full view takes the whole window: both side panels hide, and an edge toggle brings each back.
+  // Every full view starts with both hidden; nothing is remembered.
+  const panels = $state({ left: false, right: false })
+  $effect(() => {
+    if (!callView.fullShown) return
+    untrack(() => {
+      panels.left = false
+      panels.right = false
+    })
+  })
+  const hideLeft = $derived(callView.fullShown && !panels.left)
+  const hideRight = $derived(callView.fullShown && !panels.right)
   let serverMenuOpen = $state(false)
   let serverToggle = $state<HTMLButtonElement>()
   /** The same for the server menu. */
@@ -334,7 +346,7 @@
   </header>
 
   <div class="body">
-    <aside class="panel side">
+    <aside class="panel side" hidden={hideLeft}>
       <div class="panel-head">
         {#if activeServer}
           <button bind:this={serverToggle} class="head-btn" data-menu-toggle aria-haspopup="menu" aria-expanded={serverMenuOpen}
@@ -399,10 +411,20 @@
         <p class="empty">Pick a channel.</p>
       {/if}
       {#each mini ? [mini] : [] as m (m.key)}<MiniPreview channelId={m.channelId} streamer={m.streamer} />{/each}
+      {#if callView.fullShown}
+        <button type="button" class="edge left" aria-label={panels.left ? 'Hide channels' : 'Show channels'} data-tip={panels.left ? 'Hide channels' : 'Show channels'}
+          aria-expanded={panels.left} onclick={() => (panels.left = !panels.left)}><Icon name={panels.left ? 'chevronLeft' : 'chevronRight'} size={14} /></button>
+        {#if activeServerId || activeChannel?.kind === 'group'}
+          <button type="button" class="edge right" aria-label={panels.right ? 'Hide members' : 'Show members'} data-tip={panels.right ? 'Hide members' : 'Show members'}
+            aria-expanded={panels.right} onclick={() => (panels.right = !panels.right)}><Icon name={panels.right ? 'chevronRight' : 'chevronLeft'} size={14} /></button>
+        {/if}
+      {/if}
     </main>
 
-    {#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />
-    {:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}
+    <div class="right-panel" hidden={hideRight}>
+      {#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />
+      {:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}
+    </div>
   </div>
 </div>
 <StreamToast />
@@ -469,6 +491,15 @@
   .body { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 0 8px 8px; }
   .panel { border-radius: var(--radius); overflow: hidden; }
   .side { width: 264px; flex-shrink: 0; background: var(--bg-1); display: flex; flex-direction: column; }
+  /* hidden, not removed: what the panels hold (an open menu, a draft) survives full view */
+  .side[hidden] { display: none; }
+  .right-panel { display: contents; }
+  .right-panel[hidden] { display: none; }
+  /* full view's edge toggles: small tabs on the stream's left and right edges */
+  .edge { position: absolute; top: 50%; z-index: 3; width: 18px; height: 56px; margin-top: -28px; padding: 0; border: 0; background: rgba(30, 31, 36, .85); color: var(--text-2); display: grid; place-items: center; opacity: .7; }
+  .edge:hover, .edge:focus-visible { opacity: 1; color: var(--text); }
+  .edge.left { left: 0; border-radius: 0 8px 8px 0; }
+  .edge.right { right: 0; border-radius: 8px 0 0 8px; }
   .panel-head { position: relative; height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid #26282e; }
   /* the hover is a rounded pill inside the header, with the text where the padding put it */
   .head-btn { flex: 1; min-width: 0; height: 40px; margin: 0 -8px; padding: 0 8px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
