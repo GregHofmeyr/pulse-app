@@ -201,16 +201,29 @@ pub async fn award_totals(db: &SqlitePool, server: ServerId) -> AppResult<Vec<Sp
         .remove(&server.to_string())
         .unwrap_or_default();
 
-    let mut members: HashMap<UserId, u32> = HashMap::new();
-    // name_key to (latest spelling, count)
-    let mut names: HashMap<String, (String, u32)> = HashMap::new();
+    let mut speakers = Vec::new();
     for (speaker, name, key, giver) in rows {
         let speaker: Option<UserId> = parse_opt(speaker.as_deref())?;
         let giver: UserId = parse_id(&giver)?;
         let who = effective_speaker(speaker, key.as_deref(), &links);
-        if who == Some(giver) {
-            continue;
+        if who != Some(giver) {
+            speakers.push((who, key, name));
         }
+    }
+    Ok(ranked(speakers))
+}
+
+/// One count per entry, grouped by speaker and most first (ties by name, for a stable order).
+/// An entry is its effective speaker, or when it has none, the plain name's stored key and
+/// spelling; the group shows the spelling of its last entry, so pass them oldest first. Entries
+/// with neither count for nobody.
+pub(super) fn ranked(
+    entries: impl IntoIterator<Item = (Option<UserId>, Option<String>, Option<String>)>,
+) -> Vec<SpeakerCount> {
+    let mut members: HashMap<UserId, u32> = HashMap::new();
+    // name_key to (latest spelling, count)
+    let mut names: HashMap<String, (String, u32)> = HashMap::new();
+    for (who, key, name) in entries {
         match (who, key, name) {
             (Some(user), ..) => *members.entry(user).or_default() += 1,
             (None, Some(key), Some(name)) => {
@@ -240,5 +253,5 @@ pub async fn award_totals(db: &SqlitePool, server: ServerId) -> AppResult<Vec<Sp
                 .cmp(&(b.name.as_deref(), b.user_id.map(|u| u.to_string())))
         })
     });
-    Ok(out)
+    out
 }

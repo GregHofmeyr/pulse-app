@@ -25,7 +25,7 @@ pub fn router() -> Router<AppState> {
         .route("/messages/{id}", patch(edit).delete(remove))
 }
 
-pub(super) type Row = (
+pub(crate) type Row = (
     String,
     String,
     Option<String>,
@@ -37,7 +37,7 @@ pub(super) type Row = (
     Option<String>,
     Option<String>,
 );
-pub(super) const COLS: &str = "id, channel_id, author_id, kind, content, reply_to_id, created_at, edited_at, deleted_at, thread_root_id";
+pub(crate) const COLS: &str = "id, channel_id, author_id, kind, content, reply_to_id, created_at, edited_at, deleted_at, thread_root_id";
 
 fn parse<T: std::str::FromStr>(s: &str) -> AppResult<T>
 where
@@ -145,7 +145,7 @@ impl Page {
 }
 
 /// Turn rows into messages with mentions, reactions and the quote part, as `me` sees them.
-pub(super) async fn fill(db: &SqlitePool, me: UserId, rows: Vec<Row>) -> AppResult<Vec<Message>> {
+pub(crate) async fn fill(db: &SqlitePool, me: UserId, rows: Vec<Row>) -> AppResult<Vec<Message>> {
     let mut page: Vec<Message> = rows.into_iter().map(from_row).collect::<AppResult<_>>()?;
     let ids: Vec<MessageId> = page.iter().map(|m| m.id).collect();
     let mut map = mentions::for_messages(db, &ids).await?;
