@@ -171,6 +171,14 @@ fn expired_or(e: ApiError) -> ApiError {
     }
 }
 
+/// The log tail, read on the blocking pool (file I/O doesn't belong on an async worker).
+async fn read_tail(app: &AppHandle) -> String {
+    let dir = app.state::<LogDir>().0.clone();
+    tokio::task::spawn_blocking(move || tail::log_tail(&dir, TAIL_BYTES))
+        .await
+        .unwrap_or_default()
+}
+
 #[tauri::command]
 pub async fn submit_report(app: AppHandle, text: String) -> Result<String, ApiError> {
     let (api, token) = app.state::<Core>().current()?;
@@ -178,7 +186,7 @@ pub async fn submit_report(app: AppHandle, text: String) -> Result<String, ApiEr
         kind: ReportKind::Bug,
         text,
         meta: meta(&app, api.base()).await,
-        log: tail::log_tail(&app.state::<LogDir>().0, TAIL_BYTES),
+        log: read_tail(&app).await,
     };
     let r = match send_with_retry(|| api.create_report(&token, &req), Duration::from_secs(2)).await
     {
@@ -204,7 +212,7 @@ pub async fn save_report(
             .unwrap_or_default(),
     };
     let meta = meta(&app, &server).await;
-    let log = tail::log_tail(&app.state::<LogDir>().0, TAIL_BYTES);
+    let log = read_tail(&app).await;
     let path = write_new(
         &save_dir(&app),
         &file_name(unix_now()),

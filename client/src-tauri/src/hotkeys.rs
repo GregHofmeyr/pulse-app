@@ -36,16 +36,17 @@ mod platform {
     };
     use windows::Win32::UI::WindowsAndMessaging::{
         CallNextHookEx, GetForegroundWindow, GetMessageW, GetWindowThreadProcessId, HHOOK,
-        KBDLLHOOKSTRUCT, LLKHF_EXTENDED, MSG, MSLLHOOKSTRUCT, PM_NOREMOVE, PeekMessageW,
-        PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx, WH_KEYBOARD_LL, WH_MOUSE_LL,
-        WM_APP, WM_KEYDOWN, WM_KEYUP, WM_MBUTTONDOWN, WM_MBUTTONUP, WM_SYSKEYDOWN, WM_SYSKEYUP,
-        WM_XBUTTONDOWN, WM_XBUTTONUP,
+        KBDLLHOOKSTRUCT, LLKHF_EXTENDED, LLKHF_INJECTED, LLMHF_INJECTED, MSG, MSLLHOOKSTRUCT,
+        PM_NOREMOVE, PeekMessageW, PostThreadMessageW, SetWindowsHookExW, UnhookWindowsHookEx,
+        WH_KEYBOARD_LL, WH_MOUSE_LL, WM_APP, WM_KEYDOWN, WM_KEYUP, WM_MBUTTONDOWN, WM_MBUTTONUP,
+        WM_SYSKEYDOWN, WM_SYSKEYUP, WM_XBUTTONDOWN, WM_XBUTTONUP,
     };
 
     use crate::bindmatch::{Matcher, key_code};
     use crate::hookwatch::{
-        Check, Episode, Gate, HookStep, HookWatch, Hooks, LateInput, Seen, hook_step, hooks_wanted,
-        late_report, retry_wait, settled, switch_problem, watch_gate,
+        Check, Emit, Episode, Gate, HookStep, HookWatch, Hooks, LATE_INPUT_MS, MaxMeter,
+        OWN_SLOW_US, Seen, Stall, StallLog, hook_step, hooks_wanted, overslept_ms, retry_wait,
+        settled, switch_problem, tick_delay, watch_gate,
     };
     use crate::keybinds::{Action, Keybinds};
 
@@ -82,6 +83,8 @@ mod platform {
     const WM_REINSTALL: u32 = WM_APP + 1;
     /// Posted to the hook thread after ENABLED changed: install or remove the hooks to match.
     const WM_SWITCH: u32 = WM_APP + 2;
+    /// The watchdog's timestamped ping (lParam = GetTickCount when posted).
+    const WM_PING: u32 = WM_APP + 3;
     /// How often the watchdog looks.
     const WATCH_EVERY: Duration = Duration::from_secs(3);
     /// System input this much newer than the hooks' last event means they're gone; less is the
@@ -124,16 +127,27 @@ mod platform {
         })
     }
 
-    /// The worst delay between an input event and our hook seeing it, per watchdog tick.
-    static LATE: LateInput = LateInput::new();
+    /// Per watchdog tick (see `hookwatch::Stall`): input reaching our hook late, our procedure's
+    /// own run time (µs), and the hook thread picking up a ping.
+    static INPUT_LATE: MaxMeter = MaxMeter::new(LATE_INPUT_MS);
+    static OWN_RUN: MaxMeter = MaxMeter::new(OWN_SLOW_US);
+    static PING_LATE: MaxMeter = MaxMeter::new(LATE_INPUT_MS);
 
-    /// Called first thing in each hook procedure with the event's own timestamp: two atomics,
-    /// nothing that can block.
-    fn saw_input(event_ms: u32) {
+    /// Called first thing in each hook procedure with the event's own timestamp: atomics only,
+    /// nothing that can block. An injected event's stamp is whatever the injecting tool chose, so
+    /// it only counts as input seen.
+    fn saw_input(event_ms: u32, injected: bool) {
         // SAFETY: GetTickCount has no preconditions.
         let now = unsafe { GetTickCount() };
         LAST_HOOK_TICK.store(now, Ordering::Relaxed);
-        LATE.note(event_ms, now);
+        if !injected && let Some(late) = tick_delay(event_ms, now) {
+            INPUT_LATE.note(late);
+        }
+    }
+
+    /// Called last in each hook procedure, before passing the event on.
+    fn ran_for(started: Instant) {
+        OWN_RUN.note(u32::try_from(started.elapsed().as_micros()).unwrap_or(u32::MAX));
     }
 
     fn matcher() -> std::sync::MutexGuard<'static, Matcher> {
@@ -177,9 +191,10 @@ mod platform {
     /// doesn't.
     unsafe extern "system" fn keyboard(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
         if n >= 0 {
+            let started = Instant::now();
             // SAFETY: for WH_KEYBOARD_LL with n >= 0, lParam points to a KBDLLHOOKSTRUCT.
             let k = unsafe { &*(l.0 as *const KBDLLHOOKSTRUCT) };
-            saw_input(k.time);
+            saw_input(k.time, k.flags.0 & LLKHF_INJECTED.0 != 0);
             let ext = k.flags.0 & LLKHF_EXTENDED.0 != 0;
             // SAFETY: MapVirtualKeyW only reads its arguments.
             let to_scan = |vk| unsafe { MapVirtualKeyW(vk, MAPVK_VK_TO_VSC_EX) };
@@ -190,6 +205,7 @@ mod platform {
                     _ => {}
                 }
             }
+            ran_for(started);
         }
         unsafe { CallNextHookEx(None, n, w, l) }
     }
@@ -197,10 +213,11 @@ mod platform {
     /// Wheel click and the side buttons; everything else (moves, left/right clicks) passes untouched.
     unsafe extern "system" fn mouse(n: i32, w: WPARAM, l: LPARAM) -> LRESULT {
         if n >= 0 {
+            let started = Instant::now();
             // SAFETY: for WH_MOUSE_LL with n >= 0, lParam points to an MSLLHOOKSTRUCT.
             let m = unsafe { &*(l.0 as *const MSLLHOOKSTRUCT) };
             // every event, moves included: they update the system's last-input tick too
-            saw_input(m.time);
+            saw_input(m.time, m.flags & LLMHF_INJECTED != 0);
             let msg = w.0 as u32;
             let button = match msg {
                 WM_MBUTTONDOWN | WM_MBUTTONUP => Some("Mouse3"),
@@ -214,6 +231,7 @@ mod platform {
             if let Some(code) = button {
                 event(code, matches!(msg, WM_MBUTTONDOWN | WM_XBUTTONDOWN));
             }
+            ran_for(started);
         }
         unsafe { CallNextHookEx(None, n, w, l) }
     }
@@ -295,6 +313,14 @@ mod platform {
             let reinstall_asked = match msg.message {
                 WM_REINSTALL => true,
                 WM_SWITCH => false,
+                WM_PING => {
+                    // SAFETY: GetTickCount has no preconditions.
+                    let now = unsafe { GetTickCount() };
+                    if let Some(late) = tick_delay(msg.lParam.0 as u32, now) {
+                        PING_LATE.note(late);
+                    }
+                    continue;
+                }
                 _ => continue,
             };
             hooks = step(hooks, reinstall_asked);
@@ -454,6 +480,69 @@ mod platform {
             .map_err(|e| e.to_string())
     }
 
+    /// A timestamped ping: how long the hook thread takes to pick it up is how long input would
+    /// wait for it to get the CPU. Best effort.
+    fn ping(thread: u32) {
+        // SAFETY: GetTickCount has no preconditions; the message carries no pointers.
+        unsafe {
+            let now = GetTickCount();
+            let _ = PostThreadMessageW(thread, WM_PING, WPARAM(0), LPARAM(now as isize));
+        }
+    }
+
+    /// One watchdog tick's measurements, taken (and reset).
+    fn take_stall(overslept: Duration) -> Stall {
+        let (input_late_ms, late_events) = INPUT_LATE.take();
+        Stall {
+            input_late_ms,
+            late_events,
+            own_us: OWN_RUN.take().0,
+            hook_thread_ms: PING_LATE.take().0,
+            overslept_ms: overslept_ms(overslept),
+        }
+    }
+
+    fn log_stall(e: Emit, since_reinstall: Option<Duration>) {
+        // whether our hooks were just put back (first in the chain) or have sat behind others
+        let since_reinstall_s = since_reinstall.map(|d| d.as_secs());
+        match e {
+            Emit::Nothing => {}
+            Emit::Started(s) => tracing::warn!(
+                input_late_ms = s.input_late_ms,
+                late_events = s.late_events,
+                hook_proc_us = s.own_us,
+                hook_thread_ms = s.hook_thread_ms,
+                overslept_ms = s.overslept_ms,
+                ?since_reinstall_s,
+                "keybinds: input stalled (the whole PC waits on low-level hooks)"
+            ),
+            Emit::Ongoing {
+                since_last: s,
+                lasted,
+            } => tracing::warn!(
+                input_late_ms = s.input_late_ms,
+                late_events = s.late_events,
+                hook_proc_us = s.own_us,
+                hook_thread_ms = s.hook_thread_ms,
+                overslept_ms = s.overslept_ms,
+                lasted_s = lasted.as_secs(),
+                "keybinds: input still stalling (worst in the last minute)"
+            ),
+            Emit::Ended {
+                since_last: s,
+                lasted,
+            } => tracing::info!(
+                input_late_ms = s.input_late_ms,
+                late_events = s.late_events,
+                hook_proc_us = s.own_us,
+                hook_thread_ms = s.hook_thread_ms,
+                overslept_ms = s.overslept_ms,
+                lasted_s = lasted.as_secs(),
+                "keybinds: input stall over"
+            ),
+        }
+    }
+
     /// Low-level hooks get no notice when Windows drops them, so compare what they saw with what
     /// the system saw and have the hook thread reinstall them when they've gone quiet.
     fn watch_hooks(hook_thread: u32) {
@@ -473,13 +562,15 @@ mod platform {
                 }
             }
         };
+        let mut stalls = StallLog::default();
+        let mut reinstalled_at: Option<Instant> = None;
         loop {
+            let slept_from = Instant::now();
             std::thread::sleep(WATCH_EVERY);
-            if let Some(max_ms) = late_report(LATE.take()) {
-                // the whole PC's input waited this long on the hook chain (ours, one ahead of it,
-                // or a stalled machine): what a "my PC froze" report needs
-                tracing::warn!(max_ms, "keybinds: input reached the hooks late");
-            }
+            let overslept = slept_from.elapsed().saturating_sub(WATCH_EVERY);
+            let emit = stalls.tick(take_stall(overslept), Instant::now());
+            log_stall(emit, reinstalled_at.map(|t| t.elapsed()));
+            ping(hook_thread);
             match with_seen(watch_gate) {
                 Gate::Watch => {}
                 Gate::Resend => {
@@ -527,6 +618,7 @@ mod platform {
                     "keybinds: hooks stopped seeing input (dropped by Windows?); reinstalling"
                 ),
             }
+            reinstalled_at = Some(Instant::now());
             send(WM_REINSTALL);
         }
     }
