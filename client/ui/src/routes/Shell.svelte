@@ -21,7 +21,7 @@
   import GroupMembers from '../components/GroupMembers.svelte'
   import { onMount, untrack } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
-  import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
+  import { findWatch, followLiveFreeze, stream, streamApi } from '../lib/stream/stream.svelte'
   import { pendingWatchReady } from '../lib/stream/viewer'
   import { callView, openFull } from '../lib/stream/viewer.svelte'
   import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
@@ -32,7 +32,6 @@
   import { isMember, liveIn } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import { keybindsApi } from '../lib/keybinds'
-  import { motion } from '../lib/animate.svelte'
   import { watchWindowFocus } from '../lib/windowFocus.svelte'
   import type { User } from '../lib/protocol/User'
 
@@ -43,16 +42,8 @@
   let activeChannelId = $state<string | null>(null)
   let settingsOpen = $state(false)
 
-  // The animation freeze while you stream (app.css `.streaming`); here so it outlives the voice panel.
-  $effect(() => {
-    if (!stream.live) return
-    document.body.classList.add('streaming')
-    motion.streaming = true
-    return () => {
-      document.body.classList.remove('streaming')
-      motion.streaming = false
-    }
-  })
+  // The animation freeze while you stream; here so it outlives the voice panel.
+  $effect(() => followLiveFreeze())
   let settingsSection = $state<'voice' | 'keybinds'>('voice')
   // Nothing is bound by default: until they've chosen, nudge people to pick their keys (Windows;
   // on Linux the compositor binds them).

@@ -712,3 +712,50 @@ describe('live sounds', () => {
     expect(played('live_end')).toEqual([])
   })
 })
+
+describe('the emoji/animation freeze while live', () => {
+  // every way a share can end must lift it (a report had emoji frozen "after stopping")
+  async function frozenLive() {
+    const live = await goneLive()
+    const { motion } = await import('../animate.svelte')
+    const { flushSync } = await import('svelte')
+    const unfollow = live.followLiveFreeze()
+    flushSync()
+    expect(motion.streaming).toBe(true)
+    expect(document.body.classList.contains('streaming')).toBe(true)
+    const lifted = () => {
+      flushSync()
+      return !motion.streaming && !document.body.classList.contains('streaming')
+    }
+    return { ...live, motion, flushSync, unfollow, lifted }
+  }
+
+  const ends: [string, (l: Awaited<ReturnType<typeof frozenLive>>) => Promise<unknown> | void][] = [
+    ['Stop', (l) => l.streamApi.stop()],
+    ['the capture ending (Stop sharing, the window closed)', (l) => l.track.end()],
+    ['the server ending it', (l) => l.streamApi.onStreamEnded('c1', 'me', 'TimedOut' as never)],
+    ['leaving voice', (l) => l.streamApi.onVoiceChanged(null)],
+    ['moving to another voice channel', (l) => l.streamApi.onVoiceChanged('c2')],
+    ['the server not taking it back after a restart', (l) => {
+      core.handlers.stream_reannounce = () => Promise.reject('the server is having trouble (503)')
+      return l.streamApi.onReady({ me: { id: 'me' }, streams: [] } as never)
+    }],
+  ]
+  for (const [how, end] of ends) {
+    it(`lifts on ${how}, and comes back on the next go live`, async () => {
+      const l = await frozenLive()
+      await end(l)
+      await until(l.lifted, `the freeze lifted after ${how}`)
+      await l.streamApi.goLive('c1', fakeTrack() as never, 'Game', settings(false))
+      l.flushSync()
+      expect(l.motion.streaming).toBe(true)
+      l.unfollow()
+    })
+  }
+
+  it('lifts when the app stops following (signed out while live)', async () => {
+    const l = await frozenLive()
+    l.unfollow()
+    expect(l.lifted()).toBe(true)
+  })
+})

@@ -15,6 +15,7 @@ import { diag, startDiagnostics } from './diag.svelte'
 import type { Fps, Res } from './encodings'
 import { loadAudioMuted, loadStreamVolumes, saveAudioMuted, saveStreamVolumes, type GoLive } from './prefs'
 import { StreamRoom } from './room'
+import { motion } from '../animate.svelte'
 import { admit, layerFor, liveEndSound, toastFor, type Quality, type View } from './viewer'
 import { removeToast, showToast } from './viewer.svelte'
 
@@ -145,6 +146,26 @@ function onTrackEnded() {
   streamCmd.log({ ev: 'track_ended' })
   liveGen.cancel()
   void endLive(true)
+}
+
+/**
+ * While we're live the UI holds still (emoji show their first frame, app.css `.streaming` pauses
+ * CSS animation) so it doesn't cost game frames; it follows `stream.live`, so every way a share
+ * ends (Stop, the capture ending, the server or a voice change ending it) lifts it. Call once
+ * (the shell does, so it outlives the voice panel); the returned stop lifts it too.
+ */
+export function followLiveFreeze(): () => void {
+  return $effect.root(() => {
+    $effect(() => {
+      if (!stream.live) return
+      document.body.classList.add('streaming')
+      motion.streaming = true
+      return () => {
+        document.body.classList.remove('streaming')
+        motion.streaming = false
+      }
+    })
+  })
 }
 
 /** Every 15 s while live: a 480×270 WebP (JPEG where the webview has no WebP) of what we share, for the LIVE popover. */
