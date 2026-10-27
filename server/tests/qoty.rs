@@ -1208,12 +1208,16 @@ async fn everyone_sees_votes_end_and_reopen_live() {
 #[tokio::test]
 async fn ready_has_the_live_event_with_voters() {
     let f = fixture().await;
-    let (_, kim_t) = f.member("kim").await;
+    let (kim, kim_t) = f.member("kim").await;
     let (e, a, _) = two_options(&f).await;
-    f.voted(&f.sam_t, e.id, a).await;
+    f.score(a, &[kim], 1).await;
+    let voted = f.voted(&f.sam_t, e.id, a).await;
     let (_, ready) = hello_ready(&f.app, &kim_t).await;
     assert_eq!(ready.qoty.len(), 1);
     assert_eq!(ready.qoty[0].id, e.id);
+    // The same view as the events (kim's own reaction isn't marked), so nothing flips on the
+    // first update.
+    assert_eq!(ready.qoty[0].options, voted.options);
     assert_eq!(voters(&ready.qoty[0]), vec![vec![f.sam], vec![]]);
     assert_eq!((ready.qoty[0].voters, ready.qoty[0].members), (1, 3));
 
@@ -1251,5 +1255,161 @@ async fn serve_ends_overdue_votes_before_it_listens() {
             .await
             .unwrap();
     assert_eq!(reason.as_deref(), Some("time"));
+    assert_eq!(f.cards(f.ch.id).await.len(), 1);
+}
+
+// ---------- review round 1 ----------
+
+/// A timed event whose deadline has passed but which no sweep has ended yet.
+async fn past_its_deadline(f: &Fixture) -> (QotyEvent, MessageId, MessageId) {
+    let (e, a, b) = two_options_timed(f).await;
+    f.voted(&f.sam_t, e.id, a).await;
+    f.sql(&format!(
+        "UPDATE qoty_events SET ends_at = '2000-01-01T00:00:00.000Z' WHERE id = '{}'",
+        e.id
+    ))
+    .await;
+    (e, a, b)
+}
+
+#[tokio::test]
+async fn nothing_changes_after_the_deadline() {
+    let f = fixture().await;
+    let (e, _, b) = past_its_deadline(&f).await;
+    let c = f.quote("late").await;
+    assert_eq!(f.vote(&f.alex_t, e.id, b).await.status(), 409);
+    assert_eq!(
+        f.vote(&f.sam_t, e.id, b).await.status(),
+        409,
+        "no moving either"
+    );
+    assert_eq!(f.unvote(&f.sam_t, e.id).await.status(), 409);
+    assert_eq!(f.add(&f.alex_t, e.id, c.id).await.status(), 409);
+    assert_eq!(f.count("SELECT COUNT(*) FROM qoty_votes").await, 1);
+}
+
+#[tokio::test]
+async fn ending_by_hand_after_the_deadline_is_an_end_by_time() {
+    let f = fixture().await;
+    let (e, _, _) = past_its_deadline(&f).await;
+    let ended = f.ended(&f.sam_t, e.id).await;
+    assert_eq!(ended.end_reason, Some(QotyEndReason::Time));
+    assert_eq!((ended.ended_by, ended.reopen_until), (None, None));
+    assert_eq!(f.reopen(&f.sam_t, e.id, None).await.status(), 409);
+}
+
+#[tokio::test]
+async fn a_sweep_stamps_its_end_once_it_holds_the_lock() {
+    let f = fixture().await;
+    let (e, _, _) = past_its_deadline(&f).await;
+    let s = f.app.state();
+    let cutoff = pulse_server::db::now();
+    let guard = f.app.hub.in_order().await;
+    let sweep = tokio::spawn(async move { pulse_server::qoty::end_overdue(&s, &cutoff).await });
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let released = pulse_server::db::now();
+    drop(guard);
+    assert_eq!(sweep.await.unwrap().unwrap(), 1);
+    let ended_at: String = sqlx::query_scalar("SELECT ended_at FROM qoty_events WHERE id = ?")
+        .bind(e.id.to_string())
+        .fetch_one(&f.app.db)
+        .await
+        .unwrap();
+    assert!(ended_at >= released, "{ended_at} < {released}");
+}
+
+#[tokio::test]
+async fn joining_updates_the_member_count() {
+    let f = fixture().await;
+    let e = f.started().await;
+    assert_eq!(e.members, 2);
+    let mut ws = hello(&f.app, &f.alex_t).await;
+    f.member("kim").await;
+    let members: Vec<u32> = seen(&mut ws)
+        .await
+        .into_iter()
+        .filter_map(|s| match s {
+            Seen::Updated(e) => Some(e.members),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(members, vec![3]);
+}
+
+#[tokio::test]
+async fn joining_publishes_under_the_order_lock() {
+    let f = fixture().await;
+    f.started().await;
+    let (_, t) = register(&f.app, "kim").await;
+    let guard = f.app.hub.in_order().await;
+    let (http, url) = (
+        f.app.http.clone(),
+        f.app.url(&format!("/servers/{}/join", f.server)),
+    );
+    let join = tokio::spawn(async move {
+        http.post(url)
+            .bearer_auth(t)
+            .json(&json!({}))
+            .send()
+            .await
+            .unwrap()
+            .status()
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!join.is_finished(), "the join waits on in_order");
+    drop(guard);
+    assert_eq!(join.await.unwrap(), 204);
+}
+
+#[tokio::test]
+async fn reopen_drops_quotes_that_won_another_year() {
+    let f = fixture().await;
+    let (e, a, b) = two_options(&f).await;
+    f.voted(&f.sam_t, e.id, a).await;
+    f.ended(&f.alex_t, e.id).await;
+    // b wins last year's vote in the meantime.
+    let r = f.start(&f.alex_t, this_year() - 1, None).await;
+    assert_eq!(r.status(), 200);
+    let last: QotyEvent = r.json().await.unwrap();
+    assert_eq!(f.add(&f.alex_t, last.id, b).await.status(), 200);
+    f.voted(&f.alex_t, last.id, b).await;
+    f.ended(&f.alex_t, last.id).await;
+
+    let r = f.reopen(&f.sam_t, e.id, None).await;
+    assert_eq!(r.status(), 200);
+    let back: QotyEvent = r.json().await.unwrap();
+    assert_eq!(option_ids(&back), vec![a], "a quote can't win twice");
+    assert_eq!(voters(&back), vec![vec![f.sam]]);
+}
+
+#[tokio::test]
+async fn the_sweeper_ends_votes_on_time() {
+    let f = fixture().await;
+    let (e, _, _) = two_options_timed(&f).await;
+    pulse_server::qoty::spawn_sweeper(f.app.state(), Duration::from_millis(50));
+    // Past the first tick (an interval's first tick is immediate): only a later sweep can end it.
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    f.sql(&format!(
+        "UPDATE qoty_events SET ends_at = '2000-01-01T00:00:00.000Z' WHERE id = '{}'",
+        e.id
+    ))
+    .await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    loop {
+        let reason: Option<String> =
+            sqlx::query_scalar("SELECT end_reason FROM qoty_events WHERE id = ?")
+                .bind(e.id.to_string())
+                .fetch_one(&f.app.db)
+                .await
+                .unwrap();
+        if reason.as_deref() == Some("time") {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the sweeper never ended it"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
     assert_eq!(f.cards(f.ch.id).await.len(), 1);
 }

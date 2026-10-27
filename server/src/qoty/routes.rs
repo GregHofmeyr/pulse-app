@@ -14,11 +14,11 @@ use pulse_protocol::rest::{
 
 use super::{
     FIRST_YEAR, REOPEN_HOURS, check_minutes, ending, ends_at, live_in, load, publish, require_live,
-    server_of, stamp, top_options,
+    server_of, top_options,
 };
 use crate::AppState;
 use crate::auth::AuthUser;
-use crate::db::now;
+use crate::db::{now, stamp};
 use crate::error::{AppError, AppResult};
 use crate::servers::routes::is_server_member;
 
@@ -265,7 +265,8 @@ async fn add_option(
     answer(&s, id, published).await
 }
 
-/// End the vote now. Anyone in the server can.
+/// End the vote now. Anyone in the server can. Once its time has run out it is an end by time,
+/// whoever gets there first (the sweeper or this).
 async fn end(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -274,8 +275,17 @@ async fn end(
     take_part(&s, me, id).await?;
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
-    let Some(ended) = ending::finish(&mut tx, id, QotyEndReason::Early, Some(me), &now()).await?
-    else {
+    let ends_at: Option<Option<String>> =
+        sqlx::query_scalar("SELECT ends_at FROM qoty_events WHERE id = ?")
+            .bind(id.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+    let (reason, by) = if super::past(ends_at.flatten().as_deref()) {
+        (QotyEndReason::Time, None)
+    } else {
+        (QotyEndReason::Early, Some(me))
+    };
+    let Some(ended) = ending::finish(&mut tx, id, reason, by, &now()).await? else {
         return Err(AppError::Conflict("This vote is over.".into()));
     };
     tx.commit().await?;

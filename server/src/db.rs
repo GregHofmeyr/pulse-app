@@ -63,5 +63,10 @@ pub async fn backup(db: &SqlitePool, path: &std::path::Path) -> anyhow::Result<(
 
 /// Current time as RFC 3339 UTC with millisecond precision (sorts lexically).
 pub fn now() -> String {
-    chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
+    stamp(chrono::Utc::now())
+}
+
+/// A time as stored: RFC 3339 UTC with millisecond precision, so stored times compare as strings.
+pub fn stamp(t: chrono::DateTime<chrono::Utc>) -> String {
+    t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
 }

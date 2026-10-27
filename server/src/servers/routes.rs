@@ -225,6 +225,9 @@ async fn join(
     Path(id): Path<ServerId>,
 ) -> AppResult<StatusCode> {
     server_exists(&s.db, id).await?;
+    // A join changes a live Quote of the Year's member count ("N of M"), which its events carry
+    // as absolute state: publish in commit order (in_order, then the write lock).
+    let _order = s.hub.in_order().await;
     // One transaction, under the write lock: a channel created concurrently is either seen here
     // (and gets a read point) or sees us as a member in create_channel.
     let mut tx = crate::db::begin_write(&s.db).await?;
@@ -249,6 +252,11 @@ async fn join(
             crate::reads::init_point(&mut tx, me, ch.parse().map_err(anyhow::Error::from)?).await?;
         }
     }
+    let qoty = if added > 0 {
+        crate::qoty::live_in(&mut tx, id).await?
+    } else {
+        None
+    };
     tx.commit().await?;
     if added > 0 {
         s.hub
@@ -260,6 +268,9 @@ async fn join(
                 },
             )
             .await;
+    }
+    if let Some(event) = qoty {
+        crate::qoty::publish_updated(&s, event).await;
     }
     Ok(StatusCode::NO_CONTENT)
 }

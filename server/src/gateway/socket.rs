@@ -213,7 +213,7 @@ pub async fn build_ready(
         streams: live,
         custom_emoji: crate::emoji::for_ready(db).await?,
         frequent_emoji: crate::emoji::frequent(db, me, crate::emoji::FREQUENT).await?,
-        qoty: crate::qoty::for_ready(db, me).await?,
+        qoty: crate::qoty::for_ready(db).await?,
         speaker_links: crate::quotes::links::for_ready(db).await?,
     })
 }

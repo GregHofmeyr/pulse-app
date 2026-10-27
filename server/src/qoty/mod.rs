@@ -9,7 +9,7 @@
 pub mod ending;
 pub mod routes;
 
-pub use ending::{end_overdue, spawn_sweeper};
+pub use ending::{SWEEP_EVERY, end_overdue, spawn_sweeper};
 pub use routes::router;
 
 use std::collections::HashMap;
@@ -22,6 +22,7 @@ use pulse_protocol::rest::{Message, QotyEndReason, QotyEvent, QotyOption};
 use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::AppState;
+use crate::db::stamp;
 use crate::error::{AppError, AppResult};
 use crate::messages::routes::{COLS, Row, fill};
 use crate::quotes::{parse_id, parse_opt};
@@ -34,11 +35,6 @@ pub const MINUTES: RangeInclusive<u32> = 5..=20160;
 pub const REOPEN_HOURS: i64 = 24;
 /// The first year a vote can be for (the last is the current UTC year).
 pub const FIRST_YEAR: i32 = 2000;
-
-/// A time as stored: RFC 3339 UTC with milliseconds, so stored times compare as strings.
-pub(crate) fn stamp(t: DateTime<Utc>) -> String {
-    t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true)
-}
 
 fn parse_time(s: &str) -> AppResult<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(s)
@@ -116,43 +112,35 @@ pub(crate) async fn live_in(
     parse_opt(id.as_deref())
 }
 
-/// Whether the event is live; 409 if it has ended, 404 if it's gone.
+/// Whether the event is live: 409 once it has ended or its time has run out (even before a sweep
+/// ends it), 404 if it's gone.
 pub(crate) async fn require_live(db: &mut SqliteConnection, id: QotyEventId) -> AppResult<()> {
-    let ended: Option<Option<String>> =
-        sqlx::query_scalar("SELECT ended_at FROM qoty_events WHERE id = ?")
+    let row: Option<(Option<String>, Option<String>)> =
+        sqlx::query_as("SELECT ended_at, ends_at FROM qoty_events WHERE id = ?")
             .bind(id.to_string())
             .fetch_optional(db)
             .await?;
-    match ended {
+    match row {
         None => Err(AppError::NotFound),
-        Some(Some(_)) => Err(AppError::Conflict("This vote is over.".into())),
-        Some(None) => Ok(()),
+        Some((None, ends_at)) if !past(ends_at.as_deref()) => Ok(()),
+        Some(_) => Err(AppError::Conflict("This vote is over.".into())),
     }
 }
 
-/// The automatic options for `year` in `server`, best first: live quotes with a reaction score
-/// (distinct people who reacted, as the leaderboard counts) that never won a vote, the top
-/// [`TOP`] and everything tied with the last of them. A quote nobody reacted to is never one.
+/// Whether a deadline (`None`: open until ended) has passed.
+pub(crate) fn past(ends_at: Option<&str>) -> bool {
+    ends_at.is_some_and(|t| t <= crate::db::now().as_str())
+}
+
+/// The automatic options for `year` in `server`, best first: the year's ranked quotes (see
+/// [`crate::quotes::ranked`]) that never won a vote, the top [`TOP`] and everything tied with the
+/// last of them. A quote nobody reacted to is never one.
 pub(crate) async fn top_options(
     db: &mut SqliteConnection,
     server: ServerId,
     year: i32,
 ) -> AppResult<Vec<String>> {
-    let ranked: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT q.message_id, COUNT(DISTINCT r.user_id) AS score
-         FROM quotes q
-         JOIN messages msg ON msg.id = q.message_id AND msg.deleted_at IS NULL
-         JOIN channels c ON c.id = msg.channel_id
-         JOIN reactions r ON r.message_id = q.message_id
-         WHERE c.server_id = ? AND q.year = ?
-           AND NOT EXISTS (SELECT 1 FROM qoty_winners w WHERE w.message_id = q.message_id)
-         GROUP BY q.message_id
-         ORDER BY score DESC, q.message_id DESC",
-    )
-    .bind(server.to_string())
-    .bind(year)
-    .fetch_all(db)
-    .await?;
+    let ranked = crate::quotes::ranked(db, server, Some(year), true, None).await?;
     let cut = ranked.get(TOP - 1).map_or(0, |r| r.1);
     Ok(ranked
         .into_iter()
@@ -268,8 +256,9 @@ async fn build(db: &SqlitePool, row: EventRow, me: Option<UserId>) -> AppResult<
 }
 
 /// For Ready: every live event, and every event ended early within [`REOPEN_HOURS`] (so the
-/// reopen button can show), oldest first. Every server's, as QotY events go to everyone.
-pub async fn for_ready(db: &SqlitePool, me: UserId) -> AppResult<Vec<QotyEvent>> {
+/// reopen button can show), oldest first. Every server's, as QotY events go to everyone, and as
+/// the events show them (nothing marked as yours), so the first update changes nothing else.
+pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<QotyEvent>> {
     let since = stamp(Utc::now() - chrono::Duration::hours(REOPEN_HOURS));
     let rows: Vec<EventRow> = sqlx::query_as(&format!(
         "SELECT {EVENT_COLS} FROM qoty_events
@@ -281,7 +270,7 @@ pub async fn for_ready(db: &SqlitePool, me: UserId) -> AppResult<Vec<QotyEvent>>
     .await?;
     let mut out = Vec::with_capacity(rows.len());
     for row in rows {
-        out.push(build(db, row, Some(me)).await?);
+        out.push(build(db, row, None).await?);
     }
     Ok(out)
 }

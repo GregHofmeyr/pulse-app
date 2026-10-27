@@ -81,8 +81,11 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     // Before serving (connections queue in the listen backlog), so the first Ready is right.
     voice::restore::on_startup(&state, &started_at).await?;
     // Votes whose time ran out while the server was down end now, before anyone connects.
-    qoty::end_overdue(&state, &db::now()).await?;
-    qoty::spawn_sweeper(state.clone());
+    // A failure here must not keep the server down: the sweeper tries again shortly.
+    if let Err(e) = qoty::end_overdue(&state, &db::now()).await {
+        tracing::warn!(error = %e, "Quote of the Year boot sweep failed; the sweeper will retry");
+    }
+    qoty::spawn_sweeper(state.clone(), qoty::SWEEP_EVERY);
     streams::liveness::spawn(
         state.clone(),
         streams::liveness::CHECK_EVERY,

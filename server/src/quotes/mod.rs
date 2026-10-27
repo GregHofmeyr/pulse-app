@@ -346,6 +346,42 @@ pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppR
     })
 }
 
+/// Live quotes of `server` ranked by reaction score: distinct people who reacted to the quote
+/// itself (replies don't count), best first, then newest. A quote nobody reacted to isn't ranked.
+/// `year` keeps one year's; `new_winners_only` leaves out quotes that already won a Quote of the
+/// Year; `limit` caps the list (`None`: all). Returns (message id, score).
+pub(crate) async fn ranked<'e, E>(
+    db: E,
+    server: ServerId,
+    year: Option<i32>,
+    new_winners_only: bool,
+    limit: Option<usize>,
+) -> AppResult<Vec<(String, i64)>>
+where
+    E: sqlx::Executor<'e, Database = sqlx::Sqlite>,
+{
+    Ok(sqlx::query_as(
+        "SELECT q.message_id, COUNT(DISTINCT r.user_id) AS score
+         FROM quotes q
+         JOIN messages msg ON msg.id = q.message_id AND msg.deleted_at IS NULL
+         JOIN channels c ON c.id = msg.channel_id
+         JOIN reactions r ON r.message_id = q.message_id
+         WHERE c.server_id = ? AND (? IS NULL OR q.year = ?)
+           AND (? = 0 OR NOT EXISTS (SELECT 1 FROM qoty_winners w WHERE w.message_id = q.message_id))
+         GROUP BY q.message_id
+         ORDER BY score DESC, q.message_id DESC
+         LIMIT ?",
+    )
+    .bind(server.to_string())
+    .bind(year)
+    .bind(year)
+    .bind(new_winners_only)
+    // SQLite reads a negative LIMIT as none.
+    .bind(limit.map_or(-1, |n| n as i64))
+    .fetch_all(db)
+    .await?)
+}
+
 /// The plain rendering stored in `messages.content`: `“text” — speaker` per line, `[image]` for pictures.
 pub fn render_content(lines: &[CleanLine]) -> String {
     lines

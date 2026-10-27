@@ -277,30 +277,17 @@ async fn members_only(s: &AppState, server: ServerId, me: UserId) -> AppResult<(
     }
 }
 
-/// The best live quotes of `server` (optionally of one year), by distinct people who reacted to
-/// the quote itself (replies don't count), then newest. A quote nobody reacted to isn't ranked.
+/// The best live quotes of `server` (optionally of one year): see [`super::ranked`].
 async fn top_quotes(
     db: &SqlitePool,
     server: ServerId,
     year: Option<i32>,
 ) -> AppResult<Vec<String>> {
-    Ok(sqlx::query_scalar(
-        "SELECT q.message_id
-         FROM quotes q
-         JOIN messages msg ON msg.id = q.message_id AND msg.deleted_at IS NULL
-         JOIN channels c ON c.id = msg.channel_id
-         JOIN reactions r ON r.message_id = q.message_id
-         WHERE c.server_id = ? AND (? IS NULL OR q.year = ?)
-         GROUP BY q.message_id
-         ORDER BY COUNT(DISTINCT r.user_id) DESC, q.message_id DESC
-         LIMIT ?",
-    )
-    .bind(server.to_string())
-    .bind(year)
-    .bind(year)
-    .bind(BOARD_LEN as i64)
-    .fetch_all(db)
-    .await?)
+    Ok(super::ranked(db, server, year, false, Some(BOARD_LEN))
+        .await?
+        .into_iter()
+        .map(|(id, _)| id)
+        .collect())
 }
 
 /// Lines per effective speaker over the live quotes of `server`, most first.

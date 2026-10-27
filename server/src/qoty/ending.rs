@@ -167,8 +167,8 @@ pub(crate) async fn announce(s: &AppState, ended: Ended) -> Option<QotyEvent> {
 }
 
 /// Take back an ending that is being reopened, on `tx`: its wins go, its cards are deleted
-/// outright (returned for `MessageDeleted`), and options whose quote was deleted after the end go
-/// with their votes, so a deleted quote can't win after all.
+/// outright (returned for `MessageDeleted`), and options whose quote was deleted or won another
+/// vote since the end go with their votes, so such a quote can't win (again) after all.
 pub(crate) async fn undo(
     tx: &mut SqliteConnection,
     id: QotyEventId,
@@ -191,8 +191,10 @@ pub(crate) async fn undo(
         .bind(id.to_string())
         .execute(&mut *tx)
         .await?;
-    const GONE: &str =
-        "event_id = ? AND message_id IN (SELECT id FROM messages WHERE deleted_at IS NOT NULL)";
+    // This event's own wins are gone by now, so any win left is another vote's.
+    const GONE: &str = "event_id = ? AND (
+        message_id IN (SELECT id FROM messages WHERE deleted_at IS NOT NULL)
+        OR message_id IN (SELECT message_id FROM qoty_winners))";
     // Votes go with their option (foreign key cascade), but not by luck: say so.
     for table in ["qoty_votes", "qoty_options"] {
         sqlx::query(&format!("DELETE FROM {table} WHERE {GONE}"))
@@ -206,14 +208,15 @@ pub(crate) async fn undo(
         .collect()
 }
 
-/// End every live vote whose time ran out by `now`, as the sweeper does every [`SWEEP_EVERY`]
-/// and the server once before it serves. Returns how many it ended.
-pub async fn end_overdue(s: &AppState, now: &str) -> AppResult<u32> {
+/// End every live vote whose time ran out by `due` (normally now), as the sweeper does every
+/// [`SWEEP_EVERY`] and the server once before it serves. They are stamped as ended once the lock
+/// is held, so no vote that committed meanwhile is later than the end. Returns how many it ended.
+pub async fn end_overdue(s: &AppState, due: &str) -> AppResult<u32> {
     const DUE: &str = "SELECT id FROM qoty_events
                        WHERE ended_at IS NULL AND ends_at IS NOT NULL AND ends_at <= ?";
     // A cheap look first, so an idle sweep takes no locks.
     let any: Option<String> = sqlx::query_scalar(&format!("{DUE} LIMIT 1"))
-        .bind(now)
+        .bind(due)
         .fetch_optional(&s.db)
         .await?;
     if any.is_none() {
@@ -221,13 +224,21 @@ pub async fn end_overdue(s: &AppState, now: &str) -> AppResult<u32> {
     }
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
-    let due: Vec<String> = sqlx::query_scalar(DUE)
-        .bind(now)
+    let ended_at = now();
+    let ids: Vec<String> = sqlx::query_scalar(DUE)
+        .bind(due)
         .fetch_all(&mut *tx)
         .await?;
     let mut done = Vec::new();
-    for id in due {
-        if let Some(ended) = finish(&mut tx, parse_id(&id)?, QotyEndReason::Time, None, now).await?
+    for id in ids {
+        if let Some(ended) = finish(
+            &mut tx,
+            parse_id(&id)?,
+            QotyEndReason::Time,
+            None,
+            &ended_at,
+        )
+        .await?
         {
             done.push(ended);
         }
@@ -240,10 +251,11 @@ pub async fn end_overdue(s: &AppState, now: &str) -> AppResult<u32> {
     Ok(n)
 }
 
-/// End votes on time: every [`SWEEP_EVERY`], for as long as the process runs.
-pub fn spawn_sweeper(s: AppState) {
+/// End votes on time: every `every` ([`SWEEP_EVERY`] in the server), for as long as the process
+/// runs.
+pub fn spawn_sweeper(s: AppState, every: Duration) {
     tokio::spawn(async move {
-        let mut tick = tokio::time::interval(SWEEP_EVERY);
+        let mut tick = tokio::time::interval(every);
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
         loop {
             tick.tick().await;
