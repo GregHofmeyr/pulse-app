@@ -13,6 +13,7 @@
   import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
   import { hostVideo } from '../lib/stream/videoHost'
   import { callView, closeFull } from '../lib/stream/viewer.svelte'
+  import { watchWindowFocus, windowFocus } from '../lib/windowFocus.svelte'
 
   // The parent keys this on the stream, so the props never change for one instance.
   let { channelId, streamer, serverId, onMessage, onVoiceSettings }: {
@@ -61,6 +62,37 @@
     closeFull()
   }
   let menu = $state<{ userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
+
+  // Clicking the stream itself goes back to every tile, but only a plain, deliberate click: not the
+  // second of a double-click, a drag, a press that closed a menu or list, or the click that brought
+  // the window to the front (the webview passes that one on).
+  const DRAG_PX = 5
+  const ACTIVATION_MS = 300
+  watchWindowFocus()
+  let activatedAt = 0
+  let wasFocused = untrack(() => windowFocus.focused)
+  $effect(() => {
+    const f = windowFocus.focused
+    if (f && !wasFocused) activatedAt = performance.now()
+    wasFocused = f
+  })
+  let press: { x: number; y: number; armed: boolean } | null = null
+  function pressStream(e: PointerEvent) {
+    const armed = e.button === 0 && !document.querySelector(OVER) && document.hasFocus() && performance.now() - activatedAt > ACTIVATION_MS
+    press = { x: e.clientX, y: e.clientY, armed }
+  }
+  function clickStream(e: MouseEvent) {
+    const p = press
+    press = null
+    if (!p?.armed || e.detail > 1 || Math.hypot(e.clientX - p.x, e.clientY - p.y) > DRAG_PX) return
+    closeFull()
+  }
+  let stage = $state<HTMLElement>()
+  /** Right-click on the stream: the streamer's menu, as on their grid tile. */
+  function streamMenu(e: MouseEvent) {
+    e.preventDefault()
+    if (stage) menu = { userId: streamer, ...menuPoint(e, stage), opener: stage }
+  }
 </script>
 
 <svelte:window onkeydown={key} />
@@ -81,10 +113,11 @@
     </label>
     <button type="button" class="stop" onclick={stop}>Stop watching</button>
   </div>
-  <div class="stage">
+  <div class="stage" bind:this={stage}>
     {#if watch}<div class="host" {@attach hostVideo(channelId, streamer)}></div>{/if}
-    <!-- the focused stream itself: clicking it again goes back to every tile, like Back -->
-    <button type="button" class="unfocus" aria-label="Back to all streams" onclick={closeFull}></button>
+    <!-- the focused stream itself: a mouse shortcut back to every tile (Back and Esc are the keyboard's) -->
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <div class="unfocus" onpointerdown={pressStream} onclick={clickStream} oncontextmenu={streamMenu}></div>
     <StreamDiagOverlay kind="in" />
     {#if reconnecting}<div class="overlay" role="status">Reconnecting…</div>{/if}
   </div>
@@ -109,10 +142,9 @@
   .stop { height: 32px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--danger); color: #fff; font-weight: 700; }
   .stage { position: relative; flex: 1; min-height: 0; }
   .host { position: absolute; inset: 0; }
-  .unfocus { position: absolute; inset: 0; padding: 0; border: 0; background: transparent; cursor: zoom-out; }
-  .unfocus:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .unfocus { position: absolute; inset: 0; cursor: zoom-out; }
   .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
-  .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .5); color: #fff; font-size: 18px; font-weight: 600; }
+  .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .5); color: #fff; font-size: 18px; font-weight: 600; pointer-events: none; }
   .strip { flex-shrink: 0; padding: 8px 12px; display: flex; gap: 8px; overflow-x: auto; background: var(--bg-1); border-top: 1px solid var(--bg-3); }
   .slot { flex: 0 0 120px; }
 </style>

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import Icon from './Icon.svelte'
   import { app } from '../lib/store.svelte'
   import { selfVoice, voice, voiceApi } from '../lib/voice.svelte'
@@ -49,6 +50,20 @@
   const fullStreamer = $derived.by(() => {
     const f = callView.full
     return f && f.channelId === channelId && findWatch(f.channelId, f.streamer) ? f.streamer : null
+  })
+
+  // Leaving full view unmounts whatever had keyboard focus there: hand it to that stream's grid tile.
+  let wasFull: string | null = null
+  $effect(() => {
+    const now = fullStreamer
+    const left = wasFull
+    wasFull = now
+    if (!left || now) return
+    void tick().then(() => {
+      const at = document.activeElement
+      if (at && at !== document.body) return // something else already has it
+      document.querySelector<HTMLElement>(`[data-stream="${CSS.escape(left)}"] .host`)?.focus()
+    })
   })
 
   const inCall = $derived(inHere && voice.connection === 'connected')

@@ -43,8 +43,9 @@
   let quality = $state<string | null>(untrack(() => findWatch(channelId, streamer)?.quality ?? 'auto'))
 
   // A click anywhere on a not-watching tile watches; the Watch button is the keyboard route into the same click.
-  function clicked() {
-    if (watch || reason) return
+  function clicked(e: MouseEvent) {
+    // the second click of a double-click (e.g. one that left full view onto this tile) does nothing
+    if (watch || reason || e.detail > 1) return
     void streamApi.watch(channelId, streamer)
   }
   function hostKey(e: KeyboardEvent) {
@@ -75,7 +76,7 @@
 {:else if watch}
   <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_static_element_interactions -->
   <div class="tile watching" data-stream={streamer} bind:this={tile} tabindex="-1" oncontextmenu={contextMenu} onkeydown={menuKey}>
-    <div class="host" role="button" tabindex="0" aria-label="Open {name}'s stream in full view" onclick={() => onFull({ channelId, streamer })} onkeydown={hostKey} {@attach hostVideo(channelId, streamer)}></div>
+    <div class="host" role="button" tabindex="0" aria-label="Open {name}'s stream in full view" onclick={(e) => { if (e.detail <= 1) onFull({ channelId, streamer }) }} onkeydown={hostKey} {@attach hostVideo(channelId, streamer)}></div>
     {#if info?.status === 'reconnecting'}<div class="overlay" role="status">Reconnecting…</div>{/if}
     <div class="name-tag">{name}</div>
     <div class="toolbar">
@@ -126,7 +127,7 @@
   .watch { height: 34px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--ok); color: #0f2a1c; font-weight: 700; }
   .reason { margin: 0; font-size: 12px; color: var(--text-2); text-align: center; padding: 0 12px; }
   .watching { background: #000; }
-  .host { position: absolute; inset: 0; cursor: pointer; }
+  .host { position: absolute; inset: 0; cursor: zoom-in; }
   .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .5); color: #fff; font-size: 16px; font-weight: 600; pointer-events: none; }
   .name-tag { position: absolute; left: 10px; bottom: 8px; padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; transition: opacity .12s; }
