@@ -90,7 +90,8 @@ pub async fn latest_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<Message>> 
     let mut out = Vec::new();
     for id in ids {
         if let Some(m) =
-            crate::messages::routes::load(db, id.parse().map_err(anyhow::Error::from)?).await?
+            crate::messages::routes::load(db, None, id.parse().map_err(anyhow::Error::from)?)
+                .await?
         {
             out.push(m);
         }

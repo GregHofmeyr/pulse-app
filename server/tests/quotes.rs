@@ -587,6 +587,22 @@ async fn line_rules() {
         "blank name"
     );
     assert_eq!(
+        f.status(
+            json!([{ "speaker_id": f.sam, "media_hash": png.hash, "caption": "c".repeat(201) }])
+        )
+        .await,
+        400,
+        "201-char caption"
+    );
+    assert_eq!(
+        f.status(
+            json!([{ "speaker_id": f.sam, "media_hash": png.hash, "caption": "c".repeat(200) }])
+        )
+        .await,
+        200,
+        "200-char caption"
+    );
+    assert_eq!(
         f.status(json!([{ "speaker_id": f.sam, "text": "x", "caption": "c" }]))
             .await,
         400,
@@ -656,7 +672,21 @@ async fn image_lines_use_the_media_row() {
     );
     // An emoji upload is fine; identical bytes dedupe across kinds.
     let emoji = upload(&f, "/media/emoji", png_bytes()).await;
-    assert_eq!(emoji.hash.len(), 64);
+    let r = f
+        .post_lines(json!([{ "speaker_id": f.sam, "media_hash": emoji.hash }]))
+        .await;
+    assert_eq!(r.status(), 200);
+    let m: Message = r.json().await.unwrap();
+    let media = m.quote.unwrap().lines[0].media.clone().unwrap();
+    assert_eq!(
+        (
+            media.hash.as_str(),
+            media.still_hash,
+            media.width,
+            media.height
+        ),
+        (emoji.hash.as_str(), None, emoji.width, emoji.height)
+    );
 }
 
 #[tokio::test]
@@ -764,6 +794,13 @@ async fn quotes_cant_be_edited_as_messages() {
         .await
         .unwrap();
     assert_eq!(r.status(), 400);
+    let (content, edited): (String, Option<String>) =
+        sqlx::query_as("SELECT content, edited_at FROM messages WHERE id = ?")
+            .bind(m.id.to_string())
+            .fetch_one(&f.app.db)
+            .await
+            .unwrap();
+    assert_eq!((content.as_str(), edited), (m.content.as_str(), None));
 }
 
 #[tokio::test]

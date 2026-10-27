@@ -2,19 +2,17 @@
 
 pub mod routes;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use pulse_protocol::ids::{LineId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{LineMedia, Message, NewQuoteLine, Quote, QuoteLine};
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::error::{AppError, AppResult};
-use crate::servers::routes::is_server_member;
+use crate::messages::MAX_LEN;
 
 /// Most lines in one quote.
 pub const MAX_LINES: usize = 10;
-/// Longest line text, in characters.
-pub const MAX_LEN: usize = 4000;
 pub const MAX_CAPTION: usize = 200;
 pub const MAX_NAME: usize = 32;
 
@@ -28,10 +26,20 @@ pub fn name_key(name: &str) -> String {
         .to_lowercase()
 }
 
-/// Line text as stored: trimmed, with the quote marks around it removed (a matching pair, or a
-/// leading and trailing run), 1..=[`MAX_LEN`] characters.
+/// Line text as stored: trimmed, and when both ends carry quote marks, the leading and the
+/// trailing run of them removed. One-sided marks are part of the text (`'tis great`, `the dogs'`).
+/// 1..=[`MAX_LEN`] characters.
 pub fn clean_text(s: &str) -> AppResult<String> {
-    let t = s.trim().trim_matches(|c| QUOTE_MARKS.contains(&c)).trim();
+    let is_mark = |c: char| QUOTE_MARKS.contains(&c);
+    let t = s.trim();
+    let wrapped = t.chars().count() > 1
+        && t.chars().next().is_some_and(is_mark)
+        && t.chars().next_back().is_some_and(is_mark);
+    let t = if wrapped {
+        t.trim_matches(is_mark).trim()
+    } else {
+        t
+    };
     if t.is_empty() || t.chars().count() > MAX_LEN {
         return Err(AppError::BadRequest(format!(
             "a line must be 1-{MAX_LEN} characters"
@@ -58,9 +66,10 @@ fn bad(msg: &str) -> AppError {
     AppError::BadRequest(msg.into())
 }
 
-/// Check a client's lines against the rules and the server they are posted in.
+/// Check a client's lines against the rules and the server they are posted in. Run on the write
+/// transaction, so a picture can't be swept between the check and the insert.
 pub async fn validate_lines(
-    db: &SqlitePool,
+    db: &mut SqliteConnection,
     server: ServerId,
     lines: &[NewQuoteLine],
 ) -> AppResult<Vec<CleanLine>> {
@@ -88,22 +97,9 @@ pub async fn validate_lines(
             }
             _ => return Err(bad("a line has either a member or a name as its speaker")),
         };
-        let mut label = speaker_label;
-        if let Some(who) = l.speaker_id {
-            if !is_server_member(db, server, who).await? {
-                return Err(bad("the speaker isn't in this server"));
-            }
-            label = sqlx::query_scalar("SELECT username FROM users WHERE id = ?")
-                .bind(who.to_string())
-                .fetch_one(db)
-                .await?;
-        }
         let (text, media_hash, caption) = match (&l.text, &l.media_hash) {
             (Some(t), None) if l.caption.is_none() => (Some(clean_text(t)?), None, None),
             (None, Some(hash)) => {
-                if !usable_media(db, hash).await? {
-                    return Err(bad("unknown picture"));
-                }
                 let caption = match l.caption.as_deref().map(str::trim) {
                     Some(c) if c.chars().count() > MAX_CAPTION => {
                         return Err(AppError::BadRequest(format!(
@@ -124,28 +120,82 @@ pub async fn validate_lines(
             speaker_id: l.speaker_id,
             speaker_name,
             speaker_key,
-            speaker_label: label,
+            speaker_label,
             text,
             media_hash,
             caption,
         });
     }
+
+    // Members and pictures are checked together: one query each, however many lines.
+    let members = member_names(db, server, &out).await?;
+    for l in &mut out {
+        if let Some(who) = l.speaker_id {
+            l.speaker_label = members
+                .get(&who)
+                .cloned()
+                .ok_or_else(|| bad("the speaker isn't in this server"))?;
+        }
+    }
+    let usable = usable_media(db, &out).await?;
+    if out
+        .iter()
+        .filter_map(|l| l.media_hash.as_ref())
+        .any(|h| !usable.contains(h))
+    {
+        return Err(bad("unknown picture"));
+    }
     Ok(out)
 }
 
-/// A picture a line may show: an uploaded quote or emoji image that is not just an animation's still.
-async fn usable_media(db: &SqlitePool, hash: &str) -> AppResult<bool> {
-    if !crate::media::valid_hash(hash) {
-        return Ok(false);
+/// Usernames of the lines' member speakers who are in `server`.
+async fn member_names(
+    db: &mut SqliteConnection,
+    server: ServerId,
+    lines: &[CleanLine],
+) -> AppResult<HashMap<UserId, String>> {
+    let ids: Vec<String> = lines
+        .iter()
+        .filter_map(|l| l.speaker_id.map(|u| u.to_string()))
+        .collect();
+    if ids.is_empty() {
+        return Ok(HashMap::new());
     }
-    let hit: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM media WHERE hash = ? AND kind IN ('quote', 'emoji')
-           AND NOT EXISTS (SELECT 1 FROM media o WHERE o.still_hash = media.hash)",
-    )
-    .bind(hash)
-    .fetch_optional(db)
-    .await?;
-    Ok(hit.is_some())
+    let mut q = sqlx::QueryBuilder::new(
+        "SELECT u.id, u.username FROM server_members sm JOIN users u ON u.id = sm.user_id
+         WHERE sm.server_id = ",
+    );
+    q.push_bind(server.to_string());
+    q.push(" AND u.id IN (");
+    in_list(&mut q, &ids);
+    let rows: Vec<(String, String)> = q.build_query_as().fetch_all(db).await?;
+    rows.into_iter()
+        .map(|(id, name)| Ok((id.parse().map_err(anyhow::Error::from)?, name)))
+        .collect()
+}
+
+/// Of the lines' pictures, the ones a line may show: uploaded quote or emoji images that are not
+/// just an animation's still.
+async fn usable_media(
+    db: &mut SqliteConnection,
+    lines: &[CleanLine],
+) -> AppResult<HashSet<String>> {
+    let hashes: Vec<String> = lines
+        .iter()
+        .filter_map(|l| l.media_hash.clone())
+        .filter(|h| crate::media::valid_hash(h))
+        .collect();
+    if hashes.is_empty() {
+        return Ok(HashSet::new());
+    }
+    let mut q = sqlx::QueryBuilder::new(
+        "SELECT hash FROM media WHERE kind IN ('quote', 'emoji')
+           AND NOT EXISTS (SELECT 1 FROM media o WHERE o.still_hash = media.hash)
+           AND hash IN (",
+    );
+    in_list(&mut q, &hashes);
+    let rows: Vec<String> = q.build_query_scalar().fetch_all(db).await?;
+    Ok(rows.into_iter().collect())
 }
 
 /// The plain rendering stored in `messages.content`: `“text” — speaker` per line, `[image]` for pictures.
@@ -161,13 +211,14 @@ pub fn render_content(lines: &[CleanLine]) -> String {
 }
 
 /// A line's effective speaker: its member if it has one, else the member its plain name is linked
-/// to. `links` maps `name_key` to member for the line's server.
-pub fn effective_speaker(line: &QuoteLine, links: &HashMap<String, UserId>) -> Option<UserId> {
-    line.speaker_id.or_else(|| {
-        line.speaker_name
-            .as_deref()
-            .and_then(|n| links.get(&name_key(n)).copied())
-    })
+/// to. `speaker_key` is the stored key of the plain name; `links` maps `name_key` to member for
+/// the line's server.
+pub fn effective_speaker(
+    speaker_id: Option<UserId>,
+    speaker_key: Option<&str>,
+    links: &HashMap<String, UserId>,
+) -> Option<UserId> {
+    speaker_id.or_else(|| speaker_key.and_then(|k| links.get(k).copied()))
 }
 
 /// `name_key` to member for every speaker link of `servers`.
@@ -204,20 +255,22 @@ fn in_list<'a>(q: &mut sqlx::QueryBuilder<'a, sqlx::Sqlite>, ids: &'a [String]) 
     q.push(")");
 }
 
-/// message, line, speaker id, speaker name, text, media hash, caption, still, width, height, server.
-type LineRow = (
-    String,
-    String,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<String>,
-    Option<i64>,
-    Option<i64>,
-    Option<String>,
-);
+/// A stored line with its picture's still and size and the server it belongs to.
+#[derive(sqlx::FromRow)]
+struct LineRow {
+    message_id: String,
+    id: String,
+    speaker_id: Option<String>,
+    speaker_name: Option<String>,
+    speaker_key: Option<String>,
+    text: Option<String>,
+    media_hash: Option<String>,
+    caption: Option<String>,
+    still_hash: Option<String>,
+    width: Option<i64>,
+    height: Option<i64>,
+    server_id: Option<String>,
+}
 
 /// Fill `quote` on every live quote message in `msgs`, for `me` (or for nobody, as in events).
 pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -> AppResult<()> {
@@ -241,8 +294,8 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
 
     // Lines in order, with the picture's still and size and the server they belong to.
     let mut q = sqlx::QueryBuilder::new(
-        "SELECT l.message_id, l.id, l.speaker_id, l.speaker_name, l.text, l.media_hash, l.caption,
-                m.still_hash, m.width, m.height, c.server_id
+        "SELECT l.message_id, l.id, l.speaker_id, l.speaker_name, l.speaker_key, l.text, l.media_hash,
+                l.caption, m.still_hash, m.width, m.height, c.server_id
          FROM quote_lines l
          JOIN messages msg ON msg.id = l.message_id
          JOIN channels c ON c.id = msg.channel_id
@@ -254,7 +307,7 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
     let rows: Vec<LineRow> = q.build_query_as().fetch_all(db).await?;
 
     let servers: Vec<String> = {
-        let mut s: Vec<String> = rows.iter().filter_map(|r| r.10.clone()).collect();
+        let mut s: Vec<String> = rows.iter().filter_map(|r| r.server_id.clone()).collect();
         s.sort();
         s.dedup();
         s
@@ -262,7 +315,7 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
     let links = links_for(db, &servers).await?;
     let no_links = HashMap::new();
 
-    let line_ids: Vec<String> = rows.iter().map(|r| r.1.clone()).collect();
+    let line_ids: Vec<String> = rows.iter().map(|r| r.id.clone()).collect();
     let mut awards: HashMap<String, Vec<UserId>> = HashMap::new();
     if !line_ids.is_empty() {
         let mut q = sqlx::QueryBuilder::new(
@@ -280,44 +333,43 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
     }
 
     let mut by_msg: HashMap<String, Vec<QuoteLine>> = HashMap::new();
-    for (msg, id, speaker_id, speaker_name, text, media_hash, caption, still, w, h, server) in rows
-    {
-        let mut line = QuoteLine {
-            id: id.parse().map_err(anyhow::Error::from)?,
-            speaker_id: speaker_id
-                .as_deref()
-                .map(str::parse)
-                .transpose()
-                .map_err(anyhow::Error::from)?,
-            speaker_name,
-            text,
-            media: media_hash.map(|hash| LineMedia {
-                hash,
-                still_hash: still,
-                width: w.unwrap_or(0) as u32,
-                height: h.unwrap_or(0) as u32,
-            }),
-            caption,
-            awards: 0,
-            awarders: vec![],
-            awarded: false,
-        };
+    for r in rows {
+        let speaker_id: Option<UserId> = r
+            .speaker_id
+            .as_deref()
+            .map(str::parse)
+            .transpose()
+            .map_err(anyhow::Error::from)?;
         let speaker = effective_speaker(
-            &line,
-            server
+            speaker_id,
+            r.speaker_key.as_deref(),
+            r.server_id
                 .as_ref()
                 .and_then(|s| links.get(s))
                 .unwrap_or(&no_links),
         );
-        line.awarders = awards
-            .remove(&id)
+        let awarders: Vec<UserId> = awards
+            .remove(&r.id)
             .unwrap_or_default()
             .into_iter()
             .filter(|g| Some(*g) != speaker)
             .collect();
-        line.awards = line.awarders.len() as u32;
-        line.awarded = me.is_some_and(|me| line.awarders.contains(&me));
-        by_msg.entry(msg).or_default().push(line);
+        by_msg.entry(r.message_id).or_default().push(QuoteLine {
+            id: r.id.parse().map_err(anyhow::Error::from)?,
+            speaker_id,
+            speaker_name: r.speaker_name,
+            text: r.text,
+            media: r.media_hash.map(|hash| LineMedia {
+                hash,
+                still_hash: r.still_hash,
+                width: r.width.unwrap_or(0) as u32,
+                height: r.height.unwrap_or(0) as u32,
+            }),
+            caption: r.caption,
+            awards: awarders.len() as u32,
+            awarded: me.is_some_and(|me| awarders.contains(&me)),
+            awarders,
+        });
     }
 
     // Live replies, the newest of them, and how far `me` has read.
@@ -364,10 +416,16 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
     let parse_id = |s: &String| -> AppResult<MessageId> {
         Ok(s.parse::<MessageId>().map_err(anyhow::Error::from)?)
     };
+    let index: HashMap<String, usize> = msgs
+        .iter()
+        .enumerate()
+        .map(|(i, m)| (m.id.to_string(), i))
+        .collect();
     for (msg_id, year, said_on) in heads {
-        let Some(m) = msgs.iter_mut().find(|m| m.id.to_string() == msg_id) else {
+        let Some(&i) = index.get(&msg_id) else {
             continue;
         };
+        let m = &mut msgs[i];
         let (reply_count, last_reply_id) = match replies.get(&msg_id) {
             Some((n, last)) => (*n as u32, Some(parse_id(last)?)),
             None => (0, None),
@@ -412,6 +470,10 @@ mod tests {
             clean_text("he said \"hi\" twice").unwrap(),
             "he said \"hi\" twice"
         );
+        assert_eq!(clean_text("'tis great").unwrap(), "'tis great");
+        assert_eq!(clean_text("the dogs'").unwrap(), "the dogs'");
+        assert_eq!(clean_text("\"").unwrap(), "\"");
+        assert_eq!(clean_text("“x\"").unwrap(), "x");
         assert!(clean_text("  ").is_err());
         assert!(clean_text("“”").is_err());
         assert!(clean_text(&"a".repeat(MAX_LEN)).is_ok());

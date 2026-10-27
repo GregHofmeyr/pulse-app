@@ -71,6 +71,9 @@ CREATE TABLE quote_lines (
 CREATE INDEX quote_lines_message ON quote_lines(message_id, position);
 CREATE INDEX quote_lines_speaker_key ON quote_lines(speaker_key);
 
+-- `media.still_hash` is looked up to tell a still from a picture (quote lines, cleanup).
+CREATE INDEX media_still ON media(still_hash) WHERE still_hash IS NOT NULL;
+
 CREATE TABLE quote_awards (
     line_id    TEXT NOT NULL REFERENCES quote_lines(id) ON DELETE CASCADE,
     giver_id   TEXT NOT NULL REFERENCES users(id),

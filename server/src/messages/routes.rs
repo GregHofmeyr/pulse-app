@@ -17,11 +17,7 @@ use crate::db::now;
 use crate::error::{AppError, AppResult};
 use crate::servers::routes::is_server_member;
 
-use super::{mentions, reactions};
-
-const MAX_LEN: usize = 4000;
-/// Client nonces are UUIDs (36 bytes); anything much longer isn't one of ours.
-const MAX_NONCE: usize = 64;
+use super::{MAX_LEN, mentions, nonce, reactions};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -80,7 +76,12 @@ fn from_row(r: Row) -> AppResult<Message> {
     })
 }
 
-pub(crate) async fn load(db: &SqlitePool, id: MessageId) -> AppResult<Option<Message>> {
+/// `me` is whose view the quote part is (events and previews pass `None`).
+pub(crate) async fn load(
+    db: &SqlitePool,
+    me: Option<UserId>,
+    id: MessageId,
+) -> AppResult<Option<Message>> {
     let row: Option<Row> = sqlx::query_as(&format!("SELECT {COLS} FROM messages WHERE id = ?"))
         .bind(id.to_string())
         .fetch_optional(db)
@@ -99,7 +100,7 @@ pub(crate) async fn load(db: &SqlitePool, id: MessageId) -> AppResult<Option<Mes
             .unwrap_or_default();
     }
     let mut one = [m];
-    crate::quotes::attach(db, None, &mut one).await?;
+    crate::quotes::attach(db, me, &mut one).await?;
     let [m] = one;
     Ok(Some(m))
 }
@@ -192,19 +193,11 @@ async fn send(
         ));
     }
     let content = clean(&req.content)?;
-    if req
-        .nonce
-        .as_ref()
-        .is_some_and(|n| n.is_empty() || n.len() > MAX_NONCE)
-    {
-        return Err(AppError::BadRequest(format!(
-            "nonce must be 1-{MAX_NONCE} bytes"
-        )));
-    }
+    nonce::check(req.nonce.as_deref())?;
     let mut mentioned = mentions::resolve(&s.db, &ch, me, &mentions::parse(&content)).await?;
     if let Some(r) = req.reply_to_id {
         // Same-channel only; a reply target elsewhere (including private) is indistinguishable from missing.
-        match load(&s.db, r).await? {
+        match load(&s.db, None, r).await? {
             Some(target) if target.channel_id == id => {
                 // A reply pings whoever it replies to, as long as they can still see the chat.
                 if let Some(author) = target.author_id
@@ -243,19 +236,11 @@ async fn send(
     // An outbox retry of a send that already landed (e.g. the proxy said 502 after we committed):
     // hand back the original instead of posting twice. Under the write lock, check-then-insert is
     // atomic; the unique index is the backstop.
-    if let Some(nonce) = &req.nonce
-        && let Some(existing) = sqlx::query_scalar::<_, String>(
-            "SELECT id FROM messages WHERE author_id = ? AND nonce = ?",
-        )
-        .bind(me.to_string())
-        .bind(nonce)
-        .fetch_optional(&mut *tx)
-        .await?
-    {
+    if let Some(existing) = nonce::existing(&mut tx, me, req.nonce.as_deref()).await? {
         tx.rollback().await?;
         // Not re-published: the first send already fanned it out, and a second MessageCreated
         // would double-count unreads on other clients.
-        return load(&s.db, parse(&existing)?)
+        return load(&s.db, Some(me), existing)
             .await?
             .map(Json)
             .ok_or(AppError::NotFound);
@@ -314,7 +299,7 @@ async fn send(
 
 /// Load a live message the caller can see and authored. Outsiders get 404, others' messages 403.
 async fn own_message(db: &SqlitePool, me: UserId, id: MessageId) -> AppResult<Message> {
-    let msg = load(db, id).await?.ok_or(AppError::NotFound)?;
+    let msg = load(db, Some(me), id).await?.ok_or(AppError::NotFound)?;
     channel_for(db, me, msg.channel_id).await?;
     if msg.deleted {
         return Err(AppError::NotFound);
