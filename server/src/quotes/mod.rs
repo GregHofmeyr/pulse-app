@@ -207,6 +207,31 @@ async fn usable_media(
     Ok(rows.into_iter().collect())
 }
 
+/// Store `l` as line number `position` of quote `message_id`, with a fresh id.
+pub async fn insert_line(
+    tx: &mut SqliteConnection,
+    message_id: MessageId,
+    position: usize,
+    l: &CleanLine,
+) -> AppResult<()> {
+    sqlx::query(
+        "INSERT INTO quote_lines (id, message_id, position, speaker_id, speaker_name, speaker_key, text, media_hash, caption)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+    )
+    .bind(LineId::new().to_string())
+    .bind(message_id.to_string())
+    .bind(position as i64)
+    .bind(l.speaker_id.map(|u| u.to_string()))
+    .bind(&l.speaker_name)
+    .bind(&l.speaker_key)
+    .bind(&l.text)
+    .bind(&l.media_hash)
+    .bind(&l.caption)
+    .execute(tx)
+    .await?;
+    Ok(())
+}
+
 /// Whether the quote's speakers are frozen: it is a live Quote of the Year option, so changing a
 /// speaker or adding or removing a line would change what people vote on. Never, until QotY exists.
 pub async fn speakers_locked(

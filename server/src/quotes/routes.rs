@@ -2,10 +2,9 @@ use axum::extract::{Path, State};
 use axum::routing::{post, put};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
-use pulse_protocol::ids::LineId;
-use pulse_protocol::ids::{ChannelId, MessageId};
+use pulse_protocol::ids::{ChannelId, LineId, MessageId};
 use pulse_protocol::rest::{ChannelKind, EditQuoteRequest, Message, PostQuoteRequest};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::AppState;
 use crate::access::channel_for;
@@ -82,21 +81,7 @@ async fn post_quote(
         .execute(&mut *tx)
         .await?;
     for (position, l) in lines.iter().enumerate() {
-        sqlx::query(
-            "INSERT INTO quote_lines (id, message_id, position, speaker_id, speaker_name, speaker_key, text, media_hash, caption)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-        )
-        .bind(pulse_protocol::ids::LineId::new().to_string())
-        .bind(msg_id.to_string())
-        .bind(position as i64)
-        .bind(l.speaker_id.map(|u| u.to_string()))
-        .bind(&l.speaker_name)
-        .bind(&l.speaker_key)
-        .bind(&l.text)
-        .bind(&l.media_hash)
-        .bind(&l.caption)
-        .execute(&mut *tx)
-        .await?;
+        super::insert_line(&mut tx, msg_id, position, l).await?;
     }
     let moved = crate::reads::advance(&mut tx, me, id, msg_id).await?;
     tx.commit().await?;
@@ -130,6 +115,9 @@ async fn post_quote(
 /// A line as stored, for telling what an edit changes.
 type StoredLine = (String, Option<String>, Option<String>);
 
+/// Who a stored line names: the member, or the plain name's `name_key`.
+type Speaker = (Option<String>, Option<String>);
+
 async fn edit_quote(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -139,14 +127,11 @@ async fn edit_quote(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests);
     }
-    let msg = own_message(&s.db, me, id).await?;
+    let (msg, ch) = own_message(&s.db, me, id).await?;
     if msg.quote.is_none() {
         return Err(AppError::BadRequest("this isn't a quote".into()));
     }
-    let server = channel_for(&s.db, me, msg.channel_id)
-        .await?
-        .server_id
-        .ok_or(AppError::NotFound)?;
+    let server = ch.server_id.ok_or(AppError::NotFound)?;
     if !is_server_member(&s.db, server, me).await? {
         return Err(AppError::Forbidden);
     }
@@ -169,15 +154,15 @@ async fn edit_quote(
     super::check_lines(&mut tx, server, &mut lines).await?;
 
     let stored: Vec<StoredLine> =
-        sqlx::query_as("SELECT id, speaker_id, speaker_name FROM quote_lines WHERE message_id = ?")
+        sqlx::query_as("SELECT id, speaker_id, speaker_key FROM quote_lines WHERE message_id = ?")
             .bind(id.to_string())
             .fetch_all(&mut *tx)
             .await?;
-    let stored: HashMap<LineId, (Option<String>, Option<String>)> = stored
+    let stored: HashMap<LineId, Speaker> = stored
         .into_iter()
         .map(|(line, who, name)| Ok((line.parse().map_err(anyhow::Error::from)?, (who, name))))
         .collect::<AppResult<_>>()?;
-    let mut kept = std::collections::HashSet::new();
+    let mut kept = HashSet::new();
     for l in &lines {
         if let Some(line) = l.id
             && (!stored.contains_key(&line) || !kept.insert(line))
@@ -187,8 +172,10 @@ async fn edit_quote(
             ));
         }
     }
-    let speaker_changed = |l: &super::CleanLine, old: &(Option<String>, Option<String>)| {
-        (l.speaker_id.map(|u| u.to_string()), l.speaker_name.clone()) != *old
+    // A plain name changes only when its key does: a recased or respaced name is the same
+    // person, so the line keeps its awards.
+    let speaker_changed = |l: &super::CleanLine, old: &Speaker| {
+        (l.speaker_id.map(|u| u.to_string()), l.speaker_key.clone()) != *old
     };
     let changes_speakers = kept.len() != stored.len()
         || lines.iter().any(|l| match l.id {
@@ -238,23 +225,7 @@ async fn edit_quote(
                 .execute(&mut *tx)
                 .await?;
             }
-            None => {
-                sqlx::query(
-                    "INSERT INTO quote_lines (id, message_id, position, speaker_id, speaker_name, speaker_key, text, media_hash, caption)
-                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                )
-                .bind(LineId::new().to_string())
-                .bind(id.to_string())
-                .bind(position as i64)
-                .bind(speaker_id)
-                .bind(speaker_name)
-                .bind(speaker_key)
-                .bind(&l.text)
-                .bind(&l.media_hash)
-                .bind(&l.caption)
-                .execute(&mut *tx)
-                .await?;
-            }
+            None => super::insert_line(&mut tx, id, position, l).await?,
         }
     }
     sqlx::query("UPDATE messages SET content = ?, edited_at = ? WHERE id = ?")

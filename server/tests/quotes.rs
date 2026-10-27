@@ -1086,20 +1086,28 @@ async fn changing_a_speaker_drops_that_lines_awards() {
         .map(|l| l.id)
         .collect();
     let mut lines = same_lines(&m);
-    // Line 1: sam -> alex (a raw change). Line 2: the same plain name, only recased by the client.
+    // Line 1: sam -> alex (a different member). Line 2: the same plain name, recased and respaced.
     lines[0]["speaker_id"] = json!(f.alex);
-    lines[1]["speaker_name"] = json!("  A Friend ");
+    lines[1]["speaker_name"] = json!("  a   FRIEND ");
     let r = f.put(&f.alex_t, m.id, json!({ "lines": lines })).await;
     assert_eq!(r.status(), 200);
     assert_eq!(f.awards_on(ids[0]).await, 0);
     assert_eq!(
         f.awards_on(ids[1]).await,
         1,
-        "an unchanged speaker keeps its awards"
+        "a recased name is the same speaker"
+    );
+    let edited: Message = r.json().await.unwrap();
+    assert_eq!(
+        edited.quote.as_ref().unwrap().lines[1]
+            .speaker_name
+            .as_deref(),
+        Some("a   FRIEND"),
+        "the new spelling is stored"
     );
 
-    // A plain name changed to another plain name drops them too.
-    let mut lines = same_lines(&r.json::<Message>().await.unwrap());
+    // A real rename drops them too.
+    let mut lines = same_lines(&edited);
     lines[1]["speaker_name"] = json!("Someone Else");
     assert_eq!(
         f.put(&f.alex_t, m.id, json!({ "lines": lines }))
@@ -1108,6 +1116,19 @@ async fn changing_a_speaker_drops_that_lines_awards() {
         200
     );
     assert_eq!(f.awards_on(ids[1]).await, 0);
+
+    // So does switching between a member and a name.
+    f.award(ids[0], f.sam).await;
+    let mut lines = same_lines(&edited);
+    lines[0]["speaker_id"] = json!(null);
+    lines[0]["speaker_name"] = json!("alex");
+    assert_eq!(
+        f.put(&f.alex_t, m.id, json!({ "lines": lines }))
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(f.awards_on(ids[0]).await, 0);
 }
 
 #[tokio::test]
@@ -1183,6 +1204,24 @@ async fn only_the_poster_edits() {
         .await
         .unwrap();
     assert_eq!(f.put(&f.alex_t, msg_id, body.clone()).await.status(), 400);
+    // A poster who has left the server can't edit.
+    sqlx::query("DELETE FROM server_members WHERE server_id = ? AND user_id = ?")
+        .bind(f.server.to_string())
+        .bind(f.alex.to_string())
+        .execute(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        f.put(&f.alex_t, m.id, body.clone()).await.status(),
+        403,
+        "left the server"
+    );
+    sqlx::query("INSERT INTO server_members (server_id, user_id, joined_at) VALUES (?, ?, '2026-01-01T00:00:00.000Z')")
+        .bind(f.server.to_string())
+        .bind(f.alex.to_string())
+        .execute(&f.app.db)
+        .await
+        .unwrap();
     // A deleted quote is gone.
     assert_eq!(f.delete(&f.alex_t, m.id).await.status(), 204);
     assert_eq!(f.put(&f.alex_t, m.id, body).await.status(), 404);
@@ -1367,10 +1406,24 @@ async fn deleting_a_quote_clears_reactions_awards_and_replies() {
             _ => continue,
         }
     }
-    deleted.sort_by_key(|d| d.0.to_string());
-    let mut want = vec![(m.id, None), (r1, Some(m.id)), (r2, Some(m.id))];
+    assert_eq!(deleted[0], (m.id, None), "the quote's event comes first");
+    let mut replies: Vec<_> = deleted[1..].to_vec();
+    replies.sort_by_key(|d| d.0.to_string());
+    let mut want = vec![(r1, Some(m.id)), (r2, Some(m.id))];
     want.sort_by_key(|d| d.0.to_string());
-    assert_eq!(deleted, want);
+    assert_eq!(replies, want);
+    // No event for the reply that was already deleted (or anything else).
+    let extra = tokio::time::timeout(Duration::from_millis(300), async {
+        loop {
+            if let Some(ServerFrame::Event(Event::MessageDeleted { message_id, .. })) =
+                next_frame(&mut ws).await
+            {
+                return message_id;
+            }
+        }
+    })
+    .await;
+    assert!(extra.is_err(), "no fourth MessageDeleted: {extra:?}");
     // The quote reads back as deleted, without lines.
     let page: Vec<Message> =
         get_json(&f.app, &f.sam_t, &format!("/channels/{}/messages", f.ch.id)).await;

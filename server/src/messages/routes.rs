@@ -5,7 +5,7 @@ use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{
-    ChannelKind, EditMessageRequest, Message, MessageKind, SendMessageRequest,
+    Channel, ChannelKind, EditMessageRequest, Message, MessageKind, SendMessageRequest,
 };
 use serde::Deserialize;
 use sqlx::SqlitePool;
@@ -298,16 +298,20 @@ async fn send(
 }
 
 /// Load a live message the caller can see and authored. Outsiders get 404, others' messages 403.
-pub(crate) async fn own_message(db: &SqlitePool, me: UserId, id: MessageId) -> AppResult<Message> {
+pub(crate) async fn own_message(
+    db: &SqlitePool,
+    me: UserId,
+    id: MessageId,
+) -> AppResult<(Message, Channel)> {
     let msg = load(db, Some(me), id).await?.ok_or(AppError::NotFound)?;
-    channel_for(db, me, msg.channel_id).await?;
+    let channel = channel_for(db, me, msg.channel_id).await?;
     if msg.deleted {
         return Err(AppError::NotFound);
     }
     if msg.author_id != Some(me) {
         return Err(AppError::Forbidden);
     }
-    Ok(msg)
+    Ok((msg, channel))
 }
 
 async fn edit(
@@ -319,7 +323,7 @@ async fn edit(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests);
     }
-    let mut msg = own_message(&s.db, me, id).await?;
+    let (mut msg, _) = own_message(&s.db, me, id).await?;
     if msg.quote.is_some() {
         return Err(AppError::BadRequest(
             "quotes can't be edited like messages".into(),
@@ -360,7 +364,7 @@ async fn remove(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests);
     }
-    let msg = own_message(&s.db, me, id).await?;
+    let (msg, _) = own_message(&s.db, me, id).await?;
     let is_quote = msg.quote.is_some();
     // A quote's delete also drops counts (reactions, awards): publish in commit order.
     let _order = if is_quote {
