@@ -90,6 +90,7 @@ async fn start(
 
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    let overdue = ending::end_if_overdue(&mut tx, server).await?;
     if live_in(&mut tx, server).await?.is_some() {
         return Err(AppError::Conflict(
             "There's already a Quote of the Year vote on in this server.".into(),
@@ -129,6 +130,9 @@ async fn start(
             .await?;
     }
     tx.commit().await?;
+    if let Some(ended) = overdue {
+        ending::announce(&s, ended).await;
+    }
     let published = publish(&s, id, |event| Event::QotyStarted { event }).await;
     answer(&s, id, published).await
 }
@@ -328,6 +332,8 @@ async fn reopen(
             "It's too late to reopen this vote: it ended more than a day ago.".into(),
         ));
     }
+    // Before undoing ours: a quote that wins the overdue vote can't then win this one too.
+    let overdue = ending::end_if_overdue(&mut tx, server).await?;
     if live_in(&mut tx, server).await?.is_some() {
         return Err(AppError::Conflict(
             "There's already a Quote of the Year vote on in this server.".into(),
@@ -343,6 +349,9 @@ async fn reopen(
     .execute(&mut *tx)
     .await?;
     tx.commit().await?;
+    if let Some(ended) = overdue {
+        ending::announce(&s, ended).await;
+    }
     for (channel_id, message_id) in cards {
         s.hub
             .publish(

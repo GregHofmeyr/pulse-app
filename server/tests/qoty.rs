@@ -1413,3 +1413,84 @@ async fn the_sweeper_ends_votes_on_time() {
     }
     assert_eq!(f.cards(f.ch.id).await.len(), 1);
 }
+
+// ---------- review round 2 ----------
+
+#[tokio::test]
+async fn a_failing_boot_sweep_does_not_keep_the_server_down() {
+    let f = fixture().await;
+    let (e, _, _) = past_its_deadline(&f).await;
+    // Every ending fails.
+    f.sql(
+        "CREATE TRIGGER boom BEFORE UPDATE ON qoty_events BEGIN SELECT RAISE(ABORT, 'boom'); END;",
+    )
+    .await;
+    // `spawn_binary_on` waits for /health: the server came up despite the sweep failing.
+    let _server = spawn_binary_on(f.app.cfg.db_url.clone(), &[], None).await;
+    let reason: Option<String> =
+        sqlx::query_scalar("SELECT end_reason FROM qoty_events WHERE id = ?")
+            .bind(e.id.to_string())
+            .fetch_one(&f.app.db)
+            .await
+            .unwrap();
+    assert_eq!(reason, None);
+}
+
+#[tokio::test]
+async fn an_overdue_vote_does_not_block_the_next_start() {
+    let f = fixture().await;
+    let (e, a, _) = past_its_deadline(&f).await;
+    let mut ws = hello(&f.app, &f.alex_t).await;
+    let r = f.start(&f.alex_t, this_year() - 1, None).await;
+    assert_eq!(
+        r.status(),
+        200,
+        "the overdue vote is ended first, not in the way"
+    );
+    let reason: Option<String> =
+        sqlx::query_scalar("SELECT end_reason FROM qoty_events WHERE id = ?")
+            .bind(e.id.to_string())
+            .fetch_one(&f.app.db)
+            .await
+            .unwrap();
+    assert_eq!(reason.as_deref(), Some("time"));
+    let cards = f.cards(f.ch.id).await;
+    assert_eq!(cards.len(), 1);
+    assert_eq!(cards[0].qoty_card.as_ref().unwrap().message_id, Some(a));
+    // Everyone hears the ending (card, then QotyEnded) before the new start.
+    let got: Vec<&'static str> = seen(&mut ws)
+        .await
+        .iter()
+        .map(|s| match s {
+            Seen::Card(_) => "card",
+            Seen::Ended(_) => "ended",
+            Seen::Started(_) => "started",
+            Seen::Updated(_) => "updated",
+            Seen::Deleted(_) => "deleted",
+        })
+        .collect();
+    assert_eq!(got, vec!["card", "ended", "started"]);
+}
+
+#[tokio::test]
+async fn an_overdue_vote_does_not_block_a_reopen() {
+    let f = fixture().await;
+    let (early, _, _) = two_options(&f).await;
+    f.ended(&f.alex_t, early.id).await;
+    let r = f.start(&f.alex_t, this_year() - 1, Some(60)).await;
+    assert_eq!(r.status(), 200);
+    let timed: QotyEvent = r.json().await.unwrap();
+    f.sql(&format!(
+        "UPDATE qoty_events SET ends_at = '2000-01-01T00:00:00.000Z' WHERE id = '{}'",
+        timed.id
+    ))
+    .await;
+    assert_eq!(f.reopen(&f.sam_t, early.id, None).await.status(), 200);
+    let reason: Option<String> =
+        sqlx::query_scalar("SELECT end_reason FROM qoty_events WHERE id = ?")
+            .bind(timed.id.to_string())
+            .fetch_one(&f.app.db)
+            .await
+            .unwrap();
+    assert_eq!(reason.as_deref(), Some("time"));
+}

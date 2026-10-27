@@ -150,6 +150,27 @@ async fn post_card(
     system::insert(tx, channel, content, payload).await
 }
 
+/// On `tx`, end the server's live vote by time if its deadline has passed but no sweep has ended
+/// it yet, so it doesn't stand in the way of a start or reopen. The caller announces the result
+/// after commit, under the same `in_order` guard.
+pub(crate) async fn end_if_overdue(
+    tx: &mut SqliteConnection,
+    server: ServerId,
+) -> AppResult<Option<Ended>> {
+    let live: Option<(String, Option<String>)> = sqlx::query_as(
+        "SELECT id, ends_at FROM qoty_events WHERE server_id = ? AND ended_at IS NULL",
+    )
+    .bind(server.to_string())
+    .fetch_optional(&mut *tx)
+    .await?;
+    match live {
+        Some((id, ends_at)) if super::past(ends_at.as_deref()) => {
+            finish(tx, parse_id(&id)?, QotyEndReason::Time, None, &now()).await
+        }
+        _ => Ok(None),
+    }
+}
+
 /// Publish a committed ending: its cards, then `QotyEnded`. Under the caller's `in_order` guard.
 pub(crate) async fn announce(s: &AppState, ended: Ended) -> Option<QotyEvent> {
     for message in ended.cards {
