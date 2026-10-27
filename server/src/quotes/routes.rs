@@ -473,10 +473,10 @@ async fn search(
             .flatten()
             .any(|f| f.to_lowercase().contains(&needle))
         {
+            found.push(message);
             if found.len() == limit {
                 break;
             }
-            found.push(message);
         }
     }
     drop(lines);
