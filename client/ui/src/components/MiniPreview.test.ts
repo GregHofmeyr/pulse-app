@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { flushSync, mount, tick, unmount } from 'svelte'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { compile } from 'svelte/compiler'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn()
@@ -178,6 +181,41 @@ describe('mini-preview', () => {
     Object.assign(mini, { setPointerCapture: capture, releasePointerCapture: vi.fn(), hasPointerCapture: () => true })
     return { mini, open: mini.querySelector<HTMLElement>('.open')!, capture }
   }
+
+  it('floats_over_the_side_panels_at_the_corners_of_the_area_it_belongs_to', async () => {
+    // fixed (an ancestor's overflow:hidden doesn't clip it), above panel content (z 0-2) and below
+    // every popup, menu and dialog (z 5+)
+    const src = readFileSync(resolve(__dirname, 'MiniPreview.svelte'), 'utf8')
+    const css = compile(src, { filename: 'MiniPreview.svelte', css: 'external', cssHash: () => 'svelte-test' }).css!.code
+    const style = document.createElement('style')
+    style.textContent = css
+    document.head.append(style)
+    try {
+      document.body.innerHTML = '<div class="mini-preview tl svelte-test" id="m"></div>'
+      const cs = getComputedStyle(document.getElementById('m')!)
+      expect(cs.position).toBe('fixed')
+      expect(cs.zIndex).toBe('4')
+      expect(cs.top).toBe('calc(var(--area-top) + 68px)')
+      expect(cs.left).toBe('calc(var(--area-left) + 16px)')
+    } finally {
+      style.remove()
+      document.body.innerHTML = ''
+    }
+    // the corners follow the area (the call or chat panel), on mount and as the window resizes
+    await streamApi.watch('V1', 'U2')
+    let rect = { left: 280, top: 52, right: 1024, bottom: 792 }
+    vi.spyOn(document.body, 'getBoundingClientRect').mockImplementation(() => ({ ...rect, width: rect.right - rect.left, height: rect.bottom - rect.top, x: rect.left, y: rect.top, toJSON() {} }) as DOMRect)
+    vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1280)
+    vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800)
+    mountMini()
+    const mini = q('.mini-preview')!
+    const v = (n: string) => mini.style.getPropertyValue(n)
+    expect([v('--area-top'), v('--area-left'), v('--area-right'), v('--area-bottom')]).toEqual(['52px', '280px', '256px', '8px'])
+    rect = { left: 8, top: 52, right: 1272, bottom: 792 } // full view hid the side panels
+    window.dispatchEvent(new Event('resize'))
+    flushSync()
+    expect([v('--area-left'), v('--area-right')]).toEqual(['8px', '8px'])
+  })
 
   it('the_preview_is_a_plain_box_with_an_open_button_and_a_separate_x', async () => {
     await streamApi.watch('V1', 'U2')
