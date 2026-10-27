@@ -136,6 +136,7 @@ async fn emoji_reactions_and_media_end_to_end() {
         content: "hello".into(),
         reply_to_id: None,
         nonce: None,
+        thread_root_id: None,
     };
     let msg = api.send_message(&alex, chan.id, &req).await.unwrap();
 

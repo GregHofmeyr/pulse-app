@@ -2,12 +2,15 @@
 import type { Channel } from "./Channel";
 import type { ChannelId } from "./ChannelId";
 import type { CustomEmoji } from "./CustomEmoji";
+import type { LineId } from "./LineId";
 import type { Member } from "./Member";
 import type { Message } from "./Message";
 import type { MessageId } from "./MessageId";
 import type { Mute } from "./Mute";
+import type { QotyEvent } from "./QotyEvent";
 import type { Server } from "./Server";
 import type { ServerId } from "./ServerId";
+import type { SpeakerLink } from "./SpeakerLink";
 import type { StreamEndReason } from "./StreamEndReason";
 import type { StreamInfo } from "./StreamInfo";
 import type { User } from "./User";
@@ -19,8 +22,20 @@ export type Event = { "t": "MessageCreated", "d": { message: Message, nonce: str
  * Who wrote it and whom it mentioned, so clients can take it back out of their
  * unread and mention counts.
  */
-author_id: UserId | null, mentions: Array<UserId>, } } | { "t": "ChannelCreated", "d": { channel: Channel, } } | { "t": "ServerCreated", "d": { server: Server, } } | { "t": "MemberJoined", "d": { server_id: ServerId, member: Member, } } | { "t": "Typing", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceJoined", "d": { channel_id: ChannelId, user_id: UserId, 
+author_id: UserId | null, mentions: Array<UserId>, 
+/**
+ * Set when the deleted message was a reply: the quote whose thread it was in.
+ */
+thread_root_id: MessageId | null, } } | { "t": "ChannelCreated", "d": { channel: Channel, } } | { "t": "ServerCreated", "d": { server: Server, } } | { "t": "MemberJoined", "d": { server_id: ServerId, member: Member, } } | { "t": "Typing", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceJoined", "d": { channel_id: ChannelId, user_id: UserId, 
 /**
  * The joiner's current mute/deafen (they may have declared it before the join landed).
  */
-flags: VoiceFlags, } } | { "t": "VoiceLeft", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceStateChanged", "d": { channel_id: ChannelId, user_id: UserId, flags: VoiceFlags, } } | { "t": "UserCreated", "d": { user: User, } } | { "t": "PresenceChanged", "d": { user_id: UserId, online: boolean, last_seen_at: string | null, } } | { "t": "GroupMembersChanged", "d": { channel_id: ChannelId, user_ids: Array<UserId>, } } | { "t": "ChannelUpdated", "d": { channel: Channel, } } | { "t": "ChannelRemoved", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "ReadStateUpdated", "d": { user_id: UserId, channel_id: ChannelId, last_read_message_id: MessageId | null, } } | { "t": "MutesChanged", "d": { user_id: UserId, mutes: Array<Mute>, } } | { "t": "ConversationVisibility", "d": { user_id: UserId, channel_id: ChannelId, hidden: boolean, } } | { "t": "StreamStarted", "d": { stream: StreamInfo, } } | { "t": "StreamUpdated", "d": { stream: StreamInfo, } } | { "t": "StreamEnded", "d": { channel_id: ChannelId, user_id: UserId, reason: StreamEndReason, } } | { "t": "ViewersChanged", "d": { channel_id: ChannelId, user_id: UserId, viewers: Array<UserId>, } } | { "t": "EmojiCreated", "d": { emoji: CustomEmoji, } } | { "t": "EmojiUpdated", "d": { emoji: CustomEmoji, } } | { "t": "EmojiDeleted", "d": { emoji: CustomEmoji, } } | { "t": "ReactionAdded", "d": { channel_id: ChannelId, message_id: MessageId, emoji: string, user_id: UserId, count: number, } } | { "t": "ReactionRemoved", "d": { channel_id: ChannelId, message_id: MessageId, emoji: string, user_id: UserId, count: number, } } | { "t": "FrequentEmoji", "d": { user_id: UserId, frequent_emoji: Array<string>, } };
+flags: VoiceFlags, } } | { "t": "VoiceLeft", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceStateChanged", "d": { channel_id: ChannelId, user_id: UserId, flags: VoiceFlags, } } | { "t": "UserCreated", "d": { user: User, } } | { "t": "PresenceChanged", "d": { user_id: UserId, online: boolean, last_seen_at: string | null, } } | { "t": "GroupMembersChanged", "d": { channel_id: ChannelId, user_ids: Array<UserId>, } } | { "t": "ChannelUpdated", "d": { channel: Channel, } } | { "t": "ChannelRemoved", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "ReadStateUpdated", "d": { user_id: UserId, channel_id: ChannelId, last_read_message_id: MessageId | null, } } | { "t": "MutesChanged", "d": { user_id: UserId, mutes: Array<Mute>, } } | { "t": "ConversationVisibility", "d": { user_id: UserId, channel_id: ChannelId, hidden: boolean, } } | { "t": "StreamStarted", "d": { stream: StreamInfo, } } | { "t": "StreamUpdated", "d": { stream: StreamInfo, } } | { "t": "StreamEnded", "d": { channel_id: ChannelId, user_id: UserId, reason: StreamEndReason, } } | { "t": "ViewersChanged", "d": { channel_id: ChannelId, user_id: UserId, viewers: Array<UserId>, } } | { "t": "EmojiCreated", "d": { emoji: CustomEmoji, } } | { "t": "EmojiUpdated", "d": { emoji: CustomEmoji, } } | { "t": "EmojiDeleted", "d": { emoji: CustomEmoji, } } | { "t": "ReactionAdded", "d": { channel_id: ChannelId, message_id: MessageId, emoji: string, user_id: UserId, count: number, } } | { "t": "ReactionRemoved", "d": { channel_id: ChannelId, message_id: MessageId, emoji: string, user_id: UserId, count: number, } } | { "t": "FrequentEmoji", "d": { user_id: UserId, frequent_emoji: Array<string>, } } | { "t": "QuoteAwardChanged", "d": { channel_id: ChannelId, message_id: MessageId, line_id: LineId, user_id: UserId, given: boolean, count: number, 
+/**
+ * The counted awarders, oldest first.
+ */
+awarders: Array<UserId>, } } | { "t": "ThreadSeen", "d": { user_id: UserId, channel_id: ChannelId, root_id: MessageId, last_seen_id: MessageId, 
+/**
+ * How many of their unread mentions in that thread this cleared.
+ */
+mentions_cleared: number, } } | { "t": "SpeakerLinksChanged", "d": { server_id: ServerId, links: Array<SpeakerLink>, } } | { "t": "QotyStarted", "d": { event: QotyEvent, } } | { "t": "QotyUpdated", "d": { event: QotyEvent, } } | { "t": "QotyEnded", "d": { event: QotyEvent, } };

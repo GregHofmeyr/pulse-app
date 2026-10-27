@@ -50,3 +50,5 @@ id!(ServerId);
 id!(ChannelId);
 id!(MessageId);
 id!(RoleId);
+id!(LineId);
+id!(QotyEventId);

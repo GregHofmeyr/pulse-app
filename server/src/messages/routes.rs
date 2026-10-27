@@ -74,6 +74,9 @@ fn from_row(r: Row) -> AppResult<Message> {
         deleted: deleted_at.is_some(),
         mentions: vec![],
         reactions: vec![],
+        thread_root_id: None,
+        quote: None,
+        qoty_card: None,
     })
 }
 
@@ -165,10 +168,24 @@ async fn send(
                 "voice channels have no messages".into(),
             ));
         }
-        (ChannelKind::Text, Some(server)) if !is_server_member(&s.db, server, me).await? => {
+        (kind, Some(server))
+            if kind.is_server_chat() && !is_server_member(&s.db, server, me).await? =>
+        {
             return Err(AppError::Forbidden);
         }
         _ => {}
+    }
+    // Threads (replies to a quote) arrive with the quotes routes; until then none can be started,
+    // and a quotes channel holds quotes only.
+    if req.thread_root_id.is_some() {
+        return Err(AppError::BadRequest(
+            "replies to quotes aren't supported yet".into(),
+        ));
+    }
+    if ch.kind == ChannelKind::Quotes {
+        return Err(AppError::BadRequest(
+            "post a quote here; replies go in its thread".into(),
+        ));
     }
     let content = clean(&req.content)?;
     if req
@@ -213,6 +230,9 @@ async fn send(
         deleted: false,
         mentions: mentioned.clone(),
         reactions: vec![],
+        thread_root_id: None,
+        quote: None,
+        qoty_card: None,
     };
     // One transaction: the message, its mentions and your read point land together or not at all.
     let mut tx = crate::db::begin_write(&s.db).await?;
@@ -370,6 +390,7 @@ async fn remove(
                     .await?
                     .remove(&id)
                     .unwrap_or_default(),
+                thread_root_id: None,
             },
         )
         .await;

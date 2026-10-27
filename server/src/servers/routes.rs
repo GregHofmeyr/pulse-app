@@ -68,13 +68,21 @@ async fn insert_channel(
     position: i64,
 ) -> AppResult<Channel> {
     let id = ChannelId::new();
-    sqlx::query("INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES (?, ?, ?, ?, ?, ?)")
+    // Quotes channels hold one reaction per person per quote (replies and cards are exempt: see
+    // `reactions::toggle`); everything else reacts freely.
+    let reaction_mode = if kind == ChannelKind::Quotes {
+        "one_per_person"
+    } else {
+        "normal"
+    };
+    sqlx::query("INSERT INTO channels (id, server_id, kind, name, position, created_at, reaction_mode) VALUES (?, ?, ?, ?, ?, ?, ?)")
         .bind(id.to_string())
         .bind(server.map(|s| s.to_string()))
         .bind(kind.as_str())
         .bind(name)
         .bind(position)
         .bind(now())
+        .bind(reaction_mode)
         .execute(&mut *tx)
         .await?;
     Ok(Channel {
@@ -232,12 +240,13 @@ async fn join(
     .rows_affected();
     if added > 0 {
         // Start at "all read": no wall of old unreads in a server you just joined.
-        let text: Vec<String> =
-            sqlx::query_scalar("SELECT id FROM channels WHERE server_id = ? AND kind = 'text'")
-                .bind(id.to_string())
-                .fetch_all(&mut *tx)
-                .await?;
-        for ch in text {
+        let chat: Vec<String> = sqlx::query_scalar(
+            "SELECT id FROM channels WHERE server_id = ? AND kind IN ('text', 'quotes')",
+        )
+        .bind(id.to_string())
+        .fetch_all(&mut *tx)
+        .await?;
+        for ch in chat {
             crate::reads::init_point(&mut tx, me, ch.parse().map_err(anyhow::Error::from)?).await?;
         }
     }
@@ -308,7 +317,7 @@ async fn create_channel(
     }
     if req.kind.is_private() {
         return Err(AppError::BadRequest(
-            "server channels are text or voice".into(),
+            "server channels are text, voice or quotes".into(),
         ));
     }
     let name = clean_name(&req.name)?;
@@ -331,7 +340,7 @@ async fn create_channel(
     .fetch_one(&mut *tx)
     .await?;
     let ch = insert_channel(&mut tx, Some(id), req.kind, Some(&name), pos).await?;
-    if req.kind == ChannelKind::Text {
+    if req.kind.is_server_chat() {
         // Everyone in the server starts at "all read" (the channel is empty).
         let members: Vec<String> =
             sqlx::query_scalar("SELECT user_id FROM server_members WHERE server_id = ?")

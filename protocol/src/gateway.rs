@@ -3,10 +3,10 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::ids::{ChannelId, MessageId, ServerId, UserId};
+use crate::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
-    Channel, CustomEmoji, Member, Message, Mute, Person, ReadState, Server, StreamEndReason,
-    StreamInfo, User,
+    Channel, CustomEmoji, Member, Message, Mute, Person, QotyEvent, ReadState, Server, SpeakerLink,
+    StreamEndReason, StreamInfo, User,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -94,6 +94,12 @@ pub struct Ready {
     /// Your most used emoji (standard as Unicode, custom as `custom:<id>`), best first.
     #[serde(default)]
     pub frequent_emoji: Vec<String>,
+    /// Every server's Quote of the Year votes that are open, or ended and still reopenable.
+    #[serde(default)]
+    pub qoty: Vec<QotyEvent>,
+    /// Every server's plain-name speaker links.
+    #[serde(default)]
+    pub speaker_links: Vec<SpeakerLink>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -133,6 +139,9 @@ pub enum Event {
         /// unread and mention counts.
         author_id: Option<UserId>,
         mentions: Vec<UserId>,
+        /// Set when the deleted message was a reply: the quote whose thread it was in.
+        #[serde(default)]
+        thread_root_id: Option<MessageId>,
     },
     ChannelCreated {
         channel: Channel,
@@ -245,6 +254,39 @@ pub enum Event {
         user_id: UserId,
         frequent_emoji: Vec<String>,
     },
+    /// A quote line's awards changed. `count` and `awarders` are the new absolute state.
+    QuoteAwardChanged {
+        channel_id: ChannelId,
+        message_id: MessageId,
+        line_id: LineId,
+        user_id: UserId,
+        given: bool,
+        count: u32,
+        /// The counted awarders, oldest first.
+        awarders: Vec<UserId>,
+    },
+    /// Only to the user's own sessions: they have read a quote's thread up to `last_seen_id`.
+    ThreadSeen {
+        user_id: UserId,
+        channel_id: ChannelId,
+        root_id: MessageId,
+        last_seen_id: MessageId,
+        /// How many of their unread mentions in that thread this cleared.
+        mentions_cleared: u32,
+    },
+    SpeakerLinksChanged {
+        server_id: ServerId,
+        links: Vec<SpeakerLink>,
+    },
+    QotyStarted {
+        event: QotyEvent,
+    },
+    QotyUpdated {
+        event: QotyEvent,
+    },
+    QotyEnded {
+        event: QotyEvent,
+    },
 }
 
 impl Event {
@@ -260,7 +302,9 @@ impl Event {
             | Self::VoiceLeft { channel_id, .. }
             | Self::VoiceStateChanged { channel_id, .. }
             | Self::ReactionAdded { channel_id, .. }
-            | Self::ReactionRemoved { channel_id, .. } => Some(*channel_id),
+            | Self::ReactionRemoved { channel_id, .. }
+            | Self::QuoteAwardChanged { channel_id, .. }
+            | Self::ThreadSeen { channel_id, .. } => Some(*channel_id),
             Self::ChannelCreated { channel } => Some(channel.id),
             Self::GroupMembersChanged { channel_id, .. }
             | Self::ChannelRemoved { channel_id, .. }
@@ -281,7 +325,11 @@ impl Event {
             | Self::EmojiCreated { .. }
             | Self::EmojiUpdated { .. }
             | Self::EmojiDeleted { .. }
-            | Self::FrequentEmoji { .. } => None,
+            | Self::FrequentEmoji { .. }
+            | Self::SpeakerLinksChanged { .. }
+            | Self::QotyStarted { .. }
+            | Self::QotyUpdated { .. }
+            | Self::QotyEnded { .. } => None,
         }
     }
 
@@ -292,6 +340,7 @@ impl Event {
             | Self::ReadStateUpdated { user_id, .. }
             | Self::MutesChanged { user_id, .. }
             | Self::FrequentEmoji { user_id, .. }
+            | Self::ThreadSeen { user_id, .. }
             | Self::ConversationVisibility { user_id, .. } => Some(*user_id),
             _ => None,
         }
@@ -388,6 +437,8 @@ mod tests {
             streams: vec![],
             custom_emoji: vec![],
             frequent_emoji: vec![],
+            qoty: vec![],
+            speaker_links: vec![],
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");
@@ -426,5 +477,98 @@ mod tests {
     fn stream_role_is_a_letter() {
         assert_eq!(serde_json::to_string(&StreamRole::V).unwrap(), "\"v\"");
         assert_eq!(serde_json::to_string(&StreamRole::A).unwrap(), "\"a\"");
+    }
+
+    /// A pre-quotes server's `Ready` and `Message` (and a delete event) still parse.
+    #[test]
+    fn frames_without_the_quotes_fields_parse() {
+        let mut v = serde_json::to_value(Ready {
+            me: User {
+                id: UserId::new(),
+                username: "a".into(),
+                avatar_hash: None,
+            },
+            servers: vec![],
+            channels: vec![],
+            members: vec![],
+            dm_members: vec![],
+            voice: vec![],
+            people: vec![],
+            read_states: vec![],
+            mutes: vec![],
+            hidden: vec![],
+            latest: vec![],
+            streams: vec![],
+            custom_emoji: vec![],
+            frequent_emoji: vec![],
+            qoty: vec![],
+            speaker_links: vec![],
+        })
+        .unwrap();
+        let o = v.as_object_mut().unwrap();
+        o.remove("qoty");
+        o.remove("speaker_links");
+        let ready: Ready = serde_json::from_value(v).unwrap();
+        assert!(ready.qoty.is_empty() && ready.speaker_links.is_empty());
+
+        let (c, m_id) = (ChannelId::new(), MessageId::new());
+        let m: Message = serde_json::from_str(&format!(
+            r#"{{"id":"{m_id}","channel_id":"{c}","author_id":null,"kind":"normal",
+            "content":"hi","reply_to_id":null,"created_at":"2026-10-01T00:00:00.000Z",
+            "edited_at":null,"deleted":false}}"#
+        ))
+        .unwrap();
+        assert!(m.thread_root_id.is_none() && m.quote.is_none() && m.qoty_card.is_none());
+
+        let e: Event = serde_json::from_str(&format!(
+            r#"{{"t":"MessageDeleted","d":{{"channel_id":"{c}","message_id":"{m_id}",
+            "author_id":null,"mentions":[]}}}}"#
+        ))
+        .unwrap();
+        assert!(matches!(
+            e,
+            Event::MessageDeleted {
+                thread_root_id: None,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn quote_events_are_scoped_like_reactions() {
+        let (c, u) = (ChannelId::new(), UserId::new());
+        let award = Event::QuoteAwardChanged {
+            channel_id: c,
+            message_id: MessageId::new(),
+            line_id: LineId::new(),
+            user_id: u,
+            given: true,
+            count: 1,
+            awarders: vec![u],
+        };
+        assert_eq!((award.channel_id(), award.only_for()), (Some(c), None));
+        let seen = Event::ThreadSeen {
+            user_id: u,
+            channel_id: c,
+            root_id: MessageId::new(),
+            last_seen_id: MessageId::new(),
+            mentions_cleared: 2,
+        };
+        assert_eq!((seen.channel_id(), seen.only_for()), (Some(c), Some(u)));
+        let links = Event::SpeakerLinksChanged {
+            server_id: ServerId::new(),
+            links: vec![],
+        };
+        assert_eq!((links.channel_id(), links.only_for()), (None, None));
+    }
+
+    #[test]
+    fn quotes_is_a_server_chat_kind() {
+        use crate::rest::ChannelKind;
+        assert_eq!(ChannelKind::parse("quotes"), Some(ChannelKind::Quotes));
+        assert_eq!(ChannelKind::Quotes.as_str(), "quotes");
+        assert!(ChannelKind::Quotes.is_server_chat() && ChannelKind::Text.is_server_chat());
+        assert!(!ChannelKind::Voice.is_server_chat() && !ChannelKind::Dm.is_server_chat());
+        assert!(!ChannelKind::Group.is_server_chat() && !ChannelKind::Quotes.is_private());
     }
 }

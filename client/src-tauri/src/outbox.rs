@@ -93,6 +93,7 @@ impl Outbox {
                 content: item.content.clone(),
                 reply_to_id: item.reply_to,
                 nonce: Some(item.nonce.clone()),
+                thread_root_id: None,
             };
             match api.send_message(token, item.channel, &body).await {
                 Ok(m) => {

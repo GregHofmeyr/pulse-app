@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::ids::{ChannelId, MessageId, ServerId, UserId};
+use crate::ids::{ChannelId, LineId, MessageId, QotyEventId, ServerId, UserId};
 
 /// A `Debug` that names every field but prints the secret ones as `<redacted>`, for types that
 /// carry passwords, codes, tokens or tickets: debug output can end up in a log. Exported for the
@@ -137,6 +137,8 @@ pub enum ChannelKind {
     Voice,
     Dm,
     Group,
+    /// A server channel for quotes: posts are quotes, replies live in threads.
+    Quotes,
 }
 
 impl ChannelKind {
@@ -146,6 +148,7 @@ impl ChannelKind {
             Self::Voice => "voice",
             Self::Dm => "dm",
             Self::Group => "group",
+            Self::Quotes => "quotes",
         }
     }
 
@@ -155,6 +158,7 @@ impl ChannelKind {
             "voice" => Self::Voice,
             "dm" => Self::Dm,
             "group" => Self::Group,
+            "quotes" => Self::Quotes,
             _ => return None,
         })
     }
@@ -162,6 +166,11 @@ impl ChannelKind {
     /// DMs and groups are private: only their members may see anything about them.
     pub fn is_private(self) -> bool {
         matches!(self, Self::Dm | Self::Group)
+    }
+
+    /// Kinds that hold messages and belong to a server: its members may read and post.
+    pub fn is_server_chat(self) -> bool {
+        matches!(self, Self::Text | Self::Quotes)
     }
 }
 
@@ -222,6 +231,15 @@ pub struct Message {
     /// In first-reacted order. `me` is per caller; in gateway events it is always false.
     #[serde(default)]
     pub reactions: Vec<ReactionSummary>,
+    /// Set on a reply: the quote (a message of a quotes channel) whose thread it belongs to.
+    #[serde(default)]
+    pub thread_root_id: Option<MessageId>,
+    /// Set when this message is a quote.
+    #[serde(default)]
+    pub quote: Option<Quote>,
+    /// Set when this is a Quote of the Year result card.
+    #[serde(default)]
+    pub qoty_card: Option<QotyCard>,
 }
 
 /// One emoji on a message: a Unicode emoji or `custom:<id>`.
@@ -306,6 +324,9 @@ pub struct SendMessageRequest {
     pub content: String,
     pub reply_to_id: Option<MessageId>,
     pub nonce: Option<String>,
+    /// Post into this quote's thread (quotes channels only).
+    #[serde(default)]
+    pub thread_root_id: Option<MessageId>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
@@ -589,4 +610,192 @@ mod tests {
         assert!(shown[5].contains("signed_out: 2"), "{}", shown[5]);
         assert!(shown[7].contains("mfa_required"), "{}", shown[7]);
     }
+}
+
+// ---------- Quotes ----------
+
+/// The quote part of a message in a quotes channel.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Quote {
+    pub lines: Vec<QuoteLine>,
+    pub year: i32,
+    /// `YYYY-MM-DD`, set only for imported quotes.
+    pub said_on: Option<String>,
+    pub reply_count: u32,
+    /// The newest reply in the thread.
+    pub last_reply_id: Option<MessageId>,
+    /// Per caller: the newest reply you have seen (gateway events carry `None`).
+    pub replies_seen: Option<MessageId>,
+    /// Years this quote won Quote of the Year.
+    pub wins: Vec<i32>,
+}
+
+/// One line of a quote: a speaker (a member or a plain name) and either text or an image.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct QuoteLine {
+    pub id: LineId,
+    pub speaker_id: Option<UserId>,
+    pub speaker_name: Option<String>,
+    pub text: Option<String>,
+    pub media: Option<LineMedia>,
+    pub caption: Option<String>,
+    pub awards: u32,
+    /// The counted awarders, oldest first; `awards == awarders.len()`.
+    pub awarders: Vec<UserId>,
+    /// Per caller: you gave this line an award (gateway events carry `false`).
+    pub awarded: bool,
+}
+
+/// An image line's picture.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct LineMedia {
+    pub hash: String,
+    /// The first frame, set only for an animated image.
+    pub still_hash: Option<String>,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// A line as sent by a client. `id` is set when editing a line that already exists.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct NewQuoteLine {
+    pub id: Option<LineId>,
+    pub speaker_id: Option<UserId>,
+    pub speaker_name: Option<String>,
+    pub text: Option<String>,
+    pub media_hash: Option<String>,
+    pub caption: Option<String>,
+}
+
+/// `POST /channels/{id}/quotes`. `today` is the client's local `YYYY-MM-DD`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct PostQuoteRequest {
+    pub lines: Vec<NewQuoteLine>,
+    pub today: Option<String>,
+    pub nonce: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct EditQuoteRequest {
+    pub lines: Vec<NewQuoteLine>,
+}
+
+/// A plain name a server's members agreed means one of them.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SpeakerLink {
+    pub server_id: ServerId,
+    pub name_key: String,
+    pub name: String,
+    pub user_id: UserId,
+    pub linked_by: UserId,
+    pub linked_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct LinkSpeakerRequest {
+    pub name: String,
+    pub user_id: UserId,
+}
+
+/// "I have read this quote's thread up to here."
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ThreadSeenRequest {
+    pub message_id: MessageId,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum QotyEndReason {
+    Early,
+    Time,
+}
+
+/// A Quote of the Year vote for one year in one server.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct QotyEvent {
+    pub id: QotyEventId,
+    pub server_id: ServerId,
+    pub year: i32,
+    pub started_by: UserId,
+    pub started_at: String,
+    /// `None` = open until ended.
+    pub ends_at: Option<String>,
+    pub ended_at: Option<String>,
+    pub ended_by: Option<UserId>,
+    pub end_reason: Option<QotyEndReason>,
+    /// Until when an ended vote can be reopened.
+    pub reopen_until: Option<String>,
+    pub options: Vec<QotyOption>,
+    /// Members who have voted.
+    pub voters: u32,
+    /// Members of the server.
+    pub members: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct QotyOption {
+    pub message: Message,
+    pub added_by: Option<UserId>,
+    pub votes: u32,
+    /// In vote order; `votes == voters.len()`.
+    pub voters: Vec<UserId>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct StartQotyRequest {
+    pub year: i32,
+    /// `None` = open until ended.
+    pub minutes: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ReopenQotyRequest {
+    pub minutes: Option<u32>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct QotyVoteRequest {
+    pub message_id: MessageId,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct AddQotyOptionRequest {
+    pub message_id: MessageId,
+}
+
+/// The payload of a Quote of the Year result card (a system message).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct QotyCard {
+    pub event_id: QotyEventId,
+    pub year: i32,
+    /// `None` when nobody voted.
+    pub message_id: Option<MessageId>,
+    pub votes: u32,
+    pub voters: Vec<UserId>,
+    pub reason: QotyEndReason,
+}
+
+/// How many times a speaker (a member, or a plain name) appears.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SpeakerCount {
+    pub user_id: Option<UserId>,
+    pub name: Option<String>,
+    pub count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Leaderboard {
+    pub winners: Vec<LeaderboardWin>,
+    pub top_year: Vec<Message>,
+    pub top_all_time: Vec<Message>,
+    pub most_quoted: Vec<SpeakerCount>,
+    pub most_awarded: Vec<SpeakerCount>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct LeaderboardWin {
+    pub year: i32,
+    pub message: Message,
+    pub votes: u32,
+    pub voters: Vec<UserId>,
 }

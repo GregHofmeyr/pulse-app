@@ -6,9 +6,11 @@ import type { DmMembers } from "./DmMembers";
 import type { Message } from "./Message";
 import type { Mute } from "./Mute";
 import type { Person } from "./Person";
+import type { QotyEvent } from "./QotyEvent";
 import type { ReadState } from "./ReadState";
 import type { Server } from "./Server";
 import type { ServerMembers } from "./ServerMembers";
+import type { SpeakerLink } from "./SpeakerLink";
 import type { StreamInfo } from "./StreamInfo";
 import type { User } from "./User";
 import type { VoiceRoom } from "./VoiceRoom";
@@ -45,4 +47,12 @@ custom_emoji: Array<CustomEmoji>,
 /**
  * Your most used emoji (standard as Unicode, custom as `custom:<id>`), best first.
  */
-frequent_emoji: Array<string>, };
+frequent_emoji: Array<string>, 
+/**
+ * Every server's Quote of the Year votes that are open, or ended and still reopenable.
+ */
+qoty: Array<QotyEvent>, 
+/**
+ * Every server's plain-name speaker links.
+ */
+speaker_links: Array<SpeakerLink>, };

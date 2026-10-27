@@ -250,6 +250,14 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, mutes: e.d.mutes }
     case 'FrequentEmoji':
       return { ...s, frequentEmoji: e.d.frequent_emoji }
+    // Quotes: the client starts handling these with the quotes UI.
+    case 'QuoteAwardChanged':
+    case 'ThreadSeen':
+    case 'SpeakerLinksChanged':
+    case 'QotyStarted':
+    case 'QotyUpdated':
+    case 'QotyEnded':
+      return s
     case 'ConversationVisibility': {
       const { [e.d.channel_id]: _x, ...rest } = s.hidden
       return { ...s, hidden: e.d.hidden ? { ...rest, [e.d.channel_id]: true } : rest }
@@ -338,6 +346,7 @@ export function pendingMessage(p: Pending, channelId: string, meId: string): Mes
   return {
     id: `pending:${p.nonce}`, channel_id: channelId, author_id: meId, kind: 'normal', content: p.content,
     reply_to_id: p.reply_to_id, created_at: p.created_at, edited_at: null, deleted: false, mentions: [], reactions: [],
+    thread_root_id: null, quote: null, qoty_card: null,
   }
 }
 

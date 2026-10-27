@@ -8,7 +8,7 @@ use livekit_api::access_token::{AccessToken, TokenVerifier, VideoGrants};
 use livekit_api::webhooks::WebhookReceiver;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
-use pulse_protocol::rest::{Channel, ChannelKind, StreamEndReason, VoiceTokenResponse};
+use pulse_protocol::rest::{Channel, StreamEndReason, VoiceTokenResponse};
 use sqlx::SqlitePool;
 
 use crate::AppState;
@@ -34,8 +34,10 @@ async fn token(
     Path(id): Path<ChannelId>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
     let ch = channel_for(&s.db, me, id).await?;
-    if ch.kind == ChannelKind::Text {
-        return Err(AppError::BadRequest("text channels have no voice".into()));
+    if ch.kind.is_server_chat() {
+        return Err(AppError::BadRequest(
+            "text and quotes channels have no voice".into(),
+        ));
     }
     if !may_join(&s.db, me, &ch).await? {
         return Err(AppError::Forbidden);
@@ -77,7 +79,7 @@ async fn token(
 /// server's voice channels (same rule as posting). Checked when a token is issued and again on
 /// every LiveKit join (`revoke::admit`), so a token stops working once access is lost.
 pub async fn may_join(db: &SqlitePool, user: UserId, ch: &Channel) -> AppResult<bool> {
-    if ch.kind == ChannelKind::Text {
+    if ch.kind.is_server_chat() {
         return Ok(false);
     }
     if ch.kind.is_private() && !is_channel_member(db, user, ch.id).await? {

@@ -70,7 +70,7 @@ async fn send(socket: &mut WebSocket, frame: &ServerFrame) -> bool {
 }
 
 /// Oldest client protocol this server accepts.
-pub const MIN_CLIENT_VERSION: u32 = 1;
+pub const MIN_CLIENT_VERSION: u32 = 2;
 
 enum Auth {
     Ok(UserId, String),
@@ -213,6 +213,9 @@ pub async fn build_ready(
         streams: live,
         custom_emoji: crate::emoji::for_ready(db).await?,
         frequent_emoji: crate::emoji::frequent(db, me, crate::emoji::FREQUENT).await?,
+        // Filled in with the quotes routes.
+        qoty: vec![],
+        speaker_links: vec![],
     })
 }
 

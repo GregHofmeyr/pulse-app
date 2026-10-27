@@ -10,7 +10,7 @@ use axum::routing::put;
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, UserId};
-use pulse_protocol::rest::{Channel, ChannelKind, ReactionSummary};
+use pulse_protocol::rest::{Channel, ReactionSummary};
 use sqlx::{SqliteConnection, SqlitePool};
 use unicode_segmentation::UnicodeSegmentation;
 
@@ -210,7 +210,9 @@ pub async fn toggle(
     let ch = visible_message(&s.db, me, msg).await?;
     let channel_id = ch.id;
     match (ch.kind, ch.server_id) {
-        (ChannelKind::Text, Some(server)) if !is_server_member(&s.db, server, me).await? => {
+        (kind, Some(server))
+            if kind.is_server_chat() && !is_server_member(&s.db, server, me).await? =>
+        {
             return Err(AppError::Forbidden);
         }
         _ => {}

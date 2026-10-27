@@ -32,7 +32,7 @@ const spin = ce('E1', 'spin', A, S)
 const pog = ce('E2', 'pog', P, null)
 const msg = (over: Partial<Message> = {}): Message => ({
   id: 'M1', channel_id: 'C1', author_id: 'U2', kind: 'normal', content: 'look <a:spin:E1> <:pog:E2>',
-  reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], ...over,
+  reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, ...over,
 })
 
 function load(m: Message) {

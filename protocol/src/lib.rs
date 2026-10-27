@@ -57,9 +57,29 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::CustomEmoji::export_all(&cfg)?;
     rest::CreateEmojiRequest::export_all(&cfg)?;
     rest::RenameEmojiRequest::export_all(&cfg)?;
+    rest::Quote::export_all(&cfg)?;
+    rest::QuoteLine::export_all(&cfg)?;
+    rest::LineMedia::export_all(&cfg)?;
+    rest::NewQuoteLine::export_all(&cfg)?;
+    rest::PostQuoteRequest::export_all(&cfg)?;
+    rest::EditQuoteRequest::export_all(&cfg)?;
+    rest::SpeakerLink::export_all(&cfg)?;
+    rest::LinkSpeakerRequest::export_all(&cfg)?;
+    rest::ThreadSeenRequest::export_all(&cfg)?;
+    rest::QotyEndReason::export_all(&cfg)?;
+    rest::QotyEvent::export_all(&cfg)?;
+    rest::QotyOption::export_all(&cfg)?;
+    rest::StartQotyRequest::export_all(&cfg)?;
+    rest::ReopenQotyRequest::export_all(&cfg)?;
+    rest::QotyVoteRequest::export_all(&cfg)?;
+    rest::AddQotyOptionRequest::export_all(&cfg)?;
+    rest::QotyCard::export_all(&cfg)?;
+    rest::SpeakerCount::export_all(&cfg)?;
+    rest::Leaderboard::export_all(&cfg)?;
+    rest::LeaderboardWin::export_all(&cfg)?;
     Ok(())
 }
 
 /// Gateway protocol version this build speaks. Bump when an old client would misbehave
 /// against a new server; the server tells older clients to update (close 4005).
-pub const PROTOCOL_VERSION: u32 = 1;
+pub const PROTOCOL_VERSION: u32 = 2;

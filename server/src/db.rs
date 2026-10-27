@@ -5,7 +5,7 @@ use anyhow::Context;
 use sqlx::sqlite::{
     SqliteConnectOptions, SqliteJournalMode, SqlitePool, SqlitePoolOptions, SqliteSynchronous,
 };
-use sqlx::{Sqlite, Transaction};
+use sqlx::{ConnectOptions, Connection, Sqlite, Transaction};
 
 /// Open (creating if needed) the database in WAL mode with FKs on, and run migrations.
 pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
@@ -17,11 +17,16 @@ pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
         .synchronous(SqliteSynchronous::Normal)
         .foreign_keys(true)
         .busy_timeout(std::time::Duration::from_secs(5));
+    // Migrations get their own connection with foreign keys OFF: rebuilding a table (0008 does)
+    // means dropping it, and with them on that would cascade-delete everything pointing at it.
+    // Each migration checks `foreign_key_check` itself where it matters.
+    let mut migrator = opts.clone().foreign_keys(false).connect().await?;
+    sqlx::migrate!("./migrations").run(&mut migrator).await?;
+    migrator.close().await?;
     let pool = SqlitePoolOptions::new()
         .max_connections(8)
         .connect_with(opts)
         .await?;
-    sqlx::migrate!("./migrations").run(&pool).await?;
     Ok(pool)
 }
 

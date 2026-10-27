@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState, addPending, pendingMessage, removePending, restoreUnsent, type Pending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
+import type { Event } from './protocol/Event'
 import type { Channel } from './protocol/Channel'
 import type { StreamInfo } from './protocol/StreamInfo'
 
@@ -10,7 +11,7 @@ const ch = (id: string, kind: Channel['kind'] = 'text', server_id: string | null
 })
 const msg = (id: string, channel_id = 'C1', content = 'hi', author_id: string | null = 'U2'): Message => ({
   id, channel_id, author_id, kind: 'normal', content, reply_to_id: null,
-  created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [],
+  created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null,
 })
 const me = { id: 'U1', username: 'alex', avatar_hash: null }
 const ready = (over: Partial<Ready> = {}): Ready => ({
@@ -27,7 +28,7 @@ const ready = (over: Partial<Ready> = {}): Ready => ({
   latest: [],
   streams: [],
   custom_emoji: [],
-  frequent_emoji: [],
+  frequent_emoji: [], qoty: [], speaker_links: [],
   ...over,
 })
 
@@ -79,7 +80,7 @@ describe('applyEvent', () => {
     let s = applyEvent(base(), { t: 'MessageCreated', d: { message: msg('M1'), nonce: null } }, 0)
     s = applyEvent(s, { t: 'MessageUpdated', d: { message: { ...msg('M1'), content: 'edited', edited_at: 'x' } } }, 0)
     expect(s.messages['C1'][0].content).toBe('edited')
-    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M1', author_id: 'U2', mentions: [] } }, 0)
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M1', author_id: 'U2', mentions: [], thread_root_id: null } }, 0)
     expect(s.messages['C1'][0].deleted).toBe(true)
     expect(s.messages['C1'][0].content).toBe('')
   })
@@ -148,7 +149,7 @@ describe('deleting an unread message', () => {
       read_states: [{ channel_id: 'D1', last_read_message_id: 'M1', unread: 2, mentions: 1 }],
     }))
   const del = (id: string, author: string | null, mentions: string[] = []) =>
-    ({ t: 'MessageDeleted', d: { channel_id: 'D1', message_id: id, author_id: author, mentions } }) as const
+    ({ t: 'MessageDeleted', d: { channel_id: 'D1', message_id: id, author_id: author, mentions, thread_root_id: null } }) as const
 
   it('takes it back out of the unread and mention counts', () => {
     let s = applyEvent(dmReady(), del('M3', 'U2', ['U1']), 0)
@@ -443,5 +444,17 @@ describe('unsent messages', () => {
   it('pending_message_renders_as_you', () => {
     const m = pendingMessage(unsent('a'), 'C1', 'U1')
     expect(m).toMatchObject({ author_id: 'U1', channel_id: 'C1', kind: 'normal', content: 'text a', deleted: false, created_at: '2026-10-01T00:00:00.000Z' })
+  })
+})
+
+describe('quotes events (handled by the quotes UI later)', () => {
+  it('leave the state alone', () => {
+    const s = applyReady(emptyState(), ready())
+    const events: Event[] = [
+      { t: 'QuoteAwardChanged', d: { channel_id: 'C1', message_id: 'M1', line_id: 'L1', user_id: 'U2', given: true, count: 1, awarders: ['U2'] } },
+      { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'C1', root_id: 'M1', last_seen_id: 'M2', mentions_cleared: 0 } },
+      { t: 'SpeakerLinksChanged', d: { server_id: 'S1', links: [] } },
+    ]
+    for (const e of events) expect(applyEvent(s, e, 0)).toBe(s)
   })
 })

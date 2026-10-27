@@ -82,6 +82,9 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         deleted: false,
         mentions: vec![],
         reactions: vec![],
+        thread_root_id: None,
+        quote: None,
+        qoty_card: None,
     }
 }
 
@@ -131,6 +134,7 @@ async fn audience_table() {
                 message_id: MessageId::new(),
                 author_id: Some(a_id),
                 mentions: vec![],
+                thread_root_id: None,
             },
             set(&[a_id, b_id]),
         ),
@@ -220,7 +224,7 @@ async fn bad_token_closed_4001() {
     let app = spawn().await;
     let mut ws = connect(&app).await;
     ws.send(Ws::text(
-        r#"{"op":"Hello","d":{"token":"garbage","client_version":1}}"#,
+        r#"{"op":"Hello","d":{"token":"garbage","client_version":2}}"#,
     ))
     .await
     .unwrap();
@@ -402,24 +406,30 @@ async fn slow_client_does_not_block_others() {
 async fn outdated_client_is_told_to_update() {
     let app = spawn().await;
     let (_, token) = register(&app, "alex").await;
-    let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
-        .await
-        .unwrap()
-        .0;
-    // a client from before versioning: no client_version at all
-    let hello = json!({ "op": "Hello", "d": { "token": token } }).to_string();
-    ws.send(Ws::text(hello)).await.unwrap();
-    let code = loop {
-        match tokio::time::timeout(Duration::from_secs(3), ws.next())
+    // a client from before versioning (no client_version at all), and the last build before
+    // quotes channels (version 1, which can't parse their kind)
+    for d in [
+        json!({ "token": token }),
+        json!({ "token": token, "client_version": 1 }),
+    ] {
+        let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
             .await
             .unwrap()
-        {
-            Some(Ok(Ws::Close(Some(f)))) => break u16::from(f.code),
-            Some(Ok(_)) => continue,
-            other => panic!("expected a close frame, got {other:?}"),
-        }
-    };
-    assert_eq!(code, 4005);
+            .0;
+        let hello = json!({ "op": "Hello", "d": d }).to_string();
+        ws.send(Ws::text(hello)).await.unwrap();
+        let code = loop {
+            match tokio::time::timeout(Duration::from_secs(3), ws.next())
+                .await
+                .unwrap()
+            {
+                Some(Ok(Ws::Close(Some(f)))) => break u16::from(f.code),
+                Some(Ok(_)) => continue,
+                other => panic!("expected a close frame, got {other:?}"),
+            }
+        };
+        assert_eq!(code, 4005, "{d}");
+    }
 }
 
 /// Ready loads every server's channels and members, and every conversation's members, in a

@@ -2,6 +2,8 @@
 import type { ChannelId } from "./ChannelId";
 import type { MessageId } from "./MessageId";
 import type { MessageKind } from "./MessageKind";
+import type { QotyCard } from "./QotyCard";
+import type { Quote } from "./Quote";
 import type { ReactionSummary } from "./ReactionSummary";
 import type { UserId } from "./UserId";
 
@@ -13,4 +15,16 @@ mentions: Array<UserId>,
 /**
  * In first-reacted order. `me` is per caller; in gateway events it is always false.
  */
-reactions: Array<ReactionSummary>, };
+reactions: Array<ReactionSummary>, 
+/**
+ * Set on a reply: the quote (a message of a quotes channel) whose thread it belongs to.
+ */
+thread_root_id: MessageId | null, 
+/**
+ * Set when this message is a quote.
+ */
+quote: Quote | null, 
+/**
+ * Set when this is a Quote of the Year result card.
+ */
+qoty_card: QotyCard | null, };

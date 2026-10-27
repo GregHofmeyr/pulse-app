@@ -7,7 +7,7 @@ import type { Message } from './protocol/Message'
 const user = (id: string, username: string) => ({ id, username, avatar_hash: null })
 const msg = (id: string, channel: string, author: string | null, extra: Partial<Message> = {}): Message => ({
   id, channel_id: channel, author_id: author, kind: 'normal', content: 'x', reply_to_id: null,
-  created_at: '2026-10-08T10:00:00Z', edited_at: null, deleted: false, mentions: [], reactions: [], ...extra,
+  created_at: '2026-10-08T10:00:00Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, ...extra,
 })
 function ready(over: Partial<Ready> = {}): Ready {
   return {
@@ -36,7 +36,7 @@ function ready(over: Partial<Ready> = {}): Ready {
     latest: [msg('M3', 'DM1', 'U1'), msg('M9', 'G1', 'U2')],
     streams: [],
     custom_emoji: [],
-    frequent_emoji: [],
+    frequent_emoji: [], qoty: [], speaker_links: [],
     ...over,
   }
 }

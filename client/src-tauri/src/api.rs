@@ -1714,6 +1714,7 @@ mod tests {
                 content: format!("m{i}"),
                 reply_to_id: None,
                 nonce: Some(format!("n{i}")),
+                thread_root_id: None,
             };
             api.send_message(&token, general.id, &req).await.unwrap();
         }
@@ -1742,6 +1743,7 @@ mod tests {
                     content: "tpyo".into(),
                     reply_to_id: None,
                     nonce: None,
+                    thread_root_id: None,
                 },
             )
             .await
@@ -2201,6 +2203,7 @@ mod tests {
                     content: "hi".into(),
                     reply_to_id: None,
                     nonce: None,
+                    thread_root_id: None,
                 },
             )
             .await
