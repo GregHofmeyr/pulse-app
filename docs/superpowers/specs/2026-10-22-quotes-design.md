@@ -39,7 +39,7 @@ and a little game-like.
 
 - **Badges.** Quote awards and Quote of the Year wins are recorded now; the badges push turns them into badges,
   backdated (§7).
-- **Importing the Discord history.** Later, with a script like the owner's Discord-to-Root work. This design keeps the
+- **Importing the Discord history.** Later, with an import script. This design keeps the
   door open (§3.4).
 - A yearly awards show (most time in voice, most streamed, …). Idea parked by the owner; it needs extra tracking.
 - Quote search beyond the leaderboard in §4.3, exporting.
