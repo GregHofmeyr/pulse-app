@@ -218,10 +218,13 @@ describe('animated emoji in the picker and autocomplete', () => {
     load(msg())
     cmp = mount(Composer, { target: document.body, props: { placeholder: 'Message', draftKey: `K${Math.random()}`, replyingTo: null, onCancelReply: () => {}, onSend: () => {}, onTyping: () => {} } })
     flushSync()
-    const box = document.querySelector('textarea')!
-    box.value = ':spi'
-    box.setSelectionRange(4, 4)
-    box.dispatchEvent(new Event('input', { bubbles: true }))
+    const box = document.querySelector<HTMLElement>('[role="textbox"]')!
+    box.replaceChildren(document.createTextNode(':spi'))
+    const r = document.createRange()
+    r.setStart(box.firstChild!, 4)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(r)
+    box.dispatchEvent(new InputEvent('input', { bubbles: true }))
     flushSync()
     const img = document.querySelector<HTMLImageElement>('[role=option] img')!
     expect(src(img)).toBe(url(S))

@@ -9,7 +9,9 @@
   import EmojiPopover from './EmojiPopover.svelte'
   import { customToken, savedTone, search, twemojiUrl, withSkin, type Std } from '../lib/emoji'
   import { applyEmoji, emojiQuery, insertAt } from '../lib/emojiComplete'
-  import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
+  import { animatedEmoji, stillSrc, wireEmoji } from '../lib/animate.svelte'
+  import { offsetOf, positionAt, renderInto, serialize } from '../lib/composerDom'
+  import { mediaUrl } from '../lib/emoji'
   import { typingThrottle } from '../lib/markdown'
   import { applyMention, mentionQuery, suggest, type Mentionable } from '../lib/mentions'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
@@ -42,7 +44,56 @@
     else drafts.delete(draftKey)
   })
   let lastTyping: number | null = null
-  let box: HTMLTextAreaElement
+  // The message box is editable HTML so custom emoji can show as images; `text` (what's sent and
+  // what drafts keep) stays the truth, and the box is rebuilt from it whenever we change it.
+  let box: HTMLElement
+  const MAX = 4000
+  /** Where the selection was in the text, kept while focus is elsewhere (e.g. in the emoji picker). */
+  let sel = { start: 0, end: 0 }
+  /** A Shift-pick moved the caret while focus was in the picker: put it there when the box gets focus back. */
+  let caretPending = false
+  function focused() {
+    if (!caretPending) return
+    caretPending = false
+    placeCaret(sel.start)
+  }
+  /** Animation wiring of the images now in the box. */
+  let unwire: (() => void)[] = []
+  const lookup = (id: string) => app.state.customEmoji[id]
+  function render(next: string) {
+    unwire.forEach((u) => u())
+    unwire = renderInto(box, next, lookup).flatMap((img) =>
+      img.dataset.anim ? [wireEmoji(img, mediaUrl(img.dataset.anim), img.getAttribute('src') ?? '')] : [],
+    )
+  }
+  /** The selection as text offsets, if it's in the box. */
+  function readSel(): { start: number; end: number } | null {
+    const s = getSelection()
+    if (!s?.rangeCount || !box?.contains(s.anchorNode)) return null
+    const r = s.getRangeAt(0)
+    return { start: offsetOf(box, r.startContainer, r.startOffset), end: offsetOf(box, r.endContainer, r.endOffset) }
+  }
+  function placeCaret(at: number) {
+    const p = positionAt(box, at)
+    const r = document.createRange()
+    r.setStart(p.node, p.offset)
+    r.collapse(true)
+    const s = getSelection()
+    s?.removeAllRanges()
+    s?.addRange(r)
+  }
+  $effect(() => {
+    render(untrack(() => text))
+    const onSel = () => {
+      const r = readSel()
+      if (r) sel = r
+    }
+    document.addEventListener('selectionchange', onSel)
+    return () => {
+      document.removeEventListener('selectionchange', onSel)
+      unwire.forEach((u) => u())
+    }
+  })
 
   // @-mention popup: open while the caret sits right after an @token that matches someone.
   let caret = $state(0)
@@ -71,16 +122,24 @@
   let emojiBtn: HTMLButtonElement | undefined = $state()
 
   function syncCaret() {
-    caret = box?.selectionStart ?? text.length
+    const r = readSel()
+    if (r) sel = r
+    caret = r?.start ?? text.length
     pick = 0
   }
 
+  /** Replace the text (an emoji or mention picked, a line added, a paste) and put the caret at `r.caret`.
+   *  Without `focus` (a Shift-pick in the picker) focus stays where it is and the caret waits in `sel`. */
   async function setText(r: { text: string; caret: number }, focus = true) {
-    text = r.text
-    caret = r.caret
+    text = r.text.slice(0, MAX)
+    caret = Math.min(r.caret, text.length)
+    sel = { start: caret, end: caret }
+    render(text)
     await Promise.resolve()
-    box.setSelectionRange(r.caret, r.caret)
-    if (focus) box.focus()
+    caretPending = !focus
+    if (!focus) return
+    box.focus()
+    placeCaret(caret)
   }
 
   const choose = (name: string) => setText(applyMention(text, caret, name))
@@ -90,7 +149,19 @@
   // A `keep` pick (Shift) leaves the picker open and the textarea unfocused, with the caret advanced.
   function pickEmoji(e: Std | CustomEmoji, { keep }: { keep: boolean }) {
     if (!keep) picking = false
-    void setText(insertAt(text, box.selectionStart, box.selectionEnd, emojiText(e)), !keep)
+    void setText(insertAt(text, sel.start, sel.end, emojiText(e)), !keep)
+  }
+
+  /** `insert` as typed (no trailing space) over the selection. */
+  function insertRaw(insert: string) {
+    const r = readSel() ?? sel
+    void setText({ text: text.slice(0, r.start) + insert + text.slice(r.end), caret: r.start + insert.length })
+  }
+  // Only text comes in: a paste or drop of HTML would put markup in the box.
+  function paste(e: ClipboardEvent) {
+    e.preventDefault()
+    const t = e.clipboardData?.getData('text/plain') ?? ''
+    if (t) insertRaw(t.replace(/\r\n?/g, '\n'))
   }
 
   function key(e: KeyboardEvent) {
@@ -111,19 +182,34 @@
         return
       }
     }
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && e.shiftKey && !e.isComposing) {
+      // a newline in the text itself (the browser would wrap lines in elements)
+      e.preventDefault()
+      insertRaw('\n')
+      return
+    }
+    if (e.key === 'Enter' && !e.isComposing) {
       e.preventDefault()
       const t = text.trim()
       if (!t) return
       onSend(t)
-      text = ''
+      void setText({ text: '', caret: 0 })
       lastTyping = null
       return
     }
     if (e.key === 'Escape' && replyingTo) onCancelReply()
   }
 
-  function input() {
+  function input(e: Event) {
+    const next = serialize(box)
+    if (next.length > MAX) {
+      // over the limit: back to what fits, caret at the end of it
+      void setText({ text: next.slice(0, MAX), caret: MAX })
+    } else {
+      text = next
+      // the browser leaves a lone <br> in a box it emptied: clear it, so the placeholder shows
+      if (!next && box.childNodes.length && !(e as InputEvent).isComposing) render('')
+    }
     syncCaret()
     dismissed = null
     const now = Date.now()
@@ -131,8 +217,6 @@
       lastTyping = now
       onTyping()
     }
-    box.style.height = 'auto'
-    box.style.height = Math.min(box.scrollHeight, 200) + 'px'
   }
 
   export function focus() {
@@ -167,7 +251,9 @@
     <div class="replying">Replying to <strong>{replyingTo}</strong>
       <button aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={13} /></button></div>
   {/if}
-  <textarea bind:this={box} bind:value={text} rows="1" {placeholder} aria-label={placeholder} onkeydown={key} oninput={input} onclick={syncCaret} onkeyup={(e) => { if (e.key.startsWith("Arrow") && !shown) syncCaret() }} maxlength="4000"></textarea>
+  <div bind:this={box} class="input" class:empty={!text} contenteditable="true" role="textbox" tabindex="0" aria-multiline="true" aria-label={placeholder} data-placeholder={placeholder}
+    onkeydown={key} oninput={input} onpaste={paste} onfocus={focused} ondrop={(e) => e.preventDefault()} onclick={syncCaret}
+    onkeyup={(e) => { if (e.key.startsWith('Arrow') && !shown) syncCaret() }}></div>
   <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={20} /></button>
   {#if picking && emojiBtn}
     <EmojiPopover anchor={emojiBtn} onPick={pickEmoji} onClose={() => (picking = false)} />
@@ -186,5 +272,8 @@
   .replying { display: flex; align-items: center; gap: 6px; padding: 8px 14px 0; font-size: 12px; color: var(--text-3); }
   .replying strong { color: var(--text-2); }
   .replying button { margin-left: auto; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
-  textarea { width: 100%; box-sizing: border-box; min-height: 48px; max-height: 200px; resize: none; border: 0; background: transparent; padding: 14px 48px 14px 14px; font: inherit; color: var(--text); outline: none; }
+  /* grows with what's in it (images included), up to 200px, then scrolls */
+  .input { width: 100%; box-sizing: border-box; min-height: 48px; max-height: 200px; overflow-y: auto; padding: 14px 48px 14px 14px; color: var(--text); outline: none; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 20px; cursor: text; }
+  .input.empty::before { content: attr(data-placeholder); color: var(--text-3); pointer-events: none; }
+  .input :global(img.emoji) { width: 22px; height: 22px; vertical-align: -5px; margin: 0 1px; object-fit: contain; }
 </style>
