@@ -115,6 +115,19 @@ describe('full view', () => {
     expect(room.setLayer).toHaveBeenLastCalledWith('U2', 'low')
   })
 
+  it('clicking_the_focused_stream_again_returns_to_the_grid_of_all_tiles', async () => {
+    await fullOnSam()
+    expect(q('[data-stream="U2"]')).toBeNull() // focused: the other tiles are hidden
+    const stage = q('.full-view .stage .unfocus')!
+    expect(stage.getAttribute('aria-label')).toBe('Back to all streams')
+    stage.click()
+    flushSync()
+    expect(callView.full).toBeNull()
+    expect(q('.full-view')).toBeNull()
+    expect(q('[data-stream="U2"] video')).not.toBeNull() // the grid, still watching
+    expect(stream.watching).toHaveLength(1)
+  })
+
   it('esc_while_typing_is_left_alone', async () => {
     await fullOnSam()
     const input = document.createElement('input')

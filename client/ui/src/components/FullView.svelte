@@ -76,6 +76,8 @@
   </div>
   <div class="stage">
     {#if watch}<div class="host" {@attach hostVideo(channelId, streamer)}></div>{/if}
+    <!-- the focused stream itself: clicking it again goes back to every tile, like Back -->
+    <button type="button" class="unfocus" aria-label="Back to all streams" onclick={closeFull}></button>
     <StreamDiagOverlay kind="in" />
     {#if reconnecting}<div class="overlay" role="status">Reconnecting…</div>{/if}
   </div>
@@ -100,6 +102,8 @@
   .stop { height: 32px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--danger); color: #fff; font-weight: 700; }
   .stage { position: relative; flex: 1; min-height: 0; }
   .host { position: absolute; inset: 0; }
+  .unfocus { position: absolute; inset: 0; padding: 0; border: 0; background: transparent; cursor: zoom-out; }
+  .unfocus:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .5); color: #fff; font-size: 18px; font-weight: 600; }
   .strip { flex-shrink: 0; padding: 8px 12px; display: flex; gap: 8px; overflow-x: auto; background: var(--bg-1); border-top: 1px solid var(--bg-3); }
