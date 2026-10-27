@@ -288,3 +288,35 @@ describe('ChannelList voice prefetch', () => {
     expect(prefetches()).toBe(0)
   })
 })
+
+describe('ChannelList quotes group', () => {
+  it('creates a quotes channel from the QUOTES group', async () => {
+    const made = { id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 2 }
+    invoke.mockResolvedValue(made)
+    const onSelect = vi.fn()
+    unmount(cmp!)
+    cmp = mount(ChannelList, {
+      target: document.body,
+      props: { serverId: 'S1', activeChannelId: null, voiceChannelId: null, speaking: new Set<string>(), onSelect, onJoinVoice: () => {}, onMessage: () => {}, onVoiceSettings: () => {} },
+    })
+    flushSync()
+    expect([...document.querySelectorAll('.label')].map((l) => l.textContent?.trim())).toContain('QUOTES')
+    document.querySelector<HTMLButtonElement>('button[aria-label="Create quotes channel"]')!.click()
+    await tick()
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="New quotes channel name"]')!
+    input.value = 'Hall of Fame'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    await tick()
+    expect(invoke).toHaveBeenCalledWith('create_channel', { serverId: 'S1', kind: 'quotes', name: 'hall-of-fame' })
+    expect(onSelect).toHaveBeenCalledWith('Q1')
+  })
+
+  it('lists quotes channels under the group and selects one', () => {
+    app.state = applyReady(emptyState(), { ...ready, channels: [...ready.channels, { id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 0 }] })
+    flushSync()
+    const row = [...document.querySelectorAll<HTMLButtonElement>('.row')].find((r) => r.textContent?.includes('quotes'))
+    expect(row).toBeTruthy()
+  })
+})

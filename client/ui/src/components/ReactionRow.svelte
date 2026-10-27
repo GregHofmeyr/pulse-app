@@ -11,12 +11,16 @@
   import EmojiPopover from './EmojiPopover.svelte'
   import Icon from './Icon.svelte'
 
-  let { message, meId, nameOf, onError = () => {} }: {
+  let { message, meId, nameOf, onError = () => {}, onePerPerson = false, suggest = [] }: {
     message: Message
     meId: string
     nameOf: (userId: string | null) => string
     /** Where a failed add/remove is reported (the channel's error line). */
     onError?: (msg: string) => void
+    /** A quote: adding a reaction takes back my other one. */
+    onePerPerson?: boolean
+    /** Reaction keys offered as faded one-click chips (a quote's most-used picks you haven't used on it). */
+    suggest?: string[]
   } = $props()
 
   let tipFor = $state<string | null>(null)
@@ -39,7 +43,7 @@
   }
 
   function toggle(key: string, add: boolean) {
-    void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, add, meId, onError)
+    void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, add, meId, onError, onePerPerson)
   }
 
   let tipReq = 0
@@ -116,7 +120,7 @@
   }
 </script>
 
-{#if !message.deleted && message.reactions.length > 0}
+{#if !message.deleted && (message.reactions.length > 0 || suggest.length > 0)}
   <div class="reactions">
     {#each message.reactions as r (r.emoji)}
       {@const c = r.emoji.startsWith('custom:') ? customOf(r.emoji) : undefined}
@@ -145,6 +149,18 @@
         {#if tipFor === r.emoji && tipText}<span class="tip" id={tipId(r.emoji)} role="tooltip">{tipText}{#if why}<span class="why">{why}</span>{/if}</span>{/if}
       </span>
     {/each}
+    {#each suggest as key (key)}
+      {@const c = key.startsWith('custom:') ? customOf(key) : undefined}
+      {#if !blocked(key)}
+        <button class="chip suggest" type="button" aria-label={c ? `React with :${c.name}:` : `React with ${key}`} onclick={() => toggle(key, true)}>
+          {#if !key.startsWith('custom:')}
+            <img src={twemojiUrl(key)} alt="" draggable="false" />
+          {:else if c?.hash}
+            <img src={stillSrc(c)} alt="" draggable="false" {@attach animatedEmoji(c)} />
+          {/if}
+        </button>
+      {/if}
+    {/each}
     <button class="chip add" type="button" aria-label="Add reaction" data-menu-toggle onclick={(ev) => { anchor = ev.currentTarget; picking = !picking }}>
       <Icon name="smile" size={15} />
     </button>
@@ -164,6 +180,8 @@
   .chip.mine { border-color: var(--accent); background: rgba(139, 156, 255, .15); color: var(--text); }
   .chip img { width: 16px; height: 16px; }
   .gone { color: var(--text-3); font-size: 12px; }
+  .suggest { opacity: .45; padding: 0 6px; }
+  .suggest:hover, .suggest:focus-visible { opacity: .9; }
   .add { padding: 0 6px; }
   .why { display: block; color: var(--text-3); }
   .tip { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 20; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; padding: 4px 8px; border-radius: 6px; background: var(--bg-1); border: 1px solid var(--bg-4); font-size: 12px; color: var(--text); pointer-events: none; }

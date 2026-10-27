@@ -45,11 +45,11 @@
   $effect(() => () => prefetch.cancel())
 
   // inline "new channel" field
-  let adding = $state<'text' | 'voice' | null>(null)
+  let adding = $state<'text' | 'quotes' | 'voice' | null>(null)
   let draft = $state('')
   let addError = $state('')
 
-  function startAdd(kind: 'text' | 'voice') {
+  function startAdd(kind: 'text' | 'quotes' | 'voice') {
     adding = kind
     draft = ''
     addError = ''
@@ -59,12 +59,12 @@
     if (e.key !== 'Enter' || !adding) return
     const kind = adding
     // text channels read nicer as lower-case-with-dashes, like Discord
-    const name = kind === 'text' ? draft.trim().toLowerCase().replace(/\s+/g, '-') : draft.trim()
+    const name = kind !== 'voice' ? draft.trim().toLowerCase().replace(/\s+/g, '-') : draft.trim()
     if (!name) return
     try {
       const c = await api.createChannel(serverId, kind, name)
       adding = null
-      if (kind === 'text') onSelect(c.id)
+      if (kind !== 'voice') onSelect(c.id)
     } catch (err) {
       addError = errorText(err)
     }
@@ -101,6 +101,24 @@
     <button class="row" class:active={c.id === activeChannelId} class:unread={(read?.unread ?? 0) > 0 && !muted} class:muted
       onclick={() => onSelect(c.id)}>
       <span class="ico"><Icon name="hash" size={17} /></span><span class="grow">{c.name}</span>
+      {#if muted}<span class="mic"><Icon name="bellOff" size={13} /></span>{/if}
+      {#if read?.mentions}<span class="pill">{read.mentions}</span>{/if}
+    </button>
+  {/each}
+
+  <div class="label voice">QUOTES
+    {#if member}<button class="add" aria-label="Create quotes channel" onclick={() => startAdd('quotes')}><Icon name="quote" size={14} /></button>{/if}
+  </div>
+  {#if adding === 'quotes'}
+    <input class="new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-quotes" maxlength="64" aria-label="New quotes channel name" />
+    {#if addError}<small class="err">{addError}</small>{/if}
+  {/if}
+  {#each lists.quotes as c (c.id)}
+    {@const read = app.state.reads[c.id]}
+    {@const muted = isMuted(app.state, c, clock.nowIso)}
+    <button class="row" class:active={c.id === activeChannelId} class:unread={(read?.unread ?? 0) > 0 && !muted} class:muted
+      onclick={() => onSelect(c.id)}>
+      <span class="ico"><Icon name="quote" size={17} /></span><span class="grow">{c.name}</span>
       {#if muted}<span class="mic"><Icon name="bellOff" size={13} /></span>{/if}
       {#if read?.mentions}<span class="pill">{read.mentions}</span>{/if}
     </button>

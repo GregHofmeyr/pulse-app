@@ -7,6 +7,7 @@ import type { Message } from '../lib/protocol/Message'
 let releaseOlder: (page: Message[]) => void = () => {}
 const invoke = vi.fn(async (cmd: string, args?: { before?: string | null }): Promise<unknown> => {
   if (cmd === 'list_messages' && args?.before) return new Promise((done) => (releaseOlder = done))
+  if (cmd === 'list_messages') return []
   return undefined
 })
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
@@ -191,5 +192,62 @@ describe('TextChannel: the edit box', () => {
     expect(document.querySelector('[aria-label="Edit message"]')).toBeNull()
     expect(document.activeElement).toBe(document.querySelector('[aria-label="Message #general"]'))
     unmount(c)
+  })
+})
+
+describe('TextChannel: quotes channel', () => {
+  beforeEach(() => {
+    Element.prototype.scrollTo = () => {}
+    localStorage.clear()
+    resetState()
+  })
+  afterEach(() => (document.body.innerHTML = ''))
+  const me = { id: 'U1', username: 'alex', avatar_hash: null }
+  const ready = (kind: 'quotes' | 'text') => ({
+    me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
+    channels: [{ id: 'C1', server_id: 'S1', kind, name: 'quotes', position: 0 }],
+    members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
+    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [],
+  })
+  const quoteMsg: Message = {
+    ...msg(1), author_id: 'U1', content: '“hi” — alex',
+    quote: { lines: [{ id: 'L1', speaker_id: 'U1', speaker_name: null, text: 'hi', media: null, caption: null, awards: 0, awarders: [], awarded: false }], year: 2026, said_on: null, reply_count: 0, last_reply_id: null, replies_seen: null, wins: [] },
+  }
+  const system: Message = { ...msg(2), author_id: null, kind: 'system', content: 'Nobody voted this year.' }
+  const show = (kind: 'quotes' | 'text', list: Message[]) => {
+    app.state = markHistory(addHistory(applyReady(emptyState(), ready(kind)), 'C1', list), 'C1', true)
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    return c
+  }
+
+  it('renders quotes as quote items, system lines as before, and has the quotes header', () => {
+    show('quotes', [quoteMsg, system])
+    expect(document.querySelectorAll('.quote').length).toBe(1)
+    expect(document.querySelector('.line .text')?.textContent).toBe('“hi”')
+    expect(document.body.textContent).toContain('Nobody voted this year.')
+    expect(document.querySelector('button[aria-label="Leaderboard"]')).toBeTruthy()
+    expect([...document.querySelectorAll('button')].some((b) => b.textContent === 'Start Quote of the Year')).toBe(true)
+  })
+
+  it('header buttons call their callbacks', () => {
+    app.state = markHistory(addHistory(applyReady(emptyState(), ready('quotes')), 'C1', []), 'C1', true)
+    const onLeaderboard = vi.fn()
+    const onStartQoty = vi.fn()
+    mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1', onLeaderboard, onStartQoty } })
+    flushSync()
+    document.querySelector<HTMLButtonElement>('button[aria-label="Leaderboard"]')!.click()
+    ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Start Quote of the Year')!.click()
+    expect(onLeaderboard).toHaveBeenCalled()
+    expect(onStartQoty).toHaveBeenCalled()
+  })
+
+  it('has no message composer, and a text channel has no quote header', () => {
+    show('quotes', [])
+    expect(document.querySelector('.composer, [contenteditable]')).toBeNull()
+    document.body.innerHTML = ''
+    show('text', [msg(3)])
+    expect(document.querySelector('button[aria-label="Leaderboard"]')).toBeNull()
+    expect(document.querySelector('[contenteditable]')).toBeTruthy()
   })
 })

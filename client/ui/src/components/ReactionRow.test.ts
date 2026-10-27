@@ -644,4 +644,25 @@ describe('chips you cannot add to', () => {
     await settle()
     expect(calls('add_reaction')).toHaveLength(1)
   })
+
+  it('suggestions are faded and pick one reaction per person', async () => {
+    load(msg())
+    cmp = mount(ReactionRow, { target: document.body, props: { message: cur(), meId: 'U1', nameOf: (id: string | null) => id ?? '', onError, onePerPerson: true, suggest: ['🎉', '❤️'] } })
+    flushSync()
+    const faded = [...document.querySelectorAll<HTMLButtonElement>('.chip.suggest')]
+    expect(faded.map((b) => b.getAttribute('aria-label'))).toEqual(['React with 🎉', 'React with ❤️'])
+    faded[0].click()
+    await settle()
+    expect(calls('add_reaction')).toEqual([['add_reaction', { messageId: 'M1', emoji: '🎉' }]])
+    // my 👍 was given up locally: one reaction per person
+    expect(cur().reactions.find((r) => r.emoji === '👍')?.me).toBe(false)
+    expect(cur().reactions.find((r) => r.emoji === '🎉')?.me).toBe(true)
+  })
+
+  it('suggestions show on a quote with no reactions yet', () => {
+    load(msg({ reactions: [] }))
+    cmp = mount(ReactionRow, { target: document.body, props: { message: cur(), meId: 'U1', nameOf: (id: string | null) => id ?? '', onError, onePerPerson: true, suggest: ['🎉'] } })
+    flushSync()
+    expect(document.querySelectorAll('.chip.suggest').length).toBe(1)
+  })
 })

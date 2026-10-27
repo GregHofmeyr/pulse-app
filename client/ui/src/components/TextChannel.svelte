@@ -2,6 +2,7 @@
   import { tick, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import MessageItem from './MessageItem.svelte'
+  import QuoteItem from './QuoteItem.svelte'
   import Composer from './Composer.svelte'
   import Avatar from './Avatar.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
@@ -13,13 +14,16 @@
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
-  let { channelId, serverId, onAddPeople = () => {}, onLeft = () => {} }: {
+  let { channelId, serverId, onAddPeople = () => {}, onLeft = () => {}, onLeaderboard = () => {}, onStartQoty = () => {} }: {
     channelId: string
     serverId: string | null
     /** DMs/groups: open the people picker. */
     onAddPeople?: () => void
     /** After leaving/closing this conversation. */
     onLeft?: () => void
+    /** Quotes channels: open the leaderboard / start Quote of the Year (wired by the leaderboard and vote tasks). */
+    onLeaderboard?: () => void
+    onStartQoty?: () => void
   } = $props()
 
   const channel = $derived(app.state.channels[channelId])
@@ -171,6 +175,15 @@
     list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' })
   }
 
+  // --- quotes channels ---
+  const isQuotes = $derived(channel?.kind === 'quotes')
+  // The quote whose Edit was pressed; the quote composer opens on it.
+  let editingQuote = $state<Message | null>(null)
+  $effect(() => {
+    void channelId
+    editingQuote = null
+  })
+
   const nameOf = (userId: string | null) => (userId ? displayName(app.state, serverId, userId) : 'Pulse')
 
   function send(text: string) {
@@ -217,9 +230,13 @@
         <button class="title editable" data-tip="Rename group" onclick={startRename}>{title}</button>
       {/if}
     {:else}
-      <Icon name="hash" /> <span class="title">{title}</span>
+      <Icon name={isQuotes ? 'quote' : 'hash'} /> <span class="title">{title}</span>
     {/if}
     <span class="grow"></span>
+    {#if isQuotes}
+      <button class="hbtn" aria-label="Leaderboard" data-tip="Leaderboard" onclick={onLeaderboard}><Icon name="trophy" size={17} /></button>
+      <button class="qoty" onclick={onStartQoty}>Start Quote of the Year</button>
+    {/if}
     {#if isPrivate}
       <button class="hbtn" aria-label="Add people" data-tip="Add people" onclick={onAddPeople}><Icon name="userPlus" size={17} /></button>
     {/if}
@@ -242,6 +259,11 @@
     </div>{/if}
     {#each messages as m, i (m.id)}
       {#if i === newIndex}<div class="newline" role="separator" aria-label="New messages">NEW</div>{/if}
+      {#if isQuotes && m.quote}
+        <!-- no onReply yet: the replies panel supplies it -->
+        <QuoteItem message={m} serverId={serverId ?? ''} meId={app.state.me?.id ?? ''} {nameOf}
+          onEdit={() => (editingQuote = m)} onDelete={() => api.deleteMessage(m.id)} />
+      {:else}
       <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={grouped(i)}
         replyTo={m.reply_to_id ? (byId.get(m.reply_to_id) ?? null) : null}
         mine={m.author_id === app.state.me?.id}
@@ -249,6 +271,7 @@
         onReply={() => (replyTo = m)}
         onEdit={async (c) => { await api.editMessage(m.id, c) }}
         onDelete={() => api.deleteMessage(m.id)} onEditClosed={() => composer?.focus()} />
+      {/if}
     {/each}
     {#each pending as p (p.nonce)}
       <MessageItem message={pendingMessage(p, channelId, app.state.me?.id ?? '')} name={nameOf(app.state.me?.id ?? null)} {nameOf} grouped={false}
@@ -262,8 +285,12 @@
     {#if typers.length}<strong>{typers.join(', ')}</strong> {typers.length > 1 ? 'are' : 'is'} typing…{/if}
   </div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if isQuotes}
+    <!-- the quote composer goes here (it opens on `editingQuote` when set) -->
+  {:else}
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
     onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} />
+  {/if}
 </div>
 
 <style>
@@ -280,6 +307,7 @@
   .grow { flex: 1; }
   .hbtn { width: 32px; height: 32px; border: 0; border-radius: 9px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .hbtn:hover, .hbtn.on { background: var(--bg-3); color: var(--text); }
+  .qoty { height: 30px; padding: 0 12px; border: 0; border-radius: 9px; background: var(--quote-green); color: var(--on-quote-green); font-size: 13px; font-weight: 700; white-space: nowrap; }
   .newline { display: flex; align-items: center; gap: 8px; margin: 6px 18px; color: var(--danger); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
   .newline::before, .newline::after { content: ''; flex: 1; height: 1px; background: var(--danger); opacity: .6; }
   .jump { align-self: center; margin-top: -40px; position: relative; z-index: 2; padding: 6px 12px; border: 0; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; box-shadow: 0 4px 14px rgba(0, 0, 0, .35); }
