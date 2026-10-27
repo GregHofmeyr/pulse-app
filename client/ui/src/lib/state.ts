@@ -70,8 +70,9 @@ export function emptyState(): AppState {
 
 export function applyReady(s: AppState, r: Ready): AppState {
   const channels = Object.fromEntries(r.channels.map((c) => [c.id, c]))
-  // Keep history we've already paged in, for channels that still exist.
-  const messages = Object.fromEntries(Object.entries(s.messages).filter(([id]) => id in channels))
+  // Keep history we've already paged in, for channels that still exist. A detached window goes: with
+  // its marker cleared it would look attached, and the latest page would be merged in with a gap.
+  const messages = Object.fromEntries(Object.entries(s.messages).filter(([id]) => id in channels && s.history[id]?.end !== false))
   const pending = Object.fromEntries(Object.entries(s.pending).filter(([id]) => id in channels))
   return {
     ...s,
@@ -291,7 +292,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const { [c]: _h, ...hidden } = s.hidden
       return {
         ...s,
-        messages: { ...s.messages, [c]: upsertMessage(s.messages[c], withMyQuoteState(m, undefined, s.me?.id)) },
+        // A detached window shows the past: the message waits for the latest to be reloaded (no gap).
+        messages: detached(s, c) ? s.messages : { ...s.messages, [c]: upsertMessage(s.messages[c], withMyQuoteState(m, undefined, s.me?.id)) },
         pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
         typing: withoutTyping(s, c, m.author_id),
         latest: s.channels[c]?.server_id === null ? { ...s.latest, [c]: m } : s.latest,
@@ -311,7 +313,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const prev = s.latest[c]
       // Like the loaded copy (upsertEdited): the edit's reactions say me:false for everyone.
       const latest = prev?.id === m.id ? { ...s.latest, [c]: { ...m, reactions: prev.reactions } } : s.latest
-      if (!s.messages[c]) return latest === s.latest ? s : { ...s, latest } // history never loaded
+      // History never loaded, or a detached window that doesn't hold it (adding it would leave a gap).
+      if (!s.messages[c] || (detached(s, c) && !s.messages[c].some((x) => x.id === m.id))) return latest === s.latest ? s : { ...s, latest }
       return { ...s, latest, messages: { ...s.messages, [c]: upsertEdited(s.messages[c], withMyQuoteState(m, s.messages[c].find((x) => x.id === m.id), s.me?.id)) } }
     }
     case 'MessageDeleted': {
@@ -533,7 +536,8 @@ export const KEEP_ON_LEAVE = 100
  * hold every message ever scrolled through. Older ones become fetchable again on scroll-up. */
 export function trimHistory(s: AppState, channel: string, keep = KEEP_ON_LEAVE): AppState {
   const list = s.messages[channel]
-  if (!list || list.length <= keep) return s
+  // A detached window is never trimmed: its newest messages aren't the channel's latest.
+  if (!list || list.length <= keep || detached(s, channel)) return s
   // Never drop unread messages: ReadStateUpdated recounts unread from what's loaded, and the NEW
   // line needs them. A channel with a read state but no read point is all unread: keep it whole.
   const read = s.reads[channel]
@@ -572,4 +576,38 @@ export function addHistory(s: AppState, channel: string, older: Message[]): AppS
 export function markHistory(s: AppState, channel: string, reachedStart: boolean): AppState {
   const prev = s.history[channel]
   return { ...s, history: { ...s.history, [channel]: { loaded: true, start: reachedStart || !!prev?.start, end: prev?.end ?? true } } }
+}
+
+// --- Detached windows (jump to a message): `history[c].end === false` means the list is a slice of
+// the past, not the latest. Live messages aren't spliced into it (that would leave a gap), it is
+// never trimmed, and paging forward (`appendNewer`) or reloading the latest attaches it again. ---
+
+/** A full page of history, as the server sends it. */
+export const PAGE = 50
+/** An `around` window's share of a full page: older than the target, and newer (the server's split). */
+const AROUND_OLDER = PAGE / 2
+const AROUND_NEWER = PAGE - 1 - PAGE / 2
+
+const detached = (s: AppState, channel: string) => s.history[channel]?.end === false
+
+/** Replace `channel`'s list with a fetched page: the window `around` a message, or (no target) the
+ * latest page. A side shorter than its share reached the channel's start or the latest. */
+export function loadWindow(s: AppState, channel: string, page: Message[], around?: string): AppState {
+  let list: Message[] = []
+  for (const m of page) list = upsertMessage(list, m)
+  const older = around === undefined ? list.length : list.filter((m) => m.id < around).length
+  const newer = around === undefined ? 0 : list.filter((m) => m.id > around).length
+  const start = older < (around === undefined ? PAGE : AROUND_OLDER)
+  const end = around === undefined || newer < AROUND_NEWER
+  return { ...s, messages: { ...s.messages, [channel]: list }, history: { ...s.history, [channel]: { loaded: true, start, end } } }
+}
+
+/** Add a newer page fetched with `after` = the channel's newest message at the time (paging a
+ * detached window forward). Dropped if the list changed meanwhile; a short page reaches the latest. */
+export function appendNewer(s: AppState, channel: string, after: string, page: Message[]): AppState {
+  const list = s.messages[channel]
+  if (!list?.length || list[list.length - 1].id !== after) return s
+  const h = s.history[channel]
+  const next = addHistory(s, channel, page)
+  return { ...next, history: { ...s.history, [channel]: { loaded: true, start: !!h?.start, end: page.length < PAGE } } }
 }

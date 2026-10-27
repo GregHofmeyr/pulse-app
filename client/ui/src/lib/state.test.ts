@@ -766,3 +766,73 @@ describe('quotes', () => {
     expect(s.threads['M1']).toBeUndefined()
   })
 })
+
+describe('detached windows (jump to a message)', () => {
+  const ids = (from: number, n: number) => Array.from({ length: n }, (_, i) => `M${String(from + i).padStart(4, '0')}`)
+  // The server's pages are newest first.
+  const newestFirst = (list: string[]) => list.map((id) => msg(id)).reverse()
+  const withLatest = async () => {
+    const { addHistory } = await import('./state')
+    return markHistory(addHistory(applyReady(emptyState(), ready()), 'C1', newestFirst(ids(900, 50))), 'C1', false)
+  }
+
+  it('a loaded window is detached from the present', async () => {
+    const { loadWindow } = await import('./state')
+    const s = await withLatest()
+    // a full window: 25 older, the target, 24 newer
+    const w = loadWindow(s, 'C1', newestFirst(ids(100, 50)), 'M0125')
+    expect(w.messages['C1'].map((m) => m.id)).toEqual(ids(100, 50)) // replaced, oldest..newest
+    expect(w.history['C1']).toEqual({ loaded: true, start: false, end: false })
+    // near the channel start (only 3 older) and near the latest (only 2 newer)
+    expect(loadWindow(s, 'C1', newestFirst(ids(0, 28)), 'M0003').history['C1']).toEqual({ loaded: true, start: true, end: false })
+    expect(loadWindow(s, 'C1', newestFirst(ids(975, 28)), 'M1000').history['C1']).toEqual({ loaded: true, start: false, end: true })
+    // without a target it is the latest page: attached again
+    expect(loadWindow(w, 'C1', newestFirst(ids(900, 50))).history['C1']).toEqual({ loaded: true, start: false, end: true })
+    expect(loadWindow(w, 'C1', newestFirst(ids(900, 50))).messages['C1'].map((m) => m.id)).toEqual(ids(900, 50))
+  })
+
+  it('appending newer pages reaches the present without duplicates', async () => {
+    const { loadWindow, appendNewer } = await import('./state')
+    let s = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')
+    // a stale page (the list moved on) is dropped
+    expect(appendNewer(s, 'C1', 'M0100', newestFirst(ids(101, 50)))).toBe(s)
+    s = appendNewer(s, 'C1', 'M0149', newestFirst(ids(149, 50))) // overlaps by one
+    expect(s.messages['C1'].map((m) => m.id)).toEqual(ids(100, 99))
+    expect(s.history['C1'].end).toBe(false)
+    s = appendNewer(s, 'C1', 'M0198', newestFirst(ids(199, 10))) // short: the latest is reached
+    expect(s.messages['C1'].map((m) => m.id)).toEqual(ids(100, 109))
+    expect(s.history['C1']).toEqual({ loaded: true, start: false, end: true })
+  })
+
+  it('a live message in a detached window waits for the present', async () => {
+    const { loadWindow } = await import('./state')
+    const w = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')
+    const live = { ...msg('M2000'), mentions: ['U1'] }
+    const s = applyEvent(w, { t: 'MessageCreated', d: { message: live, nonce: null } }, 0)
+    expect(s.messages['C1']).toBe(w.messages['C1']) // no gap in the list
+    expect(s.reads['C1']).toMatchObject({ unread: 1, mentions: 1 })
+    // an edit of a message outside the window doesn't splice it in either
+    const edited = applyEvent(s, { t: 'MessageUpdated', d: { message: { ...live, content: 'edited' } } }, 0)
+    expect(edited.messages['C1']).toBe(w.messages['C1'])
+    // an edit inside the window still applies
+    const inside = applyEvent(s, { t: 'MessageUpdated', d: { message: { ...msg('M0110'), content: 'edited' } } }, 0)
+    expect(inside.messages['C1'].find((m) => m.id === 'M0110')?.content).toBe('edited')
+  })
+
+  it('a detached list is never trimmed', async () => {
+    const { loadWindow, appendNewer, trimHistory } = await import('./state')
+    let s = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')
+    for (let p = 0; p < 3; p++) {
+      const last = s.messages['C1'].at(-1)!.id
+      s = appendNewer(s, 'C1', last, newestFirst(ids(Number(last.slice(1)) + 1, 50)))
+    }
+    expect(s.messages['C1']).toHaveLength(200)
+    expect(trimHistory(s, 'C1')).toBe(s)
+  })
+
+  it('a reconnect drops a detached window, so the latest page is fetched again', async () => {
+    const { loadWindow } = await import('./state')
+    const w = loadWindow(await withLatest(), 'C1', newestFirst(ids(100, 50)), 'M0125')
+    expect(applyReady(w, ready()).messages['C1']).toBeUndefined()
+  })
+})

@@ -7,10 +7,11 @@
   import Composer from './Composer.svelte'
   import Avatar from './Avatar.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
-  import { app, clock } from '../lib/store.svelte'
+  import { app, clock, ui } from '../lib/store.svelte'
+  import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
-  import { addHistory, addOlder, addPending, markHistory, pendingMessage, removePending } from '../lib/state'
+  import { addHistory, addOlder, addPending, appendNewer, loadWindow, markHistory, pendingMessage, removePending } from '../lib/state'
   import { displayName, nextTypingExpiry, stableList, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
@@ -41,6 +42,8 @@
   let fetching: string | null = null
   const history = $derived(app.state.history[channelId])
   const reachedStart = $derived(!!history?.start)
+  /** The list is a window into the past (a jump), not the latest. */
+  const detached = $derived(history?.end === false)
 
   // Fade typing indicators on time, not just on events: one timer for the next expiry, and only
   // while someone is typing (an always-on 1 s interval woke the app all day).
@@ -64,8 +67,10 @@
     fetching = c
     api.listMessages(c).then(
       async (page) => {
-        app.state = markHistory(addHistory(app.state, c, page), c, page.length < 50)
         fetching = null
+        // A jump's window got there first: merging the latest page into it would leave a gap.
+        if (app.state.history[c]?.loaded) return
+        app.state = markHistory(addHistory(app.state, c, page), c, page.length < 50)
         await tick()
         list?.scrollTo({ top: list.scrollHeight })
       },
@@ -80,7 +85,8 @@
   $effect(() => {
     void messages.length
     void pending.length
-    if (!list) return
+    // A detached window's bottom isn't the latest, and a page added below one stays below the view.
+    if (!list || loadingNewer || untrack(() => detached)) return
     const nearBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 120
     if (nearBottom) tick().then(() => list?.scrollTo({ top: list.scrollHeight })) // gone if we unmounted meanwhile
   })
@@ -161,7 +167,8 @@
     const newest = messages.at(-1)?.id
     const read = app.state.reads[channelId]?.last_read_message_id ?? null
     const want = shouldMarkRead({ open: true, focused: windowFocus.focused, atBottom })
-    if (!newest || !want || (read !== null && newest <= read)) return
+    // The bottom of a detached window isn't the latest: only reaching the latest marks it read.
+    if (!newest || !want || detached || (read !== null && newest <= read)) return
     if (markTimer) clearTimeout(markTimer)
     markTimer = setTimeout(() => void api.markRead(channelId, newest).catch(() => {}), 300)
     return () => {
@@ -171,10 +178,84 @@
   function onScroll() {
     atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40
     void maybeLoadOlder()
+    if (atBottom) void maybeLoadNewer()
   }
   function jump() {
     list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' })
   }
+
+  // --- jump to a message (lib/jump.ts sets `ui.jump`): scroll it to the middle and flash it. A
+  // detached window pages forward from its bottom, or "Jump to present" reloads the latest. ---
+  let loadingNewer = false
+  async function maybeLoadNewer() {
+    if (loadingNewer || !detached || !messages.length) return
+    loadingNewer = true
+    try {
+      const newest = messages[messages.length - 1].id
+      const page = await api.listMessagesAfter(channelId, newest)
+      app.state = appendNewer(app.state, channelId, newest, page)
+      await tick() // with loadingNewer still set, the view stays where it was
+    } catch (e) {
+      error = errorText(e)
+    } finally {
+      loadingNewer = false
+    }
+  }
+  let loadingPresent = false
+  async function jumpToPresent() {
+    if (loadingPresent) return
+    loadingPresent = true
+    try {
+      const page = await api.listMessages(channelId)
+      app.state = loadWindow(app.state, channelId, page)
+      await tick()
+      list?.scrollTo({ top: list.scrollHeight })
+    } catch (e) {
+      error = errorText(e)
+    } finally {
+      loadingPresent = false
+    }
+  }
+  const FLASH_MS = 2000
+  let flashEl: Element | null = null
+  let flashTimer: ReturnType<typeof setTimeout> | undefined
+  let noticeTimer: ReturnType<typeof setTimeout> | undefined
+  let jumpNotice = $state('')
+  function clearFlash() {
+    clearTimeout(flashTimer)
+    flashEl?.classList.remove('jump-flash', 'still')
+    flashEl = null
+  }
+  function flash(id: string) {
+    const el = list?.querySelector(`[data-message-id="${id}"]`)
+    if (!el) return
+    clearFlash()
+    void (el as HTMLElement).offsetWidth // a repeat restarts the animation
+    el.classList.add('jump-flash')
+    if (motion.reducedMotion) el.classList.add('still')
+    el.scrollIntoView({ block: 'center' })
+    flashEl = el
+    flashTimer = setTimeout(clearFlash, FLASH_MS)
+  }
+  $effect(() => {
+    const j = ui.jump
+    if (!j || j.channelId !== channelId) return
+    if (j.missing) {
+      ui.jump = null
+      jumpNotice = "Couldn't find that message"
+      clearTimeout(noticeTimer)
+      noticeTimer = setTimeout(() => (jumpNotice = ''), 4000)
+      return
+    }
+    if (!messages.some((m) => m.id === j.messageId)) return // its window is still loading
+    ui.jump = null
+    jumpNotice = ''
+    void tick().then(() => flash(j.messageId))
+  })
+  $effect(() => () => {
+    clearFlash()
+    clearTimeout(noticeTimer)
+  })
 
   // --- quotes channels ---
   const isQuotes = $derived(channel?.kind === 'quotes')
@@ -194,7 +275,8 @@
     replyTo = null
     void api.sendMessage(channelId, text, r, nonce)
     // Sending from higher up takes you to the latest (your message lands there).
-    void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
+    if (detached) void jumpToPresent()
+    else void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   }
 
   function retry(nonce: string) {
@@ -281,7 +363,9 @@
         onRetry={() => retry(p.nonce)} onDiscard={() => (app.state = removePending(app.state, channelId, p.nonce))} />
     {/each}
   </div>
-  {#if unreadBelow > 0}<button class="jump" onclick={jump}>{unreadBelow} new · Jump</button>{/if}
+  {#if detached}<button class="jump" onclick={jumpToPresent}>Jump to present</button>
+  {:else if unreadBelow > 0}<button class="jump" onclick={jump}>{unreadBelow} new · Jump</button>{/if}
+  {#if jumpNotice}<p class="jump-notice" role="status">{jumpNotice}</p>{/if}
   <div class="typing" aria-live="polite">
     {#if typers.length}<strong>{typers.join(', ')}</strong> {typers.length > 1 ? 'are' : 'is'} typing…{/if}
   </div>
@@ -325,4 +409,12 @@
   .typing { height: 22px; padding: 0 18px; font-size: 12px; color: var(--text-3); }
   .typing strong { color: var(--text); }
   .error { margin: 0 18px 4px; color: #f2616b; font-size: 13px; }
+  /* a jumped-to message: a fading highlight, or a static outline under reduced motion */
+  .list :global(.jump-flash) { animation: jump-flash 2s ease-out; }
+  .list :global(.jump-flash.still) { animation: none; outline: 2px solid var(--accent); outline-offset: -2px; }
+  @keyframes jump-flash {
+    0%, 30% { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+    100% { background: transparent; }
+  }
+  .jump-notice { margin: 0 18px 4px; color: var(--text-3); font-size: 13px; }
 </style>

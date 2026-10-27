@@ -24,9 +24,16 @@ class AppStore {
 }
 export const app = new AppStore()
 
+/** A request to show a message (lib/jump.ts): the open channel scrolls to it, flashes it, then clears
+ * this. `seq` makes a repeat of the same target a new request; `missing`: it couldn't be found. */
+export type JumpRequest = { channelId: string; messageId: string; seq: number; missing?: boolean }
+
 /** What the user is looking at: drives the message sound and read marking. */
 export const ui = $state({
   openChannelId: null as string | null,
+  /** A request to switch to this channel (the shell does it and clears it). */
+  goTo: null as string | null,
+  jump: null as JumpRequest | null,
   autoReported: false,
   /** Last session's crash report, held because automatic sending is off: ask Send / Don't send. */
   heldReport: null as ReportKind | null,

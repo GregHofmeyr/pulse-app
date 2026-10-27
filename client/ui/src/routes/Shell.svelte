@@ -265,6 +265,20 @@
     })
   })
 
+  // A jump to a message (lib/jump.ts) asked for its channel.
+  $effect(() => {
+    const id = ui.goTo
+    if (!id) return
+    untrack(() => {
+      const ch = app.state.channels[id]
+      if (ch) {
+        activeServerId = ch.server_id
+        activeChannelId = id
+      }
+      ui.goTo = null
+    })
+  })
+
   // The watch in full view ended (stopped, the stream ended, voice left): no full view to go back to.
   $effect(() => {
     const f = callView.full
