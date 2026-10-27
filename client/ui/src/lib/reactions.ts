@@ -22,11 +22,13 @@ export function tooltipText(names: string[], total: number): string {
   return `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}`
 }
 
-/** The local flip applied before the server confirms; the next event's absolute count replaces it. */
-export function optimistic(list: ReactionSummary[], key: string, add: boolean, _meId: string): ReactionSummary[] {
+/** The local flip applied before the server confirms; the next event's absolute count replaces it.
+ * `onePerPerson` (a quote): adding also takes back my other reactions, as the server does. */
+export function optimistic(list: ReactionSummary[], key: string, add: boolean, _meId: string, onePerPerson = false): ReactionSummary[] {
   const has = list.find((r) => r.emoji === key)
   if (add) {
-    if (has?.me) return list
+    if (has?.me) return onePerPerson ? withoutMineExcept(list, key) : list
+    if (onePerPerson) list = withoutMineExcept(list, key)
     if (!has) return [...list, { emoji: key, count: 1, me: true }]
     return list.map((r) => (r.emoji === key ? { ...r, count: r.count + 1, me: true } : r))
   }
@@ -34,14 +36,19 @@ export function optimistic(list: ReactionSummary[], key: string, add: boolean, _
   return list.map((r) => (r.emoji === key ? { ...r, count: r.count - 1, me: false } : r)).filter((r) => r.count > 0)
 }
 
-function flip(s: AppState, channel: string, id: string, key: string, add: boolean, meId: string): AppState {
+function withoutMineExcept(list: ReactionSummary[], key: string): ReactionSummary[] {
+  if (!list.some((r) => r.me && r.emoji !== key)) return list
+  return list.map((r) => (r.me && r.emoji !== key ? { ...r, count: r.count - 1, me: false } : r)).filter((r) => r.count > 0)
+}
+
+function flip(s: AppState, channel: string, id: string, key: string, add: boolean, meId: string, onePerPerson = false): AppState {
   const list = s.messages[channel]
   if (!list) return s
   return {
     ...s,
     messages: {
       ...s.messages,
-      [channel]: list.map((m) => (m.id === id ? { ...m, reactions: optimistic(m.reactions, key, add, meId) } : m)),
+      [channel]: list.map((m) => (m.id === id ? { ...m, reactions: optimistic(m.reactions, key, add, meId, onePerPerson) } : m)),
     },
   }
 }
@@ -81,12 +88,12 @@ export function noteReactionEvent(e: Event, meId: string | undefined): void {
  */
 export function react(
   get: () => AppState, set: (s: AppState) => void,
-  channel: string, id: string, key: string, add: boolean, meId: string, onError: (msg: string) => void,
+  channel: string, id: string, key: string, add: boolean, meId: string, onError: (msg: string) => void, onePerPerson = false,
 ): Promise<void> {
   const k = toggleKey(id, key)
   // Each call settles: the core's HTTP client times requests out (15 s), and Tauri's invoke itself has
   // no timeout, so a core command that could hang would stall this emoji's later toggles.
-  const run = (queued.get(k) ?? Promise.resolve()).catch(() => {}).then(() => toggle(get, set, channel, id, key, add, meId, onError, k))
+  const run = (queued.get(k) ?? Promise.resolve()).catch(() => {}).then(() => toggle(get, set, channel, id, key, add, meId, onError, k, onePerPerson))
   queued.set(k, run)
   return run.finally(() => {
     if (queued.get(k) === run) queued.delete(k)
@@ -101,11 +108,11 @@ export function react(
  */
 async function toggle(
   get: () => AppState, set: (s: AppState) => void,
-  channel: string, id: string, key: string, add: boolean, meId: string, onError: (msg: string) => void, k: string,
+  channel: string, id: string, key: string, add: boolean, meId: string, onError: (msg: string) => void, k: string, onePerPerson: boolean,
 ): Promise<void> {
   const before = get()
   if ((entry(before, channel, id, key)?.me ?? false) === add) return
-  set(flip(before, channel, id, key, add, meId))
+  set(flip(before, channel, id, key, add, meId, onePerPerson))
   const t: Toggle = { add, landed: false }
   inFlight.set(k, t)
   try {

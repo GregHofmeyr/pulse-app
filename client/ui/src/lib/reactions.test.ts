@@ -14,6 +14,17 @@ describe('tooltipText', () => {
 })
 
 describe('optimistic', () => {
+  it('one per person replaces my other reaction optimistically', () => {
+    const list = [{ emoji: 'a', count: 2, me: true }, { emoji: 'b', count: 1, me: true }, { emoji: 'c', count: 4, me: false }]
+    expect(optimistic(list, 'c', true, 'U1', true)).toEqual([{ emoji: 'a', count: 1, me: false }, { emoji: 'c', count: 5, me: true }])
+    // a plain channel keeps them all
+    expect(optimistic(list, 'c', true, 'U1')).toHaveLength(3)
+    // removing is unaffected
+    expect(optimistic(list, 'a', false, 'U1', true)).toEqual([{ emoji: 'a', count: 1, me: false }, { emoji: 'b', count: 1, me: true }, { emoji: 'c', count: 4, me: false }])
+    // already mine: nothing changes
+    expect(optimistic(list, 'a', true, 'U1', true)).toEqual([{ emoji: 'a', count: 2, me: true }, { emoji: 'c', count: 4, me: false }])
+  })
+
   const base = [{ emoji: '👍', count: 2, me: false }]
   it('add then remove returns to the original', () => {
     const added = optimistic(base, '👍', true, 'U1')

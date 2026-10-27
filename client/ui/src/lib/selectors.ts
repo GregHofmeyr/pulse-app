@@ -5,10 +5,11 @@ import type { AppState } from './state'
 
 const byPosition = (a: Channel, b: Channel) => a.position - b.position || (a.name ?? '').localeCompare(b.name ?? '')
 
-export function channelsFor(s: AppState, serverId: string): { text: Channel[]; voice: Channel[] } {
+export function channelsFor(s: AppState, serverId: string): { text: Channel[]; quotes: Channel[]; voice: Channel[] } {
   const mine = Object.values(s.channels).filter((c) => c.server_id === serverId)
   return {
     text: mine.filter((c) => c.kind === 'text').sort(byPosition),
+    quotes: mine.filter((c) => c.kind === 'quotes').sort(byPosition),
     voice: mine.filter((c) => c.kind === 'voice').sort(byPosition),
   }
 }

@@ -1,10 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyReady, emptyState, addPending, pendingMessage, removePending, restoreUnsent, type Pending } from './state'
+import { applyEvent, applyReady, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, type AppState, type Pending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 import type { Event } from './protocol/Event'
 import type { QotyEvent } from './protocol/QotyEvent'
 import type { Channel } from './protocol/Channel'
+import type { Quote } from './protocol/Quote'
 import type { StreamInfo } from './protocol/StreamInfo'
 
 const ch = (id: string, kind: Channel['kind'] = 'text', server_id: string | null = 'S1', position = 0): Channel => ({
@@ -135,7 +136,7 @@ describe('history markers (I2)', () => {
     let s = applyReady(emptyState(), ready())
     expect(s.history['C1']).toBeUndefined()
     s = markHistory(s, 'C1', true)
-    expect(s.history['C1']).toEqual({ loaded: true, start: true })
+    expect(s.history['C1']).toEqual({ loaded: true, start: true, end: true })
     s = applyReady(s, ready())
     expect(s.history['C1']).toBeUndefined()
     expect(emptyState().history).toEqual({})
@@ -216,7 +217,7 @@ describe('trimming history on leave', () => {
     expect(t.messages['C1']).toHaveLength(KEEP_ON_LEAVE)
     expect(t.messages['C1'][0].id).toBe('M0200')
     expect(t.messages['C1'].at(-1)!.id).toBe('M0299')
-    expect(t.history['C1']).toEqual({ loaded: true, start: false })
+    expect(t.history['C1']).toEqual({ loaded: true, start: false, end: true })
   })
 
   it('leaves short channels (and the state object) alone', async () => {
@@ -448,21 +449,206 @@ describe('unsent messages', () => {
   })
 })
 
-describe('quotes events (handled by the quotes UI later)', () => {
-  it('leave the state alone', () => {
-    const s = applyReady(emptyState(), ready())
-    const qotyEvent: QotyEvent = {
-      id: 'Q1', server_id: 'S1', year: 2026, started_by: 'U1', started_at: '2026-10-01T00:00:00.000Z', ends_at: null,
-      ended_at: null, ended_by: null, end_reason: null, reopen_until: null, options: [], voters: 0, members: 2,
-    }
-    const events: Event[] = [
-      { t: 'QuoteAwardChanged', d: { channel_id: 'C1', message_id: 'M1', line_id: 'L1', user_id: 'U2', given: true, count: 1, awarders: ['U2'] } },
-      { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'C1', root_id: 'M1', last_seen_id: 'M2', mentions_cleared: 0 } },
-      { t: 'SpeakerLinksChanged', d: { server_id: 'S1', links: [] } },
-      { t: 'QotyStarted', d: { event: qotyEvent } },
-      { t: 'QotyUpdated', d: { event: qotyEvent } },
-      { t: 'QotyEnded', d: { event: qotyEvent } },
-    ]
-    for (const e of events) expect(applyEvent(s, e, 0)).toBe(s)
+
+describe('quotes', () => {
+  const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+  const line = (id: string, over: Partial<Quote['lines'][number]> = {}): Quote['lines'][number] => ({
+    id, speaker_id: null, speaker_name: 'Sam', text: 'hi', media: null, caption: null, awards: 0, awarders: [], awarded: false, ...over,
+  })
+  const quote = (over: Partial<Quote> = {}): Quote => ({ lines: [line('L1')], year: 2026, said_on: null, reply_count: 0, last_reply_id: null, replies_seen: null, wins: [], ...over })
+  const qmsg = (id: string, q: Partial<Quote> = {}): Message => ({ ...msg(id, 'Q1', ''), quote: quote(q) })
+  const reply = (id: string, root: string, over: Partial<Message> = {}): Message => ({ ...msg(id, 'Q1', 'ok'), thread_root_id: root, ...over })
+  const qready = () => applyReady(emptyState(), ready({
+    channels: [ch('Q1', 'quotes')],
+    members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: null }] }],
+    read_states: [{ channel_id: 'Q1', last_read_message_id: null, unread: 0, mentions: 0 }],
+  }))
+  const created = (s: AppState, m: Message, nonce: string | null = null) => applyEvent(s, { t: 'MessageCreated', d: { message: m, nonce } }, 0)
+  const withQuote = (q: Partial<Quote> = {}) => created(qready(), qmsg('M1', q))
+  const quoteOf = (s: AppState, id = 'M1') => s.messages['Q1'].find((m) => m.id === id)!.quote!
+
+  it('a reply goes to its thread, not the list', () => {
+    const s = created(withQuote(), reply('R1', 'M1'))
+    expect(s.messages['Q1'].map((m) => m.id)).toEqual(['M1'])
+    expect(s.threads['M1'].map((m) => m.id)).toEqual(['R1'])
+    expect(quoteOf(s)).toMatchObject({ reply_count: 1, last_reply_id: 'R1' })
+  })
+
+  it('a reply seen twice (outbox and gateway) counts once and replaces its pending', () => {
+    let s = addPending(withQuote(), 'Q1', { nonce: 'n', content: 'ok', reply_to_id: null, thread_root_id: 'M1', status: 'pending', created_at: '2026-10-01T00:00:00.000Z' })
+    s = created(s, reply('R1', 'M1'), 'n')
+    s = created(s, reply('R1', 'M1'))
+    expect(s.pending['Q1']).toEqual([])
+    expect(s.threads['M1']).toHaveLength(1)
+    expect(quoteOf(s).reply_count).toBe(1)
+  })
+
+  it('replies keep thread order and the newest reply id', () => {
+    let s = created(withQuote(), reply('R2', 'M1'))
+    s = created(s, reply('R1', 'M1'))
+    expect(s.threads['M1'].map((m) => m.id)).toEqual(['R1', 'R2'])
+    expect(quoteOf(s).last_reply_id).toBe('R2')
+  })
+
+  it('a reply is never unread but its mention counts', () => {
+    let s = created(withQuote(), reply('R1', 'M1', { author_id: 'U2' }))
+    expect(s.reads['Q1']).toMatchObject({ unread: 1, mentions: 0 }) // the quote itself, not its reply
+    s = created(s, reply('R2', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    expect(s.reads['Q1']).toMatchObject({ unread: 1, mentions: 1 })
+    s = created(s, reply('R3', 'M1', { author_id: 'U1', mentions: ['U1'] }))
+    expect(s.reads['Q1'].mentions).toBe(1) // your own reply never counts
+    s = created(s, reply('R2', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    expect(s.reads['Q1'].mentions).toBe(1) // the same reply again
+  })
+
+  it('a quote in a quotes channel is unread; a winner card is not', () => {
+    let s = created(qready(), qmsg('M1'))
+    expect(s.reads['Q1'].unread).toBe(1)
+    s = created(s, { ...msg('M2', 'Q1', ''), kind: 'system', author_id: null })
+    expect(s.reads['Q1'].unread).toBe(1)
+  })
+
+  it('a quotes channel gets a read point of its own when none was sent', () => {
+    const s = created(applyReady(emptyState(), ready({ channels: [ch('Q1', 'quotes')] })), qmsg('M1'))
+    expect(s.reads['Q1'].unread).toBe(1)
+  })
+
+  it('ThreadSeen clears the reply mentions', () => {
+    let s = created(withQuote(), reply('R1', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    s = created(s, reply('R2', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R2', mentions_cleared: 2 } }, 0)
+    expect(s.reads['Q1'].mentions).toBe(0)
+    expect(quoteOf(s).replies_seen).toBe('R2')
+    // floors at zero, and the seen point never moves back
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R1', mentions_cleared: 3 } }, 0)
+    expect(s.reads['Q1'].mentions).toBe(0)
+    expect(quoteOf(s).replies_seen).toBe('R2')
+  })
+
+  it('ThreadSeen without a cleared mention only moves the seen point', () => {
+    let s = created(withQuote(), reply('R1', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R1', mentions_cleared: 0 } }, 0)
+    expect(s.reads['Q1'].mentions).toBe(1)
+    expect(quoteOf(s).replies_seen).toBe('R1')
+  })
+
+  it('the mention count from replies survives a read-state update', () => {
+    let s = applyReady(emptyState(), ready({
+      channels: [ch('Q1', 'quotes')],
+      read_states: [{ channel_id: 'Q1', last_read_message_id: null, unread: 0, mentions: 2 }], // both in replies
+    }))
+    s = created(s, { ...qmsg('M1'), author_id: 'U2', mentions: ['U1'] })
+    expect(s.reads['Q1'].mentions).toBe(3)
+    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'Q1', last_read_message_id: 'M1' } }, 0)
+    expect(s.reads['Q1']).toMatchObject({ unread: 0, mentions: 2 })
+  })
+
+  it('an edited reply updates its thread, not the list', () => {
+    let s = created(withQuote(), reply('R1', 'M1'))
+    s = applyEvent(s, { t: 'MessageUpdated', d: { message: reply('R1', 'M1', { content: 'fixed', edited_at: '2026-10-01T01:00:00.000Z' }) } }, 0)
+    expect(s.threads['M1'][0].content).toBe('fixed')
+    expect(s.messages['Q1'].map((m) => m.id)).toEqual(['M1'])
+  })
+
+  it('deleting a reply lowers reply_count', () => {
+    let s = created(withQuote(), reply('R1', 'M1'))
+    s = created(s, reply('R2', 'M1'))
+    const del = (id: string, mentions: string[] = []): Event => ({ t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: id, author_id: 'U2', mentions, thread_root_id: 'M1' } })
+    s = applyEvent(s, del('R2'), 0)
+    expect(quoteOf(s).reply_count).toBe(1)
+    expect(s.threads['M1'].find((m) => m.id === 'R2')).toMatchObject({ deleted: true, content: '' })
+    expect(s.messages['Q1'].map((m) => m.id)).toEqual(['M1'])
+    s = applyEvent(s, del('R2'), 0) // again: no second decrement
+    expect(quoteOf(s).reply_count).toBe(1)
+    s = applyEvent(s, del('R1'), 0)
+    s = applyEvent(s, del('R1'), 0)
+    expect(quoteOf(s).reply_count).toBe(0)
+  })
+
+  it('deleting a reply that mentioned me takes it out of the mention count unless seen', () => {
+    let s = created(withQuote(), reply('R1', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: 'R1', author_id: 'U2', mentions: ['U1'], thread_root_id: 'M1' } }, 0)
+    expect(s.reads['Q1'].mentions).toBe(0)
+    s = created(s, reply('R2', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R2', mentions_cleared: 1 } }, 0)
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: 'R2', author_id: 'U2', mentions: ['U1'], thread_root_id: 'M1' } }, 0)
+    expect(s.reads['Q1'].mentions).toBe(0)
+  })
+
+  it('an edited quote keeps my award flags and replies seen from the event derived awarders', () => {
+    let s = withQuote({ lines: [line('L1', { awards: 1, awarders: ['U1'], awarded: true }), line('L2')], replies_seen: 'R1', last_reply_id: 'R1', reply_count: 1 })
+    s = applyEvent(s, { t: 'MessageUpdated', d: { message: qmsg('M1', { lines: [line('L1', { awards: 1, awarders: ['U1'] }), line('L2', { text: 'edited' })], replies_seen: null, last_reply_id: 'R1', reply_count: 1 }) } }, 0)
+    const q = quoteOf(s)
+    expect(q.lines.map((l) => [l.awarded, l.text])).toEqual([[true, 'hi'], [false, 'edited']])
+    expect(q.replies_seen).toBe('R1')
+  })
+
+  it('a link change republishes counts: awarded follows the awarders, not the old flag', () => {
+    let s = withQuote({ lines: [line('L1', { awards: 1, awarders: ['U1'], awarded: true })] })
+    s = applyEvent(s, { t: 'MessageUpdated', d: { message: qmsg('M1', { lines: [line('L1', { awards: 0, awarders: [] })] }) } }, 0)
+    expect(quoteOf(s).lines[0]).toMatchObject({ awards: 0, awarded: false })
+  })
+
+  it('an edited quote keeps its reactions', () => {
+    let s = withQuote()
+    s = applyEvent(s, { t: 'ReactionAdded', d: { channel_id: 'Q1', message_id: 'M1', emoji: '👍', user_id: 'U1', count: 1 } }, 0)
+    s = applyEvent(s, { t: 'MessageUpdated', d: { message: qmsg('M1') } }, 0)
+    expect(s.messages['Q1'][0].reactions).toEqual([{ emoji: '👍', count: 1, me: true }])
+  })
+
+  it('awards update from events and mark mine', () => {
+    let s = withQuote({ lines: [line('L1'), line('L2')] })
+    const award = (user_id: string, given: boolean, awarders: string[]): Event => ({
+      t: 'QuoteAwardChanged', d: { channel_id: 'Q1', message_id: 'M1', line_id: 'L1', user_id, given, count: awarders.length, awarders },
+    })
+    s = applyEvent(s, award('U2', true, ['U2']), 0)
+    expect(quoteOf(s).lines[0]).toMatchObject({ awards: 1, awarders: ['U2'], awarded: false })
+    s = applyEvent(s, award('U1', true, ['U2', 'U1']), 0)
+    expect(quoteOf(s).lines[0]).toMatchObject({ awards: 2, awarders: ['U2', 'U1'], awarded: true })
+    s = applyEvent(s, award('U2', false, ['U1']), 0) // the list is replaced, not appended to
+    expect(quoteOf(s).lines[0]).toMatchObject({ awards: 1, awarders: ['U1'], awarded: true })
+    expect(quoteOf(s).lines[1]).toMatchObject({ awards: 0, awarded: false })
+  })
+
+  it('an award on a quote that is not loaded changes nothing', () => {
+    const s = qready()
+    const e: Event = { t: 'QuoteAwardChanged', d: { channel_id: 'Q1', message_id: 'M9', line_id: 'L1', user_id: 'U2', given: true, count: 1, awarders: ['U2'] } }
+    expect(applyEvent(s, e, 0)).toBe(s)
+  })
+
+  it('qoty events replace the server\'s event', () => {
+    const ev = (over: Partial<QotyEvent> = {}): QotyEvent => ({
+      id: 'E1', server_id: 'S1', year: 2026, started_by: 'U1', started_at: '2026-10-01T00:00:00.000Z', ends_at: null,
+      ended_at: null, ended_by: null, end_reason: null, reopen_until: null, options: [], voters: 0, members: 2, ...over,
+    })
+    let s = applyReady(emptyState(), ready({ qoty: [ev({ year: 2025, id: 'E0' })] }))
+    expect(s.qoty['S1'].id).toBe('E0')
+    s = applyEvent(s, { t: 'QotyStarted', d: { event: ev() } }, 0)
+    expect(s.qoty['S1'].id).toBe('E1')
+    s = applyEvent(s, { t: 'QotyUpdated', d: { event: ev({ voters: 1 }) } }, 0)
+    expect(s.qoty['S1'].voters).toBe(1)
+    s = applyEvent(s, { t: 'QotyEnded', d: { event: ev({ ended_at: '2026-10-02T00:00:00.000Z', end_reason: 'early' }) } }, 0)
+    expect(s.qoty['S1'].end_reason).toBe('early')
+    expect(Object.keys(s.qoty)).toEqual(['S1'])
+  })
+
+  it('speaker links replace the server\'s list', () => {
+    const link = { server_id: 'S1', name_key: 'sam', name: 'Sam', user_id: 'U2', linked_by: 'U1', linked_at: '2026-10-01T00:00:00.000Z' }
+    let s = applyReady(emptyState(), ready({ speaker_links: [link, { ...link, server_id: 'S2', name_key: 'x' }] }))
+    expect(s.speakerLinks['S1']).toEqual([link])
+    expect(s.speakerLinks['S2']).toHaveLength(1)
+    s = applyEvent(s, { t: 'SpeakerLinksChanged', d: { server_id: 'S1', links: [] } }, 0)
+    expect(s.speakerLinks['S1']).toEqual([])
+    expect(s.speakerLinks['S2']).toHaveLength(1)
+  })
+
+  it('history lists reach the latest by default', () => {
+    expect(markHistory(emptyState(), 'C1', false).history['C1']).toEqual({ loaded: true, start: false, end: true })
+  })
+
+  it('removing a channel drops the threads of its quotes', () => {
+    let s = created(withQuote(), reply('R1', 'M1'))
+    s = applyEvent(s, { t: 'ChannelRemoved', d: { channel_id: 'Q1', user_id: 'U1' } }, 0)
+    expect(s.threads['M1']).toBeUndefined()
   })
 })

@@ -35,6 +35,14 @@ describe('selectors', () => {
     const c = channelsFor(s, 'S1')
     expect(c.text.map((x) => x.id)).toEqual(['C1', 'C2'])
     expect(c.voice.map((x) => x.id)).toEqual(['V1'])
+    expect(c.quotes).toEqual([])
+  })
+
+  it('channelsFor lists quotes channels in their own group', () => {
+    const q = applyReady(emptyState(), { ...r, channels: [...r.channels, { id: 'Q2', server_id: 'S1', kind: 'quotes', name: 'b', position: 1 }, { id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'a', position: 0 }, { id: 'QX', server_id: 'S2', kind: 'quotes', name: 'x', position: 0 }] })
+    const c = channelsFor(q, 'S1')
+    expect(c.quotes.map((x) => x.id)).toEqual(['Q1', 'Q2'])
+    expect(c.text.map((x) => x.id)).toEqual(['C1', 'C2'])
   })
 
   it('isMember', () => {

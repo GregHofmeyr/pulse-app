@@ -24,7 +24,7 @@
 
   const channel = $derived(app.state.channels[channelId])
   const messages = $derived(app.state.messages[channelId] ?? [])
-  const pending = $derived(app.state.pending[channelId] ?? [])
+  const pending = $derived((app.state.pending[channelId] ?? []).filter((p) => !p.thread_root_id)) // a reply's pending shows in its thread
   const byId = $derived(new Map(messages.map((m) => [m.id, m])))
   let now = $state(Date.now())
   const typers = $derived(typingNames(app.state, serverId, channelId, now))
@@ -186,7 +186,7 @@
   function retry(nonce: string) {
     const p = pending.find((x) => x.nonce === nonce)
     if (!p) return
-    app.state = { ...app.state, pending: { ...app.state.pending, [channelId]: pending.filter((x) => x.nonce !== nonce) } }
+    app.state = removePending(app.state, channelId, nonce)
     replyTo = p.reply_to_id ? (byId.get(p.reply_to_id) ?? null) : null
     send(p.content)
   }

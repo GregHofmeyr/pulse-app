@@ -7,9 +7,11 @@ import type { Member } from './protocol/Member'
 import type { Message } from './protocol/Message'
 import type { Mute } from './protocol/Mute'
 import type { Person } from './protocol/Person'
+import type { QotyEvent } from './protocol/QotyEvent'
 import type { ReadState } from './protocol/ReadState'
 import type { Ready } from './protocol/Ready'
 import type { Server } from './protocol/Server'
+import type { SpeakerLink } from './protocol/SpeakerLink'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { User } from './protocol/User'
 import type { VoiceMember } from './protocol/VoiceMember'
@@ -36,8 +38,9 @@ export type AppState = {
   messages: Record<string, Message[]> // channelId -> oldest..newest
   pending: Record<string, Pending[]> // channelId -> unsent
   typing: Record<string, Record<string, number>> // channelId -> userId -> expiresAt (ms)
-  /** Which channels have had their latest page fetched (cleared on every Ready so we backfill). */
-  history: Record<string, { loaded: boolean; start: boolean }>
+  /** Which channels have had their latest page fetched (cleared on every Ready so we backfill).
+   * `end`: the list reaches the latest message (always true until a quote view detaches one). */
+  history: Record<string, { loaded: boolean; start: boolean; end: boolean }>
   conn: ConnState
   people: Record<string, Person> // userId -> person (presence)
   reads: Record<string, ReadState> // channelId -> your private read point + counts
@@ -47,12 +50,15 @@ export type AppState = {
   streams: Record<string, Record<string, StreamInfo>> // channelId -> userId -> live stream
   customEmoji: Record<string, CustomEmoji> // id -> emoji; deleted ones stay (hash null) so old messages render a chip
   frequentEmoji: string[] // your most-used reaction keys, best first
+  threads: Record<string, Message[]> // quote id -> its replies, oldest..newest (replies never join `messages`)
+  qoty: Record<string, QotyEvent> // serverId -> its latest Quote of the Year vote (open, or ended and reopenable)
+  speakerLinks: Record<string, SpeakerLink[]> // serverId -> plain names linked to members
 }
 
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [] }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], threads: {}, qoty: {}, speakerLinks: {} }
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -82,15 +88,30 @@ export function applyReady(s: AppState, r: Ready): AppState {
     streams: r.streams.reduce<AppState['streams']>((acc, x) => withStream(acc, x), {}),
     customEmoji: Object.fromEntries(r.custom_emoji.map((c) => [c.id, c])),
     frequentEmoji: r.frequent_emoji,
+    qoty: latestQoty(r.qoty),
+    speakerLinks: groupLinks(r.speaker_links),
   }
 }
 
-/** Whether `channel` should have a read point for you: your DMs/groups, and text channels of servers you're in. */
+/** One vote per server: the most recently started. */
+function latestQoty(events: QotyEvent[]): Record<string, QotyEvent> {
+  const out: Record<string, QotyEvent> = {}
+  for (const e of events) if (!out[e.server_id] || e.started_at >= out[e.server_id].started_at) out[e.server_id] = e
+  return out
+}
+
+function groupLinks(links: SpeakerLink[]): Record<string, SpeakerLink[]> {
+  const out: Record<string, SpeakerLink[]> = {}
+  for (const l of links) (out[l.server_id] ??= []).push(l)
+  return out
+}
+
+/** Whether `channel` should have a read point for you: your DMs/groups, and text and quotes channels of servers you're in. */
 function tracksUnread(s: AppState, channel: string): boolean {
   const ch = s.channels[channel]
   if (!ch || !s.me) return false
   if (ch.server_id === null) return true
-  return ch.kind === 'text' && (s.members[ch.server_id] ?? []).some((m) => m.user.id === s.me!.id)
+  return (ch.kind === 'text' || ch.kind === 'quotes') && (s.members[ch.server_id] ?? []).some((m) => m.user.id === s.me!.id)
 }
 
 /** An edit event's reaction list is unreliable (`me` is always false), so reactions are kept as-is:
@@ -110,6 +131,92 @@ function upsertMessage(list: Message[] | undefined, m: Message): Message[] {
   return next
 }
 
+// --- Quotes: replies live in `threads`, never in the channel list. ---
+
+/** A quote as the event carries it, with what only we know put back: each line's `awarded` comes
+ * from `awarders` (the event's flag is always false) and `replies_seen` is kept (events carry none). */
+function withMyQuoteState(m: Message, old: Message | undefined, meId: string | undefined): Message {
+  if (!m.quote) return m
+  return {
+    ...m,
+    quote: {
+      ...m.quote,
+      lines: m.quote.lines.map((l) => ({ ...l, awarded: !!meId && l.awarders.includes(meId) })),
+      replies_seen: old?.quote?.replies_seen ?? m.quote.replies_seen,
+    },
+  }
+}
+
+/** Change one quote wherever it is loaded in its channel's list. */
+function mapQuote(s: AppState, channel: string, id: string, f: (m: Message) => Message): AppState {
+  const list = s.messages[channel]
+  if (!list?.some((m) => m.id === id)) return s
+  return { ...s, messages: { ...s.messages, [channel]: list.map((m) => (m.id === id ? f(m) : m)) } }
+}
+
+const maxId = (a: string | null, b: string) => (a !== null && a > b ? a : b)
+
+/** A reply was created. Seen before (the outbox and the gateway both deliver it) it only refreshes the copy. */
+function replyCreated(s: AppState, m: Message, nonce: string | null): AppState {
+  const root = m.thread_root_id!
+  const c = m.channel_id
+  const known = !!s.threads[root]?.some((x) => x.id === m.id)
+  const read = s.reads[c] ?? (tracksUnread(s, c) ? { channel_id: c, last_read_message_id: null, unread: 0, mentions: 0 } : undefined)
+  const mentioned = !known && !!read && m.author_id !== s.me?.id && !!s.me && m.mentions.includes(s.me.id) && m.kind === 'normal'
+  const next: AppState = {
+    ...s,
+    threads: { ...s.threads, [root]: upsertMessage(s.threads[root], m) },
+    pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
+    typing: withoutTyping(s, c, m.author_id),
+    // Replies are never unread; only a mention of me counts (until the thread is opened).
+    reads: mentioned ? { ...s.reads, [c]: { ...read, mentions: read.mentions + 1 } } : s.reads,
+  }
+  if (known) return next
+  return mapQuote(next, c, root, (q) => (q.quote ? { ...q, quote: { ...q.quote, reply_count: q.quote.reply_count + 1, last_reply_id: maxId(q.quote.last_reply_id, m.id) } } : q))
+}
+
+function replyUpdated(s: AppState, m: Message): AppState {
+  const root = m.thread_root_id!
+  const list = s.threads[root]
+  if (!list?.some((x) => x.id === m.id)) return s // thread not loaded: opening it fetches current copies
+  return { ...s, threads: { ...s.threads, [root]: upsertEdited(list, m) } }
+}
+
+function replyDeleted(s: AppState, e: Extract<Event, { t: 'MessageDeleted' }>['d']): AppState {
+  const { channel_id: c, message_id: id, thread_root_id: root, author_id, mentions } = e
+  const list = s.threads[root!]
+  const already = list?.find((x) => x.id === id)?.deleted ?? false
+  if (already) return s
+  const rootMsg = s.messages[c]?.find((m) => m.id === root)
+  const read = s.reads[c]
+  const mentioned = !!s.me && mentions.includes(s.me.id) && author_id !== s.me.id
+  // Only a mention not yet cleared by opening the thread is still in the count.
+  const counted = mentioned && !!read && !!rootMsg?.quote && (rootMsg.quote.replies_seen === null || id > rootMsg.quote.replies_seen)
+  const next: AppState = {
+    ...s,
+    threads: list ? { ...s.threads, [root!]: list.map((x) => (x.id === id ? { ...x, deleted: true, content: '' } : x)) } : s.threads,
+    reads: counted ? { ...s.reads, [c]: { ...read, mentions: Math.max(0, read.mentions - 1) } } : s.reads,
+  }
+  return mapQuote(next, c, root!, (q) => (q.quote ? { ...q, quote: { ...q.quote, reply_count: Math.max(0, q.quote.reply_count - 1) } } : q))
+}
+
+function awardChanged(s: AppState, d: Extract<Event, { t: 'QuoteAwardChanged' }>['d']): AppState {
+  const mine = (a: string[]) => !!s.me && a.includes(s.me.id)
+  return mapQuote(s, d.channel_id, d.message_id, (m) =>
+    m.quote ? { ...m, quote: { ...m.quote, lines: m.quote.lines.map((l) => (l.id === d.line_id ? { ...l, awards: d.count, awarders: d.awarders, awarded: mine(d.awarders) } : l)) } } : m,
+  )
+}
+
+function threadSeen(s: AppState, d: Extract<Event, { t: 'ThreadSeen' }>['d']): AppState {
+  if (d.user_id !== s.me?.id) return s
+  const read = s.reads[d.channel_id]
+  const next = mapQuote(s, d.channel_id, d.root_id, (m) =>
+    m.quote ? { ...m, quote: { ...m.quote, replies_seen: maxId(m.quote.replies_seen, d.last_seen_id) } } : m,
+  )
+  if (!read || d.mentions_cleared === 0) return next
+  return { ...next, reads: { ...next.reads, [d.channel_id]: { ...read, mentions: Math.max(0, read.mentions - d.mentions_cleared) } } }
+}
+
 function withoutTyping(s: AppState, channel: string, user: string | null): AppState['typing'] {
   if (!user || !s.typing[channel]?.[user]) return s.typing
   const { [user]: _gone, ...rest } = s.typing[channel]
@@ -119,6 +226,7 @@ function withoutTyping(s: AppState, channel: string, user: string | null): AppSt
 export function applyEvent(s: AppState, e: Event, now: number): AppState {
   switch (e.t) {
     case 'MessageCreated': {
+      if (e.d.message.thread_root_id) return replyCreated(s, e.d.message, e.d.nonce)
       const { message: m, nonce } = e.d
       const c = m.channel_id
       // Conversations/servers you're in but have no read point for yet (created or joined since
@@ -129,7 +237,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const { [c]: _h, ...hidden } = s.hidden
       return {
         ...s,
-        messages: { ...s.messages, [c]: upsertMessage(s.messages[c], m) },
+        messages: { ...s.messages, [c]: upsertMessage(s.messages[c], withMyQuoteState(m, undefined, s.me?.id)) },
         pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
         typing: withoutTyping(s, c, m.author_id),
         latest: s.channels[c]?.server_id === null ? { ...s.latest, [c]: m } : s.latest,
@@ -143,15 +251,17 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       }
     }
     case 'MessageUpdated': {
+      if (e.d.message.thread_root_id) return replyUpdated(s, e.d.message)
       const m = e.d.message
       const c = m.channel_id
       const prev = s.latest[c]
       // Like the loaded copy (upsertEdited): the edit's reactions say me:false for everyone.
       const latest = prev?.id === m.id ? { ...s.latest, [c]: { ...m, reactions: prev.reactions } } : s.latest
       if (!s.messages[c]) return latest === s.latest ? s : { ...s, latest } // history never loaded
-      return { ...s, latest, messages: { ...s.messages, [c]: upsertEdited(s.messages[c], m) } }
+      return { ...s, latest, messages: { ...s.messages, [c]: upsertEdited(s.messages[c], withMyQuoteState(m, s.messages[c].find((x) => x.id === m.id), s.me?.id)) } }
     }
     case 'MessageDeleted': {
+      if (e.d.thread_root_id) return replyDeleted(s, e.d)
       const { channel_id: c, message_id: id, author_id, mentions } = e.d
       const gone = (m: Message): Message => (m.id === id ? { ...m, deleted: true, content: '' } : m)
       // An unread message from someone else comes back out of the counts (mirrors MessageCreated).
@@ -217,8 +327,10 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         const { [c]: _x, ...rest } = r
         return rest
       }
+      const roots = new Set((s.messages[c] ?? []).map((m) => m.id))
       return {
         ...s,
+        threads: Object.fromEntries(Object.entries(s.threads).filter(([root]) => !roots.has(root))),
         channels: drop(s.channels),
         messages: drop(s.messages),
         dmMembers: drop(s.dmMembers),
@@ -238,11 +350,16 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         (m) => (point === null || m.id > point) && m.kind === 'normal' && !m.deleted && m.author_id !== s.me?.id,
       )
       const me = s.me?.id ?? ''
+      // Mentions in a quote's replies don't depend on the read point (only opening the thread clears them): keep them.
+      const was = s.reads[c]
+      const wasPoint = was?.last_read_message_id ?? ''
+      const inList = (s.messages[c] ?? []).filter((m) => m.id > wasPoint && m.kind === 'normal' && !m.deleted && m.author_id !== me && m.mentions.includes(me)).length
+      const inReplies = was ? Math.max(0, was.mentions - inList) : 0
       return {
         ...s,
         reads: {
           ...s.reads,
-          [c]: { channel_id: c, last_read_message_id: point, unread: after.length, mentions: after.filter((m) => m.mentions.includes(me)).length },
+          [c]: { channel_id: c, last_read_message_id: point, unread: after.length, mentions: after.filter((m) => m.mentions.includes(me)).length + inReplies },
         },
       }
     }
@@ -250,14 +367,16 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, mutes: e.d.mutes }
     case 'FrequentEmoji':
       return { ...s, frequentEmoji: e.d.frequent_emoji }
-    // Quotes: the client starts handling these with the quotes UI.
     case 'QuoteAwardChanged':
+      return awardChanged(s, e.d)
     case 'ThreadSeen':
+      return threadSeen(s, e.d)
     case 'SpeakerLinksChanged':
+      return { ...s, speakerLinks: { ...s.speakerLinks, [e.d.server_id]: e.d.links } }
     case 'QotyStarted':
     case 'QotyUpdated':
     case 'QotyEnded':
-      return s
+      return { ...s, qoty: { ...s.qoty, [e.d.event.server_id]: e.d.event } }
     case 'ConversationVisibility': {
       const { [e.d.channel_id]: _x, ...rest } = s.hidden
       return { ...s, hidden: e.d.hidden ? { ...rest, [e.d.channel_id]: true } : rest }
@@ -399,5 +518,5 @@ export function addHistory(s: AppState, channel: string, older: Message[]): AppS
 
 export function markHistory(s: AppState, channel: string, reachedStart: boolean): AppState {
   const prev = s.history[channel]
-  return { ...s, history: { ...s.history, [channel]: { loaded: true, start: reachedStart || !!prev?.start } } }
+  return { ...s, history: { ...s.history, [channel]: { loaded: true, start: reachedStart || !!prev?.start, end: prev?.end ?? true } } }
 }
