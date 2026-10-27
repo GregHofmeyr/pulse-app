@@ -176,7 +176,7 @@ describe('TextChannel: the edit box', () => {
       me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
       channels: [{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }],
       members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [],
+      dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [],
     })
     app.state = markHistory(addHistory(s, 'C1', [{ ...msg(1), author_id: 'U1' }]), 'C1', true)
     const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
