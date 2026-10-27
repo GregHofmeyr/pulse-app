@@ -169,26 +169,42 @@ describe('EmojiSettings', () => {
 
   const uiLogs = () => uiLog.mock.calls.map((c) => (c[0] as { line: string }).line)
 
-  it('an invalid name says why on Save and on Enter, logs it, and sends nothing', async () => {
+  const hint = () => document.querySelector('.name-hint')!.textContent!.trim()
+
+  it('an invalid name says why while typing, on Save and on Enter, logs it, and sends nothing', async () => {
     invoke.mockResolvedValueOnce(info)
     show()
     await upload()
+    const input = nameInput()
+    expect(input.getAttribute('aria-describedby')).toBe(document.querySelector('.name-hint')!.id)
+    expect(input.getAttribute('aria-invalid')).toBe('false')
     for (const bad of ['', 'a', 'bad name', 'cat-loaf', 'x'.repeat(33), 'caf\u00e9']) {
       typeName(bad)
-      // the reason shows while typing, not only after a click
-      expect(document.querySelector('.name-hint')?.textContent, JSON.stringify(bad)).toMatch(/letters, numbers or underscores/)
+      expect(hint(), JSON.stringify(bad)).toMatch(/letters, numbers or underscores/)
+      expect(input.getAttribute('aria-invalid')).toBe('true')
     }
     typeName('cat loaf')
     text('Save').click()
     await settle()
     flushSync()
     expect(document.querySelector('[role=alert]')!.textContent).toMatch(/no spaces or dashes/)
+    expect(uiLog).toHaveBeenCalledTimes(1)
+    // typing again clears the refused-name alert (the hint keeps saying it while it's still wrong)
+    typeName('cat loaf2')
+    expect(document.querySelector('[role=alert]')).toBeNull()
+    // Enter on its own says why too
     nameInput().dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     await settle()
+    flushSync()
+    expect(document.querySelector('[role=alert]')!.textContent).toMatch(/no spaces or dashes/)
+    expect(uiLog).toHaveBeenCalledTimes(2)
     expect(calls('create_emoji')).toHaveLength(0)
-    expect(uiLogs().some((l) => l.includes('emoji: name refused'))).toBe(true)
+    expect(uiLogs().every((l) => l.includes('emoji: name refused'))).toBe(true)
+    // the log says why, never what was typed or the file's name
+    expect(uiLogs().every((l) => !l.includes('cat loaf') && !l.includes('Big Pog'))).toBe(true)
     typeName(' ok_1 ')
-    expect(document.querySelector('.name-hint')).toBeNull()
+    expect(hint()).toBe('')
+    expect(input.getAttribute('aria-invalid')).toBe('false')
     text('Save').click()
     await settle()
     expect(calls('create_emoji')).toHaveLength(1)
@@ -231,6 +247,50 @@ describe('EmojiSettings', () => {
     expect(document.querySelector('[role=alert]')).toBeNull()
     const file = document.querySelector<HTMLInputElement>('input[type=file]')!
     expect(file.disabled).toBe(false)
+    expect(uiLogs().every((l) => !/cat\d?\.webp/.test(l))).toBe(true)
+  })
+
+  it('a rename shows the name rule while it is wrong', async () => {
+    show([emoji('X1', 'pog')])
+    btn('Rename :pog:').click()
+    await tick()
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Rename emoji"]')!
+    const rhint = () => document.getElementById(input.getAttribute('aria-describedby')!)!.textContent!.trim()
+    expect(rhint()).toBe('')
+    input.value = 'pog dog'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    flushSync()
+    expect(rhint()).toMatch(/letters, numbers or underscores/)
+    expect(input.getAttribute('aria-invalid')).toBe('true')
+  })
+
+  it('at the cap, says why adding is off', () => {
+    show(Array.from({ length: 100 }, (_, i) => emoji('X' + i, 'e' + i)))
+    expect(document.querySelector<HTMLInputElement>('input[type=file]')!.disabled).toBe(true)
+    expect(document.body.textContent).toMatch(/100 emoji, the most it can hold; delete one first/)
+  })
+
+  it('a double-clicked delete sends one request, and Cancel clears an error', async () => {
+    show([emoji('X1', 'pog')])
+    btn('Delete :pog:').click()
+    await tick()
+    let done!: () => void
+    invoke.mockImplementationOnce(() => new Promise<void>((r) => { done = r }))
+    text('Delete').click()
+    text('Delete').click()
+    done()
+    await settle()
+    expect(calls('delete_emoji')).toHaveLength(1)
+    invoke.mockRejectedValueOnce('slow down a little, then try again')
+    btn('Delete :pog:').click()
+    await tick()
+    text('Delete').click()
+    await settle()
+    flushSync()
+    expect(document.querySelector('[role=alert]')).not.toBeNull()
+    text('Cancel').click()
+    flushSync()
+    expect(document.querySelector('[role=alert]')).toBeNull()
   })
 
   it('rename and delete failures, and an invalid rename, say why and are logged', async () => {

@@ -95,16 +95,9 @@ pub async fn reannounce_with_retry(
     .await
 }
 
-/// `line` cut to at most `max` bytes, on a char boundary.
-fn capped(line: &str, max: usize) -> &str {
-    if line.len() <= max {
-        return line;
-    }
-    let mut end = max;
-    while !line.is_char_boundary(end) {
-        end -= 1;
-    }
-    &line[..end]
+/// The page's JSON line as one log line (it can carry a window title: no forged lines).
+fn share_line(line: &str) -> String {
+    crate::logging::one_line(line, LOG_LINE_MAX)
 }
 
 /// The window's size from before the picker grew it (logical px), while the picker is open.
@@ -216,9 +209,19 @@ pub async fn stream_preview_get(
     }))
 }
 
+static SHARE_BUDGET: std::sync::Mutex<Option<crate::logging::LineBudget>> =
+    std::sync::Mutex::new(None);
+
+/// Up to 60 at once, then 10 a second: well above the 5 s stats and the events between them.
 #[tauri::command]
 pub fn stream_log(line: String) {
-    tracing::info!(target: "share", "share: {}", capped(&line, LOG_LINE_MAX));
+    crate::logging::log_budgeted(
+        &SHARE_BUDGET,
+        60,
+        10.0,
+        || tracing::info!(target: "share", "share: {}", share_line(&line)),
+        |n| tracing::warn!(target: "share", "share: {n} lines dropped (too many)"),
+    );
 }
 
 /// While the picker is open the window is at least `PICKER_MIN_HEIGHT` tall; closing restores the
@@ -352,12 +355,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn log_lines_are_capped_on_a_char_boundary() {
-        assert_eq!(capped("short", 4096), "short");
-        let line = "é".repeat(3000); // 6000 bytes, 2 each
-        let c = capped(&line, 4096);
-        assert_eq!(c.len(), 4096);
-        let odd = format!("a{}", "é".repeat(10));
-        assert_eq!(capped(&odd, 4), "aé"); // byte 4 is mid-char: back off to 3
+    fn a_share_line_is_one_line() {
+        // the page's JSON can carry anything (a window title): it must not forge a log line
+        assert_eq!(
+            share_line("{\"label\":\"a\\n\"}\n2026 INFO pulse_session: pulse-session-start"),
+            "{\"label\":\"a\\n\"} 2026 INFO pulse_session: pulse-session-start"
+        );
+        assert_eq!(share_line(&"é".repeat(3000)).len(), LOG_LINE_MAX);
     }
 }

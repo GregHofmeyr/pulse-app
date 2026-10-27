@@ -145,6 +145,25 @@ fn failure_text(e: reqwest::Error) -> String {
     }
 }
 
+/// What kind of JSON problem a decode error was, and where: never any of the body.
+fn json_problem(e: &reqwest::Error) -> String {
+    use std::error::Error;
+    let mut src = e.source();
+    while let Some(s) = src {
+        if let Some(j) = s.downcast_ref::<serde_json::Error>() {
+            let kind = match j.classify() {
+                serde_json::error::Category::Io => "io",
+                serde_json::error::Category::Syntax => "syntax",
+                serde_json::error::Category::Data => "data",
+                serde_json::error::Category::Eof => "eof",
+            };
+            return format!("{kind} at {}:{}", j.line(), j.column());
+        }
+        src = s.source();
+    }
+    "-".into()
+}
+
 fn log_failure(path: Option<String>, what: &str) {
     tracing::warn!(
         path = path.as_deref().unwrap_or("?"),
@@ -264,11 +283,18 @@ impl Api {
         r: Result<reqwest::Response, reqwest::Error>,
     ) -> Result<T, ApiError> {
         let resp = Self::checked(r).await?;
-        let path = path_only(resp.url());
+        let (path, status) = (path_only(resp.url()), resp.status());
         resp.json().await.map_err(|e| {
             // a 2xx we couldn't read: checked() logged nothing, yet the caller sees a failure
+            let json = json_problem(&e);
             let text = failure_text(e);
-            log_failure(Some(path), &text);
+            tracing::warn!(
+                path,
+                status = status.as_u16(),
+                json,
+                error = text,
+                "request failed"
+            );
             ApiError::Network(text)
         })
     }
@@ -2173,6 +2199,11 @@ mod tests {
         assert!(matches!(r, Err(ApiError::Network(_))), "{r:?}");
         assert!(log.contains("request failed"), "{log}");
         assert!(log.contains("decod"), "{log}");
+        assert!(log.contains("path=\"/\""), "{log}");
+        // the status, and what kind of JSON problem (never the body itself)
+        assert!(log.contains("status=200"), "{log}");
+        assert!(log.contains("json=\"syntax at 1:1\""), "{log}");
+        assert!(!log.contains("not json"), "{log}");
     }
 
     #[tokio::test]

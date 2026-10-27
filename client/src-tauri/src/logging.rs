@@ -22,13 +22,21 @@ pub fn session_start() {
 /// How long one `ui_log` line can be (bytes).
 pub const UI_LINE_MAX: usize = 1024;
 
-/// `line` as one log line: control characters (newlines included, which could forge a line) become
-/// spaces, and it's cut to `UI_LINE_MAX` bytes on a char boundary.
-pub fn ui_line(line: &str) -> String {
-    let mut out = String::with_capacity(line.len().min(UI_LINE_MAX));
+/// Characters that would let a line pass for something else: control characters (a newline could
+/// forge a whole line, even the session marker report tails start at), line/paragraph separators,
+/// and bidi controls (they reorder what a viewer shows).
+fn misleading(c: char) -> bool {
+    c.is_control()
+        || matches!(c, '\u{2028}' | '\u{2029}' | '\u{200E}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+}
+
+/// Text from the webview as one log line: `misleading` characters become spaces, and it's cut to
+/// `max` bytes on a char boundary.
+pub fn one_line(line: &str, max: usize) -> String {
+    let mut out = String::with_capacity(line.len().min(max));
     for c in line.chars() {
-        let c = if c.is_control() { ' ' } else { c };
-        if out.len() + c.len_utf8() > UI_LINE_MAX {
+        let c = if misleading(c) { ' ' } else { c };
+        if out.len() + c.len_utf8() > max {
             break;
         }
         out.push(c);
@@ -36,10 +44,78 @@ pub fn ui_line(line: &str) -> String {
     out
 }
 
-/// A failure the UI handled on its own (e.g. a refused emoji name), so the log shows it too.
+/// A token bucket for lines the webview asks us to log: a loop there mustn't use up the day's
+/// log budget (`Capped`) and push real lines out.
+pub struct LineBudget {
+    burst: f64,
+    per_sec: f64,
+    tokens: f64,
+    last: std::time::Instant,
+    dropped: u64,
+}
+
+impl LineBudget {
+    pub fn new(burst: u32, per_sec: f64, now: std::time::Instant) -> Self {
+        Self {
+            burst: f64::from(burst),
+            per_sec,
+            tokens: f64::from(burst),
+            last: now,
+            dropped: 0,
+        }
+    }
+
+    /// `Some(n)`: log this line, after saying `n` were dropped since the last one that was. `None`: drop it.
+    pub fn take(&mut self, now: std::time::Instant) -> Option<u64> {
+        let gained = now.saturating_duration_since(self.last).as_secs_f64() * self.per_sec;
+        self.tokens = (self.tokens + gained).min(self.burst);
+        self.last = now;
+        if self.tokens < 1.0 {
+            self.dropped += 1;
+            return None;
+        }
+        self.tokens -= 1.0;
+        Some(std::mem::take(&mut self.dropped))
+    }
+}
+
+/// Logs `line` (already made one line) at warn under `budget`, first saying how many were dropped.
+pub fn log_budgeted(
+    budget: &std::sync::Mutex<Option<LineBudget>>,
+    burst: u32,
+    per_sec: f64,
+    emit: impl FnOnce(),
+    dropped: impl FnOnce(u64),
+) {
+    let now = std::time::Instant::now();
+    let verdict = budget
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get_or_insert_with(|| LineBudget::new(burst, per_sec, now))
+        .take(now);
+    match verdict {
+        None => {}
+        Some(0) => emit(),
+        Some(n) => {
+            dropped(n);
+            emit();
+        }
+    }
+}
+
+static UI_BUDGET: std::sync::Mutex<Option<LineBudget>> = std::sync::Mutex::new(None);
+
+/// A failure the UI handled on its own (e.g. a refused emoji name), so the log shows it too. The
+/// page says why, never what was typed. Up to 20 at once, then 2 a second.
 #[tauri::command]
 pub fn ui_log(line: String) {
-    tracing::warn!(target: "ui", "ui: {}", ui_line(&line));
+    log_budgeted(
+        &UI_BUDGET,
+        20,
+        2.0,
+        || tracing::warn!(target: "ui", "ui: {}", one_line(&line, UI_LINE_MAX)),
+        |n| tracing::warn!(target: "ui", "ui: {n} lines dropped (too many)"),
+    );
 }
 
 /// Whether `line` (one log line, with or without its line ending) is the session marker exactly
@@ -320,25 +396,62 @@ impl<W: std::io::Write> std::io::Write for Capped<W> {
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn a_ui_line_is_one_capped_line() {
-        // a newline could forge a line (even the session marker that report tails cut at)
-        assert_eq!(
-            super::ui_line(
-                "emoji: save failed\n2026 INFO pulse_session: pulse-session-start\r\x1b[31m"
-            ),
-            "emoji: save failed 2026 INFO pulse_session: pulse-session-start  [31m"
-        );
-        let long = "é".repeat(super::UI_LINE_MAX);
-        let cut = super::ui_line(&long);
-        assert!(cut.len() <= super::UI_LINE_MAX && cut.chars().all(|c| c == 'é'));
-    }
-
     use super::*;
     use std::io::Write;
     use std::sync::atomic::{AtomicU64, Ordering};
     use tracing::Level;
     use tracing_subscriber::layer::SubscriberExt;
+
+    #[test]
+    fn a_ui_line_is_one_capped_line() {
+        // a newline could forge a line (even the session marker that report tails cut at)
+        assert_eq!(
+            one_line(
+                "emoji: save failed\n2026 INFO pulse_session: pulse-session-start\r\x1b[31m",
+                UI_LINE_MAX
+            ),
+            "emoji: save failed 2026 INFO pulse_session: pulse-session-start  [31m"
+        );
+        // line/paragraph separators and bidi controls can't reorder or split it in a viewer either
+        assert_eq!(
+            one_line(
+                "a\u{2028}b\u{2029}c\u{200E}\u{200F}\u{202A}\u{202E}\u{2066}\u{2069}d",
+                100
+            ),
+            "a b c      d"
+        );
+        let long = "é".repeat(UI_LINE_MAX);
+        let cut = one_line(&long, UI_LINE_MAX);
+        assert!(cut.len() <= UI_LINE_MAX && cut.chars().all(|c| c == 'é'));
+        assert_eq!(cut.len(), UI_LINE_MAX);
+        let odd = format!("a{}", "é".repeat(10));
+        assert_eq!(one_line(&odd, 4), "aé"); // byte 4 is mid-char: back off to 3
+    }
+
+    #[test]
+    fn a_line_budget_allows_a_burst_then_a_steady_rate_and_counts_what_it_drops() {
+        let t0 = std::time::Instant::now();
+        let mut b = LineBudget::new(3, 1.0, t0);
+        assert_eq!(b.take(t0), Some(0));
+        assert_eq!(b.take(t0), Some(0));
+        assert_eq!(b.take(t0), Some(0));
+        assert_eq!(b.take(t0), None); // burst spent
+        assert_eq!(b.take(t0), None);
+        let t1 = t0 + std::time::Duration::from_millis(1000);
+        assert_eq!(b.take(t1), Some(2)); // one refilled; says two were dropped
+        assert_eq!(b.take(t1), None);
+        // never more than the burst, however long it was quiet
+        let t2 = t1 + std::time::Duration::from_secs(3600);
+        assert_eq!(b.take(t2), Some(1));
+        assert_eq!(b.take(t2), Some(0));
+        assert_eq!(b.take(t2), Some(0));
+        assert_eq!(b.take(t2), None);
+    }
+
+    #[test]
+    fn ui_lines_reach_the_log_at_warn_by_default() {
+        assert!(enabled(build_filter(None), "ui", Level::WARN));
+    }
 
     static DAY: AtomicU64 = AtomicU64::new(1);
     fn fake_day() -> u64 {
@@ -453,6 +566,7 @@ mod tests {
                 tracing::enabled!(target: "hyper_util::client", Level::TRACE)
             }
             ("rustls", Level::DEBUG) => tracing::enabled!(target: "rustls", Level::DEBUG),
+            ("ui", Level::WARN) => tracing::enabled!(target: "ui", Level::WARN),
             ("pulse_client::gateway", Level::TRACE) => {
                 tracing::enabled!(target: "pulse_client::gateway", Level::TRACE)
             }
