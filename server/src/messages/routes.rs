@@ -25,7 +25,7 @@ pub fn router() -> Router<AppState> {
         .route("/messages/{id}", patch(edit).delete(remove))
 }
 
-type Row = (
+pub(super) type Row = (
     String,
     String,
     Option<String>,
@@ -33,11 +33,11 @@ type Row = (
     String,
     Option<String>,
     String,
+    Option<String>,
     Option<String>,
     Option<String>,
 );
-const COLS: &str =
-    "id, channel_id, author_id, kind, content, reply_to_id, created_at, edited_at, deleted_at";
+pub(super) const COLS: &str = "id, channel_id, author_id, kind, content, reply_to_id, created_at, edited_at, deleted_at, thread_root_id";
 
 fn parse<T: std::str::FromStr>(s: &str) -> AppResult<T>
 where
@@ -47,8 +47,18 @@ where
 }
 
 fn from_row(r: Row) -> AppResult<Message> {
-    let (id, channel_id, author_id, kind, content, reply_to_id, created_at, edited_at, deleted_at) =
-        r;
+    let (
+        id,
+        channel_id,
+        author_id,
+        kind,
+        content,
+        reply_to_id,
+        created_at,
+        edited_at,
+        deleted_at,
+        thread_root_id,
+    ) = r;
     Ok(Message {
         id: parse(&id)?,
         channel_id: parse(&channel_id)?,
@@ -70,7 +80,7 @@ fn from_row(r: Row) -> AppResult<Message> {
         deleted: deleted_at.is_some(),
         mentions: vec![],
         reactions: vec![],
-        thread_root_id: None,
+        thread_root_id: thread_root_id.as_deref().map(parse).transpose()?,
         quote: None,
         qoty_card: None,
     })
@@ -116,9 +126,38 @@ fn clean(content: &str) -> AppResult<String> {
 }
 
 #[derive(Deserialize)]
-struct Page {
-    before: Option<MessageId>,
-    limit: Option<i64>,
+pub(super) struct Page {
+    pub before: Option<MessageId>,
+    pub limit: Option<i64>,
+}
+
+impl Page {
+    /// (limit, "before" bound). ULIDs sort by time, so "before" is a plain string comparison;
+    /// "~" sorts after every ULID.
+    pub(super) fn bounds(&self) -> (i64, String) {
+        (
+            self.limit.unwrap_or(50).clamp(1, 100),
+            self.before
+                .map(|b| b.to_string())
+                .unwrap_or_else(|| "~".into()),
+        )
+    }
+}
+
+/// Turn rows into messages with mentions, reactions and the quote part, as `me` sees them.
+pub(super) async fn fill(db: &SqlitePool, me: UserId, rows: Vec<Row>) -> AppResult<Vec<Message>> {
+    let mut page: Vec<Message> = rows.into_iter().map(from_row).collect::<AppResult<_>>()?;
+    let ids: Vec<MessageId> = page.iter().map(|m| m.id).collect();
+    let mut map = mentions::for_messages(db, &ids).await?;
+    // A deleted message shows no reactions, like no content.
+    let live: Vec<MessageId> = page.iter().filter(|m| !m.deleted).map(|m| m.id).collect();
+    let mut reacted = reactions::summaries(db, Some(me), &live).await?;
+    for m in &mut page {
+        m.mentions = map.remove(&m.id).unwrap_or_default();
+        m.reactions = reacted.remove(&m.id).unwrap_or_default();
+    }
+    crate::quotes::attach(db, Some(me), &mut page).await?;
+    Ok(page)
 }
 
 async fn list(
@@ -128,31 +167,17 @@ async fn list(
     Query(p): Query<Page>,
 ) -> AppResult<Json<Vec<Message>>> {
     channel_for(&s.db, me, id).await?;
-    let limit = p.limit.unwrap_or(50).clamp(1, 100);
-    // ULIDs sort by time, so "before" is a plain string comparison. "~" sorts after every ULID.
-    let before = p
-        .before
-        .map(|b| b.to_string())
-        .unwrap_or_else(|| "~".into());
+    let (limit, before) = p.bounds();
+    // Replies live in their quote's thread, not in the list.
     let rows: Vec<Row> = sqlx::query_as(&format!(
-        "SELECT {COLS} FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?"
+        "SELECT {COLS} FROM messages WHERE channel_id = ? AND id < ? AND thread_root_id IS NULL ORDER BY id DESC LIMIT ?"
     ))
     .bind(id.to_string())
     .bind(before)
     .bind(limit)
     .fetch_all(&s.db)
     .await?;
-    let mut page: Vec<Message> = rows.into_iter().map(from_row).collect::<AppResult<_>>()?;
-    let ids: Vec<MessageId> = page.iter().map(|m| m.id).collect();
-    let mut map = mentions::for_messages(&s.db, &ids).await?;
-    // A deleted message shows no reactions, like no content.
-    let live: Vec<MessageId> = page.iter().filter(|m| !m.deleted).map(|m| m.id).collect();
-    let mut reacted = reactions::summaries(&s.db, Some(me), &live).await?;
-    for m in &mut page {
-        m.mentions = map.remove(&m.id).unwrap_or_default();
-        m.reactions = reacted.remove(&m.id).unwrap_or_default();
-    }
-    crate::quotes::attach(&s.db, Some(me), &mut page).await?;
+    let page = fill(&s.db, me, rows).await?;
     Ok(Json(page))
 }
 
@@ -180,14 +205,14 @@ async fn send(
         }
         _ => {}
     }
-    // Threads (replies to a quote) arrive with the quotes routes; until then none can be started,
-    // and a quotes channel holds quotes only.
-    if req.thread_root_id.is_some() {
-        return Err(AppError::BadRequest(
-            "replies to quotes aren't supported yet".into(),
-        ));
-    }
-    if ch.kind == ChannelKind::Quotes {
+    // A quotes channel holds quotes only; the one plain message it takes is a reply in a thread.
+    if let Some(root) = req.thread_root_id {
+        if !super::threads::is_live_quote(&s.db, root, id).await? {
+            return Err(AppError::BadRequest(
+                "replies go to a quote in this channel".into(),
+            ));
+        }
+    } else if ch.kind == ChannelKind::Quotes {
         return Err(AppError::BadRequest(
             "only quotes can be posted here".into(),
         ));
@@ -198,7 +223,12 @@ async fn send(
     if let Some(r) = req.reply_to_id {
         // Same-channel only; a reply target elsewhere (including private) is indistinguishable from missing.
         match load(&s.db, None, r).await? {
-            Some(target) if target.channel_id == id => {
+            Some(target)
+                if target.channel_id == id
+                    && req.thread_root_id.is_none_or(|root| {
+                        target.id == root || target.thread_root_id == Some(root)
+                    }) =>
+            {
                 // A reply pings whoever it replies to, as long as they can still see the chat.
                 if let Some(author) = target.author_id
                     && author != me
@@ -210,7 +240,7 @@ async fn send(
             }
             _ => {
                 return Err(AppError::BadRequest(
-                    "reply target not in this channel".into(),
+                    "reply target not in this channel or thread".into(),
                 ));
             }
         }
@@ -227,7 +257,7 @@ async fn send(
         deleted: false,
         mentions: mentioned.clone(),
         reactions: vec![],
-        thread_root_id: None,
+        thread_root_id: req.thread_root_id,
         quote: None,
         qoty_card: None,
     };
@@ -245,7 +275,7 @@ async fn send(
             .map(Json)
             .ok_or(AppError::NotFound);
     }
-    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at, nonce) VALUES (?, ?, ?, 'normal', ?, ?, ?, ?)")
+    sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, reply_to_id, created_at, nonce, thread_root_id) VALUES (?, ?, ?, 'normal', ?, ?, ?, ?, ?)")
         .bind(msg.id.to_string())
         .bind(id.to_string())
         .bind(me.to_string())
@@ -253,6 +283,7 @@ async fn send(
         .bind(msg.reply_to_id.map(|r| r.to_string()))
         .bind(&msg.created_at)
         .bind(&req.nonce)
+        .bind(req.thread_root_id.map(|r| r.to_string()))
         .execute(&mut *tx)
         .await?;
     mentions::store(&mut tx, msg.id, &mentioned).await?;
@@ -267,7 +298,15 @@ async fn send(
             .await?;
     }
     // Sending marks your own read point (you've obviously seen everything up to here).
-    let moved = crate::reads::advance(&mut tx, me, id, msg.id).await?;
+    let mut thread_cleared = None;
+    // A reply is not channel traffic: it marks your place in its thread instead.
+    let moved = match req.thread_root_id {
+        Some(root) => {
+            thread_cleared = super::threads::mark_seen(&mut tx, me, root, msg.id).await?;
+            false
+        }
+        None => crate::reads::advance(&mut tx, me, id, msg.id).await?,
+    };
     tx.commit().await?;
     s.hub
         .publish(
@@ -278,6 +317,21 @@ async fn send(
             },
         )
         .await;
+    // Replying covers earlier mentions of you in the thread: tell your other sessions.
+    if let (Some(root), Some(mentions_cleared @ 1..)) = (req.thread_root_id, thread_cleared) {
+        s.hub
+            .publish(
+                &s.db,
+                Event::ThreadSeen {
+                    user_id: me,
+                    channel_id: id,
+                    root_id: root,
+                    last_seen_id: msg.id,
+                    mentions_cleared,
+                },
+            )
+            .await;
+    }
     if moved {
         s.hub
             .publish(
@@ -402,7 +456,7 @@ async fn remove(
                     .await?
                     .remove(&id)
                     .unwrap_or_default(),
-                thread_root_id: None,
+                thread_root_id: msg.thread_root_id,
             },
         )
         .await;

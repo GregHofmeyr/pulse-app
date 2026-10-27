@@ -267,7 +267,14 @@ pub async fn toggle(
             tracing::warn!(%channel_id, mode, "unknown reaction mode; treating as normal");
             ReactionMode::Normal
         });
-        if mode == ReactionMode::OnePerPerson {
+        // One per person is for quotes; replies and system cards in the channel react normally.
+        let is_quote: bool = sqlx::query_scalar(
+            "SELECT kind = 'normal' AND thread_root_id IS NULL FROM messages WHERE id = ?",
+        )
+        .bind(msg.to_string())
+        .fetch_one(&mut *tx)
+        .await?;
+        if mode == ReactionMode::OnePerPerson && is_quote {
             let others: Vec<String> = sqlx::query_scalar(
                 "DELETE FROM reactions WHERE message_id = ? AND user_id = ? AND emoji != ?
                  RETURNING emoji",

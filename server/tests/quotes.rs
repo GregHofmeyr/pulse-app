@@ -18,6 +18,10 @@ type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn hello(app: &TestApp, token: &str) -> Socket {
+    hello_ready(app, token).await.0
+}
+
+async fn hello_ready(app: &TestApp, token: &str) -> (Socket, pulse_protocol::gateway::Ready) {
     let (mut ws, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
         .await
         .unwrap();
@@ -29,7 +33,7 @@ async fn hello(app: &TestApp, token: &str) -> Socket {
     ws.send(Ws::text(f)).await.unwrap();
     loop {
         match next_frame(&mut ws).await {
-            Some(ServerFrame::Ready(_)) => return ws,
+            Some(ServerFrame::Ready(r)) => return (ws, r),
             Some(_) => continue,
             None => panic!("expected Ready"),
         }
@@ -1429,4 +1433,472 @@ async fn deleting_a_quote_clears_reactions_awards_and_replies() {
         get_json(&f.app, &f.sam_t, &format!("/channels/{}/messages", f.ch.id)).await;
     let read = page.iter().find(|p| p.id == m.id).unwrap();
     assert!(read.deleted && read.quote.is_none());
+}
+
+// ---- replies (threads) ----
+
+impl Fixture {
+    async fn quote(&self) -> Message {
+        self.post_lines(json!([self.say(self.sam, "x")]))
+            .await
+            .json()
+            .await
+            .unwrap()
+    }
+    async fn reply_raw(&self, token: &str, body: serde_json::Value) -> reqwest::Response {
+        post_json(
+            &self.app,
+            token,
+            &format!("/channels/{}/messages", self.ch.id),
+            body,
+        )
+        .await
+    }
+    async fn reply(&self, token: &str, root: MessageId, text: &str) -> Message {
+        let r = self
+            .reply_raw(token, json!({ "content": text, "thread_root_id": root }))
+            .await;
+        assert_eq!(r.status(), 200, "reply");
+        r.json().await.unwrap()
+    }
+    async fn replies(&self, token: &str, root: MessageId, query: &str) -> Vec<Message> {
+        get_json(
+            &self.app,
+            token,
+            &format!("/messages/{root}/replies{query}"),
+        )
+        .await
+    }
+    async fn seen(&self, token: &str, root: MessageId, reply: MessageId) -> reqwest::Response {
+        post_json(
+            &self.app,
+            token,
+            &format!("/messages/{root}/replies/seen"),
+            json!({ "message_id": reply }),
+        )
+        .await
+    }
+    async fn state(&self, token: &str) -> pulse_protocol::rest::ReadState {
+        let (_ws, ready) = hello_ready(&self.app, token).await;
+        ready
+            .read_states
+            .into_iter()
+            .find(|s| s.channel_id == self.ch.id)
+            .expect("read state")
+    }
+    async fn react(&self, token: &str, msg: MessageId, emoji: &str) -> u16 {
+        self.app
+            .http
+            .put(self.app.url(&format!("/messages/{msg}/reactions/{emoji}")))
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .as_u16()
+    }
+}
+
+#[tokio::test]
+async fn replies_stay_out_of_the_main_list() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let r = f.reply(&f.sam_t, q.id, "hello").await;
+    assert_eq!(r.thread_root_id, Some(q.id));
+    let page: Vec<Message> = get_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/messages", f.ch.id),
+    )
+    .await;
+    assert_eq!(page.iter().map(|m| m.id).collect::<Vec<_>>(), vec![q.id]);
+    let list = f.replies(&f.alex_t, q.id, "").await;
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].id, r.id);
+    assert_eq!(list[0].thread_root_id, Some(q.id));
+    assert_eq!(list[0].content, "hello");
+}
+
+#[tokio::test]
+async fn replies_page_newest_first() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let mut ids = vec![];
+    for i in 0..3 {
+        ids.push(f.reply(&f.sam_t, q.id, &format!("r{i}")).await.id);
+    }
+    let all = f.replies(&f.alex_t, q.id, "").await;
+    assert_eq!(
+        all.iter().map(|m| m.id).collect::<Vec<_>>(),
+        vec![ids[2], ids[1], ids[0]]
+    );
+    let page = f
+        .replies(&f.alex_t, q.id, &format!("?before={}&limit=1", ids[2]))
+        .await;
+    assert_eq!(page.iter().map(|m| m.id).collect::<Vec<_>>(), vec![ids[1]]);
+    // Not a quote, or not visible: 404.
+    let r = f
+        .app
+        .http
+        .get(f.app.url(&format!("/messages/{}/replies", ids[0])))
+        .bearer_auth(&f.alex_t)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404);
+    let (_, outsider) = register(&f.app, "robin").await;
+    let r = f
+        .app
+        .http
+        .get(f.app.url(&format!("/messages/{}/replies", q.id)))
+        .bearer_auth(&outsider)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        r.status(),
+        200,
+        "server channels are readable by any signed-in user, like list"
+    );
+}
+
+#[tokio::test]
+async fn replies_are_not_unread() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let before = f.state(&f.alex_t).await;
+    assert_eq!(before.unread, 0, "alex posted it");
+    f.reply(&f.sam_t, q.id, "hi").await;
+    let after = f.state(&f.alex_t).await;
+    assert_eq!(after.unread, 0);
+    assert_eq!(after.last_read_message_id, before.last_read_message_id);
+    // sam's own reply doesn't move sam's channel read point past unread quotes.
+    let sam = f.state(&f.sam_t).await;
+    assert_eq!(sam.unread, 1, "alex's quote is still unread for sam");
+}
+
+#[tokio::test]
+async fn a_reply_mention_counts_until_the_panel_is_seen() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let mut alex_ws = hello(&f.app, &f.alex_t).await;
+    let mut sam_ws = hello(&f.app, &f.sam_t).await;
+    let r = f.reply(&f.sam_t, q.id, "hey @alex look").await;
+    assert_eq!(f.state(&f.alex_t).await.mentions, 1);
+    assert_eq!(f.seen(&f.alex_t, q.id, r.id).await.status(), 204);
+    assert_eq!(f.state(&f.alex_t).await.mentions, 0);
+    match loop {
+        if let ServerFrame::Event(e @ Event::ThreadSeen { .. }) =
+            next_frame(&mut alex_ws).await.expect("ThreadSeen")
+        {
+            break e;
+        }
+    } {
+        Event::ThreadSeen {
+            user_id,
+            channel_id,
+            root_id,
+            last_seen_id,
+            mentions_cleared,
+        } => assert_eq!(
+            (user_id, channel_id, root_id, last_seen_id, mentions_cleared),
+            (f.alex, f.ch.id, q.id, r.id, 1)
+        ),
+        _ => unreachable!(),
+    }
+    // Only to alex.
+    let leaked = tokio::time::timeout(Duration::from_millis(300), async {
+        loop {
+            if let Some(ServerFrame::Event(Event::ThreadSeen { .. })) =
+                next_frame(&mut sam_ws).await
+            {
+                return;
+            }
+        }
+    })
+    .await;
+    assert!(leaked.is_err(), "sam must not get alex's ThreadSeen");
+    // The quote now reads as seen by alex.
+    let page: Vec<Message> = get_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/messages", f.ch.id),
+    )
+    .await;
+    assert_eq!(page[0].quote.as_ref().unwrap().replies_seen, Some(r.id));
+}
+
+#[tokio::test]
+async fn seen_only_moves_forward_and_validates() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let other = f.quote().await;
+    let (r1, r2) = (
+        f.reply(&f.sam_t, q.id, "one @alex").await,
+        f.reply(&f.sam_t, q.id, "two @alex").await,
+    );
+    let foreign = f.reply(&f.sam_t, other.id, "elsewhere").await;
+    assert_eq!(f.state(&f.alex_t).await.mentions, 2);
+    assert_eq!(f.seen(&f.alex_t, q.id, r2.id).await.status(), 204);
+    assert_eq!(f.state(&f.alex_t).await.mentions, 0);
+    // Backwards: a no-op (204, no event, nothing moves).
+    let mut ws = hello(&f.app, &f.alex_t).await;
+    assert_eq!(f.seen(&f.alex_t, q.id, r1.id).await.status(), 204);
+    let evt = tokio::time::timeout(Duration::from_millis(300), async {
+        loop {
+            if let Some(ServerFrame::Event(Event::ThreadSeen { .. })) = next_frame(&mut ws).await {
+                return;
+            }
+        }
+    })
+    .await;
+    assert!(evt.is_err(), "a backwards seen publishes nothing");
+    let seen: String = sqlx::query_scalar(
+        "SELECT last_seen_id FROM thread_reads WHERE user_id = ? AND root_id = ?",
+    )
+    .bind(f.alex.to_string())
+    .bind(q.id.to_string())
+    .fetch_one(&f.app.db)
+    .await
+    .unwrap();
+    assert_eq!(seen, r2.id.to_string());
+    // A message of another thread, the root itself, or an unknown id: 400.
+    for bad in [foreign.id, q.id, MessageId::new()] {
+        assert_eq!(f.seen(&f.alex_t, q.id, bad).await.status(), 400, "{bad}");
+    }
+    // A root that isn't a quote: 404.
+    assert_eq!(f.seen(&f.alex_t, r1.id, r2.id).await.status(), 404);
+    // Unknown root: 404.
+    assert_eq!(
+        f.seen(&f.alex_t, MessageId::new(), r2.id).await.status(),
+        404
+    );
+}
+
+#[tokio::test]
+async fn a_reply_needs_a_live_quote_in_this_channel() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    // A system/plain message root.
+    let plain = MessageId::new();
+    sqlx::query("INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES (?, ?, ?, 'p', '2026-01-01T00:00:00.000Z')")
+        .bind(plain.to_string())
+        .bind(f.ch.id.to_string())
+        .bind(f.sam.to_string())
+        .execute(&f.app.db)
+        .await
+        .unwrap();
+    // A deleted quote.
+    let dead = f.quote().await;
+    assert_eq!(f.delete(&f.alex_t, dead.id).await.status(), 204);
+    // A quote in another channel.
+    let other = create_quotes(&f.app, &f.alex_t, f.server).await;
+    let r = post_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/quotes", other.id),
+        json!({ "lines": [f.say(f.sam, "y")] }),
+    )
+    .await;
+    let elsewhere: Message = r.json().await.unwrap();
+    for root in [plain, dead.id, elsewhere.id, MessageId::new()] {
+        let r = f
+            .reply_raw(&f.sam_t, json!({ "content": "x", "thread_root_id": root }))
+            .await;
+        assert_eq!(r.status(), 400, "{root}");
+    }
+    // A plain message without a thread is still refused here.
+    assert_eq!(
+        f.reply_raw(&f.sam_t, json!({ "content": "x" }))
+            .await
+            .status(),
+        400
+    );
+    // The same rules as any message: content length, and a live quote works.
+    assert_eq!(
+        f.reply_raw(&f.sam_t, json!({ "content": " ", "thread_root_id": q.id }))
+            .await
+            .status(),
+        400
+    );
+    f.reply(&f.sam_t, q.id, "fine").await;
+}
+
+#[tokio::test]
+async fn a_reply_is_idempotent_by_nonce() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let body = json!({ "content": "x", "thread_root_id": q.id, "nonce": "n-1" });
+    let a: Message = f
+        .reply_raw(&f.sam_t, body.clone())
+        .await
+        .json()
+        .await
+        .unwrap();
+    let b: Message = f.reply_raw(&f.sam_t, body).await.json().await.unwrap();
+    assert_eq!(a.id, b.id);
+    assert_eq!(b.thread_root_id, Some(q.id));
+    assert_eq!(f.replies(&f.sam_t, q.id, "").await.len(), 1);
+}
+
+#[tokio::test]
+async fn reply_to_id_stays_in_the_thread() {
+    let f = fixture().await;
+    let (a, b) = (f.quote().await, f.quote().await);
+    let in_a = f.reply(&f.sam_t, a.id, "a1").await;
+    let in_b = f.reply(&f.sam_t, b.id, "b1").await;
+    let bad = f
+        .reply_raw(
+            &f.alex_t,
+            json!({ "content": "x", "thread_root_id": a.id, "reply_to_id": in_b.id }),
+        )
+        .await;
+    assert_eq!(bad.status(), 400);
+    // A reply to a reply in the same thread is fine, and so is one to the quote itself.
+    for target in [in_a.id, a.id] {
+        let ok = f
+            .reply_raw(
+                &f.alex_t,
+                json!({ "content": "x", "thread_root_id": a.id, "reply_to_id": target }),
+            )
+            .await;
+        assert_eq!(ok.status(), 200, "{target}");
+        let m: Message = ok.json().await.unwrap();
+        assert_eq!(
+            (m.reply_to_id, m.thread_root_id),
+            (Some(target), Some(a.id))
+        );
+    }
+}
+
+#[tokio::test]
+async fn replies_get_normal_reactions() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let r = f.reply(&f.sam_t, q.id, "hi").await;
+    assert_eq!(f.react(&f.alex_t, r.id, "👍").await, 204);
+    assert_eq!(f.react(&f.alex_t, r.id, "🎉").await, 204);
+    let list = f.replies(&f.alex_t, q.id, "").await;
+    let mut got: Vec<_> = list[0].reactions.iter().map(|x| x.emoji.clone()).collect();
+    got.sort();
+    assert_eq!(got.len(), 2, "both stay: {got:?}");
+    // A quote is still one per person.
+    assert_eq!(f.react(&f.alex_t, q.id, "👍").await, 204);
+    assert_eq!(f.react(&f.alex_t, q.id, "🎉").await, 204);
+    let page: Vec<Message> = get_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/messages", f.ch.id),
+    )
+    .await;
+    assert_eq!(page[0].reactions.len(), 1);
+    assert_eq!(page[0].reactions[0].emoji, "🎉");
+}
+
+#[tokio::test]
+async fn quote_reply_counts() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    f.reply(&f.sam_t, q.id, "1").await;
+    let r2 = f.reply(&f.alex_t, q.id, "2").await;
+    let r3 = f.reply(&f.sam_t, q.id, "3").await;
+    let read = |token: String| {
+        let (app, ch) = (&f.app, f.ch.id);
+        async move {
+            let page: Vec<Message> =
+                get_json(app, &token, &format!("/channels/{ch}/messages")).await;
+            page.into_iter().next().unwrap().quote.unwrap()
+        }
+    };
+    let quote = read(f.alex_t.clone()).await;
+    assert_eq!((quote.reply_count, quote.last_reply_id), (3, Some(r3.id)));
+    assert_eq!(f.delete(&f.sam_t, r3.id).await.status(), 204);
+    let quote = read(f.alex_t.clone()).await;
+    assert_eq!((quote.reply_count, quote.last_reply_id), (2, Some(r2.id)));
+    // Posting a reply marks your place in the thread, deleted or not.
+    assert_eq!(quote.replies_seen, Some(r2.id));
+    assert_eq!(read(f.sam_t.clone()).await.replies_seen, Some(r3.id));
+}
+
+#[tokio::test]
+async fn replies_never_change_a_score() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let r = f.reply(&f.sam_t, q.id, "hi").await;
+    assert_eq!(f.react(&f.alex_t, r.id, "🔥").await, 204);
+    let page: Vec<Message> = get_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/messages", f.ch.id),
+    )
+    .await;
+    assert!(page[0].reactions.is_empty());
+}
+
+#[tokio::test]
+async fn reply_events_carry_the_root() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let mut ws = hello(&f.app, &f.alex_t).await;
+    let r = f.reply(&f.sam_t, q.id, "hi").await;
+    let edit = f
+        .app
+        .http
+        .patch(f.app.url(&format!("/messages/{}", r.id)))
+        .bearer_auth(&f.sam_t)
+        .json(&json!({ "content": "hi!" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(edit.status(), 200);
+    let edited: Message = edit.json().await.unwrap();
+    assert_eq!(edited.thread_root_id, Some(q.id));
+    assert_eq!(f.delete(&f.sam_t, r.id).await.status(), 204);
+    let mut seen = vec![];
+    while seen.len() < 3 {
+        match next_frame(&mut ws).await.expect("reply events") {
+            ServerFrame::Event(Event::MessageCreated { message, .. }) if message.id == r.id => {
+                seen.push(("created", message.thread_root_id));
+            }
+            ServerFrame::Event(Event::MessageUpdated { message }) if message.id == r.id => {
+                seen.push(("updated", message.thread_root_id));
+            }
+            ServerFrame::Event(Event::MessageDeleted {
+                message_id,
+                thread_root_id,
+                ..
+            }) if message_id == r.id => seen.push(("deleted", thread_root_id)),
+            _ => {}
+        }
+    }
+    assert_eq!(
+        seen,
+        vec![
+            ("created", Some(q.id)),
+            ("updated", Some(q.id)),
+            ("deleted", Some(q.id))
+        ]
+    );
+}
+
+#[tokio::test]
+async fn replying_covers_earlier_mentions() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    f.reply(&f.sam_t, q.id, "hey @alex").await;
+    assert_eq!(f.state(&f.alex_t).await.mentions, 1);
+    let mut ws = hello(&f.app, &f.alex_t).await;
+    let mine = f.reply(&f.alex_t, q.id, "here").await;
+    assert_eq!(f.state(&f.alex_t).await.mentions, 0);
+    loop {
+        if let ServerFrame::Event(Event::ThreadSeen {
+            last_seen_id,
+            mentions_cleared,
+            ..
+        }) = next_frame(&mut ws).await.expect("ThreadSeen")
+        {
+            assert_eq!((last_seen_id, mentions_cleared), (mine.id, 1));
+            break;
+        }
+    }
 }

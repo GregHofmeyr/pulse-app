@@ -44,17 +44,24 @@ pub async fn advance(
     Ok(r.rows_affected() > 0)
 }
 
-/// Unread = others' normal, non-deleted messages after the point; mentions = your mentions after it.
+/// Unread = others' normal, non-deleted main-list messages after the point (replies never count);
+/// mentions = your mentions in the main list after it, plus those in a quote's replies after your
+/// seen point for that quote.
 /// Channels without a point (never joined/initialised) are reported as fully read.
 pub async fn states_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<ReadState>> {
     let rows: Vec<(String, Option<String>, i64, i64)> = sqlx::query_as(
         "SELECT rs.channel_id, rs.last_read_message_id,
             (SELECT COUNT(*) FROM messages m WHERE m.channel_id = rs.channel_id
                AND m.id > COALESCE(rs.last_read_message_id, '') AND m.kind = 'normal'
-               AND m.deleted_at IS NULL AND COALESCE(m.author_id, '') != rs.user_id),
+               AND m.deleted_at IS NULL AND m.thread_root_id IS NULL AND COALESCE(m.author_id, '') != rs.user_id),
             (SELECT COUNT(*) FROM mentions mn JOIN messages m ON m.id = mn.message_id
                WHERE mn.user_id = rs.user_id AND m.channel_id = rs.channel_id
-               AND m.id > COALESCE(rs.last_read_message_id, '') AND m.deleted_at IS NULL)
+               AND m.deleted_at IS NULL
+               AND CASE WHEN m.thread_root_id IS NULL
+                   THEN m.id > COALESCE(rs.last_read_message_id, '')
+                   ELSE m.id > COALESCE((SELECT tr.last_seen_id FROM thread_reads tr
+                        WHERE tr.user_id = rs.user_id AND tr.root_id = m.thread_root_id), '')
+                   END)
          FROM read_states rs WHERE rs.user_id = ?",
     )
     .bind(me.to_string())
