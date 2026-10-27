@@ -95,7 +95,8 @@ export const clampVolume = (pct: number) => Math.round(Math.min(200, Math.max(0,
 
 export function volumeLabel(pct: number): string {
   const v = clampVolume(pct)
-  return v === 0 ? 'Muted' : `${v}%`
+  // 0%, not "Muted": that reads as the person's own mute (Mute for me has its own mark)
+  return `${v}%`
 }
 
 /** Which sound a mute/deafen transition plays (deafen wins over mute). */

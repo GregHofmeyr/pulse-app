@@ -67,7 +67,7 @@
   {#if mutedForMe}
     <!-- the text names it; the icon alone (compact strip) carries the label -->
     <span class="for-me" data-tip="Muted for you (they don't know)"><Icon name="speakerOff" size={compact ? 11 : 13} label={compact ? 'Muted for you' : undefined} />{#if !compact}Muted for you{/if}</span>
-  {:else if !entry.pending && volume !== 100}<span class="vol">{volume === 0 ? '0%' : volumeLabel(volume)}</span>{/if}
+  {:else if !entry.pending && volume !== 100}<span class="vol">{volumeLabel(volume)}</span>{/if}
 </div>
 
 <style>

@@ -10,7 +10,7 @@ import { loadUnsent, saveUnsent } from './unsent'
 import { isMuted, messageSound, SOUND_GAP_MS } from './conversations'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { noteReactionEvent } from './reactions'
-import { playSound } from './voiceui'
+import { loadSoundPrefs, playSound } from './voiceui'
 import { streamApi } from './stream/stream.svelte'
 import { windowFocus } from './windowFocus.svelte'
 
@@ -39,8 +39,9 @@ let lastPlayedAt = 0
 
 /**
  * For a message that could ding (someone else's, in a DM/group or mentioning you), one line saying
- * why it did or didn't: only flags, never who, where or what. Skipped as "focused": also what the
- * OS says, so a focus value the page got wrong shows up.
+ * why it did or didn't: only flags, never who, where or what. Skipped because you're reading that
+ * conversation in the focused window (every message while you chat): only if the OS says the
+ * window isn't focused after all, which is the case worth knowing about.
  */
 function logSoundDecision(v: Parameters<typeof messageSound>[0], play: boolean) {
   const m = v.message
@@ -48,13 +49,17 @@ function logSoundDecision(v: Parameters<typeof messageSound>[0], play: boolean) 
   const mentioned = m.mentions.includes(v.me)
   if (m.kind !== 'normal' || m.author_id === v.me || !(isPrivate || mentioned)) return
   const gapOk = v.now - v.lastPlayedAt >= SOUND_GAP_MS
-  void api.uiLog(`sound: message private=${isPrivate} mentioned=${mentioned} open=${v.open} focused=${v.focused} muted=${v.muted} gap_ok=${gapOk} play=${play}`, 'info')
-  if (!play && v.open && v.focused) {
-    getCurrentWindow().isFocused().then(
-      (f) => void api.uiLog(`sound: skipped as focused; the OS says focused=${f}`, 'info'),
-      () => {},
-    )
-  }
+  const p = loadSoundPrefs()
+  // switched off in settings looks nothing like a sound that got lost
+  const prefs = p.volume_pct === 0 ? 'vol0' : p.off.includes('message') ? 'off' : 'on'
+  const line = `sound: message private=${isPrivate} mentioned=${mentioned} open=${v.open} focused=${v.focused} muted=${v.muted} gap_ok=${gapOk} sound=${prefs} play=${play}`
+  if (play || !v.open || !v.focused) return void api.uiLog(line, 'info')
+  getCurrentWindow().isFocused().then(
+    (f) => {
+      if (!f) void api.uiLog(`${line}; the OS says focused=false`, 'info')
+    },
+    () => {},
+  )
 }
 
 function maybeSound(e: Event) {
@@ -75,7 +80,11 @@ function maybeSound(e: Event) {
     now,
   }
   const play = messageSound(v)
-  logSoundDecision(v, play)
+  try {
+    logSoundDecision(v, play)
+  } catch {
+    /* a diagnostic never costs the message */
+  }
   if (play) {
     lastPlayedAt = now
     playSound('message')

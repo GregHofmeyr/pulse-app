@@ -27,7 +27,10 @@ pub const UI_LINE_MAX: usize = 1024;
 /// and bidi controls (they reorder what a viewer shows).
 fn misleading(c: char) -> bool {
     c.is_control()
-        || matches!(c, '\u{2028}' | '\u{2029}' | '\u{200E}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2066}'..='\u{2069}')
+        || matches!(
+            c,
+            '\u{061C}' | '\u{200E}'..='\u{200F}' | '\u{2028}'..='\u{202E}' | '\u{2066}'..='\u{2069}' | '\u{FEFF}'
+        )
 }
 
 /// Text from the webview as one log line: `misleading` characters become spaces, and it's cut to
@@ -79,7 +82,7 @@ impl LineBudget {
     }
 }
 
-/// Logs `line` (already made one line) at warn under `budget`, first saying how many were dropped.
+/// Runs `emit` under `budget` (`emit` picks the level), first saying how many were dropped.
 pub fn log_budgeted(
     budget: &std::sync::Mutex<Option<LineBudget>>,
     burst: u32,
@@ -103,7 +106,17 @@ pub fn log_budgeted(
     }
 }
 
-static UI_BUDGET: std::sync::Mutex<Option<LineBudget>> = std::sync::Mutex::new(None);
+static UI_WARN_BUDGET: std::sync::Mutex<Option<LineBudget>> = std::sync::Mutex::new(None);
+static UI_INFO_BUDGET: std::sync::Mutex<Option<LineBudget>> = std::sync::Mutex::new(None);
+
+/// Each level its own budget: a busy chat's info lines can't use up the room failures need.
+fn ui_budget(info: bool) -> &'static std::sync::Mutex<Option<LineBudget>> {
+    if info {
+        &UI_INFO_BUDGET
+    } else {
+        &UI_WARN_BUDGET
+    }
+}
 
 /// Something the UI decided or handled on its own (a refused emoji name at warn, why a message
 /// did or didn't ding at `info`), so the log shows it too. The page says why, never what was
@@ -111,12 +124,13 @@ static UI_BUDGET: std::sync::Mutex<Option<LineBudget>> = std::sync::Mutex::new(N
 #[tauri::command]
 pub fn ui_log(line: String, info: Option<bool>) {
     let line = one_line(&line, UI_LINE_MAX);
+    let info = info == Some(true);
     log_budgeted(
-        &UI_BUDGET,
+        ui_budget(info),
         20,
         2.0,
         || {
-            if info == Some(true) {
+            if info {
                 tracing::info!(target: "ui", "ui: {line}")
             } else {
                 tracing::warn!(target: "ui", "ui: {line}")
@@ -454,6 +468,16 @@ mod tests {
         assert_eq!(b.take(t2), Some(0));
         assert_eq!(b.take(t2), Some(0));
         assert_eq!(b.take(t2), None);
+    }
+
+    #[test]
+    fn info_lines_have_their_own_budget_so_they_cant_crowd_out_warnings() {
+        assert!(!std::ptr::eq(ui_budget(true), ui_budget(false)));
+    }
+
+    #[test]
+    fn line_separators_byte_order_marks_and_the_arabic_letter_mark_are_flattened() {
+        assert_eq!(one_line("a\u{061C}b\u{FEFF}c", 100), "a b c");
     }
 
     #[test]

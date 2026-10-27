@@ -11,7 +11,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => {}) }))
 describe('voice ui helpers', () => {
   it('volumeLabel', () => {
     expect(volumeLabel(100)).toBe('100%')
-    expect(volumeLabel(0)).toBe('Muted')
+    expect(volumeLabel(0)).toBe('0%') // not 'Muted': that reads as their own mute
     expect(volumeLabel(250)).toBe('200%')
   })
 
