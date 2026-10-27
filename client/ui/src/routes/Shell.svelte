@@ -42,7 +42,8 @@
   let activeChannelId = $state<string | null>(null)
   let settingsOpen = $state(false)
 
-  // The animation freeze while you stream; here so it outlives the voice panel.
+  // The animation freeze while you stream; here so it outlives the voice panel. Returning the stop
+  // is what ends it with the shell: a `{ followLiveFreeze() }` body would leak it.
   $effect(() => followLiveFreeze())
   let settingsSection = $state<'voice' | 'keybinds'>('voice')
   // Nothing is bound by default: until they've chosen, nudge people to pick their keys (Windows;

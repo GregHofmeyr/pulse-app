@@ -113,6 +113,9 @@ function nameOf(channelId: string, userId: string): string {
   return displayName(app.state, app.state.channels[channelId]?.server_id ?? null, userId)
 }
 
+/** Which `#v` connection is current (by identity: the store's copy may be a reactive proxy). */
+let roomGen = 0
+
 /** The `#v` connection for `channelId`, connecting (once) if needed. */
 async function ensureRoom(channelId: string): Promise<StreamRoom> {
   if (stream.room && roomChannel === channelId && stream.room.connected) return stream.room
@@ -124,6 +127,8 @@ async function ensureRoom(channelId: string): Promise<StreamRoom> {
     const room = await p
     stream.room = room
     roomChannel = channelId
+    const mine = ++roomGen
+    room.onLost(() => void roomLost(mine))
     return room
   } finally {
     if (connecting?.p === p) connecting = null
@@ -131,10 +136,30 @@ async function ensureRoom(channelId: string): Promise<StreamRoom> {
 }
 
 async function disconnect() {
+  roomGen++ // what LiveKit reports about the old connection from here on is our own doing
   const room = stream.room
   stream.room = null
   roomChannel = null
   await room?.disconnect().catch(logError('disconnect_error'))
+}
+
+/**
+ * LiveKit gave up on the `#v` connection: what we share and watch on it is dead, so end it (and
+ * the live freeze with it) rather than sit "live" with nothing going out. `mine` is the
+ * connection's generation: our own `disconnect()` (or a newer connection) moves it on, so it never counts.
+ */
+async function roomLost(mine: number) {
+  if (mine !== roomGen || !stream.room) return
+  stream.room = null
+  roomChannel = null
+  streamCmd.log({ ev: 'room_lost', live: !!stream.live, watching: stream.watching.length })
+  if (!stream.live && !stream.watching.length) return
+  stream.notice = 'Streaming stopped: the connection was lost'
+  if (stream.live) {
+    liveGen.cancel()
+    await endLive(true)
+  }
+  await endWatches(() => true, true)
 }
 
 /** Nothing to publish or watch: let the connection go. */

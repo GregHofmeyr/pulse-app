@@ -7,6 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }))
 const room = vi.hoisted(() => ({
   connected: true,
+  onLost: () => {},
   disconnect: async () => {},
   watch: async () => 0,
   unwatch: () => {},

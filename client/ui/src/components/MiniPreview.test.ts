@@ -10,6 +10,7 @@ vi.mock('@tauri-apps/api/window', () => ({
 }))
 const room = vi.hoisted(() => ({
   connected: true,
+  onLost: () => {},
   disconnect: async () => {},
   watch: async () => 0,
   unwatch: () => {},
