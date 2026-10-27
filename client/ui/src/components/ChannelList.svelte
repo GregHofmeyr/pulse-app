@@ -8,7 +8,7 @@
   import LiveBadge from './LiveBadge.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
   import { menuPoint } from '../lib/participantMenu'
-  import { selfVoice, voiceApi } from '../lib/voice.svelte'
+  import { selfVoice, voice, voiceApi } from '../lib/voice.svelte'
   import { hoverPrefetch } from '../lib/hoverPrefetch'
 
   let {
@@ -132,6 +132,7 @@
           <span class="joining">Joining…</span><span class="spinner" role="progressbar" aria-label="Joining"></span>
         {:else}
           <LiveBadge channelId={c.id} userId={p.userId} />
+          {#if voice.localMutes[p.userId] && p.userId !== app.state.me?.id}<span class="flag for-me" data-tip="Muted for you"><Icon name="speakerOff" size={14} label="Muted for you" /></span>{/if}
           {#if p.deafened}<span class="flag"><Icon name="headphonesOff" size={14} label="Deafened" /></span>
           {:else if p.muted}<span class="flag"><Icon name="micOff" size={14} label="Muted" /></span>{/if}
         {/if}
@@ -169,6 +170,7 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
   .flag { color: #f2616b; display: flex; }
+  .flag.for-me { color: var(--warn); }
   .row.unread { color: var(--text); font-weight: 600; }
   .row.muted { opacity: .5; }
   .mic { color: var(--text-3); display: grid; }

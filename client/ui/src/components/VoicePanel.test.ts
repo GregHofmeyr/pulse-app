@@ -268,6 +268,35 @@ describe('stream tiles', () => {
   })
 })
 
+describe('muted for you', () => {
+  it('a_person_you_muted_for_yourself_is_marked_on_their_tile_distinctly_from_their_own_mute', () => {
+    mountPanel()
+    const tile = () => q('[data-user="U2"]')!
+    expect(tile().querySelector('.for-me')).toBeNull()
+    voice.localMutes = { U2: true }
+    flushSync()
+    const mark = tile().querySelector('.for-me')!
+    expect(mark.textContent).toContain('Muted for you')
+    expect(mark.querySelector('[aria-label="Muted for you"]')).not.toBeNull()
+    // not the plain volume label, and not their own mute badge
+    expect(tile().querySelector('.vol')).toBeNull()
+    expect(tile().querySelector('.badge')).toBeNull()
+    voice.localMutes = {}
+    flushSync()
+    expect(tile().querySelector('.for-me')).toBeNull()
+  })
+
+  it('the_full_view_strip_shows_it_as_an_icon', async () => {
+    voice.localMutes = { U2: true }
+    cmp = mount(UserTile, { target: document.body, props: { entry: { userId: 'U2', name: 'sam', muted: false, deafened: false, pending: false } as never, compact: true, onMenu: () => {} } })
+    flushSync()
+    const mark = q('.for-me')!
+    expect(mark.querySelector('[aria-label="Muted for you"]')).not.toBeNull()
+    expect(mark.textContent!.trim()).toBe('')
+    voice.localMutes = {}
+  })
+})
+
 describe('everyone toggle', () => {
   const toggle = () => document.querySelector<HTMLButtonElement>('button[aria-label="Show non-streaming participants"]')!
 

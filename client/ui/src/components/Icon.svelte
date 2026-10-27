@@ -3,6 +3,7 @@
   const paths: Record<string, string> = {
     hash: 'M5 9h14M5 15h14M10 3 8 21M16 3l-2 18',
     speaker: 'M11 5 6 9H3v6h3l5 4V5zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13',
+    speakerOff: 'M11 5 6 9H3v6h3l5 4V5zM16 9l6 6M22 9l-6 6',
     mic: 'M9 6a3 3 0 0 1 6 0v5a3 3 0 0 1-6 0zM5 11a7 7 0 0 0 14 0M12 18v3',
     micOff: 'M9 6a3 3 0 0 1 6 0v5a3 3 0 0 1-6 0zM5 11a7 7 0 0 0 14 0M12 18v3M3 3l18 18',
     headphones: 'M4 15v-3a8 8 0 0 1 16 0v3M3 16a2 2 0 0 1 2-2h1a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM16 16a2 2 0 0 1 2-2h1a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2h-1a2 2 0 0 1-2-2z',

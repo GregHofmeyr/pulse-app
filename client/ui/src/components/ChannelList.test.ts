@@ -68,6 +68,24 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
+describe('muted for you', () => {
+  it('a_person_you_muted_for_yourself_is_marked_in_the_voice_channel_list', () => {
+    const lounge = Object.values(app.state.channels).find((c) => c.kind === 'voice')!
+    app.state = applyEvent(app.state, { t: 'VoiceJoined', d: { channel_id: lounge.id, user_id: 'U2', flags: { muted: false, deafened: false } } } as never, Date.now())
+    flushSync()
+    const row = () => document.querySelector<HTMLElement>('.occupant[data-user="U2"]')!
+    expect(row().querySelector('[aria-label="Muted for you"]')).toBeNull()
+    voice.localMutes = { U2: true }
+    flushSync()
+    expect(row().querySelector('.for-me [aria-label="Muted for you"]')).not.toBeNull()
+    // their own mute still shows beside it
+    app.state = applyEvent(app.state, { t: 'VoiceStateChanged', d: { channel_id: lounge.id, user_id: 'U2', flags: { muted: true, deafened: false } } } as never, Date.now())
+    flushSync()
+    expect(row().querySelector('[aria-label="Muted"]')).not.toBeNull()
+    expect(row().querySelector('[aria-label="Muted for you"]')).not.toBeNull()
+  })
+})
+
 describe('ChannelList joining', () => {
   it('joining_shows_a_greyed_entry_with_spinner_at_once', async () => {
     invoke.mockReturnValue(new Promise(() => {}))
