@@ -109,7 +109,7 @@
 
 {#if quote}
   <!-- focus anywhere inside shows the action bar (hover alone left keyboard users without it) -->
-  <div class="quote" class:compact data-message-id={message.id} onfocusin={(e) => { if (keyboardFocused(e.target)) focusIn = true }} onfocusout={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focusIn = false }}>
+  <div class="quote" class:compact data-message-id={message.id} onfocusin={(e) => (focusIn = keyboardFocused(e.target))} onfocusout={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focusIn = false }}>
     <div class="row">
       {#if !compact}<Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={40} />{/if}
       <div class="body">

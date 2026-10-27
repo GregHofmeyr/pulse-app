@@ -14,7 +14,7 @@
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
-  import { addHistory, addOlder, addPending, appendNewer, markHistory, PAGE, pendingMessage, removePending } from '../lib/state'
+  import { addHistory, addOlder, addPending, appendNewer, markHistory, reachLatest, PAGE, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
   import { liveQoty } from '../lib/quotes'
   import { groupedWith, mentionablesFor, nameOfIn, nextTypingExpiry, stableList, typingNames } from '../lib/selectors'
@@ -186,14 +186,21 @@
   // --- jump to a message (lib/jump.ts sets `ui.jump`): scroll it to the middle and flash it. A
   // detached window pages forward from its bottom, or "Jump to present" reloads the latest. ---
   let loadingNewer = false
-  async function maybeLoadNewer() {
+  async function maybeLoadNewer(emptyBefore = false) {
     if (loadingNewer || !detached || !messages.length) return
     loadingNewer = true
     let more = false
+    let retry = false
     try {
       const newest = messages[messages.length - 1].id
       const page = await api.listMessagesAfter(channelId, newest)
       app.state = appendNewer(app.state, channelId, newest, page)
+      // An empty page while the state still waits for a missed message (or a dropped older one): ask
+      // once more; empty again, nothing is coming, so it is the latest (never a request loop).
+      if (!page.length && detached) {
+        if (emptyBefore) app.state = reachLatest(app.state, channelId, newest)
+        else retry = true
+      }
       await tick() // with loadingNewer still set, the view stays where it was
       // Still at the bottom (measured now: atBottom is from the last scroll), e.g. a short page that
       // stopped before a missed live message: fetch on, but only while pages bring something.
@@ -204,6 +211,7 @@
       loadingNewer = false
     }
     if (more) void maybeLoadNewer()
+    else if (retry) void maybeLoadNewer(true)
   }
   let loadingPresent = false
   async function toPresent() {

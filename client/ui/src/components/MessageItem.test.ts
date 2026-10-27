@@ -426,6 +426,19 @@ describe('MessageItem edit box', () => {
     expect(actions.classList.contains('open')).toBe(true)
   })
 
+  it('a mouse focus inside the message after keyboard focus closes the bar again', () => {
+    show()
+    const actions = document.querySelector<HTMLElement>('.actions')!
+    const b = actions.querySelector<HTMLElement>('button')!
+    stubFocusVisible(b, true)
+    b.focus(); flushSync()
+    expect(actions.classList.contains('open')).toBe(true)
+    const chip = document.querySelector<HTMLElement>('.chip')!
+    stubFocusVisible(chip, false)
+    chip.focus(); flushSync()
+    expect(actions.classList.contains('open')).toBe(false)
+  })
+
   it('a mouse-style focus does not open the action bar', () => {
     show()
     const chip = document.querySelector<HTMLElement>('.chip')!

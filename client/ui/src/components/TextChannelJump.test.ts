@@ -11,7 +11,7 @@ import TextChannel from './TextChannel.svelte'
 import { app, resetState, ui } from '../lib/store.svelte'
 import { motion } from '../lib/animate.svelte'
 import { windowFocus } from '../lib/windowFocus.svelte'
-import { addPending, applyEvent, applyReady, emptyState, loadLatest, loadWindow } from '../lib/state'
+import { addPending, applyEvent, MISSED_CAP, applyReady, emptyState, loadLatest, loadWindow } from '../lib/state'
 import { testReady } from '../lib/testReady'
 
 const msg = (n: number): Message => ({
@@ -222,15 +222,45 @@ describe('TextChannel: jump to a message', () => {
     expect(app.state.history['C1'].end).toBe(true)
   })
 
-  it('an empty forward page stops paging', async () => {
+  const afterCalls = () => invoke.mock.calls.filter(([c]) => c === 'list_messages_after')
+  const pageForward = async () => {
+    show()
+    document.querySelector('.list')!.dispatchEvent(new Event('scroll')) // jsdom: always at the bottom
+    for (let i = 0; i < 6; i++) await settle()
+  }
+
+  it('an empty forward page with a missed message nothing can fetch retries once, then reaches the latest', async () => {
     app.state = loadWindow(ready('text'), 'C1', newestFirst(100, 50), 'M0125')
     // a missed message nothing can fetch (only a hard delete event could tell us it's gone)
     app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: msg(2000), nonce: null } }, 0)
     invoke.mockImplementation(async (cmd) => (cmd === 'list_messages_after' ? [] : undefined))
-    show()
-    document.querySelector('.list')!.dispatchEvent(new Event('scroll')) // jsdom: always at the bottom
-    for (let i = 0; i < 4; i++) await settle()
-    expect(invoke.mock.calls.filter(([c]) => c === 'list_messages_after')).toHaveLength(1)
+    await pageForward()
+    expect(afterCalls()).toHaveLength(2) // one retry, never a loop
+    expect(app.state.history['C1']).toEqual({ loaded: true, start: false, end: true })
+    expect([...document.querySelectorAll('button')].some((b) => b.textContent === 'Jump to present')).toBe(false)
+  })
+
+  it('an empty forward page with older missed messages dropped asks once more, then reaches the latest', async () => {
+    app.state = loadWindow(ready('text'), 'C1', newestFirst(100, 50), 'M0125')
+    const live = Array.from({ length: MISSED_CAP + 1 }, (_, i) => 2000 + i)
+    for (const n of live) app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: msg(n), nonce: null } }, 0)
+    for (const n of live.slice(1)) app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: `M${n}`, author_id: 'U2', mentions: [], thread_root_id: null } }, 0)
+    expect(app.state.history['C1'].missedMore).toBe(true)
+    invoke.mockImplementation(async (cmd) => (cmd === 'list_messages_after' ? [] : undefined))
+    await pageForward()
+    expect(afterCalls()).toHaveLength(2)
+    expect(app.state.history['C1']).toEqual({ loaded: true, start: false, end: true })
+  })
+
+  it('the retry brings the missed message in when the server has it by then', async () => {
+    app.state = loadWindow(ready('text'), 'C1', newestFirst(100, 50), 'M0125')
+    app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: msg(2000), nonce: null } }, 0)
+    let afters = 0
+    invoke.mockImplementation(async (cmd) => (cmd !== 'list_messages_after' ? undefined : afters++ === 0 ? [] : [msg(2000)]))
+    await pageForward()
+    expect(afterCalls()).toHaveLength(2)
+    expect(app.state.messages['C1'].at(-1)!.id).toBe('M2000')
+    expect(app.state.history['C1'].end).toBe(true)
   })
 
   it('Jump to present attaches after a missed message was deleted', async () => {

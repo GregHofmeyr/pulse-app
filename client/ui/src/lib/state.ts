@@ -209,8 +209,6 @@ export function addReplies(s: AppState, root: string, replies: Message[], reache
   return { ...s, threads: { ...s.threads, [root]: list }, threadStart: { ...s.threadStart, [root]: reachedStart || !!s.threadStart[root] } }
 }
 
-const maxId = (a: string | null, b: string) => (a !== null && a > b ? a : b)
-
 /** The greatest of some ids (`''` when there are none). */
 export function maxIdOf(...ids: (string | null | undefined)[]): string {
   return ids.reduce<string>((a, b) => (b && b > a ? b : a), '')
@@ -232,7 +230,7 @@ function replyCreated(s: AppState, m: Message, nonce: string | null): AppState {
     reads: mentioned ? { ...s.reads, [c]: { ...read, mentions: read.mentions + 1 } } : s.reads,
   }
   if (known) return next
-  return mapQuote(next, c, root, (q) => (q.quote ? { ...q, quote: { ...q.quote, reply_count: q.quote.reply_count + 1, last_reply_id: maxId(q.quote.last_reply_id, m.id) } } : q))
+  return mapQuote(next, c, root, (q) => (q.quote ? { ...q, quote: { ...q.quote, reply_count: q.quote.reply_count + 1, last_reply_id: maxIdOf(q.quote.last_reply_id, m.id) } } : q))
 }
 
 function replyUpdated(s: AppState, m: Message): AppState {
@@ -279,9 +277,9 @@ function threadSeen(s: AppState, d: Extract<Event, { t: 'ThreadSeen' }>['d']): A
   if (d.user_id !== s.me?.id) return s
   const read = s.reads[d.channel_id]
   const quoted = mapQuote(s, d.channel_id, d.root_id, (m) =>
-    m.quote ? { ...m, quote: { ...m.quote, replies_seen: maxId(m.quote.replies_seen, d.last_seen_id) } } : m,
+    m.quote ? { ...m, quote: { ...m.quote, replies_seen: maxIdOf(m.quote.replies_seen, d.last_seen_id) } } : m,
   )
-  const next = { ...quoted, threadSeen: { ...s.threadSeen, [d.root_id]: maxId(s.threadSeen[d.root_id] ?? null, d.last_seen_id) } }
+  const next = { ...quoted, threadSeen: { ...s.threadSeen, [d.root_id]: maxIdOf(s.threadSeen[d.root_id], d.last_seen_id) } }
   if (!read) return next
   // The server's absolute count wins; an older server sends only the delta.
   const mentions = d.mentions ?? Math.max(0, read.mentions - d.mentions_cleared)
@@ -675,4 +673,13 @@ export function appendNewer(s: AppState, channel: string, after: string, page: M
   const next = addHistory(s, channel, page)
   const at = { ...reached(next.messages[channel], h, page.length < PAGE), start: !!h?.start }
   return { ...next, history: { ...s.history, [channel]: at } }
+}
+
+/** Give up waiting for missed live messages once a forward page after `after` (the channel's newest)
+ * came back empty twice: nothing more is coming, so the list is the latest and attaches again. */
+export function reachLatest(s: AppState, channel: string, after: string): AppState {
+  const list = s.messages[channel]
+  const h = s.history[channel]
+  if (!h || h.end || list?.[list.length - 1]?.id !== after) return s
+  return { ...s, history: { ...s.history, [channel]: { loaded: true, start: h.start, end: true } } }
 }

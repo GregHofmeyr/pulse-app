@@ -292,6 +292,19 @@ describe('QuoteItem', () => {
     expect(actions.classList.contains('open')).toBe(true)
   })
 
+  it('a mouse focus inside the quote after keyboard focus closes the bar again', () => {
+    show(quote([line()]))
+    const actions = document.querySelector<HTMLElement>('.actions')!
+    const b = actions.querySelector<HTMLElement>('button')!
+    stubFocusVisible(b, true)
+    b.focus(); flushSync()
+    expect(actions.classList.contains('open')).toBe(true)
+    const chip = document.querySelector<HTMLElement>('.chip')!
+    stubFocusVisible(chip, false)
+    chip.focus(); flushSync()
+    expect(actions.classList.contains('open')).toBe(false)
+  })
+
   it('the line label carries the award count', () => {
     show(quote([line({ awards: 2, awarders: ['U1', 'U3'] }), line({ id: 'L2', awards: 1, awarders: ['U1'] }), line({ id: 'L3' })]))
     const labels = [...document.querySelectorAll('.line')].map((l) => l.getAttribute('aria-label'))
