@@ -2,7 +2,7 @@
 // keep) is the source of truth. Custom emoji tokens (`<:name:id>` / `<a:name:id>`) show as images
 // that serialize back to exactly their token; everything else is plain text (newlines included,
 // shown with `white-space: pre-wrap`).
-import { mediaUrl, TOKEN_RE } from './emoji'
+import { isMediaHash, mediaUrl, TOKEN_RE } from './emoji'
 
 type Emoji = { id: string; name: string; hash: string | null; still_hash: string | null; animated: boolean }
 
@@ -21,7 +21,8 @@ export function renderInto(el: HTMLElement, text: string, lookup: (id: string) =
   let at = 0
   for (const t of tokenSpans(text)) {
     const e = lookup(t.id)
-    if (!e?.hash) continue
+    // as markdown.ts: only a stored-media hash is ever put in a URL
+    if (!e?.hash || !isMediaHash(e.hash) || (e.still_hash && !isMediaHash(e.still_hash))) continue
     if (t.start > at) nodes.push(document.createTextNode(text.slice(at, t.start)))
     const img = document.createElement('img')
     img.src = mediaUrl(e.still_hash ?? e.hash)
@@ -29,7 +30,8 @@ export function renderInto(el: HTMLElement, text: string, lookup: (id: string) =
     img.className = 'emoji'
     img.draggable = false
     img.dataset.token = text.slice(t.start, t.end)
-    if (e.animated && e.still_hash) img.dataset.anim = e.hash
+    // as animate.svelte.ts: animated means a separate still to stop on
+    if (e.animated && e.still_hash && e.still_hash !== e.hash) img.dataset.anim = e.hash
     img.setAttribute('contenteditable', 'false')
     nodes.push(img)
     imgs.push(img)
@@ -61,7 +63,9 @@ export function serialize(el: Node): string {
   }
   for (const n of el.childNodes) {
     if (n.nodeType === Node.TEXT_NODE) {
-      inline((n as Text).data)
+      // a no-break space (from a paste, autocorrect or the browser) is a plain space in a message; one
+      // for one, so offsets keep their length
+      inline((n as Text).data.replace(/\u00a0/g, ' '))
     } else if (n instanceof HTMLImageElement) {
       if (n.dataset.token) inline(n.dataset.token)
     } else if (n instanceof HTMLBRElement) {
@@ -91,7 +95,9 @@ export function offsetOf(el: HTMLElement, node: Node, offset: number): number {
   // a line break the range ends right after is a newline here, not a placeholder
   const text = serialize(before)
   const last = before.lastChild
-  return last instanceof HTMLBRElement && !last.dataset.pad ? text.length + 1 : text.length
+  const at = last instanceof HTMLBRElement && last.dataset.pad === undefined ? text.length + 1 : text.length
+  // a range ending after the browser's placeholder <br> would count one line too many
+  return Math.min(at, serialize(el).length)
 }
 
 /** The DOM position for text offset `at` in `el` as `renderInto` left it; inside or at the end of a
@@ -107,6 +113,7 @@ export function positionAt(el: HTMLElement, at: number): { node: Node; offset: n
       pos += len
     } else if (n instanceof HTMLImageElement && n.dataset.token) {
       const len = n.dataset.token.length
+      if (at === pos) return { node: el, offset: i }
       if (at < pos + len || (at === pos + len && !(kids[i + 1]?.nodeType === Node.TEXT_NODE))) return { node: el, offset: i + 1 }
       pos += len
     } else if (n instanceof HTMLBRElement && n.dataset.pad !== undefined) {

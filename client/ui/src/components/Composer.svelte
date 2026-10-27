@@ -50,12 +50,34 @@
   const MAX = 4000
   /** Where the selection was in the text, kept while focus is elsewhere (e.g. in the emoji picker). */
   let sel = { start: 0, end: 0 }
-  /** A Shift-pick moved the caret while focus was in the picker: put it there when the box gets focus back. */
-  let caretPending = false
+  /** Focus back in the box (from the picker, Tab, a closed dialog): the caret goes where it was (or
+   *  where a Shift-pick moved it), unless a click in the box brought focus and placed it. Browsers
+   *  put the caret at the start whenever focus arrives without a click, so that can't be the signal. */
+  let pressed = false
   function focused() {
-    if (!caretPending) return
-    caretPending = false
-    placeCaret(sel.start)
+    const byClick = pressed
+    pressed = false
+    if (byClick) return
+    queueMicrotask(() => {
+      if (document.activeElement === box) placeCaret(sel.start)
+    })
+  }
+  /** The box's own undo history: the browser's can't follow a box we rebuild. */
+  type Snap = { text: string; caret: number }
+  let history: Snap[] = []
+  let future: Snap[] = []
+  let typedAt = 0
+  function record(prev: Snap) {
+    if (history.at(-1)?.text !== prev.text) history = [...history.slice(-99), prev]
+    future = []
+  }
+  function undo(back: boolean) {
+    const from = back ? history : future
+    const to = back ? future : history
+    const snap = from.pop()
+    if (!snap) return
+    to.push({ text, caret: sel.start })
+    void setText(snap, true, false)
   }
   /** Animation wiring of the images now in the box. */
   let unwire: (() => void)[] = []
@@ -83,8 +105,11 @@
     s?.addRange(r)
   }
   $effect(() => {
-    render(untrack(() => text))
+    // untracked: rendering reads app.state (the emoji), which changes on every event
+    untrack(() => render(text))
     const onSel = () => {
+      // only while typing here: a rebuild while focus is in the picker collapses the selection to 0
+      if (document.activeElement !== box) return
       const r = readSel()
       if (r) sel = r
     }
@@ -130,14 +155,15 @@
 
   /** Replace the text (an emoji or mention picked, a line added, a paste) and put the caret at `r.caret`.
    *  Without `focus` (a Shift-pick in the picker) focus stays where it is and the caret waits in `sel`. */
-  async function setText(r: { text: string; caret: number }, focus = true) {
-    text = r.text.slice(0, MAX)
+  async function setText(r: Snap, focus = true, remember = true) {
+    if (r.text.length > MAX) return // callers check; a change that doesn't fit isn't made
+    if (remember) record({ text, caret: sel.start })
+    text = r.text
     caret = Math.min(r.caret, text.length)
     sel = { start: caret, end: caret }
     render(text)
     await Promise.resolve()
-    caretPending = !focus
-    if (!focus) return
+    if (!focus || !box?.isConnected) return
     box.focus()
     placeCaret(caret)
   }
@@ -152,19 +178,62 @@
     void setText(insertAt(text, sel.start, sel.end, emojiText(e)), !keep)
   }
 
-  /** `insert` as typed (no trailing space) over the selection. */
+  /** Characters free for something replacing `r`. */
+  const room = (r: { start: number; end: number }) => MAX - (text.length - (r.end - r.start))
+  /** `insert` as typed (no trailing space) over the selection, cut to what fits (never mid-character). */
   function insertRaw(insert: string) {
     const r = readSel() ?? sel
-    void setText({ text: text.slice(0, r.start) + insert + text.slice(r.end), caret: r.start + insert.length })
+    let fit = ''
+    for (const ch of insert) {
+      if (fit.length + ch.length > room(r)) break
+      fit += ch
+    }
+    if (fit) void setText({ text: text.slice(0, r.start) + fit + text.slice(r.end), caret: r.start + fit.length })
   }
-  // Only text comes in: a paste or drop of HTML would put markup in the box.
+  /** Only text comes in (a paste or drop of HTML would put markup in the box); a no-break space is a space. */
+  const plain = (t: string) => t.replace(/\r\n?/g, '\n').replace(/\u00a0/g, ' ')
   function paste(e: ClipboardEvent) {
     e.preventDefault()
     const t = e.clipboardData?.getData('text/plain') ?? ''
-    if (t) insertRaw(t.replace(/\r\n?/g, '\n'))
+    if (t) insertRaw(plain(t))
+  }
+  function drop(e: DragEvent) {
+    e.preventDefault()
+    const t = e.dataTransfer?.getData('text/plain') ?? ''
+    if (!t) return
+    box.focus()
+    insertRaw(plain(t))
+  }
+  /** The clipboard gets the text itself, tokens included: the browser would give an image's alt. */
+  function copy(e: ClipboardEvent, cut = false) {
+    const r = readSel()
+    if (!r || r.start === r.end) return
+    e.preventDefault()
+    e.clipboardData?.setData('text/plain', text.slice(r.start, r.end))
+    if (cut) void setText({ text: text.slice(0, r.start) + text.slice(r.end), caret: r.start })
+  }
+  function beforeInput(e: InputEvent) {
+    // plain text only: bold/italic would show but never be sent
+    if (e.inputType.startsWith('format')) return e.preventDefault()
+    if (e.inputType === 'historyUndo' || e.inputType === 'historyRedo') {
+      e.preventDefault()
+      return undo(e.inputType === 'historyUndo')
+    }
+    // the limit refuses what's coming in, never what's there (an IME commit is checked after, in input())
+    if (!e.isComposing && e.data && e.data.length > room(readSel() ?? sel)) e.preventDefault()
   }
 
   function key(e: KeyboardEvent) {
+    // keys for an IME's candidate list (WebKit can say 229 without isComposing) are the IME's
+    if (e.isComposing || e.keyCode === 229) return
+    // undo/redo are ours (the browser's history can't follow a box we rebuild, and once we've
+    // taken its undo it has no redo to offer, so its beforeinput never comes)
+    const mod = e.ctrlKey || e.metaKey
+    const k = e.key.toLowerCase()
+    if (mod && !e.altKey && (k === 'z' || k === 'y')) {
+      e.preventDefault()
+      return undo(k === 'z' && !e.shiftKey)
+    }
     if (shown) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
@@ -173,6 +242,7 @@
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault()
+        // a pick that doesn't fit isn't made (setText refuses it)
         void (open ? choose(options[pick].name) : chooseEmoji(emojiOptions[pick]))
         return
       }
@@ -182,18 +252,20 @@
         return
       }
     }
-    if (e.key === 'Enter' && e.shiftKey && !e.isComposing) {
+    if (e.key === 'Enter' && e.shiftKey) {
       // a newline in the text itself (the browser would wrap lines in elements)
       e.preventDefault()
       insertRaw('\n')
       return
     }
-    if (e.key === 'Enter' && !e.isComposing) {
+    if (e.key === 'Enter') {
       e.preventDefault()
       const t = text.trim()
       if (!t) return
       onSend(t)
-      void setText({ text: '', caret: 0 })
+      void setText({ text: '', caret: 0 }, true, false)
+      history = []
+      future = []
       lastTyping = null
       return
     }
@@ -201,18 +273,30 @@
   }
 
   function input(e: Event) {
+    const composing = (e as InputEvent).isComposing
     const next = serialize(box)
     if (next.length > MAX) {
-      // over the limit: back to what fits, caret at the end of it
-      void setText({ text: next.slice(0, MAX), caret: MAX })
-    } else {
-      text = next
-      // the browser leaves a lone <br> in a box it emptied: clear it, so the placeholder shows
-      if (!next && box.childNodes.length && !(e as InputEvent).isComposing) render('')
+      // got past the limit (an IME commit): back to the text as it was, caret where it was
+      render(text)
+      placeCaret(sel.start)
+      return
+    }
+    // typing is remembered for undo in bursts, not per key
+    const now = Date.now()
+    if (now - typedAt > 1000) record({ text, caret: sel.start })
+    typedAt = now
+    text = next
+    if (!composing) {
+      const at = readSel()?.start ?? next.length
+      // the browser leaves a lone <br> in a box it emptied (clear it, so the placeholder shows), and
+      // can drop the line break a text ending in a newline needs (or its last line disappears)
+      if ((!next && box.childNodes.length) || (next.endsWith('\n') && !(box.lastChild instanceof HTMLBRElement))) {
+        render(next)
+        placeCaret(at)
+      }
     }
     syncCaret()
     dismissed = null
-    const now = Date.now()
     if (text.trim() && typingThrottle(lastTyping, now)) {
       lastTyping = now
       onTyping()
@@ -251,8 +335,10 @@
     <div class="replying">Replying to <strong>{replyingTo}</strong>
       <button aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={13} /></button></div>
   {/if}
-  <div bind:this={box} class="input" class:empty={!text} contenteditable="true" role="textbox" tabindex="0" aria-multiline="true" aria-label={placeholder} data-placeholder={placeholder}
-    onkeydown={key} oninput={input} onpaste={paste} onfocus={focused} ondrop={(e) => e.preventDefault()} onclick={syncCaret}
+  <div bind:this={box} class="input" class:empty={!text} contenteditable="plaintext-only" role="textbox" tabindex="0" dir="auto"
+    aria-multiline="true" aria-label={placeholder} aria-placeholder={placeholder} data-placeholder={placeholder}
+    onkeydown={key} onbeforeinput={beforeInput} oninput={input} onpaste={paste} oncopy={copy} oncut={(e) => copy(e, true)}
+    onfocus={focused} onpointerdown={() => (pressed = document.activeElement !== box)} ondrop={drop} onclick={syncCaret}
     onkeyup={(e) => { if (e.key.startsWith('Arrow') && !shown) syncCaret() }}></div>
   <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={20} /></button>
   {#if picking && emojiBtn}
@@ -274,6 +360,7 @@
   .replying button { margin-left: auto; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   /* grows with what's in it (images included), up to 200px, then scrolls */
   .input { width: 100%; box-sizing: border-box; min-height: 48px; max-height: 200px; overflow-y: auto; padding: 14px 48px 14px 14px; color: var(--text); outline: none; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 20px; cursor: text; }
-  .input.empty::before { content: attr(data-placeholder); color: var(--text-3); pointer-events: none; }
+  /* the alt text after the slash keeps the placeholder out of the box's accessible content */
+  .input.empty::before { content: attr(data-placeholder) / ''; color: var(--text-3); pointer-events: none; }
   .input :global(img.emoji) { width: 22px; height: 22px; vertical-align: -5px; margin: 0 1px; object-fit: contain; }
 </style>

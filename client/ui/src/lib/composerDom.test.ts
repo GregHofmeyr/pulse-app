@@ -68,4 +68,35 @@ describe('composer DOM', () => {
     expect(positionAt(el, 13)).toEqual({ node: t2, offset: 2 })
     expect(positionAt(el, 99)).toEqual({ node: t2, offset: 3 }) // past the end: the end
   })
+
+  it('a leading emoji: offset 0 is before its image', () => {
+    const el = box()
+    renderInto(el, '<:pog:1> x', lookup)
+    expect(positionAt(el, 0)).toEqual({ node: el, offset: 0 })
+    expect(positionAt(el, 8)).toEqual({ node: el.childNodes[1], offset: 0 })
+  })
+
+  it('an offset never runs past the end of the text', () => {
+    const el = box()
+    renderInto(el, 'a\n', lookup)
+    expect(offsetOf(el, el, el.childNodes.length)).toBe(2)
+    el.innerHTML = 'a<br>'
+    expect(offsetOf(el, el, 2)).toBe(1)
+  })
+
+  it('a no-break space reads as a plain space (pastes and autocorrect bring them)', () => {
+    const el = box()
+    el.innerHTML = 'a&nbsp;b'
+    expect(serialize(el)).toBe('a b')
+  })
+
+  it('only a real media hash becomes an image, and only a real animation is marked animated', () => {
+    const el = box()
+    const odd = { id: '3', name: 'odd', hash: '../x', still_hash: null, animated: false }
+    const same = { id: '4', name: 'same', hash: 'd'.repeat(64), still_hash: 'd'.repeat(64), animated: true }
+    renderInto(el, '<:odd:3> <a:same:4>', (id) => ({ '3': odd, '4': same })[id] as never)
+    const imgs = el.querySelectorAll('img')
+    expect(imgs).toHaveLength(1)
+    expect(imgs[0].dataset.anim).toBeUndefined()
+  })
 })

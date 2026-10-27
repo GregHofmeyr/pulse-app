@@ -52,7 +52,7 @@
   }
 
   /** Esc goes back to the grid, unless it's meant for a text field, or something open over this view. */
-  const TYPING = 'textarea, select, [contenteditable="true"], [role="menu"], [role="listbox"], input:not([type="range"], [type="checkbox"], [type="radio"], [type="button"])'
+  const TYPING = 'textarea, select, [contenteditable="true"], [contenteditable="plaintext-only"], [role="menu"], [role="listbox"], input:not([type="range"], [type="checkbox"], [type="radio"], [type="button"])'
   const OVER = '[role="dialog"], [aria-modal="true"], [role="menu"], [role="listbox"]'
   function key(e: KeyboardEvent) {
     if (e.key !== 'Escape' || e.defaultPrevented) return

@@ -36,6 +36,7 @@ function show(draftKey = `K${Math.random()}`) {
 const value = (box: Box) => serialize(box)
 /** Put the caret at text offset `at` (the browser's selection, as a click or arrow key leaves it). */
 function caretAt(box: Box, at: number) {
+  box.focus() // a click in the box focuses it as it places the caret
   const p = positionAt(box, at)
   const r = document.createRange()
   r.setStart(p.node, p.offset)
@@ -127,6 +128,7 @@ describe('Composer emoji', () => {
     ;(document.querySelector('[aria-label="Emoji"]') as HTMLButtonElement).click() // close the picker
     flushSync()
     box.focus() // back to typing
+    await tick()
     expect(caret(box)).toBe('a😀 😂 '.length)
   })
 
@@ -229,12 +231,209 @@ describe('Composer emoji', () => {
 
   it('it is a labelled multi-line text box with a placeholder', () => {
     const box = show()
-    expect(box.getAttribute('contenteditable')).toBe('true')
+    // plain text only: no bold/italic shortcuts, no HTML pastes or drops
+    expect(box.getAttribute('contenteditable')).toBe('plaintext-only')
+    expect(box.getAttribute('aria-placeholder')).toBe('Message')
+    expect(box.getAttribute('dir')).toBe('auto')
     expect(box.getAttribute('aria-multiline')).toBe('true')
     expect(box.getAttribute('aria-label')).toBe('Message')
     expect(box.dataset.placeholder).toBe('Message')
     expect(box.classList.contains('empty')).toBe(true)
     type(box, 'x')
     expect(box.classList.contains('empty')).toBe(false)
+  })
+
+  const beforeInput = (box: Box, inputType: string, data: string | null = null) => {
+    const e = new InputEvent('beforeinput', { bubbles: true, cancelable: true, inputType, data })
+    box.dispatchEvent(e)
+    flushSync()
+    return e
+  }
+  /** Put the emoji draft in place: 'hi <:pog:1> there', the caret after "there". */
+  async function emojiDraft() {
+    const box = show()
+    type(box, 'hi :po')
+    press(box, 'Enter')
+    await tick()
+    box.lastChild!.textContent += 'there'
+    box.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    caretAt(box, value(box).length)
+    flushSync()
+    return box
+  }
+
+  it('an unrelated app update leaves the box (and its caret) alone', async () => {
+    // a draft with an emoji, back after switching channel
+    const key = `K${Math.random()}`
+    let box = show(key)
+    type(box, 'hi :po')
+    press(box, 'Enter')
+    await tick()
+    unmount(cmp!)
+    box = show(key)
+    caretAt(box, 3)
+    const img = box.querySelector('img')
+    const at = caret(box)
+    app.state = { ...app.state } // any gateway event
+    flushSync()
+    expect(box.querySelector('img')).toBe(img) // not rebuilt
+    expect(caret(box)).toBe(at)
+  })
+
+  it('at the 4000 limit new input is refused, never the text already there', async () => {
+    const box = show()
+    const full = 'x'.repeat(3990) + ' <:pog:1>'.slice(0, 5) // 3995
+    type(box, full)
+    caretAt(box, 10)
+    expect(beforeInput(box, 'insertText', 'abcdef').defaultPrevented).toBe(true) // 4006 > 4000
+    expect(beforeInput(box, 'insertText', 'abcde').defaultPrevented).toBe(false) // fits exactly
+    // a pick that doesn't fit whole isn't inserted at all
+    type(box, 'x'.repeat(3996) + ' :po')
+    press(box, 'Enter')
+    await tick()
+    expect(value(box)).toBe('x'.repeat(3996) + ' :po')
+    // if something gets past (an IME commit), the text goes back to what it was, not cut short
+    type(box, 'y'.repeat(4000))
+    box.replaceChildren(document.createTextNode('Z' + 'y'.repeat(4000)))
+    box.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    flushSync()
+    expect(value(box)).toBe('y'.repeat(4000))
+  })
+
+  it('copy and cut carry the tokens, so pasting back gives the emoji', async () => {
+    const box = await emojiDraft()
+    const r = document.createRange()
+    r.selectNodeContents(box)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(r)
+    const data = new Map<string, string>()
+    const clip = (type: string) => {
+      const e = new Event(type, { bubbles: true, cancelable: true }) as ClipboardEvent
+      Object.defineProperty(e, 'clipboardData', { value: { setData: (t: string, v: string) => data.set(t, v), getData: (t: string) => data.get(t) ?? '' } })
+      box.dispatchEvent(e)
+      return e
+    }
+    expect(clip('copy').defaultPrevented).toBe(true)
+    expect(data.get('text/plain')).toBe('hi <:pog:1> there')
+    clip('cut')
+    await tick()
+    expect(value(box)).toBe('')
+    clip('paste')
+    await tick()
+    expect(value(box)).toBe('hi <:pog:1> there')
+    expect(box.querySelector('img')).not.toBeNull()
+  })
+
+  it('formatting shortcuts do nothing (nothing they do would be sent)', () => {
+    const box = show()
+    expect(beforeInput(box, 'formatBold').defaultPrevented).toBe(true)
+    expect(beforeInput(box, 'formatItalic').defaultPrevented).toBe(true)
+  })
+
+  it('undo and redo step through the box\'s own history', async () => {
+    const box = show()
+    type(box, 'gg :po')
+    press(box, 'Enter')
+    await tick()
+    expect(value(box)).toBe('gg <:pog:1> ')
+    expect(beforeInput(box, 'historyUndo').defaultPrevented).toBe(true)
+    await tick()
+    expect(value(box)).toBe('gg :po')
+    beforeInput(box, 'historyRedo')
+    await tick()
+    expect(value(box)).toBe('gg <:pog:1> ')
+  })
+
+  it('ctrl_z_and_ctrl_shift_z_or_ctrl_y_undo_and_redo_even_with_nothing_in_the_browsers_history', async () => {
+    const box = show()
+    type(box, 'gg :po')
+    press(box, 'Enter')
+    await tick()
+    press(box, 'z', { ctrlKey: true })
+    await tick()
+    expect(value(box)).toBe('gg :po')
+    press(box, 'z', { ctrlKey: true, shiftKey: true })
+    await tick()
+    expect(value(box)).toBe('gg <:pog:1> ')
+    press(box, 'z', { ctrlKey: true })
+    await tick()
+    press(box, 'y', { ctrlKey: true })
+    await tick()
+    expect(value(box)).toBe('gg <:pog:1> ')
+  })
+
+  it('keys meant for an IME candidate list are left to the IME', () => {
+    const box = show()
+    type(box, ':po')
+    const e = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true, isComposing: true })
+    box.dispatchEvent(e)
+    flushSync()
+    expect(e.defaultPrevented).toBe(false)
+    expect(value(box)).toBe(':po')
+    expect(onSend).not.toHaveBeenCalled()
+  })
+
+  it('focus coming back puts the caret where it was, not at the start', async () => {
+    const box = show()
+    type(box, 'hello')
+    caretAt(box, 3)
+    box.focus()
+    ;(document.querySelector('[aria-label="Emoji"]') as HTMLButtonElement).focus()
+    getSelection()!.removeAllRanges() // focus elsewhere takes the selection
+    box.focus()
+    await tick()
+    expect(caret(box)).toBe(3)
+  })
+
+  it('a re-render while focus is elsewhere does not move where the next pick goes', async () => {
+    const box = show()
+    type(box, 'ab')
+    caretAt(box, 1)
+    box.focus()
+    ;(document.querySelector('[aria-label="Emoji"]') as HTMLButtonElement).click()
+    flushSync()
+    ;(document.querySelector<HTMLElement>('.picker input') ?? document.body).focus()
+    const cell = () => document.querySelector('.picker button.cell[aria-label=":pog:"]')!
+    cell().dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))
+    await tick()
+    // the re-render collapsed a selection still in the box to its start, and the browser said so
+    // (focus stays in the picker)
+    const r = document.createRange()
+    r.setStart(box, 0)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(r)
+    document.dispatchEvent(new Event('selectionchange'))
+    cell().dispatchEvent(new MouseEvent('click', { bubbles: true, shiftKey: true }))
+    await tick()
+    expect(value(box)).toBe('a<:pog:1> <:pog:1> b')
+  })
+
+  it('a text ending in a newline keeps its last line', () => {
+    const box = show()
+    type(box, 'a\n') // the browser left no line break after it
+    expect(box.lastChild!.nodeName).toBe('BR')
+    expect(value(box)).toBe('a\n')
+  })
+
+  it('a drop puts in its text, like a paste', async () => {
+    const box = show()
+    type(box, 'ab')
+    caretAt(box, 2)
+    const e = new Event('drop', { bubbles: true, cancelable: true }) as DragEvent
+    Object.defineProperty(e, 'dataTransfer', { value: { getData: (t: string) => (t === 'text/plain' ? ' <:pog:1>' : '<img src=x>') } })
+    box.dispatchEvent(e)
+    await tick()
+    expect(e.defaultPrevented).toBe(true)
+    expect(value(box)).toBe('ab <:pog:1>')
+  })
+
+  it('sending then leaving the channel at once is fine', async () => {
+    const box = show()
+    type(box, 'hi')
+    press(box, 'Enter')
+    unmount(cmp!)
+    cmp = undefined
+    await tick()
+    expect(box.isConnected).toBe(false)
   })
 })
