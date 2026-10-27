@@ -83,6 +83,23 @@ describe('Shell', () => {
     stream.live = null
   })
 
+  it('Esc closes the server menu and puts focus back on the server name', async () => {
+    app.state = { ...emptyState(), servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }] }
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Alpha'))!.click()
+    flushSync()
+    const toggle = document.querySelector<HTMLButtonElement>('.head-btn')!
+    toggle.click()
+    flushSync()
+    await new Promise((r) => setTimeout(r, 0)) // clickOutside listens from the next tick
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role=menuitem]')][0].focus()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.querySelector('.head-menu')).toBeNull()
+    expect(document.activeElement).toBe(toggle)
+  })
+
   it('server settings and the server menu close when you switch server', () => {
     app.state = { ...emptyState(), servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }, { id: 'S2', name: 'Beta', icon_hash: null }] }
     cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })

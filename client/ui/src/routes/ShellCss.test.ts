@@ -6,11 +6,13 @@ import { resolve } from 'node:path'
 import { compile } from 'svelte/compiler'
 import { beforeAll, describe, expect, it } from 'vitest'
 
-let scope = ''
+// a fixed scope class, so the probes below needn't scrape Svelte's hash
+const scope = 'svelte-test'
+let src = ''
 beforeAll(() => {
-  const src = readFileSync(resolve(__dirname, 'Shell.svelte'), 'utf8')
-  const css = compile(src, { filename: 'Shell.svelte', css: 'external' }).css!.code
-  scope = /\.menu\.(svelte-[a-z0-9]+)/.exec(css)![1]
+  // a path, not new URL(…, import.meta.url): under the jsdom environment that URL isn't file:
+  src = readFileSync(resolve(__dirname, 'Shell.svelte'), 'utf8')
+  const css = compile(src, { filename: 'Shell.svelte', css: 'external', cssHash: () => scope }).css!.code
   const style = document.createElement('style')
   style.textContent = css
   document.head.append(style)
@@ -27,6 +29,10 @@ describe('the server name menu', () => {
     const s = getComputedStyle(menu)
     expect(s.top).toBe('calc(100% + 4px)')
     expect(s.bottom).toBe('auto')
+    // its items read like the account menu's, not the bold header they sit under
+    expect(getComputedStyle(menu.querySelector('button')!).fontWeight).toBe('400')
+    // the probe matches what the template renders
+    expect(src).toContain('class="menu head-menu"')
   })
 
   it('the account menu still opens upward', () => {

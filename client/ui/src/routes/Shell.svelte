@@ -79,6 +79,12 @@
     if (e instanceof KeyboardEvent) menuToggle?.focus()
   }
   let serverMenuOpen = $state(false)
+  let serverToggle = $state<HTMLButtonElement>()
+  /** The same for the server menu. */
+  function closeServerMenu(e: Event) {
+    serverMenuOpen = false
+    if (e instanceof KeyboardEvent) serverToggle?.focus()
+  }
   let serverSettingsOpen = $state(false)
   // Both belong to the server they were opened on.
   $effect(() => {
@@ -331,10 +337,10 @@
     <aside class="panel side">
       <div class="panel-head">
         {#if activeServer}
-          <button class="head-btn" data-menu-toggle aria-haspopup="menu" aria-expanded={serverMenuOpen}
+          <button bind:this={serverToggle} class="head-btn" data-menu-toggle aria-haspopup="menu" aria-expanded={serverMenuOpen}
             onclick={() => (serverMenuOpen = !serverMenuOpen)}>{activeServer.name}<Icon name="chevron" size={14} /></button>
           {#if serverMenuOpen}
-            <div class="menu head-menu" role="menu" use:clickOutside={() => (serverMenuOpen = false)}>
+            <div class="menu head-menu" role="menu" use:clickOutside={closeServerMenu}>
               <button role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsOpen = true }}>Server settings</button>
             </div>
           {/if}
@@ -464,7 +470,8 @@
   .panel { border-radius: var(--radius); overflow: hidden; }
   .side { width: 264px; flex-shrink: 0; background: var(--bg-1); display: flex; flex-direction: column; }
   .panel-head { position: relative; height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid #26282e; }
-  .head-btn { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+  /* the hover is a rounded pill inside the header, with the text where the padding put it */
+  .head-btn { flex: 1; min-width: 0; height: 40px; margin: 0 -8px; padding: 0 8px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
   .head-btn:hover { background: var(--bg-2); }
   /* two classes: .menu (declared below, for the upward account menu) must not win `bottom` back */
   .menu.head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; }
@@ -479,7 +486,7 @@
   .who-btn:hover { background: var(--bg-2); }
   .who-btn .who { overflow: hidden; }
   .menu { position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 10; min-width: 200px; padding: 6px; background: #2e3037; border: 1px solid #3d4048; border-radius: 12px; box-shadow: 0 18px 48px rgba(8, 9, 12, .5); display: flex; flex-direction: column; }
-  .menu button { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font-size: 13px; }
+  .menu button { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font-size: 13px; font-weight: 400; }
   .menu button:hover { background: var(--bg-4); }
   .menu .danger { color: #f2616b; }
   .menu .warn { color: var(--warn); }
