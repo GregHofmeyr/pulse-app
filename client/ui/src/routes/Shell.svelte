@@ -466,7 +466,8 @@
   .panel-head { position: relative; height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid #26282e; }
   .head-btn { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
   .head-btn:hover { background: var(--bg-2); }
-  .head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; }
+  /* two classes: .menu (declared below, for the upward account menu) must not win `bottom` back */
+  .menu.head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; }
   .me { padding: 10px 10px 10px 12px; background: #17181c; display: flex; align-items: center; gap: 10px; }
   .avatar { width: 34px; height: 34px; border-radius: 50%; color: #fff; font-weight: 700; display: grid; place-items: center; }
   .who { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
