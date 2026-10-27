@@ -807,3 +807,63 @@ describe('the stream connection lost for good', () => {
     expect(stream.notice).toBeFalsy()
   })
 })
+
+describe('a stream the server lists for us that we are not sending', () => {
+  const info = (user: string, channel = 'c1') => ({ channel_id: channel, user_id: user, settings: { height: 720, fps: 60, audio: true }, status: 'live', viewers: [], started_at: 't' })
+  const ev = (t: 'StreamStarted' | 'StreamUpdated', user: string, channel = 'c1') => ({ t, d: { stream: info(user, channel) } }) as never
+  const ended = (user: string, reason: string) => ({ t: 'StreamEnded', d: { channel_id: 'c1', user_id: user, reason } }) as never
+
+  async function setVoice(mod: Awaited<ReturnType<typeof load>>, channel: string | null) {
+    const { voice } = await import('../voice.svelte')
+    voice.channelId = channel
+    return mod
+  }
+
+  it('is stopped when we are in that call and not live there', async () => {
+    const { streamApi } = await setVoice(await load(), 'c1')
+    streamApi.onEvent(ev('StreamUpdated', 'me'))
+    streamApi.onEvent(ev('StreamStarted', 'me'))
+    await settle()
+    expect(calls('stream_stop')).toEqual([{ channelId: 'c1' }, { channelId: 'c1' }])
+  })
+
+  it('an end that a go-live overtook leaves no ghost: the stream it re-sends is stopped', async () => {
+    // the server ended ours, then (a re-announce overtaking it) sends the stream again
+    const mod = await goneLive()
+    await setVoice(mod, 'c1')
+    mod.streamApi.onEvent(ended('me', 'timed_out'))
+    await until(() => mod.stream.live === null, 'the local share to end')
+    core.calls = []
+    mod.streamApi.onEvent(ev('StreamUpdated', 'me'))
+    await settle()
+    expect(calls('stream_stop')).toEqual([{ channelId: 'c1' }])
+  })
+
+  it('is left alone while we are live there, going live, in another call or not in one', async () => {
+    const mod = await goneLive()
+    await setVoice(mod, 'c1')
+    core.calls = []
+    mod.streamApi.onEvent(ev('StreamUpdated', 'me')) // ours
+    mod.streamApi.onEvent(ev('StreamUpdated', 'sam')) // someone else's
+    await setVoice(mod, 'c2')
+    mod.streamApi.onEvent(ev('StreamStarted', 'me', 'c3')) // a call we're not in
+    await setVoice(mod, null)
+    mod.streamApi.onEvent(ev('StreamStarted', 'me', 'c3')) // in no call: another of our devices
+    await settle()
+    expect(calls('stream_stop')).toEqual([])
+
+    // a go-live in flight: its own StreamStarted can come before it's done
+    const fresh = await setVoice(await load(), 'c1')
+    const room = fakeRoom()
+    fake.connect = async () => room
+    const announcing = deferred()
+    core.handlers.stream_go_live = () => announcing.p
+    const going = fresh.streamApi.goLive('c1', fakeTrack() as never, 'Game', settings(false))
+    await until(() => calls('stream_go_live').length === 1, 'the announce')
+    fresh.streamApi.onEvent(ev('StreamStarted', 'me'))
+    announcing.resolve(info('me'))
+    await going
+    await settle()
+    expect(calls('stream_stop')).toEqual([])
+  })
+})

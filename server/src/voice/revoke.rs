@@ -43,7 +43,7 @@ fn grant_of(p: &ParticipantInfo) -> Option<&str> {
     p.attributes.get(GRANT_ATTRIBUTE).map(String::as_str)
 }
 
-fn not_found(e: &ServiceError) -> bool {
+pub(crate) fn not_found(e: &ServiceError) -> bool {
     matches!(e, ServiceError::Twirp(ServerError::Twirp(e)) if e.code == "not_found")
 }
 

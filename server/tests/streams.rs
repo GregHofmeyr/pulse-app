@@ -1157,3 +1157,461 @@ async fn a_late_leave_for_a_replaced_stream_connection_is_ignored() {
         Event::StreamUpdated { stream } if stream.status == StreamStatus::Reconnecting
     ));
 }
+
+// --- liveness check: LiveKit says whether a live streamer's `#v` is still in the stream room ---
+
+mod liveness {
+    use std::collections::{HashMap, HashSet};
+    use std::sync::{Arc, Mutex};
+    use std::time::Instant;
+
+    use livekit_protocol as lkp;
+    use pulse_server::streams::liveness::{
+        Checked, LiveKitRooms, StreamRooms, check, spawn as spawn_checks,
+    };
+
+    use super::common::livekit::*;
+    use super::*;
+
+    const GRACE: Duration = Duration::from_secs(60);
+
+    /// LiveKit's answers per room: the identities connected, or `None` for "couldn't ask".
+    #[derive(Default)]
+    struct FakeRooms(Mutex<HashMap<String, Option<HashSet<String>>>>);
+
+    impl FakeRooms {
+        fn set(&self, ch: ChannelId, answer: Option<&[String]>) {
+            self.0.lock().unwrap().insert(
+                format!("{ch}~s"),
+                answer.map(|ids| ids.iter().cloned().collect()),
+            );
+        }
+    }
+
+    impl StreamRooms for FakeRooms {
+        async fn connected(&self, room: &str) -> anyhow::Result<HashSet<String>> {
+            match self.0.lock().unwrap().get(room) {
+                Some(Some(ids)) => Ok(ids.clone()),
+                Some(None) => anyhow::bail!("LiveKit unreachable"),
+                None => Ok(HashSet::new()), // no such room
+            }
+        }
+    }
+
+    /// (streams ended, rooms LiveKit couldn't be asked about)
+    fn counts(c: &Checked) -> (usize, usize) {
+        (c.ended, c.unknown.len())
+    }
+
+    fn v(user: UserId) -> String {
+        format!("{user}#v")
+    }
+
+    /// Stream events already queued (none waited for).
+    fn queued(rx: &mut Receiver<ServerFrame>) -> Vec<Event> {
+        let mut out = Vec::new();
+        while let Ok(f) = rx.try_recv() {
+            if let ServerFrame::Event(
+                e @ (Event::StreamStarted { .. }
+                | Event::StreamUpdated { .. }
+                | Event::StreamEnded { .. }
+                | Event::ViewersChanged { .. }),
+            ) = f
+            {
+                out.push(e);
+            }
+        }
+        out
+    }
+
+    /// alex and sam both live in the lounge, each watching the other.
+    async fn both_live_and_watching(
+        app: &TestApp,
+    ) -> (ChannelId, UserId, UserId, Receiver<ServerFrame>) {
+        let (l, (a_id, a), (b_id, b), mut rx) = pair(app).await;
+        for tok in [&a, &b] {
+            assert_eq!(go_live(app, tok, l.id, settings()).await.status(), 200);
+        }
+        let watch = format!("/streams/{}/watch", l.id);
+        assert_eq!(
+            post_json(app, &b, &watch, json!({"streamer": a_id}))
+                .await
+                .status(),
+            204
+        );
+        assert_eq!(
+            post_json(app, &a, &watch, json!({"streamer": b_id}))
+                .await
+                .status(),
+            204
+        );
+        for _ in 0..4 {
+            next_stream_event(&mut rx).await; // two starts, two viewer changes
+        }
+        assert!(queued(&mut rx).is_empty());
+        (l.id, a_id, b_id, rx)
+    }
+
+    #[tokio::test]
+    async fn a_streamer_missing_from_the_room_for_the_grace_is_ended_with_the_watches() {
+        let app = spawn().await;
+        let (ch, a_id, b_id, mut rx) = both_live_and_watching(&app).await;
+        let s = app.state();
+        let rooms = FakeRooms::default();
+        rooms.set(ch, Some(&[v(b_id), format!("{a_id}#a")])); // alex's audio alone isn't the stream
+        let t0 = Instant::now();
+
+        assert_eq!(counts(&check(&s, &rooms, t0, GRACE).await), (0, 0));
+        let almost = t0 + GRACE - Duration::from_millis(1);
+        assert_eq!(counts(&check(&s, &rooms, almost, GRACE).await), (0, 0));
+        assert!(queued(&mut rx).is_empty(), "nothing ends within the grace");
+        assert!(app.streams.get(ch, a_id).is_some());
+
+        assert_eq!(counts(&check(&s, &rooms, t0 + GRACE, GRACE).await), (1, 0));
+        let events = queued(&mut rx);
+        assert!(
+            events.iter().any(|e| matches!(e, Event::StreamEnded { user_id, reason: StreamEndReason::TimedOut, .. } if *user_id == a_id)),
+            "{events:?}"
+        );
+        // alex's watch of sam went with the connection
+        assert!(
+            events.iter().any(|e| matches!(e, Event::ViewersChanged { user_id, viewers, .. } if *user_id == b_id && viewers.is_empty())),
+            "{events:?}"
+        );
+        assert!(app.streams.get(ch, a_id).is_none());
+        assert!(app.streams.get(ch, b_id).is_some(), "sam is still there");
+    }
+
+    #[tokio::test]
+    async fn a_streamer_livekit_has_stays_live() {
+        let app = spawn().await;
+        let (ch, a_id, b_id, mut rx) = both_live_and_watching(&app).await;
+        let rooms = FakeRooms::default();
+        rooms.set(ch, Some(&[v(a_id), v(b_id)]));
+        let t0 = Instant::now();
+        for n in 0..10 {
+            assert_eq!(
+                counts(&check(&app.state(), &rooms, t0 + GRACE * n, GRACE).await),
+                (0, 0)
+            );
+        }
+        assert!(queued(&mut rx).is_empty());
+        assert_eq!(app.streams.all().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn back_in_the_room_within_the_grace_stops_the_clock() {
+        let app = spawn().await;
+        let (ch, a_id, b_id, _rx) = both_live_and_watching(&app).await;
+        let rooms = FakeRooms::default();
+        let t0 = Instant::now();
+        rooms.set(ch, Some(&[v(b_id)]));
+        check(&app.state(), &rooms, t0, GRACE).await;
+        rooms.set(ch, Some(&[v(a_id), v(b_id)]));
+        check(&app.state(), &rooms, t0 + GRACE / 2, GRACE).await;
+        rooms.set(ch, Some(&[v(b_id)]));
+        assert_eq!(
+            counts(&check(&app.state(), &rooms, t0 + GRACE, GRACE).await),
+            (0, 0)
+        );
+        assert!(app.streams.get(ch, a_id).is_some());
+    }
+
+    #[tokio::test]
+    async fn livekit_that_cannot_be_asked_ends_nothing() {
+        let app = spawn().await;
+        let (ch, _a_id, _b_id, mut rx) = both_live_and_watching(&app).await;
+        let rooms = FakeRooms::default();
+        rooms.set(ch, None);
+        let t0 = Instant::now();
+        for n in 0..10 {
+            assert_eq!(
+                counts(&check(&app.state(), &rooms, t0 + GRACE * n, GRACE).await),
+                (0, 1)
+            );
+        }
+        assert!(queued(&mut rx).is_empty());
+        assert_eq!(app.streams.all().len(), 2);
+        // and the first answer after the outage only starts the clock
+        rooms.set(ch, Some(&[]));
+        assert_eq!(
+            counts(&check(&app.state(), &rooms, t0 + GRACE * 10, GRACE).await),
+            (0, 0)
+        );
+    }
+
+    /// alex live in the lounge, then the leave webhook: `Reconnecting`, with `media_timeout` to
+    /// come back.
+    async fn reconnecting(
+        media_timeout: Duration,
+    ) -> (TestApp, ChannelId, UserId, Receiver<ServerFrame>) {
+        let mut cfg = test_config();
+        cfg.stream_media_timeout = media_timeout;
+        let app = spawn_with(cfg).await;
+        let (l, (a_id, a), _, mut rx) = pair(&app).await;
+        assert_eq!(go_live(&app, &a, l.id, settings()).await.status(), 200);
+        stream_webhook(&app, "participant_left", l.id, &v(a_id)).await;
+        assert!(matches!(
+            next_stream_event(&mut rx).await,
+            Event::StreamStarted { .. }
+        ));
+        assert!(matches!(
+            next_stream_event(&mut rx).await,
+            Event::StreamUpdated { stream } if stream.status == StreamStatus::Reconnecting
+        ));
+        (app, l.id, a_id, rx)
+    }
+
+    #[tokio::test]
+    async fn a_reconnecting_stream_missing_from_the_room_is_left_to_its_own_timer() {
+        let (app, ch, a_id, mut rx) = reconnecting(Duration::from_secs(600)).await;
+        let rooms = FakeRooms::default();
+        let t0 = Instant::now();
+        for n in 0..3 {
+            let c = check(&app.state(), &rooms, t0 + GRACE * n, GRACE).await;
+            assert_eq!(counts(&c), (0, 0));
+        }
+        assert_eq!(
+            app.streams.get(ch, a_id).unwrap().status,
+            StreamStatus::Reconnecting
+        );
+        assert!(queued(&mut rx).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_reconnecting_stream_livekit_lists_again_is_live_again_and_its_timer_stands_down() {
+        // the leave webhook came, the rejoin's join webhook didn't
+        let (app, ch, a_id, mut rx) = reconnecting(Duration::from_millis(300)).await;
+        let rooms = FakeRooms::default();
+        rooms.set(ch, Some(&[v(a_id)]));
+        check(&app.state(), &rooms, Instant::now(), GRACE).await;
+        assert!(matches!(
+            next_stream_event(&mut rx).await,
+            Event::StreamUpdated { stream } if stream.user_id == a_id && stream.status == StreamStatus::Live
+        ));
+        tokio::time::sleep(Duration::from_millis(500)).await; // past the leave's timer
+        assert_eq!(
+            app.streams.get(ch, a_id).unwrap().status,
+            StreamStatus::Live
+        );
+        assert!(queued(&mut rx).is_empty(), "no end, no second update");
+    }
+
+    fn participant(identity: String, state: lkp::participant_info::State) -> lkp::ParticipantInfo {
+        lkp::ParticipantInfo {
+            identity,
+            sid: "PA_x".into(),
+            state: state as i32,
+            ..Default::default()
+        }
+    }
+
+    /// The app's state with LiveKit's API at `url`.
+    fn state_with(app: &TestApp, url: String) -> pulse_server::AppState {
+        let mut s = app.state();
+        s.cfg = Arc::new(pulse_server::config::Config {
+            livekit_api_url: url,
+            ..(*app.cfg).clone()
+        });
+        s
+    }
+
+    #[tokio::test]
+    async fn after_a_server_restart_reannounced_streams_are_kept_by_livekits_answer() {
+        // A restarted server knows no streams and no `#v` connections; LiveKit (not restarted)
+        // still has them, and the clients re-announce. A fresh app's empty state is that
+        // restart: what's checked here is that LiveKit's answer, through the real API client,
+        // keeps the re-announced streams.
+        let app = spawn().await;
+        let (l, (a_id, a), (b_id, b), mut rx) = pair(&app).await;
+        let room = format!("{}~s", l.id);
+        let active = lkp::participant_info::State::Active;
+        let live = SharedRooms::default();
+        live.lock().unwrap().push((
+            room.clone(),
+            vec![participant(v(a_id), active), participant(v(b_id), active)],
+        ));
+        let s = state_with(&app, fake_livekit_shared(live.clone()).await);
+        let rooms = LiveKitRooms::new(&s.cfg);
+        for tok in [&a, &b] {
+            assert_eq!(go_live(&app, tok, l.id, settings()).await.status(), 200); // the re-announce
+        }
+        let t0 = Instant::now();
+        for n in 0..3 {
+            assert_eq!(
+                counts(&check(&s, &rooms, t0 + GRACE * n, GRACE).await),
+                (0, 0)
+            );
+        }
+        assert_eq!(app.streams.all().len(), 2);
+        queued(&mut rx);
+
+        // alex's client dies: LiveKit is still tearing the connection down (it doesn't count)
+        live.lock().unwrap()[0].1[0].state = lkp::participant_info::State::Disconnected as i32;
+        assert_eq!(
+            counts(&check(&s, &rooms, t0 + GRACE * 3, GRACE).await),
+            (0, 0)
+        );
+        assert_eq!(
+            counts(&check(&s, &rooms, t0 + GRACE * 4, GRACE).await),
+            (1, 0)
+        );
+        assert!(app.streams.get(l.id, a_id).is_none());
+        assert!(app.streams.get(l.id, b_id).is_some());
+        assert!(
+            queued(&mut rx)
+                .iter()
+                .any(|e| matches!(e, Event::StreamEnded { user_id, .. } if *user_id == a_id))
+        );
+
+        // then sam's: LiveKit closes the room, which then lists nobody
+        live.lock().unwrap().clear();
+        assert_eq!(
+            counts(&check(&s, &rooms, t0 + GRACE * 5, GRACE).await),
+            (0, 0)
+        );
+        assert_eq!(
+            counts(&check(&s, &rooms, t0 + GRACE * 6, GRACE).await),
+            (1, 0)
+        );
+        assert!(app.streams.all().is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_real_client_treats_an_unreachable_livekit_as_dont_know() {
+        let app = spawn().await; // its LiveKit API URL leads nowhere
+        let (l, (a_id, a), _, _rx) = pair(&app).await;
+        go_live(&app, &a, l.id, settings()).await;
+        let rooms = LiveKitRooms::new(&app.cfg);
+        let t0 = Instant::now();
+        for n in 0..3 {
+            assert_eq!(
+                counts(&check(&app.state(), &rooms, t0 + GRACE * n, GRACE).await),
+                (0, 1)
+            );
+        }
+        assert!(app.streams.get(l.id, a_id).is_some());
+    }
+
+    /// A RoomService whose ListParticipants answers `status` with a Twirp `code`, and whose
+    /// ListRooms works (LiveKit is up; this one question failed).
+    async fn fake_livekit_refusing(status: u16, code: &'static str) -> String {
+        let app = axum::Router::new().route(
+            "/twirp/livekit.RoomService/ListParticipants",
+            axum::routing::post(move || async move {
+                (
+                    axum::http::StatusCode::from_u16(status).unwrap(),
+                    [(axum::http::header::CONTENT_TYPE, "application/json")],
+                    format!(r#"{{"code":"{code}","msg":"refused"}}"#),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        format!("http://{addr}")
+    }
+
+    #[tokio::test]
+    async fn livekit_errors_and_silence_are_dont_know_and_say_why() {
+        let app = spawn().await;
+        let (l, (a_id, a), _, _rx) = pair(&app).await;
+        go_live(&app, &a, l.id, settings()).await;
+        let t0 = Instant::now();
+        for (url, why) in [
+            (fake_livekit_refusing(503, "unavailable").await, "refused"),
+            (fake_livekit_refusing(500, "internal").await, "refused"),
+            (
+                fake_livekit_refusing(401, "unauthenticated").await,
+                "refused",
+            ),
+            (fake_livekit_hanging().await, "time"), // "timed out" or "didn't answer in time"
+        ] {
+            let s = state_with(&app, url);
+            let rooms = LiveKitRooms::with_budget(&s.cfg, Duration::from_millis(200));
+            for n in 0..3 {
+                let c = check(&s, &rooms, t0 + GRACE * n, GRACE).await;
+                assert_eq!(counts(&c), (0, 1), "{c:?}");
+                assert!(c.unknown[0].1.contains(why), "{c:?}");
+            }
+        }
+        assert!(app.streams.get(l.id, a_id).is_some());
+    }
+
+    #[tokio::test]
+    async fn the_background_check_ends_a_stream_livekit_has_lost_and_keeps_the_others() {
+        let app = spawn().await;
+        let (l, (a_id, a), (b_id, b), mut rx) = pair(&app).await;
+        for tok in [&a, &b] {
+            assert_eq!(go_live(&app, tok, l.id, settings()).await.status(), 200);
+        }
+        let live = SharedRooms::default();
+        live.lock().unwrap().push((
+            format!("{}~s", l.id),
+            vec![participant(v(b_id), lkp::participant_info::State::Active)],
+        ));
+        let s = state_with(&app, fake_livekit_shared(live).await);
+        spawn_checks(s, Duration::from_millis(50), Duration::from_millis(200));
+        let ended = tokio::time::timeout(Duration::from_secs(3), async {
+            loop {
+                if let Event::StreamEnded {
+                    user_id, reason, ..
+                } = next_stream_event(&mut rx).await
+                {
+                    return (user_id, reason);
+                }
+            }
+        })
+        .await
+        .expect("the background check never ended alex's stream");
+        assert_eq!(ended, (a_id, StreamEndReason::TimedOut));
+        tokio::time::sleep(Duration::from_millis(400)).await; // more rounds: sam stays
+        assert!(app.streams.get(l.id, b_id).is_some());
+    }
+}
+
+#[tokio::test]
+async fn an_end_that_a_new_go_live_overtook_is_followed_by_the_stream_again() {
+    // The ending path removed the stream, then (before its StreamEnded went out) the same person
+    // went live again: clients must end up seeing the new stream, whatever order they got it in.
+    let app = spawn().await;
+    let (l, (a_id, a), _, mut rx) = pair(&app).await;
+    assert_eq!(go_live(&app, &a, l.id, settings()).await.status(), 200);
+    assert!(matches!(
+        next_stream_event(&mut rx).await,
+        Event::StreamStarted { .. }
+    ));
+    pulse_server::streams::routes::publish_ended(
+        &app.state(),
+        l.id,
+        a_id,
+        StreamEndReason::TimedOut,
+    )
+    .await;
+    assert!(matches!(
+        next_stream_event(&mut rx).await,
+        Event::StreamEnded { user_id, .. } if user_id == a_id
+    ));
+    assert!(matches!(
+        next_stream_event(&mut rx).await,
+        Event::StreamUpdated { stream } if stream.user_id == a_id && stream.status == StreamStatus::Live
+    ));
+    // an end with no stream behind it is just the end
+    app.streams.end(l.id, a_id);
+    pulse_server::streams::routes::publish_ended(
+        &app.state(),
+        l.id,
+        a_id,
+        StreamEndReason::Stopped,
+    )
+    .await;
+    assert!(matches!(
+        next_stream_event(&mut rx).await,
+        Event::StreamEnded { .. }
+    ));
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), next_stream_event(&mut rx))
+            .await
+            .is_err()
+    );
+}

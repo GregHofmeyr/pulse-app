@@ -42,7 +42,7 @@ voice-smoke:
 # voice integration test against the dev LiveKit (real WebRTC, fake peer)
 voice-it: dev-livekit
     cargo test -p pulse-client --test voice_it --test voice_outage_it --test stream_it -- --ignored --nocapture
-    cargo test -p pulse-server --test livekit_ice -- --ignored --nocapture
+    cargo test -p pulse-server --test livekit_ice --test stream_liveness_it -- --ignored --nocapture
 
 # This checkout's dev LiveKit then listens on 17880-17882 and 13478 instead of 7880-7882 and 3478, and sends its
 # webhooks to 17890, where nothing listens (the tests' servers use ephemeral ports and don't need them), not to

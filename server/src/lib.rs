@@ -83,6 +83,11 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     // Votes whose time ran out while the server was down end now, before anyone connects.
     qoty::end_overdue(&state, &db::now()).await?;
     qoty::spawn_sweeper(state.clone());
+    streams::liveness::spawn(
+        state.clone(),
+        streams::liveness::CHECK_EVERY,
+        state.cfg.stream_media_timeout,
+    );
     axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),

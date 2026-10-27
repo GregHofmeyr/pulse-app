@@ -148,16 +148,7 @@ async fn stop(
     require_voice_member(&s, me, ch).await?;
     s.streams.end(ch, me).ok_or(AppError::NotFound)?;
     tracing::info!(user = %me, channel = %ch, reason = "stopped", "stream ended");
-    s.hub
-        .publish(
-            &s.db,
-            Event::StreamEnded {
-                channel_id: ch,
-                user_id: me,
-                reason: StreamEndReason::Stopped,
-            },
-        )
-        .await;
+    publish_ended(&s, ch, me, StreamEndReason::Stopped).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -199,6 +190,28 @@ fn ensure_watchable(s: &AppState, me: UserId, ch: ChannelId, streamer: UserId) -
     }
     s.streams.get(ch, streamer).ok_or(AppError::NotFound)?;
     Ok(())
+}
+
+/// Announce a stream that was just removed from the state (every stream end goes through here).
+/// A go-live from the same person can land between that removal and this publish, and its
+/// `StreamStarted` then reach clients before the `StreamEnded`: if there is a stream again once
+/// ours has gone out, it's sent once more (as an update: no "went live" toast), so every client's
+/// stream list ends up as the server's. The streamer's own client may have stopped sending on our
+/// `StreamEnded`; it stops the stream it's then sent (`stopGhost` in the UI's stream store).
+pub async fn publish_ended(s: &AppState, ch: ChannelId, user: UserId, reason: StreamEndReason) {
+    s.hub
+        .publish(
+            &s.db,
+            Event::StreamEnded {
+                channel_id: ch,
+                user_id: user,
+                reason,
+            },
+        )
+        .await;
+    if let Some(stream) = s.streams.get(ch, user) {
+        s.hub.publish(&s.db, Event::StreamUpdated { stream }).await;
+    }
 }
 
 pub async fn publish_viewers(s: &AppState, ch: ChannelId, streamer: UserId, viewers: Vec<UserId>) {
@@ -269,4 +282,32 @@ async fn get_preview(
         return Ok((StatusCode::NOT_MODIFIED, cache).into_response());
     }
     Ok((cache, [(header::CONTENT_TYPE, "image/webp")], bytes).into_response())
+}
+
+#[cfg(test)]
+mod tests {
+    /// Every `StreamEnded` goes out through [`super::publish_ended`], so none can skip the resend.
+    #[test]
+    fn stream_ends_are_published_in_one_place() {
+        let mut found = Vec::new();
+        let mut dirs = vec![std::path::PathBuf::from(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/src"
+        ))];
+        while let Some(dir) = dirs.pop() {
+            for entry in std::fs::read_dir(dir).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_dir() {
+                    dirs.push(path);
+                } else if path.extension().is_some_and(|e| e == "rs") {
+                    let text = std::fs::read_to_string(&path).unwrap();
+                    for _ in text.matches(concat!("Event::", "StreamEnded {")) {
+                        found.push(path.display().to_string());
+                    }
+                }
+            }
+        }
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert!(found[0].ends_with("streams/routes.rs"), "{found:?}");
+    }
 }

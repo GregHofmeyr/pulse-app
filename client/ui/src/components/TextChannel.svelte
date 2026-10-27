@@ -31,6 +31,7 @@
   let replyTo = $state<Message | null>(null)
   let error = $state('')
   let list: HTMLDivElement
+  let composer: Composer | undefined = $state()
   let loadingOlder = false
   let fetching: string | null = null
   const history = $derived(app.state.history[channelId])
@@ -247,7 +248,7 @@
         {mentionNames} meId={app.state.me?.id ?? ''}
         onReply={() => (replyTo = m)}
         onEdit={async (c) => { await api.editMessage(m.id, c) }}
-        onDelete={() => api.deleteMessage(m.id)} />
+        onDelete={() => api.deleteMessage(m.id)} onEditClosed={() => composer?.focus()} />
     {/each}
     {#each pending as p (p.nonce)}
       <MessageItem message={pendingMessage(p, channelId, app.state.me?.id ?? '')} name={nameOf(app.state.me?.id ?? null)} {nameOf} grouped={false}
@@ -261,7 +262,7 @@
     {#if typers.length}<strong>{typers.join(', ')}</strong> {typers.length > 1 ? 'are' : 'is'} typing…{/if}
   </div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
-  <Composer draftKey={channelId} placeholder={isPrivate ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
+  <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
     onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} />
 </div>
 
