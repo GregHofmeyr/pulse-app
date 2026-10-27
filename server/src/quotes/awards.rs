@@ -11,7 +11,7 @@ use pulse_protocol::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::SpeakerCount;
 use sqlx::{SqliteConnection, SqlitePool};
 
-use super::{effective_speaker, links_for};
+use super::{AWARD_ORDER, counted, effective_speaker, links_for, parse_id, parse_opt};
 use crate::AppState;
 use crate::access::channel_for;
 use crate::auth::AuthUser;
@@ -137,9 +137,13 @@ async fn set(s: &AppState, me: UserId, line: LineId, give: bool) -> AppResult<St
             .await?
             .rows_affected()
     };
-    // Taking back an uncounted award (one the speaker left before a link made it theirs)
-    // changes nothing anyone sees.
-    if changed == 0 || own {
+    if changed == 0 {
+        return Ok(StatusCode::NO_CONTENT);
+    }
+    // Taking back an uncounted award (the speaker's own, left before a link made it theirs) is
+    // stored but changes nothing anyone sees.
+    if own {
+        tx.commit().await?;
         return Ok(StatusCode::NO_CONTENT);
     }
     let awarders = counted_awarders(&mut tx, line, speaker).await?;
@@ -167,19 +171,17 @@ async fn counted_awarders(
     line: LineId,
     speaker: Option<UserId>,
 ) -> AppResult<Vec<UserId>> {
-    let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT giver_id FROM quote_awards WHERE line_id = ? ORDER BY created_at, rowid",
-    )
+    let rows: Vec<String> = sqlx::query_scalar(&format!(
+        "SELECT giver_id FROM quote_awards WHERE line_id = ? {AWARD_ORDER}"
+    ))
     .bind(line.to_string())
     .fetch_all(db)
     .await?;
-    rows.iter()
-        .map(|g| {
-            g.parse::<UserId>()
-                .map_err(|e| AppError::Internal(e.into()))
-        })
-        .filter(|g| g.as_ref().map_or(true, |g| Some(*g) != speaker))
-        .collect()
+    let givers = rows
+        .iter()
+        .map(|g| parse_id(g))
+        .collect::<AppResult<Vec<UserId>>>()?;
+    Ok(counted(givers, speaker))
 }
 
 /// Counted awards per effective speaker in `server`, most first (ties by name, for a stable
@@ -205,17 +207,12 @@ pub async fn award_totals(db: &SqlitePool, server: ServerId) -> AppResult<Vec<Sp
         .remove(&server.to_string())
         .unwrap_or_default();
 
-    let parse = |e| AppError::Internal(anyhow::Error::from(e));
     let mut members: HashMap<UserId, u32> = HashMap::new();
     // name_key to (latest spelling, count)
     let mut names: HashMap<String, (String, u32)> = HashMap::new();
     for (speaker, name, key, giver) in rows {
-        let speaker: Option<UserId> = speaker
-            .as_deref()
-            .map(str::parse)
-            .transpose()
-            .map_err(parse)?;
-        let giver: UserId = giver.parse().map_err(parse)?;
+        let speaker: Option<UserId> = parse_opt(speaker.as_deref())?;
+        let giver: UserId = parse_id(&giver)?;
         let who = effective_speaker(speaker, key.as_deref(), &links);
         if who == Some(giver) {
             continue;

@@ -2083,7 +2083,7 @@ impl Fixture {
             .status()
             .as_u16()
     }
-    async fn line_of(&self, m: &Message, i: usize) -> LineId {
+    fn line_of(&self, m: &Message, i: usize) -> LineId {
         m.quote.as_ref().unwrap().lines[i].id
     }
     async fn line_on_page(
@@ -2108,7 +2108,29 @@ impl Fixture {
     }
 }
 
-/// What the socket says for a while, as short strings for reactions and award events.
+type AwardEvent = (LineId, UserId, bool, u32, Vec<UserId>);
+
+/// The `QuoteAwardChanged` events the socket delivers until it goes quiet, as
+/// (line, who, given, count, awarders).
+async fn award_events(mut ws: Socket) -> Vec<AwardEvent> {
+    let mut out = Vec::new();
+    while let Some(fr) = next_frame(&mut ws).await {
+        if let ServerFrame::Event(Event::QuoteAwardChanged {
+            line_id,
+            user_id,
+            given,
+            count,
+            awarders,
+            ..
+        }) = fr
+        {
+            out.push((line_id, user_id, given, count, awarders));
+        }
+    }
+    out
+}
+
+/// What the socket says for a while about reactions, as short strings like `+😂1` and `-😂0`.
 async fn reaction_events(ws: &mut Socket) -> Vec<String> {
     let mut out = Vec::new();
     while let Some(f) = next_frame(ws).await {
@@ -2150,28 +2172,10 @@ async fn one_reaction_per_quote() {
 async fn awards_follow_the_rules() {
     let f = fixture().await;
     let q = f.quote().await; // alex posts, sam is the speaker
-    let line = f.line_of(&q, 0).await;
+    let line = f.line_of(&q, 0);
     let alex_ws = hello(&f.app, &f.alex_t).await;
 
     assert_eq!(f.award_status(&f.alex_t, line, true).await, 204);
-    let events = |ws: Socket| async move {
-        let mut ws = ws;
-        let mut out = Vec::new();
-        while let Some(fr) = next_frame(&mut ws).await {
-            if let ServerFrame::Event(Event::QuoteAwardChanged {
-                line_id,
-                user_id,
-                given,
-                count,
-                awarders,
-                ..
-            }) = fr
-            {
-                out.push((line_id, user_id, given, count, awarders));
-            }
-        }
-        out
-    };
     // sam (the speaker) can't award their own line.
     let r = f.award_req(&f.sam_t, line, true).await;
     assert_eq!(r.status(), 403);
@@ -2197,7 +2201,7 @@ async fn awards_follow_the_rules() {
     let l = f.line_on_page(&f.alex_t, &q, 0).await;
     assert_eq!((l.awards, l.awarders, l.awarded), (0, vec![], false));
     assert_eq!(
-        events(alex_ws).await,
+        award_events(alex_ws).await,
         vec![
             (line, f.alex, true, 1, vec![f.alex]),
             (line, f.alex, false, 0, vec![]),
@@ -2218,7 +2222,7 @@ async fn awards_follow_the_rules() {
     assert_eq!(f.award_status(&robin_t, line, true).await, 204);
     assert_eq!(f.award_status(&f.alex_t, line, true).await, 204);
     assert_eq!(
-        events(ws).await.last().cloned(),
+        award_events(ws).await.last().cloned(),
         Some((line, f.alex, true, 2, vec![robin, f.alex]))
     );
 }
@@ -2227,7 +2231,7 @@ async fn awards_follow_the_rules() {
 async fn award_refusals() {
     let f = fixture().await;
     let q = f.quote().await;
-    let line = f.line_of(&q, 0).await;
+    let line = f.line_of(&q, 0);
     // Not a member of the server.
     let (_, out_t) = register(&f.app, "outsider").await;
     assert_eq!(f.award_status(&out_t, line, true).await, 403);
@@ -2248,7 +2252,7 @@ async fn a_linked_name_is_its_members_own_line() {
         .json()
         .await
         .unwrap();
-    let line = f.line_of(&m, 0).await;
+    let line = f.line_of(&m, 0);
     sqlx::query(
         "INSERT INTO speaker_links (server_id, name_key, name, user_id, linked_by, linked_at)
          VALUES (?, 'sammy', 'Sammy', ?, ?, '2026-01-02T00:00:00.000Z')",
@@ -2276,11 +2280,7 @@ async fn a_plain_name_line_can_be_awarded() {
         .json()
         .await
         .unwrap();
-    let (l1, l2, l3) = (
-        f.line_of(&m, 0).await,
-        f.line_of(&m, 1).await,
-        f.line_of(&m, 2).await,
-    );
+    let (l1, l2, l3) = (f.line_of(&m, 0), f.line_of(&m, 1), f.line_of(&m, 2));
     for l in [l1, l2] {
         assert_eq!(f.award_status(&f.sam_t, l, true).await, 204);
     }
@@ -2342,7 +2342,7 @@ async fn a_plain_name_line_can_be_awarded() {
 async fn concurrent_awards_end_on_the_true_count() {
     let f = fixture().await;
     let q = f.quote().await; // sam is the speaker
-    let line = f.line_of(&q, 0).await;
+    let line = f.line_of(&q, 0);
     let mut tokens = vec![f.alex_t.clone()];
     for n in 0..4 {
         let (_, t) = register(&f.app, &format!("user{n}")).await;
@@ -2378,7 +2378,7 @@ async fn concurrent_awards_end_on_the_true_count() {
 #[tokio::test]
 async fn everyone_sees_awards_live() {
     let f = fixture().await;
-    let (robin, robin_t) = register(&f.app, "robin").await;
+    let (_, robin_t) = register(&f.app, "robin").await;
     let r = post_json(
         &f.app,
         &robin_t,
@@ -2388,7 +2388,7 @@ async fn everyone_sees_awards_live() {
     .await;
     assert_eq!(r.status(), 204);
     let q = f.quote().await;
-    let line = f.line_of(&q, 0).await;
+    let line = f.line_of(&q, 0);
     let mut ws = hello(&f.app, &robin_t).await;
     assert_eq!(f.award_status(&f.alex_t, line, true).await, 204);
     loop {
@@ -2409,14 +2409,13 @@ async fn everyone_sees_awards_live() {
             break;
         }
     }
-    let _ = robin;
 }
 
 #[tokio::test]
 async fn awarding_publishes_under_the_order_lock() {
     let f = fixture().await;
     let q = f.quote().await;
-    let line = f.line_of(&q, 0).await;
+    let line = f.line_of(&q, 0);
     let guard = f.app.hub.in_order().await;
     let (http, url, token) = (
         f.app.http.clone(),
@@ -2435,4 +2434,37 @@ async fn awarding_publishes_under_the_order_lock() {
     assert!(!put.is_finished(), "the award should wait on in_order");
     drop(guard);
     assert_eq!(put.await.unwrap(), 204);
+}
+
+#[tokio::test]
+async fn taking_back_an_award_the_speaker_left_removes_it() {
+    let f = fixture().await;
+    let m: Message = f
+        .post_lines(json!([{ "speaker_name": "Sammy", "text": "hi" }]))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let line = f.line_of(&m, 0);
+    // sam awards the plain-name line, then a link makes sam its speaker: the award is uncounted.
+    assert_eq!(f.award_status(&f.sam_t, line, true).await, 204);
+    sqlx::query(
+        "INSERT INTO speaker_links (server_id, name_key, name, user_id, linked_by, linked_at)
+         VALUES (?, 'sammy', 'Sammy', ?, ?, '2026-01-02T00:00:00.000Z')",
+    )
+    .bind(f.server.to_string())
+    .bind(f.sam.to_string())
+    .bind(f.alex.to_string())
+    .execute(&f.app.db)
+    .await
+    .unwrap();
+    let mut ws = hello(&f.app, &f.alex_t).await;
+    assert_eq!(f.award_status(&f.sam_t, line, false).await, 204);
+    assert_eq!(f.awards_on(line).await, 0, "the take-back must commit");
+    while let Some(fr) = next_frame(&mut ws).await {
+        assert!(
+            !matches!(fr, ServerFrame::Event(Event::QuoteAwardChanged { .. })),
+            "an uncounted change publishes nothing"
+        );
+    }
 }

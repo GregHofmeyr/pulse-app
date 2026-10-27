@@ -336,6 +336,34 @@ pub fn effective_speaker(
     speaker_id.or_else(|| speaker_key.and_then(|k| links.get(k).copied()))
 }
 
+/// Parse a stored id.
+pub(crate) fn parse_id<T: std::str::FromStr>(s: &str) -> AppResult<T>
+where
+    T::Err: Into<anyhow::Error>,
+{
+    s.parse().map_err(|e: T::Err| AppError::Internal(e.into()))
+}
+
+/// Parse a stored id that may be absent.
+pub(crate) fn parse_opt<T: std::str::FromStr>(s: Option<&str>) -> AppResult<Option<T>>
+where
+    T::Err: Into<anyhow::Error>,
+{
+    s.map(parse_id).transpose()
+}
+
+/// Order of awards on a line: oldest first. The one place the rule lives, for SQL.
+pub(crate) const AWARD_ORDER: &str = "ORDER BY created_at, rowid";
+
+/// The counted awarders among `givers` (oldest first, as given): everyone but the line's
+/// effective speaker, whose own award doesn't count.
+pub(crate) fn counted(
+    givers: impl IntoIterator<Item = UserId>,
+    speaker: Option<UserId>,
+) -> Vec<UserId> {
+    givers.into_iter().filter(|g| Some(*g) != speaker).collect()
+}
+
 /// `name_key` to member for every speaker link of `servers`.
 async fn links_for<'e, E>(
     db: E,
@@ -440,7 +468,7 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
             "SELECT line_id, giver_id FROM quote_awards WHERE line_id IN (",
         );
         in_list(&mut q, &line_ids);
-        q.push(" ORDER BY created_at, rowid");
+        q.push(" ").push(AWARD_ORDER);
         let given: Vec<(String, String)> = q.build_query_as().fetch_all(db).await?;
         for (line, giver) in given {
             awards
@@ -466,12 +494,7 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
                 .and_then(|s| links.get(s))
                 .unwrap_or(&no_links),
         );
-        let awarders: Vec<UserId> = awards
-            .remove(&r.id)
-            .unwrap_or_default()
-            .into_iter()
-            .filter(|g| Some(*g) != speaker)
-            .collect();
+        let awarders = counted(awards.remove(&r.id).unwrap_or_default(), speaker);
         by_msg.entry(r.message_id).or_default().push(QuoteLine {
             id: r.id.parse().map_err(anyhow::Error::from)?,
             speaker_id,
