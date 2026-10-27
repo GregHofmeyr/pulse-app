@@ -273,7 +273,7 @@ async fn join(
                     .await;
             }
             Err(e) => {
-                tracing::error!(error = ?e, server = %id, %me, "couldn't read back a join to publish")
+                tracing::error!(error = ?e, server = %id, %me, "couldn't read back a join to publish");
             }
         }
     }

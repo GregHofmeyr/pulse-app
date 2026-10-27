@@ -362,19 +362,24 @@ async fn slow_client_does_not_block_others() {
     let (mut fast, _) = hello(&app, &b).await;
 
     // The fast client heartbeats like a real one: under load the run can outlast the test
-    // server's 5 s heartbeat timeout, which would close it for the wrong reason.
+    // server's 5 s heartbeat timeout, which would close it for the wrong reason. It reports the
+    // longest wait between two of its events.
     let beat = serde_json::to_string(&ClientFrame::Heartbeat).unwrap();
     let reader = tokio::spawn(async move {
         let mut last_beat = std::time::Instant::now();
+        let (mut last_event, mut max_gap) = (std::time::Instant::now(), Duration::ZERO);
         loop {
             if last_beat.elapsed() > Duration::from_secs(1) {
                 fast.send(Ws::text(beat.clone())).await.unwrap();
                 last_beat = std::time::Instant::now();
             }
-            if let Event::MessageCreated { message, .. } = next_event(&mut fast).await
+            let e = next_event(&mut fast).await;
+            max_gap = max_gap.max(last_event.elapsed());
+            last_event = std::time::Instant::now();
+            if let Event::MessageCreated { message, .. } = e
                 && message.content.starts_with("last")
             {
-                return;
+                return max_gap;
             }
         }
     });
@@ -399,11 +404,16 @@ async fn slow_client_does_not_block_others() {
             },
         )
         .await;
-    // A blocked fan-out would starve it for good; the margin only absorbs a loaded machine.
-    tokio::time::timeout(Duration::from_secs(20), reader)
+    // A blocked fan-out would starve it for good; the margin only absorbs a loaded machine...
+    let gap = tokio::time::timeout(Duration::from_secs(20), reader)
         .await
         .expect("fast client starved")
         .unwrap();
+    // ...and a bounded stall would show as a gap: even 96 copies at once stay under 0.1 s.
+    assert!(
+        gap < Duration::from_secs(2),
+        "the fast client stalled for {gap:?}"
+    );
     assert_eq!(
         app.hub.connections_for(slow_id),
         0,

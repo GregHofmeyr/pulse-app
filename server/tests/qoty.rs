@@ -4,16 +4,13 @@ mod common;
 use std::time::Duration;
 
 use common::*;
-use futures::{SinkExt, StreamExt};
+use futures::SinkExt;
 use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
 use pulse_protocol::ids::{ChannelId, MessageId, QotyEventId, ServerId, UserId};
 use pulse_protocol::rest::{Channel, Message, MessageKind, QotyEndReason, QotyEvent};
 use reqwest::Method;
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
-
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn hello_ready(app: &TestApp, token: &str) -> (Socket, Ready) {
     let (mut ws, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
@@ -38,24 +35,9 @@ async fn hello(app: &TestApp, token: &str) -> Socket {
     hello_ready(app, token).await.0
 }
 
-/// The next frame, or `None` once the socket has been quiet for 2 s (or is gone). It heartbeats
-/// first, as a real client does, so a socket idling across several drains outlives the server's
-/// heartbeat timeout (5 s in tests); the acks are skipped.
+/// The next frame, or `None` after 2 quiet seconds (heartbeating meanwhile).
 async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
-    let beat = serde_json::to_string(&ClientFrame::Heartbeat).unwrap();
-    ws.send(Ws::text(beat)).await.ok()?;
-    loop {
-        let m = tokio::time::timeout(Duration::from_secs(2), ws.next())
-            .await
-            .ok()??
-            .ok()?;
-        if let Ws::Text(t) = m {
-            match serde_json::from_str(&t).unwrap() {
-                ServerFrame::HeartbeatAck => continue,
-                frame => return Some(frame),
-            }
-        }
-    }
+    next_frame_beating(ws, Duration::from_secs(2)).await
 }
 
 /// What the socket says about Quote of the Year and cards until it goes quiet, in order.

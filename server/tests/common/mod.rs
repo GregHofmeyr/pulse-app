@@ -144,3 +144,30 @@ pub fn binary_invite(p: &ServerProcess) -> String {
     assert!(out.status.success(), "create-invite failed");
     String::from_utf8(out.stdout).unwrap().trim().to_string()
 }
+
+/// A test's gateway socket.
+pub type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// The next frame, or `None` once the socket has been quiet for `quiet` (or is gone). It heartbeats
+/// first, as a real client does, so a socket idling across several drains outlives the server's
+/// heartbeat timeout (5 s in tests); the acks are skipped.
+pub async fn next_frame_beating(
+    ws: &mut Socket,
+    quiet: Duration,
+) -> Option<pulse_protocol::gateway::ServerFrame> {
+    use futures::{SinkExt, StreamExt};
+    use pulse_protocol::gateway::{ClientFrame, ServerFrame};
+    use tokio_tungstenite::tungstenite::Message as Ws;
+    let beat = serde_json::to_string(&ClientFrame::Heartbeat).unwrap();
+    ws.send(Ws::text(beat)).await.ok()?;
+    loop {
+        let m = tokio::time::timeout(quiet, ws.next()).await.ok()??.ok()?;
+        if let Ws::Text(t) = m {
+            match serde_json::from_str(&t).unwrap() {
+                ServerFrame::HeartbeatAck => continue,
+                frame => return Some(frame),
+            }
+        }
+    }
+}

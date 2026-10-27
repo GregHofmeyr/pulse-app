@@ -5,7 +5,7 @@ use std::borrow::Cow;
 use std::time::Duration;
 
 use common::*;
-use futures::{SinkExt, StreamExt};
+use futures::SinkExt;
 use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
 use pulse_protocol::ids::{ChannelId, MessageId};
 use pulse_protocol::rest::{Channel, ChannelKind};
@@ -13,9 +13,6 @@ use serde_json::json;
 use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
 use tokio_tungstenite::tungstenite::Message as Ws;
-
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn hello(app: &TestApp, token: &str) -> Socket {
     hello_ready(app, token).await.0
@@ -40,24 +37,9 @@ async fn hello_ready(app: &TestApp, token: &str) -> (Socket, pulse_protocol::gat
     }
 }
 
-/// The next frame, or `None` once the socket has been quiet for 3 s (or is gone). It heartbeats
-/// first, as a real client does, so a socket idling across several drains outlives the server's
-/// heartbeat timeout (5 s in tests); the acks are skipped.
+/// The next frame, or `None` after 3 quiet seconds (heartbeating meanwhile).
 async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
-    let beat = serde_json::to_string(&ClientFrame::Heartbeat).unwrap();
-    ws.send(Ws::text(beat)).await.ok()?;
-    loop {
-        let m = tokio::time::timeout(Duration::from_secs(3), ws.next())
-            .await
-            .ok()??
-            .ok()?;
-        if let Ws::Text(t) = m {
-            match serde_json::from_str(&t).unwrap() {
-                ServerFrame::HeartbeatAck => continue,
-                frame => return Some(frame),
-            }
-        }
-    }
+    next_frame_beating(ws, Duration::from_secs(3)).await
 }
 
 async fn create_quotes(
