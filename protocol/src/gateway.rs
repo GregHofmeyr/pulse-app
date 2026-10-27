@@ -197,6 +197,10 @@ pub enum Event {
         user_id: UserId,
         channel_id: ChannelId,
         last_read_message_id: Option<MessageId>,
+        /// The user's absolute mention count in the channel after this change (main list and
+        /// quote replies, as the ready snapshot counts it). Absent from older servers.
+        #[serde(default)]
+        mentions: Option<u32>,
     },
     MutesChanged {
         user_id: UserId,
@@ -273,6 +277,9 @@ pub enum Event {
         last_seen_id: MessageId,
         /// How many of their unread mentions in that thread this cleared.
         mentions_cleared: u32,
+        /// The user's absolute mention count in the channel after this change. Absent from older servers.
+        #[serde(default)]
+        mentions: Option<u32>,
     },
     SpeakerLinksChanged {
         server_id: ServerId,
@@ -553,6 +560,7 @@ mod tests {
             root_id: MessageId::new(),
             last_seen_id: MessageId::new(),
             mentions_cleared: 2,
+            mentions: Some(1),
         };
         assert_eq!((seen.channel_id(), seen.only_for()), (Some(c), Some(u)));
         let links = Event::SpeakerLinksChanged {

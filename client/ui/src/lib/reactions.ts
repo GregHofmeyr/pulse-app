@@ -1,6 +1,6 @@
 import type { Event } from './protocol/Event'
 import type { ReactionSummary } from './protocol/ReactionSummary'
-import type { AppState } from './state'
+import { findMessage, mapMessage, type AppState } from './state'
 import { api, errorText } from './tauri'
 
 const MAX_NAMES = 10
@@ -42,33 +42,23 @@ function withoutMineExcept(list: ReactionSummary[], key: string): ReactionSummar
 }
 
 function flip(s: AppState, channel: string, id: string, key: string, add: boolean, meId: string, onePerPerson = false): AppState {
-  const list = s.messages[channel]
-  if (!list) return s
-  return {
-    ...s,
-    messages: {
-      ...s.messages,
-      [channel]: list.map((m) => (m.id === id ? { ...m, reactions: optimistic(m.reactions, key, add, meId, onePerPerson) } : m)),
-    },
-  }
+  return mapMessage(s, channel, id, (m) => ({ ...m, reactions: optimistic(m.reactions, key, add, meId, onePerPerson) }))
 }
 
 const entry = (s: AppState, channel: string, id: string, key: string) =>
-  s.messages[channel]?.find((m) => m.id === id)?.reactions.find((r) => r.emoji === key)
+  findMessage(s, channel, id)?.reactions.find((r) => r.emoji === key)
 
 function setEntry(s: AppState, channel: string, id: string, key: string, e: ReactionSummary | null): AppState {
-  const list = s.messages[channel]
-  if (!list) return s
   const put = (rs: ReactionSummary[]) => {
     const rest = rs.filter((r) => r.emoji !== key)
     if (!e) return rest
     return rs.some((r) => r.emoji === key) ? rs.map((r) => (r.emoji === key ? e : r)) : [...rest, e]
   }
-  return { ...s, messages: { ...s.messages, [channel]: list.map((m) => (m.id === id ? { ...m, reactions: put(m.reactions) } : m)) } }
+  return mapMessage(s, channel, id, (m) => ({ ...m, reactions: put(m.reactions) }))
 }
 
 type Toggle = { add: boolean; landed: boolean }
-// Per (message, emoji): the last queued toggle, and the one talking to the server now.
+// Per (message, emoji) -- per message for a one-per-person one -- the last queued toggle; per (message, emoji), the one talking to the server now.
 const queued = new Map<string, Promise<void>>()
 const inFlight = new Map<string, Toggle>()
 const toggleKey = (id: string, key: string) => `${id}\u0000${key}`
@@ -85,6 +75,8 @@ export function noteReactionEvent(e: Event, meId: string | undefined): void {
  * Flips locally, then asks the server; a failure is handed to `onError`. Toggles of one emoji on
  * one message run one at a time, in click order: a double click's add and remove can't reach the
  * server swapped. Each re-checks the state when its turn comes, so one that's become a no-op sends nothing.
+ * On a quote (`onePerPerson`) every toggle of the message shares one queue: an add also takes back my
+ * other reaction, so it must not overtake or be overtaken by a toggle of that one.
  */
 export function react(
   get: () => AppState, set: (s: AppState) => void,
@@ -93,10 +85,11 @@ export function react(
   const k = toggleKey(id, key)
   // Each call settles: the core's HTTP client times requests out (15 s), and Tauri's invoke itself has
   // no timeout, so a core command that could hang would stall this emoji's later toggles.
-  const run = (queued.get(k) ?? Promise.resolve()).catch(() => {}).then(() => toggle(get, set, channel, id, key, add, meId, onError, k, onePerPerson))
-  queued.set(k, run)
+  const q = onePerPerson ? id : k
+  const run = (queued.get(q) ?? Promise.resolve()).catch(() => {}).then(() => toggle(get, set, channel, id, key, add, meId, onError, k, onePerPerson))
+  queued.set(q, run)
   return run.finally(() => {
-    if (queued.get(k) === run) queued.delete(k)
+    if (queued.get(q) === run) queued.delete(q)
   })
 }
 
@@ -104,7 +97,8 @@ export function react(
  * On failure the server's reactor list is the truth: an event may have landed during the call (even
  * an identical-looking one, e.g. the add committed but its response was lost), so decrementing
  * blindly could drift the count. If that list can't settle it (capped, or the fetch fails too), the
- * flip is undone locally, unless my own event for this toggle already arrived.
+ * flip is undone locally, unless my own event for this toggle already arrived. A one-per-person add that
+ * did not take effect also gives back the reactions it displaced locally (unless the server removed them).
  */
 async function toggle(
   get: () => AppState, set: (s: AppState) => void,
@@ -112,9 +106,14 @@ async function toggle(
 ): Promise<void> {
   const before = get()
   if ((entry(before, channel, id, key)?.me ?? false) === add) return
+  // What this add takes back from me: restored if it fails. The server's removal of each shows up as my event.
+  const displaced = add && onePerPerson
+    ? (findMessage(before, channel, id)?.reactions ?? []).filter((r) => r.me && r.emoji !== key).map((r): [string, Toggle] => [r.emoji, { add: false, landed: false }])
+    : []
   set(flip(before, channel, id, key, add, meId, onePerPerson))
   const t: Toggle = { add, landed: false }
   inFlight.set(k, t)
+  for (const [emoji, d] of displaced) inFlight.set(toggleKey(id, emoji), d)
   try {
     await (add ? api.addReaction(id, key) : api.removeReaction(id, key))
   } catch (e) {
@@ -134,9 +133,17 @@ async function toggle(
     } catch {
       undo()
     }
+    if (entry(get(), channel, id, key)?.me !== true) {
+      for (const [emoji, d] of displaced) {
+        if (d.landed) continue
+        const cur = entry(get(), channel, id, emoji)
+        if (!cur?.me) set(setEntry(get(), channel, id, emoji, { emoji, count: (cur?.count ?? 0) + 1, me: true }))
+      }
+    }
     onError(errorText(e))
   } finally {
     inFlight.delete(k)
+    for (const [emoji] of displaced) inFlight.delete(toggleKey(id, emoji))
   }
 }
 

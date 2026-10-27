@@ -51,6 +51,13 @@ export type AppState = {
   customEmoji: Record<string, CustomEmoji> // id -> emoji; deleted ones stay (hash null) so old messages render a chip
   frequentEmoji: string[] // your most-used reaction keys, best first
   threads: Record<string, Message[]> // quote id -> its replies, oldest..newest (replies never join `messages`)
+  /** Quote id -> whether its fetched replies reach the thread's start. Present only once the thread was fetched
+   * (live replies alone make `threads[root]` exist but don't set this); cleared on every Ready. */
+  threadStart: Record<string, boolean>
+  /** Quote id -> the newest reply you've seen, from ThreadSeen events (the root may not be loaded). */
+  threadSeen: Record<string, string>
+  /** Replies known deleted, so a repeated delete event can't lower a count twice. */
+  goneReplies: Record<string, true>
   qoty: Record<string, QotyEvent> // serverId -> its latest Quote of the Year vote (open, or ended and reopenable)
   speakerLinks: Record<string, SpeakerLink[]> // serverId -> plain names linked to members
 }
@@ -58,7 +65,7 @@ export type AppState = {
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], threads: {}, qoty: {}, speakerLinks: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, qoty: {}, speakerLinks: {} }
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -88,6 +95,9 @@ export function applyReady(s: AppState, r: Ready): AppState {
     streams: r.streams.reduce<AppState['streams']>((acc, x) => withStream(acc, x), {}),
     customEmoji: Object.fromEntries(r.custom_emoji.map((c) => [c.id, c])),
     frequentEmoji: r.frequent_emoji,
+    // Replies may have changed while we were away: a panel refetches its thread.
+    threads: {},
+    threadStart: {},
     qoty: latestQoty(r.qoty),
     speakerLinks: groupLinks(r.speaker_links),
   }
@@ -154,6 +164,36 @@ function mapQuote(s: AppState, channel: string, id: string, f: (m: Message) => M
   return { ...s, messages: { ...s.messages, [channel]: list.map((m) => (m.id === id ? f(m) : m)) } }
 }
 
+/** A loaded message of `channel`: in its list, or a reply in a loaded thread. */
+export function findMessage(s: AppState, channel: string, id: string): Message | undefined {
+  const m = s.messages[channel]?.find((x) => x.id === id)
+  if (m) return m
+  for (const list of Object.values(s.threads)) {
+    const r = list.find((x) => x.id === id && x.channel_id === channel)
+    if (r) return r
+  }
+  return undefined
+}
+
+/** Change a loaded message of `channel` (list or thread); the state is returned as is when it isn't loaded. */
+export function mapMessage(s: AppState, channel: string, id: string, f: (m: Message) => Message): AppState {
+  const list = s.messages[channel]
+  if (list?.some((x) => x.id === id)) return { ...s, messages: { ...s.messages, [channel]: list.map((x) => (x.id === id ? f(x) : x)) } }
+  for (const [root, replies] of Object.entries(s.threads)) {
+    if (replies.some((x) => x.id === id && x.channel_id === channel)) {
+      return { ...s, threads: { ...s.threads, [root]: replies.map((x) => (x.id === id ? f(x) : x)) } }
+    }
+  }
+  return s
+}
+
+/** Add a fetched page of a quote's replies (newest page, or older ones) and note whether the thread's start is reached. */
+export function addReplies(s: AppState, root: string, replies: Message[], reachedStart: boolean): AppState {
+  let list = s.threads[root] ?? []
+  for (const m of replies) list = upsertMessage(list, m)
+  return { ...s, threads: { ...s.threads, [root]: list }, threadStart: { ...s.threadStart, [root]: reachedStart || !!s.threadStart[root] } }
+}
+
 const maxId = (a: string | null, b: string) => (a !== null && a > b ? a : b)
 
 /** A reply was created. Seen before (the outbox and the gateway both deliver it) it only refreshes the copy. */
@@ -185,15 +225,17 @@ function replyUpdated(s: AppState, m: Message): AppState {
 function replyDeleted(s: AppState, e: Extract<Event, { t: 'MessageDeleted' }>['d']): AppState {
   const { channel_id: c, message_id: id, thread_root_id: root, author_id, mentions } = e
   const list = s.threads[root!]
-  const already = list?.find((x) => x.id === id)?.deleted ?? false
+  const already = s.goneReplies[id] || (list?.find((x) => x.id === id)?.deleted ?? false)
   if (already) return s
   const rootMsg = s.messages[c]?.find((m) => m.id === root)
   const read = s.reads[c]
   const mentioned = !!s.me && mentions.includes(s.me.id) && author_id !== s.me.id
   // Only a mention not yet cleared by opening the thread is still in the count.
-  const counted = mentioned && !!read && !!rootMsg?.quote && (rootMsg.quote.replies_seen === null || id > rootMsg.quote.replies_seen)
+  const seen = [s.threadSeen[root!], rootMsg?.quote?.replies_seen].reduce<string>((a, b) => (b && b > a ? b : a), '')
+  const counted = mentioned && !!read && id > seen
   const next: AppState = {
     ...s,
+    goneReplies: { ...s.goneReplies, [id]: true },
     threads: list ? { ...s.threads, [root!]: list.map((x) => (x.id === id ? { ...x, deleted: true, content: '' } : x)) } : s.threads,
     reads: counted ? { ...s.reads, [c]: { ...read, mentions: Math.max(0, read.mentions - 1) } } : s.reads,
   }
@@ -210,11 +252,14 @@ function awardChanged(s: AppState, d: Extract<Event, { t: 'QuoteAwardChanged' }>
 function threadSeen(s: AppState, d: Extract<Event, { t: 'ThreadSeen' }>['d']): AppState {
   if (d.user_id !== s.me?.id) return s
   const read = s.reads[d.channel_id]
-  const next = mapQuote(s, d.channel_id, d.root_id, (m) =>
+  const quoted = mapQuote(s, d.channel_id, d.root_id, (m) =>
     m.quote ? { ...m, quote: { ...m.quote, replies_seen: maxId(m.quote.replies_seen, d.last_seen_id) } } : m,
   )
-  if (!read || d.mentions_cleared === 0) return next
-  return { ...next, reads: { ...next.reads, [d.channel_id]: { ...read, mentions: Math.max(0, read.mentions - d.mentions_cleared) } } }
+  const next = { ...quoted, threadSeen: { ...s.threadSeen, [d.root_id]: maxId(s.threadSeen[d.root_id] ?? null, d.last_seen_id) } }
+  if (!read) return next
+  // The server's absolute count wins; an older server sends only the delta.
+  const mentions = d.mentions ?? Math.max(0, read.mentions - d.mentions_cleared)
+  return mentions === read.mentions ? next : { ...next, reads: { ...next.reads, [d.channel_id]: { ...read, mentions } } }
 }
 
 function withoutTyping(s: AppState, channel: string, user: string | null): AppState['typing'] {
@@ -327,10 +372,15 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         const { [c]: _x, ...rest } = r
         return rest
       }
+      // A thread goes with its channel, whether or not its quote is loaded.
       const roots = new Set((s.messages[c] ?? []).map((m) => m.id))
+      for (const [root, list] of Object.entries(s.threads)) if (list.some((m) => m.channel_id === c)) roots.add(root)
+      const without = <T,>(r: Record<string, T>) => Object.fromEntries(Object.entries(r).filter(([root]) => !roots.has(root)))
       return {
         ...s,
-        threads: Object.fromEntries(Object.entries(s.threads).filter(([root]) => !roots.has(root))),
+        threads: without(s.threads),
+        threadStart: without(s.threadStart),
+        threadSeen: without(s.threadSeen),
         channels: drop(s.channels),
         messages: drop(s.messages),
         dmMembers: drop(s.dmMembers),
@@ -350,16 +400,13 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         (m) => (point === null || m.id > point) && m.kind === 'normal' && !m.deleted && m.author_id !== s.me?.id,
       )
       const me = s.me?.id ?? ''
-      // Mentions in a quote's replies don't depend on the read point (only opening the thread clears them): keep them.
-      const was = s.reads[c]
-      const wasPoint = was?.last_read_message_id ?? ''
-      const inList = (s.messages[c] ?? []).filter((m) => m.id > wasPoint && m.kind === 'normal' && !m.deleted && m.author_id !== me && m.mentions.includes(me)).length
-      const inReplies = was ? Math.max(0, was.mentions - inList) : 0
       return {
         ...s,
         reads: {
           ...s.reads,
-          [c]: { channel_id: c, last_read_message_id: point, unread: after.length, mentions: after.filter((m) => m.mentions.includes(me)).length + inReplies },
+          // The server's absolute count includes mentions in quote replies; an older server sends none,
+          // and then only what is loaded can be counted.
+          [c]: { channel_id: c, last_read_message_id: point, unread: after.length, mentions: e.d.mentions ?? after.filter((m) => m.mentions.includes(me)).length },
         },
       }
     }
@@ -415,15 +462,11 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
           .filter((r) => r.count > 0)
         return { ...m, reactions }
       }
-      const list = s.messages[c]
-      const loaded = !!list?.some((m) => m.id === id) // not loaded: the fetch brings current reactions
+      const loaded = !!findMessage(s, c, id) // not loaded: the fetch brings current reactions
       const inLatest = s.latest[c]?.id === id // the conversation preview keeps its own copy
       if (!loaded && !inLatest) return s
-      return {
-        ...s,
-        messages: loaded ? { ...s.messages, [c]: list!.map((m) => (m.id === id ? apply(m) : m)) } : s.messages,
-        latest: inLatest ? { ...s.latest, [c]: apply(s.latest[c]) } : s.latest,
-      }
+      const next = loaded ? mapMessage(s, c, id, apply) : s
+      return { ...next, latest: inLatest ? { ...s.latest, [c]: apply(s.latest[c]) } : s.latest }
     }
   }
 }

@@ -1625,9 +1625,17 @@ async fn a_reply_mention_counts_until_the_panel_is_seen() {
             root_id,
             last_seen_id,
             mentions_cleared,
+            mentions,
         } => assert_eq!(
-            (user_id, channel_id, root_id, last_seen_id, mentions_cleared),
-            (f.alex, f.ch.id, q.id, r.id, 1)
+            (
+                user_id,
+                channel_id,
+                root_id,
+                last_seen_id,
+                mentions_cleared,
+                mentions
+            ),
+            (f.alex, f.ch.id, q.id, r.id, 1, Some(0))
         ),
         _ => unreachable!(),
     }
@@ -3371,4 +3379,71 @@ async fn another_servers_quotes_stay_out() {
     assert!(b.most_awarded.is_empty());
     assert_eq!(f.found("shared").await, vec![ours.id]);
     assert!(f.found("elsewhere").await.is_empty());
+}
+
+#[tokio::test]
+async fn read_state_and_thread_seen_carry_the_absolute_mention_count() {
+    let f = fixture().await;
+    let (a, b) = (f.quote().await, f.quote().await);
+    let ra = f.reply(&f.sam_t, a.id, "one @alex").await;
+    f.reply(&f.sam_t, b.id, "two @alex").await;
+    let mut alex_ws = hello(&f.app, &f.alex_t).await;
+    // Alex posts a quote: the read point moves, and the two reply mentions stay counted.
+    f.quote().await;
+    let e = loop {
+        if let ServerFrame::Event(e @ Event::ReadStateUpdated { .. }) =
+            next_frame(&mut alex_ws).await.expect("ReadStateUpdated")
+        {
+            break e;
+        }
+    };
+    assert!(
+        matches!(
+            e,
+            Event::ReadStateUpdated {
+                mentions: Some(2),
+                ..
+            }
+        ),
+        "{e:?}"
+    );
+    // Seeing one thread leaves the other's mention.
+    assert_eq!(f.seen(&f.alex_t, a.id, ra.id).await.status(), 204);
+    let e = loop {
+        if let ServerFrame::Event(e @ Event::ThreadSeen { .. }) =
+            next_frame(&mut alex_ws).await.expect("ThreadSeen")
+        {
+            break e;
+        }
+    };
+    assert!(
+        matches!(
+            e,
+            Event::ThreadSeen {
+                mentions_cleared: 1,
+                mentions: Some(1),
+                ..
+            }
+        ),
+        "{e:?}"
+    );
+    // Replying in the other thread covers its mention; the event counts it as gone.
+    f.reply(&f.alex_t, b.id, "ok").await;
+    let e = loop {
+        if let ServerFrame::Event(e @ Event::ThreadSeen { .. }) =
+            next_frame(&mut alex_ws).await.expect("ThreadSeen")
+        {
+            break e;
+        }
+    };
+    assert!(
+        matches!(
+            e,
+            Event::ThreadSeen {
+                mentions: Some(0),
+                ..
+            }
+        ),
+        "{e:?}"
+    );
 }

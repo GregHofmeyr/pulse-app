@@ -7,8 +7,11 @@ import { displayName } from './selectors'
 import type { AppState } from './state'
 
 /** What a plain speaker name is matched on: same rule as the server (lowercase, whitespace runs as one space). */
+// Unicode White_Space exactly (Rust's split_whitespace); JS `\s` differs (it includes U+FEFF, and lacks U+0085).
+const WHITE_SPACE = /[\t-\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/
+
 export function nameKey(name: string): string {
-  return name.split(/\s+/).filter(Boolean).join(' ').toLowerCase()
+  return name.split(WHITE_SPACE).filter(Boolean).join(' ').toLowerCase()
 }
 
 const MARKS = '"“”\'‘’«»'

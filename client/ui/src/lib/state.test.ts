@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyReady, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, type AppState, type Pending } from './state'
+import { applyEvent, applyReady, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addReplies, type AppState, type Pending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 import type { Event } from './protocol/Event'
@@ -532,15 +532,47 @@ describe('quotes', () => {
     expect(quoteOf(s).replies_seen).toBe('R1')
   })
 
-  it('the mention count from replies survives a read-state update', () => {
-    let s = applyReady(emptyState(), ready({
-      channels: [ch('Q1', 'quotes')],
-      read_states: [{ channel_id: 'Q1', last_read_message_id: null, unread: 0, mentions: 2 }], // both in replies
-    }))
-    s = created(s, { ...qmsg('M1'), author_id: 'U2', mentions: ['U1'] })
-    expect(s.reads['Q1'].mentions).toBe(3)
-    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'Q1', last_read_message_id: 'M1' } }, 0)
-    expect(s.reads['Q1']).toMatchObject({ unread: 0, mentions: 2 })
+  it('a read-state update takes the server\'s absolute mention count, replies included', () => {
+    // A quotes channel read elsewhere, never loaded here: two reply mentions stay counted.
+    let s = applyReady(emptyState(), ready({ channels: [ch('Q1', 'quotes')], read_states: [{ channel_id: 'Q1', last_read_message_id: null, unread: 3, mentions: 5 }] }))
+    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'Q1', last_read_message_id: 'M9', mentions: 2 } }, 0)
+    expect(s.reads['Q1']).toMatchObject({ last_read_message_id: 'M9', unread: 0, mentions: 2 })
+    // A text channel read elsewhere and never opened here: everything is read.
+    s = applyReady(emptyState(), ready({ read_states: [{ channel_id: 'C1', last_read_message_id: null, unread: 4, mentions: 4 }] }))
+    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: 'M9', mentions: 0 } }, 0)
+    expect(s.reads['C1']).toMatchObject({ unread: 0, mentions: 0 })
+  })
+
+  it('an older server\'s read-state update (no count) recounts what is loaded', () => {
+    let s = applyReady(emptyState(), ready({ read_states: [{ channel_id: 'C1', last_read_message_id: null, unread: 0, mentions: 0 }] }))
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: { ...msg('M1'), mentions: ['U1'] }, nonce: null } }, 0)
+    s = applyEvent(s, { t: 'MessageCreated', d: { message: { ...msg('M2'), mentions: ['U1'] }, nonce: null } }, 0)
+    s = applyEvent(s, { t: 'ReadStateUpdated', d: { user_id: 'U1', channel_id: 'C1', last_read_message_id: 'M1' } }, 0)
+    expect(s.reads['C1']).toMatchObject({ unread: 1, mentions: 1 })
+  })
+
+  it('ThreadSeen takes the absolute count when it has one', () => {
+    let s = created(withQuote(), reply('R1', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R1', mentions_cleared: 1, mentions: 4 } }, 0)
+    expect(s.reads['Q1'].mentions).toBe(4)
+  })
+
+  it('the seen point is kept even when the quote is not loaded, and a later delete uses it', () => {
+    let s = qready()
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R2', mentions_cleared: 0 } }, 0)
+    expect(s.threadSeen['M1']).toBe('R2')
+    s = { ...s, reads: { ...s.reads, Q1: { ...s.reads['Q1'], mentions: 1 } } }
+    const del = (id: string): Event => ({ t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: id, author_id: 'U2', mentions: ['U1'], thread_root_id: 'M1' } })
+    expect(applyEvent(s, del('R1'), 0).reads['Q1'].mentions).toBe(1) // already seen: not in the count
+    expect(applyEvent(s, del('R3'), 0).reads['Q1'].mentions).toBe(0) // unseen: leaves it
+  })
+
+  it('a delete seen twice for a reply that is not loaded lowers the count once', () => {
+    let s = withQuote({ reply_count: 2, last_reply_id: 'R2' })
+    const del: Event = { t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: 'R2', author_id: 'U2', mentions: [], thread_root_id: 'M1' } }
+    s = applyEvent(s, del, 0)
+    s = applyEvent(s, del, 0)
+    expect(quoteOf(s).reply_count).toBe(1)
   })
 
   it('an edited reply updates its thread, not the list', () => {
@@ -644,6 +676,44 @@ describe('quotes', () => {
 
   it('history lists reach the latest by default', () => {
     expect(markHistory(emptyState(), 'C1', false).history['C1']).toEqual({ loaded: true, start: false, end: true })
+  })
+
+  it('removing a channel drops its threads even when their quotes are not loaded', () => {
+    let s = created(qready(), reply('R1', 'M1')) // M1 itself is not loaded
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R1', mentions_cleared: 0 } }, 0)
+    s = applyEvent(s, { t: 'ChannelRemoved', d: { channel_id: 'Q1', user_id: 'U1' } }, 0)
+    expect(s.threads['M1']).toBeUndefined()
+    expect(s.threadSeen['M1']).toBeUndefined()
+  })
+
+  it('a new Ready clears the threads so a panel refetches', () => {
+    let s = addReplies(created(withQuote(), reply('R1', 'M1')), 'M1', [reply('R1', 'M1')], true)
+    expect(s.threadStart['M1']).toBe(true)
+    s = applyReady(s, ready({ channels: [ch('Q1', 'quotes')] }))
+    expect(s.threads).toEqual({})
+    expect(s.threadStart).toEqual({})
+  })
+
+  it('addReplies merges a fetched page and remembers whether the start is reached', () => {
+    let s = addReplies(withQuote(), 'M1', [reply('R2', 'M1'), reply('R3', 'M1')], false)
+    expect(s.threadStart['M1']).toBe(false)
+    s = created(s, reply('R4', 'M1'))
+    s = addReplies(s, 'M1', [reply('R1', 'M1')], true)
+    expect(s.threads['M1'].map((m) => m.id)).toEqual(['R1', 'R2', 'R3', 'R4'])
+    expect(s.threadStart['M1']).toBe(true)
+  })
+
+  it('a live reply alone does not mark its thread as fetched', () => {
+    expect(created(withQuote(), reply('R1', 'M1')).threadStart['M1']).toBeUndefined()
+  })
+
+  it('reactions on a reply update the reply in its thread', () => {
+    let s = created(withQuote(), reply('R1', 'M1'))
+    s = applyEvent(s, { t: 'ReactionAdded', d: { channel_id: 'Q1', message_id: 'R1', emoji: '👍', user_id: 'U1', count: 1 } }, 0)
+    expect(s.threads['M1'][0].reactions).toEqual([{ emoji: '👍', count: 1, me: true }])
+    s = applyEvent(s, { t: 'ReactionRemoved', d: { channel_id: 'Q1', message_id: 'R1', emoji: '👍', user_id: 'U1', count: 0 } }, 0)
+    expect(s.threads['M1'][0].reactions).toEqual([])
+    expect(s.messages['Q1'].map((m) => m.id)).toEqual(['M1'])
   })
 
   it('removing a channel drops the threads of its quotes', () => {

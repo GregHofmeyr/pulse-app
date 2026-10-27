@@ -40,6 +40,7 @@ fn owner_only_events_name_their_owner() {
         user_id: u,
         channel_id: c,
         last_read_message_id: None,
+        mentions: None,
     };
     assert_eq!(e.only_for(), Some(u));
     assert_eq!(e.channel_id(), Some(c));

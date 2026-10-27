@@ -49,6 +49,24 @@ pub async fn advance(
 /// seen point for that quote.
 /// Channels without a point (never joined/initialised) are reported as fully read.
 pub async fn states_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<ReadState>> {
+    read_states(db, me, None).await
+}
+
+/// `user`'s absolute mention count in `channel`, counted exactly as [`states_for`] does (0 for a
+/// channel without a read point). Events carry it so clients needn't infer it from what they
+/// happen to have loaded; call it under the same `Hub::in_order` guard the event is published under.
+pub async fn mentions_for(db: &SqlitePool, user: UserId, channel: ChannelId) -> AppResult<u32> {
+    Ok(read_states(db, user, Some(channel))
+        .await?
+        .first()
+        .map_or(0, |r| r.mentions))
+}
+
+async fn read_states(
+    db: &SqlitePool,
+    me: UserId,
+    only: Option<ChannelId>,
+) -> AppResult<Vec<ReadState>> {
     let rows: Vec<(String, Option<String>, i64, i64)> = sqlx::query_as(
         "SELECT rs.channel_id, rs.last_read_message_id,
             (SELECT COUNT(*) FROM messages m WHERE m.channel_id = rs.channel_id
@@ -69,10 +87,12 @@ pub async fn states_for(db: &SqlitePool, me: UserId) -> AppResult<Vec<ReadState>
               AND m.id > COALESCE(tr.last_seen_id, '')
             GROUP BY m.channel_id
          ) tm ON tm.channel_id = rs.channel_id
-         WHERE rs.user_id = ?",
+         WHERE rs.user_id = ? AND (? IS NULL OR rs.channel_id = ?)",
     )
     .bind(me.to_string())
     .bind(me.to_string())
+    .bind(only.map(|c| c.to_string()))
+    .bind(only.map(|c| c.to_string()))
     .fetch_all(db)
     .await?;
     rows.into_iter()

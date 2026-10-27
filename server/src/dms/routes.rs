@@ -49,11 +49,14 @@ async fn mark_read(
     if in_channel.is_none() {
         return Err(AppError::BadRequest("message not in this channel".into()));
     }
+    // The event carries an absolute count: take it in publish order, with messages that may mention you.
+    let _order = s.hub.in_order().await;
     let moved = {
         let mut c = s.db.acquire().await?;
         crate::reads::advance(&mut c, me, id, req.message_id).await?
     };
     if moved {
+        let mentions = crate::reads::mentions_for(&s.db, me, id).await?;
         s.hub
             .publish(
                 &s.db,
@@ -61,6 +64,7 @@ async fn mark_read(
                     user_id: me,
                     channel_id: id,
                     last_read_message_id: Some(req.message_id),
+                    mentions: Some(mentions),
                 },
             )
             .await;

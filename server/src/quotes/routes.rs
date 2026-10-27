@@ -61,6 +61,8 @@ async fn post_quote(
     let day = posted_on(req.today.as_deref());
     let msg_id = MessageId::new();
 
+    // The read-state event carries an absolute mention count: publish in commit order.
+    let _order = s.hub.in_order().await;
     // One transaction: the message, the quote, its lines and your read point land together.
     let mut tx = crate::db::begin_write(&s.db).await?;
     // An outbox retry of a post that already landed: hand back the original (see `send`).
@@ -108,6 +110,7 @@ async fn post_quote(
             .await;
     }
     if moved {
+        let mentions = crate::reads::mentions_for(&s.db, me, id).await?;
         s.hub
             .publish(
                 &s.db,
@@ -115,6 +118,7 @@ async fn post_quote(
                     user_id: me,
                     channel_id: id,
                     last_read_message_id: Some(msg_id),
+                    mentions: Some(mentions),
                 },
             )
             .await;

@@ -340,11 +340,9 @@ async fn send(
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
-    let order = if req.thread_root_id.is_some() {
-        Some(s.hub.in_order().await)
-    } else {
-        None
-    };
+    // The same hold orders the absolute mention counts of the read-state events below with every
+    // message that may mention someone.
+    let order = s.hub.in_order().await;
     // One transaction: the message, its mentions and your read point land together or not at all.
     let mut tx = crate::db::begin_write(&s.db).await?;
     // Under the write lock the id is minted in commit order, so a seen point can never pass a
@@ -416,6 +414,7 @@ async fn send(
     // Replying moves your place in the thread (and covers earlier mentions of you): tell your
     // other sessions.
     if let (Some(root), Some(mentions_cleared)) = (req.thread_root_id, thread_cleared) {
+        let mentions = crate::reads::mentions_for(&s.db, me, id).await?;
         s.hub
             .publish(
                 &s.db,
@@ -425,11 +424,13 @@ async fn send(
                     root_id: root,
                     last_seen_id: msg.id,
                     mentions_cleared,
+                    mentions: Some(mentions),
                 },
             )
             .await;
     }
     if moved {
+        let mentions = crate::reads::mentions_for(&s.db, me, id).await?;
         s.hub
             .publish(
                 &s.db,
@@ -437,16 +438,14 @@ async fn send(
                     user_id: me,
                     channel_id: id,
                     last_read_message_id: Some(msg.id),
+                    mentions: Some(mentions),
                 },
             )
             .await;
     }
     if !used.is_empty() {
         // A reply already holds the order lock (tokio's mutex isn't reentrant).
-        let _order = match order {
-            Some(held) => held,
-            None => s.hub.in_order().await,
-        };
+        let _order = order;
         crate::emoji::publish_frequent(&s, me).await;
     }
     Ok(Json(msg))

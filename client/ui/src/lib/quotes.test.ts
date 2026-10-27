@@ -34,6 +34,9 @@ describe('text helpers', () => {
   it('nameKey folds case and whitespace like the server', () => {
     expect(nameKey('  Sam   B ')).toBe('sam b')
     expect(nameKey('ÉMILE\tX')).toBe('émile x')
+    // The server splits on Unicode White_Space: NEL and no-break space count, a BOM does not.
+    expect(nameKey('a\u0085b\u00a0\u2003c')).toBe('a b c')
+    expect(nameKey('a\ufeffb')).toBe('a\ufeffb')
   })
   it('stripMarks removes surrounding quote marks only', () => {
     expect(stripMarks('“hi”')).toBe('hi')

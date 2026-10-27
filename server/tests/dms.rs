@@ -64,6 +64,7 @@ async fn owner_only_events_reach_only_their_owner() {
         user_id: a_id,
         channel_id: dm.id,
         last_read_message_id: None,
+        mentions: None,
     };
     assert_eq!(
         audience_for(&app.db, &e).await.unwrap(),
@@ -810,4 +811,58 @@ async fn a_reply_mentions_the_author_it_replies_to() {
         204
     );
     assert!(reply(&a, from_jo.id, "she left").await.mentions.is_empty());
+}
+
+#[tokio::test]
+async fn read_state_events_carry_the_absolute_mention_count() {
+    let app = spawn().await;
+    let (_a_id, a) = register(&app, "alex").await;
+    let (b_id, b) = register(&app, "sam").await;
+    let dm = create_dm(&app, &a, &[b_id]).await;
+    let first = send(&app, &a, dm.id, "hey @sam").await;
+    let second = send(&app, &a, dm.id, "again @sam").await;
+    let (mut sam_other_device, _) = hello(&app, &b).await;
+    // Reading up to the first leaves the second's mention.
+    post_json(
+        &app,
+        &b,
+        &format!("/channels/{}/read", dm.id),
+        serde_json::json!({"message_id": first.id}),
+    )
+    .await;
+    let e = wait_for(&mut sam_other_device, |e| {
+        matches!(e, Event::ReadStateUpdated { .. })
+    })
+    .await;
+    assert!(
+        matches!(
+            e,
+            Event::ReadStateUpdated {
+                mentions: Some(1),
+                ..
+            }
+        ),
+        "{e:?}"
+    );
+    post_json(
+        &app,
+        &b,
+        &format!("/channels/{}/read", dm.id),
+        serde_json::json!({"message_id": second.id}),
+    )
+    .await;
+    let e = wait_for(&mut sam_other_device, |e| {
+        matches!(e, Event::ReadStateUpdated { .. })
+    })
+    .await;
+    assert!(
+        matches!(
+            e,
+            Event::ReadStateUpdated {
+                mentions: Some(0),
+                ..
+            }
+        ),
+        "{e:?}"
+    );
 }
