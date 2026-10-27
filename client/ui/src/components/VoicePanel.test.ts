@@ -7,6 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }))
 const room = vi.hoisted(() => ({
   connected: true,
+  onLost: () => {},
   disconnect: async () => {},
   watch: async () => 0,
   unwatch: () => {},
@@ -57,6 +58,8 @@ beforeEach(() => {
   invoke.mockReset()
   invoke.mockResolvedValue(undefined)
   localStorage.clear()
+  voice.localMutes = {}
+  voice.volumes = {}
   vi.spyOn(navigator, 'userAgent', 'get').mockReturnValue('Mozilla/5.0 (Windows NT 10.0)')
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
   app.state = applyReady(emptyState(), ready)
@@ -264,6 +267,54 @@ describe('stream tiles', () => {
     expect(host.getAttribute('role')).toBe('button')
     host.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
     expect(onFull).toHaveBeenCalledWith({ channelId: 'V1', streamer: 'U2' })
+  })
+})
+
+describe('muted for you', () => {
+  const tile = () => q('[data-user="U2"]')!
+  const theirOwnMute = (muted: boolean) => {
+    app.state = applyEvent(app.state, { t: 'VoiceStateChanged', d: { channel_id: 'V1', user_id: 'U2', flags: { muted, deafened: false } } } as never, Date.now())
+    flushSync()
+  }
+
+  it('a_person_you_muted_for_yourself_is_marked_on_their_tile_beside_their_own_mute', () => {
+    voice.volumes = { U2: 50 }
+    mountPanel()
+    expect(tile().querySelector('.vol')!.textContent).toBe('50%')
+    expect(tile().querySelector('.for-me')).toBeNull()
+    voice.localMutes = { U2: true }
+    theirOwnMute(true)
+    const mark = tile().querySelector('.for-me')!
+    expect(mark.textContent!.trim()).toBe('Muted for you')
+    // the text says it: the icon is decoration, not a second announcement
+    expect(mark.querySelector('[aria-label]')).toBeNull()
+    expect(tile().querySelector('.vol')).toBeNull() // no "50%" while muted for you
+    expect(tile().querySelector('.badge [aria-label="Muted"]')).not.toBeNull() // their own, still there
+    voice.localMutes = {}
+    flushSync()
+    expect(tile().querySelector('.for-me')).toBeNull()
+    expect(tile().querySelector('.vol')!.textContent).toBe('50%') // back
+  })
+
+  it('a_volume_turned_to_zero_reads_0_percent_not_muted', () => {
+    voice.volumes = { U2: 0 }
+    mountPanel()
+    expect(tile().querySelector('.vol')!.textContent).toBe('0%')
+  })
+
+  it('you_are_never_marked_muted_for_yourself', () => {
+    voice.localMutes = { U1: true }
+    mountPanel()
+    expect(q('[data-user="U1"] .for-me')).toBeNull()
+  })
+
+  it('the_compact_strip_tile_shows_it_as_a_labelled_icon', () => {
+    voice.localMutes = { U2: true }
+    cmp = mount(UserTile, { target: document.body, props: { entry: { userId: 'U2', name: 'sam', muted: false, deafened: false, pending: false } as never, compact: true, onMenu: () => {} } })
+    flushSync()
+    const mark = q('.for-me')!
+    expect(mark.querySelector('[aria-label="Muted for you"]')).not.toBeNull()
+    expect(mark.textContent!.trim()).toBe('')
   })
 })
 

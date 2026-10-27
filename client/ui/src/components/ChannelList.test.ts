@@ -68,6 +68,36 @@ afterEach(() => {
   document.body.innerHTML = ''
 })
 
+describe('muted for you', () => {
+  const lounge = () => Object.values(app.state.channels).find((c) => c.kind === 'voice')!
+  const join = (u: string) => {
+    app.state = applyEvent(app.state, { t: 'VoiceJoined', d: { channel_id: lounge().id, user_id: u, flags: { muted: false, deafened: false } } } as never, Date.now())
+    flushSync()
+  }
+  const row = (u: string) => document.querySelector<HTMLElement>(`.occupant[data-user="${u}"]`)!
+
+  it('a_person_you_muted_for_yourself_is_marked_in_the_voice_channel_list_and_says_so_to_screen_readers', () => {
+    join('U2')
+    expect(row('U2').querySelector('.for-me')).toBeNull()
+    expect(row('U2').getAttribute('aria-label')).toBe('sam')
+    voice.localMutes = { U2: true }
+    flushSync()
+    expect(row('U2').querySelector('.for-me svg')).not.toBeNull()
+    // their own mute still shows beside it, and the row's name carries both (its content isn't read)
+    app.state = applyEvent(app.state, { t: 'VoiceStateChanged', d: { channel_id: lounge().id, user_id: 'U2', flags: { muted: true, deafened: false } } } as never, Date.now())
+    flushSync()
+    expect(row('U2').querySelector('.flag:not(.for-me) svg')).not.toBeNull()
+    expect(row('U2').getAttribute('aria-label')).toBe('sam, muted for you, muted')
+  })
+
+  it('you_are_never_marked_muted_for_yourself', () => {
+    join('U1')
+    voice.localMutes = { U1: true }
+    flushSync()
+    expect(row('U1').querySelector('.for-me')).toBeNull()
+  })
+})
+
 describe('ChannelList joining', () => {
   it('joining_shows_a_greyed_entry_with_spinner_at_once', async () => {
     invoke.mockReturnValue(new Promise(() => {}))

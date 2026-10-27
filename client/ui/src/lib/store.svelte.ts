@@ -7,9 +7,10 @@ import type { ReportKind } from './protocol/ReportKind'
 import { applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, type AppState, type ConnState } from './state'
 import { api } from './tauri'
 import { loadUnsent, saveUnsent } from './unsent'
-import { isMuted, messageSound } from './conversations'
+import { isMuted, messageSound, SOUND_GAP_MS } from './conversations'
+import { getCurrentWindow } from '@tauri-apps/api/window'
 import { noteReactionEvent } from './reactions'
-import { playSound } from './voiceui'
+import { loadSoundPrefs, playSound } from './voiceui'
 import { streamApi } from './stream/stream.svelte'
 import { windowFocus } from './windowFocus.svelte'
 
@@ -36,6 +37,31 @@ export const clock = $state({ nowIso: new Date().toISOString() })
 setInterval(() => (clock.nowIso = new Date().toISOString()), 30_000)
 let lastPlayedAt = 0
 
+/**
+ * For a message that could ding (someone else's, in a DM/group or mentioning you), one line saying
+ * why it did or didn't: only flags, never who, where or what. Skipped because you're reading that
+ * conversation in the focused window (every message while you chat): only if the OS says the
+ * window isn't focused after all, which is the case worth knowing about.
+ */
+function logSoundDecision(v: Parameters<typeof messageSound>[0], play: boolean) {
+  const m = v.message
+  const isPrivate = v.channel.server_id === null
+  const mentioned = m.mentions.includes(v.me)
+  if (m.kind !== 'normal' || m.author_id === v.me || !(isPrivate || mentioned)) return
+  const gapOk = v.now - v.lastPlayedAt >= SOUND_GAP_MS
+  const p = loadSoundPrefs()
+  // switched off in settings looks nothing like a sound that got lost
+  const prefs = p.volume_pct === 0 ? 'vol0' : p.off.includes('message') ? 'off' : 'on'
+  const line = `sound: message private=${isPrivate} mentioned=${mentioned} open=${v.open} focused=${v.focused} muted=${v.muted} gap_ok=${gapOk} sound=${prefs} play=${play}`
+  if (play || !v.open || !v.focused) return void api.uiLog(line, 'info')
+  getCurrentWindow().isFocused().then(
+    (f) => {
+      if (!f) void api.uiLog(`${line}; the OS says focused=false`, 'info')
+    },
+    () => {},
+  )
+}
+
 function maybeSound(e: Event) {
   if (e.t !== 'MessageCreated') return
   const m = e.d.message
@@ -43,7 +69,7 @@ function maybeSound(e: Event) {
   const me = app.state.me
   if (!ch || !me) return
   const now = Date.now()
-  const play = messageSound({
+  const v = {
     message: m,
     me: me.id,
     channel: ch,
@@ -52,7 +78,13 @@ function maybeSound(e: Event) {
     muted: isMuted(app.state, ch, new Date(now).toISOString()),
     lastPlayedAt,
     now,
-  })
+  }
+  const play = messageSound(v)
+  try {
+    logSoundDecision(v, play)
+  } catch {
+    /* a diagnostic never costs the message */
+  }
   if (play) {
     lastPlayedAt = now
     playSound('message')

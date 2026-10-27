@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The stream store's lifecycle against a fake `#v` connection and a fake Tauri core.
-import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 
 type Handler = (args: Record<string, unknown> | undefined) => Promise<unknown>
 const core = vi.hoisted(() => ({
@@ -27,7 +27,12 @@ function deferred<T = unknown>() {
 }
 
 function fakeRoom() {
-  return {
+  const room = {
+    /** LiveKit gave up on the connection (what `onLost` registered is called). */
+    lose: () => {},
+    onLost: vi.fn((cb: () => void) => {
+      room.lose = cb
+    }),
     connected: true,
     publish: vi.fn(async () => {}),
     unpublish: vi.fn(async () => {}),
@@ -38,6 +43,7 @@ function fakeRoom() {
     localStats: async () => undefined,
     remoteStats: async () => undefined,
   }
+  return room
 }
 
 /** A picked capture: `end()` closes it the way a closed window does. */
@@ -710,5 +716,94 @@ describe('live sounds', () => {
     const { streamApi } = await inVoice()
     streamApi.onEvent(ended('sam', 'stopped'))
     expect(played('live_end')).toEqual([])
+  })
+})
+
+describe('the emoji/animation freeze while live', () => {
+  // a failed assertion mustn't leave a follower (on its own module instance) holding the freeze
+  const unfollows: (() => void)[] = []
+  afterEach(() => {
+    unfollows.splice(0).forEach((u) => u())
+    document.body.classList.remove('streaming')
+  })
+  // every way a share can end must lift it (a report had emoji frozen "after stopping")
+  async function frozenLive() {
+    const live = await goneLive()
+    const { motion } = await import('../animate.svelte')
+    const { flushSync } = await import('svelte')
+    const unfollow = live.followLiveFreeze()
+    unfollows.push(unfollow)
+    flushSync()
+    expect(motion.streaming).toBe(true)
+    expect(document.body.classList.contains('streaming')).toBe(true)
+    const lifted = () => {
+      flushSync()
+      return !motion.streaming && !document.body.classList.contains('streaming')
+    }
+    return { ...live, motion, flushSync, unfollow, lifted }
+  }
+
+  const ends: [string, (l: Awaited<ReturnType<typeof frozenLive>>) => Promise<unknown> | void][] = [
+    ['Stop', (l) => l.streamApi.stop()],
+    ['the capture ending (Stop sharing, the window closed)', (l) => l.track.end()],
+    ['the server ending it', (l) => l.streamApi.onStreamEnded('c1', 'me', 'timed_out')],
+    ['LiveKit giving up on the connection', (l) => l.room.lose()],
+    ['leaving voice', (l) => l.streamApi.onVoiceChanged(null)],
+    ['moving to another voice channel', (l) => l.streamApi.onVoiceChanged('c2')],
+    ['the server not taking it back after a restart', (l) => {
+      core.handlers.stream_reannounce = () => Promise.reject('the server is having trouble (503)')
+      return l.streamApi.onReady({ me: { id: 'me' }, streams: [] } as never)
+    }],
+  ]
+  for (const [how, end] of ends) {
+    it(`lifts on ${how}, and comes back on the next go live`, async () => {
+      const l = await frozenLive()
+      await end(l)
+      await until(l.lifted, `the freeze lifted after ${how}`)
+      fake.connect = async () => fakeRoom() // a lost connection is gone: the next go live makes a new one
+      await l.streamApi.goLive('c1', fakeTrack() as never, 'Game', settings(false))
+      l.flushSync()
+      expect(l.motion.streaming).toBe(true)
+      expect(document.body.classList.contains('streaming')).toBe(true)
+    })
+  }
+
+  it('lifts when the shell goes away while live', async () => {
+    const l = await frozenLive()
+    l.unfollow()
+    expect(l.lifted()).toBe(true)
+  })
+})
+
+describe('the stream connection lost for good', () => {
+  it('ends our share, says so, and tells the server', async () => {
+    const { stream, room } = await goneLive()
+    room.lose()
+    await until(() => stream.live === null, 'the share to end')
+    expect(stream.notice).toMatch(/connection was lost/)
+    expect(calls('stream_stop')).toEqual([{ channelId: 'c1' }])
+    expect(stream.room).toBeNull()
+    expect(calls('stream_log').some((a) => String(a?.line).includes('room_lost'))).toBe(true)
+  })
+
+  it('ends the watches on it', async () => {
+    const mod = await load()
+    const room = fakeRoom()
+    fake.connect = async () => room
+    await mod.streamApi.watch('c1', 'sam')
+    expect(mod.stream.watching).toHaveLength(1)
+    room.lose()
+    await until(() => mod.stream.watching.length === 0, 'the watch to end')
+    // watching only: it's the watching that stopped, not a share of yours
+    expect(mod.stream.notice).toBe('Stopped watching: the connection was lost')
+  })
+
+  it('our own disconnect is not a loss', async () => {
+    const { streamApi, stream, room } = await goneLive()
+    await streamApi.stop() // lets the connection go (nothing else on it)
+    expect(room.disconnect).toHaveBeenCalled()
+    room.lose() // LiveKit reports that disconnect too
+    await settle()
+    expect(stream.notice).toBeFalsy()
   })
 })

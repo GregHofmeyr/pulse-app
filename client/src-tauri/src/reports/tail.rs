@@ -6,10 +6,16 @@ use std::path::Path;
 /// decoded lossily (a cut can land mid-character), and cut further to start at the last session
 /// marker line (`logging::is_session_marker_line`) if one is in that window. Empty if there's no log.
 pub fn log_tail(dir: &Path, max: usize) -> String {
+    try_log_tail(dir, max).unwrap_or_else(|e| {
+        tracing::warn!(error = %e, "log tail: couldn't be read; going without it");
+        String::new()
+    })
+}
+
+/// `log_tail`, saying why when the log couldn't be read (no log file yet is just empty).
+pub fn try_log_tail(dir: &Path, max: usize) -> Result<String, String> {
     use std::io::{Read, Seek, SeekFrom};
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return String::new();
-    };
+    let entries = std::fs::read_dir(dir).map_err(|e| format!("log folder: {e}"))?;
     let newest = entries
         .flatten()
         .map(|e| e.path())
@@ -20,17 +26,15 @@ pub fn log_tail(dir: &Path, max: usize) -> String {
         })
         .max(); // names are pulse.YYYY-MM-DD.log: the greatest is the newest
     let Some(path) = newest else {
-        return String::new();
+        return Ok(String::new());
     };
-    let Ok(mut f) = std::fs::File::open(&path) else {
-        return String::new();
-    };
+    let mut f = std::fs::File::open(&path).map_err(|e| format!("open: {e}"))?;
     let len = f.metadata().map(|m| m.len()).unwrap_or(0);
     let start = len.saturating_sub(max as u64);
     let mut buf = Vec::new();
-    if f.seek(SeekFrom::Start(start)).is_err() || f.read_to_end(&mut buf).is_err() {
-        return String::new();
-    }
+    f.seek(SeekFrom::Start(start))
+        .and_then(|_| f.read_to_end(&mut buf))
+        .map_err(|e| format!("read: {e}"))?;
     if start > 0 {
         // drop the partial first line
         match buf.iter().position(|b| *b == b'\n') {
@@ -51,10 +55,10 @@ pub fn log_tail(dir: &Path, max: usize) -> String {
         }
         at += line.len();
     }
-    match start {
+    Ok(match start {
         Some(i) => text[i..].to_string(),
         None => text.into_owned(),
-    }
+    })
 }
 
 #[cfg(test)]
@@ -135,6 +139,24 @@ mod tests {
         )
         .unwrap();
         assert_eq!(log_tail(d.path(), 14), "third\n");
+    }
+
+    #[test]
+    fn what_cant_be_read_is_an_error_not_an_empty_log() {
+        let d = tempfile::tempdir().unwrap();
+        assert_eq!(try_log_tail(d.path(), 1024), Ok(String::new())); // no log yet: nothing to read
+        assert!(try_log_tail(&d.path().join("missing"), 1024).is_err());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let f = d.path().join("pulse.2026-10-27.log");
+            std::fs::write(&f, "x\n").unwrap();
+            std::fs::set_permissions(&f, std::fs::Permissions::from_mode(0o000)).unwrap();
+            // root can read anything: only meaningful as a normal user
+            if std::fs::read(&f).is_err() {
+                assert!(try_log_tail(d.path(), 1024).is_err());
+            }
+        }
     }
 
     #[test]

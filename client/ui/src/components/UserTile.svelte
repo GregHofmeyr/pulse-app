@@ -18,7 +18,9 @@
   } = $props()
 
   const isMe = $derived(entry.userId === app.state.me?.id)
-  const volume = $derived(voice.localMutes[entry.userId] ? 0 : (voice.volumes[entry.userId] ?? 100))
+  /** "Mute for me": only you don't hear them (they aren't muted for anyone else). */
+  const mutedForMe = $derived(!isMe && !!voice.localMutes[entry.userId])
+  const volume = $derived(voice.volumes[entry.userId] ?? 100)
   const bars = $derived.by(() => {
     const q = voice.quality[entry.userId]
     return q === 'excellent' ? 3 : q === 'good' ? 2 : q === 'poor' ? 1 : q === 'lost' ? 0 : 3
@@ -62,7 +64,10 @@
       </span>
     {/if}
   </div>
-  {#if !entry.pending && volume !== 100}<span class="vol">{volumeLabel(volume)}</span>{/if}
+  {#if mutedForMe}
+    <!-- the text names it; the icon alone (compact strip) carries the label -->
+    <span class="for-me" data-tip="Muted for you (they don't know)"><Icon name="speakerOff" size={compact ? 11 : 13} label={compact ? 'Muted for you' : undefined} />{#if !compact}Muted for you{/if}</span>
+  {:else if !entry.pending && volume !== 100}<span class="vol">{volumeLabel(volume)}</span>{/if}
 </div>
 
 <style>
@@ -84,6 +89,9 @@
   .bar { width: 3px; border-radius: 1px; background: var(--bg-4); }
   .bar.on { background: var(--ok); }
   .vol { position: absolute; top: 10px; right: 12px; font-size: 11px; color: var(--text-3); }
+  /* amber, a speaker crossed out: not their red mute badge */
+  .for-me { position: absolute; top: 8px; right: 10px; display: flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); font-size: 11px; font-weight: 600; }
+  .compact .for-me { top: 4px; right: 6px; padding: 2px 4px; }
   .compact { gap: 4px; border-radius: 10px; }
   .compact .av { width: 36px; height: 36px; font-size: 15px; }
   .compact.speaking .av { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--ok); }

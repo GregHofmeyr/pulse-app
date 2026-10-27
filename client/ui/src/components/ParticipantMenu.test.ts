@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const invoke = vi.fn()
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a) }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }))
-const room = vi.hoisted(() => ({ connected: true, disconnect: async () => {}, watch: async () => 0, unwatch: () => {}, setLayer: vi.fn(), remoteStats: async () => undefined }))
+const room = vi.hoisted(() => ({ connected: true, onLost: () => {}, disconnect: async () => {}, watch: async () => 0, unwatch: () => {}, setLayer: vi.fn(), remoteStats: async () => undefined }))
 vi.mock('../lib/stream/room', () => ({ StreamRoom: { connect: async () => room, pick: async () => null }, STREAM_UNAVAILABLE: 'unavailable' }))
 
 import VoicePanel from './VoicePanel.svelte'

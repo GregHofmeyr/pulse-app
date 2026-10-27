@@ -25,6 +25,9 @@ struct LogGuard(
     #[allow(dead_code)] std::sync::Mutex<Option<tracing_appender::non_blocking::WorkerGuard>>,
 );
 
+static FOCUS_LOG_BUDGET: std::sync::Mutex<Option<logging::LineBudget>> =
+    std::sync::Mutex::new(None);
+
 /// The main window is built here rather than in tauri.conf.json so each profile gets its own
 /// webview storage (settings, per-user volumes) and so we can recover if the renderer dies.
 fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri::Result<()> {
@@ -45,11 +48,24 @@ fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri:
             view.reload();
         });
     })?;
+    // Focus decides message sounds and read marking: log each change the window reports (the page
+    // logs what it holds, and why each message did or didn't ding), so a missed sound can be told
+    // apart from a focus the window never lost.
+    win.on_window_event(|e| {
+        if let tauri::WindowEvent::Focused(focused) = e {
+            // budgeted: focus can flip often (alt-tabbing, focus moving inside the window)
+            logging::log_budgeted(
+                &FOCUS_LOG_BUDGET,
+                20,
+                1.0,
+                || tracing::info!(focused, "window focus"),
+                |n| tracing::info!("window focus: {n} changes not logged (too many)"),
+            );
+        }
+    });
     // WebView2: the Low memory target while minimised or in the background.
     #[cfg(windows)]
     webview_memory::install(&win);
-    #[cfg(not(any(target_os = "linux", windows)))]
-    let _ = win;
     Ok(())
 }
 
@@ -254,6 +270,7 @@ pub fn run() {
             stream::stream_preview_put,
             stream::stream_preview_get,
             stream::stream_log,
+            logging::ui_log,
             stream::stream_picker_window,
             stream::stream_audio_start,
             stream::stream_audio_stop,

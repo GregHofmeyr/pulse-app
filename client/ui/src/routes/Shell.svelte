@@ -19,9 +19,9 @@
   import PeopleBoard from '../components/PeopleBoard.svelte'
   import PeoplePicker from '../components/PeoplePicker.svelte'
   import GroupMembers from '../components/GroupMembers.svelte'
-  import { onMount, untrack } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
-  import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
+  import { findWatch, followLiveFreeze, stream, streamApi } from '../lib/stream/stream.svelte'
   import { pendingWatchReady } from '../lib/stream/viewer'
   import { callView, openFull } from '../lib/stream/viewer.svelte'
   import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
@@ -32,7 +32,6 @@
   import { isMember, liveIn } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
   import { keybindsApi } from '../lib/keybinds'
-  import { motion } from '../lib/animate.svelte'
   import { watchWindowFocus } from '../lib/windowFocus.svelte'
   import type { User } from '../lib/protocol/User'
 
@@ -43,16 +42,9 @@
   let activeChannelId = $state<string | null>(null)
   let settingsOpen = $state(false)
 
-  // The animation freeze while you stream (app.css `.streaming`); here so it outlives the voice panel.
-  $effect(() => {
-    if (!stream.live) return
-    document.body.classList.add('streaming')
-    motion.streaming = true
-    return () => {
-      document.body.classList.remove('streaming')
-      motion.streaming = false
-    }
-  })
+  // The animation freeze while you stream; here so it outlives the voice panel. Returning the stop
+  // is what ends it with the shell: a `{ followLiveFreeze() }` body would leak it.
+  $effect(() => followLiveFreeze())
   let settingsSection = $state<'voice' | 'keybinds'>('voice')
   // Nothing is bound by default: until they've chosen, nudge people to pick their keys (Windows;
   // on Linux the compositor binds them).
@@ -86,7 +78,50 @@
     menuOpen = false
     if (e instanceof KeyboardEvent) menuToggle?.focus()
   }
+  // Full view takes the whole window: both side panels hide, and an edge toggle brings each back.
+  // Every full view starts with both hidden (nothing is remembered); swapping its stream or coming
+  // back to it from the mini-preview is the same full view, so what you opened stays open.
+  const panels = $state({ left: false, right: false })
+  const fullShown = $derived(callView.fullViews > 0)
+  let hadFull = false
+  $effect(() => {
+    const has = !!callView.full
+    untrack(() => {
+      if (has && !hadFull) {
+        panels.left = false
+        panels.right = false
+      }
+      hadFull = has
+    })
+  })
+  const hideLeft = $derived(fullShown && !panels.left)
+  const hideRight = $derived(fullShown && !panels.right)
+  let sidePanel = $state<HTMLElement>()
+  let rightPanel = $state<HTMLElement>()
+  let leftEdge = $state<HTMLButtonElement>()
+  let rightEdge = $state<HTMLButtonElement>()
+  // Before a panel hides: a menu open in it closes (an unseen menu would take Esc first), and focus in
+  // it moves to the toggle that brings it back (or it would fall to the top of the page).
+  $effect.pre(() => {
+    const [left, right] = [hideLeft, hideRight]
+    untrack(() => {
+      if (left) {
+        menuOpen = false
+        serverMenuOpen = false
+      }
+      const at = document.activeElement
+      const to = left && sidePanel?.contains(at) ? 'left' : right && rightPanel?.contains(at) ? 'right' : null
+      if (to) void tick().then(() => (to === 'left' ? leftEdge : rightEdge)?.focus())
+    })
+  })
+  const leftName = $derived(activeServerId ? 'Channels' : 'Conversations')
   let serverMenuOpen = $state(false)
+  let serverToggle = $state<HTMLButtonElement>()
+  /** The same for the server menu. */
+  function closeServerMenu(e: Event) {
+    serverMenuOpen = false
+    if (e instanceof KeyboardEvent) serverToggle?.focus()
+  }
   let serverSettingsOpen = $state(false)
   // Both belong to the server they were opened on.
   $effect(() => {
@@ -336,13 +371,13 @@
   </header>
 
   <div class="body">
-    <aside class="panel side">
+    <aside id="channels-panel" class="panel side" hidden={hideLeft} bind:this={sidePanel}>
       <div class="panel-head">
         {#if activeServer}
-          <button class="head-btn" data-menu-toggle aria-haspopup="menu" aria-expanded={serverMenuOpen}
+          <button bind:this={serverToggle} class="head-btn" data-menu-toggle aria-haspopup="menu" aria-expanded={serverMenuOpen}
             onclick={() => (serverMenuOpen = !serverMenuOpen)}>{activeServer.name}<Icon name="chevron" size={14} /></button>
           {#if serverMenuOpen}
-            <div class="menu head-menu" role="menu" use:clickOutside={() => (serverMenuOpen = false)}>
+            <div class="menu head-menu" role="menu" use:clickOutside={closeServerMenu}>
               <button role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsOpen = true }}>Server settings</button>
             </div>
           {/if}
@@ -383,6 +418,10 @@
     </aside>
 
     <main class="panel content">
+      {#if fullShown}
+        <button type="button" class="edge left" bind:this={leftEdge} aria-label={leftName} aria-controls="channels-panel" aria-expanded={panels.left}
+          data-tip="{panels.left ? 'Hide' : 'Show'} {leftName.toLowerCase()}" onclick={() => (panels.left = !panels.left)}><Icon name={panels.left ? 'chevronLeft' : 'chevronRight'} size={14} /></button>
+      {/if}
       {#if activeServerId && !member}
         <div class="join">
           <p>You're not in <strong>{activeServer?.name}</strong> yet.</p>
@@ -401,10 +440,14 @@
         <p class="empty">Pick a channel.</p>
       {/if}
       {#each mini ? [mini] : [] as m (m.key)}<MiniPreview channelId={m.channelId} streamer={m.streamer} />{/each}
+      {#if fullShown && (activeServerId || activeChannel?.kind === 'group')}
+        <button type="button" class="edge right" bind:this={rightEdge} aria-label="Members" aria-controls="members-panel" aria-expanded={panels.right}
+          data-tip="{panels.right ? 'Hide' : 'Show'} members" onclick={() => (panels.right = !panels.right)}><Icon name={panels.right ? 'chevronRight' : 'chevronLeft'} size={14} /></button>
+      {/if}
     </main>
 
-    {#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />
-    {:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}
+    <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap -->
+    <div id="members-panel" class="right-panel" hidden={hideRight} bind:this={rightPanel}>{#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}</div>
   </div>
 </div>
 <StreamToast />
@@ -471,10 +514,23 @@
   .body { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 0 8px 8px; }
   .panel { border-radius: var(--radius); overflow: hidden; }
   .side { width: 264px; flex-shrink: 0; background: var(--bg-1); display: flex; flex-direction: column; }
+  /* hidden, not removed: what the panels hold (an open menu, a draft) survives full view */
+  .side[hidden] { display: none; }
+  /* a real box (aria-controls points at it; a display:contents one leaves the accessibility tree) */
+  .right-panel { display: flex; flex-shrink: 0; min-height: 0; }
+  .right-panel[hidden], .right-panel:empty { display: none; }
+  /* full view's edge toggles: small tabs on the stream's left and right edges */
+  .edge { position: absolute; top: 50%; z-index: 3; width: 18px; height: 56px; margin-top: -28px; padding: 0; border: 0; background: color-mix(in srgb, var(--bg-2) 85%, transparent); color: var(--text-2); display: grid; place-items: center; opacity: .7; }
+  .edge:hover, .edge:focus-visible { opacity: 1; color: var(--text); }
+  .edge:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .edge.left { left: 0; border-radius: 0 8px 8px 0; }
+  .edge.right { right: 0; border-radius: 8px 0 0 8px; }
   .panel-head { position: relative; height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid #26282e; }
-  .head-btn { flex: 1; min-width: 0; height: 100%; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
+  /* the hover is a rounded pill inside the header, with the text where the padding put it */
+  .head-btn { flex: 1; min-width: 0; height: 40px; margin: 0 -8px; padding: 0 8px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
   .head-btn:hover { background: var(--bg-2); }
-  .head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; }
+  /* two classes: .menu (declared below, for the upward account menu) must not win `bottom` back */
+  .menu.head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; }
   .me { padding: 10px 10px 10px 12px; background: #17181c; display: flex; align-items: center; gap: 10px; }
   .avatar { width: 34px; height: 34px; border-radius: 50%; color: #fff; font-weight: 700; display: grid; place-items: center; }
   .who { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
@@ -486,7 +542,7 @@
   .who-btn:hover { background: var(--bg-2); }
   .who-btn .who { overflow: hidden; }
   .menu { position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 10; min-width: 200px; padding: 6px; background: #2e3037; border: 1px solid #3d4048; border-radius: 12px; box-shadow: 0 18px 48px rgba(8, 9, 12, .5); display: flex; flex-direction: column; }
-  .menu button { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font-size: 13px; }
+  .menu button { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font-size: 13px; font-weight: 400; }
   .menu button:hover { background: var(--bg-4); }
   .menu .danger { color: #f2616b; }
   .menu .warn { color: var(--warn); }

@@ -145,6 +145,25 @@ fn failure_text(e: reqwest::Error) -> String {
     }
 }
 
+/// What kind of JSON problem a decode error was, and where: never any of the body.
+fn json_problem(e: &reqwest::Error) -> String {
+    use std::error::Error;
+    let mut src = e.source();
+    while let Some(s) = src {
+        if let Some(j) = s.downcast_ref::<serde_json::Error>() {
+            let kind = match j.classify() {
+                serde_json::error::Category::Io => "io",
+                serde_json::error::Category::Syntax => "syntax",
+                serde_json::error::Category::Data => "data",
+                serde_json::error::Category::Eof => "eof",
+            };
+            return format!("{kind} at {}:{}", j.line(), j.column());
+        }
+        src = s.source();
+    }
+    "-".into()
+}
+
 fn log_failure(path: Option<String>, what: &str) {
     tracing::warn!(
         path = path.as_deref().unwrap_or("?"),
@@ -263,11 +282,21 @@ impl Api {
     async fn parse<T: DeserializeOwned>(
         r: Result<reqwest::Response, reqwest::Error>,
     ) -> Result<T, ApiError> {
-        Self::checked(r)
-            .await?
-            .json()
-            .await
-            .map_err(|e| ApiError::Network(failure_text(e)))
+        let resp = Self::checked(r).await?;
+        let (path, status) = (path_only(resp.url()), resp.status());
+        resp.json().await.map_err(|e| {
+            // a 2xx we couldn't read: checked() logged nothing, yet the caller sees a failure
+            let json = json_problem(&e);
+            let text = failure_text(e);
+            tracing::warn!(
+                path,
+                status = status.as_u16(),
+                json,
+                error = text,
+                "request failed"
+            );
+            ApiError::Network(text)
+        })
     }
 
     /// For endpoints that answer 204.
@@ -2130,6 +2159,53 @@ mod tests {
             api.media("t", hash).await,
             Err(ApiError::Network(_))
         ));
+    }
+
+    /// Everything logged (at any level) while `f` runs, on this thread.
+    async fn logged<F: std::future::Future>(f: F) -> (F::Output, String) {
+        use std::sync::{Arc, Mutex};
+        let buf = Arc::new(Mutex::new(Vec::<u8>::new()));
+        let w = buf.clone();
+        let sub = tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_writer(move || Writer(w.clone()))
+            .finish();
+        let out = {
+            let _g = tracing::subscriber::set_default(sub);
+            f.await
+        };
+        let text = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+        (out, text)
+    }
+    struct Writer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for Writer {
+        fn write(&mut self, b: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(b);
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test(flavor = "current_thread")]
+    async fn an_answer_that_wont_decode_is_logged() {
+        // a 200 whose body isn't what we expected: the UI shows an error, so the log must say why
+        let resp = reqwest::Response::from(
+            tauri::http::Response::builder()
+                .status(200)
+                .body("<html>not json</html>")
+                .unwrap(),
+        );
+        let (r, log) = logged(Api::parse::<MediaInfo>(Ok(resp))).await;
+        assert!(matches!(r, Err(ApiError::Network(_))), "{r:?}");
+        assert!(log.contains("request failed"), "{log}");
+        assert!(log.contains("decod"), "{log}");
+        assert!(log.contains("path=\"/\""), "{log}");
+        // the status, and what kind of JSON problem (never the body itself)
+        assert!(log.contains("status=200"), "{log}");
+        assert!(log.contains("json=\"syntax at 1:1\""), "{log}");
+        assert!(!log.contains("not json"), "{log}");
     }
 
     #[tokio::test]

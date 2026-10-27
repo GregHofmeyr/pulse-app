@@ -15,6 +15,7 @@ import { diag, startDiagnostics } from './diag.svelte'
 import type { Fps, Res } from './encodings'
 import { loadAudioMuted, loadStreamVolumes, saveAudioMuted, saveStreamVolumes, type GoLive } from './prefs'
 import { StreamRoom } from './room'
+import { motion } from '../animate.svelte'
 import { admit, layerFor, liveEndSound, toastFor, type Quality, type View } from './viewer'
 import { removeToast, showToast } from './viewer.svelte'
 
@@ -112,6 +113,9 @@ function nameOf(channelId: string, userId: string): string {
   return displayName(app.state, app.state.channels[channelId]?.server_id ?? null, userId)
 }
 
+/** Which `#v` connection is current (by identity: the store's copy may be a reactive proxy). */
+let roomGen = 0
+
 /** The `#v` connection for `channelId`, connecting (once) if needed. */
 async function ensureRoom(channelId: string): Promise<StreamRoom> {
   if (stream.room && roomChannel === channelId && stream.room.connected) return stream.room
@@ -123,6 +127,8 @@ async function ensureRoom(channelId: string): Promise<StreamRoom> {
     const room = await p
     stream.room = room
     roomChannel = channelId
+    const mine = ++roomGen
+    room.onLost(() => void roomLost(mine))
     return room
   } finally {
     if (connecting?.p === p) connecting = null
@@ -130,10 +136,32 @@ async function ensureRoom(channelId: string): Promise<StreamRoom> {
 }
 
 async function disconnect() {
+  roomGen++ // what LiveKit reports about the old connection from here on is our own doing
   const room = stream.room
   stream.room = null
   roomChannel = null
   await room?.disconnect().catch(logError('disconnect_error'))
+}
+
+/**
+ * LiveKit gave up on the `#v` connection: what we share and watch on it is dead, so end it (and
+ * the live freeze with it) rather than sit "live" with nothing going out. `mine` is the
+ * connection's generation: our own `disconnect()` (or a newer connection) moves it on, so it never counts.
+ */
+async function roomLost(mine: number) {
+  if (mine !== roomGen || !stream.room) return
+  stream.room = null
+  roomChannel = null
+  streamCmd.log({ ev: 'room_lost', live: !!stream.live, watching: stream.watching.length })
+  if (!stream.live && !stream.watching.length) return
+  stream.notice = stream.live ? 'Streaming stopped: the connection was lost' : 'Stopped watching: the connection was lost'
+  // only what was on the lost connection: a watch started on a new one meanwhile stays
+  const lost = new Set(stream.watching.map((w) => streamKey(w.channelId, w.streamer)))
+  if (stream.live) {
+    liveGen.cancel()
+    await endLive(true)
+  }
+  await endWatches((w) => lost.has(streamKey(w.channelId, w.streamer)), true)
 }
 
 /** Nothing to publish or watch: let the connection go. */
@@ -145,6 +173,26 @@ function onTrackEnded() {
   streamCmd.log({ ev: 'track_ended' })
   liveGen.cancel()
   void endLive(true)
+}
+
+/**
+ * While we're live the UI holds still (emoji show their first frame, app.css `.streaming` pauses
+ * CSS animation) so it doesn't cost game frames; it follows `stream.live`, so every way a share
+ * ends (Stop, the capture ending, the server or a voice change ending it) lifts it. Call once
+ * (the shell does, so it outlives the voice panel); the returned stop lifts it too.
+ */
+export function followLiveFreeze(): () => void {
+  return $effect.root(() => {
+    $effect(() => {
+      if (!stream.live) return
+      document.body.classList.add('streaming')
+      motion.streaming = true
+      return () => {
+        document.body.classList.remove('streaming')
+        motion.streaming = false
+      }
+    })
+  })
 }
 
 /** Every 15 s while live: a 480×270 WebP (JPEG where the webview has no WebP) of what we share, for the LIVE popover. */

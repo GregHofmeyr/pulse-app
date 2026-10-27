@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { flushSync, mount, tick, unmount } from 'svelte'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { compile } from 'svelte/compiler'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const invoke = vi.fn()
@@ -10,6 +13,7 @@ vi.mock('@tauri-apps/api/window', () => ({
 }))
 const room = vi.hoisted(() => ({
   connected: true,
+  onLost: () => {},
   disconnect: async () => {},
   watch: async () => 0,
   unwatch: () => {},
@@ -177,6 +181,65 @@ describe('mini-preview', () => {
     Object.assign(mini, { setPointerCapture: capture, releasePointerCapture: vi.fn(), hasPointerCapture: () => true })
     return { mini, open: mini.querySelector<HTMLElement>('.open')!, capture }
   }
+
+  it('floats_over_the_side_panels_at_the_corners_of_the_area_it_belongs_to', async () => {
+    // fixed (an ancestor's overflow:hidden doesn't clip it), above panel content (z 0-2) and below
+    // every popup, menu and dialog (z 5+)
+    const src = readFileSync(resolve(__dirname, 'MiniPreview.svelte'), 'utf8')
+    const css = compile(src, { filename: 'MiniPreview.svelte', css: 'external', cssHash: () => 'svelte-test' }).css!.code
+    const style = document.createElement('style')
+    style.textContent = css
+    document.head.append(style)
+    try {
+      const corners: Record<string, [string, string, string]> = {
+        tl: ['top', 'left', 'calc(var(--area-top) + 68px)|calc(var(--area-left) + 16px)'],
+        tr: ['top', 'right', 'calc(var(--area-top) + 68px)|calc(var(--area-right) + 16px)'],
+        bl: ['bottom', 'left', 'calc(var(--area-bottom) + 96px)|calc(var(--area-left) + 16px)'],
+        br: ['bottom', 'right', 'calc(var(--area-bottom) + 96px)|calc(var(--area-right) + 16px)'],
+      }
+      for (const [corner, [v, h, want]] of Object.entries(corners)) {
+        document.body.innerHTML = `<div class="mini-preview ${corner} svelte-test" id="m"></div>`
+        const cs = getComputedStyle(document.getElementById('m')!)
+        expect(cs.position, corner).toBe('fixed')
+        expect(cs.zIndex, corner).toBe('4')
+        expect(`${cs.getPropertyValue(v)}|${cs.getPropertyValue(h)}`, corner).toBe(want)
+      }
+    } finally {
+      style.remove()
+      document.body.innerHTML = ''
+    }
+    // the corners follow the area (the call or chat panel) as it changes size (full view hiding the
+    // side panels, the member list coming and going): a ResizeObserver on that area
+    const observers: { cb: () => void; observed: Element[]; disconnect: ReturnType<typeof vi.fn> }[] = []
+    vi.stubGlobal('ResizeObserver', class {
+      observed: Element[] = []
+      disconnect = vi.fn()
+      constructor(public cb: () => void) { observers.push(this as never) }
+      observe(el: Element) { this.observed.push(el) }
+    })
+    try {
+      await streamApi.watch('V1', 'U2')
+      let rect = { left: 280, top: 52, right: 1024, bottom: 792 }
+      vi.spyOn(document.body, 'getBoundingClientRect').mockImplementation(() => ({ ...rect, width: rect.right - rect.left, height: rect.bottom - rect.top, x: rect.left, y: rect.top, toJSON() {} }) as DOMRect)
+      vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1280)
+      vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(800)
+      mountMini()
+      const mini = q('.mini-preview')!
+      const v = (n: string) => mini.style.getPropertyValue(n)
+      expect([v('--area-top'), v('--area-left'), v('--area-right'), v('--area-bottom')]).toEqual(['52px', '280px', '256px', '8px'])
+      expect(observers).toHaveLength(1)
+      expect(observers[0].observed).toEqual([mini.parentElement])
+      rect = { left: 8, top: 52, right: 1272, bottom: 792 } // full view hid the side panels
+      observers[0].cb()
+      flushSync()
+      expect([v('--area-left'), v('--area-right')]).toEqual(['8px', '8px'])
+      unmount(cmp!)
+      cmp = undefined
+      expect(observers[0].disconnect).toHaveBeenCalled()
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
 
   it('the_preview_is_a_plain_box_with_an_open_button_and_a_separate_x', async () => {
     await streamApi.watch('V1', 'U2')

@@ -156,7 +156,7 @@ impl<D: Clone> NameCache<D> {
 static DEVICES: std::sync::LazyLock<NameCache<cpal::Device>> =
     std::sync::LazyLock::new(NameCache::default);
 
-/// Fire-and-forget on a short-lived thread (cpal streams are !Send). Failures are silent: sounds are a nicety.
+/// Fire-and-forget on a short-lived thread (cpal streams are !Send). A failure only logs a line: sounds are a nicety.
 /// On `output` (a device name from settings; missing or unplugged = the system default).
 /// `volume` (0.0-1.0, clamped) scales the fixed gain; 0 plays nothing.
 pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
@@ -164,7 +164,11 @@ pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
     if volume <= 0.0 {
         return;
     }
-    let Some(sound) = load(set, name) else { return };
+    let Some(sound) = load(set, name) else {
+        tracing::warn!(name = %crate::logging::one_line(name, 32), "sound: no such sound");
+        return;
+    };
+    let name = crate::logging::one_line(name, 32);
     let _ = std::thread::Builder::new()
         .name("pulse-sound".into())
         .spawn(move || {
@@ -186,10 +190,11 @@ pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
             }
             // the cached device failed (unplugged): forget it, and play on the default instead
             DEVICES.forget();
-            if output.is_some()
-                && let Ok(dev) = find_device(false, None)
-            {
-                play_on(&dev, &sound, volume);
+            let played = output.is_some()
+                && find_device(false, None).is_ok_and(|dev| play_on(&dev, &sound, volume));
+            if !played {
+                // asked for (the `sound` line) but not heard: tells the two apart in a report
+                tracing::warn!(name, "sound: no output device would play it");
             }
         });
 }

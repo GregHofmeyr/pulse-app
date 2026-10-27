@@ -54,11 +54,11 @@
   }
   function up(e: PointerEvent) {
     if (!press) return
-    const area = box?.parentElement?.getBoundingClientRect()
-    if (offset && area) {
+    const panel = box?.parentElement?.getBoundingClientRect()
+    if (offset && panel) {
       // snap to the corner nearest where it was let go
-      const v = e.clientY < area.top + area.height / 2 ? 't' : 'b'
-      const h = e.clientX < area.left + area.width / 2 ? 'l' : 'r'
+      const v = e.clientY < panel.top + panel.height / 2 ? 't' : 'b'
+      const h = e.clientX < panel.left + panel.width / 2 ? 'l' : 'r'
       corner = `${v}${h}` as Corner
       saveMiniCorner(corner)
       dragged = true
@@ -68,6 +68,29 @@
     press = null
     offset = null
   }
+  // Fixed to the window, so no panel's overflow can clip it and it floats over the side panels when
+  // dragged there; its corners still follow the area it belongs to (the call or chat panel), which
+  // moves when the window resizes or full view hides the side panels.
+  // Watching the area's size is enough: in the shell, everything that moves it (a side panel hiding
+  // or showing) also resizes it, and a window resize doesn't move it (the header and gutters are fixed).
+  let area = $state({ top: 0, left: 0, right: 0, bottom: 0 })
+  function measure() {
+    const r = box?.parentElement?.getBoundingClientRect()
+    if (!r) return
+    const next = { top: r.top, left: r.left, right: window.innerWidth - r.right, bottom: window.innerHeight - r.bottom }
+    // untracked: the effect that first calls this must not re-run (and observe again) on its own write
+    const now = untrack(() => area)
+    if (next.top !== now.top || next.left !== now.left || next.right !== now.right || next.bottom !== now.bottom) area = next
+  }
+  $effect(() => {
+    const parent = box?.parentElement
+    if (!parent) return
+    measure()
+    const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null
+    ro?.observe(parent)
+    return () => ro?.disconnect()
+  })
+
   /** The drag was taken away (cancelled, capture lost): back where it was, nothing saved. */
   function abort() {
     press = null
@@ -88,6 +111,7 @@
 <!-- a plain box: dragging is a pointer shortcut; the controls are the open button and the ✕ -->
 <div bind:this={box} class="mini-preview {corner}" class:dragging={!!offset} role="group" aria-label="{name}'s stream"
   style:translate={offset ? `${offset.x}px ${offset.y}px` : undefined}
+  style:--area-top="{area.top}px" style:--area-left="{area.left}px" style:--area-right="{area.right}px" style:--area-bottom="{area.bottom}px"
   onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={abort} onlostpointercapture={abort}>
   {#if watch}<div class="host" {@attach hostVideo(channelId, streamer)}></div>{/if}
   <button type="button" class="open" aria-label="Back to {name}'s stream" onclick={open}></button>
@@ -98,12 +122,13 @@
 </div>
 
 <style>
-  .mini-preview { position: absolute; z-index: 20; width: 320px; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #000; box-shadow: 0 12px 32px rgba(8, 9, 12, .5); cursor: pointer; touch-action: none; user-select: none; }
+  /* above panel content (z 0-2), below every popup, menu and dialog (z 5+) */
+  .mini-preview { position: fixed; z-index: 4; width: 320px; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #000; box-shadow: 0 12px 32px rgba(8, 9, 12, .5); cursor: pointer; touch-action: none; user-select: none; }
   /* bottom corners sit above a text channel's composer; toasts (z 40) stay on top */
-  .tl { top: 68px; left: 16px; }
-  .tr { top: 68px; right: 16px; }
-  .bl { bottom: 96px; left: 16px; }
-  .br { bottom: 96px; right: 16px; }
+  .tl { top: calc(var(--area-top) + 68px); left: calc(var(--area-left) + 16px); }
+  .tr { top: calc(var(--area-top) + 68px); right: calc(var(--area-right) + 16px); }
+  .bl { bottom: calc(var(--area-bottom) + 96px); left: calc(var(--area-left) + 16px); }
+  .br { bottom: calc(var(--area-bottom) + 96px); right: calc(var(--area-right) + 16px); }
   .dragging { cursor: grabbing; opacity: .9; }
   .host { position: absolute; inset: 0; pointer-events: none; }
   .open { position: absolute; inset: 0; padding: 0; border: 0; background: transparent; cursor: pointer; }

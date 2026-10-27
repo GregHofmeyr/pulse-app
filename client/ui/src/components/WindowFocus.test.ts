@@ -15,10 +15,14 @@ vi.mock('@tauri-apps/api/event', () => ({
   },
 }))
 let tauriFocus: ((e: { payload: boolean }) => void) | undefined
+const os = vi.hoisted(() => ({ focused: true, throws: false }))
 vi.mock('@tauri-apps/api/window', () => ({
   getCurrentWindow: () => ({
     onFocusChanged: async (h: (e: { payload: boolean }) => void) => ((tauriFocus = h), () => {}),
-    isFocused: async () => true,
+    isFocused: () => {
+      if (os.throws) throw new Error('no window')
+      return Promise.resolve(os.focused)
+    },
   }),
 }))
 
@@ -73,6 +77,58 @@ describe('one window-focus source', () => {
     listeners.get('pulse://event')!({ payload: event('M3') })
     expect(sounds()).toBe(1)
     tauriFocus!({ payload: true })
+  })
+
+  it('a sound decision is logged with the sound settings; open and focused only when the OS disagrees', async () => {
+    await new Promise((r) => setTimeout(r, 0))
+    ready()
+    await startListening()
+    ui.openChannelId = 'D1'
+    const event = (id: string): Event => ({ t: 'MessageCreated', d: { message: msg(id, 'D1'), nonce: null } }) as Event
+    const logs = () => invoke.mock.calls.filter((c) => c[0] === 'ui_log').map((c) => (c[1] as { line: string; info: boolean }))
+    const settle = () => new Promise((r) => setTimeout(r, 0))
+    tauriFocus!({ payload: true })
+    await new Promise((r) => setTimeout(r, 2100)) // past the gap from the previous test's sound
+    // chatting in the open, focused DM: nothing logged (the usual case, every message)
+    os.focused = true
+    invoke.mockClear()
+    listeners.get('pulse://event')!({ payload: event('M10') })
+    await settle()
+    expect(logs()).toEqual([])
+    // the page thinks it's focused, the OS says not: that's worth a line
+    os.focused = false
+    listeners.get('pulse://event')!({ payload: event('M11') })
+    await settle()
+    expect(logs().map((l) => l.line)).toEqual([
+      'sound: message private=true mentioned=false open=true focused=true muted=false gap_ok=true sound=on play=false; the OS says focused=false',
+    ])
+    expect(logs().every((l) => l.info)).toBe(true)
+    // nothing about who or what
+    expect(logs().every((l) => !l.line.includes('U2') && !l.line.includes('hi') && !l.line.includes('D1'))).toBe(true)
+    // unfocused: it dings, and says the sound settings (switched off reads differently from lost)
+    os.focused = true
+    tauriFocus!({ payload: false })
+    localStorage.setItem('pulse.sounds', JSON.stringify({ set: 'classic', volume_pct: 100, off: ['message'] }))
+    invoke.mockClear()
+    listeners.get('pulse://event')!({ payload: event('M12') })
+    expect(logs().map((l) => l.line)).toEqual(['sound: message private=true mentioned=false open=true focused=false muted=false gap_ok=true sound=off play=true'])
+    localStorage.removeItem('pulse.sounds')
+    tauriFocus!({ payload: true })
+  }, 10_000)
+
+  it('a diagnostic that throws never costs the event', async () => {
+    await new Promise((r) => setTimeout(r, 0))
+    ready()
+    await startListening()
+    ui.openChannelId = 'D1'
+    tauriFocus!({ payload: true })
+    os.throws = true
+    try {
+      listeners.get('pulse://event')!({ payload: { t: 'MessageCreated', d: { message: msg('M20', 'D1'), nonce: null } } as Event })
+      expect(app.state.messages.D1?.some((m) => m.id === 'M20')).toBe(true)
+    } finally {
+      os.throws = false
+    }
   })
 
   it('read marking follows it', async () => {

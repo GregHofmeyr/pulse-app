@@ -3,6 +3,7 @@
 // blur can also mean keyboard focus left the webview while the window stays active). DOM
 // focus/blur and document.hasFocus() are the fallback, and the value until the first Tauri event.
 import { getCurrentWindow } from '@tauri-apps/api/window'
+import { api } from './tauri'
 
 export const windowFocus = $state({ focused: true })
 
@@ -37,13 +38,14 @@ export function watchWindowFocus(): void {
           win.isFocused().then(
             (f) => {
               if (!heard) windowFocus.focused = f
+              void api.uiLog(`focus: at start focused=${windowFocus.focused}`, 'info')
             },
             () => {},
           )
         },
-        () => {}, // DOM events only
+        () => void api.uiLog('focus: no window focus events; following the page instead'),
       )
   } catch {
-    /* DOM events only */
+    void api.uiLog('focus: no window focus events; following the page instead')
   }
 }

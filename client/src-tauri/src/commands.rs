@@ -1002,6 +1002,9 @@ pub fn hotkey(app: &AppHandle, c: crate::ipc::Command) {
     });
 }
 
+static SOUND_LOG_BUDGET: std::sync::Mutex<Option<crate::logging::LineBudget>> =
+    std::sync::Mutex::new(None);
+
 /// UI sound, played natively (see sounds.rs for why not in the webview).
 #[tauri::command]
 pub async fn play_sound(
@@ -1011,6 +1014,15 @@ pub async fn play_sound(
     output: Option<String>,
 ) {
     let set = set.as_deref().unwrap_or(crate::sounds::DEFAULT_SET);
+    // with `window focus`, shows whether a message sound was asked for (a name from a fixed list);
+    // budgeted, so a page loop can't flood the log
+    crate::logging::log_budgeted(
+        &SOUND_LOG_BUDGET,
+        20,
+        2.0,
+        || tracing::info!(name = %crate::logging::one_line(&name, 32), "sound"),
+        |n| tracing::warn!("sound: {n} lines dropped (too many)"),
+    );
     crate::sounds::play(set, &name, crate::sounds::gain(volume), output);
 }
 

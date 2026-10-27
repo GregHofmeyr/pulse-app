@@ -279,12 +279,331 @@ impl HookWatch {
     }
 }
 
+// ---- "my PC froze": what the hook machinery can measure ----
+//
+// Windows holds each input event, for the whole PC, until every low-level hook has answered (up
+// to LowLevelHooksTimeout; past it the event goes on without that hook, which Windows then
+// silently removes). So a freeze can be a slow hook chain (ours or one ahead of ours), our hook
+// thread not getting the CPU, or the whole machine stalling. Each is measured separately.
+
+/// The worst value noted since the last take, and how many reached `threshold`. From a hook
+/// procedure: two relaxed atomics, nothing that can block.
+pub struct MaxMeter {
+    max: std::sync::atomic::AtomicU32,
+    bad: std::sync::atomic::AtomicU32,
+    threshold: u32,
+}
+
+impl MaxMeter {
+    pub const fn new(threshold: u32) -> Self {
+        Self {
+            max: std::sync::atomic::AtomicU32::new(0),
+            bad: std::sync::atomic::AtomicU32::new(0),
+            threshold,
+        }
+    }
+
+    pub fn note(&self, v: u32) {
+        use std::sync::atomic::Ordering::Relaxed;
+        self.max.fetch_max(v, Relaxed);
+        if v >= self.threshold {
+            self.bad.fetch_add(1, Relaxed);
+        }
+    }
+
+    /// (worst, how many reached the threshold), and start over.
+    pub fn take(&self) -> (u32, u32) {
+        use std::sync::atomic::Ordering::Relaxed;
+        (self.max.swap(0, Relaxed), self.bad.swap(0, Relaxed))
+    }
+}
+
+/// A delay people feel as a stuck mouse or keyboard.
+pub const LATE_INPUT_MS: u32 = 250;
+/// Our own hook procedure should take microseconds; this long means it waited on something.
+pub const OWN_SLOW_US: u32 = 20_000;
+/// A longer "delay" is a stamp we can't believe (a tool's own `time`, or from before a sleep).
+pub const MAX_PLAUSIBLE_MS: u32 = 60_000;
+
+/// How late `now_ms` is after `stamp_ms` (GetTickCount-style, wrapping). A stamp just after `now`
+/// (read in the other order) is on time; an implausible delay is `None`.
+pub fn tick_delay(stamp_ms: u32, now_ms: u32) -> Option<u32> {
+    let d = now_ms.wrapping_sub(stamp_ms);
+    if d >= 1 << 31 {
+        Some(0)
+    } else if d > MAX_PLAUSIBLE_MS {
+        None
+    } else {
+        Some(d)
+    }
+}
+
+/// How long a sleep overran, in ms; an overrun past `MAX_PLAUSIBLE_MS` was the PC suspending,
+/// not stalling. (A suspend shorter than that reads as a stall: rare, and the line says so plainly.)
+pub fn overslept_ms(over: Duration) -> u32 {
+    let ms = u32::try_from(over.as_millis()).unwrap_or(u32::MAX);
+    if ms > MAX_PLAUSIBLE_MS { 0 } else { ms }
+}
+
+/// One watchdog tick's worst of each.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub struct Stall {
+    /// Input reaching our hook late: the hook chain ahead of us, our thread waking, or the PC.
+    pub input_late_ms: u32,
+    /// How many input events were that late.
+    pub late_events: u32,
+    /// Our hook procedure's own run time.
+    pub own_us: u32,
+    /// The hook thread picking up a message (no input involved): its scheduling delay.
+    pub hook_thread_ms: u32,
+    /// The watchdog's own sleep running long: the whole machine stalled.
+    pub overslept_ms: u32,
+}
+
+impl Stall {
+    pub fn felt(&self) -> bool {
+        self.input_late_ms >= LATE_INPUT_MS
+            || self.own_us >= OWN_SLOW_US
+            || self.hook_thread_ms >= LATE_INPUT_MS
+            || self.overslept_ms >= LATE_INPUT_MS
+    }
+
+    fn merge(&mut self, o: Stall) {
+        self.input_late_ms = self.input_late_ms.max(o.input_late_ms);
+        self.late_events = self.late_events.saturating_add(o.late_events);
+        self.own_us = self.own_us.max(o.own_us);
+        self.hook_thread_ms = self.hook_thread_ms.max(o.hook_thread_ms);
+        self.overslept_ms = self.overslept_ms.max(o.overslept_ms);
+    }
+}
+
+/// What to log after a tick.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Emit {
+    Nothing,
+    /// The first bad tick of an episode, as it was.
+    Started(Stall),
+    /// Still going: the worst since the last line.
+    Ongoing {
+        since_last: Stall,
+        lasted: Duration,
+    },
+    /// Over: the worst of the whole episode, and how long it lasted.
+    Ended {
+        worst: Stall,
+        lasted: Duration,
+    },
+}
+
+/// How often an ongoing stall gets a summary line.
+pub const STALL_SUMMARY_EVERY: Duration = Duration::from_secs(60);
+
+/// A line when a stall starts, a summary a minute while it lasts, one when it ends: a long one
+/// mustn't push the rest out of the log a report carries.
+#[derive(Default)]
+pub struct StallLog {
+    episode: Option<StallEpisode>,
+}
+
+struct StallEpisode {
+    started: Instant,
+    last_line: Instant,
+    since_last: Stall,
+    /// The worst of every bad tick, for the end line.
+    worst: Stall,
+    /// The last bad tick (what "lasted" runs to) and the quiet ticks since it.
+    last_bad: Instant,
+    quiet: u32,
+}
+
+/// Quiet ticks in a row that end an episode (~9 s): regular hitches stay one episode.
+pub const STALL_ENDS_AFTER_QUIET: u32 = 3;
+
+impl StallLog {
+    pub fn tick(&mut self, s: Stall, now: Instant) -> Emit {
+        match (&mut self.episode, s.felt()) {
+            (None, false) => Emit::Nothing,
+            (None, true) => {
+                self.episode = Some(StallEpisode {
+                    started: now,
+                    last_line: now,
+                    since_last: Stall::default(),
+                    worst: s,
+                    last_bad: now,
+                    quiet: 0,
+                });
+                Emit::Started(s)
+            }
+            (Some(e), true) => {
+                e.quiet = 0;
+                e.last_bad = now;
+                e.since_last.merge(s);
+                e.worst.merge(s);
+                if now.saturating_duration_since(e.last_line) < STALL_SUMMARY_EVERY {
+                    return Emit::Nothing;
+                }
+                e.last_line = now;
+                Emit::Ongoing {
+                    since_last: std::mem::take(&mut e.since_last),
+                    lasted: now.saturating_duration_since(e.started),
+                }
+            }
+            (Some(e), false) => {
+                e.quiet += 1;
+                if e.quiet < STALL_ENDS_AFTER_QUIET {
+                    return Emit::Nothing;
+                }
+                let e = self.episode.take().expect("matched Some");
+                Emit::Ended {
+                    worst: e.worst,
+                    lasted: e.last_bad.saturating_duration_since(e.started),
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     const MARGIN: u32 = 1000;
     const GAP: Duration = Duration::from_secs(10);
+
+    #[test]
+    fn a_meter_keeps_the_worst_and_counts_the_bad_until_taken() {
+        let m = MaxMeter::new(250);
+        assert_eq!(m.take(), (0, 0));
+        m.note(40);
+        m.note(900);
+        m.note(300);
+        assert_eq!(m.take(), (900, 2));
+        assert_eq!(m.take(), (0, 0)); // taken: starts over
+    }
+
+    #[test]
+    fn tick_delay_wraps_and_drops_stamps_it_cant_believe() {
+        assert_eq!(tick_delay(1_000, 1_040), Some(40));
+        // the tick count wraps after ~49.7 days
+        assert_eq!(tick_delay(u32::MAX - 10, 290), Some(301));
+        // stamped a moment after "now" (the clock read before the stamp): on time
+        assert_eq!(tick_delay(5_000, 4_990), Some(0));
+        // a remapper's own stamp, or one from before a sleep: not a real delay
+        assert_eq!(tick_delay(0, 61_000), None);
+        assert_eq!(
+            tick_delay(1_000, 1_000 + MAX_PLAUSIBLE_MS),
+            Some(MAX_PLAUSIBLE_MS)
+        );
+    }
+
+    fn stall(input_late_ms: u32) -> Stall {
+        Stall {
+            input_late_ms,
+            late_events: u32::from(input_late_ms >= LATE_INPUT_MS),
+            ..Stall::default()
+        }
+    }
+
+    #[test]
+    fn oversleeping_counts_unless_the_pc_was_asleep() {
+        assert_eq!(overslept_ms(Duration::from_millis(400)), 400);
+        assert_eq!(
+            overslept_ms(Duration::from_millis(u64::from(MAX_PLAUSIBLE_MS))),
+            MAX_PLAUSIBLE_MS
+        );
+        assert_eq!(overslept_ms(Duration::from_secs(3600)), 0); // suspended, not stalled
+    }
+
+    #[test]
+    fn a_stall_is_anything_people_would_feel_or_our_own_slowness() {
+        assert!(!Stall::default().felt());
+        assert!(!stall(LATE_INPUT_MS - 1).felt());
+        assert!(stall(LATE_INPUT_MS).felt());
+        assert!(
+            Stall {
+                own_us: OWN_SLOW_US,
+                ..Stall::default()
+            }
+            .felt()
+        );
+        assert!(
+            !Stall {
+                own_us: OWN_SLOW_US - 1,
+                ..Stall::default()
+            }
+            .felt()
+        );
+        assert!(
+            Stall {
+                hook_thread_ms: LATE_INPUT_MS,
+                ..Stall::default()
+            }
+            .felt()
+        );
+        assert!(
+            Stall {
+                overslept_ms: LATE_INPUT_MS,
+                ..Stall::default()
+            }
+            .felt()
+        );
+    }
+
+    #[test]
+    fn stall_log_says_it_once_then_a_summary_a_minute_then_that_it_ended() {
+        let t0 = Instant::now();
+        let at = |s: u64| t0 + Duration::from_secs(s);
+        let mut log = StallLog::default();
+        assert_eq!(log.tick(Stall::default(), at(0)), Emit::Nothing);
+        assert_eq!(log.tick(stall(400), at(3)), Emit::Started(stall(400)));
+        // more of it: quiet until a minute after the first line
+        assert_eq!(log.tick(stall(900), at(6)), Emit::Nothing);
+        assert_eq!(log.tick(stall(300), at(9)), Emit::Nothing);
+        // regular hitches don't start and end an episode every few seconds: it ends after three
+        // quiet ticks in a row, lasting until the last bad one
+        assert_eq!(log.tick(Stall::default(), at(12)), Emit::Nothing);
+        assert_eq!(log.tick(Stall::default(), at(15)), Emit::Nothing);
+        assert_eq!(log.tick(stall(300), at(18)), Emit::Nothing); // a hitch: the quiet count starts over
+        assert_eq!(log.tick(Stall::default(), at(21)), Emit::Nothing);
+        assert_eq!(log.tick(Stall::default(), at(24)), Emit::Nothing);
+        assert_eq!(
+            log.tick(Stall::default(), at(27)),
+            Emit::Ended {
+                // every bad tick of it, the first included
+                worst: Stall {
+                    input_late_ms: 900,
+                    late_events: 4,
+                    ..Stall::default()
+                },
+                lasted: Duration::from_secs(15)
+            }
+        );
+        // a long one: a summary each minute
+        assert_eq!(log.tick(stall(500), at(100)), Emit::Started(stall(500)));
+        for s in (103..160).step_by(3) {
+            assert_eq!(log.tick(stall(300), at(s)), Emit::Nothing, "{s}");
+        }
+        match log.tick(stall(300), at(160)) {
+            Emit::Ongoing { since_last, lasted } => {
+                assert_eq!(since_last.input_late_ms, 300);
+                assert_eq!(since_last.late_events, 20);
+                assert_eq!(lasted, Duration::from_secs(60));
+            }
+            other => panic!("{other:?}"),
+        }
+        // its end line has the worst of the whole episode, not just since the last line
+        for s in [163, 166] {
+            assert_eq!(log.tick(Stall::default(), at(s)), Emit::Nothing);
+        }
+        match log.tick(Stall::default(), at(169)) {
+            Emit::Ended { worst, lasted } => {
+                assert_eq!(worst.input_late_ms, 500);
+                assert_eq!(worst.late_events, 21);
+                assert_eq!(lasted, Duration::from_secs(60));
+            }
+            other => panic!("{other:?}"),
+        }
+    }
 
     #[test]
     fn on_with_no_hooks_installs_them() {

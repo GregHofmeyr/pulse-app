@@ -17,6 +17,7 @@ vi.mock('@tauri-apps/api/window', () => ({
 }))
 const room = vi.hoisted(() => ({
   connected: true,
+  onLost: () => {},
   disconnect: async () => {},
   watch: async () => 0,
   unwatch: () => {},
@@ -33,7 +34,7 @@ import { applyReady, emptyState } from '../lib/state'
 import { startVoiceListening, voice } from '../lib/voice.svelte'
 import { stream, streamApi } from '../lib/stream/stream.svelte'
 import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
-import { callView, joinAndWatch, openFull, showToast } from '../lib/stream/viewer.svelte'
+import { callView, joinAndWatch, openFull, showToast, watchStream } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 import Waiting from './Waiting.svelte'
 
@@ -60,6 +61,45 @@ afterEach(async () => {
 })
 
 describe('Shell', () => {
+  it('holds animation still while live, and lets go when live ends or the shell goes', async () => {
+    const { motion } = await import('../lib/animate.svelte')
+    app.state = emptyState()
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    flushSync()
+    const live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false } as typeof stream.live
+    stream.live = live
+    flushSync()
+    expect(motion.streaming).toBe(true)
+    expect(document.body.classList.contains('streaming')).toBe(true)
+    stream.live = null
+    flushSync()
+    expect(motion.streaming).toBe(false)
+    stream.live = live
+    flushSync()
+    unmount(cmp)
+    cmp = undefined
+    expect(motion.streaming).toBe(false)
+    expect(document.body.classList.contains('streaming')).toBe(false)
+    stream.live = null
+  })
+
+  it('Esc closes the server menu and puts focus back on the server name', async () => {
+    app.state = { ...emptyState(), servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }] }
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Alpha'))!.click()
+    flushSync()
+    const toggle = document.querySelector<HTMLButtonElement>('.head-btn')!
+    toggle.click()
+    flushSync()
+    await new Promise((r) => setTimeout(r, 0)) // clickOutside listens from the next tick
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role=menuitem]')][0].focus()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.querySelector('.head-menu')).toBeNull()
+    expect(document.activeElement).toBe(toggle)
+  })
+
   it('server settings and the server menu close when you switch server', () => {
     app.state = { ...emptyState(), servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }, { id: 'S2', name: 'Beta', icon_hash: null }] }
     cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
@@ -204,6 +244,126 @@ describe('watching from anywhere', () => {
     offs = [await startListening(), await startVoiceListening()]
     cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
     flushSync()
+  })
+
+  const toggle = (name: 'Channels' | 'Members') => document.querySelector<HTMLButtonElement>(`.edge[aria-label="${name}"]`)
+
+  it('full_view_hides_both_side_panels_with_edge_toggles_to_bring_each_back', async () => {
+    const setItem = vi.spyOn(Storage.prototype, 'setItem')
+    const side = () => q('aside.side')!
+    const members = () => q('.right-panel')!
+    expect(side().hidden).toBe(false)
+    expect(members().hidden).toBe(false)
+    goTo('V1')
+    await streamApi.watch('V1', 'U2')
+    openFull(SAM)
+    await settle()
+    expect(q('.full-view')).not.toBeNull()
+    expect(side().hidden).toBe(true)
+    expect(members().hidden).toBe(true)
+    const left = toggle('Channels')!
+    const right = toggle('Members')!
+    // what each toggles, in the order they sit: the left one first in main, the right one last
+    expect(left.getAttribute('aria-controls')).toBe(side().id)
+    expect(right.getAttribute('aria-controls')).toBe(members().id)
+    const main = q('main')!
+    expect(main.firstElementChild).toBe(left)
+    expect(main.lastElementChild).toBe(right)
+    expect(left.getAttribute('aria-expanded')).toBe('false')
+    left.click()
+    flushSync()
+    expect(side().hidden).toBe(false)
+    expect(members().hidden).toBe(true) // each on its own
+    expect(left.getAttribute('aria-expanded')).toBe('true')
+    right.click()
+    flushSync()
+    expect(members().hidden).toBe(false)
+    right.click()
+    flushSync()
+    expect(members().hidden).toBe(true)
+
+    // Esc leaves full view: everything is back, the toggles go
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    flushSync()
+    expect(q('.full-view')).toBeNull()
+    expect(side().hidden).toBe(false)
+    expect(members().hidden).toBe(false)
+    expect(toggle('Channels')).toBeNull()
+
+    // next time: hidden again by default (nothing remembered)
+    openFull(SAM)
+    await settle()
+    expect(side().hidden).toBe(true)
+    expect(members().hidden).toBe(true)
+    expect(setItem.mock.calls.filter(([k]) => !/^pulse\.(stream|sounds|unsent)/.test(String(k)))).toEqual([])
+  })
+
+  it('swapping_the_stream_in_full_view_keeps_the_panels_as_you_set_them', async () => {
+    goTo('V1')
+    await streamApi.watch('V1', 'U2')
+    openFull(SAM)
+    await settle()
+    toggle('Channels')!.click()
+    flushSync()
+    expect(q('aside.side')!.hidden).toBe(false)
+    // another stream in the same call takes full view from its toast's Watch (the watch cap ends sam's)
+    watchStream('V1', 'U3')
+    await settle()
+    expect(callView.full).toEqual({ channelId: 'V1', streamer: 'U3' })
+    expect(q('.full-view')).not.toBeNull()
+    expect(q('aside.side')!.hidden).toBe(false)
+  })
+
+  it('switching_channel_in_full_view_brings_the_panels_back', async () => {
+    goTo('V1')
+    await streamApi.watch('V1', 'U2')
+    openFull(SAM)
+    await settle()
+    goTo('T1')
+    await settle()
+    expect(q('aside.side')!.hidden).toBe(false)
+    expect(q('.right-panel')!.hidden).toBe(false)
+    expect(toggle('Channels')).toBeNull()
+  })
+
+  it('a_menu_left_open_in_a_panel_closes_when_full_view_hides_it_so_esc_still_leaves', async () => {
+    goTo('V1')
+    await streamApi.watch('V1', 'U2')
+    await settle()
+    q('.who-btn')!.click() // the account menu, open
+    flushSync()
+    expect(q('.menu[role="menu"]')).not.toBeNull()
+    openFull(SAM)
+    await settle()
+    expect(q('.menu[role="menu"]')).toBeNull()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
+    flushSync()
+    expect(q('.full-view')).toBeNull()
+  })
+
+  it('focus_inside_a_panel_that_hides_moves_to_its_toggle', async () => {
+    goTo('V1')
+    await streamApi.watch('V1', 'U2')
+    await settle()
+    q('aside.side button')!.focus()
+    expect(q('aside.side')!.contains(document.activeElement)).toBe(true)
+    openFull(SAM)
+    await settle()
+    expect(document.activeElement).toBe(toggle('Channels'))
+  })
+
+  it('full_view_away_from_the_call_view_hides_nothing', async () => {
+    // full view kept for the mini-preview while you read a text channel: the panels stay
+    goTo('V1')
+    await streamApi.watch('V1', 'U2')
+    openFull(SAM)
+    await settle()
+    goTo('T1')
+    await settle()
+    expect(q('.mini-preview')).not.toBeNull()
+    expect(q('aside.side')!.hidden).toBe(false)
+    expect(q('.right-panel')!.hidden).toBe(false)
+    expect(toggle('Channels')).toBeNull()
   })
 
   it('stream_end_closes_full_view_and_mini_preview', async () => {

@@ -8,7 +8,7 @@
   import LiveBadge from './LiveBadge.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
   import { menuPoint } from '../lib/participantMenu'
-  import { selfVoice, voiceApi } from '../lib/voice.svelte'
+  import { selfVoice, voice, voiceApi } from '../lib/voice.svelte'
   import { hoverPrefetch } from '../lib/hoverPrefetch'
 
   let {
@@ -38,6 +38,10 @@
 
   // Join tokens are fetched when the pointer rests on a voice channel, not while it sweeps past.
   const prefetch = hoverPrefetch((id) => voiceApi.prefetch(id))
+  const mutedForMe = (userId: string) => !!voice.localMutes[userId] && userId !== app.state.me?.id
+  /** A voice row is a button: its label is all a screen reader reads, so it carries the state too. */
+  const occupantLabel = (p: { userId: string; name: string; muted: boolean; deafened: boolean }) =>
+    [p.name, mutedForMe(p.userId) && 'muted for you', p.deafened ? 'deafened' : p.muted && 'muted'].filter(Boolean).join(', ')
   $effect(() => () => prefetch.cancel())
 
   // inline "new channel" field
@@ -122,7 +126,7 @@
     </button>
     {#each people as p (p.userId)}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
-      <div class="occupant" class:pending={p.pending} role="button" tabindex="0" data-menu-toggle aria-haspopup="menu" aria-label={p.name} data-user={p.userId}
+      <div class="occupant" class:pending={p.pending} role="button" tabindex="0" data-menu-toggle aria-haspopup="menu" aria-label={occupantLabel(p)} data-user={p.userId}
         oncontextmenu={(e) => { e.preventDefault(); if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
         onclick={(e) => { if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
         onkeydown={(e) => occupantKey(e, c.id, p)}>
@@ -132,8 +136,10 @@
           <span class="joining">Joining…</span><span class="spinner" role="progressbar" aria-label="Joining"></span>
         {:else}
           <LiveBadge channelId={c.id} userId={p.userId} />
-          {#if p.deafened}<span class="flag"><Icon name="headphonesOff" size={14} label="Deafened" /></span>
-          {:else if p.muted}<span class="flag"><Icon name="micOff" size={14} label="Muted" /></span>{/if}
+          <!-- the row's label says these (a button's content isn't read): the icons are decoration -->
+          {#if mutedForMe(p.userId)}<span class="flag for-me" data-tip="Muted for you (they don't know)"><Icon name="speakerOff" size={14} /></span>{/if}
+          {#if p.deafened}<span class="flag" data-tip="Deafened"><Icon name="headphonesOff" size={14} /></span>
+          {:else if p.muted}<span class="flag" data-tip="Muted"><Icon name="micOff" size={14} /></span>{/if}
         {/if}
       </div>
     {/each}
@@ -169,6 +175,7 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
   .flag { color: #f2616b; display: flex; }
+  .flag.for-me { color: var(--warn); }
   .row.unread { color: var(--text); font-weight: 600; }
   .row.muted { opacity: .5; }
   .mic { color: var(--text-3); display: grid; }

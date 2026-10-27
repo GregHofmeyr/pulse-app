@@ -7,6 +7,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }))
 const room = vi.hoisted(() => ({
   connected: true,
+  onLost: () => {},
   disconnect: async () => {},
   watch: async () => 0,
   unwatch: () => {},
@@ -112,6 +113,132 @@ describe('full view', () => {
     expect(q('.full-view')).toBeNull()
     expect(stream.watching).toHaveLength(1)
     expect(room.setLayer).toHaveBeenLastCalledWith('U2', 'low')
+  })
+
+  // the focused stream itself, the way a mouse uses it: press, then click (detail = click count)
+  const unfocus = () => q('.full-view .unfocus')!
+  function clickStream(opts: { detail?: number; moveBy?: number; el?: HTMLElement } = {}) {
+    const el = opts.el ?? unfocus()
+    el.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100, clientY: 100, button: 0 }))
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: opts.detail ?? 1, clientX: 100 + (opts.moveBy ?? 0), clientY: 100 }))
+    flushSync()
+  }
+
+  it('clicking_the_focused_stream_again_returns_to_the_grid_of_all_tiles', async () => {
+    await fullOnSam()
+    expect(q('[data-stream="U2"]')).toBeNull() // focused: the other tiles are hidden
+    clickStream()
+    expect(callView.full).toBeNull()
+    expect(q('.full-view')).toBeNull()
+    expect(q('[data-stream="U2"] video')).not.toBeNull() // the grid, still watching
+    expect(stream.watching).toHaveLength(1)
+  })
+
+  it('the_stream_is_a_mouse_shortcut_not_a_tab_stop', async () => {
+    await fullOnSam()
+    expect(unfocus().tagName).toBe('DIV')
+    expect(unfocus().hasAttribute('tabindex')).toBe(false)
+    expect(unfocus().getAttribute('role')).toBeNull()
+  })
+
+  it('a_double_click_neither_flickers_back_nor_opens_another_stream', async () => {
+    // into full view from the grid by double-clicking a tile: the second click is ignored
+    cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
+    await streamApi.watch('V1', 'U2')
+    await settle()
+    const host = q('[data-stream="U2"] .host')!
+    host.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
+    flushSync()
+    expect(callView.full).toEqual(SAM)
+    clickStream({ detail: 2 })
+    expect(callView.full).toEqual(SAM) // still in full view
+    // out by double-clicking the stream: the second click lands on the grid and does nothing
+    clickStream({ detail: 1 })
+    expect(callView.full).toBeNull()
+    q('[data-stream="U2"] .host')!.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 2 }))
+    flushSync()
+    expect(callView.full).toBeNull()
+  })
+
+  it('a_click_that_closes_a_menu_or_list_does_not_also_leave_full_view', async () => {
+    await fullOnSam()
+    const listbox = document.createElement('div')
+    listbox.setAttribute('role', 'listbox')
+    document.body.append(listbox)
+    unfocus().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, button: 0 }))
+    listbox.remove() // the outside press closed it
+    unfocus().dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }))
+    flushSync()
+    expect(callView.full).toEqual(SAM)
+    clickStream() // the next click does
+    expect(callView.full).toBeNull()
+  })
+
+  it('a_drag_or_the_click_that_brings_the_window_to_the_front_does_not_leave', async () => {
+    await fullOnSam()
+    clickStream({ moveBy: 20 })
+    expect(callView.full).toEqual(SAM)
+    // the window was in the background; this click brings it to the front
+    window.dispatchEvent(new FocusEvent('blur'))
+    flushSync()
+    window.dispatchEvent(new FocusEvent('focus'))
+    flushSync()
+    clickStream()
+    expect(callView.full).toEqual(SAM)
+    await new Promise((r) => setTimeout(r, 350))
+    clickStream()
+    expect(callView.full).toBeNull()
+  })
+
+  it('the_activation_click_is_ignored_even_if_the_window_focus_event_comes_late', async () => {
+    await fullOnSam()
+    // the DOM's own focus event (in the page, before the press) is enough on its own
+    window.dispatchEvent(new FocusEvent('focus'))
+    clickStream()
+    expect(callView.full).toEqual(SAM)
+    await new Promise((r) => setTimeout(r, 350))
+    // and the click is checked again: activation noticed between the press and the click
+    unfocus().dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, clientX: 100, clientY: 100, button: 0 }))
+    window.dispatchEvent(new FocusEvent('focus'))
+    unfocus().dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1, clientX: 100, clientY: 100 }))
+    flushSync()
+    expect(callView.full).toEqual(SAM)
+  })
+
+  it('a_menu_left_open_in_a_hidden_panel_does_not_block_esc_or_the_click', async () => {
+    await fullOnSam()
+    const panel = document.createElement('aside')
+    panel.hidden = true
+    panel.innerHTML = '<div role="menu"></div>'
+    document.body.append(panel)
+    await new Promise((r) => setTimeout(r, 350))
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    flushSync()
+    expect(callView.full).toBeNull()
+    panel.remove()
+  })
+
+  it('the_stream_menu_can_hand_focus_back_to_the_stage', async () => {
+    await fullOnSam()
+    expect(q('.full-view .stage')!.getAttribute('tabindex')).toBe('-1')
+  })
+
+  it('keyboard_focus_lands_on_the_streams_grid_tile_after_leaving', async () => {
+    await fullOnSam()
+    button('Back')!.focus()
+    button('Back')!.click()
+    await settle()
+    expect(document.activeElement).toBe(q('[data-stream="U2"] .host'))
+  })
+
+  it('right_click_on_the_stream_opens_the_streamers_menu', async () => {
+    await fullOnSam()
+    const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 50, clientY: 60 })
+    unfocus().dispatchEvent(e)
+    flushSync()
+    expect(e.defaultPrevented).toBe(true)
+    expect(q('[role="menu"]')).not.toBeNull()
+    expect(callView.full).toEqual(SAM)
   })
 
   it('esc_while_typing_is_left_alone', async () => {

@@ -49,6 +49,7 @@ let pickerRoom: Room | null = null
 export class StreamRoom {
   private published: LocalVideoTrack | null = null
   private readonly watched = new Map<string, Watched>()
+  private lost: (() => void) | null = null
 
   private constructor(private readonly room: Room) {
     // The streamer's `#v` came back with a new publication, or ours rejoined (a full reconnect
@@ -66,6 +67,8 @@ export class StreamRoom {
         track.attach(w.el)
       }
     })
+    // LiveKit gave up reconnecting (our own disconnect() lands here too: the store tells them apart)
+    room.on(RoomEvent.Disconnected, () => this.lost?.())
     room.on(RoomEvent.Reconnected, () => {
       for (const w of this.watched.values()) {
         const pub = this.screenOf(w.streamer)
@@ -141,6 +144,11 @@ export class StreamRoom {
       width: s.width ?? 0,
       height: s.height ?? 0,
     }
+  }
+
+  /** `cb` when the connection is gone for good. */
+  onLost(cb: () => void): void {
+    this.lost = cb
   }
 
   get connected(): boolean {
