@@ -595,6 +595,14 @@ describe('quotes', () => {
     expect(s.reads['Q1'].mentions).toBe(0)
   })
 
+  it('a system reply\'s mention was never counted, so deleting it lowers nothing', () => {
+    let s = created(qready(), reply('R1', 'M1', { author_id: 'U2', kind: 'system', mentions: ['U1'] }))
+    expect(s.reads['Q1'].mentions).toBe(0)
+    s = { ...s, reads: { ...s.reads, Q1: { ...s.reads['Q1'], mentions: 1 } } } // another counted mention
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: 'R1', author_id: 'U2', mentions: ['U1'], thread_root_id: 'M1' } }, 0)
+    expect(s.reads['Q1'].mentions).toBe(1)
+  })
+
   it('removing a channel prunes its gone replies too', () => {
     let s = created(withQuote(), reply('R1', 'M1'))
     s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: 'R1', author_id: 'U2', mentions: [], thread_root_id: 'M1' } }, 0)

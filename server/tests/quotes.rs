@@ -3493,6 +3493,8 @@ async fn a_channel_count_ignores_other_channels_reply_mentions() {
     let f = fixture().await;
     let q = f.quote().await;
     f.reply(&f.sam_t, q.id, "hey @alex").await;
+    // A second quotes channel with its own reply mention must not count here.
+    let (_ch2, _root2) = other_channel_reply_mention(&f).await;
     let mut ws = hello(&f.app, &f.alex_t).await;
     f.quote().await; // moves alex's point in this channel
     let e = loop {
@@ -3512,4 +3514,52 @@ async fn a_channel_count_ignores_other_channels_reply_mentions() {
         ),
         "{e:?}"
     );
+}
+
+/// A second quotes channel in the fixture's server with a quote and a reply that mentions alex.
+async fn other_channel_reply_mention(f: &Fixture) -> (Channel, Message) {
+    let ch2 = create_quotes(&f.app, &f.alex_t, f.server).await;
+    let q: Message = post_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/quotes", ch2.id),
+        json!({ "lines": [f.say(f.sam, "x")] }),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let r = post_json(
+        &f.app,
+        &f.sam_t,
+        &format!("/channels/{}/messages", ch2.id),
+        json!({ "content": "hey @alex", "thread_root_id": q.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    (ch2, q)
+}
+
+#[tokio::test]
+async fn ready_does_not_list_threads_of_channels_without_a_read_state() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    f.reply(&f.sam_t, q.id, "hey @alex").await;
+    let (ch2, root2) = other_channel_reply_mention(&f).await;
+    let (_ws, ready) = hello_ready(&f.app, &f.alex_t).await;
+    let mut roots: Vec<_> = ready.thread_seen.iter().map(|p| p.root_id).collect();
+    roots.sort();
+    let mut want = vec![q.id, root2.id];
+    want.sort();
+    assert_eq!(roots, want);
+    // No read state for the channel: its mentions aren't counted, so its thread isn't listed.
+    sqlx::query("DELETE FROM read_states WHERE user_id = ? AND channel_id = ?")
+        .bind(f.alex.to_string())
+        .bind(ch2.id.to_string())
+        .execute(&f.app.db)
+        .await
+        .unwrap();
+    let (_ws, ready) = hello_ready(&f.app, &f.alex_t).await;
+    let roots: Vec<_> = ready.thread_seen.iter().map(|p| p.root_id).collect();
+    assert_eq!(roots, vec![q.id]);
 }

@@ -65,9 +65,10 @@ pub async fn mentions_for(db: &SqlitePool, user: UserId, channel: ChannelId) -> 
 
 /// The reply mentions still counted for a user: a mention in a live reply of a live quote, after the
 /// user's seen point for that quote. Shared by the per-channel counts and the seen-point list, so
-/// the two can never disagree. Binds: user, channel (or NULL for all), channel.
+/// the two can never disagree: only channels the user has a read state for. Binds: user, channel (or NULL for all), channel.
 const COUNTED_REPLY_MENTIONS: &str = "FROM mentions mn JOIN messages m ON m.id = mn.message_id
     JOIN messages root ON root.id = m.thread_root_id
+    JOIN read_states rs0 ON rs0.user_id = mn.user_id AND rs0.channel_id = m.channel_id
     LEFT JOIN thread_reads tr ON tr.user_id = mn.user_id AND tr.root_id = m.thread_root_id
     WHERE mn.user_id = ? AND (? IS NULL OR m.channel_id = ?) AND m.thread_root_id IS NOT NULL
       AND m.deleted_at IS NULL AND root.deleted_at IS NULL

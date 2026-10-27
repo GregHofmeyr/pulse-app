@@ -232,7 +232,9 @@ function replyDeleted(s: AppState, e: Extract<Event, { t: 'MessageDeleted' }>['d
   if (already) return s
   const rootMsg = s.messages[c]?.find((m) => m.id === root)
   const read = s.reads[c]
-  const mentioned = !!s.me && mentions.includes(s.me.id) && author_id !== s.me.id
+  // Counted on creation only for a normal reply from someone else (see replyCreated).
+  const kind = list?.find((x) => x.id === id)?.kind ?? 'normal'
+  const mentioned = !!s.me && mentions.includes(s.me.id) && author_id !== s.me.id && kind === 'normal'
   // Only a mention not yet cleared by opening the thread is still in the count.
   // Where the user's seen point is: from Ready or a ThreadSeen, the loaded quote, or (a reply that
   // arrived live this session) nothing seen yet. Unknown: Ready lists every thread with a counted
