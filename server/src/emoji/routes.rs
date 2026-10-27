@@ -11,7 +11,7 @@ use crate::auth::AuthUser;
 use crate::db::{begin_write, now};
 use crate::error::{AppError, AppResult};
 use crate::limits::caps;
-use crate::media::{MediaKind, valid_hash};
+use crate::media::{MediaKind, process, valid_hash};
 use crate::servers::routes::is_server_member;
 
 pub fn router() -> Router<AppState> {
@@ -72,12 +72,21 @@ async fn create(
     let id = next_ulid().to_string();
     // Checked under the write lock, so cleanup can't remove the media before the insert.
     let mut tx = begin_write(&s.db).await?;
-    let media: Option<(i64,)> =
-        sqlx::query_as("SELECT frames FROM media WHERE hash = ? AND kind = ?")
-            .bind(&req.media_hash)
-            .bind(MediaKind::Emoji.as_str())
-            .fetch_optional(&mut *tx)
-            .await?;
+    // Equal bytes share one media row, kept with the kind that stored them first: a quote
+    // picture that came out exactly emoji-shaped (a 128² square within the emoji size cap) is
+    // the same file an emoji upload of it would have made, so it counts too.
+    let media: Option<(i64,)> = sqlx::query_as(
+        "SELECT frames FROM media WHERE hash = ?
+           AND (kind = ? OR (kind = ? AND width = ? AND height = ? AND size <= ?))",
+    )
+    .bind(&req.media_hash)
+    .bind(MediaKind::Emoji.as_str())
+    .bind(MediaKind::Quote.as_str())
+    .bind(process::SIZE)
+    .bind(process::SIZE)
+    .bind(process::MAX_OUTPUT as i64)
+    .fetch_optional(&mut *tx)
+    .await?;
     let Some((frames,)) = media else {
         return Err(upload_missing());
     };

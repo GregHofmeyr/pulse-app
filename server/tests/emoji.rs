@@ -225,6 +225,57 @@ async fn media_must_exist_and_be_emoji_kind() {
     assert_eq!(r.status(), 400);
 }
 
+/// A 128×128 picture comes out of the quote and emoji pipelines as the same bytes, so both
+/// uploads share one media row; whichever kind stored it first, the emoji can still be made.
+#[tokio::test]
+async fn emoji_from_bytes_first_stored_as_a_quote_image() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    let img = RgbaImage::from_pixel(128, 128, Rgba([200, 40, 90, 255]));
+    let mut out = Cursor::new(Vec::new());
+    img.write_to(&mut out, ImageFormat::Png).unwrap();
+    let bytes = out.into_inner();
+    let mut hashes = Vec::new();
+    for path in ["/media/quote", "/media/emoji"] {
+        let r = app
+            .http
+            .post(app.url(path))
+            .bearer_auth(&alex)
+            .body(bytes.clone())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 200, "{path}");
+        hashes.push(r.json::<MediaInfo>().await.unwrap().hash);
+    }
+    assert_eq!(hashes[0], hashes[1], "both pipelines give the same bytes");
+    create_ok(&app, &alex, srv.id, "shared", &hashes[1]).await;
+}
+
+/// A big quote picture is still not an emoji.
+#[tokio::test]
+async fn emoji_refuses_a_quote_sized_picture() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    let img = RgbaImage::from_pixel(300, 200, Rgba([200, 40, 90, 255]));
+    let mut out = Cursor::new(Vec::new());
+    img.write_to(&mut out, ImageFormat::Png).unwrap();
+    let r = app
+        .http
+        .post(app.url("/media/quote"))
+        .bearer_auth(&alex)
+        .body(out.into_inner())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let media: MediaInfo = r.json().await.unwrap();
+    let r = create(&app, &alex, srv.id, "big", &media.hash).await;
+    assert_eq!(r.status(), 400);
+}
+
 #[tokio::test]
 async fn rename_and_delete() {
     let app = spawn().await;
