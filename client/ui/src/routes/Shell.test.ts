@@ -61,6 +61,28 @@ afterEach(async () => {
 })
 
 describe('Shell', () => {
+  it('holds animation still while live, and lets go when live ends or the shell goes', async () => {
+    const { motion } = await import('../lib/animate.svelte')
+    app.state = emptyState()
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    flushSync()
+    const live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false } as typeof stream.live
+    stream.live = live
+    flushSync()
+    expect(motion.streaming).toBe(true)
+    expect(document.body.classList.contains('streaming')).toBe(true)
+    stream.live = null
+    flushSync()
+    expect(motion.streaming).toBe(false)
+    stream.live = live
+    flushSync()
+    unmount(cmp)
+    cmp = undefined
+    expect(motion.streaming).toBe(false)
+    expect(document.body.classList.contains('streaming')).toBe(false)
+    stream.live = null
+  })
+
   it('server settings and the server menu close when you switch server', () => {
     app.state = { ...emptyState(), servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }, { id: 'S2', name: 'Beta', icon_hash: null }] }
     cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
