@@ -98,6 +98,9 @@ pub(crate) async fn load(db: &SqlitePool, id: MessageId) -> AppResult<Option<Mes
             .remove(&m.id)
             .unwrap_or_default();
     }
+    let mut one = [m];
+    crate::quotes::attach(db, None, &mut one).await?;
+    let [m] = one;
     Ok(Some(m))
 }
 
@@ -148,6 +151,7 @@ async fn list(
         m.mentions = map.remove(&m.id).unwrap_or_default();
         m.reactions = reacted.remove(&m.id).unwrap_or_default();
     }
+    crate::quotes::attach(&s.db, Some(me), &mut page).await?;
     Ok(Json(page))
 }
 
@@ -331,6 +335,11 @@ async fn edit(
         return Err(AppError::TooManyRequests);
     }
     let mut msg = own_message(&s.db, me, id).await?;
+    if msg.quote.is_some() {
+        return Err(AppError::BadRequest(
+            "quotes can't be edited like messages".into(),
+        ));
+    }
     msg.content = clean(&req.content)?;
     msg.edited_at = Some(now());
     // Guarded: a delete that commits between our read and this write wins.

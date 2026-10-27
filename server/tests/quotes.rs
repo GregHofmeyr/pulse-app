@@ -7,7 +7,7 @@ use std::time::Duration;
 use common::*;
 use futures::{SinkExt, StreamExt};
 use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
-use pulse_protocol::ids::ChannelId;
+use pulse_protocol::ids::{ChannelId, MessageId};
 use pulse_protocol::rest::{Channel, ChannelKind};
 use serde_json::json;
 use sqlx::ConnectOptions;
@@ -371,4 +371,556 @@ async fn connect_works_for_an_in_memory_database() {
         .await
         .unwrap();
     assert_eq!(n, 0);
+}
+
+// ---------- posting and reading ----------
+
+use pulse_protocol::ids::{ServerId, UserId};
+use pulse_protocol::rest::{MediaInfo, Message};
+
+struct Fixture {
+    app: TestApp,
+    alex: UserId,
+    alex_t: String,
+    sam: UserId,
+    sam_t: String,
+    server: ServerId,
+    ch: Channel,
+}
+
+/// alex and sam in one server with a quotes channel.
+async fn fixture() -> Fixture {
+    let app = spawn().await;
+    let (alex, alex_t) = register(&app, "alex").await;
+    let (sam, sam_t) = register(&app, "sam").await;
+    let s = create_server(&app, &alex_t, "Main").await;
+    let r = post_json(&app, &sam_t, &format!("/servers/{}/join", s.id), json!({})).await;
+    assert_eq!(r.status(), 204);
+    let ch = create_quotes(&app, &alex_t, s.id).await;
+    Fixture {
+        app,
+        alex,
+        alex_t,
+        sam,
+        sam_t,
+        server: s.id,
+        ch,
+    }
+}
+
+impl Fixture {
+    async fn post(&self, token: &str, body: serde_json::Value) -> reqwest::Response {
+        post_json(
+            &self.app,
+            token,
+            &format!("/channels/{}/quotes", self.ch.id),
+            body,
+        )
+        .await
+    }
+    async fn post_lines(&self, lines: serde_json::Value) -> reqwest::Response {
+        self.post(&self.alex_t, json!({ "lines": lines })).await
+    }
+    async fn status(&self, lines: serde_json::Value) -> u16 {
+        self.post_lines(lines).await.status().as_u16()
+    }
+    fn say(&self, who: UserId, text: &str) -> serde_json::Value {
+        json!({ "speaker_id": who, "text": text })
+    }
+}
+
+fn png_bytes() -> Vec<u8> {
+    let img = image::RgbaImage::from_pixel(64, 32, image::Rgba([10, 120, 240, 255]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+fn gif_bytes() -> Vec<u8> {
+    use image::codecs::gif::GifEncoder;
+    use image::{Delay, Frame};
+    let mut out = Vec::new();
+    {
+        let mut enc = GifEncoder::new(&mut out);
+        for i in 0..3 {
+            let img = image::RgbaImage::from_pixel(32, 16, image::Rgba([i * 80, 40, 90, 255]));
+            enc.encode_frame(Frame::from_parts(
+                img,
+                0,
+                0,
+                Delay::from_numer_denom_ms(50, 1),
+            ))
+            .unwrap();
+        }
+    }
+    out
+}
+
+async fn upload(f: &Fixture, path: &str, body: Vec<u8>) -> MediaInfo {
+    let r = f
+        .app
+        .http
+        .post(f.app.url(path))
+        .bearer_auth(&f.alex_t)
+        .header("content-type", "application/octet-stream")
+        .body(body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn posts_a_two_line_quote() {
+    let f = fixture().await;
+    let r = f
+        .post_lines(json!([
+            f.say(f.sam, "“this is a quote”"),
+            f.say(f.alex, "and this builds on it"),
+        ]))
+        .await;
+    assert_eq!(r.status(), 200);
+    let m: Message = r.json().await.unwrap();
+    assert_eq!(m.channel_id, f.ch.id);
+    assert_eq!(m.author_id, Some(f.alex));
+    assert!(m.reactions.is_empty());
+    let q = m.quote.clone().unwrap();
+    assert_eq!(q.lines.len(), 2);
+    assert_eq!(q.lines[0].speaker_id, Some(f.sam));
+    assert_eq!(q.lines[0].text.as_deref(), Some("this is a quote"));
+    assert_eq!(q.lines[1].speaker_id, Some(f.alex));
+    assert_eq!(q.lines[1].text.as_deref(), Some("and this builds on it"));
+    let year: i32 = chrono::Utc::now().format("%Y").to_string().parse().unwrap();
+    assert_eq!(q.year, year);
+    assert_eq!(q.said_on, None);
+    assert_eq!(
+        (q.reply_count, q.last_reply_id, q.replies_seen),
+        (0, None, None)
+    );
+    assert!(q.wins.is_empty());
+    assert!(
+        q.lines
+            .iter()
+            .all(|l| l.awards == 0 && l.awarders.is_empty() && !l.awarded)
+    );
+    assert_eq!(
+        m.content,
+        "“this is a quote” — sam\n“and this builds on it” — alex"
+    );
+
+    let page: Vec<Message> =
+        get_json(&f.app, &f.sam_t, &format!("/channels/{}/messages", f.ch.id)).await;
+    assert_eq!(page.len(), 1);
+    assert_eq!(page[0].quote, Some(q));
+    assert_eq!(page[0].id, m.id);
+}
+
+#[tokio::test]
+async fn a_plain_name_speaker_is_kept() {
+    let f = fixture().await;
+    let r = f
+        .post_lines(json!([{ "speaker_name": "  A  Friend ", "text": "hello" }]))
+        .await;
+    assert_eq!(r.status(), 200);
+    let m: Message = r.json().await.unwrap();
+    let l = &m.quote.unwrap().lines[0];
+    assert_eq!(l.speaker_name.as_deref(), Some("A  Friend"));
+    assert_eq!(l.speaker_id, None);
+    let key: String = sqlx::query_scalar("SELECT speaker_key FROM quote_lines WHERE id = ?")
+        .bind(l.id.to_string())
+        .fetch_one(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(key, "a friend");
+}
+
+#[tokio::test]
+async fn line_rules() {
+    let f = fixture().await;
+    let sam = f.say(f.sam, "x");
+    assert_eq!(f.status(json!([])).await, 400, "no lines");
+    assert_eq!(
+        f.status(json!(vec![sam.clone(); 11])).await,
+        400,
+        "11 lines"
+    );
+    let png = upload(&f, "/media/quote", png_bytes()).await;
+    assert_eq!(
+        f.status(json!([{ "speaker_id": f.sam, "text": "x", "media_hash": png.hash }]))
+            .await,
+        400,
+        "text and media"
+    );
+    assert_eq!(
+        f.status(json!([{ "speaker_id": f.sam }])).await,
+        400,
+        "neither"
+    );
+    assert_eq!(
+        f.status(json!([{ "speaker_id": f.sam, "speaker_name": "Bo", "text": "x" }]))
+            .await,
+        400,
+        "both speakers"
+    );
+    assert_eq!(f.status(json!([{ "text": "x" }])).await, 400, "no speaker");
+    assert_eq!(
+        f.status(json!([f.say(f.sam, "“ ”")])).await,
+        400,
+        "empty after stripping"
+    );
+    assert_eq!(
+        f.status(json!([f.say(f.sam, &"a".repeat(4001))])).await,
+        400,
+        "4001 chars"
+    );
+    assert_eq!(
+        f.status(json!([{ "speaker_name": "n".repeat(33), "text": "x" }]))
+            .await,
+        400,
+        "33-char name"
+    );
+    assert_eq!(
+        f.status(json!([{ "speaker_name": "  ", "text": "x" }]))
+            .await,
+        400,
+        "blank name"
+    );
+    assert_eq!(
+        f.status(json!([{ "speaker_id": f.sam, "text": "x", "caption": "c" }]))
+            .await,
+        400,
+        "caption without media"
+    );
+    assert_eq!(
+        f.status(json!([{ "speaker_id": f.sam, "media_hash": "0".repeat(64) }]))
+            .await,
+        400,
+        "unknown media"
+    );
+    let (outsider, _) = register(&f.app, "robin").await;
+    assert_eq!(
+        f.status(json!([f.say(outsider, "x")])).await,
+        400,
+        "not a member"
+    );
+    assert_eq!(f.status(json!(vec![sam; 10])).await, 200, "10 lines");
+    assert_eq!(
+        f.status(json!([f.say(f.sam, &"a".repeat(4000))])).await,
+        200
+    );
+    assert_eq!(
+        f.status(json!([{ "speaker_name": "n".repeat(32), "text": "x" }]))
+            .await,
+        200
+    );
+}
+
+#[tokio::test]
+async fn image_lines_use_the_media_row() {
+    let f = fixture().await;
+    let still = upload(&f, "/media/quote", png_bytes()).await;
+    let gif = upload(&f, "/media/quote", gif_bytes()).await;
+    let r = f
+        .post_lines(json!([
+            { "speaker_id": f.sam, "media_hash": still.hash, "caption": "  look " },
+            { "speaker_name": "Bo", "media_hash": gif.hash },
+        ]))
+        .await;
+    assert_eq!(r.status(), 200);
+    let m: Message = r.json().await.unwrap();
+    let lines = m.quote.unwrap().lines;
+    let media = lines[0].media.clone().unwrap();
+    assert_eq!(
+        (
+            media.hash.as_str(),
+            media.still_hash.clone(),
+            media.width,
+            media.height
+        ),
+        (still.hash.as_str(), None, still.width, still.height)
+    );
+    assert_eq!(lines[0].text, None);
+    assert_eq!(lines[0].caption.as_deref(), Some("look"));
+    let media = lines[1].media.clone().unwrap();
+    assert_eq!(media.still_hash, gif.still_hash);
+    assert!(media.still_hash.is_some());
+    assert_eq!(m.content, "[image]\n[image]");
+
+    // An animation's still is not itself a usable picture.
+    let still_of_gif = gif.still_hash.clone().unwrap();
+    assert_eq!(
+        f.status(json!([{ "speaker_id": f.sam, "media_hash": still_of_gif }]))
+            .await,
+        400
+    );
+    // An emoji upload is fine; identical bytes dedupe across kinds.
+    let emoji = upload(&f, "/media/emoji", png_bytes()).await;
+    assert_eq!(emoji.hash.len(), 64);
+}
+
+#[tokio::test]
+async fn today_sets_the_year_within_a_day() {
+    let f = fixture().await;
+    let utc = chrono::Utc::now().date_naive();
+    let posted_on = |m: &Message| {
+        let id = m.id.to_string();
+        let db = f.app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, String>("SELECT posted_on FROM quotes WHERE message_id = ?")
+                .bind(id)
+                .fetch_one(&db)
+                .await
+                .unwrap()
+        }
+    };
+    let cases = [
+        (utc.to_string(), utc.to_string()),
+        (
+            (utc - chrono::Days::new(1)).to_string(),
+            (utc - chrono::Days::new(1)).to_string(),
+        ),
+        (
+            (utc + chrono::Days::new(1)).to_string(),
+            (utc + chrono::Days::new(1)).to_string(),
+        ),
+        ((utc + chrono::Days::new(2)).to_string(), utc.to_string()),
+        ((utc - chrono::Days::new(2)).to_string(), utc.to_string()),
+        ("not-a-date".to_string(), utc.to_string()),
+        ("2026-13-45".to_string(), utc.to_string()),
+    ];
+    for (today, want) in cases {
+        let r = f
+            .post(
+                &f.alex_t,
+                json!({ "lines": [f.say(f.sam, "x")], "today": today }),
+            )
+            .await;
+        assert_eq!(r.status(), 200);
+        let m: Message = r.json().await.unwrap();
+        assert_eq!(posted_on(&m).await, want, "today = {today}");
+    }
+}
+
+#[tokio::test]
+async fn quotes_need_a_quotes_channel_and_membership() {
+    let f = fixture().await;
+    let body = json!({ "lines": [f.say(f.sam, "x")] });
+    let text = general(&f.app, &f.alex_t, f.server).await;
+    let r = post_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/quotes", text.id),
+        body.clone(),
+    )
+    .await;
+    assert_eq!(r.status(), 400, "text channel");
+    let (_, robin) = register(&f.app, "robin").await;
+    assert_eq!(
+        f.post(&robin, body.clone()).await.status(),
+        403,
+        "non-member"
+    );
+    let dm = create_dm(&f.app, &f.alex_t, &[f.sam]).await;
+    let r = post_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/quotes", dm.id),
+        body.clone(),
+    )
+    .await;
+    assert!(
+        matches!(r.status().as_u16(), 400 | 404),
+        "dm: {}",
+        r.status()
+    );
+    let missing = ChannelId::new();
+    let r = post_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{missing}/quotes"),
+        body,
+    )
+    .await;
+    assert_eq!(r.status(), 404);
+}
+
+#[tokio::test]
+async fn quotes_cant_be_edited_as_messages() {
+    let f = fixture().await;
+    let m: Message = f
+        .post_lines(json!([f.say(f.sam, "x")]))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let r = f
+        .app
+        .http
+        .patch(f.app.url(&format!("/messages/{}", m.id)))
+        .bearer_auth(&f.alex_t)
+        .json(&json!({ "content": "changed" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400);
+}
+
+#[tokio::test]
+async fn a_nonce_makes_posting_idempotent() {
+    let f = fixture().await;
+    let body = json!({ "lines": [f.say(f.sam, "x")], "nonce": "n-1" });
+    let a: Message = f.post(&f.alex_t, body.clone()).await.json().await.unwrap();
+    let b: Message = f.post(&f.alex_t, body).await.json().await.unwrap();
+    assert_eq!(a.id, b.id);
+    assert_eq!(b.quote, a.quote);
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM quotes")
+        .fetch_one(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+}
+
+#[tokio::test]
+async fn posting_publishes_and_moves_the_read_point() {
+    let f = fixture().await;
+    let mut ws = hello(&f.app, &f.sam_t).await;
+    let m: Message = f
+        .post_lines(json!([f.say(f.sam, "x")]))
+        .await
+        .json()
+        .await
+        .unwrap();
+    loop {
+        match next_frame(&mut ws).await.expect("MessageCreated") {
+            ServerFrame::Event(Event::MessageCreated { message, .. }) => {
+                assert_eq!(message.id, m.id);
+                let q = message.quote.unwrap();
+                assert!(q.replies_seen.is_none() && !q.lines[0].awarded);
+                break;
+            }
+            _ => continue,
+        }
+    }
+    let read: Option<String> = sqlx::query_scalar(
+        "SELECT last_read_message_id FROM read_states WHERE user_id = ? AND channel_id = ?",
+    )
+    .bind(f.alex.to_string())
+    .bind(f.ch.id.to_string())
+    .fetch_one(&f.app.db)
+    .await
+    .unwrap();
+    assert_eq!(read, Some(m.id.to_string()));
+}
+
+/// Awards, replies and links read through `attach`, set up by SQL until their routes exist.
+#[tokio::test]
+async fn reading_counts_awards_replies_and_wins() {
+    let f = fixture().await;
+    let (robin, _) = register(&f.app, "robin").await;
+    let m: Message = f
+        .post_lines(json!([
+            f.say(f.sam, "one"),
+            { "speaker_name": "A Friend", "text": "two" },
+        ]))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let lines = m.quote.clone().unwrap().lines;
+    let (l1, l2) = (lines[0].id.to_string(), lines[1].id.to_string());
+    let db = &f.app.db;
+    let exec = |q: String| async move { sqlx::query(&q).execute(db).await.unwrap() };
+    // Oldest first: sam (the speaker, uncounted), alex, robin.
+    for (giver, at) in [(f.sam, "01"), (f.alex, "02"), (robin, "03")] {
+        exec(format!(
+            "INSERT INTO quote_awards (line_id, giver_id, created_at) VALUES ('{l1}', '{giver}', '2026-01-01T00:00:{at}.000Z')"
+        ))
+        .await;
+    }
+    exec(format!(
+        "INSERT INTO quote_awards (line_id, giver_id, created_at) VALUES ('{l2}', '{robin}', '2026-01-01T00:00:01.000Z')"
+    ))
+    .await;
+    let read = |token: String| {
+        let (app, ch, qid) = (&f.app, f.ch.id, m.id);
+        async move {
+            let page: Vec<Message> =
+                get_json(app, &token, &format!("/channels/{ch}/messages")).await;
+            page.iter()
+                .find(|p| p.id == qid)
+                .unwrap()
+                .quote
+                .clone()
+                .unwrap()
+        }
+    };
+    let q = read(f.alex_t.clone()).await;
+    assert_eq!(
+        q.lines[0].awarders,
+        vec![f.alex, robin],
+        "own award not counted"
+    );
+    assert_eq!(q.lines[0].awards, 2);
+    assert!(q.lines[0].awarded);
+    assert_eq!(q.lines[1].awarders, vec![robin]);
+    assert!(!q.lines[1].awarded);
+    let q = read(f.sam_t.clone()).await;
+    assert!(
+        !q.lines[0].awarded,
+        "sam's own award is not counted, so not awarded"
+    );
+
+    // A link makes robin the effective speaker of "A Friend": robin's award on line 2 drops.
+    exec(format!(
+        "INSERT INTO speaker_links (server_id, name_key, name, user_id, linked_by, linked_at)
+         VALUES ('{}', 'a friend', 'A Friend', '{robin}', '{}', '2026-01-02T00:00:00.000Z')",
+        f.server, f.alex
+    ))
+    .await;
+    let q = read(f.alex_t.clone()).await;
+    assert_eq!(q.lines[1].awards, 0);
+    assert!(q.lines[1].awarders.is_empty());
+    // The raw speaker survives.
+    assert_eq!(q.lines[1].speaker_name.as_deref(), Some("A Friend"));
+    assert_eq!(q.lines[0].awards, 2, "line 1 unaffected");
+
+    // Replies count live ones, and sam has seen up to the first.
+    let mid = m.id.to_string();
+    let (r1, r2, r3) = (MessageId::new(), MessageId::new(), MessageId::new());
+    for (id, deleted) in [(r1, false), (r2, false), (r3, true)] {
+        exec(format!(
+            "INSERT INTO messages (id, channel_id, author_id, content, created_at, thread_root_id, deleted_at)
+             VALUES ('{id}', '{}', '{}', 'r', '2026-01-03T00:00:00.000Z', '{mid}', {})",
+            f.ch.id,
+            f.sam,
+            if deleted { "'2026-01-04T00:00:00.000Z'" } else { "NULL" }
+        ))
+        .await;
+    }
+    exec(format!(
+        "INSERT INTO thread_reads (user_id, root_id, last_seen_id) VALUES ('{}', '{mid}', '{r1}')",
+        f.sam
+    ))
+    .await;
+    let q = read(f.sam_t.clone()).await;
+    assert_eq!(
+        (q.reply_count, q.last_reply_id, q.replies_seen),
+        (2, Some(r2), Some(r1))
+    );
+    let q = read(f.alex_t.clone()).await;
+    assert_eq!((q.reply_count, q.replies_seen), (2, None));
+
+    // Wins come from qoty_winners.
+    exec(format!(
+        "INSERT INTO qoty_events (id, server_id, year, started_by, started_at, ended_at, end_reason)
+         VALUES ('e1', '{}', 2025, '{}', '2025-12-01T00:00:00.000Z', '2025-12-02T00:00:00.000Z', 'early')",
+        f.server, f.alex
+    ))
+    .await;
+    exec(format!(
+        "INSERT INTO qoty_winners (event_id, message_id, votes) VALUES ('e1', '{mid}', 3)"
+    ))
+    .await;
+    assert_eq!(read(f.alex_t.clone()).await.wins, vec![2025]);
 }

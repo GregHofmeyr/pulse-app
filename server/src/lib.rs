@@ -10,6 +10,7 @@ pub mod hygiene;
 pub mod limits;
 pub mod media;
 pub mod messages;
+pub mod quotes;
 pub mod reads;
 pub mod reports;
 pub mod servers;
@@ -35,6 +36,7 @@ pub fn router(state: AppState) -> Router {
         .merge(servers::routes::router())
         .merge(messages::routes::router())
         .merge(messages::reactions::router())
+        .merge(quotes::routes::router())
         .merge(dms::routes::router())
         .merge(voice::routes::router())
         .merge(streams::routes::router())
