@@ -10,6 +10,9 @@ use pulse_client::voice::{AudioMode, Connection, VoiceEvent, VoiceManager};
 use pulse_protocol::rest::ChannelKind;
 use pulse_server::testing;
 
+mod common;
+use common::livekit_turn;
+
 const DEV_SECRET: &str = "pulse-dev-secret-0123456789abcdefghij";
 
 /// The dev LiveKit's address: `PULSE_DEV_LIVEKIT_PORT` when set (`just voice-it-alt`, beside another
@@ -19,6 +22,28 @@ fn dev_livekit(scheme: &str) -> String {
     format!("{scheme}://127.0.0.1:{port}")
 }
 
+/// Polls `check` until it holds or `within` passes; whether it held. For start-up that takes
+/// longer on a loaded machine (subscriptions, publishes), so the tests wait for the event
+/// itself instead of a fixed time.
+#[must_use]
+async fn eventually<F, Fut>(within: Duration, mut check: F) -> bool
+where
+    F: FnMut() -> Fut,
+    Fut: std::future::Future<Output = bool>,
+{
+    let deadline = tokio::time::Instant::now() + within;
+    loop {
+        if check().await {
+            return true;
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return false;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+/// Publishes spikes/voice/tone.ogg (8 s) as `bot` in `room` and returns once it has all been sent.
 fn bot_publishes_tone(room: &str) {
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../../spikes/voice");
     let st = Command::new("docker")
@@ -47,16 +72,21 @@ fn bot_publishes_tone(room: &str) {
         ])
         .output()
         .expect("docker");
-    assert!(
-        st.status.success(),
-        "lk bot failed: {}",
-        String::from_utf8_lossy(&st.stderr)
-    );
+    let stderr = String::from_utf8_lossy(&st.stderr);
+    // livekit-cli (v2.18, and upstream still) can panic on its way out: with `--exit-after-publish`
+    // it closes its `done` channel when the file is done, then the disconnect its own leave causes
+    // closes it again ("close of closed channel"). That leave (CLIENT_INITIATED) only comes after
+    // the publish finished; a leave for any other reason, or none, is still a failure.
+    let exit_race = stderr.contains("published track")
+        && stderr.contains("server initiated leave\t{\"reason\": \"CLIENT_INITIATED\"}")
+        && stderr.contains("panic: close of closed channel");
+    assert!(st.status.success() || exit_race, "lk bot failed: {stderr}");
 }
 
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn receives_peer_audio_at_real_time_across_rejoins() {
+    let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
     cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
@@ -91,7 +121,15 @@ async fn receives_peer_audio_at_real_time_across_rejoins() {
         tokio::task::spawn_blocking(move || bot_publishes_tone(&r))
             .await
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(300)).await;
+        // the last of the tone drains from the jitter buffer: wait until nothing more arrives
+        let mut last = vm.mixer_pushed().await;
+        for _ in 0..15 {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            let now = vm.mixer_pushed().await;
+            if std::mem::replace(&mut last, now) == now {
+                break;
+            }
+        }
         let got = (vm.mixer_pushed().await - before) as f64;
         let expected = 8.0 * 48_000.0; // tone.ogg is 8 s
         let ratio = got / expected;
@@ -114,6 +152,7 @@ async fn receives_peer_audio_at_real_time_across_rejoins() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn rapid_join_leave_never_hangs() {
+    let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
     cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
@@ -183,6 +222,7 @@ async fn rapid_join_leave_never_hangs() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn mic_audio_is_not_sent_late_after_joining() {
+    let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
     cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
@@ -244,6 +284,7 @@ async fn mic_test_queue_on_real_devices() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn one_client_hears_another_at_real_time() {
+    let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
     cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
@@ -281,10 +322,21 @@ async fn one_client_hears_another_at_real_time() {
         .await
         .unwrap();
     }
-    tokio::time::sleep(Duration::from_secs(2)).await; // subscription start-up
-    let before = b.mixer_pushed().await;
+    // subscription start-up: sam's receive task is running and alex's frames reach the mixer
+    assert!(
+        eventually(Duration::from_secs(15), || async {
+            b.rx_len().await == 1 && b.mixer_pushed().await > 0
+        })
+        .await,
+        "sam never received alex (rx tasks {})",
+        b.rx_len().await
+    );
+    // past the jitter buffer's start-up, so the window measures the steady state
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let (before, t) = (b.mixer_pushed().await, std::time::Instant::now());
     tokio::time::sleep(Duration::from_secs(4)).await;
-    let ratio = (b.mixer_pushed().await - before) as f64 / (4.0 * 48_000.0);
+    // over the time that really passed: a loaded machine oversleeps
+    let ratio = (b.mixer_pushed().await - before) as f64 / (t.elapsed().as_secs_f64() * 48_000.0);
     println!("sam receives alex at {ratio:.2}x real time");
     assert!((0.9..1.1).contains(&ratio), "{ratio:.2}x real time");
     a.leave().await;
@@ -296,6 +348,7 @@ async fn one_client_hears_another_at_real_time() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn real_devices_are_not_reopened_without_a_reason() {
+    let _turn = livekit_turn().await;
     // also shows the voice log lines (join phases, path stats) on a real machine
     let _ = tracing_subscriber::fmt()
         .with_env_filter("info,libwebrtc=warn")
@@ -377,6 +430,7 @@ async fn reopening_one_side_leaves_the_other_alone() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn leaving_while_devices_open_leaves_no_ghost() {
+    let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
     cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
@@ -407,15 +461,8 @@ async fn leaving_while_devices_open_leaves_no_ghost() {
         .await
         .unwrap();
     let others = || watcher.remote_participants().len();
-    let wait_for = |want: usize| async move {
-        for _ in 0..50 {
-            if others() == want {
-                return true;
-            }
-            tokio::time::sleep(Duration::from_millis(100)).await;
-        }
-        false
-    };
+    let wait_for =
+        |want: usize, within: Duration| eventually(within, move || async move { others() == want });
 
     let vm = std::sync::Arc::new(VoiceManager::new(std::sync::Arc::new(|_| {})));
     let (vm2, api2, lounge_id) = (vm.clone(), api.clone(), lounge.id);
@@ -425,14 +472,22 @@ async fn leaving_while_devices_open_leaves_no_ghost() {
             &alex,
             lounge_id,
             AudioConfig::default(),
-            AudioMode::SlowNull(48_000, Duration::from_secs(5)),
+            // devices still opening long after the room connected, even on a loaded machine
+            AudioMode::SlowNull(48_000, Duration::from_secs(15)),
         )
         .await
     });
-    assert!(wait_for(1).await, "alex's room never connected");
+    // well inside the devices' 15 s, so the leave below lands while they are still opening
+    assert!(
+        wait_for(1, Duration::from_secs(10)).await,
+        "alex's room never connected"
+    );
     vm.leave().await;
     assert!(joining.await.unwrap().is_err(), "the join was cancelled");
-    assert!(wait_for(0).await, "alex is still in the room: a ghost");
+    assert!(
+        wait_for(0, Duration::from_secs(15)).await,
+        "alex is still in the room: a ghost"
+    );
     watcher.close().await.unwrap();
 }
 
@@ -440,6 +495,7 @@ async fn leaving_while_devices_open_leaves_no_ghost() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn connected_shows_before_the_mic_is_published() {
+    let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
     cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
@@ -476,12 +532,15 @@ async fn connected_shows_before_the_mic_is_published() {
     )
     .await
     .unwrap();
-    for _ in 0..100 {
-        if seen.lock().unwrap().iter().any(|t| t == "mic:true") {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
+    // the publish is a round trip after "connected": slower on a loaded machine, so wait for it
+    assert!(
+        eventually(Duration::from_secs(15), || async {
+            seen.lock().unwrap().iter().any(|t| t == "mic:true")
+        })
+        .await,
+        "mic never published: {:?}",
+        seen.lock().unwrap()
+    );
     let seen = seen.lock().unwrap().clone();
     let connected = seen
         .iter()
@@ -500,8 +559,9 @@ async fn connected_shows_before_the_mic_is_published() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn stages_arrive_in_order() {
+    let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
-    cfg.livekit_url = "ws://127.0.0.1:7880".into();
+    cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
     let app = testing::spawn_with(cfg).await;
     let (_, token) = testing::register(&app, "alex").await;
@@ -539,17 +599,15 @@ async fn stages_arrive_in_order() {
     )
     .await
     .unwrap();
-    for _ in 0..100 {
-        if seen.lock().unwrap().iter().any(|t| t == "stage:connected") {
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(50)).await;
-    }
-    let seen = seen.lock().unwrap().clone();
     assert!(
-        seen.iter().any(|t| t == "stage:connected"),
-        "stage:connected never arrived: {seen:?}"
+        eventually(Duration::from_secs(15), || async {
+            seen.lock().unwrap().iter().any(|t| t == "stage:connected")
+        })
+        .await,
+        "stage:connected never arrived: {:?}",
+        seen.lock().unwrap()
     );
+    let seen = seen.lock().unwrap().clone();
     assert_eq!(
         seen,
         [
@@ -569,6 +627,7 @@ async fn stages_arrive_in_order() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn switching_channels_goes_straight_to_the_new_room() {
+    let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
     cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
@@ -640,6 +699,7 @@ async fn switching_channels_goes_straight_to_the_new_room() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn a_failed_switch_ends_disconnected_and_the_old_room_stays_left() {
+    let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
     cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
@@ -712,6 +772,7 @@ async fn a_failed_switch_ends_disconnected_and_the_old_room_stays_left() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn switching_keeps_the_audio_pipeline_and_leave_drops_it() {
+    let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
     cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
@@ -771,6 +832,7 @@ async fn two_tracks_from_one_person_both_play() {
     use livekit::webrtc::audio_source::native::NativeAudioSource;
     use livekit::webrtc::audio_source::{AudioSourceOptions, RtcAudioSource};
 
+    let _turn = livekit_turn().await;
     let mut cfg = testing::test_config();
     cfg.livekit_url = dev_livekit("ws");
     cfg.livekit_secret = DEV_SECRET.into();
@@ -829,13 +891,13 @@ async fn two_tracks_from_one_person_both_play() {
         .await
         .unwrap();
 
-    // feed both with a tone for 5 s at real time (outlasts every check below)
+    // feed both with a tone at real time until the end of the test (aborted there)
     let feed = |src: NativeAudioSource| {
         tokio::spawn(async move {
             let tone: Vec<i16> = (0..480)
                 .map(|i| ((i as f32 * 0.13).sin() * 8000.0) as i16)
                 .collect();
-            for _ in 0..500 {
+            loop {
                 let frame = AudioFrame {
                     data: tone.clone().into(),
                     sample_rate: 48_000,
@@ -847,21 +909,41 @@ async fn two_tracks_from_one_person_both_play() {
         })
     };
     let (a, b) = (feed(mic_src), feed(game_src));
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    // subscribing to both takes a moment (longer on a loaded machine)
+    assert!(
+        eventually(Duration::from_secs(15), || async {
+            vm.rx_len().await >= 2 && vm.mixer_sources().await >= 2
+        })
+        .await,
+        "both tracks never arrived: rx tasks {}, mixer sources {}",
+        vm.rx_len().await,
+        vm.mixer_sources().await
+    );
+    // and stay one each: a late duplicate task or source would show up here
+    tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(vm.rx_len().await, 2, "one receive task per track");
     assert_eq!(vm.mixer_sources().await, 2, "both tracks in the mixer");
 
     lp.unpublish_track(&game_pub.sid()).await.unwrap();
-    tokio::time::sleep(Duration::from_secs(1)).await;
+    // the unsubscribe reaches alex a moment later
+    assert!(
+        eventually(Duration::from_secs(15), || async {
+            vm.rx_len().await <= 1 && vm.mixer_sources().await <= 1
+        })
+        .await,
+        "the unpublished track was never dropped: rx tasks {}, mixer sources {}",
+        vm.rx_len().await,
+        vm.mixer_sources().await
+    );
     assert_eq!(vm.rx_len().await, 1, "the mic task survives");
     assert_eq!(vm.mixer_sources().await, 1, "the mic source survives");
     let before = vm.mixer_pushed().await;
     // Frames alone could be WebRTC's silence: the tone itself must still be heard. A single 250 ms
     // window is not a reliable "heard" (measured: even one lone mic track gives an all-zero window
-    // now and then, so it is not about the second track), so look over ~3 s for any window with the tone.
+    // now and then, so it is not about the second track), so look over up to 10 s for any window with the tone.
     vm.mixer_levels().await; // start a fresh level window
     let mut heard = Vec::new();
-    for _ in 0..12 {
+    for _ in 0..40 {
         tokio::time::sleep(Duration::from_millis(250)).await;
         heard.extend(vm.mixer_levels().await);
         if heard.iter().any(|(_, l)| *l > 0.01) {

@@ -19,6 +19,9 @@ use pulse_protocol::ids::{ChannelId, ServerId, UserId};
 use pulse_protocol::rest::StreamRole;
 use pulse_server::testing;
 
+mod common;
+use common::livekit_turn;
+
 const DEV_SECRET: &str = "pulse-dev-secret-0123456789abcdefghij";
 
 /// The dev LiveKit's address: `PULSE_DEV_LIVEKIT_PORT` when set (`just voice-it-alt`, beside another
@@ -194,6 +197,7 @@ async fn audio_publish_accepted(room: &Room, source: TrackSource) -> bool {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn stream_room_never_sees_voice_tracks() {
+    let _turn = livekit_turn().await;
     let f = fixture().await;
     let bot = tokio::task::spawn_blocking({
         let room = f.channel.to_string();
@@ -247,6 +251,7 @@ async fn stream_room_never_sees_voice_tracks() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn v_ticket_cannot_publish_audio() {
+    let _turn = livekit_turn().await;
     let f = fixture().await;
     let (room, _events) = connect(&f, StreamRole::V, RoomOptions::default()).await;
     assert!(!audio_publish_accepted(&room, TrackSource::Microphone).await);
@@ -257,6 +262,7 @@ async fn v_ticket_cannot_publish_audio() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn a_ticket_publishes_screenshare_audio() {
+    let _turn = livekit_turn().await;
     let f = fixture().await;
     let (room, _events) = connect(&f, StreamRole::A, RoomOptions::default()).await;
     assert!(audio_publish_accepted(&room, TrackSource::ScreenshareAudio).await);
@@ -347,6 +353,7 @@ where
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn published_stream_audio_reaches_a_watcher() {
+    let _turn = livekit_turn().await;
     let f = fixture().await;
     let (_, sam_token) = member(&f, "sam").await;
     let (_, kim_token) = member(&f, "kim").await;
@@ -417,6 +424,7 @@ async fn published_stream_audio_reaches_a_watcher() {
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn leave_voice_closes_the_stream_connection() {
+    let _turn = livekit_turn().await;
     let f = fixture().await;
     let (closed, on_closed) = closed_log();
     let alex = StreamAudio::new(on_closed);
@@ -479,6 +487,7 @@ fn closed_log() -> (
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn a_room_closed_by_livekit_stops_publishing() {
+    let _turn = livekit_turn().await;
     let f = fixture().await;
     let (closed, on_closed) = closed_log();
     let alex = StreamAudio::new(on_closed);
