@@ -1992,3 +1992,67 @@ async fn seen_needs_server_membership() {
         .unwrap();
     assert_eq!(f.seen(&f.sam_t, q.id, r.id).await.status(), 403);
 }
+
+#[tokio::test]
+async fn a_reply_with_an_emoji_does_not_deadlock_ordered_writes() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let r = tokio::time::timeout(
+        Duration::from_secs(5),
+        f.reply_raw(
+            &f.sam_t,
+            json!({ "content": "ha 👍", "thread_root_id": q.id }),
+        ),
+    )
+    .await
+    .expect("a reply with an emoji must not hang");
+    assert_eq!(r.status(), 200);
+    let reply: Message = r.json().await.unwrap();
+    // Ordered writes still work afterwards.
+    let react = tokio::time::timeout(Duration::from_secs(5), f.react(&f.alex_t, reply.id, "🎉"))
+        .await
+        .expect("a reaction after it must not hang");
+    assert_eq!(react, 204);
+}
+
+#[tokio::test]
+async fn deleting_a_reply_publishes_under_the_order_lock() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let r = f.reply(&f.sam_t, q.id, "hey @alex").await;
+    let mut ws = hello(&f.app, &f.alex_t).await;
+    // While the lock is held, the delete must wait for it (it publishes under it)...
+    let guard = f.app.hub.in_order().await;
+    let (http, url, token) = (
+        f.app.http.clone(),
+        f.app.url(&format!("/messages/{}", r.id)),
+        f.sam_t.clone(),
+    );
+    let del = tokio::spawn(async move {
+        http.delete(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status()
+    });
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    assert!(
+        !del.is_finished(),
+        "the delete should be waiting on in_order"
+    );
+    drop(guard);
+    assert_eq!(del.await.unwrap(), 204);
+    // Its event arrives.
+    loop {
+        if let ServerFrame::Event(Event::MessageDeleted {
+            message_id,
+            thread_root_id,
+            ..
+        }) = next_frame(&mut ws).await.expect("MessageDeleted")
+        {
+            assert_eq!((message_id, thread_root_id), (r.id, Some(q.id)));
+            break;
+        }
+    }
+}

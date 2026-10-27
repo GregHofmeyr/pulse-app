@@ -263,7 +263,7 @@ async fn send(
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
     // MessageCreated of the replies around it: hold the publish order across both.
-    let _order = if req.thread_root_id.is_some() {
+    let order = if req.thread_root_id.is_some() {
         Some(s.hub.in_order().await)
     } else {
         None
@@ -365,7 +365,11 @@ async fn send(
             .await;
     }
     if !used.is_empty() {
-        let _order = s.hub.in_order().await;
+        // A reply already holds the order lock (tokio's mutex isn't reentrant).
+        let _order = match order {
+            Some(held) => held,
+            None => s.hub.in_order().await,
+        };
         crate::emoji::publish_frequent(&s, me).await;
     }
     Ok(Json(msg))
@@ -440,8 +444,9 @@ async fn remove(
     }
     let (msg, _) = own_message(&s.db, me, id).await?;
     let is_quote = msg.quote.is_some();
-    // A quote's delete also drops counts (reactions, awards): publish in commit order.
-    let _order = if is_quote {
+    // A quote's delete drops counts (reactions, awards) and a reply's changes mention counts that
+    // ThreadSeen deltas are measured against: publish in commit order.
+    let _order = if is_quote || msg.thread_root_id.is_some() {
         Some(s.hub.in_order().await)
     } else {
         None
