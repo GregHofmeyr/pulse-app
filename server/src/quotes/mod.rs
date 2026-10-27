@@ -252,7 +252,8 @@ pub async fn speakers_locked(
 
 /// Everything a deleted quote leaves behind, in the caller's transaction (the quote's own soft
 /// delete is the caller's): its reactions and awards go, its replies are soft-deleted, and its
-/// Quote of the Year options and their votes go. `qoty_winners` rows stay. The events to publish
+/// Quote of the Year options and votes in a live event go; an ended event keeps its own
+/// (and `qoty_winners` rows stay). The events to publish
 /// once committed: one `MessageDeleted` per reply that was live, carrying `thread_root_id`.
 pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppResult<Vec<Event>> {
     let id = message_id.to_string();
@@ -266,18 +267,21 @@ pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppR
     .bind(&id)
     .execute(&mut *tx)
     .await?;
+    // Only a live event loses the quote; an ended one keeps its options and votes as history.
     // Votes go with their option (foreign key cascade), but not by luck: say so.
-    sqlx::query(
-        "DELETE FROM qoty_votes WHERE message_id = ? AND event_id IN (SELECT event_id FROM qoty_options WHERE message_id = ?)",
-    )
-    .bind(&id)
+    const LIVE: &str = "event_id IN (SELECT id FROM qoty_events WHERE ended_at IS NULL)";
+    sqlx::query(&format!(
+        "DELETE FROM qoty_votes WHERE message_id = ? AND {LIVE}"
+    ))
     .bind(&id)
     .execute(&mut *tx)
     .await?;
-    sqlx::query("DELETE FROM qoty_options WHERE message_id = ?")
-        .bind(&id)
-        .execute(&mut *tx)
-        .await?;
+    sqlx::query(&format!(
+        "DELETE FROM qoty_options WHERE message_id = ? AND {LIVE}"
+    ))
+    .bind(&id)
+    .execute(&mut *tx)
+    .await?;
 
     let replies: Vec<(String, String, Option<String>)> = sqlx::query_as(
         "UPDATE messages SET content = '', deleted_at = ?

@@ -196,21 +196,42 @@ pub async fn award_totals(db: &SqlitePool, server: ServerId) -> AppResult<Vec<Sp
     .bind(server.to_string())
     .fetch_all(db)
     .await?;
-    let links = links_for(db, &[server.to_string()])
-        .await?
-        .remove(&server.to_string())
-        .unwrap_or_default();
-
     let mut speakers = Vec::new();
-    for (speaker, name, key, giver) in rows {
-        let speaker: Option<UserId> = parse_opt(speaker.as_deref())?;
+    for (who, key, name, giver) in with_speakers(db, server, rows).await? {
         let giver: UserId = parse_id(&giver)?;
-        let who = effective_speaker(speaker, key.as_deref(), &links);
         if who != Some(giver) {
             speakers.push((who, key, name));
         }
     }
     Ok(ranked(speakers))
+}
+
+/// A line's speaker as stored: (speaker_id, speaker_name, speaker_key), plus `T`.
+pub(super) type StoredSpeaker<T> = (Option<String>, Option<String>, Option<String>, T);
+/// A line's (effective speaker, speaker_key, speaker_name), plus `T`.
+pub(super) type Speaker<T> = (Option<UserId>, Option<String>, Option<String>, T);
+
+/// Put each row's effective speaker in `server` first.
+pub(super) async fn with_speakers<T>(
+    db: &SqlitePool,
+    server: ServerId,
+    rows: Vec<StoredSpeaker<T>>,
+) -> AppResult<Vec<Speaker<T>>> {
+    let links = links_for(db, &[server.to_string()])
+        .await?
+        .remove(&server.to_string())
+        .unwrap_or_default();
+    rows.into_iter()
+        .map(|(speaker, name, key, extra)| {
+            let speaker: Option<UserId> = parse_opt(speaker.as_deref())?;
+            Ok((
+                effective_speaker(speaker, key.as_deref(), &links),
+                key,
+                name,
+                extra,
+            ))
+        })
+        .collect()
 }
 
 /// One count per entry, grouped by speaker and most first (ties by name, for a stable order).

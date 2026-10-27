@@ -1,6 +1,7 @@
 use axum::extract::{Path, Query, State};
 use axum::routing::{get, post, put};
 use axum::{Json, Router};
+use futures::TryStreamExt;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
@@ -304,9 +305,14 @@ async fn top_quotes(
 
 /// Lines per effective speaker over the live quotes of `server`, most first.
 async fn most_quoted(db: &SqlitePool, server: ServerId) -> AppResult<Vec<SpeakerCount>> {
-    type Row = (Option<String>, Option<String>, Option<String>);
-    let rows: Vec<Row> = sqlx::query_as(
-        "SELECT l.speaker_id, l.speaker_name, l.speaker_key
+    type LineRow = (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    );
+    let rows: Vec<LineRow> = sqlx::query_as(
+        "SELECT l.speaker_id, l.speaker_name, l.speaker_key, NULL
          FROM quote_lines l
          JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
          JOIN channels c ON c.id = msg.channel_id
@@ -316,20 +322,12 @@ async fn most_quoted(db: &SqlitePool, server: ServerId) -> AppResult<Vec<Speaker
     .bind(server.to_string())
     .fetch_all(db)
     .await?;
-    let links = super::links_for(db, &[server.to_string()])
-        .await?
-        .remove(&server.to_string())
-        .unwrap_or_default();
-    let mut entries = Vec::with_capacity(rows.len());
-    for (speaker, name, key) in rows {
-        let speaker: Option<UserId> = super::parse_opt(speaker.as_deref())?;
-        entries.push((
-            super::effective_speaker(speaker, key.as_deref(), &links),
-            key,
-            name,
-        ));
-    }
-    let mut out = super::awards::ranked(entries);
+    let mut out = super::awards::ranked(
+        super::awards::with_speakers(db, server, rows)
+            .await?
+            .into_iter()
+            .map(|(who, key, name, _)| (who, key, name)),
+    );
     out.truncate(BOARD_LEN);
     Ok(out)
 }
@@ -406,12 +404,12 @@ async fn leaderboard(
     };
     let mut winners = Vec::with_capacity(wins.len());
     for (year, message, votes, event) in &wins {
-        let Some(message_) = messages.get(message) else {
+        let Some(msg) = messages.get(message) else {
             continue;
         };
         winners.push(LeaderboardWin {
             year: *year as i32,
-            message: message_.clone(),
+            message: msg.clone(),
             votes: *votes as u32,
             voters: voters
                 .remove(&(event.clone(), message.clone()))
@@ -436,18 +434,6 @@ struct SearchQuery {
     limit: Option<u32>,
 }
 
-/// `s` as a LIKE pattern body that matches it literally (with `ESCAPE '\'`).
-fn like_escaped(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        if matches!(c, '%' | '_' | '\\') {
-            out.push('\\');
-        }
-        out.push(c);
-    }
-    out
-}
-
 async fn search(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -461,33 +447,61 @@ async fn search(
             "search for 1-{SEARCH_CHARS} characters"
         )));
     }
-    let pattern = format!("%{}%", like_escaped(needle));
-    let limit = q.limit.unwrap_or(SEARCH_MAX).clamp(1, SEARCH_MAX);
-    // A quote matches when any line's text, caption, plain name, member's username, or the
-    // username of the member its plain name is linked to does.
-    let rows: Vec<Row> = sqlx::query_as(&format!(
-        "SELECT {COLS} FROM messages WHERE id IN (
-             SELECT q.message_id
-             FROM quotes q
-             JOIN messages msg ON msg.id = q.message_id AND msg.deleted_at IS NULL
-             JOIN channels c ON c.id = msg.channel_id
-             WHERE c.server_id = ?1 AND EXISTS (
-                 SELECT 1 FROM quote_lines l
-                 LEFT JOIN users u ON u.id = l.speaker_id
-                 LEFT JOIN speaker_links k ON k.server_id = c.server_id AND k.name_key = l.speaker_key
-                 LEFT JOIN users lu ON lu.id = k.user_id
-                 WHERE l.message_id = q.message_id AND (
-                     l.text LIKE ?2 ESCAPE '\\' OR l.caption LIKE ?2 ESCAPE '\\'
-                     OR l.speaker_name LIKE ?2 ESCAPE '\\' OR u.username LIKE ?2 ESCAPE '\\'
-                     OR lu.username LIKE ?2 ESCAPE '\\'))
-             ORDER BY q.message_id DESC
-             LIMIT ?3)
-         ORDER BY id DESC"
-    ))
+    let needle = needle.to_lowercase();
+    let limit = q.limit.unwrap_or(SEARCH_MAX).clamp(1, SEARCH_MAX) as usize;
+
+    // Every line of the server's live quotes, newest quote first, with the usernames it can be
+    // found by. Matching is in Rust so case folds for all of Unicode (SQLite's LIKE does ASCII
+    // only); we stop reading at the `limit`th quote that matches.
+    let mut lines = sqlx::query_as::<
+        _,
+        (
+            String,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
+        "SELECT l.message_id, l.text, l.caption, l.speaker_name, u.username, lu.username
+         FROM quote_lines l
+         JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
+         JOIN channels c ON c.id = msg.channel_id
+         LEFT JOIN users u ON u.id = l.speaker_id
+         LEFT JOIN speaker_links k ON k.server_id = c.server_id AND k.name_key = l.speaker_key
+         LEFT JOIN users lu ON lu.id = k.user_id
+         WHERE c.server_id = ?
+         ORDER BY l.message_id DESC",
+    )
     .bind(server.to_string())
-    .bind(pattern)
-    .bind(i64::from(limit))
-    .fetch_all(&s.db)
-    .await?;
+    .fetch(&s.db);
+    let mut found: Vec<String> = Vec::new();
+    while let Some((message, a, b, c, d, e)) = lines.try_next().await? {
+        if found.last() == Some(&message) {
+            continue;
+        }
+        if [a, b, c, d, e]
+            .iter()
+            .flatten()
+            .any(|f| f.to_lowercase().contains(&needle))
+        {
+            if found.len() == limit {
+                break;
+            }
+            found.push(message);
+        }
+    }
+    drop(lines);
+    if found.is_empty() {
+        return Ok(Json(vec![]));
+    }
+    let mut qb = sqlx::QueryBuilder::new(format!("SELECT {COLS} FROM messages WHERE id IN ("));
+    let mut list = qb.separated(", ");
+    for id in &found {
+        list.push_bind(id);
+    }
+    qb.push(") ORDER BY id DESC");
+    let rows: Vec<Row> = qb.build_query_as().fetch_all(&s.db).await?;
     Ok(Json(fill(&s.db, me, rows).await?))
 }

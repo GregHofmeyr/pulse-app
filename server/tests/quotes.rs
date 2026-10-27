@@ -1341,6 +1341,11 @@ async fn deleting_a_quote_clears_reactions_awards_and_replies() {
             f.sam
         ),
         format!("INSERT INTO qoty_winners (event_id, message_id, votes) VALUES ('e0', '{mid}', 3)"),
+        format!("INSERT INTO qoty_options (event_id, message_id) VALUES ('e0', '{mid}')"),
+        format!(
+            "INSERT INTO qoty_votes (event_id, user_id, message_id) VALUES ('e0', '{}', '{mid}')",
+            f.alex
+        ),
     ] {
         sqlx::query(&q).execute(db).await.unwrap();
     }
@@ -1380,12 +1385,26 @@ async fn deleting_a_quote_clears_reactions_awards_and_replies() {
     );
     assert_eq!(
         count(format!(
-            "SELECT COUNT(*) FROM qoty_options WHERE message_id = '{mid}'"
+            "SELECT COUNT(*) FROM qoty_options WHERE message_id = '{mid}' AND event_id = 'e1'"
         ))
         .await,
+        0,
+        "the live event loses it"
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM qoty_votes WHERE event_id = 'e1'".into()).await,
         0
     );
-    assert_eq!(count("SELECT COUNT(*) FROM qoty_votes".into()).await, 0);
+    assert_eq!(
+        count("SELECT COUNT(*) FROM qoty_options WHERE event_id = 'e0'".into()).await,
+        1,
+        "an ended event keeps its option"
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM qoty_votes WHERE event_id = 'e0'".into()).await,
+        1,
+        "and its votes"
+    );
     assert_eq!(
         count(format!(
             "SELECT COUNT(*) FROM qoty_winners WHERE message_id = '{mid}'"
@@ -3096,11 +3115,8 @@ async fn winners_come_newest_year_first_with_voters() {
     seed_event(&f, 2024, &[(a.id, &[f.sam, f.alex, kim])]).await;
     // A tie: both win. Voters in the order they voted.
     seed_event(&f, 2025, &[(b.id, &[kim]), (c.id, &[f.sam])]).await;
-    f.sql(format!(
-        "UPDATE messages SET deleted_at = '2026-01-05T00:00:00.000Z' WHERE id = '{}'",
-        a.id
-    ))
-    .await;
+    // Deleted through the API: the quote goes, but the ended event keeps its votes.
+    assert_eq!(f.delete(&f.alex_t, a.id).await.status(), 204);
 
     let board = f.board("").await;
     let w: Vec<_> = board
@@ -3210,12 +3226,89 @@ async fn search_limit_defaults_to_and_stops_at_twenty() {
     let f = fixture().await;
     for _ in 0..21 {
         f.say_one("same").await;
-        // Stay under the post rate limit.
-        tokio::time::sleep(Duration::from_millis(250)).await;
     }
     assert_eq!(f.found("same").await.len(), 20);
-    let r = f.search_raw(&f.alex_t, "q=same&limit=3").await;
-    assert_eq!(r.json::<Vec<Message>>().await.unwrap().len(), 3);
-    let r = f.search_raw(&f.alex_t, "q=same&limit=500").await;
-    assert_eq!(r.json::<Vec<Message>>().await.unwrap().len(), 20);
+    for (limit, n) in [(3, 3), (500, 20), (0, 1)] {
+        let r = f
+            .search_raw(&f.alex_t, &format!("q=same&limit={limit}"))
+            .await;
+        assert_eq!(r.status(), 200);
+        assert_eq!(
+            r.json::<Vec<Message>>().await.unwrap().len(),
+            n,
+            "limit {limit}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn search_folds_case_beyond_ascii() {
+    let f = fixture().await;
+    let m = f.say_one("L'école est finie").await;
+    assert_eq!(f.found("ÉCOLE").await, vec![m.id]);
+    assert_eq!(f.found("école").await, vec![m.id]);
+}
+
+#[tokio::test]
+async fn default_year_is_the_current_utc_year() {
+    let f = fixture().await;
+    let (now, old) = (f.say_one("now").await, f.say_one("old").await);
+    for m in [&now, &old] {
+        assert_eq!(f.react(&f.sam_t, m.id, "😂").await, 204);
+    }
+    let year: i64 = sqlx::query_scalar("SELECT CAST(strftime('%Y', 'now') AS INTEGER)")
+        .fetch_one(&f.app.db)
+        .await
+        .unwrap();
+    f.sql(format!(
+        "UPDATE quotes SET year = {year} WHERE message_id = '{}'",
+        now.id
+    ))
+    .await;
+    f.sql(format!(
+        "UPDATE quotes SET year = {} WHERE message_id = '{}'",
+        year - 1,
+        old.id
+    ))
+    .await;
+    assert_eq!(ids(&f.board("").await.top_year), vec![now.id]);
+    assert_eq!(
+        ids(&f.board(&format!("?year={}", year - 1)).await.top_year),
+        vec![old.id]
+    );
+}
+
+#[tokio::test]
+async fn another_servers_quotes_stay_out() {
+    let f = fixture().await;
+    let ours = f.say_one("shared words").await;
+    assert_eq!(f.react(&f.sam_t, ours.id, "😂").await, 204);
+    let other = create_server(&f.app, &f.alex_t, "Other").await;
+    let ch = create_quotes(&f.app, &f.alex_t, other.id).await;
+    let theirs: Message = post_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/quotes", ch.id),
+        json!({ "lines": [{ "speaker_name": "Elsewhere", "text": "shared words" }] }),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(f.react(&f.alex_t, theirs.id, "😂").await, 204);
+    assert_eq!(f.react(&f.sam_t, theirs.id, "😂").await, 403);
+    f.award(theirs.quote.as_ref().unwrap().lines[0].id, f.sam)
+        .await;
+
+    let b = f.board("").await;
+    assert_eq!(ids(&b.top_all_time), vec![ours.id]);
+    assert_eq!(ids(&b.top_year), vec![ours.id]);
+    assert_eq!(
+        b.most_quoted.iter().map(|c| c.count).collect::<Vec<_>>(),
+        vec![1]
+    );
+    assert!(b.most_quoted[0].name.is_none());
+    assert!(b.most_awarded.is_empty());
+    assert_eq!(f.found("shared").await, vec![ours.id]);
+    assert!(f.found("elsewhere").await.is_empty());
 }
