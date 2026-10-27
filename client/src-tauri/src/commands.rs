@@ -4,10 +4,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use pulse_protocol::gateway::ClientFrame;
-use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
+use pulse_protocol::ids::{ChannelId, LineId, MessageId, QotyEventId, ServerId, UserId};
 use pulse_protocol::rest::{
-    Channel, CustomEmoji, MediaInfo, Member, Message, MuteTarget, RecoveryCodesResponse, Server,
-    SetMuteRequest, TwoFactorEnabledResponse, TwoFactorStatus, User,
+    Channel, CustomEmoji, EditQuoteRequest, Leaderboard, LinkSpeakerRequest, MediaInfo, Member,
+    Message, MuteTarget, PostQuoteRequest, QotyEvent, RecoveryCodesResponse, SendMessageRequest,
+    Server, SetMuteRequest, StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -1203,6 +1204,249 @@ pub async fn list_reactors(
 ) -> Result<Vec<UserId>, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.reactors(&token, message_id, &emoji).await)
+}
+
+// ---------- Quotes ----------
+
+/// The raw file is the request body, as for `upload_emoji_media`.
+#[tauri::command]
+pub async fn upload_quote_media(
+    app: AppHandle,
+    core: State<'_, Core>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<MediaInfo, ApiError> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(ApiError::Rejected("expected the file's bytes".into()));
+    };
+    let (api, token) = core.current()?;
+    core.check(&app, api.upload_quote_media(&token, bytes.clone()).await)
+}
+
+/// A reply in a quote's thread. Sent at once rather than queued in the outbox (which has no
+/// threads): the answer is the stored reply, a failure reaches the UI.
+#[tauri::command]
+pub async fn send_reply(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    root_id: MessageId,
+    content: String,
+    nonce: String,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    let body = SendMessageRequest {
+        content,
+        reply_to_id: None,
+        nonce: Some(nonce),
+        thread_root_id: Some(root_id),
+    };
+    core.check(&app, api.send_message(&token, channel_id, &body).await)
+}
+
+#[tauri::command]
+pub async fn list_messages_around(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    message_id: MessageId,
+) -> Result<Vec<Message>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.messages_around(&token, channel_id, message_id).await,
+    )
+}
+
+#[tauri::command]
+pub async fn list_messages_after(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    message_id: MessageId,
+) -> Result<Vec<Message>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.messages_after(&token, channel_id, message_id).await,
+    )
+}
+
+#[tauri::command]
+pub async fn post_quote(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    body: PostQuoteRequest,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.post_quote(&token, channel_id, &body).await)
+}
+
+#[tauri::command]
+pub async fn edit_quote(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    body: EditQuoteRequest,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.edit_quote(&token, message_id, &body).await)
+}
+
+#[tauri::command]
+pub async fn list_replies(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    before: Option<MessageId>,
+) -> Result<Vec<Message>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.replies(&token, message_id, before).await)
+}
+
+#[tauri::command]
+pub async fn mark_replies_seen(
+    app: AppHandle,
+    core: State<'_, Core>,
+    root_id: MessageId,
+    message_id: MessageId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.mark_replies_seen(&token, root_id, message_id).await,
+    )
+}
+
+#[tauri::command]
+pub async fn give_award(
+    app: AppHandle,
+    core: State<'_, Core>,
+    line_id: LineId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.give_award(&token, line_id).await)
+}
+
+#[tauri::command]
+pub async fn take_award(
+    app: AppHandle,
+    core: State<'_, Core>,
+    line_id: LineId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.take_award(&token, line_id).await)
+}
+
+#[tauri::command]
+pub async fn link_speaker(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    body: LinkSpeakerRequest,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.link_speaker(&token, server_id, &body).await)
+}
+
+#[tauri::command]
+pub async fn unlink_speaker(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    name_key: String,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.unlink_speaker(&token, server_id, &name_key).await)
+}
+
+#[tauri::command]
+pub async fn leaderboard(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    year: Option<i32>,
+) -> Result<Leaderboard, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.leaderboard(&token, server_id, year).await)
+}
+
+#[tauri::command]
+pub async fn search_quotes(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    q: String,
+) -> Result<Vec<Message>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.search_quotes(&token, server_id, &q).await)
+}
+
+#[tauri::command]
+pub async fn start_qoty(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    body: StartQotyRequest,
+) -> Result<QotyEvent, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.start_qoty(&token, server_id, &body).await)
+}
+
+#[tauri::command]
+pub async fn vote_qoty(
+    app: AppHandle,
+    core: State<'_, Core>,
+    event_id: QotyEventId,
+    message_id: MessageId,
+) -> Result<QotyEvent, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.vote_qoty(&token, event_id, message_id).await)
+}
+
+#[tauri::command]
+pub async fn unvote_qoty(
+    app: AppHandle,
+    core: State<'_, Core>,
+    event_id: QotyEventId,
+) -> Result<QotyEvent, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.unvote_qoty(&token, event_id).await)
+}
+
+#[tauri::command]
+pub async fn add_qoty_option(
+    app: AppHandle,
+    core: State<'_, Core>,
+    event_id: QotyEventId,
+    message_id: MessageId,
+) -> Result<QotyEvent, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.add_qoty_option(&token, event_id, message_id).await,
+    )
+}
+
+#[tauri::command]
+pub async fn end_qoty(
+    app: AppHandle,
+    core: State<'_, Core>,
+    event_id: QotyEventId,
+) -> Result<QotyEvent, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.end_qoty(&token, event_id).await)
+}
+
+#[tauri::command]
+pub async fn reopen_qoty(
+    app: AppHandle,
+    core: State<'_, Core>,
+    event_id: QotyEventId,
+    minutes: Option<u32>,
+) -> Result<QotyEvent, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.reopen_qoty(&token, event_id, minutes).await)
 }
 
 #[cfg(test)]

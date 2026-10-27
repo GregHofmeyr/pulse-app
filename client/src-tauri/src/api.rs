@@ -2,16 +2,17 @@
 
 use std::time::Duration;
 
-use pulse_protocol::ids::{ChannelId, MessageId, ServerId, UserId};
+use pulse_protocol::ids::{ChannelId, LineId, MessageId, QotyEventId, ServerId, UserId};
 use pulse_protocol::rest::{
-    AddMembersRequest, ChangePasswordRequest, Channel, ChannelKind, CreateDmRequest,
-    CreateEmojiRequest, CustomEmoji, EditMessageRequest, GoLiveRequest, LoginMfaRequest,
-    LoginRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired, MuteTarget,
-    RecoveryCodesResponse, RegisterRequest, RenameChannelRequest, RenameEmojiRequest,
-    SendMessageRequest, Server, SessionResponse, SetMuteRequest, StreamInfo, StreamRole,
-    StreamSettings, StreamTicketRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
-    TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, User, VoiceTokenResponse,
-    WatchRequest,
+    AddMembersRequest, AddQotyOptionRequest, ChangePasswordRequest, Channel, ChannelKind,
+    CreateDmRequest, CreateEmojiRequest, CustomEmoji, EditMessageRequest, EditQuoteRequest,
+    GoLiveRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest, LoginRequest, MarkReadRequest,
+    MediaInfo, Member, Message, MfaRequired, MuteTarget, PostQuoteRequest, QotyEvent,
+    QotyVoteRequest, RecoveryCodesResponse, RegisterRequest, RenameChannelRequest,
+    RenameEmojiRequest, ReopenQotyRequest, SendMessageRequest, Server, SessionResponse,
+    SetMuteRequest, StartQotyRequest, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
+    ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
+    TwoFactorSetupResponse, TwoFactorStatus, User, VoiceTokenResponse, WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -939,9 +940,19 @@ impl Api {
         token: &str,
         bytes: Vec<u8>,
     ) -> Result<MediaInfo, ApiError> {
+        self.upload_media(token, "emoji", bytes).await
+    }
+
+    /// `kind` is the media route's last segment (`emoji`, `quote`): the raw file as the body.
+    async fn upload_media(
+        &self,
+        token: &str,
+        kind: &str,
+        bytes: Vec<u8>,
+    ) -> Result<MediaInfo, ApiError> {
         let r = self
             .http
-            .post(format!("{}/media/emoji", self.base))
+            .post(self.url(&["media", kind])?)
             .bearer_auth(token)
             .timeout(Duration::from_secs(45))
             .body(bytes)
@@ -1078,6 +1089,312 @@ impl Api {
 
     fn reaction_url(&self, message: MessageId, emoji: &str) -> Result<reqwest::Url, ApiError> {
         self.url(&["messages", &message.to_string(), "reactions", emoji])
+    }
+
+    // ---------- Quotes ----------
+
+    /// A slice of the channel's main list centred on `message`.
+    pub async fn messages_around(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        message: MessageId,
+    ) -> Result<Vec<Message>, ApiError> {
+        self.messages_near(token, channel, "around", message).await
+    }
+
+    /// The messages just newer than `message`, oldest first.
+    pub async fn messages_after(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        message: MessageId,
+    ) -> Result<Vec<Message>, ApiError> {
+        self.messages_near(token, channel, "after", message).await
+    }
+
+    async fn messages_near(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        param: &str,
+        message: MessageId,
+    ) -> Result<Vec<Message>, ApiError> {
+        Self::parse(
+            self.http
+                .get(self.url(&["channels", &channel.to_string(), "messages"])?)
+                .query(&[(param, message.to_string())])
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn upload_quote_media(
+        &self,
+        token: &str,
+        bytes: Vec<u8>,
+    ) -> Result<MediaInfo, ApiError> {
+        self.upload_media(token, "quote", bytes).await
+    }
+
+    pub async fn post_quote(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &PostQuoteRequest,
+    ) -> Result<Message, ApiError> {
+        Self::parse(
+            self.http
+                .post(self.url(&["channels", &channel.to_string(), "quotes"])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn edit_quote(
+        &self,
+        token: &str,
+        message: MessageId,
+        body: &EditQuoteRequest,
+    ) -> Result<Message, ApiError> {
+        Self::parse(
+            self.http
+                .put(self.url(&["quotes", &message.to_string()])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A quote's replies, newest first; `before` pages back.
+    pub async fn replies(
+        &self,
+        token: &str,
+        message: MessageId,
+        before: Option<MessageId>,
+    ) -> Result<Vec<Message>, ApiError> {
+        let mut req = self
+            .http
+            .get(self.url(&["messages", &message.to_string(), "replies"])?)
+            .bearer_auth(token);
+        if let Some(b) = before {
+            req = req.query(&[("before", b.to_string())]);
+        }
+        Self::parse(req.send().await).await
+    }
+
+    pub async fn mark_replies_seen(
+        &self,
+        token: &str,
+        root: MessageId,
+        message: MessageId,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(self.url(&["messages", &root.to_string(), "replies", "seen"])?)
+                .bearer_auth(token)
+                .json(&ThreadSeenRequest {
+                    message_id: message,
+                })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn give_award(&self, token: &str, line: LineId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .put(self.url(&["quote-lines", &line.to_string(), "award"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn take_award(&self, token: &str, line: LineId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(self.url(&["quote-lines", &line.to_string(), "award"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn link_speaker(
+        &self,
+        token: &str,
+        server: ServerId,
+        body: &LinkSpeakerRequest,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .put(self.url(&["servers", &server.to_string(), "speaker-links"])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn unlink_speaker(
+        &self,
+        token: &str,
+        server: ServerId,
+        name_key: &str,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(self.url(&["servers", &server.to_string(), "speaker-links", name_key])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// `year`: `None` = this year, as the server sees it.
+    pub async fn leaderboard(
+        &self,
+        token: &str,
+        server: ServerId,
+        year: Option<i32>,
+    ) -> Result<Leaderboard, ApiError> {
+        let mut req = self
+            .http
+            .get(self.url(&["servers", &server.to_string(), "quotes", "leaderboard"])?)
+            .bearer_auth(token);
+        if let Some(y) = year {
+            req = req.query(&[("year", y)]);
+        }
+        Self::parse(req.send().await).await
+    }
+
+    pub async fn search_quotes(
+        &self,
+        token: &str,
+        server: ServerId,
+        q: &str,
+    ) -> Result<Vec<Message>, ApiError> {
+        Self::parse(
+            self.http
+                .get(self.url(&["servers", &server.to_string(), "quotes", "search"])?)
+                .query(&[("q", q)])
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn start_qoty(
+        &self,
+        token: &str,
+        server: ServerId,
+        body: &StartQotyRequest,
+    ) -> Result<QotyEvent, ApiError> {
+        Self::parse(
+            self.http
+                .post(self.url(&["servers", &server.to_string(), "qoty"])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn vote_qoty(
+        &self,
+        token: &str,
+        event: QotyEventId,
+        message: MessageId,
+    ) -> Result<QotyEvent, ApiError> {
+        Self::parse(
+            self.http
+                .put(self.url(&["qoty", &event.to_string(), "vote"])?)
+                .bearer_auth(token)
+                .json(&QotyVoteRequest {
+                    message_id: message,
+                })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn unvote_qoty(
+        &self,
+        token: &str,
+        event: QotyEventId,
+    ) -> Result<QotyEvent, ApiError> {
+        Self::parse(
+            self.http
+                .delete(self.url(&["qoty", &event.to_string(), "vote"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn add_qoty_option(
+        &self,
+        token: &str,
+        event: QotyEventId,
+        message: MessageId,
+    ) -> Result<QotyEvent, ApiError> {
+        Self::parse(
+            self.http
+                .post(self.url(&["qoty", &event.to_string(), "options"])?)
+                .bearer_auth(token)
+                .json(&AddQotyOptionRequest {
+                    message_id: message,
+                })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn end_qoty(&self, token: &str, event: QotyEventId) -> Result<QotyEvent, ApiError> {
+        Self::parse(
+            self.http
+                .post(self.url(&["qoty", &event.to_string(), "end"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// `minutes`: `None` = open until ended.
+    pub async fn reopen_qoty(
+        &self,
+        token: &str,
+        event: QotyEventId,
+        minutes: Option<u32>,
+    ) -> Result<QotyEvent, ApiError> {
+        Self::parse(
+            self.http
+                .post(self.url(&["qoty", &event.to_string(), "reopen"])?)
+                .bearer_auth(token)
+                .json(&ReopenQotyRequest { minutes })
+                .send()
+                .await,
+        )
+        .await
     }
 
     /// `base/seg/seg…`, each segment percent-encoded on its own (an emoji or id can't add a `/`).
@@ -2236,6 +2553,193 @@ mod tests {
             "poggers"
         );
         api.delete_emoji(&token, &e.id).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn quotes_round_trip_through_the_core() {
+        use pulse_protocol::rest::NewQuoteLine;
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (sam_id, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        api.join_server(&sam, s.id).await.unwrap();
+        let ch = api
+            .create_channel(&alex, s.id, ChannelKind::Quotes, "quotes")
+            .await
+            .unwrap();
+        let line = |text: &str| NewQuoteLine {
+            id: None,
+            speaker_id: Some(sam_id),
+            speaker_name: None,
+            text: Some(text.into()),
+            media_hash: None,
+            caption: None,
+        };
+        let quote = api
+            .post_quote(
+                &alex,
+                ch.id,
+                &PostQuoteRequest {
+                    lines: vec![line("I meant to do that")],
+                    today: None,
+                    nonce: Some("q1".into()),
+                },
+            )
+            .await
+            .unwrap();
+        let q = quote.quote.as_ref().expect("a quote");
+        assert_eq!(q.lines[0].text.as_deref(), Some("I meant to do that"));
+
+        // edit: same line id, new text
+        let mut edited = line("I meant to do that, honest");
+        edited.id = Some(q.lines[0].id);
+        let quote = api
+            .edit_quote(
+                &alex,
+                quote.id,
+                &EditQuoteRequest {
+                    lines: vec![edited],
+                },
+            )
+            .await
+            .unwrap();
+        let line_id = quote.quote.as_ref().unwrap().lines[0].id;
+
+        // an award from someone who isn't the speaker
+        let (_, jo) = testing::register(&app, "jo").await;
+        api.join_server(&jo, s.id).await.unwrap();
+        api.give_award(&jo, line_id).await.unwrap();
+        let listed = api.messages(&jo, ch.id, None).await.unwrap();
+        assert_eq!(listed[0].quote.as_ref().unwrap().lines[0].awards, 1);
+        api.take_award(&jo, line_id).await.unwrap();
+        api.give_award(&jo, line_id).await.unwrap();
+
+        // a reply stays out of the main list, and reads as seen
+        let reply = api
+            .send_message(
+                &sam,
+                ch.id,
+                &SendMessageRequest {
+                    content: "no I didn't".into(),
+                    reply_to_id: None,
+                    nonce: Some("r1".into()),
+                    thread_root_id: Some(quote.id),
+                },
+            )
+            .await
+            .unwrap();
+        let thread = api.replies(&alex, quote.id, None).await.unwrap();
+        assert_eq!(thread.iter().map(|m| m.id).collect::<Vec<_>>(), [reply.id]);
+        api.mark_replies_seen(&alex, quote.id, reply.id)
+            .await
+            .unwrap();
+        assert_eq!(api.messages(&alex, ch.id, None).await.unwrap().len(), 1);
+
+        // the board ranks by reactions; the search finds it by its words
+        api.add_reaction(&jo, quote.id, "🔥").await.unwrap();
+        let board = api.leaderboard(&sam, s.id, None).await.unwrap();
+        assert_eq!(board.top_all_time[0].id, quote.id);
+        let found = api.search_quotes(&sam, s.id, "honest").await.unwrap();
+        assert_eq!(found[0].id, quote.id);
+
+        // a second quote, then the window around the first
+        let later = api
+            .post_quote(
+                &alex,
+                ch.id,
+                &PostQuoteRequest {
+                    lines: vec![line("and another")],
+                    today: None,
+                    nonce: None,
+                },
+            )
+            .await
+            .unwrap();
+        let around = api.messages_around(&alex, ch.id, quote.id).await.unwrap();
+        assert!(around.iter().any(|m| m.id == quote.id));
+        assert!(around.iter().any(|m| m.id == later.id));
+        let after = api.messages_after(&alex, ch.id, quote.id).await.unwrap();
+        assert_eq!(after.iter().map(|m| m.id).collect::<Vec<_>>(), [later.id]);
+
+        // a plain-name speaker can be linked and unlinked
+        let named = api
+            .post_quote(
+                &alex,
+                ch.id,
+                &PostQuoteRequest {
+                    lines: vec![NewQuoteLine {
+                        speaker_id: None,
+                        speaker_name: Some("Sammy".into()),
+                        ..line("hello")
+                    }],
+                    today: None,
+                    nonce: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert!(named.quote.is_some());
+        api.link_speaker(
+            &alex,
+            s.id,
+            &LinkSpeakerRequest {
+                name: "Sammy".into(),
+                user_id: sam_id,
+            },
+        )
+        .await
+        .unwrap();
+        api.unlink_speaker(&alex, s.id, "sammy").await.unwrap();
+        assert!(
+            api.unlink_speaker(&alex, s.id, "sammy").await.is_err(),
+            "the link was removed"
+        );
+
+        // Quote of the Year: start, vote, end
+        let year = quote.quote.as_ref().unwrap().year;
+        let ev = api
+            .start_qoty(
+                &alex,
+                s.id,
+                &StartQotyRequest {
+                    year,
+                    minutes: None,
+                },
+            )
+            .await
+            .unwrap();
+        let ev = if ev.options.iter().any(|o| o.message.id == quote.id) {
+            ev
+        } else {
+            api.add_qoty_option(&alex, ev.id, quote.id).await.unwrap()
+        };
+        let voted = api.vote_qoty(&sam, ev.id, quote.id).await.unwrap();
+        let option = voted
+            .options
+            .iter()
+            .find(|o| o.message.id == quote.id)
+            .unwrap();
+        assert_eq!(option.voters, [sam_id]);
+        let unvoted = api.unvote_qoty(&sam, ev.id).await.unwrap();
+        assert_eq!(unvoted.voters, 0);
+        api.vote_qoty(&sam, ev.id, quote.id).await.unwrap();
+        let ended = api.end_qoty(&alex, ev.id).await.unwrap();
+        assert!(ended.ended_at.is_some());
+        let reopened = api.reopen_qoty(&alex, ev.id, Some(60)).await.unwrap();
+        assert!(reopened.ended_at.is_none());
+    }
+
+    #[tokio::test]
+    async fn a_quote_image_uploads_through_the_core() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let info = api
+            .upload_quote_media(&token, crate::media::tests::PNG.to_vec())
+            .await
+            .unwrap();
+        assert!(crate::media::is_hash(&info.hash));
     }
 
     #[tokio::test]

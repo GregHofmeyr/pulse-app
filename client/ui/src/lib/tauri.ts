@@ -13,6 +13,12 @@ import type { CustomEmoji } from './protocol/CustomEmoji'
 import type { TwoFactorStatus } from './protocol/TwoFactorStatus'
 import type { TwoFactorEnabledResponse } from './protocol/TwoFactorEnabledResponse'
 import type { RecoveryCodesResponse } from './protocol/RecoveryCodesResponse'
+import type { PostQuoteRequest } from './protocol/PostQuoteRequest'
+import type { EditQuoteRequest } from './protocol/EditQuoteRequest'
+import type { LinkSpeakerRequest } from './protocol/LinkSpeakerRequest'
+import type { StartQotyRequest } from './protocol/StartQotyRequest'
+import type { QotyEvent } from './protocol/QotyEvent'
+import type { Leaderboard } from './protocol/Leaderboard'
 
 /** `login` / `login_mfa`: signed in, waiting for the second step, or (second step only) the ticket is gone. */
 export type LoginResult = { status: 'ready'; user: User } | { status: 'mfa_required' } | { status: 'expired' }
@@ -86,6 +92,33 @@ export const api = {
   discardHeldReport: () => invoke<void>('discard_held_report'),
   getReportSettings: () => invoke<ReportSettings>('get_report_settings'),
   setReportSettings: (settings: ReportSettings) => invoke<ReportSettings>('set_report_settings', { settings }),
+  // Quotes and Quote of the Year.
+  listMessagesAround: (channelId: string, messageId: string) => invoke<Message[]>('list_messages_around', { channelId, messageId }),
+  listMessagesAfter: (channelId: string, messageId: string) => invoke<Message[]>('list_messages_after', { channelId, messageId }),
+  /** The raw file goes as the request body, as for `uploadEmojiMedia`. */
+  uploadQuoteMedia: (bytes: Uint8Array) => invoke<MediaInfo>('upload_quote_media', bytes),
+  postQuote: (channelId: string, body: PostQuoteRequest) => invoke<Message>('post_quote', { channelId, body }),
+  editQuote: (messageId: string, body: EditQuoteRequest) => invoke<Message>('edit_quote', { messageId, body }),
+  /** Newest first; `before` pages back. */
+  listReplies: (messageId: string, before?: string) => invoke<Message[]>('list_replies', { messageId, before: before ?? null }),
+  /** Sent at once (not queued); the stored reply comes back and also arrives as a MessageCreated event with this nonce. */
+  sendReply: (channelId: string, rootId: string, content: string, nonce: string) =>
+    invoke<Message>('send_reply', { channelId, rootId, content, nonce }),
+  markRepliesSeen: (rootId: string, messageId: string) => invoke<void>('mark_replies_seen', { rootId, messageId }),
+  giveAward: (lineId: string) => invoke<void>('give_award', { lineId }),
+  takeAward: (lineId: string) => invoke<void>('take_award', { lineId }),
+  linkSpeaker: (serverId: string, body: LinkSpeakerRequest) => invoke<void>('link_speaker', { serverId, body }),
+  unlinkSpeaker: (serverId: string, nameKey: string) => invoke<void>('unlink_speaker', { serverId, nameKey }),
+  /** `year` omitted = this year. */
+  leaderboard: (serverId: string, year?: number) => invoke<Leaderboard>('leaderboard', { serverId, year: year ?? null }),
+  searchQuotes: (serverId: string, q: string) => invoke<Message[]>('search_quotes', { serverId, q }),
+  startQoty: (serverId: string, body: StartQotyRequest) => invoke<QotyEvent>('start_qoty', { serverId, body }),
+  voteQoty: (eventId: string, messageId: string) => invoke<QotyEvent>('vote_qoty', { eventId, messageId }),
+  unvoteQoty: (eventId: string) => invoke<QotyEvent>('unvote_qoty', { eventId }),
+  addQotyOption: (eventId: string, messageId: string) => invoke<QotyEvent>('add_qoty_option', { eventId, messageId }),
+  endQoty: (eventId: string) => invoke<QotyEvent>('end_qoty', { eventId }),
+  /** `minutes` omitted = open until ended. */
+  reopenQoty: (eventId: string, minutes?: number) => invoke<QotyEvent>('reopen_qoty', { eventId, minutes: minutes ?? null }),
 }
 
 export const twoFactor = {
