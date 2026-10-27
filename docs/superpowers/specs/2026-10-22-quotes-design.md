@@ -1,6 +1,6 @@
 # Quotes, quote awards and Quote of the Year: design
 
-Date: 2026-10-22. Status: for the owner's review (builder check done, answers folded in).
+Date: 2026-10-22. Status: approved 2026-10-22; owner answers to the plan's questions added 2026-10-27 (§10).
 
 Depends on: **reactions and emoji** (its own push, designed and built first). **The implementation plan for quotes is
 written after reactions has merged**, against its real shape (reaction storage, events, counts on `Message`).
@@ -301,3 +301,25 @@ badge as big stylised quotation marks; a Founder badge for the owner and an excl
 - Exact component structure, animation library, and the pixel-spill generator.
 - Pagination of the Top/By-person views.
 - Wording of empty states and errors, following the app's tone.
+
+## 10. Owner answers to the builder's questions (2026-10-27)
+
+Decided after the plan was written; they override anything above that says otherwise. The plan's "Spec
+reconciliation" carries the detail.
+
+1. **Protocol bump:** yes. Clients older than this push get the "update required" screen.
+2. **Votes are public.** Each Quote of the Year option shows who voted for it (a small stack of avatars, names on
+   hover), in the voting window, on the winner card and in the leaderboard's winners. Quote awards show their givers
+   the same way. ("I like the competition of asking someone why on earth they voted for X.")
+3. **Leaderboard entries jump to the quote** in its channel: the channel loads history around that quote, scrolls to
+   it and highlights it, and you can scroll on to the present. Built to be reused later for search, mentions and pins.
+4. **A reply's @mention** counts in the channel's mention pill until you open that quote's replies.
+5. **Image quotes stay animated**, like custom emoji: an animated image plays and freezes by the same rules (the
+   "Animate emoji" setting, a focused window, frozen while you're live, never with reduced motion), with a still
+   first frame. Sensible size caps apply.
+6. **Lengths:** "a few hours" = 3 hours, "a day" = 24 hours, custom = 5 minutes to 14 days, or until ended.
+7. **No votes:** the "no winner" line goes in every quotes channel of the server.
+8. **Zero-reaction quotes** are never automatic options, so a quiet year can have fewer than 5; adding by hand still
+   works.
+9. **Reopening** removes the earlier winner card.
+10. **Linking a plain-name speaker** to a member is allowed while a vote is live (it isn't an edit).
