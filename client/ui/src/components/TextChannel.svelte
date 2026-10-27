@@ -186,25 +186,31 @@
   // --- jump to a message (lib/jump.ts sets `ui.jump`): scroll it to the middle and flash it. A
   // detached window pages forward from its bottom, or "Jump to present" reloads the latest. ---
   let loadingNewer = false
-  async function maybeLoadNewer(emptyBefore = false) {
+  async function maybeLoadNewer(isRetry = false) {
     if (loadingNewer || !detached || !messages.length) return
     loadingNewer = true
     let more = false
     let retry = false
+    let missedNow: string[] = []
     try {
       const newest = messages[messages.length - 1].id
+      missedNow = [...(history?.missed ?? [])]
       const page = await api.listMessagesAfter(channelId, newest)
       app.state = appendNewer(app.state, channelId, newest, page)
       // An empty page while the state still waits for a missed message (or a dropped older one): ask
-      // once more; empty again, nothing is coming, so it is the latest (never a request loop).
+      // once more; empty again, nothing is coming, so it is the latest (never a request loop). Only
+      // what was already missed when the retry was sent is given up; a message that arrived during
+      // it is paged for next (new progress, so the same one-retry rule starts over for it).
       if (!page.length && detached) {
-        if (emptyBefore) app.state = reachLatest(app.state, channelId, newest)
-        else retry = true
+        if (isRetry) {
+          app.state = reachLatest(app.state, channelId, newest, missedNow)
+          more = detached
+        } else retry = true
       }
       await tick() // with loadingNewer still set, the view stays where it was
       // Still at the bottom (measured now: atBottom is from the last scroll), e.g. a short page that
       // stopped before a missed live message: fetch on, but only while pages bring something.
-      more = page.length > 0 && detached && !!list && list.scrollHeight - list.scrollTop - list.clientHeight < 40
+      more = more || (page.length > 0 && detached && !!list && list.scrollHeight - list.scrollTop - list.clientHeight < 40)
     } catch (e) {
       error = errorText(e)
     } finally {

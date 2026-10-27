@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { keyboardFocused } from '../lib/focus'
+  import { actionBarFocus } from '../lib/focus'
   import Avatar from './Avatar.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
   import Icon from './Icon.svelte'
@@ -109,7 +109,7 @@
 
 {#if quote}
   <!-- focus anywhere inside shows the action bar (hover alone left keyboard users without it) -->
-  <div class="quote" class:compact data-message-id={message.id} onfocusin={(e) => (focusIn = keyboardFocused(e.target))} onfocusout={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focusIn = false }}>
+  <div class="quote" class:compact data-message-id={message.id} {...actionBarFocus((v) => (focusIn = v))}>
     <div class="row">
       {#if !compact}<Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={40} />{/if}
       <div class="body">

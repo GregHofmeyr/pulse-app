@@ -675,11 +675,17 @@ export function appendNewer(s: AppState, channel: string, after: string, page: M
   return { ...next, history: { ...s.history, [channel]: at } }
 }
 
-/** Give up waiting for missed live messages once a forward page after `after` (the channel's newest)
- * came back empty twice: nothing more is coming, so the list is the latest and attaches again. */
-export function reachLatest(s: AppState, channel: string, after: string): AppState {
+/** Called after a forward page after `after` (the channel's newest) came back empty a second time:
+ * the missed messages in `stale` (those pending when that request was sent) and any dropped older
+ * ones are not coming, so they are given up. A live message that arrived during the request is not
+ * given up (that would leave a gap): the list stays detached waiting for it, and the caller pages on.
+ * No-op when the list is no longer at `after` or is already attached. */
+export function reachLatest(s: AppState, channel: string, after: string, stale: string[]): AppState {
   const list = s.messages[channel]
   const h = s.history[channel]
   if (!h || h.end || list?.[list.length - 1]?.id !== after) return s
-  return { ...s, history: { ...s.history, [channel]: { loaded: true, start: h.start, end: true } } }
+  const { missedMore: _more, ...rest } = h
+  const fresh = (h.missed ?? []).filter((id) => id > after && !stale.includes(id))
+  const next = { ...missing(rest, fresh), loaded: true, end: !fresh.length }
+  return { ...s, history: { ...s.history, [channel]: next } }
 }

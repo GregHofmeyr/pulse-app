@@ -240,6 +240,21 @@ describe('TextChannel: jump to a message', () => {
     expect([...document.querySelectorAll('button')].some((b) => b.textContent === 'Jump to present')).toBe(false)
   })
 
+  it('a live message that arrives during the empty retry is not lost', async () => {
+    app.state = loadWindow(ready('text'), 'C1', newestFirst(100, 50), 'M0125')
+    app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: msg(2000), nonce: null } }, 0)
+    let afters = 0
+    invoke.mockImplementation(async (cmd) => {
+      if (cmd !== 'list_messages_after') return undefined
+      if (afters++ === 1) app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: msg(3000), nonce: null } }, 0) // during the retry
+      return afters <= 3 ? [] : [msg(3000)]
+    })
+    await pageForward()
+    expect(afterCalls().length).toBeLessThanOrEqual(5) // bounded
+    expect(app.state.messages['C1'].some((m) => m.id === 'M3000')).toBe(true) // no gap
+    expect(app.state.history['C1'].end).toBe(true)
+  })
+
   it('an empty forward page with older missed messages dropped asks once more, then reaches the latest', async () => {
     app.state = loadWindow(ready('text'), 'C1', newestFirst(100, 50), 'M0125')
     const live = Array.from({ length: MISSED_CAP + 1 }, (_, i) => 2000 + i)

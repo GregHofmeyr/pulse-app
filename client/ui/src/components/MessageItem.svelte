@@ -3,7 +3,7 @@
 </script>
 
 <script lang="ts">
-  import { keyboardFocused } from '../lib/focus'
+  import { actionBarFocus } from '../lib/focus'
   import Icon from './Icon.svelte'
   import EmojiBox from './EmojiBox.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
@@ -137,7 +137,7 @@
   <div class="system" data-message-id={message.id}>{message.content} <span class="time">{time}</span></div>
 {:else}
   <!-- focus anywhere inside shows the action bar (hover alone left keyboard users without it) -->
-  <div class="msg" data-message-id={message.id} onfocusin={(e) => (focusIn = keyboardFocused(e.target))} onfocusout={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) focusIn = false }} class:grouped class:mentioned={!!meId && message.mentions.includes(meId)}>
+  <div class="msg" data-message-id={message.id} {...actionBarFocus((v) => (focusIn = v))} class:grouped class:mentioned={!!meId && message.mentions.includes(meId)}>
     {#if replyTo}
       <div class="reply"><span class="hook"></span><strong>{nameOf(replyTo.author_id)}</strong>
         <span class="snippet">{replyTo.deleted ? 'original message deleted' : replyTo.content.slice(0, 120)}</span></div>
