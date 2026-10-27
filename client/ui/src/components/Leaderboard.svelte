@@ -3,7 +3,7 @@
   // entry opens that quote in its channel (the caller jumps to it).
   import VoterStack from './VoterStack.svelte'
   import { clickOutside } from '../lib/actions'
-  import { quotePreview, score } from '../lib/quotes'
+  import { plural, quotePreview, score } from '../lib/quotes'
   import { nameOfIn } from '../lib/selectors'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
@@ -30,8 +30,7 @@
     )
   })
 
-  const nameOf = nameOfIn(() => app.state, serverId)
-  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
+  const nameOf = $derived(nameOfIn(() => app.state, serverId))
   const preview = (m: Message) => quotePreview(app.state, serverId, m)
   const who = (c: SpeakerCount) => (c.user_id ? nameOf(c.user_id) : (c.name ?? ''))
   const empty = $derived(!!board && !board.winners.length && !board.top_year.length && !board.top_all_time.length

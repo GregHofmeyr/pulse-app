@@ -19,7 +19,7 @@ import { motion } from '../lib/animate.svelte'
 import { defaultQotyYear } from '../lib/quotes'
 import { applyEvent } from '../lib/state'
 import { app, clock, handleReady, resetState } from '../lib/store.svelte'
-import { testMe, testReady } from '../lib/testReady'
+import { testMe, testQoty, testReady } from '../lib/testReady'
 
 const sam = { id: 'U2', username: 'sam', avatar_hash: null }
 const kim = { id: 'U3', username: 'kim', avatar_hash: null }
@@ -35,12 +35,9 @@ const quote = (id: string, text: string, speaker = 'U2', reactions = 0): Message
   },
 })
 const opt = (m: Message, voters: string[] = [], added_by: string | null = null): QotyOption => ({ message: m, added_by, votes: voters.length, voters })
-const event = (over: Partial<QotyEvent> = {}): QotyEvent => ({
-  id: 'E1', server_id: 'S1', year: 2026, started_by: 'U2', started_at: '2026-10-27T10:00:00Z',
-  ends_at: new Date(Date.now() + 2 * HOUR + 5 * 60_000 + 30_000).toISOString(), ended_at: null, ended_by: null, end_reason: null,
-  reopen_until: null,
-  options: [opt(quote('Q1', 'first one', 'U2', 4)), opt(quote('Q2', 'second one', 'U3', 2))],
-  voters: 0, members: 3, ...over,
+const event = (over: Partial<QotyEvent> = {}): QotyEvent => testQoty({
+  started_by: 'U2', ends_at: new Date(Date.now() + 2 * HOUR + 5 * 60_000 + 30_000).toISOString(),
+  options: [opt(quote('Q1', 'first one', 'U2', 4)), opt(quote('Q2', 'second one', 'U3', 2))], members: 3, ...over,
 })
 const card = (over: Partial<Message> = {}, voters = ['U2', 'U3']): Message => ({
   id: 'K1', channel_id: 'C1', author_id: null, kind: 'system', content: 'Quote of the Year 2026: “first one” — sam', reply_to_id: null,
@@ -145,12 +142,14 @@ describe('Quote of the Year voting', () => {
     expect(text(option('Q1'))).toContain('sam')
     expect(text(option('Q1'))).toContain('4 reactions')
     button('Vote', option('Q1'))!.click()
+    await settle()
     expect(calls('vote_qoty')).toEqual([{ eventId: 'E1', messageId: 'Q1' }])
     // the server's answer: my vote is on Q1
     set(event({ options: [opt(quote('Q1', 'first one', 'U2', 4), ['U1']), opt(quote('Q2', 'second one', 'U3', 2))], voters: 1 }))
     expect(option('Q1').classList.contains('mine')).toBe(true)
     expect(button('Your vote', option('Q1'))!.getAttribute('aria-pressed')).toBe('true')
     button('Vote', option('Q2'))!.click()
+    await settle()
     expect(calls('vote_qoty')).toEqual([{ eventId: 'E1', messageId: 'Q1' }, { eventId: 'E1', messageId: 'Q2' }])
     button('Your vote', option('Q1'))!.click()
     expect(calls('unvote_qoty')).toEqual([{ eventId: 'E1' }])
@@ -161,7 +160,9 @@ describe('Quote of the Year voting', () => {
       options: [opt(quote('Q1', 'first one'), ['U2', 'U3']), opt(quote('Q2', 'second one'), [], 'U3')], voters: 2,
     }))
     expect(option('Q1').querySelector('[role=img]')?.getAttribute('aria-label')).toBe('sam and kim')
-    expect(text(option('Q1'))).toContain('2')
+    // the number is read out as "2 votes"
+    expect(option('Q1').querySelector('.count')?.getAttribute('aria-hidden')).toBe('true')
+    expect(text(option('Q1').querySelector('.tally'))).toContain('2 votes')
     expect(option('Q2').querySelector('[role=img]')).toBeNull()
     expect(text(option('Q2'))).toContain('added by kim')
     expect(text(option('Q1'))).not.toContain('added by')
@@ -183,7 +184,9 @@ describe('Quote of the Year voting', () => {
   })
 
   it('adds a quote found by search', async () => {
-    invoke.mockImplementation(async (cmd: string) => (cmd === 'search_quotes' ? [quote('Q1', 'first one'), quote('Q7', 'from december')] : undefined))
+    const won = quote('Q8', 'won before')
+    won.quote!.wins = [2025]
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'search_quotes' ? [quote('Q1', 'first one'), quote('Q7', 'from december'), won] : undefined))
     await openVoting()
     button('Add a quote')!.click()
     flushSync()
@@ -193,7 +196,7 @@ describe('Quote of the Year voting', () => {
     await new Promise((r) => setTimeout(r, 300))
     await settle()
     expect(calls('search_quotes')).toEqual([{ serverId: 'S1', q: 'dec' }])
-    // already an option: not offered again
+    // already an option, or won an earlier year: not offered
     const results = [...document.querySelectorAll<HTMLButtonElement>('.results button')]
     expect(results.map(text)).toEqual(['“from december” sam'])
     results[0].click()
@@ -203,8 +206,34 @@ describe('Quote of the Year voting', () => {
   it('animates a vote', async () => {
     await openVoting()
     button('Vote', option('Q1'))!.click()
-    flushSync()
+    await settle()
     expect(option('Q1').classList.contains('popped')).toBe(true)
+  })
+
+  it('a vote in flight holds further clicks', async () => {
+    let answer: () => void = () => {}
+    invoke.mockImplementation((cmd: string) => (cmd === 'vote_qoty' ? new Promise<undefined>((r) => (answer = () => r(undefined))) : Promise.resolve(undefined)))
+    await openVoting()
+    button('Vote', option('Q1'))!.click()
+    flushSync()
+    expect(button('Vote', option('Q2'))!.disabled).toBe(true)
+    button('Vote', option('Q1'))!.click()
+    button('Vote', option('Q2'))!.click()
+    expect(calls('vote_qoty')).toEqual([{ eventId: 'E1', messageId: 'Q1' }])
+    answer()
+    await settle()
+    expect(button('Vote', option('Q2'))!.disabled).toBe(false)
+  })
+
+  it('a refused vote shows why and does not celebrate', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'vote_qoty') throw { status: 409, message: 'That vote has ended.' }
+    })
+    await openVoting()
+    button('Vote', option('Q1'))!.click()
+    await settle()
+    expect(option('Q1').classList.contains('popped')).toBe(false)
+    expect(document.querySelector('.qoty-voting [role=alert]')).toBeTruthy()
   })
 })
 
@@ -289,6 +318,9 @@ describe('Quote of the Year voice strip', () => {
     set(event({ options: [opt(quote('Q1', 'first one', 'U2'), ['U1', 'U3']), opt(quote('Q2', 'second one', 'U3'), ['U2'])], voters: 3 }))
     expect(text(document.querySelector('.qoty-strip'))).toContain('Quote of the Year · sam leads with 2 · 2h 5m left')
     expect(button('Open voting')).toBeTruthy()
+    // a tie names every leader
+    set(event({ options: [opt(quote('Q1', 'first one', 'U2'), ['U1']), opt(quote('Q2', 'second one', 'U3'), ['U2']), opt(quote('Q3', 'third', 'U1'))], voters: 2 }))
+    expect(text(document.querySelector('.qoty-strip'))).toContain('Quote of the Year · sam & kim lead with 1 · 2h 5m left')
     set(event({ ends_at: null }))
     expect(text(document.querySelector('.qoty-strip'))).toContain('Quote of the Year · no votes yet · until ended')
     button('Open voting')!.click()
@@ -311,11 +343,25 @@ describe('Quote of the Year winner card', () => {
     expect(c.querySelector('[role=img]')?.getAttribute('aria-label')).toBe('sam and kim')
   })
 
-  it('without the quote loaded it shows the text the server wrote', () => {
+  it('a quote that is not loaded is fetched and shown with its lines and speakers', async () => {
+    const q = quote('Q1', 'first one', 'U2')
+    q.quote!.lines.push({ ...q.quote!.lines[0], id: 'LQ1b', speaker_id: 'U3', text: 'and another' })
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages_around' ? [quote('Q2', 'newer'), q, quote('Q0', 'older')] : undefined))
     showCard(card({}, ['U2']), null)
+    await settle()
+    expect(calls('list_messages_around')).toEqual([{ channelId: 'C1', messageId: 'Q1' }])
     const c = document.querySelector('.qoty-card')!
-    expect(text(c)).toContain('“first one” — sam')
+    expect([...c.querySelectorAll('.q p')].map(text)).toEqual(['“first one”', '“and another”'])
+    expect(text(c.querySelector('.who'))).toBe('sam & kim · Quote of the Year 2026')
     expect(text(c)).toContain('1 vote · ended early')
+    expect(text(c)).not.toContain('newer')
+  })
+
+  it('a quote that cannot be fetched falls back to the text the server wrote', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages_around' ? null : undefined))
+    showCard(card({}, ['U2']), null)
+    await settle()
+    expect(text(document.querySelector('.qoty-card'))).toContain('“first one” — sam')
   })
 
   it('the no-vote line is plain', () => {
@@ -384,7 +430,8 @@ describe('Quote of the Year motion', () => {
     button('Vote', banner()!)!.click()
     flushSync()
     button('Vote', option('Q1'))!.click()
-    flushSync()
+    await settle()
+    expect(calls('vote_qoty')).toEqual([{ eventId: 'E1', messageId: 'Q1' }])
     expect(option('Q1').classList.contains('popped')).toBe(false)
     expect(document.querySelector('.qoty-voting.animated')).toBeNull()
   })

@@ -13,6 +13,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => 
 
 import TextChannel from './TextChannel.svelte'
 import { app, handleReady, resetState, ui } from '../lib/store.svelte'
+import { testQoty } from '../lib/testReady'
 import { addHistory, applyEvent, applyReady, emptyState, markHistory, trimHistory } from '../lib/state'
 
 const msg = (n: number): Message => ({
@@ -257,11 +258,7 @@ describe('TextChannel: quotes channel', () => {
     show('quotes', [])
     const start = () => [...document.querySelectorAll('button')].find((b) => b.textContent === 'Start Quote of the Year')
     expect(start()).toBeTruthy()
-    const event = {
-      id: 'E1', server_id: 'S1', year: 2026, started_by: 'U1', started_at: '2026-10-27T10:00:00Z', ends_at: null, ended_at: null,
-      ended_by: null, end_reason: null, reopen_until: null, options: [], voters: 0, members: 1,
-    }
-    app.state = applyEvent(app.state, { t: 'QotyStarted', d: { event } }, Date.now())
+    app.state = applyEvent(app.state, { t: 'QotyStarted', d: { event: testQoty() } }, Date.now())
     flushSync()
     expect(start()).toBeUndefined()
   })

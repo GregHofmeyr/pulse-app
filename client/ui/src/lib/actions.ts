@@ -66,7 +66,6 @@ export function modal(node: HTMLElement, onClose: () => void) {
   ;(items()[0] ?? node).focus()
   // On window, in the bubble phase: Svelte delegates onkeydown to the mount root, so inner
   // handlers (an input's or Select's own Esc) have run, and can mark the event handled, by now.
-  openModals.push(node)
   const key = (e: KeyboardEvent) => {
     if (topModal() !== node) return
     if (e.key === 'Escape') {
@@ -95,13 +94,15 @@ export function modal(node: HTMLElement, onClose: () => void) {
     }
   }
   window.addEventListener('keydown', key)
+  openModals.push(node)
   return {
     update(next: () => void) {
       cb = next
     },
     destroy() {
       window.removeEventListener('keydown', key)
-      openModals.splice(openModals.indexOf(node), 1)
+      const i = openModals.indexOf(node)
+      if (i >= 0) openModals.splice(i, 1)
       for (const el of inerted) el.removeAttribute('inert')
       // After clearing inert: an inert element can't take focus.
       if (before?.isConnected) before.focus()

@@ -20,6 +20,8 @@
   --quote-green-mid: #22a865;
   --quote-green-deep: #14713f;
   --on-quote-green: #0b1f14;
+  /* the near-black the spill pours into (banner, winner card) */
+  --quote-surface: #0e1013;
   color-scheme: dark;
   font-family: 'Onest', system-ui, sans-serif;
   /* Onest's contextual alternates swap some letters (e.g. t → t2.alt) inside repeated runs, so
@@ -59,3 +61,9 @@ button { cursor: pointer; }
 .switch.on { background: var(--accent); }
 .switch.on span { left: 23px; background: var(--on-accent); }
 .switch:disabled { opacity: .5; }
+/* Quote of the Year: the filled green button, the big quote mark and the LIVE chip, shared by the
+   banner, voting window, voice strip, winner card and start dialog (each sets its own size). */
+.qoty-btn { height: 32px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--quote-green); color: var(--on-quote-green); font-size: 13px; font-weight: 700; white-space: nowrap; box-shadow: 0 2px 0 var(--quote-green-deep); }
+.qoty-btn:disabled { opacity: .6; }
+.qoty-mark { font-family: Georgia, serif; font-weight: 700; line-height: .6; }
+.qoty-live { font: 700 10px/1 ui-monospace, monospace; letter-spacing: .12em; color: var(--on-quote-green); border-radius: 4px; padding: 3px 5px; }

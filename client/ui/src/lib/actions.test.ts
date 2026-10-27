@@ -128,4 +128,21 @@ describe('modal', () => {
     a.destroy()
     document.body.innerHTML = ''
   })
+
+  it('closing a modal twice leaves the others alone', () => {
+    const { dialog } = setup()
+    const a = modal(dialog, () => {})
+    const other = document.createElement('div')
+    other.tabIndex = -1
+    other.innerHTML = '<button>y</button>'
+    document.body.append(other)
+    const otherClose = vi.fn()
+    const b = modal(other, otherClose)
+    a.destroy()
+    a.destroy()
+    key(other, 'Escape')
+    expect(otherClose).toHaveBeenCalledTimes(1)
+    b.destroy()
+    document.body.innerHTML = ''
+  })
 })

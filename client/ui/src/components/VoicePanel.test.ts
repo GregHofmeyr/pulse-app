@@ -25,6 +25,7 @@ import { voice } from '../lib/voice.svelte'
 import { stream, streamApi } from '../lib/stream/stream.svelte'
 import { callView } from '../lib/stream/viewer.svelte'
 import { diag, diagUi } from '../lib/stream/diag.svelte'
+import { testQoty } from '../lib/testReady'
 import type { Ready } from '../lib/protocol/Ready'
 
 const me = { id: 'U1', username: 'alex', avatar_hash: null }
@@ -401,11 +402,7 @@ describe('Quote of the Year', () => {
   it('a live vote shows its strip under the tiles', () => {
     mountPanel()
     expect(q('.qoty-strip')).toBeNull()
-    const event = {
-      id: 'E1', server_id: 'S1', year: 2026, started_by: 'U1', started_at: '2026-10-27T10:00:00Z', ends_at: null, ended_at: null,
-      ended_by: null, end_reason: null, reopen_until: null, options: [], voters: 0, members: 2,
-    }
-    app.state = applyEvent(app.state, { t: 'QotyStarted', d: { event } }, Date.now())
+    app.state = applyEvent(app.state, { t: 'QotyStarted', d: { event: testQoty({ members: 2 }) } }, Date.now())
     flushSync()
     const strip = q('.qoty-strip')!
     expect(strip.textContent).toContain('Quote of the Year')

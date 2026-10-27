@@ -8,7 +8,7 @@
   import VoterStack from './VoterStack.svelte'
   import { modal } from '../lib/actions'
   import { motion } from '../lib/animate.svelte'
-  import { leftLabel, liveQoty, myVote, quotePreview, score, voteAction } from '../lib/quotes'
+  import { leftLabel, liveQoty, myVote, plural, quotePreview, score, voteAction } from '../lib/quotes'
   import { nameOfIn } from '../lib/selectors'
   import { app, clock } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
@@ -21,7 +21,6 @@
   const nameOf = $derived(nameOfIn(() => app.state, serverId))
   const mine = $derived(e ? myVote(e, meId) : null)
   const total = $derived(e ? e.options.reduce((n, o) => n + o.votes, 0) : 0)
-  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`
 
   let error = $state('')
   async function attempt(f: () => Promise<unknown>): Promise<boolean> {
@@ -35,14 +34,18 @@
     }
   }
 
-  // --- voting: the option you just voted for gets a short game-like pop ---
+  // --- voting: one call at a time (the next click needs the server's answer to know what it
+  // means); the option you voted for gets a short game-like pop once the vote is in ---
   let popped = $state<string | null>(null)
-  function vote(id: string) {
-    if (!e) return
+  let voting = $state(false)
+  async function vote(id: string) {
+    if (!e || voting) return
     const eventId = e.id
     const action = voteAction(mine, id)
-    if (action !== 'unvote' && !motion.reducedMotion) popped = id
-    void attempt(() => (action === 'unvote' ? api.unvoteQoty(eventId) : api.voteQoty(eventId, id)))
+    voting = true
+    const ok = await attempt(() => (action === 'unvote' ? api.unvoteQoty(eventId) : api.voteQoty(eventId, id)))
+    voting = false
+    if (ok && action !== 'unvote' && !motion.reducedMotion) popped = id
   }
 
   // --- add a quote: search the server's quotes ---
@@ -70,8 +73,8 @@
       }
     }, 250)
   }
-  // Quotes already in the vote (or deleted) aren't offered.
-  const offered = $derived(results.filter((m) => !m.deleted && !e?.options.some((o) => o.message.id === m.id)))
+  // Quotes already in the vote, deleted ones and earlier winners (the server refuses them) aren't offered.
+  const offered = $derived(results.filter((m) => !m.deleted && !m.quote?.wins.length && !e?.options.some((o) => o.message.id === m.id)))
   async function add(m: Message) {
     if (!e) return
     const eventId = e.id
@@ -105,11 +108,11 @@
     <div class="backdrop" role="presentation" data-backdrop onclick={onClose}></div>
     <div class="modal qoty-voting" class:animated={!motion.reducedMotion} role="dialog" aria-modal="true" aria-label="Quote of the Year {e.year}"
       tabindex="-1" use:modal={escape}>
-      <div class="spill"><PixelSpill seed={e.id} cols={5} rows={80} down /></div>
+      <div class="spill"><PixelSpill seed={e.id} cols={5} rows={88} down /></div>
       <div class="top">
-        <span class="mark" aria-hidden="true">“</span>
+        <span class="qoty-mark mark" aria-hidden="true">“</span>
         <h1>Quote of the Year {e.year}</h1>
-        <span class="live">LIVE</span>
+        <span class="qoty-live live">LIVE</span>
         <span class="grow"></span>
         <button type="button" class="close" aria-label="Close" onclick={onClose}><Icon name="x" /></button>
       </div>
@@ -130,9 +133,9 @@
               </div>
             </div>
             <div class="tally">
-              <span class="count" aria-label={plural(o.votes, 'vote', 'votes')}>{o.votes}</span>
+              <span class="count" aria-hidden="true">{o.votes}</span><span class="sr">{plural(o.votes, 'vote', 'votes')}</span>
               <VoterStack userIds={o.voters} {nameOf} />
-              <button type="button" class="vote" class:on={isMine} aria-pressed={isMine} onclick={() => vote(id)}>{isMine ? 'Your vote' : 'Vote'}</button>
+              <button type="button" class="vote" class:on={isMine} aria-pressed={isMine} disabled={voting} onclick={() => void vote(id)}>{isMine ? 'Your vote' : 'Vote'}</button>
             </div>
           </div>
         {:else}
@@ -161,13 +164,13 @@
         <div class="confirm" role="group" aria-label="End voting">
           <p>End voting now? Everyone's votes are final.</p>
           <button type="button" class="ghost" disabled={ending} onclick={() => (confirming = false)}>Cancel</button>
-          <button type="button" class="gbtn danger" disabled={ending} onclick={end}>End voting</button>
+          <button type="button" class="qoty-btn danger" disabled={ending} onclick={end}>End voting</button>
         </div>
       {:else}
         <div class="foot">
-          <button type="button" class="gbtn" aria-expanded={adding} onclick={() => (adding = !adding)}>Add a quote</button>
+          <button type="button" class="qoty-btn" aria-expanded={adding} onclick={() => (adding = !adding)}>Add a quote</button>
           <span class="grow"></span>
-          <button type="button" class="gbtn" onclick={() => (confirming = true)}>End voting…</button>
+          <button type="button" class="qoty-btn" onclick={() => (confirming = true)}>End voting…</button>
         </div>
       {/if}
     </div>
@@ -178,13 +181,14 @@
   /* flex-centred (not transform): WebKitGTK blurs transformed text */
   .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; }
   .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
-  .modal { position: relative; width: min(620px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 30px 20px 18px; border-radius: 16px; background: var(--bg-1); border: 1px solid color-mix(in srgb, var(--quote-green) 35%, transparent); display: flex; flex-direction: column; gap: 12px; outline: none; }
-  .spill { position: absolute; left: 0; right: 0; top: 0; height: 22px; overflow: hidden; border-radius: 16px 16px 0 0; }
+  .modal { position: relative; width: min(620px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 46px 20px 18px; border-radius: 16px; background: var(--bg-1); border: 1px solid color-mix(in srgb, var(--quote-green) 35%, transparent); display: flex; flex-direction: column; gap: 12px; outline: none; }
+  /* 88 cells across ≈ 7 px each at full width, 5 down: the solid run and its thinning both show */
+  .spill { position: absolute; left: 0; right: 0; top: 0; height: 35px; overflow: hidden; border-radius: 16px 16px 0 0; }
   .spill :global(.pixel-spill) { width: 100%; height: 100%; }
   .top { position: relative; display: flex; align-items: center; gap: 10px; }
-  .mark { font-family: Georgia, serif; font-size: 34px; line-height: .6; padding-top: 12px; font-weight: 700; color: var(--quote-green); }
+  .mark { font-size: 34px; padding-top: 12px; color: var(--quote-green); }
   h1 { margin: 0; font-size: 18px; font-weight: 600; }
-  .live { font: 700 10px/1 ui-monospace, monospace; letter-spacing: .12em; color: var(--on-quote-green); background: var(--quote-green); border-radius: 4px; padding: 3px 5px; }
+  .live { background: var(--quote-green); }
   .grow { flex: 1; }
   .close { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; }
   .status { margin: -4px 0 0; color: var(--text-3); font-size: 12.5px; }
@@ -197,6 +201,8 @@
   .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--text-3); }
   .tag { border: 1px dashed var(--bg-4); border-radius: 999px; padding: 0 6px; }
   .tally { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
+  .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+  .vote:disabled { opacity: .6; }
   .count { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
   .vote { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--quote-green); background: transparent; color: var(--quote-green); font-size: 12.5px; font-weight: 700; white-space: nowrap; }
   .vote.on { border-color: transparent; background: var(--quote-green); color: var(--on-quote-green); box-shadow: 0 2px 0 var(--quote-green-deep); }
@@ -211,10 +217,10 @@
   .err { margin: 0; font-size: 13px; color: var(--danger); }
   .foot, .confirm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .confirm p { flex: 1; margin: 0; font-size: 13.5px; }
-  .gbtn { height: 34px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--quote-green); color: var(--on-quote-green); font-size: 13px; font-weight: 700; box-shadow: 0 2px 0 var(--quote-green-deep); }
-  .gbtn.danger { background: var(--danger); color: #fff; box-shadow: 0 2px 0 #8c1f25; }
+  .foot .qoty-btn, .confirm .qoty-btn { height: 34px; }
+  .qoty-btn.danger { background: var(--danger); color: var(--text); box-shadow: 0 2px 0 color-mix(in srgb, var(--danger) 55%, var(--bg-0)); }
   .ghost { height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 13px; }
-  .gbtn:disabled, .ghost:disabled { opacity: .6; }
+  .ghost:disabled { opacity: .6; }
 
   /* motion (off under reduced motion: no .animated, no .popped) */
   .animated .fill { transition: width .35s steps(7, end); }

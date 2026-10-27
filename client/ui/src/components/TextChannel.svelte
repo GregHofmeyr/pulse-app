@@ -283,7 +283,7 @@
     void jumpTo(m.channel_id, m.id)
   }
 
-  const nameOf = nameOfIn(() => app.state, serverId)
+  const nameOf = $derived(nameOfIn(() => app.state, serverId))
 
   function send(text: string) {
     const nonce = crypto.randomUUID()

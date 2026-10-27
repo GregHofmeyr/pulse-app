@@ -219,6 +219,8 @@ describe('QuoteItem', () => {
     expect(document.querySelector('.reactions, .reaction-row, button[aria-label="Add reaction"]')).toBeNull()
     expect(document.body.textContent).not.toContain('View 2 replies')
     for (const a of ['Reply', 'Edit', 'Delete']) expect(document.querySelector(`button[aria-label="${a}"]`)).toBeNull()
+    // the line menu stays: awards, links and copy are about the line, wherever it shows
+    expect(document.querySelector('button[aria-label="Line actions"]')).toBeTruthy()
   })
 
   it('a failed delete shows on the quote', async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { canReopen, defaultQotyYear, hasNewReplies, leader, leftLabel, liveQoty, myVote, nameKey, quotePreview, score, speakersOf, speakerOf, stripMarks, timeLeft, voteAction } from './quotes'
+import { canReopen, defaultQotyYear, hasNewReplies, leaders, leftLabel, plural, liveQoty, myVote, nameKey, quotePreview, score, speakersOf, speakerOf, stripMarks, timeLeft, voteAction } from './quotes'
 import { applyEvent, applyReady, emptyState } from './state'
 import type { Message } from './protocol/Message'
 import type { QotyEvent } from './protocol/QotyEvent'
@@ -101,12 +101,6 @@ describe('Quote of the Year helpers', () => {
     expect(voteAction('A', 'B')).toBe('move')
     expect(voteAction('A', 'A')).toBe('unvote')
   })
-  it('leader is the option with most votes, none without votes', () => {
-    expect(leader(qoty({ options: [opt('A', []), opt('B', [])] }))).toBeNull()
-    const e = qoty({ options: [opt('A', ['U1']), opt('B', ['U2', 'U3'])] })
-    expect(leader(e)).toEqual({ option: e.options[1], votes: 2 })
-    expect(leader(qoty())).toBeNull()
-  })
   it('liveQoty is the open vote that has not run out', () => {
     const now = Date.parse('2026-10-01T00:00:00Z')
     let s = applyReady(emptyState(), ready({ qoty: [qoty()] }))
@@ -146,5 +140,18 @@ describe('Quote of the Year labels', () => {
     expect(canReopen({ ...ended, reopen_until: '2026-09-30T23:59:00Z' }, 'E1', now)).toBe(false)
     expect(canReopen({ ...ended, reopen_until: null }, 'E1', now)).toBe(false)
     expect(canReopen({ ...ended, ended_at: null }, 'E1', now)).toBe(false)
+  })
+})
+
+describe('wording', () => {
+  it('plural picks the singular for exactly one', () => {
+    expect(plural(1, 'vote', 'votes')).toBe('1 vote')
+    expect(plural(0, 'vote', 'votes')).toBe('0 votes')
+    expect(plural(2, 'reply', 'replies')).toBe('2 replies')
+  })
+  it('leaders are every option tied for the most votes, none without votes', () => {
+    expect(leaders(qoty({ options: [opt('A', []), opt('B', [])] }))).toEqual([])
+    const e = qoty({ options: [opt('A', ['U1']), opt('B', ['U2', 'U3']), opt('C', ['U4', 'U5'])] })
+    expect(leaders(e)).toEqual([e.options[1], e.options[2]])
   })
 })

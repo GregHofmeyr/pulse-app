@@ -567,14 +567,9 @@ describe('jump to a message', () => {
 })
 
 describe('Quote of the Year', () => {
-  const liveVote = (over = {}) => ({
-    id: 'E1', server_id: 'S1', year: 2026, started_by: 'U1', started_at: '2026-10-27T10:00:00Z', ends_at: null, ended_at: null,
-    ended_by: null, end_reason: null, reopen_until: null, options: [], voters: 0, members: 1, ...over,
-  })
-
   it('a live vote shows its banner over every channel of its server', async () => {
     const { ui } = await import('../lib/store.svelte')
-    const { testMe: me, testReady } = await import('../lib/testReady')
+    const { testMe: me, testQoty: liveVote, testReady } = await import('../lib/testReady')
     app.state = applyReady(emptyState(), testReady([
       { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },
       { id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 1 },

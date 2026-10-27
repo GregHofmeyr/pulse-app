@@ -81,12 +81,6 @@ export function voteAction(myVote: string | null, clicked: string): 'vote' | 'mo
   return myVote === null ? 'vote' : myVote === clicked ? 'unvote' : 'move'
 }
 
-/** The option with the most votes (the first of a tie); none while nobody has voted. */
-export function leader(e: QotyEvent): { option: QotyOption; votes: number } | null {
-  let best: QotyOption | null = null
-  for (const o of e.options) if (o.votes > (best?.votes ?? 0)) best = o
-  return best ? { option: best, votes: best.votes } : null
-}
 
 /** Who said a quote: each speaker once, in line order ("sam & kim"). */
 export function speakersOf(s: AppState, serverId: string, m: Message): string {
@@ -111,4 +105,15 @@ export function leftLabel(endsAt: string | null, nowMs: number): string {
 /** Whether the ended vote `eventId` can still be reopened (`e` is the server's latest event). */
 export function canReopen(e: QotyEvent | undefined, eventId: string, nowMs: number): boolean {
   return !!e && e.id === eventId && e.ended_at !== null && e.reopen_until !== null && Date.parse(e.reopen_until) > nowMs
+}
+
+/** "1 vote", "2 votes". */
+export function plural(n: number, one: string, many: string): string {
+  return `${n} ${n === 1 ? one : many}`
+}
+
+/** Every option tied for the most votes; none while nobody has voted. */
+export function leaders(e: QotyEvent): QotyOption[] {
+  const top = Math.max(0, ...e.options.map((o) => o.votes))
+  return top > 0 ? e.options.filter((o) => o.votes === top) : []
 }

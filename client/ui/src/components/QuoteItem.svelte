@@ -4,10 +4,10 @@
   import EmojiPopover from './EmojiPopover.svelte'
   import Icon from './Icon.svelte'
   import LineMenu from './LineMenu.svelte'
+  import QuoteImage from './QuoteImage.svelte'
   import ReactionRow from './ReactionRow.svelte'
   import VoterStack from './VoterStack.svelte'
   import { modal } from '../lib/actions'
-  import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
   import { mediaUrl, reactionKey, type Std } from '../lib/emoji'
   import { menuPoint } from '../lib/participantMenu'
   import { hasNewReplies, nameKey, speakerOf } from '../lib/quotes'
@@ -42,7 +42,8 @@
     onDelete?: () => Promise<void>
     /** Absent where the replies panel pins the quote: no "View N replies" there. */
     onOpenReplies?: () => void
-    /** Just the lines (Quote of the Year's options): no poster, reactions, replies or actions. */
+    /** Just the lines (Quote of the Year's options): no poster, reactions, replies or quote actions.
+     *  Each line keeps its menu (award, link, copy): those are about the line, wherever it shows. */
     compact?: boolean
   } = $props()
 
@@ -126,8 +127,7 @@
                 <div class="said">
                   {#if line.media}
                     <button type="button" class="picbtn" aria-label="Open image full size" onclick={() => (open = { media: line.media!, caption: line.caption })}>
-                      <img class="pic" src={stillSrc(line.media)} alt={line.caption ?? 'Quoted image'} draggable="false"
-                        width={line.media.width} height={line.media.height} {@attach animatedEmoji(line.media)} />
+                      <QuoteImage media={line.media} caption={line.caption} />
                     </button>
                     {#if line.caption}<p class="caption">{line.caption}</p>{/if}
                   {:else}
@@ -185,7 +185,7 @@
   {#if open}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="lightbox" role="dialog" aria-modal="true" aria-label={open.caption ?? 'Quoted image'} tabindex="-1" use:modal={() => (open = null)} onclick={() => (open = null)}>
-      <img src={stillSrc(open.media)} alt={open.caption ?? 'Quoted image'} draggable="false" {@attach animatedEmoji(open.media)} />
+      <QuoteImage media={open.media} caption={open.caption} full />
       <button type="button" class="close" aria-label="Close" onclick={() => (open = null)}><Icon name="x" size={18} /></button>
     </div>
   {/if}
@@ -214,7 +214,6 @@
   .line:hover .lbtn, .line:focus-within .lbtn { opacity: 1; }
   .lbtn:hover { background: var(--bg-3); color: var(--text); }
   .picbtn { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 8px; }
-  .pic { display: block; max-width: 360px; max-height: 360px; width: auto; height: auto; border-radius: 8px; object-fit: contain; }
   .caption { margin: 4px 0 0; font-size: 13px; color: var(--text-2); }
   .win { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: 10px; background: var(--quote-green); color: var(--on-quote-green); font-size: 11.5px; font-weight: 700; }
   .edited { font-size: 11px; color: var(--text-3); }
@@ -227,6 +226,5 @@
   .actions button { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .actions button:hover { color: var(--text); }
   .lightbox { position: fixed; inset: 0; z-index: 70; background: rgba(10, 11, 13, .85); display: grid; place-items: center; cursor: zoom-out; outline: none; }
-  .lightbox img { max-width: 92vw; max-height: 92vh; object-fit: contain; border-radius: 8px; }
   .close { position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border: 0; border-radius: 10px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
 </style>

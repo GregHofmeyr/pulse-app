@@ -74,7 +74,7 @@
   <!-- not a <form>: the length buttons (Segmented) would submit it -->
   <div class="modal" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" use:modal={cancel}>
     <div class="top">
-      <span class="mark" aria-hidden="true">“</span>
+      <span class="qoty-mark mark" aria-hidden="true">“</span>
       <h1>{title}</h1>
       <button type="button" class="close" aria-label="Cancel" disabled={busy} onclick={cancel}><Icon name="x" /></button>
     </div>
@@ -100,7 +100,7 @@
     {#if error}<p class="err" role="alert">{error}</p>{/if}
     <div class="actions">
       <button type="button" class="ghost" disabled={busy} onclick={cancel}>Cancel</button>
-      <button type="button" class="go" disabled={!ready || busy} onclick={go}>{reopen ? 'Reopen' : 'Start'}</button>
+      <button type="button" class="qoty-btn go" disabled={!ready || busy} onclick={go}>{reopen ? 'Reopen' : 'Start'}</button>
     </div>
   </div>
 </div>
@@ -111,7 +111,7 @@
   .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
   .modal { position: relative; width: min(440px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 22px; border-radius: 16px; background: var(--bg-1); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 14px; outline: none; }
   .top { display: flex; align-items: center; gap: 10px; }
-  .mark { font-family: Georgia, serif; font-size: 34px; line-height: .6; padding-top: 12px; font-weight: 700; color: var(--quote-green); }
+  .mark { font-size: 34px; padding-top: 12px; color: var(--quote-green); }
   h1 { flex: 1; margin: 0; font-size: 18px; font-weight: 600; }
   .close { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; }
   .field { display: flex; flex-direction: column; gap: 6px; }
@@ -125,6 +125,6 @@
   .err { margin: 0; font-size: 13px; color: var(--danger); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
   .ghost { height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); }
-  .go { height: 38px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--quote-green); color: var(--on-quote-green); font-weight: 700; box-shadow: 0 2px 0 var(--quote-green-deep); }
-  .go:disabled, .ghost:disabled { opacity: .6; }
+  .go { height: 38px; padding: 0 18px; border-radius: 10px; font-size: 14px; }
+  .ghost:disabled { opacity: .6; }
 </style>

@@ -39,7 +39,7 @@
   let list: HTMLDivElement | undefined = $state()
   let composer: Composer | undefined = $state()
 
-  const nameOf = nameOfIn(() => app.state, serverId)
+  const nameOf = $derived(nameOfIn(() => app.state, serverId))
 
   // Its replies are on screen while it's open (the message sound skips them).
   $effect(() => {
