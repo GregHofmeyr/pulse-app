@@ -2808,6 +2808,60 @@ async fn link_changes_republish_quotes_whose_counts_moved() {
     assert_eq!(ev[0].quote.as_ref().unwrap().lines[0].awards, 1);
 }
 
+/// A link that committed answers 204 and still announces itself, even if one of the quotes it
+/// republishes can't be read back: that quote is skipped (and logged), the others still go out.
+#[tokio::test]
+async fn a_committed_link_succeeds_when_a_quote_cant_be_read_back() {
+    let f = fixture().await;
+    let mut posted = Vec::new();
+    for text in ["one", "two"] {
+        let m: Message = f
+            .post_lines(json!([
+                { "speaker_name": "A Friend", "text": text },
+                { "speaker_name": "Other", "text": "spare" },
+            ]))
+            .await
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(f.award_status(&f.sam_t, f.line_of(&m, 0), true).await, 204);
+        posted.push(m);
+    }
+    // In the link's own transaction, make the first quote unreadable (a line id that isn't one).
+    sqlx::query(&format!(
+        "CREATE TRIGGER spoil AFTER INSERT ON speaker_links BEGIN
+           UPDATE quote_lines SET id = 'not-a-line-id' WHERE id = '{}';
+         END",
+        f.line_of(&posted[0], 1)
+    ))
+    .execute(&f.app.db)
+    .await
+    .unwrap();
+    let mut ws = hello(&f.app, &f.alex_t).await;
+
+    assert_eq!(f.link(&f.alex_t, "a friend", f.sam).await, 204);
+    let mut links = 0;
+    let mut updated = Vec::new();
+    while let Some(fr) = next_frame(&mut ws).await {
+        match fr {
+            ServerFrame::Event(Event::SpeakerLinksChanged { .. }) => links += 1,
+            ServerFrame::Event(Event::MessageUpdated { message }) => updated.push(message.id),
+            _ => {}
+        }
+    }
+    assert_eq!(links, 1);
+    assert_eq!(
+        updated,
+        vec![posted[1].id],
+        "the readable quote still goes out"
+    );
+    let users: Vec<String> = sqlx::query_scalar("SELECT user_id FROM speaker_links")
+        .fetch_all(&f.app.db)
+        .await
+        .unwrap();
+    assert_eq!(users, vec![f.sam.to_string()]);
+}
+
 #[tokio::test]
 async fn a_refused_link_changes_and_publishes_nothing() {
     let f = fixture().await;

@@ -554,10 +554,9 @@ async fn remove(
                 channel_id: msg.channel_id,
                 message_id: id,
                 author_id: Some(me),
-                mentions: crate::messages::mentions::for_messages(&s.db, &[id])
-                    .await?
-                    .remove(&id)
-                    .unwrap_or_default(),
+                // As loaded before the delete (only sending stores mentions): nothing after the
+                // commit may fail the request, since the delete has landed.
+                mentions: msg.mentions,
                 thread_root_id: msg.thread_root_id,
             },
         )

@@ -258,16 +258,24 @@ async fn join(
         None
     };
     tx.commit().await?;
+    // The join has landed: a failed read-back is logged, and the rest still goes out.
     if added > 0 {
-        s.hub
-            .publish(
-                &s.db,
-                Event::MemberJoined {
-                    server_id: id,
-                    member: member_of(&s.db, id, me).await?,
-                },
-            )
-            .await;
+        match member_of(&s.db, id, me).await {
+            Ok(member) => {
+                s.hub
+                    .publish(
+                        &s.db,
+                        Event::MemberJoined {
+                            server_id: id,
+                            member,
+                        },
+                    )
+                    .await;
+            }
+            Err(e) => {
+                tracing::error!(error = ?e, server = %id, %me, "couldn't read back a join to publish")
+            }
+        }
     }
     if let Some(event) = qoty {
         crate::qoty::publish_updated(&s, event).await;

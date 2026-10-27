@@ -89,9 +89,10 @@ async fn link(
     .execute(&mut *tx)
     .await?;
     let links = links_of(&mut tx, server).await?;
-    tx.commit().await?;
     let moved: Vec<String> = current.into_iter().chain([new]).collect();
-    publish(&s, server, links, &key, &moved).await?;
+    let quotes = moved_quotes(&mut tx, server, &key, &moved).await?;
+    tx.commit().await?;
+    publish(&s, server, links, quotes).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -119,8 +120,9 @@ async fn unlink(
         return Err(AppError::NotFound);
     };
     let links = links_of(&mut tx, server).await?;
+    let quotes = moved_quotes(&mut tx, server, &key, &[removed]).await?;
     tx.commit().await?;
-    publish(&s, server, links, &key, &[removed]).await?;
+    publish(&s, server, links, quotes).await;
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -142,16 +144,42 @@ async fn member_in(db: &mut SqliteConnection, server: ServerId, user: UserId) ->
     Ok(hit.is_some())
 }
 
-/// Publish the server's links, then a fresh copy of every live quote with a line under `key` that
-/// one of `users` awarded: its counted awards moved with the link and clients can't derive that.
-/// Called after commit, under the caller's `in_order` guard.
-async fn publish(
-    s: &AppState,
+/// Publish the server's links, then a fresh copy of each of `quotes` (see [`moved_quotes`]).
+/// Called after commit, under the caller's `in_order` guard. The link has landed by then, so a
+/// quote that can't be read back is logged and skipped rather than failing the request.
+async fn publish(s: &AppState, server: ServerId, links: Vec<SpeakerLink>, quotes: Vec<MessageId>) {
+    s.hub
+        .publish(
+            &s.db,
+            Event::SpeakerLinksChanged {
+                server_id: server,
+                links,
+            },
+        )
+        .await;
+    for id in quotes {
+        match load(&s.db, None, id).await {
+            Ok(Some(message)) => {
+                s.hub
+                    .publish(&s.db, Event::MessageUpdated { message })
+                    .await;
+            }
+            Ok(None) => {}
+            Err(e) => {
+                tracing::error!(error = ?e, %id, "couldn't load a quote a link change moved");
+            }
+        }
+    }
+}
+
+/// The live quotes of `server` with a line under `key` that one of `users` awarded, oldest first:
+/// their counted awards move with the link, and clients can't derive that.
+async fn moved_quotes(
+    db: &mut SqliteConnection,
     server: ServerId,
-    links: Vec<SpeakerLink>,
     key: &str,
     users: &[String],
-) -> AppResult<()> {
+) -> AppResult<Vec<MessageId>> {
     let mut q = sqlx::QueryBuilder::new(
         "SELECT DISTINCT msg.id FROM quote_lines l
          JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
@@ -167,25 +195,8 @@ async fn publish(
         list.push_bind(u);
     }
     q.push(") ORDER BY msg.id");
-    let ids: Vec<String> = q.build_query_scalar().fetch_all(&s.db).await?;
-
-    s.hub
-        .publish(
-            &s.db,
-            Event::SpeakerLinksChanged {
-                server_id: server,
-                links,
-            },
-        )
-        .await;
-    for id in ids {
-        if let Some(message) = load(&s.db, None, parse_id::<MessageId>(&id)?).await? {
-            s.hub
-                .publish(&s.db, Event::MessageUpdated { message })
-                .await;
-        }
-    }
-    Ok(())
+    let ids: Vec<String> = q.build_query_scalar().fetch_all(db).await?;
+    ids.iter().map(|id| parse_id::<MessageId>(id)).collect()
 }
 
 type Row = (String, String, String, String, String, String);

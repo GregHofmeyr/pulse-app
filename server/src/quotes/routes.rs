@@ -95,17 +95,18 @@ async fn post_quote(
     let moved = crate::reads::advance(&mut tx, me, id, msg_id).await?;
     tx.commit().await?;
 
-    // A new quote has no awards or replies, so the poster's view is the same as an event's.
-    let msg = load(&s.db, None, msg_id).await?.ok_or(AppError::NotFound)?;
-    s.hub
-        .publish(
-            &s.db,
-            Event::MessageCreated {
-                message: msg.clone(),
-                nonce: req.nonce,
-            },
-        )
-        .await;
+    let msg = reread(&s, msg_id).await;
+    if let Some(message) = msg.clone() {
+        s.hub
+            .publish(
+                &s.db,
+                Event::MessageCreated {
+                    message,
+                    nonce: req.nonce,
+                },
+            )
+            .await;
+    }
     if moved {
         s.hub
             .publish(
@@ -118,7 +119,43 @@ async fn post_quote(
             )
             .await;
     }
-    Ok(Json(msg))
+    // A new quote has no awards or replies, so the poster's view is the same as an event's.
+    match msg {
+        Some(msg) => Ok(Json(msg)),
+        None => answer(&s, me, msg_id, None).await,
+    }
+}
+
+/// A quote as events show it, read back after its change committed. The change has landed, so a
+/// failed read is logged and gives `None` (nothing to publish) rather than failing the request.
+async fn reread(s: &AppState, id: MessageId) -> Option<Message> {
+    match load(&s.db, None, id).await {
+        Ok(m) => m,
+        Err(e) => {
+            tracing::error!(error = ?e, %id, "couldn't read back a committed quote to publish");
+            None
+        }
+    }
+}
+
+/// The answer to a committed change: the quote as `me` sees it, or, if that read fails, as the
+/// event showed it (`event`). Only when neither could be read is there nothing to answer with.
+async fn answer(
+    s: &AppState,
+    me: UserId,
+    id: MessageId,
+    event: Option<Message>,
+) -> AppResult<Json<Message>> {
+    match load(&s.db, Some(me), id).await {
+        Ok(m) => m.map(Json).ok_or(AppError::NotFound),
+        Err(e) => match event {
+            Some(m) => {
+                tracing::error!(error = ?e, %id, "couldn't read back a committed quote; answering with the event's view");
+                Ok(Json(m))
+            }
+            None => Err(e),
+        },
+    }
 }
 
 /// A line as stored, for telling what an edit changes.
@@ -245,14 +282,13 @@ async fn edit_quote(
         .await?;
     tx.commit().await?;
 
-    let event = load(&s.db, None, id).await?.ok_or(AppError::NotFound)?;
-    s.hub
-        .publish(&s.db, Event::MessageUpdated { message: event })
-        .await;
-    load(&s.db, Some(me), id)
-        .await?
-        .map(Json)
-        .ok_or(AppError::NotFound)
+    let event = reread(&s, id).await;
+    if let Some(message) = event.clone() {
+        s.hub
+            .publish(&s.db, Event::MessageUpdated { message })
+            .await;
+    }
+    answer(&s, me, id, event).await
 }
 
 /// Each top list and `most_*` list holds this many.
