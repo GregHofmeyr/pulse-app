@@ -1,5 +1,7 @@
 //! Test harness: a real server on an ephemeral port with a fresh temp-file SQLite.
 
+pub mod fake_s3;
+
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;

@@ -25,6 +25,10 @@ dev-livekit:
 dev-server:
     PULSE_MEDIA_DIR="${PULSE_MEDIA_DIR:-data/media}" cargo run -p pulse-server --bin pulse-app-server -- serve
 
+# a fake R2 (SigV4-checking, on disk) at 127.0.0.1:7895; prints the bucket and keys to configure
+dev-s3:
+    cargo run -p pulse-server --features testing --example fake-s3 -- 127.0.0.1:7895 data/fake-s3
+
 ui-check:
     cd client/ui && pnpm install --frozen-lockfile && pnpm check && pnpm test
 

@@ -9,8 +9,13 @@ publish.workspace = true
 name = "pulse-app-server"
 path = "src/main.rs"
 
+[[example]]
+name = "fake-s3"
+path = "examples/fake_s3.rs"
+required-features = ["testing"]
+
 [features]
-testing = ["dep:reqwest", "dep:tempfile"]
+testing = ["dep:reqwest", "dep:tempfile", "dep:hmac"]
 
 [dependencies]
 pulse-protocol.workspace = true
@@ -44,6 +49,7 @@ emojis = "0.9"
 unicode-segmentation = "1"
 totp-rs = { version = "6", default-features = false, features = ["std"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
+hmac = { version = "0.12", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs"] }
@@ -65,3 +71,4 @@ prost = "0.14"
 livekit-protocol = "0.8.0"
 # tests/livekit_ice.rs reads deploy/livekit.yaml and docker/livekit.yaml
 yaml-rust2 = { version = "0.13", default-features = false }
+rusty-s3 = "0.11.0"
