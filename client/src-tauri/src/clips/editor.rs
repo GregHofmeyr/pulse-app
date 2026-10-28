@@ -1,10 +1,10 @@
 //! The editor's local sources: probing a file, the temp files made for it (preview, filmstrip) and
 //! the in-memory list of open sources. The Tauri commands in `commands.rs` are thin wrappers.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -66,30 +66,50 @@ pub struct Entry {
 
 /// The open sources of this run, by id.
 #[derive(Default)]
-pub struct Sources(Mutex<HashMap<String, Entry>>);
+pub struct Sources {
+    map: Mutex<HashMap<String, Entry>>,
+    /// One async lock per source: a second preview or filmstrip request waits for the first.
+    locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+}
 
 impl Sources {
     pub fn insert(&self, id: String, e: Entry) {
-        self.0.lock().unwrap().insert(id, e);
+        self.map.lock().unwrap().insert(id, e);
     }
 
     pub fn get(&self, id: &str) -> Option<Entry> {
-        self.0.lock().unwrap().get(id).cloned()
+        self.map.lock().unwrap().get(id).cloned()
     }
 
     pub fn update(&self, id: &str, f: impl FnOnce(&mut Entry)) {
-        if let Some(e) = self.0.lock().unwrap().get_mut(id) {
+        if let Some(e) = self.map.lock().unwrap().get_mut(id) {
             f(e);
         }
     }
 
     pub fn remove(&self, id: &str) -> Option<Entry> {
-        self.0.lock().unwrap().remove(id)
+        self.locks.lock().unwrap().remove(id);
+        self.map.lock().unwrap().remove(id)
     }
 
     /// Forget every source (sign-out); the caller deletes the folders.
     pub fn drain(&self) -> Vec<Entry> {
-        self.0.lock().unwrap().drain().map(|(_, e)| e).collect()
+        self.locks.lock().unwrap().clear();
+        self.map.lock().unwrap().drain().map(|(_, e)| e).collect()
+    }
+
+    pub fn ids(&self) -> HashSet<String> {
+        self.map.lock().unwrap().keys().cloned().collect()
+    }
+
+    /// The lock that serialises the preview and filmstrip work of one source.
+    pub fn lock_for(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> {
+        self.locks
+            .lock()
+            .unwrap()
+            .entry(id.to_owned())
+            .or_default()
+            .clone()
     }
 }
 
@@ -102,6 +122,36 @@ pub fn remove_dir_later(dir: PathBuf) {
             tracing::warn!(error = %e, "clips: temp files not removed");
         }
     });
+}
+
+/// What the editor may open: an absolute path to a regular file with a video extension (the picker's
+/// list). Checked before ffprobe ever sees the path.
+pub fn validate_source_path(path: &Path) -> Result<(), String> {
+    const EXTENSIONS: [&str; 5] = ["mp4", "mov", "mkv", "webm", "m4v"];
+    let ext = extension(path).to_ascii_lowercase();
+    if path.is_absolute() && EXTENSIONS.contains(&ext.as_str()) && path.is_file() {
+        Ok(())
+    } else {
+        Err(UNREADABLE.to_owned())
+    }
+}
+
+/// Delete source folders under `<scope>/sources/` that no open source owns (left by a sign-out in the
+/// middle of a job, or a crash). Returns how many were removed.
+pub fn clear_stale_sources(scope: &Path, keep: &HashSet<String>) -> usize {
+    let Ok(dirs) = std::fs::read_dir(scope.join("sources")) else {
+        return 0;
+    };
+    let mut removed = 0;
+    for d in dirs.flatten() {
+        if keep.contains(d.file_name().to_string_lossy().as_ref()) {
+            continue;
+        }
+        if std::fs::remove_dir_all(d.path()).is_ok() {
+            removed += 1;
+        }
+    }
+    removed
 }
 
 pub fn new_id() -> String {
@@ -151,6 +201,13 @@ pub fn extension(path: &Path) -> String {
         .unwrap_or_default()
 }
 
+/// One `-progress` line to a whole percent (0 to 99; 100 is for the caller once ffmpeg exits). Only
+/// `out_time_us=` lines with a positive time count as progress.
+pub fn progress_percent(line: &str, duration_ms: u64) -> Option<u8> {
+    let us: i64 = line.strip_prefix("out_time_us=")?.trim().parse().ok()?;
+    (us > 0).then(|| (us / 1000 * 100 / duration_ms.max(1) as i64).clamp(0, 99) as u8)
+}
+
 enum Run {
     Done,
     /// ffmpeg exited with an error; `progressed` is whether it had reported any progress first.
@@ -177,15 +234,10 @@ async fn run_with_progress(
     let mut lines = BufReader::new(child.stdout.take().expect("piped stdout")).lines();
     let (mut progressed, mut last) = (false, 0u8);
     while let Some(line) = lines.next_line().await? {
-        let Some(us) = line
-            .strip_prefix("out_time_us=")
-            .and_then(|v| v.parse::<i64>().ok())
-            .filter(|us| *us > 0)
-        else {
+        let Some(pct) = progress_percent(&line, duration_ms) else {
             continue;
         };
         progressed = true;
-        let pct = (us / 1000 * 100 / duration_ms.max(1) as i64).clamp(0, 99) as u8;
         if pct != last {
             last = pct;
             on_percent(pct);
@@ -303,6 +355,74 @@ mod tests {
         let json = serde_json::to_value(&c).unwrap();
         assert_eq!(json["preview"], "direct");
         assert_eq!(json["duration_ms"], 1000);
+    }
+
+    #[test]
+    fn progress_lines_become_percents() {
+        assert_eq!(progress_percent("out_time_us=5000000", 10_000), Some(50));
+        assert_eq!(progress_percent("out_time_us=99999999", 10_000), Some(99));
+        // N/A at the start, zero time, other keys and junk are not progress
+        assert_eq!(progress_percent("out_time_us=N/A", 10_000), None);
+        assert_eq!(progress_percent("out_time_us=0", 10_000), None);
+        assert_eq!(progress_percent("out_time_us=-5", 10_000), None);
+        assert_eq!(progress_percent("out_time_ms=5000000", 10_000), None);
+        assert_eq!(progress_percent("progress=continue", 10_000), None);
+        assert_eq!(progress_percent("out_time_us=1000", 0), Some(99));
+    }
+
+    #[test]
+    fn only_video_files_by_extension_are_valid_sources() {
+        let dir = tempfile::tempdir().unwrap();
+        let mk = |n: &str| {
+            let p = dir.path().join(n);
+            std::fs::write(&p, b"x").unwrap();
+            p
+        };
+        for ok in ["a.mp4", "b.MOV", "c.mkv", "d.WebM", "e.m4v"] {
+            assert!(validate_source_path(&mk(ok)).is_ok(), "{ok}");
+        }
+        for bad in ["id_rsa", "a.mp3", "a.m3u8", "a.txt", "mp4"] {
+            assert_eq!(
+                validate_source_path(&mk(bad)),
+                Err(UNREADABLE.to_owned()),
+                "{bad}"
+            );
+        }
+        // missing, relative, and a directory named like a video
+        assert!(validate_source_path(&dir.path().join("none.mp4")).is_err());
+        assert!(validate_source_path(Path::new("a.mp4")).is_err());
+        std::fs::create_dir(dir.path().join("dir.mp4")).unwrap();
+        assert!(validate_source_path(&dir.path().join("dir.mp4")).is_err());
+    }
+
+    #[test]
+    fn stale_source_folders_are_cleared_but_open_ones_stay() {
+        let scope = tempfile::tempdir().unwrap();
+        for id in ["open", "stale1", "stale2"] {
+            let d = scope.path().join("sources").join(id);
+            std::fs::create_dir_all(&d).unwrap();
+            std::fs::write(d.join("preview.mp4"), b"x").unwrap();
+        }
+        let keep: HashSet<String> = ["open".to_owned()].into();
+        assert_eq!(clear_stale_sources(scope.path(), &keep), 2);
+        assert!(scope.path().join("sources/open/preview.mp4").is_file());
+        assert!(!scope.path().join("sources/stale1").exists());
+        // no sources folder at all is fine
+        assert_eq!(clear_stale_sources(&scope.path().join("nope"), &keep), 0);
+    }
+
+    #[test]
+    fn one_source_cannot_be_worked_on_twice_at_once() {
+        let s = Sources::default();
+        let first = s.lock_for("a");
+        let guard = first.try_lock().expect("free");
+        // the same source gets the same lock, so the second request has to wait
+        assert!(s.lock_for("a").try_lock().is_err());
+        // another source is independent
+        assert!(s.lock_for("b").try_lock().is_ok());
+        drop(guard);
+        assert!(s.lock_for("a").try_lock().is_ok());
+        assert_eq!(s.ids().len(), 0);
     }
 
     #[test]

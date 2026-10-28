@@ -1,7 +1,7 @@
 //! Guessing the game a clip is of, from where it was saved.
 
 /// Folder names that say where a clip was saved, not what it is of.
-const GENERIC: [&str; 12] = [
+const GENERIC: [&str; 13] = [
     "desktop",
     "videos",
     "downloads",
@@ -14,6 +14,7 @@ const GENERIC: [&str; 12] = [
     "nvidia",
     "shadowplay",
     "temp",
+    "tmp",
 ];
 
 /// The longest game name the server takes.
@@ -50,7 +51,7 @@ pub fn guess(path: &str, title: Option<&str>) -> Option<String> {
     let folder = parts
         .pop()
         .filter(|f| !f.is_empty() && !f.ends_with(':'))
-        .filter(|f| !GENERIC.contains(&f.to_lowercase().as_str()) && *f != "tmp");
+        .filter(|f| !GENERIC.contains(&f.to_lowercase().as_str()));
     folder
         .and_then(usable)
         .or_else(|| title.map(str::trim).filter(|t| *t != stem).and_then(usable))
@@ -99,6 +100,8 @@ mod tests {
         assert_eq!(guess(r"D:\clip.mp4", None), None);
         assert_eq!(guess("/clip.mp4", None), None);
         assert_eq!(guess(r"C:\Users\x\DOWNLOADS\clip.mp4", None), None);
+        assert_eq!(guess(r"C:\Users\x\TMP\clip.mp4", None), None);
+        assert_eq!(guess("/tmp/clip.mp4", None), None);
         assert_eq!(
             guess(r"C:\Users\x\Videos\NVIDIA\Captures\a.mp4", None),
             None

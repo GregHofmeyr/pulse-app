@@ -92,6 +92,8 @@ pub struct Core {
     /// The clip editor's open sources, and where their temp files go (`<app local data>/clips`).
     pub(crate) clip_sources: crate::clips::editor::Sources,
     clips_root: std::path::PathBuf,
+    /// Takes a path off the asset scope for good (`forbid_file`); see `release_source`.
+    forbid_asset: Box<dyn Fn(&std::path::Path) + Send + Sync>,
     signed_out: SignedOut,
     mfa: PendingMfa,
 }
@@ -117,15 +119,31 @@ impl Core {
             media_root,
             clip_sources: Default::default(),
             clips_root: std::path::PathBuf::new(),
+            forbid_asset: Box::new(|_| {}),
             signed_out,
             mfa: PendingMfa::default(),
         }
     }
 
     /// Where the clip editor keeps its temp files (`<root>/<account scope>/sources/<id>/`).
-    pub fn with_clips_root(mut self, root: std::path::PathBuf) -> Self {
+    pub fn with_clips(
+        mut self,
+        root: std::path::PathBuf,
+        forbid_asset: Box<dyn Fn(&std::path::Path) + Send + Sync>,
+    ) -> Self {
         self.clips_root = root;
+        self.forbid_asset = forbid_asset;
         self
+    }
+
+    /// A source is done (closed, or the account signed out): its temp files are deleted and the
+    /// webview can no longer load them. Only the per-id preview and filmstrip are forbidden, never the
+    /// user's own file: forbidding is permanent, and opening the same video again must work.
+    fn release_source(&self, e: crate::clips::editor::Entry) {
+        for p in [&e.preview, &e.filmstrip].into_iter().flatten() {
+            (self.forbid_asset)(p);
+        }
+        crate::clips::editor::remove_dir_later(e.dir);
     }
 
     /// This account's clips folder (the same scoping as the media cache); `None` when signed out.
@@ -177,6 +195,14 @@ impl Core {
             && s.token == token
         {
             s.me = Some(me);
+            // Folders no open source owns (a sign-out in the middle of a job, a crash) go.
+            if !self.clips_root.as_os_str().is_empty() {
+                let scope = crate::media::scope_dir(&self.clips_root, s.api.base(), &me);
+                let open = self.clip_sources.ids();
+                tauri::async_runtime::spawn_blocking(move || {
+                    crate::clips::editor::clear_stale_sources(&scope, &open);
+                });
+            }
             *self.last.lock().unwrap() = Some((s.api.base().to_string(), Some(me)));
         }
     }
@@ -365,7 +391,7 @@ impl Core {
         }
         self.last.lock().unwrap().take();
         for e in self.clip_sources.drain() {
-            crate::clips::editor::remove_dir_later(e.dir);
+            self.release_source(e);
         }
         (self.signed_out)();
         let s = session?;
@@ -1443,9 +1469,7 @@ pub async fn open_clip(
 ) -> Result<crate::clips::editor::ClipSource, String> {
     use crate::clips::{editor, preview};
     let path = std::path::PathBuf::from(path);
-    if !path.is_absolute() || !path.is_file() {
-        return Err(editor::UNREADABLE.to_owned());
-    }
+    editor::validate_source_path(&path)?;
     let tools = ffmpeg_paths(&app)?;
     let scope = core
         .clips_scope()
@@ -1497,6 +1521,9 @@ pub async fn prepare_preview(
     source: String,
 ) -> Result<String, String> {
     use crate::clips::{editor, preview::PreviewPlan};
+    // One job per source: a second request waits, then finds the first one's file.
+    let lock = core.clip_sources.lock_for(&source);
+    let _one_at_a_time = lock.lock().await;
     let entry = core
         .clip_sources
         .get(&source)
@@ -1516,6 +1543,11 @@ pub async fn prepare_preview(
         );
     })
     .await?;
+    if core.clip_sources.get(&source).is_none() {
+        // closed or signed out while ffmpeg ran: nothing owns these files now
+        editor::remove_dir_later(entry.dir);
+        return Err(editor::NO_PREVIEW.to_owned());
+    }
     allow_asset(&app, &out)?;
     core.clip_sources
         .update(&source, |e| e.preview = Some(out.clone()));
@@ -1530,6 +1562,8 @@ pub async fn clip_filmstrip(
     source: String,
 ) -> Result<crate::clips::editor::Filmstrip, String> {
     use crate::clips::{editor, preview::FILMSTRIP_TILES};
+    let lock = core.clip_sources.lock_for(&source);
+    let _one_at_a_time = lock.lock().await;
     let entry = core
         .clip_sources
         .get(&source)
@@ -1539,6 +1573,10 @@ pub async fn clip_filmstrip(
         None => {
             let tools = ffmpeg_paths(&app)?;
             let out = editor::make_filmstrip(&tools.ffmpeg, &entry).await?;
+            if core.clip_sources.get(&source).is_none() {
+                editor::remove_dir_later(entry.dir);
+                return Err(editor::NO_FILMSTRIP.to_owned());
+            }
             allow_asset(&app, &out)?;
             core.clip_sources
                 .update(&source, |e| e.filmstrip = Some(out.clone()));
@@ -1555,7 +1593,7 @@ pub async fn clip_filmstrip(
 #[tauri::command]
 pub fn close_clip_source(core: State<'_, Core>, source: String) {
     if let Some(e) = core.clip_sources.remove(&source) {
-        crate::clips::editor::remove_dir_later(e.dir);
+        core.release_source(e);
     }
 }
 

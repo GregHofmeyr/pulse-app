@@ -61,10 +61,16 @@ struct RawStream {
     avg_frame_rate: Option<String>,
     r_frame_rate: Option<String>,
     duration: Option<String>,
+    disposition: Option<RawDisposition>,
     #[serde(default)]
     side_data_list: Vec<serde_json::Value>,
     #[serde(default)]
     tags: std::collections::HashMap<String, serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct RawDisposition {
+    attached_pic: Option<u8>,
 }
 
 #[derive(Deserialize)]
@@ -104,7 +110,11 @@ pub fn parse(json: &str, file_size: u64) -> Result<Probe, ProbeError> {
     let video = raw
         .streams
         .iter()
-        .find(|s| s.codec_type.as_deref() == Some("video"))
+        // cover art (an mp3 with a picture) is a "video" stream that is not a video
+        .find(|s| {
+            s.codec_type.as_deref() == Some("video")
+                && s.disposition.as_ref().and_then(|d| d.attached_pic) != Some(1)
+        })
         .ok_or(ProbeError::NoVideo)?;
     let (w, h) = (video.width.unwrap_or(0), video.height.unwrap_or(0));
     if w == 0 || h == 0 {
@@ -227,6 +237,12 @@ mod tests {
             ProbeError::NoVideo.to_string(),
             "Pulse couldn't read that video."
         );
+    }
+
+    #[test]
+    fn cover_art_is_not_a_video() {
+        let json = include_str!("../../tests/fixtures/clips/cover_art.json");
+        assert_eq!(parse(json, 1), Err(ProbeError::NoVideo));
     }
 
     #[test]

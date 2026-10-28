@@ -130,6 +130,7 @@ pub fn run() {
             let media_root =
                 session::profile_dir(&app.path().app_cache_dir()?, profile.as_deref()).join("media");
             let h = app.handle().clone();
+            let fh = app.handle().clone();
             app.manage(
                 commands::Core::new(
                     session::Store::new(dir.clone(), profile.as_deref()),
@@ -137,7 +138,12 @@ pub fn run() {
                     media_root,
                     Box::new(move || media::clear_webview_cache(&h)),
                 )
-                .with_clips_root(webview_dir.join("clips")),
+                .with_clips(
+                    webview_dir.join("clips"),
+                    Box::new(move |p| {
+                        let _ = fh.asset_protocol_scope().forbid_file(p);
+                    }),
+                ),
             );
             app.manage(voice::mictest::MicTest::default());
             app.manage(stream::PickerMemory::default());
