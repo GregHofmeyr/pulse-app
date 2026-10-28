@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyReady, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addReplies, type AppState, type Pending } from './state'
+import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addReplies, type AppState, type Pending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 import type { Event } from './protocol/Event'
@@ -706,6 +706,87 @@ describe('quotes', () => {
     s = applyEvent(s, { t: 'QotyEnded', d: { event: ev({ ended_at: '2026-10-02T00:00:00.000Z', end_reason: 'early' }) } }, 0)
     expect(s.qoty['S1'].end_reason).toBe('early')
     expect(Object.keys(s.qoty)).toEqual(['S1'])
+  })
+
+  it('after a reconnect, a live vote wins over a newer ended one', () => {
+    const ev = (over: Partial<QotyEvent> = {}): QotyEvent => ({
+      id: 'E1', server_id: 'S1', year: 2026, started_by: 'U1', started_at: '2026-10-01T00:00:00.000Z', ends_at: null,
+      ended_at: null, ended_by: null, end_reason: null, reopen_until: null, options: [], voters: 0, members: 2, ...over,
+    })
+    // 2026 ended early, 2025 started and ended, then 2026 reopened
+    const live = ev()
+    const older = ev({ id: 'E0', year: 2025, started_at: '2026-10-02T00:00:00.000Z', ended_at: '2026-10-02T01:00:00.000Z', end_reason: 'early' })
+    expect(applyReady(emptyState(), ready({ qoty: [live, older] })).qoty['S1'].id).toBe('E1')
+    expect(applyReady(emptyState(), ready({ qoty: [older, live] })).qoty['S1'].id).toBe('E1')
+    // with nothing live, the newest still wins
+    const ended = { ...live, ended_at: '2026-10-01T05:00:00.000Z' }
+    expect(applyReady(emptyState(), ready({ qoty: [ended, older] })).qoty['S1'].id).toBe('E0')
+  })
+
+  describe('QotY options are live copies of their quotes', () => {
+    const ev = (options: QotyEvent['options']): QotyEvent => ({
+      id: 'E1', server_id: 'S1', year: 2026, started_by: 'U1', started_at: '2026-10-01T00:00:00.000Z', ends_at: null,
+      ended_at: null, ended_by: null, end_reason: null, reopen_until: null, options, voters: 0, members: 2,
+    })
+    const line = { id: 'L1', speaker_id: 'U2', speaker_name: null, text: 'hi', media: null, caption: null, awards: 1, awarders: ['U1'], awarded: false }
+    const q = (text = 'hi', reactions: Message['reactions'] = []): Message => ({
+      ...msg('M1', 'Q1', `“${text}”`), reactions,
+      quote: { lines: [{ ...line, text }], year: 2026, said_on: null, reply_count: 0, last_reply_id: null, replies_seen: null, wins: [] },
+    })
+    const optOf = (s: AppState) => s.qoty['S1'].options[0].message
+    const base = () => applyReady(emptyState(), ready({ channels: [ch('Q1', 'quotes')], qoty: [ev([{ message: q(), added_by: null, votes: 0, voters: [] }])] }))
+
+    it('my awards show as mine on Ready and every Qoty event', () => {
+      expect(optOf(base()).quote!.lines[0].awarded).toBe(true)
+      for (const t of ['QotyStarted', 'QotyUpdated', 'QotyEnded'] as const) {
+        const s = applyEvent(applyReady(emptyState(), ready()), { t, d: { event: ev([{ message: q(), added_by: null, votes: 0, voters: [] }]) } } as Event, 0)
+        expect(optOf(s).quote!.lines[0].awarded, t).toBe(true)
+      }
+    })
+
+    it('reactions, edits and awards reach the option even when the channel is not loaded', () => {
+      let s = base()
+      expect(s.messages['Q1']).toBeUndefined()
+      s = applyEvent(s, { t: 'ReactionAdded', d: { channel_id: 'Q1', message_id: 'M1', emoji: '😂', user_id: 'U2', count: 2 } }, 0)
+      expect(optOf(s).reactions).toEqual([{ emoji: '😂', count: 2, me: false }])
+      s = applyEvent(s, { t: 'MessageUpdated', d: { message: q('fixed') } }, 0)
+      expect(optOf(s).quote!.lines[0].text).toBe('fixed')
+      expect(optOf(s).quote!.lines[0].awarded).toBe(true)
+      expect(optOf(s).reactions).toHaveLength(1) // an edit's reactions are not trusted
+      s = applyEvent(s, { t: 'QuoteAwardChanged', d: { channel_id: 'Q1', message_id: 'M1', line_id: 'L1', user_id: 'U1', given: false, count: 0, awarders: [] } }, 0)
+      expect(optOf(s).quote!.lines[0]).toMatchObject({ awards: 0, awarders: [], awarded: false })
+      s = applyEvent(s, { t: 'ReactionRemoved', d: { channel_id: 'Q1', message_id: 'M1', emoji: '😂', user_id: 'U2', count: 0 } }, 0)
+      expect(optOf(s).reactions).toEqual([])
+    })
+
+    it('a change to another message leaves the vote as it is', () => {
+      const s = base()
+      expect(applyEvent(s, { t: 'ReactionAdded', d: { channel_id: 'Q1', message_id: 'M9', emoji: '😂', user_id: 'U2', count: 1 } }, 0).qoty).toBe(s.qoty)
+    })
+  })
+
+  it('applyMyVote moves only my vote, keeping newer votes from others', () => {
+    const o = (id: string, voters: string[]) => ({ message: msg(id, 'Q1'), added_by: null, votes: voters.length, voters })
+    const ev = (options: QotyEvent['options'], voters: number, id = 'E1'): QotyEvent => ({
+      id, server_id: 'S1', year: 2026, started_by: 'U1', started_at: '2026-10-01T00:00:00.000Z', ends_at: null,
+      ended_at: null, ended_by: null, end_reason: null, reopen_until: null, options, voters, members: 3,
+    })
+    // newer state already has sam's vote on M2; the answer to my vote predates it
+    let s = applyEvent(applyReady(emptyState(), ready()), { t: 'QotyUpdated', d: { event: ev([o('M1', []), o('M2', ['U2'])], 1) } }, 0)
+    s = applyMyVote(s, ev([o('M1', ['U1']), o('M2', [])], 1))
+    expect(s.qoty['S1'].options.map((x) => [x.votes, x.voters])).toEqual([[1, ['U1']], [1, ['U2']]])
+    expect(s.qoty['S1'].voters).toBe(2)
+    // the same answer again changes nothing
+    expect(applyMyVote(s, ev([o('M1', ['U1']), o('M2', [])], 1))).toBe(s)
+    // moved, then taken back
+    s = applyMyVote(s, ev([o('M1', []), o('M2', ['U2', 'U1'])], 2))
+    expect(s.qoty['S1'].options.map((x) => x.voters)).toEqual([[], ['U2', 'U1']])
+    s = applyMyVote(s, ev([o('M1', []), o('M2', ['U2'])], 1))
+    expect(s.qoty['S1'].options.map((x) => x.voters)).toEqual([[], ['U2']])
+    expect(s.qoty['S1'].voters).toBe(1)
+    // an answer for another event (or none) is ignored
+    expect(applyMyVote(s, ev([o('M1', ['U1'])], 1, 'E9'))).toBe(s)
+    expect(applyMyVote(s, undefined)).toBe(s)
   })
 
   it('speaker links replace the server\'s list', () => {

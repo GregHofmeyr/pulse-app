@@ -118,15 +118,20 @@ export function applyReady(s: AppState, r: Ready): AppState {
     // Where you stand in each thread that has a counted mention for you ('' = nothing seen).
     threadSeen: Object.fromEntries(r.thread_seen.map((p) => [p.root_id, p.last_seen_id ?? ''])),
     goneReplies: {},
-    qoty: latestQoty(r.qoty),
+    qoty: Object.fromEntries(Object.entries(latestQoty(r.qoty)).map(([id, e]) => [id, withMyOptions(e, r.me.id, s.qoty[id])])),
     speakerLinks: groupLinks(r.speaker_links),
   }
 }
 
-/** One vote per server: the most recently started. */
+/** One vote per server: the live one, else the most recently started. (A reopened vote can be
+ * older than one started and ended since.) */
 function latestQoty(events: QotyEvent[]): Record<string, QotyEvent> {
   const out: Record<string, QotyEvent> = {}
-  for (const e of events) if (!out[e.server_id] || e.started_at >= out[e.server_id].started_at) out[e.server_id] = e
+  const live = (e: QotyEvent) => e.ended_at === null
+  for (const e of events) {
+    const cur = out[e.server_id]
+    if (!cur || live(e) > live(cur) || (live(e) === live(cur) && e.started_at >= cur.started_at)) out[e.server_id] = e
+  }
   return out
 }
 
@@ -175,6 +180,24 @@ function withMyQuoteState(m: Message, old: Message | undefined, meId: string | u
       replies_seen: old?.quote?.replies_seen ?? m.quote.replies_seen,
     },
   }
+}
+
+/** A vote as an event carries it: each option's quote through `withMyQuoteState` (the server
+ * builds options for no one in particular). */
+function withMyOptions(e: QotyEvent, meId: string | undefined, old: QotyEvent | undefined): QotyEvent {
+  const before = old?.id === e.id ? old : undefined
+  return { ...e, options: e.options.map((o) => ({ ...o, message: withMyQuoteState(o.message, before?.options.find((x) => x.message.id === o.message.id)?.message, meId) })) }
+}
+
+/** Change a quote wherever it is a QotY option (options are copies; edits, reactions and awards
+ * reach them here). The state is returned as is when no vote holds it. */
+function mapQotyMessages(s: AppState, id: string, f: (m: Message) => Message): AppState {
+  let qoty = s.qoty
+  for (const [server, e] of Object.entries(s.qoty)) {
+    if (!e.options.some((o) => o.message.id === id)) continue
+    qoty = { ...qoty, [server]: { ...e, options: e.options.map((o) => (o.message.id === id ? { ...o, message: f(o.message) } : o)) } }
+  }
+  return qoty === s.qoty ? s : { ...s, qoty }
 }
 
 /** Change one quote wherever it is loaded in its channel's list. */
@@ -273,9 +296,9 @@ function replyDeleted(s: AppState, e: Extract<Event, { t: 'MessageDeleted' }>['d
 
 function awardChanged(s: AppState, d: Extract<Event, { t: 'QuoteAwardChanged' }>['d']): AppState {
   const mine = (a: string[]) => !!s.me && a.includes(s.me.id)
-  return mapQuote(s, d.channel_id, d.message_id, (m) =>
-    m.quote ? { ...m, quote: { ...m.quote, lines: m.quote.lines.map((l) => (l.id === d.line_id ? { ...l, awards: d.count, awarders: d.awarders, awarded: mine(d.awarders) } : l)) } } : m,
-  )
+  const f = (m: Message): Message =>
+    m.quote ? { ...m, quote: { ...m.quote, lines: m.quote.lines.map((l) => (l.id === d.line_id ? { ...l, awards: d.count, awarders: d.awarders, awarded: mine(d.awarders) } : l)) } } : m
+  return mapQotyMessages(mapQuote(s, d.channel_id, d.message_id, f), d.message_id, f)
 }
 
 function threadSeen(s: AppState, d: Extract<Event, { t: 'ThreadSeen' }>['d']): AppState {
@@ -334,9 +357,11 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const prev = s.latest[c]
       // Like the loaded copy (upsertEdited): the edit's reactions say me:false for everyone.
       const latest = prev?.id === m.id ? { ...s.latest, [c]: { ...m, reactions: prev.reactions } } : s.latest
+      // A QotY option's copy follows the edit too, loaded or not.
+      const q = mapQotyMessages(s, m.id, (old) => withMyQuoteState({ ...m, reactions: old.reactions }, old, s.me?.id))
       // History never loaded, or a detached window that doesn't hold it (adding it would leave a gap).
-      if (!s.messages[c] || (detached(s, c) && !s.messages[c].some((x) => x.id === m.id))) return latest === s.latest ? s : { ...s, latest }
-      return { ...s, latest, messages: { ...s.messages, [c]: upsertEdited(s.messages[c], withMyQuoteState(m, s.messages[c].find((x) => x.id === m.id), s.me?.id)) } }
+      if (!s.messages[c] || (detached(s, c) && !s.messages[c].some((x) => x.id === m.id))) return latest === s.latest ? q : { ...q, latest }
+      return { ...q, latest, messages: { ...s.messages, [c]: upsertEdited(s.messages[c], withMyQuoteState(m, s.messages[c].find((x) => x.id === m.id), s.me?.id)) } }
     }
     case 'MessageDeleted': {
       if (e.d.thread_root_id) return replyDeleted(s, e.d)
@@ -469,7 +494,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'QotyStarted':
     case 'QotyUpdated':
     case 'QotyEnded':
-      return { ...s, qoty: { ...s.qoty, [e.d.event.server_id]: e.d.event } }
+      return { ...s, qoty: { ...s.qoty, [e.d.event.server_id]: withMyOptions(e.d.event, s.me?.id, s.qoty[e.d.event.server_id]) } }
     case 'ConversationVisibility': {
       const { [e.d.channel_id]: _x, ...rest } = s.hidden
       return { ...s, hidden: e.d.hidden ? { ...rest, [e.d.channel_id]: true } : rest }
@@ -510,8 +535,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       }
       const loaded = !!findMessage(s, c, id) // not loaded: the fetch brings current reactions
       const inLatest = s.latest[c]?.id === id // the conversation preview keeps its own copy
-      if (!loaded && !inLatest) return s
-      const next = loaded ? mapMessage(s, c, id, apply) : s
+      const q = mapQotyMessages(s, id, apply) // a QotY option's copy, loaded or not
+      if (!loaded && !inLatest) return q
+      const next = loaded ? mapMessage(q, c, id, apply) : q
       return { ...next, latest: inLatest ? { ...s.latest, [c]: apply(s.latest[c]) } : s.latest }
     }
   }
@@ -700,4 +726,25 @@ export function reachLatest(s: AppState, channel: string, after: string, stale: 
   const fresh = (h.missed ?? []).filter((id) => id > after && !stale.includes(id))
   const next = { ...missing(rest, fresh), loaded: true, end: !fresh.length }
   return { ...s, history: { ...s.history, [channel]: next } }
+}
+
+/** The answer to my vote (`answer`, the event as the server saw it then) applied to the vote we
+ * hold now: only my own vote moves, so newer votes from others (a QotyUpdated that overtook the
+ * answer) stay. The gateway's QotyUpdated for my vote still follows with the absolute counts.
+ * Ignored for another event, or when we already have it. */
+export function applyMyVote(s: AppState, answer: QotyEvent | undefined): AppState {
+  const meId = s.me?.id
+  const cur = answer && s.qoty[answer.server_id]
+  if (!answer || !cur || cur.id !== answer.id || !meId) return s
+  const mineIn = (e: QotyEvent) => e.options.find((o) => o.voters.includes(meId))?.message.id ?? null
+  const was = mineIn(cur)
+  const now = mineIn(answer)
+  if (was === now || (now !== null && !cur.options.some((o) => o.message.id === now))) return s
+  const options = cur.options.map((o) => {
+    const others = o.voters.filter((u) => u !== meId)
+    const voters = o.message.id === now ? [...others, meId] : others
+    return voters.length === o.voters.length && o.message.id !== now && o.message.id !== was ? o : { ...o, voters, votes: voters.length }
+  })
+  const voters = cur.voters + (was === null ? 1 : 0) - (now === null ? 1 : 0)
+  return { ...s, qoty: { ...s.qoty, [cur.server_id]: { ...cur, options, voters } } }
 }
