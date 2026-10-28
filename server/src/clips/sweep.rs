@@ -7,12 +7,15 @@ use chrono::{DateTime, Utc};
 
 use super::{TICKET_TTL_HOURS, object_key};
 use crate::AppState;
-use crate::db::{begin_write, stamp};
+use crate::db::stamp;
 use crate::error::AppResult;
 
 const EVERY: Duration = Duration::from_secs(600);
 /// A clip's media row is written in the same transaction as its `clips` row, so a row without
 /// one is an orphan; the grace period only keeps the sweeper clear of anything in flight.
+/// Extra time past a ticket's expiry before the sweeper touches it: confirm refuses tickets older
+/// than `TICKET_TTL_HOURS`, so by now none that passed that check can still be in flight.
+const TICKET_GRACE_HOURS: i64 = 1;
 const ORPHAN_AFTER_HOURS: i64 = 1;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -27,53 +30,31 @@ pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<SweepReport> {
     let mut report = SweepReport::default();
     let Some(r2) = &s.r2 else { return Ok(report) };
 
-    type Ticket = (String, String, String, Option<String>, i64, i64, String);
-    let tickets: Vec<Ticket> = sqlx::query_as(
-        "SELECT id, key, user_id, channel_id, size, duration_ms, created_at
-         FROM clip_uploads WHERE created_at < ?",
-    )
-    .bind(stamp(now - chrono::Duration::hours(TICKET_TTL_HOURS)))
-    .fetch_all(&s.db)
-    .await?;
-    for ticket in tickets {
-        let (id, key, user_id, channel_id, size, duration_ms, created_at) = &ticket;
-        // Claim the row in a short transaction (a confirm racing us then finds no ticket), and
-        // leave a key a posted clip uses alone. No transaction is open during the storage call.
-        let mut tx = begin_write(&s.db).await?;
-        let claimed = sqlx::query("DELETE FROM clip_uploads WHERE id = ?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await?
-            .rows_affected();
-        let in_use: Option<i64> = sqlx::query_scalar("SELECT 1 FROM clips WHERE video_key = ?")
-            .bind(key)
-            .fetch_optional(&mut *tx)
+    let tickets: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, key FROM clip_uploads WHERE created_at < ?")
+            .bind(stamp(
+                now - chrono::Duration::hours(TICKET_TTL_HOURS + TICKET_GRACE_HOURS),
+            ))
+            .fetch_all(&s.db)
             .await?;
-        tx.commit().await?;
-        if claimed == 0 {
-            continue;
-        }
+    for (id, key) in tickets {
+        // Never an object a posted clip uses (its ticket row is just stale).
+        let in_use: Option<i64> = sqlx::query_scalar("SELECT 1 FROM clips WHERE video_key = ?")
+            .bind(&key)
+            .fetch_optional(&s.db)
+            .await?;
+        // No transaction is open during the storage call. The row goes only once the object
+        // has, so a failure (or a crash) leaves it for the next run.
         if in_use.is_none()
-            && let Err(e) = r2.delete(&object_key(key)).await
+            && let Err(e) = r2.delete(&object_key(&key)).await
         {
             tracing::warn!(error = ?e, "couldn't delete an expired clip upload's object");
-            // Put the ticket back as it was (still expired) so the next run retries.
-            sqlx::query(
-                "INSERT OR IGNORE INTO clip_uploads
-                 (id, key, user_id, channel_id, size, duration_ms, created_at)
-                 VALUES (?, ?, ?, ?, ?, ?, ?)",
-            )
-            .bind(id)
-            .bind(key)
-            .bind(user_id)
-            .bind(channel_id)
-            .bind(size)
-            .bind(duration_ms)
-            .bind(created_at)
-            .execute(&s.db)
-            .await?;
             continue;
         }
+        sqlx::query("DELETE FROM clip_uploads WHERE id = ?")
+            .bind(&id)
+            .execute(&s.db)
+            .await?;
         report.tickets += 1;
     }
 

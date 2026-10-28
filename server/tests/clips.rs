@@ -623,7 +623,12 @@ const MAX_BYTES: u64 = 200 * 1024 * 1024;
 fn unique_png() -> Vec<u8> {
     static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-    let px = image::Rgba([(n % 251) as u8, ((n / 251) % 251) as u8, 77, 255]);
+    let px = image::Rgba([
+        (n * 53 % 251) as u8,
+        (n * 97 % 241) as u8,
+        (n * 29 % 239) as u8,
+        255,
+    ]);
     let mut img = image::RgbaImage::from_pixel(64, 36, px);
     // Mix the counter into the pixels so two calls never share a colour at all.
     img.put_pixel(n % 64, n / 64 % 36, image::Rgba([n as u8, 1, 2, 255]));
@@ -1525,7 +1530,7 @@ async fn expired_tickets_and_orphans_are_swept() {
     let old = ticket_ok(&w.app, &w.alex.1, w.channel.id, 10).await;
     put_object(&w.app, &old, vec![1u8; 10]).await;
     let old_object = format!("clips/{}.mp4", ticket_key(&w.app, &old).await);
-    age_ticket(&w.app, &old, 25).await;
+    age_ticket(&w.app, &old, 26).await;
     let fresh = ticket_ok(&w.app, &w.alex.1, w.channel.id, 10).await;
     put_object(&w.app, &fresh, vec![2u8; 10]).await;
     let fresh_object = format!("clips/{}.mp4", ticket_key(&w.app, &fresh).await);
@@ -1629,7 +1634,7 @@ async fn a_ticket_for_a_deleted_channel_is_swept() {
         404
     );
 
-    age_ticket(&w.app, &up, 25).await;
+    age_ticket(&w.app, &up, 26).await;
     let report = pulse_server::clips::sweep::run(&w.app.state(), chrono::Utc::now())
         .await
         .unwrap();
@@ -1729,7 +1734,7 @@ async fn a_sweep_never_holds_the_write_lock_across_storage_calls() {
     let s3 = w.app.s3.as_ref().unwrap();
     let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 10).await;
     put_object(&w.app, &up, vec![1u8; 10]).await;
-    age_ticket(&w.app, &up, 25).await;
+    age_ticket(&w.app, &up, 26).await;
     let before: (String, i64, String) =
         sqlx::query_as("SELECT key, size, created_at FROM clip_uploads WHERE id = ?")
             .bind(up.id.to_string())
@@ -1737,7 +1742,7 @@ async fn a_sweep_never_holds_the_write_lock_across_storage_calls() {
             .await
             .unwrap();
 
-    s3.set_delay(Duration::from_millis(1500));
+    s3.set_delay(Duration::from_millis(3000));
     s3.set_down(true);
     let state = w.app.state();
     let sweep = tokio::spawn(async move {
@@ -1758,7 +1763,7 @@ async fn a_sweep_never_holds_the_write_lock_across_storage_calls() {
     .await;
     assert_eq!(r.status(), 200);
     assert!(
-        t.elapsed() < Duration::from_millis(1000),
+        t.elapsed() < Duration::from_millis(500),
         "write was held up"
     );
     let report = sweep.await.unwrap();
@@ -1770,7 +1775,7 @@ async fn a_sweep_never_holds_the_write_lock_across_storage_calls() {
             .fetch_one(&w.app.db)
             .await
             .unwrap();
-    assert_eq!(after, before, "the ticket is back, as it was");
+    assert_eq!(after, before, "a failed delete leaves the ticket as it was");
 
     s3.set_delay(Duration::ZERO);
     s3.set_down(false);
@@ -1779,4 +1784,21 @@ async fn a_sweep_never_holds_the_write_lock_across_storage_calls() {
         .unwrap();
     assert_eq!(report.tickets, 1);
     assert_eq!(tickets(&w.app).await, 0);
+}
+
+/// Expired but inside the grace period: left alone, object included.
+#[tokio::test]
+async fn a_ticket_inside_the_grace_period_is_left_alone() {
+    let w = world().await;
+    let s3 = w.app.s3.as_ref().unwrap();
+    let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 10).await;
+    put_object(&w.app, &up, vec![1u8; 10]).await;
+    let object = format!("clips/{}.mp4", ticket_key(&w.app, &up).await);
+    age_ticket(&w.app, &up, 24).await;
+    let report = pulse_server::clips::sweep::run(&w.app.state(), chrono::Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(report.tickets, 0);
+    assert_eq!(tickets(&w.app).await, 1);
+    assert!(s3.object(&object).is_some());
 }

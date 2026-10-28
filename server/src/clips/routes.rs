@@ -121,18 +121,20 @@ async fn create_ticket(
     }))
 }
 
-/// One of my tickets: `(key, channel, size)`. Anyone else's is a 404.
+/// One of my tickets: `(key, channel, size, created_at)`. Anyone else's is a 404.
 async fn my_ticket(
     db: &SqlitePool,
     me: UserId,
     id: ClipUploadId,
-) -> AppResult<(String, Option<String>, i64)> {
-    sqlx::query_as("SELECT key, channel_id, size FROM clip_uploads WHERE id = ? AND user_id = ?")
-        .bind(id.to_string())
-        .bind(me.to_string())
-        .fetch_optional(db)
-        .await?
-        .ok_or(AppError::NotFound)
+) -> AppResult<(String, Option<String>, i64, String)> {
+    sqlx::query_as(
+        "SELECT key, channel_id, size, created_at FROM clip_uploads WHERE id = ? AND user_id = ?",
+    )
+    .bind(id.to_string())
+    .bind(me.to_string())
+    .fetch_optional(db)
+    .await?
+    .ok_or(AppError::NotFound)
 }
 
 /// Drop the ticket and (best effort) its object.
@@ -155,7 +157,7 @@ async fn cancel(
     AuthUser(me): AuthUser,
     Path(id): Path<ClipUploadId>,
 ) -> AppResult<StatusCode> {
-    let (key, _, _) = my_ticket(&s.db, me, id).await?;
+    let (key, ..) = my_ticket(&s.db, me, id).await?;
     discard(&s, id, &key).await?;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -177,7 +179,7 @@ async fn confirm(
         return replay(&s, me, id, existing).await;
     }
 
-    let (key, channel, ticket_size) = match my_ticket(&s.db, me, id).await {
+    let (key, channel, ticket_size, created) = match my_ticket(&s.db, me, id).await {
         Ok(t) => t,
         // A twin of this request may have committed (spending the ticket) since the check above.
         Err(AppError::NotFound) => {
@@ -189,11 +191,6 @@ async fn confirm(
         Err(e) => return Err(e),
     };
     // The sweeper removes tickets this old (and their objects), so none may be confirmed.
-    let created: String = sqlx::query_scalar("SELECT created_at FROM clip_uploads WHERE id = ?")
-        .bind(id.to_string())
-        .fetch_optional(&s.db)
-        .await?
-        .ok_or(AppError::NotFound)?;
     if created < stamp(chrono::Utc::now() - chrono::Duration::hours(TICKET_TTL_HOURS)) {
         return Err(AppError::Conflict("That upload expired. Try again.".into()));
     }
