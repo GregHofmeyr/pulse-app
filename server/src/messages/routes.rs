@@ -555,14 +555,7 @@ async fn remove(
         // The overdue vote this delete ended may have crowned the quote; its card was then
         // rewritten in the same transaction, so announce it as stored, with no update to follow.
         if let Some(d) = deleted.as_mut() {
-            for card in ended.cards.iter_mut() {
-                if let Some(i) = d.cards.iter().position(|c| *c == card.id) {
-                    d.cards.swap_remove(i);
-                    if let Ok(Some(stored)) = load(&s.db, None, card.id).await {
-                        *card = stored;
-                    }
-                }
-            }
+            as_stored(&mut ended.cards, &mut d.cards, |c| load(&s.db, None, c)).await;
         }
         // Under this delete's `in_order` guard.
         crate::qoty::ending::announce(&s, ended).await;
@@ -605,4 +598,82 @@ async fn remove(
         }
     }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Replace each of `cards` (just created, about to be announced) that `rewritten` lists with its
+/// stored copy, taking it off `rewritten`, so it goes out once and already rewritten. A card that
+/// can't be read back stays on `rewritten` (logged), so the `MessageUpdated` that follows still
+/// carries the stored version.
+async fn as_stored<F, Fut>(cards: &mut [Message], rewritten: &mut Vec<MessageId>, mut load: F)
+where
+    F: FnMut(MessageId) -> Fut,
+    Fut: std::future::Future<Output = AppResult<Option<Message>>>,
+{
+    for card in cards.iter_mut() {
+        let Some(i) = rewritten.iter().position(|c| *c == card.id) else {
+            continue;
+        };
+        match load(card.id).await {
+            Ok(Some(stored)) => {
+                *card = stored;
+                rewritten.swap_remove(i);
+            }
+            Ok(None) => {
+                tracing::error!(card = %card.id, "a rewritten winner card is gone before it was announced");
+            }
+            Err(e) => {
+                tracing::error!(error = ?e, card = %card.id, "couldn't load a rewritten winner card to announce");
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pulse_protocol::rest::MessageKind;
+
+    fn card(content: &str) -> Message {
+        Message {
+            id: MessageId::new(),
+            channel_id: ChannelId::new(),
+            author_id: None,
+            kind: MessageKind::System,
+            content: content.into(),
+            reply_to_id: None,
+            created_at: now(),
+            edited_at: None,
+            deleted: false,
+            mentions: vec![],
+            reactions: vec![],
+            thread_root_id: None,
+            quote: None,
+            qoty_card: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn a_rewritten_card_goes_out_as_stored_or_stays_for_the_update() {
+        let (a, b, other) = (card("words a"), card("words b"), card("other"));
+        let mut cards = vec![a.clone(), b.clone(), other.clone()];
+        let mut rewritten = vec![a.id, b.id];
+        let stored_a = Message {
+            content: "a deleted quote".into(),
+            ..a.clone()
+        };
+        as_stored(&mut cards, &mut rewritten, |id| {
+            let stored_a = stored_a.clone();
+            async move {
+                if id == stored_a.id {
+                    Ok(Some(stored_a))
+                } else {
+                    Err(AppError::Internal(anyhow::anyhow!("db down")))
+                }
+            }
+        })
+        .await;
+        assert_eq!(cards, vec![stored_a, b.clone(), other]);
+        // b couldn't be read back: it stays for the MessageUpdated that follows.
+        assert_eq!(rewritten, vec![b.id]);
+    }
 }
