@@ -1533,6 +1533,16 @@ pub async fn clip_url(
     core.check(&app, api.clip_url(&token, message_id).await)
 }
 
+/// The clip player's full screen: the window is frameless, so the page's element fullscreen alone
+/// only fills the window. The UI calls this on every `fullscreenchange`.
+#[tauri::command]
+pub fn set_fullscreen(app: AppHandle, on: bool) -> Result<(), String> {
+    let win = app
+        .get_webview_window("main")
+        .ok_or_else(|| "no main window".to_owned())?;
+    win.set_fullscreen(on).map_err(|e| e.to_string())
+}
+
 #[tauri::command]
 pub async fn list_clips(
     app: AppHandle,

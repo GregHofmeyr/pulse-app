@@ -170,6 +170,8 @@ export const api = {
   editClip: (messageId: string, body: EditClipRequest) => invoke<Message>('edit_clip', { messageId, body }),
   /** A link that works for an hour; ask again on every play. */
   clipUrl: (messageId: string) => invoke<ClipUrl>('clip_url', { messageId }),
+  /** Puts the (frameless) main window in or out of full screen, with a clip's element fullscreen. */
+  setFullscreen: (on: boolean) => invoke<void>('set_fullscreen', { on }),
   /** Newest first, 30 a page; `before` pages back. */
   listClips: (channelId: string, before?: string, game?: string, author?: string) =>
     invoke<Message[]>('list_clips', { channelId, before: before ?? null, game: game ?? null, author: author ?? null }),

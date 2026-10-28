@@ -40,3 +40,10 @@ describe('clip jobs', () => {
     ])
   })
 })
+
+describe('clip player', () => {
+  it('setFullscreen sends the on flag to the core', async () => {
+    await api.setFullscreen(true)
+    expect(invoke).toHaveBeenCalledWith('set_fullscreen', { on: true })
+  })
+})

@@ -38,6 +38,17 @@
     eyeOff: 'M2 12s3.6-7 10-7 10 7 10 7-3.6 7-10 7S2 12 2 12zM12 9a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM3 3l18 18',
     quote: 'M7 7h4v5a4 4 0 0 1-4 4M15 7h4v5a4 4 0 0 1-4 4',
     trophy: 'M8 21h8M12 17v4M7 4h10v5a5 5 0 0 1-10 0zM7 6H4v1a3 3 0 0 0 3 3M17 6h3v1a3 3 0 0 1-3 3',
+    play: 'M7 4v16l13-8z',
+    pause: 'M8 4v16M16 4v16',
+    fullscreen: 'M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5',
+    back5: 'M3 4v5h5M3.5 9A9 9 0 1 1 3 13',
+    fwd5: 'M21 4v5h-5M20.5 9A9 9 0 1 0 21 13',
+    frameBack: 'M19 5 9 12l10 7zM5 5v14',
+    frameFwd: 'M5 5l10 7-10 7zM19 5v14',
+    scissors: 'M6 3a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM6 15a3 3 0 1 0 0 6 3 3 0 0 0 0-6zM8.1 8.1 20 20M8.1 15.9 20 4',
+    undo: 'M9 14 4 9l5-5M4 9h10a6 6 0 0 1 0 12h-3',
+    grid: 'M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z',
+    list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
     message: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
   }
   let { name, size = 18, label }: { name: string; size?: number; label?: string } = $props()
