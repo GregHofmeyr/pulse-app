@@ -58,7 +58,8 @@ version = "0.3.22"
 version = "0.3.19"
 
 # Pulse: libwebrtc_download.rs (SHA-256-verified libwebrtc download). Same versions and features
-# webrtc-sys-build already pulls in, so no new crates enter the build.
+# the vendored webrtc-sys-build (vendor/webrtc-sys-build) already pulls in, so no new crates enter
+# the build. zip is 9.x there and here (zip <= 9.0.4: GHSA-m665-v7pm-7grj).
 [build-dependencies.sha2]
 version = "0.10"
 
@@ -77,8 +78,8 @@ features = [
 default-features = false
 
 [build-dependencies.zip]
-version = "0.6"
-features = ["deflate"]
+version = "9.0.5"
+features = ["deflate-flate2-zlib-rs"]
 default-features = false
 
 [target.'cfg(target_os = "linux")'.build-dependencies.pkg-config]

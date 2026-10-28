@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["protocol", "server", "client/src-tauri"]
-exclude = ["spikes", "vendor/webrtc-sys"]
+exclude = ["spikes", "vendor/webrtc-sys", "vendor/webrtc-sys-build"]
 
 [workspace.package]
 edition = "2024"
@@ -77,7 +77,16 @@ strip = true
 # (measured: 501 lines/s in a call, tests/webrtc_log_volume.rs). The vendored copy registers its
 # sink at LS_WARNING (src/webrtc.cpp's AddLogToStream). It also verifies the prebuilt libwebrtc
 # archive against pinned SHA-256s before extracting it (libwebrtc_download.rs, called from build.rs;
-# upstream extracts it unverified). Those are the only two changes. Drop the log change when
-# upstream makes the severity follow log::max_level(); keep the verification while we patch.
+# upstream extracts it unverified). And its PeerConnection wrapper closes the PeerConnection before
+# releasing it (src/peer_connection.cpp, ~PeerConnection): dropped mid-SetRemoteDescription, the
+# upstream one aborts the process with a pure virtual call (tests/webrtc_teardown.rs). Those are the
+# only three changes. Drop the log change when upstream makes the severity follow log::max_level(),
+# the close once upstream's destructor closes; keep the verification while we patch.
+#
+# webrtc-sys-build (webrtc-sys's build-dependency: libwebrtc URL, cache dir, defines) is vendored
+# only to move it from zip 0.6 to zip 9 (GHSA-m665-v7pm-7grj, zip <= 9.0.4), read-side deflate
+# only. Its code is upstream's (comments aside): zip 9 kept the ZipArchive::new/extract API it uses.
+# Drop the vendored copy once an upstream webrtc-sys-build release depends on zip >= 9.0.5.
 [patch.crates-io]
 webrtc-sys = { path = "vendor/webrtc-sys" }
+webrtc-sys-build = { path = "vendor/webrtc-sys-build" }

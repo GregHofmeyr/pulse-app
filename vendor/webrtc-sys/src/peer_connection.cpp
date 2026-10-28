@@ -86,6 +86,18 @@ PeerConnection::PeerConnection(
 
 PeerConnection::~PeerConnection() {
   RTC_LOG(LS_VERBOSE) << "PeerConnection::~PeerConnection()";
+  // Pulse: close before releasing. This object is the PeerConnection's observer. Releasing the
+  // last reference without closing first makes the proxy's destructor wait on the signaling
+  // thread, which may still be running an operation queued earlier (a SetRemoteDescription); its
+  // callbacks then reach this half-destroyed observer, and OnTrack/OnAddTrack/OnRemoveTrack copy
+  // `peer_connection_` while it is being destroyed: AddRef on a partly destroyed object, a pure
+  // virtual call that aborts the process. Close() runs on the signaling thread after whatever is
+  // queued there, while this object is still whole, and no observer callback follows it. It is a
+  // no-op on a PeerConnection that was already closed. (Seen when a tokio runtime shut down with a
+  // LiveKit session mid-negotiation; client/src-tauri/tests/webrtc_teardown.rs reproduces it.)
+  if (peer_connection_) {
+    peer_connection_->Close();
+  }
 }
 
 bool PeerConnection::Initialize(
