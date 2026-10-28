@@ -23,7 +23,12 @@ dev-livekit:
 
 # uploads go to ./data/media (gitignored) unless PULSE_MEDIA_DIR says otherwise; the server's own default is /data/media
 dev-server:
-    PULSE_MEDIA_DIR="${PULSE_MEDIA_DIR:-data/media}" cargo run -p pulse-server --bin pulse-app-server -- serve
+    PULSE_MEDIA_DIR="${PULSE_MEDIA_DIR:-data/media}" \
+    PULSE_CLIPS_S3_ENDPOINT="${PULSE_CLIPS_S3_ENDPOINT:-http://127.0.0.1:7895}" \
+    PULSE_CLIPS_S3_BUCKET="${PULSE_CLIPS_S3_BUCKET:-pulse-clips-test}" \
+    PULSE_CLIPS_S3_KEY_ID="${PULSE_CLIPS_S3_KEY_ID:-FAKEKEYID-not-a-real-key}" \
+    PULSE_CLIPS_S3_SECRET="${PULSE_CLIPS_S3_SECRET:-fake-secret-not-a-real-secret-0000}" \
+    cargo run -p pulse-server --bin pulse-app-server -- serve
 
 # a fake R2 (SigV4-checking, on disk) at 127.0.0.1:7895; prints the bucket and keys to configure
 dev-s3:

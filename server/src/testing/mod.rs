@@ -20,6 +20,8 @@ pub struct TestApp {
     pub voice: crate::voice::VoiceState,
     pub streams: crate::streams::state::StreamState,
     pub limits: Arc<crate::limits::Limits>,
+    /// The fake S3 behind `cfg.clips`, unless the test brought its own store or none.
+    pub s3: Option<fake_s3::FakeS3>,
     _dir: tempfile::TempDir,
 }
 
@@ -45,6 +47,11 @@ impl TestApp {
             voice: self.voice.clone(),
             streams: self.streams.clone(),
             limits: self.limits.clone(),
+            r2: self
+                .cfg
+                .clips
+                .as_ref()
+                .map(|c| crate::media::r2::R2::new(c).unwrap()),
         }
     }
 }
@@ -64,6 +71,7 @@ pub fn test_config() -> Config {
         media_dir: Default::default(), // under the test's temp dir unless a test sets one
         media_min_free_bytes: 0,
         totp_key: Some(crate::auth::totp::TotpKey::parse(&"42".repeat(32)).unwrap()),
+        clips: None, // `spawn_in` points it at a fake S3 unless the test set it
     }
 }
 
@@ -88,7 +96,28 @@ pub async fn spawn_copy(app: &TestApp, cfg: Config) -> TestApp {
 
 /// Serve `dir/test.db` (created if missing) with `cfg`; `dir` lives as long as the app. For a
 /// test that needs the database on a particular filesystem (pass a `tempdir_in` there).
-pub async fn spawn_in(mut cfg: Config, dir: tempfile::TempDir) -> TestApp {
+pub async fn spawn_in(cfg: Config, dir: tempfile::TempDir) -> TestApp {
+    spawn_inner(cfg, dir, true).await
+}
+
+/// Like [`spawn`], but the server has no clips storage (`cfg.clips` is `None`).
+pub async fn spawn_without_clips() -> TestApp {
+    spawn_inner(test_config(), tempfile::tempdir().unwrap(), false).await
+}
+
+async fn spawn_inner(mut cfg: Config, dir: tempfile::TempDir, with_clips: bool) -> TestApp {
+    let mut s3 = None;
+    if with_clips && cfg.clips.is_none() {
+        let fake = fake_s3::FakeS3::start(fake_s3::FakeStore::Memory).await;
+        cfg.clips = Some(crate::config::ClipStoreConfig {
+            endpoint: fake.endpoint(),
+            bucket: fake_s3::FAKE_BUCKET.into(),
+            region: "auto".into(),
+            key_id: fake_s3::FAKE_KEY_ID.into(),
+            secret: fake_s3::FAKE_SECRET.into(),
+        });
+        s3 = Some(fake);
+    }
     cfg.db_url = format!("sqlite://{}", dir.path().join("test.db").display());
     if cfg.media_dir.as_os_str().is_empty() {
         cfg.media_dir = dir.path().join("media");
@@ -102,6 +131,10 @@ pub async fn spawn_in(mut cfg: Config, dir: tempfile::TempDir) -> TestApp {
     let streams = crate::streams::state::StreamState::default();
     let limits = Arc::new(crate::limits::Limits::new(&cfg.limits));
     let state = AppState {
+        r2: cfg
+            .clips
+            .as_ref()
+            .map(|c| crate::media::r2::R2::new(c).unwrap()),
         db: db.clone(),
         cfg: cfg.clone(),
         hub: hub.clone(),
@@ -126,6 +159,7 @@ pub async fn spawn_in(mut cfg: Config, dir: tempfile::TempDir) -> TestApp {
         voice,
         streams,
         limits,
+        s3,
         _dir: dir,
     }
 }

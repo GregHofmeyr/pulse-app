@@ -1,6 +1,7 @@
 //! The media store: processed uploads on disk, content-addressed by SHA-256, one `media` row each.
 
 pub mod process;
+pub mod r2;
 pub mod routes;
 
 use std::path::{Path, PathBuf};
@@ -10,7 +11,7 @@ use anyhow::Context;
 use pulse_protocol::ids::UserId;
 use pulse_protocol::rest::MediaInfo;
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::error::AppResult;
 pub use process::Processed;
@@ -24,6 +25,26 @@ const WARN_FREE_BYTES: u64 = 5 * 1024 * 1024 * 1024;
 pub enum MediaKind {
     Emoji,
     Quote,
+    /// A clip's video: stored in R2, never on disk.
+    Clip,
+    /// A clip's poster image: on disk like emoji.
+    ClipThumb,
+}
+
+/// Where a media row's bytes live.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Location {
+    Disk,
+    R2,
+}
+
+impl Location {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Disk => "disk",
+            Self::R2 => "r2",
+        }
+    }
 }
 
 impl MediaKind {
@@ -31,15 +52,61 @@ impl MediaKind {
         match self {
             Self::Emoji => "emoji",
             Self::Quote => "quote",
+            Self::Clip => "clip",
+            Self::ClipThumb => "clip_thumb",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
         match s {
             "emoji" => Some(Self::Emoji),
             "quote" => Some(Self::Quote),
+            "clip" => Some(Self::Clip),
+            "clip_thumb" => Some(Self::ClipThumb),
             _ => None,
         }
     }
+    pub fn location(self) -> Location {
+        match self {
+            Self::Clip => Location::R2,
+            Self::Emoji | Self::Quote | Self::ClipThumb => Location::Disk,
+        }
+    }
+}
+
+/// A fresh server-assigned media key: 64 lowercase hex from 32 random bytes. It has a content
+/// hash's shape (so `valid_hash` holds) but is not one.
+pub fn new_key() -> String {
+    hex::encode(rand::random::<[u8; 32]>())
+}
+
+/// Record an object stored remotely (the caller has a signed upload for it): the `media` row for
+/// `key`. Takes a connection so a caller can do it inside its own transaction.
+pub async fn put_remote(
+    db: &mut SqliteConnection,
+    kind: MediaKind,
+    key: &str,
+    size: u64,
+    width: u32,
+    height: u32,
+    by: UserId,
+) -> AppResult<()> {
+    debug_assert_eq!(kind.location(), Location::R2);
+    sqlx::query(
+        "INSERT INTO media (hash, kind, content_type, size, width, height, frames, still_hash,
+                            uploaded_by, created_at, location)
+         VALUES (?, ?, 'video/mp4', ?, ?, ?, 0, NULL, ?, ?, ?)",
+    )
+    .bind(key)
+    .bind(kind.as_str())
+    .bind(size as i64)
+    .bind(width)
+    .bind(height)
+    .bind(by.to_string())
+    .bind(crate::db::now())
+    .bind(kind.location().as_str())
+    .execute(db)
+    .await?;
+    Ok(())
 }
 
 /// `dir/ab/abcdef….webp`, sharded by the hash's first two characters. `None` unless `hash` is a
@@ -199,7 +266,8 @@ pub fn writes_ok(cfg: &crate::config::Config) -> AppResult<()> {
     disk_ok(existing_ancestor(&cfg.media_dir), cfg.media_min_free_bytes)
 }
 
-/// Delete media nothing uses that is older than `grace`: rows, then their files, in one
+/// Delete disk media nothing uses that is older than `grace` (remote rows belong to the clips
+/// sweeper): rows, then their files, in one
 /// transaction. A re-upload's insert waits for the commit, so it sees the files gone and rewrites
 /// them (see `put_one`). A still goes with its parent. Returns how many were deleted.
 pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<u64> {
@@ -210,6 +278,8 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
     let gone: Vec<String> = sqlx::query_scalar(
         "DELETE FROM media
          WHERE created_at <= ?1
+           AND location = 'disk'
+           AND hash NOT IN (SELECT thumb_hash FROM clips)
            AND hash NOT IN (SELECT media_hash FROM custom_emoji
                          WHERE media_hash IS NOT NULL)
            AND hash NOT IN (SELECT media_hash FROM quote_lines

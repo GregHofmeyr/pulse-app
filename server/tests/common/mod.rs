@@ -43,6 +43,11 @@ pub fn binary(db_url: &str, bind: std::net::SocketAddr) -> Command {
         .env("RUST_LOG", "warn")
         // A developer's own key must not leak into a test; tests that want one pass it.
         .env_remove("PULSE_TOTP_KEY")
+        .env_remove("PULSE_CLIPS_S3_ENDPOINT")
+        .env_remove("PULSE_CLIPS_S3_BUCKET")
+        .env_remove("PULSE_CLIPS_S3_KEY_ID")
+        .env_remove("PULSE_CLIPS_S3_SECRET")
+        .env_remove("PULSE_CLIPS_S3_REGION")
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     c

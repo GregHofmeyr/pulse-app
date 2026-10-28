@@ -15,7 +15,7 @@ path = "examples/fake_s3.rs"
 required-features = ["testing"]
 
 [features]
-testing = ["dep:reqwest", "dep:tempfile", "dep:hmac"]
+testing = ["dep:tempfile", "dep:hmac"]
 
 [dependencies]
 pulse-protocol.workspace = true
@@ -38,7 +38,8 @@ sha2 = "0.10"
 hex = "0.4"
 bytes = "1"
 base64 = "0.22"
-reqwest = { version = "0.12", default-features = false, features = ["json"], optional = true }
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+rusty-s3 = "0.11.0"
 tempfile = { version = "3", optional = true }
 livekit-api = { version = "0.8.1", default-features = false, features = ["access-token", "webhooks", "services"] }
 livekit-protocol = "0.8.0"
@@ -71,4 +72,3 @@ prost = "0.14"
 livekit-protocol = "0.8.0"
 # tests/livekit_ice.rs reads deploy/livekit.yaml and docker/livekit.yaml
 yaml-rust2 = { version = "0.13", default-features = false }
-rusty-s3 = "0.11.0"

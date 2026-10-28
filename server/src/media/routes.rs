@@ -61,6 +61,10 @@ pub fn router() -> Router<AppState> {
             "/media/quote",
             post(upload_quote).layer(DefaultBodyLimit::max(BODY_LIMIT)),
         )
+        .route(
+            "/media/clip-thumb",
+            post(upload_clip_thumb).layer(DefaultBodyLimit::max(BODY_LIMIT)),
+        )
         .route("/media/{hash}", get(fetch))
 }
 
@@ -79,6 +83,22 @@ async fn upload_quote(
     body: Result<Bytes, BytesRejection>,
 ) -> AppResult<Json<MediaInfo>> {
     upload(state, user, body, MediaKind::Quote, process::quote_image).await
+}
+
+/// A clip's poster: same limits and processing as a quote image, stored as `clip_thumb`.
+async fn upload_clip_thumb(
+    state: State<AppState>,
+    user: AuthUser,
+    body: Result<Bytes, BytesRejection>,
+) -> AppResult<Json<MediaInfo>> {
+    upload(
+        state,
+        user,
+        body,
+        MediaKind::ClipThumb,
+        process::quote_image,
+    )
+    .await
 }
 
 /// What every image upload does: size, rate limit, disk guard, a processing slot, then store.

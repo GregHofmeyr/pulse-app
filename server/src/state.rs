@@ -15,4 +15,6 @@ pub struct AppState {
     pub voice: VoiceState,
     pub streams: StreamState,
     pub limits: Arc<crate::limits::Limits>,
+    /// Clip video storage; `None` when the server has none configured.
+    pub r2: Option<crate::media::r2::R2>,
 }

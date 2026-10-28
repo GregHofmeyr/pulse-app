@@ -70,8 +70,10 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     }
     media::spawn_cleanup(db.clone(), cfg.media_dir.clone());
     hygiene::spawn_prune(db.clone());
+    let r2 = cfg.clips.as_ref().map(media::r2::R2::new).transpose()?;
     let state = AppState {
         db,
+        r2,
         limits: std::sync::Arc::new(limits::Limits::new(&cfg.limits)),
         cfg: std::sync::Arc::new(cfg),
         hub: hub.clone(),

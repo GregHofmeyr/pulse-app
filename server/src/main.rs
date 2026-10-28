@@ -13,6 +13,9 @@ enum Cmd {
     Serve,
     /// Apply any pending database migrations and exit (needs only PULSE_DB_URL)
     Migrate,
+    /// Check the clips storage settings: PUT, HEAD, GET and DELETE a tiny probe object (needs
+    /// only the PULSE_CLIPS_S3_* variables)
+    ClipsCheck,
     /// Print a fresh single-use invite code (bootstraps the first account)
     CreateInvite,
     /// Write a consistent snapshot of the database to PATH (must not exist yet)
@@ -55,9 +58,23 @@ async fn main() -> anyhow::Result<()> {
         println!("migrated: {version}");
         return Ok(());
     }
+    // Likewise `clips-check` needs only the storage settings.
+    if let Cmd::ClipsCheck = cmd {
+        let Some(store) = pulse_server::config::ClipStoreConfig::from_env()? else {
+            anyhow::bail!("clips storage isn't configured: set the PULSE_CLIPS_S3_* variables");
+        };
+        let r2 = pulse_server::media::r2::R2::new(&store)?;
+        return match r2.probe().await {
+            Ok(()) => {
+                println!("clips storage ok");
+                Ok(())
+            }
+            Err(step) => anyhow::bail!("{step}"),
+        };
+    }
     let cfg = pulse_server::config::Config::from_env()?;
     match cmd {
-        Cmd::Migrate => unreachable!("handled above"),
+        Cmd::Migrate | Cmd::ClipsCheck => unreachable!("handled above"),
         Cmd::Serve => pulse_server::serve(cfg).await,
         Cmd::CreateInvite => {
             let db = pulse_server::db::connect(&cfg.db_url).await?;

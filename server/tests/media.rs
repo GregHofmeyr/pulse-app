@@ -542,3 +542,180 @@ async fn a_quote_image_too_big_once_converted_is_a_clear_400() {
     );
     assert_eq!(media_rows(&app).await, 0);
 }
+
+fn jpeg(w: u32, h: u32) -> Vec<u8> {
+    let img = image::RgbImage::from_pixel(w, h, image::Rgb([200, 40, 90]));
+    let mut out = Cursor::new(Vec::new());
+    img.write_to(&mut out, ImageFormat::Jpeg).unwrap();
+    out.into_inner()
+}
+
+#[tokio::test]
+async fn uploads_a_clip_thumbnail() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let r = upload_to(&app, "/media/clip-thumb", &token, jpeg(1280, 720)).await;
+    assert_eq!(r.status(), 200);
+    let info: MediaInfo = r.json().await.unwrap();
+    assert_eq!((info.width, info.height), (1280, 720));
+    assert_eq!(info.content_type, "image/webp");
+    let (kind, location): (String, String) =
+        sqlx::query_as("SELECT kind, location FROM media WHERE hash = ?")
+            .bind(&info.hash)
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!((kind.as_str(), location.as_str()), ("clip_thumb", "disk"));
+    assert!(
+        media::path_for(&app.cfg.media_dir, &info.hash)
+            .unwrap()
+            .is_file()
+    );
+}
+
+/// An aged `r2` row nothing references yet: the clips sweeper owns it, never disk cleanup.
+#[tokio::test]
+async fn cleanup_never_touches_remote_rows() {
+    let app = spawn().await;
+    let (alex, _) = register(&app, "alex").await;
+    let key = media::new_key();
+    let mut conn = app.db.acquire().await.unwrap();
+    media::put_remote(
+        &mut conn,
+        media::MediaKind::Clip,
+        &key,
+        1234,
+        1920,
+        1080,
+        alex,
+    )
+    .await
+    .unwrap();
+    drop(conn);
+    sqlx::query("UPDATE media SET created_at = '2020-01-01T00:00:00.000Z'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let row: (String, String, String, i64, i64) = sqlx::query_as(
+        "SELECT kind, location, content_type, frames, size FROM media WHERE hash = ?",
+    )
+    .bind(&key)
+    .fetch_one(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(
+        (row.0.as_str(), row.1.as_str(), row.2.as_str(), row.3, row.4),
+        ("clip", "r2", "video/mp4", 0, 1234)
+    );
+    assert_eq!(
+        media::cleanup(&app.db, &app.cfg.media_dir, Duration::ZERO)
+            .await
+            .unwrap(),
+        0
+    );
+    assert_eq!(media_rows(&app).await, 1);
+}
+
+#[tokio::test]
+async fn cleanup_keeps_a_live_clips_thumbnail() {
+    let app = spawn().await;
+    let (alex, token) = register(&app, "alex").await;
+    let thumb: MediaInfo = upload_to(&app, "/media/clip-thumb", &token, jpeg(640, 360))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let key = media::new_key();
+    let mut conn = app.db.acquire().await.unwrap();
+    media::put_remote(
+        &mut conn,
+        media::MediaKind::Clip,
+        &key,
+        10,
+        1920,
+        1080,
+        alex,
+    )
+    .await
+    .unwrap();
+    drop(conn);
+    let server = create_server(&app, &token, "home").await;
+    for sql in [
+        format!(
+            "INSERT INTO channels (id, server_id, kind, name, position, created_at)
+             VALUES ('c1', '{}', 'clips', 'clips', 0, '2026-01-01T00:00:00.000Z')",
+            server.id
+        ),
+        format!(
+            "INSERT INTO messages (id, channel_id, author_id, content, created_at)
+             VALUES ('m1', 'c1', '{alex}', '', '2026-01-01T00:00:00.000Z')"
+        ),
+        format!(
+            "INSERT INTO clips (message_id, video_key, thumb_hash, duration_ms, width, height)
+             VALUES ('m1', '{key}', '{}', 1000, 1920, 1080)",
+            thumb.hash
+        ),
+    ] {
+        sqlx::query(&sql).execute(&app.db).await.unwrap();
+    }
+    let dir = &app.cfg.media_dir;
+    assert_eq!(
+        media::cleanup(&app.db, dir, Duration::ZERO).await.unwrap(),
+        0
+    );
+    assert!(media::path_for(dir, &thumb.hash).unwrap().is_file());
+
+    sqlx::query("DELETE FROM clips")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        media::cleanup(&app.db, dir, Duration::ZERO).await.unwrap(),
+        1
+    );
+    assert!(!media::path_for(dir, &thumb.hash).unwrap().exists());
+}
+
+// The child process is waited on by blocking, so the in-test fake needs its own thread.
+#[tokio::test(flavor = "multi_thread")]
+async fn clips_check_reports_ok_against_the_fake() {
+    use pulse_server::testing::fake_s3::*;
+    let fake = FakeS3::start(FakeStore::Memory).await;
+    let dir = tempfile::tempdir().unwrap();
+    let db = format!("sqlite://{}", dir.path().join("pulse.db").display());
+    let endpoint = fake.endpoint();
+    let env = [
+        ("PULSE_CLIPS_S3_ENDPOINT", endpoint.as_str()),
+        ("PULSE_CLIPS_S3_BUCKET", FAKE_BUCKET),
+        ("PULSE_CLIPS_S3_KEY_ID", FAKE_KEY_ID),
+        ("PULSE_CLIPS_S3_SECRET", FAKE_SECRET),
+    ];
+    let (ok, out) = run_binary(&db, &env, &["clips-check"], Duration::from_secs(20));
+    assert!(ok, "{out}");
+    assert!(out.contains("clips storage ok"), "{out}");
+    assert!(!out.contains(FAKE_SECRET), "{out}");
+    // Probed and cleaned up.
+    assert!(fake.keys().is_empty(), "{:?}", fake.keys());
+    let verbs: Vec<_> = fake.requests().iter().map(|(m, _)| m.to_string()).collect();
+    assert_eq!(verbs, ["PUT", "HEAD", "GET", "DELETE"]);
+
+    // A wrong secret names the failing step and its status.
+    let bad = [
+        env[0],
+        env[1],
+        env[2],
+        ("PULSE_CLIPS_S3_SECRET", "wrong-secret-wrong-secret"),
+    ];
+    let (ok, out) = run_binary(&db, &bad, &["clips-check"], Duration::from_secs(20));
+    assert!(!ok, "{out}");
+    assert!(out.contains("PUT") && out.contains("403"), "{out}");
+    assert!(!out.contains("wrong-secret"), "{out}");
+}
+
+#[tokio::test]
+async fn the_harness_gives_clips_storage_unless_asked_not_to() {
+    let with = spawn().await;
+    assert!(with.cfg.clips.is_some() && with.s3.is_some() && with.state().r2.is_some());
+    let without = spawn_without_clips().await;
+    assert!(without.cfg.clips.is_none() && without.s3.is_none() && without.state().r2.is_none());
+}
