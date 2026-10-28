@@ -462,7 +462,7 @@ describe('TextChannel: quotes channel', () => {
     expect(list.getAttribute('tabindex')).toBe('-1') // focusable from code, not a tab stop
   })
 
-  it("fix-wave re-review: a quote edited from its panel after it left the list, then deleted, sends the focus to the message list", async () => {
+  it("fix-wave re-review: a quote edited from its panel after it left the list, then deleted, ends the edit and sends the focus to the new-quote box", async () => {
     show('quotes', [quoteMsg])
     document.querySelector<HTMLButtonElement>('.list .quote button[aria-label="Reply"]')!.click()
     flushSync()
@@ -478,7 +478,43 @@ describe('TextChannel: quotes channel', () => {
     flushSync()
     await settled()
     expect(document.querySelector('.replies-panel')).toBeNull()
-    expect(document.activeElement).toBe(document.querySelector('.list'))
+    // never the dead quote's edit box; with nothing holding the quote the edit ends (fix-final re-review)
+    expect(document.querySelector('.edit-quote')).toBeNull()
+    expect(document.activeElement).toBe(editBox().querySelector('textarea.qtext'))
+    expect(editBox().parentElement?.classList.contains('new-quote')).toBe(true)
+  })
+
+  it("fix-final re-review: an edit of a quote only its panel held ends when the panel closes", async () => {
+    show('quotes', [quoteMsg])
+    document.querySelector<HTMLButtonElement>('.list .quote button[aria-label="Reply"]')!.click()
+    flushSync()
+    await settled()
+    app.state = { ...app.state, messages: { ...app.state.messages, C1: [msg(500)] } }
+    flushSync()
+    document.querySelector<HTMLButtonElement>('.replies-panel .quote button[aria-label="Edit"]')!.click()
+    flushSync()
+    await settled()
+    expect(document.querySelector('.edit-quote')).toBeTruthy()
+    editBox().querySelector<HTMLElement>('textarea.qtext')!.focus()
+    document.querySelector<HTMLButtonElement>('.replies-panel button[aria-label="Close replies"]')!.click()
+    flushSync()
+    await settled()
+    // nothing keeps that quote current any more: the edit can't run on a frozen copy
+    expect(document.querySelector('.replies-panel')).toBeNull()
+    expect(document.querySelector('.edit-quote')).toBeNull()
+    expect(document.activeElement).toBe(editBox().querySelector('textarea.qtext')) // the new-quote box
+    expect(editBox().parentElement?.classList.contains('new-quote')).toBe(true)
+  })
+
+  it("fix-final re-review: an edit ends when its quote leaves the list and no panel holds it", async () => {
+    show('quotes', [quoteMsg])
+    document.querySelector<HTMLButtonElement>('.list .quote button[aria-label="Edit"]')!.click()
+    flushSync()
+    expect(document.querySelector('.edit-quote')).toBeTruthy()
+    app.state = { ...app.state, messages: { ...app.state.messages, C1: [msg(500)] } } // a jump
+    flushSync()
+    await settled()
+    expect(document.querySelector('.edit-quote')).toBeNull()
   })
 
   it("r1 m5: a quote deleted while the focus is outside its panel leaves the focus alone", async () => {

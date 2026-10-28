@@ -326,6 +326,19 @@
     const q = editingQuote && (byId.get(editingQuote.id) ?? (app.state.openRoot?.id === editingQuote.id ? app.state.openRoot : editingQuote))
     return !!q && !q.deleted
   }
+  // An edit needs a live copy of its quote (award counts, M19): the list's, or the open panel's held one.
+  // Once neither holds it (its panel closed, another panel replaced it, or a jump took it out of the
+  // list), the edit ends rather than run on a frozen copy, as leaving the channel ends it. The focus,
+  // if it was in that edit, goes to the new-quote box.
+  $effect(() => {
+    const e = editingQuote
+    if (!e || byId.has(e.id) || app.state.openRoot?.id === e.id) return
+    untrack(() => {
+      const inEdit = !!document.activeElement?.closest('.edit-quote') || document.activeElement === document.body
+      editingQuote = null
+      if (inEdit) void tick().then(() => chan?.querySelector<HTMLElement>('.new-quote:not([hidden]) textarea.qtext')?.focus())
+    })
+  })
   // A deleted quote's thread is gone: its panel closes (unsent replies to it were dropped with it). The
   // focus moves on only if it was in the panel; elsewhere it is left alone.
   $effect(() => {
