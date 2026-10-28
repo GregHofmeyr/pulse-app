@@ -3310,7 +3310,7 @@ async fn leaderboard_orders_by_people_not_rows() {
 #[tokio::test]
 async fn leaderboard_and_search_are_for_members_with_sane_input() {
     let f = fixture().await;
-    let (_, outsider) = register(&f.app, "zed").await;
+    let (_, outsider) = register(&f.app, "outsider").await;
     assert_eq!(f.board_raw(&outsider, "").await.status(), 403);
     assert_eq!(f.search_raw(&outsider, "q=x").await.status(), 403);
     assert_eq!(f.board_raw(&f.alex_t, "?year=1999").await.status(), 400);
