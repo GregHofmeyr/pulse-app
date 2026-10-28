@@ -31,7 +31,11 @@
   // The winner is older than its card, so a channel's latest page usually doesn't hold it: fetch it
   // (a window around it; only the quote is kept, the channel's history is left alone).
   let fetched = $state<Message | null>(null)
-  /** The fetch found the winner gone: the server no longer shows it (deleted). */
+  /** The fetch found the winner gone: the server no longer shows it (deleted). The server 404s an
+   *  `around` whose target isn't a visible main-list message, and `listMessagesAround` resolves that
+   *  404 as `null` (client/src-tauri/src/api.rs `messages_around`), so `page` is null here; any
+   *  other failure rejects and the fallback text stays. A soft-deleted winner comes back in the
+   *  window with `deleted` set instead. */
   let missing = $state(false)
   $effect(() => {
     const id = card.message_id
