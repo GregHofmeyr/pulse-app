@@ -75,8 +75,9 @@
   let busy = $state(false)
   // One id per quote being posted: kept across retries (a failed attempt may have reached the server) and renewed after success.
   let nonce: { id: string; sig: string } | null = null
-  // Edit mode: the lines whose speaker changed while holding awards, waiting for a yes. Any change to the lines takes
-  // the question down, so a yes only ever covers the lines it named, at the counts it named.
+  // Edit mode: the lines whose speaker changed while holding awards, waiting for a yes. Changing a speaker or adding or
+  // removing a line takes the question down; a yes covers only the lines it named, at the counts it named (checked in
+  // submit).
   let confirming = $state<{ key: number; awards: number; what: string }[]>([])
   // The quote as the store has it now: awards given while the editor is open count too.
   const live = $derived(editing && (app.state.messages[channelId]?.find((m) => m.id === editing.id) ?? editing))
@@ -177,9 +178,10 @@
     if (r.uploading) return
     r.error = ''
     // typed words become the caption; if they don't fit, nothing is converted or thrown away. A new image on an image
-    // line keeps its caption.
-    const words = r.pic ? r.caption : r.text.trim()
-    if (!r.pic && [...words].length > MAX_CAPTION) {
+    // line leaves its caption alone (it stays editable while the image uploads).
+    const convert = !r.pic
+    const words = r.text.trim()
+    if (convert && [...words].length > MAX_CAPTION) {
       r.error = `That text is too long for a caption (${MAX_CAPTION} characters at most). Shorten it, or clear it first.`
       return
     }
@@ -187,8 +189,10 @@
     try {
       const info = await api.uploadQuoteMedia(await bytes(f))
       r.pic = { hash: info.hash, still_hash: info.still_hash }
-      r.caption = words
-      r.text = ''
+      if (convert) {
+        r.caption = words
+        r.text = ''
+      }
       void focusText(r.key)
     } catch (e) {
       // the line stays as it was, still editable; nothing is posted

@@ -356,6 +356,22 @@ describe('QuoteComposer', () => {
     expect(cap().value).toBe('a dog')
   })
 
+  it('a caption typed while a new image uploads is kept', async () => {
+    let done: (v: unknown) => void = () => {}
+    let n = 0
+    invoke.mockImplementation((cmd) => (cmd === 'upload_quote_media' ? (n++ ? new Promise((r) => (done = r)) : Promise.resolve(uploaded)) : Promise.resolve(undefined)))
+    show()
+    type(textOf(0), 'a cat')
+    paste(textOf(0), imageFile()); await settle(); flushSync()
+    const cap = () => rows()[0].querySelector<HTMLInputElement>('input.caption')!
+    const ev = Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer: { files: [imageFile()], types: ['Files'] } })
+    rows()[0].dispatchEvent(ev); await settle(); flushSync()
+    type(cap(), 'a cat, napping')
+    done({ ...uploaded, hash: S }); await settle(); flushSync()
+    expect(rows()[0].querySelector<HTMLImageElement>('img.thumb')!.getAttribute('src')).toContain(S)
+    expect(cap().value).toBe('a cat, napping')
+  })
+
   // M19: the speaker-change warning can't be bypassed.
   const twoAwarded = () => quoteMsg([eline({ awards: 2, awarders: ['U1', 'U3'], text: 'first' }), eline({ id: 'L2', awards: 1, awarders: ['U1'], text: 'second' })])
   const warning = () => document.querySelector('.warn')
@@ -368,25 +384,33 @@ describe('QuoteComposer', () => {
     expect(warning()).toBeNull()
   })
 
-  it('a typed name resolving, adding a line or removing one takes the warning down', async () => {
+  const warnFor0 = async () => {
+    rows()[0].querySelector<HTMLElement>('.chip')?.click(); flushSync(); pickMember(0, 'kim')
+    enter(textOf(0)); await settle()
+    expect(warning()).not.toBeNull()
+  }
+  it('a typed name resolving takes the warning down', async () => {
     show({ editing: twoAwarded() })
-    const warnFor0 = async () => {
-      rows()[0].querySelector<HTMLElement>('.chip')?.click(); flushSync(); pickMember(0, 'kim')
-      enter(textOf(0)); await settle()
-      expect(warning()).not.toBeNull()
-    }
-    // a typed name on a blank third line (blank lines are skipped), resolved when its box loses focus
+    // a blank third line is skipped, so the warning can be up while a name is typed into it
     addLine()
     await warnFor0()
     const w = whoOf(2); w.focus(); type(w, 'Grandpa'); w.dispatchEvent(new FocusEvent('blur')); flushSync()
     expect(rows()[2].querySelector('.chip')!.textContent).toContain('Grandpa')
     expect(warning()).toBeNull()
-    type(textOf(2), 'back in my day')
+  })
+
+  it('adding a line takes the warning down', async () => {
+    show({ editing: twoAwarded() })
     await warnFor0()
     addLine()
     expect(warning()).toBeNull()
+  })
+
+  it('removing a line takes the warning down', async () => {
+    show({ editing: twoAwarded() })
+    addLine()
     await warnFor0()
-    rows()[3].querySelector<HTMLButtonElement>('button[aria-label="Remove line"]')!.click(); flushSync()
+    rows()[2].querySelector<HTMLButtonElement>('button[aria-label="Remove line"]')!.click(); flushSync()
     expect(warning()).toBeNull()
   })
 
