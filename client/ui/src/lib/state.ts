@@ -302,12 +302,17 @@ function replyCreated(s: AppState, m: Message, nonce: string | null): AppState {
   // quote's newest reply is a second copy, already counted.
   const rootQuote = s.messages[c]?.find((x) => x.id === root)?.quote ?? (s.openRoot?.id === root ? s.openRoot.quote : null)
   const awaited = !!nonce && !!s.pending[c]?.some((p) => p.nonce === nonce)
-  const known = !!s.threads[root]?.some((x) => x.id === m.id) || (!awaited && !!rootQuote?.last_reply_id && m.id <= rootQuote.last_reply_id)
+  const held = !!s.threads[root]?.some((x) => x.id === m.id)
+  const known = held || (!awaited && !!rootQuote?.last_reply_id && m.id <= rootQuote.last_reply_id)
   const read = s.reads[c] ?? (tracksUnread(s, c) ? { channel_id: c, last_read_message_id: null, unread: 0, mentions: 0 } : undefined)
-  const mentioned = !known && !!read && m.author_id !== s.me?.id && !!s.me && m.mentions.includes(s.me.id) && m.kind === 'normal'
+  // A counted mention is always kept in its thread (below), so only the thread copy says it was
+  // counted: a page can bring the quote with this reply as its newest before the reply itself arrives.
+  // One at or before my seen point (the thread was opened elsewhere) was never counted.
+  const seen = [s.threadSeen[root], rootQuote?.replies_seen].reduce<string>((a, b) => (b && b > a ? b : a), '')
+  const mentioned = !held && m.id > seen && !!read && m.author_id !== s.me?.id && !!s.me && m.mentions.includes(s.me.id) && m.kind === 'normal'
   // Only an open panel's thread (fetched, or its first page on the way) takes live replies; a counted
   // mention is kept too, for its delete.
-  const keep = root in s.threadStart || s.openRoot?.id === root || mentioned || !!s.threads[root]?.some((x) => x.id === m.id)
+  const keep = root in s.threadStart || s.openRoot?.id === root || mentioned || held
   const next: AppState = {
     ...s,
     threads: keep ? { ...s.threads, [root]: upsertMessage(s.threads[root], m) } : s.threads,

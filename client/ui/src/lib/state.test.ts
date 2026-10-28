@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addReplies, type AppState, type Pending } from './state'
+import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addHistory, addReplies, type AppState, type Pending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 import type { Event } from './protocol/Event'
@@ -501,6 +501,20 @@ describe('quotes', () => {
     expect(s.reads['Q1'].mentions).toBe(1) // your own reply never counts
     s = created(s, reply('R2', 'M1', { author_id: 'U2', mentions: ['U1'] }))
     expect(s.reads['Q1'].mentions).toBe(1) // the same reply again
+  })
+
+  it('a mention reply counts even when a page already brought its quote with that reply as the newest (fix-wave re-review)', () => {
+    // sam's R1 mentions me; a history page brings M1 (last_reply_id R1) before R1's frame arrives.
+    let s = addHistory(qready(), 'Q1', [qmsg('M1', { reply_count: 1, last_reply_id: 'R1' })])
+    s = created(s, reply('R1', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    expect(s.reads['Q1'].mentions).toBe(1)
+    expect(quoteOf(s)).toMatchObject({ reply_count: 1, last_reply_id: 'R1' }) // already counted by the page
+    s = created(s, reply('R1', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    expect(s.reads['Q1'].mentions).toBe(1) // a repeat still counts once
+    // A page whose quote I've already seen past the reply (opened elsewhere): not counted.
+    s = addHistory(qready(), 'Q1', [qmsg('M1', { reply_count: 1, last_reply_id: 'R1', replies_seen: 'R1' })])
+    s = created(s, reply('R1', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    expect(s.reads['Q1'].mentions).toBe(0)
   })
 
   it('a quote in a quotes channel is unread; a winner card is not', () => {
