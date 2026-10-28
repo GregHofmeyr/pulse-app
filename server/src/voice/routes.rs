@@ -132,12 +132,11 @@ async fn webhook(
         return Ok(StatusCode::OK);
     }
     // A connection whose join was abandoned before it came up ends with
-    // `participant_connection_aborted` instead of a leave: the same for presence (matched by
-    // sid, so it only ever ends that connection).
-    let left = matches!(
-        ev.event.as_str(),
-        "participant_left" | "participant_connection_aborted"
-    );
+    // `participant_connection_aborted` instead of a leave. It never had a `participant_joined`,
+    // so it only ends presence that holds that very sid (a restore that took it while it was
+    // connecting); anything else (no presence, an open row) is another connection's.
+    let aborted = ev.event == "participant_connection_aborted";
+    let left = aborted || ev.event == "participant_left";
     if left {
         crate::voice::revoke::left(&s, p).await?;
     }
@@ -172,6 +171,7 @@ async fn webhook(
         _ if left => {
             let in_memory = match s.voice.leave(channel_id, user_id, &p.sid) {
                 Left::Stale => return Ok(StatusCode::OK),
+                Left::NotPresent if aborted => return Ok(StatusCode::OK),
                 Left::Removed => true,
                 // Still close the open row (e.g. we restarted mid-call).
                 Left::NotPresent => false,
