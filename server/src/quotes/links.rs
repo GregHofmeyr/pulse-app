@@ -33,6 +33,7 @@ async fn link(
     Json(req): Json<LinkSpeakerRequest>,
 ) -> AppResult<StatusCode> {
     limit(&s, me)?;
+    crate::servers::routes::server_exists(&s.db, server).await?;
     let name = clean_name(&req.name)?;
     let key = name_key(name);
 
@@ -103,6 +104,7 @@ async fn unlink(
     Path((server, key)): Path<(ServerId, String)>,
 ) -> AppResult<StatusCode> {
     limit(&s, me)?;
+    crate::servers::routes::server_exists(&s.db, server).await?;
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     if !member_in(&mut tx, server, me).await? {

@@ -42,7 +42,8 @@ fn clean_name(name: &str) -> AppResult<String> {
     Ok(n.to_string())
 }
 
-async fn server_exists(db: &SqlitePool, id: ServerId) -> AppResult<()> {
+/// 404 unless `id` is a server. Servers are never deleted, so this holds for the rest of a request.
+pub(crate) async fn server_exists(db: &SqlitePool, id: ServerId) -> AppResult<()> {
     let hit: Option<i64> = sqlx::query_scalar("SELECT 1 FROM servers WHERE id = ?")
         .bind(id.to_string())
         .fetch_optional(db)
@@ -58,6 +59,20 @@ pub async fn is_server_member(db: &SqlitePool, server: ServerId, user: UserId) -
             .fetch_optional(db)
             .await?;
     Ok(hit.is_some())
+}
+
+/// `user` must be a member of `server`: 404 when there is no such server, 403 when not a member.
+pub(crate) async fn require_member(
+    db: &SqlitePool,
+    server: ServerId,
+    user: UserId,
+) -> AppResult<()> {
+    server_exists(db, server).await?;
+    if is_server_member(db, server, user).await? {
+        Ok(())
+    } else {
+        Err(AppError::Forbidden)
+    }
 }
 
 async fn insert_channel(

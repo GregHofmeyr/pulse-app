@@ -20,7 +20,6 @@ use crate::AppState;
 use crate::auth::AuthUser;
 use crate::db::{now, stamp};
 use crate::error::{AppError, AppResult};
-use crate::servers::routes::is_server_member;
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -39,12 +38,9 @@ fn limit(s: &AppState, me: UserId) -> AppResult<()> {
     }
 }
 
+/// `me` must be a member of `server` (404 for no such server, 403 for not a member).
 async fn members_only(s: &AppState, server: ServerId, me: UserId) -> AppResult<()> {
-    if is_server_member(&s.db, server, me).await? {
-        Ok(())
-    } else {
-        Err(AppError::Forbidden)
-    }
+    crate::servers::routes::require_member(&s.db, server, me).await
 }
 
 /// The rate limit, then the event's server (404 if there's no such event) and membership (403).

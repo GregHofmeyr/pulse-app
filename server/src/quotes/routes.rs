@@ -316,13 +316,9 @@ struct BoardQuery {
     year: Option<i32>,
 }
 
-/// `me` must be a member of `server`.
+/// `me` must be a member of `server` (404 for no such server, 403 for not a member).
 async fn members_only(s: &AppState, server: ServerId, me: UserId) -> AppResult<()> {
-    if is_server_member(&s.db, server, me).await? {
-        Ok(())
-    } else {
-        Err(AppError::Forbidden)
-    }
+    crate::servers::routes::require_member(&s.db, server, me).await
 }
 
 /// The best live quotes of `server` (optionally of one year): see [`super::ranked`].

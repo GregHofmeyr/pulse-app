@@ -2624,6 +2624,78 @@ async fn taking_back_an_award_the_speaker_left_removes_it() {
     }
 }
 
+/// M7: a server id that isn't one is "not found", not "not a member".
+#[tokio::test]
+async fn an_unknown_server_is_404_for_board_search_and_links() {
+    let f = fixture().await;
+    f.friend_quote().await;
+    let unknown = ServerId::new();
+    let status = |r: reqwest::Response| r.status().as_u16();
+    let call = |m: reqwest::Method, path: String, body: Option<serde_json::Value>| {
+        let mut r = f
+            .app
+            .http
+            .request(m, f.app.url(&path))
+            .bearer_auth(&f.alex_t);
+        if let Some(b) = body {
+            r = r.json(&b);
+        }
+        r.send()
+    };
+    assert_eq!(
+        status(
+            call(
+                reqwest::Method::GET,
+                format!("/servers/{unknown}/quotes/leaderboard"),
+                None
+            )
+            .await
+            .unwrap()
+        ),
+        404
+    );
+    assert_eq!(
+        status(
+            call(
+                reqwest::Method::GET,
+                format!("/servers/{unknown}/quotes/search?q=x"),
+                None
+            )
+            .await
+            .unwrap()
+        ),
+        404
+    );
+    assert_eq!(
+        status(
+            call(
+                reqwest::Method::PUT,
+                format!("/servers/{unknown}/speaker-links"),
+                Some(json!({ "name": "a friend", "user_id": f.sam }))
+            )
+            .await
+            .unwrap()
+        ),
+        404
+    );
+    assert_eq!(
+        status(
+            call(
+                reqwest::Method::DELETE,
+                format!("/servers/{unknown}/speaker-links/a%20friend"),
+                None
+            )
+            .await
+            .unwrap()
+        ),
+        404
+    );
+    // A real server you aren't in stays 403.
+    let (_, out_t) = register(&f.app, "outsider").await;
+    assert_eq!(f.link(&out_t, "a friend", f.alex).await, 403);
+    assert_eq!(f.unlink(&out_t, "a friend").await, 403);
+}
+
 // ---- speaker links ----
 
 impl Fixture {

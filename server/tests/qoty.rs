@@ -670,6 +670,21 @@ async fn non_members_cant_take_part() {
     assert_eq!(f.reopen(&out_t, e.id, None).await.status(), 403);
 }
 
+/// M7: a server id that isn't one is "not found", not "not a member".
+#[tokio::test]
+async fn starting_in_an_unknown_server_is_404() {
+    let f = fixture().await;
+    let r = f
+        .call(
+            Method::POST,
+            &f.alex_t,
+            &format!("/servers/{}/qoty", ServerId::new()),
+            Some(json!({ "year": this_year(), "minutes": null })),
+        )
+        .await;
+    assert_eq!(r.status(), 404);
+}
+
 // ---------- ending ----------
 
 #[tokio::test]
