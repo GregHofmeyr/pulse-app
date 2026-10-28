@@ -608,7 +608,7 @@ async fn line_rules() {
         400,
         "unknown media"
     );
-    let (outsider, _) = register(&f.app, "robin").await;
+    let (outsider, _) = register(&f.app, "jo").await;
     assert_eq!(
         f.status(json!([f.say(outsider, "x")])).await,
         400,
@@ -739,12 +739,8 @@ async fn quotes_need_a_quotes_channel_and_membership() {
     )
     .await;
     assert_eq!(r.status(), 400, "text channel");
-    let (_, robin) = register(&f.app, "robin").await;
-    assert_eq!(
-        f.post(&robin, body.clone()).await.status(),
-        403,
-        "non-member"
-    );
+    let (_, jo) = register(&f.app, "jo").await;
+    assert_eq!(f.post(&jo, body.clone()).await.status(), 403, "non-member");
     let dm = create_dm(&f.app, &f.alex_t, &[f.sam]).await;
     let r = post_json(
         &f.app,
@@ -848,7 +844,7 @@ async fn posting_publishes_and_moves_the_read_point() {
 #[tokio::test]
 async fn reading_counts_awards_replies_and_wins() {
     let f = fixture().await;
-    let (robin, _) = register(&f.app, "robin").await;
+    let (jo, _) = register(&f.app, "jo").await;
     let m: Message = f
         .post_lines(json!([
             f.say(f.sam, "one"),
@@ -862,15 +858,15 @@ async fn reading_counts_awards_replies_and_wins() {
     let (l1, l2) = (lines[0].id.to_string(), lines[1].id.to_string());
     let db = &f.app.db;
     let exec = |q: String| async move { sqlx::query(&q).execute(db).await.unwrap() };
-    // Oldest first: sam (the speaker, uncounted), alex, robin.
-    for (giver, at) in [(f.sam, "01"), (f.alex, "02"), (robin, "03")] {
+    // Oldest first: sam (the speaker, uncounted), alex, jo.
+    for (giver, at) in [(f.sam, "01"), (f.alex, "02"), (jo, "03")] {
         exec(format!(
             "INSERT INTO quote_awards (line_id, giver_id, created_at) VALUES ('{l1}', '{giver}', '2026-01-01T00:00:{at}.000Z')"
         ))
         .await;
     }
     exec(format!(
-        "INSERT INTO quote_awards (line_id, giver_id, created_at) VALUES ('{l2}', '{robin}', '2026-01-01T00:00:01.000Z')"
+        "INSERT INTO quote_awards (line_id, giver_id, created_at) VALUES ('{l2}', '{jo}', '2026-01-01T00:00:01.000Z')"
     ))
     .await;
     let read = |token: String| {
@@ -889,12 +885,12 @@ async fn reading_counts_awards_replies_and_wins() {
     let q = read(f.alex_t.clone()).await;
     assert_eq!(
         q.lines[0].awarders,
-        vec![f.alex, robin],
+        vec![f.alex, jo],
         "own award not counted"
     );
     assert_eq!(q.lines[0].awards, 2);
     assert!(q.lines[0].awarded);
-    assert_eq!(q.lines[1].awarders, vec![robin]);
+    assert_eq!(q.lines[1].awarders, vec![jo]);
     assert!(!q.lines[1].awarded);
     let q = read(f.sam_t.clone()).await;
     assert!(
@@ -902,10 +898,10 @@ async fn reading_counts_awards_replies_and_wins() {
         "sam's own award is not counted, so not awarded"
     );
 
-    // A link makes robin the effective speaker of "A Friend": robin's award on line 2 drops.
+    // A link makes jo the effective speaker of "A Friend": jo's award on line 2 drops.
     exec(format!(
         "INSERT INTO speaker_links (server_id, name_key, name, user_id, linked_by, linked_at)
-         VALUES ('{}', 'a friend', 'A Friend', '{robin}', '{}', '2026-01-02T00:00:00.000Z')",
+         VALUES ('{}', 'a friend', 'A Friend', '{jo}', '{}', '2026-01-02T00:00:00.000Z')",
         f.server, f.alex
     ))
     .await;
@@ -1213,9 +1209,9 @@ async fn only_the_poster_edits() {
     let m = f.awarded_quote().await;
     let body = json!({ "lines": same_lines(&m) });
     assert_eq!(f.put(&f.sam_t, m.id, body.clone()).await.status(), 403);
-    let (_, robin_t) = register(&f.app, "robin").await;
+    let (_, jo_t) = register(&f.app, "jo").await;
     assert_eq!(
-        f.put(&robin_t, m.id, body.clone()).await.status(),
+        f.put(&jo_t, m.id, body.clone()).await.status(),
         403,
         "not the poster"
     );
@@ -1284,7 +1280,7 @@ async fn an_unknown_line_id_is_refused() {
             .status(),
         400
     );
-    let (stranger, _) = register(&f.app, "robin").await;
+    let (stranger, _) = register(&f.app, "jo").await;
     let mut lines = same_lines(&m);
     lines[0]["speaker_id"] = json!(stranger);
     assert_eq!(
@@ -1601,7 +1597,7 @@ async fn replies_page_newest_first() {
         .await
         .unwrap();
     assert_eq!(r.status(), 404);
-    let (_, outsider) = register(&f.app, "robin").await;
+    let (_, outsider) = register(&f.app, "jo").await;
     let r = f
         .app
         .http
@@ -2272,21 +2268,21 @@ async fn awards_follow_the_rules() {
     );
 
     // Two awarders, oldest first, absolute in the event.
-    let (robin, robin_t) = register(&f.app, "robin").await;
+    let (jo, jo_t) = register(&f.app, "jo").await;
     let r = post_json(
         &f.app,
-        &robin_t,
+        &jo_t,
         &format!("/servers/{}/join", f.server),
         json!({}),
     )
     .await;
     assert_eq!(r.status(), 204);
     let ws = hello(&f.app, &f.sam_t).await;
-    assert_eq!(f.award_status(&robin_t, line, true).await, 204);
+    assert_eq!(f.award_status(&jo_t, line, true).await, 204);
     assert_eq!(f.award_status(&f.alex_t, line, true).await, 204);
     assert_eq!(
         award_events(ws).await.last().cloned(),
-        Some((line, f.alex, true, 2, vec![robin, f.alex]))
+        Some((line, f.alex, true, 2, vec![jo, f.alex]))
     );
 }
 
@@ -2441,10 +2437,10 @@ async fn concurrent_awards_end_on_the_true_count() {
 #[tokio::test]
 async fn everyone_sees_awards_live() {
     let f = fixture().await;
-    let (_, robin_t) = register(&f.app, "robin").await;
+    let (_, jo_t) = register(&f.app, "jo").await;
     let r = post_json(
         &f.app,
-        &robin_t,
+        &jo_t,
         &format!("/servers/{}/join", f.server),
         json!({}),
     )
@@ -2452,7 +2448,7 @@ async fn everyone_sees_awards_live() {
     assert_eq!(r.status(), 204);
     let q = f.quote().await;
     let line = f.line_of(&q, 0);
-    let mut ws = hello(&f.app, &robin_t).await;
+    let mut ws = hello(&f.app, &jo_t).await;
     assert_eq!(f.award_status(&f.alex_t, line, true).await, 204);
     loop {
         if let ServerFrame::Event(Event::QuoteAwardChanged {
