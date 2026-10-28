@@ -92,6 +92,8 @@ describe('full view', () => {
     expect(q('.full-view .stage video')).not.toBeNull()
     expect(q('.full-view .bar')!.textContent).toContain('sam')
     expect(room.setLayer).toHaveBeenLastCalledWith('U2', 'high')
+    // the side panel toggles are the shell's: on its own, there's nothing to toggle
+    expect(q('.full-view .panel-toggle')).toBeNull()
   })
 
   it('back_and_esc_return_to_the_grid_and_keep_watching', async () => {

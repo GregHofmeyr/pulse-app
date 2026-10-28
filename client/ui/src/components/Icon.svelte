@@ -16,6 +16,9 @@
     chevron: 'm6 9 6 6 6-6',
     chevronLeft: 'm15 6-6 6 6 6',
     chevronRight: 'm9 6 6 6-6 6',
+    // a window with its left / right column marked: show or hide that side panel
+    panelLeft: 'M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 4v16',
+    panelRight: 'M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM15 4v16',
     reply: 'M9 14 4 9l5-5M4 9h10a6 6 0 0 1 6 6v4',
     pencil: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
     trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',

@@ -246,9 +246,9 @@ describe('watching from anywhere', () => {
     flushSync()
   })
 
-  const toggle = (name: 'Channels' | 'Members') => document.querySelector<HTMLButtonElement>(`.edge[aria-label="${name}"]`)
+  const toggle = (name: 'Channels' | 'Members') => document.querySelector<HTMLButtonElement>(`.full-view .panel-toggle[aria-label="${name}"]`)
 
-  it('full_view_hides_both_side_panels_with_edge_toggles_to_bring_each_back', async () => {
+  it('full_view_hides_both_side_panels_with_top_corner_toggles_to_bring_each_back', async () => {
     const setItem = vi.spyOn(Storage.prototype, 'setItem')
     const side = () => q('aside.side')!
     const members = () => q('.right-panel')!
@@ -263,24 +263,42 @@ describe('watching from anywhere', () => {
     expect(members().hidden).toBe(true)
     const left = toggle('Channels')!
     const right = toggle('Members')!
-    // what each toggles, in the order they sit: the left one first in main, the right one last
+    // what each toggles, where it sits: the full view's top bar, the left one first and the right one last
     expect(left.getAttribute('aria-controls')).toBe(side().id)
     expect(right.getAttribute('aria-controls')).toBe(members().id)
-    const main = q('main')!
-    expect(main.firstElementChild).toBe(left)
-    expect(main.lastElementChild).toBe(right)
-    expect(left.getAttribute('aria-expanded')).toBe('false')
+    const bar = q('.full-view .bar')!
+    expect(bar.firstElementChild).toBe(left)
+    expect(bar.lastElementChild).toBe(right)
+    // no edge tabs on the stream any more
+    expect(q('.edge')).toBeNull()
+    for (const t of [left, right]) {
+      expect(t.type).toBe('button')
+      expect(t.querySelector('svg')).not.toBeNull() // an icon
+      expect(t.getAttribute('aria-pressed')).toBe('false')
+      expect(t.hasAttribute('aria-expanded')).toBe(false) // pressed says it; both would be read twice
+      expect(t.tabIndex).toBe(0)
+    }
+    expect(left.dataset.tip).toBe('Show channels')
+    expect(right.dataset.tip).toBe('Show members')
     left.click()
     flushSync()
     expect(side().hidden).toBe(false)
     expect(members().hidden).toBe(true) // each on its own
-    expect(left.getAttribute('aria-expanded')).toBe('true')
+    expect(left.getAttribute('aria-pressed')).toBe('true')
+    expect(left.dataset.tip).toBe('Hide channels')
+    expect(right.getAttribute('aria-pressed')).toBe('false')
     right.click()
     flushSync()
     expect(members().hidden).toBe(false)
+    expect(right.getAttribute('aria-pressed')).toBe('true')
+    // the keyboard works them too: focus, then Enter is a native button's click
+    right.focus()
+    expect(document.activeElement).toBe(right)
     right.click()
     flushSync()
     expect(members().hidden).toBe(true)
+    expect(right.getAttribute('aria-pressed')).toBe('false')
+    expect(q('.full-view')).not.toBeNull() // toggling never leaves full view
 
     // Esc leaves full view: everything is back, the toggles go
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
