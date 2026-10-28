@@ -807,7 +807,8 @@ describe('quotes', () => {
 
   it('removing a channel drops its threads even when their quotes are not loaded', () => {
     let s = created(qready(), reply('R1', 'M1', { mentions: ['U1'] })) // M1 itself is not loaded; a counted mention is kept
-    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R1', mentions_cleared: 0, mentions: null } }, 0)
+    // (seen up to before it: a seen point past it would drop it already, see "r1 m3")
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R0', mentions_cleared: 0, mentions: null } }, 0)
     s = applyEvent(s, { t: 'ChannelRemoved', d: { channel_id: 'Q1', user_id: 'U1' } }, 0)
     expect(s.threads['M1']).toBeUndefined()
     expect(s.threadSeen['M1']).toBeUndefined()
@@ -910,12 +911,12 @@ describe('quotes', () => {
     // the open panel marks what it shows seen; a later mention arrives unseen
     s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R2', mentions_cleared: 1, mentions: null } }, 0)
     s = created(s, reply('R3', 'M1', { author_id: 'U2', mentions: ['U1'] }))
-    s = closeThread(s, 'M1')
+    s = closeThread(s, 'M1', 'Q1')
     expect(s.threadStart['M1']).toBeUndefined()
     // only an unseen counted mention stays (its delete must still lower the count)
     expect(s.threads['M1'].map((m) => m.id)).toEqual(['R3'])
     s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R3', mentions_cleared: 1, mentions: null } }, 0)
-    s = closeThread(s, 'M1')
+    s = closeThread(s, 'M1', 'Q1')
     expect(s.threads['M1']).toBeUndefined()
   })
 
@@ -946,7 +947,39 @@ describe('quotes', () => {
     expect(s.openRoot?.quote).toMatchObject({ reply_count: 2, last_reply_id: 'R2' })
     s = applyEvent(s, delRoot(), 0)
     expect(s.openRoot?.deleted).toBe(true)
-    expect(closeThread(s, 'M1').openRoot).toBeNull()
+    expect(closeThread(s, 'M1', 'Q1').openRoot).toBeNull()
+  })
+
+  // --- U4 round 1 ---
+  it('r1 I1: a live reply to the open quote is kept while its first page is still loading', async () => {
+    const { holdThread } = await import('./state')
+    let s = holdThread(withQuote(), qmsg('M1'))
+    s = created(s, reply('R2', 'M1')) // lands between the request and the response
+    s = addReplies(s, 'M1', [reply('R1', 'M1')], true) // the page, read before R2 existed
+    expect(s.threads['M1'].map((m) => m.id)).toEqual(['R1', 'R2'])
+  })
+
+  it("r1 m2: closing a thread another panel replaced keeps its gone replies while it's loaded", async () => {
+    const { holdThread, closeThread } = await import('./state')
+    let s = addReplies(created(withQuote({ reply_count: 1, last_reply_id: 'R1' }), qmsg('M2')), 'M1', [], true)
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'Q1', message_id: 'R1', author_id: 'U2', mentions: [], thread_root_id: 'M1' } }, 0)
+    s = holdThread(s, qmsg('M2')) // the panel moved on to M2 before M1's close ran
+    s = closeThread(s, 'M1', 'Q1')
+    expect(s.goneReplies['R1']).toBeDefined()
+    expect(s.openRoot?.id).toBe('M2')
+  })
+
+  it('r1 m3: a ThreadSeen past the kept mentions of a thread not open here drops them', () => {
+    let s = created(qready(), reply('R1', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    s = created(s, reply('R2', 'M1', { author_id: 'U2', mentions: ['U1'] }))
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R1', mentions_cleared: 1, mentions: null } }, 0)
+    expect(s.threads['M1'].map((m) => m.id)).toEqual(['R2'])
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R2', mentions_cleared: 1, mentions: null } }, 0)
+    expect(s.threads['M1']).toBeUndefined()
+    // a fetched (open) thread keeps everything
+    s = addReplies(withQuote(), 'M1', [reply('R1', 'M1')], true)
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'Q1', root_id: 'M1', last_seen_id: 'R1', mentions_cleared: 0, mentions: null } }, 0)
+    expect(s.threads['M1'].map((m) => m.id)).toEqual(['R1'])
   })
 })
 

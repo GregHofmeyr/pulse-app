@@ -300,21 +300,32 @@
     repliesOpener = at instanceof HTMLElement && list?.contains(at) ? at : null
     repliesOpen = m
   }
+  let chan: HTMLDivElement
   async function closeReplies() {
     const id = repliesOpen?.id
     const opener = repliesOpener
     repliesOpen = null
     repliesOpener = null
     await tick()
-    // the opener, else the quote itself (a click that didn't focus its button, or it's gone since)
-    const back = opener?.isConnected ? opener : list?.querySelector<HTMLElement>(`[data-message-id="${id}"] .line`)
+    // The opener; else (a click that didn't focus it, or it's gone since, like the unsent-reply marker
+    // while its panel was open) the quote's marker or first line; else (the quote is gone) the quote box.
+    const quote = `[data-message-id="${id}"]`
+    const back = (opener?.isConnected ? opener : null)
+      ?? list?.querySelector<HTMLElement>(`${quote} .unsent-reply`)
+      ?? list?.querySelector<HTMLElement>(`${quote} .line`)
+      ?? chan?.querySelector<HTMLElement>('div:not([hidden]) > .qc textarea.qtext')
     back?.focus()
   }
-  // A deleted quote's thread is gone: its panel closes (unsent replies to it were dropped with it).
+  // A deleted quote's thread is gone: its panel closes (unsent replies to it were dropped with it). The
+  // focus moves on only if it was in the panel; elsewhere it is left alone.
   $effect(() => {
     if (repliesRoot?.deleted) untrack(() => {
-      repliesOpen = null
-      repliesOpener = null
+      const inPanel = !!document.activeElement?.closest('.replies-panel')
+      if (inPanel) void closeReplies()
+      else {
+        repliesOpen = null
+        repliesOpener = null
+      }
     })
   })
   // Unsent replies wait in their quote's panel; while it's closed, the quote says it has some.
@@ -361,7 +372,7 @@
   }
 </script>
 
-<div class="chan" class:with-replies={!!repliesRoot}>
+<div class="chan" class:with-replies={!!repliesRoot} bind:this={chan}>
   <div class="head">
     {#if isPrivate && channel?.kind === 'dm' && others[0]}
       <Avatar id={others[0]} name={title} size={26} online={app.state.people[others[0]]?.online ?? false} />

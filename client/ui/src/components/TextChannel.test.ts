@@ -407,10 +407,56 @@ describe('TextChannel: quotes channel', () => {
     flushSync()
     await settled()
     expect(document.querySelector('.replies-panel')).toBeTruthy()
+    expect(document.activeElement?.closest('.replies-panel')).toBeTruthy() // its reply box has the focus
     app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M0001', thread_root_id: null, author_id: 'U1', mentions: [] } }, Date.now())
     flushSync()
     await settled()
     expect(document.querySelector('.replies-panel')).toBeNull()
+    // r1 m5: the focus doesn't fall to the page (the quote is gone: the quote box takes it)
+    expect(document.activeElement).not.toBe(document.body)
+    expect(document.activeElement?.matches('textarea.qtext')).toBe(true)
+  })
+
+  it("r1 m5: a quote deleted while the focus is outside its panel leaves the focus alone", async () => {
+    show('quotes', [quoteMsg])
+    document.querySelector<HTMLButtonElement>('.list .quote button[aria-label="Reply"]')!.click()
+    flushSync()
+    await settled()
+    const leaderboard = document.querySelector<HTMLButtonElement>('button[aria-label="Leaderboard"]')!
+    leaderboard.focus()
+    app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M0001', thread_root_id: null, author_id: 'U1', mentions: [] } }, Date.now())
+    flushSync()
+    await settled()
+    expect(document.querySelector('.replies-panel')).toBeNull()
+    expect(document.activeElement).toBe(leaderboard)
+  })
+
+  it('r1 m4: a panel opened from the unsent-reply marker gives the focus back to the marker, else to the quote', async () => {
+    show('quotes', [quoteMsg])
+    app.state = { ...app.state, pending: { C1: [unsentReply('a', 'M0001')] } }
+    flushSync()
+    const marker = () => document.querySelector<HTMLButtonElement>('.list .quote button.unsent-reply')
+    const escape = async () => {
+      document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      flushSync()
+      await settled()
+    }
+    marker()!.focus()
+    marker()!.click()
+    flushSync()
+    await settled()
+    expect(marker()).toBeNull() // the panel shows it now
+    await escape()
+    expect(document.activeElement).toBe(marker()) // back, since the reply is still unsent
+    marker()!.click()
+    flushSync()
+    await settled()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.replies-panel .pend button')].find((b) => b.textContent === 'Discard')!.click()
+    flushSync()
+    document.querySelector<HTMLElement>('.replies-panel [role="textbox"]')!.focus()
+    await escape()
+    expect(marker()).toBeNull()
+    expect(document.activeElement).toBe(document.querySelector('.list [data-message-id="M0001"] .line'))
   })
 
   it("M16: the pinned quote stays current after it leaves the channel's list", async () => {

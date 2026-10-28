@@ -56,11 +56,13 @@
     const r = root
     untrack(() => (app.state = holdThread(app.state, r)))
   })
-  $effect(() => () =>
+  let alive = true
+  $effect(() => () => {
+    alive = false
     queueMicrotask(() => {
-      if (ui.openThreadId !== rootId) app.state = closeThread(app.state, rootId) // unless it opened again
-    }),
-  )
+      if (ui.openThreadId !== rootId) app.state = closeThread(app.state, rootId, channelId) // unless it opened again
+    })
+  })
 
   // Opening it is for writing: the box takes the focus.
   let focused = false
@@ -78,6 +80,7 @@
     api.listReplies(rootId).then(
       async (page) => {
         fetching = false
+        if (!alive) return // closed meanwhile: the thread was let go, and this page would bring it back
         app.state = addReplies(app.state, rootId, page, page.length < PAGE)
         await tick()
         list?.scrollTo({ top: list.scrollHeight })

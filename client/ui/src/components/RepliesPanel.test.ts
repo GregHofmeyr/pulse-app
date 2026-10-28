@@ -249,6 +249,35 @@ describe('RepliesPanel', () => {
     expect(ui.openThreadId).toBeNull()
   })
 
+  const deferPage = () => {
+    let release: (p: Message[]) => void = () => {}
+    invoke.mockImplementation((cmd: string) => (cmd === 'list_replies' ? new Promise((done) => (release = done as never)) : Promise.resolve(undefined)))
+    return (p: Message[]) => release(p)
+  }
+
+  it('r1 I1: a reply that arrives while the first page loads is shown', async () => {
+    const release = deferPage()
+    await show()
+    app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: reply(3), nonce: null } }, Date.now())
+    release([reply(2), reply(1)]) // read before R0003 existed
+    await settle()
+    flushSync()
+    const texts = [...panel().querySelectorAll('.msg .content')].map((e) => e.textContent?.trim())
+    expect(texts).toEqual(['reply 1', 'reply 2', 'reply 3'])
+  })
+
+  it('r1 m1: a first page that lands after the panel closed does not bring the thread back', async () => {
+    const release = deferPage()
+    await show()
+    unmount(cmp!)
+    cmp = undefined
+    await settle()
+    release([reply(2), reply(1)])
+    await settle()
+    expect(app.state.threads['Q1']).toBeUndefined()
+    expect(app.state.threadStart['Q1']).toBeUndefined()
+  })
+
   it('M13/M16: holds its quote while open, and lets the thread go when it closes', async () => {
     await show()
     expect(app.state.openRoot?.id).toBe('Q1')

@@ -225,13 +225,13 @@ export function holdThread(s: AppState, root: Message): AppState {
   return s.openRoot === root ? s : { ...s, openRoot: root }
 }
 
-/** Its replies panel closed: drop what was fetched for the thread (opening it again refetches), keeping only
- * live mentions of you that are still counted, and its gone replies once the quote isn't loaded either. */
-export function closeThread(s: AppState, root: string): AppState {
+/** Its replies panel (in `channel`) closed: drop what was fetched for the thread (opening it again refetches),
+ * keeping only live mentions of you that are still counted, and its gone replies once the quote isn't loaded
+ * either. Another panel may hold its quote by now: that one stays held. */
+export function closeThread(s: AppState, root: string, channel: string): AppState {
   const rootMsg = s.openRoot?.id === root ? s.openRoot : undefined
-  const channel = rootMsg?.channel_id ?? s.threads[root]?.[0]?.channel_id
-  const loaded = !!channel && !!s.messages[channel]?.some((m) => m.id === root)
-  const quote = (channel && s.messages[channel]?.find((m) => m.id === root)?.quote) || rootMsg?.quote
+  const loaded = s.messages[channel]?.find((m) => m.id === root)
+  const quote = loaded?.quote ?? rootMsg?.quote
   const seen = maxIdOf(s.threadSeen[root], quote?.replies_seen)
   const meId = s.me?.id
   const counted = (s.threads[root] ?? []).filter((m) => !!meId && m.kind === 'normal' && !m.deleted && m.author_id !== meId && m.mentions.includes(meId) && m.id > seen)
@@ -305,8 +305,9 @@ function replyCreated(s: AppState, m: Message, nonce: string | null): AppState {
   const known = !!s.threads[root]?.some((x) => x.id === m.id) || (!awaited && !!rootQuote?.last_reply_id && m.id <= rootQuote.last_reply_id)
   const read = s.reads[c] ?? (tracksUnread(s, c) ? { channel_id: c, last_read_message_id: null, unread: 0, mentions: 0 } : undefined)
   const mentioned = !known && !!read && m.author_id !== s.me?.id && !!s.me && m.mentions.includes(s.me.id) && m.kind === 'normal'
-  // Only a fetched thread (an open panel) takes live replies; a counted mention is kept too, for its delete.
-  const keep = root in s.threadStart || mentioned || !!s.threads[root]?.some((x) => x.id === m.id)
+  // Only an open panel's thread (fetched, or its first page on the way) takes live replies; a counted
+  // mention is kept too, for its delete.
+  const keep = root in s.threadStart || s.openRoot?.id === root || mentioned || !!s.threads[root]?.some((x) => x.id === m.id)
   const next: AppState = {
     ...s,
     threads: keep ? { ...s.threads, [root]: upsertMessage(s.threads[root], m) } : s.threads,
@@ -365,7 +366,14 @@ function threadSeen(s: AppState, d: Extract<Event, { t: 'ThreadSeen' }>['d']): A
   const quoted = mapQuote(s, d.channel_id, d.root_id, (m) =>
     m.quote ? { ...m, quote: { ...m.quote, replies_seen: maxIdOf(m.quote.replies_seen, d.last_seen_id) } } : m,
   )
-  const next = { ...quoted, threadSeen: { ...s.threadSeen, [d.root_id]: maxIdOf(s.threadSeen[d.root_id], d.last_seen_id) } }
+  const seenNow = maxIdOf(s.threadSeen[d.root_id], d.last_seen_id)
+  // A thread not open here holds only counted mentions: seen ones aren't counted any more.
+  const kept = s.threads[d.root_id]
+  const open = d.root_id in s.threadStart || s.openRoot?.id === d.root_id
+  const left = kept && !open ? kept.filter((m) => m.id > seenNow) : kept
+  const { [d.root_id]: _x, ...otherThreads } = s.threads
+  const threads = left === kept ? quoted.threads : left!.length ? { ...s.threads, [d.root_id]: left! } : otherThreads
+  const next = { ...quoted, threads, threadSeen: { ...s.threadSeen, [d.root_id]: seenNow } }
   if (!read) return next
   // The server's absolute count wins; an older server sends only the delta.
   const mentions = d.mentions ?? Math.max(0, read.mentions - d.mentions_cleared)
