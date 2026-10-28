@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { clipFilter, feedKey, formatBytes, formatDuration, matchesFilter, clipView, isNewClip } from './clips'
+import { clipFilter, feedKey, formatBytes, formatDuration, matchesFilter, clipView, isNewClip, matchGame } from './clips'
+import type { Game } from './protocol/Game'
 import { applyEvent, applyReady, emptyState } from './state'
 import type { Message } from './protocol/Message'
 
@@ -53,5 +54,20 @@ describe('clipView / isNewClip', () => {
     expect(isNewClip(s, 'K1', 'M6', 'M9')).toBe(false)
     s = applyEvent(s, { t: 'ClipViewChanged', d: { user_id: 'U1', channel_id: 'K1', view: 'list' } }, 0)
     expect(clipView(s, 'K1')).toBe('list')
+  })
+})
+
+describe('matchGame', () => {
+  const g = (id: string, name: string): Game => ({ id, server_id: 'S1', name, created_by: null, created_at: '2026-10-01T00:00:00.000Z' })
+  const games = [g('G1', 'Overwatch 2'), g('G2', 'Valorant')]
+  it('finds a game by its name key', () => {
+    expect(matchGame('overwatch  2', games)).toEqual({ game: games[0] })
+  })
+  it('offers to add an unknown game, keeping the guess', () => {
+    expect(matchGame('Deadlock', games)).toEqual({ add: 'Deadlock' })
+  })
+  it('is null without a guess', () => {
+    expect(matchGame(null, games)).toBeNull()
+    expect(matchGame('   ', games)).toBeNull()
   })
 })

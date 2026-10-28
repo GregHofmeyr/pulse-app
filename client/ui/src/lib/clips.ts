@@ -2,6 +2,8 @@
 import type { AppState } from './state'
 import type { ClipView } from './protocol/ClipView'
 import type { Message } from './protocol/Message'
+import type { Game } from './protocol/Game'
+import { nameKey } from './quotes'
 
 /** Which clips of a channel a feed shows: a game and/or an author (ids). */
 export type ClipFilter = { game?: string; author?: string }
@@ -54,4 +56,13 @@ export function formatBytes(n: number): string {
 export function isNewClip(s: AppState, channelId: string, messageId: string, seenAt?: string | null): boolean {
   const point = seenAt !== undefined ? seenAt : (s.reads[channelId]?.last_read_message_id ?? null)
   return point === null || messageId > point
+}
+
+/** The server's game for a detected title (same name rule as quotes), else the name to offer adding; null with no guess. */
+export function matchGame(guess: string | null, games: Game[]): { game: Game } | { add: string } | null {
+  const name = guess?.trim() ?? ''
+  const key = nameKey(name)
+  if (!key) return null
+  const game = games.find((g) => nameKey(g.name) === key)
+  return game ? { game } : { add: name.split(/\s+/).join(' ') }
 }
