@@ -177,10 +177,12 @@ async fn clips_check() -> anyhow::Result<()> {
     }
 }
 
-/// `clip-storage` reads only the database.
+/// `clip-storage` reads only the database, opened read-only: it never migrates or creates one.
 async fn clip_storage() -> anyhow::Result<()> {
     let url = std::env::var("PULSE_DB_URL").unwrap_or_else(|_| "sqlite://pulse.db".into());
-    let db = pulse_server::db::connect(&url).await?;
+    let db = pulse_server::db::connect_read_only(&url)
+        .await
+        .map_err(|e| anyhow::anyhow!("couldn't open the database {url}: {e}"))?;
     let usage = pulse_server::clips::usage_by_server(&db).await?;
     println!("{}", pulse_server::clips::format_storage_report(&usage));
     Ok(())

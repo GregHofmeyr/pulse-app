@@ -32,6 +32,16 @@ pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
     Ok(pool)
 }
 
+/// Open an existing database without migrating it or creating it (read-only reports). A missing
+/// file is an error, so a mistyped path can't pass for an empty database.
+pub async fn connect_read_only(url: &str) -> anyhow::Result<SqlitePool> {
+    let opts = options(url)?.create_if_missing(false).read_only(true);
+    Ok(SqlitePoolOptions::new()
+        .max_connections(2)
+        .connect_with(opts)
+        .await?)
+}
+
 /// Run the migrations on an existing database the way [`connect`] does, and return the latest
 /// applied version. For the `migrate` subcommand, which never creates a database: a mistyped
 /// path must fail, not report success on a new empty file.

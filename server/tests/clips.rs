@@ -2347,3 +2347,68 @@ fn the_storage_report_prices_past_the_free_tier() {
         "{big}"
     );
 }
+
+#[tokio::test]
+async fn storage_counts_a_shared_thumbnail_once() {
+    let w = world().await;
+    let a = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![1u8; 100]).await;
+    let b = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![2u8; 200]).await;
+    let thumb = a.clip.as_ref().unwrap().thumb_hash.clone();
+    sqlx::query("UPDATE clips SET thumb_hash = ? WHERE message_id = ?")
+        .bind(&thumb)
+        .bind(b.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    let thumb_size: i64 = sqlx::query_scalar("SELECT size FROM media WHERE hash = ?")
+        .bind(&thumb)
+        .fetch_one(&w.app.db)
+        .await
+        .unwrap();
+    let st: pulse_protocol::rest::ClipStorage = get_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/servers/{}/clips/storage", w.server),
+    )
+    .await;
+    assert_eq!(st.count, 2);
+    assert_eq!(st.bytes, 300 + thumb_size as u64);
+}
+
+#[tokio::test]
+async fn clip_storage_command_refuses_a_missing_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("nope.db");
+    let url = format!("sqlite://{}", file.display());
+    let run = |url: &str| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_pulse-app-server"))
+            .env_clear()
+            .env("PULSE_DB_URL", url)
+            .env("RUST_LOG", "warn")
+            .arg("clip-storage")
+            .output()
+            .unwrap()
+    };
+    let out = run(&url);
+    assert!(!out.status.success(), "{out:?}");
+    assert!(String::from_utf8(out.stderr).unwrap().contains(&url));
+    assert!(!file.exists(), "clip-storage must not create a database");
+
+    // An existing database prints the report and is left unmigrated-by-it.
+    let pool = sqlx::SqlitePool::connect_with(
+        SqliteConnectOptions::new()
+            .filename(&file)
+            .create_if_missing(true),
+    )
+    .await
+    .unwrap();
+    pulse_server::db::migrate(&url).await.unwrap();
+    pool.close().await;
+    let out = run(&url);
+    assert!(out.status.success(), "{out:?}");
+    assert!(
+        String::from_utf8(out.stdout)
+            .unwrap()
+            .starts_with("total 0 clips  0.00 GB  ~$0.00/month")
+    );
+}

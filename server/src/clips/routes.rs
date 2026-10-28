@@ -593,6 +593,9 @@ async fn set_view(
     Path(id): Path<ChannelId>,
     Json(req): Json<SetClipViewRequest>,
 ) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
     let ch = channel_for(&s.db, me, id).await?;
     if ch.kind != ChannelKind::Clips {
         return Err(bad("this isn't a clips channel"));

@@ -154,24 +154,34 @@ pub fn est_monthly_usd(bytes: u64) -> f64 {
     bytes as f64 / 1e9 * USD_PER_GB_MONTH
 }
 
-/// A server's live clips: `(bytes, count)`, the video and thumbnail rows together.
+/// A server's live clips: `(bytes, count)`. Bytes sum each distinct media row once: the videos
+/// plus the thumbnails (a thumbnail shared by hash across clips counts once).
 pub async fn server_usage(
     db: &SqlitePool,
     server: pulse_protocol::ids::ServerId,
 ) -> AppResult<(u64, u32)> {
-    let (bytes, count): (i64, i64) = sqlx::query_as(
-        "SELECT COALESCE(SUM(v.size + COALESCE(t.size, 0)), 0), COUNT(*)
-         FROM clips c
+    let live = "FROM clips c
+         JOIN messages m ON m.id = c.message_id AND m.deleted_at IS NULL
+         JOIN channels ch ON ch.id = m.channel_id
+         WHERE ch.server_id = ?";
+    let (count, videos): (i64, i64) = sqlx::query_as(
+        "SELECT COUNT(*), COALESCE(SUM(v.size), 0) FROM clips c
          JOIN messages m ON m.id = c.message_id AND m.deleted_at IS NULL
          JOIN channels ch ON ch.id = m.channel_id
          JOIN media v ON v.hash = c.video_key
-         LEFT JOIN media t ON t.hash = c.thumb_hash
          WHERE ch.server_id = ?",
     )
     .bind(server.to_string())
     .fetch_one(db)
     .await?;
-    Ok((bytes as u64, count as u32))
+    let thumbs: i64 = sqlx::query_scalar(&format!(
+        "SELECT COALESCE(SUM(size), 0) FROM media
+         WHERE hash IN (SELECT c.thumb_hash {live})"
+    ))
+    .bind(server.to_string())
+    .fetch_one(db)
+    .await?;
+    Ok(((videos + thumbs) as u64, count as u32))
 }
 
 /// One server's line of the `clip-storage` report.

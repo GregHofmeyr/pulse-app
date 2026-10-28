@@ -1017,3 +1017,28 @@ async fn quote_edits_and_awards_share_the_mutate_limit() {
     assert_eq!(status(app.http.put(&award), &a).await, 429);
     assert_eq!(status(app.http.delete(&award), &a).await, 429);
 }
+
+#[tokio::test]
+async fn clip_view_changes_share_the_mutate_limit() {
+    let app = spawn_only(|l| l.mutate_user = tiny(2)).await;
+    let (_, a) = register(&app, "alex").await;
+    let srv = create_server(&app, &a, "Main").await;
+    let ch: pulse_protocol::rest::Channel = post_json(
+        &app,
+        &a,
+        &format!("/servers/{}/channels", srv.id),
+        serde_json::json!({ "kind": "clips", "name": "clips" }),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    let put = || {
+        app.http
+            .put(app.url(&format!("/channels/{}/clip-view", ch.id)))
+            .json(&serde_json::json!({ "view": "list" }))
+    };
+    assert_eq!(status(put(), &a).await, 204);
+    assert_eq!(status(put(), &a).await, 204);
+    assert_eq!(status(put(), &a).await, 429);
+}
