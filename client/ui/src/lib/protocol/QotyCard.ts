@@ -2,6 +2,7 @@
 import type { MessageId } from "./MessageId";
 import type { QotyEndReason } from "./QotyEndReason";
 import type { QotyEventId } from "./QotyEventId";
+import type { QuoteSpeaker } from "./QuoteSpeaker";
 import type { UserId } from "./UserId";
 
 /**
@@ -11,4 +12,9 @@ export type QotyCard = { event_id: QotyEventId, year: number,
 /**
  * `None` when nobody voted.
  */
-message_id: MessageId | null, votes: number, voters: Array<UserId>, reason: QotyEndReason, };
+message_id: MessageId | null, votes: number, voters: Array<UserId>, reason: QotyEndReason, 
+/**
+ * Who said each line of the winner when the vote ended, in line order. Empty on a no-vote
+ * card (and on cards from before it was kept).
+ */
+speakers: Array<QuoteSpeaker>, };

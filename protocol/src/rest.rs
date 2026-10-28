@@ -657,6 +657,17 @@ pub struct QotyCard {
     pub votes: u32,
     pub voters: Vec<UserId>,
     pub reason: QotyEndReason,
+    /// Who said each line of the winner when the vote ended, in line order. Empty on a no-vote
+    /// card (and on cards from before it was kept).
+    #[serde(default)]
+    pub speakers: Vec<QuoteSpeaker>,
+}
+
+/// Who said a line: a member, a plain name, or both (a plain name linked to a member).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct QuoteSpeaker {
+    pub user_id: Option<UserId>,
+    pub name: Option<String>,
 }
 
 /// How many times a speaker (a member, or a plain name) appears.
@@ -682,6 +693,9 @@ pub struct LeaderboardWin {
     pub message: Message,
     pub votes: u32,
     pub voters: Vec<UserId>,
+    /// Who said each line when the vote ended, in line order: the win stays theirs whatever
+    /// later edits and links do.
+    pub speakers: Vec<QuoteSpeaker>,
 }
 
 #[cfg(test)]

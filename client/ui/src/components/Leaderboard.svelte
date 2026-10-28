@@ -9,6 +9,7 @@
   import { api, errorText } from '../lib/tauri'
   import type { Leaderboard } from '../lib/protocol/Leaderboard'
   import type { Message } from '../lib/protocol/Message'
+  import type { QuoteSpeaker } from '../lib/protocol/QuoteSpeaker'
   import type { SpeakerCount } from '../lib/protocol/SpeakerCount'
 
   let { serverId, onOpen, onClose }: {
@@ -31,14 +32,14 @@
   })
 
   const nameOf = $derived(nameOfIn(() => app.state, serverId))
-  const preview = (m: Message) => quotePreview(app.state, serverId, m)
+  const preview = (m: Message, speaker?: QuoteSpeaker) => quotePreview(app.state, serverId, m, speaker)
   const who = (c: SpeakerCount) => (c.user_id ? nameOf(c.user_id) : (c.name ?? ''))
   const empty = $derived(!!board && !board.winners.length && !board.top_year.length && !board.top_all_time.length
     && !board.most_quoted.length && !board.most_awarded.length)
 </script>
 
-{#snippet entry(m: Message, note: string)}
-  {@const p = preview(m)}
+{#snippet entry(m: Message, note: string, speaker?: QuoteSpeaker)}
+  {@const p = preview(m, speaker)}
   <button type="button" class="entry" onclick={() => onOpen(m)}>
     <span class="said">{p.said}</span>
     {#if p.by}<span class="by">{p.by}</span>{/if}
@@ -82,7 +83,8 @@
       {#each board.winners as w (`${w.year}:${w.message.id}`)}
         <div class="win">
           <span class="year">{w.year}</span>
-          {@render entry(w.message, plural(w.votes, 'vote', 'votes'))}
+          <!-- the first line's speaker when the vote ended (a later edit or link never moves a win) -->
+          {@render entry(w.message, plural(w.votes, 'vote', 'votes'), w.speakers[0])}
           <VoterStack userIds={w.voters} {nameOf} />
         </div>
       {:else}

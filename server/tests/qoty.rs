@@ -7,7 +7,9 @@ use common::*;
 use futures::SinkExt;
 use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
 use pulse_protocol::ids::{ChannelId, MessageId, QotyEventId, ServerId, UserId};
-use pulse_protocol::rest::{Channel, Message, MessageKind, QotyEndReason, QotyEvent};
+use pulse_protocol::rest::{
+    Channel, Leaderboard, Message, MessageKind, QotyEndReason, QotyEvent, QuoteSpeaker,
+};
 use reqwest::Method;
 use serde_json::json;
 use tokio_tungstenite::tungstenite::Message as Ws;
@@ -1117,6 +1119,63 @@ async fn wins_keep_their_speaker_snapshot() {
         want,
         "unchanged by the edit"
     );
+}
+
+/// The card and the leaderboard show the speakers as they were at the end (I3), not today's.
+#[tokio::test]
+async fn card_and_leaderboard_carry_the_speaker_snapshot() {
+    let f = fixture().await;
+    let e = f.started().await;
+    let r = post_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/quotes", f.ch.id),
+        json!({ "lines": [
+            { "speaker_id": f.sam, "text": "one" },
+            { "speaker_name": "A Friend", "text": "two" },
+        ] }),
+    )
+    .await;
+    let q: Message = r.json().await.unwrap();
+    assert_eq!(f.add(&f.alex_t, e.id, q.id).await.status(), 200);
+    f.voted(&f.alex_t, e.id, q.id).await;
+    f.ended(&f.alex_t, e.id).await;
+    let lines = q.quote.as_ref().unwrap().lines.clone();
+    assert_eq!(
+        f.edit(
+            &q,
+            json!([
+                { "id": lines[0].id, "speaker_id": f.alex, "text": "one" },
+                { "id": lines[1].id, "speaker_id": f.alex, "text": "two" },
+            ])
+        )
+        .await,
+        200
+    );
+    let want = vec![
+        QuoteSpeaker {
+            user_id: Some(f.sam),
+            name: None,
+        },
+        QuoteSpeaker {
+            user_id: None,
+            name: Some("A Friend".into()),
+        },
+    ];
+    let cards = f.cards(f.ch.id).await;
+    let card = cards[0].qoty_card.as_ref().unwrap();
+    assert_eq!(
+        card.speakers, want,
+        "the card keeps the speakers at the end"
+    );
+    let board: Leaderboard = get_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/servers/{}/quotes/leaderboard", f.server),
+    )
+    .await;
+    assert_eq!(board.winners.len(), 1);
+    assert_eq!(board.winners[0].speakers, want, "and so does the board");
 }
 
 #[tokio::test]

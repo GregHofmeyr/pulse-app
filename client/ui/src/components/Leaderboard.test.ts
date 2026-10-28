@@ -24,7 +24,7 @@ const quote = (id: string, text: string, reactions = 0): Message => ({
   },
 })
 const board: Board = {
-  winners: [{ year: 2025, message: quote('Q1', 'the winner'), votes: 3, voters: ['U1', 'U2', 'U3'] }],
+  winners: [{ year: 2025, message: quote('Q1', 'the winner'), votes: 3, voters: ['U1', 'U2', 'U3'], speakers: [] }],
   top_year: [quote('Q2', 'funny this year', 4)],
   top_all_time: [quote('Q3', 'funny forever', 9)],
   most_quoted: [{ user_id: 'U2', name: null, count: 7 }, { user_id: null, name: 'a friend', count: 2 }],
@@ -85,6 +85,18 @@ describe('Leaderboard', () => {
     expect(win.textContent).toContain('the winner')
     expect(win.textContent).toContain('3 votes')
     expect(win.querySelector('.stack')?.getAttribute('aria-label')).toBe('alex, sam and kim')
+  })
+
+  it('a winner names who said it when the vote ended, not today\'s speaker', async () => {
+    const ended: Board = { ...board, winners: [{ ...board.winners[0], speakers: [{ user_id: 'U3', name: null }] }] }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'leaderboard' ? ended : undefined))
+    await show()
+    expect(section('Quote of the Year')!.querySelector('.by')?.textContent).toBe('kim')
+  })
+
+  it('a winner without a snapshot falls back to the quote\'s speaker', async () => {
+    await show()
+    expect(section('Quote of the Year')!.querySelector('.by')?.textContent).toBe('sam')
   })
 
   it('an entry jumps to the quote', async () => {

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, QotyEventId, ServerId, UserId};
-use pulse_protocol::rest::{Message, QotyCard, QotyEndReason, QotyEvent};
+use pulse_protocol::rest::{Message, QotyCard, QotyEndReason, QotyEvent, QuoteSpeaker};
 use sqlx::SqliteConnection;
 
 use super::{publish, reason_str, votes_of};
@@ -53,13 +53,16 @@ pub(crate) async fn finish(
     let year = year as i32;
     let votes = votes_of(&mut *tx, id).await?;
     let top = votes.values().map(Vec::len).max().unwrap_or(0);
-    let card = |message_id: Option<MessageId>, voters: Vec<UserId>| QotyCard {
-        event_id: id,
-        year,
-        message_id,
-        votes: voters.len() as u32,
-        voters,
-        reason,
+    let card = |message_id: Option<MessageId>, voters: Vec<UserId>, speakers: Vec<QuoteSpeaker>| {
+        QotyCard {
+            event_id: id,
+            year,
+            message_id,
+            votes: voters.len() as u32,
+            voters,
+            reason,
+            speakers,
+        }
     };
 
     let mut cards = Vec::new();
@@ -74,7 +77,7 @@ pub(crate) async fn finish(
         for ch in channels {
             let content =
                 format!("Nobody voted in Quote of the Year {year}, so there's no winner.");
-            cards.push(post_card(tx, parse_id(&ch)?, content, card(None, vec![])).await?);
+            cards.push(post_card(tx, parse_id(&ch)?, content, card(None, vec![], vec![])).await?);
         }
         return Ok(Some(Ended { event: id, cards }));
     }
@@ -93,27 +96,29 @@ pub(crate) async fn finish(
             .bind(voters.len() as i64)
             .execute(&mut *tx)
             .await?;
-        snapshot_speakers(tx, id, &message, links).await?;
+        let speakers = snapshot_speakers(tx, id, &message, links).await?;
         let (channel, content): (String, String) =
             sqlx::query_as("SELECT channel_id, content FROM messages WHERE id = ?")
                 .bind(&message)
                 .fetch_one(&mut *tx)
                 .await?;
         let content = format!("Quote of the Year {year}: {content}");
-        let c = card(Some(parse_id(&message)?), voters);
+        let c = card(Some(parse_id(&message)?), voters, speakers);
         cards.push(post_card(tx, parse_id(&channel)?, content, c).await?);
     }
     Ok(Some(Ended { event: id, cards }))
 }
 
 /// Who said each line of a winning quote at the end: the effective speaker (a member, also by a
-/// link) and the plain name if the line has one. Later edits and links don't change it.
+/// link) and the plain name if the line has one. Later edits and links don't change it. Returns
+/// them in line order, for the card.
 async fn snapshot_speakers(
     tx: &mut SqliteConnection,
     event: QotyEventId,
     message: &str,
     links: &HashMap<String, UserId>,
-) -> AppResult<()> {
+) -> AppResult<Vec<QuoteSpeaker>> {
+    let mut out = Vec::new();
     /// (position, member, plain name's key, plain name)
     type Line = (i64, Option<String>, Option<String>, Option<String>);
     let lines: Vec<Line> = sqlx::query_as(
@@ -133,11 +138,12 @@ async fn snapshot_speakers(
         .bind(message)
         .bind(position)
         .bind(who.map(|u| u.to_string()))
-        .bind(name)
+        .bind(&name)
         .execute(&mut *tx)
         .await?;
+        out.push(QuoteSpeaker { user_id: who, name });
     }
-    Ok(())
+    Ok(out)
 }
 
 async fn post_card(

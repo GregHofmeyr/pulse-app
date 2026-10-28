@@ -9,7 +9,7 @@
   import QuoteImage from './QuoteImage.svelte'
   import VoterStack from './VoterStack.svelte'
   import { motion } from '../lib/animate.svelte'
-  import { canReopen, plural, speakersOf } from '../lib/quotes'
+  import { canReopen, plural, snapshotSpeakers, speakersOf } from '../lib/quotes'
   import { api } from '../lib/tauri'
   import { nameOfIn } from '../lib/selectors'
   import { app, clock } from '../lib/store.svelte'
@@ -49,7 +49,11 @@
   const lines = $derived(shown?.quote && !shown.deleted ? shown.quote.lines : null)
   /** While the quote loads (or if it can't be): the text the server wrote ("Quote of the Year 2026: “…” — sam"). */
   const fallback = $derived(message.content.replace(`Quote of the Year ${card.year}: `, ''))
-  const speakers = $derived(shown && lines ? speakersOf(app.state, serverId, shown) : '')
+  // Who said it when the vote ended (spec §3.2: a later edit or link never moves a win); a card
+  // from before that was kept names today's speakers.
+  const speakers = $derived(
+    card.speakers.length ? snapshotSpeakers(app.state, serverId, card.speakers) : shown && lines ? speakersOf(app.state, serverId, shown) : '',
+  )
   // A card that just arrived animates in once (not every time the channel is opened).
   const reveal = untrack(() => Date.now() - Date.parse(message.created_at) < 60_000 && !motion.reducedMotion)
   let reopening = $state(false)

@@ -74,6 +74,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::QotyVoteRequest::export_all(&cfg)?;
     rest::AddQotyOptionRequest::export_all(&cfg)?;
     rest::QotyCard::export_all(&cfg)?;
+    rest::QuoteSpeaker::export_all(&cfg)?;
     rest::SpeakerCount::export_all(&cfg)?;
     rest::Leaderboard::export_all(&cfg)?;
     rest::LeaderboardWin::export_all(&cfg)?;

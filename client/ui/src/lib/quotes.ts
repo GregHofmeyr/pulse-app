@@ -3,6 +3,7 @@ import type { Message } from './protocol/Message'
 import type { QotyEvent } from './protocol/QotyEvent'
 import type { QotyOption } from './protocol/QotyOption'
 import type { QuoteLine } from './protocol/QuoteLine'
+import type { QuoteSpeaker } from './protocol/QuoteSpeaker'
 import { displayName } from './selectors'
 import type { AppState } from './state'
 
@@ -87,13 +88,25 @@ export function speakersOf(s: AppState, serverId: string, m: Message | Message[]
   return [...new Set(lines.map((l) => speakerOf(s, serverId, l).name))].join(' & ')
 }
 
-/** A quote in one line: its first line (an ellipsis when there are more) and that line's speaker. */
-export function quotePreview(s: AppState, serverId: string, m: Message): { said: string; by: string } {
+/** A stored speaker (a win's snapshot): the member's name, else the plain name. */
+export function snapshotName(s: AppState, serverId: string, who: QuoteSpeaker): string {
+  return who.user_id ? displayName(s, serverId, who.user_id) : (who.name ?? '')
+}
+
+/** A win's snapshot speakers as one label ("sam & A Friend"); '' when there is none (an old card). */
+export function snapshotSpeakers(s: AppState, serverId: string, speakers: QuoteSpeaker[]): string {
+  return [...new Set(speakers.map((w) => snapshotName(s, serverId, w)))].join(' & ')
+}
+
+/** A quote in one line: its first line (an ellipsis when there are more) and that line's speaker,
+ *  or `speaker` when given (a win's snapshot, which later edits and links don't move). */
+export function quotePreview(s: AppState, serverId: string, m: Message, speaker?: QuoteSpeaker): { said: string; by: string } {
   const lines = m.quote?.lines ?? []
   const first = lines[0]
   if (!first) return { said: m.content, by: '' }
   const said = first.text ? `“${first.text}”` : (first.caption ?? 'Image')
-  return { said: lines.length > 1 ? `${said} …` : said, by: speakerOf(s, serverId, first).name }
+  const by = speaker ? snapshotName(s, serverId, speaker) : speakerOf(s, serverId, first).name
+  return { said: lines.length > 1 ? `${said} …` : said, by }
 }
 
 /** "2h 5m left", or "until ended" for a vote without an end time. */

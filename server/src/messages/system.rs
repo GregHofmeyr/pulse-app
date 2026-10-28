@@ -108,10 +108,27 @@ mod tests {
             votes: 2,
             voters: vec![],
             reason: QotyEndReason::Early,
+            speakers: vec![],
         };
         let stored = qoty_card_payload(&card).unwrap().to_string();
         assert_eq!(qoty_card(&stored), Some(card));
         assert_eq!(qoty_card(r#"{"type":"members_added","by":"x"}"#), None);
         assert_eq!(qoty_card("not json"), None);
+    }
+
+    #[test]
+    fn a_card_from_before_speakers_were_kept_still_parses() {
+        let card = QotyCard {
+            event_id: QotyEventId::new(),
+            year: 2026,
+            message_id: Some(MessageId::new()),
+            votes: 1,
+            voters: vec![],
+            reason: QotyEndReason::Time,
+            speakers: vec![],
+        };
+        let mut old = qoty_card_payload(&card).unwrap();
+        old.as_object_mut().unwrap().remove("speakers");
+        assert_eq!(qoty_card(&old.to_string()), Some(card));
     }
 }

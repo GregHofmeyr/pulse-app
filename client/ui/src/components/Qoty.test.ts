@@ -43,7 +43,7 @@ const card = (over: Partial<Message> = {}, voters = ['U2', 'U3']): Message => ({
   id: 'K1', channel_id: 'C1', author_id: null, kind: 'system', content: 'Quote of the Year 2026: “first one” — sam', reply_to_id: null,
   created_at: new Date(Date.now() - 5 * 60_000).toISOString(), edited_at: null, deleted: false, mentions: [], reactions: [],
   thread_root_id: null, quote: null,
-  qoty_card: { event_id: 'E1', year: 2026, message_id: 'Q1', votes: voters.length, voters, reason: 'early' },
+  qoty_card: { event_id: 'E1', year: 2026, message_id: 'Q1', votes: voters.length, voters, reason: 'early', speakers: [] },
   ...over,
 })
 
@@ -362,6 +362,21 @@ describe('Quote of the Year winner card', () => {
     expect(text(c)).not.toContain('newer')
   })
 
+  it('the card names the speakers as they were when the vote ended, not today\'s', () => {
+    // The winning line was later changed to sam; the vote ended with kim saying it.
+    const ended = card()
+    ended.qoty_card!.speakers = [{ user_id: 'U3', name: null }]
+    showCard(ended)
+    expect(text(document.querySelector('.qoty-card .who'))).toBe('kim · Quote of the Year 2026')
+  })
+
+  it('a plain-name speaker in the snapshot shows that name', () => {
+    const ended = card()
+    ended.qoty_card!.speakers = [{ user_id: null, name: 'A Friend' }]
+    showCard(ended)
+    expect(text(document.querySelector('.qoty-card .who'))).toBe('A Friend · Quote of the Year 2026')
+  })
+
   it('a quote that cannot be fetched falls back to the text the server wrote', async () => {
     invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages_around' ? null : undefined))
     showCard(card({}, ['U2']), null)
@@ -370,7 +385,7 @@ describe('Quote of the Year winner card', () => {
   })
 
   it('the no-vote line is plain', () => {
-    showCard(card({ content: "Nobody voted in Quote of the Year 2026, so there's no winner.", qoty_card: { event_id: 'E1', year: 2026, message_id: null, votes: 0, voters: [], reason: 'time' } }), null)
+    showCard(card({ content: "Nobody voted in Quote of the Year 2026, so there's no winner.", qoty_card: { event_id: 'E1', year: 2026, message_id: null, votes: 0, voters: [], reason: 'time', speakers: [] } }), null)
     expect(document.querySelector('.qoty-card')).toBeNull()
     expect(text(document.body)).toContain("Nobody voted in Quote of the Year 2026, so there's no winner.")
   })

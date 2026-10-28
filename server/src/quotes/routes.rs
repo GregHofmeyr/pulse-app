@@ -6,7 +6,7 @@ use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
     ChannelKind, EditQuoteRequest, Leaderboard, LeaderboardWin, Message, PostQuoteRequest,
-    SpeakerCount,
+    QuoteSpeaker, SpeakerCount,
 };
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
@@ -404,6 +404,27 @@ async fn leaderboard(
             .push(super::parse_id(&user)?);
     }
 
+    // Who said each winner's lines when its vote ended, in line order.
+    let mut speakers: HashMap<(String, String), Vec<QuoteSpeaker>> = HashMap::new();
+    let said: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT ws.event_id, ws.message_id, ws.user_id, ws.name
+         FROM qoty_winner_speakers ws JOIN qoty_events e ON e.id = ws.event_id
+         WHERE e.server_id = ?
+         ORDER BY ws.event_id, ws.message_id, ws.position",
+    )
+    .bind(server.to_string())
+    .fetch_all(&s.db)
+    .await?;
+    for (event, message, user, name) in said {
+        speakers
+            .entry((event, message))
+            .or_default()
+            .push(QuoteSpeaker {
+                user_id: super::parse_opt(user.as_deref())?,
+                name,
+            });
+    }
+
     // One batched load for every message on the board, as the caller sees them.
     let mut wanted: Vec<&String> = top_year
         .iter()
@@ -440,6 +461,9 @@ async fn leaderboard(
             message: msg.clone(),
             votes: *votes as u32,
             voters: voters
+                .remove(&(event.clone(), message.clone()))
+                .unwrap_or_default(),
+            speakers: speakers
                 .remove(&(event.clone(), message.clone()))
                 .unwrap_or_default(),
         });

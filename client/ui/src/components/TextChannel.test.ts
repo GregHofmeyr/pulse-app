@@ -240,7 +240,7 @@ describe('TextChannel: quotes channel', () => {
   it('renders a Quote of the Year result as its card, and drops it when the card is removed', () => {
     const card: Message = {
       ...msg(2), author_id: null, kind: 'system', content: 'Quote of the Year 2026: “hi” — alex',
-      qoty_card: { event_id: 'E1', year: 2026, message_id: quoteMsg.id, votes: 1, voters: ['U1'], reason: 'time' },
+      qoty_card: { event_id: 'E1', year: 2026, message_id: quoteMsg.id, votes: 1, voters: ['U1'], reason: 'time', speakers: [] },
     }
     show('quotes', [quoteMsg, card])
     const c = document.querySelector('.qoty-card')!
@@ -257,7 +257,7 @@ describe('TextChannel: quotes channel', () => {
   it('a fetched winner gives way to the live quote once the channel loads it', async () => {
     const card: Message = {
       ...msg(2), author_id: null, kind: 'system', content: 'Quote of the Year 2026: “hi” — alex',
-      qoty_card: { event_id: 'E1', year: 2026, message_id: quoteMsg.id, votes: 1, voters: ['U1'], reason: 'time' },
+      qoty_card: { event_id: 'E1', year: 2026, message_id: quoteMsg.id, votes: 1, voters: ['U1'], reason: 'time', speakers: [] },
     }
     invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages_around' ? [quoteMsg] : undefined))
     show('quotes', [card])
