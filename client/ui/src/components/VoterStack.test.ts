@@ -4,7 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import VoterStack from './VoterStack.svelte'
 
 let cmp: ReturnType<typeof mount> | undefined
-const names: Record<string, string> = { U1: 'alex', U2: 'sam', U3: 'kim', U4: 'lee', U5: 'ray', U6: 'mia', U7: 'zed' }
+const names: Record<string, string> = { U1: 'alex', U2: 'sam', U3: 'kim', U4: 'jo', U5: 'member5', U6: 'member6', U7: 'member7' }
 const show = (userIds: string[], max?: number) => {
   cmp = mount(VoterStack, { target: document.body, props: { userIds, nameOf: (id: string | null) => names[id ?? ''] ?? '?', ...(max ? { max } : {}) } })
   flushSync()
@@ -17,7 +17,7 @@ describe('VoterStack', () => {
     expect(document.querySelectorAll('.av').length).toBe(5)
     expect(document.querySelector('.more')?.textContent).toBe('+2')
     const tip = document.querySelector('.stack')!.getAttribute('data-tip')
-    expect(tip).toBe('alex, sam, kim, lee, ray, mia and zed')
+    expect(tip).toBe('alex, sam, kim, jo, member5, member6 and member7')
   })
 
   it('shows no +N when everyone fits', () => {

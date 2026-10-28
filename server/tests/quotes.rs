@@ -3384,7 +3384,7 @@ async fn most_quoted_merges_linked_names() {
     let f = fixture().await;
     f.friend_quote().await;
     f.say_one("mine").await;
-    f.post_lines(json!([{ "speaker_name": "Zed", "text": "z" }]))
+    f.post_lines(json!([{ "speaker_name": "Someone Else", "text": "z" }]))
         .await;
     let name = |c: &pulse_protocol::rest::SpeakerCount| (c.user_id, c.name.clone(), c.count);
     let b = f.board("").await;
@@ -3394,14 +3394,17 @@ async fn most_quoted_merges_linked_names() {
         vec![
             (None, Some("a  friend".into()), 2),
             (Some(f.sam), None, 1),
-            (None, Some("Zed".into()), 1),
+            (None, Some("Someone Else".into()), 1),
         ]
     );
     assert_eq!(f.link(&f.alex_t, "a friend", f.sam).await, 204);
     let b = f.board("").await;
     assert_eq!(
         b.most_quoted.iter().map(name).collect::<Vec<_>>(),
-        vec![(Some(f.sam), None, 3), (None, Some("Zed".into()), 1)]
+        vec![
+            (Some(f.sam), None, 3),
+            (None, Some("Someone Else".into()), 1)
+        ]
     );
 }
 
