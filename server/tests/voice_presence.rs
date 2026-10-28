@@ -140,6 +140,29 @@ async fn stale_left_from_replaced_connection_keeps_user_in_voice() {
     );
 }
 
+/// A connection whose join is abandoned before it ever came up ends with
+/// `participant_connection_aborted`, not `participant_left`. If presence has that connection
+/// (restored from LiveKit's room list while it was still connecting, say), it must go, as for a
+/// leave; one for a connection already replaced is stale, as for a leave.
+#[tokio::test]
+async fn an_aborted_connection_leaves_voice_like_a_leave() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (_, l) = lounge(&app, &a).await;
+    lk_event(&app, "participant_joined", l.id, a_id, "PA_new").await;
+    lk_event(&app, "participant_connection_aborted", l.id, a_id, "PA_old").await;
+    assert_eq!(
+        voice_members(&app, &a, l.id).await,
+        vec![a_id],
+        "a stale abort keeps the live connection"
+    );
+    lk_event(&app, "participant_connection_aborted", l.id, a_id, "PA_new").await;
+    assert!(
+        voice_members(&app, &a, l.id).await.is_empty(),
+        "gone once its own connection aborts"
+    );
+}
+
 async fn lounge(app: &TestApp, token: &str) -> (pulse_protocol::rest::Server, Channel) {
     let s = create_server(app, token, "Main").await;
     let chans: Vec<Channel> = get_json(app, token, &format!("/servers/{}/channels", s.id)).await;

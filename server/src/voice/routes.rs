@@ -131,7 +131,14 @@ async fn webhook(
     if ev.event == "participant_joined" && !crate::voice::revoke::admit(&s, &room.name, p).await? {
         return Ok(StatusCode::OK);
     }
-    if ev.event == "participant_left" {
+    // A connection whose join was abandoned before it came up ends with
+    // `participant_connection_aborted` instead of a leave: the same for presence (matched by
+    // sid, so it only ever ends that connection).
+    let left = matches!(
+        ev.event.as_str(),
+        "participant_left" | "participant_connection_aborted"
+    );
+    if left {
         crate::voice::revoke::left(&s, p).await?;
     }
     let Some(ch) = load_channel(&s.db, channel_id).await? else {
@@ -162,7 +169,7 @@ async fn webhook(
                 )
                 .await;
         }
-        "participant_left" => {
+        _ if left => {
             let in_memory = match s.voice.leave(channel_id, user_id, &p.sid) {
                 Left::Stale => return Ok(StatusCode::OK),
                 Left::Removed => true,
