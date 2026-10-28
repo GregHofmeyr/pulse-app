@@ -48,6 +48,7 @@ pub fn router(state: AppState) -> Router {
         .merge(media::routes::router())
         .merge(emoji::routes::router())
         .merge(clips::games::router())
+        .merge(clips::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)

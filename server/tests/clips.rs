@@ -8,7 +8,8 @@ use common::*;
 use futures::SinkExt;
 use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
 use pulse_protocol::ids::ChannelId;
-use pulse_protocol::rest::{Channel, ChannelKind};
+use pulse_protocol::ids::{ServerId, UserId};
+use pulse_protocol::rest::{Channel, ChannelKind, ClipUpload, MediaInfo, Message};
 use serde_json::json;
 use sqlx::sqlite::SqliteConnectOptions;
 use tokio_tungstenite::tungstenite::Message as Ws;
@@ -611,4 +612,493 @@ async fn games_are_capped() {
         "Game 7"
     );
     assert_eq!(game_rows(&app, s.id).await, 300);
+}
+
+// ---- Posting clips: tickets, confirm, attach ----
+
+const MAX_BYTES: u64 = 200 * 1024 * 1024;
+
+/// A decodable image no other call produces (the media store dedups by content hash and keeps
+/// the first uploader, so a shared image would belong to whoever uploaded it first).
+fn unique_png() -> Vec<u8> {
+    static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    let px = image::Rgba([(n % 251) as u8, ((n / 251) % 251) as u8, 77, 255]);
+    let mut img = image::RgbaImage::from_pixel(64, 36, px);
+    // Mix the counter into the pixels so two calls never share a colour at all.
+    img.put_pixel(n % 64, n / 64 % 36, image::Rgba([n as u8, 1, 2, 255]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+async fn upload_thumb(app: &TestApp, token: &str) -> String {
+    let r = app
+        .http
+        .post(app.url("/media/clip-thumb"))
+        .bearer_auth(token)
+        .header("content-type", "application/octet-stream")
+        .body(unique_png())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "thumb upload");
+    r.json::<MediaInfo>().await.unwrap().hash
+}
+
+async fn ticket(
+    app: &TestApp,
+    token: &str,
+    channel: ChannelId,
+    size: u64,
+    duration_ms: u32,
+) -> reqwest::Response {
+    post_json(
+        app,
+        token,
+        &format!("/channels/{channel}/clips/uploads"),
+        json!({ "size": size, "duration_ms": duration_ms }),
+    )
+    .await
+}
+
+async fn ticket_ok(app: &TestApp, token: &str, channel: ChannelId, size: u64) -> ClipUpload {
+    let r = ticket(app, token, channel, size, 30_000).await;
+    assert_eq!(r.status(), 200, "ticket");
+    r.json().await.unwrap()
+}
+
+async fn put_object(app: &TestApp, up: &ClipUpload, bytes: Vec<u8>) {
+    let r = app
+        .http
+        .put(&up.url)
+        .header("content-type", &up.content_type)
+        .body(bytes)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success(), "PUT {}", r.status());
+}
+
+async fn ticket_key(app: &TestApp, up: &ClipUpload) -> String {
+    sqlx::query_scalar("SELECT key FROM clip_uploads WHERE id = ?")
+        .bind(up.id.to_string())
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+async fn tickets(app: &TestApp) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM clip_uploads")
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+fn confirm_body(thumb: &str, nonce: Option<&str>) -> serde_json::Value {
+    json!({
+        "caption": "  nice one  ",
+        "game_id": null,
+        "duration_ms": 30_000,
+        "width": 1920,
+        "height": 1080,
+        "thumb_hash": thumb,
+        "nonce": nonce,
+    })
+}
+
+async fn confirm(
+    app: &TestApp,
+    token: &str,
+    up: &ClipUpload,
+    body: serde_json::Value,
+) -> reqwest::Response {
+    post_json(
+        app,
+        token,
+        &format!("/clip-uploads/{}/confirm", up.id),
+        body,
+    )
+    .await
+}
+
+/// Ticket, PUT, thumbnail, confirm: one posted clip.
+async fn upload_clip(app: &TestApp, token: &str, channel: ChannelId, bytes: Vec<u8>) -> Message {
+    let up = ticket_ok(app, token, channel, bytes.len() as u64).await;
+    put_object(app, &up, bytes).await;
+    let thumb = upload_thumb(app, token).await;
+    let r = confirm(app, token, &up, confirm_body(&thumb, None)).await;
+    assert_eq!(r.status(), 200, "confirm");
+    r.json().await.unwrap()
+}
+
+struct World {
+    app: TestApp,
+    alex: (UserId, String),
+    sam: (UserId, String),
+    server: ServerId,
+    channel: Channel,
+}
+
+async fn world() -> World {
+    let app = spawn().await;
+    let alex = register(&app, "alex").await;
+    let sam = register(&app, "sam").await;
+    let s = create_server(&app, &alex.1, "Main").await;
+    let r = post_json(&app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
+    assert_eq!(r.status(), 204);
+    let channel = create_clips(&app, &alex.1, s.id).await;
+    World {
+        app,
+        alex,
+        sam,
+        server: s.id,
+        channel,
+    }
+}
+
+async fn error_message(r: reqwest::Response) -> String {
+    r.json::<pulse_protocol::rest::ApiError>()
+        .await
+        .unwrap()
+        .message
+}
+
+#[tokio::test]
+async fn posts_a_clip() {
+    let w = world().await;
+    let mut ws = hello(&w.app, &w.sam.1).await;
+    let bytes = vec![7u8; 1_000];
+    let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 1_000).await;
+    assert_eq!(up.content_type, "video/mp4");
+    put_object(&w.app, &up, bytes.clone()).await;
+    let key = ticket_key(&w.app, &up).await;
+    let (stored, _) = w
+        .app
+        .s3
+        .as_ref()
+        .unwrap()
+        .object(&format!("clips/{key}.mp4"))
+        .expect("object");
+    assert_eq!(stored, bytes);
+
+    let thumb = upload_thumb(&w.app, &w.alex.1).await;
+    let r = confirm(&w.app, &w.alex.1, &up, confirm_body(&thumb, Some("n-1"))).await;
+    assert_eq!(r.status(), 200);
+    let m: Message = r.json().await.unwrap();
+    assert_eq!(m.content, "nice one");
+    assert_eq!(m.author_id, Some(w.alex.0));
+    let clip = m.clip.clone().expect("clip");
+    assert_eq!(
+        (
+            clip.size,
+            clip.duration_ms,
+            clip.width,
+            clip.height,
+            clip.thumb_hash.as_str()
+        ),
+        (1_000, 30_000, 1920, 1080, thumb.as_str())
+    );
+    assert_eq!(
+        (clip.reply_count, clip.last_reply_id, clip.replies_seen),
+        (0, None, None)
+    );
+    assert_eq!(tickets(&w.app).await, 0, "the ticket is spent");
+    assert_eq!(read_points(&w.app, w.channel.id, w.alex.0).await, 1);
+    let (kind, location, size): (String, String, i64) =
+        sqlx::query_as("SELECT kind, location, size FROM media WHERE hash = ?")
+            .bind(&key)
+            .fetch_one(&w.app.db)
+            .await
+            .unwrap();
+    assert_eq!(
+        (kind.as_str(), location.as_str(), size),
+        ("clip", "r2", 1_000)
+    );
+
+    let list: Vec<Message> = get_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/channels/{}/messages", w.channel.id),
+    )
+    .await;
+    assert_eq!(list.len(), 1);
+    assert_eq!(list[0].clip, m.clip);
+
+    loop {
+        match next_frame_beating(&mut ws, Duration::from_secs(3))
+            .await
+            .expect("MessageCreated")
+        {
+            ServerFrame::Event(Event::MessageCreated { message, nonce }) => {
+                assert_eq!(message.id, m.id);
+                assert_eq!(message.clip, m.clip);
+                assert_eq!(nonce.as_deref(), Some("n-1"));
+                break;
+            }
+            _ => continue,
+        }
+    }
+}
+
+#[tokio::test]
+async fn tickets_check_the_rules() {
+    let w = world().await;
+    let text = general(&w.app, &w.alex.1, w.server).await;
+    let r = ticket(&w.app, &w.alex.1, text.id, 1_000, 1_000).await;
+    assert_eq!(r.status(), 400, "a text channel");
+    let outsider = register(&w.app, "kim").await;
+    let r = ticket(&w.app, &outsider.1, w.channel.id, 1_000, 1_000).await;
+    assert_eq!(r.status(), 403, "not a member");
+    let r = ticket(&w.app, &w.alex.1, w.channel.id, 0, 1_000).await;
+    assert_eq!(r.status(), 400, "empty");
+    let r = ticket(&w.app, &w.alex.1, w.channel.id, MAX_BYTES + 1, 1_000).await;
+    assert_eq!(r.status(), 413);
+    assert_eq!(error_message(r).await, "Clips can be up to 200 MB.");
+    let r = ticket(&w.app, &w.alex.1, w.channel.id, MAX_BYTES, 1_000).await;
+    assert_eq!(r.status(), 200, "exactly the cap");
+    let r = ticket(&w.app, &w.alex.1, w.channel.id, 1_000, 90_001).await;
+    assert_eq!(r.status(), 400);
+    assert_eq!(error_message(r).await, "Clips can be up to 1:30.");
+    let r = ticket(&w.app, &w.alex.1, w.channel.id, 1_000, 0).await;
+    assert_eq!(r.status(), 400, "no duration");
+    let r = ticket(&w.app, &w.alex.1, w.channel.id, 1_000, 90_000).await;
+    assert_eq!(r.status(), 200, "exactly 1:30");
+
+    let bare = spawn_without_clips().await;
+    let (_, token) = register(&bare, "alex").await;
+    let s = create_server(&bare, &token, "Main").await;
+    let ch = create_clips(&bare, &token, s.id).await;
+    let r = ticket(&bare, &token, ch.id, 1_000, 1_000).await;
+    assert_eq!(r.status(), 503);
+    assert_eq!(
+        error_message(r).await,
+        "Clips storage isn't set up on this server."
+    );
+}
+
+#[tokio::test]
+async fn confirm_checks_the_object() {
+    let w = world().await;
+    let s3 = w.app.s3.as_ref().unwrap();
+    let thumb = upload_thumb(&w.app, &w.alex.1).await;
+
+    // Nothing arrived yet.
+    let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 1_000).await;
+    let r = confirm(&w.app, &w.alex.1, &up, confirm_body(&thumb, None)).await;
+    assert_eq!(r.status(), 409);
+    assert_eq!(
+        error_message(r).await,
+        "The upload didn't arrive. Try again."
+    );
+
+    // The wrong size: the object and the ticket both go.
+    let key = ticket_key(&w.app, &up).await;
+    let object = format!("clips/{key}.mp4");
+    s3.put_raw(&object, vec![1u8; 999]);
+    let r = confirm(&w.app, &w.alex.1, &up, confirm_body(&thumb, None)).await;
+    assert_eq!(r.status(), 400);
+    assert!(s3.object(&object).is_none());
+    assert_eq!(tickets(&w.app).await, 0);
+
+    // A good upload; every bad confirm leaves the ticket for a corrected try.
+    let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 1_000).await;
+    put_object(&w.app, &up, vec![2u8; 1_000]).await;
+    let r = confirm(&w.app, &w.sam.1, &up, confirm_body(&thumb, None)).await;
+    assert_eq!(r.status(), 404, "someone else's ticket");
+
+    let sams_thumb = upload_thumb(&w.app, &w.sam.1).await;
+    let other = create_server(&w.app, &w.sam.1, "Other").await;
+    let foreign_game = add_game_ok(&w.app, &w.sam.1, other.id, "Elsewhere").await;
+    let bad = |f: &dyn Fn(&mut serde_json::Value)| {
+        let mut b = confirm_body(&thumb, None);
+        f(&mut b);
+        b
+    };
+    let cases = [
+        ("duration", bad(&|b| b["duration_ms"] = json!(90_501))),
+        ("width", bad(&|b| b["width"] = json!(8))),
+        ("height", bad(&|b| b["height"] = json!(7681))),
+        ("thumb", bad(&|b| b["thumb_hash"] = json!(sams_thumb))),
+        ("no such thumb", bad(&|b| b["thumb_hash"] = json!("nothex"))),
+        ("game", bad(&|b| b["game_id"] = json!(foreign_game.id))),
+        ("caption", bad(&|b| b["caption"] = json!("x".repeat(301)))),
+    ];
+    for (what, body) in cases {
+        let r = confirm(&w.app, &w.alex.1, &up, body).await;
+        assert_eq!(r.status(), 400, "{what}");
+    }
+    assert_eq!(tickets(&w.app).await, 1);
+    let mut ok = confirm_body(&thumb, None);
+    ok["duration_ms"] = json!(90_500);
+    ok["caption"] = json!("x".repeat(300));
+    let r = confirm(&w.app, &w.alex.1, &up, ok).await;
+    assert_eq!(r.status(), 200, "the limits themselves are fine");
+}
+
+#[tokio::test]
+async fn confirm_rechecks_membership() {
+    let w = world().await;
+    let up = ticket_ok(&w.app, &w.sam.1, w.channel.id, 1_000).await;
+    put_object(&w.app, &up, vec![3u8; 1_000]).await;
+    let thumb = upload_thumb(&w.app, &w.sam.1).await;
+    sqlx::query("DELETE FROM server_members WHERE user_id = ?")
+        .bind(w.sam.0.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    let r = confirm(&w.app, &w.sam.1, &up, confirm_body(&thumb, None)).await;
+    assert_eq!(r.status(), 403);
+}
+
+#[tokio::test]
+async fn the_twenty_first_clip_in_an_hour_waits() {
+    let w = world().await;
+    let mut ups = vec![];
+    for _ in 0..20 {
+        ups.push(ticket_ok(&w.app, &w.alex.1, w.channel.id, 1_000).await);
+    }
+    let r = ticket(&w.app, &w.alex.1, w.channel.id, 1_000, 1_000).await;
+    assert_eq!(r.status(), 429);
+    assert_eq!(
+        error_message(r).await,
+        "That's 20 clips this hour. Try again later."
+    );
+    // Another person has their own allowance.
+    assert_eq!(
+        ticket(&w.app, &w.sam.1, w.channel.id, 1_000, 1_000)
+            .await
+            .status(),
+        200
+    );
+
+    let r = w
+        .app
+        .http
+        .delete(w.app.url(&format!("/clip-uploads/{}", ups[0].id)))
+        .bearer_auth(&w.alex.1)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    assert_eq!(
+        ticket(&w.app, &w.alex.1, w.channel.id, 1_000, 1_000)
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(
+        ticket(&w.app, &w.alex.1, w.channel.id, 1_000, 1_000)
+            .await
+            .status(),
+        429
+    );
+
+    let old = pulse_server::db::stamp(chrono::Utc::now() - chrono::Duration::minutes(61));
+    sqlx::query("UPDATE clip_uploads SET created_at = ?")
+        .bind(old)
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        ticket(&w.app, &w.alex.1, w.channel.id, 1_000, 1_000)
+            .await
+            .status(),
+        200
+    );
+}
+
+/// Posted clips count too, deleted or not, and so do they when their tickets are gone.
+#[tokio::test]
+async fn posted_clips_count_toward_the_hour() {
+    let w = world().await;
+    for _ in 0..19 {
+        upload_clip(&w.app, &w.alex.1, w.channel.id, vec![5u8; 10]).await;
+    }
+    let last = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![5u8; 10]).await;
+    assert_eq!(
+        ticket(&w.app, &w.alex.1, w.channel.id, 10, 1_000)
+            .await
+            .status(),
+        429
+    );
+    // Deleting the clip (rows and all) doesn't free the slot.
+    sqlx::query("UPDATE messages SET deleted_at = ?, content = '' WHERE id = ?")
+        .bind(pulse_server::db::now())
+        .bind(last.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    sqlx::query("DELETE FROM clips WHERE message_id = ?")
+        .bind(last.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        ticket(&w.app, &w.alex.1, w.channel.id, 10, 1_000)
+            .await
+            .status(),
+        429
+    );
+}
+
+#[tokio::test]
+async fn a_repeated_confirm_returns_the_same_clip() {
+    let w = world().await;
+    let mut ws = hello(&w.app, &w.sam.1).await;
+    let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 1_000).await;
+    put_object(&w.app, &up, vec![4u8; 1_000]).await;
+    let thumb = upload_thumb(&w.app, &w.alex.1).await;
+    let first: Message = confirm(&w.app, &w.alex.1, &up, confirm_body(&thumb, Some("same")))
+        .await
+        .json()
+        .await
+        .unwrap();
+    // The ticket is gone by now; the nonce still answers.
+    let r = confirm(&w.app, &w.alex.1, &up, confirm_body(&thumb, Some("same"))).await;
+    assert_eq!(r.status(), 200);
+    let second: Message = r.json().await.unwrap();
+    assert_eq!(first.id, second.id);
+    assert_eq!(second.clip, first.clip);
+
+    let mut created = 0;
+    while let Some(f) = next_frame_beating(&mut ws, Duration::from_millis(600)).await {
+        if matches!(f, ServerFrame::Event(Event::MessageCreated { .. })) {
+            created += 1;
+        }
+    }
+    assert_eq!(created, 1);
+}
+
+#[tokio::test]
+async fn cancel_deletes_ticket_and_object() {
+    let w = world().await;
+    let s3 = w.app.s3.as_ref().unwrap();
+    let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 1_000).await;
+    put_object(&w.app, &up, vec![9u8; 1_000]).await;
+    let object = format!("clips/{}.mp4", ticket_key(&w.app, &up).await);
+    assert!(s3.object(&object).is_some());
+
+    let url = w.app.url(&format!("/clip-uploads/{}", up.id));
+    let r = w
+        .app
+        .http
+        .delete(&url)
+        .bearer_auth(&w.sam.1)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 404, "only the owner cancels");
+    assert!(s3.object(&object).is_some());
+    let r = w
+        .app
+        .http
+        .delete(&url)
+        .bearer_auth(&w.alex.1)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    assert_eq!(tickets(&w.app).await, 0);
+    assert!(s3.object(&object).is_none());
 }

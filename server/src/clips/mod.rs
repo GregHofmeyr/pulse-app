@@ -1,3 +1,93 @@
 //! Clips: short videos shared in `clips` channels, tagged with a game from the server's registry.
 
 pub mod games;
+pub mod routes;
+
+use std::collections::HashMap;
+use std::time::Duration;
+
+use pulse_protocol::ids::{GameId, UserId};
+use pulse_protocol::rest::{Clip, Message};
+use sqlx::SqlitePool;
+
+use crate::error::{AppError, AppResult};
+
+/// The most one clip's file can be (shown to people as "200 MB").
+pub const MAX_BYTES: u64 = 200 * 1024 * 1024;
+/// What a ticket accepts. The client keeps clips at or under this.
+pub const MAX_DURATION_MS: u32 = 90_000;
+/// What confirm accepts: the encoder and AAC padding round the length up a little.
+pub const CONFIRM_SLACK_MS: u32 = 500;
+/// Clips (posted plus open tickets) one person can start in a rolling hour.
+pub const PER_HOUR: i64 = 20;
+/// How long a signed upload or play URL works.
+pub const URL_TTL: Duration = Duration::from_secs(3600);
+/// How long an unconfirmed ticket (and its object) is kept.
+pub const TICKET_TTL_HOURS: i64 = 24;
+pub const CAPTION_MAX: usize = 300;
+pub const MIN_SIDE: u32 = 16;
+pub const MAX_SIDE: u32 = 7680;
+/// Clips per page of a feed.
+pub const PAGE: u32 = 30;
+
+/// The R2 object key of a clip's media row.
+pub fn object_key(video_key: &str) -> String {
+    crate::media::r2::R2::object_key(crate::media::MediaKind::Clip, video_key)
+}
+
+/// The storage, or the 503 that says it isn't set up.
+pub fn storage(s: &crate::AppState) -> AppResult<&crate::media::r2::R2> {
+    s.r2.as_ref()
+        .ok_or_else(|| AppError::Unavailable("Clips storage isn't set up on this server.".into()))
+}
+
+type ClipRow = (String, String, i64, i64, i64, i64, Option<String>);
+
+/// Fill `clip` on every live clip message in `msgs`. Reply fields are 0 / `None` until replies
+/// are counted (`me` is whose view it is; events pass `None`).
+pub async fn attach(db: &SqlitePool, _me: Option<UserId>, msgs: &mut [Message]) -> AppResult<()> {
+    let ids: Vec<String> = msgs
+        .iter()
+        .filter(|m| !m.deleted)
+        .map(|m| m.id.to_string())
+        .collect();
+    if ids.is_empty() {
+        return Ok(());
+    }
+    let mut q = sqlx::QueryBuilder::new(
+        "SELECT c.message_id, c.thumb_hash, c.duration_ms, c.width, c.height, v.size, c.game_id
+         FROM clips c JOIN media v ON v.hash = c.video_key
+         WHERE c.message_id IN (",
+    );
+    let mut list = q.separated(", ");
+    for id in &ids {
+        list.push_bind(id);
+    }
+    q.push(")");
+    let rows: Vec<ClipRow> = q.build_query_as().fetch_all(db).await?;
+    let mut by_msg: HashMap<String, Clip> = HashMap::new();
+    for (message_id, thumb_hash, duration_ms, width, height, size, game_id) in rows {
+        let game_id = game_id
+            .map(|g| g.parse::<GameId>())
+            .transpose()
+            .map_err(anyhow::Error::from)?;
+        by_msg.insert(
+            message_id,
+            Clip {
+                thumb_hash,
+                duration_ms: duration_ms as u32,
+                width: width as u32,
+                height: height as u32,
+                size: size as u64,
+                game_id,
+                reply_count: 0,
+                last_reply_id: None,
+                replies_seen: None,
+            },
+        );
+    }
+    for m in msgs.iter_mut().filter(|m| !m.deleted) {
+        m.clip = by_msg.remove(&m.id.to_string());
+    }
+    Ok(())
+}

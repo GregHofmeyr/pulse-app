@@ -118,6 +118,7 @@ pub(crate) async fn load(
     }
     let mut one = [m];
     crate::quotes::attach(db, me, &mut one).await?;
+    crate::clips::attach(db, me, &mut one).await?;
     let [m] = one;
     Ok(Some(m))
 }
@@ -173,6 +174,7 @@ pub(crate) async fn fill(
         m.reactions = reacted.remove(&m.id).unwrap_or_default();
     }
     crate::quotes::attach(db, me, &mut page).await?;
+    crate::clips::attach(db, me, &mut page).await?;
     Ok(page)
 }
 
