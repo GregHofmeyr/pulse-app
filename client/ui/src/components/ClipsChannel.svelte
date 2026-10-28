@@ -1,7 +1,7 @@
 <script lang="ts">
   // A clips channel: the header (filters, view toggle, Share a clip), the feed for the view and filter, and
   // the replies panel of one clip, the editor (from Share a clip or a dropped file) and your clips being sent.
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import { getCurrentWebview } from '@tauri-apps/api/webview'
   import ClipEditor from './ClipEditor.svelte'
   import ClipFeed from './ClipFeed.svelte'
@@ -102,7 +102,12 @@
   let source = $state<ClipSource | null>(null)
   let opening = false
   let alive = true
-  $effect(() => () => (alive = false))
+  // Leaving with the editor open: the editor only lets its source go on close or send, so do it here.
+  $effect(() => () => {
+    alive = false
+    const s = untrack(() => source)
+    if (s) void api.closeClipSource(s.id).catch(() => {})
+  })
   const notice = new InlineError()
   $effect(() => notice.stop)
 
@@ -184,8 +189,11 @@
     }
   })
 
-  // Your clips being sent here (the core's order: oldest first).
-  const pending = $derived(Object.values(app.state.clipJobs).filter((j) => j.channel_id === channelId))
+  // Your clips being sent here (the core's order: oldest first). A posted one's card goes once the clip is in a feed.
+  const shownClips = $derived(new Set(Object.values(app.state.clipFeeds).flatMap((f) => (f.channelId === channelId ? f.items.map((m) => m.id) : []))))
+  const pending = $derived(
+    Object.values(app.state.clipJobs).filter((j) => j.channel_id === channelId && !(j.stage === 'done' && j.message_id && shownClips.has(j.message_id))),
+  )
 </script>
 
 <div class="chan" class:with-replies={!!repliesRoot} bind:this={chan}>

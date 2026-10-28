@@ -218,7 +218,7 @@
     </div>
     <div class="sentinel" bind:this={sentinel}></div>
   {/if}
-  {#if feed?.start && items.length === 0}<p class="empty">{unfiltered ? 'No clips yet. Share one!' : 'No clips match.'}</p>{/if}
+  {#if feed?.start && items.length === 0 && pending.length === 0}<p class="empty">{unfiltered ? 'No clips yet. Share one!' : 'No clips match.'}</p>{/if}
   {#if failedKey === key}
     <p class="error" role="alert">{error} <button type="button" class="retry" onclick={() => (failedKey = null)}>Try again</button></p>
   {/if}

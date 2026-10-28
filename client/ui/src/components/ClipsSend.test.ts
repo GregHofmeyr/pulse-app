@@ -27,7 +27,7 @@ vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 
 import ClipsChannel from './ClipsChannel.svelte'
 import { app } from '../lib/store.svelte'
-import { applyReady, emptyState, setClipJob } from '../lib/state'
+import { applyEvent, applyReady, emptyState, setClipJob } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
 
 const ready = (over = {}) =>
@@ -210,9 +210,45 @@ describe('ClipsSend', () => {
     expect(list.at(-1)!.querySelector('.pending-clip')).not.toBeNull()
     expect(list.at(-2)!.dataset.clipId).toBe('M2')
 
-    // gone once it's done
-    app.state = setClipJob(app.state, job('J1', 'C1', { stage: 'done', message_id: 'M3' }))
+    // cancelled: gone
+    app.state = setClipJob(app.state, job('J1', 'C1', { stage: 'done' }))
     flushSync()
     expect(pending()).toHaveLength(0)
+  })
+
+  it('a posted clip takes its card\'s place without a gap', async () => {
+    app.state = applyReady(emptyState(), ready({ clip_views: [{ channel_id: 'C1', view: 'list' }] }))
+    app.state = setClipJob(app.state, job('J1', 'C1', { stage: 'posting', progress: 1 }))
+    await show()
+    const pending = () => [...document.querySelectorAll<HTMLElement>('.pending-clip')]
+    // the core says it posted before the clip itself arrives: the card stays
+    app.state = setClipJob(app.state, job('J1', 'C1', { stage: 'done', message_id: 'M3' }))
+    flushSync()
+    expect(pending()).toHaveLength(1)
+    app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: clip('M3'), nonce: null } }, Date.now())
+    flushSync()
+    expect(pending()).toHaveLength(0)
+    expect(document.querySelector('[data-clip-id="M3"]')).not.toBeNull()
+  })
+
+  it('leaving the channel with the editor open lets its source go', async () => {
+    await show()
+    await dragEvent({ type: 'drop', paths: ['/v/a.mp4'] })
+    expect(editor()).not.toBeNull()
+    unmount(cmp!)
+    cmp = undefined
+    await settle()
+    expect(calls('close_clip_source')).toEqual([['close_clip_source', { source: 'SRC1' }]])
+  })
+
+  it('an empty channel with a clip on its way does not say there are none', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_clips' ? [] : cmd === 'clip_facets' ? { games: [], authors: [] } : undefined))
+    app.state = setClipJob(app.state, job('J1', 'C1'))
+    await show()
+    expect(document.querySelectorAll('.pending-clip')).toHaveLength(1)
+    expect(document.body.textContent).not.toContain('No clips yet')
+    app.state = setClipJob(app.state, job('J1', 'C1', { stage: 'done' }))
+    flushSync()
+    expect(document.body.textContent).toContain('No clips yet. Share one!')
   })
 })

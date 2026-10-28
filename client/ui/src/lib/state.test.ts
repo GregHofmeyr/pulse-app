@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, type AppState, type Pending } from './state'
+import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, type AppState, type Pending } from './state'
 import { feedKey, clipView, type ClipFilter } from './clips'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
@@ -1228,7 +1228,17 @@ describe('clips', () => {
     let s = setClipJob(emptyState(), job)
     expect(s.clipJobs['J1'].progress).toBe(0.5)
     s = setClipJob(s, { ...job, stage: 'done' })
+    expect(s.clipJobs['J1']).toBeUndefined() // cancelled: gone
+  })
+
+  it('a posted job is kept until its card is let go (the clip shows in its place)', () => {
+    const job = { id: 'J1', channel_id: 'K1', stage: 'posting' as const, progress: 1, error: null, caption: '', game_id: null, kept_ms: 1, thumb_path: null, message_id: null }
+    let s = setClipJob(emptyState(), job)
+    s = setClipJob(s, { ...job, stage: 'done', message_id: 'M9' })
+    expect(s.clipJobs['J1']).toMatchObject({ stage: 'done', message_id: 'M9' })
+    s = dropClipJob(s, 'J1')
     expect(s.clipJobs['J1']).toBeUndefined()
+    expect(dropClipJob(s, 'J1')).toBe(s)
   })
 
   it('a clip delete takes it out of unread', () => {

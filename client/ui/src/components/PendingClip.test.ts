@@ -92,6 +92,11 @@ describe('PendingClip', () => {
     await settle()
     flushSync()
     expect(card().textContent).toContain("Clips storage isn't set up on this server.")
+
+    // it's about that try: once the job moves on, it goes
+    p.job = job({ stage: 'preparing', progress: 0.1 })
+    flushSync()
+    expect(card().textContent).not.toContain("Clips storage isn't set up on this server.")
   })
 
   it('cancel calls cancel_clip', async () => {
@@ -113,5 +118,6 @@ describe('PendingClip', () => {
   it('done shows no cancel', () => {
     show(job({ stage: 'done', progress: 1, message_id: 'M1' }))
     expect(button('Cancel')).toBeUndefined()
+    expect(card().textContent).toContain('Posting…') // until the clip itself takes its place
   })
 })

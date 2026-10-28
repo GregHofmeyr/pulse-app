@@ -86,7 +86,7 @@ export type AppState = {
    * the text channel's `messages`/`history`; a clip's replies still live in `threads`. */
   clipFeeds: Record<string, ClipFeed>
   clipFacets: Record<string, ClipFacets> // channelId -> filter chips
-  clipJobs: Record<string, ClipJob> // job id -> clip being sent (a `done` one is removed)
+  clipJobs: Record<string, ClipJob> // job id -> clip being sent (a cancelled one is removed; a posted one stays a moment)
 }
 
 export type ClipFeed = { channelId: string; filter: ClipFilter; items: Message[] /* newest first */; start: boolean; loading: boolean; /** Clips deleted while a page was being fetched (it may still carry them). */ gone?: string[] }
@@ -263,13 +263,18 @@ export function feedFailed(s: AppState, key: string): AppState {
   return feed?.loading ? { ...s, clipFeeds: { ...s.clipFeeds, [key]: { ...feed, loading: false } } } : s
 }
 
-/** Keep a job while it is under way; a finished one is dropped. */
+/** Keep a job while it is under way. A cancelled one is dropped; a posted one stays (`done`, with its
+ * `message_id`) until `dropClipJob`, so its card can wait for the clip to arrive in its place. */
 export function setClipJob(s: AppState, job: ClipJob): AppState {
-  if (job.stage === 'done') {
-    const { [job.id]: _gone, ...rest } = s.clipJobs
-    return { ...s, clipJobs: rest }
-  }
+  if (job.stage === 'done' && !job.message_id) return dropClipJob(s, job.id)
   return { ...s, clipJobs: { ...s.clipJobs, [job.id]: job } }
+}
+
+/** Let a job go. */
+export function dropClipJob(s: AppState, id: string): AppState {
+  if (!(id in s.clipJobs)) return s
+  const { [id]: _gone, ...rest } = s.clipJobs
+  return { ...s, clipJobs: rest }
 }
 
 /** A clip created, in every feed of its channel it matches. */

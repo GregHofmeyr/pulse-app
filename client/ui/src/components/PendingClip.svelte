@@ -1,6 +1,7 @@
 <script lang="ts">
   // A clip you're sending, in its channel's feed until it posts: the local poster, caption and game, and how far
   // it's got. Only your own client shows it (the server knows nothing of it until it posts).
+  import { untrack } from 'svelte'
   import { convertFileSrc } from '@tauri-apps/api/core'
   import Icon from './Icon.svelte'
   import { formatDuration } from '../lib/clips'
@@ -16,7 +17,7 @@
   const status = $derived(
     job.stage === 'preparing' ? `Preparing… ${percent}%`
     : job.stage === 'uploading' ? `Uploading… ${percent}%`
-    : job.stage === 'posting' ? 'Posting…'
+    : job.stage === 'posting' || job.stage === 'done' ? 'Posting…' // done: until the clip takes its place
     : '',
   )
 
@@ -24,6 +25,13 @@
   let cancelling = $state(false)
   let retrying = $state(false)
   let problem = $state('')
+  // A refused Retry or Cancel is about that press: once the job moves on, it goes.
+  let lastStage = untrack(() => job.stage)
+  $effect.pre(() => {
+    if (job.stage === lastStage) return
+    lastStage = job.stage
+    problem = ''
+  })
 
   async function cancel() {
     if (cancelling) return
@@ -65,7 +73,7 @@
       {#if job.error}<p class="why">{job.error}</p>{/if}
     {:else if status}
       <p class="status" role="status">{status}</p>
-      {#if job.stage !== 'posting'}<div class="bar" aria-hidden="true"><span style:width="{percent}%"></span></div>{/if}
+      {#if job.stage === 'preparing' || job.stage === 'uploading'}<div class="bar" aria-hidden="true"><span style:width="{percent}%"></span></div>{/if}
     {/if}
     {#if problem}<p class="why">{problem}</p>{/if}
     {#if job.stage !== 'done'}

@@ -32,7 +32,7 @@
   import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
   import { api, errorText, type ClipJob } from '../lib/tauri'
   import { app, clock, openDm, ui } from '../lib/store.svelte'
-  import { applyEvent, setClipJob, trimHistory } from '../lib/state'
+  import { applyEvent, dropClipJob, setClipJob, trimHistory } from '../lib/state'
   import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { isMember, liveIn } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
@@ -152,18 +152,32 @@
   onMount(() => void checkKeybinds())
   onMount(watchWindowFocus)
   // The clips you're sending: the ones the core already has (after a restart, the ones left over), then every
-  // change as `clip://job`. An event beats the list for its job (it's newer).
+  // change as `clip://job`. An event beats the list for its job (it's newer). A posted clip's card stays a
+  // moment (the clip itself may arrive just after), then goes even if the clip never showed up here.
+  const POSTED_CARD_MS = 5_000
   onMount(() => {
     let off: (() => void) | null = null
     let gone = false
+    const timers = new Set<ReturnType<typeof setTimeout>>()
     void (async () => {
       const heard = new Set<string>()
-      const f = await listen<ClipJob>('clip://job', (e) => {
-        heard.add(e.payload.id)
-        app.state = setClipJob(app.state, e.payload)
-      })
-      if (gone) return f()
-      off = f
+      try {
+        const f = await listen<ClipJob>('clip://job', (e) => {
+          const job = e.payload
+          heard.add(job.id)
+          app.state = setClipJob(app.state, job)
+          if (job.stage !== 'done' || !job.message_id) return
+          const t = setTimeout(() => {
+            timers.delete(t)
+            app.state = dropClipJob(app.state, job.id)
+          }, POSTED_CARD_MS)
+          timers.add(t)
+        })
+        if (gone) return f()
+        off = f
+      } catch {
+        // no progress events: the jobs still show as they were at start
+      }
       const jobs = await api.clipJobs().catch(() => [] as ClipJob[])
       if (gone) return
       for (const j of jobs ?? []) if (!heard.has(j.id)) app.state = setClipJob(app.state, j)
@@ -171,6 +185,7 @@
     return () => {
       gone = true
       off?.()
+      for (const t of timers) clearTimeout(t)
     }
   })
   $effect(() => {

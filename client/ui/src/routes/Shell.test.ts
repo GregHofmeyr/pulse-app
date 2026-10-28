@@ -6,8 +6,11 @@ const invoke = vi.fn()
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a), convertFileSrc: (s: string) => s }))
 /** The core's events, by name: tests emit them as the Rust side would. */
 const handlers = vi.hoisted(() => new Map<string, (e: { payload: unknown }) => void>())
+/** Events whose listen is refused. */
+const listenFails = vi.hoisted(() => new Set<string>())
 vi.mock('@tauri-apps/api/event', () => ({
   listen: async (name: string, fn: (e: { payload: unknown }) => void) => {
+    if (listenFails.has(name)) throw new Error(`can't listen to ${name}`)
     handlers.set(name, fn)
     return () => handlers.delete(name)
   },
@@ -632,7 +635,9 @@ describe('Quote of the Year', () => {
     flushSync()
     expect(document.querySelector('[role=dialog][aria-label="Start Quote of the Year"]')).toBeNull()
   })
+})
 
+describe('clips being sent', () => {
   it('keeps the clips being sent: the ones left over at start, then each clip://job', async () => {
     const job = (id: string, over: Record<string, unknown> = {}) => ({
       id, channel_id: 'C1', stage: 'failed', progress: 0, error: null, caption: '', game_id: null, kept_ms: 9000, thumb_path: null, message_id: null, ...over,
@@ -652,5 +657,44 @@ describe('Quote of the Year', () => {
     expect(app.state.clipJobs.J2?.stage).toBe('uploading')
     handlers.get('clip://job')!({ payload: job('J1', { stage: 'done', progress: 1 }) })
     expect(app.state.clipJobs.J1).toBeUndefined()
+  })
+
+  it('a posted clip keeps its card a moment, so the clip can take its place', async () => {
+    const job = (over: Record<string, unknown> = {}) => ({
+      id: 'J1', channel_id: 'C1', stage: 'posting', progress: 1, error: null, caption: '', game_id: null, kept_ms: 9000, thumb_path: null, message_id: null, ...over,
+    })
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'clip_jobs' ? [] : undefined))
+    app.state = emptyState()
+    vi.useFakeTimers()
+    try {
+      cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+      flushSync()
+      await vi.advanceTimersByTimeAsync(0)
+      handlers.get('clip://job')!({ payload: job() })
+      handlers.get('clip://job')!({ payload: job({ stage: 'done', message_id: 'M9' }) })
+      expect(app.state.clipJobs.J1?.stage).toBe('done')
+      await vi.advanceTimersByTimeAsync(4_900)
+      expect(app.state.clipJobs.J1).toBeDefined()
+      await vi.advanceTimersByTimeAsync(200)
+      expect(app.state.clipJobs.J1).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("still loads the clips being sent when it can't listen for them", async () => {
+    listenFails.add('clip://job')
+    try {
+      invoke.mockImplementation(async (cmd: string) =>
+        cmd === 'clip_jobs' ? [{ id: 'J1', channel_id: 'C1', stage: 'failed', progress: 0, error: null, caption: '', game_id: null, kept_ms: 9000, thumb_path: null, message_id: null }] : undefined)
+      app.state = emptyState()
+      cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+      flushSync()
+      await new Promise((r) => setTimeout(r, 0))
+      await new Promise((r) => setTimeout(r, 0))
+      expect(app.state.clipJobs.J1?.stage).toBe('failed')
+    } finally {
+      listenFails.clear()
+    }
   })
 })
