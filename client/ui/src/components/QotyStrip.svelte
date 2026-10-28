@@ -4,6 +4,7 @@
   import PixelSpill from './PixelSpill.svelte'
   import QotyVoting from './QotyVoting.svelte'
   import { leaders, leftLabel, liveQoty, speakerNames } from '../lib/quotes'
+  import { qotyWindow } from '../lib/qotyWindow.svelte'
   import { app, clock } from '../lib/store.svelte'
 
   let { serverId }: { serverId: string } = $props()
@@ -18,14 +19,7 @@
     const names = speakerNames(app.state, serverId, top.map((o) => o.message))
     return `${names.join(' & ')} ${names.length > 1 ? 'lead' : 'leads'} with ${top[0].votes}`
   })
-  let voting = $state(false)
-  // The window closes for good when the vote stops being live or another server's vote shows:
-  // reopened (the same event) or switched to, it waits to be asked for again.
-  const shown = $derived(e ? `${serverId}/${e.id}` : null)
-  $effect.pre(() => {
-    void shown
-    voting = false
-  })
+  const voting = qotyWindow(() => serverId, () => e)
 </script>
 
 {#if e}
@@ -33,9 +27,9 @@
     <PixelSpill seed={e.id} cols={8} rows={4} />
     <span class="qoty-mark mark" aria-hidden="true">“”</span>
     <span class="txt"><b>Quote of the Year</b> <span class="lead">· {lead} · {leftLabel(e.ends_at, now)}</span></span>
-    <button type="button" class="qoty-btn open" aria-haspopup="dialog" onclick={() => (voting = true)}>Open voting</button>
+    <button type="button" class="qoty-btn open" aria-haspopup="dialog" onclick={voting.show}>Open voting</button>
   </div>
-  {#if voting}<QotyVoting {serverId} onClose={() => (voting = false)} />{/if}
+  {#if voting.open}<QotyVoting {serverId} onClose={voting.close} />{/if}
 {/if}
 
 <style>
