@@ -79,8 +79,13 @@
   // removing a line takes the question down; a yes covers only the lines it named, at the counts it named (checked in
   // submit).
   let confirming = $state<{ key: number; awards: number; what: string }[]>([])
-  // The quote as the store has it now: awards given while the editor is open count too.
-  const live = $derived(editing && (app.state.messages[channelId]?.find((m) => m.id === editing.id) ?? editing))
+  // The quote as the store has it now: awards given while the editor is open count too. Opened from
+  // its replies panel after it left the list (a jump), the panel's held copy is the live one.
+  const live = $derived(
+    editing &&
+      (app.state.messages[channelId]?.find((m) => m.id === editing.id) ??
+        (app.state.openRoot?.id === editing.id ? app.state.openRoot : editing)),
+  )
   const awardsOf = (r: Row) => (r.id ? (live?.quote?.lines.find((l) => l.id === r.id)?.awards ?? 0) : 0)
   let root = $state<HTMLElement>()
 

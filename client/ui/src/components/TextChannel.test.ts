@@ -447,6 +447,25 @@ describe('TextChannel: quotes channel', () => {
     expect(list.getAttribute('tabindex')).toBe('-1') // focusable from code, not a tab stop
   })
 
+  it("fix-wave re-review: a quote edited from its panel after it left the list, then deleted, sends the focus to the message list", async () => {
+    show('quotes', [quoteMsg])
+    document.querySelector<HTMLButtonElement>('.list .quote button[aria-label="Reply"]')!.click()
+    flushSync()
+    await settled()
+    // "Jump to present" replaced the list: only the panel holds the quote now
+    app.state = { ...app.state, messages: { ...app.state.messages, C1: [msg(500)] } }
+    flushSync()
+    document.querySelector<HTMLButtonElement>('.replies-panel .quote button[aria-label="Edit"]')!.click()
+    flushSync()
+    expect(editBox().closest('.edit-quote')).toBeTruthy()
+    document.querySelector<HTMLElement>('.replies-panel [role="textbox"]')!.focus()
+    app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M0001', thread_root_id: null, author_id: 'U1', mentions: [] } }, Date.now())
+    flushSync()
+    await settled()
+    expect(document.querySelector('.replies-panel')).toBeNull()
+    expect(document.activeElement).toBe(document.querySelector('.list'))
+  })
+
   it("r1 m5: a quote deleted while the focus is outside its panel leaves the focus alone", async () => {
     show('quotes', [quoteMsg])
     document.querySelector<HTMLButtonElement>('.list .quote button[aria-label="Reply"]')!.click()

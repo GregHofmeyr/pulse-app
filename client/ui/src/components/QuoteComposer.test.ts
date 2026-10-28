@@ -12,7 +12,7 @@ vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 
 import QuoteComposer from './QuoteComposer.svelte'
 import { app } from '../lib/store.svelte'
-import { emptyState } from '../lib/state'
+import { applyEvent, emptyState, holdThread } from '../lib/state'
 
 const alex = { id: 'U1', username: 'alex', avatar_hash: null }
 const sam = { id: 'U2', username: 'sam', avatar_hash: null }
@@ -460,6 +460,19 @@ describe('QuoteComposer', () => {
     app.state = { ...app.state, messages: { C1: [m] } }
     rows()[0].querySelector<HTMLElement>('.chip')!.click(); flushSync(); pickMember(0, 'kim')
     app.state = { ...app.state, messages: { C1: [quoteMsg([eline({ awards: 1, awarders: ['U3'] })])] } }
+    flushSync()
+    enter(textOf(0)); await settle()
+    expect(calls('edit_quote')).toHaveLength(0)
+    expect(document.body.textContent).toContain('This line has 1 award. Changing who said it removes them.')
+  })
+
+  it('fix-wave re-review: editing a quote held only by its replies panel (it left the list) reads its live awards', async () => {
+    const m = quoteMsg([eline()])
+    show({ editing: m })
+    // after a jump the channel's list no longer has the quote; the open panel holds it
+    app.state = holdThread({ ...app.state, messages: { C1: [] } }, m)
+    rows()[0].querySelector<HTMLElement>('.chip')!.click(); flushSync(); pickMember(0, 'kim')
+    app.state = applyEvent(app.state, { t: 'QuoteAwardChanged', d: { channel_id: 'C1', message_id: 'M1', line_id: 'L1', user_id: 'U3', given: true, count: 1, awarders: ['U3'] } }, 0)
     flushSync()
     enter(textOf(0)); await settle()
     expect(calls('edit_quote')).toHaveLength(0)

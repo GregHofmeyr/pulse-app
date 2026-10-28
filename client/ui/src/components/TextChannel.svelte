@@ -304,6 +304,8 @@
   async function closeReplies() {
     const id = repliesOpen?.id
     const opener = repliesOpener
+    // Asked before the panel goes: closing it lets go of the quote it held (see editedAlive).
+    const editAlive = editedAlive()
     repliesOpen = null
     repliesOpener = null
     await tick()
@@ -315,12 +317,13 @@
       ?? list?.querySelector<HTMLElement>(`${quote} .unsent-reply`)
       ?? list?.querySelector<HTMLElement>(`${quote} .line`)
       ?? chan?.querySelector<HTMLElement>('.new-quote:not([hidden]) textarea.qtext')
-      ?? (editedAlive() ? chan?.querySelector<HTMLElement>('.edit-quote textarea.qtext') : null)
+      ?? (editAlive ? chan?.querySelector<HTMLElement>('.edit-quote textarea.qtext') : null)
       ?? list
     back?.focus()
   }
   function editedAlive() {
-    const q = editingQuote && (byId.get(editingQuote.id) ?? editingQuote)
+    // Like the composer's live copy: the list's, else the panel's held one (it may have left the list).
+    const q = editingQuote && (byId.get(editingQuote.id) ?? (app.state.openRoot?.id === editingQuote.id ? app.state.openRoot : editingQuote))
     return !!q && !q.deleted
   }
   // A deleted quote's thread is gone: its panel closes (unsent replies to it were dropped with it). The
