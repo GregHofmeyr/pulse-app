@@ -882,27 +882,8 @@ async fn renaming_a_group_is_limited_per_user() {
 async fn marking_replies_seen_is_limited() {
     let app = spawn_only(|l| l.mutate_user = tiny(2)).await;
     let (_, a) = register(&app, "alex").await;
-    let srv = create_server(&app, &a, "Main").await;
-    let ch: pulse_protocol::rest::Channel = post_json(
-        &app,
-        &a,
-        &format!("/servers/{}/channels", srv.id),
-        serde_json::json!({ "kind": "quotes", "name": "quotes" }),
-    )
-    .await
-    .json()
-    .await
-    .unwrap();
-    let q: pulse_protocol::rest::Message = post_json(
-        &app,
-        &a,
-        &format!("/channels/{}/quotes", ch.id),
-        serde_json::json!({ "lines": [{ "speaker_name": "A Friend", "text": "x" }] }),
-    )
-    .await
-    .json()
-    .await
-    .unwrap();
+    let ch = quotes_channel(&app, &a).await;
+    let q = post_quote(&app, &a, &ch).await;
     let r: pulse_protocol::rest::Message = post_json(
         &app,
         &a,
@@ -978,20 +959,37 @@ async fn quotes_channel(app: &TestApp, token: &str) -> pulse_protocol::rest::Cha
     r.json().await.unwrap()
 }
 
+/// Post a one-line quote (a plain-name speaker) to `ch`.
+async fn post_quote_raw(
+    app: &TestApp,
+    token: &str,
+    ch: &pulse_protocol::rest::Channel,
+) -> reqwest::Response {
+    post_json(
+        app,
+        token,
+        &format!("/channels/{}/quotes", ch.id),
+        serde_json::json!({ "lines": [{ "speaker_name": "A Friend", "text": "hi" }] }),
+    )
+    .await
+}
+
+async fn post_quote(
+    app: &TestApp,
+    token: &str,
+    ch: &pulse_protocol::rest::Channel,
+) -> pulse_protocol::rest::Message {
+    let r = post_quote_raw(app, token, ch).await;
+    assert_eq!(r.status(), 200, "post quote");
+    r.json().await.unwrap()
+}
+
 #[tokio::test]
 async fn posting_quotes_shares_the_send_limit() {
     let app = spawn_only(|l| l.send_user = tiny(2)).await;
     let (_, a) = register(&app, "alex").await;
     let ch = quotes_channel(&app, &a).await;
-    let path = format!("/channels/{}/quotes", ch.id);
-    let post = || {
-        post_json(
-            &app,
-            &a,
-            &path,
-            serde_json::json!({ "lines": [{ "speaker_name": "A Friend", "text": "hi" }] }),
-        )
-    };
+    let post = || post_quote_raw(&app, &a, &ch);
     assert_eq!(post().await.status(), 200);
     assert_eq!(post().await.status(), 200);
     assert_eq!(post().await.status(), 429);
@@ -1002,15 +1000,7 @@ async fn quote_edits_and_awards_share_the_mutate_limit() {
     let app = spawn_only(|l| l.mutate_user = tiny(3)).await;
     let (_, a) = register(&app, "alex").await;
     let ch = quotes_channel(&app, &a).await;
-    let r = post_json(
-        &app,
-        &a,
-        &format!("/channels/{}/quotes", ch.id),
-        serde_json::json!({ "lines": [{ "speaker_name": "A Friend", "text": "hi" }] }),
-    )
-    .await;
-    assert_eq!(r.status(), 200);
-    let q: pulse_protocol::rest::Message = r.json().await.unwrap();
+    let q = post_quote(&app, &a, &ch).await;
     let line = q.quote.unwrap().lines[0].id;
     let edit = || {
         app.http
