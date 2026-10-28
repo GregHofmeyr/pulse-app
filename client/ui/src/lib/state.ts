@@ -1,8 +1,11 @@
 // The app's single source of truth, as pure functions over plain data so they're easy to test.
 // The reactive wrapper lives in store.svelte.ts.
 import type { Channel } from './protocol/Channel'
+import type { ClipFacets } from './protocol/ClipFacets'
+import type { ClipView } from './protocol/ClipView'
 import type { CustomEmoji } from './protocol/CustomEmoji'
 import type { Event } from './protocol/Event'
+import type { Game } from './protocol/Game'
 import type { Member } from './protocol/Member'
 import type { Message } from './protocol/Message'
 import type { Mute } from './protocol/Mute'
@@ -15,6 +18,8 @@ import type { SpeakerLink } from './protocol/SpeakerLink'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { User } from './protocol/User'
 import type { VoiceMember } from './protocol/VoiceMember'
+import { feedKey, matchesFilter, type ClipFilter } from './clips'
+import type { ClipJob } from './tauri'
 
 /** A winner card's text once its quote is deleted: the server writes exactly this (`quotes::on_delete`). */
 export function deletedWinnerContent(year: number): string {
@@ -75,7 +80,19 @@ export type AppState = {
   openRoot: Message | null
   qoty: Record<string, QotyEvent> // serverId -> its latest Quote of the Year vote (open, or ended and reopenable)
   speakerLinks: Record<string, SpeakerLink[]> // serverId -> plain names linked to members
+  games: Record<string, Game[]> // serverId -> its games, by name
+  clipViews: Record<string, ClipView> // channelId -> your view (absent = the wall)
+  /** A clips channel's feeds by `feedKey` (cleared on every Ready: a viewed feed is fetched again). They are not
+   * the text channel's `messages`/`history`; a clip's replies still live in `threads`. */
+  clipFeeds: Record<string, ClipFeed>
+  clipFacets: Record<string, ClipFacets> // channelId -> filter chips
+  clipJobs: Record<string, ClipJob> // job id -> clip being sent (a `done` one is removed)
 }
+
+export type ClipFeed = { channelId: string; filter: ClipFilter; items: Message[] /* newest first */; start: boolean; loading: boolean }
+
+/** Clips per page of a feed (the server's page size). */
+export const CLIP_PAGE = 30
 
 export type History = { loaded: boolean; start: boolean; end: boolean; missed?: string[]; missedMore?: true }
 
@@ -86,7 +103,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -127,6 +144,10 @@ export function applyReady(s: AppState, r: Ready): AppState {
     goneReplies: {},
     qoty: Object.fromEntries(Object.entries(latestQoty(r.qoty)).map(([id, e]) => [id, withMyOptions(e, r.me.id, s.qoty[id])])),
     speakerLinks: groupLinks(r.speaker_links),
+    games: r.games.reduce<AppState['games']>((acc, g) => withGame(acc, g), {}),
+    clipViews: Object.fromEntries(r.clip_views.map((v) => [v.channel_id, v.view])),
+    clipFeeds: {},
+    clipFacets: {},
   }
 }
 
@@ -148,12 +169,12 @@ function groupLinks(links: SpeakerLink[]): Record<string, SpeakerLink[]> {
   return out
 }
 
-/** Whether `channel` should have a read point for you: your DMs/groups, and text and quotes channels of servers you're in. */
+/** Whether `channel` should have a read point for you: your DMs/groups, and text quotes and clips channels of servers you're in. */
 export function tracksUnread(s: AppState, channel: string): boolean {
   const ch = s.channels[channel]
   if (!ch || !s.me) return false
   if (ch.server_id === null) return true
-  return (ch.kind === 'text' || ch.kind === 'quotes') && (s.members[ch.server_id] ?? []).some((m) => m.user.id === s.me!.id)
+  return (ch.kind === 'text' || ch.kind === 'quotes' || ch.kind === 'clips') && (s.members[ch.server_id] ?? []).some((m) => m.user.id === s.me!.id)
 }
 
 /** An edit event's reaction list is unreliable (`me` is always false), so reactions are kept as-is:
@@ -173,7 +194,112 @@ function upsertMessage(list: Message[] | undefined, m: Message): Message[] {
   return next
 }
 
-// --- Quotes: replies live in `threads`, never in the channel list. ---
+// --- Quotes and clips: replies live in `threads`, never in the channel list. ---
+
+type Thread = { reply_count: number; last_reply_id: string | null; replies_seen: string | null }
+
+/** The reply counters of a message that has a thread (a quote or a clip). */
+export function threadOf(m: Message): Thread | null {
+  return m.quote ?? m.clip
+}
+
+/** `m` with its thread counters changed by `f` (as is when it has none). */
+export function withThread(m: Message, f: (t: Thread) => Thread): Message {
+  if (m.quote) return { ...m, quote: { ...m.quote, ...f(m.quote) } }
+  if (m.clip) return { ...m, clip: { ...m.clip, ...f(m.clip) } }
+  return m
+}
+
+function withGame(games: Record<string, Game[]>, g: Game): Record<string, Game[]> {
+  const list = (games[g.server_id] ?? []).filter((x) => x.id !== g.id)
+  return { ...games, [g.server_id]: [...list, g].sort((a, b) => a.name.localeCompare(b.name)) }
+}
+
+const newestFirst = (a: Message, b: Message) => (a.id < b.id ? 1 : a.id > b.id ? -1 : 0)
+
+/** Change a clip in every feed that holds it (feeds without it are untouched). */
+function mapFeedItems(s: AppState, channel: string, id: string, f: (m: Message) => Message): AppState {
+  let feeds = s.clipFeeds
+  for (const [k, feed] of Object.entries(s.clipFeeds)) {
+    if (feed.channelId !== channel || !feed.items.some((m) => m.id === id)) continue
+    feeds = { ...feeds, [k]: { ...feed, items: feed.items.map((m) => (m.id === id ? f(m) : m)) } }
+  }
+  return feeds === s.clipFeeds ? s : { ...s, clipFeeds: feeds }
+}
+
+/** The loaded copy of a message in its channel list or (for a clip) a feed. */
+function loadedRoot(s: AppState, channel: string, id: string): Message | undefined {
+  const m = s.messages[channel]?.find((x) => x.id === id)
+  if (m) return m
+  for (const feed of Object.values(s.clipFeeds)) {
+    const f = feed.channelId === channel ? feed.items.find((x) => x.id === id) : undefined
+    if (f) return f
+  }
+  return undefined
+}
+
+/** Start (or keep) the feed of a channel for a filter, ready to be filled by `loadFeedPage`. */
+export function openFeed(s: AppState, channelId: string, filter: ClipFilter): AppState {
+  const key = feedKey(channelId, filter)
+  const feed = s.clipFeeds[key]
+  if (feed) return feed.loading ? s : { ...s, clipFeeds: { ...s.clipFeeds, [key]: { ...feed, loading: true } } }
+  return { ...s, clipFeeds: { ...s.clipFeeds, [key]: { channelId, filter, items: [], start: false, loading: true } } }
+}
+
+/** Add a fetched page of a feed (`before` null = the newest page, else the page older than that id). Clips that
+ * arrived live meanwhile stay, once each; the start is reached on a short page. */
+export function loadFeedPage(s: AppState, key: string, page: Message[], _before: string | null): AppState {
+  const feed = s.clipFeeds[key]
+  if (!feed) return s
+  const seen = new Set(feed.items.map((m) => m.id))
+  const items = [...feed.items, ...page.filter((m) => !seen.has(m.id))].sort(newestFirst)
+  return { ...s, clipFeeds: { ...s.clipFeeds, [key]: { ...feed, items, start: page.length < CLIP_PAGE, loading: false } } }
+}
+
+/** A feed's fetch failed: it can be tried again. */
+export function feedFailed(s: AppState, key: string): AppState {
+  const feed = s.clipFeeds[key]
+  return feed?.loading ? { ...s, clipFeeds: { ...s.clipFeeds, [key]: { ...feed, loading: false } } } : s
+}
+
+/** Keep a job while it is under way; a finished one is dropped. */
+export function setClipJob(s: AppState, job: ClipJob): AppState {
+  if (job.stage === 'done') {
+    const { [job.id]: _gone, ...rest } = s.clipJobs
+    return { ...s, clipJobs: rest }
+  }
+  return { ...s, clipJobs: { ...s.clipJobs, [job.id]: job } }
+}
+
+/** A clip created, in every feed of its channel it matches. */
+function clipCreated(s: AppState, m: Message): AppState {
+  let feeds = s.clipFeeds
+  for (const [k, feed] of Object.entries(s.clipFeeds)) {
+    if (feed.channelId !== m.channel_id || !matchesFilter(m, feed.filter) || feed.items.some((x) => x.id === m.id)) continue
+    feeds = { ...feeds, [k]: { ...feed, items: [...feed.items, m].sort(newestFirst) } }
+  }
+  return feeds === s.clipFeeds ? s : { ...s, clipFeeds: feeds }
+}
+
+/** A clip edited: replaced where it still matches, dropped where it no longer does, added where its edit now fits. Reactions and
+ * the seen point are kept (events carry neither). */
+function clipUpdated(s: AppState, m: Message): AppState {
+  let feeds = s.clipFeeds
+  for (const [k, feed] of Object.entries(s.clipFeeds)) {
+    if (feed.channelId !== m.channel_id) continue
+    const old = feed.items.find((x) => x.id === m.id)
+    const fits = matchesFilter(m, feed.filter)
+    // Not held yet: it belongs only where the feed reaches that far back (to its oldest clip, or its start).
+    if (!old && !(fits && (feed.start || (feed.items.length > 0 && m.id > feed.items[feed.items.length - 1].id)))) continue
+    const items = !fits
+      ? feed.items.filter((x) => x.id !== m.id)
+      : old
+        ? feed.items.map((x) => (x.id === m.id ? { ...m, reactions: old.reactions, clip: m.clip && old.clip ? { ...m.clip, replies_seen: old.clip.replies_seen } : m.clip } : x))
+        : [...feed.items, m].sort(newestFirst)
+    feeds = { ...feeds, [k]: { ...feed, items } }
+  }
+  return feeds === s.clipFeeds ? s : { ...s, clipFeeds: feeds }
+}
 
 /** A quote as the event carries it, with what only we know put back: each line's `awarded` comes
  * from `awarders` (the event's flag is always false) and `replies_seen` is kept (events carry none). */
@@ -212,9 +338,9 @@ function mapOpenRoot(s: AppState, id: string, f: (m: Message) => Message): AppSt
   return s.openRoot?.id === id ? { ...s, openRoot: f(s.openRoot) } : s
 }
 
-/** Change one quote wherever it is loaded: in its channel's list, and as the open panel's quote. */
+/** Change one quote or clip wherever it is loaded: in its channel's list or clip feeds, and as the open panel's root. */
 function mapQuote(s: AppState, channel: string, id: string, f: (m: Message) => Message): AppState {
-  const held = mapOpenRoot(s, id, f)
+  const held = mapFeedItems(mapOpenRoot(s, id, f), channel, id, f)
   const list = s.messages[channel]
   if (!list?.some((m) => m.id === id)) return held
   return { ...held, messages: { ...s.messages, [channel]: list.map((m) => (m.id === id ? f(m) : m)) } }
@@ -230,9 +356,8 @@ export function holdThread(s: AppState, root: Message): AppState {
  * either. Another panel may hold its quote by now: that one stays held. */
 export function closeThread(s: AppState, root: string, channel: string): AppState {
   const rootMsg = s.openRoot?.id === root ? s.openRoot : undefined
-  const loaded = s.messages[channel]?.find((m) => m.id === root)
-  const quote = loaded?.quote ?? rootMsg?.quote
-  const seen = maxIdOf(s.threadSeen[root], quote?.replies_seen)
+  const loaded = loadedRoot(s, channel, root)
+  const seen = maxIdOf(s.threadSeen[root], threadOf(loaded ?? rootMsg ?? ({ quote: null, clip: null } as Message))?.replies_seen)
   const meId = s.me?.id
   const counted = (s.threads[root] ?? []).filter((m) => !!meId && m.kind === 'normal' && !m.deleted && m.author_id !== meId && m.mentions.includes(meId) && m.id > seen)
   const { [root]: _list, ...threads } = s.threads
@@ -300,7 +425,8 @@ function replyCreated(s: AppState, m: Message, nonce: string | null): AppState {
   // A thread that isn't held can't say whether it has this reply. Replies arrive newest last, except
   // yours confirmed over REST (still pending until its first copy): any other no newer than the
   // quote's newest reply is a second copy, already counted.
-  const rootQuote = s.messages[c]?.find((x) => x.id === root)?.quote ?? (s.openRoot?.id === root ? s.openRoot.quote : null)
+  const rootMsg = loadedRoot(s, c, root) ?? (s.openRoot?.id === root ? s.openRoot : undefined)
+  const rootQuote = rootMsg ? threadOf(rootMsg) : null
   const awaited = !!nonce && !!s.pending[c]?.some((p) => p.nonce === nonce)
   const held = !!s.threads[root]?.some((x) => x.id === m.id)
   const known = held || (!awaited && !!rootQuote?.last_reply_id && m.id <= rootQuote.last_reply_id)
@@ -322,7 +448,7 @@ function replyCreated(s: AppState, m: Message, nonce: string | null): AppState {
     reads: mentioned ? { ...s.reads, [c]: { ...read, mentions: read.mentions + 1 } } : s.reads,
   }
   if (known) return next
-  return mapQuote(next, c, root, (q) => (q.quote ? { ...q, quote: { ...q.quote, reply_count: q.quote.reply_count + 1, last_reply_id: maxIdOf(q.quote.last_reply_id, m.id) } } : q))
+  return mapQuote(next, c, root, (q) => withThread(q, (t) => ({ ...t, reply_count: t.reply_count + 1, last_reply_id: maxIdOf(t.last_reply_id, m.id) })))
 }
 
 function replyUpdated(s: AppState, m: Message): AppState {
@@ -337,7 +463,8 @@ function replyDeleted(s: AppState, e: Extract<Event, { t: 'MessageDeleted' }>['d
   const list = s.threads[root!]
   const already = s.goneReplies[id] || (list?.find((x) => x.id === id)?.deleted ?? false)
   if (already) return s
-  const rootMsg = s.messages[c]?.find((m) => m.id === root)
+  const rootMsg = loadedRoot(s, c, root!)
+  const rootThread = rootMsg ? threadOf(rootMsg) : null
   const read = s.reads[c]
   // Counted on creation only for a normal reply from someone else (see replyCreated).
   const kind = list?.find((x) => x.id === id)?.kind ?? 'normal'
@@ -346,8 +473,8 @@ function replyDeleted(s: AppState, e: Extract<Event, { t: 'MessageDeleted' }>['d
   // Where the user's seen point is: from Ready or a ThreadSeen, the loaded quote, or (a reply that
   // arrived live this session) nothing seen yet. Unknown: Ready lists every thread with a counted
   // mention, so this one had none and the deleted mention was not in the count.
-  const known = s.threadSeen[root!] !== undefined || !!rootMsg?.quote || !!list?.some((x) => x.id === id)
-  const seen = [s.threadSeen[root!], rootMsg?.quote?.replies_seen].reduce<string>((a, b) => (b && b > a ? b : a), '')
+  const known = s.threadSeen[root!] !== undefined || !!rootThread || !!list?.some((x) => x.id === id)
+  const seen = [s.threadSeen[root!], rootThread?.replies_seen].reduce<string>((a, b) => (b && b > a ? b : a), '')
   const counted = mentioned && !!read && known && id > seen
   const next: AppState = {
     ...s,
@@ -355,7 +482,7 @@ function replyDeleted(s: AppState, e: Extract<Event, { t: 'MessageDeleted' }>['d
     threads: list ? { ...s.threads, [root!]: list.map((x) => (x.id === id ? { ...x, deleted: true, content: '' } : x)) } : s.threads,
     reads: counted ? { ...s.reads, [c]: { ...read, mentions: Math.max(0, read.mentions - 1) } } : s.reads,
   }
-  return mapQuote(next, c, root!, (q) => (q.quote ? { ...q, quote: { ...q.quote, reply_count: Math.max(0, q.quote.reply_count - 1) } } : q))
+  return mapQuote(next, c, root!, (q) => withThread(q, (t) => ({ ...t, reply_count: Math.max(0, t.reply_count - 1) })))
 }
 
 function awardChanged(s: AppState, d: Extract<Event, { t: 'QuoteAwardChanged' }>['d']): AppState {
@@ -369,7 +496,7 @@ function threadSeen(s: AppState, d: Extract<Event, { t: 'ThreadSeen' }>['d']): A
   if (d.user_id !== s.me?.id) return s
   const read = s.reads[d.channel_id]
   const quoted = mapQuote(s, d.channel_id, d.root_id, (m) =>
-    m.quote ? { ...m, quote: { ...m.quote, replies_seen: maxIdOf(m.quote.replies_seen, d.last_seen_id) } } : m,
+    withThread(m, (t) => ({ ...t, replies_seen: maxIdOf(t.replies_seen, d.last_seen_id) })),
   )
   const seenNow = maxIdOf(s.threadSeen[d.root_id], d.last_seen_id)
   // A thread not open here holds only counted mentions: seen ones aren't counted any more.
@@ -385,6 +512,14 @@ function threadSeen(s: AppState, d: Extract<Event, { t: 'ThreadSeen' }>['d']): A
   return mentions === read.mentions ? next : { ...next, reads: { ...next.reads, [d.channel_id]: { ...read, mentions } } }
 }
 
+function dropFromFeeds(feeds: AppState['clipFeeds'], channel: string, id: string): AppState['clipFeeds'] {
+  let next = feeds
+  for (const [k, feed] of Object.entries(feeds)) {
+    if (feed.channelId === channel && feed.items.some((m) => m.id === id)) next = { ...next, [k]: { ...feed, items: feed.items.filter((m) => m.id !== id) } }
+  }
+  return next
+}
+
 function withoutTyping(s: AppState, channel: string, user: string | null): AppState['typing'] {
   if (!user || !s.typing[channel]?.[user]) return s.typing
   const { [user]: _gone, ...rest } = s.typing[channel]
@@ -397,6 +532,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       if (e.d.message.thread_root_id) return replyCreated(s, e.d.message, e.d.nonce)
       const { message: m, nonce } = e.d
       const c = m.channel_id
+      const feeds = m.clip ? clipCreated(s, m) : s
       // Conversations/servers you're in but have no read point for yet (created or joined since
       // Ready) start at zero, so their first messages count right away.
       const read = s.reads[c] ?? (tracksUnread(s, c) ? { channel_id: c, last_read_message_id: null, unread: 0, mentions: 0 } : undefined)
@@ -407,8 +543,10 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         ...s,
         // A detached window shows the past: the message waits for the latest to be reloaded (no gap),
         // and is noted so paging forward doesn't stop short of it.
-        messages: detached(s, c) ? s.messages : { ...s.messages, [c]: upsertMessage(s.messages[c], withMyQuoteState(m, undefined, s.me?.id)) },
-        history: detached(s, c) ? { ...s.history, [c]: withMissed(s.history[c], m.id) } : s.history,
+        // A clip joins the channel's feeds, not its text history.
+        clipFeeds: feeds.clipFeeds,
+        messages: m.clip || detached(s, c) ? s.messages : { ...s.messages, [c]: upsertMessage(s.messages[c], withMyQuoteState(m, undefined, s.me?.id)) },
+        history: m.clip ? s.history : detached(s, c) ? { ...s.history, [c]: withMissed(s.history[c], m.id) } : s.history,
         pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
         typing: withoutTyping(s, c, m.author_id),
         latest: s.channels[c]?.server_id === null ? { ...s.latest, [c]: m } : s.latest,
@@ -431,6 +569,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       // A QotY option's copy follows the edit too, loaded or not.
       const follow = (old: Message) => withMyQuoteState({ ...m, reactions: old.reactions }, old, s.me?.id)
       const q = mapOpenRoot(mapQotyMessages(s, m.id, follow), m.id, follow)
+      if (m.clip) return clipUpdated(q, m)
       // History never loaded, or a detached window that doesn't hold it (adding it would leave a gap).
       if (!s.messages[c] || (detached(s, c) && !s.messages[c].some((x) => x.id === m.id))) return latest === s.latest ? q : { ...q, latest }
       return { ...q, latest, messages: { ...s.messages, [c]: upsertEdited(s.messages[c], withMyQuoteState(m, s.messages[c].find((x) => x.id === m.id), s.me?.id)) } }
@@ -463,6 +602,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         pending: left.length === (s.pending[c] ?? []).length ? s.pending : left.length ? { ...s.pending, [c]: left } : otherPending,
         openRoot: s.openRoot && s.openRoot.channel_id === c ? gone(s.openRoot) : s.openRoot,
         messages: s.messages[c] ? { ...s.messages, [c]: s.messages[c].map(gone) } : s.messages,
+        clipFeeds: dropFromFeeds(s.clipFeeds, c, id),
         latest: s.latest[c] ? { ...s.latest, [c]: gone(s.latest[c]) } : s.latest,
         reads: wasUnread
           ? {
@@ -472,6 +612,10 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
           : s.reads,
       }
     }
+    case 'GameAdded':
+      return { ...s, games: withGame(s.games, e.d.game) }
+    case 'ClipViewChanged':
+      return { ...s, clipViews: { ...s.clipViews, [e.d.channel_id]: e.d.view } }
     case 'ChannelCreated':
       return { ...s, channels: { ...s.channels, [e.d.channel.id]: e.d.channel } }
     case 'ServerCreated':
@@ -539,6 +683,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         pending: drop(s.pending),
         typing: drop(s.typing),
         history: drop(s.history),
+        clipViews: drop(s.clipViews),
+        clipFacets: drop(s.clipFacets),
+        clipFeeds: Object.fromEntries(Object.entries(s.clipFeeds).filter(([, f]) => f.channelId !== c)),
       }
     }
     case 'ReadStateUpdated': {

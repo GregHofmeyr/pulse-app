@@ -173,3 +173,12 @@ describe('nameOfIn', () => {
     expect(nameOf(null)).toBe('Pulse')
   })
 })
+
+describe('channelsFor clips', () => {
+  it('clips channels are their own group', () => {
+    const st = applyReady(emptyState(), { ...r, channels: [...r.channels, { id: 'K1', server_id: 'S1', kind: 'clips', name: 'clips', position: 0 }] })
+    const g = channelsFor(st, 'S1')
+    expect(g.clips.map((c) => c.id)).toEqual(['K1'])
+    expect(g.text.map((c) => c.id)).not.toContain('K1')
+  })
+})

@@ -1,0 +1,55 @@
+import { describe, expect, it } from 'vitest'
+import { feedKey, formatBytes, formatDuration, matchesFilter, clipView, isNewClip } from './clips'
+import { applyEvent, applyReady, emptyState } from './state'
+import type { Message } from './protocol/Message'
+
+const clip = (game: string | null, author = 'U2'): Message => ({
+  id: 'M1', channel_id: 'K1', author_id: author, kind: 'normal', content: '', reply_to_id: null,
+  created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null,
+  clip: { thumb_hash: '', duration_ms: 1000, width: 1, height: 1, size: 1, game_id: game, reply_count: 0, last_reply_id: null, replies_seen: null },
+})
+
+describe('formatDuration', () => {
+  it('shows minutes and seconds', () => {
+    expect(formatDuration(65_000)).toBe('1:05')
+    expect(formatDuration(9_400)).toBe('0:09')
+    expect(formatDuration(0)).toBe('0:00')
+    expect(formatDuration(3_723_000)).toBe('1:02:03')
+  })
+})
+
+describe('formatBytes', () => {
+  it('uses decimal units', () => {
+    expect(formatBytes(47_736_000)).toBe('47.7 MB')
+    expect(formatBytes(1_200_000_000)).toBe('1.2 GB')
+    expect(formatBytes(512)).toBe('512 B')
+    expect(formatBytes(2_500)).toBe('3 KB')
+  })
+})
+
+describe('matchesFilter', () => {
+  it('needs every set part to match', () => {
+    expect(matchesFilter(clip('G1'), {})).toBe(true)
+    expect(matchesFilter(clip('G1'), { game: 'G1' })).toBe(true)
+    expect(matchesFilter(clip('G2'), { game: 'G1' })).toBe(false)
+    expect(matchesFilter(clip(null), { game: 'G1' })).toBe(false)
+    expect(matchesFilter(clip('G1', 'U3'), { game: 'G1', author: 'U2' })).toBe(false)
+    expect(matchesFilter(clip('G1', 'U2'), { game: 'G1', author: 'U2' })).toBe(true)
+  })
+  it('keys differ per filter', () => {
+    expect(feedKey('K1', {})).not.toBe(feedKey('K1', { game: 'G1' }))
+    expect(feedKey('K1', { game: 'G1' })).toBe(feedKey('K1', { game: 'G1' }))
+  })
+})
+
+describe('clipView / isNewClip', () => {
+  it('defaults to wall', () => expect(clipView(emptyState(), 'K1')).toBe('wall'))
+  it('is new when after the read point', () => {
+    let s = applyReady(emptyState(), { me: { id: 'U1', username: 'alex', avatar_hash: null }, servers: [], channels: [], members: [], dm_members: [], voice: [], people: [], read_states: [{ channel_id: 'K1', last_read_message_id: 'M5', unread: 0, mentions: 0 }], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [] })
+    expect(isNewClip(s, 'K1', 'M6')).toBe(true)
+    expect(isNewClip(s, 'K1', 'M5')).toBe(false)
+    expect(isNewClip(s, 'K1', 'M6', 'M9')).toBe(false)
+    s = applyEvent(s, { t: 'ClipViewChanged', d: { user_id: 'U1', channel_id: 'K1', view: 'list' } }, 0)
+    expect(clipView(s, 'K1')).toBe('list')
+  })
+})

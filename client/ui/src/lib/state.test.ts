@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addHistory, addReplies, type AppState, type Pending } from './state'
+import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addHistory, addReplies, openFeed, loadFeedPage, setClipJob, type AppState, type Pending } from './state'
+import { feedKey, clipView, type ClipFilter } from './clips'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 import type { Event } from './protocol/Event'
@@ -1133,5 +1134,100 @@ describe('detached windows (jump to a message)', () => {
     const s = applyReady(w, ready())
     expect(s.messages['C1']).toBe(w.messages['C1'])
     expect(s.history['C1']).toEqual({ loaded: true, start: false, end: false })
+  })
+})
+
+describe('clips', () => {
+  const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+  const cm = (id: string, game: string | null = null, over: Partial<Message> = {}): Message => ({
+    ...msg(id, 'K1', ''),
+    clip: { thumb_hash: '', duration_ms: 1000, width: 1, height: 1, size: 1, game_id: game, reply_count: 0, last_reply_id: null, replies_seen: null },
+    ...over,
+  })
+  const base = () => applyReady(emptyState(), ready({
+    channels: [ch('K1', 'clips')],
+    members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: null }] }],
+    read_states: [{ channel_id: 'K1', last_read_message_id: null, unread: 0, mentions: 0 }],
+  }))
+  const open = (s: AppState, filter: ClipFilter, items: Message[] = []) => loadFeedPage(openFeed(s, 'K1', filter), feedKey('K1', filter), items, null)
+  const created = (s: AppState, m: Message) => applyEvent(s, { t: 'MessageCreated', d: { message: m, nonce: null } }, 0)
+  const ids = (s: AppState, filter: ClipFilter) => s.clipFeeds[feedKey('K1', filter)].items.map((m) => m.id)
+
+  it('a new clip lands in matching feeds only', () => {
+    let s = open(open(open(base(), {}), { game: 'G1' }), { game: 'G2' })
+    s = created(s, cm('M1', 'G1'))
+    s = created(s, cm('M2', 'G1'))
+    expect(ids(s, {})).toEqual(['M2', 'M1'])
+    expect(ids(s, { game: 'G1' })).toEqual(['M2', 'M1'])
+    expect(ids(s, { game: 'G2' })).toEqual([])
+    s = created(s, cm('M2', 'G1'))
+    expect(ids(s, {})).toEqual(['M2', 'M1'])
+  })
+
+  it('a clip counts as unread and stays out of the text history', () => {
+    const s = created(base(), cm('M1'))
+    expect(s.reads['K1'].unread).toBe(1)
+    expect(s.messages['K1']).toBeUndefined()
+  })
+
+  it("editing a clip's game moves it between filtered feeds", () => {
+    let s = open(open(base(), { game: 'G1' }), { game: 'G2' })
+    s = created(s, cm('M1', 'G1'))
+    s = applyEvent(s, { t: 'MessageUpdated', d: { message: cm('M1', 'G2', { content: 'new' }) } }, 0)
+    expect(ids(s, { game: 'G1' })).toEqual([])
+    expect(ids(s, { game: 'G2' })).toEqual(['M1'])
+    s = applyEvent(s, { t: 'MessageUpdated', d: { message: cm('M1', 'G2', { content: 'newer' }) } }, 0)
+    expect(s.clipFeeds[feedKey('K1', { game: 'G2' })].items[0].content).toBe('newer')
+  })
+
+  it('a deleted clip leaves every feed', () => {
+    let s = open(open(base(), {}), { game: 'G1' })
+    s = created(s, cm('M1', 'G1'))
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'K1', message_id: 'M1', thread_root_id: null, author_id: 'U2', mentions: [] } }, 0)
+    expect(ids(s, {})).toEqual([])
+    expect(ids(s, { game: 'G1' })).toEqual([])
+    expect(s.reads['K1'].unread).toBe(0)
+  })
+
+  it('a feed page appends older clips and notes the start', () => {
+    let s = open(base(), {}, [cm('M9'), cm('M8')])
+    expect(s.clipFeeds[feedKey('K1', {})].start).toBe(true)
+    const page = Array.from({ length: 30 }, (_, i) => cm(`M${String(50 - i)}`))
+    s = loadFeedPage(s, feedKey('K1', {}), page, 'M9')
+    expect(s.clipFeeds[feedKey('K1', {})].start).toBe(false)
+    expect(ids(s, {}).slice(0, 3)).toEqual(['M9', 'M8', 'M50'])
+    expect(ids(s, {})).toHaveLength(32)
+  })
+
+  it('clip views default to wall and follow events', () => {
+    let s = applyReady(emptyState(), ready({ clip_views: [{ channel_id: 'K1', view: 'list' }] }))
+    expect(clipView(s, 'K1')).toBe('list')
+    expect(clipView(s, 'K2')).toBe('wall')
+    s = applyEvent(s, { t: 'ClipViewChanged', d: { user_id: 'U1', channel_id: 'K1', view: 'wall' } }, 0)
+    expect(clipView(s, 'K1')).toBe('wall')
+  })
+
+  it('games arrive by event', () => {
+    let s = applyReady(emptyState(), ready({ games: [{ id: 'G2', server_id: 'S1', name: 'Zed', created_by: null, created_at: '' }] }))
+    const g = { id: 'G1', server_id: 'S1', name: 'Apex', created_by: null, created_at: '' }
+    s = applyEvent(s, { t: 'GameAdded', d: { game: g } }, 0)
+    s = applyEvent(s, { t: 'GameAdded', d: { game: g } }, 0)
+    expect(s.games['S1'].map((x) => x.name)).toEqual(['Apex', 'Zed'])
+  })
+
+  it('a reply to a clip counts on the clip', () => {
+    let s = open(base(), {}, [cm('M1')])
+    s = created(s, { ...msg('R1', 'K1', 'ok'), thread_root_id: 'M1' })
+    expect(s.clipFeeds[feedKey('K1', {})].items[0].clip).toMatchObject({ reply_count: 1, last_reply_id: 'R1' })
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'K1', message_id: 'R1', thread_root_id: 'M1', author_id: 'U2', mentions: [] } }, 0)
+    expect(s.clipFeeds[feedKey('K1', {})].items[0].clip!.reply_count).toBe(0)
+  })
+
+  it('a job is stored until done', () => {
+    const job = { id: 'J1', channel_id: 'K1', stage: 'uploading' as const, progress: 0.5, error: null, caption: '', game_id: null, kept_ms: 1, thumb_path: null, message_id: null }
+    let s = setClipJob(emptyState(), job)
+    expect(s.clipJobs['J1'].progress).toBe(0.5)
+    s = setClipJob(s, { ...job, stage: 'done' })
+    expect(s.clipJobs['J1']).toBeUndefined()
   })
 })
