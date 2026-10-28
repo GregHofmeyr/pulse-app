@@ -104,7 +104,8 @@ async fn upload(
     tokio::fs::create_dir_all(dir)
         .await
         .map_err(|e| anyhow::anyhow!("create {}: {e}", dir.display()))?;
-    super::disk_ok(dir, s.cfg.media_min_free_bytes)?;
+    // The upload adds `media` rows as well as files: both volumes need room.
+    super::writes_ok(&s.cfg)?;
     let processed = run_processing(move || process(&body))
         .await?
         .map_err(|e| AppError::BadRequest(e.to_string()))?;

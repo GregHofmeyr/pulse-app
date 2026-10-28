@@ -233,6 +233,12 @@ async fn migration_keeps_every_channel_row() {
         format!(
             "INSERT INTO channel_members (channel_id, user_id, added_at) VALUES ('{dm}', '{user}', '{ts}')"
         ),
+        format!(
+            "INSERT INTO dm_hidden (user_id, channel_id, hidden_at) VALUES ('{user}', '{dm}', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES ('VS', '{user}', '{voice}', '{ts}')"
+        ),
     ] {
         sqlx::query(&q)
             .execute(&pool)
@@ -261,6 +267,8 @@ async fn migration_keeps_every_channel_row() {
     assert_eq!(count("reactions").await, 1);
     assert_eq!(count("read_states").await, 1);
     assert_eq!(count("server_members").await, 1);
+    assert_eq!(count("dm_hidden").await, 1, "the hidden dm stayed hidden");
+    assert_eq!(count("voice_sessions").await, 1);
     let modes: Vec<(String, String)> =
         sqlx::query_as("SELECT id, reaction_mode FROM channels ORDER BY id")
             .fetch_all(&pool)
@@ -300,6 +308,14 @@ async fn migration_keeps_every_channel_row() {
         .unwrap();
     assert_eq!(count("messages").await, 0, "ON DELETE CASCADE still works");
     assert_eq!(count("read_states").await, 0);
+    for (child, of) in [("dm_hidden", dm), ("voice_sessions", voice)] {
+        sqlx::query("DELETE FROM channels WHERE id = ?")
+            .bind(of)
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(count(child).await, 0, "{child} still cascades");
+    }
 }
 
 /// Run on a connection with foreign keys on, the table rebuild would cascade-delete every

@@ -143,29 +143,76 @@ async fn upload_needs_login() {
 
 #[tokio::test]
 async fn upload_rate_limited() {
-    let mut cfg = test_config();
-    cfg.limits.upload_user = Rate::new(1, 0.0);
-    let app = spawn_with(cfg).await;
-    let (_, token) = register(&app, "alex").await;
-    assert_eq!(upload(&app, &token, png()).await.status(), 200);
-    assert_eq!(upload(&app, &token, png()).await.status(), 429);
+    for path in ["/media/emoji", "/media/quote"] {
+        let mut cfg = test_config();
+        cfg.limits.upload_user = Rate::new(1, 0.0);
+        let app = spawn_with(cfg).await;
+        let (_, token) = register(&app, "alex").await;
+        assert_eq!(
+            upload_to(&app, path, &token, png()).await.status(),
+            200,
+            "{path}"
+        );
+        assert_eq!(
+            upload_to(&app, path, &token, png()).await.status(),
+            429,
+            "{path}"
+        );
+    }
 }
 
 #[tokio::test]
 async fn disk_guard_refuses() {
-    let mut cfg = test_config();
-    cfg.media_min_free_bytes = u64::MAX;
-    let app = spawn_with(cfg).await;
-    let (_, token) = register(&app, "alex").await;
-    let r = upload(&app, &token, png()).await;
-    assert_eq!(r.status(), 507);
-    let e: ApiError = r.json().await.unwrap();
-    assert!(
-        e.message.contains("server storage is full"),
-        "{}",
-        e.message
-    );
-    assert_eq!(media_rows(&app).await, 0);
+    for path in ["/media/emoji", "/media/quote"] {
+        let mut cfg = test_config();
+        cfg.media_min_free_bytes = u64::MAX;
+        let app = spawn_with(cfg).await;
+        let (_, token) = register(&app, "alex").await;
+        let r = upload_to(&app, path, &token, png()).await;
+        assert_eq!(r.status(), 507, "{path}");
+        let e: ApiError = r.json().await.unwrap();
+        assert!(
+            e.message.contains("server storage is full"),
+            "{path}: {}",
+            e.message
+        );
+        assert_eq!(media_rows(&app).await, 0, "{path}");
+    }
+}
+
+#[cfg(unix)]
+fn free_bytes(dir: &std::path::Path) -> u64 {
+    let st = rustix::fs::statvfs(dir).unwrap();
+    st.f_bavail.saturating_mul(st.f_frsize)
+}
+
+/// An upload grows the database (its `media` rows) as well as the media dir: with the two on
+/// different volumes, a full database volume refuses it even while the media volume has room.
+#[cfg(unix)]
+#[tokio::test]
+async fn upload_refused_when_the_database_volume_is_low() {
+    // The test database lives under the system temp dir; put the media dir on the volume the
+    // build lives on, and set the threshold between the two volumes' free space.
+    let media = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
+    let (m, d) = (free_bytes(media.path()), free_bytes(&std::env::temp_dir()));
+    const MARGIN: u64 = 1 << 30;
+    if m <= d.saturating_add(2 * MARGIN) {
+        eprintln!(
+            "skipped: the temp dir and the target dir need different volumes, the target's with \
+             at least 2 GiB more free space"
+        );
+        return;
+    }
+    for path in ["/media/emoji", "/media/quote"] {
+        let mut cfg = test_config();
+        cfg.media_dir = media.path().join(path.trim_start_matches("/media/"));
+        cfg.media_min_free_bytes = d + (m - d) / 2;
+        let app = spawn_with(cfg).await;
+        let (_, token) = register(&app, "alex").await;
+        let r = upload_to(&app, path, &token, png()).await;
+        assert_eq!(r.status(), 507, "{path}");
+        assert_eq!(media_rows(&app).await, 0, "{path}");
+    }
 }
 
 #[tokio::test]

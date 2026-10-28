@@ -149,8 +149,8 @@ async fn ensure_file(path: &Path, hash: &str, bytes: &[u8]) -> AppResult<()> {
     Ok(())
 }
 
-/// Refuse uploads when the media filesystem has less than `min_free` bytes free.
-pub fn disk_ok(dir: &Path, min_free: u64) -> AppResult<()> {
+/// Refuse when the filesystem holding `dir` has less than `min_free` bytes free (see [`writes_ok`]).
+fn disk_ok(dir: &Path, min_free: u64) -> AppResult<()> {
     #[cfg(unix)]
     {
         let st = rustix::fs::statvfs(dir).with_context(|| format!("statvfs {}", dir.display()))?;
@@ -190,7 +190,7 @@ fn existing_ancestor(dir: &Path) -> &Path {
 }
 
 /// The same free-space check for a write that grows the database (a message, a report, an
-/// emoji): refuses when either the database's directory or the media directory is low.
+/// emoji, an upload): refuses when either the database's directory or the media directory is low.
 /// Usually these are one volume; they are both checked in case they are not.
 pub fn writes_ok(cfg: &crate::config::Config) -> AppResult<()> {
     if let Some(dir) = db_dir(&cfg.db_url) {
