@@ -63,7 +63,7 @@ describe('GamePicker', () => {
   it('pre-fills a new guess as an offer without adding it', async () => {
     const { target, onChange } = show({ guess: 'Valorant' })
     expect(options(target)).toEqual(["Add 'Valorant'"])
-    expect(target.querySelector('input')!.value).toBe('Valorant')
+    expect(target.querySelector('input')!.value).toBe('') // the box shows what will be sent: nothing
     expect(onChange).not.toHaveBeenCalled()
     expect(invoke).not.toHaveBeenCalled()
   })
@@ -73,5 +73,54 @@ describe('GamePicker', () => {
     expect(target.querySelector('input')!.value).toBe('Rust')
     type(target, '')
     expect(onChange).toHaveBeenCalledWith(null)
+  })
+
+  it('typing a known name (any case) selects it', () => {
+    const { target, onChange } = show()
+    type(target, 'RUST')
+    expect(onChange).toHaveBeenCalledWith('G2')
+  })
+
+  it('on blur the box reverts to the selected game, or to empty', async () => {
+    vi.useFakeTimers()
+    try {
+      const withGame = show({ value: 'G2' })
+      type(withGame.target, 'Rus')
+      withGame.target.querySelector('input')!.dispatchEvent(new Event('blur'))
+      vi.advanceTimersByTime(200); flushSync()
+      expect(withGame.target.querySelector('input')!.value).toBe('Rust')
+      const none = show()
+      type(none.target, 'Valo')
+      none.target.querySelector('input')!.dispatchEvent(new Event('blur'))
+      vi.advanceTimersByTime(200); flushSync()
+      expect(none.target.querySelector('input')!.value).toBe('')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a failed add shows the message and selects nothing', async () => {
+    invoke.mockImplementation(async (cmd) => { if (cmd === 'add_game') throw 'That game is already there.'; return undefined })
+    const { target, onChange } = show()
+    type(target, 'Valorant')
+    target.querySelector<HTMLElement>('[role=option]')!.click()
+    await settle(); flushSync()
+    expect(target.querySelector('[role=alert]')?.textContent).toContain('That game is already there.')
+    expect(onChange).not.toHaveBeenCalled()
+  })
+
+  it('a pending blur timer does not outlive the picker', () => {
+    vi.useFakeTimers()
+    try {
+      const { target } = show()
+      const before = vi.getTimerCount()
+      target.querySelector('input')!.dispatchEvent(new Event('blur'))
+      const armed = vi.getTimerCount()
+      expect(armed).toBeGreaterThan(before)
+      cmps.forEach((c) => unmount(c)); cmps = []
+      expect(vi.getTimerCount()).toBeLessThan(armed) // the picker's own timer is gone
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

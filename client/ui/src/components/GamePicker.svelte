@@ -1,7 +1,7 @@
 <script lang="ts">
   // The game of a clip: a type-ahead over the server's games, with "Add 'X'" for a name it doesn't know.
   // A detected title (`guess`) selects the game it matches, or is offered as "Add 'X'" until picked.
-  import { onMount } from 'svelte'
+  import { onDestroy, onMount } from 'svelte'
   import { matchGame } from '../lib/clips'
   import { applyEvent } from '../lib/state'
   import { collapseName, nameKey } from '../lib/quotes'
@@ -15,7 +15,8 @@
   const games = $derived(app.state.games[serverId] ?? [])
   let query = $state('')
   let open = $state(false)
-  let offered = $state(false) // a guessed new name is on offer without the input being focused
+  let offered = $state<string | null>(null) // a guessed new name, on offer as "Add 'X'" (never the box's value)
+  let blurTimer: ReturnType<typeof setTimeout> | undefined
   let hi = $state(0)
   let busy = $state(false)
   let error = $state('')
@@ -23,9 +24,10 @@
   const name = $derived(collapseName(query))
   const matches = $derived(games.filter((g) => nameKey(g.name).includes(nameKey(name))))
   const canAdd = $derived(name !== '' && [...name].length <= MAX_NAME && !games.some((g) => nameKey(g.name) === nameKey(name)))
-  const list = $derived(name === '' && !offered ? games : matches)
-  const rows = $derived<({ game: (typeof games)[number] } | { add: string })[]>([...list.map((game) => ({ game })), ...(canAdd ? [{ add: name }] : [])])
-  const shown = $derived((open || offered) && rows.length > 0)
+  const list = $derived(name === '' ? (offered === null ? games : []) : matches)
+  const addName = $derived(canAdd ? name : name === '' ? offered : null)
+  const rows = $derived<({ game: (typeof games)[number] } | { add: string })[]>([...list.map((game) => ({ game })), ...(addName ? [{ add: addName }] : [])])
+  const shown = $derived((open || offered !== null) && rows.length > 0)
 
   onMount(() => {
     const m = matchGame(guess, games)
@@ -34,13 +36,17 @@
         query = m.game.name
         onChange(m.game.id)
       } else {
-        query = m.add
-        offered = true
+        offered = m.add
       }
     } else {
       query = games.find((g) => g.id === value)?.name ?? ''
     }
   })
+
+  onDestroy(() => clearTimeout(blurTimer))
+
+  /** The box always shows what will be sent: the selected game, or nothing. */
+  const selectedName = () => games.find((g) => g.id === value)?.name ?? ''
 
   // The chosen game changed from outside: show its name.
   $effect(() => {
@@ -51,7 +57,7 @@
   function pick(id: string, label: string) {
     query = label
     open = false
-    offered = false
+    offered = null
     error = ''
     onChange(id)
   }
@@ -79,9 +85,21 @@
   function onInput(e: Event & { currentTarget: HTMLInputElement }) {
     query = e.currentTarget.value
     open = true
-    offered = false
+    offered = null
     hi = 0
-    if (collapseName(query) === '') onChange(null)
+    const typed = collapseName(query)
+    if (typed === '') return onChange(null)
+    // A typed name that is a known game (ignoring case) selects it.
+    const known = games.find((g) => nameKey(g.name) === nameKey(typed))
+    if (known) onChange(known.id)
+  }
+
+  function onBlur() {
+    clearTimeout(blurTimer)
+    blurTimer = setTimeout(() => {
+      open = false
+      query = selectedName()
+    }, 120)
   }
 
   function onKey(e: KeyboardEvent) {
@@ -112,8 +130,8 @@
     autocomplete="off"
     value={query}
     oninput={onInput}
-    onfocus={() => { open = true; offered = false }}
-    onblur={() => setTimeout(() => (open = false), 120)}
+    onfocus={() => { clearTimeout(blurTimer); open = true; offered = null }}
+    onblur={onBlur}
     onkeydown={onKey}
   />
   {#if shown}

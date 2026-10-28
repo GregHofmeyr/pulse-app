@@ -78,7 +78,7 @@
   })
   onDestroy(() => {
     destroyed = true
-    if (frameCb !== null && el && 'cancelVideoFrameCallback' in el) el.cancelVideoFrameCallback(frameCb)
+    stopFrames()
   })
 
   function onVideoError() {
@@ -105,9 +105,17 @@
     }
   }
 
+  function stopFrames() {
+    if (frameCb !== null && el && 'cancelVideoFrameCallback' in el) el.cancelVideoFrameCallback(frameCb)
+    frameCb = null
+  }
+
+  /** One rVFC chain at a time: it follows the playing video frame by frame. */
   function watchFrames() {
+    stopFrames()
     if (!el || !('requestVideoFrameCallback' in el)) return // timeupdate does the job
     frameCb = el.requestVideoFrameCallback(() => {
+      frameCb = null
       tick()
       if (el && !el.paused) watchFrames()
     })
@@ -178,10 +186,11 @@
     // Not while typing, and not Space/Enter on a focused control (that presses it).
     if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return
     if (t?.tagName === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) return
+    if (t?.getAttribute('role') === 'slider') return // a timeline edge takes its own arrows
     if (e.ctrlKey || e.metaKey) {
       if (e.key.toLowerCase() === 'z' && !e.shiftKey && !e.altKey) {
         e.preventDefault()
-        undoStep()
+        if (!e.repeat) undoStep() // a held key is one press
       }
       return
     }
@@ -193,12 +202,12 @@
       case 'ArrowRight': return handled(() => step(SKIP_MS))
       case ',': return handled(() => step(-1000 / fps))
       case '.': return handled(() => step(1000 / fps))
-      case 'c': case 'C': return handled(cutHere)
-      case 'Delete': return handled(dropPiece)
+      case 'c': case 'C': return handled(() => { if (!e.repeat) cutHere() })
+      case 'Delete': return handled(() => { if (!e.repeat) dropPiece() })
     }
   }
 
-  const sizeText = (p: PresetId) => `~${Math.max(1, Math.round(estimateBytes(p, total) / 1e6))} MB`
+  const sizeText = (p: PresetId) => block === 'empty' ? '—' : `~${Math.max(1, Math.round(estimateBytes(p, total) / 1e6))} MB`
 </script>
 
 <svelte:window onkeydown={onKey} />
@@ -228,7 +237,7 @@
               ontimeupdate={tick}
               onseeked={tick}
               onplay={() => { playing = true; watchFrames() }}
-              onpause={() => { playing = false; tick() }}
+              onpause={() => { playing = false; stopFrames(); tick() }}
               onended={() => (playing = false)}
               onerror={onVideoError}
             ></video>
@@ -263,6 +272,7 @@
           onSelect={(i) => (cut = select(cut, i))}
           onDragEdge={(edge, ms) => (cut = dragEdge(cut, edge, ms))}
           onDragEnd={() => (cut = endDrag(cut))}
+          frameMs={1000 / fps}
         />
       </section>
 

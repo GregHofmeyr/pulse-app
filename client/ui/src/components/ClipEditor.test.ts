@@ -261,4 +261,87 @@ describe('ClipEditor', () => {
     key('z', { ctrlKey: true })
     expect(pieces()[0].dataset.end).toBe('10000')
   })
+
+  it('Space on a focused button presses it once and does not also toggle playback', async () => {
+    await show()
+    const cutBtn = [...document.querySelectorAll('button')].find((b) => b.textContent?.includes('Cut here'))!
+    cutBtn.focus()
+    cutBtn.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true }))
+    flushSync()
+    expect(video()._paused).not.toBe(false)
+    expect(invoke).not.toHaveBeenCalledWith('send_clip', expect.anything())
+  })
+
+  it('typing in the game box does not trigger shortcuts', async () => {
+    await show()
+    at(10)
+    const box = document.querySelector<HTMLInputElement>('input[role=combobox]')!
+    for (const k of ['c', 'Delete', ' ', 'ArrowRight']) box.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }))
+    flushSync()
+    expect(pieces()).toHaveLength(1)
+    expect(video()._t).toBe(10)
+  })
+
+  it('a held key repeats nothing', async () => {
+    await show()
+    at(10)
+    key('c')
+    key('c', { repeat: true }) // would be a no-op anyway at the same spot; use a drop to tell
+    key('Delete')
+    key('Delete', { repeat: true })
+    key('z', { ctrlKey: true })
+    key('z', { ctrlKey: true, repeat: true })
+    // one undo undid the drop; the repeat did not also undo the cut
+    expect(pieces()).toHaveLength(2)
+    expect(pieces()[1].dataset.dropped).toBeUndefined()
+  })
+
+  it('shows no size when nothing is kept', async () => {
+    await show()
+    pieces()[0].click(); flushSync(); key('Delete')
+    const labels = [...document.querySelectorAll('[data-preset]')].map((l) => l.textContent?.replace(/\s+/g, ' ').trim())
+    expect(labels).toEqual(['Light · 720p60 · —', 'Sharp · 1080p60 · —'])
+  })
+
+  it('a timeline edge is a slider that arrow keys nudge, one undo step each', async () => {
+    await show()
+    at(10); key('c')
+    const edge = document.querySelector<HTMLElement>('[data-edge="1"]')!
+    expect(edge.getAttribute('role')).toBe('slider')
+    expect(edge.getAttribute('aria-label')).toBe('Start of piece 2')
+    expect(edge.getAttribute('aria-valuenow')).toBe('10000')
+    edge.focus()
+    const press = (k: string, shiftKey = false) => { edge.dispatchEvent(new KeyboardEvent('keydown', { key: k, shiftKey, bubbles: true })); flushSync() }
+    press('ArrowRight')
+    expect(pieces()[0].dataset.end).toBe('10017') // one frame at 60 fps
+    press('ArrowRight', true)
+    expect(pieces()[0].dataset.end).toBe('11017')
+    expect(video()._t).toBe(10) // the playhead did not move
+    key('z', { ctrlKey: true })
+    expect(pieces()[0].dataset.end).toBe('10017')
+    key('z', { ctrlKey: true })
+    expect(pieces()[0].dataset.end).toBe('10000')
+  })
+
+  it('runs one frame-callback chain, cancelled on pause and on unmount', async () => {
+    const el = HTMLVideoElement.prototype as unknown as Record<string, unknown>
+    let n = 0
+    const live = new Set<number>()
+    el.requestVideoFrameCallback = vi.fn(() => { live.add(++n); return n })
+    el.cancelVideoFrameCallback = vi.fn((h: number) => { live.delete(h) })
+    try {
+      await show()
+      video().dispatchEvent(new Event('play')); video().dispatchEvent(new Event('play'))
+      expect(live.size).toBe(1)
+      video().dispatchEvent(new Event('pause'))
+      expect(live.size).toBe(0)
+      video().dispatchEvent(new Event('play'))
+      expect(live.size).toBe(1)
+      cmps.forEach((c) => unmount(c)); cmps = []
+      expect(live.size).toBe(0)
+    } finally {
+      delete el.requestVideoFrameCallback
+      delete el.cancelVideoFrameCallback
+    }
+  })
 })

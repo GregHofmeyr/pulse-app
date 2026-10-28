@@ -14,6 +14,7 @@
     onSelect,
     onDragEdge,
     onDragEnd,
+    frameMs = 1000 / 30,
   }: {
     cut: Cut
     duration: number
@@ -23,6 +24,8 @@
     onSelect: (index: number) => void
     onDragEdge: (edge: number, ms: number) => void
     onDragEnd: () => void
+    /** One frame, the arrow-key nudge of an edge (Shift: one second). */
+    frameMs?: number
   } = $props()
 
   const MAX_TICKS = 150
@@ -64,6 +67,14 @@
     const t = timeAt(e.clientX)
     if (t !== null) onDragEdge(dragging, Math.round(t))
   }
+  function nudge(e: KeyboardEvent, edge: number) {
+    if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+    e.preventDefault()
+    e.stopPropagation()
+    const by = (e.shiftKey ? 1000 : frameMs) * (e.key === 'ArrowLeft' ? -1 : 1)
+    onDragEdge(edge, Math.round(cut.pieces[edge].start + by))
+    onDragEnd() // each nudge is its own undo step
+  }
   function up(e: PointerEvent) {
     if (dragging === null) return
     ;(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId)
@@ -102,9 +113,17 @@
     {/each}
     {#each cut.pieces as p, i (i)}
       {#if i > 0}
-        <!-- svelte-ignore a11y_no_static_element_interactions -->
         <div
           class="edge"
+          role="slider"
+          tabindex="0"
+          aria-orientation="horizontal"
+          aria-label="Start of piece {i + 1}"
+          aria-valuemin={cut.pieces[i - 1].start}
+          aria-valuemax={p.end}
+          aria-valuenow={p.start}
+          aria-valuetext={formatDuration(p.start)}
+          onkeydown={(e) => nudge(e, i)}
           data-edge={i}
           style:left="{pct(p.start)}%"
           onpointerdown={(e) => down(e, i)}
