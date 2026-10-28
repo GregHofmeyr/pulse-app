@@ -6,8 +6,14 @@ use std::time::Duration;
 
 use common::*;
 use futures::SinkExt;
+use image::{ImageFormat, Rgba, RgbaImage};
+use pulse_protocol::gateway::Event;
 use pulse_protocol::gateway::{ClientFrame, Ready, ServerFrame};
-use pulse_protocol::rest::{Badge, NameStyle, Profile, User};
+use pulse_protocol::rest::{
+    ApiError, Badge, MediaInfo, NameStyle, Profile, UpdateProfileRequest, User,
+};
+use pulse_server::limits::{LimitsConfig, Rate};
+use pulse_server::media;
 use sqlx::sqlite::SqliteConnectOptions;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
@@ -394,4 +400,314 @@ async fn unknown_user_is_404() {
         .await
         .unwrap();
     assert_eq!(r.status(), 401);
+}
+
+// ---- PUT /me/profile ----
+
+fn png() -> Vec<u8> {
+    let img = RgbaImage::from_pixel(64, 32, Rgba([10, 120, 240, 255]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+async fn upload_kind(app: &TestApp, token: &str, kind: &str) -> String {
+    let r = app
+        .http
+        .post(app.url(&format!("/media/{kind}")))
+        .bearer_auth(token)
+        .header("content-type", "application/octet-stream")
+        .body(png())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    r.json::<MediaInfo>().await.unwrap().hash
+}
+
+fn request() -> UpdateProfileRequest {
+    UpdateProfileRequest {
+        avatar_hash: None,
+        banner_hash: None,
+        theme_top: "#8a3cff".into(),
+        theme_bottom: "#ff8a2a".into(),
+        style: NameStyle::default(),
+        pronouns: None,
+        bio: None,
+    }
+}
+
+async fn put_profile(app: &TestApp, token: &str, body: &UpdateProfileRequest) -> reqwest::Response {
+    app.http
+        .put(app.url("/me/profile"))
+        .bearer_auth(token)
+        .json(body)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn refused(app: &TestApp, token: &str, body: &UpdateProfileRequest, msg: &str) {
+    let r = put_profile(app, token, body).await;
+    assert_eq!(r.status(), 400, "{msg}");
+    assert_eq!(r.json::<ApiError>().await.unwrap().message, msg);
+}
+
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn connected(app: &TestApp, token: &str) -> Socket {
+    let (mut ws, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
+        .await
+        .unwrap();
+    let f = serde_json::to_string(&ClientFrame::Hello {
+        token: token.into(),
+        client_version: pulse_protocol::PROTOCOL_VERSION,
+    })
+    .unwrap();
+    ws.send(Ws::text(f)).await.unwrap();
+    loop {
+        if let Some(ServerFrame::Ready(_)) =
+            next_frame_beating(&mut ws, Duration::from_secs(3)).await
+        {
+            return ws;
+        }
+    }
+}
+
+async fn profile_event(ws: &mut Socket) -> Event {
+    loop {
+        match next_frame_beating(ws, Duration::from_secs(3)).await {
+            Some(ServerFrame::Event(e @ Event::ProfileUpdated { .. })) => return e,
+            Some(_) => continue,
+            None => panic!("expected ProfileUpdated"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn saves_a_whole_profile_and_tells_everyone() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    let (_, kim) = register(&app, "kim").await;
+    let mut kim_ws = connected(&app, &kim).await;
+
+    let req = UpdateProfileRequest {
+        avatar_hash: Some(upload_kind(&app, &alex, "avatar").await),
+        banner_hash: Some(upload_kind(&app, &alex, "banner").await),
+        theme_top: "#8a3cff".into(),
+        theme_bottom: "#ff8a2a".into(),
+        style: NameStyle {
+            font: Some("pacifico".into()),
+            colors: vec!["#ffbe7a".into(), "#ff7fae".into()],
+        },
+        pronouns: Some("they/them".into()),
+        bio: Some("one\ntwo\nthree".into()),
+    };
+    let r = put_profile(&app, &alex, &req).await;
+    assert_eq!(r.status(), 200);
+    let p: Profile = r.json().await.unwrap();
+    assert_eq!(p.user.id, alex_id);
+    assert_eq!(p.user.style, req.style);
+    assert_eq!(p.user.avatar_hash, req.avatar_hash);
+    assert_eq!(p.card.banner_hash, req.banner_hash);
+    assert_eq!(p.card.pronouns.as_deref(), Some("they/them"));
+    assert_eq!(p.card.bio.as_deref(), Some("one\ntwo\nthree"));
+
+    match profile_event(&mut kim_ws).await {
+        Event::ProfileUpdated { user, card } => {
+            assert_eq!(user, p.user);
+            assert_eq!(card, p.card);
+        }
+        _ => unreachable!(),
+    }
+    let ready = ready_of(&app, &sam).await;
+    let seen = &ready
+        .people
+        .iter()
+        .find(|p| p.user.id == alex_id)
+        .unwrap()
+        .user;
+    assert_eq!(seen.style, req.style);
+}
+
+#[tokio::test]
+async fn custom_colours_are_lightened() {
+    let app = spawn().await;
+    let (id, alex) = register(&app, "alex").await;
+    let mut req = request();
+    req.style.colors = vec!["#0000FF".into()];
+    let p: Profile = put_profile(&app, &alex, &req).await.json().await.unwrap();
+    assert_eq!(p.user.style.colors, vec!["#a1a1ff".to_string()]);
+    assert_eq!(
+        profile_of(&app, &alex, id).await.user.style.colors,
+        vec!["#a1a1ff".to_string()]
+    );
+}
+
+#[tokio::test]
+async fn bad_input_is_refused() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let colours = "Colours must look like #a1b2c3.";
+
+    let mut r = request();
+    r.style.font = Some("comic-sans".into());
+    refused(&app, &alex, &r, "Unknown name font.").await;
+
+    let mut r = request();
+    r.style.colors = vec!["blue".into()];
+    refused(&app, &alex, &r, colours).await;
+
+    let mut r = request();
+    r.style.colors = vec!["#aaaaaa".into(), "#bbbbbb".into(), "#cccccc".into()];
+    refused(&app, &alex, &r, colours).await;
+
+    let mut r = request();
+    r.theme_top = "#12345".into();
+    refused(&app, &alex, &r, colours).await;
+
+    let mut r = request();
+    r.pronouns = Some("p".repeat(41));
+    refused(&app, &alex, &r, "Pronouns can be up to 40 characters.").await;
+
+    let mut r = request();
+    r.pronouns = Some("a\u{0007}b".into());
+    refused(
+        &app,
+        &alex,
+        &r,
+        "Pronouns can't contain control characters.",
+    )
+    .await;
+
+    let mut r = request();
+    r.bio = Some("b".repeat(191));
+    refused(&app, &alex, &r, "Your bio can be up to 190 characters.").await;
+
+    let mut r = request();
+    r.bio = Some("a\nb\nc\nd\ne\nf".into());
+    refused(&app, &alex, &r, "Your bio can have at most 4 line breaks.").await;
+
+    let mut r = request();
+    r.bio = Some("a\u{0007}b".into());
+    refused(
+        &app,
+        &alex,
+        &r,
+        "Your bio can't contain control characters.",
+    )
+    .await;
+
+    let expired = "That picture has expired. Upload it again.";
+    exec(&app,
+        "INSERT INTO media (hash, kind, content_type, size, width, height, frames, still_hash, created_at) VALUES ('an-emoji', 'emoji', 'image/webp', 1, 128, 128, 1, NULL, '2026-10-01T00:00:00.000Z')", &[]).await;
+    let mut r = request();
+    r.avatar_hash = Some("an-emoji".into());
+    refused(&app, &alex, &r, expired).await;
+
+    let av = upload_kind(&app, &alex, "avatar").await;
+    let mut r = request();
+    r.banner_hash = Some(av);
+    refused(&app, &alex, &r, expired).await;
+}
+
+#[tokio::test]
+async fn limits_count_characters_not_bytes() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let mut r = request();
+    r.pronouns = Some("\u{1F600}".repeat(40));
+    r.bio = Some("\u{e9}".repeat(190));
+    assert_eq!(put_profile(&app, &alex, &r).await.status(), 200);
+}
+
+#[tokio::test]
+async fn clearing_works() {
+    let app = spawn().await;
+    let (id, alex) = register(&app, "alex").await;
+    let mut r = request();
+    r.avatar_hash = Some(upload_kind(&app, &alex, "avatar").await);
+    r.pronouns = Some("she/her".into());
+    r.bio = Some("hello".into());
+    assert_eq!(put_profile(&app, &alex, &r).await.status(), 200);
+
+    let mut r = request();
+    r.pronouns = Some(String::new());
+    r.bio = Some("  ".into());
+    let p: Profile = put_profile(&app, &alex, &r).await.json().await.unwrap();
+    assert_eq!(p.user.avatar_hash, None);
+    assert_eq!((p.card.pronouns, p.card.bio), (None, None));
+    let row: (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) = sqlx::query_as("SELECT avatar_hash, pronouns, bio, name_color FROM users WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(row, (None, None, None, None));
+}
+
+#[tokio::test]
+async fn a_swept_upload_is_refused_on_save() {
+    let app = spawn().await;
+    let (id, alex) = register(&app, "alex").await;
+    let hash = upload_kind(&app, &alex, "avatar").await;
+    exec(
+        &app,
+        "UPDATE media SET created_at = '2020-01-01T00:00:00.000Z'",
+        &[],
+    )
+    .await;
+    media::cleanup(&app.db, &app.cfg.media_dir, Duration::from_secs(24 * 3600))
+        .await
+        .unwrap();
+    let mut r = request();
+    r.avatar_hash = Some(hash);
+    r.pronouns = Some("changed".into());
+    refused(
+        &app,
+        &alex,
+        &r,
+        "That picture has expired. Upload it again.",
+    )
+    .await;
+    assert_eq!(profile_of(&app, &alex, id).await.card.pronouns, None);
+}
+
+#[tokio::test]
+async fn the_current_avatar_is_always_accepted() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let hash = upload_kind(&app, &alex, "avatar").await;
+    let mut r = request();
+    r.avatar_hash = Some(hash);
+    assert_eq!(put_profile(&app, &alex, &r).await.status(), 200);
+    exec(
+        &app,
+        "UPDATE media SET created_at = '2020-01-01T00:00:00.000Z'",
+        &[],
+    )
+    .await;
+    media::cleanup(&app.db, &app.cfg.media_dir, Duration::from_secs(24 * 3600))
+        .await
+        .unwrap();
+    assert_eq!(put_profile(&app, &alex, &r).await.status(), 200);
+    assert_eq!(put_profile(&app, &alex, &r).await.status(), 200);
+}
+
+#[tokio::test]
+async fn saving_is_rate_limited() {
+    let mut cfg = pulse_server::testing::test_config();
+    cfg.limits = LimitsConfig::unlimited();
+    cfg.limits.mutate_user = Rate::new(2, 0.0);
+    let app = spawn_with(cfg).await;
+    let (_, alex) = register(&app, "alex").await;
+    assert_eq!(put_profile(&app, &alex, &request()).await.status(), 200);
+    assert_eq!(put_profile(&app, &alex, &request()).await.status(), 200);
+    assert_eq!(put_profile(&app, &alex, &request()).await.status(), 429);
 }

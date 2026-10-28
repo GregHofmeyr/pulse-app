@@ -1,14 +1,17 @@
 //! Profiles: avatars, banners, name styles and profile cards.
 
+pub mod colors;
 pub mod routes;
 pub mod users;
 
 use pulse_protocol::ids::{ServerId, UserId};
-use pulse_protocol::rest::{Badge, CardProfile, NameArchiveEntry, Profile, ProfileStats};
+use pulse_protocol::rest::{
+    Badge, CardProfile, NameArchiveEntry, Profile, ProfileStats, UpdateProfileRequest,
+};
 use sqlx::SqlitePool;
 
 use crate::db::now;
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use users::{USER_COLS, USER_JOIN};
 
 #[derive(sqlx::FromRow)]
@@ -114,4 +117,108 @@ pub async fn load_profile(db: &SqlitePool, user: UserId) -> AppResult<Option<Pro
         badges,
         name_archive,
     }))
+}
+
+/// The bundled name fonts (plan reconciliation 9).
+pub const NAME_FONTS: [&str; 8] = [
+    "cormorant-garamond",
+    "fredoka",
+    "press-start-2p",
+    "pacifico",
+    "caveat",
+    "space-grotesk",
+    "bricolage-grotesque",
+    "orbitron",
+];
+
+const PRONOUNS_MAX: usize = 40;
+const BIO_MAX: usize = 190;
+const BIO_LINE_BREAKS_MAX: usize = 4;
+
+/// A profile edit that passed every text and colour rule, ready to store. The two picture
+/// hashes still need their database check.
+#[derive(Debug, PartialEq, Eq)]
+pub struct Validated {
+    pub avatar_hash: Option<String>,
+    pub banner_hash: Option<String>,
+    pub theme_top: String,
+    pub theme_bottom: String,
+    pub font: Option<String>,
+    /// Lightened, lowercase `#rrggbb`, at most two.
+    pub colors: Vec<String>,
+    pub pronouns: Option<String>,
+    pub bio: Option<String>,
+}
+
+fn bad(msg: &str) -> AppError {
+    AppError::BadRequest(msg.into())
+}
+
+fn bad_colour() -> AppError {
+    bad("Colours must look like #a1b2c3.")
+}
+
+/// Trimmed text, or `None` if nothing is left.
+fn text(s: Option<String>) -> Option<String> {
+    s.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
+}
+
+/// The text and colour rules (the server enforces every rule; the client only previews).
+pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
+    let font = match req.style.font {
+        Some(f) if NAME_FONTS.contains(&f.as_str()) => Some(f),
+        Some(_) => return Err(bad("Unknown name font.")),
+        None => None,
+    };
+    if req.style.colors.len() > 2 {
+        return Err(bad_colour());
+    }
+    let colors = req
+        .style
+        .colors
+        .iter()
+        .map(|c| {
+            colors::parse_hex(c)
+                .map(|rgb| colors::to_hex(colors::lighten_for_name(rgb)))
+                .ok_or_else(bad_colour)
+        })
+        .collect::<AppResult<Vec<_>>>()?;
+    // Theme colours are taken as chosen (spec: a custom pair is accepted as is).
+    let theme = |c: &str| {
+        colors::parse_hex(c)
+            .map(colors::to_hex)
+            .ok_or_else(bad_colour)
+    };
+
+    let pronouns = text(req.pronouns);
+    if let Some(p) = &pronouns {
+        if p.chars().count() > PRONOUNS_MAX {
+            return Err(bad("Pronouns can be up to 40 characters."));
+        }
+        if p.chars().any(char::is_control) {
+            return Err(bad("Pronouns can't contain control characters."));
+        }
+    }
+    let bio = text(req.bio);
+    if let Some(b) = &bio {
+        if b.chars().count() > BIO_MAX {
+            return Err(bad("Your bio can be up to 190 characters."));
+        }
+        if b.matches('\n').count() > BIO_LINE_BREAKS_MAX {
+            return Err(bad("Your bio can have at most 4 line breaks."));
+        }
+        if b.chars().any(|c| c.is_control() && c != '\n') {
+            return Err(bad("Your bio can't contain control characters."));
+        }
+    }
+    Ok(Validated {
+        avatar_hash: req.avatar_hash,
+        banner_hash: req.banner_hash,
+        theme_top: theme(&req.theme_top)?,
+        theme_bottom: theme(&req.theme_bottom)?,
+        font,
+        colors,
+        pronouns,
+        bio,
+    })
 }
