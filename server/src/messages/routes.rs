@@ -520,14 +520,9 @@ async fn remove(
     }
     let (msg, ch) = own_message(&s.db, me, id).await?;
     let is_quote = msg.quote.is_some();
-    // A quote's delete drops counts (reactions, awards), and a reply's or a mentioning message's
-    // changes mention counts that absolute read-state counts are measured against: publish in
-    // commit order.
-    let _order = if is_quote || msg.thread_root_id.is_some() || !msg.mentions.is_empty() {
-        Some(s.hub.in_order().await)
-    } else {
-        None
-    };
+    // Every delete changes counts others publish as absolutes (mark_read's unread, a mention
+    // count, a quote's reactions and awards): publish in commit order. Deletes are rare.
+    let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     // A vote whose time ran out is over even if no sweep has ended it yet: end it first, so the
     // quote it may have won with is still there (and still its option) when it is counted.
@@ -554,7 +549,7 @@ async fn remove(
     };
     tx.commit().await?;
     if let Some(ended) = overdue {
-        // Under this delete's `in_order` guard (taken because it is a quote).
+        // Under this delete's `in_order` guard.
         crate::qoty::ending::announce(&s, ended).await;
     }
     s.hub
@@ -575,7 +570,7 @@ async fn remove(
         for event in deleted.replies {
             s.hub.publish(&s.db, event).await;
         }
-        // Still under this delete's `in_order` guard (taken because it is a quote).
+        // Still under this delete's `in_order` guard.
         for event in deleted.qoty {
             crate::qoty::publish_updated(&s, event).await;
         }

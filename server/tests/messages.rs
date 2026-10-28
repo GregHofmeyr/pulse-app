@@ -112,6 +112,35 @@ async fn delete_own_soft_deletes() {
     assert_eq!(list[0].content, "");
 }
 
+/// M2: a plain delete changes the unread counts mark_read publishes as absolutes under
+/// `in_order`, so it publishes under that lock too.
+#[tokio::test]
+async fn deleting_a_plain_message_publishes_under_the_order_lock() {
+    let (app, a, _, g) = setup().await;
+    let m = send(&app, &a, g.id, "oops").await;
+    let guard = app.hub.in_order().await;
+    let (http, url, token) = (
+        app.http.clone(),
+        app.url(&format!("/messages/{}", m.id)),
+        a.clone(),
+    );
+    let del = tokio::spawn(async move {
+        http.delete(url)
+            .bearer_auth(token)
+            .send()
+            .await
+            .unwrap()
+            .status()
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(400)).await;
+    assert!(
+        !del.is_finished(),
+        "the delete should be waiting on in_order"
+    );
+    drop(guard);
+    assert_eq!(del.await.unwrap(), 204);
+}
+
 #[tokio::test]
 async fn edit_or_delete_deleted_404() {
     let (app, a, _, g) = setup().await;
