@@ -12,6 +12,7 @@
   import TextChannel from '../components/TextChannel.svelte'
   import ClipsChannel from '../components/ClipsChannel.svelte'
   import Settings from '../components/Settings.svelte'
+  import FullProfile from '../components/FullProfile.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
   import { clickOutside } from '../lib/actions'
   import ReportBug from '../components/ReportBug.svelte'
@@ -25,7 +26,7 @@
   import GroupMembers from '../components/GroupMembers.svelte'
   // Profiles: the quick card and the full profile
   import ProfileCardPopover from '../components/ProfileCardPopover.svelte'
-  import { profileUi } from '../lib/profileCard.svelte'
+  import { closeFull, profileUi } from '../lib/profileCard.svelte'
   import { onMount, tick, untrack } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { findWatch, followLiveFreeze, stream, streamApi } from '../lib/stream/stream.svelte'
@@ -518,7 +519,7 @@
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
 <!-- Profiles: the quick card (one at a time), and the full profile's place (Task 12 renders it here) -->
 <ProfileCardPopover />
-{#if profileUi.full}{/if}
+{#if profileUi.full}<FullProfile userId={profileUi.full.userId} serverId={profileUi.full.serverId} onClose={closeFull} />{/if}
 {#if creating}
   <div class="overlay">
   <div class="backdrop" role="presentation" onclick={() => (creating = false)}></div>
