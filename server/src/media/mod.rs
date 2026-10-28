@@ -29,6 +29,10 @@ pub enum MediaKind {
     Clip,
     /// A clip's poster image: on disk like emoji.
     ClipThumb,
+    /// A profile picture: on disk, with an animation's still.
+    Avatar,
+    /// A profile banner: on disk, with an animation's still.
+    Banner,
 }
 
 /// Where a media row's bytes live.
@@ -54,6 +58,8 @@ impl MediaKind {
             Self::Quote => "quote",
             Self::Clip => "clip",
             Self::ClipThumb => "clip_thumb",
+            Self::Avatar => "avatar",
+            Self::Banner => "banner",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -62,13 +68,17 @@ impl MediaKind {
             "quote" => Some(Self::Quote),
             "clip" => Some(Self::Clip),
             "clip_thumb" => Some(Self::ClipThumb),
+            "avatar" => Some(Self::Avatar),
+            "banner" => Some(Self::Banner),
             _ => None,
         }
     }
     pub fn location(self) -> Location {
         match self {
             Self::Clip => Location::R2,
-            Self::Emoji | Self::Quote | Self::ClipThumb => Location::Disk,
+            Self::Emoji | Self::Quote | Self::ClipThumb | Self::Avatar | Self::Banner => {
+                Location::Disk
+            }
         }
     }
 }
@@ -285,6 +295,8 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
                          WHERE media_hash IS NOT NULL)
            AND hash NOT IN (SELECT media_hash FROM quote_lines
                          WHERE media_hash IS NOT NULL)
+           AND hash NOT IN (SELECT avatar_hash FROM users WHERE avatar_hash IS NOT NULL)
+           AND hash NOT IN (SELECT banner_hash FROM users WHERE banner_hash IS NOT NULL)
            AND hash NOT IN (SELECT p.still_hash FROM media p
                             WHERE p.still_hash IS NOT NULL
                               AND (p.created_at > ?1
@@ -292,7 +304,11 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
                                                   WHERE media_hash IS NOT NULL)
                                    OR p.hash IN (SELECT media_hash FROM quote_lines
                                                   WHERE media_hash IS NOT NULL)
-                                   OR p.hash IN (SELECT thumb_hash FROM clips)))
+                                   OR p.hash IN (SELECT thumb_hash FROM clips)
+                                   OR p.hash IN (SELECT avatar_hash FROM users
+                                                  WHERE avatar_hash IS NOT NULL)
+                                   OR p.hash IN (SELECT banner_hash FROM users
+                                                  WHERE banner_hash IS NOT NULL)))
          RETURNING hash",
     )
     .bind(&cutoff)
@@ -353,7 +369,9 @@ mod tests {
             MediaKind::parse(MediaKind::Quote.as_str()),
             Some(MediaKind::Quote)
         );
-        assert_eq!(MediaKind::parse("avatar"), None);
+        assert_eq!(MediaKind::parse("avatar"), Some(MediaKind::Avatar));
+        assert_eq!(MediaKind::parse("banner"), Some(MediaKind::Banner));
+        assert_eq!(MediaKind::parse("avatars"), None);
     }
 
     #[test]

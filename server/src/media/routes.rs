@@ -4,11 +4,12 @@ use axum::Json;
 use axum::Router;
 use axum::body::Bytes;
 use axum::extract::rejection::BytesRejection;
-use axum::extract::{DefaultBodyLimit, Path, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, State};
 use axum::http::{StatusCode, header};
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
 use pulse_protocol::rest::MediaInfo;
+use serde::Deserialize;
 use tokio::sync::Semaphore;
 
 use super::{CONTENT_TYPE, MediaKind, process};
@@ -18,6 +19,8 @@ use crate::error::{AppError, AppResult};
 
 /// Bodies a little over the processing limit still reach it, so they get its clear message.
 const BODY_LIMIT: usize = process::MAX_INPUT + 64 * 1024;
+/// The same for avatars and banners, which may be bigger.
+const PROFILE_BODY_LIMIT: usize = process::PROFILE_MAX_INPUT + 64 * 1024;
 
 /// At most this many uploads processed at once: decoding and resizing is the costly part, so this
 /// bounds the CPU/RAM a burst of uploads can take.
@@ -65,6 +68,14 @@ pub fn router() -> Router<AppState> {
             "/media/clip-thumb",
             post(upload_clip_thumb).layer(DefaultBodyLimit::max(BODY_LIMIT)),
         )
+        .route(
+            "/media/avatar",
+            post(upload_avatar).layer(DefaultBodyLimit::max(PROFILE_BODY_LIMIT)),
+        )
+        .route(
+            "/media/banner",
+            post(upload_banner).layer(DefaultBodyLimit::max(PROFILE_BODY_LIMIT)),
+        )
         .route("/media/{hash}", get(fetch))
 }
 
@@ -82,7 +93,10 @@ async fn upload_quote(
     user: AuthUser,
     body: Result<Bytes, BytesRejection>,
 ) -> AppResult<Json<MediaInfo>> {
-    upload(state, user, body, MediaKind::Quote, process::quote_image).await
+    upload(state, user, body, MediaKind::Quote, |b| {
+        process::quote_image(b)
+    })
+    .await
 }
 
 /// A clip's poster: same limits and processing as a quote image, stored as `clip_thumb`.
@@ -91,13 +105,67 @@ async fn upload_clip_thumb(
     user: AuthUser,
     body: Result<Bytes, BytesRejection>,
 ) -> AppResult<Json<MediaInfo>> {
-    upload(
-        state,
-        user,
-        body,
-        MediaKind::ClipThumb,
-        process::quote_image,
-    )
+    upload(state, user, body, MediaKind::ClipThumb, |b| {
+        process::quote_image(b)
+    })
+    .await
+}
+
+/// `?x=&y=&w=&h=`: a crop rectangle in source pixels. All four or none.
+#[derive(Deserialize)]
+struct CropQuery {
+    x: Option<String>,
+    y: Option<String>,
+    w: Option<String>,
+    h: Option<String>,
+}
+
+impl CropQuery {
+    fn crop(&self) -> AppResult<Option<process::Crop>> {
+        let all = [&self.x, &self.y, &self.w, &self.h];
+        if all.iter().all(|v| v.is_none()) {
+            return Ok(None);
+        }
+        let bad = || AppError::BadRequest("the crop needs x, y, w and h".into());
+        let n = |v: &Option<String>| {
+            v.as_deref()
+                .and_then(|v| v.parse::<u32>().ok())
+                .ok_or_else(bad)
+        };
+        Ok(Some(process::Crop {
+            x: n(&self.x)?,
+            y: n(&self.y)?,
+            w: n(&self.w)?,
+            h: n(&self.h)?,
+        }))
+    }
+}
+
+/// An avatar: cropped if asked, then covered to 256×256; see [`process::avatar`].
+async fn upload_avatar(
+    state: State<AppState>,
+    Query(q): Query<CropQuery>,
+    user: AuthUser,
+    body: Result<Bytes, BytesRejection>,
+) -> AppResult<Json<MediaInfo>> {
+    let crop = q.crop()?;
+    upload(state, user, body, MediaKind::Avatar, move |b| {
+        process::avatar(b, crop)
+    })
+    .await
+}
+
+/// A banner: cropped if asked, then covered; see [`process::banner`].
+async fn upload_banner(
+    state: State<AppState>,
+    Query(q): Query<CropQuery>,
+    user: AuthUser,
+    body: Result<Bytes, BytesRejection>,
+) -> AppResult<Json<MediaInfo>> {
+    let crop = q.crop()?;
+    upload(state, user, body, MediaKind::Banner, move |b| {
+        process::banner(b, crop)
+    })
     .await
 }
 
@@ -107,12 +175,18 @@ async fn upload(
     AuthUser(me): AuthUser,
     body: Result<Bytes, BytesRejection>,
     kind: MediaKind,
-    process: fn(&[u8]) -> Result<process::Processed, process::ProcessError>,
+    process: impl FnOnce(&[u8]) -> Result<process::Processed, process::ProcessError> + Send + 'static,
 ) -> AppResult<Json<MediaInfo>> {
     // Past the body limit axum would answer in plain text; keep to the API's JSON error shape.
     let body = body.map_err(|e| {
         if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
-            AppError::PayloadTooLarge(process::ProcessError::TooBig.to_string())
+            AppError::PayloadTooLarge(
+                match kind {
+                    MediaKind::Avatar | MediaKind::Banner => process::ProcessError::ProfileTooBig,
+                    _ => process::ProcessError::TooBig,
+                }
+                .to_string(),
+            )
         } else {
             AppError::BadRequest("the upload couldn't be read".into())
         }

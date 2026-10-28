@@ -796,3 +796,101 @@ async fn the_harness_gives_clips_storage_unless_asked_not_to() {
     let without = spawn_without_clips().await;
     assert!(without.cfg.clips.is_none() && without.s3.is_none() && without.state().r2.is_none());
 }
+
+#[tokio::test]
+async fn uploads_an_avatar_with_a_crop() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let r = upload_to(&app, "/media/avatar?x=0&y=0&w=32&h=32", &token, png()).await;
+    assert_eq!(r.status(), 200);
+    let info: MediaInfo = r.json().await.unwrap();
+    assert_eq!((info.width, info.height), (256, 256));
+    assert_eq!(media_kind(&app, &info.hash).await, "avatar");
+}
+
+#[tokio::test]
+async fn uploads_an_animated_banner() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let r = upload_to(&app, "/media/banner", &token, gif(3)).await;
+    assert_eq!(r.status(), 200);
+    let info: MediaInfo = r.json().await.unwrap();
+    assert!(info.animated);
+    assert!(info.still_hash.is_some());
+    assert_eq!(info.width, 600);
+    assert_eq!(media_kind(&app, &info.hash).await, "banner");
+}
+
+#[tokio::test]
+async fn a_partial_crop_is_refused() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    for q in ["x=1", "x=1&y=1&w=8", "x=a&y=0&w=8&h=8"] {
+        let r = upload_to(&app, &format!("/media/avatar?{q}"), &token, png()).await;
+        assert_eq!(r.status(), 400, "{q}");
+        let e: ApiError = r.json().await.unwrap();
+        assert_eq!(e.message, "the crop needs x, y, w and h", "{q}");
+    }
+    let r = upload_to(&app, "/media/banner?x=0&y=0&w=999&h=8", &token, png()).await;
+    assert_eq!(r.status(), 400);
+    let e: ApiError = r.json().await.unwrap();
+    assert_eq!(e.message, "The crop is outside the image.");
+    assert_eq!(media_rows(&app).await, 0);
+}
+
+#[tokio::test]
+async fn an_8mb_body_reaches_processing() {
+    let app = spawn().await;
+    let (_, token) = register(&app, "alex").await;
+    let r = upload_to(&app, "/media/avatar", &token, vec![0u8; 3 * 1024 * 1024]).await;
+    assert_ne!(r.status(), 413);
+    assert_eq!(r.status(), 400);
+    let r = upload_to(&app, "/media/avatar", &token, vec![0u8; 9 * 1024 * 1024]).await;
+    assert_eq!(r.status(), 413);
+    let e: ApiError = r.json().await.unwrap();
+    assert_eq!(e.code, "payload_too_large");
+    assert!(
+        e.message.contains("that file is too big (8 MB at most)"),
+        "{}",
+        e.message
+    );
+}
+
+#[tokio::test]
+async fn cleanup_keeps_live_avatars_and_banners() {
+    let app = spawn().await;
+    let (alex, token) = register(&app, "alex").await;
+    let av: MediaInfo = upload_to(&app, "/media/avatar", &token, gif(3))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let bn: MediaInfo = upload_to(&app, "/media/banner", &token, gif(3))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(media_rows(&app).await, 4);
+    sqlx::query("UPDATE users SET avatar_hash = ?, banner_hash = ? WHERE id = ?")
+        .bind(&av.hash)
+        .bind(&bn.hash)
+        .bind(alex.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE media SET created_at = '2020-01-01T00:00:00.000Z'")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let dir = &app.cfg.media_dir;
+    let grace = Duration::from_secs(24 * 3600);
+    assert_eq!(media::cleanup(&app.db, dir, grace).await.unwrap(), 0);
+    assert_eq!(media_rows(&app).await, 4);
+
+    sqlx::query("UPDATE users SET avatar_hash = NULL, banner_hash = NULL")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(media::cleanup(&app.db, dir, grace).await.unwrap(), 4);
+    assert_eq!(media_rows(&app).await, 0);
+}

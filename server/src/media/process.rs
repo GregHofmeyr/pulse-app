@@ -37,6 +37,23 @@ pub const QUOTE_ANIM_MAX_OUTPUT: usize = 4 * 1024 * 1024;
 /// 128 MB of RGBA per upload being processed.
 pub const QUOTE_ANIM_MAX_FITTED_PIXELS: u64 = 32_000_000;
 
+/// Avatar and banner uploads: input bounds (the 4096 px side limit is shared with emoji).
+pub const PROFILE_MAX_INPUT: usize = 8 * 1024 * 1024;
+pub const PROFILE_MAX_FRAMES: u32 = 200;
+/// Avatar: a square, still or animated.
+pub const AVATAR_SIDE: u32 = 256;
+pub const AVATAR_MAX_OUTPUT: usize = 512 * 1024;
+pub const AVATAR_ANIM_MAX_OUTPUT: usize = 1024 * 1024;
+/// Banner: 960×384 still; an animation is smaller (600×240), since every frame is held.
+pub const BANNER_W: u32 = 960;
+pub const BANNER_H: u32 = 384;
+pub const BANNER_ANIM_W: u32 = 600;
+pub const BANNER_ANIM_H: u32 = 240;
+pub const BANNER_MAX_OUTPUT: usize = 1024 * 1024;
+pub const BANNER_ANIM_MAX_OUTPUT: usize = 2 * 1024 * 1024;
+/// Most pixels an animated avatar's or banner's fitted frames may total (about 128 MB of RGBA).
+pub const PROFILE_ANIM_MAX_FITTED_PIXELS: u64 = 32_000_000;
+
 /// Largest Go Live preview upload accepted.
 pub const PREVIEW_MAX_INPUT: usize = 100 * 1024;
 /// Box a preview is fitted into (the client sends exactly this).
@@ -45,6 +62,15 @@ pub const PREVIEW_H: u32 = 270;
 /// Largest preview side decoded: 4x the box and far beyond what the client sends. That is under a
 /// quarter of the pixels an emoji may have, since a streamer sends one every 15 s.
 const PREVIEW_MAX_SIDE: u32 = 1920;
+
+/// A rectangle in source pixels, applied to every frame before fitting.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Crop {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+}
 
 #[derive(Debug)]
 pub struct Processed {
@@ -74,6 +100,16 @@ pub enum ProcessError {
     TooLarge,
     #[error("this animation is too large to convert; try a smaller or shorter one")]
     AnimationTooLarge,
+    #[error("that file is too big (8 MB at most)")]
+    ProfileTooBig,
+    #[error("that animation has too many frames (200 at most)")]
+    ProfileTooManyFrames,
+    #[error("that animation is too big once converted (1 MB at most); try a shorter one")]
+    AvatarOutputTooBig,
+    #[error("that animation is too big once converted (2 MB at most); try a shorter one")]
+    BannerOutputTooBig,
+    #[error("The crop is outside the image.")]
+    CropOutside,
 }
 
 impl From<ImageError> for ProcessError {
@@ -168,13 +204,16 @@ pub fn preview(input: &[u8], declared: ImageFormat) -> Result<Vec<u8>, PreviewEr
     encode(&[(fitted, 0)]).map_err(|_| PreviewError::Encode)
 }
 
-/// How an upload is fitted and bounded: the per-frame `fit` (given the side to fit to) and, for a
-/// still and for an animation, the side and the largest processed file.
+/// How an upload is fitted and bounded: the per-frame `fit` (given the box to fit to), the largest
+/// input and frame count, and, for a still and for an animation, the box and the largest processed
+/// file.
 struct Profile {
-    fit: fn(&RgbaImage, u32) -> RgbaImage,
-    still_side: u32,
+    fit: fn(&RgbaImage, (u32, u32)) -> RgbaImage,
+    max_input: usize,
+    max_frames: u32,
+    still_box: (u32, u32),
     still_max: usize,
-    anim_side: u32,
+    anim_box: (u32, u32),
     anim_max: usize,
     /// Most pixels the fitted frames of an animation may total.
     anim_max_pixels: u64,
@@ -183,22 +222,50 @@ struct Profile {
 /// Emoji: a transparent square, still or animated.
 const EMOJI: Profile = Profile {
     fit: |img, _| fit(img),
-    still_side: SIZE,
+    max_input: MAX_INPUT,
+    max_frames: MAX_FRAMES,
+    still_box: (SIZE, SIZE),
     still_max: MAX_OUTPUT,
-    anim_side: SIZE,
+    anim_box: (SIZE, SIZE),
     anim_max: MAX_OUTPUT,
     // 300 frames of 128², already its natural bound.
     anim_max_pixels: u64::MAX,
 };
 
-/// Quote images: aspect kept, never enlarged.
+/// Quote images: aspect kept, never enlarged, fitted on the long side to the box's width.
 const QUOTE: Profile = Profile {
-    fit: fit_long_side,
-    still_side: QUOTE_MAX_SIDE,
+    fit: |img, b| fit_long_side(img, b.0),
+    max_input: MAX_INPUT,
+    max_frames: MAX_FRAMES,
+    still_box: (QUOTE_MAX_SIDE, QUOTE_MAX_SIDE),
     still_max: QUOTE_MAX_OUTPUT,
-    anim_side: QUOTE_ANIM_MAX_SIDE,
+    anim_box: (QUOTE_ANIM_MAX_SIDE, QUOTE_ANIM_MAX_SIDE),
     anim_max: QUOTE_ANIM_MAX_OUTPUT,
     anim_max_pixels: QUOTE_ANIM_MAX_FITTED_PIXELS,
+};
+
+/// Avatars: covered to a square.
+const AVATAR: Profile = Profile {
+    fit: fit_cover,
+    max_input: PROFILE_MAX_INPUT,
+    max_frames: PROFILE_MAX_FRAMES,
+    still_box: (AVATAR_SIDE, AVATAR_SIDE),
+    still_max: AVATAR_MAX_OUTPUT,
+    anim_box: (AVATAR_SIDE, AVATAR_SIDE),
+    anim_max: AVATAR_ANIM_MAX_OUTPUT,
+    anim_max_pixels: PROFILE_ANIM_MAX_FITTED_PIXELS,
+};
+
+/// Banners: covered to a wide box, smaller when animated.
+const BANNER: Profile = Profile {
+    fit: fit_cover,
+    max_input: PROFILE_MAX_INPUT,
+    max_frames: PROFILE_MAX_FRAMES,
+    still_box: (BANNER_W, BANNER_H),
+    still_max: BANNER_MAX_OUTPUT,
+    anim_box: (BANNER_ANIM_W, BANNER_ANIM_H),
+    anim_max: BANNER_ANIM_MAX_OUTPUT,
+    anim_max_pixels: PROFILE_ANIM_MAX_FITTED_PIXELS,
 };
 
 /// Process an emoji upload. CPU-bound: call it off the async runtime.
@@ -214,24 +281,68 @@ pub fn quote_image(input: &[u8]) -> Result<Processed, ProcessError> {
 
 /// [`quote_image`] with the profile injected, so tests can use small caps.
 fn quote_with(input: &[u8], profile: &Profile) -> Result<Processed, ProcessError> {
-    convert(input, MAX_DECODED_PIXELS, profile).map_err(|e| match e {
+    convert(input, None, MAX_DECODED_PIXELS, profile).map_err(|e| match e {
         ProcessError::OutputTooBig => ProcessError::QuoteOutputTooBig,
+        e => e,
+    })
+}
+
+/// Process an avatar upload: an optional crop on every frame, then covered to 256×256. CPU-bound:
+/// call it off the async runtime.
+pub fn avatar(input: &[u8], crop: Option<Crop>) -> Result<Processed, ProcessError> {
+    avatar_with(input, crop, &AVATAR)
+}
+
+/// Process a banner upload: an optional crop on every frame, then covered to 960×384 (600×240
+/// when animated). CPU-bound: call it off the async runtime.
+pub fn banner(input: &[u8], crop: Option<Crop>) -> Result<Processed, ProcessError> {
+    banner_with(input, crop, &BANNER)
+}
+
+fn avatar_with(
+    input: &[u8],
+    crop: Option<Crop>,
+    profile: &Profile,
+) -> Result<Processed, ProcessError> {
+    profile_with(input, crop, profile, ProcessError::AvatarOutputTooBig)
+}
+
+fn banner_with(
+    input: &[u8],
+    crop: Option<Crop>,
+    profile: &Profile,
+) -> Result<Processed, ProcessError> {
+    profile_with(input, crop, profile, ProcessError::BannerOutputTooBig)
+}
+
+/// [`convert`] for a profile picture, with the errors that name its limits.
+fn profile_with(
+    input: &[u8],
+    crop: Option<Crop>,
+    profile: &Profile,
+    output_too_big: ProcessError,
+) -> Result<Processed, ProcessError> {
+    convert(input, crop, MAX_DECODED_PIXELS, profile).map_err(|e| match e {
+        ProcessError::TooBig => ProcessError::ProfileTooBig,
+        ProcessError::TooManyFrames => ProcessError::ProfileTooManyFrames,
+        ProcessError::OutputTooBig => output_too_big,
         e => e,
     })
 }
 
 /// [`emoji`] with the animation pixel budget injected, so tests needn't decode 100 Mpx.
 fn emoji_with_budget(input: &[u8], max_decoded_pixels: u64) -> Result<Processed, ProcessError> {
-    convert(input, max_decoded_pixels, &EMOJI)
+    convert(input, None, max_decoded_pixels, &EMOJI)
 }
 
-/// The pipeline [`emoji`] and [`quote_image`] share: sniff, bound, decode, fit, re-encode.
+/// The pipeline every kind shares: sniff, bound, decode, crop, fit, re-encode.
 fn convert(
     input: &[u8],
+    crop: Option<Crop>,
     max_decoded_pixels: u64,
     profile: &Profile,
 ) -> Result<Processed, ProcessError> {
-    if input.len() > MAX_INPUT {
+    if input.len() > profile.max_input {
         return Err(ProcessError::TooBig);
     }
     let format = image::guess_format(input).map_err(|_| ProcessError::UnsupportedType)?;
@@ -244,7 +355,16 @@ fn convert(
     // Dimensions come from the header alone, before anything is decoded.
     let mut reader = ImageReader::with_format(Cursor::new(input), format);
     reader.limits(limits());
-    reader.into_dimensions()?;
+    let (logical_w, logical_h) = reader.into_dimensions()?;
+    if let Some(c) = crop {
+        let inside = c.w >= 1
+            && c.h >= 1
+            && u64::from(c.x) + u64::from(c.w) <= u64::from(logical_w)
+            && u64::from(c.y) + u64::from(c.h) <= u64::from(logical_h);
+        if !inside {
+            return Err(ProcessError::CropOutside);
+        }
+    }
 
     let frames: Option<Frames> = match format {
         ImageFormat::Gif => {
@@ -269,7 +389,7 @@ fn convert(
             // which is fitted differently from a still.
             let mut first: Option<(RgbaImage, i32)> = None;
             for f in frames {
-                if n == MAX_FRAMES {
+                if n == profile.max_frames {
                     return Err(ProcessError::TooManyFrames);
                 }
                 let f = f?;
@@ -286,7 +406,7 @@ fn convert(
                 let ms = frame_ms(num, den);
                 n += 1;
                 if n == 1 {
-                    first = Some((f.into_buffer(), ms));
+                    first = Some((cropped(f.into_buffer(), crop), ms));
                     continue;
                 }
                 // All fitted frames are held until encoding, so their total is bounded too.
@@ -299,19 +419,22 @@ fn convert(
                     Ok(())
                 };
                 if let Some((img, ms)) = first.take() {
-                    push((profile.fit)(&img, profile.anim_side), ms)?;
+                    push((profile.fit)(&img, profile.anim_box), ms)?;
                 }
-                push((profile.fit)(f.buffer(), profile.anim_side), ms)?;
+                push(
+                    (profile.fit)(&cropped(f.into_buffer(), crop), profile.anim_box),
+                    ms,
+                )?;
             }
             if let Some((img, ms)) = first {
-                fitted.push(((profile.fit)(&img, profile.still_side), ms));
+                fitted.push(((profile.fit)(&img, profile.still_box), ms));
             }
         }
         None => {
             let mut reader = ImageReader::with_format(Cursor::new(input), format);
             reader.limits(limits());
-            let img = reader.decode()?.into_rgba8();
-            fitted.push(((profile.fit)(&img, profile.still_side), 0));
+            let img = cropped(reader.decode()?.into_rgba8(), crop);
+            fitted.push(((profile.fit)(&img, profile.still_box), 0));
         }
     }
     if fitted.is_empty() {
@@ -344,6 +467,36 @@ fn convert(
 fn frame_ms(numer: u32, denom: u32) -> i32 {
     let ms = numer / denom.max(1);
     if ms <= 10 { 100 } else { ms.min(60_000) as i32 }
+}
+
+/// `img` cut to `crop` (already checked to lie inside the image), if there is one.
+fn cropped(img: RgbaImage, crop: Option<Crop>) -> RgbaImage {
+    match crop {
+        Some(c) => imageops::crop_imm(&img, c.x, c.y, c.w, c.h).to_image(),
+        None => img,
+    }
+}
+
+/// Centre-crop to the aspect of `(w, h)`, then resize to exactly `w`×`h` (small sources are
+/// enlarged).
+fn fit_cover(img: &RgbaImage, (w, h): (u32, u32)) -> RgbaImage {
+    let (iw, ih) = img.dimensions();
+    // Compare iw/ih with w/h by cross-multiplying.
+    let (cw, ch) = if u64::from(iw) * u64::from(h) > u64::from(ih) * u64::from(w) {
+        // Wider than the box: trim the sides.
+        (
+            ((u64::from(ih) * u64::from(w)) / u64::from(h)).max(1) as u32,
+            ih,
+        )
+    } else {
+        (
+            iw,
+            ((u64::from(iw) * u64::from(h)) / u64::from(w)).max(1) as u32,
+        )
+    };
+    let (cw, ch) = (cw.min(iw), ch.min(ih));
+    let view = imageops::crop_imm(img, (iw - cw) / 2, (ih - ch) / 2, cw, ch).to_image();
+    resize(&view, w, h)
 }
 
 /// Scale to fit `SIZE` (keeping the aspect ratio), centred on a transparent square.
@@ -711,6 +864,7 @@ mod tests {
         assert!(matches!(
             convert(
                 &noisy_png(64),
+                None,
                 MAX_DECODED_PIXELS,
                 &Profile {
                     still_max: tiny,
@@ -834,5 +988,219 @@ mod tests {
                 .to_string()
                 .contains("PNG, JPEG, GIF or WebP")
         );
+        for (e, msg) in [
+            (
+                ProcessError::ProfileTooBig,
+                "that file is too big (8 MB at most)",
+            ),
+            (
+                ProcessError::ProfileTooManyFrames,
+                "that animation has too many frames (200 at most)",
+            ),
+            (
+                ProcessError::AvatarOutputTooBig,
+                "that animation is too big once converted (1 MB at most); try a shorter one",
+            ),
+            (
+                ProcessError::BannerOutputTooBig,
+                "that animation is too big once converted (2 MB at most); try a shorter one",
+            ),
+            (ProcessError::CropOutside, "The crop is outside the image."),
+        ] {
+            assert_eq!(e.to_string(), msg);
+        }
+    }
+
+    /// A GIF of `frames` frames, `w`×`h`, the left half red and the right half blue.
+    fn split_gif(frames: usize, w: u32, h: u32) -> Vec<u8> {
+        let mut out = Vec::new();
+        {
+            let mut enc = GifEncoder::new(&mut out);
+            for i in 0..frames {
+                // The blue half differs a little per frame, or the encoder merges the frames.
+                let img = RgbaImage::from_fn(w, h, |x, _| {
+                    if x < w / 2 {
+                        Rgba([255, 0, 0, 255])
+                    } else {
+                        Rgba([0, 0, 255 - 15 * i as u8, 255])
+                    }
+                });
+                let delay = Delay::from_numer_denom_ms(50, 1);
+                enc.encode_frame(Frame::from_parts(img, 0, 0, delay))
+                    .unwrap();
+            }
+        }
+        out
+    }
+
+    fn centre(webp: &[u8]) -> [u8; 4] {
+        let img = image::load_from_memory_with_format(webp, ImageFormat::WebP)
+            .unwrap()
+            .to_rgba8();
+        img.get_pixel(img.width() / 2, img.height() / 2).0
+    }
+
+    #[test]
+    fn avatar_is_a_256_square() {
+        let p = avatar(&png(300, 150), None).unwrap();
+        assert_eq!((p.width, p.height, p.frames), (256, 256, 1));
+        assert!(p.still.is_none());
+        assert_eq!(dims(&p.webp), (256, 256));
+    }
+
+    #[test]
+    fn avatar_crop_is_applied_to_every_frame() {
+        let crop = Crop {
+            x: 100,
+            y: 0,
+            w: 100,
+            h: 100,
+        };
+        let p = avatar(&split_gif(3, 200, 100), Some(crop)).unwrap();
+        assert_eq!((p.frames, p.width, p.height), (3, 256, 256));
+        let dec = WebPDecoder::new(Cursor::new(&p.webp)).unwrap();
+        let frames = dec.into_frames().collect_frames().unwrap();
+        assert_eq!(frames.len(), 3);
+        for f in &frames {
+            assert_eq!(f.buffer().dimensions(), (256, 256));
+            let px = f.buffer().get_pixel(128, 128).0;
+            assert!(
+                px[0] < 40 && px[2] > 190,
+                "centre should be blue, got {px:?}"
+            );
+        }
+        let still = p.still.as_deref().unwrap();
+        assert_eq!(dims(still), (256, 256));
+        assert!(
+            !WebPDecoder::new(Cursor::new(still))
+                .unwrap()
+                .has_animation()
+        );
+        let px = centre(still);
+        assert!(px[0] < 40 && px[2] > 190, "{px:?}");
+    }
+
+    #[test]
+    fn banner_still_and_animated_sizes() {
+        let p = banner(&png(1920, 768), None).unwrap();
+        assert_eq!((p.width, p.height, p.frames), (960, 384, 1));
+        assert!(p.still.is_none());
+        let p = banner(&gif_sized(3, 1200, 480), None).unwrap();
+        assert_eq!((p.width, p.height, p.frames), (600, 240, 3));
+        assert_eq!(dims(p.still.as_deref().unwrap()), (600, 240));
+    }
+
+    #[test]
+    fn small_sources_are_enlarged_to_the_box() {
+        let p = avatar(&png(64, 64), None).unwrap();
+        assert_eq!((p.width, p.height), (256, 256));
+        assert_eq!(dims(&p.webp), (256, 256));
+    }
+
+    #[test]
+    fn a_crop_outside_the_image_is_refused() {
+        let past = Crop {
+            x: 250,
+            y: 0,
+            w: 100,
+            h: 100,
+        };
+        assert!(matches!(
+            avatar(&png(300, 150), Some(past)),
+            Err(ProcessError::CropOutside)
+        ));
+        let empty = Crop {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 10,
+        };
+        assert!(matches!(
+            banner(&png(300, 150), Some(empty)),
+            Err(ProcessError::CropOutside)
+        ));
+        let empty = Crop {
+            x: 0,
+            y: 0,
+            w: 10,
+            h: 0,
+        };
+        assert!(matches!(
+            avatar(&png(300, 150), Some(empty)),
+            Err(ProcessError::CropOutside)
+        ));
+        // The exact edge is inside.
+        let edge = Crop {
+            x: 200,
+            y: 50,
+            w: 100,
+            h: 100,
+        };
+        assert!(avatar(&png(300, 150), Some(edge)).is_ok());
+    }
+
+    #[test]
+    fn profile_uploads_refuse_what_they_should() {
+        assert!(matches!(
+            avatar(&vec![0u8; PROFILE_MAX_INPUT + 1], None),
+            Err(ProcessError::ProfileTooBig)
+        ));
+        assert!(matches!(
+            banner(&vec![0u8; PROFILE_MAX_INPUT + 1], None),
+            Err(ProcessError::ProfileTooBig)
+        ));
+        assert!(matches!(
+            avatar(&gif(201, 1), None),
+            Err(ProcessError::ProfileTooManyFrames)
+        ));
+        assert!(matches!(
+            avatar(&gif_of(&[(5000, 1)]), None),
+            Err(ProcessError::TooLarge)
+        ));
+        assert!(matches!(
+            banner(b"hello", None),
+            Err(ProcessError::UnsupportedType)
+        ));
+    }
+
+    #[test]
+    fn profile_output_caps() {
+        let tiny = 2_000;
+        let still_capped = Profile {
+            still_max: tiny,
+            ..AVATAR
+        };
+        assert!(matches!(
+            avatar_with(&noisy_png(64), None, &still_capped),
+            Err(ProcessError::AvatarOutputTooBig)
+        ));
+        let anim_capped = Profile {
+            anim_max: tiny,
+            ..AVATAR
+        };
+        assert!(avatar_with(&noisy_png(64), None, &anim_capped).is_ok());
+        assert!(matches!(
+            avatar_with(&noisy_gif(3, 64), None, &anim_capped),
+            Err(ProcessError::AvatarOutputTooBig)
+        ));
+        assert!(avatar_with(&noisy_gif(3, 64), None, &still_capped).is_ok());
+
+        let still_capped = Profile {
+            still_max: tiny,
+            ..BANNER
+        };
+        assert!(matches!(
+            banner_with(&noisy_png(64), None, &still_capped),
+            Err(ProcessError::BannerOutputTooBig)
+        ));
+        let anim_capped = Profile {
+            anim_max: tiny,
+            ..BANNER
+        };
+        assert!(banner_with(&noisy_png(64), None, &anim_capped).is_ok());
+        assert!(matches!(
+            banner_with(&noisy_gif(3, 64), None, &anim_capped),
+            Err(ProcessError::BannerOutputTooBig)
+        ));
     }
 }
