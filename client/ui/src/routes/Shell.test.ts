@@ -632,4 +632,25 @@ describe('Quote of the Year', () => {
     flushSync()
     expect(document.querySelector('[role=dialog][aria-label="Start Quote of the Year"]')).toBeNull()
   })
+
+  it('keeps the clips being sent: the ones left over at start, then each clip://job', async () => {
+    const job = (id: string, over: Record<string, unknown> = {}) => ({
+      id, channel_id: 'C1', stage: 'failed', progress: 0, error: null, caption: '', game_id: null, kept_ms: 9000, thumb_path: null, message_id: null, ...over,
+    })
+    let answer: (jobs: unknown[]) => void = () => {}
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'clip_jobs' ? new Promise((r) => (answer = r)) : undefined))
+    app.state = emptyState()
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    flushSync()
+    await new Promise((r) => setTimeout(r, 0))
+    expect(invoke.mock.calls.filter((c) => c[0] === 'clip_jobs')).toHaveLength(1)
+    // an event that beats the startup list is newer than it
+    handlers.get('clip://job')!({ payload: job('J2', { stage: 'uploading', progress: 0.5 }) })
+    answer([job('J1'), job('J2')])
+    await new Promise((r) => setTimeout(r, 0))
+    expect(app.state.clipJobs.J1?.stage).toBe('failed')
+    expect(app.state.clipJobs.J2?.stage).toBe('uploading')
+    handlers.get('clip://job')!({ payload: job('J1', { stage: 'done', progress: 1 }) })
+    expect(app.state.clipJobs.J1).toBeUndefined()
+  })
 })

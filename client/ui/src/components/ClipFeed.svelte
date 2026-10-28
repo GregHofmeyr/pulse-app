@@ -4,15 +4,16 @@
   import { tick, untrack } from 'svelte'
   import ClipCard from './ClipCard.svelte'
   import ClipItem from './ClipItem.svelte'
+  import PendingClip from './PendingClip.svelte'
   import { clipFilter, feedKey, isNewClip, type ClipFilter } from '../lib/clips'
   import { feedFailed, loadFeedPage, openFeed, tracksUnread } from '../lib/state'
   import { nameOfIn } from '../lib/selectors'
   import { app } from '../lib/store.svelte'
-  import { api, errorText } from '../lib/tauri'
+  import { api, errorText, type ClipJob } from '../lib/tauri'
   import { windowFocus } from '../lib/windowFocus.svelte'
   import type { Message } from '../lib/protocol/Message'
 
-  let { channelId, filter, layout, onOpenReplies, unsentReplies = {} }: {
+  let { channelId, filter, layout, onOpenReplies, unsentReplies = {}, pending = [] }: {
     channelId: string
     filter: ClipFilter
     layout: 'list' | 'wall'
@@ -20,6 +21,8 @@
     onOpenReplies?: (m: Message) => void
     /** Your unsent replies per clip id (shown while its panel is closed). */
     unsentReplies?: Record<string, number>
+    /** Your clips being sent here, oldest first: at the newest end (the list's bottom, the wall's top-left). */
+    pending?: ClipJob[]
   } = $props()
 
   const serverId = $derived(app.state.channels[channelId]?.server_id ?? '')
@@ -127,6 +130,17 @@
     placed = at
   })
 
+  // --- a clip you just sent shows where you'll see it: the list's bottom, the wall's top ---
+  let pendingSeen = new Set<string>(untrack(() => pending.map((j) => j.id)))
+  $effect(() => {
+    const ids = pending.map((j) => j.id)
+    const fresh = ids.some((id) => !pendingSeen.has(id))
+    pendingSeen = new Set(ids)
+    if (!fresh || !scroller) return
+    const el = scroller
+    void tick().then(() => (el.scrollTop = layout === 'list' ? el.scrollHeight : 0))
+  })
+
   // --- switching between list and wall keeps the clip you were looking at in view ---
   let lastLayout = untrack(() => layout)
   let keep: string | null = null
@@ -191,9 +205,11 @@
         <ClipItem message={m} {serverId} {meId} {nameOf} unsentReplies={unsentReplies[m.id] ?? 0}
           onOpenReplies={onOpenReplies ? () => onOpenReplies(m) : undefined} />
       {/each}
+      {#each pending as j (j.id)}<div class="pending-row"><PendingClip job={j} /></div>{/each}
     </div>
   {:else}
     <div class="grid">
+      {#each [...pending].reverse() as j (j.id)}<PendingClip job={j} />{/each}
       {#each shown as m (m.id)}
         <ClipCard message={m} {serverId} {meId} {nameOf} isNew={isNew(m)} unsentReplies={unsentReplies[m.id] ?? 0}
           playing={playingId === m.id} onPlay={() => (playingId = m.id)}
@@ -217,6 +233,7 @@
   .start, .empty { margin: 0; padding: 16px 18px; color: var(--text-3); font-size: 13px; }
   .newline { display: flex; align-items: center; gap: 8px; margin: 6px 18px; color: var(--danger); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
   .newline::before, .newline::after { content: ''; flex: 1; height: 1px; background: var(--danger); opacity: .6; }
+  .pending-row { padding: 6px 18px 6px 70px; max-width: 520px; }
   .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; padding: 16px 18px 8px; align-items: start; }
   @media (max-width: 899.98px) {
     .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }

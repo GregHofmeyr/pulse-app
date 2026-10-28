@@ -291,4 +291,34 @@ describe('RepliesPanel', () => {
     expect(app.state.threadStart['Q1']).toBeUndefined()
     expect(app.state.pending['C1']).toEqual([])
   })
+
+  it('pins a clip and replies to it', async () => {
+    const clipRoot: Message = {
+      ...base('CL1'), content: 'what a shot',
+      clip: { thumb_hash: 'a'.repeat(64), duration_ms: 12000, width: 1280, height: 720, size: 1000, game_id: null, reply_count: 3, last_reply_id: 'R0003', replies_seen: null },
+    }
+    pages = { '': [reply(2, { thread_root_id: 'CL1' }), reply(1, { thread_root_id: 'CL1' })] }
+    await show(clipRoot)
+    expect(calls('list_replies')[0][1]).toEqual({ messageId: 'CL1', before: null })
+    const pinned = panel().querySelector('.pinned')!
+    expect(pinned.querySelector('.clip-item.compact[data-clip-id="CL1"]')).not.toBeNull() // the clip, compact
+    expect(pinned.querySelector('.quote')).toBeNull()
+    expect(pinned.textContent).not.toMatch(/repl/i) // no "View N replies": they're right here
+    // seen up to the clip's newest reply, even one not on this page
+    expect(calls('mark_replies_seen')).toEqual([['mark_replies_seen', { rootId: 'CL1', messageId: 'R0003' }]])
+    const box = panel().querySelector<HTMLElement>('[role="textbox"]')!
+    expect(box.getAttribute('aria-label')).toBe('Reply about this clip')
+    press(type('nice'), 'Enter')
+    expect(calls('send_reply')[0][1]).toMatchObject({ channelId: 'C1', rootId: 'CL1', content: 'nice', replyToId: null })
+  })
+
+  it("a clip's replies already seen aren't marked again", async () => {
+    const clipRoot: Message = {
+      ...base('CL1'),
+      clip: { thumb_hash: 'a'.repeat(64), duration_ms: 12000, width: 1280, height: 720, size: 1000, game_id: null, reply_count: 2, last_reply_id: 'R0002', replies_seen: 'R0002' },
+    }
+    pages = { '': [reply(2, { thread_root_id: 'CL1' }), reply(1, { thread_root_id: 'CL1' })] }
+    await show(clipRoot)
+    expect(calls('mark_replies_seen')).toHaveLength(0)
+  })
 })

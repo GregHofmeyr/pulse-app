@@ -1,5 +1,5 @@
 <script lang="ts">
-  // The replies to one quote (spec §3.6): the quote pinned at the top, then a normal chat about it.
+  // The replies to one quote or clip (spec §3.6): it is pinned at the top, then a normal chat about it.
   // Replies live in `app.state.threads[root]`, never in the channel's list.
   import { tick, untrack } from 'svelte'
   import Composer from './Composer.svelte'
@@ -9,14 +9,14 @@
   import ClipItem from './ClipItem.svelte'
   import { app, ui } from '../lib/store.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
-  import { addPending, addReplies, closeThread, holdThread, maxIdOf, PAGE, pendingMessage, removePending, tracksUnread, type Pending } from '../lib/state'
+  import { addPending, addReplies, closeThread, holdThread, maxIdOf, PAGE, pendingMessage, removePending, threadOf, tracksUnread, type Pending } from '../lib/state'
   import { overlayShown } from '../lib/escape'
   import { groupedWith, mentionablesFor, nameOfIn, stableList } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
   let { root, serverId, onClose, onEditQuote = () => {} }: {
-    /** The quote (kept current by the caller). */
+    /** The quote or clip (kept current by the caller). */
     root: Message
     serverId: string
     onClose: () => void
@@ -123,8 +123,9 @@
 
   // Seen: up to the newest reply, on opening and as replies arrive, while the window is focused. Only
   // for a member: no one else has a seen point (the server refuses it).
-  const newest = $derived(maxIdOf(replies.at(-1)?.id, root.quote?.last_reply_id))
-  const seen = $derived(maxIdOf(root.quote?.replies_seen, app.state.threadSeen[rootId]))
+  const thread = $derived(threadOf(root))
+  const newest = $derived(maxIdOf(replies.at(-1)?.id, thread?.last_reply_id))
+  const seen = $derived(maxIdOf(thread?.replies_seen, app.state.threadSeen[rootId]))
   const member = $derived(tracksUnread(app.state, channelId))
   let asked = ''
   $effect(() => {
@@ -208,7 +209,7 @@
   </div>
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   <!-- typing isn't sent: it would show in the channel, where the replies aren't -->
-  <Composer bind:this={composer} draftKey="thread:{rootId}" placeholder="Reply about this quote" replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
+  <Composer bind:this={composer} draftKey="thread:{rootId}" placeholder={root.clip ? 'Reply about this clip' : 'Reply about this quote'} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
     onCancelReply={() => (replyTo = null)} onSend={(t) => send(t)} onTyping={() => {}} {mentionables} />
 </aside>
 

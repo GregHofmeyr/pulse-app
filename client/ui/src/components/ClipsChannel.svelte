@@ -1,13 +1,16 @@
 <script lang="ts">
   // A clips channel: the header (filters, view toggle, Share a clip), the feed for the view and filter, and
-  // the replies panel of one clip. (Task 20 adds the editor and the pending cards here.)
+  // the replies panel of one clip, the editor (from Share a clip or a dropped file) and your clips being sent.
   import { tick } from 'svelte'
+  import { getCurrentWebview } from '@tauri-apps/api/webview'
+  import ClipEditor from './ClipEditor.svelte'
   import ClipFeed from './ClipFeed.svelte'
   import ClipsHeader from './ClipsHeader.svelte'
   import RepliesPanel from './RepliesPanel.svelte'
   import { clipView, type ClipFilter } from '../lib/clips'
+  import { InlineError } from '../lib/inlineError.svelte'
   import { app, onAppEvent } from '../lib/store.svelte'
-  import { api } from '../lib/tauri'
+  import { api, errorText, type ClipSource } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
   let { channelId, serverId }: { channelId: string; serverId: string } = $props()
@@ -92,23 +95,122 @@
     }, {}),
   )
 
-  // "Share a clip": the editor opens here (Task 20).
-  function share() {}
+  // --- sharing: Share a clip or a dropped file opens the editor (one at a time) ---
+  const WINDOWS_ONLY = 'Sharing clips is Windows-only for now.'
+  const UNREADABLE = "Pulse couldn't read that video."
+  const ONE_AT_A_TIME = 'One clip at a time.'
+  let source = $state<ClipSource | null>(null)
+  let opening = false
+  let alive = true
+  $effect(() => () => (alive = false))
+  const notice = new InlineError()
+  $effect(() => notice.stop)
+
+  /** Whether this install can send; says why not when it can't. */
+  async function canSend(): Promise<boolean> {
+    try {
+      const s = await api.clipSupport()
+      if (s.can_send) return true
+      notice.show(s.reason || WINDOWS_ONLY)
+    } catch (e) {
+      notice.show(errorText(e))
+    }
+    return false
+  }
+  /** Opens a file in the editor (after `canSend`); a file the core can't read says so. */
+  async function open(path: string): Promise<boolean> {
+    try {
+      const s = await api.openClip(path)
+      if (!alive) {
+        void api.closeClipSource(s.id).catch(() => {})
+        return false
+      }
+      source = s
+      return true
+    } catch (e) {
+      notice.show(typeof e === 'string' && e ? e : UNREADABLE) // the core's own words, else the plain one
+      return false
+    }
+  }
+  async function share() {
+    if (opening || source) return
+    opening = true
+    try {
+      if (!(await canSend())) return
+      const path = await api.pickClipFile()
+      if (path && alive) await open(path)
+    } catch (e) {
+      notice.show(errorText(e))
+    } finally {
+      opening = false
+    }
+  }
+  async function dropped(paths: string[]) {
+    if (!paths.length) return
+    if (opening || source) return notice.show(ONE_AT_A_TIME) // one is open (or opening) already
+    opening = true
+    try {
+      if (!(await canSend())) return
+      if ((await open(paths[0])) && paths.length > 1) notice.show(ONE_AT_A_TIME)
+    } finally {
+      opening = false
+    }
+  }
+
+  // Files dragged over the window: the channel lights up, and a drop opens the first one.
+  let dragging = $state(false)
+  $effect(() => {
+    let off: (() => void) | null = null
+    let gone = false
+    try {
+      void getCurrentWebview()
+        .onDragDropEvent((e) => {
+          const p = e.payload
+          if (p.type === 'enter' || p.type === 'over') dragging = !source
+          else if (p.type === 'leave') dragging = false
+          else if (p.type === 'drop') {
+            dragging = false
+            void dropped(p.paths)
+          }
+        })
+        .then((f) => (gone ? f() : (off = f)), () => {})
+    } catch {
+      // not in the app's webview (tests without it): no dropping
+    }
+    return () => {
+      gone = true
+      off?.()
+      dragging = false
+    }
+  })
+
+  // Your clips being sent here (the core's order: oldest first).
+  const pending = $derived(Object.values(app.state.clipJobs).filter((j) => j.channel_id === channelId))
 </script>
 
 <div class="chan" class:with-replies={!!repliesRoot} bind:this={chan}>
   <ClipsHeader {channelId} {serverId} {filter} onFilter={(f) => (filter = f)} {view} onShare={share} />
-  <ClipFeed {channelId} {filter} layout={view} onOpenReplies={openReplies} {unsentReplies} />
+  <ClipFeed {channelId} {filter} layout={view} onOpenReplies={openReplies} {unsentReplies} {pending} />
   {#if repliesRoot}
     {#key repliesRoot.id}
       <RepliesPanel root={repliesRoot} {serverId} onClose={closeReplies} />
     {/key}
   {/if}
+  {#if dragging}<div class="drop-zone" aria-hidden="true"><span>Drop a video to share it</span></div>{/if}
+  {#if notice.text}<p class="notice" role="status">{notice.text}</p>{/if}
 </div>
+{#if source}
+  {#key source.id}
+    <ClipEditor {source} {channelId} {serverId} onClose={() => (source = null)} />
+  {/key}
+{/if}
 
 <style>
   .chan { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   /* the replies panel sits on the right (RepliesPanel, absolutely placed); the channel keeps the rest */
   .chan { position: relative; --replies-w: min(380px, 45%); }
   .chan.with-replies { padding-right: var(--replies-w); }
+  .drop-zone { position: absolute; inset: 8px; z-index: 4; display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: 14px; background: color-mix(in srgb, var(--bg-1) 80%, transparent); pointer-events: none; }
+  .drop-zone span { padding: 8px 16px; border-radius: 10px; background: var(--bg-2); color: var(--text); font-size: 15px; font-weight: 600; }
+  .notice { position: absolute; left: 50%; bottom: 72px; transform: translateX(-50%); z-index: 5; margin: 0; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, .3); max-width: 80%; }
 </style>

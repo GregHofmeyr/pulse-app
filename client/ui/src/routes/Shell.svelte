@@ -1,5 +1,6 @@
 <script lang="ts">
   import { getCurrentWindow } from '@tauri-apps/api/window'
+  import { listen } from '@tauri-apps/api/event'
   import ConnText from '../components/ConnText.svelte'
   import Icon from '../components/Icon.svelte'
   import ChannelList from '../components/ChannelList.svelte'
@@ -29,9 +30,9 @@
   import { callView, openFull } from '../lib/stream/viewer.svelte'
   import { PANEL_ID, PANEL_TOGGLE_ID, setFullPanels } from '../lib/stream/fullPanels'
   import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
-  import { api, errorText } from '../lib/tauri'
+  import { api, errorText, type ClipJob } from '../lib/tauri'
   import { app, clock, openDm, ui } from '../lib/store.svelte'
-  import { applyEvent, trimHistory } from '../lib/state'
+  import { applyEvent, setClipJob, trimHistory } from '../lib/state'
   import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { isMember, liveIn } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
@@ -150,6 +151,28 @@
   const nowIso = $derived(clock.nowIso)
   onMount(() => void checkKeybinds())
   onMount(watchWindowFocus)
+  // The clips you're sending: the ones the core already has (after a restart, the ones left over), then every
+  // change as `clip://job`. An event beats the list for its job (it's newer).
+  onMount(() => {
+    let off: (() => void) | null = null
+    let gone = false
+    void (async () => {
+      const heard = new Set<string>()
+      const f = await listen<ClipJob>('clip://job', (e) => {
+        heard.add(e.payload.id)
+        app.state = setClipJob(app.state, e.payload)
+      })
+      if (gone) return f()
+      off = f
+      const jobs = await api.clipJobs().catch(() => [] as ClipJob[])
+      if (gone) return
+      for (const j of jobs ?? []) if (!heard.has(j.id)) app.state = setClipJob(app.state, j)
+    })()
+    return () => {
+      gone = true
+      off?.()
+    }
+  })
   $effect(() => {
     ui.openChannelId = activeChannelId
   })
