@@ -234,6 +234,12 @@
         error = `A name can be at most ${MAX_NAME} characters.`
         return null
       }
+      // The server refuses "." and ".." (and any name of only dots): a link to one could never be undone.
+      if (r.speaker.id === null && /^\.+$/.test(nameKey(r.speaker.name))) {
+        error = 'A name needs more than dots.'
+        void focusWho(r.key)
+        return null
+      }
       const speaker = { speaker_id: r.speaker.id, speaker_name: r.speaker.id ? null : r.speaker.name }
       if (r.pic) {
         const caption = r.caption.trim()

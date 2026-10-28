@@ -21,13 +21,18 @@ pub const MAX_LINES: usize = 10;
 pub const MAX_CAPTION: usize = 200;
 pub const MAX_NAME: usize = 32;
 
-/// A plain speaker name as stored: trimmed, 1..=[`MAX_NAME`] characters.
+/// A plain speaker name as stored: trimmed, 1..=[`MAX_NAME`] characters, and not only dots (its
+/// `name_key` is a path segment, where "." and ".." can't be used, so a link to it could never be
+/// undone).
 pub fn clean_name(name: &str) -> AppResult<&str> {
     let name = name.trim();
     if name.is_empty() || name.chars().count() > MAX_NAME {
         return Err(AppError::BadRequest(format!(
             "a name must be 1-{MAX_NAME} characters"
         )));
+    }
+    if name.chars().all(|c| c == '.') {
+        return Err(bad("a name needs more than dots"));
     }
     Ok(name)
 }

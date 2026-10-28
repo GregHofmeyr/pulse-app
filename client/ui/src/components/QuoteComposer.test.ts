@@ -297,6 +297,15 @@ describe('QuoteComposer', () => {
     expect(document.body.textContent).toContain('at most 32')
   })
 
+  it('a name that is only dots is refused before sending, as the server would', async () => {
+    show()
+    type(textOf(0), 'hi')
+    const w = whoOf(0); w.focus(); type(w, '..')
+    enter(textOf(0)); await settle()
+    expect(calls('post_quote')).toHaveLength(0)
+    expect(document.body.textContent).toContain('A name needs more than dots.')
+  })
+
   it('saving an edit with every line cleared says so', async () => {
     show({ editing: quoteMsg([eline()]) })
     type(textOf(0), '')

@@ -1177,6 +1177,36 @@ async fn lines_can_be_reordered() {
     assert_eq!(q.lines[1].text.as_deref(), Some("one"));
 }
 
+/// A name that is only dots ("." or "..") can't be a speaker: its name_key couldn't be a path
+/// segment, so a link to it could never be undone (M14).
+#[tokio::test]
+async fn dot_only_names_are_refused() {
+    let f = fixture().await;
+    for name in [".", "..", " ... "] {
+        assert_eq!(
+            f.status(json!([{ "speaker_name": name, "text": "x" }]))
+                .await,
+            400,
+            "{name:?}"
+        );
+    }
+    assert_eq!(
+        f.status(json!([{ "speaker_name": "Dot.", "text": "x" }]))
+            .await,
+        200,
+        "dots beside other characters are fine"
+    );
+    let m: Message = f
+        .post_lines(json!([{ "speaker_name": "A Friend", "text": "x" }]))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let line = m.quote.as_ref().unwrap().lines[0].id;
+    let body = json!({ "lines": [{ "id": line, "speaker_name": "..", "text": "x" }] });
+    assert_eq!(f.put(&f.alex_t, m.id, body).await.status(), 400, "edit");
+}
+
 #[tokio::test]
 async fn only_the_poster_edits() {
     let f = fixture().await;
