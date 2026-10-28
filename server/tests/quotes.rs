@@ -463,6 +463,65 @@ async fn a_legacy_orphan_outside_the_guard_does_not_stop_a_migrating_boot() {
     assert_eq!(v, 8);
 }
 
+/// M1: with the whole-database check only logging, 0008's own guard is what stops a migration
+/// over an orphan in a table it rebuilds around: the boot fails and nothing changes.
+#[tokio::test]
+async fn an_orphan_in_a_guarded_table_still_stops_the_migration() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    let mut conn = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .foreign_keys(false)
+        .connect()
+        .await
+        .unwrap();
+    let mut migrator = sqlx::migrate::Migrator::new(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
+    )
+    .await
+    .unwrap();
+    migrator.migrations = Cow::Owned(
+        migrator
+            .migrations
+            .iter()
+            .filter(|m| m.version <= 7)
+            .cloned()
+            .collect(),
+    );
+    migrator.run(&mut conn).await.unwrap();
+    for q in [
+        "INSERT INTO users (id, username, password_hash, created_at) VALUES ('U', 'alex', 'x', '2026-10-01T00:00:00.000Z')",
+        "INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES ('M', 'NO-SUCH-CHANNEL', 'U', 'hi', '2026-10-01T00:00:00.000Z')",
+    ] {
+        sqlx::query(q).execute(&mut conn).await.unwrap();
+    }
+    conn.close().await.unwrap();
+
+    let err = pulse_server::db::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .expect_err("0008's guard refuses the orphaned message");
+    assert!(
+        format!("{err:#}").contains("CHECK constraint failed"),
+        "refused by the guard: {err:#}"
+    );
+    let mut conn = SqliteConnectOptions::new()
+        .filename(&path)
+        .connect()
+        .await
+        .unwrap();
+    let v: i64 = sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(v, 7, "0008 rolled back");
+    let kept: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages WHERE id = 'M'")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(kept, 1, "the row is untouched");
+}
+
 // ---------- posting and reading ----------
 
 use pulse_protocol::ids::{LineId, ServerId, UserId};
