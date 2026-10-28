@@ -13,8 +13,8 @@ use pulse_protocol::rest::{
 };
 
 use super::{
-    FIRST_YEAR, REOPEN_HOURS, check_minutes, ending, ends_at, live_in, load, publish, require_live,
-    server_of, top_options,
+    FIRST_YEAR, MAX_OPTIONS, REOPEN_HOURS, check_minutes, ending, ends_at, live_in, load, publish,
+    require_live, server_of, top_options,
 };
 use crate::AppState;
 use crate::auth::AuthUser;
@@ -216,6 +216,7 @@ async fn add_option(
     Json(req): Json<AddQotyOptionRequest>,
 ) -> AppResult<Json<QotyEvent>> {
     let server = take_part(&s, me, id).await?;
+    crate::media::writes_ok(&s.cfg)?;
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     require_live(&mut tx, id).await?;
@@ -253,6 +254,14 @@ async fn add_option(
         return Err(AppError::Conflict(
             "That quote has already won Quote of the Year.".into(),
         ));
+    }
+    // Every update of the event carries every option to everyone: keep that bounded.
+    let options: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM qoty_options WHERE event_id = ?")
+        .bind(id.to_string())
+        .fetch_one(&mut *tx)
+        .await?;
+    if options >= MAX_OPTIONS {
+        return Err(AppError::Conflict("This vote has enough options.".into()));
     }
     sqlx::query("INSERT INTO qoty_options (event_id, message_id, added_by) VALUES (?, ?, ?)")
         .bind(id.to_string())

@@ -35,6 +35,8 @@ pub const MINUTES: RangeInclusive<u32> = 5..=20160;
 pub const REOPEN_HOURS: i64 = 24;
 /// The first year a vote can be for (the last is the current UTC year).
 pub const FIRST_YEAR: i32 = 2000;
+/// The most options a vote takes by hand: every update of it carries every option to everyone.
+pub const MAX_OPTIONS: i64 = 50;
 
 fn parse_time(s: &str) -> AppResult<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(s)

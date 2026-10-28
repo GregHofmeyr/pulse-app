@@ -685,6 +685,53 @@ async fn starting_in_an_unknown_server_is_404() {
     assert_eq!(r.status(), 404);
 }
 
+/// M10: every vote's update carries every option, so an event takes at most 50.
+#[tokio::test]
+async fn an_event_takes_at_most_fifty_options() {
+    let f = fixture().await;
+    let e = f.started().await;
+    assert!(e.options.is_empty());
+    for i in 0..50 {
+        let q = f.quote(&format!("q{i}")).await;
+        assert_eq!(
+            f.add(&f.sam_t, e.id, q.id).await.status(),
+            200,
+            "option {i}"
+        );
+    }
+    let extra = f.quote("one too many").await;
+    let r = f.add(&f.sam_t, e.id, extra.id).await;
+    assert_eq!(r.status(), 409);
+    let err: pulse_protocol::rest::ApiError = r.json().await.unwrap();
+    assert_eq!(err.message, "This vote has enough options.");
+    assert_eq!(f.count("SELECT COUNT(*) FROM qoty_options").await, 50);
+}
+
+/// M10: adding an option grows the database: refused on a full disk.
+#[tokio::test]
+async fn adding_an_option_is_refused_when_disk_is_low() {
+    let f = fixture().await;
+    let (e, _, _) = two_options(&f).await;
+    let c = f.quote("c").await;
+    let mut cfg = test_config();
+    cfg.media_min_free_bytes = u64::MAX;
+    let full = spawn_copy(&f.app, cfg).await;
+    let r = full
+        .http
+        .post(full.url(&format!("/qoty/{}/options", e.id)))
+        .bearer_auth(&f.sam_t)
+        .json(&json!({ "message_id": c.id }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 507);
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM qoty_options")
+        .fetch_one(&full.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 2, "nothing added");
+}
+
 // ---------- ending ----------
 
 #[tokio::test]
