@@ -1,6 +1,6 @@
-<script lang="ts">
+<script module lang="ts">
   // Inline stroke icons (no icon font, no network).
-  const paths: Record<string, string> = {
+  const paths = {
     hash: 'M5 9h14M5 15h14M10 3 8 21M16 3l-2 18',
     speaker: 'M11 5 6 9H3v6h3l5 4V5zM15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13',
     speakerOff: 'M11 5 6 9H3v6h3l5 4V5zM16 9l6 6M22 9l-6 6',
@@ -51,11 +51,15 @@
     list: 'M8 6h13M8 12h13M8 18h13M3 6h.01M3 12h.01M3 18h.01',
     film: 'M4 4h16v16H4zM8 4v16M16 4v16M4 9h4M4 15h4M16 9h4M16 15h4',
     message: 'M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z',
-  }
-  let { name, size = 18, label }: { name: string; size?: number; label?: string } = $props()
+  } satisfies Record<string, string>
+  export type IconName = keyof typeof paths
+</script>
+
+<script lang="ts">
+  let { name, size = 18, label }: { name: IconName | (string & {}); size?: number; label?: string } = $props()
 </script>
 
 <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
   stroke-linecap="round" stroke-linejoin="round" role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : true}>
-  <path d={paths[name] ?? ''} />
+  <path d={(paths as Record<string, string>)[name] ?? ''} />
 </svg>
