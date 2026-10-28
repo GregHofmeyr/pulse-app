@@ -8,13 +8,16 @@ use pulse_protocol::ids::{ChannelId, GameId, LineId, MessageId, QotyEventId, Ser
 use pulse_protocol::rest::{
     Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji, EditClipRequest,
     EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest, MediaInfo, Member, Message,
-    MuteTarget, PostQuoteRequest, QotyEvent, RecoveryCodesResponse, Server, SetMuteRequest,
-    StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus, User,
+    MuteTarget, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse, Server,
+    SetMuteRequest, StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus,
+    UpdateProfileRequest, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
 
-use crate::api::{Api, ApiError, LoginOutcome, MfaOutcome, check_server_url};
+use crate::api::{
+    Api, ApiError, CropRect, LoginOutcome, MfaOutcome, ProfileMediaKind, check_server_url,
+};
 use crate::gateway::{Boot, ConnState, GatewayHandle, GatewayUpdate};
 use crate::qr::QrMatrix;
 use crate::session::Store;
@@ -1396,6 +1399,88 @@ pub async fn upload_emoji_media(
     core.check(&app, api.upload_emoji_media(&token, bytes.clone()).await)
 }
 
+// ---------- Profiles ----------
+
+#[tauri::command]
+pub async fn get_profile(
+    app: AppHandle,
+    core: State<'_, Core>,
+    user_id: UserId,
+) -> Result<Profile, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.profile(&token, user_id).await)
+}
+
+#[tauri::command]
+pub async fn update_profile(
+    app: AppHandle,
+    core: State<'_, Core>,
+    request: UpdateProfileRequest,
+) -> Result<Profile, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.update_profile(&token, &request).await)
+}
+
+/// The `x-pulse-crop` header is `x,y,w,h`; absent means no crop.
+fn parse_crop(header: Option<&str>) -> Result<Option<CropRect>, ApiError> {
+    let Some(h) = header else { return Ok(None) };
+    let bad = || ApiError::Rejected("bad crop".into());
+    let n = h
+        .split(',')
+        .map(|p| p.trim().parse::<u32>().map_err(|_| bad()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let [x, y, w, h] = n[..] else {
+        return Err(bad());
+    };
+    Ok(Some(CropRect { x, y, w, h }))
+}
+
+/// The raw file is the body, as for `upload_emoji_media`; the crop rides in `x-pulse-crop`.
+async fn upload_profile_media(
+    app: AppHandle,
+    core: State<'_, Core>,
+    request: tauri::ipc::Request<'_>,
+    kind: ProfileMediaKind,
+) -> Result<MediaInfo, ApiError> {
+    let tauri::ipc::InvokeBody::Raw(bytes) = request.body() else {
+        return Err(ApiError::Rejected("expected the file's bytes".into()));
+    };
+    let crop = parse_crop(
+        request
+            .headers()
+            .get("x-pulse-crop")
+            .map(|v| {
+                v.to_str()
+                    .map_err(|_| ApiError::Rejected("bad crop".into()))
+            })
+            .transpose()?,
+    )?;
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.upload_profile_media(&token, kind, bytes.clone(), crop)
+            .await,
+    )
+}
+
+#[tauri::command]
+pub async fn upload_avatar_media(
+    app: AppHandle,
+    core: State<'_, Core>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<MediaInfo, ApiError> {
+    upload_profile_media(app, core, request, ProfileMediaKind::Avatar).await
+}
+
+#[tauri::command]
+pub async fn upload_banner_media(
+    app: AppHandle,
+    core: State<'_, Core>,
+    request: tauri::ipc::Request<'_>,
+) -> Result<MediaInfo, ApiError> {
+    upload_profile_media(app, core, request, ProfileMediaKind::Banner).await
+}
+
 #[tauri::command]
 pub async fn create_emoji(
     app: AppHandle,
@@ -2044,6 +2129,25 @@ pub async fn reopen_qoty(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn crop_header_parses() {
+        assert_eq!(
+            parse_crop(Some("1,2,3,4")).unwrap(),
+            Some(CropRect {
+                x: 1,
+                y: 2,
+                w: 3,
+                h: 4
+            })
+        );
+        assert_eq!(parse_crop(None).unwrap(), None);
+        assert!(
+            matches!(parse_crop(Some("1,2,x,4")), Err(ApiError::Rejected(m)) if m == "bad crop")
+        );
+        assert!(parse_crop(Some("1,2,3")).is_err());
+        assert!(parse_crop(Some("1,2,3,4,5")).is_err());
+    }
 
     #[test]
     fn a_pending_login_is_replaced_by_the_next_and_cleared_on_demand() {

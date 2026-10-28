@@ -1,6 +1,9 @@
 // Typed wrappers over Tauri commands. The UI never calls the network itself.
 import { invoke } from '@tauri-apps/api/core'
 import type { User } from './protocol/User'
+import type { Profile } from './protocol/Profile'
+import type { UpdateProfileRequest } from './protocol/UpdateProfileRequest'
+import type { CropRect } from './crop'
 import type { Server } from './protocol/Server'
 import type { Channel } from './protocol/Channel'
 import type { Member } from './protocol/Member'
@@ -83,6 +86,11 @@ export type TwoFactorSetup = { secret: string; qr: QrMatrix }
 /** What startup found: signed in, show login, or signed in but the server refused the connection. */
 export type Restored = { status: 'ready'; user: User } | { status: 'logged_out' } | { status: 'refused' }
 
+function uploadProfileMedia(cmd: string, bytes: Uint8Array, crop: CropRect | null) {
+  if (!crop) return invoke<MediaInfo>(cmd, bytes)
+  return invoke<MediaInfo>(cmd, bytes, { headers: { 'x-pulse-crop': `${crop.x},${crop.y},${crop.w},${crop.h}` } })
+}
+
 export const api = {
   createDm: (userIds: string[]) => invoke<Channel>('create_dm', { userIds }),
   addMembers: (channelId: string, userIds: string[]) => invoke<void>('add_members', { channelId, userIds }),
@@ -124,6 +132,11 @@ export const api = {
   sendTyping: (channelId: string) => invoke<void>('send_typing', { channelId }),
   /** The raw file goes as the request body (a JSON number array would be slow at 2 MB). */
   uploadEmojiMedia: (bytes: Uint8Array) => invoke<MediaInfo>('upload_emoji_media', bytes),
+  getProfile: (userId: string) => invoke<Profile>('get_profile', { userId }),
+  updateProfile: (request: UpdateProfileRequest) => invoke<Profile>('update_profile', { request }),
+  /** The raw file is the body; a crop rides in the `x-pulse-crop` header as `x,y,w,h`. */
+  uploadAvatar: (bytes: Uint8Array, crop: CropRect | null) => uploadProfileMedia('upload_avatar_media', bytes, crop),
+  uploadBanner: (bytes: Uint8Array, crop: CropRect | null) => uploadProfileMedia('upload_banner_media', bytes, crop),
   createEmoji: (serverId: string, name: string, mediaHash: string) =>
     invoke<CustomEmoji>('create_emoji', { serverId, name, mediaHash }),
   renameEmoji: (id: string, name: string) => invoke<CustomEmoji>('rename_emoji', { id, name }),

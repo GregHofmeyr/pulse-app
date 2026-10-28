@@ -11,12 +11,13 @@ use pulse_protocol::rest::{
     ConfirmClipRequest, CreateDmRequest, CreateEmojiRequest, CustomEmoji, EditClipRequest,
     EditMessageRequest, EditQuoteRequest, Game, GoLiveRequest, Leaderboard, LinkSpeakerRequest,
     LoginMfaRequest, LoginRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired,
-    MuteTarget, PostQuoteRequest, QotyEvent, QotyVoteRequest, RecoveryCodesResponse,
+    MuteTarget, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse,
     RegisterRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest,
     SendMessageRequest, Server, SessionResponse, SetClipViewRequest, SetMuteRequest,
     StartQotyRequest, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
     ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
-    TwoFactorSetupResponse, TwoFactorStatus, User, VoiceTokenResponse, WatchRequest,
+    TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, User, VoiceTokenResponse,
+    WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -149,6 +150,32 @@ pub fn path_only(url: &reqwest::Url) -> String {
 
 /// What an emoji upload over the server's body limit says.
 pub const TOO_BIG: &str = "Files can be 2 MB at most";
+pub const PROFILE_TOO_BIG: &str = "Profile pictures and banners can be up to 8 MB.";
+
+/// Which profile picture an upload is for: the media route's last segment.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProfileMediaKind {
+    Avatar,
+    Banner,
+}
+
+impl ProfileMediaKind {
+    fn segment(self) -> &'static str {
+        match self {
+            Self::Avatar => "avatar",
+            Self::Banner => "banner",
+        }
+    }
+}
+
+/// The part of the picture to keep, in source pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct CropRect {
+    pub x: u32,
+    pub y: u32,
+    pub w: u32,
+    pub h: u32,
+}
 
 /// The connection was never made: a request with this error certainly didn't arrive.
 pub const CONNECT_FAILED: &str = "couldn't connect";
@@ -975,11 +1002,44 @@ impl Api {
         bytes: Vec<u8>,
         clip: bool,
     ) -> Result<MediaInfo, ApiError> {
+        let url = self.url(&["media", kind])?;
+        self.post_media(token, url, bytes, 45, TOO_BIG, clip).await
+    }
+
+    /// An 8 MB picture and its resize can take a while: 90 s. `crop` is all four numbers or none.
+    pub async fn upload_profile_media(
+        &self,
+        token: &str,
+        kind: ProfileMediaKind,
+        bytes: Vec<u8>,
+        crop: Option<CropRect>,
+    ) -> Result<MediaInfo, ApiError> {
+        let mut url = self.url(&["media", kind.segment()])?;
+        if let Some(c) = crop {
+            url.query_pairs_mut()
+                .append_pair("x", &c.x.to_string())
+                .append_pair("y", &c.y.to_string())
+                .append_pair("w", &c.w.to_string())
+                .append_pair("h", &c.h.to_string());
+        }
+        self.post_media(token, url, bytes, 90, PROFILE_TOO_BIG, false)
+            .await
+    }
+
+    async fn post_media(
+        &self,
+        token: &str,
+        url: reqwest::Url,
+        bytes: Vec<u8>,
+        timeout_secs: u64,
+        too_big: &str,
+        clip: bool,
+    ) -> Result<MediaInfo, ApiError> {
         let r = self
             .http
-            .post(self.url(&["media", kind])?)
+            .post(url)
             .bearer_auth(token)
-            .timeout(Duration::from_secs(45))
+            .timeout(Duration::from_secs(timeout_secs))
             .body(bytes)
             .send()
             .await;
@@ -989,7 +1049,7 @@ impl Api {
         {
             note_version(resp);
             log_failure(Some(path_only(resp.url())), resp.status().as_str());
-            return Err(ApiError::Rejected(TOO_BIG.into()));
+            return Err(ApiError::Rejected(too_big.into()));
         }
         // a clip's poster keeps the server's own 429/503 words, like the other clip calls
         if clip {
@@ -997,6 +1057,33 @@ impl Api {
         } else {
             Self::parse(r).await
         }
+    }
+
+    pub async fn profile(&self, token: &str, user: UserId) -> Result<Profile, ApiError> {
+        Self::parse(
+            self.http
+                .get(self.url(&["users", &user.to_string(), "profile"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn update_profile(
+        &self,
+        token: &str,
+        req: &UpdateProfileRequest,
+    ) -> Result<Profile, ApiError> {
+        Self::parse(
+            self.http
+                .put(self.url(&["me", "profile"])?)
+                .bearer_auth(token)
+                .json(req)
+                .send()
+                .await,
+        )
+        .await
     }
 
     pub async fn media(&self, token: &str, hash: &str) -> Result<Vec<u8>, ApiError> {
@@ -3079,6 +3166,66 @@ mod tests {
             .await
             .unwrap_err();
         assert_eq!(err.to_string(), TOO_BIG);
+    }
+
+    #[tokio::test]
+    async fn a_profile_round_trips_through_the_core() {
+        let app = testing::spawn().await;
+        let (me, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let crop = CropRect {
+            x: 0,
+            y: 0,
+            w: 1,
+            h: 1,
+        };
+        let avatar = api
+            .upload_profile_media(
+                &token,
+                ProfileMediaKind::Avatar,
+                crate::media::tests::PNG.to_vec(),
+                Some(crop),
+            )
+            .await
+            .unwrap();
+        let before = api.profile(&token, me).await.unwrap();
+        let saved = api
+            .update_profile(
+                &token,
+                &UpdateProfileRequest {
+                    avatar_hash: Some(avatar.hash.clone()),
+                    banner_hash: None,
+                    theme_top: "#8a3cff".into(),
+                    theme_bottom: "#ff8a2a".into(),
+                    style: before.user.style.clone(),
+                    pronouns: Some("they/them".into()),
+                    bio: Some("hi".into()),
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(saved.card.theme_top, "#8a3cff");
+        let read = api.profile(&token, me).await.unwrap();
+        assert_eq!(read.user.avatar_hash.as_deref(), Some(avatar.hash.as_str()));
+        assert_eq!(read.card.pronouns.as_deref(), Some("they/them"));
+        assert_eq!(read.card.bio.as_deref(), Some("hi"));
+    }
+
+    #[tokio::test]
+    async fn an_oversized_profile_upload_says_8_mb() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let err = api
+            .upload_profile_media(
+                &token,
+                ProfileMediaKind::Banner,
+                vec![0; 9 * 1024 * 1024],
+                None,
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), PROFILE_TOO_BIG);
     }
 
     #[tokio::test]
