@@ -45,6 +45,23 @@ describe('text helpers', () => {
     expect(stripMarks('the dogs\'')).toBe('the dogs\'')
     expect(stripMarks('  “ hi ”  ')).toBe('hi')
   })
+  it('stripMarks takes one matching pair that wraps the whole text, as the server does', () => {
+    const cases: [string, string][] = [
+      ['“x"', '“x"'],
+      ["'x\"", "'x\""],
+      ['"Yes" and "no"', '"Yes" and "no"'],
+      ['“Yes” and “no”', '“Yes” and “no”'],
+      ['""x""', '""x""'],
+      ['“He said ‘hi’”', 'He said ‘hi’'],
+      ['“‘x’”', '‘x’'],
+      ["'don't do that'", "don't do that"],
+      ['‘don’t’', 'don’t'],
+      ['«x»', 'x'],
+      ['“”', ''],
+      ['"', '"'],
+    ]
+    for (const [text, want] of cases) expect(stripMarks(text), text).toBe(want)
+  })
 })
 
 describe('speakerOf', () => {

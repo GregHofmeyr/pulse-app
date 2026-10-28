@@ -15,18 +15,26 @@ export function nameKey(name: string): string {
   return name.split(WHITE_SPACE).filter(Boolean).join(' ').toLowerCase()
 }
 
-const MARKS = '"“”\'‘’«»'
-const isMark = (c: string) => MARKS.includes(c)
+/** Quote marks that wrap a line, opening mark to closing mark (the server's `QUOTE_PAIRS`). */
+const PAIRS: Record<string, string> = { '"': '"', '“': '”', '‘': '’', "'": "'", '«': '»' }
+const WORD = /[\p{Alphabetic}\p{N}]/u // Rust's char::is_alphanumeric
+const trimWs = (s: string) => s.replace(new RegExp(`^${WHITE_SPACE.source}|${WHITE_SPACE.source}$`, 'g'), '')
 
-/** Line text without its surrounding quote marks, as the server stores it: only when both ends carry one. */
+/** Line text as the server stores it: trimmed, and without the one matching pair of quote marks
+ *  that wraps it, if any. A pair wraps the text only if the opening mark's first closing mark is
+ *  the last character (so `"Yes" and "no"` keeps its marks); an apostrophe inside a word (`don't`)
+ *  doesn't close a single quote. */
 export function stripMarks(text: string): string {
-  const t = text.trim()
-  if (t.length < 2 || !isMark(t[0]) || !isMark(t[t.length - 1])) return t
-  let a = 0
-  let b = t.length
-  while (a < b && isMark(t[a])) a++
-  while (b > a && isMark(t[b - 1])) b--
-  return t.slice(a, b).trim()
+  const t = trimWs(text)
+  const cs = [...t]
+  const close = PAIRS[cs[0]]
+  if (!close) return t
+  const word = (i: number) => i < cs.length && WORD.test(cs[i])
+  for (let i = 1; i < cs.length; i++) {
+    if (cs[i] !== close || ((close === "'" || close === '’') && word(i - 1) && word(i + 1))) continue
+    return i === cs.length - 1 ? trimWs(cs.slice(1, -1).join('')) : t
+  }
+  return t
 }
 
 /** Who a line is credited to now: its member, or the member a plain name is linked to, else the plain name. */

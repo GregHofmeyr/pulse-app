@@ -32,7 +32,9 @@ pub fn clean_name(name: &str) -> AppResult<&str> {
     Ok(name)
 }
 
-const QUOTE_MARKS: [char; 8] = ['"', '“', '”', '\'', '‘', '’', '«', '»'];
+/// Quote marks that wrap a line, as (opening, closing) pairs.
+const QUOTE_PAIRS: [(char, char); 5] =
+    [('"', '"'), ('“', '”'), ('‘', '’'), ('\'', '\''), ('«', '»')];
 
 /// What a plain speaker name is matched on: Unicode lowercase, trimmed, whitespace runs as one space.
 pub fn name_key(name: &str) -> String {
@@ -42,19 +44,16 @@ pub fn name_key(name: &str) -> String {
         .to_lowercase()
 }
 
-/// Line text as stored: trimmed, and when both ends carry quote marks, the leading and the
-/// trailing run of them removed. One-sided marks are part of the text (`'tis great`, `the dogs'`).
-/// 1..=[`MAX_LEN`] characters.
+/// Line text as stored: trimmed, and when it is wrapped in one matching pair of quote marks,
+/// that pair removed (one mark from each end). A pair wraps the text only if the opening mark's
+/// first closing mark is the last character, so inner quotes (`"Yes" and "no"`) and one-sided
+/// marks (`'tis great`, `the dogs'`) are part of the text. An apostrophe inside a word (`don't`)
+/// doesn't close a single quote. 1..=[`MAX_LEN`] characters.
 pub fn clean_text(s: &str) -> AppResult<String> {
-    let is_mark = |c: char| QUOTE_MARKS.contains(&c);
     let t = s.trim();
-    let wrapped = t.chars().count() > 1
-        && t.chars().next().is_some_and(is_mark)
-        && t.chars().next_back().is_some_and(is_mark);
-    let t = if wrapped {
-        t.trim_matches(is_mark).trim()
-    } else {
-        t
+    let t = match unwrap_pair(t) {
+        Some(inner) => inner.trim(),
+        None => t,
     };
     if t.is_empty() || t.chars().count() > MAX_LEN {
         return Err(AppError::BadRequest(format!(
@@ -62,6 +61,19 @@ pub fn clean_text(s: &str) -> AppResult<String> {
         )));
     }
     Ok(t.to_string())
+}
+
+/// `t` without its wrapping pair of quote marks, if it has one (see [`clean_text`]).
+fn unwrap_pair(t: &str) -> Option<&str> {
+    let chars: Vec<(usize, char)> = t.char_indices().collect();
+    let &(_, open) = chars.first()?;
+    let &(last_at, _) = chars.last()?;
+    let close = QUOTE_PAIRS.iter().find(|(o, _)| *o == open)?.1;
+    let word = |i: usize| chars.get(i).is_some_and(|(_, c)| c.is_alphanumeric());
+    let first_close = (1..chars.len()).find(|&i| {
+        chars[i].1 == close && !(matches!(close, '\'' | '’') && word(i - 1) && word(i + 1))
+    })?;
+    (first_close == chars.len() - 1).then(|| &t[open.len_utf8()..last_at])
 }
 
 /// A validated line, ready to store. `id` is the client's, for edits of existing lines.
@@ -660,15 +672,7 @@ mod tests {
 
     #[test]
     fn clean_text_strips_surrounding_marks_only() {
-        for s in [
-            "\"x\"",
-            "“x”",
-            "'x'",
-            "‘x’",
-            "«x»",
-            "  “ x ”  ",
-            "\"\"x\"\"",
-        ] {
+        for s in ["\"x\"", "“x”", "'x'", "‘x’", "«x»", "  “ x ”  "] {
             assert_eq!(clean_text(s).unwrap(), "x", "{s}");
         }
         assert_eq!(
@@ -678,10 +682,31 @@ mod tests {
         assert_eq!(clean_text("'tis great").unwrap(), "'tis great");
         assert_eq!(clean_text("the dogs'").unwrap(), "the dogs'");
         assert_eq!(clean_text("\"").unwrap(), "\"");
-        assert_eq!(clean_text("“x\"").unwrap(), "x");
         assert!(clean_text("  ").is_err());
         assert!(clean_text("“”").is_err());
         assert!(clean_text(&"a".repeat(MAX_LEN)).is_ok());
         assert!(clean_text(&"a".repeat(MAX_LEN + 1)).is_err());
+    }
+
+    /// One mark from each end, only for a pair that opens and closes the whole text (M6).
+    #[test]
+    fn clean_text_strips_one_matching_pair() {
+        for (s, want) in [
+            // Not a pair: kept as typed.
+            ("“x\"", "“x\""),
+            ("'x\"", "'x\""),
+            // The first mark closes before the end: these are inner quotes, not a wrapper.
+            ("\"Yes\" and \"no\"", "\"Yes\" and \"no\""),
+            ("“Yes” and “no”", "“Yes” and “no”"),
+            ("\"\"x\"\"", "\"\"x\"\""),
+            // Only one pair goes; marks inside stay.
+            ("“He said ‘hi’”", "He said ‘hi’"),
+            ("“‘x’”", "‘x’"),
+            // An apostrophe inside a word doesn't close a single quote.
+            ("'don't do that'", "don't do that"),
+            ("‘don’t’", "don’t"),
+        ] {
+            assert_eq!(clean_text(s).unwrap(), want, "{s}");
+        }
     }
 }
