@@ -308,13 +308,20 @@
     repliesOpener = null
     await tick()
     // The opener; else (a click that didn't focus it, or it's gone since, like the unsent-reply marker
-    // while its panel was open) the quote's marker or first line; else (the quote is gone) the new-quote box (hidden while an edit is open: then nowhere).
+    // while its panel was open) the quote's marker or first line; else (the quote is gone) the new-quote
+    // box; else (an edit hides it) that edit box if its quote is still there; else the message list.
     const quote = `[data-message-id="${id}"]`
     const back = (opener?.isConnected ? opener : null)
       ?? list?.querySelector<HTMLElement>(`${quote} .unsent-reply`)
       ?? list?.querySelector<HTMLElement>(`${quote} .line`)
-      ?? chan?.querySelector<HTMLElement>('.new-quote:not([hidden]) textarea.qtext') // never an edit box: that's another quote
+      ?? chan?.querySelector<HTMLElement>('.new-quote:not([hidden]) textarea.qtext')
+      ?? (editedAlive() ? chan?.querySelector<HTMLElement>('.edit-quote textarea.qtext') : null)
+      ?? list
     back?.focus()
+  }
+  function editedAlive() {
+    const q = editingQuote && (byId.get(editingQuote.id) ?? editingQuote)
+    return !!q && !q.deleted
   }
   // A deleted quote's thread is gone: its panel closes (unsent replies to it were dropped with it). The
   // focus moves on only if it was in the panel; elsewhere it is left alone.
@@ -415,7 +422,8 @@
       <ConversationMenu {channel} {muted} show={menu} onClose={() => (menu = null)} onRename={startRename} {onLeft} />
     {/if}
   </div>
-  <div class="list" bind:this={list} onscroll={onScroll}>
+  <!-- tabindex -1: a place to put the focus back when nothing better is left (not a tab stop) -->
+  <div class="list" tabindex="-1" bind:this={list} onscroll={onScroll}>
     {#if reachedStart}<div class="start">
       {#if channel?.kind === 'dm'}This is the start of your conversation with {title}.
       {:else if channel?.kind === 'group'}This is the start of {title}.
@@ -460,7 +468,7 @@
     {/key}
     {#if editingQuote}
       {#key editingQuote.id}
-        <QuoteComposer {channelId} serverId={serverId ?? ''} editing={editingQuote} onDone={() => (editingQuote = null)} />
+        <div class="edit-quote"><QuoteComposer {channelId} serverId={serverId ?? ''} editing={editingQuote} onDone={() => (editingQuote = null)} /></div>
       {/key}
     {/if}
   {:else}
@@ -496,6 +504,7 @@
   .newline::before, .newline::after { content: ''; flex: 1; height: 1px; background: var(--danger); opacity: .6; }
   .jump { align-self: center; margin-top: -40px; position: relative; z-index: 2; padding: 6px 12px; border: 0; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; box-shadow: 0 4px 14px rgba(0, 0, 0, .35); }
   .list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 0 8px; display: flex; flex-direction: column; }
+  .list:focus { outline: none; } /* focused only from code, as a fallback: no ring */
   .start { padding: 16px 18px; color: var(--text-3); font-size: 13px; }
   .typing { height: 22px; padding: 0 18px; font-size: 12px; color: var(--text-3); }
   .typing strong { color: var(--text); }

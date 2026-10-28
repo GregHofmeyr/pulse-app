@@ -418,10 +418,11 @@ describe('TextChannel: quotes channel', () => {
     expect(document.activeElement?.closest('.qc')?.parentElement?.hasAttribute('hidden')).toBe(false)
   })
 
-  it("r2: a deleted quote's panel never hands the focus to another quote's edit box", async () => {
-    const q2: Message = { ...quoteMsg, id: 'M0002' }
-    show('quotes', [quoteMsg, q2])
-    document.querySelector<HTMLButtonElement>('.list .quote[data-message-id="M0002"] button[aria-label="Edit"]')!.click() // editing M0002
+  // While an edit is open the new-quote box is hidden: the focus goes to that edit box if its quote is
+  // still there, else to the message list.
+  const deleteUnderPanel = async (editing: string) => {
+    show('quotes', [quoteMsg, { ...quoteMsg, id: 'M0002' }])
+    document.querySelector<HTMLButtonElement>(`.list .quote[data-message-id="${editing}"] button[aria-label="Edit"]`)!.click()
     flushSync()
     document.querySelector<HTMLButtonElement>('.list .quote[data-message-id="M0001"] button[aria-label="Reply"]')!.click()
     flushSync()
@@ -431,9 +432,19 @@ describe('TextChannel: quotes channel', () => {
     flushSync()
     await settled()
     expect(document.querySelector('.replies-panel')).toBeNull()
-    const edit = [...document.querySelectorAll('.qc')].find((c) => !c.closest('[hidden]') && c.querySelector<HTMLTextAreaElement>('textarea.qtext')?.value === 'hi')!
-    expect(edit).toBeTruthy() // the edit box is open
-    expect(edit.contains(document.activeElement)).toBe(false)
+  }
+  const editBox = () => [...document.querySelectorAll('.qc')].find((c) => !c.closest('[hidden]'))!
+
+  it("r3: a deleted quote's panel hands the focus to the open edit box of a quote that's still there", async () => {
+    await deleteUnderPanel('M0002')
+    expect(document.activeElement).toBe(editBox().querySelector('textarea.qtext'))
+  })
+
+  it("r3: editing the deleted quote itself, the focus goes to the message list", async () => {
+    await deleteUnderPanel('M0001')
+    const list = document.querySelector<HTMLElement>('.list')!
+    expect(document.activeElement).toBe(list)
+    expect(list.getAttribute('tabindex')).toBe('-1') // focusable from code, not a tab stop
   })
 
   it("r1 m5: a quote deleted while the focus is outside its panel leaves the focus alone", async () => {
