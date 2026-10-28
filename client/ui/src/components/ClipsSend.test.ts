@@ -70,8 +70,12 @@ async function show() {
   await settle()
   flushSync()
 }
-async function dragEvent(e: DragDrop) {
-  drag.handler!({ payload: { ...e, position: { x: 10, y: 10 } } })
+// What is under the pointer (jsdom lays nothing out; the channel unless a test says otherwise), and the points asked.
+let under: () => Element | null = () => chan()
+const pointed: [number, number][] = []
+Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: (x: number, y: number) => { pointed.push([x, y]); return under() } })
+async function dragEvent(e: DragDrop, position = { x: 10, y: 10 }) {
+  drag.handler!({ payload: { ...e, position } })
   flushSync()
   await settle()
   await settle()
@@ -83,6 +87,9 @@ beforeEach(() => {
   picked = null
   opens = async () => source
   drag.handler = null
+  under = () => chan()
+  pointed.length = 0
+  Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 })
   invoke.mockReset()
   invoke.mockImplementation(async (cmd: string) => {
     if (cmd === 'list_clips') return [clip('M2'), clip('M1')]
@@ -134,6 +141,78 @@ describe('ClipsSend', () => {
     cmp = undefined
     await settle()
     expect(drag.handler).toBeNull()
+  })
+
+  // A file dropped anywhere else in the window (the sidebar, or a modal over the channel) is not a clip to share.
+  const VIDEO = '/home/alex/Videos/Apex/replay.mp4'
+  async function dragOverAndDrop() {
+    await dragEvent({ type: 'enter', paths: [VIDEO] })
+    await dragEvent({ type: 'over' })
+    const lit = !!chan().querySelector('.drop-zone')
+    await dragEvent({ type: 'drop', paths: [VIDEO] })
+    return lit
+  }
+  const settingsModal = () => {
+    const o = document.createElement('div')
+    o.innerHTML = '<div class="backdrop" data-backdrop></div><div role="dialog" aria-modal="true" aria-label="Settings"><button>Close</button></div>'
+    document.body.appendChild(o)
+    return o
+  }
+
+  it('a drop outside the channel does nothing', async () => {
+    await show()
+    const sidebar = document.body.appendChild(document.createElement('nav'))
+    under = () => sidebar
+    expect(await dragOverAndDrop()).toBe(false)
+    expect(calls('clip_support')).toHaveLength(0)
+    expect(calls('open_clip')).toHaveLength(0)
+    expect(editor()).toBeNull()
+  })
+
+  it('a drop on a modal over the channel (settings) does nothing', async () => {
+    await show()
+    const m = settingsModal()
+    under = () => m.querySelector('button')
+    expect(await dragOverAndDrop()).toBe(false)
+    under = () => m.querySelector('[data-backdrop]')
+    expect(await dragOverAndDrop()).toBe(false)
+    expect(calls('open_clip')).toHaveLength(0)
+  })
+
+  it('while a modal is open, even a point on the channel takes no drop', async () => {
+    await show()
+    settingsModal()
+    expect(await dragOverAndDrop()).toBe(false)
+    expect(calls('open_clip')).toHaveLength(0)
+  })
+
+  it("a modal opened from inside the channel (a clip's Edit) takes no drop", async () => {
+    await show()
+    const o = chan().appendChild(document.createElement('div'))
+    o.innerHTML = '<div class="backdrop" data-backdrop></div><div role="dialog" aria-modal="true" aria-label="Edit clip"><input /></div>'
+    under = () => o.querySelector('[data-backdrop]')
+    expect(await dragOverAndDrop()).toBe(false)
+    under = () => o.querySelector('input')
+    expect(await dragOverAndDrop()).toBe(false)
+    expect(calls('open_clip')).toHaveLength(0)
+  })
+
+  it('the drop position is taken from physical to CSS pixels', async () => {
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 2 })
+    await show()
+    await dragEvent({ type: 'drop', paths: [VIDEO] }, { x: 40, y: 20 })
+    expect(pointed.at(-1)).toEqual([20, 10])
+    expect(calls('open_clip')).toEqual([['open_clip', { path: VIDEO }]])
+  })
+
+  it('a drop on the open share editor still says one at a time', async () => {
+    await show()
+    await dragEvent({ type: 'drop', paths: [VIDEO] })
+    expect(editor()).not.toBeNull()
+    under = () => editor()
+    await dragEvent({ type: 'drop', paths: ['/v/second.mp4'] })
+    expect(calls('open_clip')).toHaveLength(1)
+    expect(document.body.textContent).toContain('One clip at a time.')
   })
 
   it('two files open the first and say one at a time', async () => {

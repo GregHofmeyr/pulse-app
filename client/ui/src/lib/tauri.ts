@@ -163,6 +163,9 @@ export const api = {
   listMessagesAfter: (channelId: string, messageId: string) => invoke<Message[]>('list_messages_after', { channelId, messageId }),
   /** The raw file goes as the request body, as for `uploadEmojiMedia`. */
   uploadQuoteMedia: (bytes: Uint8Array) => invoke<MediaInfo>('upload_quote_media', bytes),
+  /** Files dropped on a quote line (Tauri gives only their paths): the first image's bytes, read by the core with the
+   *  same limits as an upload; none an image, or too big, is refused in the server's words. */
+  readQuoteImage: async (paths: string[]) => new Uint8Array(await invoke<ArrayBuffer>('read_quote_image', { paths })),
   postQuote: (channelId: string, body: PostQuoteRequest) => invoke<Message>('post_quote', { channelId, body }),
   editQuote: (messageId: string, body: EditQuoteRequest) => invoke<Message>('edit_quote', { messageId, body }),
   /** Newest first; `before` pages back. */

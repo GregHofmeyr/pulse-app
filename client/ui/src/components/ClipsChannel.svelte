@@ -162,8 +162,20 @@
     }
   }
 
-  // Files dragged over the window: the channel lights up, and a drop opens the first one.
+  // Files dragged over the channel: it lights up, and a drop opens the first one. Tauri reports every file drag over the
+  // window (its position in physical pixels), so only one whose point is on this channel counts: not the sidebar, and
+  // not a modal on top (settings, a clip's Edit). One on our own share editor still counts, so it says one at a time.
   let dragging = $state(false)
+  let editorHost = $state<HTMLElement>()
+  function onChannel(pos: { x: number; y: number }): boolean {
+    const scale = window.devicePixelRatio || 1
+    const el = document.elementFromPoint(pos.x / scale, pos.y / scale)
+    if (!el) return false
+    if (editorHost?.contains(el)) return true
+    if (!chan?.contains(el)) return false
+    // any other modal open (each has its backdrop over the whole window) takes the drop away from the channel
+    return ![...document.querySelectorAll('[aria-modal="true"]')].some((m) => !editorHost?.contains(m))
+  }
   $effect(() => {
     let off: (() => void) | null = null
     let gone = false
@@ -171,11 +183,11 @@
       void getCurrentWebview()
         .onDragDropEvent((e) => {
           const p = e.payload
-          if (p.type === 'enter' || p.type === 'over') dragging = !source
+          if (p.type === 'enter' || p.type === 'over') dragging = !source && onChannel(p.position)
           else if (p.type === 'leave') dragging = false
           else if (p.type === 'drop') {
             dragging = false
-            void dropped(p.paths)
+            if (onChannel(p.position)) void dropped(p.paths)
           }
         })
         .then((f) => (gone ? f() : (off = f)), () => {})
@@ -207,17 +219,20 @@
   {#if dragging}<div class="drop-zone" aria-hidden="true"><span>Drop a video to share it</span></div>{/if}
   {#if notice.text}<p class="notice" role="status">{notice.text}</p>{/if}
 </div>
-{#if source}
-  {#key source.id}
-    <ClipEditor {source} {channelId} {serverId} onClose={() => (source = null)} />
-  {/key}
-{/if}
+<div class="editor-host" bind:this={editorHost}>
+  {#if source}
+    {#key source.id}
+      <ClipEditor {source} {channelId} {serverId} onClose={() => (source = null)} />
+    {/key}
+  {/if}
+</div>
 
 <style>
   .chan { flex: 1; display: flex; flex-direction: column; min-height: 0; }
   /* the replies panel sits on the right (RepliesPanel, absolutely placed); the channel keeps the rest */
   .chan { position: relative; --replies-w: min(380px, 45%); }
   .chan.with-replies { padding-right: var(--replies-w); }
+  .editor-host { display: contents; }
   .drop-zone { position: absolute; inset: 8px; z-index: 4; display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: 14px; background: color-mix(in srgb, var(--bg-1) 80%, transparent); pointer-events: none; }
   .drop-zone span { padding: 8px 16px; border-radius: 10px; background: var(--bg-2); color: var(--text); font-size: 15px; font-weight: 600; }
   .notice { position: absolute; left: 50%; bottom: 72px; transform: translateX(-50%); z-index: 5; margin: 0; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, .3); max-width: 80%; }

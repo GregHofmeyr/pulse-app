@@ -233,6 +233,53 @@ pub fn clear_webview_cache(app: &AppHandle) {
 }
 
 /// Written aside, then renamed: a reader never sees half a file.
+/// The image types a quote line takes: the image picker's own list (PNG, JPEG, GIF, WebP).
+pub const IMAGE_EXTENSIONS: [&str; 5] = ["png", "jpg", "jpeg", "gif", "webp"];
+/// The server's limit on an uploaded image (`media::process::MAX_INPUT`).
+pub const MAX_IMAGE_BYTES: u64 = 2 * 1024 * 1024;
+/// The server's own words for a file it can't take as an image.
+pub const NOT_AN_IMAGE: &str = "that isn't a supported image: use PNG, JPEG, GIF or WebP";
+pub const UNREADABLE_IMAGE: &str = "Pulse couldn't read that file.";
+
+fn is_image_name(path: &Path) -> bool {
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| IMAGE_EXTENSIONS.contains(&e.to_ascii_lowercase().as_str()))
+}
+
+/// Several files dropped at once: the first that is an image by name (as a paste or a drop in a
+/// browser takes the first image file), if any.
+pub fn first_image(paths: &[PathBuf]) -> Option<&Path> {
+    paths
+        .iter()
+        .map(PathBuf::as_path)
+        .find(|p| is_image_name(p))
+}
+
+/// A file dropped on a quote line (the webview gets only its path, so the core reads it). Only an
+/// image by name, and no bigger than the server takes: anything larger is refused unread, in the
+/// words the upload itself would use.
+pub fn read_quote_image(path: &Path) -> Result<Vec<u8>, ApiError> {
+    use std::io::Read;
+    if !is_image_name(path) {
+        return Err(ApiError::Rejected(NOT_AN_IMAGE.into()));
+    }
+    let unreadable = || ApiError::Rejected(UNREADABLE_IMAGE.into());
+    if !path.is_absolute() || !path.is_file() {
+        return Err(unreadable());
+    }
+    let file = std::fs::File::open(path).map_err(|_| unreadable())?;
+    let mut bytes = Vec::new();
+    // bounded: a file that grew past the limit after it was checked is still not read whole
+    file.take(MAX_IMAGE_BYTES + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| unreadable())?;
+    if bytes.len() as u64 > MAX_IMAGE_BYTES {
+        return Err(ApiError::Rejected(crate::api::TOO_BIG.into()));
+    }
+    Ok(bytes)
+}
+
 async fn store(file: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = file.parent().expect("sharded path");
     tokio::fs::create_dir_all(dir).await?;
@@ -259,6 +306,77 @@ pub(crate) mod tests {
             cache: cache.map(Path::to_path_buf),
             alive: Arc::new(AtomicBool::new(true)),
         })
+    }
+
+    // A file dropped on a quote line: the core reads it (the webview only gets its path).
+    #[test]
+    fn a_dropped_image_is_read_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let png = dir.path().join("cat.png");
+        std::fs::write(&png, PNG).unwrap();
+        assert_eq!(read_quote_image(&png).unwrap(), PNG);
+        let jpg = dir.path().join("CAT.JPEG");
+        std::fs::write(&jpg, b"jpeg bytes").unwrap();
+        assert_eq!(read_quote_image(&jpg).unwrap(), b"jpeg bytes");
+    }
+
+    #[test]
+    fn of_several_dropped_files_the_first_image_is_taken() {
+        let p = |s: &str| PathBuf::from(s);
+        let dropped = [p("/x/notes.txt"), p("/x/cat.PNG"), p("/x/dog.png")];
+        assert_eq!(first_image(&dropped), Some(p("/x/cat.PNG").as_path()));
+        assert_eq!(first_image(&[p("/x/notes.txt"), p("/x/clip.mp4")]), None);
+        assert_eq!(first_image(&[]), None);
+    }
+
+    #[test]
+    fn a_dropped_file_that_isnt_an_image_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in ["notes.txt", "clip.mp4", "no-extension", "cat.png.exe"] {
+            let f = dir.path().join(name);
+            std::fs::write(&f, b"x").unwrap();
+            assert_eq!(
+                read_quote_image(&f).unwrap_err().to_string(),
+                NOT_AN_IMAGE,
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_dropped_image_over_the_limit_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let f = dir.path().join("big.png");
+        std::fs::write(&f, vec![0u8; MAX_IMAGE_BYTES as usize + 1]).unwrap();
+        assert_eq!(
+            read_quote_image(&f).unwrap_err().to_string(),
+            crate::api::TOO_BIG
+        );
+        let ok = dir.path().join("edge.png");
+        std::fs::write(&ok, vec![0u8; MAX_IMAGE_BYTES as usize]).unwrap();
+        assert_eq!(
+            read_quote_image(&ok).unwrap().len(),
+            MAX_IMAGE_BYTES as usize
+        );
+    }
+
+    #[test]
+    fn a_missing_relative_or_folder_path_is_unreadable() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("pics.png");
+        std::fs::create_dir(&folder).unwrap();
+        for p in [
+            dir.path().join("gone.png"),
+            PathBuf::from("cat.png"),
+            folder,
+        ] {
+            assert_eq!(
+                read_quote_image(&p).unwrap_err().to_string(),
+                UNREADABLE_IMAGE,
+                "{}",
+                p.display()
+            );
+        }
     }
 
     #[test]

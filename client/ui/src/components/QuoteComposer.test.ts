@@ -7,6 +7,17 @@ import { fakeMatchMedia, FakeIntersectionObserver } from '../lib/testMotion'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
+// Files dropped on the window come as Tauri drag-drop events (paths and a physical position), never as HTML5 drops.
+type DragHandler = (e: { payload: unknown }) => void
+const drag = vi.hoisted(() => ({ handlers: [] as ((e: { payload: unknown }) => void)[] }))
+vi.mock('@tauri-apps/api/webview', () => ({
+  getCurrentWebview: () => ({
+    onDragDropEvent: async (fn: DragHandler) => {
+      drag.handlers.push(fn)
+      return () => { drag.handlers = drag.handlers.filter((h) => h !== fn) }
+    },
+  }),
+}))
 vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
 vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 
@@ -52,7 +63,30 @@ const paste = (el: HTMLElement, f: File) => {
   el.dispatchEvent(ev); flushSync()
 }
 
-beforeEach(() => { invoke.mockReset(); invoke.mockResolvedValue(undefined); onDone.mockClear() })
+// What is under the pointer (jsdom lays nothing out), and the points asked about.
+let under: Element | null = null
+const pointed: [number, number][] = []
+Object.defineProperty(document, 'elementFromPoint', { configurable: true, value: (x: number, y: number) => { pointed.push([x, y]); return under } })
+const CAT = '/home/alex/Pictures/cat.png'
+const dragTo = (el: Element | null, type: 'enter' | 'over', position = { x: 10, y: 10 }, paths = [CAT]) => {
+  under = el
+  for (const h of [...drag.handlers]) h({ payload: type === 'enter' ? { type, paths, position } : { type, position } })
+  flushSync()
+}
+const fireDrag = (payload: Record<string, unknown>) => { for (const h of [...drag.handlers]) h({ payload }); flushSync() }
+async function dropOn(el: Element | null, paths = [CAT], position = { x: 10, y: 10 }) {
+  dragTo(el, 'enter', position, paths)
+  dragTo(el, 'over', position)
+  fireDrag({ type: 'drop', paths, position })
+  await settle(); await settle(); flushSync()
+}
+const lit = () => rows().map((r) => r.classList.contains('drop'))
+
+beforeEach(() => {
+  invoke.mockReset(); invoke.mockResolvedValue(undefined); onDone.mockClear()
+  under = null; pointed.length = 0
+  Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1 })
+})
 afterEach(() => { if (cmp) unmount(cmp); cmp = undefined; document.body.innerHTML = '' })
 
 const eline = (over: Partial<QuoteLine> = {}): QuoteLine => ({
@@ -222,13 +256,92 @@ describe('QuoteComposer', () => {
   })
 
   const uploaded = { hash: H, content_type: 'image/webp', width: 10, height: 10, frames: 1, animated: false, still_hash: null }
-  it('a dropped image uploads', async () => {
-    invoke.mockImplementation(async (cmd) => (cmd === 'upload_quote_media' ? uploaded : undefined))
+  const dropped = new Uint8Array([7, 8, 9]).buffer
+  const readsAndUploads = (cmd: string) => (cmd === 'read_quote_image' ? dropped : cmd === 'upload_quote_media' ? uploaded : undefined)
+  it('a dropped image file is read by the core and uploads', async () => {
+    invoke.mockImplementation(async (cmd) => readsAndUploads(cmd))
     show()
-    const ev = Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer: { files: [imageFile()], types: ['Files'] } })
-    rows()[0].dispatchEvent(ev); await settle(); flushSync()
+    await dropOn(textOf(0))
+    expect(calls('read_quote_image')).toEqual([['read_quote_image', { paths: [CAT] }]])
     expect(calls('upload_quote_media')).toHaveLength(1)
+    expect([...(calls('upload_quote_media')[0][1] as Uint8Array)]).toEqual([7, 8, 9])
     expect(rows()[0].querySelector('img.thumb')).not.toBeNull()
+  })
+
+  it('a drop lands on the line under the pointer, its position taken from physical to CSS pixels', async () => {
+    invoke.mockImplementation(async (cmd) => readsAndUploads(cmd))
+    Object.defineProperty(window, 'devicePixelRatio', { configurable: true, value: 1.5 })
+    show()
+    addLine()
+    await dropOn(whoOf(1), [CAT], { x: 300, y: 120 })
+    expect(pointed.at(-1)).toEqual([200, 80])
+    expect(rows()[0].querySelector('img.thumb')).toBeNull()
+    expect(rows()[1].querySelector('img.thumb')).not.toBeNull()
+  })
+
+  it('a drop off the lines does nothing', async () => {
+    invoke.mockImplementation(async (cmd) => readsAndUploads(cmd))
+    show()
+    await dropOn(document.querySelector('button.post'))
+    await dropOn(null)
+    expect(calls('read_quote_image')).toHaveLength(0)
+    expect(rows()[0].querySelector('.err')).toBeNull()
+  })
+
+  it('the line under a file drag lights up, and goes out on leave or drop', async () => {
+    invoke.mockImplementation(async (cmd) => readsAndUploads(cmd))
+    show()
+    addLine()
+    expect(lit()).toEqual([false, false])
+    dragTo(textOf(0), 'enter')
+    expect(lit()).toEqual([true, false])
+    dragTo(whoOf(1), 'over')
+    expect(lit()).toEqual([false, true])
+    dragTo(document.querySelector('button.post'), 'over')
+    expect(lit()).toEqual([false, false])
+    dragTo(textOf(0), 'over')
+    fireDrag({ type: 'leave' })
+    expect(lit()).toEqual([false, false])
+    await dropOn(textOf(1))
+    expect(lit()).toEqual([false, false])
+  })
+
+  it('several files dropped go to the core together (it takes the first image)', async () => {
+    invoke.mockImplementation(async (cmd) => readsAndUploads(cmd))
+    show()
+    const paths = ['/home/alex/notes.txt', CAT, '/home/alex/Pictures/dog.png']
+    await dropOn(textOf(0), paths)
+    expect(calls('read_quote_image')).toEqual([['read_quote_image', { paths }]])
+    expect(calls('upload_quote_media')).toHaveLength(1)
+  })
+
+  it("a dropped file that isn't an image says so on its line, in the core's words, and uploads nothing", async () => {
+    const words = "that isn't a supported image: use PNG, JPEG, GIF or WebP"
+    invoke.mockImplementation(async (cmd) => { if (cmd === 'read_quote_image') throw words; return undefined })
+    show()
+    type(textOf(0), 'keep me')
+    await dropOn(textOf(0), ['/home/alex/notes.txt'])
+    expect(calls('upload_quote_media')).toHaveLength(0)
+    expect(rows()[0].querySelector('.err')!.textContent).toBe(words)
+    expect(textOf(0).value).toBe('keep me')
+    expect(rows()[0].querySelector('.note')).toBeNull()
+  })
+
+  it('with two composers open (new quote and an edit), only the one under the drop takes it', async () => {
+    invoke.mockImplementation(async (cmd) => readsAndUploads(cmd))
+    show()
+    const second = document.createElement('div')
+    document.body.appendChild(second)
+    const other = mount(QuoteComposer, { target: second, props: { channelId: 'C1', serverId: 'S1', editing: quoteMsg([eline()]) } })
+    flushSync()
+    await settle()
+    expect(drag.handlers).toHaveLength(2)
+    await dropOn(second.querySelector('textarea.qtext'))
+    expect(calls('read_quote_image')).toHaveLength(1)
+    expect(second.querySelector('img.thumb')).not.toBeNull()
+    expect(rows()[0].querySelector('img.thumb')).toBeNull()
+    unmount(other)
+    expect(drag.handlers).toHaveLength(1)
   })
 
   it('a picked file uploads', async () => {
@@ -336,8 +449,7 @@ describe('QuoteComposer', () => {
     paste(textOf(0), imageFile()); await settle(); flushSync()
     const cap = () => rows()[0].querySelector<HTMLInputElement>('input.caption')!
     expect(cap().value).toBe('a cat')
-    const ev = Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer: { files: [imageFile()], types: ['Files'] } })
-    rows()[0].dispatchEvent(ev); await settle(); flushSync()
+    await dropOn(rows()[0].querySelector('.row'))
     expect(calls('upload_quote_media')).toHaveLength(2)
     expect(rows()[0].querySelector<HTMLImageElement>('img.thumb')!.getAttribute('src')).toContain(S)
     expect(cap().value).toBe('a cat')
@@ -364,8 +476,7 @@ describe('QuoteComposer', () => {
     type(textOf(0), 'a cat')
     paste(textOf(0), imageFile()); await settle(); flushSync()
     const cap = () => rows()[0].querySelector<HTMLInputElement>('input.caption')!
-    const ev = Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer: { files: [imageFile()], types: ['Files'] } })
-    rows()[0].dispatchEvent(ev); await settle(); flushSync()
+    await dropOn(rows()[0].querySelector('.row'))
     type(cap(), 'a cat, napping')
     done({ ...uploaded, hash: S }); await settle(); flushSync()
     expect(rows()[0].querySelector<HTMLImageElement>('img.thumb')!.getAttribute('src')).toContain(S)
@@ -390,8 +501,7 @@ describe('QuoteComposer', () => {
     invoke.mockImplementation((cmd) => (cmd === 'upload_quote_media' ? (n++ ? new Promise((r) => (done = r)) : Promise.resolve(uploaded)) : Promise.resolve(undefined)))
     show()
     paste(textOf(0), imageFile()); await settle(); flushSync()
-    const ev = Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer: { files: [imageFile()], types: ['Files'] } })
-    rows()[0].dispatchEvent(ev); await settle(); flushSync()
+    await dropOn(rows()[0].querySelector('.row'))
     rows()[0].querySelector<HTMLButtonElement>('button[aria-label="Remove image"]')!.click(); flushSync()
     type(textOf(0), 'never mind the picture')
     done({ ...uploaded, hash: S }); await settle(); flushSync()
