@@ -5,8 +5,8 @@ use ts_rs::TS;
 
 use crate::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
-    Channel, CustomEmoji, Member, Message, Mute, Person, QotyEvent, ReadState, Server, SpeakerLink,
-    StreamEndReason, StreamInfo, User,
+    Channel, ClipView, ClipViewPref, CustomEmoji, Game, Member, Message, Mute, Person, QotyEvent,
+    ReadState, Server, SpeakerLink, StreamEndReason, StreamInfo, User,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -104,6 +104,12 @@ pub struct Ready {
     /// clients can tell whether a deleted reply's mention was still in your count.
     #[serde(default)]
     pub thread_seen: Vec<ThreadSeenPoint>,
+    /// Every server's game registry.
+    #[serde(default)]
+    pub games: Vec<Game>,
+    /// Your chosen view of each clips channel you changed from the default.
+    #[serde(default)]
+    pub clip_views: Vec<ClipViewPref>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -310,6 +316,16 @@ pub enum Event {
     QotyEnded {
         event: QotyEvent,
     },
+    /// A game was added to a server's registry (everyone).
+    GameAdded {
+        game: Game,
+    },
+    /// Only to the user's own sessions: they chose a view of a clips channel.
+    ClipViewChanged {
+        user_id: UserId,
+        channel_id: ChannelId,
+        view: ClipView,
+    },
 }
 
 impl Event {
@@ -327,7 +343,8 @@ impl Event {
             | Self::ReactionAdded { channel_id, .. }
             | Self::ReactionRemoved { channel_id, .. }
             | Self::QuoteAwardChanged { channel_id, .. }
-            | Self::ThreadSeen { channel_id, .. } => Some(*channel_id),
+            | Self::ThreadSeen { channel_id, .. }
+            | Self::ClipViewChanged { channel_id, .. } => Some(*channel_id),
             Self::ChannelCreated { channel } => Some(channel.id),
             Self::GroupMembersChanged { channel_id, .. }
             | Self::ChannelRemoved { channel_id, .. }
@@ -352,7 +369,8 @@ impl Event {
             | Self::SpeakerLinksChanged { .. }
             | Self::QotyStarted { .. }
             | Self::QotyUpdated { .. }
-            | Self::QotyEnded { .. } => None,
+            | Self::QotyEnded { .. }
+            | Self::GameAdded { .. } => None,
         }
     }
 
@@ -364,6 +382,7 @@ impl Event {
             | Self::MutesChanged { user_id, .. }
             | Self::FrequentEmoji { user_id, .. }
             | Self::ThreadSeen { user_id, .. }
+            | Self::ClipViewChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. } => Some(*user_id),
             _ => None,
         }
@@ -463,6 +482,8 @@ mod tests {
             qoty: vec![],
             speaker_links: vec![],
             thread_seen: vec![],
+            games: vec![],
+            clip_views: vec![],
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");
@@ -528,6 +549,8 @@ mod tests {
             qoty: vec![],
             speaker_links: vec![],
             thread_seen: vec![],
+            games: vec![],
+            clip_views: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -599,5 +622,80 @@ mod tests {
         assert!(ChannelKind::Quotes.is_server_chat() && ChannelKind::Text.is_server_chat());
         assert!(!ChannelKind::Voice.is_server_chat() && !ChannelKind::Dm.is_server_chat());
         assert!(!ChannelKind::Group.is_server_chat() && !ChannelKind::Quotes.is_private());
+    }
+
+    #[test]
+    fn clips_is_a_server_chat_kind() {
+        use crate::rest::ChannelKind;
+        assert_eq!(ChannelKind::parse("clips"), Some(ChannelKind::Clips));
+        assert_eq!(ChannelKind::Clips.as_str(), "clips");
+        assert!(ChannelKind::Clips.is_server_chat() && !ChannelKind::Clips.is_private());
+    }
+
+    /// A pre-clips server's `Ready` and `Message` still parse.
+    #[test]
+    fn frames_without_the_clips_fields_parse() {
+        let mut v = serde_json::to_value(Ready {
+            me: User {
+                id: UserId::new(),
+                username: "a".into(),
+                avatar_hash: None,
+            },
+            servers: vec![],
+            channels: vec![],
+            members: vec![],
+            dm_members: vec![],
+            voice: vec![],
+            people: vec![],
+            read_states: vec![],
+            mutes: vec![],
+            hidden: vec![],
+            latest: vec![],
+            streams: vec![],
+            custom_emoji: vec![],
+            frequent_emoji: vec![],
+            qoty: vec![],
+            speaker_links: vec![],
+            thread_seen: vec![],
+            games: vec![],
+            clip_views: vec![],
+        })
+        .unwrap();
+        let o = v.as_object_mut().unwrap();
+        o.remove("games");
+        o.remove("clip_views");
+        let ready: Ready = serde_json::from_value(v).unwrap();
+        assert!(ready.games.is_empty() && ready.clip_views.is_empty());
+
+        let (c, m_id) = (ChannelId::new(), MessageId::new());
+        let m: Message = serde_json::from_str(&format!(
+            r#"{{"id":"{m_id}","channel_id":"{c}","author_id":null,"kind":"normal",
+            "content":"hi","reply_to_id":null,"created_at":"2026-10-01T00:00:00.000Z",
+            "edited_at":null,"deleted":false}}"#
+        ))
+        .unwrap();
+        assert!(m.clip.is_none());
+    }
+
+    #[test]
+    fn clip_events_are_scoped() {
+        use crate::rest::{ClipView, Game};
+        let (c, u) = (ChannelId::new(), UserId::new());
+        let view = Event::ClipViewChanged {
+            user_id: u,
+            channel_id: c,
+            view: ClipView::Wall,
+        };
+        assert_eq!((view.channel_id(), view.only_for()), (Some(c), Some(u)));
+        let game = Event::GameAdded {
+            game: Game {
+                id: crate::ids::GameId::new(),
+                server_id: ServerId::new(),
+                name: "Chess".into(),
+                created_by: Some(u),
+                created_at: "2026-10-01T00:00:00.000Z".into(),
+            },
+        };
+        assert_eq!((game.channel_id(), game.only_for()), (None, None));
     }
 }

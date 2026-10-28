@@ -17,7 +17,7 @@ const kim = { id: 'U3', username: 'kim', avatar_hash: null }
 const quote = (id: string, text: string, reactions = 0): Message => ({
   id, channel_id: 'C1', author_id: 'U1', kind: 'normal', content: `“${text}” — sam`, reply_to_id: null,
   created_at: '2026-10-01T10:00:00.000Z', edited_at: null, deleted: false, mentions: [],
-  reactions: reactions ? [{ emoji: '😂', count: reactions, me: false }] : [], thread_root_id: null, qoty_card: null,
+  reactions: reactions ? [{ emoji: '😂', count: reactions, me: false }] : [], thread_root_id: null, qoty_card: null, clip: null,
   quote: {
     lines: [{ id: `L${id}`, speaker_id: 'U2', speaker_name: null, text, media: null, caption: null, awards: 0, awarders: [], awarded: false }],
     year: 2025, said_on: null, reply_count: 0, last_reply_id: null, replies_seen: null, wins: [],

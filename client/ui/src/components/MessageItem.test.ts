@@ -19,7 +19,7 @@ const ce = (id: string, name: string): CustomEmoji => ({
 const msg = (over: Partial<Message> = {}): Message => ({
   id: 'M1', channel_id: 'C1', author_id: 'U1', kind: 'normal', content: 'hello',
   reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [],
-  reactions: [{ emoji: '👍', count: 1, me: false }], thread_root_id: null, quote: null, qoty_card: null, ...over,
+  reactions: [{ emoji: '👍', count: 1, me: false }], thread_root_id: null, quote: null, qoty_card: null, clip: null, ...over,
 })
 
 let cmp: ReturnType<typeof mount> | undefined

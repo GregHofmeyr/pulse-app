@@ -573,6 +573,10 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'QotyUpdated':
     case 'QotyEnded':
       return { ...s, qoty: { ...s.qoty, [e.d.event.server_id]: withMyOptions(e.d.event, s.me?.id, s.qoty[e.d.event.server_id]) } }
+    // Clips: the client starts handling these with the clips UI.
+    case 'GameAdded':
+    case 'ClipViewChanged':
+      return s
     case 'ConversationVisibility': {
       const { [e.d.channel_id]: _x, ...rest } = s.hidden
       return { ...s, hidden: e.d.hidden ? { ...rest, [e.d.channel_id]: true } : rest }
@@ -661,7 +665,7 @@ export function pendingMessage(p: Pending, channelId: string, meId: string): Mes
   return {
     id: `pending:${p.nonce}`, channel_id: channelId, author_id: meId, kind: 'normal', content: p.content,
     reply_to_id: p.reply_to_id, created_at: p.created_at, edited_at: null, deleted: false, mentions: [], reactions: [],
-    thread_root_id: p.thread_root_id, quote: null, qoty_card: null,
+    thread_root_id: p.thread_root_id, quote: null, qoty_card: null, clip: null,
   }
 }
 

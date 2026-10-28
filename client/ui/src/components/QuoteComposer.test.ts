@@ -61,7 +61,7 @@ const eline = (over: Partial<QuoteLine> = {}): QuoteLine => ({
 const quoteMsg = (lines: QuoteLine[]): Message => ({
   id: 'M1', channel_id: 'C1', author_id: 'U1', kind: 'normal', content: '', reply_to_id: null,
   created_at: '2026-10-01T10:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null,
-  quote: { lines, year: 2026, said_on: null, reply_count: 0, last_reply_id: null, replies_seen: null, wins: [] }, qoty_card: null,
+  quote: { lines, year: 2026, said_on: null, reply_count: 0, last_reply_id: null, replies_seen: null, wins: [] }, qoty_card: null, clip: null,
 })
 
 describe('QuoteComposer', () => {

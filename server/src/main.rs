@@ -11,6 +11,8 @@ struct Cli {
 enum Cmd {
     /// Run the HTTP + gateway server
     Serve,
+    /// Apply any pending database migrations and exit (needs only PULSE_DB_URL)
+    Migrate,
     /// Print a fresh single-use invite code (bootstraps the first account)
     CreateInvite,
     /// Write a consistent snapshot of the database to PATH (must not exist yet)
@@ -45,8 +47,17 @@ async fn main() -> anyhow::Result<()> {
                 .unwrap_or_else(|_| "info,sqlx=warn".into()),
         )
         .init();
+    let cmd = Cli::parse().cmd;
+    // `migrate` reads only the database URL: no LiveKit settings are needed to run it.
+    if let Cmd::Migrate = cmd {
+        let url = std::env::var("PULSE_DB_URL").unwrap_or_else(|_| "sqlite://pulse.db".into());
+        let version = pulse_server::db::migrate(&url).await?;
+        println!("migrated: {version}");
+        return Ok(());
+    }
     let cfg = pulse_server::config::Config::from_env()?;
-    match Cli::parse().cmd {
+    match cmd {
+        Cmd::Migrate => unreachable!("handled above"),
         Cmd::Serve => pulse_server::serve(cfg).await,
         Cmd::CreateInvite => {
             let db = pulse_server::db::connect(&cfg.db_url).await?;

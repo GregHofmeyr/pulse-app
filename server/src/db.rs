@@ -7,22 +7,50 @@ use sqlx::sqlite::{
 };
 use sqlx::{ConnectOptions, Connection, Sqlite, Transaction};
 
-/// Open (creating if needed) the database in WAL mode with FKs on, and run migrations.
-pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
-    let opts = SqliteConnectOptions::from_str(url)?
+fn options(url: &str) -> anyhow::Result<SqliteConnectOptions> {
+    Ok(SqliteConnectOptions::from_str(url)?
         .create_if_missing(true)
         .journal_mode(SqliteJournalMode::Wal)
         // Safe from corruption in WAL; an OS crash or power cut (not a process crash) can roll back
         // the last commits. One fsync per checkpoint instead of one per commit.
         .synchronous(SqliteSynchronous::Normal)
         .foreign_keys(true)
-        .busy_timeout(std::time::Duration::from_secs(5));
-    // Migrations get their own connection with foreign keys OFF: rebuilding a table (0008 does)
-    // means dropping it, and with them on that would cascade-delete everything pointing at it.
-    // Each migration that rebuilds a table guards its own children (0008 refuses on a violation
-    // in them, so that is the hard stop). A boot that applied something also checks the whole
-    // database, but only logs: a legacy orphan in an unrelated table must not brick every boot.
-    // (Run `PRAGMA foreign_key_check` on a backup of production before deploying a migration.)
+        .busy_timeout(std::time::Duration::from_secs(5)))
+}
+
+/// Open (creating if needed) the database in WAL mode with FKs on, and run migrations.
+pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
+    let opts = options(url)?;
+    let migrator = run_migrations(&opts).await?;
+    // The pool opens before the migration connection closes: an in-memory database lives only
+    // while a connection to it is open.
+    let pool = SqlitePoolOptions::new()
+        .max_connections(8)
+        .connect_with(opts)
+        .await?;
+    migrator.close().await?;
+    Ok(pool)
+}
+
+/// Run the migrations on a database (creating it if needed) the way [`connect`] does, and
+/// return the latest applied version. For the `migrate` subcommand.
+pub async fn migrate(url: &str) -> anyhow::Result<i64> {
+    let mut migrator = run_migrations(&options(url)?).await?;
+    let version: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
+        .fetch_one(&mut migrator)
+        .await?;
+    migrator.close().await?;
+    Ok(version)
+}
+
+/// Migrations get their own connection with foreign keys OFF: rebuilding a table (0008 and 0009
+/// do) means dropping it, and with them on that would cascade-delete everything pointing at it.
+/// Each migration that rebuilds a table guards its own children (they refuse on a violation in
+/// them, so that is the hard stop). A run that applied something also checks the whole
+/// database, but only logs: a legacy orphan in an unrelated table must not brick every boot.
+/// (Run `PRAGMA foreign_key_check` on a backup of production before deploying a migration.)
+/// Returns the open migration connection; the caller closes it.
+async fn run_migrations(opts: &SqliteConnectOptions) -> anyhow::Result<sqlx::SqliteConnection> {
     let mut migrator = opts.clone().foreign_keys(false).connect().await?;
     let tracked: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
@@ -56,14 +84,7 @@ pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
             );
         }
     }
-    // The pool opens before the migration connection closes: an in-memory database lives only
-    // while a connection to it is open.
-    let pool = SqlitePoolOptions::new()
-        .max_connections(8)
-        .connect_with(opts)
-        .await?;
-    migrator.close().await?;
-    Ok(pool)
+    Ok(migrator)
 }
 
 /// Start a transaction that will write. `BEGIN IMMEDIATE` takes the write lock up front, so a

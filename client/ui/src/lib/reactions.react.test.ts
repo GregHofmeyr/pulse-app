@@ -11,7 +11,7 @@ vi.mock('./tauri', () => ({
 
 const quote: Message = {
   id: 'M1', channel_id: 'Q1', author_id: 'U2', kind: 'normal', content: '', reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z',
-  edited_at: null, deleted: false, mentions: [], thread_root_id: null, qoty_card: null,
+  edited_at: null, deleted: false, mentions: [], thread_root_id: null, qoty_card: null, clip: null,
   quote: { lines: [], year: 2026, said_on: null, reply_count: 0, last_reply_id: null, replies_seen: null, wins: [] },
   reactions: [{ emoji: 'a', count: 2, me: true }, { emoji: 'c', count: 1, me: false }],
 }

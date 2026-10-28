@@ -24,7 +24,7 @@ const ready = testReady([{ id: 'C1', server_id: 'S1', kind: 'quotes', name: 'quo
 
 const base = (id: string): Message => ({
   id, channel_id: 'C1', author_id: 'U2', kind: 'normal', content: '', reply_to_id: null, created_at: '2026-10-01T10:00:00.000Z',
-  edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null,
+  edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null,
 })
 const root: Message = {
   ...base('Q1'), content: '“hi” — sam',

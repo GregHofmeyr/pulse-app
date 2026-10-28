@@ -29,7 +29,7 @@ const HOUR = 3_600_000
 const quote = (id: string, text: string, speaker = 'U2', reactions = 0): Message => ({
   id, channel_id: 'C1', author_id: 'U1', kind: 'normal', content: `“${text}”`, reply_to_id: null,
   created_at: '2026-10-01T10:00:00.000Z', edited_at: null, deleted: false, mentions: [],
-  reactions: reactions ? [{ emoji: '😂', count: reactions, me: false }] : [], thread_root_id: null, qoty_card: null,
+  reactions: reactions ? [{ emoji: '😂', count: reactions, me: false }] : [], thread_root_id: null, qoty_card: null, clip: null,
   quote: {
     lines: [{ id: `L${id}`, speaker_id: speaker, speaker_name: null, text, media: null, caption: null, awards: 0, awarders: [], awarded: false }],
     year: 2026, said_on: null, reply_count: 0, last_reply_id: null, replies_seen: null, wins: [],
@@ -43,7 +43,7 @@ const event = (over: Partial<QotyEvent> = {}): QotyEvent => testQoty({
 const card = (over: Partial<Message> = {}, voters = ['U2', 'U3']): Message => ({
   id: 'K1', channel_id: 'C1', author_id: null, kind: 'system', content: 'Quote of the Year 2026: “first one” — sam', reply_to_id: null,
   created_at: new Date(Date.now() - 5 * 60_000).toISOString(), edited_at: null, deleted: false, mentions: [], reactions: [],
-  thread_root_id: null, quote: null,
+  thread_root_id: null, quote: null, clip: null,
   qoty_card: { event_id: 'E1', year: 2026, message_id: 'Q1', votes: voters.length, voters, reason: 'early', speakers: [] },
   ...over,
 })

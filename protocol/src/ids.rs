@@ -52,3 +52,5 @@ id!(MessageId);
 id!(RoleId);
 id!(LineId);
 id!(QotyEventId);
+id!(GameId);
+id!(ClipUploadId);

@@ -258,7 +258,7 @@ async fn join(
     if added > 0 {
         // Start at "all read": no wall of old unreads in a server you just joined.
         let chat: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM channels WHERE server_id = ? AND kind IN ('text', 'quotes')",
+            "SELECT id FROM channels WHERE server_id = ? AND kind IN ('text', 'quotes', 'clips')",
         )
         .bind(id.to_string())
         .fetch_all(&mut *tx)

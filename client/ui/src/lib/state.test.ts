@@ -13,7 +13,7 @@ const ch = (id: string, kind: Channel['kind'] = 'text', server_id: string | null
 })
 const msg = (id: string, channel_id = 'C1', content = 'hi', author_id: string | null = 'U2'): Message => ({
   id, channel_id, author_id, kind: 'normal', content, reply_to_id: null,
-  created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null,
+  created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null,
 })
 const me = { id: 'U1', username: 'alex', avatar_hash: null }
 const ready = (over: Partial<Ready> = {}): Ready => ({
@@ -30,7 +30,7 @@ const ready = (over: Partial<Ready> = {}): Ready => ({
   latest: [],
   streams: [],
   custom_emoji: [],
-  frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [],
+  frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
   ...over,
 })
 

@@ -3,7 +3,9 @@
 use serde::{Deserialize, Serialize};
 use ts_rs::TS;
 
-use crate::ids::{ChannelId, LineId, MessageId, QotyEventId, ServerId, UserId};
+use crate::ids::{
+    ChannelId, ClipUploadId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId,
+};
 
 /// A `Debug` that names every field but prints the secret ones as `<redacted>`, for types that
 /// carry passwords, codes, tokens or tickets: debug output can end up in a log. Exported for the
@@ -139,6 +141,8 @@ pub enum ChannelKind {
     Group,
     /// A server channel for quotes: posts are quotes, replies live in threads.
     Quotes,
+    /// A server channel for video clips: posts are clips, replies live in threads.
+    Clips,
 }
 
 impl ChannelKind {
@@ -149,6 +153,7 @@ impl ChannelKind {
             Self::Dm => "dm",
             Self::Group => "group",
             Self::Quotes => "quotes",
+            Self::Clips => "clips",
         }
     }
 
@@ -159,6 +164,7 @@ impl ChannelKind {
             "dm" => Self::Dm,
             "group" => Self::Group,
             "quotes" => Self::Quotes,
+            "clips" => Self::Clips,
             _ => return None,
         })
     }
@@ -170,7 +176,7 @@ impl ChannelKind {
 
     /// Kinds that hold messages and belong to a server: its members may read and post.
     pub fn is_server_chat(self) -> bool {
-        matches!(self, Self::Text | Self::Quotes)
+        matches!(self, Self::Text | Self::Quotes | Self::Clips)
     }
 }
 
@@ -240,6 +246,9 @@ pub struct Message {
     /// Set when this is a Quote of the Year result card.
     #[serde(default)]
     pub qoty_card: Option<QotyCard>,
+    /// Set when this message is a clip.
+    #[serde(default)]
+    pub clip: Option<Clip>,
 }
 
 /// One emoji on a message: a Unicode emoji or `custom:<id>`.
@@ -512,6 +521,127 @@ pub struct Quote {
     pub replies_seen: Option<MessageId>,
     /// Years this quote won Quote of the Year.
     pub wins: Vec<i32>,
+}
+
+/// The clip part of a message in a clips channel. The caption is the message content.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Clip {
+    pub thumb_hash: String,
+    pub duration_ms: u32,
+    pub width: u32,
+    pub height: u32,
+    #[ts(type = "number")]
+    pub size: u64,
+    pub game_id: Option<GameId>,
+    pub reply_count: u32,
+    /// The newest reply in the thread.
+    pub last_reply_id: Option<MessageId>,
+    /// Per caller: the newest reply you have seen (gateway events carry `None`).
+    pub replies_seen: Option<MessageId>,
+}
+
+/// A game in a server's registry; clips are tagged with one.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Game {
+    pub id: GameId,
+    pub server_id: ServerId,
+    pub name: String,
+    pub created_by: Option<UserId>,
+    pub created_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct AddGameRequest {
+    pub name: String,
+}
+
+/// How a user looks at a clips channel.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum ClipView {
+    List,
+    Wall,
+}
+
+/// A user's chosen view of one clips channel.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ClipViewPref {
+    pub channel_id: ChannelId,
+    pub view: ClipView,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SetClipViewRequest {
+    pub view: ClipView,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ClipUploadRequest {
+    #[ts(type = "number")]
+    pub size: u64,
+    pub duration_ms: u32,
+}
+
+/// An upload ticket: PUT the file to `url`, then confirm.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ClipUpload {
+    pub id: ClipUploadId,
+    pub url: String,
+    pub content_type: String,
+    pub expires_at: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ConfirmClipRequest {
+    pub caption: String,
+    pub game_id: Option<GameId>,
+    pub duration_ms: u32,
+    pub width: u32,
+    pub height: u32,
+    pub thumb_hash: String,
+    #[serde(default)]
+    pub nonce: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct EditClipRequest {
+    pub caption: String,
+    pub game_id: Option<GameId>,
+}
+
+/// A short-lived URL to play a clip.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ClipUrl {
+    pub url: String,
+    pub expires_at: String,
+}
+
+/// Filter chips of a clips channel: clip counts per game and per author.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ClipFacets {
+    pub games: Vec<GameCount>,
+    pub authors: Vec<AuthorCount>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct GameCount {
+    pub game_id: GameId,
+    pub count: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct AuthorCount {
+    pub user_id: UserId,
+    pub count: u32,
+}
+
+/// How much clip storage a server uses.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct ClipStorage {
+    #[ts(type = "number")]
+    pub bytes: u64,
+    pub count: u32,
+    pub est_monthly_usd: f64,
 }
 
 /// One line of a quote: a speaker (a member or a plain name) and either text or an image.

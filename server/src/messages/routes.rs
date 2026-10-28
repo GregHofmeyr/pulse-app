@@ -85,6 +85,7 @@ fn from_row(r: Row) -> AppResult<Message> {
         reactions: vec![],
         thread_root_id: thread_root_id.as_deref().map(parse).transpose()?,
         quote: None,
+        clip: None,
         qoty_card: match system_payload {
             Some(p) if system && deleted_at.is_none() => super::system::qoty_card(&p),
             _ => None,
@@ -293,6 +294,8 @@ async fn send(
         return Err(AppError::BadRequest(
             "only quotes can be posted here".into(),
         ));
+    } else if ch.kind == ChannelKind::Clips {
+        return Err(AppError::BadRequest("only clips can be posted here".into()));
     }
     let content = clean(&req.content)?;
     nonce::check(req.nonce.as_deref())?;
@@ -336,6 +339,7 @@ async fn send(
         reactions: vec![],
         thread_root_id: req.thread_root_id,
         quote: None,
+        clip: None,
         qoty_card: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
@@ -483,6 +487,15 @@ async fn edit(
     if msg.quote.is_some() {
         return Err(AppError::BadRequest(
             "quotes can't be edited like messages".into(),
+        ));
+    }
+    let is_clip: Option<i64> = sqlx::query_scalar("SELECT 1 FROM clips WHERE message_id = ?")
+        .bind(id.to_string())
+        .fetch_optional(&s.db)
+        .await?;
+    if is_clip.is_some() {
+        return Err(AppError::BadRequest(
+            "clips are edited with their own route".into(),
         ));
     }
     msg.content = clean(&req.content)?;
@@ -648,6 +661,7 @@ mod tests {
             reactions: vec![],
             thread_root_id: None,
             quote: None,
+            clip: None,
             qoty_card: None,
         }
     }

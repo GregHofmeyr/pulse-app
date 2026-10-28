@@ -210,7 +210,7 @@ describe('watching from anywhere', () => {
     ],
     members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: null }] }],
     dm_members: [], voice: [{ channel_id: 'V1', members: [{ user_id: 'U1', flags }, { user_id: 'U2', flags }] }],
-    people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [samStream], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [],
+    people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [samStream], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
   }
   const SAM = { channelId: 'V1', streamer: 'U2' }
   const q = (sel: string) => document.querySelector<HTMLElement>(sel)

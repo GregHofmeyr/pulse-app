@@ -48,7 +48,7 @@ describe('unsent messages in the store', () => {
     me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
     channels: [{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }],
     members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [],
+    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
   })
   const unsent = (nonce: string, status: Pending['status'] = 'pending'): Pending => ({ nonce, content: `text ${nonce}`, reply_to_id: null, thread_root_id: null, status, created_at: '2026-10-01T00:00:00.000Z' })
   const stored = (id: string) => JSON.parse(localStorage.getItem(`pulse.unsent.${id}`) ?? 'null')
@@ -73,7 +73,7 @@ describe('unsent messages in the store', () => {
     app.state = removePending(app.state, 'C1', 'a')
     flushSync()
     expect(stored('U1').C1.map((p: Pending) => p.nonce)).toEqual(['b'])
-    const m: Message = { id: 'M1', channel_id: 'C1', author_id: 'U1', kind: 'normal', content: 'x', reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null }
+    const m: Message = { id: 'M1', channel_id: 'C1', author_id: 'U1', kind: 'normal', content: 'x', reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null }
     app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: m, nonce: 'b' } }, 0)
     flushSync()
     expect(localStorage.getItem('pulse.unsent.U1')).toBeNull()

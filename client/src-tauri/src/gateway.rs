@@ -1025,6 +1025,8 @@ mod tests {
                         qoty: vec![],
                         speaker_links: vec![],
                         thread_seen: vec![],
+                        games: vec![],
+                        clip_views: vec![],
                     });
                     ws.send(tokio_tungstenite::tungstenite::Message::text(
                         serde_json::to_string(&ready).unwrap(),

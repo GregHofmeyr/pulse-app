@@ -10,7 +10,7 @@ export function testReady(channels: Channel[], over: Partial<Ready> = {}): Ready
   return {
     me: testMe, servers: [{ id: 'S1', name: 'Main', icon_hash: null }], channels,
     members: [{ server_id: 'S1', members: [{ user: testMe, nickname: null }] }],
-    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [],
+    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
     ...over,
   }
 }

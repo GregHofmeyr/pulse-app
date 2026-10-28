@@ -78,9 +78,24 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::SpeakerCount::export_all(&cfg)?;
     rest::Leaderboard::export_all(&cfg)?;
     rest::LeaderboardWin::export_all(&cfg)?;
+    rest::Clip::export_all(&cfg)?;
+    rest::Game::export_all(&cfg)?;
+    rest::AddGameRequest::export_all(&cfg)?;
+    rest::ClipView::export_all(&cfg)?;
+    rest::ClipViewPref::export_all(&cfg)?;
+    rest::SetClipViewRequest::export_all(&cfg)?;
+    rest::ClipUploadRequest::export_all(&cfg)?;
+    rest::ClipUpload::export_all(&cfg)?;
+    rest::ConfirmClipRequest::export_all(&cfg)?;
+    rest::EditClipRequest::export_all(&cfg)?;
+    rest::ClipUrl::export_all(&cfg)?;
+    rest::ClipFacets::export_all(&cfg)?;
+    rest::GameCount::export_all(&cfg)?;
+    rest::AuthorCount::export_all(&cfg)?;
+    rest::ClipStorage::export_all(&cfg)?;
     Ok(())
 }
 
 /// Gateway protocol version this build speaks. Bump when an old client would misbehave
 /// against a new server; the server tells older clients to update (close 4005).
-pub const PROTOCOL_VERSION: u32 = 2;
+pub const PROTOCOL_VERSION: u32 = 3;

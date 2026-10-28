@@ -84,6 +84,7 @@ fn msg(channel: ChannelId, content: &str) -> Message {
         reactions: vec![],
         thread_root_id: None,
         quote: None,
+        clip: None,
         qoty_card: None,
     }
 }
@@ -224,7 +225,7 @@ async fn bad_token_closed_4001() {
     let app = spawn().await;
     let mut ws = connect(&app).await;
     ws.send(Ws::text(
-        r#"{"op":"Hello","d":{"token":"garbage","client_version":2}}"#,
+        r#"{"op":"Hello","d":{"token":"garbage","client_version":3}}"#,
     ))
     .await
     .unwrap();
@@ -425,11 +426,13 @@ async fn slow_client_does_not_block_others() {
 async fn outdated_client_is_told_to_update() {
     let app = spawn().await;
     let (_, token) = register(&app, "alex").await;
-    // a client from before versioning (no client_version at all), and the last build before
-    // quotes channels (version 1, which can't parse their kind)
+    // a client from before versioning (no client_version at all), the last build before
+    // quotes channels (version 1) and the last before clips channels (version 2): none can
+    // parse the newer kinds
     for d in [
         json!({ "token": token }),
         json!({ "token": token, "client_version": 1 }),
+        json!({ "token": token, "client_version": 2 }),
     ] {
         let mut ws = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
             .await

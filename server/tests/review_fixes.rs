@@ -166,6 +166,7 @@ async fn silent_client_times_out_despite_outbound_traffic() {
                 reactions: vec![],
                 thread_root_id: None,
                 quote: None,
+                clip: None,
                 qoty_card: None,
             };
             hub.publish(
