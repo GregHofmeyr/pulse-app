@@ -15,6 +15,9 @@
   --warn: #e8b04a;
   --ok: #4fd18b;
   --radius: 14px;
+  /* translucent, so the thumb reads on every surface it sits on (--bg-0 to --bg-4) */
+  --scrollbar-thumb: color-mix(in srgb, var(--text-3) 32%, transparent);
+  --scrollbar-thumb-hover: color-mix(in srgb, var(--text-3) 55%, transparent);
   color-scheme: dark;
   font-family: 'Onest', system-ui, sans-serif;
   /* Onest's contextual alternates swap some letters (e.g. t → t2.alt) inside repeated runs, so
@@ -30,6 +33,20 @@ html, body, #app { margin: 0; height: 100%; overflow: hidden; }
 button, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* One minimal scrollbar everywhere (lists, messages, settings, menus, pickers, modals, the message
+   box, code blocks). WebView2 (Chromium) and WebKitGTK take the -webkit- rules: a 10px gutter with a
+   6px rounded thumb inset by a transparent border, no arrows, a transparent track. Hover only
+   recolours it, so nothing moves. */
+::-webkit-scrollbar { width: 10px; height: 10px; background: transparent; }
+::-webkit-scrollbar-track, ::-webkit-scrollbar-corner { background: transparent; }
+::-webkit-scrollbar-button { display: none; }
+::-webkit-scrollbar-thumb { background-color: var(--scrollbar-thumb); border: 2px solid transparent; border-radius: 5px; background-clip: padding-box; min-height: 24px; min-width: 24px; }
+::-webkit-scrollbar-thumb:hover, ::-webkit-scrollbar-thumb:active { background-color: var(--scrollbar-thumb-hover); }
+/* Only where those aren't supported: Chromium ignores the -webkit- rules once these are set. */
+@supports not selector(::-webkit-scrollbar) {
+  * { scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) transparent; }
+}
 
 .pulse-tooltip {
   position: fixed; z-index: 100; pointer-events: none; max-width: 260px;
