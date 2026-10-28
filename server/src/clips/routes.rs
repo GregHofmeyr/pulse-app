@@ -144,19 +144,24 @@ async fn my_ticket(
     .ok_or(AppError::NotFound)
 }
 
-/// Drop the ticket and (best effort) its object.
-async fn discard(s: &AppState, id: ClipUploadId, key: &str) -> AppResult<()> {
-    sqlx::query("DELETE FROM clip_uploads WHERE id = ?")
+/// Drop the ticket and (best effort) its object. Only a ticket this call deleted takes its object:
+/// one a confirm spent in the meantime is a posted clip's video now. Whether it was still there.
+async fn discard(s: &AppState, id: ClipUploadId, key: &str) -> AppResult<bool> {
+    let deleted = sqlx::query("DELETE FROM clip_uploads WHERE id = ?")
         .bind(id.to_string())
         .execute(&s.db)
-        .await?;
+        .await?
+        .rows_affected();
+    if deleted == 0 {
+        return Ok(false);
+    }
     if let Some(r2) = &s.r2
         && let Err(e) = r2.delete(&object_key(key)).await
     {
         // The sweeper retries what a failed delete leaves behind.
         tracing::warn!(error = ?e, "couldn't delete a cancelled clip upload's object");
     }
-    Ok(())
+    Ok(true)
 }
 
 async fn cancel(
@@ -165,7 +170,10 @@ async fn cancel(
     Path(id): Path<ClipUploadId>,
 ) -> AppResult<StatusCode> {
     let (key, ..) = my_ticket(&s.db, me, id).await?;
-    discard(&s, id, &key).await?;
+    if !discard(&s, id, &key).await? {
+        // a confirm spent it a moment ago
+        return Err(AppError::NotFound);
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 
@@ -646,4 +654,79 @@ async fn storage_of(
         count,
         est_monthly_usd: super::est_monthly_usd(bytes),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::testing;
+    use serde_json::json;
+
+    /// A cancel whose ticket a confirm spent between its lookup and its delete (the race) must
+    /// leave the posted clip's video alone.
+    #[tokio::test]
+    async fn a_spent_ticket_never_takes_the_clips_object_with_it() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let server = testing::create_server(&app, &token, "Main").await;
+        let r = testing::post_json(
+            &app,
+            &token,
+            &format!("/servers/{}/channels", server.id),
+            json!({ "kind": "clips", "name": "clips" }),
+        )
+        .await;
+        let channel: pulse_protocol::rest::Channel = r.json().await.unwrap();
+        let r = testing::post_json(
+            &app,
+            &token,
+            &format!("/channels/{}/clips/uploads", channel.id),
+            json!({ "size": 1000, "duration_ms": 3000 }),
+        )
+        .await;
+        let up: ClipUpload = r.json().await.unwrap();
+        let put = app
+            .http
+            .put(&up.url)
+            .header("content-type", &up.content_type)
+            .body(vec![7u8; 1000])
+            .send()
+            .await
+            .unwrap();
+        assert!(put.status().is_success());
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::RgbaImage::from_pixel(32, 18, image::Rgba([9, 99, 199, 255]))
+            .write_to(&mut png, image::ImageFormat::Png)
+            .unwrap();
+        let thumb: pulse_protocol::rest::MediaInfo = app
+            .http
+            .post(app.url("/media/clip-thumb"))
+            .bearer_auth(&token)
+            .body(png.into_inner())
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        let key: String = sqlx::query_scalar("SELECT key FROM clip_uploads WHERE id = ?")
+            .bind(up.id.to_string())
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+        let r = testing::post_json(
+            &app,
+            &token,
+            &format!("/clip-uploads/{}/confirm", up.id),
+            json!({ "caption": "", "game_id": null, "duration_ms": 3000, "width": 1280,
+                    "height": 720, "thumb_hash": thumb.hash, "nonce": "n-1" }),
+        )
+        .await;
+        assert_eq!(r.status(), 200);
+
+        // the cancel looked the ticket up before the confirm committed, and discards it now
+        assert!(!discard(&app.state(), up.id, &key).await.unwrap());
+        let object = object_key(&key);
+        assert!(app.s3.as_ref().unwrap().object(&object).is_some());
+    }
 }
