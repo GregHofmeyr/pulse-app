@@ -62,6 +62,10 @@ pub enum ApiError {
     /// server." Nothing was done, so asking again is safe (`never_arrived` is true for a 503).
     #[error("{message}")]
     Told { status: u16, message: String },
+    /// Confirming a clip found its ticket or its upload gone (404, or a 409 such as "That upload
+    /// expired. Try again."), in Pulse's words: a new ticket and upload can still post it.
+    #[error("{0}")]
+    UploadGone(String),
 }
 
 impl ApiError {
@@ -1426,15 +1430,31 @@ impl Api {
         id: ClipUploadId,
         body: &ConfirmClipRequest,
     ) -> Result<Message, ApiError> {
-        Self::clip_parse(
-            self.http
-                .post(self.url(&["clip-uploads", &id.to_string(), "confirm"])?)
-                .bearer_auth(token)
-                .json(body)
-                .send()
-                .await,
-        )
-        .await
+        use reqwest::StatusCode;
+        let r = self
+            .http
+            .post(self.url(&["clip-uploads", &id.to_string(), "confirm"])?)
+            .bearer_auth(token)
+            .json(body)
+            .send()
+            .await;
+        match r {
+            Ok(resp) if matches!(resp.status(), StatusCode::NOT_FOUND | StatusCode::CONFLICT) => {
+                note_version(&resp);
+                log_failure(Some(path_only(resp.url())), resp.status().as_str());
+                let message = resp
+                    .json::<pulse_protocol::rest::ApiError>()
+                    .await
+                    .map(|e| e.message)
+                    .unwrap_or_default();
+                Err(ApiError::UploadGone(if message.is_empty() {
+                    "That upload expired. Try again.".into()
+                } else {
+                    message
+                }))
+            }
+            r => Self::clip_parse(r).await,
+        }
     }
 
     /// A clip's poster (a JPEG or PNG of at most 640 px); the server makes the WebP.
@@ -3631,5 +3651,36 @@ mod tests {
             matches!(e, ApiError::Server(_)) && e.never_arrived(),
             "{e:?}"
         );
+    }
+    #[tokio::test]
+    async fn a_confirm_whose_upload_is_gone_says_so() {
+        use pulse_protocol::rest::ConfirmClipRequest;
+        let body = ConfirmClipRequest {
+            caption: String::new(),
+            game_id: None,
+            duration_ms: 1,
+            width: 16,
+            height: 16,
+            thumb_hash: "0".repeat(64),
+            nonce: None,
+        };
+        for (status, words, gone) in [
+            (404u16, "not found", true),
+            (409, "That upload expired. Try again.", true),
+            (400, "That game isn't in this server.", false),
+            (403, "you can't do that", false),
+        ] {
+            let api = canned(status, words).await;
+            let e = api
+                .confirm_clip("t", ClipUploadId::new(), &body)
+                .await
+                .unwrap_err();
+            assert_eq!(
+                matches!(e, ApiError::UploadGone(_)),
+                gone,
+                "{status}: {e:?}"
+            );
+            assert_eq!(e.to_string(), words);
+        }
     }
 }

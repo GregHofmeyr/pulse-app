@@ -201,7 +201,7 @@ export const api = {
       },
     }),
   retryClip: (id: string) => invoke<ClipJob>('retry_clip', { id }),
-  /** Stops it and deletes everything; a last `done` event with no `message_id` follows. */
+  /** Stops it and deletes everything; a last `done` event follows (no `message_id`, unless a confirm already on its way posted it). */
   cancelClip: (id: string) => invoke<void>('cancel_clip', { id }),
   /** The jobs of this session (after a restart, the ones left over, failed). */
   clipJobs: () => invoke<ClipJob[]>('clip_jobs'),

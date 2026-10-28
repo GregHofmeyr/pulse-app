@@ -7,6 +7,7 @@
 //! as the whole [`ClipJob`] (`clip://job`), progress at most 4 times a second.
 
 use std::collections::HashMap;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -14,7 +15,7 @@ use std::time::{Duration, Instant};
 use pulse_protocol::ids::{ChannelId, ClipUploadId, GameId, MessageId};
 use pulse_protocol::rest::{ClipUploadRequest, ConfirmClipRequest};
 use serde::{Deserialize, Serialize};
-use tokio::task::AbortHandle;
+use tokio::task::JoinHandle;
 
 use super::encode::{self, EncodeError, Preset, Runner, Span, WORKING};
 use super::preview;
@@ -33,9 +34,21 @@ pub const TOO_LONG: &str = "Clips can be up to 1:30. Drop a bit more.";
 pub const NOTHING_KEPT: &str = "Nothing kept. Bring a piece back.";
 const BAD_PIECES: &str = "Those pieces don't fit that video.";
 const CAPTION_TOO_LONG: &str = "Captions can be up to 300 characters.";
+const NOT_SAVED: &str = "Pulse couldn't save that clip.";
+const NO_SUCH_JOB: &str = "That clip is gone.";
 
 /// Progress alone goes to the UI at most this often (stage changes always go at once).
 const PROGRESS_EVERY: Duration = Duration::from_millis(250);
+/// Sign-out spends at most this long deleting tickets; the server sweeps what is left.
+const SIGN_OUT_LIMIT: Duration = Duration::from_secs(5);
+
+/// The finished files, and what ffmpeg writes while it works (renamed when it is done, so a stop
+/// half way never leaves something that looks finished).
+const OUT: &str = "out.mp4";
+const OUT_PART: &str = "out.mp4.part";
+const THUMB: &str = "thumb.jpg";
+/// ffmpeg picks the image format from the extension, so the partial poster keeps `.jpg`.
+const THUMB_PART: &str = "thumb.part.jpg";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -94,13 +107,14 @@ struct Saved {
     nonce: String,
     channel_id: ChannelId,
     stage: Stage,
-    /// The current ticket. Retry cancels it before asking for a new one.
+    /// The current ticket. Retry cancels it before asking for a new one; sign-out deletes it.
     upload_id: Option<ClipUploadId>,
     /// The store took the file for `upload_id`: Retry confirms rather than uploading again.
     #[serde(default)]
     uploaded: bool,
     thumb_hash: Option<String>,
-    /// The encoder that made `out.mp4` (for the log and bug reports).
+    /// The encoder that made `out.mp4`. Set only once preparing finished (the poster too), so it
+    /// also says the files are complete.
     encoder: Option<String>,
 }
 
@@ -118,9 +132,27 @@ struct Entry {
     /// A pipeline task is running (it owns the job until it ends); `run_no` tells runs apart.
     running: bool,
     run_no: u64,
-    task: Option<AbortHandle>,
+    task: Option<JoinHandle<()>>,
     cancel: CancellationFlag,
     last_emit: Option<Instant>,
+    /// A progress change held back by the 4-a-second limit is due to be sent.
+    trailing: bool,
+}
+
+impl Entry {
+    fn new(saved: Saved) -> Self {
+        Self {
+            saved,
+            progress: 0.0,
+            error: None,
+            running: false,
+            run_no: 0,
+            task: None,
+            cancel: CancellationFlag::new(),
+            last_emit: None,
+            trailing: false,
+        }
+    }
 }
 
 struct Inner<R> {
@@ -134,6 +166,8 @@ struct Inner<R> {
     jobs: Mutex<HashMap<String, Entry>>,
     #[cfg(test)]
     lose_confirm: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    confirm_gate: Mutex<Option<Arc<tokio::sync::Notify>>>,
 }
 
 /// The clip jobs of one signed-in session. Cloning shares them.
@@ -199,13 +233,19 @@ fn server_words(e: &ApiError) -> Stop {
     match e {
         ApiError::Told { message, .. }
         | ApiError::Rejected(message)
-        | ApiError::Forbidden(message) => Some(message.clone()),
+        | ApiError::Forbidden(message)
+        | ApiError::UploadGone(message) => Some(message.clone()),
         _ => None,
     }
 }
 
-/// Delete a job's folder. ffmpeg killed a moment ago may still hold `out.mp4` on Windows, so a
-/// failure is retried briefly.
+/// Whether preparing finished: the encoder is recorded and both files are there.
+fn prepared(job_dir: &Path, s: &Saved) -> bool {
+    s.encoder.is_some() && job_dir.join(OUT).is_file() && job_dir.join(THUMB).is_file()
+}
+
+/// Delete a folder. ffmpeg killed a moment ago may still hold `out.mp4.part` on Windows, so a
+/// failure is retried briefly. Blocking: call off the async threads.
 fn remove_folder(dir: &Path) {
     for attempt in 0..10 {
         match std::fs::remove_dir_all(dir) {
@@ -219,68 +259,122 @@ fn remove_folder(dir: &Path) {
     }
 }
 
-impl<R: Runner + Send + Sync + 'static> Jobs<R> {
-    /// The jobs saved in `dir` (`<scope>/jobs`). One that was preparing, uploading or posting when
-    /// Pulse stopped is failed now, for the person to Retry; its nonce is kept, so a confirm that
-    /// did land is replayed, not posted twice. Call from inside the async runtime.
-    pub fn load(dir: PathBuf, runner: R, api: Api, token: String, hooks: Hooks) -> Self {
-        let inner = Inner {
-            dir,
-            runner,
-            api,
-            token,
-            http: upload::client(),
-            hooks,
-            rt: tokio::runtime::Handle::current(),
-            jobs: Mutex::new(HashMap::new()),
-            #[cfg(test)]
-            lose_confirm: Default::default(),
+/// Write `<job_dir>/job.json` through a synced temp file, so neither a crash nor a power cut
+/// leaves half of one.
+fn persist(job_dir: &Path, saved: &Saved) -> bool {
+    let tmp = job_dir.join("job.json.tmp");
+    let ok = serde_json::to_vec(saved)
+        .map_err(std::io::Error::other)
+        .and_then(|raw| {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(&raw)?;
+            f.sync_all()
+        })
+        .and_then(|()| std::fs::rename(&tmp, job_dir.join("job.json")));
+    if let Err(e) = &ok {
+        tracing::warn!(error = %e, "clips: job not saved");
+    }
+    ok.is_ok()
+}
+
+/// Read the saved jobs of `dir`, failing the ones that were running (saved so), and deleting what
+/// can't be read. Blocking.
+fn read_saved(dir: &Path) -> Vec<(String, Saved)> {
+    let mut out = Vec::new();
+    for d in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let id = d.file_name().to_string_lossy().into_owned();
+        let saved = std::fs::read(d.path().join("job.json"))
+            .ok()
+            .and_then(|raw| serde_json::from_slice::<Saved>(&raw).ok());
+        let Some(mut saved) = saved.filter(|s| s.stage != Stage::Done) else {
+            // unreadable, or done but not yet deleted: nothing to show
+            remove_folder(&d.path());
+            continue;
         };
-        let mut jobs = HashMap::new();
-        for d in std::fs::read_dir(&inner.dir)
+        if saved.stage != Stage::Failed {
+            saved.stage = Stage::Failed;
+            persist(&d.path(), &saved);
+        }
+        out.push((id, saved));
+    }
+    out
+}
+
+/// Sign-out: delete every saved job's ticket on the server (all at once, for at most a few
+/// seconds; the server sweeps whatever is left), then the jobs folder itself. Works whether or not
+/// the jobs were ever loaded; stop a loaded [`Jobs`] first.
+pub async fn discard_all(dir: PathBuf, api: Api, token: String) {
+    let scan = dir.clone();
+    let tickets: Vec<ClipUploadId> = tokio::task::spawn_blocking(move || {
+        std::fs::read_dir(&scan)
             .into_iter()
             .flatten()
             .flatten()
-        {
-            let id = d.file_name().to_string_lossy().into_owned();
-            let saved = std::fs::read(d.path().join("job.json"))
-                .ok()
-                .and_then(|raw| serde_json::from_slice::<Saved>(&raw).ok());
-            let Some(mut saved) = saved.filter(|s| s.stage != Stage::Done) else {
-                // unreadable, or done but not yet deleted: nothing to show
-                remove_folder(&d.path());
-                continue;
-            };
-            if saved.stage != Stage::Failed {
-                saved.stage = Stage::Failed;
-                inner.persist(&id, &saved);
+            .filter_map(|d| std::fs::read(d.path().join("job.json")).ok())
+            .filter_map(|raw| serde_json::from_slice::<Saved>(&raw).ok())
+            .filter_map(|s| s.upload_id)
+            .collect()
+    })
+    .await
+    .unwrap_or_default();
+    let cancels = tickets.into_iter().map(|t| {
+        let (api, token) = (&api, token.as_str());
+        async move {
+            if let Err(e) = api.cancel_clip_upload(token, t).await {
+                tracing::info!(error = %e, "clips: ticket not cancelled at sign-out");
             }
-            let thumb = d.path().join("thumb.jpg");
-            if thumb.is_file() {
-                (inner.hooks.allow_file)(&thumb);
-            }
-            jobs.insert(
-                id,
-                Entry {
-                    saved,
-                    progress: 0.0,
-                    error: None,
-                    running: false,
-                    run_no: 0,
-                    task: None,
-                    cancel: CancellationFlag::new(),
-                    last_emit: None,
-                },
-            );
         }
-        *inner.jobs.lock().unwrap() = jobs;
+    });
+    if tokio::time::timeout(SIGN_OUT_LIMIT, futures::future::join_all(cancels))
+        .await
+        .is_err()
+    {
+        tracing::info!("clips: sign-out stopped waiting for ticket deletes");
+    }
+    let _ = tokio::task::spawn_blocking(move || remove_folder(&dir)).await;
+}
+
+impl<R: Runner + Send + Sync + 'static> Jobs<R> {
+    /// The jobs saved in `dir` (`<scope>/jobs`). One that was preparing, uploading or posting when
+    /// Pulse stopped is failed now, for the person to Retry; its nonce is kept, so a confirm that
+    /// did land is replayed, not posted twice.
+    pub async fn load(dir: PathBuf, runner: R, api: Api, token: String, hooks: Hooks) -> Self {
+        let scan = dir.clone();
+        let saved = tokio::task::spawn_blocking(move || read_saved(&scan))
+            .await
+            .unwrap_or_default();
+        let mut jobs = HashMap::new();
+        for (id, s) in saved {
+            let thumb = dir.join(&id).join(THUMB);
+            if thumb.is_file() {
+                (hooks.allow_file)(&thumb);
+            }
+            jobs.insert(id, Entry::new(s));
+        }
         Self {
-            inner: Arc::new(inner),
+            inner: Arc::new(Inner {
+                dir,
+                runner,
+                api,
+                token,
+                http: upload::client(),
+                hooks,
+                rt: tokio::runtime::Handle::current(),
+                jobs: Mutex::new(jobs),
+                #[cfg(test)]
+                lose_confirm: Default::default(),
+                #[cfg(test)]
+                confirm_gate: Default::default(),
+            }),
         }
     }
 
     pub fn token(&self) -> &str {
         &self.inner.token
+    }
+
+    pub fn dir(&self) -> &Path {
+        &self.inner.dir
     }
 
     pub fn list(&self) -> Vec<ClipJob> {
@@ -310,23 +404,13 @@ impl<R: Runner + Send + Sync + 'static> Jobs<R> {
             encoder: None,
         };
         let dir = self.inner.dir.join(&id);
-        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-        if !self.inner.persist(&id, &saved) {
-            remove_folder(&dir);
-            return Err("Pulse couldn't save that clip to send.".to_owned());
+        if std::fs::create_dir_all(&dir).is_err() || !persist(&dir, &saved) {
+            let _ = std::fs::remove_dir_all(&dir);
+            return Err(NOT_SAVED.to_owned());
         }
         let job = {
             let mut jobs = self.inner.jobs.lock().unwrap();
-            let e = jobs.entry(id.clone()).or_insert(Entry {
-                saved,
-                progress: 0.0,
-                error: None,
-                running: false,
-                run_no: 0,
-                task: None,
-                cancel: CancellationFlag::new(),
-                last_emit: None,
-            });
+            let e = jobs.entry(id.clone()).or_insert(Entry::new(saved));
             self.inner.view(&id, e)
         };
         (self.inner.hooks.emit)(&job);
@@ -334,18 +418,19 @@ impl<R: Runner + Send + Sync + 'static> Jobs<R> {
         Ok(job)
     }
 
-    /// Try a failed job again: confirm if the file is up, upload if it is made, else prepare.
+    /// Try a failed job again: confirm if the file is up, upload if preparing finished, else
+    /// prepare again.
     pub fn retry(&self, id: &str) -> Result<ClipJob, String> {
-        let job = {
+        let job_dir = self.inner.dir.join(id);
+        let (job, saved) = {
             let mut jobs = self.inner.jobs.lock().unwrap();
-            let e = jobs.get_mut(id).ok_or("That clip isn't being sent.")?;
+            let e = jobs.get_mut(id).ok_or(NO_SUCH_JOB)?;
             if e.running {
                 return Ok(self.inner.view(id, e));
             }
-            let made = self.inner.dir.join(id).join("out.mp4").is_file();
             e.saved.stage = if e.saved.uploaded && e.saved.upload_id.is_some() {
                 Stage::Posting
-            } else if made {
+            } else if prepared(&job_dir, &e.saved) {
                 Stage::Uploading
             } else {
                 Stage::Preparing
@@ -353,10 +438,10 @@ impl<R: Runner + Send + Sync + 'static> Jobs<R> {
             e.saved.uploaded &= e.saved.stage == Stage::Posting;
             e.error = None;
             e.progress = 0.0;
-            self.inner.persist(id, &e.saved);
             e.last_emit = Some(Instant::now());
-            self.inner.view(id, e)
+            (self.inner.view(id, e), e.saved.clone())
         };
+        persist(&job_dir, &saved);
         (self.inner.hooks.emit)(&job);
         self.start(id);
         Ok(job)
@@ -364,8 +449,20 @@ impl<R: Runner + Send + Sync + 'static> Jobs<R> {
 
     /// Stop a job and remove every trace of it: ffmpeg is killed, the upload aborted, the ticket (and
     /// any object) deleted on the server, the folder deleted. The UI gets `Done` with no message.
+    /// A confirm already on its way is waited for: if it posts, the job ends posted.
     pub async fn cancel(&self, id: &str) -> Result<(), String> {
+        let confirming = {
+            let mut jobs = self.inner.jobs.lock().unwrap();
+            match jobs.get_mut(id) {
+                Some(e) if e.running && e.saved.stage == Stage::Posting => e.task.take(),
+                _ => None,
+            }
+        };
+        if let Some(run) = confirming {
+            let _ = run.await;
+        }
         let Some(e) = self.inner.jobs.lock().unwrap().remove(id) else {
+            // posted (or cancelled) meanwhile
             return Ok(());
         };
         e.cancel.cancel();
@@ -387,35 +484,14 @@ impl<R: Runner + Send + Sync + 'static> Jobs<R> {
         Ok(())
     }
 
-    /// Sign-out: cancel every job (tickets included), then delete the whole jobs folder.
-    pub async fn cancel_all(&self) {
-        let ids: Vec<String> = self.inner.jobs.lock().unwrap().keys().cloned().collect();
-        for id in ids {
-            let _ = self.cancel(&id).await;
-        }
-        self.abandon();
-    }
-
-    /// Stop every job and delete the jobs folder, with no server calls (the session is gone).
-    pub fn abandon(&self) {
+    /// Stop every running job and forget them all; the files stay (sign-out deletes them with
+    /// [`discard_all`]; a paused session keeps them for next time).
+    pub fn stop(&self) {
         for (_, e) in self.inner.jobs.lock().unwrap().drain() {
             e.cancel.cancel();
             if let Some(t) = e.task {
                 t.abort();
             }
-        }
-        let dir = self.inner.dir.clone();
-        self.inner.rt.spawn_blocking(move || remove_folder(&dir));
-    }
-
-    /// Stop the running work but keep everything on disk (the session paused, not signed out).
-    pub fn stop(&self) {
-        for e in self.inner.jobs.lock().unwrap().values_mut() {
-            e.cancel.cancel();
-            if let Some(t) = e.task.take() {
-                t.abort();
-            }
-            e.running = false;
         }
     }
 
@@ -432,11 +508,11 @@ impl<R: Runner + Send + Sync + 'static> Jobs<R> {
             .inner
             .rt
             .spawn(self.inner.clone().run(id.to_owned(), run_no));
-        if let Some(e) = self.inner.jobs.lock().unwrap().get_mut(id)
-            && e.running
-            && e.run_no == run_no
-        {
-            e.task = Some(task.abort_handle());
+        let mut jobs = self.inner.jobs.lock().unwrap();
+        match jobs.get_mut(id) {
+            Some(e) if e.running && e.run_no == run_no => e.task = Some(task),
+            // already over: nothing to keep
+            _ => drop(task),
         }
     }
 
@@ -447,11 +523,19 @@ impl<R: Runner + Send + Sync + 'static> Jobs<R> {
             .lose_confirm
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
+
+    /// Tests: every confirm waits for a `notify_one` on the returned gate before it is sent.
+    #[cfg(test)]
+    pub fn hold_confirms(&self) -> Arc<tokio::sync::Notify> {
+        let gate = Arc::new(tokio::sync::Notify::new());
+        *self.inner.confirm_gate.lock().unwrap() = Some(gate.clone());
+        gate
+    }
 }
 
 impl<R: Runner + Send + Sync + 'static> Inner<R> {
     fn view(&self, id: &str, e: &Entry) -> ClipJob {
-        let thumb = self.dir.join(id).join("thumb.jpg");
+        let thumb = self.dir.join(id).join(THUMB);
         ClipJob {
             id: id.to_owned(),
             channel_id: e.saved.channel_id,
@@ -468,20 +552,6 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
         }
     }
 
-    /// Write `job.json` (through a temp file, so a crash never leaves half of one).
-    fn persist(&self, id: &str, saved: &Saved) -> bool {
-        let dir = self.dir.join(id);
-        let tmp = dir.join("job.json.tmp");
-        let ok = serde_json::to_vec(saved)
-            .map_err(std::io::Error::other)
-            .and_then(|raw| std::fs::write(&tmp, raw))
-            .and_then(|()| std::fs::rename(&tmp, dir.join("job.json")));
-        if let Err(e) = &ok {
-            tracing::warn!(error = %e, "clips: job not saved");
-        }
-        ok.is_ok()
-    }
-
     fn snapshot(&self, id: &str, run_no: u64) -> Option<Saved> {
         let jobs = self.jobs.lock().unwrap();
         jobs.get(id)
@@ -490,31 +560,63 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
     }
 
     /// Change this run's job (ignored once the job was cancelled or another run owns it), save it
-    /// when `save`, and tell the UI (progress alone at most 4 times a second).
-    fn update(&self, id: &str, run_no: u64, save: bool, f: impl FnOnce(&mut Entry)) -> bool {
-        let job = {
+    /// when `save`, and tell the UI. Progress alone goes at most 4 times a second; a change held
+    /// back is sent when its window ends.
+    fn update(
+        self: &Arc<Self>,
+        id: &str,
+        run_no: u64,
+        save: bool,
+        f: impl FnOnce(&mut Entry),
+    ) -> bool {
+        let (job, saved) = {
             let mut jobs = self.jobs.lock().unwrap();
             let Some(e) = jobs.get_mut(id).filter(|e| e.running && e.run_no == run_no) else {
                 return false;
             };
             let (stage, progress) = (e.saved.stage, e.progress);
             f(e);
-            if save {
-                self.persist(id, &e.saved);
+            let only_progress = !save && e.saved.stage == stage;
+            if only_progress && e.progress == progress {
+                return true;
             }
-            let only_progress = e.saved.stage == stage && e.progress != progress && !save;
             let now = Instant::now();
-            if only_progress && e.last_emit.is_some_and(|t| now - t < PROGRESS_EVERY) {
+            if only_progress && let Some(last) = e.last_emit.filter(|t| now - *t < PROGRESS_EVERY) {
+                if !e.trailing {
+                    e.trailing = true;
+                    self.rt
+                        .spawn(self.clone().trailing(id.to_owned(), last + PROGRESS_EVERY));
+                }
                 return true;
             }
             e.last_emit = Some(now);
-            self.view(id, e)
+            e.trailing = false;
+            (self.view(id, e), save.then(|| e.saved.clone()))
         };
+        if let Some(saved) = saved {
+            persist(&self.dir.join(id), &saved);
+        }
         (self.hooks.emit)(&job);
         true
     }
 
-    fn progress(&self, id: &str, run_no: u64, p: f32) {
+    /// The progress change held back by the rate limit, sent when its window ends (unless
+    /// something was sent since).
+    async fn trailing(self: Arc<Self>, id: String, at: Instant) {
+        tokio::time::sleep_until(at.into()).await;
+        let job = {
+            let mut jobs = self.jobs.lock().unwrap();
+            let Some(e) = jobs.get_mut(&id).filter(|e| e.trailing) else {
+                return;
+            };
+            e.trailing = false;
+            e.last_emit = Some(Instant::now());
+            self.view(&id, e)
+        };
+        (self.hooks.emit)(&job);
+    }
+
+    fn progress(self: &Arc<Self>, id: &str, run_no: u64, p: f32) {
         self.update(id, run_no, false, |e| {
             if p > e.progress {
                 e.progress = p;
@@ -522,7 +624,13 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
         });
     }
 
-    fn to_stage(&self, id: &str, run_no: u64, stage: Stage, f: impl FnOnce(&mut Saved)) -> bool {
+    fn to_stage(
+        self: &Arc<Self>,
+        id: &str,
+        run_no: u64,
+        stage: Stage,
+        f: impl FnOnce(&mut Saved),
+    ) -> bool {
         self.update(id, run_no, true, |e| {
             f(&mut e.saved);
             e.saved.stage = stage;
@@ -575,7 +683,7 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
     /// The job is over (posted, or cancelled): its folder goes and the UI gets its last event.
     async fn finish(&self, id: &str, mut e: Entry, message: Option<MessageId>) {
         let dir = self.dir.join(id);
-        (self.hooks.forbid_file)(&dir.join("thumb.jpg"));
+        (self.hooks.forbid_file)(&dir.join(THUMB));
         let _ = self.rt.spawn_blocking(move || remove_folder(&dir)).await;
         e.saved.stage = Stage::Done;
         e.progress = 1.0;
@@ -586,17 +694,26 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
         (self.hooks.emit)(&job);
     }
 
-    /// Encode the kept pieces (0 to 0.95), then make the poster (to 1.0).
-    async fn prepare(&self, id: &str, run_no: u64, s: Saved) -> Result<(), Stop> {
+    /// Encode the kept pieces (0 to 0.95), then make the poster (to 1.0). Both are written under a
+    /// temporary name and renamed once complete.
+    async fn prepare(self: &Arc<Self>, id: &str, run_no: u64, s: Saved) -> Result<(), Stop> {
         let dir = self.dir.join(id);
-        let (out, thumb) = (dir.join("out.mp4"), dir.join("thumb.jpg"));
-        let _ = std::fs::remove_file(&out);
+        let (out, out_part) = (dir.join(OUT), dir.join(OUT_PART));
+        let (thumb, thumb_part) = (dir.join(THUMB), dir.join(THUMB_PART));
+        for f in [&out, &out_part, &thumb_part] {
+            let _ = std::fs::remove_file(f);
+        }
+        if s.encoder.is_some() {
+            self.update(id, run_no, true, |e| e.saved.encoder = None);
+        }
         let kept = kept_ms(&s.spans);
-        let build = |enc| encode::args(&s.probe, &s.source_path, &s.spans, s.preset, enc, &out);
+        let build =
+            |enc| encode::args(&s.probe, &s.source_path, &s.spans, s.preset, enc, &out_part);
         let failed = |e: EncodeError| {
             let EncodeError::Failed { stderr_tail } = &e;
             tracing::warn!(stderr = %stderr_tail, "clips: export failed");
-            let _ = std::fs::remove_file(&out);
+            let _ = std::fs::remove_file(&out_part);
+            let _ = std::fs::remove_file(&thumb_part);
             Some(e.to_string())
         };
         let enc = WORKING
@@ -605,14 +722,14 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
             })
             .await
             .map_err(failed)?;
-        let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+        let size = std::fs::metadata(&out_part).map(|m| m.len()).unwrap_or(0);
         if size == 0 {
             return Err(failed(EncodeError::Failed {
                 stderr_tail: "no output".into(),
             }));
         }
         if size > MAX_BYTES {
-            let _ = std::fs::remove_file(&out);
+            let _ = std::fs::remove_file(&out_part);
             return Err(Some(TOO_BIG.to_owned()));
         }
 
@@ -620,12 +737,19 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
         args.extend(preview::thumb_args(
             &s.source_path.to_string_lossy(),
             thumb_at(&s.spans),
-            &thumb.to_string_lossy(),
+            &thumb_part.to_string_lossy(),
         ));
         let made = self.runner.run(args, &mut |_| {}).await;
-        if made.is_err() || !thumb.is_file() {
+        if made.is_err() || !thumb_part.is_file() {
             let stderr_tail = made.err().map(|f| f.stderr_tail).unwrap_or_default();
             return Err(failed(EncodeError::Failed { stderr_tail }));
+        }
+        let renamed =
+            std::fs::rename(&out_part, &out).and_then(|()| std::fs::rename(&thumb_part, &thumb));
+        if let Err(e) = renamed {
+            return Err(failed(EncodeError::Failed {
+                stderr_tail: e.to_string(),
+            }));
         }
         (self.hooks.allow_file)(&thumb);
         self.progress(id, run_no, 1.0);
@@ -639,12 +763,13 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
     /// A new ticket (the old one cancelled first), the poster, then the file.
     async fn upload(self: &Arc<Self>, id: &str, run_no: u64, s: Saved) -> Result<(), Stop> {
         let dir = self.dir.join(id);
-        let out = dir.join("out.mp4");
-        let Ok(meta) = std::fs::metadata(&out) else {
-            // the file went (cleaned up by hand?): make it again
+        let out = dir.join(OUT);
+        if !prepared(&dir, &s) {
+            // not (or no longer) complete: make it again
             self.to_stage(id, run_no, Stage::Preparing, |_| {});
             return Ok(());
-        };
+        }
+        let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
         let (api, token) = (&self.api, self.token.as_str());
         if let Some(old) = s.upload_id {
             if let Err(e) = api.cancel_clip_upload(token, old).await {
@@ -657,7 +782,7 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
                 token,
                 s.channel_id,
                 &ClipUploadRequest {
-                    size: meta.len(),
+                    size,
                     duration_ms: kept_ms(&s.spans) as u32,
                 },
             )
@@ -669,7 +794,7 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
             return Ok(());
         }
 
-        let poster = std::fs::read(dir.join("thumb.jpg")).map_err(|_| None)?;
+        let poster = std::fs::read(dir.join(THUMB)).map_err(|_| None)?;
         let thumb = api
             .upload_clip_thumb(token, poster)
             .await
@@ -701,9 +826,10 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
         Ok(())
     }
 
-    /// Confirm with the job's nonce. A refusal that means the upload is no good (the ticket expired,
-    /// the file didn't arrive) sends Retry back to uploading with a new ticket.
-    async fn post(&self, id: &str, run_no: u64, s: Saved) -> Result<MessageId, Stop> {
+    /// Confirm with the job's nonce. When the ticket or its upload is gone (404, 409: expired,
+    /// didn't arrive) Retry uploads again with a new ticket; any other refusal keeps the upload, so
+    /// Retry confirms again.
+    async fn post(self: &Arc<Self>, id: &str, run_no: u64, s: Saved) -> Result<MessageId, Stop> {
         let (Some(ticket), Some(thumb_hash)) = (s.upload_id, s.thumb_hash.clone()) else {
             self.update(id, run_no, true, |e| e.saved.uploaded = false);
             return Err(None);
@@ -718,6 +844,13 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
             thumb_hash,
             nonce: Some(s.nonce.clone()),
         };
+        #[cfg(test)]
+        {
+            let gate = self.confirm_gate.lock().unwrap().clone();
+            if let Some(gate) = gate {
+                gate.notified().await;
+            }
+        }
         #[allow(unused_mut)]
         let mut res = self.api.confirm_clip(&self.token, ticket, &body).await;
         #[cfg(test)]
@@ -730,7 +863,7 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
         }
         match res {
             Ok(m) => Ok(m.id),
-            Err(e @ (ApiError::Rejected(_) | ApiError::Forbidden(_))) => {
+            Err(e @ ApiError::UploadGone(_)) => {
                 self.update(id, run_no, true, |e| e.saved.uploaded = false);
                 Err(server_words(&e))
             }
@@ -771,10 +904,25 @@ mod tests {
         out.into_inner()
     }
 
-    /// Stands in for ffmpeg: the export writes `out_len` bytes (reporting progress first), the
-    /// thumbnail run writes a unique image.
+    /// Stands in for ffmpeg: the export writes `out_len` bytes (reporting `steps` progress lines
+    /// first, then pausing `pause`), the thumbnail run writes a unique image. The first `fail`
+    /// exports fail half way.
     struct FakeRunner {
         out_len: u64,
+        steps: u64,
+        pause: Duration,
+        fail: AtomicU32,
+    }
+
+    impl FakeRunner {
+        fn new(out_len: u64) -> Self {
+            Self {
+                out_len,
+                steps: 3,
+                pause: Duration::ZERO,
+                fail: AtomicU32::new(0),
+            }
+        }
     }
 
     impl Runner for FakeRunner {
@@ -784,13 +932,25 @@ mod tests {
             on_line: &mut (dyn FnMut(&str) + Send),
         ) -> Result<(), RunFailed> {
             let out = PathBuf::from(args.last().unwrap());
-            if out.file_name().is_some_and(|n| n == "thumb.jpg") {
+            if out.to_string_lossy().ends_with(".jpg") {
                 std::fs::write(&out, unique_png()).unwrap();
                 return Ok(());
             }
-            for us in [250_000, 500_000, 1_000_000] {
-                on_line(&format!("out_time_us={us}"));
+            // the clip keeps 12.5 s: the steps go up to half of it
+            for i in 1..=self.steps {
+                on_line(&format!("out_time_us={}", 6_250_000 * i / self.steps));
             }
+            if self
+                .fail
+                .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |n| n.checked_sub(1))
+                .is_ok()
+            {
+                std::fs::write(&out, b"half a clip").unwrap();
+                return Err(RunFailed {
+                    stderr_tail: "boom".into(),
+                });
+            }
+            tokio::time::sleep(self.pause).await;
             let f = std::fs::File::create(&out).unwrap();
             if self.out_len > 64 * 1024 {
                 // sparse: the size is what counts
@@ -868,11 +1028,15 @@ mod tests {
         }
 
         /// `Jobs` as a fresh start of Pulse would build it.
-        fn jobs(&self, out_len: u64) -> Jobs<FakeRunner> {
+        async fn jobs(&self, out_len: u64) -> Jobs<FakeRunner> {
+            self.jobs_with(FakeRunner::new(out_len)).await
+        }
+
+        async fn jobs_with(&self, runner: FakeRunner) -> Jobs<FakeRunner> {
             let events = self.events.clone();
             Jobs::load(
                 self.dir(),
-                FakeRunner { out_len },
+                runner,
                 self.api.clone(),
                 self.token.clone(),
                 Hooks {
@@ -881,6 +1045,16 @@ mod tests {
                     forbid_file: Box::new(|_| {}),
                 },
             )
+            .await
+        }
+
+        /// PUTs the store has seen.
+        fn puts(&self) -> usize {
+            self.s3()
+                .requests()
+                .iter()
+                .filter(|(m, _)| m.as_str() == "PUT")
+                .count()
         }
 
         fn request(&self) -> NewJob {
@@ -966,7 +1140,7 @@ mod tests {
     #[tokio::test]
     async fn a_job_goes_preparing_uploading_posting_done() {
         let r = rig().await;
-        let jobs = r.jobs(3 * 1024 * 1024);
+        let jobs = r.jobs(3 * 1024 * 1024).await;
         let job = jobs.send(r.request()).unwrap();
         assert_eq!(job.stage, Stage::Preparing);
         assert_eq!(job.kept_ms, 12_500);
@@ -1017,7 +1191,7 @@ mod tests {
                 .await
                 .unwrap();
         }
-        let jobs = r.jobs(1024);
+        let jobs = r.jobs(1024).await;
         let job = jobs.send(r.request()).unwrap();
         let failed = r.until(&job.id, |j| j.stage == Stage::Failed).await;
         assert_eq!(
@@ -1032,7 +1206,7 @@ mod tests {
     async fn cancel_mid_upload_leaves_nothing() {
         let r = rig().await;
         r.s3().set_delay(Duration::from_secs(30));
-        let jobs = r.jobs(3 * 1024 * 1024);
+        let jobs = r.jobs(3 * 1024 * 1024).await;
         let job = jobs.send(r.request()).unwrap();
         r.until(&job.id, |j| j.stage == Stage::Uploading).await;
         // wait for the ticket to be taken
@@ -1063,7 +1237,7 @@ mod tests {
     #[tokio::test]
     async fn restart_turns_live_jobs_into_failed() {
         let r = rig().await;
-        let jobs = r.jobs(1024);
+        let jobs = r.jobs(1024).await;
         let job = jobs.send(r.request()).unwrap();
         r.until(&job.id, |j| j.stage == Stage::Done).await;
 
@@ -1094,7 +1268,7 @@ mod tests {
         }
         std::fs::write(r.dir().join("bbbb").join("thumb.jpg"), unique_png()).unwrap();
 
-        let jobs = r.jobs(1024);
+        let jobs = r.jobs(1024).await;
         let mut list = jobs.list();
         list.sort_by(|a, b| a.id.cmp(&b.id));
         assert_eq!(list.len(), 3);
@@ -1125,7 +1299,7 @@ mod tests {
     async fn retry_after_a_failed_upload_posts_once() {
         let r = rig().await;
         r.s3().set_down(true);
-        let jobs = r.jobs(2 * 1024 * 1024);
+        let jobs = r.jobs(2 * 1024 * 1024).await;
         let job = jobs.send(r.request()).unwrap();
         r.until(&job.id, |j| j.stage == Stage::Failed).await;
         let old_ticket = r.saved(&job.id)["upload_id"]
@@ -1137,7 +1311,7 @@ mod tests {
         drop(jobs);
 
         // Pulse restarts, then Retry
-        let jobs = r.jobs(2 * 1024 * 1024);
+        let jobs = r.jobs(2 * 1024 * 1024).await;
         assert_eq!(jobs.list()[0].stage, Stage::Failed);
         let mut rx = r.app.hub.register(r.me, String::new()).rx;
         jobs.retry(&job.id).unwrap();
@@ -1163,7 +1337,7 @@ mod tests {
     #[tokio::test]
     async fn a_lost_confirm_response_never_double_posts() {
         let r = rig().await;
-        let jobs = r.jobs(1024 * 1024);
+        let jobs = r.jobs(1024 * 1024).await;
         jobs.lose_next_confirm_response();
         let mut rx = r.app.hub.register(r.me, String::new()).rx;
         let job = jobs.send(r.request()).unwrap();
@@ -1179,7 +1353,7 @@ mod tests {
         drop(jobs);
 
         // Retry after a restart: confirm again with the same nonce
-        let jobs = r.jobs(1024 * 1024);
+        let jobs = r.jobs(1024 * 1024).await;
         jobs.retry(&job.id).unwrap();
         let done = r.until(&job.id, |j| j.stage == Stage::Done).await;
         assert_eq!(done.message_id, Some(first[0].id));
@@ -1190,7 +1364,7 @@ mod tests {
     #[tokio::test]
     async fn an_oversized_output_fails_before_upload() {
         let r = rig().await;
-        let jobs = r.jobs(MAX_BYTES + 1);
+        let jobs = r.jobs(MAX_BYTES + 1).await;
         let job = jobs.send(r.request()).unwrap();
         let failed = r.until(&job.id, |j| j.stage == Stage::Failed).await;
         assert_eq!(
@@ -1209,7 +1383,7 @@ mod tests {
     #[tokio::test]
     async fn bad_requests_are_refused_up_front() {
         let r = rig().await;
-        let jobs = r.jobs(1024);
+        let jobs = r.jobs(1024).await;
         let mut req = r.request();
         req.spans.clear();
         assert_eq!(
@@ -1237,6 +1411,244 @@ mod tests {
         assert!(jobs.send(req).is_err(), "out of order");
         assert!(jobs.list().is_empty());
         assert!(!r.dir().exists() || std::fs::read_dir(r.dir()).unwrap().next().is_none());
+    }
+
+    /// Save a job as a stop in the middle of preparing leaves it (restart material).
+    fn save_job(r: &Rig, id: &str, stage: &str, encoder: Option<&str>) -> PathBuf {
+        let d = r.dir().join(id);
+        std::fs::create_dir_all(&d).unwrap();
+        let saved = serde_json::json!({
+            "source_path": r.source,
+            "probe": probe(),
+            "spans": [{ "start_ms": 0, "end_ms": 5000 }],
+            "preset": "light",
+            "caption": "clutch",
+            "game_id": null,
+            "nonce": format!("nonce-{id}"),
+            "channel_id": r.channel.id,
+            "stage": stage,
+            "upload_id": null,
+            "uploaded": false,
+            "thumb_hash": null,
+            "encoder": encoder,
+        });
+        std::fs::write(d.join("job.json"), saved.to_string()).unwrap();
+        d
+    }
+
+    #[tokio::test]
+    async fn retry_after_a_stop_mid_prepare_prepares_again() {
+        let r = rig().await;
+        // stopped mid-encode: a partial export, no poster
+        let d = save_job(&r, "aaaa", "preparing", None);
+        std::fs::write(d.join("out.mp4.part"), b"half").unwrap();
+        std::fs::write(d.join("out.mp4"), b"half, from an older build").unwrap();
+        // stopped making the poster: the export is whole, the poster isn't
+        let d = save_job(&r, "bbbb", "preparing", None);
+        std::fs::write(d.join("out.mp4"), vec![1u8; 4096]).unwrap();
+        std::fs::write(d.join("thumb.part.jpg"), b"half a jpeg").unwrap();
+        // finished files but no encoder recorded: not trusted either
+        let d = save_job(&r, "cccc", "uploading", None);
+        std::fs::write(d.join("out.mp4"), vec![1u8; 4096]).unwrap();
+        std::fs::write(d.join("thumb.jpg"), unique_png()).unwrap();
+
+        let jobs = r.jobs(2 * 1024 * 1024).await;
+        for id in ["aaaa", "bbbb", "cccc"] {
+            let again = jobs.retry(id).unwrap();
+            assert_eq!(again.stage, Stage::Preparing, "{id}");
+            let done = r.until(id, |j| j.stage == Stage::Done).await;
+            assert!(done.message_id.is_some());
+        }
+        let clips = r.clips().await;
+        assert_eq!(clips.len(), 3);
+        for c in clips {
+            assert_eq!(c.clip.unwrap().size, 2 * 1024 * 1024, "the fresh export");
+        }
+        assert_eq!(r.puts(), 3);
+    }
+
+    #[tokio::test]
+    async fn retry_after_an_encoder_failure_prepares_again() {
+        let r = rig().await;
+        let runner = FakeRunner::new(1024 * 1024);
+        runner.fail.store(1, Ordering::SeqCst);
+        let jobs = r.jobs_with(runner).await;
+        let job = jobs.send(r.request()).unwrap();
+        let failed = r.until(&job.id, |j| j.stage == Stage::Failed).await;
+        assert_eq!(
+            failed.error.as_deref(),
+            Some("Pulse couldn't prepare that clip.")
+        );
+        let d = r.dir().join(&job.id);
+        assert!(!d.join("out.mp4").exists() && !d.join("out.mp4.part").exists());
+        assert_eq!(jobs.retry(&job.id).unwrap().stage, Stage::Preparing);
+        r.until(&job.id, |j| j.stage == Stage::Done).await;
+        assert_eq!(r.clips().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn cancel_while_posting_ends_as_posted() {
+        let r = rig().await;
+        let jobs = r.jobs(1024 * 1024).await;
+        let gate = jobs.hold_confirms();
+        let job = jobs.send(r.request()).unwrap();
+        r.until(&job.id, |j| j.stage == Stage::Posting).await;
+        let (j2, id) = (jobs.clone(), job.id.clone());
+        let cancel = tokio::spawn(async move { j2.cancel(&id).await });
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        gate.notify_one();
+        cancel.await.unwrap().unwrap();
+        let last = r.until(&job.id, |j| j.stage == Stage::Done).await;
+        let clips = r.clips().await;
+        assert_eq!(clips.len(), 1);
+        assert_eq!(
+            last.message_id,
+            Some(clips[0].id),
+            "it posted, so it ends posted"
+        );
+        assert_eq!(r.s3().keys().len(), 1, "the clip keeps its video");
+        assert!(jobs.list().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_gone_upload_on_confirm_uploads_again_on_retry() {
+        let r = rig().await;
+        let jobs = r.jobs(1024 * 1024).await;
+        let gate = jobs.hold_confirms();
+        let job = jobs.send(r.request()).unwrap();
+        r.until(&job.id, |j| j.stage == Stage::Posting).await;
+        // the ticket is gone before the confirm arrives (expired and swept, say)
+        let ticket = r.saved(&job.id)["upload_id"].as_str().unwrap().to_owned();
+        r.api
+            .cancel_clip_upload(&r.token, ticket.parse().unwrap())
+            .await
+            .unwrap();
+        gate.notify_one();
+        let failed = r.until(&job.id, |j| j.stage == Stage::Failed).await;
+        assert!(failed.error.is_some(), "the server's words");
+        assert_eq!(r.saved(&job.id)["uploaded"], false);
+
+        gate.notify_one();
+        jobs.retry(&job.id).unwrap();
+        r.until(&job.id, |j| j.stage == Stage::Done).await;
+        assert_eq!(r.puts(), 2, "uploaded again with a new ticket");
+        assert_eq!(r.clips().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_refused_confirm_keeps_the_upload() {
+        let r = rig().await;
+        // a game of another server
+        let other = testing::create_server(&r.app, &r.token, "Other").await;
+        let stranger = r.api.add_game(&r.token, other.id, "Tetris").await.unwrap();
+        let jobs = r.jobs(1024 * 1024).await;
+        let mut req = r.request();
+        req.game_id = Some(stranger.id);
+        let job = jobs.send(req).unwrap();
+        let failed = r.until(&job.id, |j| j.stage == Stage::Failed).await;
+        assert_eq!(
+            failed.error.as_deref(),
+            Some("That game isn't in this server.")
+        );
+        assert_eq!(r.saved(&job.id)["uploaded"], true);
+        jobs.retry(&job.id).unwrap();
+        r.until(&job.id, |j| j.stage == Stage::Posting).await;
+        r.until(&job.id, |j| j.stage == Stage::Failed).await;
+        assert_eq!(r.puts(), 1, "Retry confirms again, it doesn't upload again");
+    }
+
+    #[tokio::test]
+    async fn a_store_outage_on_confirm_keeps_the_upload() {
+        let r = rig().await;
+        let jobs = r.jobs(1024 * 1024).await;
+        let gate = jobs.hold_confirms();
+        let job = jobs.send(r.request()).unwrap();
+        r.until(&job.id, |j| j.stage == Stage::Posting).await;
+        r.s3().set_down(true);
+        gate.notify_one();
+        let failed = r.until(&job.id, |j| j.stage == Stage::Failed).await;
+        assert_eq!(failed.error, None);
+        assert_eq!(r.saved(&job.id)["uploaded"], true);
+        r.s3().set_down(false);
+        gate.notify_one();
+        jobs.retry(&job.id).unwrap();
+        r.until(&job.id, |j| j.stage == Stage::Done).await;
+        assert_eq!(r.puts(), 1);
+        assert_eq!(r.clips().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn progress_is_rate_limited_and_the_last_value_still_arrives() {
+        let r = rig().await;
+        let mut runner = FakeRunner::new(1024);
+        runner.steps = 50;
+        runner.pause = Duration::from_millis(700);
+        let jobs = r.jobs_with(runner).await;
+        let job = jobs.send(r.request()).unwrap();
+        r.until(&job.id, |j| j.stage == Stage::Uploading).await;
+        let preparing: Vec<f32> = r
+            .events
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|j| j.id == job.id && j.stage == Stage::Preparing)
+            .map(|j| j.progress)
+            .collect();
+        // 50 progress lines in a burst: the first, then the last of the burst once its window
+        // ends (during the pause), then the poster's 1.0
+        assert!(preparing.len() <= 5, "{preparing:?}");
+        let last_of_burst = 0.95 * 0.5;
+        let at = preparing
+            .iter()
+            .position(|p| (p - last_of_burst).abs() < 1e-4)
+            .unwrap_or_else(|| panic!("the held-back value never arrived: {preparing:?}"));
+        assert_eq!(preparing[at + 1], 1.0);
+    }
+
+    #[tokio::test]
+    async fn sign_out_deletes_tickets_and_the_folder() {
+        let r = rig().await;
+        r.s3().set_delay(Duration::from_secs(30));
+        let jobs = r.jobs(3 * 1024 * 1024).await;
+        let job = jobs.send(r.request()).unwrap();
+        r.until(&job.id, |j| j.stage == Stage::Uploading).await;
+        let mut ticket = None;
+        for _ in 0..500 {
+            ticket = r.saved(&job.id)["upload_id"].as_str().map(str::to_owned);
+            if ticket.is_some() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let ticket = ticket.expect("a ticket");
+        r.s3().set_delay(Duration::ZERO);
+        // and a failed job from an earlier run that was never loaded, holding a ticket
+        let d = save_job(&r, "ffff", "failed", None);
+        let old = r
+            .api
+            .clip_upload(
+                &r.token,
+                r.channel.id,
+                &ClipUploadRequest {
+                    size: 10,
+                    duration_ms: 1000,
+                },
+            )
+            .await
+            .unwrap();
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(d.join("job.json")).unwrap()).unwrap();
+        saved["upload_id"] = serde_json::json!(old.id);
+        std::fs::write(d.join("job.json"), saved.to_string()).unwrap();
+
+        let started = std::time::Instant::now();
+        jobs.stop();
+        discard_all(r.dir(), r.api.clone(), r.token.clone()).await;
+        assert!(started.elapsed() < Duration::from_secs(6));
+        assert!(!r.dir().exists());
+        assert!(!r.ticket_alive(&ticket).await);
+        assert!(!r.ticket_alive(&old.id.to_string()).await);
+        assert!(jobs.list().is_empty());
     }
 
     #[test]

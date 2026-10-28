@@ -23,6 +23,8 @@ use crate::voice::devices::{AudioConfig, DeviceInfo};
 use crate::voice::{AudioMode, VoiceError, VoiceManager, controls::Controls};
 
 type ClipJobs = crate::clips::jobs::Jobs<crate::clips::encode::FfmpegRunner>;
+const SIGN_IN_FOR_CLIPS: &str = "Sign in to share clips.";
+const NOT_CONNECTED: &str = "Pulse is still connecting. Try again in a moment.";
 
 /// Signed in: where, with which token, and as whom (`None` until login or the first Ready says).
 #[derive(Clone)]
@@ -214,7 +216,7 @@ impl Core {
 
     /// The session `token` is ready: load its account's clip jobs from disk (once per session; a
     /// reconnect's Ready keeps them). Jobs that were running when Pulse stopped come back failed.
-    fn start_clip_jobs(&self, app: &AppHandle, token: &str) {
+    async fn start_clip_jobs(&self, app: &AppHandle, token: &str) {
         use crate::clips::{encode::FfmpegRunner, ffmpeg::FfmpegPaths, jobs};
         if self.clips_root.as_os_str().is_empty()
             || self
@@ -234,8 +236,9 @@ impl Core {
         else {
             return;
         };
-        let Some(me) = s.me else { return };
-        let dir = crate::media::scope_dir(&self.clips_root, s.api.base(), &me).join("jobs");
+        let Some(dir) = self.clip_jobs_dir(&s) else {
+            return;
+        };
         // Without ffmpeg (a broken install) a job can still upload and post; preparing fails.
         let paths = ffmpeg_paths(app).unwrap_or(FfmpegPaths {
             ffmpeg: Default::default(),
@@ -253,20 +256,58 @@ impl Core {
                 let _ = forbid.asset_protocol_scope().forbid_file(p);
             }),
         };
-        let loaded = jobs::Jobs::load(dir, FfmpegRunner(paths), s.api, s.token, hooks);
+        let loaded = jobs::Jobs::load(dir, FfmpegRunner(paths), s.api, s.token, hooks).await;
+        // the session may have ended (or another Ready loaded them) while the disk was read
+        let current = self.inner.lock().unwrap().as_ref().map(|s| s.token.clone());
+        let taken = self
+            .clip_jobs
+            .borrow()
+            .as_ref()
+            .is_some_and(|j| j.token() == token);
+        if current.as_deref() != Some(token) || taken {
+            loaded.stop();
+            return;
+        }
         if let Some(old) = self.clip_jobs.send_replace(Some(loaded)) {
             old.stop();
         }
     }
 
-    /// This session's clip jobs, waiting for them to load (the first Ready); `None` when signed out.
-    async fn clip_jobs(&self) -> Option<ClipJobs> {
-        let (_, token) = self.current().ok()?;
+    /// `<clips scope>/jobs` of this session's account, once known.
+    fn clip_jobs_dir(&self, s: &Session) -> Option<std::path::PathBuf> {
+        if self.clips_root.as_os_str().is_empty() {
+            return None;
+        }
+        let me = s.me?;
+        Some(crate::media::scope_dir(&self.clips_root, s.api.base(), &me).join("jobs"))
+    }
+
+    /// Signing out: stop the clip jobs, then (the returned future) delete their tickets, while
+    /// `s`'s token still works, and their folder, whether they were loaded or not.
+    fn discard_clip_jobs(
+        &self,
+        s: &Session,
+    ) -> Option<impl std::future::Future<Output = ()> + Send + use<>> {
+        if let Some(jobs) = self.clip_jobs.send_replace(None) {
+            jobs.stop();
+        }
+        let dir = self.clip_jobs_dir(s)?;
+        Some(crate::clips::jobs::discard_all(
+            dir,
+            s.api.clone(),
+            s.token.clone(),
+        ))
+    }
+
+    /// This session's clip jobs, waiting for them to load (on the first Ready). The error is the
+    /// reason to show: signed out, or not connected yet.
+    async fn clip_jobs(&self) -> Result<ClipJobs, String> {
+        let (_, token) = self.current().map_err(|_| SIGN_IN_FOR_CLIPS.to_owned())?;
         let mut rx = self.clip_jobs.subscribe();
         let ready = rx.wait_for(|j| j.as_ref().is_some_and(|j| j.token() == token));
         match tokio::time::timeout(std::time::Duration::from_secs(30), ready).await {
-            Ok(Ok(j)) => j.clone(),
-            _ => None,
+            Ok(Ok(j)) => j.clone().ok_or_else(|| NOT_CONNECTED.to_owned()),
+            _ => Err(NOT_CONNECTED.to_owned()),
         }
     }
 
@@ -455,9 +496,26 @@ impl Core {
         if let Some(s) = &session {
             s.alive.store(false, Ordering::SeqCst);
         }
-        self.last.lock().unwrap().take();
-        if let Some(jobs) = self.clip_jobs.send_replace(None) {
-            jobs.abandon();
+        let last = self.last.lock().unwrap().take();
+        match session.as_ref().and_then(|s| self.discard_clip_jobs(s)) {
+            Some(discard) => {
+                tauri::async_runtime::spawn(discard);
+            }
+            None => {
+                if let Some(jobs) = self.clip_jobs.send_replace(None) {
+                    jobs.stop();
+                }
+                // a paused session (its token isn't usable here): the folder at least goes, the
+                // server sweeps the tickets
+                if let Some((base, Some(me))) = last
+                    && !self.clips_root.as_os_str().is_empty()
+                {
+                    let dir = crate::media::scope_dir(&self.clips_root, &base, &me).join("jobs");
+                    tauri::async_runtime::spawn_blocking(move || {
+                        let _ = std::fs::remove_dir_all(dir);
+                    });
+                }
+            }
         }
         for e in self.clip_sources.drain() {
             self.release_source(e);
@@ -512,7 +570,7 @@ async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>,
         match &u {
             GatewayUpdate::Ready(r) => {
                 app.state::<Core>().learn_me(&token, r.me.id);
-                app.state::<Core>().start_clip_jobs(&app, &token);
+                app.state::<Core>().start_clip_jobs(&app, &token).await;
                 let _ = app.emit("pulse://ready", &**r);
             }
             GatewayUpdate::Event(e) => {
@@ -712,9 +770,10 @@ async fn unrestored_reason(api: &Api, token: &str) -> ApiError {
 #[tauri::command]
 pub async fn logout(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiError> {
     core.mfa.clear();
-    if let Some(jobs) = core.clip_jobs.send_replace(None) {
-        // while the token still works: their tickets are deleted on the server too
-        jobs.cancel_all().await;
+    let session = core.inner.lock().unwrap().clone();
+    if let Some(discard) = session.as_ref().and_then(|s| core.discard_clip_jobs(s)) {
+        // while the token still works, so their tickets go too (a few seconds at most)
+        discard.await;
     }
     if let Ok((api, token)) = core.current() {
         let _ = api.logout(&token).await;
@@ -1547,7 +1606,7 @@ pub async fn open_clip(
     let tools = ffmpeg_paths(&app)?;
     let scope = core
         .clips_scope()
-        .ok_or_else(|| "Sign in to share clips.".to_owned())?;
+        .ok_or_else(|| SIGN_IN_FOR_CLIPS.to_owned())?;
     let probe = editor::probe_file(&tools.ffprobe, &path).await?;
     let plan = preview::plan(&probe, &editor::extension(&path));
     let id = editor::new_id();
@@ -1682,8 +1741,6 @@ pub struct SendClip {
     game_id: Option<GameId>,
 }
 
-const SIGN_IN_FOR_CLIPS: &str = "Sign in to share clips.";
-
 /// Start sending a clip of an open editor source (its path is copied, so closing the editor is fine).
 /// Progress arrives as `clip://job` events (the whole job).
 #[tauri::command]
@@ -1695,10 +1752,7 @@ pub async fn send_clip(
         .clip_sources
         .get(&request.source)
         .ok_or_else(|| crate::clips::editor::UNREADABLE.to_owned())?;
-    let jobs = core
-        .clip_jobs()
-        .await
-        .ok_or_else(|| SIGN_IN_FOR_CLIPS.to_owned())?;
+    let jobs = core.clip_jobs().await?;
     jobs.send(crate::clips::jobs::NewJob {
         source_path: source.path,
         probe: source.probe,
@@ -1715,18 +1769,15 @@ pub async fn retry_clip(
     core: State<'_, Core>,
     id: String,
 ) -> Result<crate::clips::jobs::ClipJob, String> {
-    let jobs = core
-        .clip_jobs()
-        .await
-        .ok_or_else(|| SIGN_IN_FOR_CLIPS.to_owned())?;
-    jobs.retry(&id)
+    core.clip_jobs().await?.retry(&id)
 }
 
 #[tauri::command]
 pub async fn cancel_clip(core: State<'_, Core>, id: String) -> Result<(), String> {
     match core.clip_jobs().await {
-        Some(jobs) => jobs.cancel(&id).await,
-        None => Ok(()),
+        Ok(jobs) => jobs.cancel(&id).await,
+        // signed out: sign-out already deleted it
+        Err(_) => Ok(()),
     }
 }
 
@@ -2000,6 +2051,85 @@ mod tests {
         })
         .unwrap();
         assert_eq!(json, want);
+    }
+
+    /// Signing out deletes the account's clip jobs and their tickets even when they were never
+    /// loaded (no Ready yet, or a paused session).
+    #[tokio::test]
+    async fn sign_out_deletes_clip_jobs_that_were_never_loaded() {
+        use pulse_protocol::rest::{ChannelKind, ClipUploadRequest};
+        let app = testing::spawn().await;
+        let (me, token) = testing::register(&app, "alex").await;
+        let server = testing::create_server(&app, &token, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let channel = api
+            .create_channel(&token, server.id, ChannelKind::Clips, "clips")
+            .await
+            .unwrap();
+        let ticket = api
+            .clip_upload(
+                &token,
+                channel.id,
+                &ClipUploadRequest {
+                    size: 10,
+                    duration_ms: 1000,
+                },
+            )
+            .await
+            .unwrap();
+
+        let root = tempfile::tempdir().unwrap();
+        let core = Core::new(
+            Store::new(root.path().join("session"), Some("unit-test")),
+            crate::outbox::Outbox::new(std::sync::Arc::new(|_: &str, _, _: Option<&Message>| {})),
+            root.path().join("media"),
+            Box::new(|| {}),
+        )
+        .with_clips(root.path().join("clips"), Box::new(|_| {}));
+        core.begin(api.clone(), token.clone(), Some(me));
+        let jobs =
+            crate::media::scope_dir(&root.path().join("clips"), api.base(), &me).join("jobs");
+        let job = jobs.join("0123456789abcdef");
+        std::fs::create_dir_all(&job).unwrap();
+        let saved = serde_json::json!({
+            "source_path": "/v/a.mp4",
+            "probe": { "duration_ms": 5000, "width": 1280, "height": 720, "fps": 60.0,
+                       "video_codec": "h264", "audio": [], "format_name": "mp4",
+                       "title": null, "size": 1 },
+            "spans": [{ "start_ms": 0, "end_ms": 1000 }],
+            "preset": "light", "caption": "", "game_id": null, "nonce": "n",
+            "channel_id": channel.id, "stage": "failed", "upload_id": ticket.id,
+            "uploaded": false, "thumb_hash": null, "encoder": null,
+        });
+        std::fs::write(job.join("job.json"), saved.to_string()).unwrap();
+        std::fs::write(job.join("out.mp4"), b"x").unwrap();
+
+        core.forget();
+        for _ in 0..500 {
+            if !jobs.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(!jobs.exists(), "the jobs folder goes");
+        assert!(
+            api.cancel_clip_upload(&token, ticket.id).await.is_err(),
+            "its ticket was deleted"
+        );
+
+        // a session paused at startup (its server didn't answer), then signed out
+        std::fs::create_dir_all(&job).unwrap();
+        std::fs::write(job.join("job.json"), saved.to_string()).unwrap();
+        core.begin(api.clone(), token.clone(), Some(me));
+        core.suspend();
+        core.forget();
+        for _ in 0..500 {
+            if !jobs.exists() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert!(!jobs.exists(), "the jobs folder goes after a pause too");
     }
 
     /// A Core with a sign-out hook that counts, signed in as `me` on `server`.
