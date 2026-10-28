@@ -344,4 +344,18 @@ describe('ClipEditor', () => {
       delete el.cancelVideoFrameCallback
     }
   })
+
+  it('other shortcuts still work while a timeline edge has focus', async () => {
+    await show()
+    at(10); key('c')
+    const edge = document.querySelector<HTMLElement>('[data-edge="1"]')!
+    edge.focus()
+    const press = (k: string, init: KeyboardEventInit = {}) => { edge.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, ...init })); flushSync() }
+    press('Delete')
+    expect(pieces()[1].dataset.dropped).toBe('true')
+    press('z', { ctrlKey: true })
+    expect(pieces()[1].dataset.dropped).toBeUndefined()
+    press('.')
+    expect(video()._t).toBeCloseTo(10 + 1 / 60, 2)
+  })
 })

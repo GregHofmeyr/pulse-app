@@ -186,7 +186,7 @@
     // Not while typing, and not Space/Enter on a focused control (that presses it).
     if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return
     if (t?.tagName === 'BUTTON' && (e.key === ' ' || e.key === 'Enter')) return
-    if (t?.getAttribute('role') === 'slider') return // a timeline edge takes its own arrows
+    if (t?.getAttribute('role') === 'slider' && (e.key === 'ArrowLeft' || e.key === 'ArrowRight')) return // a timeline edge takes its own arrows
     if (e.ctrlKey || e.metaKey) {
       if (e.key.toLowerCase() === 'z' && !e.shiftKey && !e.altKey) {
         e.preventDefault()
