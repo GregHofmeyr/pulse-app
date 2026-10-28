@@ -10,8 +10,8 @@ use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
 use pulse_protocol::ids::{ChannelId, MessageId};
 use pulse_protocol::rest::{Channel, ChannelKind};
 use serde_json::json;
-use sqlx::ConnectOptions;
 use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{ConnectOptions, Connection};
 use tokio_tungstenite::tungstenite::Message as Ws;
 
 async fn hello(app: &TestApp, token: &str) -> Socket {
@@ -365,6 +365,86 @@ async fn connect_works_for_an_in_memory_database() {
         .await
         .unwrap();
     assert_eq!(n, 0);
+}
+
+/// A reactions row whose message is gone, written with foreign keys off (as an old build
+/// could have left one).
+async fn orphan_reaction(path: &std::path::Path) {
+    let mut conn = SqliteConnectOptions::new()
+        .filename(path)
+        .foreign_keys(false)
+        .connect()
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO users (id, username, password_hash, created_at) VALUES ('U', 'alex', 'x', '2026-10-01T00:00:00.000Z')",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO reactions (message_id, user_id, emoji, created_at) VALUES ('GONE', 'U', '👍', '2026-10-01T00:00:00.000Z')",
+    )
+    .execute(&mut conn)
+    .await
+    .unwrap();
+    conn.close().await.unwrap();
+}
+
+/// M1: an unrelated legacy orphan never stops a boot that applies nothing.
+#[tokio::test]
+async fn a_legacy_orphan_does_not_stop_a_boot_without_migrations() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("pulse.db");
+    let url = format!("sqlite://{}", path.display());
+    pulse_server::db::connect(&url).await.unwrap().close().await;
+    orphan_reaction(&path).await;
+    let pool = pulse_server::db::connect(&url)
+        .await
+        .expect("a boot that migrates nothing starts despite an old orphan");
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM reactions")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "nothing is touched");
+}
+
+/// M1: after migrating, an orphan outside 0008's guarded tables is only logged; the scoped
+/// guard stays the hard stop.
+#[tokio::test]
+async fn a_legacy_orphan_outside_the_guard_does_not_stop_a_migrating_boot() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("old.db");
+    let opts = SqliteConnectOptions::new()
+        .filename(&path)
+        .create_if_missing(true)
+        .foreign_keys(false);
+    let mut conn = opts.connect().await.unwrap();
+    let mut migrator = sqlx::migrate::Migrator::new(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
+    )
+    .await
+    .unwrap();
+    migrator.migrations = Cow::Owned(
+        migrator
+            .migrations
+            .iter()
+            .filter(|m| m.version <= 7)
+            .cloned()
+            .collect(),
+    );
+    migrator.run(&mut conn).await.unwrap();
+    conn.close().await.unwrap();
+    orphan_reaction(&path).await;
+
+    let pool = pulse_server::db::connect(&format!("sqlite://{}", path.display()))
+        .await
+        .expect("0008 applies and the server starts");
+    let v: i64 = sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(v, 8);
 }
 
 // ---------- posting and reading ----------

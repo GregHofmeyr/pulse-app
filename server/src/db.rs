@@ -19,21 +19,42 @@ pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
         .busy_timeout(std::time::Duration::from_secs(5));
     // Migrations get their own connection with foreign keys OFF: rebuilding a table (0008 does)
     // means dropping it, and with them on that would cascade-delete everything pointing at it.
-    // Nothing is FK-checked while they are off, so check the whole database afterwards.
+    // Each migration that rebuilds a table guards its own children (0008 refuses on a violation
+    // in them, so that is the hard stop). A boot that applied something also checks the whole
+    // database, but only logs: a legacy orphan in an unrelated table must not brick every boot.
+    // (Run `PRAGMA foreign_key_check` on a backup of production before deploying a migration.)
     let mut migrator = opts.clone().foreign_keys(false).connect().await?;
+    let tracked: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
+    )
+    .fetch_one(&mut migrator)
+    .await?;
+    let before: i64 = if tracked == 0 {
+        0
+    } else {
+        sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+            .fetch_one(&mut migrator)
+            .await?
+    };
     sqlx::migrate!("./migrations").run(&mut migrator).await?;
-    let broken: Vec<(String, Option<i64>, String, i64)> =
-        sqlx::query_as("PRAGMA foreign_key_check")
-            .fetch_all(&mut migrator)
-            .await?;
-    if !broken.is_empty() {
-        let mut tables: Vec<&str> = broken.iter().map(|b| b.0.as_str()).collect();
-        tables.sort_unstable();
-        tables.dedup();
-        anyhow::bail!(
-            "foreign key violations after migrating, in: {}",
-            tables.join(", ")
-        );
+    let after: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM _sqlx_migrations")
+        .fetch_one(&mut migrator)
+        .await?;
+    if after > before {
+        let broken: Vec<(String, Option<i64>, String, i64)> =
+            sqlx::query_as("PRAGMA foreign_key_check")
+                .fetch_all(&mut migrator)
+                .await?;
+        if !broken.is_empty() {
+            let mut tables: Vec<&str> = broken.iter().map(|b| b.0.as_str()).collect();
+            tables.sort_unstable();
+            tables.dedup();
+            tracing::error!(
+                rows = broken.len(),
+                tables = %tables.join(", "),
+                "foreign key violations after migrating (left as they are)"
+            );
+        }
     }
     // The pool opens before the migration connection closes: an in-memory database lives only
     // while a connection to it is open.
