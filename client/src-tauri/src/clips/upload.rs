@@ -67,7 +67,8 @@ pub fn client() -> reqwest::Client {
         .expect("http client")
 }
 
-/// PUT `path` to `url`. `on_progress(sent, total)` runs at most every 250 ms (and at the end).
+/// PUT `path` to `url`. `on_progress(sent, total)` runs at most every 250 ms; it stays below
+/// `total` (99%) until the store answers 2xx, then reports `total` once.
 pub async fn put_file(
     http: &reqwest::Client,
     url: &str,
@@ -149,7 +150,9 @@ pub async fn put_file_with_stall(
             let due = st.last_report.is_none_or(|t| now - t >= PROGRESS_EVERY);
             if due || st.sent >= total {
                 st.last_report = Some(now);
-                report(st.sent, total);
+                // The connection taking the last chunk isn't the store acknowledging it: stay
+                // under 100% until the answer arrives.
+                report(st.sent.min(total - total / 100), total);
             }
             Some((Ok::<Vec<u8>, std::io::Error>(buf), st))
         }
@@ -179,7 +182,10 @@ pub async fn put_file_with_stall(
         () = cancel.cancelled() => Err(UploadError::Cancelled),
         () = watchdog => Err(UploadError::Stalled),
         res = send => match res {
-            Ok(resp) if resp.status().is_success() => Ok(()),
+            Ok(resp) if resp.status().is_success() => {
+                on_progress(total, total);
+                Ok(())
+            }
             Ok(resp) => Err(UploadError::Rejected(resp.status().as_u16())),
             Err(e) => Err(UploadError::Network(crate::api::failure_text(e))),
         },

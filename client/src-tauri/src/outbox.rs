@@ -25,7 +25,7 @@ pub type StatusSink = Arc<dyn Fn(&str, Status, Option<&Message>) + Send + Sync>;
 pub fn retryable(e: &ApiError) -> bool {
     matches!(
         e,
-        ApiError::Network(_) | ApiError::Server(_) | ApiError::RateLimited
+        ApiError::Network(_) | ApiError::Server(_) | ApiError::RateLimited | ApiError::Told { .. }
     )
 }
 

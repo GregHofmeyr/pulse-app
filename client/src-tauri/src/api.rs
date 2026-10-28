@@ -57,6 +57,11 @@ pub enum ApiError {
     RateLimited,
     #[error("can't reach the server: {0}")]
     Network(String),
+    /// A clip call refused with a 429 or 503 in Pulse's own words (`message`, shown as-is):
+    /// "That's 20 clips this hour. Try again later." / "Clips storage isn't set up on this
+    /// server." Nothing was done, so asking again is safe (`never_arrived` is true for a 503).
+    #[error("{message}")]
+    Told { status: u16, message: String },
 }
 
 impl ApiError {
@@ -67,6 +72,8 @@ impl ApiError {
         match self {
             Self::Network(t) => t == CONNECT_FAILED,
             Self::Server(s) => s.starts_with("502") || s.starts_with("503"),
+            // a clip call the server refused up front (storage not set up / unavailable)
+            Self::Told { status, .. } => *status == 503,
             _ => false,
         }
     }
@@ -288,6 +295,11 @@ impl Api {
         r: Result<reqwest::Response, reqwest::Error>,
     ) -> Result<T, ApiError> {
         let resp = Self::checked(r).await?;
+        Self::read_json(resp).await
+    }
+
+    /// The body of a response that already passed a status check.
+    async fn read_json<T: DeserializeOwned>(resp: reqwest::Response) -> Result<T, ApiError> {
         let (path, status) = (path_only(resp.url()), resp.status());
         resp.json().await.map_err(|e| {
             // a 2xx we couldn't read: checked() logged nothing, yet the caller sees a failure
@@ -944,7 +956,7 @@ impl Api {
         token: &str,
         bytes: Vec<u8>,
     ) -> Result<MediaInfo, ApiError> {
-        self.upload_media(token, "emoji", bytes).await
+        self.upload_media(token, "emoji", bytes, false).await
     }
 
     /// `kind` is the media route's last segment (`emoji`, `quote`): the raw file as the body.
@@ -953,6 +965,7 @@ impl Api {
         token: &str,
         kind: &str,
         bytes: Vec<u8>,
+        clip: bool,
     ) -> Result<MediaInfo, ApiError> {
         let r = self
             .http
@@ -970,7 +983,12 @@ impl Api {
             log_failure(Some(path_only(resp.url())), resp.status().as_str());
             return Err(ApiError::Rejected(TOO_BIG.into()));
         }
-        Self::parse(r).await
+        // a clip's poster keeps the server's own 429/503 words, like the other clip calls
+        if clip {
+            Self::clip_parse(r).await
+        } else {
+            Self::parse(r).await
+        }
     }
 
     pub async fn media(&self, token: &str, hash: &str) -> Result<Vec<u8>, ApiError> {
@@ -1151,7 +1169,7 @@ impl Api {
         token: &str,
         bytes: Vec<u8>,
     ) -> Result<MediaInfo, ApiError> {
-        self.upload_media(token, "quote", bytes).await
+        self.upload_media(token, "quote", bytes, false).await
     }
 
     pub async fn post_quote(
@@ -1315,9 +1333,8 @@ impl Api {
 
     // ---------- Clips ----------
 
-    /// Like [`Self::checked`], but a 429 or 503 keeps the server's own words ("That's 20 clips
-    /// this hour. Try again later.", "Clips storage isn't set up on this server."); the generic
-    /// text is only the fallback when the body isn't Pulse's (a proxy's page).
+    /// Like [`Self::checked`], but a 429 or 503 keeps the server's own words (`ApiError::Told`);
+    /// the generic text is only the fallback when the body isn't Pulse's (a proxy's page).
     async fn clip_checked(
         r: Result<reqwest::Response, reqwest::Error>,
     ) -> Result<reqwest::Response, ApiError> {
@@ -1333,7 +1350,10 @@ impl Api {
                 let status = resp.status();
                 log_failure(Some(path_only(resp.url())), status.as_str());
                 return Err(match resp.json::<pulse_protocol::rest::ApiError>().await {
-                    Ok(e) if !e.message.is_empty() => ApiError::Rejected(e.message),
+                    Ok(e) if !e.message.is_empty() => ApiError::Told {
+                        status: status.as_u16(),
+                        message: e.message,
+                    },
                     _ if status == StatusCode::TOO_MANY_REQUESTS => ApiError::RateLimited,
                     _ => ApiError::Server(status.to_string()),
                 });
@@ -1346,9 +1366,12 @@ impl Api {
     async fn clip_parse<T: DeserializeOwned>(
         r: Result<reqwest::Response, reqwest::Error>,
     ) -> Result<T, ApiError> {
-        // the body is read by `parse`, which re-runs `checked` on a response that already passed
-        let resp = Self::clip_checked(r).await?;
-        Self::parse(Ok(resp)).await
+        Self::read_json(Self::clip_checked(r).await?).await
+    }
+
+    /// For clip endpoints that answer 204.
+    async fn clip_ok_empty(r: Result<reqwest::Response, reqwest::Error>) -> Result<(), ApiError> {
+        Self::clip_checked(r).await.map(|_| ())
     }
 
     pub async fn add_game(
@@ -1387,7 +1410,7 @@ impl Api {
     }
 
     pub async fn cancel_clip_upload(&self, token: &str, id: ClipUploadId) -> Result<(), ApiError> {
-        Self::ok_empty(
+        Self::clip_ok_empty(
             self.http
                 .delete(self.url(&["clip-uploads", &id.to_string()])?)
                 .bearer_auth(token)
@@ -1420,7 +1443,7 @@ impl Api {
         token: &str,
         bytes: Vec<u8>,
     ) -> Result<MediaInfo, ApiError> {
-        self.upload_media(token, "clip-thumb", bytes).await
+        self.upload_media(token, "clip-thumb", bytes, true).await
     }
 
     pub async fn edit_clip(
@@ -1498,7 +1521,7 @@ impl Api {
         channel: ChannelId,
         view: ClipView,
     ) -> Result<(), ApiError> {
-        Self::ok_empty(
+        Self::clip_ok_empty(
             self.http
                 .put(self.url(&["channels", &channel.to_string(), "clip-view"])?)
                 .bearer_auth(token)
@@ -3288,6 +3311,9 @@ mod tests {
         .await;
         assert!(matches!(res, Err(UploadError::Cancelled)), "{res:?}");
         assert!(started.elapsed() < Duration::from_secs(5));
+        // the aborted PUT stored nothing
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert!(r.app.s3.as_ref().unwrap().keys().is_empty());
     }
 
     #[tokio::test]
@@ -3387,5 +3413,223 @@ mod tests {
             .await
             .unwrap_err();
         assert!(matches!(e, ApiError::Network(_)));
+    }
+
+    #[tokio::test]
+    async fn progress_stays_under_the_total_until_the_store_answers() {
+        use crate::clips::upload::{CancellationFlag, put_file};
+        const LEN: u64 = 2 * 1024 * 1024;
+        let r = clip_rig(LEN as usize).await;
+        let ticket = r.ticket().await;
+        r.app
+            .s3
+            .as_ref()
+            .unwrap()
+            .set_delay(Duration::from_millis(800));
+        let seen = Arc::new(std::sync::Mutex::new(Vec::<u64>::new()));
+        let log = seen.clone();
+        let http = reqwest::Client::new();
+        let done = put_file(
+            &http,
+            &ticket.url,
+            r.file.path(),
+            &ticket.content_type,
+            move |s, _| log.lock().unwrap().push(s),
+            CancellationFlag::new(),
+        );
+        tokio::pin!(done);
+        // the whole file has been handed over, the answer has not come
+        tokio::select! {
+            _ = &mut done => panic!("answered before the delay"),
+            () = tokio::time::sleep(Duration::from_millis(400)) => {}
+        }
+        let mid = seen.lock().unwrap().clone();
+        assert!(!mid.is_empty() && mid.iter().all(|&s| s < LEN), "{mid:?}");
+        done.await.unwrap();
+        let all = seen.lock().unwrap().clone();
+        assert_eq!(all.last(), Some(&LEN));
+        assert_eq!(all.iter().filter(|&&s| s == LEN).count(), 1);
+    }
+
+    #[tokio::test]
+    async fn list_clips_filters_by_author() {
+        use pulse_protocol::rest::ConfirmClipRequest;
+        let r = clip_rig(2048).await;
+        let (sam_id, sam) = testing::register(&r.app, "sam").await;
+        r.api.join_server(&sam, r.server.id).await.unwrap();
+        let (alex_id, _) = r.api.me(&r.token).await.map(|u| (u.id, ())).unwrap();
+        let mut ids = vec![];
+        for (who, token) in [(alex_id, r.token.clone()), (sam_id, sam.clone())] {
+            let ticket = r
+                .api
+                .clip_upload(
+                    &token,
+                    r.channel.id,
+                    &ClipUploadRequest {
+                        size: 2048,
+                        duration_ms: 1000,
+                    },
+                )
+                .await
+                .unwrap();
+            crate::clips::upload::put_file(
+                &reqwest::Client::new(),
+                &ticket.url,
+                r.file.path(),
+                &ticket.content_type,
+                |_, _| {},
+                crate::clips::upload::CancellationFlag::new(),
+            )
+            .await
+            .unwrap();
+            let thumb = r.api.upload_clip_thumb(&token, unique_png()).await.unwrap();
+            let m = r
+                .api
+                .confirm_clip(
+                    &token,
+                    ticket.id,
+                    &ConfirmClipRequest {
+                        caption: String::new(),
+                        game_id: None,
+                        duration_ms: 1000,
+                        width: 640,
+                        height: 360,
+                        thumb_hash: thumb.hash,
+                        nonce: None,
+                    },
+                )
+                .await
+                .unwrap();
+            ids.push((who, m.id));
+        }
+        for (who, id) in ids {
+            let got = r
+                .api
+                .list_clips(&r.token, r.channel.id, None, None, Some(who))
+                .await
+                .unwrap();
+            assert_eq!(got.iter().map(|m| m.id).collect::<Vec<_>>(), vec![id]);
+        }
+    }
+
+    /// A server that answers every request with this status and JSON body (then closes).
+    async fn canned(status: u16, message: &str) -> Api {
+        let body = serde_json::json!({ "code": "x", "message": message }).to_string();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            loop {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let body = body.clone();
+                tokio::spawn(async move {
+                    let mut buf = vec![0u8; 16 * 1024];
+                    let _ = sock.read(&mut buf).await;
+                    let resp = format!(
+                        "HTTP/1.1 {status} X\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                        body.len()
+                    );
+                    let _ = sock.write_all(resp.as_bytes()).await;
+                    let _ = sock.shutdown().await;
+                });
+            }
+        });
+        Api::new(&format!("http://{addr}"))
+    }
+
+    #[tokio::test]
+    async fn every_clip_call_carries_the_servers_words_for_429_and_503() {
+        use pulse_protocol::rest::ConfirmClipRequest;
+        let ch = ChannelId::new();
+        let sv = ServerId::new();
+        let msg = (ClipUploadId::new(), MessageId::new());
+        for (status, words) in [
+            (429u16, "Slow down, clip."),
+            (503u16, "Clips storage isn't set up on this server."),
+        ] {
+            let api = canned(status, words).await;
+            let t = "t";
+            let said = |e: ApiError| {
+                assert!(
+                    matches!(&e, ApiError::Told { status: s, .. } if *s == status),
+                    "{e:?}"
+                );
+                assert_eq!(e.to_string(), words);
+                // a 503 means nothing was done: safe to ask again; a 429 is not "never arrived"
+                assert_eq!(e.never_arrived(), status == 503);
+                assert!(crate::outbox::retryable(&e));
+            };
+            said(api.add_game(t, sv, "x").await.unwrap_err());
+            said(
+                api.clip_upload(
+                    t,
+                    ch,
+                    &ClipUploadRequest {
+                        size: 1,
+                        duration_ms: 1,
+                    },
+                )
+                .await
+                .unwrap_err(),
+            );
+            said(api.cancel_clip_upload(t, msg.0).await.unwrap_err());
+            said(
+                api.confirm_clip(
+                    t,
+                    msg.0,
+                    &ConfirmClipRequest {
+                        caption: String::new(),
+                        game_id: None,
+                        duration_ms: 1,
+                        width: 16,
+                        height: 16,
+                        thumb_hash: "0".repeat(64),
+                        nonce: None,
+                    },
+                )
+                .await
+                .unwrap_err(),
+            );
+            said(api.upload_clip_thumb(t, unique_png()).await.unwrap_err());
+            said(
+                api.edit_clip(
+                    t,
+                    msg.1,
+                    &EditClipRequest {
+                        caption: String::new(),
+                        game_id: None,
+                    },
+                )
+                .await
+                .unwrap_err(),
+            );
+            said(api.clip_url(t, msg.1).await.unwrap_err());
+            said(api.list_clips(t, ch, None, None, None).await.unwrap_err());
+            said(api.clip_facets(t, ch).await.unwrap_err());
+            said(api.set_clip_view(t, ch, ClipView::List).await.unwrap_err());
+            said(api.clip_storage(t, sv).await.unwrap_err());
+        }
+        // not Pulse's body (a proxy page): the generic words, as before
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut b = vec![0u8; 4096];
+            let _ = sock.read(&mut b).await;
+            let _ = sock
+                .write_all(b"HTTP/1.1 503 X\r\ncontent-length: 4\r\nconnection: close\r\n\r\nnope")
+                .await;
+        });
+        let e = Api::new(&format!("http://{addr}"))
+            .clip_storage("t", sv)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(e, ApiError::Server(_)) && e.never_arrived(),
+            "{e:?}"
+        );
     }
 }
