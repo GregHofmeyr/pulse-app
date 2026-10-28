@@ -29,6 +29,7 @@
     onEdit,
     onDelete,
     onOpenReplies,
+    unsentReplies = 0,
     compact = false,
   }: {
     message: Message
@@ -42,6 +43,8 @@
     onDelete?: () => Promise<void>
     /** Absent where the replies panel pins the quote: no "View N replies" there. */
     onOpenReplies?: () => void
+    /** Your replies to it not sent yet (pending or failed), shown while its panel is closed; opens it. */
+    unsentReplies?: number
     /** Just the lines (Quote of the Year's options): no poster, reactions, replies or quote actions.
      *  Each line keeps its menu (award, link, copy): those are about the line, wherever it shows. */
     compact?: boolean
@@ -158,6 +161,11 @@
             {#if hasNewReplies(message)}<span class="new">new</span>{/if}
           </button>
         {/if}
+        {#if unsentReplies > 0 && onOpenReplies && !compact}
+          <button type="button" class="unsent-reply" onclick={onOpenReplies}>
+            <Icon name="reply" size={13} />{unsentReplies === 1 ? 'Unsent reply' : `${unsentReplies} unsent replies`}
+          </button>
+        {/if}
         {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
       </div>
       {#if !message.deleted && !compact}
@@ -220,6 +228,8 @@
   .replies { margin-top: 4px; padding: 0; border: 0; background: none; color: var(--accent); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
   .replies:hover { text-decoration: underline; }
   .new { padding: 0 6px; border-radius: 8px; background: var(--quote-green); color: var(--on-quote-green); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+  .unsent-reply { margin: 4px 0 0 10px; padding: 0; border: 0; background: none; color: var(--danger); font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
+  .unsent-reply:hover { text-decoration: underline; }
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger); }
   .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: 8px; }
   .quote:hover .actions, .actions.open { opacity: 1; pointer-events: auto; }

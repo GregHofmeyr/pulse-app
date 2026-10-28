@@ -289,7 +289,41 @@
 
   // The replies panel (one at a time: opening another replaces it) and the leaderboard popover.
   let repliesOpen = $state<Message | null>(null)
-  const repliesRoot = $derived(repliesOpen ? (byId.get(repliesOpen.id) ?? repliesOpen) : null) // kept current
+  // Kept current: the loaded copy, else the store's copy of the open quote (it may leave the list).
+  const repliesRoot = $derived(
+    repliesOpen ? (byId.get(repliesOpen.id) ?? (app.state.openRoot?.id === repliesOpen.id ? app.state.openRoot : repliesOpen)) : null,
+  )
+  // What opened the panel gets the focus back when you close it (Escape or ✕).
+  let repliesOpener: HTMLElement | null = null
+  function openReplies(m: Message) {
+    const at = document.activeElement
+    repliesOpener = at instanceof HTMLElement && list?.contains(at) ? at : null
+    repliesOpen = m
+  }
+  async function closeReplies() {
+    const id = repliesOpen?.id
+    const opener = repliesOpener
+    repliesOpen = null
+    repliesOpener = null
+    await tick()
+    // the opener, else the quote itself (a click that didn't focus its button, or it's gone since)
+    const back = opener?.isConnected ? opener : list?.querySelector<HTMLElement>(`[data-message-id="${id}"] .line`)
+    back?.focus()
+  }
+  // A deleted quote's thread is gone: its panel closes (unsent replies to it were dropped with it).
+  $effect(() => {
+    if (repliesRoot?.deleted) untrack(() => {
+      repliesOpen = null
+      repliesOpener = null
+    })
+  })
+  // Unsent replies wait in their quote's panel; while it's closed, the quote says it has some.
+  const unsentReplies = $derived(
+    (app.state.pending[channelId] ?? []).reduce<Record<string, number>>((acc, p) => {
+      if (p.thread_root_id && p.thread_root_id !== repliesOpen?.id) acc[p.thread_root_id] = (acc[p.thread_root_id] ?? 0) + 1
+      return acc
+    }, {}),
+  )
   let leaderboardOpen = $state(false)
   const qotyLive = $derived(!!serverId && !!liveQoty(app.state, serverId, Date.parse(clock.nowIso)))
   function openLeaderboardEntry(m: Message) {
@@ -299,23 +333,31 @@
 
   const nameOf = $derived(nameOfIn(() => app.state, serverId))
 
-  function send(text: string) {
+  function post(text: string, replyToId: string | null) {
     const nonce = crypto.randomUUID()
-    app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyTo?.id ?? null, thread_root_id: null, status: 'pending', created_at: new Date().toISOString() })
-    const r = replyTo?.id ?? null
-    replyTo = null
-    void api.sendMessage(channelId, text, r, nonce)
+    app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyToId, thread_root_id: null, status: 'pending', created_at: new Date().toISOString() })
+    void api.sendMessage(channelId, text, replyToId, nonce)
     // Sending from higher up takes you to the latest (your message lands there).
     if (detached) void toPresent()
     else void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   }
+  function send(text: string) {
+    const r = replyTo?.id ?? null
+    replyTo = null
+    post(text, r)
+  }
 
+  // A retry keeps its own target and leaves the one being picked for the next message alone.
   function retry(nonce: string) {
     const p = pending.find((x) => x.nonce === nonce)
     if (!p) return
     app.state = removePending(app.state, channelId, nonce)
-    replyTo = p.reply_to_id ? (byId.get(p.reply_to_id) ?? null) : null
-    send(p.content)
+    post(p.content, p.reply_to_id)
+  }
+
+  // A quote posted from higher up lands at the latest too.
+  function quotePosted() {
+    if (detached) void toPresent()
   }
 </script>
 
@@ -373,8 +415,8 @@
       {#if m.qoty_card && serverId}
         <QotyCard message={m} {serverId} quote={m.qoty_card.message_id ? (byId.get(m.qoty_card.message_id) ?? null) : null} />
       {:else if isQuotes && m.quote}
-        <QuoteItem message={m} serverId={serverId ?? ''} meId={app.state.me?.id ?? ''} {nameOf}
-          onReply={() => (repliesOpen = m)} onOpenReplies={() => (repliesOpen = m)}
+        <QuoteItem message={m} serverId={serverId ?? ''} meId={app.state.me?.id ?? ''} {nameOf} unsentReplies={unsentReplies[m.id] ?? 0}
+          onReply={() => openReplies(m)} onOpenReplies={() => openReplies(m)}
           onEdit={() => (editingQuote = m)} onDelete={() => api.deleteMessage(m.id)} />
       {:else}
       <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={groupedWith(messages, i)}
@@ -403,7 +445,7 @@
   {#if isQuotes}
     <!-- the new-quote composer stays mounted (hidden) while one is edited, so its draft survives -->
     {#key channelId}
-      <div hidden={!!editingQuote}><QuoteComposer {channelId} serverId={serverId ?? ''} /></div>
+      <div hidden={!!editingQuote}><QuoteComposer {channelId} serverId={serverId ?? ''} onDone={quotePosted} /></div>
     {/key}
     {#if editingQuote}
       {#key editingQuote.id}
@@ -416,7 +458,7 @@
   {/if}
   {#if repliesRoot}
     {#key repliesRoot.id}
-      <RepliesPanel root={repliesRoot} serverId={serverId ?? ''} onClose={() => (repliesOpen = null)} onEditQuote={() => (editingQuote = repliesRoot)} />
+      <RepliesPanel root={repliesRoot} serverId={serverId ?? ''} onClose={closeReplies} onEditQuote={() => (editingQuote = repliesRoot)} />
     {/key}
   {/if}
 </div>

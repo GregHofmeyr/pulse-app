@@ -112,6 +112,20 @@ describe('TextChannel: unsent messages', () => {
     unmount(c)
   })
 
+  it('retrying a failed message keeps the reply target you just picked (as replies do, M24)', () => {
+    const c = show([unsent('t5', 'failed', 'again')])
+    app.state = markHistory(addHistory(app.state, 'C1', [msg(7)]), 'C1', true)
+    flushSync()
+    invoke.mockClear()
+    document.querySelector<HTMLButtonElement>('.msg:not(.unsent) button[aria-label="Reply"]')!.click()
+    flushSync()
+    button('Retry')!.click()
+    flushSync()
+    expect(invoke.mock.calls.find(([cmd]) => cmd === 'send_message')![1]).toMatchObject({ content: 'again', replyToId: null })
+    expect(document.querySelector('.replying')).toBeTruthy() // still replying to M0007
+    unmount(c)
+  })
+
   it('survives_reload', () => {
     localStorage.setItem('pulse.unsent.U1', JSON.stringify({ C1: [unsent('r1', 'pending', 'left behind')], GONE: [unsent('r2', 'pending')] }))
     app.state = emptyState()
@@ -358,6 +372,82 @@ describe('TextChannel: quotes channel', () => {
     document.querySelector('.replies-panel [role="textbox"]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
     flushSync()
     expect(document.querySelector('.replies-panel')).toBeNull()
+  })
+
+  const unsentReply = (nonce: string, root: string, status: 'pending' | 'failed' = 'failed') =>
+    ({ nonce, content: `reply ${nonce}`, reply_to_id: null, thread_root_id: root, status, created_at: '2026-10-01T00:00:00.000Z' })
+  const settled = async () => {
+    for (let i = 0; i < 3; i++) await tick()
+    await new Promise((r) => setTimeout(r, 0))
+    flushSync()
+  }
+
+  it('I5: a quote with an unsent reply says so while its panel is closed, and the marker opens it', async () => {
+    show('quotes', [quoteMsg])
+    app.state = { ...app.state, pending: { C1: [unsentReply('a', 'M0001')] } }
+    flushSync()
+    const marker = () => document.querySelector<HTMLButtonElement>('.list .quote button.unsent-reply')
+    expect(marker()?.textContent?.trim()).toBe('Unsent reply')
+    expect(document.querySelector('.list .unsent')).toBeNull() // not in the channel list itself
+    marker()!.click()
+    flushSync()
+    await settled()
+    expect(document.querySelector('.replies-panel .quote')?.getAttribute('data-message-id')).toBe('M0001')
+    expect(document.querySelector('.replies-panel .unsent')).toBeTruthy() // Retry / Discard live here
+    expect(marker()).toBeNull() // the panel shows it now
+    app.state = { ...app.state, pending: { C1: [unsentReply('a', 'M0001'), unsentReply('b', 'M0001')] } }
+    document.querySelector<HTMLButtonElement>('.replies-panel button[aria-label="Close replies"]')!.click()
+    flushSync()
+    expect(marker()?.textContent?.trim()).toBe('2 unsent replies')
+  })
+
+  it('M16: the replies panel closes when its quote is deleted', async () => {
+    show('quotes', [quoteMsg])
+    document.querySelector<HTMLButtonElement>('.list .quote button[aria-label="Reply"]')!.click()
+    flushSync()
+    await settled()
+    expect(document.querySelector('.replies-panel')).toBeTruthy()
+    app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M0001', thread_root_id: null, author_id: 'U1', mentions: [] } }, Date.now())
+    flushSync()
+    await settled()
+    expect(document.querySelector('.replies-panel')).toBeNull()
+  })
+
+  it("M16: the pinned quote stays current after it leaves the channel's list", async () => {
+    show('quotes', [quoteMsg])
+    document.querySelector<HTMLButtonElement>('.list .quote button[aria-label="Reply"]')!.click()
+    flushSync()
+    await settled()
+    // "Jump to present" replaced the list: the quote isn't loaded there any more
+    app.state = { ...app.state, messages: { ...app.state.messages, C1: [msg(500)] } }
+    flushSync()
+    const edited: Message = { ...quoteMsg, edited_at: '2026-10-02T00:00:00.000Z', quote: { ...quoteMsg.quote!, lines: [{ ...quoteMsg.quote!.lines[0], text: 'hi there' }] } }
+    app.state = applyEvent(app.state, { t: 'MessageUpdated', d: { message: edited } }, Date.now())
+    flushSync()
+    expect(document.querySelector('.replies-panel .quote .line .text')?.textContent).toBe('“hi there”')
+    app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M0001', thread_root_id: null, author_id: 'U1', mentions: [] } }, Date.now())
+    flushSync()
+    await settled()
+    expect(document.querySelector('.replies-panel')).toBeNull()
+  })
+
+  it('M20: closing replies with Escape or ✕ puts focus back on what opened them', async () => {
+    const q: Message = { ...quoteMsg, quote: { ...quoteMsg.quote!, reply_count: 1, last_reply_id: 'R1' } }
+    show('quotes', [q])
+    for (const how of ['escape', 'close'] as const) {
+      const opener = [...document.querySelectorAll<HTMLButtonElement>('.list button.replies')].find((b) => b.textContent?.includes('View 1 reply'))!
+      opener.focus()
+      opener.click()
+      flushSync()
+      await settled()
+      expect(document.activeElement?.closest('.replies-panel'), how).toBeTruthy() // the reply box took it
+      if (how === 'escape') document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      else document.querySelector<HTMLButtonElement>('.replies-panel button[aria-label="Close replies"]')!.click()
+      flushSync()
+      await settled()
+      expect(document.querySelector('.replies-panel'), how).toBeNull()
+      expect(document.activeElement, how).toBe(opener)
+    }
   })
 
   it('has no message composer, and a text channel has no quote header', () => {

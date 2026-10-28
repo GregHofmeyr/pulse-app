@@ -148,6 +148,30 @@ describe('RepliesPanel', () => {
     expect(calls('mark_replies_seen').at(-1)).toEqual(['mark_replies_seen', { rootId: 'Q1', messageId: 'R0004' }])
   })
 
+  it("M17: a non-member's open panel never marks seen (the server would refuse every time)", async () => {
+    handleReady({ ...ready, members: [{ server_id: 'S1', members: [{ user: sam, nickname: null }] }] })
+    await show()
+    app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: reply(3), nonce: null } }, Date.now())
+    flushSync()
+    expect(calls('mark_replies_seen')).toHaveLength(0)
+  })
+
+  it('M24: retrying a failed reply keeps the reply target you just picked', async () => {
+    await show()
+    press(type('first'), 'Enter')
+    const nonce = (calls('send_reply')[0][1] as { nonce: string }).nonce
+    app.state = setPendingStatus(app.state, 'C1', nonce, 'failed')
+    flushSync()
+    panel().querySelectorAll<HTMLButtonElement>('.msg:not(.unsent) button[aria-label="Reply"]')[0].click() // pick R0001
+    flushSync()
+    ;[...panel().querySelectorAll<HTMLButtonElement>('.pend button')].find((b) => b.textContent === 'Retry')!.click()
+    flushSync()
+    expect(calls('send_reply')[1][1]).toMatchObject({ content: 'first', replyToId: null }) // the retry keeps its own target
+    expect(panel().querySelector('.replying')?.textContent).toContain('sam') // and yours stays picked
+    press(type('second'), 'Enter')
+    expect(calls('send_reply')[2][1]).toMatchObject({ content: 'second', replyToId: 'R0001' })
+  })
+
   it('does not mark what was already seen', async () => {
     await show({ ...root, quote: { ...root.quote!, replies_seen: 'R0002' } })
     expect(calls('mark_replies_seen')).toHaveLength(0)
@@ -223,5 +247,19 @@ describe('RepliesPanel', () => {
     unmount(cmp!)
     cmp = undefined
     expect(ui.openThreadId).toBeNull()
+  })
+
+  it('M13/M16: holds its quote while open, and lets the thread go when it closes', async () => {
+    await show()
+    expect(app.state.openRoot?.id).toBe('Q1')
+    expect(app.state.threadStart['Q1']).toBe(true)
+    unmount(cmp!)
+    cmp = undefined
+    app.state = { ...app.state, pending: { C1: [] } } // a change in the same flush survives the close
+    await settle()
+    expect(app.state.openRoot).toBeNull()
+    expect(app.state.threads['Q1']).toBeUndefined()
+    expect(app.state.threadStart['Q1']).toBeUndefined()
+    expect(app.state.pending['C1']).toEqual([])
   })
 })

@@ -40,6 +40,9 @@ export async function jumpToPresent(channelId: string): Promise<boolean> {
   const mine = ++seq
   const page = await api.listMessages(channelId)
   if (mine !== seq) return false
+  // Paging forward reached the latest meanwhile, and live messages have joined the list since: this
+  // page is older than they are, so replacing the list with it would drop them.
+  if (app.state.history[channelId]?.end !== false) return true
   app.state = loadLatest(app.state, channelId, page)
   // A live message newer than the page arrived meanwhile (your own, sent from the window): fetch it.
   for (let i = 0; i < CATCH_UP_PAGES && app.state.history[channelId]?.end === false; i++) {

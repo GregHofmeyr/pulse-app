@@ -98,6 +98,25 @@ describe('jumpTo', () => {
     expect(invoke).toHaveBeenCalledWith('list_messages_after', { channelId: 'C1', messageId: 'M0949' })
   })
 
+  it('M15: a list that paging forward attached while the latest loads keeps its live messages', async () => {
+    invoke.mockImplementation(async (cmd) => (cmd === 'list_messages_around' ? newestFirst(100, 50) : undefined))
+    await jumpTo('C1', 'M0125')
+    ui.openChannelId = 'C1'
+    let releaseLatest: (p: Message[]) => void = () => {}
+    invoke.mockImplementation((cmd) => (cmd === 'list_messages' ? new Promise((done) => (releaseLatest = done as never)) : Promise.resolve([])))
+    const going = jumpToPresent('C1')
+    // scrolling to the bottom pages forward and reaches the latest first...
+    const { appendNewer, applyEvent } = await import('./state')
+    app.state = appendNewer(app.state, 'C1', 'M0149', newestFirst(150, 10))
+    expect(app.state.history['C1'].end).toBe(true)
+    // ...so a live message joins the attached list
+    app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: msg(2000), nonce: null } }, 0)
+    releaseLatest(newestFirst(110, 50)) // the latest as it was when asked: without M2000
+    expect(await going).toBe(true)
+    expect(app.state.messages['C1'].at(-1)!.id).toBe('M2000')
+    expect(app.state.history['C1'].end).toBe(true)
+  })
+
   it('a jump made while Jump to present loads wins', async () => {
     invoke.mockImplementation(async (cmd) => (cmd === 'list_messages_around' ? newestFirst(100, 50) : undefined))
     await jumpTo('C1', 'M0125')

@@ -8,7 +8,7 @@
   import QuoteItem from './QuoteItem.svelte'
   import { app, ui } from '../lib/store.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
-  import { addPending, addReplies, maxIdOf, PAGE, pendingMessage, removePending, type Pending } from '../lib/state'
+  import { addPending, addReplies, closeThread, holdThread, maxIdOf, PAGE, pendingMessage, removePending, tracksUnread, type Pending } from '../lib/state'
   import { overlayShown } from '../lib/escape'
   import { groupedWith, mentionablesFor, nameOfIn, stableList } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
@@ -48,6 +48,19 @@
       if (ui.openThreadId === rootId) ui.openThreadId = null
     }
   })
+
+  // The store keeps the quote current while it's open (even once its channel's list lets it go), and
+  // the thread is let go when it closes: opening it again refetches. After the flush that closed it: a
+  // teardown reads state as it was before that flush, so writing it there would undo the flush's changes.
+  $effect(() => {
+    const r = root
+    untrack(() => (app.state = holdThread(app.state, r)))
+  })
+  $effect(() => () =>
+    queueMicrotask(() => {
+      if (ui.openThreadId !== rootId) app.state = closeThread(app.state, rootId) // unless it opened again
+    }),
+  )
 
   // Opening it is for writing: the box takes the focus.
   let focused = false
@@ -104,13 +117,15 @@
     if (nearBottom) void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   })
 
-  // Seen: up to the newest reply, on opening and as replies arrive, while the window is focused.
+  // Seen: up to the newest reply, on opening and as replies arrive, while the window is focused. Only
+  // for a member: no one else has a seen point (the server refuses it).
   const newest = $derived(maxIdOf(replies.at(-1)?.id, root.quote?.last_reply_id))
   const seen = $derived(maxIdOf(root.quote?.replies_seen, app.state.threadSeen[rootId]))
+  const member = $derived(tracksUnread(app.state, channelId))
   let asked = ''
   $effect(() => {
     const n = newest
-    if (!n || !windowFocus.focused || n <= seen || n <= asked) return
+    if (!n || !member || !windowFocus.focused || n <= seen || n <= asked) return
     asked = n
     api.markRepliesSeen(rootId, n).catch(() => {
       if (asked === n) asked = '' // try again with the next reply or focus
@@ -123,16 +138,21 @@
   const mentionNames = $derived((lastNames = stableList(lastNames, mentionables.map((p) => p.name))))
 
   // `replyToId` stays inside the thread: it's never the quote unless the person picked it.
-  function send(text: string, replyToId = replyTo?.id ?? null) {
+  function post(text: string, replyToId: string | null) {
     const nonce = crypto.randomUUID()
     app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyToId, thread_root_id: rootId, status: 'pending', created_at: new Date().toISOString() })
-    replyTo = null
     void api.sendReply(channelId, rootId, text, replyToId, nonce)
     void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
   }
+  function send(text: string) {
+    const r = replyTo?.id ?? null
+    replyTo = null
+    post(text, r)
+  }
+  // A retry keeps its own target and leaves the one being picked for the next reply alone.
   function retry(p: Pending) {
     app.state = removePending(app.state, channelId, p.nonce)
-    send(p.content, p.reply_to_id)
+    post(p.content, p.reply_to_id)
   }
 
   // Escape closes the panel, unless something else takes it: a field outside the panel, or a menu,

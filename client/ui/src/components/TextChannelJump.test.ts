@@ -200,6 +200,31 @@ describe('TextChannel: jump to a message', () => {
     expect(document.querySelector('[data-message-id="M2000"]')).toBeTruthy()
   })
 
+  it('I4: a quote posted from a detached window shows once the present is loaded', async () => {
+    const posted = { ...quote(2000), author_id: 'U1' }
+    invoke.mockImplementation(async (cmd, args) =>
+      cmd === 'post_quote' ? posted
+        : cmd === 'list_messages' && !(args as { before: string | null }).before ? [posted, ...newestFirst(900, 49, quote)]
+          : undefined)
+    app.state = loadWindow(ready('quotes'), 'C1', newestFirst(100, 50, quote), 'M0125')
+    show()
+    const text = document.querySelector<HTMLTextAreaElement>('textarea.qtext')!
+    text.value = 'back in my day'; text.dispatchEvent(new Event('input', { bubbles: true })); flushSync()
+    const who = document.querySelector<HTMLInputElement>('input.who')!
+    who.focus(); who.value = 'Grandpa'; who.dispatchEvent(new Event('input', { bubbles: true })); flushSync()
+    const use = [...document.querySelectorAll<HTMLElement>('[role=option]')].find((o) => o.textContent?.includes('Grandpa'))!
+    use.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })); use.click(); flushSync()
+    text.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    // the gateway's copy lands while detached: it waits in `missed`
+    app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: posted, nonce: null } }, 0)
+    await settle()
+    await settle()
+    expect(invoke.mock.calls.some(([c]) => c === 'post_quote')).toBe(true)
+    expect(invoke).toHaveBeenCalledWith('list_messages', { channelId: 'C1', before: null })
+    expect(app.state.history['C1'].end).toBe(true)
+    expect(document.querySelector('.quote[data-message-id="M2000"]')).toBeTruthy()
+  })
+
   it('a live message that lands while a forward page loads is fetched next', async () => {
     let releaseAfter: (p: Message[]) => void = () => {}
     let afters = 0

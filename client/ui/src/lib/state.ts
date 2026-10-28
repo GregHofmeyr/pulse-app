@@ -58,14 +58,21 @@ export type AppState = {
   streams: Record<string, Record<string, StreamInfo>> // channelId -> userId -> live stream
   customEmoji: Record<string, CustomEmoji> // id -> emoji; deleted ones stay (hash null) so old messages render a chip
   frequentEmoji: string[] // your most-used reaction keys, best first
-  threads: Record<string, Message[]> // quote id -> its replies, oldest..newest (replies never join `messages`)
-  /** Quote id -> whether its fetched replies reach the thread's start. Present only once the thread was fetched
-   * (live replies alone make `threads[root]` exist but don't set this); cleared on every Ready. */
+  /** Quote id -> its replies, oldest..newest (replies never join `messages`). A thread is held while its panel is
+   * open (fetched, and live replies join it); otherwise only live mentions of you that are counted are kept, so
+   * their delete can take them back out of the count. */
+  threads: Record<string, Message[]>
+  /** Quote id -> whether its fetched replies reach the thread's start. Present only while the thread is fetched
+   * (live replies alone don't set this); cleared on every Ready and when its panel closes. */
   threadStart: Record<string, boolean>
   /** Quote id -> the newest reply you've seen, from ThreadSeen events (the root may not be loaded). */
   threadSeen: Record<string, string>
-  /** Replies known deleted, so a repeated delete event can't lower a count twice. */
-  goneReplies: Record<string, string> // reply id -> its channel
+  /** Replies known deleted, so a repeated delete event can't lower a count twice. Kept while their quote is
+   * loaded (trimming the quote away drops them). */
+  goneReplies: Record<string, { channel: string; root: string }> // reply id -> where it was
+  /** The quote whose replies panel is open, kept current by events like a loaded one, so the panel's pinned
+   * copy stays live after the quote leaves its channel's list (a jump, "Jump to present"). */
+  openRoot: Message | null
   qoty: Record<string, QotyEvent> // serverId -> its latest Quote of the Year vote (open, or ended and reopenable)
   speakerLinks: Record<string, SpeakerLink[]> // serverId -> plain names linked to members
 }
@@ -79,7 +86,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, qoty: {}, speakerLinks: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {} }
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -142,7 +149,7 @@ function groupLinks(links: SpeakerLink[]): Record<string, SpeakerLink[]> {
 }
 
 /** Whether `channel` should have a read point for you: your DMs/groups, and text and quotes channels of servers you're in. */
-function tracksUnread(s: AppState, channel: string): boolean {
+export function tracksUnread(s: AppState, channel: string): boolean {
   const ch = s.channels[channel]
   if (!ch || !s.me) return false
   if (ch.server_id === null) return true
@@ -200,11 +207,55 @@ function mapQotyMessages(s: AppState, id: string, f: (m: Message) => Message): A
   return qoty === s.qoty ? s : { ...s, qoty }
 }
 
-/** Change one quote wherever it is loaded in its channel's list. */
+/** Change the open replies panel's quote if it is `id` (the state is returned as is otherwise). */
+function mapOpenRoot(s: AppState, id: string, f: (m: Message) => Message): AppState {
+  return s.openRoot?.id === id ? { ...s, openRoot: f(s.openRoot) } : s
+}
+
+/** Change one quote wherever it is loaded: in its channel's list, and as the open panel's quote. */
 function mapQuote(s: AppState, channel: string, id: string, f: (m: Message) => Message): AppState {
+  const held = mapOpenRoot(s, id, f)
   const list = s.messages[channel]
-  if (!list?.some((m) => m.id === id)) return s
-  return { ...s, messages: { ...s.messages, [channel]: list.map((m) => (m.id === id ? f(m) : m)) } }
+  if (!list?.some((m) => m.id === id)) return held
+  return { ...held, messages: { ...s.messages, [channel]: list.map((m) => (m.id === id ? f(m) : m)) } }
+}
+
+/** Hold `root` as the open replies panel's quote (see `openRoot`). */
+export function holdThread(s: AppState, root: Message): AppState {
+  return s.openRoot === root ? s : { ...s, openRoot: root }
+}
+
+/** Its replies panel closed: drop what was fetched for the thread (opening it again refetches), keeping only
+ * live mentions of you that are still counted, and its gone replies once the quote isn't loaded either. */
+export function closeThread(s: AppState, root: string): AppState {
+  const rootMsg = s.openRoot?.id === root ? s.openRoot : undefined
+  const channel = rootMsg?.channel_id ?? s.threads[root]?.[0]?.channel_id
+  const loaded = !!channel && !!s.messages[channel]?.some((m) => m.id === root)
+  const quote = (channel && s.messages[channel]?.find((m) => m.id === root)?.quote) || rootMsg?.quote
+  const seen = maxIdOf(s.threadSeen[root], quote?.replies_seen)
+  const meId = s.me?.id
+  const counted = (s.threads[root] ?? []).filter((m) => !!meId && m.kind === 'normal' && !m.deleted && m.author_id !== meId && m.mentions.includes(meId) && m.id > seen)
+  const { [root]: _list, ...threads } = s.threads
+  const { [root]: _start, ...threadStart } = s.threadStart
+  return {
+    ...s,
+    threads: counted.length ? { ...threads, [root]: counted } : threads,
+    threadStart,
+    goneReplies: loaded ? s.goneReplies : Object.fromEntries(Object.entries(s.goneReplies).filter(([, g]) => g.root !== root)),
+    openRoot: rootMsg ? null : s.openRoot,
+  }
+}
+
+/** Unsent replies to a quote known deleted (loaded, or the open panel's) can never post: drop them. */
+function withoutDeadReplies(s: AppState, channel: string): AppState {
+  const list = s.pending[channel]
+  if (!list?.some((p) => p.thread_root_id)) return s
+  const dead = new Set((s.messages[channel] ?? []).filter((m) => m.deleted).map((m) => m.id))
+  if (s.openRoot?.deleted && s.openRoot.channel_id === channel) dead.add(s.openRoot.id)
+  const left = list.filter((p) => !p.thread_root_id || !dead.has(p.thread_root_id))
+  if (left.length === list.length) return s
+  const { [channel]: _gone, ...rest } = s.pending
+  return { ...s, pending: left.length ? { ...s.pending, [channel]: left } : rest }
 }
 
 /** A loaded message of `channel`: in its list, or a reply in a loaded thread. */
@@ -221,7 +272,7 @@ export function findMessage(s: AppState, channel: string, id: string): Message |
 /** Change a loaded message of `channel` (list or thread); the state is returned as is when it isn't loaded. */
 export function mapMessage(s: AppState, channel: string, id: string, f: (m: Message) => Message): AppState {
   const list = s.messages[channel]
-  if (list?.some((x) => x.id === id)) return { ...s, messages: { ...s.messages, [channel]: list.map((x) => (x.id === id ? f(x) : x)) } }
+  if (list?.some((x) => x.id === id)) return mapOpenRoot({ ...s, messages: { ...s.messages, [channel]: list.map((x) => (x.id === id ? f(x) : x)) } }, id, f)
   for (const [root, replies] of Object.entries(s.threads)) {
     if (replies.some((x) => x.id === id && x.channel_id === channel)) {
       return { ...s, threads: { ...s.threads, [root]: replies.map((x) => (x.id === id ? f(x) : x)) } }
@@ -246,12 +297,19 @@ export function maxIdOf(...ids: (string | null | undefined)[]): string {
 function replyCreated(s: AppState, m: Message, nonce: string | null): AppState {
   const root = m.thread_root_id!
   const c = m.channel_id
-  const known = !!s.threads[root]?.some((x) => x.id === m.id)
+  // A thread that isn't held can't say whether it has this reply. Replies arrive newest last, except
+  // yours confirmed over REST (still pending until its first copy): any other no newer than the
+  // quote's newest reply is a second copy, already counted.
+  const rootQuote = s.messages[c]?.find((x) => x.id === root)?.quote ?? (s.openRoot?.id === root ? s.openRoot.quote : null)
+  const awaited = !!nonce && !!s.pending[c]?.some((p) => p.nonce === nonce)
+  const known = !!s.threads[root]?.some((x) => x.id === m.id) || (!awaited && !!rootQuote?.last_reply_id && m.id <= rootQuote.last_reply_id)
   const read = s.reads[c] ?? (tracksUnread(s, c) ? { channel_id: c, last_read_message_id: null, unread: 0, mentions: 0 } : undefined)
   const mentioned = !known && !!read && m.author_id !== s.me?.id && !!s.me && m.mentions.includes(s.me.id) && m.kind === 'normal'
+  // Only a fetched thread (an open panel) takes live replies; a counted mention is kept too, for its delete.
+  const keep = root in s.threadStart || mentioned || !!s.threads[root]?.some((x) => x.id === m.id)
   const next: AppState = {
     ...s,
-    threads: { ...s.threads, [root]: upsertMessage(s.threads[root], m) },
+    threads: keep ? { ...s.threads, [root]: upsertMessage(s.threads[root], m) } : s.threads,
     pending: nonce ? { ...s.pending, [c]: (s.pending[c] ?? []).filter((p) => p.nonce !== nonce) } : s.pending,
     typing: withoutTyping(s, c, m.author_id),
     // Replies are never unread; only a mention of me counts (until the thread is opened).
@@ -287,7 +345,7 @@ function replyDeleted(s: AppState, e: Extract<Event, { t: 'MessageDeleted' }>['d
   const counted = mentioned && !!read && known && id > seen
   const next: AppState = {
     ...s,
-    goneReplies: { ...s.goneReplies, [id]: c },
+    goneReplies: { ...s.goneReplies, [id]: { channel: c, root: root! } },
     threads: list ? { ...s.threads, [root!]: list.map((x) => (x.id === id ? { ...x, deleted: true, content: '' } : x)) } : s.threads,
     reads: counted ? { ...s.reads, [c]: { ...read, mentions: Math.max(0, read.mentions - 1) } } : s.reads,
   }
@@ -358,7 +416,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       // Like the loaded copy (upsertEdited): the edit's reactions say me:false for everyone.
       const latest = prev?.id === m.id ? { ...s.latest, [c]: { ...m, reactions: prev.reactions } } : s.latest
       // A QotY option's copy follows the edit too, loaded or not.
-      const q = mapQotyMessages(s, m.id, (old) => withMyQuoteState({ ...m, reactions: old.reactions }, old, s.me?.id))
+      const follow = (old: Message) => withMyQuoteState({ ...m, reactions: old.reactions }, old, s.me?.id)
+      const q = mapOpenRoot(mapQotyMessages(s, m.id, follow), m.id, follow)
       // History never loaded, or a detached window that doesn't hold it (adding it would leave a gap).
       if (!s.messages[c] || (detached(s, c) && !s.messages[c].some((x) => x.id === m.id))) return latest === s.latest ? q : { ...q, latest }
       return { ...q, latest, messages: { ...s.messages, [c]: upsertEdited(s.messages[c], withMyQuoteState(m, s.messages[c].find((x) => x.id === m.id), s.me?.id)) } }
@@ -382,9 +441,14 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       // come back in a page: stop waiting for it.
       const h = s.history[c]
       const history = h?.missed?.includes(id) ? { ...s.history, [c]: missing(h, h.missed.filter((x) => x !== id)) } : s.history
+      // Unsent replies to it can never post now (the thread is gone with it).
+      const left = (s.pending[c] ?? []).filter((p) => p.thread_root_id !== id)
+      const { [c]: _p, ...otherPending } = s.pending
       return {
         ...s,
         history,
+        pending: left.length === (s.pending[c] ?? []).length ? s.pending : left.length ? { ...s.pending, [c]: left } : otherPending,
+        openRoot: s.openRoot && s.openRoot.channel_id === c ? gone(s.openRoot) : s.openRoot,
         messages: s.messages[c] ? { ...s.messages, [c]: s.messages[c].map(gone) } : s.messages,
         latest: s.latest[c] ? { ...s.latest, [c]: gone(s.latest[c]) } : s.latest,
         reads: wasUnread
@@ -451,7 +515,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
         threads: without(s.threads),
         threadStart: without(s.threadStart),
         threadSeen: without(s.threadSeen),
-        goneReplies: Object.fromEntries(Object.entries(s.goneReplies).filter(([, channel]) => channel !== c)),
+        goneReplies: Object.fromEntries(Object.entries(s.goneReplies).filter(([, g]) => g.channel !== c)),
+        openRoot: s.openRoot?.channel_id === c ? null : s.openRoot,
         channels: drop(s.channels),
         messages: drop(s.messages),
         dmMembers: drop(s.dmMembers),
@@ -535,7 +600,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       }
       const loaded = !!findMessage(s, c, id) // not loaded: the fetch brings current reactions
       const inLatest = s.latest[c]?.id === id // the conversation preview keeps its own copy
-      const q = mapQotyMessages(s, id, apply) // a QotY option's copy, loaded or not
+      // a QotY option's copy and the open panel's quote, loaded or not (mapMessage reaches the latter when loaded)
+      const q = loaded ? mapQotyMessages(s, id, apply) : mapOpenRoot(mapQotyMessages(s, id, apply), id, apply)
       if (!loaded && !inLatest) return q
       const next = loaded ? mapMessage(q, c, id, apply) : q
       return { ...next, latest: inLatest ? { ...s.latest, [c]: apply(s.latest[c]) } : s.latest }
@@ -572,7 +638,9 @@ export function restoreUnsent(s: AppState, saved: Record<string, Pending[]>): Ap
     pending[channel] = [...(pending[channel] ?? []), ...fresh]
     changed = true
   }
-  return changed ? { ...s, pending } : s
+  if (!changed) return s
+  // A reply to a quote known deleted can never post: it would sit failed forever.
+  return Object.keys(saved).reduce((acc, channel) => withoutDeadReplies(acc, channel), { ...s, pending })
 }
 
 /** An unsent message as a normal one (yours), so it renders through the same path as a sent one. */
@@ -608,10 +676,15 @@ export function trimHistory(s: AppState, channel: string, keep = KEEP_ON_LEAVE):
   const cut = firstUnread >= 0 ? Math.min(list.length - keep, firstUnread) : list.length - keep
   if (cut <= 0) return s
   const h = s.history[channel]
+  const kept = list.slice(cut)
+  const roots = new Set(kept.map((m) => m.id))
+  if (s.openRoot) roots.add(s.openRoot.id)
   return {
     ...s,
-    messages: { ...s.messages, [channel]: list.slice(cut) },
+    messages: { ...s.messages, [channel]: kept },
     history: h ? { ...s.history, [channel]: { ...h, start: false } } : s.history,
+    // they only guard the reply counts of loaded quotes
+    goneReplies: Object.fromEntries(Object.entries(s.goneReplies).filter(([, g]) => g.channel !== channel || roots.has(g.root))),
   }
 }
 
@@ -629,7 +702,7 @@ export function addOlder(s: AppState, channel: string, before: string, older: Me
 export function addHistory(s: AppState, channel: string, older: Message[]): AppState {
   let list = s.messages[channel] ?? []
   for (const m of older) list = upsertMessage(list, m)
-  return { ...s, messages: { ...s.messages, [channel]: list } }
+  return withoutDeadReplies({ ...s, messages: { ...s.messages, [channel]: list } }, channel)
 }
 
 export function markHistory(s: AppState, channel: string, reachedStart: boolean): AppState {
@@ -690,7 +763,7 @@ export function loadWindow(s: AppState, channel: string, page: Message[], around
   const start = list.filter((m) => m.id < around).length < AROUND_OLDER
   const end = list.filter((m) => m.id > around).length < AROUND_NEWER
   const h = { ...reached(list, s.history[channel], end), start }
-  return { ...s, messages: { ...s.messages, [channel]: list }, history: { ...s.history, [channel]: h } }
+  return withoutDeadReplies({ ...s, messages: { ...s.messages, [channel]: list }, history: { ...s.history, [channel]: h } }, channel)
 }
 
 /** Replace `channel`'s list with its latest page ("Jump to present"): attached again, unless a live
@@ -698,7 +771,7 @@ export function loadWindow(s: AppState, channel: string, page: Message[], around
 export function loadLatest(s: AppState, channel: string, page: Message[]): AppState {
   const list = sorted(page)
   const h = { ...reached(list, s.history[channel], true), start: list.length < PAGE }
-  return { ...s, messages: { ...s.messages, [channel]: list }, history: { ...s.history, [channel]: h } }
+  return withoutDeadReplies({ ...s, messages: { ...s.messages, [channel]: list }, history: { ...s.history, [channel]: h } }, channel)
 }
 
 /** Add a newer page fetched with `after` = the channel's newest message at the time (paging a
