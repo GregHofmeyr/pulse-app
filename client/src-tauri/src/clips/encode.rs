@@ -4,6 +4,7 @@
 use std::future::Future;
 use std::path::Path;
 use std::process::Stdio;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use serde::{Deserialize, Serialize};
 use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
@@ -243,7 +244,13 @@ pub fn args(
     let kept = if kept.is_empty() { &whole } else { kept };
     let (from, to) = (kept[0].start_ms, kept[kept.len() - 1].end_ms);
     let (filter, audio_map) = graph(p, kept, preset);
-    let out_fps = target_fps(p.fps).unwrap_or_else(|| p.fps.round().max(1.0) as u32);
+    // a source with no usable frame rate (0 or NaN) gets a 60 fps GOP
+    let src_fps = if p.fps >= 1.0 {
+        p.fps.round() as u32
+    } else {
+        60
+    };
+    let out_fps = target_fps(p.fps).unwrap_or(src_fps);
 
     let mut a = head();
     a.extend(
@@ -334,9 +341,15 @@ impl Runner for FfmpegRunner {
         );
         // Both pipes are read at once, or a chatty one would block ffmpeg.
         let lines = async {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                on_line(&line);
+            // bytes, not `lines()`: a non-UTF-8 line must not end the reading (ffmpeg would block on a full pipe)
+            let mut reader = BufReader::new(stdout);
+            let mut raw = Vec::new();
+            loop {
+                raw.clear();
+                match reader.read_until(b'\n', &mut raw).await {
+                    Ok(1..) => on_line(String::from_utf8_lossy(&raw).trim_end()),
+                    _ => break,
+                }
             }
         };
         let errors = async {
@@ -355,6 +368,50 @@ impl Runner for FfmpegRunner {
             Ok(_) => Err(RunFailed { stderr_tail }),
             Err(e) => Err(fail(e.to_string())),
         }
+    }
+}
+
+/// The encoder that worked last in this run of Pulse, so a machine without the first GPU encoder does not
+/// probe it again for every clip. It only ever moves down `CHAIN`: a later init failure on the remembered
+/// encoder falls further down, never back up.
+pub struct WorkingEncoder(AtomicUsize);
+
+/// The process-wide store the export and the preview encode share.
+pub static WORKING: WorkingEncoder = WorkingEncoder::new();
+
+impl WorkingEncoder {
+    pub const fn new() -> Self {
+        Self(AtomicUsize::new(0))
+    }
+
+    /// The part of `CHAIN` to try: from the remembered encoder on.
+    pub fn chain(&self) -> &'static [Encoder] {
+        &CHAIN[self.0.load(Ordering::Relaxed).min(CHAIN.len() - 1)..]
+    }
+
+    pub fn remember(&self, enc: Encoder) {
+        if let Some(i) = CHAIN.iter().position(|&e| e == enc) {
+            self.0.fetch_max(i, Ordering::Relaxed);
+        }
+    }
+
+    /// `run_with_fallback` from the remembered encoder, remembering the one that worked.
+    pub async fn run<R: Runner>(
+        &self,
+        runner: &R,
+        kept_ms: u64,
+        build: impl Fn(Encoder) -> Vec<String>,
+        on_progress: impl FnMut(f32) + Send,
+    ) -> Result<Encoder, EncodeError> {
+        let enc = run_with_fallback(runner, self.chain(), kept_ms, build, on_progress).await?;
+        self.remember(enc);
+        Ok(enc)
+    }
+}
+
+impl Default for WorkingEncoder {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -639,8 +696,7 @@ mod tests {
         }
     }
 
-    // The fake is only used from a current-thread test, so Send is not needed for it; the trait's
-    // futures must be Send for the real runner, which the next test checks.
+    // The fake keeps its state in Mutexes so its futures are Send like the real runner's (checked below).
     #[tokio::test]
     async fn gpu_init_failure_falls_back_to_cpu() {
         let fake = Fake::new(vec![
@@ -724,6 +780,50 @@ mod tests {
         });
         let mut on_line = |_: &str| {};
         needs_send(r.run(Vec::new(), &mut on_line));
+    }
+
+    #[test]
+    fn a_source_without_a_frame_rate_gets_a_60_fps_gop() {
+        for fps in [0.0, f64::NAN] {
+            let cmd = run(
+                &probe(1920, 1080, fps, 1),
+                &two(),
+                Preset::Light,
+                Encoder::X264,
+            );
+            assert!(cmd.contains("-g 120 "), "{fps}: {cmd}");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_working_encoder_is_remembered_and_never_moves_back_up() {
+        let store = WorkingEncoder::new();
+        let build = |e: Encoder| vec![e.name().to_owned()];
+        // first run: Nvenc and Amf cannot start, Qsv works
+        let fake = Fake::new(vec![(vec![], false), (vec![], false), (vec![], true)]);
+        assert_eq!(
+            store.run(&fake, 1000, build, |_| {}).await,
+            Ok(Encoder::Qsv)
+        );
+        // second run starts at Qsv
+        let fake = Fake::new(vec![(vec![], true)]);
+        assert_eq!(
+            store.run(&fake, 1000, build, |_| {}).await,
+            Ok(Encoder::Qsv)
+        );
+        assert_eq!(*fake.calls.lock().unwrap(), ["h264_qsv"]);
+        // Qsv now fails to start: Mf is tried, and is the new start
+        let fake = Fake::new(vec![(vec![], false), (vec![], true)]);
+        assert_eq!(store.run(&fake, 1000, build, |_| {}).await, Ok(Encoder::Mf));
+        assert_eq!(*fake.calls.lock().unwrap(), ["h264_qsv", "h264_mf"]);
+        assert_eq!(store.chain()[0], Encoder::Mf);
+        // a stray later report of an earlier encoder does not move it back up
+        store.remember(Encoder::Nvenc);
+        assert_eq!(store.chain()[0], Encoder::Mf);
+        // a mid-encode failure remembers nothing new
+        let fake = Fake::new(vec![(vec!["out_time_us=1"], false)]);
+        assert!(store.run(&fake, 1000, build, |_| {}).await.is_err());
+        assert_eq!(store.chain()[0], Encoder::Mf);
     }
 
     #[test]

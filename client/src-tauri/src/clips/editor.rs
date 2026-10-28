@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use super::encode::{self, CHAIN, Encoder, FfmpegRunner, run_with_fallback};
+use super::encode::{self, CHAIN, Encoder, FfmpegRunner, WORKING, run_with_fallback};
 use super::ffmpeg::FfmpegPaths;
 use super::preview::{self, PreviewPlan};
 use super::probe::{self, Probe};
@@ -193,7 +193,7 @@ pub fn extension(path: &Path) -> String {
 }
 
 /// Make `<dir>/preview.mp4` for a Remux or Encode source. Encode goes down the shared encoder chain
-/// (`encode::run_with_fallback`); a Remux has just the one run.
+/// (`encode::WORKING`, which remembers the encoder that works); a Remux has just the one run.
 pub async fn make_preview(
     paths: &FfmpegPaths,
     entry: &Entry,
@@ -203,11 +203,7 @@ pub async fn make_preview(
     std::fs::create_dir_all(&entry.dir).map_err(|_| NO_PREVIEW.to_owned())?;
     let (src, dst) = (text(&entry.path), text(&out));
     let copy_audio = preview::can_copy_audio(&entry.probe);
-    let encoders: &[Encoder] = if entry.plan == PreviewPlan::Encode {
-        &CHAIN
-    } else {
-        &CHAIN[..1]
-    };
+    let encode_preview = entry.plan == PreviewPlan::Encode;
     let build = |enc: Encoder| {
         let mut a = encode::head();
         a.extend(preview::args(
@@ -228,14 +224,14 @@ pub async fn make_preview(
         }
     };
     let runner = FfmpegRunner(paths.clone());
-    let done = run_with_fallback(
-        &runner,
-        encoders,
-        entry.probe.duration_ms,
-        build,
-        on_progress,
-    )
-    .await;
+    let kept_ms = entry.probe.duration_ms;
+    let done = if encode_preview {
+        WORKING.run(&runner, kept_ms, build, on_progress).await
+    } else {
+        // A Remux is a stream copy: no encoder is involved (the encoder argument is unused), so one run, and
+        // nothing to remember.
+        run_with_fallback(&runner, &CHAIN[..1], kept_ms, build, on_progress).await
+    };
     if let Err(e) = done {
         tracing::warn!(error = ?e, "clips: preview not made");
         let _ = std::fs::remove_file(&out);

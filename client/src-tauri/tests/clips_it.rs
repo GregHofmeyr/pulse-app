@@ -198,3 +198,97 @@ async fn exports_two_pieces_as_light() {
     );
     assert!(thumb.is_file() && strip.is_file());
 }
+
+/// A phone clip: stored 2560x1440 with a 90 degree display rotation, so it shows as portrait 1440x2560.
+#[tokio::test]
+#[ignore = "needs ffmpeg and ffprobe (PULSE_DEV_FFMPEG_DIR or PATH)"]
+async fn exports_a_rotated_source_as_portrait_light() {
+    let t = tools();
+    let dir = tempfile::tempdir().unwrap();
+    let (plain, src, out) = (
+        dir.path().join("plain.mp4"),
+        dir.path().join("rot.mp4"),
+        dir.path().join("out.mp4"),
+    );
+    ffmpeg_ok(
+        &t,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=2560x1440:rate=30:duration=3",
+            "-c:v",
+            "libx264",
+            "-preset",
+            "ultrafast",
+            "-crf",
+            "30",
+            "-pix_fmt",
+            "yuv420p",
+            "-y",
+            &plain.to_string_lossy(),
+        ],
+    );
+    ffmpeg_ok(
+        &t,
+        &[
+            "-display_rotation",
+            "90",
+            "-i",
+            &plain.to_string_lossy(),
+            "-c",
+            "copy",
+            "-y",
+            &src.to_string_lossy(),
+        ],
+    );
+    let p = probe::parse(
+        &String::from_utf8_lossy(
+            &Command::new(&t.ffprobe)
+                .args(probe::args(&src.to_string_lossy()))
+                .output()
+                .unwrap()
+                .stdout,
+        ),
+        std::fs::metadata(&src).unwrap().len(),
+    )
+    .expect("probe the source");
+    assert_eq!(
+        (p.width, p.height),
+        (1440, 2560),
+        "probe applies the rotation"
+    );
+
+    let kept = [Span {
+        start_ms: 0,
+        end_ms: 2_000,
+    }];
+    run_with_fallback(
+        &FfmpegRunner(t.clone()),
+        &CHAIN,
+        2_000,
+        |enc| encode::args(&p, &src, &kept, Preset::Light, enc, &out),
+        |_| {},
+    )
+    .await
+    .expect("export");
+
+    let j = ffprobe_json(&t, &out);
+    let v = j["streams"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["codec_type"] == "video")
+        .unwrap();
+    assert_eq!(
+        (v["width"].as_u64(), v["height"].as_u64()),
+        (Some(720), Some(1280))
+    );
+    assert!(
+        j["streams"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|s| s["codec_type"] != "audio")
+    );
+}
