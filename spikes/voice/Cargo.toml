@@ -15,3 +15,9 @@ anyhow = "1"
 clap = { version = "4", features = ["derive"] }
 cpal = "0.15"
 hound = "3"
+
+# Same patched webrtc-sys / webrtc-sys-build as the app (see the root Cargo.toml): the SHA-256
+# verified libwebrtc download, and zip 9 instead of zip 0.6 (GHSA-m665-v7pm-7grj).
+[patch.crates-io]
+webrtc-sys = { path = "../../vendor/webrtc-sys" }
+webrtc-sys-build = { path = "../../vendor/webrtc-sys-build" }
