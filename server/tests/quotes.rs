@@ -3686,3 +3686,113 @@ async fn ready_does_not_list_threads_of_channels_without_a_read_state() {
     let roots: Vec<_> = ready.thread_seen.iter().map(|p| p.root_id).collect();
     assert_eq!(roots, vec![q.id]);
 }
+
+// ---- a committed change never answers 500 because a count couldn't be read afterwards (M5) ----
+
+impl Fixture {
+    /// From now on, any write to a read point (or a first thread seen point) leaves a read point
+    /// that can't be parsed back, in the same transaction: the change commits, every later count
+    /// read fails.
+    async fn spoil_read_points(&self) {
+        for t in [
+            "CREATE TRIGGER spoil_rs_ins AFTER INSERT ON read_states BEGIN
+               UPDATE read_states SET last_read_message_id = 'not-an-id' WHERE rowid = NEW.rowid;
+             END",
+            "CREATE TRIGGER spoil_rs_upd AFTER UPDATE OF last_read_message_id ON read_states BEGIN
+               UPDATE read_states SET last_read_message_id = 'not-an-id' WHERE rowid = NEW.rowid;
+             END",
+            "CREATE TRIGGER spoil_tr AFTER INSERT ON thread_reads BEGIN
+               UPDATE read_states SET last_read_message_id = 'not-an-id' WHERE user_id = NEW.user_id;
+             END",
+        ] {
+            sqlx::query(t).execute(&self.app.db).await.unwrap();
+        }
+    }
+    async fn rows(&self, sql: &str) -> i64 {
+        sqlx::query_scalar(sql)
+            .fetch_one(&self.app.db)
+            .await
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn a_posted_quote_answers_200_when_its_counts_cant_be_read() {
+    let f = fixture().await;
+    f.spoil_read_points().await;
+    let r = f.post_lines(json!([f.say(f.sam, "landed")])).await;
+    assert_eq!(r.status(), 200);
+    let m: Message = r.json().await.unwrap();
+    assert_eq!(m.quote.unwrap().lines[0].text.as_deref(), Some("landed"));
+    assert_eq!(f.rows("SELECT COUNT(*) FROM quotes").await, 1);
+}
+
+#[tokio::test]
+async fn a_reply_answers_200_when_its_counts_cant_be_read() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    f.spoil_read_points().await;
+    let r = f
+        .reply_raw(
+            &f.sam_t,
+            json!({ "content": "landed", "thread_root_id": q.id }),
+        )
+        .await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(
+        f.rows("SELECT COUNT(*) FROM messages WHERE thread_root_id IS NOT NULL")
+            .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn a_plain_message_answers_200_when_its_counts_cant_be_read() {
+    let f = fixture().await;
+    let g = general(&f.app, &f.alex_t, f.server).await;
+    f.spoil_read_points().await;
+    let r = post_json(
+        &f.app,
+        &f.sam_t,
+        &format!("/channels/{}/messages", g.id),
+        json!({ "content": "landed" }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(
+        f.rows("SELECT COUNT(*) FROM messages WHERE content = 'landed'")
+            .await,
+        1
+    );
+}
+
+#[tokio::test]
+async fn replies_seen_answers_204_when_its_counts_cant_be_read() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let reply = f.reply(&f.sam_t, q.id, "hey").await;
+    f.spoil_read_points().await;
+    assert_eq!(f.seen(&f.alex_t, q.id, reply.id).await.status(), 204);
+    assert_eq!(
+        f.rows("SELECT COUNT(*) FROM thread_reads WHERE root_id IN (SELECT id FROM messages WHERE thread_root_id IS NULL)")
+            .await,
+        2,
+        "sam's (from replying) and alex's"
+    );
+}
+
+#[tokio::test]
+async fn mark_read_answers_204_when_its_counts_cant_be_read() {
+    let f = fixture().await;
+    let g = general(&f.app, &f.alex_t, f.server).await;
+    let m = send(&f.app, &f.sam_t, g.id, "hi").await;
+    f.spoil_read_points().await;
+    let r = post_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/read", g.id),
+        json!({ "message_id": m.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 204);
+}

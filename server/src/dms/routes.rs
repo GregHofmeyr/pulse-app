@@ -55,8 +55,9 @@ async fn mark_read(
         let mut c = s.db.acquire().await?;
         crate::reads::advance(&mut c, me, id, req.message_id).await?
     };
-    if moved {
-        let (unread, mentions) = crate::reads::counts_for(&s.db, me, id).await?;
+    if moved
+        && let Some((unread, mentions)) = crate::reads::counts_after_commit(&s.db, me, id).await
+    {
         s.hub
             .publish(
                 &s.db,

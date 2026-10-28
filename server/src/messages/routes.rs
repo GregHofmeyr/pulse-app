@@ -413,8 +413,9 @@ async fn send(
         .await;
     // Replying moves your place in the thread (and covers earlier mentions of you): tell your
     // other sessions.
-    if let (Some(root), Some(mentions_cleared)) = (req.thread_root_id, thread_cleared) {
-        let (_, mentions) = crate::reads::counts_for(&s.db, me, id).await?;
+    if let (Some(root), Some(mentions_cleared)) = (req.thread_root_id, thread_cleared)
+        && let Some((_, mentions)) = crate::reads::counts_after_commit(&s.db, me, id).await
+    {
         s.hub
             .publish(
                 &s.db,
@@ -429,8 +430,9 @@ async fn send(
             )
             .await;
     }
-    if moved {
-        let (unread, mentions) = crate::reads::counts_for(&s.db, me, id).await?;
+    if moved
+        && let Some((unread, mentions)) = crate::reads::counts_after_commit(&s.db, me, id).await
+    {
         s.hub
             .publish(
                 &s.db,

@@ -146,8 +146,9 @@ async fn seen(
     let mut tx = crate::db::begin_write(&s.db).await?;
     let cleared = mark_seen(&mut tx, me, root, req.message_id).await?;
     tx.commit().await?;
-    if let Some(mentions_cleared) = cleared {
-        let (_, mentions) = crate::reads::counts_for(&s.db, me, channel.id).await?;
+    if let Some(mentions_cleared) = cleared
+        && let Some((_, mentions)) = crate::reads::counts_after_commit(&s.db, me, channel.id).await
+    {
         s.hub
             .publish(
                 &s.db,

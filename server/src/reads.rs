@@ -68,6 +68,23 @@ pub async fn counts_for(
         .map_or((0, 0), |r| (r.unread, r.mentions)))
 }
 
+/// [`counts_for`] after a change has committed, for the event that announces it: the change has
+/// landed, so a failed read is logged and gives `None` (the event is skipped) rather than failing a
+/// request whose retry would find nothing left to do.
+pub async fn counts_after_commit(
+    db: &SqlitePool,
+    user: UserId,
+    channel: ChannelId,
+) -> Option<(u32, u32)> {
+    match counts_for(db, user, channel).await {
+        Ok(c) => Some(c),
+        Err(e) => {
+            tracing::error!(error = ?e, %user, %channel, "couldn't read counts after a commit; event skipped");
+            None
+        }
+    }
+}
+
 /// The reply mentions still counted for a user: a mention in a live reply of a live quote, after the
 /// user's seen point for that quote. Shared by the per-channel counts and the seen-point list, so
 /// the two can never disagree: only channels the user has a read state for.

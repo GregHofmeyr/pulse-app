@@ -109,8 +109,9 @@ async fn post_quote(
             )
             .await;
     }
-    if moved {
-        let (unread, mentions) = crate::reads::counts_for(&s.db, me, id).await?;
+    if moved
+        && let Some((unread, mentions)) = crate::reads::counts_after_commit(&s.db, me, id).await
+    {
         s.hub
             .publish(
                 &s.db,
