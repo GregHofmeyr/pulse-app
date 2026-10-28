@@ -86,6 +86,16 @@ close-public-ssh:
     just provision ubuntu@pulse
     ssh ubuntu@pulse 'sudo bash /tmp/pulse-deploy/setup.sh --close-ssh'
 
+# disk use on the live server (and this machine's build caches); run it daily. Warns at 80%.
+disk:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    out=$(ssh {{prod}} 'df -h / | tail -1; docker system df')
+    echo "$out"
+    used=$(awk 'NR==1 {sub("%", "", $5); print $5}' <<<"$out")
+    if [ "$used" -ge 80 ]; then echo "WARNING: server disk ${used}% full" >&2; exit 1; fi
+    du -sh target ../pulse-app-*/target 2>/dev/null || true
+
 # back up, then run image TAG (a 7-char commit or `latest`); prints the commit that's live
 deploy tag="latest":
     # Checks the server's .env (LIVEKIT_NODE_IP, PULSE_TOTP_KEY) with this deploy.sh before anything is copied, so a

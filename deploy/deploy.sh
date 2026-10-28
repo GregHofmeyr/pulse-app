@@ -72,6 +72,16 @@ reload_caddy() {
   return 0
 }
 
+# prune_old_images: keep the newest 3 server images (the live one and two to roll back to) and remove the rest, so
+# each deploy's ~160 MB image doesn't pile up on the disk. Quiet; an image still in use simply isn't removed.
+prune_old_images() {
+  local old
+  old=$(docker images --no-trunc --format '{{.ID}}' "$repo" | awk '!seen[$0]++' | tail -n +4)
+  # shellcheck disable=SC2086 # one id per word
+  [ -z "$old" ] || docker rmi -f $old >/dev/null 2>&1 || true
+  docker image prune -f >/dev/null 2>&1 || true
+}
+
 # Sourced by the self-test with DEPLOY_SH_LIB=1: define the functions, run nothing.
 [ -n "${DEPLOY_SH_LIB:-}" ] && return 0
 
@@ -108,6 +118,8 @@ for _ in $(seq 1 30); do
     rev=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
       "$(docker compose ps -q pulse-server)")
     echo "healthy: $tag (commit ${rev:0:7}, ${image#*@})"
+    prune_old_images
+    df -h / | awk 'NR==2 {print "disk: " $5 " used, " $4 " free"}'
     exit 0
   fi
   sleep 1

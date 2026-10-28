@@ -276,6 +276,22 @@ else
   echo "FAIL a good caddy reload: rc=$rc, stdout '$(cat "$tmp/out")', stderr '$(cat "$tmp/err")'"
   failed=1
 fi
+# prune_old_images keeps the 3 newest server images (docker lists newest first; a tag pair shares one id)
+# shellcheck disable=SC2329 # invoked by prune_old_images
+docker() {
+  case $1 in
+    images) printf '%s\n' id5 id4 id4 id3 id2 id1 ;;
+    rmi) shift 2; echo "$*" >"$tmp/removed" ;;
+  esac
+}
+rm -f "$tmp/removed"
+prune_old_images
+if [ "$(cat "$tmp/removed" 2>/dev/null)" = "id2 id1" ]; then
+  echo "ok   prune keeps the 3 newest images"
+else
+  echo "FAIL prune removed '$(cat "$tmp/removed" 2>/dev/null)', want 'id2 id1'"
+  failed=1
+fi
 unset -f docker
 
 exit "$failed"
