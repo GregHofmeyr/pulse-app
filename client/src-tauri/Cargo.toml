@@ -67,6 +67,8 @@ log = "0.4"
 # paused-clock tests (`#[tokio::test(start_paused = true)]`)
 tokio = { workspace = true, features = ["test-util"] }
 pulse-server = { path = "../../server", features = ["testing"] }
+# tests/voice_it.rs asks LiveKit itself who is in a room (the server's version)
+livekit-api = { version = "0.8.1", default-features = false, features = ["access-token", "services"] }
 # tests compute the codes a phone would show (same version/features as the server)
 totp-rs = { version = "6", default-features = false, features = ["std"] }
 # tests/emoji_e2e.rs builds the PNG and GIF it uploads

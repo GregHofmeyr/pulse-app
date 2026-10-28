@@ -491,6 +491,190 @@ async fn leaving_while_devices_open_leaves_no_ghost() {
     watcher.close().await.unwrap();
 }
 
+/// A TCP proxy in front of the dev LiveKit that lets each signal connection's first message
+/// (LiveKit's JoinResponse: the join is accepted) through, then holds the rest of what LiveKit
+/// says (the SDP answer the peer connection needs) until `release`. A join through it stops
+/// inside `Room::connect` after LiveKit accepted it, for as long as the test likes.
+struct HoldAfterJoin {
+    addr: std::net::SocketAddr,
+    release: tokio::sync::watch::Sender<bool>,
+}
+
+impl HoldAfterJoin {
+    async fn start() -> Self {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (release, released) = tokio::sync::watch::channel(false);
+        let upstream = dev_livekit("ws").replace("ws://", "");
+        tokio::spawn(async move {
+            while let Ok((client, _)) = listener.accept().await {
+                let (upstream, mut released) = (upstream.clone(), released.clone());
+                tokio::spawn(async move {
+                    let server = tokio::net::TcpStream::connect(&upstream).await.unwrap();
+                    let (mut cr, mut cw) = client.into_split();
+                    let (mut sr, mut sw) = server.into_split();
+                    tokio::spawn(async move {
+                        let _ = tokio::io::copy(&mut cr, &mut sw).await;
+                        let _ = sw.shutdown().await;
+                    });
+                    // LiveKit's HTTP response head, then (an upgrade) its first frame
+                    let mut head = Vec::new();
+                    while !head.ends_with(b"\r\n\r\n") {
+                        let Ok(b) = sr.read_u8().await else { return };
+                        head.push(b);
+                    }
+                    if cw.write_all(&head).await.is_err() {
+                        return;
+                    }
+                    if head.starts_with(b"HTTP/1.1 101") {
+                        let mut frame = vec![0u8; 2];
+                        if sr.read_exact(&mut frame).await.is_err() {
+                            return;
+                        }
+                        let ext = match frame[1] & 0x7f {
+                            126 => 2,
+                            127 => 8,
+                            _ => 0,
+                        };
+                        let mask = if frame[1] & 0x80 != 0 { 4 } else { 0 };
+                        let mut more = vec![0u8; ext];
+                        if sr.read_exact(&mut more).await.is_err() {
+                            return;
+                        }
+                        let len = match ext {
+                            0 => (frame[1] & 0x7f) as usize,
+                            _ => more.iter().fold(0usize, |n, b| n << 8 | *b as usize),
+                        };
+                        frame.extend_from_slice(&more);
+                        let mut rest = vec![0u8; mask + len];
+                        if sr.read_exact(&mut rest).await.is_err() {
+                            return;
+                        }
+                        frame.extend_from_slice(&rest);
+                        if cw.write_all(&frame).await.is_err() {
+                            return;
+                        }
+                        let _ = released.wait_for(|r| *r).await;
+                    }
+                    let _ = tokio::io::copy(&mut sr, &mut cw).await;
+                });
+            }
+        });
+        Self { addr, release }
+    }
+
+    fn url(&self) -> String {
+        format!("ws://{}", self.addr)
+    }
+
+    fn release(&self) {
+        let _ = self.release.send(true);
+    }
+}
+
+/// Leave while `Room::connect` itself is still running, after LiveKit accepted the join (it
+/// lists the participant) but before the peer connection is up. The join must still end with
+/// LiveKit told: a dropped connect left the participant listed until LiveKit timed it out
+/// (~15 s), and one that came up meanwhile would have been a ghost everyone saw.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn leaving_mid_connect_leaves_no_ghost() {
+    let _turn = livekit_turn().await;
+    let hold = HoldAfterJoin::start().await;
+    let mut cfg = testing::test_config();
+    // the server hands out the proxy's address as LiveKit's
+    cfg.livekit_url = hold.url();
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, alex) = testing::register(&app, "alex").await;
+    let s = testing::create_server(&app, &alex, "Main").await;
+    let (sam_id, sam) = testing::register(&app, "sam").await;
+    let r = testing::post_json(
+        &app,
+        &sam,
+        &format!("/servers/{}/join", s.id),
+        serde_json::json!({}),
+    )
+    .await;
+    assert!(r.status().is_success(), "join server: {}", r.status());
+    let api = Api::new(&format!("http://{}", app.addr));
+    let lounge = api
+        .channels(&alex, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+    let room_name = lounge.id.to_string();
+    let sam_identity = sam_id.to_string();
+
+    // LiveKit's own view of the room
+    let lk = livekit_api::services::room::RoomClient::with_api_key(
+        &dev_livekit("http"),
+        "devkey",
+        DEV_SECRET,
+    );
+    let sam_listed = || {
+        let (lk, room, who) = (&lk, room_name.clone(), sam_identity.clone());
+        async move {
+            lk.list_participants(&room)
+                .await
+                .expect("list participants")
+                .iter()
+                .any(|p| p.identity == who)
+        }
+    };
+
+    // alex is in the room, straight to LiveKit (a plain LiveKit client: who the others see)
+    let vt = api.voice_token(&alex, lounge.id).await.unwrap();
+    let (alex_room, _events) =
+        livekit::Room::connect(&dev_livekit("ws"), &vt.token, Default::default())
+            .await
+            .unwrap();
+    let alex_sees_sam = || {
+        alex_room
+            .remote_participants()
+            .keys()
+            .any(|id| id.as_str() == sam_identity)
+    };
+
+    let vm = Arc::new(VoiceManager::new(Arc::new(|_| {})));
+    let (vm2, api2, lounge_id) = (vm.clone(), api.clone(), lounge.id);
+    let joining = tokio::spawn(async move {
+        vm2.join(
+            &api2,
+            &sam,
+            lounge_id,
+            AudioConfig::default(),
+            AudioMode::Null(48_000),
+        )
+        .await
+    });
+    assert!(
+        eventually(Duration::from_secs(10), sam_listed).await,
+        "LiveKit never accepted sam's join"
+    );
+    assert!(!joining.is_finished(), "sam's join got past Room::connect");
+    tokio::time::timeout(Duration::from_secs(10), vm.leave())
+        .await
+        .expect("leave waited for the connect");
+    assert!(joining.await.unwrap().is_err(), "the join was cancelled");
+    // LiveKit's answer reaches sam now: what's left of the cancelled join may finish connecting
+    hold.release();
+
+    // well inside LiveKit's own timeouts for a participant that went quiet (~15-20 s)
+    assert!(
+        eventually(Duration::from_secs(2), || async { !sam_listed().await }).await,
+        "LiveKit still lists sam 2 s after the leave: a ghost"
+    );
+    assert!(
+        eventually(Duration::from_secs(2), || async { !alex_sees_sam() }).await,
+        "alex still sees sam 2 s after the leave: a ghost"
+    );
+    alex_room.close().await.unwrap();
+}
+
 /// "Connected" (and the join sound) must not wait a round trip for the mic publish.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]

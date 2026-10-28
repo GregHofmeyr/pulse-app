@@ -474,3 +474,42 @@ async fn grants_whose_connection_ended_while_down_are_marked_left() {
     assert!(left.is_some(), "the lost leave is made up for");
     assert_eq!(grant_row(&app, &here).await, (Some("PA_1".into()), None));
 }
+
+/// A participant LiveKit has accepted but whose connection never came up (JOINING/JOINED, never
+/// ACTIVE) is not in the call: LiveKit sends no `participant_joined` for it, and if its join is
+/// abandoned it ends with `participant_connection_aborted`, never a leave for a joined one.
+/// Restore skips it: no presence, no session row, no join check (its grant isn't recorded and
+/// it isn't removed); its join webhook does all that if it does come up.
+#[tokio::test]
+async fn participants_still_connecting_are_not_restored() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (b_id, _) = register(&app, "sam").await;
+    let l = lounge(&app, &a).await;
+    let room = l.id.to_string();
+    let grant = grant_livekit(&app, &room, &a_id.to_string()).await;
+    let mut joining = with_grant(participant(a_id, "PA_1"), &grant);
+    joining.state = lkp::participant_info::State::Joined as i32;
+    let mut revoked = participant(b_id, "PB_1");
+    revoked.state = lkp::participant_info::State::Joining as i32;
+    let revoked = with_grant(revoked, "not-a-grant");
+    let (lk, removed) = fake_livekit_logged(vec![(room, vec![joining, revoked])]).await;
+
+    let n = restore::sync(&state_with(&app, lk), &pulse_server::db::now(), BUDGET)
+        .await
+        .unwrap();
+
+    assert_eq!(n, 0);
+    assert!(app.voice_members(l.id).is_empty());
+    assert!(session(&app, a_id).await.is_empty());
+    assert_eq!(
+        grant_row(&app, &grant).await,
+        (None, None),
+        "no join recorded"
+    );
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert!(
+        removed.lock().unwrap().is_empty(),
+        "left to its own join webhook"
+    );
+}

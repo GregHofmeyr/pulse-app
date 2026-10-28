@@ -29,7 +29,7 @@ const BOOT_BUDGET: Duration = Duration::from_secs(2);
 const RETRY_EVERY: Duration = Duration::from_secs(5);
 const RETRIES: u32 = 12;
 
-/// Someone LiveKit reports as connected to one of our rooms.
+/// Someone LiveKit reports as connected (ACTIVE) to one of our rooms.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LiveParticipant {
     pub channel: ChannelId,
@@ -45,7 +45,8 @@ pub struct Live {
     /// Voice-room participants: rooms that are channel ids, identities that are user ids (our
     /// tokens, `voice/routes.rs`).
     pub voice: Vec<LiveParticipant>,
-    /// Every connected participant in every room (stream rooms included), with its room name.
+    /// Every connected (ACTIVE) participant in every room (stream rooms included), with its room
+    /// name.
     pub all: Vec<(String, ParticipantInfo)>,
 }
 
@@ -60,7 +61,11 @@ pub async fn fetch(url: &str, key: &str, secret: &str, budget: Duration) -> anyh
         let mut out = Live::default();
         for room in client.list_rooms(vec![]).await? {
             for p in client.list_participants(&room.name).await? {
-                if p.state == State::Disconnected as i32 {
+                // Only connections that came up. One still connecting (JOINING/JOINED) has had no
+                // `participant_joined` yet and may never: an abandoned join ends with
+                // `participant_connection_aborted`. Its join webhook admits and records it if
+                // it does come up.
+                if p.state != State::Active as i32 {
                     continue;
                 }
                 out.all.push((room.name.clone(), p.clone()));

@@ -121,44 +121,60 @@ impl CloseRoom for Room {
 /// A connected room that no session owns yet. A dropped livekit `Room` stays connected (its task
 /// only ends on `close()`): others would see a ghost. So a guard dropped with its room still in
 /// it (a cancelled join) closes the room in the background; `disarm` once a session owns it.
-struct OpenRoom<R: CloseRoom>(Option<Arc<R>>);
+/// Its `InFlight` (from `connect_detached`) is held until the room is owned or closed, so the
+/// next join waits for that close too.
+struct OpenRoom<R: CloseRoom> {
+    room: Option<Arc<R>>,
+    in_flight: Option<InFlight>,
+}
 
 impl<R: CloseRoom> OpenRoom<R> {
     fn new(room: R) -> Self {
-        Self(Some(Arc::new(room)))
+        Self {
+            room: Some(Arc::new(room)),
+            in_flight: None,
+        }
+    }
+
+    /// Hold `in_flight` until the room is owned or closed.
+    fn tracked(mut self, in_flight: InFlight) -> Self {
+        self.in_flight = Some(in_flight);
+        self
     }
 
     fn room(&self) -> &Arc<R> {
-        self.0
+        self.room
             .as_ref()
             .expect("an OpenRoom holds its room until closed or disarmed")
     }
 
     /// Close it now (bounded wait).
     async fn close(mut self) {
-        if let Some(room) = self.0.take() {
+        if let Some(room) = self.room.take() {
             let _ = tokio::time::timeout(CLOSE_TIMEOUT, room.close_room()).await;
         }
     }
 
     /// A session owns the room now (and closes it on leave): stop guarding it.
     fn disarm(mut self) {
-        self.0.take();
+        self.room.take();
     }
 }
 
 impl<R: CloseRoom> Drop for OpenRoom<R> {
     fn drop(&mut self) {
-        if let Some(room) = self.0.take() {
-            close_in_background(room);
+        if let Some(room) = self.room.take() {
+            close_in_background(room, self.in_flight.take());
         }
     }
 }
 
-/// Close `room` without waiting for it (bounded by `CLOSE_TIMEOUT`).
-fn close_in_background<R: CloseRoom>(room: Arc<R>) {
+/// Close `room` without waiting for it (bounded by `CLOSE_TIMEOUT`); `in_flight` is held until
+/// it is closed.
+fn close_in_background<R: CloseRoom>(room: Arc<R>, in_flight: Option<InFlight>) {
     if let Ok(rt) = tokio::runtime::Handle::try_current() {
         rt.spawn(async move {
+            let _in_flight = in_flight;
             if tokio::time::timeout(CLOSE_TIMEOUT, room.close_room())
                 .await
                 .is_err()
@@ -167,6 +183,72 @@ fn close_in_background<R: CloseRoom>(room: Arc<R>) {
             }
         });
     }
+}
+
+/// Held while a room connect (`connect_detached`), or the close of the room it connected, is
+/// still in flight. Its `Connecting` is done once every clone is gone.
+#[derive(Clone)]
+struct InFlight {
+    // only held: dropping the last clone closes the channel `Connecting` waits on
+    _done: Arc<tokio::sync::watch::Sender<()>>,
+}
+
+impl InFlight {
+    fn new() -> (Self, Connecting) {
+        let (tx, rx) = tokio::sync::watch::channel(());
+        (
+            Self {
+                _done: Arc::new(tx),
+            },
+            Connecting(rx),
+        )
+    }
+}
+
+/// A room connect running in a task of its own (`connect_detached`): done once it has
+/// connected and its room is owned by a session or closed, or it failed.
+#[derive(Clone)]
+struct Connecting(tokio::sync::watch::Receiver<()>);
+
+impl Connecting {
+    async fn finished(mut self) {
+        // the `InFlight`s hold the sender: closed = done
+        while self.0.changed().await.is_ok() {}
+    }
+}
+
+/// Run a room `connect` to completion in a task of its own, and hand its room over guarded.
+/// A join cancelled meanwhile drops the receiving end; the task then closes the room as soon
+/// as it connects. Dropping `Room::connect` midway instead (livekit 0.9.3) left its signal
+/// connection open in tasks of livekit's own, with the participant listed until LiveKit timed
+/// it out (~15 s); one whose peer connection came up just then was a ghost others saw.
+fn connect_detached<R: CloseRoom, E: Send + 'static>(
+    connect: impl Future<Output = Result<(R, E), VoiceError>> + Send + 'static,
+) -> (
+    impl Future<Output = Result<(OpenRoom<R>, E), VoiceError>>,
+    Connecting,
+) {
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let (in_flight, done) = InFlight::new();
+    tokio::spawn(async move {
+        // guarded from here: a room left in the channel unreceived is closed by its guard
+        let r = connect
+            .await
+            .map(|(room, events)| (OpenRoom::new(room).tracked(in_flight.clone()), events));
+        if let Err(Ok((room, _))) = tx.send(r) {
+            // Accepted cost: the connection came up, so LiveKit reports it joined and then
+            // left (tens of ms apart), and the others in the channel see this user appear and
+            // go again. The alternative, dropping the connect, kept them listed for ~15 s.
+            tracing::info!("voice: a cancelled join's room connected; closing it");
+            room.close().await;
+        }
+        drop(in_flight);
+    });
+    let connected = async move {
+        rx.await
+            .unwrap_or_else(|_| Err(VoiceError::Connect("the room connect stopped".into())))
+    };
+    (connected, done)
 }
 
 /// How many failed publishes in a row a rejoin may hand back to the rejoin loop before the call
@@ -761,7 +843,7 @@ impl<R: CloseRoom> Session<R> {
         let room = self.room.clone();
         // its tasks stop here: our own close must not look like LiveKit dropping us (a rejoin)
         drop(self);
-        close_in_background(room);
+        close_in_background(room, None);
         pipeline
     }
 
@@ -868,6 +950,10 @@ pub struct VoiceManager {
     built: AtomicU64,
     /// Link figures for the status panel (reported only while it is open).
     link: Arc<linkstats::LinkState>,
+    /// The last join's room connect, which runs on if the join is cancelled (and closes its
+    /// room once connected). The next connect waits for it: LiveKit lets a later join of the
+    /// same identity replace the earlier one, so a stale connect landing last would kick it.
+    connecting: Mutex<Option<Connecting>>,
 }
 
 impl VoiceManager {
@@ -893,6 +979,7 @@ impl VoiceManager {
             reconnect_give_up: rejoin::RECONNECT_GIVE_UP,
             built: Default::default(),
             link: Default::default(),
+            connecting: Mutex::new(None),
         }
     }
 
@@ -1204,15 +1291,33 @@ impl VoiceManager {
         };
         let room = async {
             let t = Instant::now();
-            let (room, events) = tokio::time::timeout(
-                CONNECT_TIMEOUT,
-                Room::connect(&vt.url, &vt.token, RoomOptions::default()),
-            )
-            .await
-            .map_err(|_| VoiceError::Timeout("connecting to voice"))?
-            .map_err(|e| VoiceError::Connect(e.to_string()))?;
-            // guarded from here: a cancelled join closes it
-            Ok::<_, VoiceError>((OpenRoom::new(room), events, ms(t)))
+            // A cancelled join's connect still running: let it connect and close first. Unbounded
+            // on purpose (it is bounded by CONNECT_TIMEOUT + CLOSE_TIMEOUT, ~20 s, and Leave
+            // cancels the wait): a shorter wait would let a stale connect that lands after this
+            // one replace it at LiveKit (same identity), kicking the call the user wants.
+            let previous = self.connecting.lock().unwrap().clone();
+            if let Some(previous) = previous {
+                previous.finished().await;
+            }
+            // runs to completion even if this join is cancelled (then it closes the room)
+            let (url, token) = (vt.url.clone(), vt.token.clone());
+            let (connected, connecting) = connect_detached(async move {
+                // Known gap: the timeout drops `Room::connect` midway, which (livekit 0.9.3)
+                // leaves its signal tasks running until LiveKit gives up on the participant
+                // (~15 s; never ACTIVE, so no one sees it). The SDK hands out nothing to close
+                // before `connect` returns, so there is nothing to call here.
+                tokio::time::timeout(
+                    CONNECT_TIMEOUT,
+                    Room::connect(&url, &token, RoomOptions::default()),
+                )
+                .await
+                .map_err(|_| VoiceError::Timeout("connecting to voice"))?
+                .map_err(|e| VoiceError::Connect(e.to_string()))
+            });
+            *self.connecting.lock().unwrap() = Some(connecting);
+            // guarded: a cancelled join closes it
+            let (room, events) = connected.await?;
+            Ok::<_, VoiceError>((room, events, ms(t)))
         };
         let (
             ((pipeline, pipeline_reused), devices_ms),
@@ -1922,6 +2027,160 @@ mod tests {
             !closed.load(Ordering::SeqCst),
             "a session's room was closed"
         );
+    }
+
+    /// A join cancelled while its room is still connecting: the connect runs on, and the room
+    /// is closed as soon as it connects (a dropped `Room::connect` left LiveKit listing us).
+    #[tokio::test(start_paused = true)]
+    async fn a_cancelled_connect_closes_its_room_once_connected() {
+        let closed = Arc::new(AtomicBool::new(false));
+        let c = closed.clone();
+        let (connect, connecting) = connect_detached(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            Ok::<_, VoiceError>((FakeRoom(c), ()))
+        });
+        let mut finished = Box::pin(connecting.finished());
+        // the join gets as far as waiting for it, then is cancelled
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), connect)
+                .await
+                .is_err()
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut finished)
+                .await
+                .is_err(),
+            "finished before the room connected"
+        );
+        tokio::time::timeout(Duration::from_secs(1), finished)
+            .await
+            .expect("the cancelled connect never finished");
+        assert!(closed.load(Ordering::SeqCst), "the room was left connected");
+    }
+
+    /// Not cancelled: the room is handed over guarded, and nothing closes it.
+    #[tokio::test(start_paused = true)]
+    async fn a_finished_connect_hands_its_room_over() {
+        let closed = Arc::new(AtomicBool::new(false));
+        let c = closed.clone();
+        let (connect, connecting) = connect_detached(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            Ok::<_, VoiceError>((FakeRoom(c), 7))
+        });
+        let (room, events) = connect.await.expect("connected");
+        assert_eq!(events, 7);
+        // in flight until a session owns it
+        room.disarm();
+        connecting.finished().await;
+        for _ in 0..100 {
+            tokio::task::yield_now().await;
+        }
+        assert!(
+            !closed.load(Ordering::SeqCst),
+            "a session's room was closed"
+        );
+    }
+
+    /// A room whose close takes a while (a slow link).
+    struct SlowClose(Arc<AtomicBool>);
+    impl CloseRoom for SlowClose {
+        async fn close_room(&self) {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            self.0.store(true, Ordering::SeqCst);
+        }
+    }
+
+    /// The join was cancelled after its room was handed over but before a session took it: the
+    /// guard's background close counts as in flight too, so the next join waits for it.
+    #[tokio::test(start_paused = true)]
+    async fn a_handed_over_room_dropped_unclaimed_is_waited_for() {
+        let closed = Arc::new(AtomicBool::new(false));
+        let c = closed.clone();
+        let (connect, connecting) =
+            connect_detached(async move { Ok::<_, VoiceError>((SlowClose(c), ())) });
+        let (room, ()) = connect.await.expect("connected");
+        drop(room);
+        let mut finished = Box::pin(connecting.finished());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(100), &mut finished)
+                .await
+                .is_err(),
+            "finished while the room was still closing"
+        );
+        tokio::time::timeout(Duration::from_secs(1), finished)
+            .await
+            .expect("never finished");
+        assert!(closed.load(Ordering::SeqCst), "finished before the close");
+    }
+
+    /// A join waits for the last cancelled join's connect (and its close) before it connects:
+    /// a stale connect landing after it would replace it at LiveKit (same identity). Leave
+    /// still cancels the join while it waits.
+    #[tokio::test]
+    async fn a_join_waits_for_a_cancelled_connect_and_leave_cancels_the_wait() {
+        let app = testing::spawn_with(unreachable_livekit()).await;
+        let (token, api, channel) = alex_and_a_voice_channel(&app).await;
+        let vm = Arc::new(VoiceManager::new(Arc::new(|_| {})));
+        // a cancelled join's connect still in flight
+        let (in_flight, connecting) = InFlight::new();
+        *vm.connecting.lock().unwrap() = Some(connecting);
+
+        let join = |vm: Arc<VoiceManager>| {
+            let (api, token) = (api.clone(), token.clone());
+            tokio::spawn(async move {
+                vm.join(
+                    &api,
+                    &token,
+                    channel,
+                    AudioConfig::default(),
+                    AudioMode::Null(48_000),
+                )
+                .await
+            })
+        };
+
+        // waits while it is in flight; Leave cancels it there
+        let joining = join(vm.clone());
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            !joining.is_finished(),
+            "didn't wait for the cancelled connect"
+        );
+        tokio::time::timeout(Duration::from_secs(2), vm.leave())
+            .await
+            .expect("leave waited");
+        let r = tokio::time::timeout(Duration::from_secs(2), joining)
+            .await
+            .expect("the waiting join wasn't cancelled")
+            .unwrap();
+        assert!(matches!(r, Err(VoiceError::Cancelled)), "{r:?}");
+
+        // once it is done, the next join goes on to connect (and fails: nothing listens)
+        let joining = join(vm.clone());
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        assert!(
+            !joining.is_finished(),
+            "didn't wait for the cancelled connect"
+        );
+        drop(in_flight);
+        let r = tokio::time::timeout(Duration::from_secs(10), joining)
+            .await
+            .expect("the join never went on")
+            .unwrap();
+        assert!(
+            matches!(r, Err(VoiceError::Connect(_) | VoiceError::Timeout(_))),
+            "{r:?}"
+        );
+    }
+
+    /// A connect that fails reports its error, cancelled or not.
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_connect_reports_its_error() {
+        let (connect, connecting) = connect_detached(async {
+            Err::<(FakeRoom, ()), _>(VoiceError::Connect("refused".into()))
+        });
+        assert!(matches!(connect.await, Err(VoiceError::Connect(_))));
+        connecting.finished().await;
     }
 
     /// A room whose close never finishes (a lossy link): records that it was started.

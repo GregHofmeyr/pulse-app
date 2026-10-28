@@ -140,6 +140,55 @@ async fn stale_left_from_replaced_connection_keeps_user_in_voice() {
     );
 }
 
+/// A connection whose join is abandoned before it ever came up ends with
+/// `participant_connection_aborted`, never with a `participant_joined` before it. One for a
+/// connection presence doesn't have is a no-op: an open session row stays open and no
+/// VoiceLeft goes out (that row is some other connection's, e.g. one kept by a restore). One
+/// for a connection already replaced is stale, as for a leave.
+#[tokio::test]
+async fn an_abort_for_a_connection_never_joined_changes_nothing() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (_, l) = lounge(&app, &a).await;
+    // a call on record (restored, say) that presence doesn't have
+    sqlx::query("INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES ('VS1', ?, ?, '2026-01-01T00:00:00.000Z')")
+        .bind(a_id.to_string())
+        .bind(l.id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let mut rx = app.hub.register(a_id, String::new()).rx;
+    lk_event(
+        &app,
+        "participant_connection_aborted",
+        l.id,
+        a_id,
+        "PA_never",
+    )
+    .await;
+    let left_at: Option<String> =
+        sqlx::query_scalar("SELECT left_at FROM voice_sessions WHERE id = 'VS1'")
+            .fetch_one(&app.db)
+            .await
+            .unwrap();
+    assert_eq!(left_at, None, "the open row is untouched");
+    while let Ok(f) = rx.try_recv() {
+        assert!(
+            !matches!(f, ServerFrame::Event(Event::VoiceLeft { .. })),
+            "no VoiceLeft for a connection that never joined"
+        );
+    }
+
+    // stale: the live connection stays
+    lk_event(&app, "participant_joined", l.id, a_id, "PA_live").await;
+    lk_event(&app, "participant_connection_aborted", l.id, a_id, "PA_old").await;
+    assert_eq!(
+        voice_members(&app, &a, l.id).await,
+        vec![a_id],
+        "a stale abort keeps the live connection"
+    );
+}
+
 async fn lounge(app: &TestApp, token: &str) -> (pulse_protocol::rest::Server, Channel) {
     let s = create_server(app, token, "Main").await;
     let chans: Vec<Channel> = get_json(app, token, &format!("/servers/{}/channels", s.id)).await;
