@@ -40,6 +40,7 @@ struct Shared {
     store: FakeStore,
     inner: Mutex<Inner>,
     down: AtomicBool,
+    delay_ms: std::sync::atomic::AtomicU64,
     /// Unix seconds to treat as "now"; 0 means the real clock.
     now: AtomicI64,
 }
@@ -72,6 +73,7 @@ impl FakeS3 {
             store,
             inner: Mutex::default(),
             down: AtomicBool::new(false),
+            delay_ms: std::sync::atomic::AtomicU64::new(0),
             now: AtomicI64::new(0),
         });
         let app = axum::Router::new()
@@ -111,6 +113,13 @@ impl FakeS3 {
     /// While down, every request is answered 503 (broken storage).
     pub fn set_down(&self, down: bool) {
         self.shared.down.store(down, Ordering::SeqCst);
+    }
+
+    /// Hold every request this long before answering (slow storage).
+    pub fn set_delay(&self, d: std::time::Duration) {
+        self.shared
+            .delay_ms
+            .store(d.as_millis() as u64, Ordering::SeqCst);
     }
 
     /// Fix the verifier's clock at this unix time (`None`: the real clock again).
@@ -208,6 +217,10 @@ fn empty(status: StatusCode) -> Response {
 }
 
 async fn handle(State(s): State<Arc<Shared>>, req: Request<Body>) -> Response {
+    let delay = s.delay_ms.load(Ordering::SeqCst);
+    if delay > 0 {
+        tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
+    }
     if s.down.load(Ordering::SeqCst) {
         return xml_error(
             StatusCode::SERVICE_UNAVAILABLE,

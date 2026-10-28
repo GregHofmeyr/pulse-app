@@ -1720,3 +1720,63 @@ async fn a_sweep_never_removes_a_posted_clips_object() {
     assert!(s3.object(&format!("clips/{key}.mp4")).is_some());
     assert_eq!(tickets(&w.app).await, 0);
 }
+
+/// Slow storage during a sweep must not block other writers, and a failed delete leaves the
+/// ticket for the next run, unchanged.
+#[tokio::test]
+async fn a_sweep_never_holds_the_write_lock_across_storage_calls() {
+    let w = world().await;
+    let s3 = w.app.s3.as_ref().unwrap();
+    let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 10).await;
+    put_object(&w.app, &up, vec![1u8; 10]).await;
+    age_ticket(&w.app, &up, 25).await;
+    let before: (String, i64, String) =
+        sqlx::query_as("SELECT key, size, created_at FROM clip_uploads WHERE id = ?")
+            .bind(up.id.to_string())
+            .fetch_one(&w.app.db)
+            .await
+            .unwrap();
+
+    s3.set_delay(Duration::from_millis(1500));
+    s3.set_down(true);
+    let state = w.app.state();
+    let sweep = tokio::spawn(async move {
+        pulse_server::clips::sweep::run(&state, chrono::Utc::now())
+            .await
+            .unwrap()
+    });
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    // The sweep is waiting on storage now; a write must go through at once.
+    let t = std::time::Instant::now();
+    let general = general(&w.app, &w.alex.1, w.server).await;
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/messages", general.id),
+        json!({"content": "during the sweep"}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    assert!(
+        t.elapsed() < Duration::from_millis(1000),
+        "write was held up"
+    );
+    let report = sweep.await.unwrap();
+    assert_eq!((report.tickets, report.orphans), (0, 0));
+
+    let after: (String, i64, String) =
+        sqlx::query_as("SELECT key, size, created_at FROM clip_uploads WHERE id = ?")
+            .bind(up.id.to_string())
+            .fetch_one(&w.app.db)
+            .await
+            .unwrap();
+    assert_eq!(after, before, "the ticket is back, as it was");
+
+    s3.set_delay(Duration::ZERO);
+    s3.set_down(false);
+    let report = pulse_server::clips::sweep::run(&w.app.state(), chrono::Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(report.tickets, 1);
+    assert_eq!(tickets(&w.app).await, 0);
+}

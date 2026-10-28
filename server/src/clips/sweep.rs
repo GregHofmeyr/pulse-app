@@ -27,36 +27,53 @@ pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<SweepReport> {
     let mut report = SweepReport::default();
     let Some(r2) = &s.r2 else { return Ok(report) };
 
-    let tickets: Vec<(String, String)> =
-        sqlx::query_as("SELECT id, key FROM clip_uploads WHERE created_at < ?")
-            .bind(stamp(now - chrono::Duration::hours(TICKET_TTL_HOURS)))
-            .fetch_all(&s.db)
-            .await?;
-    for (id, key) in tickets {
-        // Claim the row first, under the write lock: a confirm racing us then finds no ticket,
-        // and a failed object delete rolls the claim back so the next run retries.
+    type Ticket = (String, String, String, Option<String>, i64, i64, String);
+    let tickets: Vec<Ticket> = sqlx::query_as(
+        "SELECT id, key, user_id, channel_id, size, duration_ms, created_at
+         FROM clip_uploads WHERE created_at < ?",
+    )
+    .bind(stamp(now - chrono::Duration::hours(TICKET_TTL_HOURS)))
+    .fetch_all(&s.db)
+    .await?;
+    for ticket in tickets {
+        let (id, key, user_id, channel_id, size, duration_ms, created_at) = &ticket;
+        // Claim the row in a short transaction (a confirm racing us then finds no ticket), and
+        // leave a key a posted clip uses alone. No transaction is open during the storage call.
         let mut tx = begin_write(&s.db).await?;
         let claimed = sqlx::query("DELETE FROM clip_uploads WHERE id = ?")
-            .bind(&id)
+            .bind(id)
             .execute(&mut *tx)
             .await?
             .rows_affected();
+        let in_use: Option<i64> = sqlx::query_scalar("SELECT 1 FROM clips WHERE video_key = ?")
+            .bind(key)
+            .fetch_optional(&mut *tx)
+            .await?;
+        tx.commit().await?;
         if claimed == 0 {
             continue;
         }
-        // Never an object a posted clip uses.
-        let in_use: Option<i64> = sqlx::query_scalar("SELECT 1 FROM clips WHERE video_key = ?")
-            .bind(&key)
-            .fetch_optional(&mut *tx)
-            .await?;
         if in_use.is_none()
-            && let Err(e) = r2.delete(&object_key(&key)).await
+            && let Err(e) = r2.delete(&object_key(key)).await
         {
             tracing::warn!(error = ?e, "couldn't delete an expired clip upload's object");
-            tx.rollback().await?;
+            // Put the ticket back as it was (still expired) so the next run retries.
+            sqlx::query(
+                "INSERT OR IGNORE INTO clip_uploads
+                 (id, key, user_id, channel_id, size, duration_ms, created_at)
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+            )
+            .bind(id)
+            .bind(key)
+            .bind(user_id)
+            .bind(channel_id)
+            .bind(size)
+            .bind(duration_ms)
+            .bind(created_at)
+            .execute(&s.db)
+            .await?;
             continue;
         }
-        tx.commit().await?;
         report.tickets += 1;
     }
 
