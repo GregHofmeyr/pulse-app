@@ -1479,6 +1479,13 @@ async fn a_failed_object_delete_is_retried_by_the_sweeper() {
         delete_message(&w.app, &w.alex.1, clip.id).await.status(),
         204
     );
+    let down = pulse_server::clips::sweep::run(
+        &w.app.state(),
+        chrono::Utc::now() + chrono::Duration::hours(2),
+    )
+    .await
+    .unwrap();
+    assert_eq!((down.tickets, down.orphans), (0, 0), "storage is down");
     s3.set_down(false);
     assert!(s3.object(&object).is_some(), "the delete failed");
     assert_eq!(
@@ -1658,4 +1665,58 @@ async fn a_deleted_clip_still_counts_toward_the_hour() {
             .status(),
         429
     );
+}
+
+#[tokio::test]
+async fn confirm_refuses_an_expired_ticket() {
+    let w = world().await;
+    let s3 = w.app.s3.as_ref().unwrap();
+    let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 10).await;
+    put_object(&w.app, &up, vec![1u8; 10]).await;
+    let object = format!("clips/{}.mp4", ticket_key(&w.app, &up).await);
+    let thumb = upload_thumb(&w.app, &w.alex.1).await;
+    age_ticket(&w.app, &up, 25).await;
+    let r = confirm(&w.app, &w.alex.1, &up, confirm_body(&thumb, None)).await;
+    assert_eq!(r.status(), 409);
+    assert_eq!(error_message(r).await, "That upload expired. Try again.");
+    let posted: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM clips")
+        .fetch_one(&w.app.db)
+        .await
+        .unwrap();
+    assert_eq!(posted, 0);
+    assert!(s3.object(&object).is_some(), "left for the sweeper");
+}
+
+/// An expired ticket whose key a posted clip uses loses its row but never the object.
+#[tokio::test]
+async fn a_sweep_never_removes_a_posted_clips_object() {
+    let w = world().await;
+    let s3 = w.app.s3.as_ref().unwrap();
+    let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![5u8; 10]).await;
+    let key = text(
+        &w.app,
+        "SELECT video_key FROM clips WHERE message_id = ?",
+        &clip.id.to_string(),
+    )
+    .await;
+    sqlx::query(
+        "INSERT INTO clip_uploads (id, key, user_id, channel_id, size, duration_ms, created_at)
+         VALUES (?, ?, ?, ?, 10, 1000, ?)",
+    )
+    .bind(pulse_protocol::ids::ClipUploadId::new().to_string())
+    .bind(&key)
+    .bind(w.alex.0.to_string())
+    .bind(w.channel.id.to_string())
+    .bind(pulse_server::db::stamp(
+        chrono::Utc::now() - chrono::Duration::hours(30),
+    ))
+    .execute(&w.app.db)
+    .await
+    .unwrap();
+    let report = pulse_server::clips::sweep::run(&w.app.state(), chrono::Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(report.orphans, 0);
+    assert!(s3.object(&format!("clips/{key}.mp4")).is_some());
+    assert_eq!(tickets(&w.app).await, 0);
 }

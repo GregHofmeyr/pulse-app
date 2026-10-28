@@ -14,7 +14,7 @@ use sqlx::SqlitePool;
 
 use super::{
     CAPTION_MAX, CONFIRM_SLACK_MS, MAX_BYTES, MAX_DURATION_MS, MAX_SIDE, MIN_SIDE, PER_HOUR,
-    URL_TTL, games, object_key, storage,
+    TICKET_TTL_HOURS, URL_TTL, games, object_key, storage,
 };
 use crate::AppState;
 use crate::access::channel_for;
@@ -188,6 +188,15 @@ async fn confirm(
         }
         Err(e) => return Err(e),
     };
+    // The sweeper removes tickets this old (and their objects), so none may be confirmed.
+    let created: String = sqlx::query_scalar("SELECT created_at FROM clip_uploads WHERE id = ?")
+        .bind(id.to_string())
+        .fetch_optional(&s.db)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    if created < stamp(chrono::Utc::now() - chrono::Duration::hours(TICKET_TTL_HOURS)) {
+        return Err(AppError::Conflict("That upload expired. Try again.".into()));
+    }
     let channel: ChannelId = channel
         .ok_or(AppError::NotFound)?
         .parse()

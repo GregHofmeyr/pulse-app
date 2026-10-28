@@ -7,7 +7,7 @@ use chrono::{DateTime, Utc};
 
 use super::{TICKET_TTL_HOURS, object_key};
 use crate::AppState;
-use crate::db::stamp;
+use crate::db::{begin_write, stamp};
 use crate::error::AppResult;
 
 const EVERY: Duration = Duration::from_secs(600);
@@ -33,14 +33,30 @@ pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<SweepReport> {
             .fetch_all(&s.db)
             .await?;
     for (id, key) in tickets {
-        if let Err(e) = r2.delete(&object_key(&key)).await {
-            tracing::warn!(error = ?e, "couldn't delete an expired clip upload's object");
+        // Claim the row first, under the write lock: a confirm racing us then finds no ticket,
+        // and a failed object delete rolls the claim back so the next run retries.
+        let mut tx = begin_write(&s.db).await?;
+        let claimed = sqlx::query("DELETE FROM clip_uploads WHERE id = ?")
+            .bind(&id)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected();
+        if claimed == 0 {
             continue;
         }
-        sqlx::query("DELETE FROM clip_uploads WHERE id = ?")
-            .bind(id)
-            .execute(&s.db)
+        // Never an object a posted clip uses.
+        let in_use: Option<i64> = sqlx::query_scalar("SELECT 1 FROM clips WHERE video_key = ?")
+            .bind(&key)
+            .fetch_optional(&mut *tx)
             .await?;
+        if in_use.is_none()
+            && let Err(e) = r2.delete(&object_key(&key)).await
+        {
+            tracing::warn!(error = ?e, "couldn't delete an expired clip upload's object");
+            tx.rollback().await?;
+            continue;
+        }
+        tx.commit().await?;
         report.tickets += 1;
     }
 
