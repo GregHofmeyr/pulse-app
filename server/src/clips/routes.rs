@@ -69,12 +69,13 @@ async fn create_ticket(
         Some(server) if is_server_member(&s.db, server, me).await? => {}
         _ => return Err(AppError::Forbidden),
     }
-    if req.size == 0 || req.size > MAX_BYTES {
-        return Err(if req.size == 0 {
-            AppError::BadRequest("That clip is empty.".into())
-        } else {
-            AppError::PayloadTooLarge("Clips can be up to 200 MB.".into())
-        });
+    if req.size == 0 {
+        return Err(AppError::BadRequest("That clip is empty.".into()));
+    }
+    if req.size > MAX_BYTES {
+        return Err(AppError::PayloadTooLarge(
+            "Clips can be up to 200 MB.".into(),
+        ));
     }
     if req.duration_ms == 0 || req.duration_ms > MAX_DURATION_MS {
         return Err(AppError::BadRequest("Clips can be up to 1:30.".into()));
@@ -86,9 +87,9 @@ async fn create_ticket(
     // Count and insert under the write lock, so two tickets can't both take the last slot.
     let mut tx = begin_write(&s.db).await?;
     if started_this_hour(&mut tx, me).await? >= PER_HOUR {
-        return Err(AppError::RateLimitedMsg(format!(
+        return Err(AppError::TooManyRequests(Some(format!(
             "That's {PER_HOUR} clips this hour. Try again later."
-        )));
+        ))));
     }
     sqlx::query(
         "INSERT INTO clip_uploads (id, key, user_id, channel_id, size, duration_ms, created_at)
@@ -167,24 +168,29 @@ async fn confirm(
     let r2 = storage(&s)?;
     nonce::check(req.nonce.as_deref())?;
     // A retry of a confirm that already landed gets the same clip back (even with no ticket).
-    if let Some(n) = req.nonce.as_deref() {
-        let existing: Option<String> =
-            sqlx::query_scalar("SELECT id FROM messages WHERE author_id = ? AND nonce = ?")
-                .bind(me.to_string())
-                .bind(n)
-                .fetch_optional(&s.db)
-                .await?;
-        if let Some(existing) = existing {
-            return replay(&s, me, existing).await;
-        }
+    if let Some(existing) = prior(&s, me, req.nonce.as_deref()).await? {
+        return replay(&s, me, id, existing).await;
     }
 
-    let (key, channel, ticket_size) = my_ticket(&s.db, me, id).await?;
+    let (key, channel, ticket_size) = match my_ticket(&s.db, me, id).await {
+        Ok(t) => t,
+        // A twin of this request may have committed (spending the ticket) since the check above.
+        Err(AppError::NotFound) => {
+            return match prior(&s, me, req.nonce.as_deref()).await? {
+                Some(existing) => replay(&s, me, id, existing).await,
+                None => Err(AppError::NotFound),
+            };
+        }
+        Err(e) => return Err(e),
+    };
     let channel: ChannelId = channel
         .ok_or(AppError::NotFound)?
         .parse()
         .map_err(anyhow::Error::from)?;
     let ch = channel_for(&s.db, me, channel).await?;
+    if ch.kind != ChannelKind::Clips {
+        return Err(bad("this isn't a clips channel"));
+    }
     let server = ch.server_id.ok_or(AppError::NotFound)?;
 
     let size = r2
@@ -226,7 +232,7 @@ async fn confirm(
     }
     crate::media::writes_ok(&s.cfg)?;
 
-    let mut msg = Message {
+    let msg = Message {
         id: MessageId::new(),
         channel_id: channel,
         author_id: Some(me),
@@ -256,11 +262,9 @@ async fn confirm(
     // As in `send`: publishes (and the absolute unread counts) go out in commit order.
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
-    msg.id = MessageId::new();
-    msg.created_at = now();
     if let Some(existing) = nonce::existing(&mut tx, me, req.nonce.as_deref()).await? {
         tx.rollback().await?;
-        return replay(&s, me, existing.to_string()).await;
+        return replay(&s, me, id, existing.to_string()).await;
     }
     // The ticket may have been cancelled or swept since the early check.
     let live = sqlx::query("DELETE FROM clip_uploads WHERE id = ? AND user_id = ?")
@@ -339,8 +343,43 @@ async fn confirm(
     Ok(Json(msg))
 }
 
-/// The message an earlier confirm with this nonce posted (nothing new is published).
-async fn replay(s: &AppState, me: UserId, id: String) -> AppResult<Json<Message>> {
+/// The id of my message that used this nonce, if any.
+async fn prior(s: &AppState, me: UserId, nonce: Option<&str>) -> AppResult<Option<String>> {
+    let Some(n) = nonce else { return Ok(None) };
+    Ok(
+        sqlx::query_scalar("SELECT id FROM messages WHERE author_id = ? AND nonce = ?")
+            .bind(me.to_string())
+            .bind(n)
+            .fetch_optional(&s.db)
+            .await?,
+    )
+}
+
+/// The clip an earlier confirm with this nonce posted (nothing new is published). The nonce must
+/// belong to one of my clips, and to this ticket's channel while the ticket still exists.
+async fn replay(
+    s: &AppState,
+    me: UserId,
+    ticket: ClipUploadId,
+    id: String,
+) -> AppResult<Json<Message>> {
+    let (channel, is_clip): (String, bool) = sqlx::query_as(
+        "SELECT channel_id, EXISTS (SELECT 1 FROM clips WHERE message_id = messages.id)
+         FROM messages WHERE id = ?",
+    )
+    .bind(&id)
+    .fetch_one(&s.db)
+    .await?;
+    let ticket_channel: Option<Option<String>> =
+        sqlx::query_scalar("SELECT channel_id FROM clip_uploads WHERE id = ? AND user_id = ?")
+            .bind(ticket.to_string())
+            .bind(me.to_string())
+            .fetch_optional(&s.db)
+            .await?;
+    let other_channel = ticket_channel.is_some_and(|c| c.as_deref() != Some(channel.as_str()));
+    if !is_clip || other_channel {
+        return Err(AppError::Conflict("That request was already used.".into()));
+    }
     let id: MessageId = id.parse().map_err(anyhow::Error::from)?;
     load(&s.db, Some(me), id)
         .await?

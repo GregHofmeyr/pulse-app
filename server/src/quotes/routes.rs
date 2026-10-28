@@ -45,7 +45,7 @@ async fn post_quote(
     Json(req): Json<PostQuoteRequest>,
 ) -> AppResult<Json<Message>> {
     if !s.limits.send_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     crate::media::writes_ok(&s.cfg)?;
     let ch = channel_for(&s.db, me, id).await?;
@@ -177,7 +177,7 @@ async fn edit_quote(
     Json(req): Json<EditQuoteRequest>,
 ) -> AppResult<Json<Message>> {
     if !s.limits.mutate_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     let (msg, ch) = own_message(&s.db, me, id).await?;
     if msg.quote.is_none() {

@@ -88,7 +88,7 @@ async fn ticket(
     // A random grant id for this session, checked on join (see `voice/routes.rs`).
     let (room, identity) = (format!("{ch}~s"), format!("{me}#{suffix}"));
     if !s.limits.livekit_token_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     let grant = crate::auth::session::record_grant(&s.db, &session, &room, &identity)
         .await?
@@ -122,7 +122,7 @@ async fn go_live(
     Json(req): Json<GoLiveRequest>,
 ) -> AppResult<Json<StreamInfo>> {
     if !s.limits.mutate_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     require_voice_member(&s, me, ch).await?;
     let st = &req.settings;
@@ -159,7 +159,7 @@ async fn watch(
     Json(req): Json<WatchRequest>,
 ) -> AppResult<StatusCode> {
     if !s.limits.mutate_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     require_voice_member(&s, me, ch).await?;
     ensure_watchable(&s, me, ch, req.streamer)?;
@@ -245,7 +245,7 @@ async fn put_preview(
         .and_then(preview_format)
         .ok_or(AppError::UnsupportedMediaType)?;
     if !s.limits.preview_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     // Not live: refuse before spending any decoding on it.
     if s.streams.get(ch, me).is_none() {

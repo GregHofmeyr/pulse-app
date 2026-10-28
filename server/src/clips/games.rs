@@ -76,7 +76,7 @@ async fn add(
     Json(req): Json<AddGameRequest>,
 ) -> AppResult<Json<Game>> {
     if !s.limits.mutate_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     crate::media::writes_ok(&s.cfg)?;
     if !is_server_member(&s.db, server, me).await? {

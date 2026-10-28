@@ -59,7 +59,7 @@ async fn add(
     Path((id, emoji)): Path<(MessageId, String)>,
 ) -> AppResult<StatusCode> {
     if !s.limits.mutate_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     toggle(&s, me, id, &emoji, true).await?;
     Ok(StatusCode::NO_CONTENT)
@@ -71,7 +71,7 @@ async fn remove(
     Path((id, emoji)): Path<(MessageId, String)>,
 ) -> AppResult<StatusCode> {
     if !s.limits.mutate_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     toggle(&s, me, id, &emoji, false).await?;
     Ok(StatusCode::NO_CONTENT)

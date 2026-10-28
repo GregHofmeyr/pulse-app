@@ -144,7 +144,7 @@ fn limit(s: &AppState, me: UserId) -> AppResult<()> {
     if s.limits.mutate_user.hit(&me.to_string()) {
         Ok(())
     } else {
-        Err(AppError::TooManyRequests)
+        Err(AppError::TooManyRequests(None))
     }
 }
 

@@ -46,7 +46,7 @@ async fn token(
     // and revoking this session removes the participant that joined with it.
     let room = id.to_string();
     if !s.limits.livekit_token_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     let grant = crate::auth::session::record_grant(&s.db, &session, &room, &me.to_string())
         .await?

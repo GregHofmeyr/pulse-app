@@ -59,7 +59,7 @@ async fn create(
     Json(req): Json<CreateEmojiRequest>,
 ) -> AppResult<Json<CustomEmoji>> {
     if !s.limits.emoji_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     crate::media::writes_ok(&s.cfg)?;
     if !is_server_member(&s.db, server, me).await? {
@@ -147,7 +147,7 @@ async fn rename(
     Json(req): Json<RenameEmojiRequest>,
 ) -> AppResult<Json<CustomEmoji>> {
     if !s.limits.emoji_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     let name = clean_name(&req.name)?;
     editable(&s, me, &id).await?;
@@ -180,7 +180,7 @@ async fn delete(
     Path(id): Path<String>,
 ) -> AppResult<Json<CustomEmoji>> {
     if !s.limits.emoji_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     editable(&s, me, &id).await?;
     // Dropping the media reference lets cleanup reclaim the file; the row keeps its name.

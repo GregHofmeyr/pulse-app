@@ -37,11 +37,9 @@ pub enum AppError {
     Conflict(String),
     #[error("{0}")]
     PayloadTooLarge(String),
-    #[error("too many attempts, try again in a bit")]
-    TooManyRequests,
-    /// A 429 whose reason is worth showing to the user as-is.
-    #[error("{0}")]
-    RateLimitedMsg(String),
+    /// A 429; the message is the default unless the reason is worth showing as-is.
+    #[error("{}", .0.as_deref().unwrap_or("too many attempts, try again in a bit"))]
+    TooManyRequests(Option<String>),
     /// A 503 whose reason is worth showing to the user as-is.
     #[error("{0}")]
     Unavailable(String),
@@ -94,8 +92,7 @@ impl IntoResponse for AppError {
                 api(StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large", message)
             }
             Self::Conflict(_) => api(StatusCode::CONFLICT, "conflict", message),
-            Self::TooManyRequests => api(StatusCode::TOO_MANY_REQUESTS, "rate_limited", message),
-            Self::RateLimitedMsg(_) => api(StatusCode::TOO_MANY_REQUESTS, "rate_limited", message),
+            Self::TooManyRequests(_) => api(StatusCode::TOO_MANY_REQUESTS, "rate_limited", message),
             Self::Unavailable(_) => {
                 api(StatusCode::SERVICE_UNAVAILABLE, "unavailable", message)
             }

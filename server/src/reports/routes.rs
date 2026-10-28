@@ -22,7 +22,7 @@ async fn create(
     Json(req): Json<CreateReportRequest>,
 ) -> AppResult<Json<CreateReportResponse>> {
     if !s.limits.report_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     crate::media::writes_ok(&s.cfg)?;
     let id = super::store::insert(&s.db, me, &req).await?;

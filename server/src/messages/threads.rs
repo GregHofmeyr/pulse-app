@@ -123,7 +123,7 @@ async fn seen(
     Json(req): Json<ThreadSeenRequest>,
 ) -> AppResult<StatusCode> {
     if !s.limits.mutate_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     let channel = visible_quote(&s.db, me, root).await?;
     if let Some(server) = channel.server_id

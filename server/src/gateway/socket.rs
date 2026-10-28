@@ -43,7 +43,7 @@ pub async fn handler(
     // back once the socket authenticates, so only failed or abandoned attempts keep the spend.
     let ip_key = crate::limits::rate_key(ip).to_string();
     if !s.limits.gateway_ip.hit(&ip_key) {
-        return AppError::TooManyRequests.into_response();
+        return AppError::TooManyRequests(None).into_response();
     }
     ws.max_message_size(MAX_CLIENT_FRAME)
         .max_frame_size(MAX_CLIENT_FRAME)

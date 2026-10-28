@@ -118,7 +118,7 @@ async fn upload(
         }
     })?;
     if !s.limits.upload_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     let dir = &s.cfg.media_dir;
     tokio::fs::create_dir_all(dir)

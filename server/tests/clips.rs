@@ -1102,3 +1102,67 @@ async fn cancel_deletes_ticket_and_object() {
     assert_eq!(tickets(&w.app).await, 0);
     assert!(s3.object(&object).is_none());
 }
+
+#[tokio::test]
+async fn a_nonce_of_a_plain_message_is_not_a_repeated_confirm() {
+    let w = world().await;
+    let text = general(&w.app, &w.alex.1, w.server).await;
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/messages", text.id),
+        json!({ "content": "hi", "nonce": "taken" }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 1_000).await;
+    put_object(&w.app, &up, vec![6u8; 1_000]).await;
+    let thumb = upload_thumb(&w.app, &w.alex.1).await;
+    let r = confirm(&w.app, &w.alex.1, &up, confirm_body(&thumb, Some("taken"))).await;
+    assert_eq!(r.status(), 409);
+    assert_eq!(tickets(&w.app).await, 1, "the ticket is untouched");
+}
+
+#[tokio::test]
+async fn confirm_needs_a_clips_channel() {
+    let w = world().await;
+    let text = general(&w.app, &w.alex.1, w.server).await;
+    let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 1_000).await;
+    put_object(&w.app, &up, vec![8u8; 1_000]).await;
+    sqlx::query("UPDATE clip_uploads SET channel_id = ?")
+        .bind(text.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    let thumb = upload_thumb(&w.app, &w.alex.1).await;
+    let r = confirm(&w.app, &w.alex.1, &up, confirm_body(&thumb, None)).await;
+    assert_eq!(r.status(), 400);
+}
+
+#[tokio::test]
+async fn two_confirms_at_once_post_one_clip() {
+    let w = world().await;
+    let mut ws = hello(&w.app, &w.sam.1).await;
+    let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 1_000).await;
+    put_object(&w.app, &up, vec![1u8; 1_000]).await;
+    let thumb = upload_thumb(&w.app, &w.alex.1).await;
+    let (a, b) = tokio::join!(
+        confirm(&w.app, &w.alex.1, &up, confirm_body(&thumb, Some("race"))),
+        confirm(&w.app, &w.alex.1, &up, confirm_body(&thumb, Some("race"))),
+    );
+    assert_eq!((a.status().as_u16(), b.status().as_u16()), (200, 200));
+    let (a, b): (Message, Message) = (a.json().await.unwrap(), b.json().await.unwrap());
+    assert_eq!(a.id, b.id);
+    let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM clips")
+        .fetch_one(&w.app.db)
+        .await
+        .unwrap();
+    assert_eq!(rows, 1);
+    let mut created = 0;
+    while let Some(f) = next_frame_beating(&mut ws, Duration::from_millis(600)).await {
+        if matches!(f, ServerFrame::Event(Event::MessageCreated { .. })) {
+            created += 1;
+        }
+    }
+    assert_eq!(created, 1);
+}

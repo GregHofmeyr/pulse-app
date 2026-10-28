@@ -149,7 +149,7 @@ async fn create_server(
     Json(req): Json<CreateServerRequest>,
 ) -> AppResult<Json<Server>> {
     if !s.limits.create_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     let name = clean_name(&req.name)?;
     let id = ServerId::new();
@@ -342,7 +342,7 @@ async fn create_channel(
     Json(req): Json<CreateChannelRequest>,
 ) -> AppResult<Json<Channel>> {
     if !s.limits.create_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     server_exists(&s.db, id).await?;
     if !is_server_member(&s.db, id, me).await? {
@@ -508,7 +508,7 @@ async fn create_dm(
     }
     // A group is always new, so it pays now; a 1:1 DM pays only if it doesn't exist yet.
     if others.len() > 1 && !s.limits.create_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     // Out of creates: refuse a new 1:1 here, before the lookups and the write lock (a plain
     // read; the spend below, under the lock, is what counts).
@@ -518,7 +518,7 @@ async fn create_dm(
             .await?
             .is_none()
     {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     for u in &others {
         let hit: Option<i64> = sqlx::query_scalar("SELECT 1 FROM users WHERE id = ?")
@@ -561,7 +561,7 @@ async fn create_dm(
             return ch.map(Json).ok_or(AppError::NotFound);
         }
         if !s.limits.create_user.hit(&me.to_string()) {
-            return Err(AppError::TooManyRequests); // dropping `tx` rolls back
+            return Err(AppError::TooManyRequests(None)); // dropping `tx` rolls back
         }
     }
     let kind = if others.len() == 1 {

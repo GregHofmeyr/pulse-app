@@ -88,7 +88,7 @@ async fn speaker_of(db: &mut SqliteConnection, t: &Target) -> AppResult<Option<U
 /// publishes nothing. The event carries the new absolute count and counted awarders.
 async fn set(s: &AppState, me: UserId, line: LineId, give: bool) -> AppResult<StatusCode> {
     if !s.limits.mutate_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     // Checks through the pool first (missing, deleted and unseen all look the same), then again
     // on the write transaction, where a delete or edit that committed meanwhile wins.

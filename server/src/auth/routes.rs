@@ -77,7 +77,7 @@ async fn register(
     // used or expired invite code (guessing) keeps the spend; every other outcome is refunded.
     let ip_key = crate::limits::rate_key(ip).to_string();
     if !s.limits.register_ip.hit(&ip_key) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     let res = register_with(&s, req).await;
     if !matches!(res, Err(AppError::NotFound | AppError::Gone)) {
@@ -203,7 +203,7 @@ async fn login(
     };
     if !ip_ok || !pair_ok || !(user_ok || pair_fresh) {
         refund(ip_ok, pair_ok, user_ok); // a refused attempt costs nothing
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     let res = check_login(&s, req).await;
     if !matches!(res, Err(AppError::Unauthorized)) {
@@ -441,7 +441,7 @@ async fn create_invite(
     AuthUser(u): AuthUser,
 ) -> AppResult<Json<InviteResponse>> {
     if !s.limits.invite_user.hit(&u.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     // Counted and inserted under the write lock, so concurrent requests can't pass the cap.
     let mut tx = crate::db::begin_write(&s.db).await?;

@@ -75,7 +75,7 @@ pub async fn limited_by<T>(
     };
     if !ip_ok || !user_ok {
         refund(ip_ok, user_ok);
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     let res = check.await;
     if !matches!(&res, Err(e) if keeps_spend(e)) {

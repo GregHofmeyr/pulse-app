@@ -82,3 +82,6 @@ CREATE TABLE clip_view_prefs (
     view       TEXT NOT NULL CHECK (view IN ('list', 'wall')),
     PRIMARY KEY (user_id, channel_id)
 ) STRICT;
+
+-- The hourly clip count looks up one author's recent top-level messages.
+CREATE INDEX messages_author_recent ON messages(author_id, created_at) WHERE thread_root_id IS NULL;

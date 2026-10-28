@@ -137,7 +137,7 @@ async fn add_members(
     Json(req): Json<AddMembersRequest>,
 ) -> AppResult<StatusCode> {
     if !s.limits.create_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     group_for(&s, me, id).await?;
     let current = members_of(&s.db, id).await?;
@@ -347,7 +347,7 @@ async fn rename(
 ) -> AppResult<Json<Channel>> {
     // Each rename reaches every member and adds a system message: limited and disk-guarded.
     if !s.limits.mutate_user.hit(&me.to_string()) {
-        return Err(AppError::TooManyRequests);
+        return Err(AppError::TooManyRequests(None));
     }
     crate::media::writes_ok(&s.cfg)?;
     group_for(&s, me, id).await?;
