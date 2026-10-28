@@ -338,10 +338,12 @@
       }
     })
   })
-  // Unsent replies wait in their quote's panel; while it's closed, the quote says it has some.
+  // Unsent replies wait in their quote's panel; while it's closed, the quote says it has some. One
+  // still sending isn't unsent: replies are only sent from the open panel, and one that can't get
+  // through turns failed (after the outbox's tries), so a panel closed mid-send doesn't flash it.
   const unsentReplies = $derived(
     (app.state.pending[channelId] ?? []).reduce<Record<string, number>>((acc, p) => {
-      if (p.thread_root_id && p.thread_root_id !== repliesOpen?.id) acc[p.thread_root_id] = (acc[p.thread_root_id] ?? 0) + 1
+      if (p.thread_root_id && p.status === 'failed' && p.thread_root_id !== repliesOpen?.id) acc[p.thread_root_id] = (acc[p.thread_root_id] ?? 0) + 1
       return acc
     }, {}),
   )

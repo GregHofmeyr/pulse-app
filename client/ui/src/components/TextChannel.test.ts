@@ -401,6 +401,21 @@ describe('TextChannel: quotes channel', () => {
     expect(marker()?.textContent?.trim()).toBe('2 unsent replies')
   })
 
+  it('fix-wave re-review: a reply still in flight when its panel closes shows no marker until it fails', async () => {
+    show('quotes', [quoteMsg])
+    document.querySelector<HTMLButtonElement>('.list .quote button[aria-label="Reply"]')!.click()
+    flushSync()
+    await settled()
+    app.state = { ...app.state, pending: { C1: [unsentReply('a', 'M0001', 'pending')] } }
+    document.querySelector<HTMLButtonElement>('.replies-panel button[aria-label="Close replies"]')!.click()
+    flushSync()
+    const marker = () => document.querySelector<HTMLButtonElement>('.list .quote button.unsent-reply')
+    expect(marker()).toBeNull() // sending, not unsent
+    app.state = { ...app.state, pending: { C1: [unsentReply('a', 'M0001', 'failed'), unsentReply('b', 'M0001', 'pending')] } }
+    flushSync()
+    expect(marker()?.textContent?.trim()).toBe('Unsent reply') // only the failed one
+  })
+
   it('M16: the replies panel closes when its quote is deleted', async () => {
     show('quotes', [quoteMsg])
     document.querySelector<HTMLButtonElement>('.list .quote button[aria-label="Reply"]')!.click()
