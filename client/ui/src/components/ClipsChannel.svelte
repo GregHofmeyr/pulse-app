@@ -20,16 +20,19 @@
   // --- the chips: loaded on open (and after a reconnect clears them), then a second after clip changes ---
   let facetsLoading = false
   let facetsFailed = false
+  let facetsSeq = 0 // only the newest request's answer counts (an on-open load and a debounced one can overlap)
   async function loadFacets() {
+    const seq = ++facetsSeq
     facetsLoading = true
     try {
       const f = await api.clipFacets(channelId)
+      if (seq !== facetsSeq) return
       facetsFailed = false
       app.state = { ...app.state, clipFacets: { ...app.state.clipFacets, [channelId]: f } }
     } catch {
-      facetsFailed = true // the chips stay as they were; the next clip change asks again
+      if (seq === facetsSeq) facetsFailed = true // the chips stay as they were; the next clip change asks again
     } finally {
-      facetsLoading = false
+      if (seq === facetsSeq) facetsLoading = false
     }
   }
   $effect(() => {

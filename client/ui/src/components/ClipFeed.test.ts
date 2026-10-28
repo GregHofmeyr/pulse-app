@@ -178,6 +178,55 @@ describe('ClipFeed', () => {
     expect(feedOf(app.state, 'C1', { game: 'G1', author: 'U2' })?.start).toBe(true)
   })
 
+  it('"Try again" after a failed first page fetches it again', async () => {
+    let fail = true
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_clips') {
+        if (fail) throw 'Server unreachable'
+        return [clip('M002'), clip('M001')]
+      }
+      return undefined
+    })
+    await show({ layout: 'wall' })
+    expect(calls('list_clips')).toHaveLength(1)
+    const alert = document.querySelector('[role="alert"]')!
+    expect(alert.textContent).toContain('Server unreachable')
+    await settle()
+    expect(calls('list_clips')).toHaveLength(1) // no retry loop on its own
+    fail = false
+    ;[...alert.querySelectorAll('button')].find((b) => b.textContent === 'Try again')!.click()
+    flushSync()
+    await settle()
+    flushSync()
+    expect(calls('list_clips')).toHaveLength(2)
+    expect(order()).toEqual(['M002', 'M001'])
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('switching back to a filter whose first page failed fetches it again', async () => {
+    let failGame = true
+    invoke.mockImplementation(async (cmd: string, args?: unknown) => {
+      if (cmd !== 'list_clips') return undefined
+      const game = (args as { game: string | null }).game
+      if (game === 'G1' && failGame) throw 'Server unreachable'
+      return game === 'G1' ? [clip('M003')] : [clip('M002'), clip('M001')]
+    })
+    const p = await show({ layout: 'wall', filter: { game: 'G1' } })
+    expect(document.querySelector('[role="alert"]')).not.toBeNull()
+    p.filter = {}
+    flushSync()
+    await settle()
+    flushSync()
+    expect(order()).toEqual(['M002', 'M001'])
+    failGame = false
+    p.filter = { game: 'G1' }
+    flushSync()
+    await settle()
+    flushSync()
+    expect(calls('list_clips').filter((c) => (c[1] as { game: string | null }).game === 'G1')).toHaveLength(2)
+    expect(order()).toEqual(['M003'])
+  })
+
   it('switching view keeps the clip in view', async () => {
     pages = [[clip('M004'), clip('M003'), clip('M002'), clip('M001')]]
     const p = await show({ layout: 'list' })
@@ -270,7 +319,9 @@ describe('ClipFeed', () => {
     open()
     item('Delete').click()
     flushSync()
+    await settle()
     const ask = document.querySelector<HTMLElement>('[role="alertdialog"]')!
+    expect(document.activeElement).toBe([...ask.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Cancel'))
     expect(ask.textContent).toContain('Delete this clip? Its replies go too.')
     ;[...ask.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Cancel')!.click()
     flushSync()

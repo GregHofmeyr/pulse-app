@@ -5,9 +5,10 @@
   import ClipActions from './ClipActions.svelte'
   import ClipCaption from './ClipCaption.svelte'
   import ClipPlayer from './ClipPlayer.svelte'
+  import ClipReplies from './ClipReplies.svelte'
   import Icon from './Icon.svelte'
   import ReactionRow from './ReactionRow.svelte'
-  import { formatDuration, gameName, hasNewClipReplies } from '../lib/clips'
+  import { formatDuration, gameName } from '../lib/clips'
   import { mediaUrl } from '../lib/emoji'
   import { app } from '../lib/store.svelte'
   import { InlineError } from '../lib/inlineError.svelte'
@@ -81,17 +82,7 @@
       </div>
       <span class="time">{when}{#if message.edited_at} · edited{/if}</span>
       <ReactionRow {message} {meId} {nameOf} onError={inlineError.show} />
-      {#if clip.reply_count > 0 && onOpenReplies}
-        <button type="button" class="replies" onclick={onOpenReplies}>
-          View {clip.reply_count} {clip.reply_count === 1 ? 'reply' : 'replies'}
-          {#if hasNewClipReplies(message)}<span class="new">new</span>{/if}
-        </button>
-      {/if}
-      {#if unsentReplies > 0 && onOpenReplies}
-        <button type="button" class="unsent-reply" onclick={onOpenReplies}>
-          <Icon name="reply" size={13} />{unsentReplies === 1 ? 'Unsent reply' : `${unsentReplies} unsent replies`}
-        </button>
-      {/if}
+      {#if onOpenReplies}<ClipReplies {message} {onOpenReplies} {unsentReplies} />{/if}
       {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
     </div>
   </article>
@@ -117,9 +108,5 @@
   .game { padding: 1px 8px; border-radius: 10px; background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; white-space: nowrap; }
   .grow { flex: 1; }
   .time { font-size: 11px; color: var(--text-3); }
-  .replies { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--accent); font-size: 12.5px; display: inline-flex; align-items: center; gap: 6px; }
-  .replies:hover { text-decoration: underline; }
-  .new { padding: 0 6px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font-size: 10px; font-weight: 700; text-transform: uppercase; }
-  .unsent-reply { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--danger); font-size: 12.5px; display: inline-flex; align-items: center; gap: 5px; }
   .err { margin: 0; font-size: 12px; color: var(--danger); }
 </style>

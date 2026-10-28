@@ -1,7 +1,7 @@
 <script lang="ts">
   // A clips channel's feed for one filter, as a list (newest at the bottom, like messages) or a wall (newest
   // top-left). Both read one paged feed in `clipFeeds` (newest first); older pages load at the far end.
-  import { untrack } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import ClipCard from './ClipCard.svelte'
   import ClipItem from './ClipItem.svelte'
   import { clipFilter, feedKey, isNewClip, type ClipFilter } from '../lib/clips'
@@ -46,6 +46,15 @@
   let error = $state('')
   // A feed cleared by a reconnect starts again: a page still coming for the old one is dropped.
   const epochs = new Map<string, number>()
+  // Coming back to a filter whose page failed tries again (the error belongs to the visit that saw it).
+  let lastKey = untrack(() => key)
+  $effect.pre(() => {
+    if (key === lastKey) return
+    lastKey = key
+    failedKey = null
+  })
+  /** Not fetched yet: absent, or left empty by a failed first page (`feedFailed` keeps it). */
+  const unfetched = (f: (typeof app.state.clipFeeds)[string] | undefined) => !f || (!f.items.length && !f.start && !f.loading)
 
   /** Fetches the newest page, or the one before the oldest held; resolves true once it is in. */
   async function fetchPage(older: boolean): Promise<boolean> {
@@ -54,7 +63,7 @@
     const held = app.state.clipFeeds[k]
     if (held?.loading) return false
     if (older && (!held || held.start || !held.items.length)) return false
-    if (!held) epochs.set(k, (epochs.get(k) ?? 0) + 1)
+    if (unfetched(held)) epochs.set(k, (epochs.get(k) ?? 0) + 1)
     const epoch = epochs.get(k)
     const before = older ? held!.items[held!.items.length - 1].id : undefined
     app.state = openFeed(app.state, channelId, f)
@@ -73,9 +82,9 @@
     }
   }
 
-  // The newest page whenever this feed isn't held (first look, another filter, or after a reconnect).
+  // The newest page whenever this feed isn't fetched (first look, another filter, after a reconnect, or "Try again").
   $effect(() => {
-    if (feed || failedKey === key) return
+    if (!unfetched(feed) || failedKey === key) return
     untrack(() => void fetchPage(false))
   })
 
@@ -98,7 +107,7 @@
     const list = layout === 'list' && scroller ? scroller : null
     const fromBottom = list ? list.scrollHeight - list.scrollTop : 0
     if (!(await fetchPage(true)) || !list) return
-    await Promise.resolve()
+    await tick()
     list.scrollTop = list.scrollHeight - fromBottom
   }
 

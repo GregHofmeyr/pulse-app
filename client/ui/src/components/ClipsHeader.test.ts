@@ -175,6 +175,29 @@ describe('ClipsChannel', () => {
     expect(calls('clip_facets')).toHaveLength(2) // once for both
   })
 
+  it('an older chips response never replaces a newer one', async () => {
+    vi.useFakeTimers()
+    const later = { games: [{ game_id: 'G1', count: 9 }], authors: [] }
+    let first: ((f: unknown) => void) | null = null
+    let n = 0
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_clips') return []
+      if (cmd === 'clip_facets') return ++n === 1 ? new Promise((r) => (first = r)) : later
+      return undefined
+    })
+    cmp = mount(ClipsChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    await vi.advanceTimersByTimeAsync(0)
+    await startListening()
+    listeners.get('pulse://event')!({ payload: { t: 'MessageCreated', d: { message: clip('M3'), nonce: null } } })
+    await vi.advanceTimersByTimeAsync(1100)
+    expect(calls('clip_facets')).toHaveLength(2)
+    expect(app.state.clipFacets.C1).toEqual(later)
+    first!(facets) // the on-open load answers last
+    await vi.advanceTimersByTimeAsync(0)
+    expect(app.state.clipFacets.C1).toEqual(later)
+  })
+
   it('opens a clip\'s replies in the side panel with the clip pinned', async () => {
     Element.prototype.scrollTo = () => {} // jsdom has none
     const replied = { ...clip('M1'), clip: { ...clip('M1').clip!, reply_count: 2 } }
@@ -191,5 +214,30 @@ describe('ClipsChannel', () => {
     expect(panel).not.toBeNull()
     expect(panel.querySelector('.pinned [data-clip-id="M1"]')).not.toBeNull()
     expect(panel.querySelector('.pinned .replies')).toBeNull() // no replies link on the pinned clip
+  })
+
+  it('a delete prompt focuses its own Cancel when the clip is also pinned in its panel', async () => {
+    Element.prototype.scrollTo = () => {} // jsdom has none
+    const mine = { ...clip('M1'), author_id: 'U1', clip: { ...clip('M1').clip!, reply_count: 1 } }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_clips' ? [mine] : cmd === 'clip_facets' ? facets : cmd === 'list_replies' ? [] : undefined))
+    app.state = applyReady(emptyState(), ready({ clip_views: [{ channel_id: 'C1', view: 'list' }] }))
+    cmp = mount(ClipsChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    await settle()
+    flushSync()
+    button('View 1 reply').click()
+    flushSync()
+    await settle()
+    const askIn = async (root: Element) => {
+      root.querySelector<HTMLButtonElement>('button[aria-label="Clip actions"]')!.click()
+      flushSync()
+      ;[...root.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === 'Delete')!.click()
+      flushSync()
+      await settle()
+      return root.querySelector<HTMLElement>('[role="alertdialog"] .keep')!
+    }
+    await askIn(document.querySelector('.feed [data-clip-id="M1"]')!)
+    const panelCancel = await askIn(document.querySelector('.replies-panel [data-clip-id="M1"]')!)
+    expect(document.activeElement).toBe(panelCancel)
   })
 })

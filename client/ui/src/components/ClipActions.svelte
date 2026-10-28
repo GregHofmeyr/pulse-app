@@ -13,6 +13,7 @@
   const MAX_CAPTION = 300
 
   let opener: HTMLButtonElement | undefined = $state()
+  let keep: HTMLButtonElement | undefined = $state()
   let menu = $state(false)
   let asking = $state(false)
   let editing = $state(false)
@@ -37,7 +38,7 @@
     error = ''
     asking = true
     await tick()
-    document.querySelector<HTMLButtonElement>(`[data-ask-delete="${message.id}"] .keep`)?.focus()
+    keep?.focus() // this copy's Cancel (the same clip can also be pinned in its replies panel)
   }
   async function run(f: () => Promise<unknown>, done: () => void) {
     if (busy) return
@@ -70,9 +71,9 @@
     </div>
   {/if}
   {#if asking}
-    <div class="ask" role="alertdialog" aria-label="Delete clip" data-ask-delete={message.id} use:clickOutside={() => { if (!busy) asking = false }}>
+    <div class="ask" role="alertdialog" aria-label="Delete clip" use:clickOutside={() => { if (!busy) asking = false }}>
       <p>Delete this clip? Its replies go too.</p>
-      <button type="button" class="keep" disabled={busy} onclick={() => (asking = false)}>Cancel</button>
+      <button bind:this={keep} type="button" class="keep" disabled={busy} onclick={() => (asking = false)}>Cancel</button>
       <button type="button" class="go" disabled={busy} onclick={() => void remove()}>Delete</button>
       {#if error}<p class="err" role="alert">{error}</p>{/if}
     </div>
