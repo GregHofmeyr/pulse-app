@@ -191,23 +191,33 @@ fn free_bytes(dir: &std::path::Path) -> u64 {
 #[cfg(unix)]
 #[tokio::test]
 async fn upload_refused_when_the_database_volume_is_low() {
-    // The test database lives under the system temp dir; put the media dir on the volume the
-    // build lives on, and set the threshold between the two volumes' free space.
-    let media = tempfile::tempdir_in(env!("CARGO_TARGET_TMPDIR")).unwrap();
-    let (m, d) = (free_bytes(media.path()), free_bytes(&std::env::temp_dir()));
-    const MARGIN: u64 = 1 << 30;
-    if m <= d.saturating_add(2 * MARGIN) {
-        eprintln!(
-            "skipped: the temp dir and the target dir need different volumes, the target's with \
-             at least 2 GiB more free space"
+    // Two filesystems every Linux box has: tmpfs at /dev/shm and the disk the build is on. The
+    // database goes on the one with less room, the media dir on the other, and the threshold
+    // sits between their free space.
+    const MARGIN: u64 = 256 << 20;
+    let shm = std::path::Path::new("/dev/shm");
+    let target = std::path::Path::new(env!("CARGO_TARGET_TMPDIR"));
+    let (s, t) = if shm.is_dir() {
+        (free_bytes(shm), free_bytes(target))
+    } else {
+        (0, 0)
+    };
+    if s.abs_diff(t) <= 2 * MARGIN {
+        let why = format!(
+            "needs /dev/shm and the target dir with free space at least 512 MiB apart (got {s} and {t})"
         );
+        assert!(std::env::var_os("CI").is_none(), "{why}");
+        eprintln!("skipped: {why}");
         return;
     }
+    let (db_fs, media_fs) = if s < t { (shm, target) } else { (target, shm) };
+    let (low, high) = (s.min(t), s.max(t));
     for path in ["/media/emoji", "/media/quote"] {
+        let media = tempfile::tempdir_in(media_fs).unwrap();
         let mut cfg = test_config();
-        cfg.media_dir = media.path().join(path.trim_start_matches("/media/"));
-        cfg.media_min_free_bytes = d + (m - d) / 2;
-        let app = spawn_with(cfg).await;
+        cfg.media_dir = media.path().join("media");
+        cfg.media_min_free_bytes = low + (high - low) / 2;
+        let app = spawn_in(cfg, tempfile::tempdir_in(db_fs).unwrap()).await;
         let (_, token) = register(&app, "alex").await;
         let r = upload_to(&app, path, &token, png()).await;
         assert_eq!(r.status(), 507, "{path}");

@@ -84,8 +84,9 @@ pub async fn spawn_copy(app: &TestApp, cfg: Config) -> TestApp {
     spawn_in(cfg, dir).await
 }
 
-/// Serve `dir/test.db` (created if missing) with `cfg`; `dir` lives as long as the app.
-async fn spawn_in(mut cfg: Config, dir: tempfile::TempDir) -> TestApp {
+/// Serve `dir/test.db` (created if missing) with `cfg`; `dir` lives as long as the app. For a
+/// test that needs the database on a particular filesystem (pass a `tempdir_in` there).
+pub async fn spawn_in(mut cfg: Config, dir: tempfile::TempDir) -> TestApp {
     cfg.db_url = format!("sqlite://{}", dir.path().join("test.db").display());
     if cfg.media_dir.as_os_str().is_empty() {
         cfg.media_dir = dir.path().join("media");
