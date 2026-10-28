@@ -583,13 +583,15 @@ pub struct ClipUploadRequest {
 }
 
 /// An upload ticket: PUT the file to `url`, then confirm.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct ClipUpload {
     pub id: ClipUploadId,
     pub url: String,
     pub content_type: String,
     pub expires_at: String,
 }
+// `url` is a live presigned link.
+redacting_debug!(ClipUpload { id, content_type, expires_at ; url });
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct ConfirmClipRequest {
@@ -610,11 +612,12 @@ pub struct EditClipRequest {
 }
 
 /// A short-lived URL to play a clip.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct ClipUrl {
     pub url: String,
     pub expires_at: String,
 }
+redacting_debug!(ClipUrl { expires_at ; url });
 
 /// Filter chips of a clips channel: clip counts per game and per author.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
@@ -941,5 +944,32 @@ mod tests {
         assert!(shown[1].contains("alex"), "{}", shown[1]);
         assert!(shown[5].contains("signed_out: 2"), "{}", shown[5]);
         assert!(shown[7].contains("mfa_required"), "{}", shown[7]);
+    }
+
+    /// A clip's upload and play links are live presigned URLs (key id and signature).
+    #[test]
+    fn debug_never_shows_signed_urls() {
+        let url = "https://bucket.example/clips/k.mp4?X-Amz-Credential=SECRET-KEY&X-Amz-Signature=SECRET-SIG";
+        let up = format!(
+            "{:?}",
+            ClipUpload {
+                id: crate::ids::ClipUploadId::new(),
+                url: url.into(),
+                content_type: "video/mp4".into(),
+                expires_at: "2026-10-28T11:00:00.000Z".into(),
+            }
+        );
+        let play = format!(
+            "{:?}",
+            ClipUrl {
+                url: url.into(),
+                expires_at: "2026-10-28T11:00:00.000Z".into(),
+            }
+        );
+        for d in [&up, &play] {
+            assert!(!d.contains("SECRET"), "{d}");
+            assert!(d.contains("expires_at"), "{d}");
+        }
+        assert!(up.contains("video/mp4"), "{up}");
     }
 }

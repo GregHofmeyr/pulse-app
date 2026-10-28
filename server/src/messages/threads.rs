@@ -1,6 +1,8 @@
 //! Replies to a quote or clip: a thread per root, kept out of the channel's list, unread counts and
 //! scores. A reply is an ordinary message whose `thread_root_id` names the root.
 
+use std::collections::HashMap;
+
 use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::routing::{get, post};
@@ -8,8 +10,6 @@ use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{Channel, Message, ThreadSeenRequest};
-use std::collections::HashMap;
-
 use sqlx::{SqliteConnection, SqlitePool};
 
 use super::routes::{COLS, Page, Row, fill};
@@ -255,8 +255,7 @@ pub(crate) async fn soft_delete_replies(
     .bind(&id)
     .fetch_all(&mut *tx)
     .await?;
-    let mut mentioned: std::collections::HashMap<String, Vec<UserId>> =
-        std::collections::HashMap::new();
+    let mut mentioned: HashMap<String, Vec<UserId>> = HashMap::new();
     for (msg, user) in sqlx::query_as::<_, (String, String)>(
         "SELECT mt.message_id, mt.user_id FROM mentions mt JOIN messages m ON m.id = mt.message_id
          WHERE m.thread_root_id = ? ORDER BY mt.rowid",
