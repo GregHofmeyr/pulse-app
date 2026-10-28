@@ -308,12 +308,12 @@
     repliesOpener = null
     await tick()
     // The opener; else (a click that didn't focus it, or it's gone since, like the unsent-reply marker
-    // while its panel was open) the quote's marker or first line; else (the quote is gone) the quote box.
+    // while its panel was open) the quote's marker or first line; else (the quote is gone) the new-quote box (hidden while an edit is open: then nowhere).
     const quote = `[data-message-id="${id}"]`
     const back = (opener?.isConnected ? opener : null)
       ?? list?.querySelector<HTMLElement>(`${quote} .unsent-reply`)
       ?? list?.querySelector<HTMLElement>(`${quote} .line`)
-      ?? chan?.querySelector<HTMLElement>('div:not([hidden]) > .qc textarea.qtext')
+      ?? chan?.querySelector<HTMLElement>('.new-quote:not([hidden]) textarea.qtext') // never an edit box: that's another quote
     back?.focus()
   }
   // A deleted quote's thread is gone: its panel closes (unsent replies to it were dropped with it). The
@@ -456,7 +456,7 @@
   {#if isQuotes}
     <!-- the new-quote composer stays mounted (hidden) while one is edited, so its draft survives -->
     {#key channelId}
-      <div hidden={!!editingQuote}><QuoteComposer {channelId} serverId={serverId ?? ''} onDone={quotePosted} /></div>
+      <div class="new-quote" hidden={!!editingQuote}><QuoteComposer {channelId} serverId={serverId ?? ''} onDone={quotePosted} /></div>
     {/key}
     {#if editingQuote}
       {#key editingQuote.id}

@@ -415,6 +415,25 @@ describe('TextChannel: quotes channel', () => {
     // r1 m5: the focus doesn't fall to the page (the quote is gone: the quote box takes it)
     expect(document.activeElement).not.toBe(document.body)
     expect(document.activeElement?.matches('textarea.qtext')).toBe(true)
+    expect(document.activeElement?.closest('.qc')?.parentElement?.hasAttribute('hidden')).toBe(false)
+  })
+
+  it("r2: a deleted quote's panel never hands the focus to another quote's edit box", async () => {
+    const q2: Message = { ...quoteMsg, id: 'M0002' }
+    show('quotes', [quoteMsg, q2])
+    document.querySelector<HTMLButtonElement>('.list .quote[data-message-id="M0002"] button[aria-label="Edit"]')!.click() // editing M0002
+    flushSync()
+    document.querySelector<HTMLButtonElement>('.list .quote[data-message-id="M0001"] button[aria-label="Reply"]')!.click()
+    flushSync()
+    await settled()
+    document.querySelector<HTMLElement>('.replies-panel [role="textbox"]')!.focus()
+    app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M0001', thread_root_id: null, author_id: 'U1', mentions: [] } }, Date.now())
+    flushSync()
+    await settled()
+    expect(document.querySelector('.replies-panel')).toBeNull()
+    const edit = [...document.querySelectorAll('.qc')].find((c) => !c.closest('[hidden]') && c.querySelector<HTMLTextAreaElement>('textarea.qtext')?.value === 'hi')!
+    expect(edit).toBeTruthy() // the edit box is open
+    expect(edit.contains(document.activeElement)).toBe(false)
   })
 
   it("r1 m5: a quote deleted while the focus is outside its panel leaves the focus alone", async () => {
