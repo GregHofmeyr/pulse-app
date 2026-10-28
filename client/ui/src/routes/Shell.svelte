@@ -23,6 +23,9 @@
   import PeopleBoard from '../components/PeopleBoard.svelte'
   import PeoplePicker from '../components/PeoplePicker.svelte'
   import GroupMembers from '../components/GroupMembers.svelte'
+  // Profiles: the quick card and the full profile
+  import ProfileCardPopover from '../components/ProfileCardPopover.svelte'
+  import { profileUi } from '../lib/profileCard.svelte'
   import { onMount, tick, untrack } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { findWatch, followLiveFreeze, stream, streamApi } from '../lib/stream/stream.svelte'
@@ -513,6 +516,9 @@
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if qotyStart}<QotyStart serverId={qotyStart} onClose={() => (qotyStart = null)} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
+<!-- Profiles: the quick card (one at a time), and the full profile's place (Task 12 renders it here) -->
+<ProfileCardPopover />
+{#if profileUi.full}{/if}
 {#if creating}
   <div class="overlay">
   <div class="backdrop" role="presentation" onclick={() => (creating = false)}></div>
