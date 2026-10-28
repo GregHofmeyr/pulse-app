@@ -71,16 +71,25 @@
 
   // --- names and avatars: the avatar animates while the pointer is over the row; pills take the person's style ---
   let rowHover = $state(false)
-  // Pass the HTML so a new render restyles. Messages without pills never read the state here.
-  const mentionsIn = (_html: string): Attachment<HTMLElement> => (node) => {
-    if (!node.querySelector('.mention')) return
-    const s = app.state
-    const showStyles = appearance.showNameStyles
-    styleMentions(node, mentionLookup(s), (id) => nameCss(resolveNameStyle(userOf(s, id), { roleColor: roleColorFor(s, serverId, id), showStyles })))
+  // Pills restyle only when the HTML or a mentioned person's style changes, not on every state update:
+  // the lookup is rebuilt only when people or members change, and the styles are compared as one string.
+  const lookup = $derived(mentionLookup(app.state))
+  const mentioned = $derived.by(() => {
+    const c = message.content.toLowerCase()
+    if (!c.includes('@')) return [] as string[]
+    const ids = mentionNames.filter((n) => c.includes('@' + n.toLowerCase())).map(lookup)
+    return [...new Set(ids.filter((id): id is string => !!id))]
+  })
+  const cssFor = (id: string) => nameCss(resolveNameStyle(userOf(app.state, id), { roleColor: roleColorFor(app.state, serverId, id), showStyles: appearance.showNameStyles }))
+  const mentionCss = $derived(mentioned.map((id) => `${id}\t${cssFor(id)}`).join('\n'))
+  const mentionsIn = (_html: string, look: (name: string) => string | null, cssKey: string): Attachment<HTMLElement> => (node) => {
+    if (!cssKey || !node.querySelector('.mention')) return
+    const css = new Map(cssKey.split('\n').map((l) => l.split('\t') as [string, string]))
+    styleMentions(node, (n) => { const id = look(n); return id && css.has(id) ? id : null }, (id) => css.get(id)!)
   }
   function openMention(e: MouseEvent) {
     const pill = (e.target as Element).closest('.mention')
-    const id = pill && mentionLookup(app.state)(mentionName(pill))
+    const id = pill && lookup(mentionName(pill))
     if (pill && id) openCard(id, serverId, pill)
   }
 
@@ -189,7 +198,7 @@
           {@const html = renderMessage(message, mentionNames, app.state.customEmoji)}
           <!-- a mention pill opens its person's card (a pointer shortcut: the author's name is the keyboard route) -->
           <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html)} onclick={openMention}>{@html html}</div>
+          <div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention}>{@html html}</div>
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
         {#if !pending}<ReactionRow {message} {meId} {nameOf} onError={showError} />{/if}
@@ -271,7 +280,7 @@
   .content :global(img.emoji.big) { width: 48px; height: 48px; }
   .content :global(.emoji-gone) { color: var(--text-3); background: var(--bg-3); border-radius: 4px; padding: 0 4px; font-size: .9em; }
   .content :global(.emoji-gone.big) { font-size: 1.25em; }
-  .content :global(.mention) { color: var(--accent); background: rgba(139, 156, 255, .15); border-radius: 4px; padding: 0 3px; font-weight: 600; font-size: calc(1em * var(--name-scale, 1)); cursor: pointer; }
+  .content :global(.mention) { color: var(--accent); background: rgba(139, 156, 255, .15); border-radius: 4px; padding: 0 3px; font-weight: 600; font-size: calc(1em * var(--name-scale, 1)); line-height: calc(1.5em / var(--name-scale, 1)); vertical-align: baseline; cursor: pointer; }
   /* a gradient name clips its background to the text: the pill background is on this wrapper instead */
   .content :global(.mention-wrap) { background: rgba(139, 156, 255, .15); border-radius: 4px; padding: 0 3px; }
 </style>

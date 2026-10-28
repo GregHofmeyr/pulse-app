@@ -4,17 +4,24 @@ import type { AppState } from './state'
 
 const WRAP = 'mention-wrap'
 
-/** The user a pill's `@name` points at: matched case-insensitively against usernames, as pills are made. */
+let memo: { people: AppState['people']; members: AppState['members']; me: AppState['me']; look: (name: string) => string | null } | null = null
+
+/** The user a pill's `@name` points at: matched case-insensitively against usernames, as pills are
+ * made (people first, then members, then me). Built once per people/members/me: the same function
+ * comes back until one of them changes, so it can feed a `$derived` without waking it. */
 export function mentionLookup(s: AppState): (name: string) => string | null {
-  return (name) => {
-    const n = name.toLowerCase()
-    for (const p of Object.values(s.people)) if (p.user.username.toLowerCase() === n) return p.user.id
-    for (const list of Object.values(s.members)) {
-      const m = list.find((x) => x.user.username.toLowerCase() === n)
-      if (m) return m.user.id
-    }
-    return s.me?.username.toLowerCase() === n ? s.me.id : null
+  if (memo && memo.people === s.people && memo.members === s.members && memo.me === s.me) return memo.look
+  const ids = new Map<string, string>()
+  const add = (username: string, id: string) => {
+    const k = username.toLowerCase()
+    if (!ids.has(k)) ids.set(k, id)
   }
+  for (const p of Object.values(s.people)) add(p.user.username, p.user.id)
+  for (const list of Object.values(s.members)) for (const m of list) add(m.user.username, m.user.id)
+  if (s.me) add(s.me.username, s.me.id)
+  const look = (name: string) => ids.get(name.toLowerCase()) ?? null
+  memo = { people: s.people, members: s.members, me: s.me, look }
+  return look
 }
 
 /** The name a `.mention` pill shows, without its `@`. */

@@ -4,14 +4,14 @@ import { mentionLookup, styleMentions } from './mentionStyles'
 import { emptyState } from './state'
 
 const pill = (name: string) => `<span class="mention">@${name}</span>`
-const css: Record<string, string> = {
-  U2: 'font-family: Fredoka; --name-scale: 1; color: #ffc4a3',
-  U3: '--name-scale: 1; background-image: linear-gradient(90deg, #ffbe7a, #ff7fae); -webkit-background-clip: text; background-clip: text; color: transparent',
-}
 const ids: Record<string, string> = { sam: 'U2', kim: 'U3' }
 
 describe('styleMentions', () => {
   it('styles known names and leaves unknown pills alone', () => {
+    const css: Record<string, string> = {
+      U2: 'font-family: Fredoka; --name-scale: 1; color: #ffc4a3',
+      U3: '--name-scale: 1; background-image: linear-gradient(90deg, #ffbe7a, #ff7fae); -webkit-background-clip: text; background-clip: text; color: transparent',
+    }
     const root = document.createElement('div')
     root.innerHTML = `<p>hi ${pill('sam')} and ${pill('kim')} and ${pill('jo')}</p>`
     styleMentions(root, (n) => ids[n.toLowerCase()] ?? null, (id) => css[id])
@@ -38,5 +38,8 @@ describe('styleMentions', () => {
     expect(look('Sam')).toBe('U2')
     expect(look('kim')).toBe('U3')
     expect(look('jo')).toBeNull()
+    // built once per people/members: the same lookup until either changes
+    expect(mentionLookup({ ...(s as object), typing: { C1: {} } } as never)).toBe(look)
+    expect(mentionLookup({ ...(s as object), people: {} } as never)).not.toBe(look)
   })
 })

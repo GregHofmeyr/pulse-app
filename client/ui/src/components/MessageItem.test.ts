@@ -518,6 +518,15 @@ describe('MessageItem names and avatars', () => {
     app.state = { ...app.state, people: { ...app.state.people, U2: { user: u('U2', 'sam', { style: { font: null, colors: ['#a3d8ff'] } }), online: true, last_seen_at: null } } }
     flushSync()
     expect(document.querySelector<HTMLElement>('.content .mention')!.style.color).toBe('rgb(163, 216, 255)')
+    // an unrelated update (someone typing) doesn't restyle the pills
+    const pill = document.querySelector<HTMLElement>('.content .mention')!
+    pill.setAttribute('style', 'color: red')
+    app.state = { ...app.state, typing: { C1: { U3: Date.now() + 5000 } } }
+    flushSync()
+    expect(pill.getAttribute('style')).toBe('color: red')
+    app.state = { ...app.state, people: { ...app.state.people, U2: { user: u('U2', 'sam', { style: { font: null, colors: ['#ffc4a3'] } }), online: true, last_seen_at: null } } }
+    flushSync()
+    expect(pill.style.color).toBe('rgb(255, 196, 163)')
     // name styles off: plain pills
     appearance.showNameStyles = false
     flushSync()
@@ -533,5 +542,30 @@ describe('MessageItem names and avatars', () => {
     sam.click()
     flushSync()
     expect(profileUi.card).toMatchObject({ userId: 'U2', serverId: 'S1' })
+  })
+})
+
+describe('mention pill CSS', () => {
+  // From the compiled CSS (jsdom applies the cascade but doesn't lay out).
+  it('a scaled pill font keeps the line height', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const { compile } = await import('svelte/compiler')
+    const src = readFileSync(resolve(__dirname, 'MessageItem.svelte'), 'utf8')
+    const css = compile(src, { filename: 'MessageItem.svelte', css: 'external', cssHash: () => 'svelte-test' }).css!.code
+    const style = document.createElement('style')
+    style.textContent = css
+    document.head.append(style)
+    try {
+      document.body.innerHTML = '<div class="content svelte-test"><span class="mention" style="--name-scale: 1.2">@kim</span></div>'
+      const pill = document.querySelector<HTMLElement>('.mention')!
+      const cs = getComputedStyle(pill)
+      expect(cs.fontSize).toBe('calc(1em * var(--name-scale, 1))')
+      // the same compensation Name uses: the line box stays 1.5 of the message's font
+      expect(cs.lineHeight).toBe('calc(1.5em / var(--name-scale, 1))')
+      expect(cs.verticalAlign).toBe('baseline')
+    } finally {
+      style.remove()
+    }
   })
 })
