@@ -1936,3 +1936,414 @@ async fn replies_get_normal_reactions() {
     assert_eq!(replies[0].reactions.len(), 1);
     assert_eq!(replies[0].reactions[0].count, 1);
 }
+
+// ---- Playback URLs, feeds, facets, view preference, storage totals ----
+
+async fn get_status(app: &TestApp, token: &str, path: &str) -> reqwest::Response {
+    app.http
+        .get(app.url(path))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn play_url(
+    app: &TestApp,
+    token: &str,
+    id: pulse_protocol::ids::MessageId,
+) -> reqwest::Response {
+    get_status(app, token, &format!("/clips/{id}/url")).await
+}
+
+#[tokio::test]
+async fn play_urls_are_fresh_and_member_only() {
+    let w = world().await;
+    let bytes: Vec<u8> = (0..100u8).collect();
+    let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, bytes.clone()).await;
+
+    let mut last = String::new();
+    for _ in 0..2 {
+        let r = play_url(&w.app, &w.sam.1, clip.id).await;
+        assert_eq!(r.status(), 200);
+        let u: pulse_protocol::rest::ClipUrl = r.json().await.unwrap();
+        assert!(u.expires_at >= last, "{} < {last}", u.expires_at);
+        last = u.expires_at.clone();
+        let got = w
+            .app
+            .http
+            .get(&u.url)
+            .header("range", "bytes=0-9")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(got.status(), 206);
+        assert_eq!(got.bytes().await.unwrap().to_vec(), bytes[..10].to_vec());
+    }
+
+    // Someone who is not in the server: 403.
+    let kim = register(&w.app, "kim").await;
+    assert_eq!(play_url(&w.app, &kim.1, clip.id).await.status(), 403);
+    // Not a clip at all: 404.
+    assert_eq!(
+        play_url(&w.app, &w.sam.1, pulse_protocol::ids::MessageId::new())
+            .await
+            .status(),
+        404
+    );
+
+    // A clip from years back still plays.
+    sqlx::query("UPDATE messages SET created_at = '2022-01-01T00:00:00.000Z' WHERE id = ?")
+        .bind(clip.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    let u: pulse_protocol::rest::ClipUrl = play_url(&w.app, &w.sam.1, clip.id)
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        w.app
+            .http
+            .get(&u.url)
+            .header("range", "bytes=0-9")
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        206
+    );
+
+    // A deleted clip: 404.
+    assert_eq!(
+        delete_message(&w.app, &w.alex.1, clip.id).await.status(),
+        204
+    );
+    assert_eq!(play_url(&w.app, &w.sam.1, clip.id).await.status(), 404);
+}
+
+#[tokio::test]
+async fn play_urls_without_storage_are_503() {
+    let bare = spawn_without_clips().await;
+    let alex = register(&bare, "alex").await;
+    let s = create_server(&bare, &alex.1, "Main").await;
+    let ch = create_clips(&bare, &alex.1, s.id).await;
+    let r = play_url(&bare, &alex.1, pulse_protocol::ids::MessageId::new()).await;
+    assert_eq!(r.status(), 503);
+    // Feeds and facets read only the database, so they work.
+    let feed: Vec<Message> = get_json(&bare, &alex.1, &format!("/channels/{}/clips", ch.id)).await;
+    assert!(feed.is_empty());
+}
+
+fn ids(v: &[Message]) -> Vec<pulse_protocol::ids::MessageId> {
+    v.iter().map(|m| m.id).collect()
+}
+
+#[tokio::test]
+async fn feeds_page_and_filter() {
+    let w = world().await;
+    let doom = add_game_ok(&w.app, &w.alex.1, w.server, "Doom").await;
+    let halo = add_game_ok(&w.app, &w.alex.1, w.server, "Halo").await;
+    // 18 from alex, 17 from sam, oldest first.
+    let mut posted = Vec::new();
+    for i in 0..35 {
+        let (token, uid) = if i % 2 == 0 {
+            (&w.alex.1, w.alex.0)
+        } else {
+            (&w.sam.1, w.sam.0)
+        };
+        let m = upload_clip(&w.app, token, w.channel.id, vec![i as u8; 10]).await;
+        let game = if i % 3 == 0 { doom.id } else { halo.id };
+        sqlx::query("UPDATE clips SET game_id = ? WHERE message_id = ?")
+            .bind(game.to_string())
+            .bind(m.id.to_string())
+            .execute(&w.app.db)
+            .await
+            .unwrap();
+        posted.push((m.id, uid, game));
+    }
+    let newest_first: Vec<_> = posted.iter().rev().map(|p| p.0).collect();
+    let path = format!("/channels/{}/clips", w.channel.id);
+
+    let page1: Vec<Message> = get_json(&w.app, &w.sam.1, &path).await;
+    assert_eq!(ids(&page1), newest_first[..30].to_vec());
+    assert!(page1.iter().all(|m| m.clip.is_some()));
+    let page2: Vec<Message> =
+        get_json(&w.app, &w.sam.1, &format!("{path}?before={}", page1[29].id)).await;
+    assert_eq!(ids(&page2), newest_first[30..].to_vec());
+    let small: Vec<Message> = get_json(&w.app, &w.sam.1, &format!("{path}?limit=3")).await;
+    assert_eq!(small.len(), 3);
+    let big: Vec<Message> = get_json(&w.app, &w.sam.1, &format!("{path}?limit=99")).await;
+    assert_eq!(big.len(), 30, "capped at a page");
+
+    let by_game: Vec<Message> =
+        get_json(&w.app, &w.sam.1, &format!("{path}?game={}", doom.id)).await;
+    let want: Vec<_> = posted
+        .iter()
+        .rev()
+        .filter(|p| p.2 == doom.id)
+        .map(|p| p.0)
+        .collect();
+    assert_eq!(ids(&by_game), want);
+    let by_author: Vec<Message> =
+        get_json(&w.app, &w.sam.1, &format!("{path}?author={}", w.sam.0)).await;
+    assert_eq!(by_author.len(), 17);
+    assert!(by_author.iter().all(|m| m.author_id == Some(w.sam.0)));
+    let both: Vec<Message> = get_json(
+        &w.app,
+        &w.sam.1,
+        &format!("{path}?author={}&game={}", w.sam.0, doom.id),
+    )
+    .await;
+    let want: Vec<_> = posted
+        .iter()
+        .rev()
+        .filter(|p| p.1 == w.sam.0 && p.2 == doom.id)
+        .map(|p| p.0)
+        .collect();
+    assert_eq!(ids(&both), want);
+
+    // Replies and deleted clips are absent.
+    let newest = posted.last().unwrap().0;
+    assert_eq!(
+        clip_reply(&w, &w.sam.1, w.channel.id, newest, "gg")
+            .await
+            .status(),
+        200
+    );
+    assert_eq!(
+        delete_message(&w.app, &w.sam.1, posted[33].0)
+            .await
+            .status(),
+        204
+    );
+    let again: Vec<Message> = get_json(&w.app, &w.sam.1, &path).await;
+    assert_eq!(again.len(), 30);
+    assert!(again.iter().all(|m| m.thread_root_id.is_none()));
+    assert!(!ids(&again).contains(&posted[33].0));
+    assert_eq!(again[0].clip.as_ref().unwrap().reply_count, 1);
+}
+
+#[tokio::test]
+async fn facets_count_live_clips() {
+    let w = world().await;
+    let doom = add_game_ok(&w.app, &w.alex.1, w.server, "Doom").await;
+    let halo = add_game_ok(&w.app, &w.alex.1, w.server, "Halo").await;
+    let apex = add_game_ok(&w.app, &w.alex.1, w.server, "Apex").await;
+    // (author token, author id, game)
+    let plan = [
+        (&w.alex.1, Some(doom.id)),
+        (&w.alex.1, Some(halo.id)),
+        (&w.sam.1, Some(halo.id)),
+        (&w.sam.1, Some(halo.id)),
+        (&w.sam.1, Some(apex.id)),
+        (&w.sam.1, Some(apex.id)),
+        (&w.sam.1, None),
+        (&w.alex.1, None),
+    ];
+    let mut clips = Vec::new();
+    for (token, game) in plan {
+        let m = upload_clip(&w.app, token, w.channel.id, vec![1u8; 10]).await;
+        sqlx::query("UPDATE clips SET game_id = ? WHERE message_id = ?")
+            .bind(game.map(|g| g.to_string()))
+            .bind(m.id.to_string())
+            .execute(&w.app.db)
+            .await
+            .unwrap();
+        clips.push(m.id);
+    }
+    // A reply and a deleted clip add nothing.
+    clip_reply(&w, &w.sam.1, w.channel.id, clips[0], "hi").await;
+    assert_eq!(
+        delete_message(&w.app, &w.sam.1, clips[2]).await.status(),
+        204
+    );
+
+    let f: pulse_protocol::rest::ClipFacets = get_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/clips/facets", w.channel.id),
+    )
+    .await;
+    let games: Vec<_> = f.games.iter().map(|g| (g.game_id, g.count)).collect();
+    // Count desc, then name: Apex 2, Halo 2 (one of three was deleted), Doom 1.
+    assert_eq!(games, vec![(apex.id, 2), (halo.id, 2), (doom.id, 1)]);
+    let authors: Vec<_> = f.authors.iter().map(|a| (a.user_id, a.count)).collect();
+    assert_eq!(authors, vec![(w.sam.0, 4), (w.alex.0, 3)]);
+}
+
+#[tokio::test]
+async fn view_preference_is_per_person_and_channel() {
+    let w = world().await;
+    let mut alex_ws = hello(&w.app, &w.alex.1).await;
+    let mut sam_ws = hello(&w.app, &w.sam.1).await;
+    let path = format!("/channels/{}/clip-view", w.channel.id);
+    let put = |token: &str, body: serde_json::Value, path: String| {
+        let r = w
+            .app
+            .http
+            .put(w.app.url(&path))
+            .bearer_auth(token)
+            .json(&body);
+        async move { r.send().await.unwrap() }
+    };
+    assert_eq!(
+        put(&w.alex.1, json!({ "view": "list" }), path.clone())
+            .await
+            .status(),
+        204
+    );
+    // Again, to change it, and an upsert not a duplicate.
+    assert_eq!(
+        put(&w.alex.1, json!({ "view": "wall" }), path.clone())
+            .await
+            .status(),
+        204
+    );
+    assert_eq!(
+        put(&w.alex.1, json!({ "view": "list" }), path.clone())
+            .await
+            .status(),
+        204
+    );
+
+    let r = ready_of(&w.app, &w.alex.1).await;
+    assert_eq!(r.clip_views.len(), 1);
+    assert_eq!(r.clip_views[0].channel_id, w.channel.id);
+    assert_eq!(r.clip_views[0].view, pulse_protocol::rest::ClipView::List);
+    assert!(ready_of(&w.app, &w.sam.1).await.clip_views.is_empty());
+
+    let mut seen = false;
+    while let Some(f) = next_frame_beating(&mut alex_ws, Duration::from_millis(600)).await {
+        if let ServerFrame::Event(Event::ClipViewChanged {
+            user_id,
+            channel_id,
+            view,
+        }) = f
+        {
+            assert_eq!((user_id, channel_id), (w.alex.0, w.channel.id));
+            seen = view == pulse_protocol::rest::ClipView::List || seen;
+        }
+    }
+    assert!(seen, "alex's session hears about it");
+    while let Some(f) = next_frame_beating(&mut sam_ws, Duration::from_millis(600)).await {
+        assert!(
+            !matches!(f, ServerFrame::Event(Event::ClipViewChanged { .. })),
+            "sam must not hear it"
+        );
+    }
+
+    // Not a clips channel: 400. Not a member: 403.
+    let general = general(&w.app, &w.alex.1, w.server).await;
+    let r = put(
+        &w.alex.1,
+        json!({ "view": "list" }),
+        format!("/channels/{}/clip-view", general.id),
+    )
+    .await;
+    assert_eq!(r.status(), 400);
+    let kim = register(&w.app, "kim").await;
+    assert_eq!(
+        put(&kim.1, json!({ "view": "list" }), path).await.status(),
+        403
+    );
+}
+
+#[tokio::test]
+async fn storage_counts_this_server_only() {
+    let w = world().await;
+    for n in [100usize, 250] {
+        upload_clip(&w.app, &w.alex.1, w.channel.id, vec![3u8; n]).await;
+    }
+    let gone = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![3u8; 4_000]).await;
+    assert_eq!(
+        delete_message(&w.app, &w.alex.1, gone.id).await.status(),
+        204
+    );
+    // A second server with its own clip.
+    let other = create_server(&w.app, &w.alex.1, "Other").await;
+    let och = create_clips(&w.app, &w.alex.1, other.id).await;
+    upload_clip(&w.app, &w.alex.1, och.id, vec![3u8; 1_000_000]).await;
+
+    let thumb_bytes = |server: ServerId| {
+        let db = w.app.db.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "SELECT COALESCE(SUM(t.size), 0) FROM clips c
+                 JOIN messages m ON m.id = c.message_id
+                 JOIN channels ch ON ch.id = m.channel_id
+                 JOIN media t ON t.hash = c.thumb_hash
+                 WHERE ch.server_id = ? AND m.deleted_at IS NULL",
+            )
+            .bind(server.to_string())
+            .fetch_one(&db)
+            .await
+            .unwrap() as u64
+        }
+    };
+    let a: pulse_protocol::rest::ClipStorage = get_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/servers/{}/clips/storage", w.server),
+    )
+    .await;
+    assert_eq!(a.count, 2);
+    let thumbs = thumb_bytes(w.server).await;
+    assert!(thumbs > 0);
+    assert_eq!(a.bytes, 350 + thumbs);
+    assert!((a.est_monthly_usd - a.bytes as f64 / 1e9 * 0.015).abs() < 1e-15);
+
+    let b: pulse_protocol::rest::ClipStorage = get_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/servers/{}/clips/storage", other.id),
+    )
+    .await;
+    assert_eq!(b.count, 1);
+    assert_eq!(b.bytes, 1_000_000 + thumb_bytes(other.id).await);
+
+    // Members only.
+    let kim = register(&w.app, "kim").await;
+    let r = get_status(
+        &w.app,
+        &kim.1,
+        &format!("/servers/{}/clips/storage", w.server),
+    )
+    .await;
+    assert_eq!(r.status(), 403);
+}
+
+#[tokio::test]
+async fn storage_without_clips_storage_is_503() {
+    let bare = spawn_without_clips().await;
+    let alex = register(&bare, "alex").await;
+    let s = create_server(&bare, &alex.1, "Main").await;
+    let r = get_status(&bare, &alex.1, &format!("/servers/{}/clips/storage", s.id)).await;
+    assert_eq!(r.status(), 503);
+    assert_eq!(
+        error_message(r).await,
+        "Clips storage isn't set up on this server."
+    );
+}
+
+#[test]
+fn the_storage_report_prices_past_the_free_tier() {
+    use pulse_server::clips::{ServerUsage, format_storage_report};
+    let line = |name: &str, count: u32, gb: f64| ServerUsage {
+        name: name.into(),
+        count,
+        bytes: (gb * 1e9) as u64,
+    };
+    let small = format_storage_report(&[line("Main", 3, 1.5), line("Other", 1, 0.25)]);
+    assert_eq!(
+        small,
+        "Main  3 clips  1.50 GB\nOther  1 clips  0.25 GB\n\
+         total 4 clips  1.75 GB  ~$0.00/month (after R2's 10 GB free tier; the backups bucket shares it)"
+    );
+    let big = format_storage_report(&[line("Main", 9, 20.0)]);
+    assert!(
+        big.ends_with("total 9 clips  20.00 GB  ~$0.15/month (after R2's 10 GB free tier; the backups bucket shares it)"),
+        "{big}"
+    );
+}

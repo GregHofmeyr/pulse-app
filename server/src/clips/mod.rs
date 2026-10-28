@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{GameId, UserId};
-use pulse_protocol::rest::{Clip, Message};
+use pulse_protocol::rest::{Clip, ClipView, ClipViewPref, Message};
 use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::error::{AppError, AppResult};
@@ -122,4 +122,91 @@ pub async fn on_delete(
             .await?;
     let replies = crate::messages::threads::soft_delete_replies(tx, message_id).await?;
     Ok(ClipDeleted { key, replies })
+}
+
+/// The caller's chosen view of each clips channel they changed from the default.
+pub async fn views_for_ready(db: &SqlitePool, me: UserId) -> AppResult<Vec<ClipViewPref>> {
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT channel_id, view FROM clip_view_prefs WHERE user_id = ? ORDER BY channel_id",
+    )
+    .bind(me.to_string())
+    .fetch_all(db)
+    .await?;
+    rows.into_iter()
+        .map(|(channel, view)| {
+            Ok(ClipViewPref {
+                channel_id: channel.parse().map_err(anyhow::Error::from)?,
+                view: match view.as_str() {
+                    "list" => ClipView::List,
+                    _ => ClipView::Wall,
+                },
+            })
+        })
+        .collect()
+}
+
+/// R2's price per GB-month past the free tier.
+const USD_PER_GB_MONTH: f64 = 0.015;
+const FREE_GB: f64 = 10.0;
+
+/// What a server's live clips cost to keep: bytes (videos plus thumbnails), count and dollars a month.
+pub fn est_monthly_usd(bytes: u64) -> f64 {
+    bytes as f64 / 1e9 * USD_PER_GB_MONTH
+}
+
+/// A server's live clips: `(bytes, count)`, the video and thumbnail rows together.
+pub async fn server_usage(
+    db: &SqlitePool,
+    server: pulse_protocol::ids::ServerId,
+) -> AppResult<(u64, u32)> {
+    let (bytes, count): (i64, i64) = sqlx::query_as(
+        "SELECT COALESCE(SUM(v.size + COALESCE(t.size, 0)), 0), COUNT(*)
+         FROM clips c
+         JOIN messages m ON m.id = c.message_id AND m.deleted_at IS NULL
+         JOIN channels ch ON ch.id = m.channel_id
+         JOIN media v ON v.hash = c.video_key
+         LEFT JOIN media t ON t.hash = c.thumb_hash
+         WHERE ch.server_id = ?",
+    )
+    .bind(server.to_string())
+    .fetch_one(db)
+    .await?;
+    Ok((bytes as u64, count as u32))
+}
+
+/// One server's line of the `clip-storage` report.
+pub struct ServerUsage {
+    pub name: String,
+    pub count: u32,
+    pub bytes: u64,
+}
+
+/// Every server's usage, by name (the `clip-storage` command).
+pub async fn usage_by_server(db: &SqlitePool) -> AppResult<Vec<ServerUsage>> {
+    let servers: Vec<(String, String)> =
+        sqlx::query_as("SELECT id, name FROM servers ORDER BY name, id")
+            .fetch_all(db)
+            .await?;
+    let mut out = Vec::new();
+    for (id, name) in servers {
+        let (bytes, count) = server_usage(db, id.parse().map_err(anyhow::Error::from)?).await?;
+        out.push(ServerUsage { name, count, bytes });
+    }
+    Ok(out)
+}
+
+/// The `clip-storage` output: a line per server, then the total with the estimated cost.
+pub fn format_storage_report(servers: &[ServerUsage]) -> String {
+    let gb = |bytes: u64| bytes as f64 / 1e9;
+    let mut lines: Vec<String> = servers
+        .iter()
+        .map(|s| format!("{}  {} clips  {:.2} GB", s.name, s.count, gb(s.bytes)))
+        .collect();
+    let count: u32 = servers.iter().map(|s| s.count).sum();
+    let total = gb(servers.iter().map(|s| s.bytes).sum());
+    let cost = (total - FREE_GB).max(0.0) * USD_PER_GB_MONTH;
+    lines.push(format!(
+        "total {count} clips  {total:.2} GB  ~${cost:.2}/month (after R2's 10 GB free tier; the backups bucket shares it)"
+    ));
+    lines.join("\n")
 }

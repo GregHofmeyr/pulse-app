@@ -1,19 +1,21 @@
 //! Posting a clip: an upload ticket, the client's PUT straight to storage, then confirm.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, post, put};
+use axum::routing::{delete, get, post, put};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
-use pulse_protocol::ids::{ChannelId, ClipUploadId, MessageId, UserId};
+use pulse_protocol::ids::{ChannelId, ClipUploadId, GameId, MessageId, ServerId, UserId};
 use pulse_protocol::rest::{
-    ChannelKind, Clip, ClipUpload, ClipUploadRequest, ConfirmClipRequest, EditClipRequest, Message,
-    MessageKind,
+    AuthorCount, ChannelKind, Clip, ClipFacets, ClipStorage, ClipUpload, ClipUploadRequest,
+    ClipUrl, ClipView, ConfirmClipRequest, EditClipRequest, GameCount, Message, MessageKind,
+    SetClipViewRequest,
 };
+use serde::Deserialize;
 use sqlx::SqlitePool;
 
 use super::{
-    CAPTION_MAX, CONFIRM_SLACK_MS, MAX_BYTES, MAX_DURATION_MS, MAX_SIDE, MIN_SIDE, PER_HOUR,
+    CAPTION_MAX, CONFIRM_SLACK_MS, MAX_BYTES, MAX_DURATION_MS, MAX_SIDE, MIN_SIDE, PAGE, PER_HOUR,
     TICKET_TTL_HOURS, URL_TTL, games, object_key, storage,
 };
 use crate::AppState;
@@ -34,6 +36,11 @@ pub fn router() -> Router<AppState> {
         .route("/clip-uploads/{id}", delete(cancel))
         .route("/clip-uploads/{id}/confirm", post(confirm))
         .route("/clips/{message_id}", put(edit))
+        .route("/clips/{message_id}/url", get(play_url))
+        .route("/channels/{id}/clips", get(feed))
+        .route("/channels/{id}/clips/facets", get(facets))
+        .route("/channels/{id}/clip-view", put(set_view))
+        .route("/servers/{id}/clips/storage", get(storage_of))
 }
 
 /// Clips `me` started in the last rolling hour: top-level messages in clips channels (deleted
@@ -454,4 +461,186 @@ async fn edit(
         )
         .await;
     Ok(Json(msg))
+}
+
+/// A new signed link to play a clip. Every call signs again; nothing is stored.
+async fn play_url(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<MessageId>,
+) -> AppResult<Json<ClipUrl>> {
+    if !s.limits.clip_url_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    let r2 = storage(&s)?;
+    let (channel, key): (String, String) = sqlx::query_as(
+        "SELECT m.channel_id, c.video_key FROM clips c
+         JOIN messages m ON m.id = c.message_id
+         WHERE c.message_id = ? AND m.deleted_at IS NULL",
+    )
+    .bind(id.to_string())
+    .fetch_optional(&s.db)
+    .await?
+    .ok_or(AppError::NotFound)?;
+    let ch = channel_for(&s.db, me, channel.parse().map_err(anyhow::Error::from)?).await?;
+    match ch.server_id {
+        Some(server) if is_server_member(&s.db, server, me).await? => {}
+        _ => return Err(AppError::Forbidden),
+    }
+    let (url, expires_at) = r2.download_url(&object_key(&key), URL_TTL);
+    Ok(Json(ClipUrl {
+        url: url.to_string(),
+        expires_at,
+    }))
+}
+
+#[derive(Deserialize)]
+struct FeedQuery {
+    before: Option<MessageId>,
+    limit: Option<u32>,
+    game: Option<GameId>,
+    author: Option<UserId>,
+}
+
+/// A page of a clips channel's live clips, newest first (replies and deleted clips excluded).
+async fn feed(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ChannelId>,
+    Query(q): Query<FeedQuery>,
+) -> AppResult<Json<Vec<Message>>> {
+    channel_for(&s.db, me, id).await?;
+    let limit = q.limit.unwrap_or(PAGE).clamp(1, PAGE);
+    let mut qb = sqlx::QueryBuilder::new(format!(
+        "SELECT {} FROM messages m JOIN clips c ON c.message_id = m.id
+         WHERE m.channel_id = ",
+        crate::messages::routes::COLS
+            .split(", ")
+            .map(|c| format!("m.{c}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    qb.push_bind(id.to_string());
+    qb.push(" AND m.deleted_at IS NULL AND m.thread_root_id IS NULL");
+    if let Some(before) = q.before {
+        qb.push(" AND m.id < ").push_bind(before.to_string());
+    }
+    if let Some(game) = q.game {
+        qb.push(" AND c.game_id = ").push_bind(game.to_string());
+    }
+    if let Some(author) = q.author {
+        qb.push(" AND m.author_id = ").push_bind(author.to_string());
+    }
+    qb.push(" ORDER BY m.id DESC LIMIT ").push_bind(limit);
+    let rows: Vec<crate::messages::routes::Row> = qb.build_query_as().fetch_all(&s.db).await?;
+    Ok(Json(
+        crate::messages::routes::fill(&s.db, Some(me), rows).await?,
+    ))
+}
+
+/// Clip counts per game and per author, live clips only.
+async fn facets(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ChannelId>,
+) -> AppResult<Json<ClipFacets>> {
+    channel_for(&s.db, me, id).await?;
+    let games: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT c.game_id, COUNT(*) AS n FROM clips c
+         JOIN messages m ON m.id = c.message_id
+         JOIN games g ON g.id = c.game_id
+         WHERE m.channel_id = ? AND m.deleted_at IS NULL
+         GROUP BY c.game_id ORDER BY n DESC, g.name_key, g.id",
+    )
+    .bind(id.to_string())
+    .fetch_all(&s.db)
+    .await?;
+    let authors: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT m.author_id, COUNT(*) AS n FROM clips c
+         JOIN messages m ON m.id = c.message_id
+         WHERE m.channel_id = ? AND m.deleted_at IS NULL AND m.author_id IS NOT NULL
+         GROUP BY m.author_id ORDER BY n DESC, m.author_id",
+    )
+    .bind(id.to_string())
+    .fetch_all(&s.db)
+    .await?;
+    Ok(Json(ClipFacets {
+        games: games
+            .into_iter()
+            .map(|(g, n)| {
+                Ok(GameCount {
+                    game_id: g.parse().map_err(anyhow::Error::from)?,
+                    count: n as u32,
+                })
+            })
+            .collect::<AppResult<_>>()?,
+        authors: authors
+            .into_iter()
+            .map(|(u, n)| {
+                Ok(AuthorCount {
+                    user_id: u.parse().map_err(anyhow::Error::from)?,
+                    count: n as u32,
+                })
+            })
+            .collect::<AppResult<_>>()?,
+    }))
+}
+
+/// Remember how I like to see one clips channel; my other sessions hear about it.
+async fn set_view(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ChannelId>,
+    Json(req): Json<SetClipViewRequest>,
+) -> AppResult<StatusCode> {
+    let ch = channel_for(&s.db, me, id).await?;
+    if ch.kind != ChannelKind::Clips {
+        return Err(bad("this isn't a clips channel"));
+    }
+    match ch.server_id {
+        Some(server) if is_server_member(&s.db, server, me).await? => {}
+        _ => return Err(AppError::Forbidden),
+    }
+    let view = match req.view {
+        ClipView::List => "list",
+        ClipView::Wall => "wall",
+    };
+    sqlx::query(
+        "INSERT INTO clip_view_prefs (user_id, channel_id, view) VALUES (?, ?, ?)
+         ON CONFLICT (user_id, channel_id) DO UPDATE SET view = excluded.view",
+    )
+    .bind(me.to_string())
+    .bind(id.to_string())
+    .bind(view)
+    .execute(&s.db)
+    .await?;
+    s.hub
+        .publish(
+            &s.db,
+            Event::ClipViewChanged {
+                user_id: me,
+                channel_id: id,
+                view: req.view,
+            },
+        )
+        .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// How much storage this server's live clips use. Per server only: no other server's usage shows.
+async fn storage_of(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(server): Path<ServerId>,
+) -> AppResult<Json<ClipStorage>> {
+    storage(&s)?;
+    if !is_server_member(&s.db, server, me).await? {
+        return Err(AppError::Forbidden);
+    }
+    let (bytes, count) = super::server_usage(&s.db, server).await?;
+    Ok(Json(ClipStorage {
+        bytes,
+        count,
+        est_monthly_usd: super::est_monthly_usd(bytes),
+    }))
 }

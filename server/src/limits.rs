@@ -92,6 +92,8 @@ pub struct LimitsConfig {
     /// Published `VoiceState` changes per user. Every frame is still stored; past the limit,
     /// one trailing publish of the latest flags goes out when the bucket allows.
     pub voice_state_user: Rate,
+    /// Clip play links minted per user (each signs a storage URL).
+    pub clip_url_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -124,6 +126,8 @@ impl Default for LimitsConfig {
             invite_user: Rate::per_hour(10),
             mutate_user: Rate::new(30, 2.0),
             voice_state_user: Rate::new(10, 2.0),
+            // A clips wall plays one link per tile opened; 60 at once and one a second after.
+            clip_url_user: Rate::new(60, 1.0),
         }
     }
 }
@@ -152,6 +156,7 @@ impl LimitsConfig {
             invite_user: r,
             mutate_user: r,
             voice_state_user: r,
+            clip_url_user: r,
         }
     }
 }
@@ -293,6 +298,7 @@ pub struct Limits {
     pub invite_user: Limiter,
     pub mutate_user: Limiter,
     pub voice_state_user: Limiter,
+    pub clip_url_user: Limiter,
 }
 
 impl Limits {
@@ -317,6 +323,7 @@ impl Limits {
             invite_user: Limiter::new(c.invite_user),
             mutate_user: Limiter::new(c.mutate_user),
             voice_state_user: Limiter::new(c.voice_state_user),
+            clip_url_user: Limiter::new(c.clip_url_user),
         }
     }
 }

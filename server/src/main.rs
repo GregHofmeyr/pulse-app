@@ -16,6 +16,9 @@ enum Cmd {
     /// Check the clips storage settings: PUT, HEAD, GET and DELETE a tiny probe object (needs
     /// only the PULSE_CLIPS_S3_* variables)
     ClipsCheck,
+    /// Print each server's live clip storage and the estimated monthly cost (needs only
+    /// PULSE_DB_URL)
+    ClipStorage,
     /// Print a fresh single-use invite code (bootstraps the first account)
     CreateInvite,
     /// Write a consistent snapshot of the database to PATH (must not exist yet)
@@ -57,6 +60,7 @@ async fn main() -> anyhow::Result<()> {
     match cmd {
         Cmd::Migrate => migrate().await,
         Cmd::ClipsCheck => clips_check().await,
+        Cmd::ClipStorage => clip_storage().await,
         Cmd::Serve => pulse_server::serve(cfg()?).await,
         Cmd::CreateInvite => {
             let cfg = cfg()?;
@@ -171,4 +175,13 @@ async fn clips_check() -> anyhow::Result<()> {
         }
         Err(step) => anyhow::bail!("{step}"),
     }
+}
+
+/// `clip-storage` reads only the database.
+async fn clip_storage() -> anyhow::Result<()> {
+    let url = std::env::var("PULSE_DB_URL").unwrap_or_else(|_| "sqlite://pulse.db".into());
+    let db = pulse_server::db::connect(&url).await?;
+    let usage = pulse_server::clips::usage_by_server(&db).await?;
+    println!("{}", pulse_server::clips::format_storage_report(&usage));
+    Ok(())
 }

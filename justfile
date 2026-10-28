@@ -118,6 +118,10 @@ smoke:
     ./deploy/smoke.sh pulsechat.co.za
 
 # a single-use invite on the live server (valid 24 h)
+# each server's clip storage and the estimated monthly cost (all servers together; never shown in the app)
+clips-storage:
+    ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server clip-storage'
+
 invite-prod:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server create-invite'
 
