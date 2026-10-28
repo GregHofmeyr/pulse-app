@@ -93,6 +93,13 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::GameCount::export_all(&cfg)?;
     rest::AuthorCount::export_all(&cfg)?;
     rest::ClipStorage::export_all(&cfg)?;
+    rest::NameStyle::export_all(&cfg)?;
+    rest::CardProfile::export_all(&cfg)?;
+    rest::ProfileStats::export_all(&cfg)?;
+    rest::Badge::export_all(&cfg)?;
+    rest::NameArchiveEntry::export_all(&cfg)?;
+    rest::Profile::export_all(&cfg)?;
+    rest::UpdateProfileRequest::export_all(&cfg)?;
     Ok(())
 }
 

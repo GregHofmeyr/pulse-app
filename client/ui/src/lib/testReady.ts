@@ -3,7 +3,7 @@ import type { Channel } from './protocol/Channel'
 import type { QotyEvent } from './protocol/QotyEvent'
 import type { Ready } from './protocol/Ready'
 
-export const testMe = { id: 'U1', username: 'alex', avatar_hash: null }
+export const testMe = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 
 /** `channels` all belong to server S1 unless they say otherwise; `over` replaces any other field. */
 export function testReady(channels: Channel[], over: Partial<Ready> = {}): Ready {

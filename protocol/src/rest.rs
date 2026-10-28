@@ -53,6 +53,76 @@ pub struct User {
     pub id: UserId,
     pub username: String,
     pub avatar_hash: Option<String>,
+    /// The first-frame still of an animated avatar (`None` for a still one).
+    #[serde(default)]
+    pub avatar_still: Option<String>,
+    #[serde(default)]
+    pub style: NameStyle,
+}
+
+/// How a name is drawn: a bundled font and 0 (default), 1 (solid) or 2 (gradient, first to
+/// second) `#rrggbb` colours.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct NameStyle {
+    pub font: Option<String>,
+    pub colors: Vec<String>,
+}
+
+/// The parts of a profile card that are not part of [`User`].
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct CardProfile {
+    pub banner_hash: Option<String>,
+    pub banner_still: Option<String>,
+    pub theme_top: String,
+    pub theme_bottom: String,
+    pub pronouns: Option<String>,
+    pub bio: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ProfileStats {
+    #[ts(type = "number")]
+    pub voice_seconds: u64,
+    pub member_since: String,
+    pub top_reaction: Option<String>,
+    pub times_renamed: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct Badge {
+    pub key: String,
+    pub earned_at: String,
+    pub first_earner: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct NameArchiveEntry {
+    pub server_id: ServerId,
+    pub name: String,
+    pub changed_by: UserId,
+    pub changed_at: String,
+}
+
+/// `GET /users/{id}/profile`.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Profile {
+    pub user: User,
+    pub card: CardProfile,
+    pub stats: ProfileStats,
+    pub badges: Vec<Badge>,
+    pub name_archive: Vec<NameArchiveEntry>,
+}
+
+/// `PUT /me/profile`: the whole editable profile at once.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct UpdateProfileRequest {
+    pub avatar_hash: Option<String>,
+    pub banner_hash: Option<String>,
+    pub theme_top: String,
+    pub theme_bottom: String,
+    pub style: NameStyle,
+    pub pronouns: Option<String>,
+    pub bio: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, TS)]
@@ -910,6 +980,8 @@ mod tests {
                         id: UserId::new(),
                         username: s("alex"),
                         avatar_hash: None,
+                        avatar_still: None,
+                        style: Default::default(),
                     },
                 }
             ),

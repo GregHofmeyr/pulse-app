@@ -5,8 +5,8 @@ use ts_rs::TS;
 
 use crate::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
-    Channel, ClipView, ClipViewPref, CustomEmoji, Game, Member, Message, Mute, Person, QotyEvent,
-    ReadState, Server, SpeakerLink, StreamEndReason, StreamInfo, User,
+    CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game, Member, Message, Mute, Person,
+    QotyEvent, ReadState, Server, SpeakerLink, StreamEndReason, StreamInfo, User,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -197,6 +197,11 @@ pub enum Event {
         online: bool,
         last_seen_at: Option<String>,
     },
+    /// Someone saved their profile; goes to everyone, like presence.
+    ProfileUpdated {
+        user: User,
+        card: CardProfile,
+    },
     GroupMembersChanged {
         channel_id: ChannelId,
         user_ids: Vec<UserId>,
@@ -361,6 +366,7 @@ impl Event {
             | Self::MemberJoined { .. }
             | Self::UserCreated { .. }
             | Self::PresenceChanged { .. }
+            | Self::ProfileUpdated { .. }
             | Self::MutesChanged { .. }
             | Self::EmojiCreated { .. }
             | Self::EmojiUpdated { .. }
@@ -465,6 +471,8 @@ mod tests {
                 id: UserId::new(),
                 username: "a".into(),
                 avatar_hash: None,
+                avatar_still: None,
+                style: Default::default(),
             },
             servers: vec![],
             channels: vec![],
@@ -532,6 +540,8 @@ mod tests {
                 id: UserId::new(),
                 username: "a".into(),
                 avatar_hash: None,
+                avatar_still: None,
+                style: Default::default(),
             },
             servers: vec![],
             channels: vec![],
@@ -640,6 +650,8 @@ mod tests {
                 id: UserId::new(),
                 username: "a".into(),
                 avatar_hash: None,
+                avatar_still: None,
+                style: Default::default(),
             },
             servers: vec![],
             channels: vec![],
@@ -697,5 +709,65 @@ mod tests {
             },
         };
         assert_eq!((game.channel_id(), game.only_for()), (None, None));
+    }
+
+    /// A pre-profiles `User` (no still, no style) still parses, with plain defaults.
+    #[test]
+    fn old_shapes_still_parse() {
+        let id = UserId::new();
+        let u: User = serde_json::from_value(
+            serde_json::json!({ "id": id, "username": "a", "avatar_hash": null }),
+        )
+        .unwrap();
+        assert_eq!(u.avatar_still, None);
+        assert_eq!(u.style, crate::rest::NameStyle::default());
+        assert!(u.style.font.is_none() && u.style.colors.is_empty());
+    }
+
+    /// A v3 reader (without the profile fields) ignores them, so no protocol bump is needed.
+    #[test]
+    fn a_v3_reader_ignores_profile_fields() {
+        #[derive(Deserialize)]
+        #[allow(dead_code)]
+        struct OldUser {
+            id: UserId,
+            username: String,
+            avatar_hash: Option<String>,
+        }
+        let user = User {
+            id: UserId::new(),
+            username: "a".into(),
+            avatar_hash: Some("h".into()),
+            avatar_still: Some("s".into()),
+            style: crate::rest::NameStyle {
+                font: Some("pacifico".into()),
+                colors: vec!["#ffc4a3".into(), "#ff7fae".into()],
+            },
+        };
+        let old: OldUser = serde_json::from_value(serde_json::to_value(&user).unwrap()).unwrap();
+        assert_eq!(old.id, user.id);
+        assert_eq!(old.avatar_hash.as_deref(), Some("h"));
+    }
+
+    #[test]
+    fn profile_updated_goes_to_everyone() {
+        let e = Event::ProfileUpdated {
+            user: User {
+                id: UserId::new(),
+                username: "a".into(),
+                avatar_hash: None,
+                avatar_still: None,
+                style: Default::default(),
+            },
+            card: CardProfile {
+                banner_hash: None,
+                banner_still: None,
+                theme_top: "#3a3d46".into(),
+                theme_bottom: "#16171b".into(),
+                pronouns: None,
+                bio: None,
+            },
+        };
+        assert_eq!((e.channel_id(), e.only_for()), (None, None));
     }
 }

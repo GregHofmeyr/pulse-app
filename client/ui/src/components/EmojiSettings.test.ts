@@ -24,7 +24,7 @@ const info = { hash: 'newhash', content_type: 'image/webp', width: 128, height: 
 let cmp: ReturnType<typeof mount> | undefined
 const show = (list: CustomEmoji[] = []) => {
   app.state = { ...emptyState(), customEmoji: Object.fromEntries(list.map((e) => [e.id, e])),
-    members: { S1: [{ user: { id: 'U2', username: 'sam', avatar_hash: null }, nickname: null }] } }
+    members: { S1: [{ user: { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, nickname: null }] } }
   cmp = mount(EmojiSettings, { target: document.body, props: { server } })
   flushSync()
 }

@@ -16,7 +16,7 @@ import { windowFocus } from '../lib/windowFocus.svelte'
 import { positionAt } from '../lib/composerDom'
 import { testMe, testReady } from '../lib/testReady'
 
-const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready = testReady([{ id: 'C1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 0 }], {
   members: [{ server_id: 'S1', members: [{ user: testMe, nickname: null }, { user: sam, nickname: null }] }],
   people: [{ user: testMe, online: true, last_seen_at: null }, { user: sam, online: true, last_seen_at: null }],

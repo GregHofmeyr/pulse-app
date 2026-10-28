@@ -67,7 +67,7 @@ describe('Shell', () => {
   it('holds animation still while live, and lets go when live ends or the shell goes', async () => {
     const { motion } = await import('../lib/animate.svelte')
     app.state = emptyState()
-    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
     flushSync()
     const live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false } as typeof stream.live
     stream.live = live
@@ -88,7 +88,7 @@ describe('Shell', () => {
 
   it('Esc closes the server menu and puts focus back on the server name', async () => {
     app.state = { ...emptyState(), servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }] }
-    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
     flushSync()
     ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Alpha'))!.click()
     flushSync()
@@ -105,7 +105,7 @@ describe('Shell', () => {
 
   it('server settings and the server menu close when you switch server', () => {
     app.state = { ...emptyState(), servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }, { id: 'S2', name: 'Beta', icon_hash: null }] }
-    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
     flushSync()
     const tab = (name: string) => [...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes(name))!
     tab('Alpha').click()
@@ -123,7 +123,7 @@ describe('Shell', () => {
 
   it('the top bar says why a refused connection is retrying', () => {
     app.state = { ...emptyState(), conn: 'too_many_devices' }
-    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
     flushSync()
     expect(document.querySelector('.conn')!.textContent).toBe('Too many devices connected — close Pulse on another device')
     app.connAt = Date.now()
@@ -138,7 +138,7 @@ describe('Shell', () => {
       vi.setSystemTime(100_000)
       app.connAt = Date.now()
       app.state = { ...emptyState(), conn: { rate_limited: 3 } }
-      cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+      cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
       flushSync()
       expect(document.querySelector('.conn')!.textContent).toBe('Too many attempts, retrying in 3s…')
       vi.advanceTimersByTime(1000)
@@ -164,7 +164,7 @@ describe('Shell', () => {
 describe('account menu', () => {
   it('esc_closes_the_account_menu_and_focus_returns_to_its_toggle', async () => {
     app.state = { ...emptyState() }
-    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
     flushSync()
     const toggle = document.querySelector<HTMLButtonElement>('.who-btn')!
     toggle.click()
@@ -186,7 +186,7 @@ describe('account menu', () => {
 
   it('esc_closes_the_server_mute_menu', async () => {
     app.state = { ...emptyState(), servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }] }
-    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
     flushSync()
     const tab = [...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Alpha'))!
     tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
@@ -200,8 +200,8 @@ describe('account menu', () => {
 })
 
 describe('watching from anywhere', () => {
-  const me = { id: 'U1', username: 'alex', avatar_hash: null }
-  const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+  const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+  const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
   const flags = { muted: false, deafened: false }
   const samStream = { channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false }, status: 'live' as const, viewers: [], started_at: '2026-10-26T10:00:00Z' }
   const ready: Ready = {
@@ -541,7 +541,7 @@ describe('watching from anywhere', () => {
 })
 
 describe('Go Live cleanup', () => {
-  const user = { id: 'U1', username: 'alex', avatar_hash: null }
+  const user = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
   const mountShell = () => {
     cmp = mount(Shell, { target: document.body, props: { user, onLogout: () => {} } })
     flushSync()
@@ -645,7 +645,7 @@ describe('clips being sent', () => {
     let answer: (jobs: unknown[]) => void = () => {}
     invoke.mockImplementation(async (cmd: string) => (cmd === 'clip_jobs' ? new Promise((r) => (answer = r)) : undefined))
     app.state = emptyState()
-    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
     flushSync()
     await new Promise((r) => setTimeout(r, 0))
     expect(invoke.mock.calls.filter((c) => c[0] === 'clip_jobs')).toHaveLength(1)
@@ -667,7 +667,7 @@ describe('clips being sent', () => {
     app.state = emptyState()
     vi.useFakeTimers()
     try {
-      cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+      cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
       flushSync()
       await vi.advanceTimersByTimeAsync(0)
       handlers.get('clip://job')!({ payload: job() })
@@ -688,7 +688,7 @@ describe('clips being sent', () => {
       invoke.mockImplementation(async (cmd: string) =>
         cmd === 'clip_jobs' ? [{ id: 'J1', channel_id: 'C1', stage: 'failed', progress: 0, error: null, caption: '', game_id: null, kept_ms: 9000, thumb_path: null, message_id: null }] : undefined)
       app.state = emptyState()
-      cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null }, onLogout: () => {} } })
+      cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
       flushSync()
       await new Promise((r) => setTimeout(r, 0))
       await new Promise((r) => setTimeout(r, 0))

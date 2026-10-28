@@ -19,7 +19,7 @@ const store = (start: AppState) => {
   let s = start
   return { get: () => s, set: (n: AppState) => (s = n) }
 }
-const start = (): AppState => ({ ...emptyState(), me: { id: 'U1', username: 'alex', avatar_hash: null }, messages: { Q1: [quote] } })
+const start = (): AppState => ({ ...emptyState(), me: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, messages: { Q1: [quote] } })
 const reactions = (s: AppState) => s.messages['Q1'][0].reactions
 
 beforeEach(() => {

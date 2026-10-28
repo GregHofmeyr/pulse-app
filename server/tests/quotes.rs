@@ -455,12 +455,12 @@ async fn a_legacy_orphan_outside_the_guard_does_not_stop_a_migrating_boot() {
 
     let pool = pulse_server::db::connect(&format!("sqlite://{}", path.display()))
         .await
-        .expect("0008 and 0009 apply and the server starts");
+        .expect("0008 to 0010 apply and the server starts");
     let v: i64 = sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(v, 9, "0008 and 0009 apply");
+    assert_eq!(v, 10, "0008, 0009 and 0010 apply");
 }
 
 /// M1: with the whole-database check only logging, 0008's own guard is what stops a migration

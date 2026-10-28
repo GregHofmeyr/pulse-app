@@ -1008,6 +1008,8 @@ mod tests {
                             id: pulse_protocol::ids::UserId::new(),
                             username: "alex".into(),
                             avatar_hash: None,
+                            avatar_still: None,
+                            style: Default::default(),
                         },
                         servers: vec![],
                         channels: vec![],

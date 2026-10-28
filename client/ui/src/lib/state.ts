@@ -674,6 +674,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       if (!p) return s
       return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, online: e.d.online, last_seen_at: e.d.last_seen_at ?? p.last_seen_at } } }
     }
+    case 'ProfileUpdated':
+      return s // applied to people and members in a later task
     case 'GroupMembersChanged':
       return { ...s, dmMembers: { ...s.dmMembers, [e.d.channel_id]: e.d.user_ids } }
     case 'ChannelUpdated':

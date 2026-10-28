@@ -19,8 +19,8 @@ import { startVoiceListening, voice, voiceApi } from '../lib/voice.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 import { HOVER_DELAY_MS } from '../lib/hoverPrefetch'
 
-const me = { id: 'U1', username: 'alex', avatar_hash: null }
-const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready: Ready = {
   me,
   servers: [{ id: 'S1', name: 'Main', icon_hash: null }],

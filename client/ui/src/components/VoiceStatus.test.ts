@@ -19,7 +19,7 @@ import { startVoiceListening, voice } from '../lib/voice.svelte'
 import { windowFocus } from '../lib/windowFocus.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 
-const me = { id: 'U1', username: 'alex', avatar_hash: null }
+const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready: Ready = {
   me,
   servers: [{ id: 'S1', name: 'Main', icon_hash: null }],

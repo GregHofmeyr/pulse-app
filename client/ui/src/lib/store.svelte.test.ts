@@ -43,7 +43,7 @@ describe('app store', () => {
 })
 
 describe('unsent messages in the store', () => {
-  const user = (id: string, username: string) => ({ id, username, avatar_hash: null })
+  const user = (id: string, username: string) => ({ id, username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
   const ready = (me = user('U1', 'alex')): Ready => ({
     me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
     channels: [{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }],

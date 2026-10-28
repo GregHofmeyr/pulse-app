@@ -36,7 +36,7 @@ const msg = (over: Partial<Message> = {}): Message => ({
 })
 
 function load(m: Message) {
-  const me = { id: 'U1', username: 'alex', avatar_hash: null }
+  const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
   app.state = {
     ...emptyState(), me,
     servers: [{ id: 'S1', name: 'Main', icon_hash: null }],

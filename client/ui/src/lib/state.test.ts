@@ -16,7 +16,7 @@ const msg = (id: string, channel_id = 'C1', content = 'hi', author_id: string | 
   id, channel_id, author_id, kind: 'normal', content, reply_to_id: null,
   created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null,
 })
-const me = { id: 'U1', username: 'alex', avatar_hash: null }
+const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready = (over: Partial<Ready> = {}): Ready => ({
   me,
   servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
@@ -116,7 +116,7 @@ describe('applyEvent', () => {
 
   it('member joins and channel creation are idempotent', () => {
     let s = base()
-    const joined = { t: 'MemberJoined', d: { server_id: 'S1', member: { user: { id: 'U2', username: 'sam', avatar_hash: null }, nickname: null } } } as const
+    const joined = { t: 'MemberJoined', d: { server_id: 'S1', member: { user: { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] as string[] } }, nickname: null } } } as const
     s = applyEvent(applyEvent(s, joined, 0), joined, 0)
     expect(s.members['S1']).toHaveLength(2)
     const created = { t: 'ChannelCreated', d: { channel: ch('C2') } } as const
@@ -452,7 +452,7 @@ describe('unsent messages', () => {
 
 
 describe('quotes', () => {
-  const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+  const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
   const line = (id: string, over: Partial<Quote['lines'][number]> = {}): Quote['lines'][number] => ({
     id, speaker_id: null, speaker_name: 'Sam', text: 'hi', media: null, caption: null, awards: 0, awarders: [], awarded: false, ...over,
   })
@@ -1138,7 +1138,7 @@ describe('detached windows (jump to a message)', () => {
 })
 
 describe('clips', () => {
-  const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+  const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
   const cm = (id: string, game: string | null = null, over: Partial<Message> = {}): Message => ({
     ...msg(id, 'K1', ''),
     clip: { thumb_hash: '', duration_ms: 1000, width: 1, height: 1, size: 1, game_id: game, reply_count: 0, last_reply_id: null, replies_seen: null },

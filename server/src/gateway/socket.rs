@@ -10,7 +10,7 @@ use pulse_protocol::gateway::{
     ClientFrame, DmMembers, Event, Ready, ServerFrame, ServerMembers, VoiceMember, VoiceRoom,
 };
 use pulse_protocol::ids::{ChannelId, UserId};
-use pulse_protocol::rest::{Person, User};
+use pulse_protocol::rest::Person;
 use sqlx::SqlitePool;
 
 use crate::AppState;
@@ -20,6 +20,7 @@ use crate::auth::session;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
 use crate::limits::ClientIp;
+use crate::profiles::users::{USER_COLS, USER_JOIN, UserRow};
 use crate::servers::routes::{all_server_channels, all_server_members, all_servers, dms_of};
 use crate::streams::state::StreamState;
 use crate::voice::VoiceState;
@@ -124,22 +125,24 @@ async fn disconnected(s: &AppState, conn: ConnId, me: UserId) {
 
 /// Everyone with an account, online if they have any live connection.
 pub async fn people(db: &SqlitePool, hub: &Hub) -> AppResult<Vec<Person>> {
-    let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT id, username, avatar_hash, last_seen_at FROM users ORDER BY username",
-    )
+    #[derive(sqlx::FromRow)]
+    struct PersonRow {
+        #[sqlx(flatten)]
+        user: UserRow,
+        last_seen_at: Option<String>,
+    }
+    let rows: Vec<PersonRow> = sqlx::query_as(&format!(
+        "SELECT {USER_COLS}, u.last_seen_at FROM users u {USER_JOIN} ORDER BY u.username"
+    ))
     .fetch_all(db)
     .await?;
     rows.into_iter()
-        .map(|(id, username, avatar_hash, last_seen_at)| {
-            let id: UserId = id.parse().map_err(anyhow::Error::from)?;
+        .map(|r| {
+            let user = r.user.into_user()?;
             Ok(Person {
-                online: hub.is_online(id),
-                user: User {
-                    id,
-                    username,
-                    avatar_hash,
-                },
-                last_seen_at,
+                online: hub.is_online(user.id),
+                user,
+                last_seen_at: r.last_seen_at,
             })
         })
         .collect()

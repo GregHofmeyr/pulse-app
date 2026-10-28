@@ -21,7 +21,7 @@ import { reactiveProps } from '../lib/testProps.svelte'
 import { testMe, testReady } from '../lib/testReady'
 import { windowFocus } from '../lib/windowFocus.svelte'
 
-const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready = (lastRead: string | null = null) =>
   testReady([{ id: 'C1', server_id: 'S1', kind: 'clips', name: 'clips', position: 0 }], {
     members: [{ server_id: 'S1', members: [{ user: testMe, nickname: null }, { user: sam, nickname: null }] }],

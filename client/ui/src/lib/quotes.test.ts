@@ -6,8 +6,8 @@ import type { QotyEvent } from './protocol/QotyEvent'
 import type { QuoteLine } from './protocol/QuoteLine'
 import type { Ready } from './protocol/Ready'
 
-const me = { id: 'U1', username: 'alex', avatar_hash: null }
-const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const line = (over: Partial<QuoteLine> = {}): QuoteLine => ({
   id: 'L1', speaker_id: null, speaker_name: 'Sam B', text: 'hi', media: null, caption: null, awards: 0, awarders: [], awarded: false, ...over,
 })

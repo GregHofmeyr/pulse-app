@@ -18,7 +18,7 @@ let cmp: ReturnType<typeof mount> | undefined
 const onSend = vi.fn()
 type Box = HTMLElement
 function show(draftKey = `K${Math.random()}`) {
-  const me = { id: 'U1', username: 'alex', avatar_hash: null }
+  const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
   app.state = {
     ...emptyState(), me,
     servers: [{ id: 'S1', name: 'Main', icon_hash: null }, { id: 'S2', name: 'Other', icon_hash: null }],

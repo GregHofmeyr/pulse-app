@@ -24,7 +24,7 @@ import App from './App.svelte'
 import { app, ui } from './lib/store.svelte'
 import { emptyState } from './lib/state'
 
-const alex = { id: 'U1', username: 'alex', avatar_hash: null }
+const alex = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 let cmp: ReturnType<typeof mount> | undefined
 const conn = (payload: unknown) => {
   h.handlers['pulse://conn']({ payload })

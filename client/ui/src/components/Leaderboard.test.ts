@@ -11,8 +11,8 @@ import Leaderboard from './Leaderboard.svelte'
 import { app, handleReady, resetState } from '../lib/store.svelte'
 import { testMe, testReady } from '../lib/testReady'
 
-const sam = { id: 'U2', username: 'sam', avatar_hash: null }
-const kim = { id: 'U3', username: 'kim', avatar_hash: null }
+const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const kim = { id: 'U3', username: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 
 const quote = (id: string, text: string, reactions = 0): Message => ({
   id, channel_id: 'C1', author_id: 'U1', kind: 'normal', content: `“${text}” — sam`, reply_to_id: null,

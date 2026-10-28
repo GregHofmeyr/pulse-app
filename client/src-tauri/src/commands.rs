@@ -2128,6 +2128,8 @@ mod tests {
             id: UserId::new(),
             username: "alex".into(),
             avatar_hash: None,
+            avatar_still: None,
+            style: Default::default(),
         };
         assert!(j(Restored::Ready(u)).starts_with(r#"{"status":"ready","user":{"#));
     }

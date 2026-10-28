@@ -89,9 +89,9 @@ describe('ServerSettings dialog', () => {
   it('lists links and undo calls unlink_speaker', async () => {
     invoke.mockReset()
     invoke.mockResolvedValue(undefined)
-    const me = { id: 'U1', username: 'alex', avatar_hash: null }
-    const sam = { id: 'U2', username: 'sam', avatar_hash: null }
-    const kim = { id: 'U3', username: 'kim', avatar_hash: null }
+    const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    const kim = { id: 'U3', username: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
     app.state = {
       ...emptyState(), me,
       members: { S1: [{ user: me, nickname: null }, { user: sam, nickname: null }, { user: kim, nickname: null }] },
@@ -127,8 +127,8 @@ describe('ServerSettings dialog', () => {
   it('Escape in the member picker closes the picker, not the dialog', async () => {
     invoke.mockReset()
     invoke.mockResolvedValue(undefined)
-    const me = { id: 'U1', username: 'alex', avatar_hash: null }
-    const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+    const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
     app.state = {
       ...emptyState(), me,
       members: { S1: [{ user: me, nickname: null }, { user: sam, nickname: null }] },

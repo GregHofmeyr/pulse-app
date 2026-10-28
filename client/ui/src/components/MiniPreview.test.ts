@@ -31,8 +31,8 @@ import { stream, streamApi } from '../lib/stream/stream.svelte'
 import { callView, openFull } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 
-const me = { id: 'U1', username: 'alex', avatar_hash: null }
-const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const flags = { muted: false, deafened: false }
 const samStream = { channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false }, status: 'live' as const, viewers: [], started_at: '2026-10-26T10:00:00Z' }
 const ready: Ready = {

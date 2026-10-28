@@ -409,7 +409,7 @@ async fn migrate_subcommand_migrates_and_exits() {
     let out = run_migrate(&url);
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.lines().any(|l| l == "migrated: 9"), "{stdout}");
+    assert!(stdout.lines().any(|l| l == "migrated: 10"), "{stdout}");
     assert!(stdout.contains(&url), "names the database: {stdout}");
 }
 

@@ -580,7 +580,7 @@ describe('reactor tooltip edge cases', () => {
 })
 
 describe('chips you cannot add to', () => {
-  const me = { id: 'U1', username: 'alex', avatar_hash: null }
+  const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
   const ce = (id: string, server: string, hash: string | null) =>
     ({ id, server_id: server, name: `e${id}`, hash, still_hash: null, animated: false, added_by: null, created_at: '2026-10-01T00:00:00.000Z' })
   function showCustom(reactions: Message['reactions']) {

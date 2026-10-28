@@ -11,6 +11,7 @@ pub mod hygiene;
 pub mod limits;
 pub mod media;
 pub mod messages;
+pub mod profiles;
 pub mod qoty;
 pub mod quotes;
 pub mod reads;

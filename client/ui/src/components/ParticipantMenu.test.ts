@@ -18,8 +18,8 @@ import { goLiveUi } from '../lib/stream/golive.svelte'
 import { callView } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 
-const me = { id: 'U1', username: 'alex', avatar_hash: null }
-const sam = { id: 'U2', username: 'sam', avatar_hash: null }
+const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const flags = { muted: false, deafened: false }
 const ready: Ready = {
   me,

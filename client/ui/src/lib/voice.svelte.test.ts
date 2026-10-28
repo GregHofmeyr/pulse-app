@@ -19,7 +19,7 @@ import { app, startListening } from './store.svelte'
 import { emptyState } from './state'
 import { startVoiceListening, voice } from './voice.svelte'
 
-const me = { id: 'ME', username: 'alex', avatar_hash: null }
+const me = { id: 'ME', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const removed = (channel_id: string, user_id = 'ME') => h.handlers['pulse://event']({ payload: { t: 'ChannelRemoved', d: { channel_id, user_id } } })
 
 describe('removed from a conversation', () => {

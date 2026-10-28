@@ -12,7 +12,7 @@ use base64::Engine;
 use pulse_protocol::ids::UserId;
 use pulse_protocol::rest::{
     LoginMfaRequest, RecoveryCodesResponse, SessionResponse, TwoFactorCodeRequest,
-    TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, User,
+    TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus,
 };
 use rand::RngCore;
 use sha2::{Digest, Sha256};
@@ -500,18 +500,9 @@ async fn login_second_step(
         }
         tx.commit().await?;
         let token = session::create(&s.db, user).await?;
-        let (username, avatar_hash): (String, Option<String>) =
-            sqlx::query_as("SELECT username, avatar_hash FROM users WHERE id = ?")
-                .bind(user.to_string())
-                .fetch_one(&s.db)
-                .await?;
         Ok(Json(SessionResponse {
             token,
-            user: User {
-                id: user,
-                username,
-                avatar_hash,
-            },
+            user: crate::auth::routes::load_user(&s.db, user).await?,
         }))
     })
     .await

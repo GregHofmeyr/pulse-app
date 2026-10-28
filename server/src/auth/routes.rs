@@ -16,6 +16,7 @@ use crate::AppState;
 use crate::db::now;
 use crate::error::{AppError, AppResult, Ticket};
 use crate::limits::ClientIp;
+use crate::profiles::users::{USER_COLS, USER_JOIN, UserRow};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -55,17 +56,14 @@ fn check_password_rule(p: &str) -> AppResult<()> {
 }
 
 pub async fn load_user(db: &SqlitePool, id: UserId) -> AppResult<User> {
-    let (username, avatar_hash): (String, Option<String>) =
-        sqlx::query_as("SELECT username, avatar_hash FROM users WHERE id = ?")
-            .bind(id.to_string())
-            .fetch_optional(db)
-            .await?
-            .ok_or(AppError::NotFound)?;
-    Ok(User {
-        id,
-        username,
-        avatar_hash,
-    })
+    sqlx::query_as::<_, UserRow>(&format!(
+        "SELECT {USER_COLS} FROM users u {USER_JOIN} WHERE u.id = ?"
+    ))
+    .bind(id.to_string())
+    .fetch_optional(db)
+    .await?
+    .ok_or(AppError::NotFound)?
+    .into_user()
 }
 
 async fn register(
@@ -158,6 +156,8 @@ async fn register_with(s: &AppState, mut req: RegisterRequest) -> AppResult<Json
         id,
         username: req.username,
         avatar_hash: None,
+        avatar_still: None,
+        style: Default::default(),
     };
     s.hub
         .publish(&s.db, Event::UserCreated { user: user.clone() })
@@ -213,12 +213,12 @@ async fn login(
 }
 
 async fn check_login(s: &AppState, req: LoginRequest) -> AppResult<Json<SessionResponse>> {
-    let row: Option<(String, String, Option<String>)> =
-        sqlx::query_as("SELECT id, password_hash, avatar_hash FROM users WHERE username = ?")
+    let row: Option<(String, String)> =
+        sqlx::query_as("SELECT id, password_hash FROM users WHERE username = ?")
             .bind(&req.username)
             .fetch_optional(&s.db)
             .await?;
-    let Some((id, hash, avatar_hash)) = row else {
+    let Some((id, hash)) = row else {
         let _ = password::verify_async(req.password, DUMMY_HASH.clone()).await;
         return Err(AppError::Unauthorized);
     };
@@ -234,11 +234,7 @@ async fn check_login(s: &AppState, req: LoginRequest) -> AppResult<Json<SessionR
     };
     Ok(Json(SessionResponse {
         token,
-        user: User {
-            id,
-            username: req.username,
-            avatar_hash,
-        },
+        user: load_user(&s.db, id).await?,
     }))
 }
 

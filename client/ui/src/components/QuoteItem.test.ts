@@ -20,9 +20,9 @@ const A = 'a'.repeat(64)
 const S = 'b'.repeat(64)
 const P = 'c'.repeat(64)
 const url = (h: string) => `pulse-media://localhost/${h}`
-const alex = { id: 'U1', username: 'alex', avatar_hash: null }
-const sam = { id: 'U2', username: 'sam', avatar_hash: null }
-const kim = { id: 'U3', username: 'kim', avatar_hash: null }
+const alex = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const kim = { id: 'U3', username: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 
 const line = (over: Partial<QuoteLine> = {}): QuoteLine => ({
   id: 'L1', speaker_id: 'U2', speaker_name: null, text: 'hello there', media: null, caption: null,

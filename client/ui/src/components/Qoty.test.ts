@@ -22,8 +22,8 @@ import { app, clock, handleReady, resetState } from '../lib/store.svelte'
 import { testMe, testQoty, testReady } from '../lib/testReady'
 import { reactiveProps } from '../lib/testProps.svelte'
 
-const sam = { id: 'U2', username: 'sam', avatar_hash: null }
-const kim = { id: 'U3', username: 'kim', avatar_hash: null }
+const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const kim = { id: 'U3', username: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const HOUR = 3_600_000
 
 const quote = (id: string, text: string, speaker = 'U2', reactions = 0): Message => ({

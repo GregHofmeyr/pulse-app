@@ -8,7 +8,7 @@ use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, ServerId, UserId};
 use pulse_protocol::rest::{
     Channel, ChannelKind, CreateChannelRequest, CreateDmRequest, CreateServerRequest, Member,
-    Server, User,
+    Server,
 };
 use sqlx::SqlitePool;
 
@@ -19,6 +19,7 @@ use crate::auth::routes::load_user;
 use crate::db::now;
 use crate::error::{AppError, AppResult};
 use crate::limits::caps;
+use crate::profiles::users::{USER_COLS, USER_JOIN, UserRow};
 
 const MAX_GROUP_OTHERS: usize = 9;
 
@@ -397,55 +398,53 @@ async fn create_channel(
     Ok(Json(ch))
 }
 
-fn member_from_row(
-    uid: String,
-    username: String,
-    avatar_hash: Option<String>,
+#[derive(sqlx::FromRow)]
+struct MemberRow {
+    #[sqlx(flatten)]
+    user: UserRow,
     nickname: Option<String>,
-) -> AppResult<Member> {
-    Ok(Member {
-        user: User {
-            id: uid.parse().map_err(anyhow::Error::from)?,
-            username,
-            avatar_hash,
-        },
-        nickname,
-    })
+}
+
+impl MemberRow {
+    fn into_member(self) -> AppResult<Member> {
+        Ok(Member {
+            user: self.user.into_user()?,
+            nickname: self.nickname,
+        })
+    }
 }
 
 pub async fn server_members(db: &SqlitePool, id: ServerId) -> AppResult<Vec<Member>> {
-    let rows: Vec<(String, String, Option<String>, Option<String>)> = sqlx::query_as(
-        "SELECT u.id, u.username, u.avatar_hash, m.nickname FROM server_members m JOIN users u ON u.id = m.user_id
-         WHERE m.server_id = ? ORDER BY m.joined_at, m.user_id",
-    )
+    let rows: Vec<MemberRow> = sqlx::query_as(&format!(
+        "SELECT {USER_COLS}, m.nickname FROM server_members m JOIN users u ON u.id = m.user_id {USER_JOIN}
+         WHERE m.server_id = ? ORDER BY m.joined_at, m.user_id"
+    ))
     .bind(id.to_string())
     .fetch_all(db)
     .await?;
-    rows.into_iter()
-        .map(|(uid, username, avatar_hash, nickname)| {
-            member_from_row(uid, username, avatar_hash, nickname)
-        })
-        .collect()
+    rows.into_iter().map(MemberRow::into_member).collect()
 }
 
-/// server id, user id, username, avatar hash, nickname.
-type ServerMemberRow = (String, String, String, Option<String>, Option<String>);
+#[derive(sqlx::FromRow)]
+struct ServerMemberRow {
+    server_id: String,
+    #[sqlx(flatten)]
+    member: MemberRow,
+}
 
 /// Every server's members in one query, each list ordered as [`server_members`] orders it.
 pub async fn all_server_members(db: &SqlitePool) -> AppResult<HashMap<ServerId, Vec<Member>>> {
-    let rows: Vec<ServerMemberRow> = sqlx::query_as(
-        "SELECT m.server_id, u.id, u.username, u.avatar_hash, m.nickname
-         FROM server_members m JOIN users u ON u.id = m.user_id
-         ORDER BY m.server_id, m.joined_at, m.user_id",
-    )
+    let rows: Vec<ServerMemberRow> = sqlx::query_as(&format!(
+        "SELECT m.server_id, {USER_COLS}, m.nickname
+         FROM server_members m JOIN users u ON u.id = m.user_id {USER_JOIN}
+         ORDER BY m.server_id, m.joined_at, m.user_id"
+    ))
     .fetch_all(db)
     .await?;
     let mut out: HashMap<ServerId, Vec<Member>> = HashMap::new();
-    for (sid, uid, username, avatar_hash, nickname) in rows {
-        let sid: ServerId = sid.parse().map_err(anyhow::Error::from)?;
-        out.entry(sid)
-            .or_default()
-            .push(member_from_row(uid, username, avatar_hash, nickname)?);
+    for row in rows {
+        let sid: ServerId = row.server_id.parse().map_err(anyhow::Error::from)?;
+        out.entry(sid).or_default().push(row.member.into_member()?);
     }
     Ok(out)
 }
