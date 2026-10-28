@@ -762,6 +762,34 @@ async fn world() -> World {
     }
 }
 
+/// Every frame `ws` gets up to a marker: a message alex posts in the server's text channel after
+/// the action. Events reach a socket in the order they were published, and every route here
+/// publishes before it answers, so all the action's frames are in, without betting on a quiet
+/// period (a frame later than that on a slow runner would be missed). A generous per-frame deadline.
+async fn frames_until_marker(w: &World, ws: &mut Socket) -> Vec<ServerFrame> {
+    let text = general(&w.app, &w.alex.1, w.server).await;
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/messages", text.id),
+        json!({ "content": "marker" }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "marker");
+    let marker: Message = r.json().await.unwrap();
+    let mut frames = Vec::new();
+    loop {
+        let f = next_frame_beating(ws, Duration::from_secs(5))
+            .await
+            .expect("the marker arrives");
+        if matches!(&f, ServerFrame::Event(Event::MessageCreated { message, .. }) if message.id == marker.id)
+        {
+            return frames;
+        }
+        frames.push(f);
+    }
+}
+
 async fn error_message(r: reqwest::Response) -> String {
     r.json::<pulse_protocol::rest::ApiError>()
         .await
@@ -937,9 +965,20 @@ async fn confirm_checks_the_object() {
         let r = confirm(&w.app, &w.alex.1, &up, body).await;
         assert_eq!(r.status(), 400, "{what}");
     }
-    // a poster that isn't mine (or is gone): a 409 the client answers with a fresh poster
+    // a poster that isn't stored (gone, or never a still image): a 409 the client answers with a fresh poster
     let unknown = "0".repeat(64);
-    for hash in [sams_thumb.as_str(), unknown.as_str()] {
+    let emoji = "e".repeat(64);
+    sqlx::query(
+        "INSERT INTO media (hash, kind, content_type, size, width, height, frames, uploaded_by, created_at)
+         VALUES (?, 'emoji', 'image/webp', 10, 32, 32, 1, ?, ?)",
+    )
+    .bind(&emoji)
+    .bind(w.alex.0.to_string())
+    .bind("2026-10-28T00:00:00.000Z")
+    .execute(&w.app.db)
+    .await
+    .unwrap();
+    for hash in [unknown.as_str(), emoji.as_str()] {
         let r = confirm(
             &w.app,
             &w.alex.1,
@@ -953,11 +992,93 @@ async fn confirm_checks_the_object() {
         assert_eq!(e.message, "The preview image is missing. Try again.");
     }
     assert_eq!(tickets(&w.app).await, 1);
-    let mut ok = confirm_body(&thumb, None);
-    ok["duration_ms"] = json!(90_500);
+    // someone else's poster is fine: the store keeps one row per image, and anyone can fetch it
+    let mut ok = confirm_body(&sams_thumb, None);
+    ok["duration_ms"] = json!(30_500);
     ok["caption"] = json!("x".repeat(300));
     let r = confirm(&w.app, &w.alex.1, &up, ok).await;
     assert_eq!(r.status(), 200, "the limits themselves are fine");
+
+    // the longest clip a ticket can be granted, with the encoder's slack
+    let r = ticket(&w.app, &w.alex.1, w.channel.id, 1_000, 90_000).await;
+    let up: ClipUpload = r.json().await.unwrap();
+    put_object(&w.app, &up, vec![2u8; 1_000]).await;
+    let mut ok = confirm_body(&thumb, None);
+    ok["duration_ms"] = json!(90_500);
+    assert_eq!(confirm(&w.app, &w.alex.1, &up, ok).await.status(), 200);
+}
+
+#[tokio::test]
+async fn confirm_keeps_to_the_tickets_duration() {
+    let w = world().await;
+    let thumb = upload_thumb(&w.app, &w.alex.1).await;
+    let r = ticket(&w.app, &w.alex.1, w.channel.id, 1_000, 10_000).await;
+    let up: ClipUpload = r.json().await.unwrap();
+    put_object(&w.app, &up, vec![2u8; 1_000]).await;
+    let mut body = confirm_body(&thumb, None);
+    body["duration_ms"] = json!(10_501);
+    let r = confirm(&w.app, &w.alex.1, &up, body.clone()).await;
+    assert_eq!(r.status(), 400, "longer than the ticket was granted for");
+    assert_eq!(
+        error_message(r).await,
+        "That clip is longer than its upload."
+    );
+    body["duration_ms"] = json!(10_500);
+    let r = confirm(&w.app, &w.alex.1, &up, body).await;
+    assert_eq!(r.status(), 200, "the encoder's slack is fine");
+}
+
+/// A still image with fixed bytes: two people uploading it store one row (the first uploader's).
+fn same_png() -> Vec<u8> {
+    let img = image::RgbaImage::from_pixel(64, 36, image::Rgba([0, 0, 0, 255]));
+    let mut out = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+    out.into_inner()
+}
+
+async fn upload_image(app: &TestApp, token: &str, path: &str, bytes: Vec<u8>) -> String {
+    let r = app
+        .http
+        .post(app.url(path))
+        .bearer_auth(token)
+        .header("content-type", "application/octet-stream")
+        .body(bytes)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200, "{path}");
+    r.json::<MediaInfo>().await.unwrap().hash
+}
+
+#[tokio::test]
+async fn identical_posters_from_two_people_both_post() {
+    let w = world().await;
+    // a black frame (a fade, a loading screen) encodes to the same bytes for everyone
+    let alexs = upload_image(&w.app, &w.alex.1, "/media/clip-thumb", same_png()).await;
+    let sams = upload_image(&w.app, &w.sam.1, "/media/clip-thumb", same_png()).await;
+    assert_eq!(alexs, sams);
+    for (who, hash) in [(&w.alex.1, &alexs), (&w.sam.1, &sams)] {
+        let up = ticket_ok(&w.app, who, w.channel.id, 1_000).await;
+        put_object(&w.app, &up, vec![5u8; 1_000]).await;
+        let r = confirm(&w.app, who, &up, confirm_body(hash, None)).await;
+        assert_eq!(r.status(), 200);
+    }
+}
+
+#[tokio::test]
+async fn a_poster_first_stored_as_a_quote_image_posts() {
+    let w = world().await;
+    let mut png = std::io::Cursor::new(Vec::new());
+    image::RgbaImage::from_pixel(64, 36, image::Rgba([255, 255, 255, 255]))
+        .write_to(&mut png, image::ImageFormat::Png)
+        .unwrap();
+    let quote = upload_image(&w.app, &w.sam.1, "/media/quote", png.get_ref().clone()).await;
+    let poster = upload_image(&w.app, &w.alex.1, "/media/clip-thumb", png.into_inner()).await;
+    assert_eq!(quote, poster);
+    let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 1_000).await;
+    put_object(&w.app, &up, vec![5u8; 1_000]).await;
+    let r = confirm(&w.app, &w.alex.1, &up, confirm_body(&poster, None)).await;
+    assert_eq!(r.status(), 200);
 }
 
 #[tokio::test]
@@ -1085,12 +1206,11 @@ async fn a_repeated_confirm_returns_the_same_clip() {
     assert_eq!(first.id, second.id);
     assert_eq!(second.clip, first.clip);
 
-    let mut created = 0;
-    while let Some(f) = next_frame_beating(&mut ws, Duration::from_millis(600)).await {
-        if matches!(f, ServerFrame::Event(Event::MessageCreated { .. })) {
-            created += 1;
-        }
-    }
+    let created = frames_until_marker(&w, &mut ws)
+        .await
+        .into_iter()
+        .filter(|f| matches!(f, ServerFrame::Event(Event::MessageCreated { .. })))
+        .count();
     assert_eq!(created, 1);
 }
 
@@ -1182,12 +1302,11 @@ async fn two_confirms_at_once_post_one_clip() {
         .await
         .unwrap();
     assert_eq!(rows, 1);
-    let mut created = 0;
-    while let Some(f) = next_frame_beating(&mut ws, Duration::from_millis(600)).await {
-        if matches!(f, ServerFrame::Event(Event::MessageCreated { .. })) {
-            created += 1;
-        }
-    }
+    let created = frames_until_marker(&w, &mut ws)
+        .await
+        .into_iter()
+        .filter(|f| matches!(f, ServerFrame::Event(Event::MessageCreated { .. })))
+        .count();
     assert_eq!(created, 1);
 }
 
@@ -1356,6 +1475,45 @@ async fn only_the_poster_edits() {
 }
 
 #[tokio::test]
+async fn an_edit_shows_each_person_their_own_seen_point() {
+    let w = world().await;
+    let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![1u8; 10]).await;
+    // alex's own reply marks alex's place in the thread; sam has never opened it
+    let r = clip_reply(&w, &w.alex.1, w.channel.id, clip.id, "first").await;
+    let reply: Message = r.json().await.unwrap();
+    let mut ws = hello(&w.app, &w.sam.1).await;
+
+    let r = put_clip(
+        &w.app,
+        &w.alex.1,
+        clip.id,
+        json!({ "caption": "edited", "game_id": null }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let m: Message = r.json().await.unwrap();
+    assert_eq!(
+        m.clip.unwrap().replies_seen,
+        Some(reply.id),
+        "alex's answer is alex's view"
+    );
+    loop {
+        match next_frame_beating(&mut ws, Duration::from_secs(5))
+            .await
+            .expect("MessageUpdated")
+        {
+            ServerFrame::Event(Event::MessageUpdated { message }) if message.id == clip.id => {
+                let c = message.clip.unwrap();
+                assert_eq!(c.replies_seen, None, "an event carries nobody's seen point");
+                assert_eq!(c.last_reply_id, Some(reply.id));
+                break;
+            }
+            _ => continue,
+        }
+    }
+}
+
+#[tokio::test]
 async fn clips_cant_be_edited_as_messages() {
     let w = world().await;
     let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![1u8; 10]).await;
@@ -1456,7 +1614,7 @@ async fn deleting_a_clip_removes_object_reactions_and_replies() {
     assert!(deleted.is_some());
 
     let (mut got_clip, mut got_reply) = (false, false);
-    while let Some(f) = next_frame_beating(&mut ws, Duration::from_millis(600)).await {
+    for f in frames_until_marker(&w, &mut ws).await {
         if let ServerFrame::Event(Event::MessageDeleted {
             message_id,
             thread_root_id,
@@ -2234,7 +2392,7 @@ async fn view_preference_is_per_person_and_channel() {
     assert!(ready_of(&w.app, &w.sam.1).await.clip_views.is_empty());
 
     let mut seen = false;
-    while let Some(f) = next_frame_beating(&mut alex_ws, Duration::from_millis(600)).await {
+    for f in frames_until_marker(&w, &mut alex_ws).await {
         if let ServerFrame::Event(Event::ClipViewChanged {
             user_id,
             channel_id,
@@ -2246,7 +2404,7 @@ async fn view_preference_is_per_person_and_channel() {
         }
     }
     assert!(seen, "alex's session hears about it");
-    while let Some(f) = next_frame_beating(&mut sam_ws, Duration::from_millis(600)).await {
+    for f in frames_until_marker(&w, &mut sam_ws).await {
         assert!(
             !matches!(f, ServerFrame::Event(Event::ClipViewChanged { .. })),
             "sam must not hear it"

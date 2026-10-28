@@ -218,12 +218,15 @@ impl R2 {
 }
 
 /// The `clips-check` length step: a store that answers 2xx to a body longer than the signed
-/// length doesn't enforce the cap.
+/// length doesn't enforce the cap. Only a 4xx is a refusal; a 5xx (an outage) or anything else
+/// proves nothing.
 fn length_check(status: reqwest::StatusCode) -> Result<(), String> {
     if status.is_success() {
         Err("length check failed: the store accepted a body longer than the signed length".into())
-    } else {
+    } else if status.is_client_error() {
         Ok(())
+    } else {
+        Err(format!("length check failed: HTTP {status}"))
     }
 }
 
@@ -402,6 +405,20 @@ mod tests {
         let e = length_check(StatusCode::OK).unwrap_err();
         assert!(e.starts_with("length check failed"), "{e}");
         assert!(length_check(StatusCode::FORBIDDEN).is_ok());
+        assert!(length_check(StatusCode::BAD_REQUEST).is_ok());
+    }
+
+    #[test]
+    fn a_store_outage_is_not_a_refusal() {
+        for code in [
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::SERVICE_UNAVAILABLE,
+        ] {
+            let e = length_check(code).unwrap_err();
+            assert_eq!(e, format!("length check failed: HTTP {code}"));
+        }
+        // a redirect proves nothing either
+        assert!(length_check(StatusCode::TEMPORARY_REDIRECT).is_err());
     }
 
     #[test]

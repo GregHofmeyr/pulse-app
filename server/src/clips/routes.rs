@@ -128,19 +128,31 @@ async fn create_ticket(
     }))
 }
 
-/// One of my tickets: `(key, channel, size, created_at)`. Anyone else's is a 404.
-async fn my_ticket(
-    db: &SqlitePool,
-    me: UserId,
-    id: ClipUploadId,
-) -> AppResult<(String, Option<String>, i64, String)> {
-    sqlx::query_as(
-        "SELECT key, channel_id, size, created_at FROM clip_uploads WHERE id = ? AND user_id = ?",
+/// One of my tickets. Anyone else's is a 404.
+struct Ticket {
+    key: String,
+    channel: Option<String>,
+    size: i64,
+    duration_ms: u32,
+    created_at: String,
+}
+
+async fn my_ticket(db: &SqlitePool, me: UserId, id: ClipUploadId) -> AppResult<Ticket> {
+    sqlx::query_as::<_, (String, Option<String>, i64, u32, String)>(
+        "SELECT key, channel_id, size, duration_ms, created_at FROM clip_uploads
+         WHERE id = ? AND user_id = ?",
     )
     .bind(id.to_string())
     .bind(me.to_string())
     .fetch_optional(db)
     .await?
+    .map(|(key, channel, size, duration_ms, created_at)| Ticket {
+        key,
+        channel,
+        size,
+        duration_ms,
+        created_at,
+    })
     .ok_or(AppError::NotFound)
 }
 
@@ -169,7 +181,7 @@ async fn cancel(
     AuthUser(me): AuthUser,
     Path(id): Path<ClipUploadId>,
 ) -> AppResult<StatusCode> {
-    let (key, ..) = my_ticket(&s.db, me, id).await?;
+    let key = my_ticket(&s.db, me, id).await?.key;
     if !discard(&s, id, &key).await? {
         // a confirm spent it a moment ago
         return Err(AppError::NotFound);
@@ -179,6 +191,26 @@ async fn cancel(
 
 /// The `code` of confirm's 409 for a poster that isn't there (the client uploads it again).
 pub const THUMB_MISSING: &str = "thumb_missing";
+
+/// The poster is a stored still image. The store keeps one row per image (its first uploader's
+/// kind and owner), and anyone can fetch it by hash, so a poster needn't be "mine": two people's
+/// identical posters (a black or white frame) or an image first stored for a quote both count.
+/// Missing: a 409 the client answers by uploading it again.
+async fn poster_stored(c: &mut sqlx::SqliteConnection, hash: &str) -> AppResult<()> {
+    let found: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM media WHERE hash = ? AND kind IN ('clip_thumb', 'quote') AND frames <= 1",
+    )
+    .bind(hash)
+    .fetch_optional(c)
+    .await?;
+    match found {
+        Some(_) => Ok(()),
+        None => Err(AppError::ConflictCode(
+            THUMB_MISSING,
+            "The preview image is missing. Try again.".into(),
+        )),
+    }
+}
 
 fn bad(msg: &str) -> AppError {
     AppError::BadRequest(msg.into())
@@ -197,7 +229,13 @@ async fn confirm(
         return replay(&s, me, id, existing).await;
     }
 
-    let (key, channel, ticket_size, created) = match my_ticket(&s.db, me, id).await {
+    let Ticket {
+        key,
+        channel,
+        size: ticket_size,
+        duration_ms: granted_ms,
+        created_at: created,
+    } = match my_ticket(&s.db, me, id).await {
         Ok(t) => t,
         // A twin of this request may have committed (spending the ticket) since the check above.
         Err(AppError::NotFound) => {
@@ -237,27 +275,19 @@ async fn confirm(
     if req.duration_ms == 0 || req.duration_ms > MAX_DURATION_MS + CONFIRM_SLACK_MS {
         return Err(bad("Clips can be up to 1:30."));
     }
+    // The ticket pins the length it was granted for; the encoder may round up a little.
+    if req.duration_ms > granted_ms.saturating_add(CONFIRM_SLACK_MS) {
+        return Err(bad("That clip is longer than its upload."));
+    }
     let side = MIN_SIDE..=MAX_SIDE;
     if !side.contains(&req.width) || !side.contains(&req.height) {
         return Err(bad("That clip's size isn't supported."));
     }
-    let thumb: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM media WHERE hash = ? AND kind = 'clip_thumb' AND uploaded_by = ?",
-    )
-    .bind(&req.thumb_hash)
-    .bind(me.to_string())
-    .fetch_optional(&s.db)
-    .await?;
-    if thumb.is_none() {
-        if !crate::media::valid_hash(&req.thumb_hash) {
-            return Err(bad("That preview image isn't valid."));
-        }
-        // well formed but not one of mine (gone, or never mine): the client uploads it again
-        return Err(AppError::ConflictCode(
-            THUMB_MISSING,
-            "The preview image is missing. Try again.".into(),
-        ));
+    if !crate::media::valid_hash(&req.thumb_hash) {
+        return Err(bad("That preview image isn't valid."));
     }
+    // Checked early to answer fast, and again inside the write (the hourly cleanup may take it meanwhile).
+    poster_stored(&mut *s.db.acquire().await?, &req.thumb_hash).await?;
     if let Some(game) = req.game_id
         && !games::in_server(&s.db, server, game).await?
     {
@@ -316,6 +346,8 @@ async fn confirm(
     if live == 0 {
         return Err(AppError::NotFound);
     }
+    // Under the write lock: the cleanup can't take the poster between here and the `clips` insert.
+    poster_stored(&mut tx, &req.thumb_hash).await?;
     crate::media::put_remote(
         &mut tx,
         MediaKind::Clip,
@@ -472,15 +504,13 @@ async fn edit(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    // Events carry nobody's thread seen point (as quotes); the answer carries mine.
+    if let Some(event) = load(&s.db, None, id).await? {
+        s.hub
+            .publish(&s.db, Event::MessageUpdated { message: event })
+            .await;
+    }
     let msg = load(&s.db, Some(me), id).await?.ok_or(AppError::NotFound)?;
-    s.hub
-        .publish(
-            &s.db,
-            Event::MessageUpdated {
-                message: msg.clone(),
-            },
-        )
-        .await;
     Ok(Json(msg))
 }
 
