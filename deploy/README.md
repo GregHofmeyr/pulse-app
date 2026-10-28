@@ -213,7 +213,7 @@ Setup, once:
    Do this now and then; an untested backup is a hope. `RCLONE_CONFIG_R2_NO_HEAD` in `backup.sh` drops rclone's post-upload check, so the drill is the integrity check of what reached R2.
 
 Restoring for real: `just restore daily/pulse-<time>.db.age`. The restored database needs the `PULSE_TOTP_KEY` it was
-written under (same server: already in `.env`; new server: section 11; otherwise see "Lost key"). The server stops for
+written under (same server: already in `.env`; new server: section 12; otherwise see "Lost key"). The server stops for
 a few seconds; the old database is kept next to it as `data/pulse.db.pre-restore-<time>`.
 
 Restoring the media (the database restore doesn't touch it; do this after a lost or rebuilt server, or to roll
@@ -226,12 +226,42 @@ the row-driven hourly cleanup: delete those under `data/media` by hand, or resto
 Backups of a media directory that changes mid-archive (an upload during the backup) only warn; the database backup
 and the rest of the media are kept.
 
-## 9. Uptime monitor
+## 9. Clips storage
+
+Clips (the clips channels) keep their videos in a Cloudflare R2 bucket of their own, apart from the backups bucket:
+the client uploads straight to R2 with a short-lived signed URL, and players stream from R2 the same way. **Clips are
+not backed up, by design:** R2 is the durable copy. The nightly job copies the database rows (which say what each clip
+is) and the thumbnails (small files on the server's disk, backed up with the media like emoji), but never the videos.
+Lose the bucket and the rows would point at nothing, so don't delete it.
+
+Without the three `CLIPS_R2_*` settings the server runs fine and answers "Clips storage isn't set up on this server."
+for clip uploads. They are all or nothing: `deploy.sh` (and `just deploy`, before copying anything) refuses a
+half-filled set and names the empty ones.
+
+Setup, once, in the Cloudflare dashboard and on the server:
+
+1. R2 → create a bucket for clips (a different one from `pulse-backups`). No public access, no custom domain.
+2. R2 → Manage API tokens → Create: permission **Object Read & Write**, only for that bucket. Note the Access Key ID
+   and the Secret Access Key. The account ID is the `R2_ACCOUNT_ID` already in `.env`: it is one account, a separate
+   bucket and a separate token, so a leaked clips token can't touch the backups.
+3. `ssh -t pulse@pulse 'TERM=xterm-256color nano /srv/pulse/.env'` → fill `CLIPS_R2_BUCKET`, `CLIPS_R2_ACCESS_KEY_ID`,
+   `CLIPS_R2_SECRET_ACCESS_KEY`. The endpoint is `https://<account-id>.r2.cloudflarestorage.com`, built by
+   `compose.yml` from `R2_ACCOUNT_ID`.
+4. `just deploy`, then `just clips-check`: it writes, reads and deletes one small object with the live settings
+   and says which step failed if one does.
+
+`just clips-storage` shows how many clips each server holds, their size and the estimated monthly cost (R2's free tier
+taken into account).
+
+**No CORS rule is needed on the bucket.** Uploads come from the Tauri client's Rust core (not a browser origin), and
+playback is a plain `<video src>` element, which makes a no-cors request.
+
+## 10. Uptime monitor
 
 UptimeRobot (free) → New monitor → type **Keyword**, URL `https://pulsechat.co.za/health`, keyword `ok`,
 interval 5 minutes, alert by email. Pause and resume it once to see the emails arrive.
 
-## 10. Lost, stolen or returned laptop
+## 11. Lost, stolen or returned laptop
 
 Nothing lives only on the laptop: the code is on GitHub, images on GHCR, server secrets on the server, server
 access through your Tailscale identity, and the backup key in NordPass.
@@ -242,7 +272,7 @@ access through your Tailscale identity, and the backup key in NordPass.
   access to the server at once. If you're worried, also delete and re-create the R2 token (section 8 step 2)
   and update `.env`.
 
-## 11. Moving to another host
+## 12. Moving to another host
 
 1. Section 4 on the new VM (it gets its own Tailscale name; use `ubuntu@<name>` until the old one is gone).
 2. `just backup-now` on the old server.

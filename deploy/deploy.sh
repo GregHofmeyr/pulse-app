@@ -61,6 +61,27 @@ check_totp_key() {
   return 1
 }
 
+# check_clips_env FILE: the clips bucket settings are all or nothing, the same rule the server applies. The three
+# CLIPS_R2_* values all empty means clips storage is off (fine). All three set also needs R2_ACCOUNT_ID, which makes
+# the endpoint (compose.yml). Anything else is refused, naming what is empty. Values are never printed.
+check_clips_env() {
+  local v val missing=() set=0
+  if [ ! -r "$1" ]; then
+    echo "$1 not found (or not readable): see deploy/README.md, \"Clips storage\"" >&2
+    return 1
+  fi
+  for v in CLIPS_R2_BUCKET CLIPS_R2_ACCESS_KEY_ID CLIPS_R2_SECRET_ACCESS_KEY; do
+    val=$(sed -n "s/^${v}=//p" "$1" | tail -n1)
+    if [ -n "$val" ]; then set=$((set + 1)); else missing+=("$v"); fi
+  done
+  [ "$set" -gt 0 ] || return 0
+  val=$(sed -n 's/^R2_ACCOUNT_ID=//p' "$1" | tail -n1)
+  [ -n "$val" ] || missing+=(R2_ACCOUNT_ID)
+  [ "${#missing[@]}" -gt 0 ] || return 0
+  echo "clips storage in $1 is half set up; empty: ${missing[*]} (deploy/README.md, \"Clips storage\")" >&2
+  return 1
+}
+
 # reload_caddy: apply the Caddyfile just copied. Quiet when it works. A failure doesn't stop the deploy (the
 # running Caddy keeps its previous config, and the server update is what matters), but it says so on stderr.
 # reload finds the admin API (a unix socket, see the Caddyfile's global block) from --config.
@@ -86,10 +107,11 @@ prune_old_images() {
 [ -n "${DEPLOY_SH_LIB:-}" ] && return 0
 
 # `just deploy` runs this first, piped over ssh, before it copies anything to the server: a missing or bad
-# LIVEKIT_NODE_IP or PULSE_TOTP_KEY stops the deploy while /srv/pulse is still exactly as it was.
+# LIVEKIT_NODE_IP, PULSE_TOTP_KEY or half-filled clips settings stop the deploy while /srv/pulse is still exactly as it was.
 if [ "${1:-}" = --check-env ]; then
   check_node_ip "${2:-/srv/pulse/.env}"
   check_totp_key "${2:-/srv/pulse/.env}"
+  check_clips_env "${2:-/srv/pulse/.env}"
   exit
 fi
 
@@ -97,6 +119,7 @@ tag=${1:?usage: deploy.sh TAG}
 cd /srv/pulse
 check_node_ip .env
 check_totp_key .env
+check_clips_env .env
 ./backup.sh run
 # Pull first: a mistyped tag fails here and leaves .env and the running server untouched.
 # PULSE_IMAGE from the shell wins over .env, so this pulls TAG and not the previously pinned digest.

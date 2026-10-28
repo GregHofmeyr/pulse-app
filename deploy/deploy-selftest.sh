@@ -126,6 +126,106 @@ else
   echo "ok   --check-env refuses a missing PULSE_TOTP_KEY"
 fi
 
+# expect_clips ok|refused NAMES FILE-LINES: check_clips_env on a .env holding the lines. NAMES (refused only) are the
+# variables the message must name, space separated; for ok the message must stay empty.
+expect_clips() {
+  local want=$1 names=$2 lines=$3 got out n
+  printf '%s' "$lines" >"$tmp/.env"
+  if out=$(check_clips_env "$tmp/.env" 2>&1); then got=ok; else got=refused; fi
+  if [ "$got" != "$want" ]; then
+    echo "FAIL clips want $want, got $got: ${lines//$'\n'/ }"
+    failed=1
+    return
+  fi
+  for n in $names; do
+    if [[ $out != *"$n"* ]]; then
+      echo "FAIL clips message doesn't name $n: $out"
+      failed=1
+      return
+    fi
+  done
+  echo "ok   clips $want${names:+ (names $names)}: ${lines//$'\n'/ }"
+}
+cb=CLIPS_R2_BUCKET cid=CLIPS_R2_ACCESS_KEY_ID csec=CLIPS_R2_SECRET_ACCESS_KEY
+expect_clips ok '' ''
+expect_clips ok '' "R2_ACCOUNT_ID=<account-id>
+$cb=
+$cid=
+$csec=
+"
+expect_clips ok '' "R2_ACCOUNT_ID=acct
+$cb=pulse-clips
+$cid=kid
+$csec=sec
+"
+expect_clips refused "$cb" "R2_ACCOUNT_ID=acct
+$cb=
+$cid=kid
+$csec=sec
+"
+expect_clips refused "$cid" "R2_ACCOUNT_ID=acct
+$cb=pulse-clips
+$cid=
+$csec=sec
+"
+expect_clips refused "$csec" "R2_ACCOUNT_ID=acct
+$cb=pulse-clips
+$cid=kid
+"
+expect_clips refused "$cid $csec" "R2_ACCOUNT_ID=acct
+$cb=pulse-clips
+"
+expect_clips refused "R2_ACCOUNT_ID" "$cb=pulse-clips
+$cid=kid
+$csec=sec
+"
+expect_clips refused "R2_ACCOUNT_ID" "R2_ACCOUNT_ID=
+$cb=pulse-clips
+$cid=kid
+$csec=sec
+"
+# the secret's value is never echoed
+printf 'R2_ACCOUNT_ID=acct\n%s=b\n%s=\n%s=topsecretvalue\n' "$cb" "$cid" "$csec" >"$tmp/.env"
+if out=$(check_clips_env "$tmp/.env" 2>&1) || [[ $out == *topsecretvalue* ]]; then
+  echo "FAIL clips check echoed a secret or accepted a half set"
+  failed=1
+else
+  echo "ok   clips message never echoes values"
+fi
+if check_clips_env "$tmp/missing.env" 2>/dev/null; then
+  echo "FAIL check_clips_env accepted a missing .env"
+  failed=1
+else
+  echo "ok   clips on a missing .env is refused"
+fi
+# --check-env runs it too (a good node ip and key, half-filled clips)
+printf 'LIVEKIT_NODE_IP=203.0.113.10\nPULSE_TOTP_KEY=%s\nR2_ACCOUNT_ID=acct\n%s=b\n' "$key" "$cb" >"$tmp/halfclips.env"
+if bash "$here/deploy.sh" --check-env "$tmp/halfclips.env" 2>/dev/null; then
+  echo "FAIL --check-env accepted half-filled clips settings"
+  failed=1
+else
+  echo "ok   --check-env refuses half-filled clips settings"
+fi
+# the shipped example: clips blanks are all-empty (clips off), and compose passes them through
+if check_clips_env "$here/env.example"; then
+  echo "ok   env.example's clips block is all blank"
+else
+  echo "FAIL env.example's clips block isn't all blank"
+  failed=1
+fi
+for v in CLIPS_R2_BUCKET CLIPS_R2_ACCESS_KEY_ID CLIPS_R2_SECRET_ACCESS_KEY; do
+  if ! grep -q "^$v=\$" "$here/env.example" || ! grep -qF "\${$v:-}" "$here/compose.yml"; then
+    echo "FAIL $v missing from env.example or compose.yml"
+    failed=1
+  fi
+done
+# shellcheck disable=SC2016 # a literal compose expression
+endpoint='PULSE_CLIPS_S3_ENDPOINT: https://${R2_ACCOUNT_ID:-unset}.r2.cloudflarestorage.com'
+if ! grep -qF "$endpoint" "$here/compose.yml"; then
+  echo "FAIL compose.yml doesn't pass the clips endpoint"
+  failed=1
+fi
+
 # The three LiveKit copies move together: deploy/compose.yml (prod), docker-compose.yml (dev and
 # `just voice-it`) and release-windows.yml (the Windows test kit's binary, by version + SHA-256).
 # livekit_pins_agree PROD_COMPOSE DEV_COMPOSE RELEASE_WORKFLOW: the two image refs are identical

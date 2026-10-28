@@ -117,6 +117,10 @@ deploy tag="latest":
 smoke:
     ./deploy/smoke.sh pulsechat.co.za
 
+# write, read and delete one small object in the clips bucket from the live server (run after filling the CLIPS_R2_* settings)
+clips-check:
+    ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server clips-check'
+
 # each server's clip storage and the estimated monthly cost (all servers together; never shown in the app)
 clips-storage:
     ssh {{prod}} 'cd /srv/pulse && docker compose exec -T pulse-server pulse-app-server clip-storage'

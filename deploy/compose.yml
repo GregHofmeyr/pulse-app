@@ -36,6 +36,12 @@ services:
       PULSE_LIVEKIT_KEY: pulse
       PULSE_LIVEKIT_SECRET: ${LIVEKIT_SECRET:?}
       PULSE_TOTP_KEY: ${PULSE_TOTP_KEY:?}
+      # Clips storage (deploy/README.md, "Clips storage"). The server treats an empty bucket, key or secret as "not
+      # configured" whatever the endpoint is; deploy.sh refuses a half-filled set.
+      PULSE_CLIPS_S3_ENDPOINT: https://${R2_ACCOUNT_ID:-unset}.r2.cloudflarestorage.com
+      PULSE_CLIPS_S3_BUCKET: ${CLIPS_R2_BUCKET:-}
+      PULSE_CLIPS_S3_KEY_ID: ${CLIPS_R2_ACCESS_KEY_ID:-}
+      PULSE_CLIPS_S3_SECRET: ${CLIPS_R2_SECRET_ACCESS_KEY:-}
       RUST_LOG: info,sqlx=warn
     volumes:
       - ./data:/data
