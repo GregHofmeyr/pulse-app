@@ -9,6 +9,7 @@
   import VoiceStatus from '../components/VoiceStatus.svelte'
   import VoicePanel from '../components/VoicePanel.svelte'
   import TextChannel from '../components/TextChannel.svelte'
+  import ClipsChannel from '../components/ClipsChannel.svelte'
   import Settings from '../components/Settings.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
   import { clickOutside } from '../lib/actions'
@@ -450,6 +451,8 @@
         </div>
       {:else if activeChannel?.kind === 'voice'}
         <VoicePanel channelId={activeChannel.id} serverId={activeServerId} onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />
+      {:else if activeChannel?.kind === 'clips' && activeServerId}
+        {#key activeChannel.id}<ClipsChannel channelId={activeChannel.id} serverId={activeServerId} />{/key}
       {:else if activeChannel}
         {#key activeChannel.id}<TextChannel channelId={activeChannel.id} serverId={activeServerId}
           onAddPeople={() => (picker = { mode: 'add', channelId: activeChannel.id })}

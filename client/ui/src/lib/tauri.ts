@@ -109,7 +109,7 @@ export const api = {
   probe: () => invoke<void>('gateway_probe'),
   listServers: () => invoke<Server[]>('list_servers'),
   createServer: (name: string) => invoke<Server>('create_server', { name }),
-  createChannel: (serverId: string, kind: 'text' | 'quotes' | 'voice', name: string) =>
+  createChannel: (serverId: string, kind: 'text' | 'quotes' | 'clips' | 'voice', name: string) =>
     invoke<Channel>('create_channel', { serverId, kind, name }),
   joinServer: (serverId: string) => invoke<void>('join_server', { serverId }),
   listChannels: (serverId: string) => invoke<Channel[]>('list_channels', { serverId }),

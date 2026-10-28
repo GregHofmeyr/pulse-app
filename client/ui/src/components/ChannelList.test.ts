@@ -320,3 +320,34 @@ describe('ChannelList quotes group', () => {
     expect(row).toBeTruthy()
   })
 })
+
+describe('ChannelList clips group', () => {
+  it('creates a clips channel from the CLIPS group', async () => {
+    const made = { id: 'K1', server_id: 'S1', kind: 'clips', name: 'clips', position: 3 }
+    invoke.mockResolvedValue(made)
+    const onSelect = vi.fn()
+    unmount(cmp!)
+    app.state = applyReady(emptyState(), { ...ready, channels: [...ready.channels, { id: 'K0', server_id: 'S1', kind: 'clips', name: 'highlights', position: 0 }] })
+    cmp = mount(ChannelList, {
+      target: document.body,
+      props: { serverId: 'S1', activeChannelId: null, voiceChannelId: null, speaking: new Set<string>(), onSelect, onJoinVoice: () => {}, onMessage: () => {}, onVoiceSettings: () => {} },
+    })
+    flushSync()
+    const labels = [...document.querySelectorAll('.label')].map((l) => l.textContent?.trim())
+    expect(labels).toContain('CLIPS')
+    expect(labels.indexOf('CLIPS')).toBe(labels.indexOf('QUOTES') + 1)
+    expect([...document.querySelectorAll('.row')].some((r) => r.textContent?.includes('highlights'))).toBe(true)
+    const add = document.querySelector<HTMLButtonElement>('button[aria-label="Create clips channel"]')!
+    expect(add.querySelector('path')?.getAttribute('d')).toContain('M4 4h16v16H4z') // the film icon
+    add.click()
+    await tick()
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="New clips channel name"]')!
+    input.value = 'Best Plays'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await tick()
+    await tick()
+    expect(invoke).toHaveBeenCalledWith('create_channel', { serverId: 'S1', kind: 'clips', name: 'best-plays' })
+    expect(onSelect).toHaveBeenCalledWith('K1')
+  })
+})

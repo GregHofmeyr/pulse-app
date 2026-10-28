@@ -46,11 +46,11 @@
   $effect(() => () => prefetch.cancel())
 
   // inline "new channel" field
-  let adding = $state<'text' | 'quotes' | 'voice' | null>(null)
+  let adding = $state<'text' | 'quotes' | 'clips' | 'voice' | null>(null)
   let draft = $state('')
   let addError = $state('')
 
-  function startAdd(kind: 'text' | 'quotes' | 'voice') {
+  function startAdd(kind: 'text' | 'quotes' | 'clips' | 'voice') {
     adding = kind
     draft = ''
     addError = ''
@@ -116,6 +116,15 @@
     {#if addError}<small class="err">{addError}</small>{/if}
   {/if}
   {#each lists.quotes as c (c.id)}{@render channelRow(c, "quote")}{/each}
+
+  <div class="label voice">CLIPS
+    {#if member}<button class="add" aria-label="Create clips channel" onclick={() => startAdd('clips')}><Icon name="film" size={14} /></button>{/if}
+  </div>
+  {#if adding === 'clips'}
+    <input class="new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-clips" maxlength="64" aria-label="New clips channel name" />
+    {#if addError}<small class="err">{addError}</small>{/if}
+  {/if}
+  {#each lists.clips as c (c.id)}{@render channelRow(c, "film")}{/each}
 
   <div class="label voice">VOICE CHANNELS
     {#if member}<button class="add" aria-label="Create voice channel" onclick={() => startAdd('voice')}><Icon name="plus" size={14} /></button>{/if}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { clipFilter, feedKey, formatBytes, formatDuration, matchesFilter, clipView, isNewClip, matchGame } from './clips'
+import { clipFilter, feedKey, formatBytes, formatDuration, matchesFilter, clipView, isNewClip, matchGame, hasNewClipReplies, gameName } from './clips'
 import type { Game } from './protocol/Game'
 import { applyEvent, applyReady, emptyState } from './state'
 import type { Message } from './protocol/Message'
@@ -79,5 +79,22 @@ describe('matchGame', () => {
   it('is null without a guess', () => {
     expect(matchGame(null, games)).toBeNull()
     expect(matchGame('   ', games)).toBeNull()
+  })
+})
+
+describe('hasNewClipReplies / gameName', () => {
+  const withThread = (last: string | null, seen: string | null): Message => ({ ...clip(null), clip: { ...clip(null).clip!, last_reply_id: last, replies_seen: seen } })
+  it('is new when the newest reply is past the one you saw', () => {
+    expect(hasNewClipReplies(withThread(null, null))).toBe(false)
+    expect(hasNewClipReplies(withThread('R2', null))).toBe(true)
+    expect(hasNewClipReplies(withThread('R2', 'R1'))).toBe(true)
+    expect(hasNewClipReplies(withThread('R2', 'R2'))).toBe(false)
+  })
+  it('names the game from the server registry', () => {
+    const g: Game = { id: 'G1', server_id: 'S1', name: 'Apex', created_by: null, created_at: '2026-10-01T00:00:00Z' }
+    const s = { ...emptyState(), games: { S1: [g] } }
+    expect(gameName(s, 'S1', clip('G1'))).toBe('Apex')
+    expect(gameName(s, 'S1', clip('G9'))).toBeNull()
+    expect(gameName(s, 'S1', clip(null))).toBeNull()
   })
 })

@@ -69,3 +69,15 @@ export function matchGame(guess: string | null, games: Game[]): { game: Game } |
   const game = games.find((g) => nameKey(g.name) === key)
   return game ? { game } : { add: [...name].slice(0, MAX_GAME_NAME).join('').trimEnd() }
 }
+
+/** Whether a clip's thread has a reply newer than the one you last saw. */
+export function hasNewClipReplies(m: Message): boolean {
+  const c = m.clip
+  return !!c?.last_reply_id && (c.replies_seen === null || c.last_reply_id > c.replies_seen)
+}
+
+/** The name of a clip's game in its server's registry (null when untagged or not known here). */
+export function gameName(s: AppState, serverId: string, m: Message): string | null {
+  const id = m.clip?.game_id
+  return id ? ((s.games[serverId] ?? []).find((g) => g.id === id)?.name ?? null) : null
+}

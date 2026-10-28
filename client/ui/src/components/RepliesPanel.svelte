@@ -6,6 +6,7 @@
   import Icon from './Icon.svelte'
   import MessageItem from './MessageItem.svelte'
   import QuoteItem from './QuoteItem.svelte'
+  import ClipItem from './ClipItem.svelte'
   import { app, ui } from '../lib/store.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { addPending, addReplies, closeThread, holdThread, maxIdOf, PAGE, pendingMessage, removePending, tracksUnread, type Pending } from '../lib/state'
@@ -180,7 +181,11 @@
     <button class="hbtn" aria-label="Close replies" data-tip="Close" onclick={onClose}><Icon name="x" size={16} /></button>
   </div>
   <div class="pinned">
-    <QuoteItem message={root} {serverId} {meId} {nameOf} onEdit={onEditQuote} onDelete={() => api.deleteMessage(rootId)} />
+    {#if root.clip}
+      <ClipItem message={root} {serverId} {meId} {nameOf} compact />
+    {:else}
+      <QuoteItem message={root} {serverId} {meId} {nameOf} onEdit={onEditQuote} onDelete={() => api.deleteMessage(rootId)} />
+    {/if}
   </div>
   <div class="list" bind:this={list} onscroll={() => void maybeLoadOlder()}>
     {#if fetched && reachedStart && replies.length === 0 && pending.length === 0}
