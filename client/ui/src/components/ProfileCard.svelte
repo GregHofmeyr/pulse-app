@@ -6,9 +6,8 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import Icon from './Icon.svelte'
-  import { app, openDm, ui } from '../lib/store.svelte'
-  import { addPending } from '../lib/state'
-  import { api, errorText } from '../lib/tauri'
+  import { app, openDm, queueMessage, ui } from '../lib/store.svelte'
+  import { errorText } from '../lib/tauri'
   import { cardVars } from '../lib/cardTheme'
   import { mediaUrl } from '../lib/emoji'
   import { renderMarkdown } from '../lib/markdown'
@@ -74,9 +73,7 @@
     error = null
     try {
       const channelId = await openDm(user.id)
-      const nonce = crypto.randomUUID()
-      app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: null, thread_root_id: null, status: 'pending', created_at: new Date().toISOString() })
-      void api.sendMessage(channelId, text, null, nonce)
+      queueMessage(channelId, text, null)
       draft = ''
       ui.goTo = channelId
       onClose?.()

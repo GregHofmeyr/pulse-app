@@ -106,7 +106,7 @@ describe('ProfileCard', () => {
     cmp = undefined
     // a room you can't see (not in your channels) isn't named
     app.state = { ...app.state, channels: {}, } as never
-    expect(show().querySelector('.info')!.textContent).not.toContain('In ')
+    expect(show().querySelector('.room')).toBeNull()
   })
 
   it('the message box sends to the DM and switches to it', async () => {
@@ -124,6 +124,31 @@ describe('ProfileCard', () => {
     expect(app.state.pending.D1).toHaveLength(1)
     expect(ui.goTo).toBe('D1')
     expect(onClose).toHaveBeenCalled()
+  })
+
+  it('a failed send shows the error and keeps the draft', async () => {
+    const onClose = vi.fn()
+    vi.mocked(invoke).mockImplementation((async (cmd: string) => {
+      if (cmd === 'create_dm') throw "You can't message sam."
+    }) as never)
+    const el = show({ onClose })
+    const box = el.querySelector('input.msg') as HTMLInputElement
+    box.value = 'hey'
+    box.dispatchEvent(new Event('input'))
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await vi.waitFor(() => expect(el.querySelector('[role="alert"]')).not.toBeNull())
+    expect(el.querySelector('[role="alert"]')!.textContent).toContain("You can't message sam.")
+    expect(box.value).toBe('hey')
+    expect(calls('send_message')).toHaveLength(0)
+    expect(ui.goTo).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('a malicious bio renders inert', () => {
+    const el = show({ card: card({ bio: '<img src=x onerror=alert(1)> [click](javascript:alert(1))' }) })
+    const bio = el.querySelector('.bio')!
+    expect(bio.querySelector('[onerror]')).toBeNull()
+    expect([...bio.querySelectorAll('a')].some((a) => /^\s*javascript:/i.test(a.getAttribute('href') ?? ''))).toBe(false)
   })
 
   it('no message box on your own card or in preview', () => {
@@ -192,6 +217,68 @@ describe('ProfileCardPopover', () => {
     expect(profileUi.card).toBeNull()
     expect(document.querySelector('[role="dialog"]')).toBeNull()
     expect(document.activeElement).toBe(anchor)
+  })
+
+  it('stays inside the window, measured, even when opened low down', () => {
+    vi.mocked(invoke).mockImplementation((() => new Promise(() => {})) as never)
+    const h = vi.spyOn(HTMLElement.prototype, 'offsetHeight', 'get').mockReturnValue(507)
+    try {
+      cmp = mount(ProfileCardPopover, { target: document.body })
+      const anchor = document.createElement('button')
+      document.body.append(anchor)
+      anchor.getBoundingClientRect = () => ({ left: 20, right: 60, top: window.innerHeight - 30, bottom: window.innerHeight - 10, width: 40, height: 20, x: 20, y: window.innerHeight - 30, toJSON() {} })
+      openCard('U2', null, anchor)
+      flushSync()
+      const top = parseInt((document.querySelector('.pop') as HTMLElement).style.top)
+      expect(top + 507).toBeLessThanOrEqual(window.innerHeight - 8)
+      expect(top).toBeGreaterThanOrEqual(8)
+    } finally {
+      h.mockRestore()
+    }
+  })
+
+  it('clicking the same name again closes it', () => {
+    vi.mocked(invoke).mockImplementation((() => new Promise(() => {})) as never)
+    cmp = mount(ProfileCardPopover, { target: document.body })
+    const anchor = document.createElement('button')
+    document.body.append(anchor)
+    anchor.addEventListener('click', () => openCard('U2', null, anchor))
+    anchor.focus()
+    anchor.click()
+    flushSync()
+    expect(profileUi.card).not.toBeNull()
+    // a real click: pointerdown, then click
+    anchor.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    flushSync()
+    anchor.click()
+    flushSync()
+    expect(profileUi.card).toBeNull()
+    expect(document.querySelector('[role="dialog"]')).toBeNull()
+  })
+
+  it('a press on the anchor that never took focus is left to its click too', () => {
+    vi.mocked(invoke).mockImplementation((() => new Promise(() => {})) as never)
+    cmp = mount(ProfileCardPopover, { target: document.body })
+    const anchor = document.createElement('span')
+    document.body.append(anchor)
+    anchor.getBoundingClientRect = () => ({ left: 10, right: 50, top: 10, bottom: 30, width: 40, height: 20, x: 10, y: 10, toJSON() {} })
+    openCard('U2', null, anchor)
+    flushSync()
+    anchor.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, clientX: 20, clientY: 20 }))
+    flushSync()
+    expect(profileUi.card).not.toBeNull()
+    openCard('U2', null, anchor)
+    expect(profileUi.card).toBeNull()
+  })
+
+  it('a window resize closes it', () => {
+    vi.mocked(invoke).mockImplementation((() => new Promise(() => {})) as never)
+    cmp = mount(ProfileCardPopover, { target: document.body })
+    openCard('U2', null, document.body)
+    flushSync()
+    window.dispatchEvent(new Event('resize'))
+    flushSync()
+    expect(profileUi.card).toBeNull()
   })
 
   it('an outside click closes it', () => {

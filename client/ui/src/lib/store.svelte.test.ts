@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }))
 
 import { invoke } from '@tauri-apps/api/core'
-import { app, handleReady, loadProfile, noteProfileUpdate, resetState } from './store.svelte'
+import { app, handleReady, loadProfile, noteProfileUpdate, queueMessage, resetState } from './store.svelte'
 import { addPending, applyEvent, emptyState, removePending, type Pending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
@@ -119,6 +119,20 @@ describe('unsent messages in the store', () => {
     expect(app.state.pending['C1']).toBeUndefined()
     expect(localStorage.getItem('pulse.unsent.U2')).toBeNull()
     expect(stored('U1').C1).toHaveLength(1)
+  })
+})
+
+describe('queueMessage', () => {
+  it('adds a pending message and sends it through the outbox with the same nonce', () => {
+    resetState()
+    vi.mocked(invoke).mockReset()
+    vi.mocked(invoke).mockImplementation((async () => undefined) as never)
+    queueMessage('C1', 'hey', 'M9')
+    const [p] = app.state.pending.C1
+    expect(p).toMatchObject({ content: 'hey', reply_to_id: 'M9', thread_root_id: null, status: 'pending' })
+    const sent = vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'send_message')
+    expect(sent).toHaveLength(1)
+    expect(sent[0][1]).toEqual({ channelId: 'C1', content: 'hey', replyToId: 'M9', nonce: p.nonce })
   })
 })
 

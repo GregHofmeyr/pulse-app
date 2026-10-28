@@ -11,11 +11,11 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
-  import { app, clock, ui } from '../lib/store.svelte'
+  import { app, clock, queueMessage, ui } from '../lib/store.svelte'
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
-  import { addHistory, addOlder, addPending, appendNewer, markHistory, reachLatest, PAGE, pendingMessage, removePending } from '../lib/state'
+  import { addHistory, addOlder, appendNewer, markHistory, reachLatest, PAGE, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
   import { liveQoty } from '../lib/quotes'
   import { groupedWith, mentionablesFor, nameOfIn, nextTypingExpiry, stableList, typingNames } from '../lib/selectors'
@@ -371,9 +371,7 @@
   const nameOf = $derived(nameOfIn(() => app.state, serverId))
 
   function post(text: string, replyToId: string | null) {
-    const nonce = crypto.randomUUID()
-    app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyToId, thread_root_id: null, status: 'pending', created_at: new Date().toISOString() })
-    void api.sendMessage(channelId, text, replyToId, nonce)
+    queueMessage(channelId, text, replyToId)
     // Sending from higher up takes you to the latest (your message lands there).
     if (detached) void toPresent()
     else void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))

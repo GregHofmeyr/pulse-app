@@ -7,7 +7,7 @@ import type { Profile } from './protocol/Profile'
 import type { User } from './protocol/User'
 import type { Ready } from './protocol/Ready'
 import type { ReportKind } from './protocol/ReportKind'
-import { applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, setProfile, type AppState, type ConnState } from './state'
+import { addPending, applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, setProfile, type AppState, type ConnState } from './state'
 import { api } from './tauri'
 import { loadUnsent, saveUnsent } from './unsent'
 import { isMuted, messageSound, onScreen, SOUND_GAP_MS } from './conversations'
@@ -110,6 +110,13 @@ export async function openDm(userId: string): Promise<string> {
   // Show it straight away: the ChannelCreated gateway event may arrive after this response.
   if (!app.state.channels[ch.id]) app.state = applyEvent(app.state, { t: 'ChannelCreated', d: { channel: ch } }, Date.now())
   return ch.id
+}
+
+/** Queue `text` for `channelId`: shown as pending straight away and sent through the core's outbox (retries, failed state). */
+export function queueMessage(channelId: string, text: string, replyToId: string | null): void {
+  const nonce = crypto.randomUUID()
+  app.state = addPending(app.state, channelId, { nonce, content: text, reply_to_id: replyToId, thread_root_id: null, status: 'pending', created_at: new Date().toISOString() })
+  void api.sendMessage(channelId, text, replyToId, nonce)
 }
 
 // Unsent messages: saved whenever the pending map changes, and restored (failed, never resent) on

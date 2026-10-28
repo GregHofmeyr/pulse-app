@@ -4,9 +4,12 @@ export type FullTarget = { userId: string; serverId: string | null }
 
 export const profileUi: { card: CardTarget | null; full: FullTarget | null } = $state({ card: null, full: null })
 
-/** Opens the quick card for `userId` next to `el`. */
+/** Opens the quick card for `userId` next to `el`; the same name or avatar again closes it. */
 export function openCard(userId: string, serverId: string | null, el: Element): void {
-  profileUi.card = { userId, serverId, anchor: el.getBoundingClientRect() }
+  const anchor = el.getBoundingClientRect()
+  const open = profileUi.card
+  if (open && open.userId === userId && open.anchor.left === anchor.left && open.anchor.top === anchor.top) profileUi.card = null
+  else profileUi.card = { userId, serverId, anchor }
 }
 
 export function openFull(userId: string, serverId: string | null): void {
