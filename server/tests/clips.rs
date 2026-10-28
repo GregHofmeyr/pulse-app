@@ -902,7 +902,12 @@ async fn confirm_checks_the_object() {
     let object = format!("clips/{key}.mp4");
     s3.put_raw(&object, vec![1u8; 999]);
     let r = confirm(&w.app, &w.alex.1, &up, confirm_body(&thumb, None)).await;
-    assert_eq!(r.status(), 400);
+    // a 409: that ticket is spent, so the client uploads again with a new one
+    assert_eq!(r.status(), 409);
+    assert_eq!(
+        error_message(r).await,
+        "The upload didn't match. Try again."
+    );
     assert!(s3.object(&object).is_none());
     assert_eq!(tickets(&w.app).await, 0);
 
@@ -924,7 +929,6 @@ async fn confirm_checks_the_object() {
         ("duration", bad(&|b| b["duration_ms"] = json!(90_501))),
         ("width", bad(&|b| b["width"] = json!(8))),
         ("height", bad(&|b| b["height"] = json!(7681))),
-        ("thumb", bad(&|b| b["thumb_hash"] = json!(sams_thumb))),
         ("no such thumb", bad(&|b| b["thumb_hash"] = json!("nothex"))),
         ("game", bad(&|b| b["game_id"] = json!(foreign_game.id))),
         ("caption", bad(&|b| b["caption"] = json!("x".repeat(301)))),
@@ -932,6 +936,21 @@ async fn confirm_checks_the_object() {
     for (what, body) in cases {
         let r = confirm(&w.app, &w.alex.1, &up, body).await;
         assert_eq!(r.status(), 400, "{what}");
+    }
+    // a poster that isn't mine (or is gone): a 409 the client answers with a fresh poster
+    let unknown = "0".repeat(64);
+    for hash in [sams_thumb.as_str(), unknown.as_str()] {
+        let r = confirm(
+            &w.app,
+            &w.alex.1,
+            &up,
+            bad(&|b| b["thumb_hash"] = json!(hash)),
+        )
+        .await;
+        assert_eq!(r.status(), 409, "{hash}");
+        let e: pulse_protocol::rest::ApiError = r.json().await.unwrap();
+        assert_eq!(e.code, "thumb_missing");
+        assert_eq!(e.message, "The preview image is missing. Try again.");
     }
     assert_eq!(tickets(&w.app).await, 1);
     let mut ok = confirm_body(&thumb, None);

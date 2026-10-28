@@ -234,7 +234,8 @@ fn server_words(e: &ApiError) -> Stop {
         ApiError::Told { message, .. }
         | ApiError::Rejected(message)
         | ApiError::Forbidden(message)
-        | ApiError::UploadGone(message) => Some(message.clone()),
+        | ApiError::UploadGone(message)
+        | ApiError::PosterGone(message) => Some(message.clone()),
         _ => None,
     }
 }
@@ -830,9 +831,24 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
     /// didn't arrive) Retry uploads again with a new ticket; any other refusal keeps the upload, so
     /// Retry confirms again.
     async fn post(self: &Arc<Self>, id: &str, run_no: u64, s: Saved) -> Result<MessageId, Stop> {
-        let (Some(ticket), Some(thumb_hash)) = (s.upload_id, s.thumb_hash.clone()) else {
+        let Some(ticket) = s.upload_id else {
             self.update(id, run_no, true, |e| e.saved.uploaded = false);
             return Err(None);
+        };
+        let thumb_hash = match s.thumb_hash.clone() {
+            Some(h) => h,
+            // the server lost the poster (or never had it): send it again, the video is fine
+            None => {
+                let poster = std::fs::read(self.dir.join(id).join(THUMB)).map_err(|_| None)?;
+                let h = self
+                    .api
+                    .upload_clip_thumb(&self.token, poster)
+                    .await
+                    .map_err(|e| server_words(&e))?
+                    .hash;
+                self.update(id, run_no, true, |e| e.saved.thumb_hash = Some(h.clone()));
+                h
+            }
         };
         let (width, height) = encode::target_size(s.probe.width, s.probe.height, s.preset);
         let body = ConfirmClipRequest {
@@ -865,6 +881,10 @@ impl<R: Runner + Send + Sync + 'static> Inner<R> {
             Ok(m) => Ok(m.id),
             Err(e @ ApiError::UploadGone(_)) => {
                 self.update(id, run_no, true, |e| e.saved.uploaded = false);
+                Err(server_words(&e))
+            }
+            Err(e @ ApiError::PosterGone(_)) => {
+                self.update(id, run_no, true, |e| e.saved.thumb_hash = None);
                 Err(server_words(&e))
             }
             Err(e) => Err(server_words(&e)),
@@ -1532,6 +1552,80 @@ mod tests {
         jobs.retry(&job.id).unwrap();
         r.until(&job.id, |j| j.stage == Stage::Done).await;
         assert_eq!(r.puts(), 2, "uploaded again with a new ticket");
+        assert_eq!(r.clips().await.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_missing_poster_on_confirm_sends_the_poster_again() {
+        let r = rig().await;
+        // an uploaded job (restart material) whose poster the server doesn't have
+        let d = save_job(&r, "pppp", "posting", Some("libx264"));
+        let video = vec![5u8; 1000];
+        std::fs::write(d.join("out.mp4"), &video).unwrap();
+        std::fs::write(d.join("thumb.jpg"), unique_png()).unwrap();
+        let ticket = r
+            .api
+            .clip_upload(
+                &r.token,
+                r.channel.id,
+                &ClipUploadRequest {
+                    size: 1000,
+                    duration_ms: 5000,
+                },
+            )
+            .await
+            .unwrap();
+        let put = reqwest::Client::new()
+            .put(&ticket.url)
+            .header("content-type", &ticket.content_type)
+            .body(video)
+            .send()
+            .await
+            .unwrap();
+        assert!(put.status().is_success());
+        let mut saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(d.join("job.json")).unwrap()).unwrap();
+        saved["upload_id"] = serde_json::json!(ticket.id);
+        saved["uploaded"] = serde_json::json!(true);
+        saved["thumb_hash"] = serde_json::json!("0".repeat(64));
+        std::fs::write(d.join("job.json"), saved.to_string()).unwrap();
+
+        let jobs = r.jobs(1024).await;
+        assert_eq!(jobs.retry("pppp").unwrap().stage, Stage::Posting);
+        let failed = r.until("pppp", |j| j.stage == Stage::Failed).await;
+        assert_eq!(
+            failed.error.as_deref(),
+            Some("The preview image is missing. Try again.")
+        );
+        assert!(r.saved("pppp")["thumb_hash"].is_null());
+        assert_eq!(r.saved("pppp")["uploaded"], true);
+
+        assert_eq!(jobs.retry("pppp").unwrap().stage, Stage::Posting);
+        r.until("pppp", |j| j.stage == Stage::Done).await;
+        assert_eq!(r.clips().await.len(), 1);
+        assert_eq!(r.puts(), 1, "the video wasn't sent again");
+    }
+
+    #[tokio::test]
+    async fn a_mismatched_upload_on_confirm_uploads_again_at_once() {
+        let r = rig().await;
+        let jobs = r.jobs(1024 * 1024).await;
+        let gate = jobs.hold_confirms();
+        let job = jobs.send(r.request()).unwrap();
+        r.until(&job.id, |j| j.stage == Stage::Posting).await;
+        // the stored object isn't the size the ticket says
+        let key = r.s3().keys().pop().unwrap();
+        r.s3().put_raw(&key, vec![0u8; 10]);
+        gate.notify_one();
+        let failed = r.until(&job.id, |j| j.stage == Stage::Failed).await;
+        assert_eq!(
+            failed.error.as_deref(),
+            Some("The upload didn't match. Try again.")
+        );
+        assert_eq!(r.saved(&job.id)["uploaded"], false);
+        gate.notify_one();
+        assert_eq!(jobs.retry(&job.id).unwrap().stage, Stage::Uploading);
+        r.until(&job.id, |j| j.stage == Stage::Done).await;
         assert_eq!(r.clips().await.len(), 1);
     }
 

@@ -35,6 +35,9 @@ pub enum AppError {
     BadRequest(String),
     #[error("{0}")]
     Conflict(String),
+    /// A 409 with its own `code`, for a client that acts on which conflict it was.
+    #[error("{1}")]
+    ConflictCode(&'static str, String),
     #[error("{0}")]
     PayloadTooLarge(String),
     /// A 429; the message is the default unless the reason is worth showing as-is.
@@ -92,6 +95,7 @@ impl IntoResponse for AppError {
                 api(StatusCode::PAYLOAD_TOO_LARGE, "payload_too_large", message)
             }
             Self::Conflict(_) => api(StatusCode::CONFLICT, "conflict", message),
+            Self::ConflictCode(code, _) => api(StatusCode::CONFLICT, code, message),
             Self::TooManyRequests(_) => api(StatusCode::TOO_MANY_REQUESTS, "rate_limited", message),
             Self::Unavailable(_) => {
                 api(StatusCode::SERVICE_UNAVAILABLE, "unavailable", message)

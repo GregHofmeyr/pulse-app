@@ -25,6 +25,8 @@ use crate::voice::{AudioMode, VoiceError, VoiceManager, controls::Controls};
 type ClipJobs = crate::clips::jobs::Jobs<crate::clips::encode::FfmpegRunner>;
 const SIGN_IN_FOR_CLIPS: &str = "Sign in to share clips.";
 const NOT_CONNECTED: &str = "Pulse is still connecting. Try again in a moment.";
+/// How long a clip command waits for the session's jobs to load (the first Ready).
+const CLIP_JOBS_WAIT: std::time::Duration = std::time::Duration::from_secs(30);
 
 /// Signed in: where, with which token, and as whom (`None` until login or the first Ready says).
 #[derive(Clone)]
@@ -268,8 +270,13 @@ impl Core {
             loaded.stop();
             return;
         }
+        let found = loaded.list();
         if let Some(old) = self.clip_jobs.send_replace(Some(loaded)) {
             old.stop();
+        }
+        // what's left from last time arrives like any other job update
+        for job in found {
+            let _ = app.emit("clip://job", job);
         }
     }
 
@@ -302,12 +309,26 @@ impl Core {
     /// This session's clip jobs, waiting for them to load (on the first Ready). The error is the
     /// reason to show: signed out, or not connected yet.
     async fn clip_jobs(&self) -> Result<ClipJobs, String> {
+        self.clip_jobs_within(CLIP_JOBS_WAIT).await
+    }
+
+    async fn clip_jobs_within(&self, wait: std::time::Duration) -> Result<ClipJobs, String> {
         let (_, token) = self.current().map_err(|_| SIGN_IN_FOR_CLIPS.to_owned())?;
         let mut rx = self.clip_jobs.subscribe();
         let ready = rx.wait_for(|j| j.as_ref().is_some_and(|j| j.token() == token));
-        match tokio::time::timeout(std::time::Duration::from_secs(30), ready).await {
+        match tokio::time::timeout(wait, ready).await {
             Ok(Ok(j)) => j.clone().ok_or_else(|| NOT_CONNECTED.to_owned()),
             _ => Err(NOT_CONNECTED.to_owned()),
+        }
+    }
+
+    /// Cancel a clip job. Signed out is fine (sign-out deleted it); not connected yet is an error
+    /// to show, since nothing was cancelled.
+    async fn cancel_clip_job(&self, id: &str, wait: std::time::Duration) -> Result<(), String> {
+        match self.clip_jobs_within(wait).await {
+            Ok(jobs) => jobs.cancel(id).await,
+            Err(e) if e == SIGN_IN_FOR_CLIPS => Ok(()),
+            Err(e) => Err(e),
         }
     }
 
@@ -570,7 +591,11 @@ async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>,
         match &u {
             GatewayUpdate::Ready(r) => {
                 app.state::<Core>().learn_me(&token, r.me.id);
-                app.state::<Core>().start_clip_jobs(&app, &token).await;
+                // the jobs load on their own: Ready (and what follows) never waits for the disk
+                let (a, t) = (app.clone(), token.clone());
+                tauri::async_runtime::spawn(async move {
+                    a.state::<Core>().start_clip_jobs(&a, &t).await;
+                });
                 let _ = app.emit("pulse://ready", &**r);
             }
             GatewayUpdate::Event(e) => {
@@ -1774,11 +1799,7 @@ pub async fn retry_clip(
 
 #[tauri::command]
 pub async fn cancel_clip(core: State<'_, Core>, id: String) -> Result<(), String> {
-    match core.clip_jobs().await {
-        Ok(jobs) => jobs.cancel(&id).await,
-        // signed out: sign-out already deleted it
-        Err(_) => Ok(()),
-    }
+    core.cancel_clip_job(&id, CLIP_JOBS_WAIT).await
 }
 
 /// The clips being sent (after a restart, the ones left over, failed). Waits for them to load.
@@ -2051,6 +2072,24 @@ mod tests {
         })
         .unwrap();
         assert_eq!(json, want);
+    }
+
+    /// Cancel while signed in but before the jobs loaded says so; signed out it is a no-op.
+    #[tokio::test]
+    async fn cancelling_a_clip_before_connecting_says_so() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, _) = signed_in(
+            root.path(),
+            "https://pulse.example.com",
+            Some(UserId::new()),
+        );
+        let wait = std::time::Duration::from_millis(50);
+        assert_eq!(
+            core.cancel_clip_job("0123456789abcdef", wait).await,
+            Err(NOT_CONNECTED.to_owned())
+        );
+        core.forget();
+        assert_eq!(core.cancel_clip_job("0123456789abcdef", wait).await, Ok(()));
     }
 
     /// Signing out deletes the account's clip jobs and their tickets even when they were never

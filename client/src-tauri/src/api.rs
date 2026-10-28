@@ -66,6 +66,10 @@ pub enum ApiError {
     /// expired. Try again."), in Pulse's words: a new ticket and upload can still post it.
     #[error("{0}")]
     UploadGone(String),
+    /// Confirming a clip found its poster missing (a 409 `thumb_missing`): upload the poster
+    /// again, the video is fine.
+    #[error("{0}")]
+    PosterGone(String),
 }
 
 impl ApiError {
@@ -1442,11 +1446,14 @@ impl Api {
             Ok(resp) if matches!(resp.status(), StatusCode::NOT_FOUND | StatusCode::CONFLICT) => {
                 note_version(&resp);
                 log_failure(Some(path_only(resp.url())), resp.status().as_str());
-                let message = resp
+                let (code, message) = resp
                     .json::<pulse_protocol::rest::ApiError>()
                     .await
-                    .map(|e| e.message)
+                    .map(|e| (e.code, e.message))
                     .unwrap_or_default();
+                if code == "thumb_missing" {
+                    return Err(ApiError::PosterGone(message));
+                }
                 Err(ApiError::UploadGone(if message.is_empty() {
                     "That upload expired. Try again.".into()
                 } else {
@@ -3534,7 +3541,11 @@ mod tests {
 
     /// A server that answers every request with this status and JSON body (then closes).
     async fn canned(status: u16, message: &str) -> Api {
-        let body = serde_json::json!({ "code": "x", "message": message }).to_string();
+        canned_code(status, "x", message).await
+    }
+
+    async fn canned_code(status: u16, code: &str, message: &str) -> Api {
+        let body = serde_json::json!({ "code": code, "message": message }).to_string();
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -3682,5 +3693,18 @@ mod tests {
             );
             assert_eq!(e.to_string(), words);
         }
+        // the poster, not the upload, is what's missing
+        let api = canned_code(
+            409,
+            "thumb_missing",
+            "The preview image is missing. Try again.",
+        )
+        .await;
+        let e = api
+            .confirm_clip("t", ClipUploadId::new(), &body)
+            .await
+            .unwrap_err();
+        assert!(matches!(e, ApiError::PosterGone(_)), "{e:?}");
+        assert_eq!(e.to_string(), "The preview image is missing. Try again.");
     }
 }

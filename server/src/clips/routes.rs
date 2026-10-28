@@ -177,6 +177,9 @@ async fn cancel(
     Ok(StatusCode::NO_CONTENT)
 }
 
+/// The `code` of confirm's 409 for a poster that isn't there (the client uploads it again).
+pub const THUMB_MISSING: &str = "thumb_missing";
+
 fn bad(msg: &str) -> AppError {
     AppError::BadRequest(msg.into())
 }
@@ -226,7 +229,10 @@ async fn confirm(
         .ok_or_else(|| AppError::Conflict("The upload didn't arrive. Try again.".into()))?;
     if size as i64 != ticket_size {
         discard(&s, id, &key).await?;
-        return Err(bad("The upload didn't match. Try again."));
+        // a conflict, not bad input: the ticket is spent, and a new upload can still post it
+        return Err(AppError::Conflict(
+            "The upload didn't match. Try again.".into(),
+        ));
     }
     if req.duration_ms == 0 || req.duration_ms > MAX_DURATION_MS + CONFIRM_SLACK_MS {
         return Err(bad("Clips can be up to 1:30."));
@@ -243,7 +249,14 @@ async fn confirm(
     .fetch_optional(&s.db)
     .await?;
     if thumb.is_none() {
-        return Err(bad("The preview image is missing. Try again."));
+        if !crate::media::valid_hash(&req.thumb_hash) {
+            return Err(bad("That preview image isn't valid."));
+        }
+        // well formed but not one of mine (gone, or never mine): the client uploads it again
+        return Err(AppError::ConflictCode(
+            THUMB_MISSING,
+            "The preview image is missing. Try again.".into(),
+        ));
     }
     if let Some(game) = req.game_id
         && !games::in_server(&s.db, server, game).await?
