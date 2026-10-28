@@ -6,15 +6,18 @@
   import PixelSpill from './PixelSpill.svelte'
   import QuoteItem from './QuoteItem.svelte'
   import VoterStack from './VoterStack.svelte'
+  import { tick } from 'svelte'
   import { modal } from '../lib/actions'
   import { motion } from '../lib/animate.svelte'
   import { leftLabel, liveQoty, myVote, plural, quotePreview, score, voteAction } from '../lib/quotes'
   import { nameOfIn } from '../lib/selectors'
+  import { applyMyVote } from '../lib/state'
   import { app, clock } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
   let { serverId, onClose }: { serverId: string; onClose: () => void } = $props()
+  const uid = $props.id()
 
   const e = $derived(liveQoty(app.state, serverId, Date.parse(clock.nowIso)))
   const meId = $derived(app.state.me?.id ?? '')
@@ -35,7 +38,8 @@
   }
 
   // --- voting: one call at a time (the next click needs the server's answer to know what it
-  // means); the option you voted for gets a short game-like pop once the vote is in ---
+  // means; the answer moves my vote in state at once, before the gateway's update); the option you
+  // voted for gets a short game-like pop once the vote is in ---
   let popped = $state<string | null>(null)
   let voting = $state(false)
   async function vote(id: string) {
@@ -43,7 +47,10 @@
     const eventId = e.id
     const action = voteAction(mine, id)
     voting = true
-    const ok = await attempt(() => (action === 'unvote' ? api.unvoteQoty(eventId) : api.voteQoty(eventId, id)))
+    const ok = await attempt(async () => {
+      const answer = await (action === 'unvote' ? api.unvoteQoty(eventId) : api.voteQoty(eventId, id))
+      app.state = applyMyVote(app.state, answer)
+    })
     voting = false
     if (ok && action !== 'unvote' && !motion.reducedMotion) popped = id
   }
@@ -75,6 +82,7 @@
   }
   // Quotes already in the vote, deleted ones and earlier winners (the server refuses them) aren't offered.
   const offered = $derived(results.filter((m) => !m.deleted && !m.quote?.wins.length && !e?.options.some((o) => o.message.id === m.id)))
+  let addButton = $state<HTMLButtonElement>()
   async function add(m: Message) {
     if (!e) return
     const eventId = e.id
@@ -82,12 +90,27 @@
       adding = false
       query = ''
       results = []
+      // the search box is gone: focus goes back to where adding started
+      await tick()
+      addButton?.focus()
     }
   }
 
-  // --- ending: asks first ---
+  // --- ending: asks first; the question takes focus (Cancel) and gives it back when withdrawn ---
   let confirming = $state(false)
   let ending = $state(false)
+  let endButton = $state<HTMLButtonElement>()
+  let cancelButton = $state<HTMLButtonElement>()
+  async function ask() {
+    confirming = true
+    await tick()
+    cancelButton?.focus()
+  }
+  async function unask() {
+    confirming = false
+    await tick()
+    endButton?.focus()
+  }
   async function end() {
     if (!e || ending) return
     const eventId = e.id
@@ -98,7 +121,7 @@
 
   // Escape steps back out of the end question before it closes the window.
   function escape() {
-    if (confirming) confirming = false
+    if (confirming) void unask()
     else onClose()
   }
 </script>
@@ -116,12 +139,14 @@
         <span class="grow"></span>
         <button type="button" class="close" aria-label="Close" onclick={onClose}><Icon name="x" /></button>
       </div>
-      <p class="status">{leftLabel(e.ends_at, Date.parse(clock.nowIso))} · {e.voters} of {e.members} have voted</p>
+      <!-- only the count is live: the time left ticks every minute -->
+      <p class="status">{leftLabel(e.ends_at, Date.parse(clock.nowIso))} · <span aria-live="polite">{e.voters} of {e.members} have voted</span></p>
 
       <div class="options">
         {#each e.options as o (o.message.id)}
           {@const id = o.message.id}
           {@const isMine = id === mine}
+          {@const p = quotePreview(app.state, serverId, o.message)}
           <div class="opt" class:mine={isMine} class:popped={popped === id} data-option={id}
             onanimationend={(ev) => { if (ev.animationName.endsWith('qoty-pop')) popped = null }}>
             <div class="fill" style:width="{total ? (o.votes / total) * 100 : 0}%"></div>
@@ -135,7 +160,8 @@
             <div class="tally">
               <span class="count" aria-hidden="true">{o.votes}</span><span class="sr">{plural(o.votes, 'vote', 'votes')}</span>
               <VoterStack userIds={o.voters} {nameOf} />
-              <button type="button" class="vote" class:on={isMine} aria-pressed={isMine} disabled={voting} onclick={() => void vote(id)}>{isMine ? 'Your vote' : 'Vote'}</button>
+              <button type="button" class="vote" class:on={isMine} aria-pressed={isMine}
+                aria-label="{isMine ? 'Your vote:' : 'Vote for'} {p.said} — {p.by}" disabled={voting} onclick={() => void vote(id)}>{isMine ? 'Your vote' : 'Vote'}</button>
             </div>
           </div>
         {:else}
@@ -161,16 +187,16 @@
       {#if error}<p class="err" role="alert">{error}</p>{/if}
 
       {#if confirming}
-        <div class="confirm" role="group" aria-label="End voting">
-          <p>End voting now? Everyone's votes are final.</p>
-          <button type="button" class="ghost" disabled={ending} onclick={() => (confirming = false)}>Cancel</button>
-          <button type="button" class="qoty-btn danger" disabled={ending} onclick={end}>End voting</button>
+        <div class="confirm" role="group" aria-label="End voting" aria-describedby="{uid}-end-q">
+          <p id="{uid}-end-q">End voting now? Everyone's votes are final.</p>
+          <button type="button" class="ghost" bind:this={cancelButton} aria-describedby="{uid}-end-q" disabled={ending} onclick={() => void unask()}>Cancel</button>
+          <button type="button" class="qoty-btn danger" aria-describedby="{uid}-end-q" disabled={ending} onclick={end}>End voting</button>
         </div>
       {:else}
         <div class="foot">
-          <button type="button" class="qoty-btn" aria-expanded={adding} onclick={() => (adding = !adding)}>Add a quote</button>
+          <button type="button" class="qoty-btn" bind:this={addButton} aria-expanded={adding} onclick={() => (adding = !adding)}>Add a quote</button>
           <span class="grow"></span>
-          <button type="button" class="qoty-btn" onclick={() => (confirming = true)}>End voting…</button>
+          <button type="button" class="qoty-btn" bind:this={endButton} onclick={() => void ask()}>End voting…</button>
         </div>
       {/if}
     </div>

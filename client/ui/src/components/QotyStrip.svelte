@@ -3,21 +3,29 @@
   // (spec §5.2): who leads and the time left, and "Open voting".
   import PixelSpill from './PixelSpill.svelte'
   import QotyVoting from './QotyVoting.svelte'
-  import { leaders, leftLabel, liveQoty, speakersOf } from '../lib/quotes'
+  import { leaders, leftLabel, liveQoty, speakerNames } from '../lib/quotes'
   import { app, clock } from '../lib/store.svelte'
 
   let { serverId }: { serverId: string } = $props()
 
   const now = $derived(Date.parse(clock.nowIso))
   const e = $derived(liveQoty(app.state, serverId, now))
-  // A tie names every leader, each person once: "sam & kim lead with 2".
+  // A tie names every leader, each person once: "sam & kim lead with 2". The verb agrees with the
+  // names shown, not the number of quotes: two tied quotes by sam are "sam leads".
   const lead = $derived.by(() => {
     const top = e ? leaders(e) : []
     if (!top.length) return 'no votes yet'
-    const names = speakersOf(app.state, serverId, top.map((o) => o.message))
-    return `${names} ${top.length > 1 ? 'lead' : 'leads'} with ${top[0].votes}`
+    const names = speakerNames(app.state, serverId, top.map((o) => o.message))
+    return `${names.join(' & ')} ${names.length > 1 ? 'lead' : 'leads'} with ${top[0].votes}`
   })
   let voting = $state(false)
+  // The window closes for good when the vote stops being live or another server's vote shows:
+  // reopened (the same event) or switched to, it waits to be asked for again.
+  const shown = $derived(e ? `${serverId}/${e.id}` : null)
+  $effect.pre(() => {
+    void shown
+    voting = false
+  })
 </script>
 
 {#if e}

@@ -90,10 +90,15 @@ export function voteAction(myVote: string | null, clicked: string): 'vote' | 'mo
   return myVote === null ? 'vote' : myVote === clicked ? 'unvote' : 'move'
 }
 
-/** Who said a quote (or several): each person once, in line order ("sam & kim"). */
-export function speakersOf(s: AppState, serverId: string, m: Message | Message[]): string {
+/** Who said a quote (or several): each person once, in line order. */
+export function speakerNames(s: AppState, serverId: string, m: Message | Message[]): string[] {
   const lines = (Array.isArray(m) ? m : [m]).flatMap((q) => q.quote?.lines ?? [])
-  return [...new Set(lines.map((l) => speakerOf(s, serverId, l).name))].join(' & ')
+  return [...new Set(lines.map((l) => speakerOf(s, serverId, l).name))]
+}
+
+/** Who said a quote (or several) as one label: "sam & kim". */
+export function speakersOf(s: AppState, serverId: string, m: Message | Message[]): string {
+  return speakerNames(s, serverId, m).join(' & ')
 }
 
 /** A stored speaker (a win's snapshot): the member's name, else the plain name. */

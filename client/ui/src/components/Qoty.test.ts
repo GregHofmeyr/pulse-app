@@ -20,6 +20,7 @@ import { defaultQotyYear } from '../lib/quotes'
 import { applyEvent } from '../lib/state'
 import { app, clock, handleReady, resetState } from '../lib/store.svelte'
 import { testMe, testQoty, testReady } from '../lib/testReady'
+import { reactiveProps } from '../lib/testProps.svelte'
 
 const sam = { id: 'U2', username: 'sam', avatar_hash: null }
 const kim = { id: 'U3', username: 'kim', avatar_hash: null }
@@ -237,6 +238,187 @@ describe('Quote of the Year voting', () => {
   })
 })
 
+describe('Quote of the Year voting window lifecycle', () => {
+  const dialog = () => document.querySelector('[role=dialog][aria-label="Quote of the Year 2026"]')
+  const ended = () => event({ ended_at: new Date().toISOString(), end_reason: 'early' })
+
+  it('a window open when the vote ends does not pop back open when it is reopened', async () => {
+    set(event())
+    show(QotyBanner, { serverId: 'S1' })
+    button('Vote', banner()!)!.click()
+    flushSync()
+    expect(dialog()).toBeTruthy()
+    app.state = applyEvent(app.state, { t: 'QotyEnded', d: { event: ended() } }, Date.now())
+    flushSync()
+    expect(dialog()).toBeNull()
+    // the same event, reopened
+    set(event())
+    await settle()
+    expect(banner()).toBeTruthy()
+    expect(dialog()).toBeNull()
+  })
+
+  it('the strip\'s window does not pop back open when the vote is reopened', async () => {
+    set(event())
+    show(QotyStrip, { serverId: 'S1' })
+    button('Open voting')!.click()
+    flushSync()
+    expect(dialog()).toBeTruthy()
+    app.state = applyEvent(app.state, { t: 'QotyEnded', d: { event: ended() } }, Date.now())
+    flushSync()
+    set(event())
+    await settle()
+    expect(document.querySelector('.qoty-strip')).toBeTruthy()
+    expect(dialog()).toBeNull()
+  })
+
+  it('switching to another server with a live vote does not open its window', async () => {
+    set(event())
+    set(event({ id: 'E2', server_id: 'S2' }))
+    const props = reactiveProps({ serverId: 'S1' })
+    mounted.push(mount(QotyBanner, { target: document.body, props }))
+    flushSync()
+    button('Vote', banner()!)!.click()
+    flushSync()
+    expect(dialog()).toBeTruthy()
+    props.serverId = 'S2'
+    flushSync()
+    await settle()
+    expect(banner()).toBeTruthy()
+    expect(dialog()).toBeNull()
+  })
+})
+
+describe('Quote of the Year voting window details', () => {
+  async function openVoting(e = event()) {
+    set(e)
+    show(QotyBanner, { serverId: 'S1' })
+    button('Vote', banner()!)!.click()
+    flushSync()
+    await settle()
+  }
+  const items = () => [...document.querySelectorAll<HTMLElement>('[role=menuitem]')].map((x) => x.textContent?.trim())
+  const lineMenu = () => {
+    option('Q1').querySelector<HTMLButtonElement>('button[aria-label="Line actions"]')!.click()
+    flushSync()
+  }
+
+  it('options follow reactions, edits and awards of their quotes', async () => {
+    await openVoting()
+    expect(text(option('Q1'))).toContain('4 reactions')
+    app.state = applyEvent(app.state, { t: 'ReactionAdded', d: { channel_id: 'C1', message_id: 'Q1', emoji: '😂', user_id: 'U3', count: 5 } }, Date.now())
+    flushSync()
+    expect(text(option('Q1'))).toContain('5 reactions')
+    app.state = applyEvent(app.state, { t: 'MessageUpdated', d: { message: quote('Q1', 'first one, fixed', 'U2') } }, Date.now())
+    flushSync()
+    expect(text(option('Q1'))).toContain('first one, fixed')
+    // an edit's reactions aren't trusted: the score stays
+    expect(text(option('Q1'))).toContain('5 reactions')
+    lineMenu()
+    expect(items()).toContain('Give quote award')
+    document.querySelector('[role=menu]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.querySelector('[role=menu]')).toBeNull()
+    expect(dialogOpen()).toBe(true)
+    app.state = applyEvent(app.state, { t: 'QuoteAwardChanged', d: { channel_id: 'C1', message_id: 'Q1', line_id: 'LQ1', user_id: 'U1', given: true, count: 1, awarders: ['U1'] } }, Date.now())
+    flushSync()
+    lineMenu()
+    expect(items()).toContain('Take back award')
+    expect(items()).not.toContain('Give quote award')
+  })
+
+  it('a line I awarded before the window opened offers to take it back', async () => {
+    const q = quote('Q1', 'first one', 'U2')
+    q.quote!.lines[0] = { ...q.quote!.lines[0], awards: 1, awarders: ['U1'], awarded: false } // as the server sends it
+    await openVoting(event({ options: [opt(q), opt(quote('Q2', 'second one', 'U3'))] }))
+    lineMenu()
+    expect(items()).toContain('Take back award')
+  })
+
+  it('a second click right after a vote lands takes it back', async () => {
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'vote_qoty' ? event({ options: [opt(quote('Q1', 'first one', 'U2', 4), ['U1']), opt(quote('Q2', 'second one', 'U3', 2))], voters: 1 }) : undefined)
+    await openVoting()
+    button('Vote', option('Q1'))!.click()
+    await settle()
+    // the gateway's QotyUpdated hasn't arrived yet; the answer already says it's mine
+    expect(option('Q1').classList.contains('mine')).toBe(true)
+    button('Your vote', option('Q1'))!.click()
+    await settle()
+    expect(calls('vote_qoty')).toEqual([{ eventId: 'E1', messageId: 'Q1' }])
+    expect(calls('unvote_qoty')).toEqual([{ eventId: 'E1' }])
+  })
+
+  it('vote buttons name their quote and the vote count is announced', async () => {
+    await openVoting(event({ options: [opt(quote('Q1', 'first one', 'U2'), ['U1']), opt(quote('Q2', 'second one', 'U3'))], voters: 1 }))
+    expect(option('Q1').querySelector('button.vote')!.getAttribute('aria-label')).toBe('Your vote: “first one” — sam')
+    expect(option('Q2').querySelector('button.vote')!.getAttribute('aria-label')).toBe('Vote for “second one” — kim')
+    const live = document.querySelector('.qoty-voting [aria-live=polite]')!
+    expect(text(live)).toBe('1 of 3 have voted')
+    // the banner's ticking line is not a live region
+    expect(banner()!.querySelector('[aria-live]')).toBeNull()
+  })
+
+  it('the end question takes focus and is announced; Cancel and Escape return to "End voting…"', async () => {
+    await openVoting()
+    button('End voting…')!.click()
+    flushSync()
+    await settle()
+    const cancel = button('Cancel', document.querySelector('.confirm')!)!
+    expect(document.activeElement).toBe(cancel)
+    const q = document.getElementById(cancel.getAttribute('aria-describedby') ?? '')
+    expect(text(q)).toBe("End voting now? Everyone's votes are final.")
+    cancel.click()
+    flushSync()
+    await settle()
+    expect(document.activeElement).toBe(button('End voting…'))
+    button('End voting…')!.click()
+    flushSync()
+    await settle()
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    await settle()
+    expect(document.querySelector('.confirm')).toBeNull()
+    expect(dialogOpen()).toBe(true)
+    expect(document.activeElement).toBe(button('End voting…'))
+  })
+
+  it('after adding a quote, focus goes back to "Add a quote"', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'search_quotes' ? [quote('Q7', 'from december')] : undefined))
+    await openVoting()
+    await search('dec')
+    document.querySelector<HTMLButtonElement>('.results button')!.click()
+    await settle()
+    expect(document.querySelector('input[aria-label="Search quotes"]')).toBeNull()
+    expect(document.activeElement).toBe(button('Add a quote'))
+  })
+
+  it('a full vote shows the server\'s answer when adding', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'search_quotes') return [quote('Q7', 'from december')]
+      if (cmd === 'add_qoty_option') throw 'This vote has enough options.'
+    })
+    await openVoting()
+    await search('dec')
+    document.querySelector<HTMLButtonElement>('.results button')!.click()
+    await settle()
+    expect(text(document.querySelector('.qoty-voting [role=alert]'))).toBe('This vote has enough options.')
+    // still adding: the search stays
+    expect(document.querySelector('input[aria-label="Search quotes"]')).toBeTruthy()
+  })
+
+  const dialogOpen = () => !!document.querySelector('[role=dialog][aria-label="Quote of the Year 2026"]')
+  async function search(q: string) {
+    button('Add a quote')!.click()
+    flushSync()
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Search quotes"]')!
+    input.value = q
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    await new Promise((r) => setTimeout(r, 300))
+    await settle()
+  }
+})
+
 describe('Quote of the Year start', () => {
   it('start offers 3 hours, a day, custom 5 min-14 days and until ended', async () => {
     show(QotyStart, { serverId: 'S1', onClose: () => {} })
@@ -326,6 +508,12 @@ describe('Quote of the Year voice strip', () => {
     both.quote!.lines.push({ ...both.quote!.lines[0], id: 'LQ4b', speaker_id: 'U3', text: 'yes' })
     set(event({ options: [opt(both, ['U1']), opt(quote('Q5', 'alone', 'U2'), ['U3'])], voters: 2 }))
     expect(text(document.querySelector('.qoty-strip'))).toContain('Quote of the Year · sam & kim lead with 1 · 2h 5m left')
+    // the verb follows the names shown: two tied quotes by sam are "sam leads"
+    set(event({ options: [opt(quote('Q6', 'one', 'U2'), ['U1']), opt(quote('Q7', 'two', 'U2'), ['U3'])], voters: 2 }))
+    expect(text(document.querySelector('.qoty-strip'))).toContain('Quote of the Year · sam leads with 1 · 2h 5m left')
+    // ...and one quote said by sam and kim is "sam & kim lead"
+    set(event({ options: [opt(both, ['U1', 'U3'])], voters: 2 }))
+    expect(text(document.querySelector('.qoty-strip'))).toContain('Quote of the Year · sam & kim lead with 2 · 2h 5m left')
     set(event({ ends_at: null }))
     expect(text(document.querySelector('.qoty-strip'))).toContain('Quote of the Year · no votes yet · until ended')
     button('Open voting')!.click()

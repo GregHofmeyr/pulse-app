@@ -11,6 +11,13 @@
   const now = $derived(Date.parse(clock.nowIso))
   const e = $derived(liveQoty(app.state, serverId, now))
   let voting = $state(false)
+  // The window closes for good when the vote stops being live or another server's vote shows:
+  // reopened (the same event) or switched to, it waits to be asked for again.
+  const shown = $derived(e ? `${serverId}/${e.id}` : null)
+  $effect.pre(() => {
+    void shown
+    voting = false
+  })
 </script>
 
 {#if e}
