@@ -112,6 +112,9 @@ describe('conversations', () => {
     expect(messageSound({ ...base, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(true)
     expect(messageSound({ ...base, message: msg('A', 'T1', 'U1'), channel: text })).toBe(false)
     expect(messageSound({ ...base, message: msg('A', 'T1', 'U1', { mentions: ['ME'] }), channel: text })).toBe(true)
+    const clips = { ...text, id: 'K1', kind: 'clips' as const }
+    expect(messageSound({ ...base, message: msg('A', 'K1', 'U1'), channel: clips })).toBe(false) // like text: server channels ping on mention
+    expect(messageSound({ ...base, message: msg('A', 'K1', 'U1', { mentions: ['ME'] }), channel: clips })).toBe(true)
     expect(messageSound({ ...base, message: msg('A', 'DM1', 'ME'), channel: dm })).toBe(false)
     expect(messageSound({ ...base, message: msg('A', 'DM1', null, { kind: 'system' }), channel: dm })).toBe(false)
     expect(messageSound({ ...base, open: true, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(false)

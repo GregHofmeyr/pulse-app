@@ -89,7 +89,7 @@ export type AppState = {
   clipJobs: Record<string, ClipJob> // job id -> clip being sent (a `done` one is removed)
 }
 
-export type ClipFeed = { channelId: string; filter: ClipFilter; items: Message[] /* newest first */; start: boolean; loading: boolean }
+export type ClipFeed = { channelId: string; filter: ClipFilter; items: Message[] /* newest first */; start: boolean; loading: boolean; /** Clips deleted while a page was being fetched (it may still carry them). */ gone?: string[] }
 
 /** Clips per page of a feed (the server's page size). */
 export const CLIP_PAGE = 30
@@ -246,14 +246,15 @@ export function openFeed(s: AppState, channelId: string, filter: ClipFilter): Ap
   return { ...s, clipFeeds: { ...s.clipFeeds, [key]: { channelId, filter, items: [], start: false, loading: true } } }
 }
 
-/** Add a fetched page of a feed (`before` null = the newest page, else the page older than that id). Clips that
- * arrived live meanwhile stay, once each; the start is reached on a short page. */
-export function loadFeedPage(s: AppState, key: string, page: Message[], _before: string | null): AppState {
+/** Add a fetched page of a feed (the newest, or one older than what is held: merged by id). Clips that arrived
+ * live meanwhile stay, once each; ones deleted while it was in flight stay out; the start is reached on a short page. */
+export function loadFeedPage(s: AppState, key: string, page: Message[]): AppState {
   const feed = s.clipFeeds[key]
   if (!feed) return s
   const seen = new Set(feed.items.map((m) => m.id))
-  const items = [...feed.items, ...page.filter((m) => !seen.has(m.id))].sort(newestFirst)
-  return { ...s, clipFeeds: { ...s.clipFeeds, [key]: { ...feed, items, start: page.length < CLIP_PAGE, loading: false } } }
+  const gone = new Set(feed.gone)
+  const items = [...feed.items, ...page.filter((m) => !seen.has(m.id) && !gone.has(m.id))].sort(newestFirst)
+  return { ...s, clipFeeds: { ...s.clipFeeds, [key]: { ...feed, items, start: page.length < CLIP_PAGE, loading: false, gone: undefined } } }
 }
 
 /** A feed's fetch failed: it can be tried again. */
@@ -294,7 +295,7 @@ function clipUpdated(s: AppState, m: Message): AppState {
     const items = !fits
       ? feed.items.filter((x) => x.id !== m.id)
       : old
-        ? feed.items.map((x) => (x.id === m.id ? { ...m, reactions: old.reactions, clip: m.clip && old.clip ? { ...m.clip, replies_seen: old.clip.replies_seen } : m.clip } : x))
+        ? feed.items.map((x) => (x.id === m.id ? { ...withMyQuoteState(m, old, undefined), reactions: old.reactions } : x))
         : [...feed.items, m].sort(newestFirst)
     feeds = { ...feeds, [k]: { ...feed, items } }
   }
@@ -304,6 +305,7 @@ function clipUpdated(s: AppState, m: Message): AppState {
 /** A quote as the event carries it, with what only we know put back: each line's `awarded` comes
  * from `awarders` (the event's flag is always false) and `replies_seen` is kept (events carry none). */
 function withMyQuoteState(m: Message, old: Message | undefined, meId: string | undefined): Message {
+  if (m.clip) return { ...m, clip: { ...m.clip, replies_seen: old?.clip?.replies_seen ?? m.clip.replies_seen } }
   if (!m.quote) return m
   return {
     ...m,
@@ -357,7 +359,8 @@ export function holdThread(s: AppState, root: Message): AppState {
 export function closeThread(s: AppState, root: string, channel: string): AppState {
   const rootMsg = s.openRoot?.id === root ? s.openRoot : undefined
   const loaded = loadedRoot(s, channel, root)
-  const seen = maxIdOf(s.threadSeen[root], threadOf(loaded ?? rootMsg ?? ({ quote: null, clip: null } as Message))?.replies_seen)
+  const copy = loaded ?? rootMsg
+  const seen = maxIdOf(s.threadSeen[root], copy && threadOf(copy)?.replies_seen)
   const meId = s.me?.id
   const counted = (s.threads[root] ?? []).filter((m) => !!meId && m.kind === 'normal' && !m.deleted && m.author_id !== meId && m.mentions.includes(meId) && m.id > seen)
   const { [root]: _list, ...threads } = s.threads
@@ -515,7 +518,9 @@ function threadSeen(s: AppState, d: Extract<Event, { t: 'ThreadSeen' }>['d']): A
 function dropFromFeeds(feeds: AppState['clipFeeds'], channel: string, id: string): AppState['clipFeeds'] {
   let next = feeds
   for (const [k, feed] of Object.entries(feeds)) {
-    if (feed.channelId === channel && feed.items.some((m) => m.id === id)) next = { ...next, [k]: { ...feed, items: feed.items.filter((m) => m.id !== id) } }
+    if (feed.channelId !== channel) continue
+    const held = feed.items.some((m) => m.id === id)
+    if (held || feed.loading) next = { ...next, [k]: { ...feed, items: feed.items.filter((m) => m.id !== id), gone: feed.loading ? [...(feed.gone ?? []), id] : feed.gone } }
   }
   return next
 }
@@ -762,10 +767,11 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
           .filter((r) => r.count > 0)
         return { ...m, reactions }
       }
+      const base = mapFeedItems(s, c, id, apply) // a clip in the channel's feeds
       const loaded = !!findMessage(s, c, id) // not loaded: the fetch brings current reactions
       const inLatest = s.latest[c]?.id === id // the conversation preview keeps its own copy
       // a QotY option's copy and the open panel's quote, loaded or not (mapMessage reaches the latter when loaded)
-      const q = loaded ? mapQotyMessages(s, id, apply) : mapOpenRoot(mapQotyMessages(s, id, apply), id, apply)
+      const q = loaded ? mapQotyMessages(base, id, apply) : mapOpenRoot(mapQotyMessages(base, id, apply), id, apply)
       if (!loaded && !inLatest) return q
       const next = loaded ? mapMessage(q, c, id, apply) : q
       return { ...next, latest: inLatest ? { ...s.latest, [c]: apply(s.latest[c]) } : s.latest }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { feedKey, formatBytes, formatDuration, matchesFilter, clipView, isNewClip } from './clips'
+import { clipFilter, feedKey, formatBytes, formatDuration, matchesFilter, clipView, isNewClip } from './clips'
 import { applyEvent, applyReady, emptyState } from './state'
 import type { Message } from './protocol/Message'
 
@@ -39,6 +39,8 @@ describe('matchesFilter', () => {
   it('keys differ per filter', () => {
     expect(feedKey('K1', {})).not.toBe(feedKey('K1', { game: 'G1' }))
     expect(feedKey('K1', { game: 'G1' })).toBe(feedKey('K1', { game: 'G1' }))
+    expect(feedKey('K1', clipFilter('', null))).toBe(feedKey('K1', {}))
+    expect(clipFilter('G1', undefined)).toEqual({ game: 'G1' })
   })
 })
 

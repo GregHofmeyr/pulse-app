@@ -6,9 +6,20 @@ import type { Message } from './protocol/Message'
 /** Which clips of a channel a feed shows: a game and/or an author (ids). */
 export type ClipFilter = { game?: string; author?: string }
 
-/** The key of a channel's feed for a filter (ids never contain `|`). */
+/** The one way to build a filter: a missing, null or empty part is unset. */
+export function clipFilter(game?: string | null, author?: string | null): ClipFilter {
+  return { ...(game ? { game } : {}), ...(author ? { author } : {}) }
+}
+
+/** The key of a channel's feed for a filter (ids never contain `|`); every feed lookup goes through it. */
 export function feedKey(channelId: string, filter: ClipFilter): string {
-  return `${channelId}|${filter.game ?? ''}|${filter.author ?? ''}`
+  const f = clipFilter(filter.game, filter.author)
+  return `${channelId}|${f.game ?? ''}|${f.author ?? ''}`
+}
+
+/** A channel's feed for a filter, if started. */
+export function feedOf(s: AppState, channelId: string, filter: ClipFilter): AppState['clipFeeds'][string] | undefined {
+  return s.clipFeeds[feedKey(channelId, filter)]
 }
 
 /** Whether a clip message belongs in a feed with this filter. */

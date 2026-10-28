@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addHistory, addReplies, openFeed, loadFeedPage, setClipJob, type AppState, type Pending } from './state'
+import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, type AppState, type Pending } from './state'
 import { feedKey, clipView, type ClipFilter } from './clips'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
@@ -1149,7 +1149,7 @@ describe('clips', () => {
     members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: null }] }],
     read_states: [{ channel_id: 'K1', last_read_message_id: null, unread: 0, mentions: 0 }],
   }))
-  const open = (s: AppState, filter: ClipFilter, items: Message[] = []) => loadFeedPage(openFeed(s, 'K1', filter), feedKey('K1', filter), items, null)
+  const open = (s: AppState, filter: ClipFilter, items: Message[] = []) => loadFeedPage(openFeed(s, 'K1', filter), feedKey('K1', filter), items)
   const created = (s: AppState, m: Message) => applyEvent(s, { t: 'MessageCreated', d: { message: m, nonce: null } }, 0)
   const ids = (s: AppState, filter: ClipFilter) => s.clipFeeds[feedKey('K1', filter)].items.map((m) => m.id)
 
@@ -1193,7 +1193,7 @@ describe('clips', () => {
     let s = open(base(), {}, [cm('M9'), cm('M8')])
     expect(s.clipFeeds[feedKey('K1', {})].start).toBe(true)
     const page = Array.from({ length: 30 }, (_, i) => cm(`M${String(50 - i)}`))
-    s = loadFeedPage(s, feedKey('K1', {}), page, 'M9')
+    s = loadFeedPage(s, feedKey('K1', {}), page)
     expect(s.clipFeeds[feedKey('K1', {})].start).toBe(false)
     expect(ids(s, {}).slice(0, 3)).toEqual(['M9', 'M8', 'M50'])
     expect(ids(s, {})).toHaveLength(32)
@@ -1229,5 +1229,55 @@ describe('clips', () => {
     expect(s.clipJobs['J1'].progress).toBe(0.5)
     s = setClipJob(s, { ...job, stage: 'done' })
     expect(s.clipJobs['J1']).toBeUndefined()
+  })
+
+  it('a clip delete takes it out of unread', () => {
+    let s = created(base(), cm('M1'))
+    s = created(s, cm('M2'))
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'K1', message_id: 'M1', thread_root_id: null, author_id: 'U2', mentions: [] } }, 0)
+    expect(s.reads['K1'].unread).toBe(1)
+  })
+
+  it('an edit adds a clip to a feed it newly fits, once the feed reaches that far', () => {
+    let s = open(base(), {}, [cm('M1', 'G1')])
+    s = open(s, { game: 'G2' }, [])
+    s = open(s, { game: 'G3' }, Array.from({ length: 30 }, (_, i) => cm(`M${String(90 - i)}`, 'G3')))
+    s = applyEvent(s, { t: 'MessageUpdated', d: { message: cm('M1', 'G2') } }, 0)
+    expect(ids(s, { game: 'G2' })).toEqual(['M1'])
+    s = applyEvent(s, { t: 'MessageUpdated', d: { message: cm('M1', 'G3') } }, 0)
+    expect(ids(s, { game: 'G3' })).not.toContain('M1') // older than the page reached
+  })
+
+  it('reactions reach a clip in the feeds and the open clip', () => {
+    let s = open(base(), {}, [cm('M1')])
+    s = holdThread(s, s.clipFeeds[feedKey('K1', {})].items[0])
+    s = applyEvent(s, { t: 'ReactionAdded', d: { channel_id: 'K1', message_id: 'M1', emoji: '👍', user_id: 'U1', count: 1 } }, 0)
+    expect(s.clipFeeds[feedKey('K1', {})].items[0].reactions).toEqual([{ emoji: '👍', count: 1, me: true }])
+    expect(s.openRoot!.reactions).toEqual([{ emoji: '👍', count: 1, me: true }])
+    s = applyEvent(s, { t: 'ReactionRemoved', d: { channel_id: 'K1', message_id: 'M1', emoji: '👍', user_id: 'U1', count: 0 } }, 0)
+    expect(s.clipFeeds[feedKey('K1', {})].items[0].reactions).toEqual([])
+  })
+
+  it('an edit of the open clip keeps its seen point', () => {
+    let s = open(base(), {}, [])
+    const withSeen = { ...cm('M1'), clip: { ...cm('M1').clip!, replies_seen: 'R5' } }
+    s = holdThread(s, withSeen)
+    s = applyEvent(s, { t: 'MessageUpdated', d: { message: cm('M1', null, { content: 'new' }) } }, 0)
+    expect(s.openRoot!.content).toBe('new')
+    expect(s.openRoot!.clip!.replies_seen).toBe('R5')
+  })
+
+  it('a clip deleted while its page was on the way does not come back', () => {
+    let s = openFeed(base(), 'K1', {})
+    s = applyEvent(s, { t: 'MessageDeleted', d: { channel_id: 'K1', message_id: 'M1', thread_root_id: null, author_id: 'U2', mentions: [] } }, 0)
+    s = loadFeedPage(s, feedKey('K1', {}), [cm('M2'), cm('M1')])
+    expect(ids(s, {})).toEqual(['M2'])
+    expect(s.clipFeeds[feedKey('K1', {})].gone).toBeUndefined()
+  })
+
+  it('ThreadSeen on a clip moves its seen point', () => {
+    let s = open(base(), {}, [cm('M1')])
+    s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'K1', root_id: 'M1', last_seen_id: 'R2', mentions_cleared: 0, mentions: null } }, 0)
+    expect(s.clipFeeds[feedKey('K1', {})].items[0].clip!.replies_seen).toBe('R2')
   })
 })
