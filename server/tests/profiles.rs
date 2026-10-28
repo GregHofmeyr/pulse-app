@@ -7,7 +7,7 @@ use std::time::Duration;
 use common::*;
 use futures::SinkExt;
 use pulse_protocol::gateway::{ClientFrame, Ready, ServerFrame};
-use pulse_protocol::rest::{NameStyle, User};
+use pulse_protocol::rest::{Badge, NameStyle, Profile, User};
 use sqlx::sqlite::SqliteConnectOptions;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
@@ -185,4 +185,213 @@ async fn migration_0010_adds_defaults_and_drops_images() {
         .await
         .unwrap();
     assert!(broken.is_empty(), "{broken:?}");
+}
+
+fn ago(secs: i64) -> String {
+    pulse_server::db::stamp(chrono::Utc::now() - chrono::Duration::seconds(secs))
+}
+
+async fn profile_of(app: &TestApp, token: &str, id: pulse_protocol::ids::UserId) -> Profile {
+    get_json(app, token, &format!("/users/{id}/profile")).await
+}
+
+async fn exec(app: &TestApp, q: &str, binds: &[&str]) {
+    let mut query = sqlx::query(q);
+    for b in binds {
+        query = query.bind(*b);
+    }
+    query.execute(&app.db).await.unwrap();
+}
+
+#[tokio::test]
+async fn stats_total_across_servers() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let sa = create_server(&app, &alex, "A").await;
+    let sb = create_server(&app, &alex, "B").await;
+    let ca = general(&app, &alex, sa.id).await;
+    let cb = general(&app, &alex, sb.id).await;
+    let u = alex_id.to_string();
+    let (a, b) = (ca.id.to_string(), cb.id.to_string());
+    let q = "INSERT INTO voice_sessions (id, user_id, channel_id, joined_at, left_at) VALUES (?, ?, ?, ?, ?)";
+    exec(&app, q, &["s1", &u, &a, &ago(7200), &ago(3600)]).await;
+    exec(&app, q, &["s2", &u, &b, &ago(5400), &ago(3600)]).await;
+    exec(
+        &app,
+        "INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES ('s3', ?, ?, ?)",
+        &[&u, &a, &ago(60)],
+    )
+    .await;
+
+    let p = profile_of(&app, &alex, alex_id).await;
+    assert!(
+        (5460..=5470).contains(&p.stats.voice_seconds),
+        "{}",
+        p.stats.voice_seconds
+    );
+    let created: String = sqlx::query_scalar("SELECT created_at FROM users WHERE id = ?")
+        .bind(&u)
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(p.stats.member_since, created);
+    assert_eq!(p.user.username, "alex");
+}
+
+#[tokio::test]
+async fn top_reaction_counts_live_messages_only() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let s = create_server(&app, &alex, "Main").await;
+    let c = general(&app, &alex, s.id).await;
+    let u = alex_id.to_string();
+    let mut live = Vec::new();
+    for i in 0..5 {
+        live.push(
+            send(&app, &alex, c.id, &format!("m{i}"))
+                .await
+                .id
+                .to_string(),
+        );
+    }
+    let gone = send(&app, &alex, c.id, "gone").await.id.to_string();
+    exec(
+        &app,
+        "UPDATE messages SET deleted_at = ? WHERE id = ?",
+        &[&ago(1), &gone],
+    )
+    .await;
+    let q = "INSERT INTO reactions (message_id, user_id, emoji, created_at) VALUES (?, ?, ?, ?)";
+    for m in &live[..3] {
+        exec(&app, q, &[m, &u, "🔥", &ago(100)]).await;
+    }
+    for m in &live[3..] {
+        exec(&app, q, &[m, &u, "😂", &ago(50)]).await;
+    }
+    // Three more 😂 on a deleted message must not count.
+    exec(&app, q, &[&gone, &u, "😂", &ago(10)]).await;
+    exec(&app, q, &[&gone, &u, "🎉", &ago(10)]).await;
+    assert_eq!(
+        profile_of(&app, &alex, alex_id)
+            .await
+            .stats
+            .top_reaction
+            .as_deref(),
+        Some("🔥")
+    );
+
+    // A tie goes to the most recent: 😂 now has 3 live too, and the newest reaction.
+    exec(&app, q, &[&live[0], &u, "😂", &ago(5)]).await;
+    assert_eq!(
+        profile_of(&app, &alex, alex_id)
+            .await
+            .stats
+            .top_reaction
+            .as_deref(),
+        Some("😂")
+    );
+}
+
+#[tokio::test]
+async fn name_archive_and_renames() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (sam_id, _) = register(&app, "sam").await;
+    let sa = create_server(&app, &alex, "A").await;
+    let sb = create_server(&app, &alex, "B").await;
+
+    let none = profile_of(&app, &alex, alex_id).await;
+    assert_eq!(none.stats.times_renamed, 0);
+    assert!(none.name_archive.is_empty());
+
+    let q = "INSERT INTO nickname_history (id, server_id, target_user_id, changed_by, old_nick, new_nick, changed_at) VALUES (?, ?, ?, ?, NULL, ?, ?)";
+    let (u, by) = (alex_id.to_string(), sam_id.to_string());
+    let t_old = ago(200);
+    let t_new = ago(100);
+    exec(&app, q, &["h1", &sa.id.to_string(), &u, &u, "Old", &t_old]).await;
+    exec(&app, q, &["h2", &sb.id.to_string(), &u, &by, "New", &t_new]).await;
+
+    let p = profile_of(&app, &alex, alex_id).await;
+    assert_eq!(p.stats.times_renamed, 2);
+    assert_eq!(p.name_archive.len(), 2);
+    assert_eq!(p.name_archive[0].name, "New");
+    assert_eq!(p.name_archive[0].server_id, sb.id);
+    assert_eq!(p.name_archive[0].changed_by, sam_id);
+    assert_eq!(p.name_archive[0].changed_at, t_new);
+    assert_eq!(p.name_archive[1].name, "Old");
+    assert_eq!(p.name_archive[1].server_id, sa.id);
+    assert_eq!(p.name_archive[1].changed_by, alex_id);
+}
+
+#[tokio::test]
+async fn badges_come_from_user_badges() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    assert!(profile_of(&app, &alex, alex_id).await.badges.is_empty());
+    let t = ago(30);
+    exec(
+        &app,
+        "INSERT INTO user_badges (user_id, badge_key, earned_at, first_earner) VALUES (?, 'founder', ?, 1)",
+        &[&alex_id.to_string(), &t],
+    )
+    .await;
+    assert_eq!(
+        profile_of(&app, &alex, alex_id).await.badges,
+        vec![Badge {
+            key: "founder".into(),
+            earned_at: t,
+            first_earner: true
+        }]
+    );
+}
+
+#[tokio::test]
+async fn card_carries_theme_and_banner_still() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    exec(&app,
+        "INSERT INTO media (hash, kind, content_type, size, width, height, frames, still_hash, created_at) VALUES ('b-still', 'banner', 'image/webp', 1, 960, 384, 1, NULL, '2026-10-01T00:00:00.000Z')", &[]).await;
+    exec(&app,
+        "INSERT INTO media (hash, kind, content_type, size, width, height, frames, still_hash, created_at) VALUES ('b-full', 'banner', 'image/webp', 1, 600, 240, 4, 'b-still', '2026-10-01T00:00:00.000Z')", &[]).await;
+    exec(
+        &app,
+        "UPDATE users SET banner_hash = 'b-full', pronouns = 'they/them', bio = 'hi' WHERE id = ?",
+        &[&alex_id.to_string()],
+    )
+    .await;
+    let c = profile_of(&app, &alex, alex_id).await.card;
+    assert_eq!(c.banner_hash.as_deref(), Some("b-full"));
+    assert_eq!(c.banner_still.as_deref(), Some("b-still"));
+    assert_eq!(
+        (c.theme_top.as_str(), c.theme_bottom.as_str()),
+        ("#3a3d46", "#16171b")
+    );
+    assert_eq!(c.pronouns.as_deref(), Some("they/them"));
+    assert_eq!(c.bio.as_deref(), Some("hi"));
+}
+
+#[tokio::test]
+async fn unknown_user_is_404() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    for id in [
+        pulse_protocol::ids::UserId::new().to_string(),
+        "not-an-id".into(),
+    ] {
+        let r = app
+            .http
+            .get(app.url(&format!("/users/{id}/profile")))
+            .bearer_auth(&alex)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 404, "{id}");
+    }
+    let r = app
+        .http
+        .get(app.url("/users/x/profile"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 401);
 }
