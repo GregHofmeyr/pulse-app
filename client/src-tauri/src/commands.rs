@@ -1483,6 +1483,22 @@ pub async fn upload_quote_media(
     core.check(&app, api.upload_quote_media(&token, bytes.clone()).await)
 }
 
+/// The bytes of the image among files dropped on a quote line (Tauri gives the page only their
+/// paths), for `upload_quote_media`: the first image by name, at most the size limit. None of them
+/// an image says so in the server's words.
+#[tauri::command]
+pub async fn read_quote_image(paths: Vec<String>) -> Result<tauri::ipc::Response, ApiError> {
+    let paths: Vec<std::path::PathBuf> = paths.into_iter().map(Into::into).collect();
+    let bytes = tokio::task::spawn_blocking(move || {
+        let path = crate::media::first_image(&paths)
+            .ok_or_else(|| ApiError::Rejected(crate::media::NOT_AN_IMAGE.into()))?;
+        crate::media::read_quote_image(path)
+    })
+    .await
+    .map_err(|_| ApiError::Rejected(crate::media::UNREADABLE_IMAGE.into()))??;
+    Ok(tauri::ipc::Response::new(bytes))
+}
+
 /// A reply in a quote's thread: queued in the outbox like `send_message` (retry, failed state),
 /// carrying the quote it answers (and an inline reply-to inside that thread, if any). Confirmation
 /// arrives as a `pulse://outbox` event whose message has `thread_root_id` set.

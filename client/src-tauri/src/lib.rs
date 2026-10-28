@@ -265,6 +265,7 @@ pub fn run() {
             commands::list_messages_around,
             commands::list_messages_after,
             commands::upload_quote_media,
+            commands::read_quote_image,
             commands::post_quote,
             commands::edit_quote,
             commands::list_replies,

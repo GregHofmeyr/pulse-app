@@ -7,6 +7,7 @@
   // (emoji typed or pasted work as characters) and EmojiBox's inline emoji images, mention popup and draft handling are
   // all things a quote line does not have.
   import { onMount, tick } from 'svelte'
+  import { getCurrentWebview } from '@tauri-apps/api/webview'
   import { stillSrc } from '../lib/animate.svelte'
   import { mediaUrl } from '../lib/emoji'
   import { suggest } from '../lib/mentions'
@@ -179,7 +180,8 @@
       fr.readAsArrayBuffer(f)
     })
   }
-  async function upload(r: Row, f: File) {
+  /** Uploads an image to line `r`; `read` gives its bytes (a pasted or picked File, or a dropped path the core reads). */
+  async function upload(r: Row, read: () => Promise<Uint8Array>) {
     if (r.uploading) return
     r.error = ''
     // typed words become the caption; if they don't fit, nothing is converted or thrown away. The boxes stay editable
@@ -192,7 +194,7 @@
     }
     r.uploading = true
     try {
-      const info = await api.uploadQuoteMedia(await bytes(f))
+      const info = await api.uploadQuoteMedia(await read())
       // the image this one was replacing was removed meanwhile: the line is a text line again, so drop the upload
       if (!convert && !r.pic) return
       r.pic = { hash: info.hash, still_hash: info.still_hash }
@@ -212,20 +214,51 @@
     const f = imageIn(e.clipboardData?.files)
     if (!f) return
     e.preventDefault()
-    void upload(r, f)
-  }
-  function onDrop(e: DragEvent, r: Row) {
-    const f = imageIn(e.dataTransfer?.files)
-    if (!f) return
-    e.preventDefault()
-    void upload(r, f)
+    void upload(r, () => bytes(f))
   }
   function onPick(e: Event, r: Row) {
     const input = e.currentTarget as HTMLInputElement
     const f = imageIn(input.files)
     input.value = ''
-    if (f) void upload(r, f)
+    if (f) void upload(r, () => bytes(f))
   }
+
+  // Files dropped from the OS: Tauri takes them itself (its drag-drop handler is on, so the webview never sees an HTML5
+  // drop carrying files) and reports the paths with a position in physical pixels. The line under that point lights up
+  // while files are dragged over it and gets the first image dropped there. Every composer open (the new quote and an
+  // edit) hears every drop; only the one whose line is under the pointer acts.
+  let dropKey = $state<number | null>(null)
+  function lineAt(pos: { x: number; y: number }): Row | undefined {
+    const scale = window.devicePixelRatio || 1
+    const el = document.elementFromPoint(pos.x / scale, pos.y / scale)?.closest<HTMLElement>('.qline')
+    if (!el || !root?.contains(el)) return undefined
+    return rows.find((r) => String(r.key) === el.dataset.key)
+  }
+  $effect(() => {
+    let off: (() => void) | null = null
+    let gone = false
+    try {
+      void getCurrentWebview()
+        .onDragDropEvent((e) => {
+          const p = e.payload
+          if (p.type === 'enter' || p.type === 'over') dropKey = lineAt(p.position)?.key ?? null
+          else if (p.type === 'leave') dropKey = null
+          else if (p.type === 'drop') {
+            dropKey = null
+            const r = lineAt(p.position)
+            if (r && p.paths.length) void upload(r, () => api.readQuoteImage(p.paths))
+          }
+        })
+        .then((f) => (gone ? f() : (off = f)), () => {})
+    } catch {
+      // not in the app's webview (tests without it): no dropping
+    }
+    return () => {
+      gone = true
+      off?.()
+      dropKey = null
+    }
+  })
 
   // --- posting ---
   const today = () => {
@@ -341,8 +374,7 @@
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div class="qc" bind:this={root} onkeydown={rootKey}>
   {#each rows as r (r.key)}
-    <!-- svelte-ignore a11y_no_static_element_interactions -->
-    <div class="qline" data-key={r.key} ondragover={(e) => e.dataTransfer?.types.includes('Files') && e.preventDefault()} ondrop={(e) => onDrop(e, r)}>
+    <div class="qline" class:drop={dropKey === r.key} data-key={r.key}>
       <div class="row">
         {#if r.pic}
           <div class="pic">
@@ -403,6 +435,8 @@
 <style>
   .qc { flex-shrink: 0; margin: 0 18px 16px; padding: 8px; background: var(--bg-3); border-radius: 12px; display: flex; flex-direction: column; gap: 6px; }
   .row { display: flex; align-items: center; gap: 8px; }
+  .qline { border-radius: 10px; }
+  .qline.drop { outline: 2px dashed var(--accent); outline-offset: 2px; }
   .qtext, .caption, .who { min-width: 0; flex: 1; padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; background: var(--bg-2); color: var(--text); font: inherit; resize: none; field-sizing: content; max-height: 140px; outline: none; }
   .qtext:focus, .caption:focus, .who:focus { border-color: var(--accent); }
   .picker { position: relative; width: 170px; flex-shrink: 0; }
