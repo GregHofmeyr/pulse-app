@@ -305,7 +305,8 @@ pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppR
         .execute(&mut *tx)
         .await?;
     // A win stays (spec §3.1), but its card stops showing the deleted words: the payload (votes,
-    // speakers) and `qoty_winners` are untouched.
+    // speakers) and `qoty_winners` are untouched. The client writes the same text on the quote's
+    // MessageDeleted (`deletedWinnerContent` in client/ui/src/lib/state.ts): change both together.
     let cards: Vec<String> = sqlx::query_scalar(
         "UPDATE messages
          SET content = 'Quote of the Year ' || json_extract(system_payload, '$.year') || ': a deleted quote'
