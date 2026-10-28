@@ -496,6 +496,27 @@ impl<R: Runner + Send + Sync + 'static> Jobs<R> {
         }
     }
 
+    /// Quitting: stop every running job and wait until each task has ended. An aborted task
+    /// drops its ffmpeg child, which kills it, so none is left running after Pulse exits (the
+    /// runtime's tasks are never dropped at exit). The files stay, as with [`Jobs::stop`].
+    pub async fn shutdown(&self) {
+        let tasks: Vec<JoinHandle<()>> = self
+            .inner
+            .jobs
+            .lock()
+            .unwrap()
+            .drain()
+            .filter_map(|(_, e)| {
+                e.cancel.cancel();
+                e.task
+            })
+            .collect();
+        for t in tasks {
+            t.abort();
+            let _ = t.await;
+        }
+    }
+
     fn start(&self, id: &str) {
         let run_no = {
             let mut jobs = self.inner.jobs.lock().unwrap();
@@ -932,6 +953,8 @@ mod tests {
         steps: u64,
         pause: Duration,
         fail: AtomicU32,
+        /// Exports in flight: an export that is dropped (its ffmpeg killed) counts down too.
+        live: Arc<AtomicU32>,
     }
 
     impl FakeRunner {
@@ -941,7 +964,15 @@ mod tests {
                 steps: 3,
                 pause: Duration::ZERO,
                 fail: AtomicU32::new(0),
+                live: Default::default(),
             }
+        }
+    }
+
+    struct Live(Arc<AtomicU32>);
+    impl Drop for Live {
+        fn drop(&mut self) {
+            self.0.fetch_sub(1, Ordering::SeqCst);
         }
     }
 
@@ -956,6 +987,8 @@ mod tests {
                 std::fs::write(&out, unique_png()).unwrap();
                 return Ok(());
             }
+            self.live.fetch_add(1, Ordering::SeqCst);
+            let _live = Live(self.live.clone());
             // the clip keeps 12.5 s: the steps go up to half of it
             for i in 1..=self.steps {
                 on_line(&format!("out_time_us={}", 6_250_000 * i / self.steps));
@@ -1742,6 +1775,30 @@ mod tests {
         assert!(!r.dir().exists());
         assert!(!r.ticket_alive(&ticket).await);
         assert!(!r.ticket_alive(&old.id.to_string()).await);
+        assert!(jobs.list().is_empty());
+    }
+
+    /// Quitting: the running export's ffmpeg is gone by the time `shutdown` returns (`stop` only
+    /// asks the tasks to end).
+    #[tokio::test]
+    async fn shutting_down_lets_go_of_running_exports() {
+        let r = rig().await;
+        let mut runner = FakeRunner::new(1024);
+        runner.pause = Duration::from_secs(30);
+        let live = runner.live.clone();
+        let jobs = r.jobs_with(runner).await;
+        jobs.send(r.request()).unwrap();
+        for _ in 0..500 {
+            if live.load(Ordering::SeqCst) == 1 {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(live.load(Ordering::SeqCst), 1, "exporting");
+        tokio::time::timeout(Duration::from_secs(2), jobs.shutdown())
+            .await
+            .expect("shutdown waits for the tasks, not the exports");
+        assert_eq!(live.load(Ordering::SeqCst), 0, "the export was dropped");
         assert!(jobs.list().is_empty());
     }
 

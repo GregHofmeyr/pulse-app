@@ -259,25 +259,66 @@ impl Core {
             }),
         };
         let loaded = jobs::Jobs::load(dir, FfmpegRunner(paths), s.api, s.token, hooks).await;
-        // the session may have ended (or another Ready loaded them) while the disk was read
-        let current = self.inner.lock().unwrap().as_ref().map(|s| s.token.clone());
+        // what's left from last time arrives like any other job update
+        for job in self.install_clip_jobs(token, loaded).unwrap_or_default() {
+            let _ = app.emit("clip://job", job);
+        }
+    }
+
+    /// Install `loaded` as session `token`'s clip jobs and return what they hold, unless that
+    /// session ended (or another Ready installed them) while the disk was read: then they're
+    /// stopped. Checked and swapped under `inner`, the lock `forget` takes before it clears the
+    /// jobs, so a sign-out either finds them installed (and discards them) or they never are.
+    fn install_clip_jobs(
+        &self,
+        token: &str,
+        loaded: ClipJobs,
+    ) -> Option<Vec<crate::clips::jobs::ClipJob>> {
+        let inner = self.inner.lock().unwrap();
+        let current = inner.as_ref().is_some_and(|s| s.token == token);
         let taken = self
             .clip_jobs
             .borrow()
             .as_ref()
             .is_some_and(|j| j.token() == token);
-        if current.as_deref() != Some(token) || taken {
+        if !current || taken {
+            drop(inner);
             loaded.stop();
-            return;
+            return None;
         }
         let found = loaded.list();
-        if let Some(old) = self.clip_jobs.send_replace(Some(loaded)) {
+        let old = self.clip_jobs.send_replace(Some(loaded));
+        drop(inner);
+        if let Some(old) = old {
             old.stop();
         }
-        // what's left from last time arrives like any other job update
-        for job in found {
-            let _ = app.emit("clip://job", job);
-        }
+        Some(found)
+    }
+
+    /// Quitting: stop the clip jobs and close every editor source, then wait until their ffmpeg
+    /// runs have been dropped (and so killed). The runtime's tasks are never dropped at exit, and
+    /// neither OS kills a child with its parent. Files stay for next time (a paused job comes back
+    /// failed; stale source folders are cleared at the next sign-in).
+    pub async fn stop_clips(&self) {
+        let jobs = self.clip_jobs.send_replace(None);
+        let work: Vec<_> = self
+            .clip_sources
+            .drain()
+            .into_iter()
+            .map(|(_, w)| w)
+            .collect();
+        let jobs_done = async {
+            if let Some(j) = jobs {
+                j.shutdown().await;
+            }
+        };
+        // a preview or filmstrip holds its source's lock until its ffmpeg run is dropped
+        let editor_done = async {
+            for w in &work {
+                drop(w.lock().await);
+            }
+        };
+        tokio::join!(jobs_done, editor_done);
     }
 
     /// `<clips scope>/jobs` of this session's account, once known.
@@ -538,7 +579,7 @@ impl Core {
                 }
             }
         }
-        for e in self.clip_sources.drain() {
+        for (e, _) in self.clip_sources.drain() {
             self.release_source(e);
         }
         (self.signed_out)();
@@ -1693,8 +1734,11 @@ pub async fn prepare_preview(
 ) -> Result<String, String> {
     use crate::clips::{editor, preview::PreviewPlan};
     // One job per source: a second request waits, then finds the first one's file.
-    let lock = core.clip_sources.lock_for(&source);
-    let _one_at_a_time = lock.lock().await;
+    let work = core
+        .clip_sources
+        .lock_for(&source)
+        .ok_or_else(|| editor::NO_PREVIEW.to_owned())?;
+    let _one_at_a_time = work.lock().await;
     let entry = core
         .clip_sources
         .get(&source)
@@ -1707,18 +1751,20 @@ pub async fn prepare_preview(
     }
     let tools = ffmpeg_paths(&app)?;
     let id = source.clone();
-    let out = editor::make_preview(&tools, &entry, |percent| {
+    let out = editor::make_preview(&tools, &entry, work.closed(), |percent| {
         let _ = app.emit(
             "clip://preview",
             serde_json::json!({ "source": id, "percent": percent }),
         );
     })
-    .await?;
+    .await;
     if core.clip_sources.get(&source).is_none() {
-        // closed or signed out while ffmpeg ran: nothing owns these files now
+        // closed or signed out while (or just as) ffmpeg ran: nothing owns these files now, and
+        // ffmpeg has let go of them
         editor::remove_dir_later(entry.dir);
         return Err(editor::NO_PREVIEW.to_owned());
     }
+    let out = out?;
     allow_asset(&app, &out)?;
     core.clip_sources
         .update(&source, |e| e.preview = Some(out.clone()));
@@ -1733,8 +1779,11 @@ pub async fn clip_filmstrip(
     source: String,
 ) -> Result<crate::clips::editor::Filmstrip, String> {
     use crate::clips::{editor, preview::FILMSTRIP_TILES};
-    let lock = core.clip_sources.lock_for(&source);
-    let _one_at_a_time = lock.lock().await;
+    let work = core
+        .clip_sources
+        .lock_for(&source)
+        .ok_or_else(|| editor::NO_FILMSTRIP.to_owned())?;
+    let _one_at_a_time = work.lock().await;
     let entry = core
         .clip_sources
         .get(&source)
@@ -1743,11 +1792,13 @@ pub async fn clip_filmstrip(
         Some(done) => done,
         None => {
             let tools = ffmpeg_paths(&app)?;
-            let out = editor::make_filmstrip(&tools.ffmpeg, &entry).await?;
+            let out = editor::make_filmstrip(&tools.ffmpeg, &entry, work.closed()).await;
             if core.clip_sources.get(&source).is_none() {
+                // closed while (or just as) ffmpeg ran: nothing owns these files now
                 editor::remove_dir_later(entry.dir);
                 return Err(editor::NO_FILMSTRIP.to_owned());
             }
+            let out = out?;
             allow_asset(&app, &out)?;
             core.clip_sources
                 .update(&source, |e| e.filmstrip = Some(out.clone()));
@@ -2182,6 +2233,115 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         assert!(!jobs.exists(), "the jobs folder goes after a pause too");
+    }
+
+    fn no_hooks() -> crate::clips::jobs::Hooks {
+        crate::clips::jobs::Hooks {
+            emit: Box::new(|_| {}),
+            allow_file: Box::new(|_| {}),
+            forbid_file: Box::new(|_| {}),
+        }
+    }
+
+    async fn load_jobs(dir: &std::path::Path, token: &str) -> ClipJobs {
+        use crate::clips::{encode::FfmpegRunner, ffmpeg::FfmpegPaths};
+        let paths = FfmpegPaths {
+            ffmpeg: Default::default(),
+            ffprobe: Default::default(),
+        };
+        ClipJobs::load(
+            dir.to_path_buf(),
+            FfmpegRunner(paths),
+            Api::new("https://pulse.example.com"),
+            token.to_owned(),
+            no_hooks(),
+        )
+        .await
+    }
+
+    /// Jobs loaded for a session that signed out before they were installed stay out (the
+    /// install is checked under the lock sign-out takes first); a live session's go in, once.
+    #[tokio::test]
+    async fn clip_jobs_of_a_signed_out_session_are_never_installed() {
+        let root = tempfile::tempdir().unwrap();
+        let me = UserId::new();
+        let (core, _) = signed_in(root.path(), "https://pulse.example.com", Some(me));
+        let dir = root.path().join("jobs");
+        let loaded = load_jobs(&dir, "t1").await;
+        core.forget(); // signed out between the load and the install
+        assert!(core.install_clip_jobs("t1", loaded).is_none());
+        assert!(core.clip_jobs.borrow().is_none());
+
+        core.begin(Api::new("https://pulse.example.com"), "t2".into(), Some(me));
+        let loaded = load_jobs(&dir, "t2").await;
+        assert_eq!(core.install_clip_jobs("t2", loaded), Some(vec![]));
+        let again = load_jobs(&dir, "t2").await;
+        assert!(
+            core.install_clip_jobs("t2", again).is_none(),
+            "already loaded"
+        );
+        assert!(core.clip_jobs.borrow().is_some());
+        // an older session's load never replaces the current one's
+        assert!(
+            core.install_clip_jobs("t1", load_jobs(&dir, "t1").await)
+                .is_none()
+        );
+    }
+
+    /// Quitting stops clip work: the jobs go, every editor source closes, and it returns once
+    /// the editor's work in flight has let go.
+    #[tokio::test]
+    async fn quitting_stops_clip_work() {
+        let root = tempfile::tempdir().unwrap();
+        let me = UserId::new();
+        let (core, _) = signed_in(root.path(), "https://pulse.example.com", Some(me));
+        assert!(
+            core.install_clip_jobs("t1", load_jobs(&root.path().join("jobs"), "t1").await)
+                .is_some()
+        );
+        core.clip_sources.insert(
+            "a".into(),
+            crate::clips::editor::Entry {
+                path: "/v/a.mp4".into(),
+                dir: root.path().join("sources/a"),
+                probe: crate::clips::probe::Probe {
+                    duration_ms: 1000,
+                    width: 1,
+                    height: 1,
+                    fps: 1.0,
+                    video_codec: "h264".into(),
+                    audio: vec![],
+                    format_name: String::new(),
+                    title: None,
+                    size: 1,
+                },
+                plan: crate::clips::preview::PreviewPlan::Encode,
+                preview: None,
+                filmstrip: None,
+            },
+        );
+        // a preview in flight: it holds the source's lock until its source closes
+        let work = core.clip_sources.lock_for("a").unwrap();
+        let (held_tx, held_rx) = tokio::sync::oneshot::channel();
+        let let_go = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let flag = let_go.clone();
+        tokio::spawn(async move {
+            let _one_at_a_time = work.lock().await;
+            let _ = held_tx.send(());
+            work.closed().await;
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await; // ffmpeg being dropped
+            flag.store(true, Ordering::SeqCst);
+        });
+        held_rx.await.unwrap();
+        tokio::time::timeout(std::time::Duration::from_secs(2), core.stop_clips())
+            .await
+            .expect("quitting doesn't hang");
+        assert!(
+            let_go.load(Ordering::SeqCst),
+            "returned only after the preview let go"
+        );
+        assert!(core.clip_jobs.borrow().is_none());
+        assert!(core.clip_sources.ids().is_empty());
     }
 
     /// A Core with a sign-out hook that counts, signed in as `me` on `server`.

@@ -101,6 +101,61 @@ where
     cmd
 }
 
+/// Start a [`command`]. On Windows the child also joins a job object that kills it when Pulse's
+/// last handle to the job closes, which the OS does when Pulse exits, however it exits (even
+/// killed or crashed): a backstop to `kill_on_drop` and the exit hook's `stop_clips`.
+pub fn spawn(cmd: &mut Command) -> std::io::Result<tokio::process::Child> {
+    let child = cmd.spawn()?;
+    #[cfg(windows)]
+    contain(&child);
+    Ok(child)
+}
+
+/// [`spawn`], then wait for it to finish, collecting stdout and stderr (as `Command::output`).
+/// Dropping the future kills the child.
+pub async fn output(mut cmd: Command) -> std::io::Result<std::process::Output> {
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    spawn(&mut cmd)?.wait_with_output().await
+}
+
+/// Put `child` in Pulse's kill-on-close job object (made on first use, never closed by us).
+#[cfg(windows)]
+fn contain(child: &tokio::process::Child) {
+    use std::sync::OnceLock;
+    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::System::JobObjects::{
+        AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
+        SetInformationJobObject,
+    };
+    // the handle as an address: a raw HANDLE isn't Send/Sync
+    static JOB: OnceLock<Option<usize>> = OnceLock::new();
+    let job = JOB.get_or_init(|| {
+        // SAFETY: plain Win32 calls with a valid, correctly sized limit struct.
+        unsafe {
+            let job = CreateJobObjectW(None, windows::core::PCWSTR::null()).ok()?;
+            let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
+            SetInformationJobObject(
+                job,
+                JobObjectExtendedLimitInformation,
+                std::ptr::from_ref(&info).cast(),
+                std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
+            )
+            .ok()?;
+            Some(job.0 as usize)
+        }
+    });
+    if let (Some(job), Some(process)) = (*job, child.raw_handle()) {
+        // SAFETY: both handles are live (the job is never closed; the child is borrowed). A child
+        // that already exited just fails to join, which is fine.
+        if let Err(e) = unsafe { AssignProcessToJobObject(HANDLE(job as *mut _), HANDLE(process)) }
+        {
+            tracing::debug!(error = %e, "clips: ffmpeg not put in the kill-on-close job");
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct ClipSupport {
     pub can_send: bool,
@@ -246,6 +301,20 @@ mod tests {
                 reason: Some(MISSING.into())
             }
         );
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn output_collects_what_the_command_prints() {
+        let out = output(command(
+            Path::new("/bin/sh"),
+            ["-c", "echo hi; echo oops >&2"],
+        ))
+        .await
+        .unwrap();
+        assert!(out.status.success());
+        assert_eq!(out.stdout, b"hi\n");
+        assert_eq!(out.stderr, b"oops\n");
     }
 
     #[test]

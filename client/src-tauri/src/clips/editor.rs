@@ -55,52 +55,85 @@ pub struct Entry {
     pub filmstrip: Option<PathBuf>,
 }
 
-/// The open sources of this run, by id.
+/// One open source's editor work: a lock, so a second preview or filmstrip request waits for the
+/// first, and a signal that the source closed, which stops the ffmpeg run in flight.
+pub struct Work {
+    lock: tokio::sync::Mutex<()>,
+    closed: tokio::sync::watch::Sender<bool>,
+}
+
+impl Work {
+    fn new() -> Self {
+        Self {
+            lock: tokio::sync::Mutex::new(()),
+            closed: tokio::sync::watch::Sender::new(false),
+        }
+    }
+
+    pub async fn lock(&self) -> tokio::sync::MutexGuard<'_, ()> {
+        self.lock.lock().await
+    }
+
+    fn close(&self) {
+        self.closed.send_replace(true);
+    }
+
+    /// Resolves once the source is closed (at once if it already is).
+    pub async fn closed(&self) {
+        let mut rx = self.closed.subscribe();
+        let _ = rx.wait_for(|closed| *closed).await;
+    }
+}
+
+/// The open sources of this run, by id, each with its work. One map, so work exists exactly while
+/// its source is open: nothing is left behind for an id that was never opened or is closed.
 #[derive(Default)]
 pub struct Sources {
-    map: Mutex<HashMap<String, Entry>>,
-    /// One async lock per source: a second preview or filmstrip request waits for the first.
-    locks: Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>,
+    map: Mutex<HashMap<String, (Entry, Arc<Work>)>>,
 }
 
 impl Sources {
     pub fn insert(&self, id: String, e: Entry) {
-        self.map.lock().unwrap().insert(id, e);
+        self.map
+            .lock()
+            .unwrap()
+            .insert(id, (e, Arc::new(Work::new())));
     }
 
     pub fn get(&self, id: &str) -> Option<Entry> {
-        self.map.lock().unwrap().get(id).cloned()
+        self.map.lock().unwrap().get(id).map(|(e, _)| e.clone())
     }
 
     pub fn update(&self, id: &str, f: impl FnOnce(&mut Entry)) {
-        if let Some(e) = self.map.lock().unwrap().get_mut(id) {
+        if let Some((e, _)) = self.map.lock().unwrap().get_mut(id) {
             f(e);
         }
     }
 
+    /// Close a source: its work in flight stops.
     pub fn remove(&self, id: &str) -> Option<Entry> {
-        self.locks.lock().unwrap().remove(id);
-        self.map.lock().unwrap().remove(id)
+        let (e, work) = self.map.lock().unwrap().remove(id)?;
+        work.close();
+        Some(e)
     }
 
-    /// Forget every source (sign-out); the caller deletes the folders.
-    pub fn drain(&self) -> Vec<Entry> {
-        self.locks.lock().unwrap().clear();
-        self.map.lock().unwrap().drain().map(|(_, e)| e).collect()
+    /// Close every source (sign-out, quitting); the caller deletes the folders. Each comes with
+    /// its work, to wait on (`Work::lock` is free once its run has stopped).
+    pub fn drain(&self) -> Vec<(Entry, Arc<Work>)> {
+        let all: Vec<_> = self.map.lock().unwrap().drain().map(|(_, v)| v).collect();
+        for (_, work) in &all {
+            work.close();
+        }
+        all
     }
 
     pub fn ids(&self) -> HashSet<String> {
         self.map.lock().unwrap().keys().cloned().collect()
     }
 
-    /// The lock that serialises the preview and filmstrip work of one source.
-    pub fn lock_for(&self, id: &str) -> Arc<tokio::sync::Mutex<()>> {
-        self.locks
-            .lock()
-            .unwrap()
-            .entry(id.to_owned())
-            .or_default()
-            .clone()
+    /// The work of an open source; `None` once it is closed (or for an id never opened).
+    pub fn lock_for(&self, id: &str) -> Option<Arc<Work>> {
+        self.map.lock().unwrap().get(id).map(|(_, w)| w.clone())
     }
 }
 
@@ -158,7 +191,7 @@ pub async fn probe_file(ffprobe: &Path, path: &Path) -> Result<Probe, String> {
     let size = std::fs::metadata(path)
         .map_err(|_| UNREADABLE.to_owned())?
         .len();
-    let run = ffmpeg::command(ffprobe, probe::args(&text(path))).output();
+    let run = ffmpeg::output(ffmpeg::command(ffprobe, probe::args(&text(path))));
     let out = match tokio::time::timeout(PROBE_TIMEOUT, run).await {
         Ok(Ok(out)) if out.status.success() => out,
         _ => return Err(UNREADABLE.to_owned()),
@@ -194,9 +227,11 @@ pub fn extension(path: &Path) -> String {
 
 /// Make `<dir>/preview.mp4` for a Remux or Encode source. Encode goes down the shared encoder chain
 /// (`encode::WORKING`, which remembers the encoder that works); a Remux has just the one run.
+/// Closing the source (`closed` resolves) stops ffmpeg: its run is dropped, which kills it.
 pub async fn make_preview(
     paths: &FfmpegPaths,
     entry: &Entry,
+    closed: impl Future<Output = ()>,
     mut on_percent: impl FnMut(u8) + Send,
 ) -> Result<PathBuf, String> {
     let out = entry.dir.join("preview.mp4");
@@ -225,12 +260,21 @@ pub async fn make_preview(
     };
     let runner = FfmpegRunner(paths.clone());
     let kept_ms = entry.probe.duration_ms;
-    let done = if encode_preview {
-        WORKING.run(&runner, kept_ms, build, on_progress).await
-    } else {
-        // A Remux is a stream copy: no encoder is involved (the encoder argument is unused), so one run, and
-        // nothing to remember.
-        run_with_fallback(&runner, &CHAIN[..1], kept_ms, build, on_progress).await
+    let run = async {
+        if encode_preview {
+            WORKING.run(&runner, kept_ms, build, on_progress).await
+        } else {
+            // A Remux is a stream copy: no encoder is involved (the encoder argument is unused), so one run, and
+            // nothing to remember.
+            run_with_fallback(&runner, &CHAIN[..1], kept_ms, build, on_progress).await
+        }
+    };
+    let done = tokio::select! {
+        done = run => done,
+        () = closed => {
+            let _ = std::fs::remove_file(&out);
+            return Err(NO_PREVIEW.to_owned());
+        }
     };
     if let Err(e) = done {
         tracing::warn!(error = ?e, "clips: preview not made");
@@ -240,19 +284,26 @@ pub async fn make_preview(
     Ok(out)
 }
 
-/// Make `<dir>/filmstrip.jpg`.
-pub async fn make_filmstrip(ffmpeg_exe: &Path, entry: &Entry) -> Result<PathBuf, String> {
+/// Make `<dir>/filmstrip.jpg`. Closing the source (`closed` resolves) stops ffmpeg.
+pub async fn make_filmstrip(
+    ffmpeg_exe: &Path,
+    entry: &Entry,
+    closed: impl Future<Output = ()>,
+) -> Result<PathBuf, String> {
     let out = entry.dir.join("filmstrip.jpg");
     std::fs::create_dir_all(&entry.dir).map_err(|_| NO_FILMSTRIP.to_owned())?;
     let args = preview::filmstrip_args(&text(&entry.path), entry.probe.duration_ms, &text(&out));
-    let run = ffmpeg::command(
+    let run = ffmpeg::output(ffmpeg::command(
         ffmpeg_exe,
         ["-v", "error"]
             .into_iter()
             .chain(args.iter().map(String::as_str)),
-    )
-    .output();
-    match tokio::time::timeout(FILMSTRIP_TIMEOUT, run).await {
+    ));
+    let made = tokio::select! {
+        made = tokio::time::timeout(FILMSTRIP_TIMEOUT, run) => made,
+        () = closed => return Err(NO_FILMSTRIP.to_owned()),
+    };
+    match made {
         Ok(Ok(o)) if o.status.success() && out.is_file() => Ok(out),
         _ => Err(NO_FILMSTRIP.to_owned()),
     }
@@ -360,18 +411,155 @@ mod tests {
         assert_eq!(clear_stale_sources(&scope.path().join("nope"), &keep), 0);
     }
 
-    #[test]
-    fn one_source_cannot_be_worked_on_twice_at_once() {
+    #[tokio::test]
+    async fn one_source_cannot_be_worked_on_twice_at_once() {
         let s = Sources::default();
-        let first = s.lock_for("a");
-        let guard = first.try_lock().expect("free");
+        s.insert("a".into(), entry(Path::new("/t/a")));
+        s.insert("b".into(), entry(Path::new("/t/b")));
+        let first = s.lock_for("a").unwrap();
+        let guard = first.lock().await;
         // the same source gets the same lock, so the second request has to wait
-        assert!(s.lock_for("a").try_lock().is_err());
+        let again = s.lock_for("a").unwrap();
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), again.lock())
+                .await
+                .is_err()
+        );
         // another source is independent
-        assert!(s.lock_for("b").try_lock().is_ok());
+        let b = s.lock_for("b").unwrap();
+        let _b = b.lock().await;
         drop(guard);
-        assert!(s.lock_for("a").try_lock().is_ok());
-        assert_eq!(s.ids().len(), 0);
+        let _a = again.lock().await;
+    }
+
+    #[test]
+    fn only_open_sources_have_work() {
+        let s = Sources::default();
+        // an id never opened, or already closed, gets nothing (and leaves nothing behind)
+        assert!(s.lock_for("nope").is_none());
+        s.insert("a".into(), entry(Path::new("/t/a")));
+        assert!(s.lock_for("a").is_some());
+        assert!(s.remove("a").is_some());
+        assert!(s.lock_for("a").is_none());
+        assert!(s.ids().is_empty());
+    }
+
+    #[tokio::test]
+    async fn closing_a_source_signals_its_work() {
+        let s = Sources::default();
+        s.insert("a".into(), entry(Path::new("/t/a")));
+        s.insert("b".into(), entry(Path::new("/t/b")));
+        let (a, b) = (s.lock_for("a").unwrap(), s.lock_for("b").unwrap());
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), a.closed())
+                .await
+                .is_err(),
+            "open: not closed"
+        );
+        s.remove("a");
+        tokio::time::timeout(Duration::from_secs(1), a.closed())
+            .await
+            .expect("closed");
+        // sign-out closes the rest
+        assert_eq!(s.drain().len(), 1);
+        tokio::time::timeout(Duration::from_secs(1), b.closed())
+            .await
+            .expect("closed by the drain");
+    }
+
+    /// A stand-in ffmpeg that notes its pid and sleeps for 30 s.
+    #[cfg(target_os = "linux")]
+    fn sleeper(dir: &Path) -> (PathBuf, PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let pid = dir.join("pid");
+        let exe = dir.join("ffmpeg");
+        std::fs::write(
+            &exe,
+            format!("#!/bin/sh\necho $$ > '{}'\nexec sleep 30\n", pid.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&exe, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (exe, pid)
+    }
+
+    /// Waits for the sleeper to start, then closes source `id`; returns its pid.
+    #[cfg(target_os = "linux")]
+    async fn close_once_running(s: &Sources, id: &str, pid: &Path) -> u32 {
+        for _ in 0..500 {
+            if let Some(p) = std::fs::read_to_string(pid)
+                .ok()
+                .and_then(|t| t.trim().parse().ok())
+            {
+                s.remove(id);
+                return p;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("the stand-in ffmpeg never started");
+    }
+
+    /// Gone, or a zombie: either way it no longer runs.
+    #[cfg(target_os = "linux")]
+    async fn assert_stops(pid: u32) {
+        let stat = format!("/proc/{pid}/stat");
+        for _ in 0..250 {
+            match std::fs::read_to_string(&stat) {
+                Err(_) => return,
+                Ok(s)
+                    if s.rsplit(')')
+                        .next()
+                        .is_some_and(|r| r.trim_start().starts_with('Z')) =>
+                {
+                    return;
+                }
+                Ok(_) => tokio::time::sleep(Duration::from_millis(20)).await,
+            }
+        }
+        panic!("ffmpeg {pid} still running");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn closing_the_editor_stops_its_filmstrip() {
+        let dir = tempfile::tempdir().unwrap();
+        let (exe, pid) = sleeper(dir.path());
+        let e = entry(&dir.path().join("src"));
+        let s = Sources::default();
+        s.insert("a".into(), e.clone());
+        let work = s.lock_for("a").unwrap();
+        let run = make_filmstrip(&exe, &e, work.closed());
+        let (made, pid) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(run, close_once_running(&s, "a", &pid))
+        })
+        .await
+        .expect("the filmstrip stops when its source closes");
+        assert_eq!(made, Err(NO_FILMSTRIP.to_owned()));
+        assert_stops(pid).await;
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn closing_the_editor_stops_its_preview() {
+        let dir = tempfile::tempdir().unwrap();
+        let (exe, pid) = sleeper(dir.path());
+        let mut e = entry(&dir.path().join("src"));
+        e.plan = PreviewPlan::Remux;
+        let s = Sources::default();
+        s.insert("a".into(), e.clone());
+        let work = s.lock_for("a").unwrap();
+        let paths = FfmpegPaths {
+            ffmpeg: exe.clone(),
+            ffprobe: exe,
+        };
+        let run = make_preview(&paths, &e, work.closed(), |_| {});
+        let (made, pid) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(run, close_once_running(&s, "a", &pid))
+        })
+        .await
+        .expect("the preview stops when its source closes");
+        assert_eq!(made, Err(NO_PREVIEW.to_owned()));
+        assert!(!dir.path().join("src/preview.mp4").exists());
+        assert_stops(pid).await;
     }
 
     #[test]

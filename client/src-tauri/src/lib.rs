@@ -335,20 +335,27 @@ pub fn run() {
         .run(|app, event| {
             // Quitting leaves voice properly, so others don't see a ghost until LiveKit times it
             // out. (Minimising/hiding isn't an exit: you stay in voice.)
+            // It also stops clip work, so no ffmpeg keeps running (and holding its files) after Pulse.
             if let tauri::RunEvent::Exit = event {
                 use tauri::Manager;
                 let voice = app.state::<voice::VoiceManager>();
                 let stream_audio = app.state::<stream::audio::StreamAudio>();
+                let core = app.state::<commands::Core>();
                 tauri::async_runtime::block_on(async {
                     // side by side: one slow close must not use up the other's budget
                     let leave = async {
                         tokio::join!(stream_audio.leave(), voice.leave());
                     };
-                    if tokio::time::timeout(std::time::Duration::from_secs(2), leave)
-                        .await
-                        .is_err()
-                    {
+                    let budget = std::time::Duration::from_secs(2);
+                    let (left, stopped) = tokio::join!(
+                        tokio::time::timeout(budget, leave),
+                        tokio::time::timeout(budget, core.stop_clips()),
+                    );
+                    if left.is_err() {
                         tracing::warn!("voice: leave on exit timed out");
+                    }
+                    if stopped.is_err() {
+                        tracing::warn!("clips: stopping on exit timed out");
                     }
                 });
                 reports::crash::clear_running(&app.state::<reports::LogDir>().0);

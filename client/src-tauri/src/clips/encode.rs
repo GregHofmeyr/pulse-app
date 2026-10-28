@@ -334,7 +334,7 @@ impl Runner for FfmpegRunner {
         let fail = |what: String| RunFailed { stderr_tail: what };
         let mut cmd = ffmpeg::command(&self.0.ffmpeg, args);
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut child = cmd.spawn().map_err(|e| fail(e.to_string()))?;
+        let mut child = ffmpeg::spawn(&mut cmd).map_err(|e| fail(e.to_string()))?;
         let (stdout, mut stderr) = (
             child.stdout.take().expect("piped stdout"),
             child.stderr.take().expect("piped stderr"),
@@ -373,7 +373,10 @@ impl Runner for FfmpegRunner {
 
 /// The encoder that worked last in this run of Pulse, so a machine without the first GPU encoder does not
 /// probe it again for every clip. It only ever moves down `CHAIN`: a later init failure on the remembered
-/// encoder falls further down, never back up.
+/// encoder falls further down, never back up. So a transient init failure (NVENC's session limit while
+/// another app records, a busy GPU) demotes the encoder for the rest of the run, and exports stay slower
+/// until Pulse restarts. That is on purpose (plan #14): re-probing the faster encoder before every clip
+/// would cost each export a failed start on machines where it never works.
 pub struct WorkingEncoder(AtomicUsize);
 
 /// The process-wide store the export and the preview encode share.
