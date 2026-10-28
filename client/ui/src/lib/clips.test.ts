@@ -66,6 +66,16 @@ describe('matchGame', () => {
   it('offers to add an unknown game, keeping the guess', () => {
     expect(matchGame('Deadlock', games)).toEqual({ add: 'Deadlock' })
   })
+  it('uses the same whitespace rule as nameKey', () => {
+    expect(matchGame('\u0085Overwatch\u00a02\u0085', games)).toEqual({ game: games[0] })
+    expect(matchGame('\uFEFFDeadlock', games)).toEqual({ add: '\uFEFFDeadlock' })
+  })
+  it('caps the added name at 40 characters', () => {
+    const r = matchGame('x'.repeat(30) + ' ' + '🎮'.repeat(20), games) as { add: string }
+    expect([...r.add]).toHaveLength(40)
+    expect(r.add.endsWith('🎮')).toBe(true)
+    expect(matchGame('y'.repeat(39) + ' zzz', games)).toEqual({ add: 'y'.repeat(39) })
+  })
   it('is null without a guess', () => {
     expect(matchGame(null, games)).toBeNull()
     expect(matchGame('   ', games)).toBeNull()

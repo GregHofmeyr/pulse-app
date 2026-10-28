@@ -20,7 +20,7 @@ export const MAX_KEPT_MS = 90_000
 const MIN_KEPT_MS = 1000
 
 export function newCut(duration: number): Cut {
-  const end = Math.max(0, Math.round(duration))
+  const end = Number.isFinite(duration) ? Math.max(0, Math.round(duration)) : 0
   return { duration: end, pieces: [{ start: 0, end, dropped: false }], selected: null, past: [], lastDrag: null }
 }
 
@@ -56,12 +56,13 @@ export function dropSelected(c: Cut): Cut {
 
 /** Moves the edge between pieces `edge - 1` and `edge`, keeping both at least MIN_PIECE_MS. Drags of the same edge in a row are one undo step (until `endDrag`). */
 export function dragEdge(c: Cut, edge: number, t: number): Cut {
-  if (!Number.isInteger(edge) || edge < 1 || edge >= c.pieces.length) return c
+  if (!Number.isFinite(t) || !Number.isInteger(edge) || edge < 1 || edge >= c.pieces.length) return c
   const a = c.pieces[edge - 1]
   const b = c.pieces[edge]
   const at = Math.min(Math.max(Math.round(t), a.start + MIN_PIECE_MS), b.end - MIN_PIECE_MS)
   const pieces = c.pieces.map((p, j) => (j === edge - 1 ? { ...p, end: at } : j === edge ? { ...p, start: at } : p))
   if (c.lastDrag === edge) return { ...c, pieces }
+  if (at === a.end) return c
   return { ...step(c, pieces, c.selected), lastDrag: edge }
 }
 
@@ -73,8 +74,8 @@ export function endDrag(c: Cut): Cut {
 export function undo(c: Cut): Cut {
   if (c.past.length === 0) return c
   const pieces = c.past[c.past.length - 1]
-  const selected = c.selected !== null && c.selected < pieces.length ? c.selected : null
-  return { ...c, pieces, selected, past: c.past.slice(0, -1), lastDrag: null }
+  // Indexes shift when a cut is undone, so nothing stays selected (no silent drop of the wrong piece).
+  return { ...c, pieces, selected: null, past: c.past.slice(0, -1), lastDrag: null }
 }
 
 /** The kept spans, adjacent kept pieces merged. */

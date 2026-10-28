@@ -11,8 +11,13 @@ import type { AppState } from './state'
 // Unicode White_Space exactly (Rust's split_whitespace); JS `\s` differs (it includes U+FEFF, and lacks U+0085).
 const WHITE_SPACE = /[\t-\r \u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000]+/
 
+/** A name with whitespace runs as one space and no edge whitespace (case kept). */
+export function collapseName(name: string): string {
+  return name.split(WHITE_SPACE).filter(Boolean).join(' ')
+}
+
 export function nameKey(name: string): string {
-  return name.split(WHITE_SPACE).filter(Boolean).join(' ').toLowerCase()
+  return collapseName(name).toLowerCase()
 }
 
 /** Quote marks that wrap a line, opening mark to closing mark (the server's `QUOTE_PAIRS`). */

@@ -3,7 +3,7 @@ import type { AppState } from './state'
 import type { ClipView } from './protocol/ClipView'
 import type { Message } from './protocol/Message'
 import type { Game } from './protocol/Game'
-import { nameKey } from './quotes'
+import { collapseName, nameKey } from './quotes'
 
 /** Which clips of a channel a feed shows: a game and/or an author (ids). */
 export type ClipFilter = { game?: string; author?: string }
@@ -58,11 +58,14 @@ export function isNewClip(s: AppState, channelId: string, messageId: string, see
   return point === null || messageId > point
 }
 
+/** The longest game name the server accepts (Unicode characters). */
+const MAX_GAME_NAME = 40
+
 /** The server's game for a detected title (same name rule as quotes), else the name to offer adding; null with no guess. */
 export function matchGame(guess: string | null, games: Game[]): { game: Game } | { add: string } | null {
-  const name = guess?.trim() ?? ''
+  const name = collapseName(guess ?? '')
+  if (!name) return null
   const key = nameKey(name)
-  if (!key) return null
   const game = games.find((g) => nameKey(g.name) === key)
-  return game ? { game } : { add: name.split(/\s+/).join(' ') }
+  return game ? { game } : { add: [...name].slice(0, MAX_GAME_NAME).join('').trimEnd() }
 }

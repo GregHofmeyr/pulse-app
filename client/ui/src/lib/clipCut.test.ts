@@ -151,6 +151,28 @@ describe('clipCut', () => {
     expect(dropSelected({ ...c, selected: null })).toEqual({ ...c, selected: null })
   })
 
+  it('ignores non-finite input', () => {
+    expect(newCut(NaN).pieces).toEqual([{ start: 0, end: 0, dropped: false }])
+    const c = cutAt(newCut(10_000), 5000)
+    expect(dragEdge(c, 1, NaN)).toBe(c)
+    expect(dragEdge(c, 1, Infinity)).toBe(c)
+  })
+
+  it('a drag that changes nothing records no undo step', () => {
+    const c = cutAt(newCut(10_000), 5000)
+    expect(dragEdge(c, 1, 5000)).toBe(c)
+    expect(dragEdge(c, 1, 5000).past).toHaveLength(1)
+  })
+
+  it('undo leaves nothing selected, so dropSelected cannot drop the wrong piece', () => {
+    let c = cutAt(cutAt(cutAt(newCut(40_000), 10_000), 20_000), 30_000)
+    c = select(c, 2)
+    c = undo(c) // undo the last cut: index 2 would now be a different piece
+    expect(c.selected).toBeNull()
+    expect(dropSelected(c)).toBe(c)
+    expect(keptMs(c)).toBe(40_000)
+  })
+
   it('never makes a zero-length piece', () => {
     let c = newCut(1000)
     for (const t of [0, 1, 99, 100, 500, 900, 901, 999, 1000]) c = cutAt(c, t)
