@@ -85,6 +85,7 @@ pub fn run() {
         }));
     }
     builder
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             use tauri::Manager;
             let profile = std::env::var("PULSE_PROFILE").ok();
@@ -129,12 +130,15 @@ pub fn run() {
             let media_root =
                 session::profile_dir(&app.path().app_cache_dir()?, profile.as_deref()).join("media");
             let h = app.handle().clone();
-            app.manage(commands::Core::new(
-                session::Store::new(dir.clone(), profile.as_deref()),
-                outbox,
-                media_root,
-                Box::new(move || media::clear_webview_cache(&h)),
-            ));
+            app.manage(
+                commands::Core::new(
+                    session::Store::new(dir.clone(), profile.as_deref()),
+                    outbox,
+                    media_root,
+                    Box::new(move || media::clear_webview_cache(&h)),
+                )
+                .with_clips_root(webview_dir.join("clips")),
+            );
             app.manage(voice::mictest::MicTest::default());
             app.manage(stream::PickerMemory::default());
             let h = app.handle().clone();
@@ -281,6 +285,11 @@ pub fn run() {
             commands::set_clip_view,
             commands::clip_storage,
             commands::clip_support,
+            commands::open_clip,
+            commands::pick_clip_file,
+            commands::prepare_preview,
+            commands::clip_filmstrip,
+            commands::close_clip_source,
             startup::ui_painted,
             keybinds::get_keybinds,
             keybinds::set_keybinds,

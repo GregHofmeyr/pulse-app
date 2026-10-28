@@ -1,0 +1,48 @@
+{
+  "streams": [
+    {
+      "index": 0,
+      "codec_name": "h264",
+      "codec_long_name": "H.264 / AVC / MPEG-4 AVC / MPEG-4 part 10",
+      "profile": "High",
+      "codec_type": "video",
+      "width": 2560,
+      "height": 1440,
+      "pix_fmt": "yuv420p",
+      "r_frame_rate": "60/1",
+      "avg_frame_rate": "60/1",
+      "time_base": "1/60000",
+      "duration": "87.350000",
+      "bit_rate": "86500000"
+    },
+    {
+      "index": 1,
+      "codec_name": "aac",
+      "codec_long_name": "AAC (Advanced Audio Coding)",
+      "profile": "LC",
+      "codec_type": "audio",
+      "sample_rate": "48000",
+      "channels": 2,
+      "channel_layout": "stereo",
+      "r_frame_rate": "0/0",
+      "avg_frame_rate": "0/0",
+      "duration": "87.360000",
+      "bit_rate": "192000"
+    }
+  ],
+  "format": {
+    "filename": "RUST 2026.05.20 - 12.26.53.03.DVR.mp4",
+    "nb_streams": 2,
+    "format_name": "mov,mp4,m4a,3gp,3g2,mj2",
+    "duration": "87.360000",
+    "size": "944000000",
+    "bit_rate": "86650000",
+    "tags": {
+      "major_brand": "isom",
+      "minor_version": "512",
+      "compatible_brands": "isomiso2avc1mp41",
+      "title": "RUST",
+      "encoder": "Lavf60.16.100"
+    }
+  }
+}

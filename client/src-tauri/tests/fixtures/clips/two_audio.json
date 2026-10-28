@@ -1,0 +1,21 @@
+{
+  "streams": [
+    {
+      "index": 0,
+      "codec_name": "h264",
+      "codec_type": "video",
+      "width": 1920,
+      "height": 1080,
+      "r_frame_rate": "60/1",
+      "avg_frame_rate": "0/0"
+    },
+    { "index": 1, "codec_name": "aac", "codec_type": "audio", "sample_rate": "48000", "channels": 2 },
+    { "index": 2, "codec_name": "opus", "codec_type": "audio", "sample_rate": "48000", "channels": 1 }
+  ],
+  "format": {
+    "format_name": "matroska,webm",
+    "duration": "30.000000",
+    "size": "50000000",
+    "tags": { "TITLE": "Valorant" }
+  }
+}

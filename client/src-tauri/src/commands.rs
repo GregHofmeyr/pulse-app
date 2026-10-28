@@ -89,6 +89,9 @@ pub struct Core {
     last: Mutex<Option<(String, Option<UserId>)>>,
     /// Where each account's `pulse-media` cache lives (`media::scope_dir`).
     media_root: std::path::PathBuf,
+    /// The clip editor's open sources, and where their temp files go (`<app local data>/clips`).
+    pub(crate) clip_sources: crate::clips::editor::Sources,
+    clips_root: std::path::PathBuf,
     signed_out: SignedOut,
     mfa: PendingMfa,
 }
@@ -112,9 +115,24 @@ impl Core {
             starting: Mutex::new(()),
             last: Mutex::new(None),
             media_root,
+            clip_sources: Default::default(),
+            clips_root: std::path::PathBuf::new(),
             signed_out,
             mfa: PendingMfa::default(),
         }
+    }
+
+    /// Where the clip editor keeps its temp files (`<root>/<account scope>/sources/<id>/`).
+    pub fn with_clips_root(mut self, root: std::path::PathBuf) -> Self {
+        self.clips_root = root;
+        self
+    }
+
+    /// This account's clips folder (the same scoping as the media cache); `None` when signed out.
+    pub(crate) fn clips_scope(&self) -> Option<std::path::PathBuf> {
+        let s = self.inner.lock().unwrap().clone()?;
+        let me = s.me?;
+        Some(crate::media::scope_dir(&self.clips_root, s.api.base(), &me))
     }
 
     /// A login or registration begins: whatever second step was pending is superseded (even if
@@ -346,6 +364,9 @@ impl Core {
             s.alive.store(false, Ordering::SeqCst);
         }
         self.last.lock().unwrap().take();
+        for e in self.clip_sources.drain() {
+            crate::clips::editor::remove_dir_later(e.dir);
+        }
         (self.signed_out)();
         let s = session?;
         if let Some(me) = &s.me {
@@ -1387,6 +1408,155 @@ pub async fn clip_support(app: AppHandle) -> crate::clips::ffmpeg::ClipSupport {
         ffmpeg::Os::current(),
     );
     ffmpeg::clip_support(found.as_ref(), ffmpeg::Os::current())
+}
+
+/// ffmpeg and ffprobe, or why clips can't be edited here.
+fn ffmpeg_paths(app: &AppHandle) -> Result<crate::clips::ffmpeg::FfmpegPaths, String> {
+    use crate::clips::ffmpeg;
+    let resource_dir = app.path().resource_dir().ok();
+    let os = ffmpeg::Os::current();
+    let found = ffmpeg::locate(
+        resource_dir.as_deref(),
+        ffmpeg::dev_override().as_deref(),
+        os,
+    );
+    found.ok_or_else(|| {
+        ffmpeg::clip_support(None, os)
+            .reason
+            .unwrap_or_else(|| ffmpeg::MISSING.to_owned())
+    })
+}
+
+/// Let the webview load this one file through the asset protocol.
+fn allow_asset(app: &AppHandle, path: &std::path::Path) -> Result<(), String> {
+    app.asset_protocol_scope()
+        .allow_file(path)
+        .map_err(|e| e.to_string())
+}
+
+/// Look at a video file and open it as an editor source (allowing the file on the asset scope).
+#[tauri::command]
+pub async fn open_clip(
+    app: AppHandle,
+    core: State<'_, Core>,
+    path: String,
+) -> Result<crate::clips::editor::ClipSource, String> {
+    use crate::clips::{editor, preview};
+    let path = std::path::PathBuf::from(path);
+    if !path.is_absolute() || !path.is_file() {
+        return Err(editor::UNREADABLE.to_owned());
+    }
+    let tools = ffmpeg_paths(&app)?;
+    let scope = core
+        .clips_scope()
+        .ok_or_else(|| "Sign in to share clips.".to_owned())?;
+    let probe = editor::probe_file(&tools.ffprobe, &path).await?;
+    let plan = preview::plan(&probe, &editor::extension(&path));
+    let id = editor::new_id();
+    let source = editor::describe(&id, &path, &probe, plan);
+    allow_asset(&app, &path)?;
+    core.clip_sources.insert(
+        id.clone(),
+        editor::Entry {
+            dir: scope.join("sources").join(&id),
+            path,
+            probe,
+            plan,
+            preview: None,
+            filmstrip: None,
+        },
+    );
+    Ok(source)
+}
+
+/// The system file dialog, filtered to videos. `None` when cancelled.
+#[tauri::command]
+pub async fn pick_clip_file(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app
+        .dialog()
+        .file()
+        .add_filter("Videos", &["mp4", "mov", "mkv", "webm", "m4v"]);
+    if let Some(win) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&win);
+    }
+    dialog.pick_file(move |f| {
+        let _ = tx.send(f);
+    });
+    let picked = rx.await.ok().flatten()?.into_path().ok()?;
+    Some(picked.to_string_lossy().into_owned())
+}
+
+/// The file the editor plays: the source itself (Direct), or a remuxed or re-encoded copy made now
+/// (`clip://preview` events `{ source, percent }` while it runs). Its path is on the asset scope.
+#[tauri::command]
+pub async fn prepare_preview(
+    app: AppHandle,
+    core: State<'_, Core>,
+    source: String,
+) -> Result<String, String> {
+    use crate::clips::{editor, preview::PreviewPlan};
+    let entry = core
+        .clip_sources
+        .get(&source)
+        .ok_or_else(|| editor::NO_PREVIEW.to_owned())?;
+    if entry.plan == PreviewPlan::Direct {
+        return Ok(entry.path.to_string_lossy().into_owned());
+    }
+    if let Some(done) = entry.preview.as_ref().filter(|p| p.is_file()) {
+        return Ok(done.to_string_lossy().into_owned());
+    }
+    let tools = ffmpeg_paths(&app)?;
+    let id = source.clone();
+    let out = editor::make_preview(&tools.ffmpeg, &entry, |percent| {
+        let _ = app.emit(
+            "clip://preview",
+            serde_json::json!({ "source": id, "percent": percent }),
+        );
+    })
+    .await?;
+    allow_asset(&app, &out)?;
+    core.clip_sources
+        .update(&source, |e| e.preview = Some(out.clone()));
+    Ok(out.to_string_lossy().into_owned())
+}
+
+/// The scrubber's sprite: 24 keyframe tiles in one JPEG, on the asset scope.
+#[tauri::command]
+pub async fn clip_filmstrip(
+    app: AppHandle,
+    core: State<'_, Core>,
+    source: String,
+) -> Result<crate::clips::editor::Filmstrip, String> {
+    use crate::clips::{editor, preview::FILMSTRIP_TILES};
+    let entry = core
+        .clip_sources
+        .get(&source)
+        .ok_or_else(|| editor::NO_FILMSTRIP.to_owned())?;
+    let path = match entry.filmstrip.clone().filter(|p| p.is_file()) {
+        Some(done) => done,
+        None => {
+            let tools = ffmpeg_paths(&app)?;
+            let out = editor::make_filmstrip(&tools.ffmpeg, &entry).await?;
+            allow_asset(&app, &out)?;
+            core.clip_sources
+                .update(&source, |e| e.filmstrip = Some(out.clone()));
+            out
+        }
+    };
+    Ok(editor::Filmstrip {
+        path: path.to_string_lossy().into_owned(),
+        tiles: FILMSTRIP_TILES,
+    })
+}
+
+/// The editor is done with this source: its preview and filmstrip files are deleted.
+#[tauri::command]
+pub fn close_clip_source(core: State<'_, Core>, source: String) {
+    if let Some(e) = core.clip_sources.remove(&source) {
+        crate::clips::editor::remove_dir_later(e.dir);
+    }
 }
 
 #[tauri::command]

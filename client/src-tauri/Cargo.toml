@@ -53,6 +53,7 @@ tauri-plugin-single-instance = "2"
 base64 = "0.22"
 # The 2FA setup QR code, drawn by the UI from a module matrix (the otpauth URI itself never leaves Rust).
 qrcode = { version = "0.14", default-features = false }
+tauri-plugin-dialog = "2"
 
 [features]
 # Strong uses DeepFilterNet3's low-latency model (36 MB) instead of the normal one (8 MB).

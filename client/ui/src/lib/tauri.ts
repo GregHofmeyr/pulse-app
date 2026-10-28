@@ -31,6 +31,22 @@ export type LoginResult = { status: 'ready'; user: User } | { status: 'mfa_requi
 
 /** The QR code as a square module matrix, row by row (true = dark); the quiet zone is not included. */
 export type QrMatrix = { size: number; modules: boolean[] }
+/** Mirrors `clips::editor::ClipSource` (hand-written: it never crosses the server protocol). */
+export type ClipSource = {
+  id: string
+  path: string
+  file_name: string
+  size: number
+  duration_ms: number
+  width: number
+  height: number
+  fps: number
+  video_codec: string
+  game_guess: string | null
+  /** How the editor plays it: as is, copied into an MP4, or re-encoded small. */
+  preview: 'direct' | 'remux' | 'encode'
+}
+
 /** Mirrors `clips::ffmpeg::ClipSupport`. */
 export type ClipSupport = { can_send: boolean; reason: string | null }
 /** The manual key (grouped in fours) and the QR for the authenticator app. */
@@ -134,6 +150,16 @@ export const api = {
   clipStorage: (serverId: string) => invoke<ClipStorage>('clip_storage', { serverId }),
   /** Whether this install can send clips (Windows, ffmpeg bundled); `reason` says why not. */
   clipSupport: () => invoke<ClipSupport>('clip_support'),
+  /** Probe a video file and open it as an editor source; rejects with a message to show. */
+  openClip: (path: string) => invoke<ClipSource>('open_clip', { path }),
+  /** The system file dialog (videos only); null when cancelled. */
+  pickClipFile: () => invoke<string | null>('pick_clip_file'),
+  /** The file to play (the source itself when it plays as is). Progress arrives as `clip://preview` `{ source, percent }`. */
+  preparePreview: (source: string) => invoke<string>('prepare_preview', { source }),
+  /** One JPEG of `tiles` keyframe tiles, 72 px tall, loadable through the asset protocol. */
+  clipFilmstrip: (source: string) => invoke<{ path: string; tiles: number }>('clip_filmstrip', { source }),
+  /** Deletes the preview and filmstrip temp files. */
+  closeClipSource: (source: string) => invoke<void>('close_clip_source', { source }),
   searchQuotes: (serverId: string, q: string) => invoke<Message[]>('search_quotes', { serverId, q }),
   startQoty: (serverId: string, body: StartQotyRequest) => invoke<QotyEvent>('start_qoty', { serverId, body }),
   voteQoty: (eventId: string, messageId: string) => invoke<QotyEvent>('vote_qoty', { eventId, messageId }),
