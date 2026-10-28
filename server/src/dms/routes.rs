@@ -40,12 +40,14 @@ async fn mark_read(
     Json(req): Json<MarkReadRequest>,
 ) -> AppResult<StatusCode> {
     channel_for(&s.db, me, id).await?;
-    let in_channel: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM messages WHERE id = ? AND channel_id = ?")
-            .bind(req.message_id.to_string())
-            .bind(id.to_string())
-            .fetch_optional(&s.db)
-            .await?;
+    // A reply lives in its quote's thread, not the main list the read point measures.
+    let in_channel: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM messages WHERE id = ? AND channel_id = ? AND thread_root_id IS NULL",
+    )
+    .bind(req.message_id.to_string())
+    .bind(id.to_string())
+    .fetch_optional(&s.db)
+    .await?;
     if in_channel.is_none() {
         return Err(AppError::BadRequest("message not in this channel".into()));
     }

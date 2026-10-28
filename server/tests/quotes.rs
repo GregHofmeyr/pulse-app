@@ -3868,3 +3868,15 @@ async fn mark_read_answers_204_when_its_counts_cant_be_read() {
     .await;
     assert_eq!(r.status(), 204);
 }
+
+/// M8: a reply isn't a place in the channel's main list, so it can't be its read point.
+#[tokio::test]
+async fn a_reply_cant_be_the_channel_read_point() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let reply = f.reply(&f.sam_t, q.id, "newer than the quote").await;
+    let path = format!("/channels/{}/read", f.ch.id);
+    let read = |id: MessageId| post_json(&f.app, &f.alex_t, &path, json!({ "message_id": id }));
+    assert_eq!(read(reply.id).await.status(), 400);
+    assert_eq!(read(q.id).await.status(), 204);
+}
