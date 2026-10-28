@@ -616,15 +616,13 @@ async fn cleanup_never_touches_remote_rows() {
     assert_eq!(media_rows(&app).await, 1);
 }
 
-#[tokio::test]
-async fn cleanup_keeps_a_live_clips_thumbnail() {
-    let app = spawn().await;
-    let (alex, token) = register(&app, "alex").await;
-    let thumb: MediaInfo = upload_to(&app, "/media/clip-thumb", &token, jpeg(640, 360))
-        .await
-        .json()
-        .await
-        .unwrap();
+/// A clips channel with one clip (a stored video key) whose thumbnail is `thumb_hash`.
+async fn insert_live_clip(
+    app: &TestApp,
+    token: &str,
+    alex: pulse_protocol::ids::UserId,
+    thumb_hash: &str,
+) {
     let key = media::new_key();
     let mut conn = app.db.acquire().await.unwrap();
     media::put_remote(
@@ -639,7 +637,7 @@ async fn cleanup_keeps_a_live_clips_thumbnail() {
     .await
     .unwrap();
     drop(conn);
-    let server = create_server(&app, &token, "home").await;
+    let server = create_server(app, token, "home").await;
     for sql in [
         format!(
             "INSERT INTO channels (id, server_id, kind, name, position, created_at)
@@ -652,12 +650,23 @@ async fn cleanup_keeps_a_live_clips_thumbnail() {
         ),
         format!(
             "INSERT INTO clips (message_id, video_key, thumb_hash, duration_ms, width, height)
-             VALUES ('m1', '{key}', '{}', 1000, 1920, 1080)",
-            thumb.hash
+             VALUES ('m1', '{key}', '{thumb_hash}', 1000, 1920, 1080)"
         ),
     ] {
         sqlx::query(&sql).execute(&app.db).await.unwrap();
     }
+}
+
+#[tokio::test]
+async fn cleanup_keeps_a_live_clips_thumbnail() {
+    let app = spawn().await;
+    let (alex, token) = register(&app, "alex").await;
+    let thumb: MediaInfo = upload_to(&app, "/media/clip-thumb", &token, jpeg(640, 360))
+        .await
+        .json()
+        .await
+        .unwrap();
+    insert_live_clip(&app, &token, alex, &thumb.hash).await;
     let dir = &app.cfg.media_dir;
     assert_eq!(
         media::cleanup(&app.db, dir, Duration::ZERO).await.unwrap(),
@@ -674,6 +683,64 @@ async fn cleanup_keeps_a_live_clips_thumbnail() {
         1
     );
     assert!(!media::path_for(dir, &thumb.hash).unwrap().exists());
+}
+
+#[tokio::test]
+async fn cleanup_keeps_the_still_of_a_live_animated_clip_thumbnail() {
+    let app = spawn().await;
+    let (alex, token) = register(&app, "alex").await;
+    let thumb: MediaInfo = upload_to(&app, "/media/clip-thumb", &token, gif(2))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let still = thumb
+        .still_hash
+        .clone()
+        .expect("an animated thumbnail has a still");
+    insert_live_clip(&app, &token, alex, &thumb.hash).await;
+    let dir = &app.cfg.media_dir;
+    assert_eq!(
+        media::cleanup(&app.db, dir, Duration::ZERO).await.unwrap(),
+        0
+    );
+    assert!(media::path_for(dir, &thumb.hash).unwrap().is_file());
+    assert!(media::path_for(dir, &still).unwrap().is_file());
+
+    sqlx::query("DELETE FROM clips")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(
+        media::cleanup(&app.db, dir, Duration::ZERO).await.unwrap(),
+        2
+    );
+    assert!(!media::path_for(dir, &thumb.hash).unwrap().exists());
+    assert!(!media::path_for(dir, &still).unwrap().exists());
+}
+
+#[tokio::test]
+async fn put_remote_refuses_a_size_that_does_not_fit() {
+    let app = spawn().await;
+    let (alex, _token) = register(&app, "alex").await;
+    let mut conn = app.db.acquire().await.unwrap();
+    let r = media::put_remote(
+        &mut conn,
+        media::MediaKind::Clip,
+        &media::new_key(),
+        u64::MAX,
+        1920,
+        1080,
+        alex,
+    )
+    .await;
+    assert!(r.is_err());
+    drop(conn);
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM media")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
 }
 
 // The child process is waited on by blocking, so the in-test fake needs its own thread.
@@ -696,6 +763,7 @@ async fn clips_check_reports_ok_against_the_fake() {
     assert!(!out.contains(FAKE_SECRET), "{out}");
     // Probed and cleaned up.
     assert!(fake.keys().is_empty(), "{:?}", fake.keys());
+    // The over-long PUT is refused at the signature check, so it never reaches the log.
     let verbs: Vec<_> = fake.requests().iter().map(|(m, _)| m.to_string()).collect();
     assert_eq!(verbs, ["PUT", "HEAD", "GET", "DELETE"]);
 
@@ -710,6 +778,15 @@ async fn clips_check_reports_ok_against_the_fake() {
     assert!(!ok, "{out}");
     assert!(out.contains("PUT") && out.contains("403"), "{out}");
     assert!(!out.contains("wrong-secret"), "{out}");
+
+    // Storage that isn't there: the step is named and no signed URL is printed.
+    drop(fake);
+    let (ok, out) = run_binary(&db, &env, &["clips-check"], Duration::from_secs(20));
+    assert!(!ok, "{out}");
+    assert!(out.contains("failed"), "{out}");
+    for secret in [FAKE_KEY_ID, "X-Amz-Signature", "X-Amz-Credential"] {
+        assert!(!out.contains(secret), "{secret} leaked: {out}");
+    }
 }
 
 #[tokio::test]

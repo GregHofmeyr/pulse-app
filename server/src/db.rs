@@ -32,10 +32,14 @@ pub async fn connect(url: &str) -> anyhow::Result<SqlitePool> {
     Ok(pool)
 }
 
-/// Run the migrations on a database (creating it if needed) the way [`connect`] does, and
-/// return the latest applied version. For the `migrate` subcommand.
+/// Run the migrations on an existing database the way [`connect`] does, and return the latest
+/// applied version. For the `migrate` subcommand, which never creates a database: a mistyped
+/// path must fail, not report success on a new empty file.
 pub async fn migrate(url: &str) -> anyhow::Result<i64> {
-    let mut migrator = run_migrations(&options(url)?).await?;
+    let opts = options(url)?.create_if_missing(false);
+    let mut migrator = run_migrations(&opts)
+        .await
+        .with_context(|| format!("no usable database at {url} (migrate never creates one)"))?;
     let version: i64 = sqlx::query_scalar("SELECT COALESCE(MAX(version), 0) FROM _sqlx_migrations")
         .fetch_one(&mut migrator)
         .await?;

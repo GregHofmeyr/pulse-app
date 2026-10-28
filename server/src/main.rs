@@ -51,41 +51,26 @@ async fn main() -> anyhow::Result<()> {
         )
         .init();
     let cmd = Cli::parse().cmd;
-    // `migrate` reads only the database URL: no LiveKit settings are needed to run it.
-    if let Cmd::Migrate = cmd {
-        let url = std::env::var("PULSE_DB_URL").unwrap_or_else(|_| "sqlite://pulse.db".into());
-        let version = pulse_server::db::migrate(&url).await?;
-        println!("migrated: {version}");
-        return Ok(());
-    }
-    // Likewise `clips-check` needs only the storage settings.
-    if let Cmd::ClipsCheck = cmd {
-        let Some(store) = pulse_server::config::ClipStoreConfig::from_env()? else {
-            anyhow::bail!("clips storage isn't configured: set the PULSE_CLIPS_S3_* variables");
-        };
-        let r2 = pulse_server::media::r2::R2::new(&store)?;
-        return match r2.probe().await {
-            Ok(()) => {
-                println!("clips storage ok");
-                Ok(())
-            }
-            Err(step) => anyhow::bail!("{step}"),
-        };
-    }
-    let cfg = pulse_server::config::Config::from_env()?;
+    // Every arm that needs the full settings loads them itself: `migrate` and `clips-check` read
+    // only their own variables, so they run without the LiveKit settings.
+    let cfg = || pulse_server::config::Config::from_env();
     match cmd {
-        Cmd::Migrate | Cmd::ClipsCheck => unreachable!("handled above"),
-        Cmd::Serve => pulse_server::serve(cfg).await,
+        Cmd::Migrate => migrate().await,
+        Cmd::ClipsCheck => clips_check().await,
+        Cmd::Serve => pulse_server::serve(cfg()?).await,
         Cmd::CreateInvite => {
+            let cfg = cfg()?;
             let db = pulse_server::db::connect(&cfg.db_url).await?;
             println!("{}", pulse_server::auth::invites::create(&db, None).await?);
             Ok(())
         }
         Cmd::Backup { path } => {
+            let cfg = cfg()?;
             let db = pulse_server::db::connect(&cfg.db_url).await?;
             pulse_server::db::backup(&db, &path).await
         }
         Cmd::Reset2fa { username } => {
+            let cfg = cfg()?;
             let db = pulse_server::db::connect(&cfg.db_url).await?;
             let name = pulse_server::auth::two_factor::reset(&db, &username).await?;
             println!(
@@ -96,6 +81,7 @@ async fn main() -> anyhow::Result<()> {
         // The running server isn't told: REST calls with a deleted session fail at once, but its
         // open real-time connections and calls stay until they drop (restarting it ends them).
         Cmd::ResetPassword { username } => {
+            let cfg = cfg()?;
             let password = pulse_server::auth::routes::read_password_line(std::io::stdin().lock())?;
             let db = pulse_server::db::connect(&cfg.db_url).await?;
             let (name, n) =
@@ -104,12 +90,14 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Cmd::RevokeSessions { username } => {
+            let cfg = cfg()?;
             let db = pulse_server::db::connect(&cfg.db_url).await?;
             let (name, n) = pulse_server::auth::routes::revoke_sessions(&db, &username).await?;
             println!("signed out {n} {} of {name}", sessions(n));
             Ok(())
         }
         Cmd::Reports { limit } => {
+            let cfg = cfg()?;
             let db = pulse_server::db::connect(&cfg.db_url).await?;
             let rows = pulse_server::reports::store::list(&db, limit).await?;
             if rows.is_empty() {
@@ -129,6 +117,7 @@ async fn main() -> anyhow::Result<()> {
             Ok(())
         }
         Cmd::Report { id, log } => {
+            let cfg = cfg()?;
             let db = pulse_server::db::connect(&cfg.db_url).await?;
             let r = pulse_server::reports::store::find(&db, &id).await?;
             let l = &r.listed;
@@ -158,4 +147,28 @@ async fn main() -> anyhow::Result<()> {
 
 fn sessions(n: u64) -> &'static str {
     if n == 1 { "session" } else { "sessions" }
+}
+
+/// `migrate` reads only the database URL: no LiveKit settings are needed to run it.
+async fn migrate() -> anyhow::Result<()> {
+    let url = std::env::var("PULSE_DB_URL").unwrap_or_else(|_| "sqlite://pulse.db".into());
+    println!("database: {url}");
+    let version = pulse_server::db::migrate(&url).await?;
+    println!("migrated: {version}");
+    Ok(())
+}
+
+/// Likewise `clips-check` needs only the storage settings.
+async fn clips_check() -> anyhow::Result<()> {
+    let Some(store) = pulse_server::config::ClipStoreConfig::from_env()? else {
+        anyhow::bail!("clips storage isn't configured: set the PULSE_CLIPS_S3_* variables");
+    };
+    let r2 = pulse_server::media::r2::R2::new(&store)?;
+    match r2.probe().await {
+        Ok(()) => {
+            println!("clips storage ok");
+            Ok(())
+        }
+        Err(step) => anyhow::bail!("{step}"),
+    }
 }

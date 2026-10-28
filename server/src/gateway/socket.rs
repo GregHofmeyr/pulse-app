@@ -216,9 +216,8 @@ pub async fn build_ready(
         qoty: crate::qoty::for_ready(db).await?,
         speaker_links: crate::quotes::links::for_ready(db).await?,
         thread_seen: crate::reads::thread_seen_for(db, me).await?,
-        // Filled by the view-preference task.
         games: crate::clips::games::for_ready(db).await?,
-        clip_views: vec![],
+        clip_views: vec![], // filled by the view-preference task
     })
 }
 

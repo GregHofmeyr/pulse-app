@@ -186,6 +186,11 @@ async fn migration_keeps_every_channel_row() {
     migrator.run(&pool).await.unwrap();
 
     let ts = "2026-10-01T00:00:00.000Z";
+    let (other, voice, dm) = (
+        "01J000000000000000000OTHER",
+        "01J00000000000000000VOICE0",
+        "01J0000000000000000000DM00",
+    );
     let (user, server, text, quotes, message, quote_msg) = (
         "01J0000000000000000000USER",
         "01J000000000000000000SERVER",
@@ -209,6 +214,27 @@ async fn migration_keeps_every_channel_row() {
         ),
         format!(
             "INSERT INTO channels (id, server_id, kind, name, position, created_at, reaction_mode) VALUES ('{quotes}', '{server}', 'quotes', 'quotes', 1, '{ts}', 'one_per_person')"
+        ),
+        format!(
+            "INSERT INTO users (id, username, password_hash, created_at) VALUES ('{other}', 'sam', 'x', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('{voice}', '{server}', 'voice', 'lounge', 2, '{ts}')"
+        ),
+        format!(
+            "INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('{dm}', NULL, 'dm', NULL, 0, '{ts}')"
+        ),
+        format!(
+            "INSERT INTO channel_members (channel_id, user_id, added_at) VALUES ('{dm}', '{user}', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO channel_members (channel_id, user_id, added_at) VALUES ('{dm}', '{other}', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO dm_hidden (user_id, channel_id, hidden_at) VALUES ('{user}', '{dm}', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES ('VS1', '{user}', '{voice}', '{ts}')"
         ),
         format!(
             "INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES ('{message}', '{text}', '{user}', 'hi', '{ts}')"
@@ -246,7 +272,25 @@ async fn migration_keeps_every_channel_row() {
                 .unwrap()
         }
     };
-    assert_eq!(count("channels").await, 2);
+    assert_eq!(count("channels").await, 4);
+    assert_eq!(count("channel_members").await, 2);
+    assert_eq!(count("dm_hidden").await, 1);
+    assert_eq!(count("voice_sessions").await, 1);
+    // Copied values survive, and the rebuilt table keeps its index.
+    let (mode, position): (String, i64) =
+        sqlx::query_as("SELECT reaction_mode, position FROM channels WHERE id = ?")
+            .bind(quotes)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((mode.as_str(), position), ("one_per_person", 1));
+    let index: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'channels_server'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(index, 1);
     assert_eq!(count("messages").await, 2);
     assert_eq!(count("reactions").await, 1);
     assert_eq!(count("quotes").await, 1);
@@ -280,20 +324,104 @@ async fn migration_keeps_every_channel_row() {
 }
 
 #[tokio::test]
-async fn migrate_subcommand_migrates_and_exits() {
+async fn migration_0009_refuses_to_run_with_foreign_keys_on() {
+    use sqlx::{ConnectOptions, Connection};
     let dir = tempfile::tempdir().unwrap();
-    let url = format!("sqlite://{}", dir.path().join("m.db").display());
+    // 0008 refuses foreign keys too, so bring the database to 8 with them off first.
+    let opts = SqliteConnectOptions::new()
+        .filename(dir.path().join("old.db"))
+        .create_if_missing(true)
+        .foreign_keys(false);
+    let mut conn = opts.connect().await.unwrap();
+    let mut migrator = sqlx::migrate::Migrator::new(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"),
+    )
+    .await
+    .unwrap();
+    let all = migrator.migrations.clone();
+    migrator.migrations = Cow::Owned(all.iter().filter(|m| m.version <= 8).cloned().collect());
+    migrator.run(&mut conn).await.unwrap();
+    let ts = "2026-10-01T00:00:00.000Z";
+    for q in [
+        format!(
+            "INSERT INTO users (id, username, password_hash, created_at) VALUES ('U', 'alex', 'x', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO servers (id, name, created_by, created_at) VALUES ('S', 'Main', 'U', '{ts}')"
+        ),
+        format!(
+            "INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('C', 'S', 'text', 'general', 0, '{ts}')"
+        ),
+        format!(
+            "INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES ('M', 'C', 'U', 'hi', '{ts}')"
+        ),
+    ] {
+        sqlx::query(&q).execute(&mut conn).await.unwrap();
+    }
+    conn.close().await.unwrap();
+    let mut conn = opts.foreign_keys(true).connect().await.unwrap();
+    migrator.migrations = all;
+    let err = migrator.run(&mut conn).await.unwrap_err().to_string();
+    assert!(
+        err.contains("CHECK constraint failed"),
+        "refused by the guard: {err}"
+    );
+    let v: i64 = sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
+        .fetch_one(&mut conn)
+        .await
+        .unwrap();
+    assert_eq!(v, 8, "0009 rolled back");
+    for (table, want) in [("channels", 1), ("messages", 1)] {
+        let n: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+            .fetch_one(&mut conn)
+            .await
+            .unwrap();
+        assert_eq!(n, want, "{table} unchanged");
+    }
+}
+
+fn run_migrate(url: &str) -> std::process::Output {
     // Only PULSE_DB_URL is needed: no LiveKit variables.
-    let out = std::process::Command::new(env!("CARGO_BIN_EXE_pulse-app-server"))
+    std::process::Command::new(env!("CARGO_BIN_EXE_pulse-app-server"))
         .env_clear()
-        .env("PULSE_DB_URL", &url)
+        .env("PULSE_DB_URL", url)
         .env("RUST_LOG", "warn")
         .arg("migrate")
         .output()
-        .unwrap();
+        .unwrap()
+}
+
+#[tokio::test]
+async fn migrate_subcommand_migrates_and_exits() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("m.db");
+    let url = format!("sqlite://{}", file.display());
+    // `migrate` upgrades a database that exists.
+    let pool = sqlx::SqlitePool::connect_with(
+        SqliteConnectOptions::new()
+            .filename(&file)
+            .create_if_missing(true),
+    )
+    .await
+    .unwrap();
+    pool.close().await;
+    let out = run_migrate(&url);
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.lines().any(|l| l == "migrated: 9"), "{stdout}");
+    assert!(stdout.contains(&url), "names the database: {stdout}");
+}
+
+#[tokio::test]
+async fn migrate_refuses_a_missing_database() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("nope.db");
+    let url = format!("sqlite://{}", file.display());
+    let out = run_migrate(&url);
+    assert!(!out.status.success(), "{out:?}");
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains(&url), "{stderr}");
+    assert!(!file.exists(), "migrate must not create a database");
 }
 
 // ---- Games registry ----

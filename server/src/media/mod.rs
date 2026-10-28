@@ -91,6 +91,7 @@ pub async fn put_remote(
     by: UserId,
 ) -> AppResult<()> {
     debug_assert_eq!(kind.location(), Location::R2);
+    let size = i64::try_from(size).context("a stored size must fit an i64")?;
     sqlx::query(
         "INSERT INTO media (hash, kind, content_type, size, width, height, frames, still_hash,
                             uploaded_by, created_at, location)
@@ -98,7 +99,7 @@ pub async fn put_remote(
     )
     .bind(key)
     .bind(kind.as_str())
-    .bind(size as i64)
+    .bind(size)
     .bind(width)
     .bind(height)
     .bind(by.to_string())
@@ -267,9 +268,9 @@ pub fn writes_ok(cfg: &crate::config::Config) -> AppResult<()> {
 }
 
 /// Delete disk media nothing uses that is older than `grace` (remote rows belong to the clips
-/// sweeper): rows, then their files, in one
-/// transaction. A re-upload's insert waits for the commit, so it sees the files gone and rewrites
-/// them (see `put_one`). A still goes with its parent. Returns how many were deleted.
+/// sweeper): rows, then their files, in one transaction. A re-upload's insert waits for the
+/// commit, so it sees the files gone and rewrites them (see `put_one`). A still goes with its
+/// parent. Returns how many were deleted.
 pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<u64> {
     let cutoff = chrono::Utc::now()
         - chrono::Duration::from_std(grace).context("cleanup grace out of range")?;
@@ -290,7 +291,8 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
                                    OR p.hash IN (SELECT media_hash FROM custom_emoji
                                                   WHERE media_hash IS NOT NULL)
                                    OR p.hash IN (SELECT media_hash FROM quote_lines
-                                                  WHERE media_hash IS NOT NULL)))
+                                                  WHERE media_hash IS NOT NULL)
+                                   OR p.hash IN (SELECT thumb_hash FROM clips)))
          RETURNING hash",
     )
     .bind(&cutoff)

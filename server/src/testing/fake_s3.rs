@@ -102,7 +102,8 @@ impl FakeS3 {
         self.shared.keys()
     }
 
-    /// Every request that was authenticated and served (method, object key), oldest first.
+    /// Every request that passed the signature check (method, object key), oldest first,
+    /// whatever its outcome (a GET of a missing key is in here too).
     pub fn requests(&self) -> Vec<(Method, String)> {
         self.shared.inner.lock().unwrap().requests.clone()
     }
@@ -414,6 +415,13 @@ pub(super) fn verify(
     let expires: i64 = param("X-Amz-Expires")
         .and_then(|e| e.parse().ok())
         .ok_or(BAD)?;
+    // S3 and R2 refuse a lifetime outside 1 second to 7 days.
+    if !(1..=604_800).contains(&expires) {
+        return Err((
+            "AuthorizationQueryParametersError",
+            "X-Amz-Expires must be between 1 and 604800 seconds",
+        ));
+    }
     let signed = param("X-Amz-SignedHeaders").ok_or(BAD)?;
     let given = param("X-Amz-Signature").ok_or(BAD)?;
     let credential = param("X-Amz-Credential").ok_or(BAD)?;
@@ -574,6 +582,20 @@ mod tests {
                 .contains("<Code>SignatureDoesNotMatch</Code>")
         );
 
+        // A longer lifetime than the one signed.
+        let longer = url
+            .to_string()
+            .replace("X-Amz-Expires=3600", "X-Amz-Expires=7200");
+        assert_ne!(longer, url.to_string());
+        let r = http.get(&longer).send().await.unwrap();
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        assert!(
+            r.text()
+                .await
+                .unwrap()
+                .contains("<Code>SignatureDoesNotMatch</Code>")
+        );
+
         // A different key under the same signature.
         let other = url.to_string().replace("a.mp4", "b.mp4");
         assert_eq!(
@@ -615,6 +637,17 @@ mod tests {
             .put(url.clone())
             .header("content-type", "video/mp4")
             .body(b"123456".to_vec())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        assert!(fake.keys().is_empty(), "nothing stored");
+
+        // A content-type other than the signed one.
+        let r = http
+            .put(url.clone())
+            .header("content-type", "image/png")
+            .body(b"12345".to_vec())
             .send()
             .await
             .unwrap();
@@ -713,10 +746,49 @@ mod tests {
         );
         fake.set_down(false);
         assert_eq!(http.get(url).send().await.unwrap().status(), StatusCode::OK);
+        // A missing key is a 404, and still a request that passed the signature check.
+        let missing = bucket
+            .get_object(Some(&creds), "nope")
+            .sign(Duration::from_secs(60));
+        assert_eq!(
+            http.get(missing).send().await.unwrap().status(),
+            StatusCode::NOT_FOUND
+        );
         assert_eq!(
             fake.requests(),
-            vec![(reqwest::Method::GET, "k".to_string())]
+            vec![
+                (reqwest::Method::GET, "k".to_string()),
+                (reqwest::Method::GET, "nope".to_string())
+            ]
         );
+    }
+
+    #[tokio::test]
+    async fn expires_must_be_one_second_to_seven_days() {
+        let fake = FakeS3::start(FakeStore::Memory).await;
+        fake.put_raw("k", b"x".to_vec());
+        let (bucket, creds) = signer(&fake);
+        let http = reqwest::Client::new();
+        let get = |secs| {
+            bucket
+                .get_object(Some(&creds), "k")
+                .sign(Duration::from_secs(secs))
+        };
+        assert_eq!(
+            http.get(get(604_800)).send().await.unwrap().status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            http.get(get(604_801)).send().await.unwrap().status(),
+            StatusCode::FORBIDDEN
+        );
+        // Hand-built: the signature is irrelevant, the range is checked first.
+        let zero = get(60)
+            .to_string()
+            .replace("X-Amz-Expires=60", "X-Amz-Expires=0");
+        let r = http.get(&zero).send().await.unwrap();
+        assert_eq!(r.status(), StatusCode::FORBIDDEN);
+        assert!(r.text().await.unwrap().contains("X-Amz-Expires must be"));
     }
 
     #[tokio::test]
