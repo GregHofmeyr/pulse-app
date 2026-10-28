@@ -545,8 +545,19 @@ impl Core {
         app.state::<crate::voice::mictest::MicTest>().stop();
         let app = app.clone();
         tauri::async_runtime::spawn(async move { app.state::<VoiceManager>().leave().await });
-        if let Some(api) = self.forget() {
-            self.store.clear(api.base());
+        self.forget_stored();
+    }
+
+    /// `forget`, and the stored session with it (the next launch starts at the login screen).
+    /// A paused session (`suspend`) has no live session to name its server, but is still
+    /// stored: whatever is stored goes.
+    fn forget_stored(&self) {
+        let server = match self.forget() {
+            Some(api) => Some(api.base().to_string()),
+            None => self.store.load().map(|(server, _)| server),
+        };
+        if let Some(server) = server {
+            self.store.clear(&server);
         }
     }
 
@@ -2404,6 +2415,26 @@ mod tests {
         core.give_up_restoring(true);
         assert_eq!(cleared.load(Ordering::SeqCst), 1);
         assert!(core.media_session().is_none());
+    }
+
+    /// Startup couldn't reach the stored session's server (it is paused, kept for the next
+    /// launch), and the user signs out while waiting: the stored session goes too.
+    #[test]
+    fn signing_out_of_a_paused_session_forgets_the_stored_session() {
+        let root = tempfile::tempdir().unwrap();
+        let server = "https://pulse.example.com";
+        let (core, _) = signed_in(root.path(), server, Some(UserId::new()));
+        let dir = root.path().join("session");
+        crate::session::file::save(&dir, server, "t1").unwrap();
+        core.give_up_restoring(false);
+        assert!(core.media_session().is_none(), "paused: no live session");
+        assert!(
+            core.store.load().is_some(),
+            "still stored for the next launch"
+        );
+        core.forget_stored();
+        assert!(core.store.load().is_none(), "the stored session is gone");
+        assert!(!dir.join(crate::session::file::NAME).exists());
     }
 
     #[test]
