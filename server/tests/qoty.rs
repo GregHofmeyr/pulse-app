@@ -714,6 +714,30 @@ async fn an_event_takes_at_most_fifty_options() {
     assert_eq!(f.count("SELECT COUNT(*) FROM qoty_options").await, 50);
 }
 
+/// M10: the automatic options stop at 50 too, even when dozens tie at 5th (a small server's
+/// scores bunch up): the newest of the tied go in. Adding by hand is then refused.
+#[tokio::test]
+async fn the_automatic_options_stop_at_fifty() {
+    let f = fixture().await;
+    let fans = f.fans(1).await;
+    let mut posted = Vec::new();
+    for i in 0..55 {
+        let q = f.quote(&format!("q{i}")).await;
+        f.score(q.id, &fans, 1).await;
+        posted.push(q.id);
+    }
+    let e = f.started().await;
+    let mut got = option_ids(&e);
+    got.sort();
+    // Newest = highest id (two posts in one millisecond needn't keep their order).
+    posted.sort();
+    assert_eq!(got, posted[5..].to_vec(), "the 50 newest of the tie");
+    let r = f.add(&f.sam_t, e.id, posted[0]).await;
+    assert_eq!(r.status(), 409);
+    let err: pulse_protocol::rest::ApiError = r.json().await.unwrap();
+    assert_eq!(err.message, "This vote has enough options.");
+}
+
 /// M10: adding an option grows the database: refused on a full disk.
 #[tokio::test]
 async fn adding_an_option_is_refused_when_disk_is_low() {

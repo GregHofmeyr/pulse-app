@@ -260,7 +260,7 @@ async fn add_option(
         .bind(id.to_string())
         .fetch_one(&mut *tx)
         .await?;
-    if options >= MAX_OPTIONS {
+    if options >= MAX_OPTIONS as i64 {
         return Err(AppError::Conflict("This vote has enough options.".into()));
     }
     sqlx::query("INSERT INTO qoty_options (event_id, message_id, added_by) VALUES (?, ?, ?)")

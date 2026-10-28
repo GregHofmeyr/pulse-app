@@ -35,8 +35,9 @@ pub const MINUTES: RangeInclusive<u32> = 5..=20160;
 pub const REOPEN_HOURS: i64 = 24;
 /// The first year a vote can be for (the last is the current UTC year).
 pub const FIRST_YEAR: i32 = 2000;
-/// The most options a vote takes by hand: every update of it carries every option to everyone.
-pub const MAX_OPTIONS: i64 = 50;
+/// The most options a vote has, automatic and added by hand together: every update of it carries
+/// every option to everyone.
+pub const MAX_OPTIONS: usize = 50;
 
 fn parse_time(s: &str) -> AppResult<DateTime<Utc>> {
     Ok(DateTime::parse_from_rfc3339(s)
@@ -136,7 +137,8 @@ pub(crate) fn past(ends_at: Option<&str>) -> bool {
 
 /// The automatic options for `year` in `server`, best first: the year's ranked quotes (see
 /// [`crate::quotes::ranked`]) that never won a vote, the top [`TOP`] and everything tied with the
-/// last of them. A quote nobody reacted to is never one.
+/// last of them, at most [`MAX_OPTIONS`] (the newest of a long tie). A quote nobody reacted to is
+/// never one.
 pub(crate) async fn top_options(
     db: &mut SqliteConnection,
     server: ServerId,
@@ -148,6 +150,8 @@ pub(crate) async fn top_options(
         .into_iter()
         .enumerate()
         .take_while(|(i, r)| *i < TOP || r.1 == cut)
+        // A small server's scores bunch up, so a tie at 5th can be dozens long: newest first.
+        .take(MAX_OPTIONS)
         .map(|(_, r)| r.0)
         .collect())
 }
