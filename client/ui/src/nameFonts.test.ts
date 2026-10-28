@@ -86,3 +86,16 @@ describe('bundled name fonts', () => {
     expect(onest).toContain('SIL Open Font License 1.1')
   })
 })
+
+describe('NAME_FONTS table vs nameFonts.css', () => {
+  it('each family and weight appears as a font-family/font-weight pair in the css', async () => {
+    const { NAME_FONTS } = await import('./lib/nameFonts')
+    const pairs = new Set(
+      faces(read('./nameFonts.css')).map((f) => `${f.family}|${f.weight}`),
+    )
+    for (const f of NAME_FONTS) {
+      const family = /^'([^']+)'/.exec(f.family)?.[1]
+      expect(pairs.has(`${family}|${f.weight}`), f.key).toBe(true)
+    }
+  })
+})
