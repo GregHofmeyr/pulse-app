@@ -1,5 +1,6 @@
 pub mod access;
 pub mod auth;
+pub mod clips;
 pub mod config;
 pub mod db;
 pub mod dms;
@@ -46,6 +47,7 @@ pub fn router(state: AppState) -> Router {
         .merge(reports::routes::router())
         .merge(media::routes::router())
         .merge(emoji::routes::router())
+        .merge(clips::games::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)

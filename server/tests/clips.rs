@@ -295,3 +295,192 @@ async fn migrate_subcommand_migrates_and_exits() {
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(stdout.lines().any(|l| l == "migrated: 9"), "{stdout}");
 }
+
+// ---- Games registry ----
+
+async fn add_game(
+    app: &TestApp,
+    token: &str,
+    server: pulse_protocol::ids::ServerId,
+    name: &str,
+) -> reqwest::Response {
+    post_json(
+        app,
+        token,
+        &format!("/servers/{server}/games"),
+        json!({ "name": name }),
+    )
+    .await
+}
+
+async fn add_game_ok(
+    app: &TestApp,
+    token: &str,
+    server: pulse_protocol::ids::ServerId,
+    name: &str,
+) -> pulse_protocol::rest::Game {
+    let r = add_game(app, token, server, name).await;
+    assert_eq!(r.status(), 200, "add {name:?}");
+    r.json().await.unwrap()
+}
+
+async fn ready_of(app: &TestApp, token: &str) -> pulse_protocol::gateway::Ready {
+    let (mut ws, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
+        .await
+        .unwrap();
+    let f = serde_json::to_string(&ClientFrame::Hello {
+        token: token.into(),
+        client_version: pulse_protocol::PROTOCOL_VERSION,
+    })
+    .unwrap();
+    ws.send(Ws::text(f)).await.unwrap();
+    loop {
+        match next_frame_beating(&mut ws, Duration::from_secs(3)).await {
+            Some(ServerFrame::Ready(r)) => return r,
+            Some(_) => continue,
+            None => panic!("expected Ready"),
+        }
+    }
+}
+
+async fn game_rows(app: &TestApp, server: pulse_protocol::ids::ServerId) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM games WHERE server_id = ?")
+        .bind(server.to_string())
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn adding_a_game_is_case_and_space_insensitive() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    let s = create_server(&app, &alex, "Main").await;
+    let r = post_json(&app, &sam, &format!("/servers/{}/join", s.id), json!({})).await;
+    assert_eq!(r.status(), 204);
+    let mut ws = hello(&app, &sam).await;
+
+    let g = add_game_ok(&app, &alex, s.id, "Overwatch 2").await;
+    assert_eq!(g.name, "Overwatch 2");
+    assert_eq!(g.server_id, s.id);
+    assert_eq!(g.created_by, Some(alex_id));
+    let again = add_game_ok(&app, &sam, s.id, " overwatch  2 ").await;
+    assert_eq!(again, g, "the existing game comes back as it was stored");
+    assert_eq!(game_rows(&app, s.id).await, 1);
+
+    let e = add_game_ok(&app, &alex, s.id, "ÉCLAIR").await;
+    let e2 = add_game_ok(&app, &alex, s.id, "éclair").await;
+    assert_eq!(e2.id, e.id);
+    assert_eq!(e.name, "ÉCLAIR");
+
+    // Exactly one GameAdded per new game, none for the repeats.
+    let mut added = vec![];
+    while let Some(f) = next_frame_beating(&mut ws, Duration::from_millis(500)).await {
+        if let ServerFrame::Event(Event::GameAdded { game }) = f {
+            added.push(game);
+        }
+    }
+    assert_eq!(added, vec![g, e]);
+}
+
+#[tokio::test]
+async fn game_names_are_checked() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let s = create_server(&app, &alex, "Main").await;
+    for bad in ["", "   ", &"x".repeat(41)] {
+        assert_eq!(
+            add_game(&app, &alex, s.id, bad).await.status(),
+            400,
+            "{bad:?}"
+        );
+    }
+    // Characters, not bytes.
+    let ok = "é".repeat(40);
+    assert_eq!(add_game_ok(&app, &alex, s.id, &ok).await.name, ok);
+    assert_eq!(
+        add_game(&app, &alex, s.id, &"é".repeat(41)).await.status(),
+        400
+    );
+    assert_eq!(
+        add_game(&app, &alex, s.id, &"x".repeat(40)).await.status(),
+        200
+    );
+    assert_eq!(game_rows(&app, s.id).await, 2);
+}
+
+#[tokio::test]
+async fn non_members_cant_add_games() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let (_, kim) = register(&app, "kim").await;
+    let s = create_server(&app, &alex, "Main").await;
+    assert_eq!(
+        add_game(&app, &kim, s.id, "Overwatch 2").await.status(),
+        403
+    );
+    assert_eq!(game_rows(&app, s.id).await, 0);
+}
+
+#[tokio::test]
+async fn games_are_in_ready() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let (_, jo) = register(&app, "jo").await;
+    let s = create_server(&app, &alex, "Main").await;
+    let other = create_server(&app, &jo, "Other").await;
+    let b = add_game_ok(&app, &alex, s.id, "Zelda").await;
+    let a = add_game_ok(&app, &alex, s.id, "Apex").await;
+    let o = add_game_ok(&app, &jo, other.id, "Apex").await;
+    assert_ne!(o.id, a.id, "the key is per server");
+
+    let ready = ready_of(&app, &alex).await;
+    let names: Vec<_> = ready
+        .games
+        .iter()
+        .filter(|g| g.server_id == s.id)
+        .map(|g| g.name.as_str())
+        .collect();
+    assert_eq!(names, ["Apex", "Zelda"]);
+    assert!(ready.games.contains(&b));
+
+    use pulse_server::clips::games;
+    assert!(games::in_server(&app.db, s.id, a.id).await.unwrap());
+    assert!(!games::in_server(&app.db, s.id, o.id).await.unwrap());
+    assert!(
+        !games::in_server(&app.db, s.id, pulse_protocol::ids::GameId::new())
+            .await
+            .unwrap()
+    );
+}
+
+#[tokio::test]
+async fn games_are_capped() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let s = create_server(&app, &alex, "Main").await;
+    for i in 1..=300 {
+        sqlx::query(
+            "INSERT INTO games (id, server_id, name, name_key, created_by, created_at)
+             VALUES (?, ?, ?, ?, NULL, '2026-01-01T00:00:00Z')",
+        )
+        .bind(pulse_protocol::ids::GameId::new().to_string())
+        .bind(s.id.to_string())
+        .bind(format!("Game {i}"))
+        .bind(format!("game {i}"))
+        .execute(&app.db)
+        .await
+        .unwrap();
+    }
+    let r = add_game(&app, &alex, s.id, "One more").await;
+    assert_eq!(r.status(), 400);
+    let e: pulse_protocol::rest::ApiError = r.json().await.unwrap();
+    assert_eq!(e.message, "This server has too many games.");
+    // An existing name is still answered at the cap, and nothing is added.
+    assert_eq!(
+        add_game_ok(&app, &alex, s.id, "GAME 7").await.name,
+        "Game 7"
+    );
+    assert_eq!(game_rows(&app, s.id).await, 300);
+}
