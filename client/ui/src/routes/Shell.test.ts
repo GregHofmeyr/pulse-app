@@ -291,7 +291,7 @@ describe('watching from anywhere', () => {
     flushSync()
     expect(members().hidden).toBe(false)
     expect(right.getAttribute('aria-pressed')).toBe('true')
-    // the keyboard works them too: focus, then Enter is a native button's click
+    // they take keyboard focus (a native button: Enter and Space click it)
     right.focus()
     expect(document.activeElement).toBe(right)
     right.click()
@@ -368,6 +368,18 @@ describe('watching from anywhere', () => {
     openFull(SAM)
     await settle()
     expect(document.activeElement).toBe(toggle('Channels'))
+  })
+
+  it('focus_inside_the_member_list_as_it_hides_moves_to_the_members_toggle', async () => {
+    goTo('V1')
+    await streamApi.watch('V1', 'U2')
+    await settle()
+    const inMembers = q('.right-panel')!.querySelector<HTMLElement>('button, [tabindex]')!
+    inMembers.focus()
+    expect(q('.right-panel')!.contains(document.activeElement)).toBe(true)
+    openFull(SAM)
+    await settle()
+    expect(document.activeElement).toBe(toggle('Members'))
   })
 
   it('full_view_away_from_the_call_view_hides_nothing', async () => {

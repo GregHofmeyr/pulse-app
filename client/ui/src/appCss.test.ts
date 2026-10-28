@@ -25,9 +25,13 @@ const rule = (selector: string) => {
 describe('the global scrollbar', () => {
   it('has its colours as tokens: a translucent thumb (it reads on every surface), brighter on hover', () => {
     const root = rule(':root')
-    expect(root.getPropertyValue('--scrollbar-thumb')).toMatch(/var\(--text-3\)/)
-    expect(root.getPropertyValue('--scrollbar-thumb-hover')).toMatch(/var\(--text-3\)/)
-    expect(root.getPropertyValue('--scrollbar-thumb-hover')).not.toBe(root.getPropertyValue('--scrollbar-thumb'))
+    // --text-3 (#8e92a0) at two opacities, as plain rgb(): no color-mix() for an engine to drop
+    expect(root.getPropertyValue('--text-3')).toBe('#8e92a0')
+    const alpha = (v: string) => Number(/^rgb\(142 146 160 ?\/ ?(\.\d+)\)$/.exec(v.trim())?.[1])
+    const [rest, hover] = [alpha(root.getPropertyValue('--scrollbar-thumb')), alpha(root.getPropertyValue('--scrollbar-thumb-hover'))]
+    expect(rest).toBeGreaterThan(0)
+    expect(hover).toBeGreaterThan(rest)
+    expect(hover).toBeLessThan(1)
   })
 
   it('WebView2 (Chromium) and WebKitGTK: thin, transparent track, rounded thumb, the same size on hover', () => {
@@ -69,6 +73,6 @@ describe('the global scrollbar', () => {
     }
     walk(__dirname)
     expect(files.length).toBeGreaterThan(10)
-    expect(files.filter((f) => /scrollbar/.test(readFileSync(f, 'utf8'))).map((f) => f.slice(__dirname.length + 1))).toEqual([])
+    expect(files.filter((f) => /::-webkit-scrollbar|scrollbar-(width|color)/.test(readFileSync(f, 'utf8'))).map((f) => f.slice(__dirname.length + 1))).toEqual([])
   })
 })

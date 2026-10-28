@@ -23,3 +23,5 @@ const KEY = Symbol('fullPanels')
 export const setFullPanels = (p: FullPanels) => setContext(KEY, p)
 /** Undefined outside the shell (a full view mounted on its own has no panels to toggle). */
 export const getFullPanels = () => getContext<FullPanels | undefined>(KEY)
+/** For `mount(…, { context })`: what the shell would set. */
+export const fullPanelsContext = (p: FullPanels) => new Map<symbol, FullPanels>([[KEY, p]])

@@ -164,6 +164,7 @@
   .panel-toggle { width: 32px; height: 32px; margin-top: 5px; flex-shrink: 0; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .panel-toggle:hover { background: var(--bg-3); color: var(--text); }
   .panel-toggle[aria-pressed='true'] { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  .panel-toggle[aria-pressed='true']:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
   .back { flex-shrink: 0; white-space: nowrap; height: 32px; padding: 0 12px 0 8px; border: 0; border-radius: 10px; background: var(--bg-3); color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 4px; }
   /* rows of 42px (the quality select's height): 52px in all on one row, as before, with the corner toggles centred on the first */
   .controls { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }

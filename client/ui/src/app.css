@@ -15,9 +15,10 @@
   --warn: #e8b04a;
   --ok: #4fd18b;
   --radius: 14px;
-  /* translucent, so the thumb reads on every surface it sits on (--bg-0 to --bg-4) */
-  --scrollbar-thumb: color-mix(in srgb, var(--text-3) 32%, transparent);
-  --scrollbar-thumb-hover: color-mix(in srgb, var(--text-3) 55%, transparent);
+  /* --text-3, translucent, so the thumb reads on every surface it sits on (--bg-0 to --bg-4). Plain
+     rgb(), not color-mix(): an engine without color-mix() would make the thumb invisible. */
+  --scrollbar-thumb: rgb(142 146 160 / .32);
+  --scrollbar-thumb-hover: rgb(142 146 160 / .55);
   color-scheme: dark;
   font-family: 'Onest', system-ui, sans-serif;
   /* Onest's contextual alternates swap some letters (e.g. t → t2.alt) inside repeated runs, so
