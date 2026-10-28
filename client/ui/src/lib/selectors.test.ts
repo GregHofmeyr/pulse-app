@@ -193,6 +193,14 @@ describe('userOf and roleColorFor', () => {
     expect(userOf(s, 'nobody')).toBeNull()
   })
 
+  it('userOf order: people beat members, members beat me', () => {
+    const tag = (u: typeof me, h: string) => ({ ...u, avatar_hash: h })
+    const base = { ...r, me: tag(me, 'me'), members: [{ server_id: 'S1', members: [{ user: tag(me, 'mem'), nickname: null }] }], people: [{ user: tag(me, 'ppl'), online: false, last_seen_at: null }] }
+    expect(userOf(applyReady(emptyState(), base), 'U1')?.avatar_hash).toBe('ppl')
+    expect(userOf(applyReady(emptyState(), { ...base, people: [] }), 'U1')?.avatar_hash).toBe('mem')
+    expect(userOf(applyReady(emptyState(), { ...base, people: [], members: [] }), 'U1')?.avatar_hash).toBe('me')
+  })
+
   it('roleColorFor reads the fixture map', () => {
     const s = { ...applyReady(emptyState(), r), roleColors: { S1: { U2: '#ff0000' } } }
     expect(roleColorFor(s, 'S1', 'U2')).toBe('#ff0000')

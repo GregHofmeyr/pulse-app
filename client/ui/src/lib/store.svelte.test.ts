@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }))
 
 import { invoke } from '@tauri-apps/api/core'
-import { app, handleReady, loadProfile, resetState } from './store.svelte'
+import { app, handleReady, loadProfile, noteProfileUpdate, resetState } from './store.svelte'
 import { addPending, applyEvent, emptyState, removePending, type Pending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
@@ -149,6 +149,36 @@ describe('loadProfile', () => {
     await expect(loadProfile('U2')).rejects.toThrow('boom')
     vi.mocked(invoke).mockImplementation((async () => profile('U2')) as never)
     expect((await loadProfile('U2')).user.id).toBe('U2')
+    expect(calls()).toHaveLength(2)
+  })
+
+  it('a ProfileUpdated during the load wins over the older response (stats come from the fetch)', async () => {
+    let resolve!: (p: unknown) => void
+    vi.mocked(invoke).mockImplementation((() => new Promise((r) => (resolve = r))) as never)
+    const load = loadProfile('U2')
+    const fresh = { ...profile('U2').user, avatar_hash: 'new' }
+    const freshCard = { ...profile('U2').card, bio: 'new bio' }
+    const e = { t: 'ProfileUpdated', d: { user: fresh, card: freshCard } } as const
+    noteProfileUpdate(e)
+    app.state = applyEvent(app.state, e, 0)
+    resolve({ ...profile('U2'), stats: { ...profile('U2').stats, times_renamed: 5 } })
+    await load
+    expect(app.state.profiles.U2.user).toEqual(fresh)
+    expect(app.state.profiles.U2.card).toEqual(freshCard)
+    expect(app.state.profiles.U2.stats.times_renamed).toBe(5)
+  })
+
+  it('a load that resolves after a reset does not write into the new state', async () => {
+    let resolve!: (p: unknown) => void
+    vi.mocked(invoke).mockImplementation((() => new Promise((r) => (resolve = r))) as never)
+    const load = loadProfile('U2')
+    resetState()
+    resolve(profile('U2'))
+    await load
+    expect(app.state.profiles).toEqual({})
+    // and the old in-flight entry is gone: a new call fetches again
+    vi.mocked(invoke).mockImplementation((async () => profile('U2')) as never)
+    await loadProfile('U2')
     expect(calls()).toHaveLength(2)
   })
 })

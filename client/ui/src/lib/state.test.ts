@@ -1334,4 +1334,10 @@ describe('profiles', () => {
     const p = profileOf(sam)
     expect(setProfile(emptyState(), p).profiles.U2).toBe(p)
   })
+
+  it('a (re)connect clears cached profiles', () => {
+    let s = setProfile(applyReady(emptyState(), ready()), profileOf(sam))
+    s = applyReady(s, ready())
+    expect(s.profiles).toEqual({})
+  })
 })

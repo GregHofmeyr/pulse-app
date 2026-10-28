@@ -120,6 +120,7 @@ export function applyReady(s: AppState, r: Ready): AppState {
   return {
     ...s,
     me: r.me,
+    profiles: {}, // a ProfileUpdated may have been missed while away: open cards refetch
     servers: r.servers,
     channels,
     members: Object.fromEntries(r.members.map((m) => [m.server_id, m.members])),

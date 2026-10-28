@@ -2,7 +2,9 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
+import type { CardProfile } from './protocol/CardProfile'
 import type { Profile } from './protocol/Profile'
+import type { User } from './protocol/User'
 import type { Ready } from './protocol/Ready'
 import type { ReportKind } from './protocol/ReportKind'
 import { applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, setProfile, type AppState, type ConnState } from './state'
@@ -123,17 +125,35 @@ $effect.root(() => {
 })
 
 const profileLoads = new Map<string, Promise<Profile>>()
+/** The newest ProfileUpdated seen per user while that user's load is in flight. */
+const updatedDuringLoad = new Map<string, { user: User; card: CardProfile }>()
+/** Bumped by resetState: a load started before it must not write into the new state. */
+let loadEpoch = 0
+
+/** Remember a ProfileUpdated that lands while the user's profile is loading, so the older response can't undo it. */
+export function noteProfileUpdate(e: Event) {
+  if (e.t === 'ProfileUpdated' && profileLoads.has(e.d.user.id)) updatedDuringLoad.set(e.d.user.id, e.d)
+}
+
 /** Fetch `userId`'s profile into the cache; calls made while one is in flight share its request. */
 export function loadProfile(userId: string): Promise<Profile> {
   const inflight = profileLoads.get(userId)
   if (inflight) return inflight
-  const p = api.getProfile(userId).then((profile) => {
+  const epoch = loadEpoch
+  const p = api.getProfile(userId).then((fetched) => {
+    if (epoch !== loadEpoch) return fetched
+    const newer = updatedDuringLoad.get(userId)
+    const profile = newer ? { ...fetched, user: newer.user, card: newer.card } : fetched
     app.state = setProfile(app.state, profile)
     return profile
   })
   profileLoads.set(userId, p)
   // settled either way: the next call fetches again (so a failure isn't stuck)
-  const done = () => void profileLoads.delete(userId)
+  const done = () => {
+    if (epoch !== loadEpoch) return
+    profileLoads.delete(userId)
+    updatedDuringLoad.delete(userId)
+  }
   p.then(done, done)
   return p
 }
@@ -167,6 +187,7 @@ export async function startListening(): Promise<UnlistenFn> {
     listen<Ready>('pulse://ready', (e) => handleReady(e.payload)),
     listen<Event>('pulse://event', (e) => {
       maybeSound(e.payload)
+      noteProfileUpdate(e.payload)
       noteReactionEvent(e.payload, app.state.me?.id)
       app.state = applyEvent(app.state, e.payload, Date.now())
       streamApi.onEvent(e.payload)
@@ -208,6 +229,9 @@ export async function startListening(): Promise<UnlistenFn> {
 
 export function resetState() {
   restoredFor = null // the next Ready restores again
+  loadEpoch++
+  profileLoads.clear()
+  updatedDuringLoad.clear()
   app.state = emptyState()
   // a held crash report belongs to the session (and server) it was offered in: the next sign-in
   // asks again if the core still has it for that server
