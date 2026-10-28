@@ -14,6 +14,7 @@
   import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
   import { hostVideo } from '../lib/stream/videoHost'
   import { callView, closeFull } from '../lib/stream/viewer.svelte'
+  import { getFullPanels, PANEL_ID, PANEL_TOGGLE_ID } from '../lib/stream/fullPanels'
   import { watchWindowFocus, windowFocus } from '../lib/windowFocus.svelte'
 
   // The parent keys this on the stream, so the props never change for one instance.
@@ -24,6 +25,9 @@
     onMessage: (userId: string) => void
     onVoiceSettings: () => void
   } = $props()
+
+  /** The shell's side panels (hidden while this is on screen): a toggle for each in the bar's top corners. */
+  const panels = getFullPanels()
 
   const watch = $derived(findWatch(channelId, streamer))
   const name = $derived(displayName(app.state, serverId, streamer))
@@ -103,19 +107,33 @@
 
 <div class="full-view">
   <div class="bar">
-    <button type="button" class="back" onclick={closeFull}><Icon name="chevronLeft" size={16} /> Back</button>
-    <strong class="name">{name}</strong>
-    <span class="spacer"></span>
-    <div class="ctl">
-      <span>Quality</span>
-      <Select bind:value={quality} label="Quality" options={[{ value: 'auto', label: 'Auto' }, { value: 'saver', label: 'Data saver' }]}
-        onchange={() => streamApi.setQuality(channelId, streamer, quality === 'saver' ? 'saver' : 'auto')} />
+    {#if panels}
+      <button type="button" class="panel-toggle" id={PANEL_TOGGLE_ID.left} aria-label={panels.leftName} aria-controls={PANEL_ID.left} aria-pressed={panels.left}
+        data-tip="{panels.left ? 'Hide' : 'Show'} {panels.leftName.toLowerCase()}" onclick={() => panels.toggle('left')}><Icon name="panelLeft" size={18} /></button>
+    {/if}
+    <!-- between the corner toggles; when the panels leave too little room it wraps, the toggles stay put -->
+    <div class="controls">
+      <div class="lead">
+        <button type="button" class="back" onclick={closeFull}><Icon name="chevronLeft" size={16} /> Back</button>
+        <strong class="name">{name}</strong>
+      </div>
+      <div class="trail">
+        <div class="ctl">
+          <span>Quality</span>
+          <Select bind:value={quality} label="Quality" options={[{ value: 'auto', label: 'Auto' }, { value: 'saver', label: 'Data saver' }]}
+            onchange={() => streamApi.setQuality(channelId, streamer, quality === 'saver' ? 'saver' : 'auto')} />
+        </div>
+        <label class="ctl">
+          Volume <strong>{volumeLabel(volume)}</strong>
+          <input type="range" min="0" max="200" step="5" value={volume} aria-label="Stream volume" oninput={(e) => streamApi.setStreamVolume(streamer, +e.currentTarget.value)} />
+        </label>
+        <button type="button" class="stop" onclick={stop}>Stop watching</button>
+      </div>
     </div>
-    <label class="ctl">
-      Volume <strong>{volumeLabel(volume)}</strong>
-      <input type="range" min="0" max="200" step="5" value={volume} aria-label="Stream volume" oninput={(e) => streamApi.setStreamVolume(streamer, +e.currentTarget.value)} />
-    </label>
-    <button type="button" class="stop" onclick={stop}>Stop watching</button>
+    {#if panels?.hasRight}
+      <button type="button" class="panel-toggle" id={PANEL_TOGGLE_ID.right} aria-label="Members" aria-controls={PANEL_ID.right} aria-pressed={panels.right}
+        data-tip="{panels.right ? 'Hide' : 'Show'} members" onclick={() => panels.toggle('right')}><Icon name="panelRight" size={18} /></button>
+    {/if}
   </div>
   <!-- focusable from script only: the stream's menu hands focus back here when it closes -->
   <div class="stage" bind:this={stage} tabindex="-1">
@@ -138,13 +156,21 @@
 
 <style>
   .full-view { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: #000; }
-  .bar { flex-shrink: 0; height: 52px; padding: 0 16px; display: flex; align-items: center; gap: 14px; background: var(--bg-1); border-bottom: 1px solid var(--bg-3); }
-  .back { height: 32px; padding: 0 12px 0 8px; border: 0; border-radius: 10px; background: var(--bg-3); color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 4px; }
-  .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .spacer { flex: 1; }
-  .ctl { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); }
+  .bar { flex-shrink: 0; min-height: 52px; padding: 4px 10px 5px; display: flex; align-items: flex-start; gap: 14px; background: var(--bg-1); border-bottom: 1px solid var(--bg-3); }
+  /* the side panel toggles, one in each top corner; pressed while its panel shows */
+  .panel-toggle { width: 32px; height: 32px; margin-top: 5px; flex-shrink: 0; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); display: grid; place-items: center; }
+  .panel-toggle:hover { background: var(--bg-3); color: var(--text); }
+  .panel-toggle[aria-pressed='true'] { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  .panel-toggle[aria-pressed='true']:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
+  .back { flex-shrink: 0; white-space: nowrap; height: 32px; padding: 0 12px 0 8px; border: 0; border-radius: 10px; background: var(--bg-3); color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 4px; }
+  /* rows of 42px (the quality select's height): 52px in all on one row, as before, with the corner toggles centred on the first */
+  .controls { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
+  .lead, .trail { display: flex; align-items: center; gap: 14px; min-width: 0; min-height: 42px; }
+  .trail { flex-wrap: wrap; justify-content: flex-end; row-gap: 8px; margin-left: auto; }
+  .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ctl { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); white-space: nowrap; }
   input[type='range'] { width: 120px; accent-color: var(--accent); }
-  .stop { height: 32px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--danger); color: #fff; font-weight: 700; }
+  .stop { flex-shrink: 0; white-space: nowrap; height: 32px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--danger); color: #fff; font-weight: 700; }
   .stage { position: relative; flex: 1; min-height: 0; }
   .host { position: absolute; inset: 0; }
   .unfocus { position: absolute; inset: 0; cursor: zoom-out; }

@@ -26,6 +26,7 @@
   import { findWatch, followLiveFreeze, stream, streamApi } from '../lib/stream/stream.svelte'
   import { pendingWatchReady } from '../lib/stream/viewer'
   import { callView, openFull } from '../lib/stream/viewer.svelte'
+  import { PANEL_ID, PANEL_TOGGLE_ID, setFullPanels } from '../lib/stream/fullPanels'
   import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
   import { api, errorText } from '../lib/tauri'
   import { app, clock, openDm, ui } from '../lib/store.svelte'
@@ -82,7 +83,8 @@
     menuOpen = false
     if (e instanceof KeyboardEvent) menuToggle?.focus()
   }
-  // Full view takes the whole window: both side panels hide, and an edge toggle brings each back.
+  // Full view takes the whole window: both side panels hide, and a toggle in each top corner of its
+  // bar brings one back.
   // Every full view starts with both hidden (nothing is remembered); swapping its stream or coming
   // back to it from the mini-preview is the same full view, so what you opened stays open.
   const panels = $state({ left: false, right: false })
@@ -102,8 +104,6 @@
   const hideRight = $derived(fullShown && !panels.right)
   let sidePanel = $state<HTMLElement>()
   let rightPanel = $state<HTMLElement>()
-  let leftEdge = $state<HTMLButtonElement>()
-  let rightEdge = $state<HTMLButtonElement>()
   // Before a panel hides: a menu open in it closes (an unseen menu would take Esc first), and focus in
   // it moves to the toggle that brings it back (or it would fall to the top of the page).
   $effect.pre(() => {
@@ -115,10 +115,17 @@
       }
       const at = document.activeElement
       const to = left && sidePanel?.contains(at) ? 'left' : right && rightPanel?.contains(at) ? 'right' : null
-      if (to) void tick().then(() => (to === 'left' ? leftEdge : rightEdge)?.focus())
+      if (to) void tick().then(() => document.getElementById(PANEL_TOGGLE_ID[to])?.focus())
     })
   })
   const leftName = $derived(activeServerId ? 'Channels' : 'Conversations')
+  setFullPanels({
+    get left() { return panels.left },
+    get right() { return panels.right },
+    get leftName() { return leftName },
+    get hasRight() { return !!(activeServerId || activeChannel?.kind === 'group') },
+    toggle: (side) => (panels[side] = !panels[side]),
+  })
   let serverMenuOpen = $state(false)
   let serverToggle = $state<HTMLButtonElement>()
   /** The same for the server menu. */
@@ -387,7 +394,7 @@
   </header>
 
   <div class="body">
-    <aside id="channels-panel" class="panel side" hidden={hideLeft} bind:this={sidePanel}>
+    <aside id={PANEL_ID.left} class="panel side" hidden={hideLeft} bind:this={sidePanel}>
       <div class="panel-head">
         {#if activeServer}
           <button bind:this={serverToggle} class="head-btn" data-menu-toggle aria-haspopup="menu" aria-expanded={serverMenuOpen}
@@ -434,10 +441,6 @@
     </aside>
 
     <main class="panel content">
-      {#if fullShown}
-        <button type="button" class="edge left" bind:this={leftEdge} aria-label={leftName} aria-controls="channels-panel" aria-expanded={panels.left}
-          data-tip="{panels.left ? 'Hide' : 'Show'} {leftName.toLowerCase()}" onclick={() => (panels.left = !panels.left)}><Icon name={panels.left ? 'chevronLeft' : 'chevronRight'} size={14} /></button>
-      {/if}
       {#if activeServerId && member && !fullShown}<QotyBanner serverId={activeServerId} />{/if}
       {#if activeServerId && !member}
         <div class="join">
@@ -457,14 +460,10 @@
         <p class="empty">Pick a channel.</p>
       {/if}
       {#each mini ? [mini] : [] as m (m.key)}<MiniPreview channelId={m.channelId} streamer={m.streamer} />{/each}
-      {#if fullShown && (activeServerId || activeChannel?.kind === 'group')}
-        <button type="button" class="edge right" bind:this={rightEdge} aria-label="Members" aria-controls="members-panel" aria-expanded={panels.right}
-          data-tip="{panels.right ? 'Hide' : 'Show'} members" onclick={() => (panels.right = !panels.right)}><Icon name={panels.right ? 'chevronRight' : 'chevronLeft'} size={14} /></button>
-      {/if}
     </main>
 
     <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap -->
-    <div id="members-panel" class="right-panel" hidden={hideRight} bind:this={rightPanel}>{#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}</div>
+    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel}>{#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}</div>
   </div>
 </div>
 <StreamToast />
@@ -537,12 +536,6 @@
   /* a real box (aria-controls points at it; a display:contents one leaves the accessibility tree) */
   .right-panel { display: flex; flex-shrink: 0; min-height: 0; }
   .right-panel[hidden], .right-panel:empty { display: none; }
-  /* full view's edge toggles: small tabs on the stream's left and right edges */
-  .edge { position: absolute; top: 50%; z-index: 3; width: 18px; height: 56px; margin-top: -28px; padding: 0; border: 0; background: color-mix(in srgb, var(--bg-2) 85%, transparent); color: var(--text-2); display: grid; place-items: center; opacity: .7; }
-  .edge:hover, .edge:focus-visible { opacity: 1; color: var(--text); }
-  .edge:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
-  .edge.left { left: 0; border-radius: 0 8px 8px 0; }
-  .edge.right { right: 0; border-radius: 8px 0 0 8px; }
   .panel-head { position: relative; height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid #26282e; }
   /* the hover is a rounded pill inside the header, with the text where the padding put it */
   .head-btn { flex: 1; min-width: 0; height: 40px; margin: 0 -8px; padding: 0 8px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }

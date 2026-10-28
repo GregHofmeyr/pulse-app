@@ -52,6 +52,15 @@ export function installTooltips(): () => void {
     current = el
     timer = setTimeout(() => current === el && show(el, text), e.type === 'focusin' ? 0 : DELAY_MS)
   }
+  // A click from the keyboard (Enter, Space) leaves the tip up: a toggle's label that changes with it
+  // ("Show members" → "Hide members") is read again once the click is handled. A mouse press hid it.
+  const clicked = () => {
+    const el = current
+    if (el) setTimeout(() => {
+      const text = current === el && tip.classList.contains('show') ? labelFor(el) : null
+      if (text) show(el, text)
+    }, 0)
+  }
   const leave = (e: Event) => {
     if (current && !(current as Element).contains((e as MouseEvent).relatedTarget as Node | null)) hide()
   }
@@ -61,12 +70,14 @@ export function installTooltips(): () => void {
   document.addEventListener('mouseout', leave)
   document.addEventListener('focusout', hide)
   document.addEventListener('mousedown', hide)
+  document.addEventListener('click', clicked)
   return () => {
     document.removeEventListener('mouseover', enter)
     document.removeEventListener('focusin', enter)
     document.removeEventListener('mouseout', leave)
     document.removeEventListener('focusout', hide)
     document.removeEventListener('mousedown', hide)
+    document.removeEventListener('click', clicked)
     tip.remove()
   }
 }

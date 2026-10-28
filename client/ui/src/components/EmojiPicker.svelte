@@ -254,16 +254,13 @@
   .tone { width: 14px; height: 14px; padding: 0; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
   .tone.on { border-color: var(--accent); }
   .body { flex: 1; min-height: 0; display: flex; }
-  .rail { display: flex; flex-direction: column; gap: 4px; padding: 6px; background: var(--bg-1); border-right: 1px solid var(--line); overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--bg-4) transparent; }
+  .rail { display: flex; flex-direction: column; gap: 4px; padding: 6px; background: var(--bg-1); border-right: 1px solid var(--line); overflow-y: auto; }
   .rail-btn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); cursor: pointer; padding: 0; }
   .rail-btn:hover { background: var(--bg-3); color: var(--text); }
   .grp { width: 20px; height: 20px; }
   .srv { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
   .init { display: grid; place-items: center; background: var(--bg-4); color: var(--text); font-size: 12px; font-weight: 700; }
-  .grid { flex: 1; min-width: 0; overflow-y: auto; padding: 0 8px 8px; scrollbar-width: thin; scrollbar-color: var(--bg-4) transparent; }
-  .grid::-webkit-scrollbar, .rail::-webkit-scrollbar { width: 8px; }
-  .grid::-webkit-scrollbar-thumb, .rail::-webkit-scrollbar-thumb { background: var(--bg-4); border-radius: 4px; }
-  .grid::-webkit-scrollbar-track, .rail::-webkit-scrollbar-track { background: transparent; }
+  .grid { flex: 1; min-width: 0; overflow-y: auto; padding: 0 8px 8px; }
   .head { position: sticky; top: 0; z-index: 1; width: 100%; display: flex; align-items: center; gap: 4px; padding: 8px 2px 4px; background: var(--bg-2); border: 0; color: var(--text-3); font: inherit; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; cursor: pointer; text-align: left; }
   .caret { display: inline-flex; transition: transform 0.12s; }
   .caret.shut { transform: rotate(-90deg); }

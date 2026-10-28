@@ -24,6 +24,7 @@ import { applyReady, emptyState } from '../lib/state'
 import { voice } from '../lib/voice.svelte'
 import { stream, streamApi } from '../lib/stream/stream.svelte'
 import { callView, openFull } from '../lib/stream/viewer.svelte'
+import { fullPanelsContext, type PanelSide } from '../lib/stream/fullPanels'
 import type { Ready } from '../lib/protocol/Ready'
 
 const me = { id: 'U1', username: 'alex', avatar_hash: null }
@@ -92,6 +93,24 @@ describe('full view', () => {
     expect(q('.full-view .stage video')).not.toBeNull()
     expect(q('.full-view .bar')!.textContent).toContain('sam')
     expect(room.setLayer).toHaveBeenLastCalledWith('U2', 'high')
+    // the side panel toggles are the shell's: on its own, there's nothing to toggle
+    expect(q('.full-view .panel-toggle')).toBeNull()
+  })
+
+  it('with_no_member_list_only_the_left_toggle_shows_named_for_what_the_left_panel_holds', async () => {
+    const toggled: PanelSide[] = []
+    const panels = { left: false, right: false, leftName: 'Conversations', hasRight: false, toggle: (s: PanelSide) => void toggled.push(s) }
+    cmp = mount(VoicePanel, { target: document.body, context: fullPanelsContext(panels),
+      props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
+    await streamApi.watch('V1', 'U2')
+    openFull(SAM)
+    await settle()
+    const toggles = [...document.querySelectorAll<HTMLButtonElement>('.full-view .panel-toggle')]
+    expect(toggles.map((t) => t.getAttribute('aria-label'))).toEqual(['Conversations'])
+    expect(toggles[0].dataset.tip).toBe('Show conversations')
+    expect(q('.full-view .bar')!.lastElementChild!.classList.contains('controls')).toBe(true)
+    toggles[0].click()
+    expect(toggled).toEqual(['left'])
   })
 
   it('back_and_esc_return_to_the_grid_and_keep_watching', async () => {
