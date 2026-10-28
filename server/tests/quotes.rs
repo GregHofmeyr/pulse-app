@@ -1959,6 +1959,46 @@ async fn replies_get_normal_reactions() {
     assert_eq!(page[0].reactions[0].emoji, "🎉");
 }
 
+/// M25: a QotY card is a system message in a quotes channel, not a quote: normal reactions.
+#[tokio::test]
+async fn a_system_card_gets_normal_reactions() {
+    let f = fixture().await;
+    let year: i32 = chrono::Utc::now().format("%Y").to_string().parse().unwrap();
+    let r = post_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/servers/{}/qoty", f.server),
+        json!({ "year": year, "minutes": null }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let e: pulse_protocol::rest::QotyEvent = r.json().await.unwrap();
+    let r = post_json(&f.app, &f.alex_t, &format!("/qoty/{}/end", e.id), json!({})).await;
+    assert_eq!(r.status(), 200);
+    let page: Vec<Message> = get_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/messages", f.ch.id),
+    )
+    .await;
+    let card = page
+        .iter()
+        .find(|m| m.qoty_card.is_some())
+        .expect("the no-vote card");
+    assert_eq!(f.react(&f.alex_t, card.id, "👍").await, 204);
+    assert_eq!(f.react(&f.alex_t, card.id, "🎉").await, 204);
+    let page: Vec<Message> = get_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/messages", f.ch.id),
+    )
+    .await;
+    let card = page.iter().find(|m| m.id == card.id).unwrap();
+    let mut got: Vec<_> = card.reactions.iter().map(|x| x.emoji.clone()).collect();
+    got.sort();
+    assert_eq!(got, vec!["🎉".to_string(), "👍".to_string()], "both stay");
+}
+
 #[tokio::test]
 async fn quote_reply_counts() {
     let f = fixture().await;

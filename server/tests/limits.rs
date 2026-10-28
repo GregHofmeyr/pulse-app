@@ -963,3 +963,67 @@ async fn qoty_routes_share_the_mutate_limit() {
     assert_eq!(status(app.http.post(&start).json(&year), &a).await, 429);
     assert_eq!(status(app.http.put(&vote).json(&pick), &a).await, 429);
 }
+
+/// A quotes channel in a new server of `token`'s.
+async fn quotes_channel(app: &TestApp, token: &str) -> pulse_protocol::rest::Channel {
+    let srv = create_server(app, token, "Main").await;
+    let r = post_json(
+        app,
+        token,
+        &format!("/servers/{}/channels", srv.id),
+        serde_json::json!({ "kind": "quotes", "name": "quotes" }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn posting_quotes_shares_the_send_limit() {
+    let app = spawn_only(|l| l.send_user = tiny(2)).await;
+    let (_, a) = register(&app, "alex").await;
+    let ch = quotes_channel(&app, &a).await;
+    let path = format!("/channels/{}/quotes", ch.id);
+    let post = || {
+        post_json(
+            &app,
+            &a,
+            &path,
+            serde_json::json!({ "lines": [{ "speaker_name": "A Friend", "text": "hi" }] }),
+        )
+    };
+    assert_eq!(post().await.status(), 200);
+    assert_eq!(post().await.status(), 200);
+    assert_eq!(post().await.status(), 429);
+}
+
+#[tokio::test]
+async fn quote_edits_and_awards_share_the_mutate_limit() {
+    let app = spawn_only(|l| l.mutate_user = tiny(3)).await;
+    let (_, a) = register(&app, "alex").await;
+    let ch = quotes_channel(&app, &a).await;
+    let r = post_json(
+        &app,
+        &a,
+        &format!("/channels/{}/quotes", ch.id),
+        serde_json::json!({ "lines": [{ "speaker_name": "A Friend", "text": "hi" }] }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let q: pulse_protocol::rest::Message = r.json().await.unwrap();
+    let line = q.quote.unwrap().lines[0].id;
+    let edit = || {
+        app.http
+            .put(app.url(&format!("/quotes/{}", q.id)))
+            .json(&serde_json::json!({
+                "lines": [{ "id": line, "speaker_name": "A Friend", "text": "hi!" }]
+            }))
+    };
+    let award = app.url(&format!("/quote-lines/{line}/award"));
+    assert_eq!(status(edit(), &a).await, 200);
+    assert_eq!(status(app.http.put(&award), &a).await, 204);
+    assert_eq!(status(app.http.delete(&award), &a).await, 204);
+    assert_eq!(status(edit(), &a).await, 429);
+    assert_eq!(status(app.http.put(&award), &a).await, 429);
+    assert_eq!(status(app.http.delete(&award), &a).await, 429);
+}
