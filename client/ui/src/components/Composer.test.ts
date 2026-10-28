@@ -666,3 +666,24 @@ describe('Composer emoji', () => {
     expect(value(box)).toBe('abc defXYZ') // nothing cut
   })
 })
+
+describe('Composer mentions', () => {
+  it('autocomplete rows show styled names', () => {
+    const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: 'fredoka', colors: ['#ffc4a3'] } }
+    app.state = { ...emptyState(), members: { S1: [{ user: sam, nickname: null }] } }
+    cmp = mount(Composer, {
+      target: document.body,
+      props: { placeholder: 'Message', draftKey: `K${Math.random()}`, replyingTo: null, onCancelReply: () => {}, onSend, onTyping: () => {}, mentionables: [{ id: 'U2', name: 'sam' }], serverId: 'S1' },
+    })
+    flushSync()
+    const box = document.querySelector<HTMLElement>('[role="textbox"]')!
+    box.focus()
+    type(box, '@s')
+    const opt = document.querySelector<HTMLElement>('[role=listbox][aria-label="Mention someone"] [role=option]')!
+    expect(opt.textContent).toBe('@sam')
+    const name = opt.querySelector<HTMLElement>('.name')!
+    expect(name.tagName).toBe('SPAN')
+    expect(name.getAttribute('style')).toContain('Fredoka')
+    expect(name.getAttribute('style')).toContain('rgb(255, 196, 163)')
+  })
+})

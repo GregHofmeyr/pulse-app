@@ -2,6 +2,7 @@
   // One clip on the wall: its thumbnail until played (then the player, with sound), caption, poster, game and reactions.
   import { tick } from 'svelte'
   import Avatar from './Avatar.svelte'
+  import Name from './Name.svelte'
   import ClipActions from './ClipActions.svelte'
   import ClipCaption from './ClipCaption.svelte'
   import ClipPlayer from './ClipPlayer.svelte'
@@ -57,10 +58,13 @@
     await tick()
     void el?.querySelector<HTMLElement>('.clip')?.requestFullscreen?.()?.catch(() => {})
   }
+  // the poster's avatar animates while the pointer is over the card
+  let over = $state(false)
 </script>
 
 {#if clip}
-  <article class="card" data-clip-id={message.id} data-message-id={message.id} bind:this={el}>
+  <article class="card" data-clip-id={message.id} data-message-id={message.id} bind:this={el}
+    onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}>
     <div class="media" class:still={!playing}>
       {#if playing}
         <ClipPlayer {message} autoplay compact />
@@ -77,8 +81,8 @@
     <div class="info">
       <ClipCaption {message} />
       <div class="meta">
-        <Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={20} />
-        <span class="who">{nameOf(message.author_id)}</span>
+        <Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={20} interactive={!!message.author_id} serverId={serverId || null} hovered={() => over} />
+        <span class="who">{#if message.author_id}<Name userId={message.author_id} serverId={serverId || null} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</span>
         {#if game}<span class="game">{game}</span>{/if}
         <span class="grow"></span>
         {#if onOpenReplies}<button type="button" class="reply" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={15} /></button>{/if}

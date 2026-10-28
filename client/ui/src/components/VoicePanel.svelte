@@ -98,7 +98,7 @@
         <div class="grid">
           {#each tiles as t (t.kind === 'user' ? `u:${t.entry.userId}` : `s:${t.streamer}`)}
             {#if t.kind === 'user'}
-              <UserTile entry={t.entry} onMenu={(e, a) => openMenu(t.entry.userId, e, a)} />
+              <UserTile entry={t.entry} {serverId} onMenu={(e, a) => openMenu(t.entry.userId, e, a)} />
             {:else}
               <StreamTile {channelId} {serverId} streamer={t.streamer} mine={t.mine} onMenu={(e, a) => openMenu(t.streamer, e, a)} onFull={openFull} />
             {/if}

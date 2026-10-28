@@ -4,6 +4,7 @@
   import EmojiPopover from './EmojiPopover.svelte'
   import Icon from './Icon.svelte'
   import LineMenu from './LineMenu.svelte'
+  import Name from './Name.svelte'
   import QuoteImage from './QuoteImage.svelte'
   import ReactionRow from './ReactionRow.svelte'
   import VoterStack from './VoterStack.svelte'
@@ -106,17 +107,22 @@
     void react(() => app.state, (s) => (app.state = s), message.channel_id, message.id, key, pickAdds(message.reactions, key, keep), meId, showError, true)
   }
 
+  // --- names: the poster's avatar animates while the pointer is over the quote ---
+  let over = $state(false)
+  const sid = $derived(serverId || null)
+
   // --- the full-size image ---
   let open = $state<{ media: LineMedia; caption: string | null } | null>(null)
 </script>
 
 {#if quote}
   <!-- focus anywhere inside shows the action bar (hover alone left keyboard users without it) -->
-  <div class="quote" class:compact data-message-id={message.id} {...actionBarFocus((v) => (focusIn = v))}>
+  <div class="quote" class:compact data-message-id={message.id} {...actionBarFocus((v) => (focusIn = v))}
+    onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}>
     <div class="row">
-      {#if !compact}<Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={40} />{/if}
+      {#if !compact}<Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={40} interactive={!!message.author_id} serverId={sid} hovered={() => over} />{/if}
       <div class="body">
-        {#if !compact}<div class="meta"><strong>{nameOf(message.author_id)}</strong><span class="time">{when}</span></div>{/if}
+        {#if !compact}<div class="meta"><strong>{#if message.author_id}<Name userId={message.author_id} serverId={sid} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</strong><span class="time">{when}</span></div>{/if}
         {#if message.deleted}
           <p class="deleted">quote deleted</p>
         {:else}
@@ -138,7 +144,8 @@
                   {/if}
                 </div>
                 <div class="by">
-                  <span class="speaker">{who.name}</span>
+                  <!-- a member (or a name linked to one) is styled and opens their card; a plain name stays text -->
+                  <span class="speaker">{#if who.userId}<Name userId={who.userId} serverId={sid} text={who.name} />{:else}{who.name}{/if}</span>
                   {#if line.awards > 0}
                     <span class="trophy" aria-hidden="true">🏆 {line.awards}</span>
                     <VoterStack userIds={line.awarders} {nameOf} />

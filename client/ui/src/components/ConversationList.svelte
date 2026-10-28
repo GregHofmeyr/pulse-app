@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
+  import Name from './Name.svelte'
   import { app, clock } from '../lib/store.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
   import { conversations, previewText } from '../lib/conversations'
@@ -20,6 +21,9 @@
   const me = $derived(app.state.me?.id)
   const others = (members: string[]) => members.filter((u) => u !== me)
   const nameOf = (id: string) => app.state.people[id]?.user.username ?? '?'
+  // the row under the pointer: its avatars animate
+  let hovered = $state<string | null>(null)
+  const over = (id: string) => () => hovered === id
 </script>
 
 <button class="new" onclick={onNew}><Icon name="plus" size={15} /> New message</button>
@@ -30,18 +34,20 @@
     {@const badge = c.muted ? c.mentions : c.unread}
     <button class="row" class:active={c.channel.id === activeId} class:unread={c.unread > 0 && !c.muted} class:muted={c.muted}
       onclick={() => onOpen(c.channel.id)}
+      onpointerenter={() => (hovered = c.channel.id)} onpointerleave={() => { if (hovered === c.channel.id) hovered = null }}
       oncontextmenu={(e) => { e.preventDefault(); ctx = { id: c.channel.id, x: e.clientX, y: Math.min(e.clientY, innerHeight - 250) } }}>
       {#if c.channel.kind === 'dm' && people[0]}
-        <Avatar id={people[0]} name={nameOf(people[0])} size={32} online={app.state.people[people[0]]?.online ?? false} />
+        <Avatar id={people[0]} name={nameOf(people[0])} size={32} online={app.state.people[people[0]]?.online ?? false} hovered={over(c.channel.id)} />
       {:else}
         <span class="stack">
           {#each people.slice(0, 2) as u, i (u)}
-            <span class="s{i}"><Avatar id={u} name={nameOf(u)} size={21} /></span>
+            <span class="s{i}"><Avatar id={u} name={nameOf(u)} size={21} hovered={over(c.channel.id)} /></span>
           {/each}
         </span>
       {/if}
       <span class="meta">
-        <span class="name">{c.name}</span>
+        <!-- the row is a button: the DM's name is styled but not a button of its own -->
+        <span class="name">{#if c.channel.kind === 'dm' && people[0]}<Name userId={people[0]} serverId={null} text={c.name} interactive={false} />{:else}{c.name}{/if}</span>
         {#if c.latest}
           {@const p = previewText(app.state, c.latest)}
           <span class="prev" class:sys={p.system}>{p.text}</span>

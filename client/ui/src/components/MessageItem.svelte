@@ -17,12 +17,20 @@
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import { renderMessage } from '../lib/markdown'
   import { animateEmojiIn } from '../lib/animate.svelte'
-  import { avatarColor, initial } from '../lib/avatar'
+  import Avatar from './Avatar.svelte'
+  import Name from './Name.svelte'
+  import { mentionLookup, mentionName, styleMentions } from '../lib/mentionStyles'
+  import { nameCss, resolveNameStyle } from '../lib/nameStyle'
+  import { roleColorFor, userOf } from '../lib/selectors'
+  import { appearance } from '../lib/appearance.svelte'
+  import { openCard } from '../lib/profileCard.svelte'
+  import type { Attachment } from 'svelte/attachments'
   import type { Message } from '../lib/protocol/Message'
   import type { Pending } from '../lib/state'
 
   let {
     message,
+    serverId,
     name,
     nameOf,
     replyTo,
@@ -39,6 +47,8 @@
     onEditClosed = () => {},
   }: {
     message: Message
+    /** The server the message is in (null in DMs and groups): names use its nicknames and role colours. */
+    serverId: string | null
     name: string
     nameOf: (userId: string | null) => string
     replyTo: Message | null
@@ -58,6 +68,21 @@
     onEditClosed?: () => void
   } = $props()
   const uid = $props.id()
+
+  // --- names and avatars: the avatar animates while the pointer is over the row; pills take the person's style ---
+  let rowHover = $state(false)
+  // Pass the HTML so a new render restyles. Messages without pills never read the state here.
+  const mentionsIn = (_html: string): Attachment<HTMLElement> => (node) => {
+    if (!node.querySelector('.mention')) return
+    const s = app.state
+    const showStyles = appearance.showNameStyles
+    styleMentions(node, mentionLookup(s), (id) => nameCss(resolveNameStyle(userOf(s, id), { roleColor: roleColorFor(s, serverId, id), showStyles })))
+  }
+  function openMention(e: MouseEvent) {
+    const pill = (e.target as Element).closest('.mention')
+    const id = pill && mentionLookup(app.state)(mentionName(pill))
+    if (pill && id) openCard(id, serverId, pill)
+  }
 
   let focusIn = $state(false)
   let picking = $state(false)
@@ -137,9 +162,10 @@
   <div class="system" data-message-id={message.id}>{message.content} <span class="time">{time}</span></div>
 {:else}
   <!-- focus anywhere inside shows the action bar (hover alone left keyboard users without it) -->
-  <div class="msg" data-message-id={message.id} {...actionBarFocus((v) => (focusIn = v))} class:grouped class:mentioned={!!meId && message.mentions.includes(meId)}>
+  <div class="msg" data-message-id={message.id} {...actionBarFocus((v) => (focusIn = v))} class:grouped class:mentioned={!!meId && message.mentions.includes(meId)}
+    onpointerenter={() => (rowHover = true)} onpointerleave={() => (rowHover = false)}>
     {#if replyTo}
-      <div class="reply"><span class="hook"></span><strong>{nameOf(replyTo.author_id)}</strong>
+      <div class="reply"><span class="hook"></span><strong>{#if replyTo.author_id}<Name userId={replyTo.author_id} {serverId} text={nameOf(replyTo.author_id)} />{:else}{nameOf(null)}{/if}</strong>
         <span class="snippet">{replyTo.deleted ? 'original message deleted' : replyTo.content.slice(0, 120)}</span></div>
     {:else if message.reply_to_id}
       <div class="reply"><span class="hook"></span><span class="snippet">original message not loaded</span></div>
@@ -148,10 +174,10 @@
       {#if grouped && !replyTo}
         <span class="gutter"></span>
       {:else}
-        <span class="av" style:background={avatarColor(message.author_id ?? '')}>{initial(name)}</span>
+        <Avatar id={message.author_id ?? ''} {name} size={40} interactive={!!message.author_id} {serverId} hovered={() => rowHover} />
       {/if}
       <div class="body">
-        {#if !grouped || replyTo}<div class="meta"><strong>{name}</strong><span class="time">{time}</span></div>{/if}
+        {#if !grouped || replyTo}<div class="meta"><strong>{#if message.author_id}<Name userId={message.author_id} {serverId} text={name} />{:else}{name}{/if}</strong><span class="time">{time}</span></div>{/if}
         {#if message.deleted}
           <p class="deleted">message deleted</p>
         {:else if editing}
@@ -161,7 +187,9 @@
         {:else}
           <!-- renderMessage output is DOMPurify-sanitised (allow-list, cached per message); the only {@html} in the app. -->
           {@const html = renderMessage(message, mentionNames, app.state.customEmoji)}
-          <div class="content" {@attach animateEmojiIn(html)}>{@html html}</div>
+          <!-- a mention pill opens its person's card (a pointer shortcut: the author's name is the keyboard route) -->
+          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+          <div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html)} onclick={openMention}>{@html html}</div>
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
         {#if !pending}<ReactionRow {message} {meId} {nameOf} onError={showError} />{/if}
@@ -210,7 +238,6 @@
   .msg.grouped { padding-top: 1px; }
   .msg:hover { background: rgba(255, 255, 255, .02); }
   .row { display: flex; gap: 14px; }
-  .av { width: 40px; height: 40px; border-radius: 50%; color: #fff; font-weight: 700; display: grid; place-items: center; flex-shrink: 0; }
   .gutter { width: 40px; flex-shrink: 0; }
   .body { flex: 1; min-width: 0; }
   .meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
@@ -244,5 +271,7 @@
   .content :global(img.emoji.big) { width: 48px; height: 48px; }
   .content :global(.emoji-gone) { color: var(--text-3); background: var(--bg-3); border-radius: 4px; padding: 0 4px; font-size: .9em; }
   .content :global(.emoji-gone.big) { font-size: 1.25em; }
-  .content :global(.mention) { color: var(--accent); background: rgba(139, 156, 255, .15); border-radius: 4px; padding: 0 3px; font-weight: 600; }
+  .content :global(.mention) { color: var(--accent); background: rgba(139, 156, 255, .15); border-radius: 4px; padding: 0 3px; font-weight: 600; font-size: calc(1em * var(--name-scale, 1)); cursor: pointer; }
+  /* a gradient name clips its background to the text: the pill background is on this wrapper instead */
+  .content :global(.mention-wrap) { background: rgba(139, 156, 255, .15); border-radius: 4px; padding: 0 3px; }
 </style>

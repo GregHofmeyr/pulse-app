@@ -44,7 +44,7 @@ const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 function showItem(m: Message) {
   load(m)
   cmp = mount(MessageItem, { target: document.body, props: {
-    message: cur(), name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false, mine: false,
+    message: cur(), serverId: null, name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false, mine: false,
     onReply: () => {}, onEdit: async () => {}, onDelete: async () => {}, meId: 'U1',
   } })
   flushSync()
@@ -169,7 +169,7 @@ describe('MessageItem reactions', () => {
   it('hidden_on_deleted_message', () => {
     load(msg({ deleted: true }))
     cmp = mount(MessageItem, { target: document.body, props: {
-      message: cur(), name: 'sam', nameOf: () => 'sam', replyTo: null, grouped: false, mine: false,
+      message: cur(), serverId: null, name: 'sam', nameOf: () => 'sam', replyTo: null, grouped: false, mine: false,
       onReply: () => {}, onEdit: async () => {}, onDelete: async () => {},
     } })
     flushSync()
@@ -285,7 +285,7 @@ describe('reaction toggles', () => {
     load(msg({ reactions: [] }))
     cmp = mount(MessageItem, { target: document.body, props: {
       get message() { return cur() }, // live, as in the app: the store's message, not a snapshot
-      name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false, mine: false,
+      serverId: null, name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false, mine: false,
       onReply: () => {}, onEdit: async () => {}, onDelete: async () => {}, meId: 'U1',
     } })
     flushSync()

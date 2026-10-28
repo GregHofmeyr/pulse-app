@@ -11,6 +11,7 @@
   import { callView, joinAndWatch, openFull } from '../lib/stream/viewer.svelte'
   import { pickSource } from '../lib/stream/golive.svelte'
   import { watchDisabledReason } from '../lib/stream/viewer'
+  import { openCard } from '../lib/profileCard.svelte'
 
   let {
     channelId,
@@ -134,6 +135,8 @@
 
 <div bind:this={el} class="menu" role="menu" aria-label="Actions for {name}" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px"
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
+  <!-- the card opens beside the row or tile the menu came from -->
+  <button type="button" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>
   {#each ids as id (id)}
     {#if id === 'volume'}
       <div class="slider" role="none">

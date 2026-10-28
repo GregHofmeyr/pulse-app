@@ -193,7 +193,7 @@
       <p class="empty">No replies yet. Say something about it.</p>
     {/if}
     {#each replies as m, i (m.id)}
-      <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={groupedWith(replies, i)}
+      <MessageItem message={m} serverId={serverId || null} name={nameOf(m.author_id)} {nameOf} grouped={groupedWith(replies, i)}
         replyTo={m.reply_to_id ? (byId.get(m.reply_to_id) ?? (m.reply_to_id === rootId ? root : null)) : null}
         mine={m.author_id === meId} {mentionNames} {meId}
         onReply={() => (replyTo = m)}
@@ -201,7 +201,7 @@
         onDelete={() => api.deleteMessage(m.id)} onEditClosed={() => composer?.focus()} />
     {/each}
     {#each pending as p (p.nonce)}
-      <MessageItem message={pendingMessage(p, channelId, meId)} name={nameOf(meId || null)} {nameOf} grouped={false}
+      <MessageItem message={pendingMessage(p, channelId, meId)} serverId={serverId || null} name={nameOf(meId || null)} {nameOf} grouped={false}
         replyTo={p.reply_to_id ? (byId.get(p.reply_to_id) ?? null) : null} mine
         {mentionNames} {meId} pending={p} onReply={() => {}} onEdit={async () => {}} onDelete={async () => {}}
         onRetry={() => retry(p)} onDiscard={() => (app.state = removePending(app.state, channelId, p.nonce))} />
@@ -210,7 +210,7 @@
   {#if error}<p class="error" role="alert">{error}</p>{/if}
   <!-- typing isn't sent: it would show in the channel, where the replies aren't -->
   <Composer bind:this={composer} draftKey="thread:{rootId}" placeholder={root.clip ? 'Reply about this clip' : 'Reply about this quote'} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
-    onCancelReply={() => (replyTo = null)} onSend={(t) => send(t)} onTyping={() => {}} {mentionables} />
+    onCancelReply={() => (replyTo = null)} onSend={(t) => send(t)} onTyping={() => {}} {mentionables} serverId={serverId || null} />
 </aside>
 
 <style>

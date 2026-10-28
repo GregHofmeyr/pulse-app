@@ -368,3 +368,22 @@ describe('QuoteItem', () => {
     expect(document.querySelector('.actions')!.classList.contains('open')).toBe(false)
   })
 })
+
+describe('QuoteItem names', () => {
+  it('a member-linked speaker is styled, a plain name isn\'t', () => {
+    show(quote([line(), line({ id: 'L2', speaker_id: null, speaker_name: 'Grandpa', text: 'back in my day' })]))
+    app.state = {
+      ...app.state,
+      people: { ...app.state.people, U2: { user: { ...sam, style: { font: 'fredoka', colors: ['#ffc4a3'] } }, online: true, last_seen_at: null } },
+    }
+    flushSync()
+    const [first, second] = document.querySelectorAll<HTMLElement>('.line .speaker')
+    const styled = first.querySelector<HTMLElement>('.name')!
+    expect(styled.textContent).toBe('sam')
+    expect(styled.getAttribute('style')).toContain('Fredoka')
+    expect(second.querySelector('.name')).toBeNull()
+    expect(second.textContent).toBe('Grandpa')
+    // the poster's name is a Name too
+    expect(document.querySelector('.meta .name')!.textContent).toBe('alex')
+  })
+})

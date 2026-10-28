@@ -16,6 +16,7 @@
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import { memberServers } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
+  import Name from './Name.svelte'
 
   let {
     placeholder,
@@ -25,6 +26,7 @@
     onSend,
     onTyping,
     mentionables = [],
+    serverId = null,
   }: {
     placeholder: string
     draftKey: string
@@ -34,6 +36,8 @@
     onTyping: () => void
     /** People who can be @mentioned here (autocomplete). */
     mentionables?: Mentionable[]
+    /** The server it posts in (null in DMs and groups): suggested names use its role colours. */
+    serverId?: string | null
   } = $props()
 
   // The composer remounts per channel ({#key} in Shell), so reading the key once is intended.
@@ -147,7 +151,7 @@
     <div class="mentions" role="listbox" aria-label="Mention someone">
       {#each options as o, i (o.id)}
         <button role="option" aria-selected={i === pick} class:on={i === pick}
-          onmousedown={(e) => { e.preventDefault(); void choose(o.name) }}>@{o.name}</button>
+          onmousedown={(e) => { e.preventDefault(); void choose(o.name) }}><span>@<Name userId={o.id} {serverId} text={o.name} interactive={false} /></span></button>
       {/each}
     </div>
   {:else if emojiOpen}

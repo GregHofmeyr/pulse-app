@@ -6,6 +6,7 @@
   import ClipPlayer from './ClipPlayer.svelte'
   import ClipReplies from './ClipReplies.svelte'
   import Icon from './Icon.svelte'
+  import Name from './Name.svelte'
   import ReactionRow from './ReactionRow.svelte'
   import { gameName } from '../lib/clips'
   import { suggestedReactions } from '../lib/reactions'
@@ -43,14 +44,17 @@
 
   const inlineError = new InlineError()
   $effect(() => inlineError.stop)
+  // the poster's avatar animates while the pointer is over the clip
+  let over = $state(false)
 </script>
 
 {#if clip}
-  <article class="clip-item" class:compact data-clip-id={message.id} data-message-id={message.id}>
-    <Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={compact ? 32 : 40} />
+  <article class="clip-item" class:compact data-clip-id={message.id} data-message-id={message.id}
+    onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}>
+    <Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={compact ? 32 : 40} interactive={!!message.author_id} serverId={serverId || null} hovered={() => over} />
     <div class="body">
       <div class="meta">
-        <strong>{nameOf(message.author_id)}</strong>
+        <strong>{#if message.author_id}<Name userId={message.author_id} serverId={serverId || null} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</strong>
         {#if game}<span class="game">{game}</span>{/if}
         <span class="time">{when}</span>
         {#if message.edited_at}<span class="edited">(edited)</span>{/if}

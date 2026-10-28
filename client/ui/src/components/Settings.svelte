@@ -6,13 +6,16 @@
   import KeybindSettings from './KeybindSettings.svelte'
   import ChatSettings from './ChatSettings.svelte'
   import AdvancedSettings from './AdvancedSettings.svelte'
+  import AppearanceSettings from './AppearanceSettings.svelte'
 
-  type Section = 'voice' | 'keybinds' | 'chat' | 'advanced'
+  type Section = 'profile' | 'appearance' | 'voice' | 'keybinds' | 'chat' | 'advanced'
   let { onClose, section = 'voice' }: { onClose: () => void; section?: Section } = $props()
 
   let current = $state<Section>('voice')
   onMount(() => (current = section))
   const sections: { key: Section; label: string }[] = [
+    { key: 'profile', label: 'Profile' },
+    { key: 'appearance', label: 'Appearance' },
     { key: 'voice', label: 'Voice & Audio' },
     { key: 'keybinds', label: 'Keybinds' },
     { key: 'chat', label: 'Chat' },
@@ -32,7 +35,10 @@
   </nav>
   <div class="content">
     <button class="close" aria-label="Close settings" onclick={onClose}><Icon name="x" size={16} /></button>
-    {#if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else}<AdvancedSettings />{/if}
+    <!-- a placeholder until the profile editor is built -->
+    {#if current === 'profile'}<section class="settings-pane"><h2>Profile</h2></section>
+    {:else if current === 'appearance'}<AppearanceSettings />
+    {:else if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else}<AdvancedSettings />{/if}
   </div>
 </div>
 </div>

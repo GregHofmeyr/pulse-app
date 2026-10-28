@@ -11,6 +11,9 @@ import MessageItem, { INLINE_ERROR_MS } from './MessageItem.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { offsetOf, positionAt, serialize } from '../lib/composerDom'
+import { appearance } from '../lib/appearance.svelte'
+import { motion } from '../lib/animate.svelte'
+import { closeCard, profileUi } from '../lib/profileCard.svelte'
 
 const ce = (id: string, name: string): CustomEmoji => ({
   id, server_id: 'S1', name, hash: id.repeat(64).slice(0, 64), still_hash: null, animated: false, added_by: null, created_at: '2026-10-01T00:00:00Z',
@@ -30,7 +33,7 @@ function show(content = 'hello') {
   const m = msg({ content })
   app.state = { ...emptyState(), messages: { C1: [m] }, customEmoji: { '1': ce('1', 'pog') } }
   cmp = mount(MessageItem, { target: document.body, props: {
-    message: app.state.messages['C1'][0], name: 'alex', nameOf: (id: string | null) => id ?? '', replyTo: null,
+    message: app.state.messages['C1'][0], serverId: null, name: 'alex', nameOf: (id: string | null) => id ?? '', replyTo: null,
     grouped: false, mine: true, onReply: () => {}, onEdit, onDelete, meId: 'U1', onEditClosed,
   } })
   flushSync()
@@ -445,5 +448,90 @@ describe('MessageItem edit box', () => {
     stubFocusVisible(chip, false)
     chip.focus(); flushSync()
     expect(document.querySelector('.actions')!.classList.contains('open')).toBe(false)
+  })
+})
+
+describe('MessageItem names and avatars', () => {
+  const A = 'a'.repeat(64)
+  const S = 'b'.repeat(64)
+  const url = (h: string) => `pulse-media://localhost/${h}`
+  const u = (id: string, username: string, over: object = {}) => ({ id, username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] }, ...over })
+  function showStyled(content: string, alexOver: object = {}, mentionNames: string[] = []) {
+    const m = msg({ content })
+    const alex = u('U1', 'alex', alexOver)
+    const sam = u('U2', 'sam', { style: { font: 'fredoka', colors: ['#ffc4a3'] } })
+    const kim = u('U3', 'kim', { style: { font: null, colors: ['#ffbe7a', '#ff7fae'] } })
+    app.state = {
+      ...emptyState(), me: alex, messages: { C1: [m] },
+      people: { U1: { user: alex, online: true, last_seen_at: null }, U2: { user: sam, online: true, last_seen_at: null }, U3: { user: kim, online: true, last_seen_at: null } },
+    }
+    cmp = mount(MessageItem, { target: document.body, props: {
+      message: app.state.messages['C1'][0], name: 'alex', nameOf: (id: string | null) => id ?? '', replyTo: null, serverId: 'S1',
+      grouped: false, mine: false, onReply: () => {}, onEdit, onDelete, meId: 'U9', mentionNames,
+    } })
+    flushSync()
+  }
+  beforeEach(() => {
+    appearance.showNameStyles = true
+    motion.streaming = false
+    window.dispatchEvent(new Event('focus'))
+    closeCard()
+  })
+  afterEach(() => closeCard())
+
+  it('the author name uses the style and opens the card', () => {
+    showStyled('hello', { style: { font: 'fredoka', colors: ['#ffc4a3'] } })
+    const name = document.querySelector<HTMLElement>('.meta .name')!
+    expect(name.textContent).toBe('alex')
+    expect(name.getAttribute('style')).toContain('Fredoka')
+    expect(name.getAttribute('style')).toContain('rgb(255, 196, 163)')
+    name.click()
+    flushSync()
+    expect(profileUi.card).toMatchObject({ userId: 'U1', serverId: 'S1' })
+    closeCard()
+    document.querySelector<HTMLButtonElement>('.row .avbtn')!.click()
+    flushSync()
+    expect(profileUi.card).toMatchObject({ userId: 'U1', serverId: 'S1' })
+  })
+
+  it('an animated avatar shows its still in chat', () => {
+    showStyled('hello', { avatar_hash: A, avatar_still: S })
+    const img = document.querySelector<HTMLImageElement>('.row .av img')!
+    expect(img.getAttribute('src')).toBe(url(S))
+    // it animates while the pointer is anywhere over the message's row, not only the avatar
+    document.querySelector('.msg')!.dispatchEvent(new Event('pointerenter'))
+    flushSync()
+    expect(img.getAttribute('src')).toBe(url(A))
+    document.querySelector('.msg')!.dispatchEvent(new Event('pointerleave'))
+    flushSync()
+    expect(img.getAttribute('src')).toBe(url(S))
+  })
+
+  it('mention pills take the mentioned person\'s font and colour', () => {
+    showStyled('hi @sam and @kim and @jo', {}, ['sam', 'kim', 'jo'])
+    const [sam, kim, jo] = document.querySelectorAll<HTMLElement>('.content .mention')
+    expect(sam.style.fontFamily).toContain('Fredoka')
+    expect(sam.style.color).toBe('rgb(255, 196, 163)')
+    expect(kim.style.backgroundImage).toContain('linear-gradient')
+    expect(jo.getAttribute('style')).toBeNull()
+    // a profile change restyles the pills live
+    app.state = { ...app.state, people: { ...app.state.people, U2: { user: u('U2', 'sam', { style: { font: null, colors: ['#a3d8ff'] } }), online: true, last_seen_at: null } } }
+    flushSync()
+    expect(document.querySelector<HTMLElement>('.content .mention')!.style.color).toBe('rgb(163, 216, 255)')
+    // name styles off: plain pills
+    appearance.showNameStyles = false
+    flushSync()
+    expect(document.querySelector<HTMLElement>('.content .mention')!.style.color).toBe('')
+  })
+
+  it('clicking a mention pill opens that person\'s card; an unknown name does nothing', () => {
+    showStyled('hi @sam and @jo', {}, ['sam', 'jo'])
+    const [sam, jo] = document.querySelectorAll<HTMLElement>('.content .mention')
+    jo.click()
+    flushSync()
+    expect(profileUi.card).toBeNull()
+    sam.click()
+    flushSync()
+    expect(profileUi.card).toMatchObject({ userId: 'U2', serverId: 'S1' })
   })
 })

@@ -9,6 +9,7 @@
   import Leaderboard from './Leaderboard.svelte'
   import Composer from './Composer.svelte'
   import Avatar from './Avatar.svelte'
+  import Name from './Name.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
   import { app, clock, ui } from '../lib/store.svelte'
   import { motion } from '../lib/animate.svelte'
@@ -400,8 +401,8 @@
 <div class="chan" class:with-replies={!!repliesRoot} bind:this={chan}>
   <div class="head">
     {#if isPrivate && channel?.kind === 'dm' && others[0]}
-      <Avatar id={others[0]} name={title} size={26} online={app.state.people[others[0]]?.online ?? false} />
-      <span class="title">{title}</span>
+      <Avatar id={others[0]} name={title} size={26} online={app.state.people[others[0]]?.online ?? false} interactive serverId={null} />
+      <span class="title"><Name userId={others[0]} serverId={null} text={title} /></span>
     {:else if isPrivate}
       <span class="pile">
         {#each others.slice(0, 3) as u (u)}<Avatar id={u} name={app.state.people[u]?.user.username ?? '?'} size={22} />{/each}
@@ -456,7 +457,7 @@
           onReply={() => openReplies(m)} onOpenReplies={() => openReplies(m)}
           onEdit={() => (editingQuote = m)} onDelete={() => api.deleteMessage(m.id)} />
       {:else}
-      <MessageItem message={m} name={nameOf(m.author_id)} {nameOf} grouped={groupedWith(messages, i)}
+      <MessageItem message={m} {serverId} name={nameOf(m.author_id)} {nameOf} grouped={groupedWith(messages, i)}
         replyTo={m.reply_to_id ? (byId.get(m.reply_to_id) ?? null) : null}
         mine={m.author_id === app.state.me?.id}
         {mentionNames} meId={app.state.me?.id ?? ''}
@@ -466,7 +467,7 @@
       {/if}
     {/each}
     {#each pending as p (p.nonce)}
-      <MessageItem message={pendingMessage(p, channelId, app.state.me?.id ?? '')} name={nameOf(app.state.me?.id ?? null)} {nameOf} grouped={false}
+      <MessageItem message={pendingMessage(p, channelId, app.state.me?.id ?? '')} {serverId} name={nameOf(app.state.me?.id ?? null)} {nameOf} grouped={false}
         replyTo={p.reply_to_id ? (byId.get(p.reply_to_id) ?? null) : null} mine
         {mentionNames} meId={app.state.me?.id ?? ''} pending={p} onReply={() => {}} onEdit={async () => {}} onDelete={async () => {}}
         onRetry={() => retry(p.nonce)} onDiscard={() => (app.state = removePending(app.state, channelId, p.nonce))} />
@@ -491,7 +492,7 @@
     {/if}
   {:else}
   <Composer bind:this={composer} draftKey={channelId} placeholder={isPrivate ? `Message ${title}` : `Message #${title}`} replyingTo={replyTo ? nameOf(replyTo.author_id) : null}
-    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} />
+    onCancelReply={() => (replyTo = null)} onSend={send} onTyping={() => void api.sendTyping(channelId)} {mentionables} {serverId} />
   {/if}
   {#if repliesRoot}
     {#key repliesRoot.id}

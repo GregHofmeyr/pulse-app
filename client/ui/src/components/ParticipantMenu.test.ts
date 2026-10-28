@@ -17,6 +17,7 @@ import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
 import { goLiveUi } from '../lib/stream/golive.svelte'
 import { callView } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
+import { closeCard, profileUi } from '../lib/profileCard.svelte'
 
 const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -87,6 +88,22 @@ afterEach(async () => {
 })
 
 describe('ParticipantMenu', () => {
+  it('View profile opens the card', () => {
+    closeCard()
+    mountPanel()
+    const opener = q('[data-user="U2"] .avatar-btn')!
+    opener.focus()
+    key(opener, 'ContextMenu')
+    const first = items()[0]
+    expect(first.dataset.item).toBe('profile')
+    expect(first.textContent).toBe('View profile')
+    first.click()
+    flushSync()
+    expect(profileUi.card).toMatchObject({ userId: 'U2', serverId: 'S1' })
+    expect(menu()).toBeNull()
+    closeCard()
+  })
+
   it('right_click_on_a_tile_opens_the_menu', () => {
     mountPanel()
     expect(menu()).toBeNull()
@@ -121,16 +138,18 @@ describe('ParticipantMenu', () => {
     opener.focus()
     key(opener, 'ContextMenu')
     const list = items()
-    expect(list.map((i) => i.dataset.item)).toEqual(['volume', 'local-mute', 'message'])
+    expect(list.map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'message'])
     expect(document.activeElement).toBe(list[0])
     key(document.activeElement!, 'ArrowDown')
     expect(document.activeElement).toBe(list[1])
     key(document.activeElement!, 'ArrowDown')
     expect(document.activeElement).toBe(list[2])
     key(document.activeElement!, 'ArrowDown')
+    expect(document.activeElement).toBe(list[3])
+    key(document.activeElement!, 'ArrowDown')
     expect(document.activeElement).toBe(list[0]) // wraps
     key(document.activeElement!, 'ArrowUp')
-    expect(document.activeElement).toBe(list[2])
+    expect(document.activeElement).toBe(list[3])
     key(document.activeElement!, 'Escape')
     expect(menu()).toBeNull()
     expect(document.activeElement).toBe(opener)
@@ -175,7 +194,7 @@ describe('ParticipantMenu', () => {
   it('your_own_menu_has_mute_deafen_and_voice_settings', () => {
     mountPanel()
     rightClick(q('[data-user="U1"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['mute', 'deafen', 'go-live', 'voice-settings'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'mute', 'deafen', 'go-live', 'voice-settings'])
     document.querySelector<HTMLElement>('[data-item="mute"]')!.click()
     expect(invoke).toHaveBeenCalledWith('toggle_mute')
     rightClick(q('[data-user="U1"]')!)
@@ -196,7 +215,7 @@ describe('ParticipantMenu', () => {
     app.state = applyReady(emptyState(), { ...ready, streams: [{ channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false }, status: 'live', viewers: [], started_at: '2026-10-26T10:00:00Z' }] })
     mountPanel()
     rightClick(q('[data-stream="U2"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['volume', 'local-mute', 'message', 'watch'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'message', 'watch'])
     document.querySelector<HTMLElement>('[data-item="watch"]')!.click()
     await settle()
     expect(invoke).toHaveBeenCalledWith('stream_watch', { channelId: 'V1', streamer: 'U2' })
@@ -211,7 +230,7 @@ describe('ParticipantMenu', () => {
     const occ = [...document.querySelectorAll<HTMLElement>('.occupant')].find((o) => o.textContent?.includes('sam'))!
     expect(occ.tabIndex).toBe(0)
     rightClick(occ)
-    expect(items().map((i) => i.dataset.item)).toEqual(['volume', 'local-mute', 'message'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'message'])
     key(menu()!, 'Escape')
     expect(document.activeElement).toBe(occ)
     key(occ, 'F10', { shiftKey: true })
@@ -325,7 +344,7 @@ describe('ParticipantMenu', () => {
   it('the_stream_volume_slider_uses_the_shared_stream_volumes', async () => {
     await watchSam()
     rightClick(q('[data-stream="U2"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['volume', 'local-mute', 'message', 'stream-volume', 'stop-watching', 'full-view'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'message', 'stream-volume', 'stop-watching', 'full-view'])
     const slider = q('[role=menu] input[aria-label="Stream volume"]') as HTMLInputElement
     slider.focus()
     key(slider, 'ArrowRight')
@@ -353,7 +372,7 @@ describe('ParticipantMenu', () => {
     const stop = vi.spyOn(streamApi, 'stop').mockResolvedValue()
     mountPanel()
     rightClick(q('[data-user="U1"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['mute', 'deafen', 'stop-streaming', 'voice-settings'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'mute', 'deafen', 'stop-streaming', 'voice-settings'])
     item('stop-streaming').click()
     expect(stop).toHaveBeenCalledTimes(1)
     stream.live = null

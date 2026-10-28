@@ -88,3 +88,17 @@ describe('Settings dialog', () => {
     expect(onClose).not.toHaveBeenCalled()
   })
 })
+
+describe('Settings sections', () => {
+  it('Profile and Appearance sections are listed first', () => {
+    cmp = mount(Settings, { target: document.body, props: { onClose: () => {} } })
+    flushSync()
+    const labels = [...document.querySelectorAll('nav button')].map((b) => b.textContent)
+    expect(labels.slice(0, 2)).toEqual(['Profile', 'Appearance'])
+    // the default is still Voice & Audio
+    expect(document.querySelector('nav button[aria-current=page]')!.textContent).toBe('Voice & Audio')
+    ;([...document.querySelectorAll('nav button')][1] as HTMLButtonElement).click()
+    flushSync()
+    expect(document.querySelector('input[role=switch]')).not.toBeNull()
+  })
+})

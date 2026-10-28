@@ -49,7 +49,7 @@ let cmp: ReturnType<typeof mount> | undefined
 function showMessage(m = msg()) {
   load(m)
   cmp = mount(MessageItem, { target: document.body, props: {
-    message: app.state.messages['C1'][0], name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false,
+    message: app.state.messages['C1'][0], serverId: null, name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false,
     mine: false, onReply: () => {}, onEdit: async () => {}, onDelete: async () => {}, meId: 'U1',
   } })
   flushSync()
@@ -138,7 +138,7 @@ describe('animated emoji in a message', () => {
     app.state = { ...app.state, messages: { C1: [msg({ content: '<a:spin:E1> <a:spin:E1>', edited_at: '2026-10-02T00:00:00.000Z' })] } }
     unmount(cmp!)
     cmp = mount(MessageItem, { target: document.body, props: {
-      message: app.state.messages['C1'][0], name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false,
+      message: app.state.messages['C1'][0], serverId: null, name: 'sam', nameOf: (id: string | null) => id ?? '', replyTo: null, grouped: false,
       mine: false, onReply: () => {}, onEdit: async () => {}, onDelete: async () => {}, meId: 'U1',
     } })
     flushSync()

@@ -3,15 +3,19 @@
   import { voice } from '../lib/voice.svelte'
   import { app } from '../lib/store.svelte'
   import type { RosterEntry } from '../lib/selectors'
-  import { avatarColor, initial } from '../lib/avatar'
+  import Avatar from './Avatar.svelte'
+  import Name from './Name.svelte'
   import { volumeLabel } from '../lib/voiceui'
 
   let {
     entry,
+    serverId = null,
     compact = false,
     onMenu,
   }: {
     entry: RosterEntry
+    /** The server whose voice channel this is (null in DMs and groups): names use its nicknames and role colours. */
+    serverId?: string | null
     /** The small tile in the full view's strip. */
     compact?: boolean
     onMenu: (e: MouseEvent | KeyboardEvent, anchor: HTMLElement) => void
@@ -29,6 +33,8 @@
   let avatar = $state<HTMLElement>()
   // a joining entry (yours) has no menu yet
   const locked = $derived(entry.pending)
+  // the avatar animates while the pointer is over the tile
+  let over = $state(false)
 
   function ask(e: MouseEvent | KeyboardEvent) {
     if (avatar && !locked) onMenu(e, avatar)
@@ -47,15 +53,16 @@
 
 <!-- the context menu is a pointer shortcut; the keyboard route is the avatar button's ContextMenu / Shift+F10 -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="tile" class:compact class:pending={entry.pending} class:speaking={voice.speaking.has(entry.userId)} data-user={entry.userId} oncontextmenu={contextMenu}>
+<div class="tile" class:compact class:pending={entry.pending} class:speaking={voice.speaking.has(entry.userId)} data-user={entry.userId} oncontextmenu={contextMenu}
+  onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}>
   <button bind:this={avatar} type="button" class="avatar-btn" data-menu-toggle aria-disabled={locked} aria-haspopup="menu" aria-label={entry.name} data-tip={isMe ? undefined : `Options for ${entry.name}`}
     onkeydown={key} onclick={ask}>
-    <span class="av" style:background={avatarColor(entry.userId)}>{initial(entry.name)}</span>
+    <Avatar id={entry.userId} name={entry.name} size={compact ? 36 : 84} hovered={() => over} />
     {#if entry.deafened}<span class="badge"><Icon name="headphonesOff" size={compact ? 11 : 14} label="Deafened" /></span>
     {:else if entry.muted}<span class="badge"><Icon name="micOff" size={compact ? 11 : 14} label="Muted" /></span>{/if}
   </button>
   <div class="name">
-    <span class="text">{entry.name}</span>
+    <span class="text"><Name userId={entry.userId} {serverId} text={entry.name} /></span>
     {#if entry.pending}
       <span class="joining">Joining…</span><span class="spinner" role="progressbar" aria-label="Joining"></span>
     {:else}
@@ -76,8 +83,8 @@
   .tile.pending { opacity: .6; }
   .avatar-btn { position: relative; border: 0; padding: 0; background: none; border-radius: 50%; }
   .avatar-btn[aria-disabled='true'] { cursor: default; }
-  .av { width: 84px; height: 84px; border-radius: 50%; color: #fff; font-size: 34px; font-weight: 700; display: grid; place-items: center; transition: box-shadow .12s; }
-  .tile.speaking .av { box-shadow: 0 0 0 4px var(--bg-1), 0 0 0 7px var(--ok); }
+  .avatar-btn :global(.av) { transition: box-shadow .12s; }
+  .tile.speaking :global(.av) { box-shadow: 0 0 0 4px var(--bg-1), 0 0 0 7px var(--ok); }
   .badge { position: absolute; right: -4px; bottom: -4px; width: 28px; height: 28px; border-radius: 50%; background: var(--danger); color: #fff; border: 4px solid var(--bg-1); display: grid; place-items: center; }
   .name { display: flex; align-items: center; gap: 8px; font-weight: 600; max-width: 90%; }
   .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -93,8 +100,7 @@
   .for-me { position: absolute; top: 8px; right: 10px; display: flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); font-size: 11px; font-weight: 600; }
   .compact .for-me { top: 4px; right: 6px; padding: 2px 4px; }
   .compact { gap: 4px; border-radius: 10px; }
-  .compact .av { width: 36px; height: 36px; font-size: 15px; }
-  .compact.speaking .av { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--ok); }
+  .compact.speaking :global(.av) { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--ok); }
   .compact .badge { width: 16px; height: 16px; border-width: 2px; right: -3px; bottom: -3px; }
   .compact .name { font-size: 12px; gap: 5px; }
   .compact .vol { top: 4px; right: 6px; font-size: 10px; }

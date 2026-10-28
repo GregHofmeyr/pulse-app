@@ -7,7 +7,7 @@
   import { openCard } from '../lib/profileCard.svelte'
   import type { Attachment } from 'svelte/attachments'
 
-  let { id, name, size = 30, online = null, place = 'list', interactive = false, serverId = null }: {
+  let { id, name, size = 30, online = null, place = 'list', interactive = false, serverId = null, hovered }: {
     id: string
     name: string
     size?: number
@@ -15,6 +15,8 @@
     place?: 'list' | 'card'
     interactive?: boolean
     serverId?: string | null
+    /** In a list: whether the pointer is over this person's row (the avatar animates then too). */
+    hovered?: () => boolean
   } = $props()
 
   // Read from the store so a ProfileUpdated swaps the picture live.
@@ -25,7 +27,7 @@
 
   // An animated avatar shows its still until the rule says otherwise; a still-only one never changes.
   const wire = $derived<Attachment<HTMLImageElement>>((img) => {
-    if (hash && still && still !== hash) return wireAnimated(img, mediaUrl(hash), mediaUrl(still), (s) => shouldAnimateProfile(place, s), () => over)
+    if (hash && still && still !== hash) return wireAnimated(img, mediaUrl(hash), mediaUrl(still), (s) => shouldAnimateProfile(place, s), () => over || !!hovered?.())
   })
 </script>
 

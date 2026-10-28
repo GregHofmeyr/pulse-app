@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
+  import Name from './Name.svelte'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
 
@@ -12,6 +13,8 @@
       .sort((a, b) => a.user.username.localeCompare(b.user.username)),
   )
   let error = $state('')
+  // the row under the pointer: its avatar animates
+  let hovered = $state<string | null>(null)
 
   async function remove(id: string) {
     error = ''
@@ -26,9 +29,9 @@
 <aside class="members" aria-label="Group members">
   <div class="label">MEMBERS — {members.length}</div>
   {#each members as p (p.user.id)}
-    <div class="row">
-      <Avatar id={p.user.id} name={p.user.username} size={32} online={p.online} />
-      <span class="who">{p.user.username}{#if p.user.id === app.state.me?.id}<small> (you)</small>{/if}</span>
+    <div class="row" role="presentation" onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}>
+      <Avatar id={p.user.id} name={p.user.username} size={32} online={p.online} interactive serverId={null} hovered={() => hovered === p.user.id} />
+      <span class="who"><Name userId={p.user.id} serverId={null} text={p.user.username} />{#if p.user.id === app.state.me?.id}<small> (you)</small>{/if}</span>
       {#if p.user.id !== app.state.me?.id}
         <button class="x" aria-label="Remove {p.user.username}" data-tip="Remove from group" onclick={() => remove(p.user.id)}><Icon name="x" size={14} /></button>
       {/if}

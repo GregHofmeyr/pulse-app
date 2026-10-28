@@ -351,3 +351,25 @@ describe('ChannelList clips group', () => {
     expect(onSelect).toHaveBeenCalledWith('K1')
   })
 })
+
+describe('voice occupant names', () => {
+  it('voice occupants show styled names and still avatars', () => {
+    const A = 'a'.repeat(64)
+    const S = 'b'.repeat(64)
+    const styled = { ...sam, avatar_hash: A, avatar_still: S, style: { font: 'fredoka', colors: ['#ffc4a3'] } }
+    window.dispatchEvent(new Event('focus'))
+    app.state = applyReady(emptyState(), { ...ready, members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: styled, nickname: null }] }], voice: [{ channel_id: 'V1', members: [{ user_id: 'U2', flags: { muted: false, deafened: false } }] }] })
+    flushSync()
+    const occ = document.querySelector<HTMLElement>('.occupant[data-user="U2"]')!
+    const name = occ.querySelector<HTMLElement>('.name')!
+    expect(name.tagName).toBe('SPAN') // the row opens the participant menu; "View profile" is in it
+    expect(name.textContent).toBe('sam')
+    expect(name.getAttribute('style')).toContain('Fredoka')
+    const img = occ.querySelector('img')!
+    expect(img.getAttribute('src')).toBe(`pulse-media://localhost/${S}`)
+    occ.dispatchEvent(new Event('pointerenter'))
+    flushSync()
+    expect(img.getAttribute('src')).toBe(`pulse-media://localhost/${A}`)
+    expect(occ.getAttribute('aria-label')).toBe('sam')
+  })
+})

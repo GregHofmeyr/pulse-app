@@ -3,7 +3,8 @@
   import type { Channel } from '../lib/protocol/Channel'
   import { app, clock } from '../lib/store.svelte'
   import { callRoster, channelsFor, isMember } from '../lib/selectors'
-  import { avatarColor, initial } from '../lib/avatar'
+  import Avatar from './Avatar.svelte'
+  import Name from './Name.svelte'
   import { api, errorText } from '../lib/tauri'
   import { isMuted } from '../lib/conversations'
   import LiveBadge from './LiveBadge.svelte'
@@ -44,6 +45,9 @@
   const occupantLabel = (p: { userId: string; name: string; muted: boolean; deafened: boolean }) =>
     [p.name, mutedForMe(p.userId) && 'muted for you', p.deafened ? 'deafened' : p.muted && 'muted'].filter(Boolean).join(', ')
   $effect(() => () => prefetch.cancel())
+
+  // the voice occupant under the pointer: its avatar animates
+  let hoveredOccupant = $state<string | null>(null)
 
   // inline "new channel" field
   let adding = $state<'text' | 'quotes' | 'clips' | 'voice' | null>(null)
@@ -149,9 +153,10 @@
       <div class="occupant" class:pending={p.pending} role="button" tabindex="0" data-menu-toggle aria-haspopup="menu" aria-label={occupantLabel(p)} data-user={p.userId}
         oncontextmenu={(e) => { e.preventDefault(); if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
         onclick={(e) => { if (!p.pending) openMenu(c.id, p.userId, e, e.currentTarget) }}
-        onkeydown={(e) => occupantKey(e, c.id, p)}>
-        <span class="av" class:speaking={speaking.has(p.userId)} style:background={avatarColor(p.userId)}>{initial(p.name)}</span>
-        <span class="grow">{p.name}</span>
+        onkeydown={(e) => occupantKey(e, c.id, p)}
+        onpointerenter={() => (hoveredOccupant = p.userId)} onpointerleave={() => { if (hoveredOccupant === p.userId) hoveredOccupant = null }}>
+        <span class="ring" class:speaking={speaking.has(p.userId)}><Avatar id={p.userId} name={p.name} size={22} hovered={() => hoveredOccupant === p.userId} /></span>
+        <span class="grow"><Name userId={p.userId} {serverId} interactive={false} /></span>
         {#if p.pending}
           <span class="joining">Joining…</span><span class="spinner" role="progressbar" aria-label="Joining"></span>
         {:else}
@@ -186,8 +191,8 @@
   .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { font-size: 11px; color: var(--text-3); }
   .occupant { cursor: default; border-radius: 8px; height: 30px; padding: 0 8px 0 38px; display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); }
-  .av { width: 22px; height: 22px; border-radius: 50%; color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; flex-shrink: 0; transition: box-shadow .12s; }
-  .av.speaking { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--ok); }
+  .ring { display: flex; flex-shrink: 0; border-radius: 50%; transition: box-shadow .12s; }
+  .ring.speaking { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--ok); }
   .occupant:hover { background: var(--bg-2); }
   .occupant.pending { opacity: .6; }
   .joining { font-size: 11px; color: var(--text-2); }

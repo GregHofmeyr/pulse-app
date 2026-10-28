@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
+  import Name from './Name.svelte'
   import { app } from '../lib/store.svelte'
 
   let {
@@ -28,6 +29,8 @@
 
   let q = $state('')
   let picked = $state<string[]>([])
+  // the row under the pointer: its avatar animates
+  let hovered = $state<string | null>(null)
   const me = $derived(app.state.me?.id)
   const nameOf = (id: string) => app.state.people[id]?.user.username ?? '?'
   const total = $derived(1 + fixed.length + picked.length)
@@ -64,9 +67,11 @@
       {#each people as p (p.user.id)}
         {@const isIn = disabled.includes(p.user.id)}
         {@const sel = picked.includes(p.user.id)}
-        <button class="pick" class:sel disabled={isIn || (full && !sel)} onclick={() => toggle(p.user.id)}>
-          <Avatar id={p.user.id} name={p.user.username} size={30} online={p.online} />
-          <span class="nm">{p.user.username}{#if isIn}<small> · already here</small>{/if}</span>
+        <!-- the row is the pick button: the name is styled but not a button of its own -->
+        <button class="pick" class:sel disabled={isIn || (full && !sel)} onclick={() => toggle(p.user.id)}
+          onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}>
+          <Avatar id={p.user.id} name={p.user.username} size={30} online={p.online} hovered={() => hovered === p.user.id} />
+          <span class="nm"><Name userId={p.user.id} serverId={null} text={p.user.username} interactive={false} />{#if isIn}<small> · already here</small>{/if}</span>
           <span class="box" aria-hidden="true"></span>
         </button>
       {:else}

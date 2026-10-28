@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
+  import Name from './Name.svelte'
   import { app, clock, openDm } from '../lib/store.svelte'
   import { relativeTime } from '../lib/conversations'
   import { errorText } from '../lib/tauri'
@@ -11,6 +12,8 @@
   } = $props()
 
   let error = $state('')
+  // the card under the pointer: its avatar animates
+  let hovered = $state<string | null>(null)
 
   const people = $derived(
     Object.values(app.state.people)
@@ -61,11 +64,12 @@
         {#each section.list as p (p.user.id)}
           {@const voice = voiceOf(p.user.id)}
           {@const unread = dmUnread(p.user.id)}
-          <div class="card" class:unread={unread > 0} class:away={!p.online}>
+          <div class="card" class:unread={unread > 0} class:away={!p.online} role="presentation"
+            onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}>
             <div class="who">
-              <Avatar id={p.user.id} name={p.user.username} size={36} online={p.online} />
+              <Avatar id={p.user.id} name={p.user.username} size={36} online={p.online} interactive serverId={null} hovered={() => hovered === p.user.id} />
               <div class="text">
-                <strong>{p.user.username}</strong>
+                <strong><Name userId={p.user.id} serverId={null} text={p.user.username} /></strong>
                 <span class="status">
                   {#if voice}<Icon name="speaker" size={12} /> {voice.label}
                   {:else if unread > 0}{unread} new message{unread === 1 ? '' : 's'}
