@@ -163,6 +163,18 @@ fn text(s: Option<String>) -> Option<String> {
     s.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
 }
 
+/// A bio with `\r\n` and lone `\r` as `\n`, its end trimmed (leading space is kept), or `None`
+/// if nothing is left.
+fn bio_text(s: Option<String>) -> Option<String> {
+    s.map(|s| {
+        s.replace("\r\n", "\n")
+            .replace('\r', "\n")
+            .trim_end()
+            .to_owned()
+    })
+    .filter(|s| !s.is_empty())
+}
+
 /// The text and colour rules (the server enforces every rule; the client only previews).
 pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
     let font = match req.style.font {
@@ -199,7 +211,7 @@ pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
             return Err(bad("Pronouns can't contain control characters."));
         }
     }
-    let bio = text(req.bio);
+    let bio = bio_text(req.bio);
     if let Some(b) = &bio {
         if b.chars().count() > BIO_MAX {
             return Err(bad("Your bio can be up to 190 characters."));

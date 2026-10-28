@@ -7,8 +7,7 @@ use std::time::Duration;
 use common::*;
 use futures::SinkExt;
 use image::{ImageFormat, Rgba, RgbaImage};
-use pulse_protocol::gateway::Event;
-use pulse_protocol::gateway::{ClientFrame, Ready, ServerFrame};
+use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
 use pulse_protocol::rest::{
     ApiError, Badge, MediaInfo, NameStyle, Profile, UpdateProfileRequest, User,
 };
@@ -565,7 +564,15 @@ async fn bad_input_is_refused() {
     refused(&app, &alex, &r, colours).await;
 
     let mut r = request();
+    r.style.colors = vec!["#0000ff".into(), "blue".into()];
+    refused(&app, &alex, &r, colours).await;
+
+    let mut r = request();
     r.theme_top = "#12345".into();
+    refused(&app, &alex, &r, colours).await;
+
+    let mut r = request();
+    r.theme_bottom = "red".into();
     refused(&app, &alex, &r, colours).await;
 
     let mut r = request();
@@ -710,4 +717,23 @@ async fn saving_is_rate_limited() {
     assert_eq!(put_profile(&app, &alex, &request()).await.status(), 200);
     assert_eq!(put_profile(&app, &alex, &request()).await.status(), 200);
     assert_eq!(put_profile(&app, &alex, &request()).await.status(), 429);
+}
+
+#[tokio::test]
+async fn bio_line_endings_are_normalised_and_only_its_end_is_trimmed() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let mut r = request();
+    r.bio = Some("a\r\nb\rc".into());
+    let p: Profile = put_profile(&app, &alex, &r).await.json().await.unwrap();
+    assert_eq!(p.card.bio.as_deref(), Some("a\nb\nc"));
+
+    let mut r = request();
+    r.bio = Some("a\r\nb\r\nc\r\nd\r\ne\r\nf".into());
+    refused(&app, &alex, &r, "Your bio can have at most 4 line breaks.").await;
+
+    let mut r = request();
+    r.bio = Some("\n  indented  \n\n".into());
+    let p: Profile = put_profile(&app, &alex, &r).await.json().await.unwrap();
+    assert_eq!(p.card.bio.as_deref(), Some("\n  indented"));
 }
