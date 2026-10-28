@@ -12,59 +12,68 @@
   let { message, autoplay = false, compact = false }: { message: Message; autoplay?: boolean; compact?: boolean } = $props()
 
   const SKIP_S = 5
-  const RENEW_AFTER_MS = 50 * 60_000
-  const NETWORK_NO_SOURCE = 3
 
   let box: HTMLElement | undefined = $state()
   let el: HTMLVideoElement | undefined = $state()
   let src = $state<string | null>(null)
   let playing = $state(false)
+  let loading = $state(false)
   let cur = $state(0) // seconds
   let dur = $state<number | null>(null)
   let failed = $state(false)
   let fullscreen = $state(false)
-  let fetchedAt = 0
-  let renewed = false
+  let renewed = false // the one renewal is spent until the video plays again
   let resumeAt: number | null = null
-  let gen = 0 // a newer play supersedes a slower earlier one
+  let startPlaying = true
+  let gen = 0 // a newer play (or a pause, stop or unmount) supersedes a slower fetch
+  let token: symbol | null = null
+  let windowWas: Promise<boolean> = Promise.resolve(false)
 
   const total = $derived(dur ?? (message.clip?.duration_ms ?? 0) / 1000)
 
   function stop() {
     gen++
+    loading = false
     el?.pause()
     src = null
     playing = false
   }
 
-  /** Asks for a link and points the video at it; plays from `from` seconds. */
-  async function load(from: number, isRenewal: boolean) {
+  /** Asks for a link and points the video at it; resumes at `from` seconds, playing or not. */
+  async function load(from: number, isRenewal: boolean, andPlay: boolean) {
     const mine = ++gen
     failed = false
+    loading = true
     try {
       const { url } = await api.clipUrl(message.id)
       if (mine !== gen) return
-      fetchedAt = Date.now()
+      loading = false
       renewed = isRenewal
       resumeAt = from
-      claim(message.id, stop)
+      startPlaying = andPlay
+      token = claim(message.id, stop, token ?? undefined)
       src = url
     } catch {
       if (mine !== gen) return
+      loading = false
       failed = true
-      release(message.id)
+      if (token) release(token)
     }
   }
 
   function play() {
-    void load(el ? cur : 0, false)
+    void load(total > 0 && cur >= total - 0.5 ? 0 : cur, false, true)
   }
 
   function pause() {
+    if (loading) {
+      gen++ // Pause cancels a Play still waiting for its link
+      loading = false
+    }
     el?.pause()
   }
 
-  const toggle = () => (playing ? pause() : play())
+  const toggle = () => (playing || loading ? pause() : play())
 
   function onMeta() {
     if (!el) return
@@ -73,13 +82,14 @@
       el.currentTime = resumeAt
       resumeAt = null
     }
-    void el.play()
+    if (startPlaying) el.play()?.catch(() => {})
   }
 
+  // Any media error on a loaded clip may be a link that expired: ask once more, same spot, same
+  // play/pause state. A renewed link that fails too is a real failure.
   function onError() {
     if (!el) return
-    const expired = el.networkState === NETWORK_NO_SOURCE && Date.now() - fetchedAt > RENEW_AFTER_MS
-    if (expired && !renewed) void load(cur, true)
+    if (!renewed) void load(el.currentTime || cur, true, playing)
     else {
       failed = true
       playing = false
@@ -103,16 +113,18 @@
   }
 
   function toggleFullscreen() {
-    if (document.fullscreenElement === box) void document.exitFullscreen()
-    else void box?.requestFullscreen()
+    if (document.fullscreenElement === box) void document.exitFullscreen()?.catch(() => {})
+    else void box?.requestFullscreen()?.catch(() => {})
   }
 
-  // Only this player's own change counts; the window follows the element.
+  // Only this player's own change counts; the window follows the element, and goes back to how it
+  // was before (not blindly to windowed) on the way out.
   function onFullscreenChange() {
     const now = document.fullscreenElement === box
     if (now === fullscreen) return
     fullscreen = now
-    void api.setFullscreen(now).catch(() => {})
+    if (now) windowWas = Promise.resolve(api.setFullscreen(true)).then((was) => was === true, () => false)
+    else void windowWas.then((was) => api.setFullscreen(was)).catch(() => {})
   }
 
   $effect(() => {
@@ -124,8 +136,9 @@
   onMount(() => {
     if (autoplay) play()
     return () => {
-      release(message.id)
-      if (fullscreen) void api.setFullscreen(false).catch(() => {})
+      gen++ // a fetch still in flight must not claim for a gone player
+      if (token) release(token)
+      if (fullscreen) void windowWas.then((was) => api.setFullscreen(was)).catch(() => {})
     }
   })
 </script>
@@ -146,6 +159,8 @@
         ontimeupdate={() => (cur = el?.currentTime ?? 0)}
         ondurationchange={() => (dur = el && Number.isFinite(el.duration) ? el.duration : dur)}
         onplay={() => (playing = true)}
+        oncanplay={() => (renewed = false)}
+        onplaying={() => (renewed = false)}
         onpause={() => (playing = false)}
         onended={() => (playing = false)}
         onerror={onError}
@@ -157,12 +172,12 @@
     {#if failed}
       <p class="fail" role="alert">Couldn't play this clip. Try again.</p>
     {/if}
-    {#if !playing && !failed}
-      <button class="big" aria-label="Play" onclick={play}><Icon name="play" size={28} /></button>
+    {#if !playing && !loading && !failed}
+      <button class="big" aria-label="Play clip" onclick={play}><Icon name="play" size={28} /></button>
     {/if}
   </div>
   <div class="bar">
-    <button class="ico" aria-label={playing ? 'Pause' : 'Play'} onclick={toggle}><Icon name={playing ? 'pause' : 'play'} /></button>
+    <button class="ico" aria-label={playing || loading ? 'Pause' : 'Play'} onclick={toggle}><Icon name={playing || loading ? 'pause' : 'play'} /></button>
     <input class="seek" type="range" aria-label="Seek" min="0" max={total || 1} step="0.1" value={cur} disabled={!el} oninput={(e) => seek(Number(e.currentTarget.value))} />
     <span class="time">{formatDuration(cur * 1000)} / {formatDuration(total * 1000)}</span>
     {#if !compact}

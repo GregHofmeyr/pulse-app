@@ -4,7 +4,7 @@ import { claim, loadVolume, playback, release, setMuted, setVolume } from './cli
 
 beforeEach(() => {
   localStorage.clear()
-  playback.nowPlaying = null
+  release(claim('reset', () => {}))
 })
 
 describe('claim', () => {
@@ -18,18 +18,30 @@ describe('claim', () => {
     expect(b).not.toHaveBeenCalled()
     expect(playback.nowPlaying).toBe('B')
   })
-  it('claiming again as the same clip pauses nothing', () => {
+  it('claiming again with the same token pauses nothing', () => {
     const a = vi.fn()
-    claim('A', a)
-    claim('A', a)
+    const t = claim('A', a)
+    claim('A', a, t)
     expect(a).not.toHaveBeenCalled()
   })
-  it('release only clears your own claim', () => {
+  it('two players of one message displace each other', () => {
+    const a = vi.fn()
+    claim('A', a)
     claim('A', vi.fn())
-    release('B')
+    expect(a).toHaveBeenCalledTimes(1)
+  })
+  it('release only clears your own claim', () => {
+    const t = claim('A', vi.fn())
+    release(Symbol('other'))
     expect(playback.nowPlaying).toBe('A')
-    release('A')
+    release(t)
     expect(playback.nowPlaying).toBeNull()
+  })
+  it('a displaced player releasing does not clear the new holder', () => {
+    const old = claim('A', vi.fn())
+    claim('A', vi.fn())
+    release(old)
+    expect(playback.nowPlaying).toBe('A')
   })
 })
 

@@ -20,18 +20,23 @@ function read(): Saved {
 /** The playing message's id (or null), and the volume (0..1) and mute shared by every player. */
 export const playback = $state<{ nowPlaying: string | null; volume: number; muted: boolean }>({ nowPlaying: null, ...read() })
 
+let owner: symbol | null = null
 let pauseCurrent: (() => void) | null = null
 
-/** Makes `id` the one playing clip: the previous one is paused through the callback it registered. */
-export function claim(id: string, pause: () => void): void {
-  if (playback.nowPlaying !== null && playback.nowPlaying !== id) pauseCurrent?.()
+/** Makes this player (one instance, whatever its message) the one playing clip: the previous holder is
+ * paused through the callback it registered. Returns the token to `release` with. */
+export function claim(id: string, pause: () => void, token: symbol = Symbol(id)): symbol {
+  if (owner !== null && owner !== token) pauseCurrent?.()
+  owner = token
   playback.nowPlaying = id
   pauseCurrent = pause
+  return token
 }
 
-/** Gives up the claim, if `id` still holds it. */
-export function release(id: string): void {
-  if (playback.nowPlaying !== id) return
+/** Gives up the claim, if this token still holds it. */
+export function release(token: symbol): void {
+  if (owner !== token) return
+  owner = null
   playback.nowPlaying = null
   pauseCurrent = null
 }
