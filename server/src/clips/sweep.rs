@@ -11,11 +11,11 @@ use crate::db::stamp;
 use crate::error::AppResult;
 
 const EVERY: Duration = Duration::from_secs(600);
-/// A clip's media row is written in the same transaction as its `clips` row, so a row without
-/// one is an orphan; the grace period only keeps the sweeper clear of anything in flight.
 /// Extra time past a ticket's expiry before the sweeper touches it: confirm refuses tickets older
 /// than `TICKET_TTL_HOURS`, so by now none that passed that check can still be in flight.
 const TICKET_GRACE_HOURS: i64 = 1;
+/// A clip's media row is written in the same transaction as its `clips` row, so a row without
+/// one is an orphan; the grace period only keeps the sweeper clear of anything in flight.
 const ORPHAN_AFTER_HOURS: i64 = 1;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -24,7 +24,7 @@ pub struct SweepReport {
     pub orphans: u32,
 }
 
-/// Delete tickets older than 24 h and unreferenced clip media older than 1 h, the object first and
+/// Delete tickets older than 25 h (the TTL plus the grace period) and unreferenced clip media older than 1 h, the object first and
 /// then the row. A failed object delete keeps the row, so the next run tries again.
 pub async fn run(s: &AppState, now: DateTime<Utc>) -> AppResult<SweepReport> {
     let mut report = SweepReport::default();

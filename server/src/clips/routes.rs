@@ -190,7 +190,8 @@ async fn confirm(
         }
         Err(e) => return Err(e),
     };
-    // The sweeper removes tickets this old (and their objects), so none may be confirmed.
+    // The sweeper only touches tickets past the TTL plus a grace period, so refusing expired
+    // tickets here keeps confirm and the sweeper from ever racing over one.
     if created < stamp(chrono::Utc::now() - chrono::Duration::hours(TICKET_TTL_HOURS)) {
         return Err(AppError::Conflict("That upload expired. Try again.".into()));
     }
