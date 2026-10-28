@@ -19,6 +19,12 @@ import type { LinkSpeakerRequest } from './protocol/LinkSpeakerRequest'
 import type { StartQotyRequest } from './protocol/StartQotyRequest'
 import type { QotyEvent } from './protocol/QotyEvent'
 import type { Leaderboard } from './protocol/Leaderboard'
+import type { Game } from './protocol/Game'
+import type { EditClipRequest } from './protocol/EditClipRequest'
+import type { ClipUrl } from './protocol/ClipUrl'
+import type { ClipFacets } from './protocol/ClipFacets'
+import type { ClipView } from './protocol/ClipView'
+import type { ClipStorage } from './protocol/ClipStorage'
 
 /** `login` / `login_mfa`: signed in, waiting for the second step, or (second step only) the ticket is gone. */
 export type LoginResult = { status: 'ready'; user: User } | { status: 'mfa_required' } | { status: 'expired' }
@@ -113,6 +119,17 @@ export const api = {
   unlinkSpeaker: (serverId: string, nameKey: string) => invoke<void>('unlink_speaker', { serverId, nameKey }),
   /** `year` omitted = this year. */
   leaderboard: (serverId: string, year?: number) => invoke<Leaderboard>('leaderboard', { serverId, year: year ?? null }),
+  // Clips (the upload itself is the send_clip command, with the editor).
+  addGame: (serverId: string, name: string) => invoke<Game>('add_game', { serverId, name }),
+  editClip: (messageId: string, body: EditClipRequest) => invoke<Message>('edit_clip', { messageId, body }),
+  /** A link that works for an hour; ask again on every play. */
+  clipUrl: (messageId: string) => invoke<ClipUrl>('clip_url', { messageId }),
+  /** Newest first, 30 a page; `before` pages back. */
+  listClips: (channelId: string, before?: string, game?: string, author?: string) =>
+    invoke<Message[]>('list_clips', { channelId, before: before ?? null, game: game ?? null, author: author ?? null }),
+  clipFacets: (channelId: string) => invoke<ClipFacets>('clip_facets', { channelId }),
+  setClipView: (channelId: string, view: ClipView) => invoke<void>('set_clip_view', { channelId, view }),
+  clipStorage: (serverId: string) => invoke<ClipStorage>('clip_storage', { serverId }),
   searchQuotes: (serverId: string, q: string) => invoke<Message[]>('search_quotes', { serverId, q }),
   startQoty: (serverId: string, body: StartQotyRequest) => invoke<QotyEvent>('start_qoty', { serverId, body }),
   voteQoty: (eventId: string, messageId: string) => invoke<QotyEvent>('vote_qoty', { eventId, messageId }),

@@ -4,11 +4,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
 use pulse_protocol::gateway::ClientFrame;
-use pulse_protocol::ids::{ChannelId, LineId, MessageId, QotyEventId, ServerId, UserId};
+use pulse_protocol::ids::{ChannelId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId};
 use pulse_protocol::rest::{
-    Channel, CustomEmoji, EditQuoteRequest, Leaderboard, LinkSpeakerRequest, MediaInfo, Member,
-    Message, MuteTarget, PostQuoteRequest, QotyEvent, RecoveryCodesResponse, Server,
-    SetMuteRequest, StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus, User,
+    Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji, EditClipRequest,
+    EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest, MediaInfo, Member, Message,
+    MuteTarget, PostQuoteRequest, QotyEvent, RecoveryCodesResponse, Server, SetMuteRequest,
+    StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -1291,6 +1292,88 @@ pub async fn edit_quote(
 ) -> Result<Message, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.edit_quote(&token, message_id, &body).await)
+}
+
+// ---------- Clips ----------
+
+#[tauri::command]
+pub async fn add_game(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    name: String,
+) -> Result<Game, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.add_game(&token, server_id, &name).await)
+}
+
+#[tauri::command]
+pub async fn edit_clip(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    body: EditClipRequest,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.edit_clip(&token, message_id, &body).await)
+}
+
+#[tauri::command]
+pub async fn clip_url(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+) -> Result<ClipUrl, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.clip_url(&token, message_id).await)
+}
+
+#[tauri::command]
+pub async fn list_clips(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    before: Option<MessageId>,
+    game: Option<GameId>,
+    author: Option<UserId>,
+) -> Result<Vec<Message>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.list_clips(&token, channel_id, before, game, author)
+            .await,
+    )
+}
+
+#[tauri::command]
+pub async fn clip_facets(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+) -> Result<ClipFacets, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.clip_facets(&token, channel_id).await)
+}
+
+#[tauri::command]
+pub async fn set_clip_view(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    view: ClipView,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_clip_view(&token, channel_id, view).await)
+}
+
+#[tauri::command]
+pub async fn clip_storage(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<ClipStorage, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.clip_storage(&token, server_id).await)
 }
 
 #[tauri::command]

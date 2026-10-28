@@ -1,6 +1,7 @@
 pub mod api;
 pub mod backoff;
 pub mod bindmatch;
+pub mod clips;
 pub mod commands;
 pub mod gateway;
 pub mod hookwatch;
@@ -271,6 +272,14 @@ pub fn run() {
             commands::add_qoty_option,
             commands::end_qoty,
             commands::reopen_qoty,
+            // clips
+            commands::add_game,
+            commands::edit_clip,
+            commands::clip_url,
+            commands::list_clips,
+            commands::clip_facets,
+            commands::set_clip_view,
+            commands::clip_storage,
             startup::ui_painted,
             keybinds::get_keybinds,
             keybinds::set_keybinds,

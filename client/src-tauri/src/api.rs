@@ -2,15 +2,19 @@
 
 use std::time::Duration;
 
-use pulse_protocol::ids::{ChannelId, LineId, MessageId, QotyEventId, ServerId, UserId};
+use pulse_protocol::ids::{
+    ChannelId, ClipUploadId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId,
+};
 use pulse_protocol::rest::{
-    AddMembersRequest, AddQotyOptionRequest, ChangePasswordRequest, Channel, ChannelKind,
-    CreateDmRequest, CreateEmojiRequest, CustomEmoji, EditMessageRequest, EditQuoteRequest,
-    GoLiveRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest, LoginRequest, MarkReadRequest,
-    MediaInfo, Member, Message, MfaRequired, MuteTarget, PostQuoteRequest, QotyEvent,
-    QotyVoteRequest, RecoveryCodesResponse, RegisterRequest, RenameChannelRequest,
-    RenameEmojiRequest, ReopenQotyRequest, SendMessageRequest, Server, SessionResponse,
-    SetMuteRequest, StartQotyRequest, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
+    AddGameRequest, AddMembersRequest, AddQotyOptionRequest, ChangePasswordRequest, Channel,
+    ChannelKind, ClipFacets, ClipStorage, ClipUpload, ClipUploadRequest, ClipUrl, ClipView,
+    ConfirmClipRequest, CreateDmRequest, CreateEmojiRequest, CustomEmoji, EditClipRequest,
+    EditMessageRequest, EditQuoteRequest, Game, GoLiveRequest, Leaderboard, LinkSpeakerRequest,
+    LoginMfaRequest, LoginRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired,
+    MuteTarget, PostQuoteRequest, QotyEvent, QotyVoteRequest, RecoveryCodesResponse,
+    RegisterRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest,
+    SendMessageRequest, Server, SessionResponse, SetClipViewRequest, SetMuteRequest,
+    StartQotyRequest, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
     ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
     TwoFactorSetupResponse, TwoFactorStatus, User, VoiceTokenResponse, WatchRequest,
 };
@@ -135,7 +139,7 @@ pub const TOO_BIG: &str = "Files can be 2 MB at most";
 pub const CONNECT_FAILED: &str = "couldn't connect";
 
 /// A reqwest error in plain words, without the URL (its Display would include host + query).
-fn failure_text(e: reqwest::Error) -> String {
+pub(crate) fn failure_text(e: reqwest::Error) -> String {
     // connect first: a connect timeout is both, and it certainly never arrived
     if e.is_connect() {
         CONNECT_FAILED.into()
@@ -1302,6 +1306,217 @@ impl Api {
             self.http
                 .get(self.url(&["servers", &server.to_string(), "quotes", "search"])?)
                 .query(&[("q", q)])
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    // ---------- Clips ----------
+
+    /// Like [`Self::checked`], but a 429 or 503 keeps the server's own words ("That's 20 clips
+    /// this hour. Try again later.", "Clips storage isn't set up on this server."); the generic
+    /// text is only the fallback when the body isn't Pulse's (a proxy's page).
+    async fn clip_checked(
+        r: Result<reqwest::Response, reqwest::Error>,
+    ) -> Result<reqwest::Response, ApiError> {
+        use reqwest::StatusCode;
+        let resp = match r {
+            Ok(resp)
+                if matches!(
+                    resp.status(),
+                    StatusCode::TOO_MANY_REQUESTS | StatusCode::SERVICE_UNAVAILABLE
+                ) =>
+            {
+                note_version(&resp);
+                let status = resp.status();
+                log_failure(Some(path_only(resp.url())), status.as_str());
+                return Err(match resp.json::<pulse_protocol::rest::ApiError>().await {
+                    Ok(e) if !e.message.is_empty() => ApiError::Rejected(e.message),
+                    _ if status == StatusCode::TOO_MANY_REQUESTS => ApiError::RateLimited,
+                    _ => ApiError::Server(status.to_string()),
+                });
+            }
+            other => other,
+        };
+        Self::checked(resp).await
+    }
+
+    async fn clip_parse<T: DeserializeOwned>(
+        r: Result<reqwest::Response, reqwest::Error>,
+    ) -> Result<T, ApiError> {
+        // the body is read by `parse`, which re-runs `checked` on a response that already passed
+        let resp = Self::clip_checked(r).await?;
+        Self::parse(Ok(resp)).await
+    }
+
+    pub async fn add_game(
+        &self,
+        token: &str,
+        server: ServerId,
+        name: &str,
+    ) -> Result<Game, ApiError> {
+        Self::clip_parse(
+            self.http
+                .post(self.url(&["servers", &server.to_string(), "games"])?)
+                .bearer_auth(token)
+                .json(&AddGameRequest { name: name.into() })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A ticket for one clip: PUT the file to its URL, then [`Self::confirm_clip`].
+    pub async fn clip_upload(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        body: &ClipUploadRequest,
+    ) -> Result<ClipUpload, ApiError> {
+        Self::clip_parse(
+            self.http
+                .post(self.url(&["channels", &channel.to_string(), "clips", "uploads"])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn cancel_clip_upload(&self, token: &str, id: ClipUploadId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(self.url(&["clip-uploads", &id.to_string()])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn confirm_clip(
+        &self,
+        token: &str,
+        id: ClipUploadId,
+        body: &ConfirmClipRequest,
+    ) -> Result<Message, ApiError> {
+        Self::clip_parse(
+            self.http
+                .post(self.url(&["clip-uploads", &id.to_string(), "confirm"])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A clip's poster (a JPEG or PNG of at most 640 px); the server makes the WebP.
+    pub async fn upload_clip_thumb(
+        &self,
+        token: &str,
+        bytes: Vec<u8>,
+    ) -> Result<MediaInfo, ApiError> {
+        self.upload_media(token, "clip-thumb", bytes).await
+    }
+
+    pub async fn edit_clip(
+        &self,
+        token: &str,
+        message: MessageId,
+        body: &EditClipRequest,
+    ) -> Result<Message, ApiError> {
+        Self::clip_parse(
+            self.http
+                .put(self.url(&["clips", &message.to_string()])?)
+                .bearer_auth(token)
+                .json(body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A short-lived link to play the clip.
+    pub async fn clip_url(&self, token: &str, message: MessageId) -> Result<ClipUrl, ApiError> {
+        Self::clip_parse(
+            self.http
+                .get(self.url(&["clips", &message.to_string(), "url"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Newest first, 30 a page; `before` pages back.
+    pub async fn list_clips(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        before: Option<MessageId>,
+        game: Option<GameId>,
+        author: Option<UserId>,
+    ) -> Result<Vec<Message>, ApiError> {
+        let mut req = self
+            .http
+            .get(self.url(&["channels", &channel.to_string(), "clips"])?)
+            .bearer_auth(token);
+        if let Some(b) = before {
+            req = req.query(&[("before", b.to_string())]);
+        }
+        if let Some(g) = game {
+            req = req.query(&[("game", g.to_string())]);
+        }
+        if let Some(a) = author {
+            req = req.query(&[("author", a.to_string())]);
+        }
+        Self::clip_parse(req.send().await).await
+    }
+
+    pub async fn clip_facets(
+        &self,
+        token: &str,
+        channel: ChannelId,
+    ) -> Result<ClipFacets, ApiError> {
+        Self::clip_parse(
+            self.http
+                .get(self.url(&["channels", &channel.to_string(), "clips", "facets"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn set_clip_view(
+        &self,
+        token: &str,
+        channel: ChannelId,
+        view: ClipView,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .put(self.url(&["channels", &channel.to_string(), "clip-view"])?)
+                .bearer_auth(token)
+                .json(&SetClipViewRequest { view })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn clip_storage(
+        &self,
+        token: &str,
+        server: ServerId,
+    ) -> Result<ClipStorage, ApiError> {
+        Self::clip_parse(
+            self.http
+                .get(self.url(&["servers", &server.to_string(), "clips", "storage"])?)
                 .bearer_auth(token)
                 .send()
                 .await,
@@ -2854,5 +3069,323 @@ mod tests {
         assert_eq!(api.reactors(&token, m.id, "👍🏽").await.unwrap(), vec![me]);
         api.remove_reaction(&token, m.id, "👍🏽").await.unwrap();
         assert!(api.reactors(&token, m.id, "👍🏽").await.unwrap().is_empty());
+    }
+
+    // ---------- Clips ----------
+
+    /// A decodable image no other call produces (the media store dedups by content hash and keeps
+    /// the first uploader).
+    fn unique_png() -> Vec<u8> {
+        static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+        let n = N.fetch_add(1, Ordering::SeqCst);
+        let px = image::Rgba([
+            (n * 53 % 251) as u8,
+            (n * 97 % 241) as u8,
+            (n * 29 % 239) as u8,
+            255,
+        ]);
+        let mut img = image::RgbaImage::from_pixel(64, 36, px);
+        img.put_pixel(n % 64, n / 64 % 36, image::Rgba([n as u8, 1, 2, 255]));
+        let mut out = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut out, image::ImageFormat::Png).unwrap();
+        out.into_inner()
+    }
+
+    /// A clips channel with alex in it, a ticket for a file of `len` bytes, and that file.
+    struct ClipRig {
+        app: testing::TestApp,
+        api: Api,
+        token: String,
+        server: pulse_protocol::rest::Server,
+        channel: Channel,
+        file: tempfile::NamedTempFile,
+        bytes: Vec<u8>,
+    }
+
+    async fn clip_rig(len: usize) -> ClipRig {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let server = testing::create_server(&app, &token, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let channel = api
+            .create_channel(&token, server.id, ChannelKind::Clips, "clips")
+            .await
+            .unwrap();
+        let bytes: Vec<u8> = (0..len).map(|i| (i * 31 % 251) as u8).collect();
+        let file = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(file.path(), &bytes).unwrap();
+        ClipRig {
+            app,
+            api,
+            token,
+            server,
+            channel,
+            file,
+            bytes,
+        }
+    }
+
+    impl ClipRig {
+        async fn ticket(&self) -> pulse_protocol::rest::ClipUpload {
+            self.api
+                .clip_upload(
+                    &self.token,
+                    self.channel.id,
+                    &ClipUploadRequest {
+                        size: self.bytes.len() as u64,
+                        duration_ms: 3000,
+                    },
+                )
+                .await
+                .unwrap()
+        }
+    }
+
+    #[tokio::test]
+    async fn clips_round_trip_through_the_core() {
+        use crate::clips::upload::{CancellationFlag, put_file};
+        use pulse_protocol::rest::{ClipView, ConfirmClipRequest};
+        const THREE_MIB: usize = 3 * 1024 * 1024;
+        let r = clip_rig(THREE_MIB).await;
+        let game = r
+            .api
+            .add_game(&r.token, r.server.id, "Rocket League")
+            .await
+            .unwrap();
+        assert_eq!(game.name, "Rocket League");
+
+        let ticket = r.ticket().await;
+        let sent = Arc::new(std::sync::atomic::AtomicU64::new(0));
+        let seen = sent.clone();
+        put_file(
+            &reqwest::Client::new(),
+            &ticket.url,
+            r.file.path(),
+            &ticket.content_type,
+            move |s, t| {
+                assert_eq!(t, THREE_MIB as u64);
+                seen.fetch_max(s, Ordering::SeqCst);
+            },
+            CancellationFlag::new(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(sent.load(Ordering::SeqCst), THREE_MIB as u64);
+
+        let thumb = r
+            .api
+            .upload_clip_thumb(&r.token, unique_png())
+            .await
+            .unwrap();
+        let msg = r
+            .api
+            .confirm_clip(
+                &r.token,
+                ticket.id,
+                &ConfirmClipRequest {
+                    caption: "ace".into(),
+                    game_id: Some(game.id),
+                    duration_ms: 3000,
+                    width: 1280,
+                    height: 720,
+                    thumb_hash: thumb.hash,
+                    nonce: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(msg.content, "ace");
+
+        let listed = r
+            .api
+            .list_clips(&r.token, r.channel.id, None, None, None)
+            .await
+            .unwrap();
+        assert_eq!(
+            listed.iter().map(|m| m.id).collect::<Vec<_>>(),
+            vec![msg.id]
+        );
+        let by_game = r
+            .api
+            .list_clips(&r.token, r.channel.id, None, Some(game.id), None)
+            .await
+            .unwrap();
+        assert_eq!(by_game.len(), 1);
+        assert!(
+            r.api
+                .list_clips(&r.token, r.channel.id, Some(msg.id), None, None)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        let facets = r.api.clip_facets(&r.token, r.channel.id).await.unwrap();
+        assert_eq!(facets.games[0].game_id, game.id);
+
+        let url = r.api.clip_url(&r.token, msg.id).await.unwrap();
+        let got = reqwest::get(&url.url).await.unwrap().bytes().await.unwrap();
+        assert!(
+            got.as_ref() == r.bytes.as_slice(),
+            "the played bytes are the uploaded ones"
+        );
+
+        let edited = r
+            .api
+            .edit_clip(
+                &r.token,
+                msg.id,
+                &EditClipRequest {
+                    caption: "ace!".into(),
+                    game_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(edited.content, "ace!");
+
+        r.api
+            .set_clip_view(&r.token, r.channel.id, ClipView::Wall)
+            .await
+            .unwrap();
+        let storage = r.api.clip_storage(&r.token, r.server.id).await.unwrap();
+        assert_eq!(storage.count, 1);
+        // the video plus its small poster
+        assert!((THREE_MIB as u64..THREE_MIB as u64 + 4096).contains(&storage.bytes));
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_ticket_is_gone() {
+        let r = clip_rig(1024).await;
+        let ticket = r.ticket().await;
+        r.api.cancel_clip_upload(&r.token, ticket.id).await.unwrap();
+        assert!(r.api.cancel_clip_upload(&r.token, ticket.id).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn put_file_stops_on_cancel() {
+        use crate::clips::upload::{CancellationFlag, UploadError, put_file};
+        let r = clip_rig(3 * 1024 * 1024).await;
+        let ticket = r.ticket().await;
+        r.app
+            .s3
+            .as_ref()
+            .unwrap()
+            .set_delay(Duration::from_secs(30));
+        let cancel = CancellationFlag::new();
+        let c = cancel.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(300)).await;
+            c.cancel();
+        });
+        let started = std::time::Instant::now();
+        let res = put_file(
+            &reqwest::Client::new(),
+            &ticket.url,
+            r.file.path(),
+            &ticket.content_type,
+            |_, _| {},
+            cancel,
+        )
+        .await;
+        assert!(matches!(res, Err(UploadError::Cancelled)), "{res:?}");
+        assert!(started.elapsed() < Duration::from_secs(5));
+    }
+
+    #[tokio::test]
+    async fn put_file_gives_up_when_nothing_moves() {
+        use crate::clips::upload::{CancellationFlag, UploadError, put_file_with_stall};
+        let r = clip_rig(1024 * 1024).await;
+        let ticket = r.ticket().await;
+        r.app
+            .s3
+            .as_ref()
+            .unwrap()
+            .set_delay(Duration::from_secs(30));
+        let res = put_file_with_stall(
+            &reqwest::Client::new(),
+            &ticket.url,
+            r.file.path(),
+            &ticket.content_type,
+            |_, _| {},
+            CancellationFlag::new(),
+            Duration::from_millis(500),
+        )
+        .await;
+        assert!(matches!(res, Err(UploadError::Stalled)), "{res:?}");
+    }
+
+    #[tokio::test]
+    async fn put_file_reports_a_rejected_put() {
+        use crate::clips::upload::{CancellationFlag, UploadError, put_file};
+        let r = clip_rig(4096).await;
+        let ticket = r.ticket().await;
+        assert!(ticket.url.contains("X-Amz-Signature="));
+        let bad = ticket.url.replace("X-Amz-Signature=", "X-Amz-Signature=00");
+        let res = put_file(
+            &reqwest::Client::new(),
+            &bad,
+            r.file.path(),
+            &ticket.content_type,
+            |_, _| {},
+            CancellationFlag::new(),
+        )
+        .await;
+        assert!(matches!(res, Err(UploadError::Rejected(403))), "{res:?}");
+    }
+
+    #[tokio::test]
+    async fn clip_errors_carry_the_servers_own_words() {
+        // 503: this server has no clips storage
+        let app = testing::spawn_without_clips().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let ch = api
+            .create_channel(&token, s.id, ChannelKind::Clips, "clips")
+            .await
+            .unwrap();
+        let req = ClipUploadRequest {
+            size: 10,
+            duration_ms: 1000,
+        };
+        let err = api.clip_upload(&token, ch.id, &req).await.unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Clips storage isn't set up on this server."
+        );
+
+        // 429: the hourly limit
+        let r = clip_rig(10).await;
+        let mut last = None;
+        for _ in 0..21 {
+            match r
+                .api
+                .clip_upload(
+                    &r.token,
+                    r.channel.id,
+                    &ClipUploadRequest {
+                        size: 10,
+                        duration_ms: 1000,
+                    },
+                )
+                .await
+            {
+                Ok(_) => {}
+                Err(e) => {
+                    last = Some(e);
+                    break;
+                }
+            }
+        }
+        assert_eq!(
+            last.expect("the 21st ticket is refused").to_string(),
+            "That's 20 clips this hour. Try again later."
+        );
+
+        // everything else keeps the generic words
+        let e = Api::new("http://127.0.0.1:1")
+            .clip_storage("t", s.id)
+            .await
+            .unwrap_err();
+        assert!(matches!(e, ApiError::Network(_)));
     }
 }
