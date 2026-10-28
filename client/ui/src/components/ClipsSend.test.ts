@@ -29,6 +29,7 @@ import ClipsChannel from './ClipsChannel.svelte'
 import { app } from '../lib/store.svelte'
 import { applyEvent, applyReady, emptyState, setClipJob } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
+import { positionAt } from '../lib/composerDom'
 
 const ready = (over = {}) =>
   testReady([{ id: 'C1', server_id: 'S1', kind: 'clips', name: 'highlights', position: 0 }], {
@@ -88,6 +89,7 @@ beforeEach(() => {
     if (cmd === 'pick_clip_file') return picked
     if (cmd === 'open_clip') return opens()
     if (cmd === 'clip_filmstrip') return { path: '/tmp/film.jpg', tiles: 24 }
+    if (cmd === 'list_replies') return []
     return undefined
   })
   app.state = applyReady(emptyState(), ready())
@@ -250,5 +252,37 @@ describe('ClipsSend', () => {
     app.state = setClipJob(app.state, job('J1', 'C1', { stage: 'done' }))
     flushSync()
     expect(document.body.textContent).toContain('No clips yet. Share one!')
+  })
+
+  it('a clip with no replies yet can start its thread from the channel', async () => {
+    Element.prototype.scrollTo = () => {}
+    await show()
+    const card = document.querySelector<HTMLElement>('[data-clip-id="M1"]')!
+    expect(card.querySelector('.replies')).toBeNull()
+    card.querySelector<HTMLButtonElement>('button[aria-label="Reply"]')!.click()
+    flushSync()
+    await settle()
+    flushSync()
+    const panel = document.querySelector<HTMLElement>('.replies-panel')!
+    expect(panel.querySelector('.pinned [data-clip-id="M1"]')).not.toBeNull()
+    const box = panel.querySelector<HTMLElement>('[role="textbox"]')!
+    box.focus()
+    box.replaceChildren(document.createTextNode('nice'))
+    const p = positionAt(box, 4)
+    const r = document.createRange()
+    r.setStart(p.node, p.offset)
+    r.collapse(true)
+    getSelection()!.removeAllRanges()
+    getSelection()!.addRange(r)
+    box.dispatchEvent(new InputEvent('input', { bubbles: true }))
+    flushSync()
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(calls('send_reply')[0][1]).toMatchObject({ channelId: 'C1', rootId: 'M1', content: 'nice' })
+    // the server's echo of the reply counts it on the clip
+    const reply: Message = { ...clip('R1'), content: 'nice', clip: null, thread_root_id: 'M1' }
+    app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: reply, nonce: null } }, Date.now())
+    flushSync()
+    expect(card.querySelector('.replies')?.textContent?.trim()).toMatch(/^View 1 reply\b/)
   })
 })

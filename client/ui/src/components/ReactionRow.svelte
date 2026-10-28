@@ -11,7 +11,7 @@
   import EmojiPopover from './EmojiPopover.svelte'
   import Icon from './Icon.svelte'
 
-  let { message, meId, nameOf, onError = () => {}, onePerPerson = false, suggest = [] }: {
+  let { message, meId, nameOf, onError = () => {}, onePerPerson = false, suggest = [], alwaysAdd = false }: {
     message: Message
     meId: string
     nameOf: (userId: string | null) => string
@@ -21,6 +21,8 @@
     onePerPerson?: boolean
     /** Reaction keys offered as faded one-click chips (a quote's most-used picks you haven't used on it). */
     suggest?: string[]
+    /** Keep the "Add reaction" chip with no reactions at all (a clip has no other way to add the first). */
+    alwaysAdd?: boolean
   } = $props()
 
   let tipFor = $state<string | null>(null)
@@ -113,7 +115,7 @@
   }
 </script>
 
-{#if !message.deleted && (message.reactions.length > 0 || suggest.length > 0)}
+{#if !message.deleted && (message.reactions.length > 0 || suggest.length > 0 || alwaysAdd)}
   <div class="reactions">
     {#each message.reactions as r (r.emoji)}
       {@const c = r.emoji.startsWith('custom:') ? customOf(r.emoji) : undefined}

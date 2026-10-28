@@ -414,6 +414,17 @@ export function mapMessage(s: AppState, channel: string, id: string, f: (m: Mess
   return s
 }
 
+/** A message wherever it shows: its channel list, a thread, a clip feed or the open replies panel's root. */
+export function findShown(s: AppState, channel: string, id: string): Message | undefined {
+  return findMessage(s, channel, id) ?? loadedRoot(s, channel, id) ?? (s.openRoot?.id === id && s.openRoot.channel_id === channel ? s.openRoot : undefined)
+}
+
+/** `mapMessage`, also reaching a clip in its feeds and the open replies panel's root. */
+export function mapShown(s: AppState, channel: string, id: string, f: (m: Message) => Message): AppState {
+  const listed = mapMessage(s, channel, id, f)
+  return listed !== s ? mapFeedItems(listed, channel, id, f) : mapQuote(s, channel, id, f)
+}
+
 /** Add a fetched page of a quote's replies (newest page, or older ones) and note whether the thread's start is reached. */
 export function addReplies(s: AppState, root: string, replies: Message[], reachedStart: boolean): AppState {
   let list = s.threads[root] ?? []
@@ -730,10 +741,6 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'QotyUpdated':
     case 'QotyEnded':
       return { ...s, qoty: { ...s.qoty, [e.d.event.server_id]: withMyOptions(e.d.event, s.me?.id, s.qoty[e.d.event.server_id]) } }
-    // Clips: the client starts handling these with the clips UI.
-    case 'GameAdded':
-    case 'ClipViewChanged':
-      return s
     case 'ConversationVisibility': {
       const { [e.d.channel_id]: _x, ...rest } = s.hidden
       return { ...s, hidden: e.d.hidden ? { ...rest, [e.d.channel_id]: true } : rest }

@@ -5,8 +5,10 @@
   import ClipCaption from './ClipCaption.svelte'
   import ClipPlayer from './ClipPlayer.svelte'
   import ClipReplies from './ClipReplies.svelte'
-    import ReactionRow from './ReactionRow.svelte'
+  import Icon from './Icon.svelte'
+  import ReactionRow from './ReactionRow.svelte'
   import { gameName } from '../lib/clips'
+  import { suggestedReactions } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import { InlineError } from '../lib/inlineError.svelte'
   import type { Message } from '../lib/protocol/Message'
@@ -35,6 +37,8 @@
   const clip = $derived(message.clip)
   const mine = $derived(!!meId && message.author_id === meId)
   const game = $derived(gameName(app.state, serverId, message))
+  // Any number of reactions per person: offer your usual picks it has no chip for yet.
+  const suggest = $derived(suggestedReactions(app.state, message.reactions))
   const when = $derived(new Date(message.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))
 
   const inlineError = new InlineError()
@@ -51,11 +55,12 @@
         <span class="time">{when}</span>
         {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         <span class="grow"></span>
+        {#if onOpenReplies && !compact}<button type="button" class="reply" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={15} /></button>{/if}
         {#if mine}<ClipActions {message} {serverId} />{/if}
       </div>
       <ClipCaption {message} />
       <div class="player"><ClipPlayer {message} {compact} /></div>
-      <ReactionRow {message} {meId} {nameOf} onError={inlineError.show} />
+      <ReactionRow {message} {meId} {nameOf} onError={inlineError.show} {suggest} alwaysAdd />
       {#if onOpenReplies && !compact}<ClipReplies {message} {onOpenReplies} {unsentReplies} />{/if}
       {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
     </div>
@@ -73,6 +78,8 @@
   .game { padding: 1px 8px; border-radius: 10px; background: var(--bg-3); color: var(--text-2); font-size: 11.5px; font-weight: 600; }
   .time, .edited { font-size: 11px; color: var(--text-3); }
   .grow { flex: 1; }
+  .reply { width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .reply:hover { background: var(--bg-3); color: var(--text); }
   .player { width: 100%; max-width: 640px; }
   .compact .player { max-width: 100%; }
   .err { margin: 0; font-size: 12px; color: var(--danger); }

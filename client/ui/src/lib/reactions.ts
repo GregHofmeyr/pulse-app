@@ -1,6 +1,6 @@
 import type { Event } from './protocol/Event'
 import type { ReactionSummary } from './protocol/ReactionSummary'
-import { findMessage, mapMessage, type AppState } from './state'
+import { findShown, mapShown, type AppState } from './state'
 import { api, errorText } from './tauri'
 
 const MAX_NAMES = 10
@@ -42,11 +42,11 @@ function withoutMineExcept(list: ReactionSummary[], key: string): ReactionSummar
 }
 
 function flip(s: AppState, channel: string, id: string, key: string, add: boolean, meId: string, onePerPerson = false): AppState {
-  return mapMessage(s, channel, id, (m) => ({ ...m, reactions: optimistic(m.reactions, key, add, meId, onePerPerson) }))
+  return mapShown(s, channel, id, (m) => ({ ...m, reactions: optimistic(m.reactions, key, add, meId, onePerPerson) }))
 }
 
 const entry = (s: AppState, channel: string, id: string, key: string) =>
-  findMessage(s, channel, id)?.reactions.find((r) => r.emoji === key)
+  findShown(s, channel, id)?.reactions.find((r) => r.emoji === key)
 
 function setEntry(s: AppState, channel: string, id: string, key: string, e: ReactionSummary | null): AppState {
   const put = (rs: ReactionSummary[]) => {
@@ -54,7 +54,7 @@ function setEntry(s: AppState, channel: string, id: string, key: string, e: Reac
     if (!e) return rest
     return rs.some((r) => r.emoji === key) ? rs.map((r) => (r.emoji === key ? e : r)) : [...rest, e]
   }
-  return mapMessage(s, channel, id, (m) => ({ ...m, reactions: put(m.reactions) }))
+  return mapShown(s, channel, id, (m) => ({ ...m, reactions: put(m.reactions) }))
 }
 
 type Toggle = { add: boolean; landed: boolean; /** Any user's reaction event for this emoji arrived meanwhile. */ touched?: boolean }
@@ -110,7 +110,7 @@ async function toggle(
   if ((entry(before, channel, id, key)?.me ?? false) === add) return
   // What this add takes back from me: restored if it fails. The server's removal of each shows up as my event.
   const displaced = add && onePerPerson
-    ? (findMessage(before, channel, id)?.reactions ?? []).filter((r) => r.me && r.emoji !== key).map((r): [string, Toggle] => [r.emoji, { add: false, landed: false }])
+    ? (findShown(before, channel, id)?.reactions ?? []).filter((r) => r.me && r.emoji !== key).map((r): [string, Toggle] => [r.emoji, { add: false, landed: false }])
     : []
   set(flip(before, channel, id, key, add, meId, onePerPerson))
   const t: Toggle = { add, landed: false }
@@ -175,4 +175,9 @@ export function blockedReason(s: AppState, key: string): string | null {
   const c = s.customEmoji[key.slice(7)]
   if (!c?.hash) return 'This emoji was deleted'
   return memberServers(s).has(c.server_id) ? null : "From a server you're not in"
+}
+
+/** Up to three of your usual picks that this message has no chip for yet (offered as one-click suggestions). */
+export function suggestedReactions(s: AppState, reactions: ReactionSummary[]): string[] {
+  return s.frequentEmoji.filter((k) => !reactions.some((r) => r.emoji === k) && !blockedReason(s, k)).slice(0, 3)
 }

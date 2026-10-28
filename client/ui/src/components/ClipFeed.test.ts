@@ -337,4 +337,69 @@ describe('ClipFeed', () => {
     flushSync()
     expect(order()).toEqual(['M003'])
   })
+
+  describe.each(['list', 'wall'] as const)('starting on a clip (%s)', (layout) => {
+    it('a clip with no replies has Reply, which opens its panel; a reply then shows "View 1 reply"', async () => {
+      const onOpenReplies = vi.fn()
+      pages = [[clip('M001')]]
+      cmp = mount(ClipFeed, { target: document.body, props: { channelId: 'C1', filter: {}, layout, onOpenReplies } })
+      flushSync()
+      await settle()
+      flushSync()
+      expect(card('M001').querySelector('.replies')).toBeNull()
+      card('M001').querySelector<HTMLButtonElement>('button[aria-label="Reply"]')!.click()
+      expect(onOpenReplies).toHaveBeenCalledWith(expect.objectContaining({ id: 'M001' }))
+      const reply: Message = { ...clip('R001'), content: 'nice', clip: null, thread_root_id: 'M001' }
+      app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: reply, nonce: null } }, Date.now())
+      flushSync()
+      expect(card('M001').querySelector('.replies')?.textContent?.trim()).toMatch(/^View 1 reply\b/)
+    })
+
+    it('no Reply where nothing opens replies', async () => {
+      pages = [[clip('M001')]]
+      await show({ layout })
+      expect(card('M001').querySelector('button[aria-label="Reply"]')).toBeNull()
+    })
+
+    it('a clip with no reactions can get its first one', async () => {
+      pages = [[clip('M001')]]
+      await show({ layout })
+      const add = card('M001').querySelectorAll<HTMLButtonElement>('button[aria-label="Add reaction"]')
+      expect(add).toHaveLength(1)
+      add[0].click()
+      flushSync()
+      ;[...document.querySelectorAll<HTMLButtonElement>('.cell')].find((c) => c.dataset.key === '👍')!.click()
+      flushSync()
+      await settle()
+      flushSync()
+      expect(calls('add_reaction').map((c) => c[1])).toEqual([{ messageId: 'M001', emoji: '👍' }])
+      expect(card('M001').querySelector('.reactions .chip.mine')?.textContent?.trim()).toBe('1')
+    })
+
+    it('your own reaction on a clip comes off with a click', async () => {
+      pages = [[clip('M001', { reactions: [{ emoji: '🔥', count: 2, me: true }] })]]
+      await show({ layout })
+      card('M001').querySelector<HTMLButtonElement>('.reactions .chip.mine')!.click()
+      flushSync()
+      await settle()
+      flushSync()
+      expect(calls('remove_reaction').map((c) => c[1])).toEqual([{ messageId: 'M001', emoji: '🔥' }])
+      expect(card('M001').querySelector('.reactions .chip.mine')).toBeNull()
+      expect(card('M001').querySelector('.reactions .chip')?.textContent?.trim()).toBe('1')
+    })
+
+    it('suggests your usual picks it does not have yet, any number per person', async () => {
+      app.state = { ...app.state, frequentEmoji: ['👍', '🔥', '😂', '🎉'] }
+      pages = [[clip('M001', { reactions: [{ emoji: '🔥', count: 1, me: true }] })]]
+      await show({ layout })
+      const sug = [...card('M001').querySelectorAll<HTMLButtonElement>('.chip.suggest')]
+      expect(sug.map((b) => b.getAttribute('aria-label'))).toEqual(['React with 👍', 'React with 😂', 'React with 🎉'])
+      sug[0].click()
+      await settle()
+      flushSync()
+      // a clip keeps your other reactions (no take-back as on a quote)
+      expect(calls('add_reaction').map((c) => c[1])).toEqual([{ messageId: 'M001', emoji: '👍' }])
+      expect(calls('remove_reaction')).toHaveLength(0)
+    })
+  })
 })
