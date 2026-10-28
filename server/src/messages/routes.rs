@@ -285,11 +285,11 @@ async fn send(
         }
         _ => {}
     }
-    // A quotes channel holds quotes only; the one plain message it takes is a reply in a thread.
+    // A quotes or clips channel holds those only; the one plain message it takes is a reply in a thread.
     if let Some(root) = req.thread_root_id {
-        if !super::threads::is_live_quote(&s.db, root, id).await? {
+        if !super::threads::is_live_root(&s.db, root, id).await? {
             return Err(AppError::BadRequest(
-                "replies go to a quote in this channel".into(),
+                "replies go to a quote or clip in this channel".into(),
             ));
         }
     } else if ch.kind == ChannelKind::Quotes {
@@ -357,10 +357,10 @@ async fn send(
     msg.created_at = now();
     // A delete of the quote may have committed since the early check: the root must still be live.
     if let Some(root) = req.thread_root_id
-        && !super::threads::is_live_quote(&mut *tx, root, id).await?
+        && !super::threads::is_live_root(&mut *tx, root, id).await?
     {
         return Err(AppError::BadRequest(
-            "replies go to a quote in this channel".into(),
+            "replies go to a quote or clip in this channel".into(),
         ));
     }
     // An outbox retry of a send that already landed (e.g. the proxy said 502 after we committed):

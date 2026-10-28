@@ -45,9 +45,9 @@ pub fn storage(s: &crate::AppState) -> AppResult<&crate::media::r2::R2> {
 
 type ClipRow = (String, String, i64, i64, i64, i64, Option<String>);
 
-/// Fill `clip` on every live clip message in `msgs`. Reply fields are 0 / `None` until replies
-/// are counted (`me` is whose view it is; events pass `None`).
-pub async fn attach(db: &SqlitePool, _me: Option<UserId>, msgs: &mut [Message]) -> AppResult<()> {
+/// Fill `clip` on every live clip message in `msgs` (`me` is whose view it is for the seen point;
+/// events pass `None`).
+pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -> AppResult<()> {
     let ids: Vec<String> = msgs
         .iter()
         .filter(|m| !m.deleted)
@@ -67,12 +67,15 @@ pub async fn attach(db: &SqlitePool, _me: Option<UserId>, msgs: &mut [Message]) 
     }
     q.push(")");
     let rows: Vec<ClipRow> = q.build_query_as().fetch_all(db).await?;
+    let clip_ids: Vec<String> = rows.iter().map(|r| r.0.clone()).collect();
+    let mut threads = crate::messages::threads::summaries(db, me, &clip_ids).await?;
     let mut by_msg: HashMap<String, Clip> = HashMap::new();
     for (message_id, thumb_hash, duration_ms, width, height, size, game_id) in rows {
         let game_id = game_id
             .map(|g| g.parse::<GameId>())
             .transpose()
             .map_err(anyhow::Error::from)?;
+        let t = threads.remove(&message_id);
         by_msg.insert(
             message_id,
             Clip {
@@ -82,9 +85,9 @@ pub async fn attach(db: &SqlitePool, _me: Option<UserId>, msgs: &mut [Message]) 
                 height: height as u32,
                 size: size as u64,
                 game_id,
-                reply_count: 0,
-                last_reply_id: None,
-                replies_seen: None,
+                reply_count: t.as_ref().map_or(0, |t| t.reply_count),
+                last_reply_id: t.as_ref().and_then(|t| t.last_reply_id),
+                replies_seen: t.and_then(|t| t.replies_seen),
             },
         );
     }

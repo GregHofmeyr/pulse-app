@@ -141,7 +141,7 @@ async fn plain_messages_are_refused_in_a_clips_channel() {
             .unwrap()
             .contains("only clips can be posted here")
     );
-    // Replies arrive later: until then any thread_root_id is refused as well.
+    // A thread_root_id that is not a live clip here is refused as well.
     let r = post_json(
         &app,
         &alex,
@@ -1801,4 +1801,138 @@ async fn a_ticket_inside_the_grace_period_is_left_alone() {
     assert_eq!(report.tickets, 0);
     assert_eq!(tickets(&w.app).await, 1);
     assert!(s3.object(&object).is_some());
+}
+
+// ---- Replies ----
+
+async fn clip_reply(
+    w: &World,
+    token: &str,
+    channel: ChannelId,
+    root: pulse_protocol::ids::MessageId,
+    text: &str,
+) -> reqwest::Response {
+    post_json(
+        &w.app,
+        token,
+        &format!("/channels/{channel}/messages"),
+        json!({ "content": text, "thread_root_id": root }),
+    )
+    .await
+}
+
+async fn read_state_of(w: &World, token: &str) -> pulse_protocol::rest::ReadState {
+    ready_of(&w.app, token)
+        .await
+        .read_states
+        .into_iter()
+        .find(|s| s.channel_id == w.channel.id)
+        .expect("read state")
+}
+
+#[tokio::test]
+async fn replies_to_a_clip() {
+    let w = world().await;
+    let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![3u8; 100]).await;
+    let before = read_state_of(&w, &w.alex.1).await;
+    let r = clip_reply(&w, &w.sam.1, w.channel.id, clip.id, "nice one").await;
+    assert_eq!(r.status(), 200);
+    let reply: Message = r.json().await.unwrap();
+    assert_eq!(reply.thread_root_id, Some(clip.id));
+
+    let list: Vec<Message> = get_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/messages", w.channel.id),
+    )
+    .await;
+    assert_eq!(list.len(), 1, "the reply stays out of the main list");
+    assert_eq!(list[0].id, clip.id);
+    let c = list[0].clip.as_ref().unwrap();
+    assert_eq!(c.reply_count, 1);
+    assert_eq!(c.last_reply_id, Some(reply.id));
+    assert_eq!(c.replies_seen, None);
+
+    let replies: Vec<Message> =
+        get_json(&w.app, &w.alex.1, &format!("/messages/{}/replies", clip.id)).await;
+    assert_eq!(replies.len(), 1);
+    assert_eq!(replies[0].id, reply.id);
+
+    let after = read_state_of(&w, &w.alex.1).await;
+    assert_eq!(after.unread, before.unread);
+    // sam's own view carries sam's seen point (a reply marks your place).
+    let mine: Vec<Message> = get_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/channels/{}/messages", w.channel.id),
+    )
+    .await;
+    assert_eq!(mine[0].clip.as_ref().unwrap().replies_seen, Some(reply.id));
+}
+
+#[tokio::test]
+async fn a_reply_needs_a_live_clip_in_this_channel() {
+    let w = world().await;
+    let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![4u8; 100]).await;
+    let other = create_clips(&w.app, &w.alex.1, w.server).await;
+    let r = clip_reply(&w, &w.sam.1, other.id, clip.id, "wrong channel").await;
+    assert_eq!(r.status(), 400);
+    assert_eq!(
+        delete_message(&w.app, &w.alex.1, clip.id).await.status(),
+        204
+    );
+    let r = clip_reply(&w, &w.sam.1, w.channel.id, clip.id, "too late").await;
+    assert_eq!(r.status(), 400);
+}
+
+#[tokio::test]
+async fn a_reply_mention_counts_until_seen() {
+    let w = world().await;
+    let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![5u8; 100]).await;
+    let r: Message = clip_reply(&w, &w.sam.1, w.channel.id, clip.id, "look @alex")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(read_state_of(&w, &w.alex.1).await.mentions, 1);
+    let seen = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/messages/{}/replies/seen", clip.id),
+        json!({ "message_id": r.id }),
+    )
+    .await;
+    assert_eq!(seen.status(), 204);
+    assert_eq!(read_state_of(&w, &w.alex.1).await.mentions, 0);
+    let list: Vec<Message> = get_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/messages", w.channel.id),
+    )
+    .await;
+    assert_eq!(list[0].clip.as_ref().unwrap().replies_seen, Some(r.id));
+}
+
+#[tokio::test]
+async fn replies_get_normal_reactions() {
+    let w = world().await;
+    let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![6u8; 100]).await;
+    let r: Message = clip_reply(&w, &w.sam.1, w.channel.id, clip.id, "hi")
+        .await
+        .json()
+        .await
+        .unwrap();
+    let put = w
+        .app
+        .http
+        .put(w.app.url(&format!("/messages/{}/reactions/👍", r.id)))
+        .bearer_auth(&w.alex.1)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(put.status(), 204);
+    let replies: Vec<Message> =
+        get_json(&w.app, &w.alex.1, &format!("/messages/{}/replies", clip.id)).await;
+    assert_eq!(replies[0].reactions.len(), 1);
+    assert_eq!(replies[0].reactions[0].count, 1);
 }

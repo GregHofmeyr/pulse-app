@@ -579,35 +579,7 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
         });
     }
 
-    // Live replies, the newest of them, and how far `me` has read.
-    let mut q = sqlx::QueryBuilder::new(
-        "SELECT thread_root_id, COUNT(*), MAX(id) FROM messages
-         WHERE deleted_at IS NULL AND thread_root_id IN (",
-    );
-    in_list(&mut q, &quote_ids);
-    q.push(" GROUP BY thread_root_id");
-    let replies: HashMap<String, (i64, String)> = q
-        .build_query_as::<(String, i64, String)>()
-        .fetch_all(db)
-        .await?
-        .into_iter()
-        .map(|(root, n, last)| (root, (n, last)))
-        .collect();
-    let mut seen: HashMap<String, String> = HashMap::new();
-    if let Some(me) = me {
-        let mut q = sqlx::QueryBuilder::new(
-            "SELECT root_id, last_seen_id FROM thread_reads WHERE user_id = ",
-        );
-        q.push_bind(me.to_string());
-        q.push(" AND root_id IN (");
-        in_list(&mut q, &quote_ids);
-        seen = q
-            .build_query_as::<(String, String)>()
-            .fetch_all(db)
-            .await?
-            .into_iter()
-            .collect();
-    }
+    let threads = crate::messages::threads::summaries(db, me, &quote_ids).await?;
 
     let mut q = sqlx::QueryBuilder::new(
         "SELECT w.message_id, e.year FROM qoty_winners w JOIN qoty_events e ON e.id = w.event_id
@@ -630,17 +602,14 @@ pub async fn attach(db: &SqlitePool, me: Option<UserId>, msgs: &mut [Message]) -
             continue;
         };
         let m = &mut msgs[i];
-        let (reply_count, last_reply_id) = match replies.get(&msg_id) {
-            Some((n, last)) => (*n as u32, Some(parse_id(last)?)),
-            None => (0, None),
-        };
+        let t = threads.get(&msg_id);
         m.quote = Some(Quote {
             lines: by_msg.remove(&msg_id).unwrap_or_default(),
             year: year as i32,
             said_on,
-            reply_count,
-            last_reply_id,
-            replies_seen: seen.get(&msg_id).map(|s| parse_id(s)).transpose()?,
+            reply_count: t.map_or(0, |t| t.reply_count),
+            last_reply_id: t.and_then(|t| t.last_reply_id),
+            replies_seen: t.and_then(|t| t.replies_seen),
             wins: wins.remove(&msg_id).unwrap_or_default(),
         });
     }
