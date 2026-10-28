@@ -177,11 +177,11 @@
   async function upload(r: Row, f: File) {
     if (r.uploading) return
     r.error = ''
-    // typed words become the caption; if they don't fit, nothing is converted or thrown away. A new image on an image
-    // line leaves its caption alone (it stays editable while the image uploads).
+    // typed words become the caption; if they don't fit, nothing is converted or thrown away. The boxes stay editable
+    // while the image uploads, so the words are taken when it lands (if they grew past the limit meanwhile, posting says
+    // so). A new image on an image line leaves its caption alone.
     const convert = !r.pic
-    const words = r.text.trim()
-    if (convert && [...words].length > MAX_CAPTION) {
+    if (convert && [...r.text.trim()].length > MAX_CAPTION) {
       r.error = `That text is too long for a caption (${MAX_CAPTION} characters at most). Shorten it, or clear it first.`
       return
     }
@@ -190,7 +190,7 @@
       const info = await api.uploadQuoteMedia(await bytes(f))
       r.pic = { hash: info.hash, still_hash: info.still_hash }
       if (convert) {
-        r.caption = words
+        r.caption = r.text.trim()
         r.text = ''
       }
       void focusText(r.key)

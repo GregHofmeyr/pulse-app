@@ -372,6 +372,18 @@ describe('QuoteComposer', () => {
     expect(cap().value).toBe('a cat, napping')
   })
 
+  it('words typed while a text line\'s first image uploads become its caption', async () => {
+    let done: (v: unknown) => void = () => {}
+    invoke.mockImplementation((cmd) => (cmd === 'upload_quote_media' ? new Promise((r) => (done = r)) : Promise.resolve(undefined)))
+    show()
+    type(textOf(0), 'a cat')
+    paste(textOf(0), imageFile()); await settle(); flushSync()
+    type(textOf(0), 'a cat, napping')
+    done(uploaded); await settle(); flushSync()
+    expect(rows()[0].querySelector('img.thumb')).not.toBeNull()
+    expect(rows()[0].querySelector<HTMLInputElement>('input.caption')!.value).toBe('a cat, napping')
+  })
+
   // M19: the speaker-change warning can't be bypassed.
   const twoAwarded = () => quoteMsg([eline({ awards: 2, awarders: ['U1', 'U3'], text: 'first' }), eline({ id: 'L2', awards: 1, awarders: ['U1'], text: 'second' })])
   const warning = () => document.querySelector('.warn')
