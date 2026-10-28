@@ -264,8 +264,8 @@ pub struct Deleted {
 }
 
 /// Everything a deleted quote leaves behind, in the caller's transaction (the quote's own soft
-/// delete is the caller's): its reactions and awards go, its replies are soft-deleted, and its
-/// Quote of the Year options and votes in a live event go; an ended event keeps its own
+/// delete is the caller's): its reactions, awards and lines go, its replies are soft-deleted,
+/// and its Quote of the Year options and votes in a live event go; an ended event keeps its own
 /// (and `qoty_winners` rows stay). Returns what to publish once committed.
 pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppResult<Deleted> {
     let id = message_id.to_string();
@@ -279,6 +279,12 @@ pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppR
     .bind(&id)
     .execute(&mut *tx)
     .await?;
+    // Its lines go too: nothing reads a deleted quote's lines (wins keep their own speaker
+    // snapshot), and keeping them would keep the text and keep its pictures from being reclaimed.
+    sqlx::query("DELETE FROM quote_lines WHERE message_id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
     // Only a live event loses the quote; an ended one keeps its options and votes as history.
     // Votes go with their option (foreign key cascade), but not by luck: say so.
     const LIVE: &str = "event_id IN (SELECT id FROM qoty_events WHERE ended_at IS NULL)";

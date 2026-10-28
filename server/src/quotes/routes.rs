@@ -202,6 +202,9 @@ async fn edit_quote(
     if live.is_none() {
         return Err(AppError::NotFound);
     }
+    // A vote whose time ran out is over even if no sweep has ended it yet: end it first, so its
+    // card shows the quote as it was voted on (and its speakers are no longer locked).
+    let overdue = crate::qoty::ending::end_if_overdue(&mut tx, server).await?;
     super::check_lines(&mut tx, server, &mut lines).await?;
 
     let stored: Vec<StoredLine> =
@@ -286,6 +289,9 @@ async fn edit_quote(
         .execute(&mut *tx)
         .await?;
     tx.commit().await?;
+    if let Some(ended) = overdue {
+        crate::qoty::ending::announce(&s, ended).await;
+    }
 
     let event = reread(&s, id).await;
     if let Some(message) = event.clone() {

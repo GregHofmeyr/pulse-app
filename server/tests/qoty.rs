@@ -1321,6 +1321,60 @@ async fn past_its_deadline(f: &Fixture) -> (QotyEvent, MessageId, MessageId) {
     (e, a, b)
 }
 
+/// A quote deleted after the deadline but before the sweep still wins the vote it led (M11).
+#[tokio::test]
+async fn a_delete_after_the_deadline_doesnt_change_the_result() {
+    let f = fixture().await;
+    let (_, a, _) = past_its_deadline(&f).await;
+    let r = f
+        .call(Method::DELETE, &f.alex_t, &format!("/messages/{a}"), None)
+        .await;
+    assert_eq!(r.status(), 204);
+    pulse_server::qoty::end_overdue(&f.app.state(), &pulse_server::db::now())
+        .await
+        .unwrap();
+    let cards = f.cards(f.ch.id).await;
+    let won: Vec<_> = cards
+        .iter()
+        .map(|c| c.qoty_card.as_ref().unwrap().message_id)
+        .collect();
+    assert_eq!(won, vec![Some(a)], "a led when time ran out, so a won");
+    assert_eq!(f.count("SELECT COUNT(*) FROM qoty_winners").await, 1);
+}
+
+/// An edit after the deadline but before the sweep doesn't change the winner card (M11).
+#[tokio::test]
+async fn an_edit_after_the_deadline_doesnt_change_the_card() {
+    let f = fixture().await;
+    let (_, a, _) = past_its_deadline(&f).await;
+    let page: Vec<Message> = get_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/messages", f.ch.id),
+    )
+    .await;
+    let q = page.into_iter().find(|m| m.id == a).unwrap();
+    let line = q.quote.as_ref().unwrap().lines[0].id;
+    assert_eq!(
+        f.edit(
+            &q,
+            json!([{ "id": line, "speaker_id": f.sam, "text": "rewritten" }])
+        )
+        .await,
+        200
+    );
+    pulse_server::qoty::end_overdue(&f.app.state(), &pulse_server::db::now())
+        .await
+        .unwrap();
+    let cards = f.cards(f.ch.id).await;
+    assert_eq!(cards.len(), 1);
+    assert!(
+        cards[0].content.contains("“a” — sam"),
+        "{}",
+        cards[0].content
+    );
+}
+
 #[tokio::test]
 async fn nothing_changes_after_the_deadline() {
     let f = fixture().await;

@@ -394,6 +394,66 @@ async fn cleanup_keeps_media_used_by_a_quote_line() {
     assert_eq!(media_rows(&app).await, 0);
 }
 
+/// A deleted quote leaves nothing behind (I6): its lines go, so its picture and still are
+/// reclaimed and its text is no longer stored.
+#[tokio::test]
+async fn deleting_a_quote_frees_its_lines_and_pictures() {
+    let app = spawn().await;
+    let (alex, token) = register(&app, "alex").await;
+    let info: MediaInfo = upload_to(&app, "/media/quote", &token, gif(3))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let server = create_server(&app, &token, "home").await;
+    let r = post_json(
+        &app,
+        &token,
+        &format!("/servers/{}/channels", server.id),
+        serde_json::json!({ "kind": "quotes", "name": "quotes" }),
+    )
+    .await;
+    let ch: pulse_protocol::rest::Channel = r.json().await.unwrap();
+    let r = post_json(
+        &app,
+        &token,
+        &format!("/channels/{}/quotes", ch.id),
+        serde_json::json!({ "lines": [
+            { "speaker_id": alex, "media_hash": info.hash },
+            { "speaker_name": "A Friend", "text": "embarrassing" },
+        ] }),
+    )
+    .await;
+    assert_eq!(r.status(), 200, "post quote");
+    let q: pulse_protocol::rest::Message = r.json().await.unwrap();
+    let dir = &app.cfg.media_dir;
+    assert_eq!(
+        media::cleanup(&app.db, dir, Duration::ZERO).await.unwrap(),
+        0,
+        "in use"
+    );
+
+    let r = app
+        .http
+        .delete(app.url(&format!("/messages/{}", q.id)))
+        .bearer_auth(&token)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    let lines: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM quote_lines")
+        .fetch_one(&app.db)
+        .await
+        .unwrap();
+    assert_eq!(lines, 0, "the line text is gone");
+    assert_eq!(
+        media::cleanup(&app.db, dir, Duration::ZERO).await.unwrap(),
+        2,
+        "the picture and its still are reclaimed"
+    );
+    assert!(!media::path_for(dir, &info.hash).unwrap().exists());
+}
+
 /// Incompressible pixels as a JPEG: under the 2 MB input cap, yet well over the 1 MB a still quote
 /// may be once converted.
 fn noisy_jpeg(size: u32) -> Vec<u8> {

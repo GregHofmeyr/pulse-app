@@ -518,7 +518,7 @@ async fn remove(
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests);
     }
-    let (msg, _) = own_message(&s.db, me, id).await?;
+    let (msg, ch) = own_message(&s.db, me, id).await?;
     let is_quote = msg.quote.is_some();
     // A quote's delete drops counts (reactions, awards), and a reply's or a mentioning message's
     // changes mention counts that absolute read-state counts are measured against: publish in
@@ -529,6 +529,12 @@ async fn remove(
         None
     };
     let mut tx = crate::db::begin_write(&s.db).await?;
+    // A vote whose time ran out is over even if no sweep has ended it yet: end it first, so the
+    // quote it may have won with is still there (and still its option) when it is counted.
+    let overdue = match ch.server_id {
+        Some(server) if is_quote => crate::qoty::ending::end_if_overdue(&mut tx, server).await?,
+        _ => None,
+    };
     let changed = sqlx::query(
         "UPDATE messages SET content = '', deleted_at = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
     )
@@ -547,6 +553,10 @@ async fn remove(
         None
     };
     tx.commit().await?;
+    if let Some(ended) = overdue {
+        // Under this delete's `in_order` guard (taken because it is a quote).
+        crate::qoty::ending::announce(&s, ended).await;
+    }
     s.hub
         .publish(
             &s.db,
