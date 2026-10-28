@@ -71,4 +71,34 @@ if FFMPEG_URL="file://$work/missing.zip" FFMPEG_SHA256="$good_sha" FFMPEG_DEST="
     fail "a folder missing ffprobe.exe counted as up to date"
 fi
 
+# 6. No unzip, 7z only, under MSYS (cygpath present): 7z gets the cygpath -w paths. PATH holds only stubs and the
+# tools the script needs, so neither unzip nor python3 can be picked first.
+stub="$work/stub"
+mkdir -p "$stub"
+for t in bash curl sha256sum cut mktemp rm mkdir cp mv cat dirname; do ln -s "$(command -v "$t")" "$stub/$t"; done
+py=$(command -v python3)
+cat > "$stub/cygpath" <<STUB
+#!$(command -v bash)
+[ "\$1" = "-w" ] || exit 2
+printf 'WIN:%s\n' "\$2"
+STUB
+cat > "$stub/7z" <<STUB
+#!$(command -v bash)
+# Fake native 7z: logs its arguments, then extracts only if both paths came through cygpath.
+printf '%s\n' "\$@" > "$work/7z.args"
+out=; zip=
+for a in "\$@"; do
+    case "\$a" in -oWIN:*) out=\${a#-oWIN:} ;; WIN:*) zip=\${a#WIN:} ;; esac
+done
+[ -n "\$out" ] && [ -n "\$zip" ] || { echo "7z got a non-native path" >&2; exit 2; }
+"$py" -I -m zipfile -e "\$zip" "\$out"
+STUB
+chmod +x "$stub/cygpath" "$stub/7z"
+dest7="$work/out7/ffmpeg"
+PATH="$stub" FFMPEG_URL="file://$zip" FFMPEG_SHA256="$good_sha" FFMPEG_DEST="$dest7" "$stub/bash" "$fetch" \
+    >"$work/log" 2>&1 || { cat "$work/log" >&2; fail "the 7z path (MSYS) failed"; }
+grep -qx -- '-oWIN:.*/x' "$work/7z.args" || fail "7z output dir wasn't converted: $(cat "$work/7z.args")"
+grep -qx 'WIN:.*/ffmpeg.zip' "$work/7z.args" || fail "7z archive path wasn't converted: $(cat "$work/7z.args")"
+[ -f "$dest7/ffmpeg.exe" ] && [ -f "$dest7/LICENSE.txt" ] || fail "the 7z path extracted nothing"
+
 echo "fetch-ffmpeg self-test: ok"

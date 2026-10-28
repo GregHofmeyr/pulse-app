@@ -53,7 +53,9 @@ mkdir "$tmp/x"
 if command -v unzip >/dev/null; then
     unzip -q "$tmp/ffmpeg.zip" -d "$tmp/x"
 elif command -v 7z >/dev/null; then
-    7z x -bd -y -o"$tmp/x" "$tmp/ffmpeg.zip" >/dev/null
+    # 7z.exe is a native Windows program: under Git Bash/MSYS it needs Windows paths, not /tmp/... ones.
+    native() { if command -v cygpath >/dev/null; then cygpath -w "$1"; else printf '%s\n' "$1"; fi; }
+    7z x -bd -y -o"$(native "$tmp/x")" "$(native "$tmp/ffmpeg.zip")" >/dev/null
 else
     python3 -I -m zipfile -e "$tmp/ffmpeg.zip" "$tmp/x"
 fi
