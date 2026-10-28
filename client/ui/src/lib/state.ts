@@ -16,6 +16,11 @@ import type { StreamInfo } from './protocol/StreamInfo'
 import type { User } from './protocol/User'
 import type { VoiceMember } from './protocol/VoiceMember'
 
+/** A winner card's text once its quote is deleted: the server writes exactly this (`quotes::on_delete`). */
+export function deletedWinnerContent(year: number): string {
+  return `Quote of the Year ${year}: a deleted quote`
+}
+
 export type ConnState =
   | 'connecting'
   | 'connected'
@@ -336,7 +341,14 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'MessageDeleted': {
       if (e.d.thread_root_id) return replyDeleted(s, e.d)
       const { channel_id: c, message_id: id, author_id, mentions } = e.d
-      const gone = (m: Message): Message => (m.id === id ? { ...m, deleted: true, content: '' } : m)
+      // A deleted quote's winner cards (in its channel) drop its words now, as the server's
+      // MessageUpdated for them will: a card showing a fetched copy of the quote needn't wait for it.
+      const gone = (m: Message): Message =>
+        m.id === id
+          ? { ...m, deleted: true, content: '' }
+          : m.qoty_card?.message_id === id && !m.deleted
+            ? { ...m, content: deletedWinnerContent(m.qoty_card.year) }
+            : m
       // An unread message from someone else comes back out of the counts (mirrors MessageCreated).
       const read = s.reads[c]
       const wasUnread = read && author_id !== s.me?.id && id > (read.last_read_message_id ?? '')

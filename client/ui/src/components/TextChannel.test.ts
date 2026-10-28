@@ -272,6 +272,34 @@ describe('TextChannel: quotes channel', () => {
     expect(document.querySelector('.qoty-card .q p')?.textContent).toBe('“hi there”')
   })
 
+  it('a fetched winner switches to the deleted placeholder as soon as its quote is deleted', async () => {
+    const card: Message = {
+      ...msg(2), author_id: null, kind: 'system', content: 'Quote of the Year 2026: “hi” — alex',
+      qoty_card: { event_id: 'E1', year: 2026, message_id: quoteMsg.id, votes: 1, voters: ['U1'], reason: 'time', speakers: [{ user_id: 'U1', name: null }] },
+    }
+    const settled = async () => {
+      for (let i = 0; i < 3; i++) await tick()
+      await new Promise((r) => setTimeout(r, 0))
+      flushSync()
+    }
+    for (const event of ['deleted', 'updated'] as const) {
+      let fetches = 0
+      // The first fetch finds the quote; any re-fetch never answers (the placeholder can't wait on it).
+      invoke.mockImplementation((cmd: string) => (cmd === 'list_messages_around' ? (fetches++ ? new Promise(() => {}) : Promise.resolve([quoteMsg])) : Promise.resolve(undefined)))
+      show('quotes', [card])
+      await settled()
+      expect(document.querySelector('.qoty-card .q p')?.textContent, event).toBe('“hi”')
+      app.state = event === 'deleted'
+        ? applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: quoteMsg.id, thread_root_id: null, author_id: 'U1', mentions: [] } }, Date.now())
+        : applyEvent(app.state, { t: 'MessageUpdated', d: { message: { ...card, content: 'Quote of the Year 2026: a deleted quote' } } }, Date.now())
+      flushSync()
+      expect(document.querySelector('.qoty-card .q')?.textContent, event).toBe('This quote was deleted.')
+      expect(document.querySelector('.qoty-card .who')?.textContent, event).toContain('Quote of the Year 2026')
+      for (const c of mounted.splice(0)) unmount(c)
+      document.body.innerHTML = ''
+    }
+  })
+
   it('offers Start only while no vote is live', () => {
     show('quotes', [])
     const start = () => [...document.querySelectorAll('button')].find((b) => b.textContent === 'Start Quote of the Year')

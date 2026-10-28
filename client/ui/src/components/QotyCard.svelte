@@ -14,6 +14,7 @@
   import { nameOfIn } from '../lib/selectors'
   import { app, clock } from '../lib/store.svelte'
   import type { Message } from '../lib/protocol/Message'
+  import { deletedWinnerContent } from '../lib/state'
 
   let { message, serverId, quote }: {
     message: Message
@@ -50,9 +51,10 @@
   })
   // The loaded (live) message whenever the channel has it; the fetched one is a snapshot, only for until then.
   const shown = $derived(quote ?? fetched)
-  const lines = $derived(shown?.quote && !shown.deleted ? shown.quote.lines : null)
-  // A deleted winner keeps its win (spec §3.1) but not its words.
-  const deleted = $derived(!!shown?.deleted || (!shown && missing))
+  // A deleted winner keeps its win (spec §3.1) but not its words. The card's own text says so as
+  // soon as the quote's delete arrives, before any re-fetch of a copy that still has the words.
+  const deleted = $derived(message.content === deletedWinnerContent(card.year) || !!shown?.deleted || (!shown && missing))
+  const lines = $derived(shown?.quote && !deleted ? shown.quote.lines : null)
   /** While the quote loads (or if it can't be): the text the server wrote ("Quote of the Year 2026: “…” — sam"). */
   const fallback = $derived(message.content.replace(`Quote of the Year ${card.year}: `, ''))
   // Who said it when the vote ended (spec §3.2: a later edit or link never moves a win); a card
