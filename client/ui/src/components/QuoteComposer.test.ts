@@ -384,6 +384,34 @@ describe('QuoteComposer', () => {
     expect(rows()[0].querySelector<HTMLInputElement>('input.caption')!.value).toBe('a cat, napping')
   })
 
+  it('an image removed while its replacement uploads stays removed and the typed words stay', async () => {
+    let done: (v: unknown) => void = () => {}
+    let n = 0
+    invoke.mockImplementation((cmd) => (cmd === 'upload_quote_media' ? (n++ ? new Promise((r) => (done = r)) : Promise.resolve(uploaded)) : Promise.resolve(undefined)))
+    show()
+    paste(textOf(0), imageFile()); await settle(); flushSync()
+    const ev = Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer: { files: [imageFile()], types: ['Files'] } })
+    rows()[0].dispatchEvent(ev); await settle(); flushSync()
+    rows()[0].querySelector<HTMLButtonElement>('button[aria-label="Remove image"]')!.click(); flushSync()
+    type(textOf(0), 'never mind the picture')
+    done({ ...uploaded, hash: S }); await settle(); flushSync()
+    expect(rows()[0].querySelector('img.thumb')).toBeNull()
+    expect(textOf(0).value).toBe('never mind the picture')
+  })
+
+  it('a caption over 200 characters is refused when posting', async () => {
+    invoke.mockImplementation(async (cmd) => (cmd === 'upload_quote_media' ? uploaded : undefined))
+    show()
+    paste(textOf(0), imageFile()); await settle(); flushSync()
+    pickMember(0, 'sam')
+    const cap = rows()[0].querySelector<HTMLInputElement>('input.caption')!
+    type(cap, 'x'.repeat(201))
+    enter(cap); await settle()
+    expect(calls('post_quote')).toHaveLength(0)
+    expect(document.body.textContent).toContain('A caption can be at most 200 characters.')
+    expect(cap.value).toHaveLength(201)
+  })
+
   // M19: the speaker-change warning can't be bypassed.
   const twoAwarded = () => quoteMsg([eline({ awards: 2, awarders: ['U1', 'U3'], text: 'first' }), eline({ id: 'L2', awards: 1, awarders: ['U1'], text: 'second' })])
   const warning = () => document.querySelector('.warn')

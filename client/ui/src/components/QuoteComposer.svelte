@@ -188,6 +188,8 @@
     r.uploading = true
     try {
       const info = await api.uploadQuoteMedia(await bytes(f))
+      // the image this one was replacing was removed meanwhile: the line is a text line again, so drop the upload
+      if (!convert && !r.pic) return
       r.pic = { hash: info.hash, still_hash: info.still_hash }
       if (convert) {
         r.caption = r.text.trim()
