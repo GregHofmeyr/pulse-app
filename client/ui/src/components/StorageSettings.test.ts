@@ -14,11 +14,13 @@ afterEach(() => {
   cmp = undefined
   document.body.innerHTML = ''
 })
-const settle = () => new Promise((r) => setTimeout(r, 0))
-async function show() {
+function mountIt() {
   cmp = mount(StorageSettings, { target: document.body, props: { server } })
-  await settle()
   flushSync()
+}
+async function show() {
+  mountIt()
+  await vi.waitFor(() => expect(document.querySelector('p:not(.loading)')).not.toBeNull())
 }
 
 describe('StorageSettings', () => {
@@ -43,5 +45,34 @@ describe('StorageSettings', () => {
     invoke.mockRejectedValue("Clips storage isn't set up on this server.")
     await show()
     expect(document.querySelector('[role=alert]')!.textContent).toBe("Clips storage isn't set up on this server.")
+  })
+
+  it('says loading until the answer arrives', async () => {
+    invoke.mockReset()
+    let done!: (v: unknown) => void
+    invoke.mockReturnValue(new Promise((r) => { done = r }))
+    mountIt()
+    expect(document.querySelector('.loading')!.textContent).toBe('Loading…')
+    done({ bytes: 0, count: 0, est_monthly_usd: 0 })
+    await vi.waitFor(() => expect(document.querySelector('.loading')).toBeNull())
+  })
+
+  it('a cent exactly shows the amount, just under says under a cent', async () => {
+    invoke.mockReset()
+    invoke.mockResolvedValue({ bytes: 700_000_000, count: 2, est_monthly_usd: 0.01 })
+    await show()
+    expect(document.body.textContent).toContain("about $0.01 a month")
+    unmount(cmp!)
+    document.body.innerHTML = ''
+    invoke.mockResolvedValue({ bytes: 600_000_000, count: 2, est_monthly_usd: 0.0099 })
+    await show()
+    expect(document.body.textContent).toContain("under $0.01 a month")
+  })
+
+  it('an empty server reads 0 clips', async () => {
+    invoke.mockReset()
+    invoke.mockResolvedValue({ bytes: 0, count: 0, est_monthly_usd: 0 })
+    await show()
+    expect(document.body.textContent).toContain("0 clips · 0 B · under $0.01 a month at R2's list price")
   })
 })

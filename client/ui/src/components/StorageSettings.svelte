@@ -28,7 +28,9 @@
 <h3>Clips</h3>
 {#if error}
   <p class="error" role="alert">{error}</p>
-{:else if usage}
+{:else if !usage}
+  <p class="loading">Loading…</p>
+{:else}
   <p>{usage.count} {usage.count === 1 ? 'clip' : 'clips'} · {formatBytes(usage.bytes)} · {cost(usage.est_monthly_usd)} a month at R2's list price</p>
 {/if}
 
