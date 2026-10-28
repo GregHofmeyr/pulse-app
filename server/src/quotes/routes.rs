@@ -187,6 +187,8 @@ async fn edit_quote(
     if !is_server_member(&s.db, server, me).await? {
         return Err(AppError::Forbidden);
     }
+    // An edit rewrites the lines and can add up to nine more.
+    crate::media::writes_ok(&s.cfg)?;
     let mut lines = super::clean_lines(&req.lines)?;
 
     // Awards counts change with the lines, so publish in commit order (as reactions do).

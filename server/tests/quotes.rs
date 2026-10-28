@@ -3880,3 +3880,65 @@ async fn a_reply_cant_be_the_channel_read_point() {
     assert_eq!(read(reply.id).await.status(), 400);
     assert_eq!(read(q.id).await.status(), 204);
 }
+
+// ---- the disk guard (M9, M25) ----
+
+/// The test config with the disk guard tripped: every write that grows the database is refused.
+fn disk_full() -> pulse_server::config::Config {
+    let mut cfg = test_config();
+    cfg.media_min_free_bytes = u64::MAX;
+    cfg
+}
+
+/// M9: an edit can add lines and text, so a full disk refuses it and nothing changes.
+#[tokio::test]
+async fn editing_a_quote_is_refused_when_disk_is_low() {
+    let f = fixture().await;
+    let m = f.quote().await;
+    let full = spawn_copy(&f.app, disk_full()).await;
+    let mut lines = same_lines(&m);
+    lines.push(json!({ "speaker_id": f.alex, "text": "x".repeat(4000) }));
+    let r = full
+        .http
+        .put(full.url(&format!("/quotes/{}", m.id)))
+        .bearer_auth(&f.alex_t)
+        .json(&json!({ "lines": lines }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 507);
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM quote_lines")
+        .fetch_one(&full.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "not edited");
+}
+
+/// M25: posting a quote and replying to one grow the database: both refused on a full disk.
+#[tokio::test]
+async fn posting_a_quote_or_a_reply_is_refused_when_disk_is_low() {
+    let f = fixture().await;
+    let q = f.quote().await;
+    let full = spawn_copy(&f.app, disk_full()).await;
+    let r = post_json(
+        &full,
+        &f.alex_t,
+        &format!("/channels/{}/quotes", f.ch.id),
+        json!({ "lines": [f.say(f.sam, "y")] }),
+    )
+    .await;
+    assert_eq!(r.status(), 507, "quote");
+    let r = post_json(
+        &full,
+        &f.sam_t,
+        &format!("/channels/{}/messages", f.ch.id),
+        json!({ "content": "ha", "thread_root_id": q.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 507, "reply");
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM messages")
+        .fetch_one(&full.db)
+        .await
+        .unwrap();
+    assert_eq!(n, 1, "only the first quote");
+}

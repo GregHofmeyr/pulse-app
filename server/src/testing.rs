@@ -69,8 +69,23 @@ pub async fn spawn() -> TestApp {
     spawn_with(test_config()).await
 }
 
-pub async fn spawn_with(mut cfg: Config) -> TestApp {
+pub async fn spawn_with(cfg: Config) -> TestApp {
+    spawn_in(cfg, tempfile::tempdir().unwrap()).await
+}
+
+/// Another server on a copy of `app`'s database as it is now, run with `cfg` (say a full disk):
+/// for how a route behaves under that config on data set up through the API. The copy is
+/// independent of `app`, which keeps running; its media dir starts empty.
+pub async fn spawn_copy(app: &TestApp, cfg: Config) -> TestApp {
     let dir = tempfile::tempdir().unwrap();
+    db::backup(&app.db, &dir.path().join("test.db"))
+        .await
+        .unwrap();
+    spawn_in(cfg, dir).await
+}
+
+/// Serve `dir/test.db` (created if missing) with `cfg`; `dir` lives as long as the app.
+async fn spawn_in(mut cfg: Config, dir: tempfile::TempDir) -> TestApp {
     cfg.db_url = format!("sqlite://{}", dir.path().join("test.db").display());
     if cfg.media_dir.as_os_str().is_empty() {
         cfg.media_dir = dir.path().join("media");
