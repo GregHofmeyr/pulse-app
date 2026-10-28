@@ -46,3 +46,45 @@ links to the libraries. Linux builds don't include it.
 - H.264/AAC encoders: the encoder names in `avcodec-62.dll` show `h264_nvenc`, `h264_amf`, `h264_qsv`, `h264_mf`,
   `libopenh264` and `aac` (no `libx264`: it is GPL). Confirm from the first `release-windows` run, whose
   "ffmpeg encoders" step prints `ffmpeg.exe -hide_banner -encoders` filtered to `h264|aac`.
+
+## Fonts
+
+All bundled fonts come from the [Fontsource](https://fontsource.org) npm packages and are licensed under the
+[SIL Open Font License 1.1](https://openfontlicense.org). Only the woff2 files named below are bundled,
+unmodified (`client/ui/src/fonts.css`, `client/ui/src/nameFonts.css`). The licence text ships in each package's `LICENSE`.
+
+### Onest (`@fontsource/onest` 5.3.1)
+
+Copyright 2021 The Onest Project Authors (https://github.com/simpals/onest). SIL Open Font License 1.1. Bundled: the weights 400 to 700 of the latin, latin-ext and symbols woff2 files only, unmodified.
+
+### Cormorant Garamond (`@fontsource/cormorant-garamond` 5.3.0)
+
+Copyright 2015 The Cormorant Project Authors (github.com/CatharsisFonts/Cormorant). SIL Open Font License 1.1. Bundled: weight 600 of the latin and latin-ext woff2 files only, unmodified.
+
+### Fredoka (`@fontsource/fredoka` 5.3.0)
+
+Copyright 2016 The Fredoka Project Authors (https://github.com/hafontia/Fredoka-One). SIL Open Font License 1.1. Bundled: weight 500 of the latin and latin-ext woff2 files only, unmodified.
+
+### Press Start 2P (`@fontsource/press-start-2p` 5.3.0)
+
+Copyright 2012 The Press Start 2P Project Authors, with Reserved Font Name "Press Start 2P". SIL Open Font License 1.1. Bundled: weight 400 of the latin and latin-ext woff2 files only, unmodified.
+
+### Pacifico (`@fontsource/pacifico` 5.3.0)
+
+Copyright 2018 The Pacifico Project Authors (https://github.com/googlefonts/Pacifico). SIL Open Font License 1.1. Bundled: weight 400 of the latin and latin-ext woff2 files only, unmodified.
+
+### Caveat (`@fontsource/caveat` 5.3.0)
+
+Copyright 2014 The Caveat Project Authors (https://github.com/googlefonts/caveat). SIL Open Font License 1.1. Bundled: weight 600 of the latin and latin-ext woff2 files only, unmodified.
+
+### Space Grotesk (`@fontsource/space-grotesk` 5.3.0)
+
+Copyright 2020 The Space Grotesk Project Authors (https://github.com/floriankarsten/space-grotesk). SIL Open Font License 1.1. Bundled: weight 600 of the latin and latin-ext woff2 files only, unmodified.
+
+### Bricolage Grotesque (`@fontsource/bricolage-grotesque` 5.3.0)
+
+Copyright 2022 The Bricolage Grotesque Project Authors (https://github.com/ateliertriay/bricolage). SIL Open Font License 1.1. Bundled: weight 600 of the latin and latin-ext woff2 files only, unmodified.
+
+### Orbitron (`@fontsource/orbitron` 5.3.0)
+
+Copyright 2018 The Orbitron Project Authors (https://github.com/theleagueof/orbitron). SIL Open Font License 1.1. Bundled: weight 600 of the latin woff2 files only, unmodified.

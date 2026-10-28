@@ -234,3 +234,27 @@ pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
         bio,
     })
 }
+
+#[cfg(test)]
+mod name_font_tests {
+    use super::NAME_FONTS;
+
+    /// A literal copy of `NAME_FONTS` in client/ui/src/lib/nameFonts.test.ts: change one side and
+    /// both tests fail.
+    #[test]
+    fn keys_match_the_ui_list() {
+        assert_eq!(
+            NAME_FONTS,
+            [
+                "cormorant-garamond",
+                "fredoka",
+                "press-start-2p",
+                "pacifico",
+                "caveat",
+                "space-grotesk",
+                "bricolage-grotesque",
+                "orbitron",
+            ]
+        );
+    }
+}
