@@ -45,9 +45,8 @@
     caption: string
     pic: Picture | null
     speaker: Speaker | null
-    /** What the speaker was when the line was loaded (edit mode) and how many awards the line holds. */
+    /** What the speaker was when the line was loaded (edit mode). */
     was: string | null
-    awards: number
     query: string
     open: boolean
     /** The highlighted entry of the picker list. */
@@ -57,7 +56,7 @@
   }
 
   let nextKey = 0
-  const blank = (): Row => ({ key: nextKey++, id: null, text: '', caption: '', pic: null, speaker: null, was: null, awards: 0, query: '', open: false, hi: 0, uploading: false, error: '' })
+  const blank = (): Row => ({ key: nextKey++, id: null, text: '', caption: '', pic: null, speaker: null, was: null, query: '', open: false, hi: 0, uploading: false, error: '' })
   const speakerKey = (s: Speaker | null) => (s ? (s.id ? `u:${s.id}` : `n:${nameKey(s.name)}`) : null)
 
   function initial(): Row[] {
@@ -67,7 +66,7 @@
       const speaker: Speaker | null = l.speaker_id ? { id: l.speaker_id, name: displayName(app.state, serverId, l.speaker_id) } : l.speaker_name ? { id: null, name: l.speaker_name } : null
       return {
         ...blank(), id: l.id, text: l.text ?? '', caption: l.caption ?? '', pic: l.media ? { hash: l.media.hash, still_hash: l.media.still_hash } : null,
-        speaker, was: speakerKey(speaker), awards: l.awards,
+        speaker, was: speakerKey(speaker),
       }
     })
   }
@@ -76,8 +75,12 @@
   let busy = $state(false)
   // One id per quote being posted: kept across retries (a failed attempt may have reached the server) and renewed after success.
   let nonce: { id: string; sig: string } | null = null
-  // Edit mode: the lines whose speaker changed while holding awards, waiting for a yes.
+  // Edit mode: the lines whose speaker changed while holding awards, waiting for a yes. Any change to the lines takes
+  // the question down, so a yes only ever covers the lines it named, at the counts it named.
   let confirming = $state<{ key: number; awards: number; what: string }[]>([])
+  // The quote as the store has it now: awards given while the editor is open count too.
+  const live = $derived(editing && (app.state.messages[channelId]?.find((m) => m.id === editing.id) ?? editing))
+  const awardsOf = (r: Row) => (r.id ? (live?.quote?.lines.find((l) => l.id === r.id)?.awards ?? 0) : 0)
   let root = $state<HTMLElement>()
 
   const members = $derived((app.state.members[serverId] ?? []).map((m) => ({ id: m.user.id, name: m.nickname ?? m.user.username })))
@@ -100,10 +103,12 @@
     if (rows.length >= MAX_LINES) return
     const r = blank()
     rows.push(r)
+    confirming = []
     void focusText(r.key)
   }
   function removeLine(key: number) {
     if (rows.length > 1) rows = rows.filter((r) => r.key !== key)
+    confirming = []
   }
 
   function choose(r: Row, s: Speaker) {
@@ -118,6 +123,7 @@
     r.speaker = null
     r.query = ''
     r.open = true
+    confirming = []
     void focusWho(r.key)
   }
   const typed = (r: Row) => r.query.trim()
@@ -137,6 +143,7 @@
     r.speaker = m ? { id: m.user.id, name: m.nickname ?? m.user.username } : { id: null, name: q }
     r.query = ''
     r.open = false
+    confirming = []
   }
   function whyKey(e: KeyboardEvent, r: Row) {
     const list = options(r)
@@ -169,9 +176,10 @@
   async function upload(r: Row, f: File) {
     if (r.uploading) return
     r.error = ''
-    // typed words become the caption; if they don't fit, nothing is converted or thrown away
-    const words = r.text.trim()
-    if ([...words].length > MAX_CAPTION) {
+    // typed words become the caption; if they don't fit, nothing is converted or thrown away. A new image on an image
+    // line keeps its caption.
+    const words = r.pic ? r.caption : r.text.trim()
+    if (!r.pic && [...words].length > MAX_CAPTION) {
       r.error = `That text is too long for a caption (${MAX_CAPTION} characters at most). Shorten it, or clear it first.`
       return
     }
@@ -275,10 +283,12 @@
     for (const r of rows) resolveTyped(r)
     const lines = build()
     if (!lines) return
-    if (editing && !confirmed) {
-      const hit = rows.filter((r) => r.id && r.awards > 0 && speakerKey(r.speaker) !== r.was)
-      if (hit.length) {
-        confirming = hit.map((r) => ({ key: r.key, awards: r.awards, what: r.pic ? 'Image' : `“${[...r.text.trim()].slice(0, 30).join('')}”` }))
+    if (editing) {
+      // "Save anyway" covers only the lines it named, and only at the counts it named
+      const yes = confirmed ? confirming : []
+      const risky = rows.filter((r) => awardsOf(r) > 0 && speakerKey(r.speaker) !== r.was)
+      if (risky.some((r) => !yes.some((c) => c.key === r.key && c.awards >= awardsOf(r)))) {
+        confirming = risky.map((r) => ({ key: r.key, awards: awardsOf(r), what: r.pic ? 'Image' : `“${[...r.text.trim()].slice(0, 30).join('')}”` }))
         return
       }
     }
@@ -328,7 +338,8 @@
             <img class="thumb" src={stillSrc({ hash: r.pic.hash, still_hash: r.pic.still_hash })} alt="" />
             <button type="button" class="x" aria-label="Remove image" onclick={() => (r.pic = null)}><Icon name="x" size={12} /></button>
           </div>
-          <input class="caption" type="text" placeholder="Caption (optional)" aria-label="Caption" bind:value={r.caption} onkeydown={textKey} />
+          <input class="caption" type="text" placeholder="Caption (optional)" aria-label="Caption" bind:value={r.caption} onkeydown={textKey}
+            onpaste={(e) => onPaste(e, r)} />
         {:else}
           <textarea class="qtext" rows="1" placeholder={rows.length > 1 ? 'What they said' : 'Paste or type the quote'} aria-label="Quote text" bind:value={r.text}
             onkeydown={textKey} onpaste={(e) => onPaste(e, r)}></textarea>

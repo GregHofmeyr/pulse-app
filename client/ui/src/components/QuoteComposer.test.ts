@@ -327,6 +327,98 @@ describe('QuoteComposer', () => {
     expect(t).toContain('“second” This line has 1 award. Changing who said it removes them.')
   })
 
+  // M18: a new image on an image line keeps its caption; pasting an image into the caption box replaces the image.
+  it('a new image dropped on an image line keeps its caption', async () => {
+    let n = 0
+    invoke.mockImplementation(async (cmd) => (cmd === 'upload_quote_media' ? { ...uploaded, hash: n++ ? S : H } : undefined))
+    show()
+    type(textOf(0), 'a cat')
+    paste(textOf(0), imageFile()); await settle(); flushSync()
+    const cap = () => rows()[0].querySelector<HTMLInputElement>('input.caption')!
+    expect(cap().value).toBe('a cat')
+    const ev = Object.assign(new Event('drop', { bubbles: true, cancelable: true }), { dataTransfer: { files: [imageFile()], types: ['Files'] } })
+    rows()[0].dispatchEvent(ev); await settle(); flushSync()
+    expect(calls('upload_quote_media')).toHaveLength(2)
+    expect(rows()[0].querySelector<HTMLImageElement>('img.thumb')!.getAttribute('src')).toContain(S)
+    expect(cap().value).toBe('a cat')
+  })
+
+  it('pasting an image into the caption box replaces the image and keeps the caption', async () => {
+    let n = 0
+    invoke.mockImplementation(async (cmd) => (cmd === 'upload_quote_media' ? { ...uploaded, hash: n++ ? S : H } : undefined))
+    show()
+    paste(textOf(0), imageFile()); await settle(); flushSync()
+    const cap = () => rows()[0].querySelector<HTMLInputElement>('input.caption')!
+    type(cap(), 'a dog')
+    paste(cap(), imageFile()); await settle(); flushSync()
+    expect(calls('upload_quote_media')).toHaveLength(2)
+    expect(rows()[0].querySelector<HTMLImageElement>('img.thumb')!.getAttribute('src')).toContain(S)
+    expect(cap().value).toBe('a dog')
+  })
+
+  // M19: the speaker-change warning can't be bypassed.
+  const twoAwarded = () => quoteMsg([eline({ awards: 2, awarders: ['U1', 'U3'], text: 'first' }), eline({ id: 'L2', awards: 1, awarders: ['U1'], text: 'second' })])
+  const warning = () => document.querySelector('.warn')
+  it('changing another line while the warning is up takes the warning down', async () => {
+    show({ editing: twoAwarded() })
+    rows()[0].querySelector<HTMLElement>('.chip')!.click(); flushSync(); pickMember(0, 'kim')
+    enter(textOf(0)); await settle()
+    expect(warning()).not.toBeNull()
+    rows()[1].querySelector<HTMLElement>('.chip')!.click(); flushSync()
+    expect(warning()).toBeNull()
+  })
+
+  it('a typed name resolving, adding a line or removing one takes the warning down', async () => {
+    show({ editing: twoAwarded() })
+    const warnFor0 = async () => {
+      rows()[0].querySelector<HTMLElement>('.chip')?.click(); flushSync(); pickMember(0, 'kim')
+      enter(textOf(0)); await settle()
+      expect(warning()).not.toBeNull()
+    }
+    // a typed name on a blank third line (blank lines are skipped), resolved when its box loses focus
+    addLine()
+    await warnFor0()
+    const w = whoOf(2); w.focus(); type(w, 'Grandpa'); w.dispatchEvent(new FocusEvent('blur')); flushSync()
+    expect(rows()[2].querySelector('.chip')!.textContent).toContain('Grandpa')
+    expect(warning()).toBeNull()
+    type(textOf(2), 'back in my day')
+    await warnFor0()
+    addLine()
+    expect(warning()).toBeNull()
+    await warnFor0()
+    rows()[3].querySelector<HTMLButtonElement>('button[aria-label="Remove line"]')!.click(); flushSync()
+    expect(warning()).toBeNull()
+  })
+
+  it('a line that gains its first award mid-edit warns', async () => {
+    const m = quoteMsg([eline()])
+    show({ editing: m })
+    app.state = { ...app.state, messages: { C1: [m] } }
+    rows()[0].querySelector<HTMLElement>('.chip')!.click(); flushSync(); pickMember(0, 'kim')
+    app.state = { ...app.state, messages: { C1: [quoteMsg([eline({ awards: 1, awarders: ['U3'] })])] } }
+    flushSync()
+    enter(textOf(0)); await settle()
+    expect(calls('edit_quote')).toHaveLength(0)
+    expect(document.body.textContent).toContain('This line has 1 award. Changing who said it removes them.')
+  })
+
+  it('"Save anyway" skips only the lines that were confirmed', async () => {
+    const m = quoteMsg([eline({ text: 'first' }), eline({ id: 'L2', awards: 1, awarders: ['U1'], text: 'second' })])
+    show({ editing: m })
+    app.state = { ...app.state, messages: { C1: [m] } }
+    for (const n of [0, 1]) { rows()[n].querySelector<HTMLElement>('.chip')!.click(); flushSync(); pickMember(n, 'kim') }
+    enter(textOf(0)); await settle()
+    expect(warning()!.textContent).not.toContain('“first”')
+    // line 1 gains an award while the warning for line 2 is up
+    app.state = { ...app.state, messages: { C1: [quoteMsg([eline({ text: 'first', awards: 1, awarders: ['U3'] }), eline({ id: 'L2', awards: 1, awarders: ['U1'], text: 'second' })])] } }
+    flushSync()
+    document.querySelector<HTMLButtonElement>('button.confirm')!.click(); await settle()
+    expect(calls('edit_quote')).toHaveLength(0)
+    expect(warning()!.textContent).toContain('“first” This line has 1 award.')
+    document.querySelector<HTMLButtonElement>('button.confirm')!.click(); await settle()
+    expect(calls('edit_quote')).toHaveLength(1)
+  })
+
   it('a retry after changing the text gets a new nonce', async () => {
     let n = 0
     invoke.mockImplementation(async (cmd) => { if (cmd === 'post_quote' && n++ === 0) throw 'network down'; return undefined })
