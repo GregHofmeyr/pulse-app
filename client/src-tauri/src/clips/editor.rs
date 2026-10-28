@@ -3,30 +3,21 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
-use tokio::io::{AsyncBufReadExt, BufReader};
 
+use super::encode::{self, CHAIN, Encoder, FfmpegRunner, run_with_fallback};
+use super::ffmpeg::FfmpegPaths;
 use super::preview::{self, PreviewPlan};
 use super::probe::{self, Probe};
+use super::progress;
 use super::{ffmpeg, game};
 
 pub const UNREADABLE: &str = "Pulse couldn't read that video.";
 pub const NO_PREVIEW: &str = "Pulse couldn't prepare a preview of that video.";
 pub const NO_FILMSTRIP: &str = "Pulse couldn't read the frames of that video.";
-
-/// Hardware first; the LGPL build has no x264, so the last only matters on a dev machine.
-const ENCODERS: [&str; 6] = [
-    "h264_nvenc",
-    "h264_amf",
-    "h264_qsv",
-    "h264_mf",
-    "libopenh264",
-    "libx264",
-];
 
 const PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 const FILMSTRIP_TIMEOUT: Duration = Duration::from_secs(120);
@@ -201,81 +192,56 @@ pub fn extension(path: &Path) -> String {
         .unwrap_or_default()
 }
 
-/// One `-progress` line to a whole percent (0 to 99; 100 is for the caller once ffmpeg exits). Only
-/// `out_time_us=` lines with a positive time count as progress.
-pub fn progress_percent(line: &str, duration_ms: u64) -> Option<u8> {
-    let us: i64 = line.strip_prefix("out_time_us=")?.trim().parse().ok()?;
-    (us > 0).then(|| (us / 1000 * 100 / duration_ms.max(1) as i64).clamp(0, 99) as u8)
-}
-
-enum Run {
-    Done,
-    /// ffmpeg exited with an error; `progressed` is whether it had reported any progress first.
-    Failed {
-        progressed: bool,
-    },
-}
-
-/// Run ffmpeg with `-progress`, reporting whole percents of `duration_ms`.
-async fn run_with_progress(
-    ffmpeg_exe: &Path,
-    args: &[String],
-    duration_ms: u64,
-    on_percent: &mut impl FnMut(u8),
-) -> std::io::Result<Run> {
-    let mut cmd = ffmpeg::command(
-        ffmpeg_exe,
-        ["-v", "error", "-nostats", "-progress", "pipe:1"]
-            .into_iter()
-            .chain(args.iter().map(String::as_str)),
-    );
-    cmd.stdout(Stdio::piped()).stderr(Stdio::null());
-    let mut child = cmd.spawn()?;
-    let mut lines = BufReader::new(child.stdout.take().expect("piped stdout")).lines();
-    let (mut progressed, mut last) = (false, 0u8);
-    while let Some(line) = lines.next_line().await? {
-        let Some(pct) = progress_percent(&line, duration_ms) else {
-            continue;
-        };
-        progressed = true;
-        if pct != last {
-            last = pct;
-            on_percent(pct);
-        }
-    }
-    Ok(if child.wait().await?.success() {
-        Run::Done
-    } else {
-        Run::Failed { progressed }
-    })
-}
-
-/// Make `<dir>/preview.mp4` for a Remux or Encode source. Encode tries each encoder in turn, moving on
-/// only when one fails before reporting any progress (it could not start: no such GPU, busy).
+/// Make `<dir>/preview.mp4` for a Remux or Encode source. Encode goes down the shared encoder chain
+/// (`encode::run_with_fallback`); a Remux has just the one run.
 pub async fn make_preview(
-    ffmpeg_exe: &Path,
+    paths: &FfmpegPaths,
     entry: &Entry,
-    mut on_percent: impl FnMut(u8),
+    mut on_percent: impl FnMut(u8) + Send,
 ) -> Result<PathBuf, String> {
     let out = entry.dir.join("preview.mp4");
     std::fs::create_dir_all(&entry.dir).map_err(|_| NO_PREVIEW.to_owned())?;
     let (src, dst) = (text(&entry.path), text(&out));
     let copy_audio = preview::can_copy_audio(&entry.probe);
-    let encoders: &[&str] = if entry.plan == PreviewPlan::Encode {
-        &ENCODERS
+    let encoders: &[Encoder] = if entry.plan == PreviewPlan::Encode {
+        &CHAIN
     } else {
-        &[""]
+        &CHAIN[..1]
     };
-    for encoder in encoders {
-        let args = preview::args(entry.plan, &src, &dst, encoder, copy_audio);
-        match run_with_progress(ffmpeg_exe, &args, entry.probe.duration_ms, &mut on_percent).await {
-            Ok(Run::Done) => return Ok(out),
-            Ok(Run::Failed { progressed: false }) => {}
-            _ => break,
+    let build = |enc: Encoder| {
+        let mut a = encode::head();
+        a.extend(preview::args(
+            entry.plan,
+            &src,
+            &dst,
+            enc.name(),
+            copy_audio,
+        ));
+        a
+    };
+    let mut last = 0u8;
+    let on_progress = |fraction: f32| {
+        let pct = progress::percent(fraction);
+        if pct != last {
+            last = pct;
+            on_percent(pct);
         }
+    };
+    let runner = FfmpegRunner(paths.clone());
+    let done = run_with_fallback(
+        &runner,
+        encoders,
+        entry.probe.duration_ms,
+        build,
+        on_progress,
+    )
+    .await;
+    if let Err(e) = done {
+        tracing::warn!(error = ?e, "clips: preview not made");
+        let _ = std::fs::remove_file(&out);
+        return Err(NO_PREVIEW.to_owned());
     }
-    let _ = std::fs::remove_file(&out);
-    Err(NO_PREVIEW.to_owned())
+    Ok(out)
 }
 
 /// Make `<dir>/filmstrip.jpg`.
@@ -355,19 +321,6 @@ mod tests {
         let json = serde_json::to_value(&c).unwrap();
         assert_eq!(json["preview"], "direct");
         assert_eq!(json["duration_ms"], 1000);
-    }
-
-    #[test]
-    fn progress_lines_become_percents() {
-        assert_eq!(progress_percent("out_time_us=5000000", 10_000), Some(50));
-        assert_eq!(progress_percent("out_time_us=99999999", 10_000), Some(99));
-        // N/A at the start, zero time, other keys and junk are not progress
-        assert_eq!(progress_percent("out_time_us=N/A", 10_000), None);
-        assert_eq!(progress_percent("out_time_us=0", 10_000), None);
-        assert_eq!(progress_percent("out_time_us=-5", 10_000), None);
-        assert_eq!(progress_percent("out_time_ms=5000000", 10_000), None);
-        assert_eq!(progress_percent("progress=continue", 10_000), None);
-        assert_eq!(progress_percent("out_time_us=1000", 0), Some(99));
     }
 
     #[test]

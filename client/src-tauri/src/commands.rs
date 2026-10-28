@@ -1536,7 +1536,7 @@ pub async fn prepare_preview(
     }
     let tools = ffmpeg_paths(&app)?;
     let id = source.clone();
-    let out = editor::make_preview(&tools.ffmpeg, &entry, |percent| {
+    let out = editor::make_preview(&tools, &entry, |percent| {
         let _ = app.emit(
             "clip://preview",
             serde_json::json!({ "source": id, "percent": percent }),

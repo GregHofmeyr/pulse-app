@@ -120,6 +120,13 @@ jobs:
       - run: cargo fmt --all -- --check
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: cargo test --workspace
+      # The export against a real ffmpeg (the #[ignore] clips_it); the distro build has x264 for the CPU path.
+      - name: Clips export against real ffmpeg
+        env:
+          PULSE_DEV_FFMPEG_DIR: /usr/bin
+        run: |
+          sudo apt-get install -y --no-install-recommends ffmpeg
+          cargo test -p pulse-client --test clips_it -- --ignored
       - run: just types-check
 
   ui:
