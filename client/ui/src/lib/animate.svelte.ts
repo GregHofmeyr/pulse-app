@@ -76,12 +76,20 @@ function observe(el: Element, cb: (visible: boolean) => void): () => void {
   }
 }
 
+export type AnimateState = { focused: boolean; visible: boolean; hovered: boolean; reducedMotion: boolean; streaming: boolean }
+
+/** Profile pictures (plan reconciliation 13): cards animate when focused and on-screen; lists only under the pointer. "Animate emoji" does not apply. */
+export function shouldAnimateProfile(place: 'card' | 'list', s: AnimateState): boolean {
+  if (s.streaming || !s.focused || !s.visible || s.reducedMotion) return false
+  return place === 'card' || s.hovered
+}
+
 /**
- * Keeps `img`'s src on `anim` or `still` by the rule above. Hover counts over the button holding
- * the image (a reaction chip, picker cell or autocomplete row), else the image itself; `hovered`
- * overrides that. Returns the cleanup.
+ * Keeps `img`'s src on `anim` or `still` as `decide` says (it is read reactively). Hover counts
+ * over the button holding the image (a reaction chip, picker cell or autocomplete row), else the
+ * image itself; `hovered` overrides that. Returns the cleanup.
  */
-export function wireEmoji(img: HTMLImageElement, anim: string, still: string, hovered?: () => boolean): () => void {
+export function wireAnimated(img: HTMLImageElement, anim: string, still: string, decide: (s: AnimateState) => boolean, hovered?: () => boolean): () => void {
   return untrack(() => {
     watchMotion()
     let visible = $state(false)
@@ -96,7 +104,7 @@ export function wireEmoji(img: HTMLImageElement, anim: string, still: string, ho
     const unobserve = observe(img, (v) => (visible = v))
     const stop = $effect.root(() => {
       $effect(() => {
-        const on = shouldAnimate({ ...motion, focused: windowFocus.focused, visible, hovered: hovered ? hovered() : pointer })
+        const on = decide({ focused: windowFocus.focused, visible, hovered: hovered ? hovered() : pointer, reducedMotion: motion.reducedMotion, streaming: motion.streaming })
         const src = on ? anim : still
         if (img.getAttribute('src') !== src) img.setAttribute('src', src)
       })
@@ -108,6 +116,11 @@ export function wireEmoji(img: HTMLImageElement, anim: string, still: string, ho
       target.removeEventListener('pointerleave', leave)
     }
   })
+}
+
+/** Emoji: the rule above, with the "Animate emoji" setting. */
+export function wireEmoji(img: HTMLImageElement, anim: string, still: string, hovered?: () => boolean): () => void {
+  return wireAnimated(img, anim, still, (s) => shouldAnimate({ ...s, mode: motion.mode }), hovered)
 }
 
 const isAnimated = (hash: string | null, still: string | null): still is string => !!hash && !!still && still !== hash

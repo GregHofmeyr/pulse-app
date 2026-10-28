@@ -47,6 +47,39 @@ describe('shouldAnimate', () => {
   })
 })
 
+describe('shouldAnimateProfile', () => {
+  const on = { focused: true, visible: true, hovered: false, reducedMotion: false, streaming: false }
+  it('lists show the still and animate on hover', async () => {
+    const { shouldAnimateProfile } = await fresh()
+    expect(shouldAnimateProfile('list', on)).toBe(false)
+    expect(shouldAnimateProfile('list', { ...on, hovered: true })).toBe(true)
+    expect(shouldAnimateProfile('list', { ...on, hovered: true, focused: false })).toBe(false)
+    expect(shouldAnimateProfile('list', { ...on, hovered: true, visible: false })).toBe(false)
+  })
+  it('cards animate', async () => {
+    const { shouldAnimateProfile } = await fresh()
+    expect(shouldAnimateProfile('card', on)).toBe(true)
+    expect(shouldAnimateProfile('card', { ...on, focused: false })).toBe(false)
+    expect(shouldAnimateProfile('card', { ...on, visible: false })).toBe(false)
+  })
+  it('reduced motion never animates', async () => {
+    const { shouldAnimateProfile } = await fresh()
+    expect(shouldAnimateProfile('card', { ...on, reducedMotion: true })).toBe(false)
+    expect(shouldAnimateProfile('list', { ...on, hovered: true, reducedMotion: true })).toBe(false)
+  })
+  it('going live freezes', async () => {
+    const { shouldAnimateProfile } = await fresh()
+    expect(shouldAnimateProfile('card', { ...on, streaming: true })).toBe(false)
+    expect(shouldAnimateProfile('list', { ...on, hovered: true, streaming: true })).toBe(false)
+  })
+  it("Animate emoji = never doesn't stop avatars", async () => {
+    const m = await fresh()
+    m.setAnimateMode('never')
+    expect(m.shouldAnimateProfile('card', on)).toBe(true)
+    expect(m.shouldAnimateProfile('list', { ...on, hovered: true })).toBe(true)
+  })
+})
+
 describe('Animate emoji setting', () => {
   it('defaults to always and persists a choice', async () => {
     let m = await fresh()
