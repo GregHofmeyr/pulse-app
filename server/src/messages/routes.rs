@@ -550,7 +550,20 @@ async fn remove(
         None
     };
     tx.commit().await?;
-    if let Some(ended) = overdue {
+    let mut deleted = deleted;
+    if let Some(mut ended) = overdue {
+        // The overdue vote this delete ended may have crowned the quote; its card was then
+        // rewritten in the same transaction, so announce it as stored, with no update to follow.
+        if let Some(d) = deleted.as_mut() {
+            for card in ended.cards.iter_mut() {
+                if let Some(i) = d.cards.iter().position(|c| *c == card.id) {
+                    d.cards.swap_remove(i);
+                    if let Ok(Some(stored)) = load(&s.db, None, card.id).await {
+                        *card = stored;
+                    }
+                }
+            }
+        }
         // Under this delete's `in_order` guard.
         crate::qoty::ending::announce(&s, ended).await;
     }
@@ -571,6 +584,20 @@ async fn remove(
     if let Some(deleted) = deleted {
         for event in deleted.replies {
             s.hub.publish(&s.db, event).await;
+        }
+        // The delete has landed: a card that can't be read back is logged, not a failed request.
+        for card in deleted.cards {
+            match load(&s.db, None, card).await {
+                Ok(Some(message)) => {
+                    s.hub
+                        .publish(&s.db, Event::MessageUpdated { message })
+                        .await;
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::error!(error = ?e, %card, "couldn't load a rewritten winner card")
+                }
+            }
         }
         // Still under this delete's `in_order` guard.
         for event in deleted.qoty {

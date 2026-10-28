@@ -107,13 +107,14 @@ export function snapshotSpeakers(s: AppState, serverId: string, speakers: QuoteS
 }
 
 /** A quote in one line: its first line (an ellipsis when there are more) and that line's speaker,
- *  or `speaker` when given (a win's snapshot, which later edits and links don't move). */
-export function quotePreview(s: AppState, serverId: string, m: Message, speaker?: QuoteSpeaker): { said: string; by: string } {
+ *  or, for a win, everyone who said it when the vote ended (`speakers`, the snapshot: later edits
+ *  and links don't move it; empty for an old win without one). */
+export function quotePreview(s: AppState, serverId: string, m: Message, speakers: QuoteSpeaker[] = []): { said: string; by: string } {
   const lines = m.quote?.lines ?? []
   const first = lines[0]
   if (!first) return { said: m.content, by: '' }
   const said = first.text ? `“${first.text}”` : (first.caption ?? 'Image')
-  const by = speaker ? snapshotName(s, serverId, speaker) : speakerOf(s, serverId, first).name
+  const by = speakers.length ? snapshotSpeakers(s, serverId, speakers) : speakerOf(s, serverId, first).name
   return { said: lines.length > 1 ? `${said} …` : said, by }
 }
 

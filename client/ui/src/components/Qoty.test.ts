@@ -378,10 +378,39 @@ describe('Quote of the Year winner card', () => {
   })
 
   it('a quote that cannot be fetched falls back to the text the server wrote', async () => {
-    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages_around' ? null : undefined))
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'list_messages_around') throw { code: 'network', message: 'offline' }
+    })
     showCard(card({}, ['U2']), null)
     await settle()
     expect(text(document.querySelector('.qoty-card'))).toContain('“first one” — sam')
+  })
+
+  it('a winner that was deleted says so, with the speakers at the end, not its words', async () => {
+    const snap = (m: Message) => {
+      m.qoty_card!.speakers = [{ user_id: 'U2', name: null }]
+      return m
+    }
+    const deleted = (where: string) => {
+      const c = document.querySelectorAll('.qoty-card')
+      const last = c[c.length - 1]
+      expect(text(last.querySelector('.q')), where).toBe('This quote was deleted.')
+      expect(text(last.querySelector('.who')), where).toBe('sam · Quote of the Year 2026')
+      expect(text(last), where).not.toContain('first one')
+    }
+    // Loaded in the channel, deleted.
+    showCard(snap(card()), { ...quote('Q1', 'first one'), deleted: true, content: '', quote: null })
+    deleted('loaded')
+    // Fetched: the window has it, deleted.
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages_around' ? [{ ...quote('Q1', 'x'), deleted: true, content: '', quote: null }] : undefined))
+    showCard(snap(card()), null)
+    await settle()
+    deleted('fetched')
+    // Fetched: the server no longer shows it.
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages_around' ? null : undefined))
+    showCard(snap(card()), null)
+    await settle()
+    deleted('gone')
   })
 
   it('the no-vote line is plain', () => {

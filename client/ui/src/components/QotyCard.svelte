@@ -30,13 +30,17 @@
   // The winner is older than its card, so a channel's latest page usually doesn't hold it: fetch it
   // (a window around it; only the quote is kept, the channel's history is left alone).
   let fetched = $state<Message | null>(null)
+  /** The fetch found the winner gone: the server no longer shows it (deleted). */
+  let missing = $state(false)
   $effect(() => {
     const id = card.message_id
     if (quote || !id || message.deleted) return
     let gone = false
     api.listMessagesAround(message.channel_id, id).then(
       (page) => {
-        if (!gone) fetched = page?.find((m) => m.id === id) ?? null
+        if (gone) return
+        fetched = page?.find((m) => m.id === id) ?? null
+        missing = !fetched
       },
       () => {}, // the fallback text stays
     )
@@ -47,6 +51,8 @@
   // The loaded (live) message whenever the channel has it; the fetched one is a snapshot, only for until then.
   const shown = $derived(quote ?? fetched)
   const lines = $derived(shown?.quote && !shown.deleted ? shown.quote.lines : null)
+  // A deleted winner keeps its win (spec §3.1) but not its words.
+  const deleted = $derived(!!shown?.deleted || (!shown && missing))
   /** While the quote loads (or if it can't be): the text the server wrote ("Quote of the Year 2026: “…” — sam"). */
   const fallback = $derived(message.content.replace(`Quote of the Year ${card.year}: `, ''))
   // Who said it when the vote ended (spec §3.2: a later edit or link never moves a win); a card
@@ -81,6 +87,9 @@
           {/each}
         </div>
         <div class="who">{speakers} · <span>Quote of the Year {card.year}</span></div>
+      {:else if deleted}
+        <div class="q"><p class="gone">This quote was deleted.</p></div>
+        <div class="who">{speakers ? `${speakers} · ` : ''}<span>Quote of the Year {card.year}</span></div>
       {:else}
         <div class="q"><p>{fallback}</p></div>
         <div class="who"><span>Quote of the Year {card.year}</span></div>
@@ -107,6 +116,7 @@
   .q { font-size: 18px; line-height: 1.4; overflow-wrap: anywhere; text-shadow: 0 1px 0 var(--quote-surface); }
   .q p { margin: 0; }
   .q .caption { font-size: 13px; color: var(--text-2); }
+  .q .gone { font-size: 15px; font-style: italic; color: var(--text-3); }
   .q :global(.pic) { margin: 0 auto; }
   .who { font-size: 14px; font-weight: 600; color: var(--quote-green); }
   .who span { color: var(--text); }

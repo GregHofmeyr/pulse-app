@@ -49,6 +49,8 @@ enum Seen {
     Updated(QotyEvent),
     Ended(QotyEvent),
     Card(Box<Message>),
+    /// A card rewritten in place (its quote was deleted).
+    CardUpdated(Box<Message>),
     Deleted(MessageId),
 }
 
@@ -63,6 +65,11 @@ async fn seen(ws: &mut Socket) -> Vec<Seen> {
                 if message.kind == MessageKind::System =>
             {
                 out.push(Seen::Card(Box::new(message)))
+            }
+            ServerFrame::Event(Event::MessageUpdated { message })
+                if message.kind == MessageKind::System =>
+            {
+                out.push(Seen::CardUpdated(Box::new(message)))
             }
             ServerFrame::Event(Event::MessageDeleted { message_id, .. }) => {
                 out.push(Seen::Deleted(message_id))
@@ -1388,6 +1395,7 @@ async fn past_its_deadline(f: &Fixture) -> (QotyEvent, MessageId, MessageId) {
 async fn a_delete_after_the_deadline_doesnt_change_the_result() {
     let f = fixture().await;
     let (_, a, _) = past_its_deadline(&f).await;
+    let mut ws = hello(&f.app, &f.sam_t).await;
     let r = f
         .call(Method::DELETE, &f.alex_t, &format!("/messages/{a}"), None)
         .await;
@@ -1402,6 +1410,18 @@ async fn a_delete_after_the_deadline_doesnt_change_the_result() {
         .collect();
     assert_eq!(won, vec![Some(a)], "a led when time ran out, so a won");
     assert_eq!(f.count("SELECT COUNT(*) FROM qoty_winners").await, 1);
+    // The card it won with never carries the deleted words, stored or sent.
+    let placeholder = format!("Quote of the Year {}: a deleted quote", this_year());
+    assert_eq!(cards[0].content, placeholder);
+    let sent: Vec<String> = seen(&mut ws)
+        .await
+        .into_iter()
+        .filter_map(|s| match s {
+            Seen::Card(m) | Seen::CardUpdated(m) => Some(m.content),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(sent, vec![placeholder]);
 }
 
 /// An edit after the deadline but before the sweep doesn't change the winner card (M11).
@@ -1434,6 +1454,133 @@ async fn an_edit_after_the_deadline_doesnt_change_the_card() {
         cards[0].content.contains("“a” — sam"),
         "{}",
         cards[0].content
+    );
+}
+
+/// A timed vote with one option, a quote of plain-name "A Friend" that sam voted for, whose deadline
+/// has passed but which no sweep has ended yet. Returns the quote.
+async fn friend_past_its_deadline(f: &Fixture) -> MessageId {
+    let r = post_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/channels/{}/quotes", f.ch.id),
+        json!({ "lines": [{ "speaker_name": "A Friend", "text": "one" }] }),
+    )
+    .await;
+    let q: Message = r.json().await.unwrap();
+    let r = f.start(&f.alex_t, this_year(), Some(60)).await;
+    assert_eq!(r.status(), 200);
+    let e: QotyEvent = r.json().await.unwrap();
+    assert_eq!(f.add(&f.alex_t, e.id, q.id).await.status(), 200);
+    f.voted(&f.sam_t, e.id, q.id).await;
+    f.sql(&format!(
+        "UPDATE qoty_events SET ends_at = '2000-01-01T00:00:00.000Z' WHERE id = '{}'",
+        e.id
+    ))
+    .await;
+    q.id
+}
+
+impl Fixture {
+    async fn link_friend(&self, to: UserId) -> u16 {
+        self.call(
+            Method::PUT,
+            &self.sam_t,
+            &format!("/servers/{}/speaker-links", self.server),
+            Some(json!({ "name": "A Friend", "user_id": to })),
+        )
+        .await
+        .status()
+        .as_u16()
+    }
+    async fn unlink_friend(&self) -> u16 {
+        self.call(
+            Method::DELETE,
+            &self.sam_t,
+            &format!("/servers/{}/speaker-links/a friend", self.server),
+            None,
+        )
+        .await
+        .status()
+        .as_u16()
+    }
+}
+
+/// Wins snapshot the speakers as they were when time ran out: a link made after the deadline but
+/// before the sweep doesn't move the win (M11, spec reconciliation 10).
+#[tokio::test]
+async fn a_link_after_the_deadline_doesnt_move_the_win() {
+    let f = fixture().await;
+    let (kim, _) = f.member("kim").await;
+    let q = friend_past_its_deadline(&f).await;
+    assert_eq!(f.link_friend(kim).await, 204);
+    pulse_server::qoty::end_overdue(&f.app.state(), &pulse_server::db::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        winner_speakers(&f, q).await,
+        vec![(0, None, Some("A Friend".to_string()))]
+    );
+}
+
+/// And neither does an unlink.
+#[tokio::test]
+async fn an_unlink_after_the_deadline_doesnt_move_the_win() {
+    let f = fixture().await;
+    let (kim, _) = f.member("kim").await;
+    let q = friend_past_its_deadline(&f).await;
+    // Linked before the deadline: the effective speaker at the end is kim.
+    f.sql("UPDATE qoty_events SET ends_at = '2999-01-01T00:00:00.000Z'")
+        .await;
+    assert_eq!(f.link_friend(kim).await, 204);
+    f.sql("UPDATE qoty_events SET ends_at = '2000-01-01T00:00:00.000Z'")
+        .await;
+    assert_eq!(f.unlink_friend().await, 204);
+    pulse_server::qoty::end_overdue(&f.app.state(), &pulse_server::db::now())
+        .await
+        .unwrap();
+    assert_eq!(
+        winner_speakers(&f, q).await,
+        vec![(0, Some(kim.to_string()), Some("A Friend".to_string()))]
+    );
+}
+
+/// Deleting a quote that won removes its words from its card too, live; the win stays (I6 follow-up).
+#[tokio::test]
+async fn deleting_a_winner_rewrites_its_card() {
+    let f = fixture().await;
+    let (e, a, _) = two_options(&f).await;
+    f.voted(&f.sam_t, e.id, a).await;
+    f.ended(&f.alex_t, e.id).await;
+    let card = f.cards(f.ch.id).await.remove(0);
+    assert!(card.content.contains("“a”"), "{}", card.content);
+    let mut ws = hello(&f.app, &f.sam_t).await;
+    let r = f
+        .call(Method::DELETE, &f.alex_t, &format!("/messages/{a}"), None)
+        .await;
+    assert_eq!(r.status(), 204);
+    let year = this_year();
+    let want = format!("Quote of the Year {year}: a deleted quote");
+    let after = f.cards(f.ch.id).await.remove(0);
+    assert_eq!((after.id, after.content.as_str()), (card.id, want.as_str()));
+    assert_eq!(after.qoty_card, card.qoty_card, "the payload stays");
+    assert_eq!(
+        f.count("SELECT COUNT(*) FROM qoty_winners").await,
+        1,
+        "and the win"
+    );
+    let updated: Vec<Message> = seen(&mut ws)
+        .await
+        .into_iter()
+        .filter_map(|s| match s {
+            Seen::CardUpdated(m) => Some(*m),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(updated.len(), 1);
+    assert_eq!(
+        (updated[0].id, updated[0].content.as_str()),
+        (card.id, want.as_str())
     );
 }
 
@@ -1628,6 +1775,7 @@ async fn an_overdue_vote_does_not_block_the_next_start() {
         .iter()
         .map(|s| match s {
             Seen::Card(_) => "card",
+            Seen::CardUpdated(_) => "card updated",
             Seen::Ended(_) => "ended",
             Seen::Started(_) => "started",
             Seen::Updated(_) => "updated",

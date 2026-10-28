@@ -56,6 +56,10 @@ describe('text helpers', () => {
       ['“‘x’”', '‘x’'],
       ["'don't do that'", "don't do that"],
       ['‘don’t’', 'don’t'],
+      // Ruling (fix wave U1): a leading elision can't be told from an opening quote, so a line that
+      // both opens and closes with a single quote is a wrapper and loses both.
+      ["'tis the dogs'", 'tis the dogs'],
+      ["'tis great", "'tis great"],
       ['«x»', 'x'],
       ['“”', ''],
       ['"', '"'],

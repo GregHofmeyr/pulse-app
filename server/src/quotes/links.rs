@@ -40,6 +40,9 @@ async fn link(
     // Events carry absolute state, so publish in commit order (in_order, then the write lock).
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    // A vote whose time ran out is over even if no sweep has ended it yet: end it first, so its
+    // wins snapshot the speakers as they were at the end, not as this changes them.
+    let overdue = crate::qoty::ending::end_if_overdue(&mut tx, server).await?;
     if !member_in(&mut tx, server, me).await? {
         return Err(AppError::Forbidden);
     }
@@ -93,6 +96,9 @@ async fn link(
     let moved: Vec<String> = current.into_iter().chain([new]).collect();
     let quotes = moved_quotes(&mut tx, server, &key, &moved).await?;
     tx.commit().await?;
+    if let Some(ended) = overdue {
+        crate::qoty::ending::announce(&s, ended).await;
+    }
     publish(&s, server, links, quotes).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -107,6 +113,9 @@ async fn unlink(
     crate::servers::routes::server_exists(&s.db, server).await?;
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    // A vote whose time ran out is over even if no sweep has ended it yet: end it first, so its
+    // wins snapshot the speakers as they were at the end, not as this changes them.
+    let overdue = crate::qoty::ending::end_if_overdue(&mut tx, server).await?;
     if !member_in(&mut tx, server, me).await? {
         return Err(AppError::Forbidden);
     }
@@ -124,6 +133,9 @@ async fn unlink(
     let links = links_of(&mut tx, server).await?;
     let quotes = moved_quotes(&mut tx, server, &key, &[removed]).await?;
     tx.commit().await?;
+    if let Some(ended) = overdue {
+        crate::qoty::ending::announce(&s, ended).await;
+    }
     publish(&s, server, links, quotes).await;
     Ok(StatusCode::NO_CONTENT)
 }

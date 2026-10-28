@@ -278,6 +278,8 @@ pub struct Deleted {
     pub replies: Vec<Event>,
     /// Live Quote of the Year events that lost the quote as an option.
     pub qoty: Vec<QotyEventId>,
+    /// Winner cards of the quote, rewritten without its words: publish each as `MessageUpdated`.
+    pub cards: Vec<MessageId>,
 }
 
 /// Everything a deleted quote leaves behind, in the caller's transaction (the quote's own soft
@@ -302,6 +304,20 @@ pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppR
         .bind(&id)
         .execute(&mut *tx)
         .await?;
+    // A win stays (spec §3.1), but its card stops showing the deleted words: the payload (votes,
+    // speakers) and `qoty_winners` are untouched.
+    let cards: Vec<String> = sqlx::query_scalar(
+        "UPDATE messages
+         SET content = 'Quote of the Year ' || json_extract(system_payload, '$.year') || ': a deleted quote'
+         WHERE kind = 'system' AND deleted_at IS NULL
+           AND json_extract(system_payload, '$.type') = ?
+           AND json_extract(system_payload, '$.message_id') = ?
+         RETURNING id",
+    )
+    .bind(crate::messages::system::QOTY_CARD)
+    .bind(&id)
+    .fetch_all(&mut *tx)
+    .await?;
     // Only a live event loses the quote; an ended one keeps its options and votes as history.
     // Votes go with their option (foreign key cascade), but not by luck: say so.
     const LIVE: &str = "event_id IN (SELECT id FROM qoty_events WHERE ended_at IS NULL)";
@@ -366,6 +382,10 @@ pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppR
     Ok(Deleted {
         replies,
         qoty: qoty.iter().map(|e| parse_id(e)).collect::<AppResult<_>>()?,
+        cards: cards
+            .iter()
+            .map(|c| parse_id(c))
+            .collect::<AppResult<_>>()?,
     })
 }
 
@@ -710,6 +730,11 @@ mod tests {
             // An apostrophe inside a word doesn't close a single quote.
             ("'don't do that'", "don't do that"),
             ("‘don’t’", "don’t"),
+            // Ruling (fix wave U1): a leading elision can't be told from an opening quote, so a
+            // line that both opens and closes with a single quote is a wrapper and loses both.
+            ("'tis the dogs'", "tis the dogs"),
+            // One-sided, it's part of the text.
+            ("'tis great", "'tis great"),
         ] {
             assert_eq!(clean_text(s).unwrap(), want, "{s}");
         }

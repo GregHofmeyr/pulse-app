@@ -3,7 +3,7 @@
   // entry opens that quote in its channel (the caller jumps to it).
   import VoterStack from './VoterStack.svelte'
   import { clickOutside } from '../lib/actions'
-  import { plural, quotePreview, score } from '../lib/quotes'
+  import { plural, quotePreview, score, snapshotSpeakers } from '../lib/quotes'
   import { nameOfIn } from '../lib/selectors'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
@@ -32,14 +32,14 @@
   })
 
   const nameOf = $derived(nameOfIn(() => app.state, serverId))
-  const preview = (m: Message, speaker?: QuoteSpeaker) => quotePreview(app.state, serverId, m, speaker)
+  const preview = (m: Message, speakers?: QuoteSpeaker[]) => quotePreview(app.state, serverId, m, speakers)
   const who = (c: SpeakerCount) => (c.user_id ? nameOf(c.user_id) : (c.name ?? ''))
   const empty = $derived(!!board && !board.winners.length && !board.top_year.length && !board.top_all_time.length
     && !board.most_quoted.length && !board.most_awarded.length)
 </script>
 
-{#snippet entry(m: Message, note: string, speaker?: QuoteSpeaker)}
-  {@const p = preview(m, speaker)}
+{#snippet entry(m: Message, note: string, speakers?: QuoteSpeaker[])}
+  {@const p = preview(m, speakers)}
   <button type="button" class="entry" onclick={() => onOpen(m)}>
     <span class="said">{p.said}</span>
     {#if p.by}<span class="by">{p.by}</span>{/if}
@@ -83,8 +83,18 @@
       {#each board.winners as w (`${w.year}:${w.message.id}`)}
         <div class="win">
           <span class="year">{w.year}</span>
-          <!-- the first line's speaker when the vote ended (a later edit or link never moves a win) -->
-          {@render entry(w.message, plural(w.votes, 'vote', 'votes'), w.speakers[0])}
+          <!-- who said it when the vote ended (a later edit or link never moves a win) -->
+          {#if w.message.deleted}
+            <!-- the win stays (spec §3.1), the words don't; nothing to jump to -->
+            {@const by = snapshotSpeakers(app.state, serverId, w.speakers)}
+            <div class="entry gone">
+              <span class="said">This quote was deleted.</span>
+              {#if by}<span class="by">{by}</span>{/if}
+              <span class="note">{plural(w.votes, 'vote', 'votes')}</span>
+            </div>
+          {:else}
+            {@render entry(w.message, plural(w.votes, 'vote', 'votes'), w.speakers)}
+          {/if}
           <VoterStack userIds={w.voters} {nameOf} />
         </div>
       {:else}
@@ -105,6 +115,8 @@
   h3 { margin: 0 0 4px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--quote-green); }
   .entry { width: 100%; display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; min-width: 0; }
   .entry:hover, .entry:focus-visible { background: var(--bg-3); }
+  .gone:hover { background: transparent; }
+  .gone .said { color: var(--text-3); font-style: italic; }
   .said { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .by { flex-shrink: 0; color: var(--text-2); }
   .by::before { content: '— '; color: var(--text-3); }

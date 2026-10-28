@@ -304,6 +304,9 @@ describe('QuoteComposer', () => {
     enter(textOf(0)); await settle()
     expect(calls('post_quote')).toHaveLength(0)
     expect(document.body.textContent).toContain('A name needs more than dots.')
+    // Focus goes to the line's who field (the chip, once a name is picked) to fix it.
+    expect((document.activeElement as HTMLElement | null)?.matches('.who, .chip')).toBe(true)
+    expect(document.activeElement?.closest('.row')).toBe(textOf(0).closest('.row'))
   })
 
   it('saving an edit with every line cleared says so', async () => {

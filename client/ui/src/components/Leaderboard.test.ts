@@ -94,6 +94,30 @@ describe('Leaderboard', () => {
     expect(section('Quote of the Year')!.querySelector('.by')?.textContent).toBe('kim')
   })
 
+  it('a winner names every speaker of the snapshot, whatever the first line is now', async () => {
+    // Line 1 (sam) was removed after the win, so kim's line now comes first.
+    const now = quote('Q1', 'two')
+    now.quote!.lines[0].speaker_id = 'U3'
+    const ended: Board = { ...board, winners: [{ ...board.winners[0], message: now, speakers: [{ user_id: 'U2', name: null }, { user_id: 'U3', name: null }] }] }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'leaderboard' ? ended : undefined))
+    await show()
+    expect(section('Quote of the Year')!.querySelector('.by')?.textContent).toBe('sam & kim')
+  })
+
+  it('a deleted winner keeps its year, speakers and votes, says it was deleted, and has nothing to jump to', async () => {
+    const gone: Message = { ...quote('Q1', 'x'), content: '', deleted: true, quote: null }
+    const ended: Board = { ...board, winners: [{ ...board.winners[0], message: gone, speakers: [{ user_id: null, name: 'A Friend' }] }] }
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'leaderboard' ? ended : undefined))
+    await show()
+    const win = section('Quote of the Year')!
+    expect(win.querySelector('button.entry')).toBeNull()
+    expect(win.textContent).toContain('2025')
+    expect(win.textContent).toContain('This quote was deleted.')
+    expect(win.querySelector('.by')?.textContent).toBe('A Friend')
+    expect(win.textContent).toContain('3 votes')
+    expect(win.querySelector('.stack')).toBeTruthy()
+  })
+
   it('a winner without a snapshot falls back to the quote\'s speaker', async () => {
     await show()
     expect(section('Quote of the Year')!.querySelector('.by')?.textContent).toBe('sam')
