@@ -4971,6 +4971,7 @@ dependencies = [
  "keyring",
  "libc",
  "livekit",
+ "livekit-api",
  "log",
  "ndarray",
  "nnnoiseless",
