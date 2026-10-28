@@ -31,6 +31,8 @@ export type LoginResult = { status: 'ready'; user: User } | { status: 'mfa_requi
 
 /** The QR code as a square module matrix, row by row (true = dark); the quiet zone is not included. */
 export type QrMatrix = { size: number; modules: boolean[] }
+/** Mirrors `clips::ffmpeg::ClipSupport`. */
+export type ClipSupport = { can_send: boolean; reason: string | null }
 /** The manual key (grouped in fours) and the QR for the authenticator app. */
 export type TwoFactorSetup = { secret: string; qr: QrMatrix }
 
@@ -130,6 +132,8 @@ export const api = {
   clipFacets: (channelId: string) => invoke<ClipFacets>('clip_facets', { channelId }),
   setClipView: (channelId: string, view: ClipView) => invoke<void>('set_clip_view', { channelId, view }),
   clipStorage: (serverId: string) => invoke<ClipStorage>('clip_storage', { serverId }),
+  /** Whether this install can send clips (Windows, ffmpeg bundled); `reason` says why not. */
+  clipSupport: () => invoke<ClipSupport>('clip_support'),
   searchQuotes: (serverId: string, q: string) => invoke<Message[]>('search_quotes', { serverId, q }),
   startQoty: (serverId: string, body: StartQotyRequest) => invoke<QotyEvent>('start_qoty', { serverId, body }),
   voteQoty: (eventId: string, messageId: string) => invoke<QotyEvent>('vote_qoty', { eventId, messageId }),

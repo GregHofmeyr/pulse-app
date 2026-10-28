@@ -280,6 +280,7 @@ pub fn run() {
             commands::clip_facets,
             commands::set_clip_view,
             commands::clip_storage,
+            commands::clip_support,
             startup::ui_painted,
             keybinds::get_keybinds,
             keybinds::set_keybinds,

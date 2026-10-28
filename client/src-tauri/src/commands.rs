@@ -1376,6 +1376,19 @@ pub async fn clip_storage(
     core.check(&app, api.clip_storage(&token, server_id).await)
 }
 
+/// Whether this install can send clips (ffmpeg found), and the reason shown when it can't.
+#[tauri::command]
+pub async fn clip_support(app: AppHandle) -> crate::clips::ffmpeg::ClipSupport {
+    use crate::clips::ffmpeg;
+    let resource_dir = app.path().resource_dir().ok();
+    let found = ffmpeg::locate(
+        resource_dir.as_deref(),
+        ffmpeg::dev_override().as_deref(),
+        ffmpeg::Os::current(),
+    );
+    ffmpeg::clip_support(found.as_ref(), ffmpeg::Os::current())
+}
+
 #[tauri::command]
 pub async fn list_replies(
     app: AppHandle,

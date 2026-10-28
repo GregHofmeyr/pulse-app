@@ -10,3 +10,6 @@ spikes/**/*.wav
 client/ui/public/emoji/
 /data/
 __pycache__/
+# scripts/fetch-ffmpeg.sh: the Windows installer's ffmpeg (never committed) and its pin marker
+client/src-tauri/ffmpeg/
+client/src-tauri/ffmpeg.pinned

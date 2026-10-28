@@ -22,7 +22,7 @@ serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
 thiserror.workspace = true
-tauri = { version = "2.12", features = [] }
+tauri = { version = "2.12", features = ["protocol-asset"] }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2", "stream"] }
 url = "2"
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }

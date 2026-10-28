@@ -1,7 +1,7 @@
 set dotenv-load := true
 
 # everything CI runs
-check: fmt-check clippy test types-check ui-check
+check: fmt-check clippy test types-check ui-check fetch-ffmpeg-test
 
 fmt-check:
     cargo fmt --all -- --check
@@ -17,6 +17,15 @@ gen-types:
 
 types-check: gen-types
     git diff --exit-code -- client/ui/src/lib/protocol
+
+# the pinned LGPL ffmpeg the Windows installer bundles, into client/src-tauri/ffmpeg/ (verified by SHA-256; Windows
+# builds and `cargo xwin` need it, Linux builds don't)
+fetch-ffmpeg:
+    bash scripts/fetch-ffmpeg.sh
+
+# offline self-test of scripts/fetch-ffmpeg.sh (fake archives, wrong and right SHA-256)
+fetch-ffmpeg-test:
+    bash scripts/fetch-ffmpeg-test.sh
 
 dev-livekit:
     docker compose up -d livekit

@@ -59,6 +59,8 @@ jobs:
               # deploy-selftest.sh checks the LiveKit pins in these agree with deploy/compose.yml
               - 'docker-compose.yml'
               - '.github/workflows/release-windows.yml'
+              # the Windows installer's ffmpeg fetch (release-windows.yml) and its self-test
+              - 'scripts/fetch-ffmpeg*.sh'
               - '.github/workflows/ci.yml'
             image:
               - 'deploy/server.Dockerfile'
@@ -163,9 +165,11 @@ jobs:
           docker run --rm -e PULSE_DOMAIN=example.com -e ACME_EMAIL=ci@example.com \
             -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" "$caddy_image" caddy validate --config /etc/caddy/Caddyfile
       - name: shell scripts
-        run: docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh
+        run: docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh scripts/fetch-ffmpeg*.sh
       - name: deploy.sh self-test
         run: bash deploy/deploy-selftest.sh
+      - name: fetch-ffmpeg.sh self-test
+        run: bash scripts/fetch-ffmpeg-test.sh
 
   # A Dependabot bump of the server image's base images gets built before it merges (amd64 only,
   # nothing pushed; release-server.yml builds and publishes both architectures from main).
