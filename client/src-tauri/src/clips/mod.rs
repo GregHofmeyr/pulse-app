@@ -4,6 +4,7 @@ pub mod editor;
 pub mod encode;
 pub mod ffmpeg;
 pub mod game;
+pub mod jobs;
 pub mod preview;
 pub mod probe;
 pub mod progress;

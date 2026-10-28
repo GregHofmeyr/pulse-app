@@ -47,6 +47,34 @@ export type ClipSource = {
   preview: 'direct' | 'remux' | 'encode'
 }
 
+/** Mirrors `clips::jobs::ClipJob` (hand-written: it never crosses the server protocol). Arrives whole as `clip://job`. */
+export type ClipJob = {
+  id: string
+  channel_id: string
+  stage: 'preparing' | 'uploading' | 'posting' | 'failed' | 'done'
+  /** 0 to 1 within the stage. */
+  progress: number
+  /** The server's or the encoder's own words; null otherwise (the card says "Upload failed — Retry"). */
+  error: string | null
+  caption: string
+  game_id: string | null
+  kept_ms: number
+  /** The local poster once made (load it with `convertFileSrc`). */
+  thumb_path: string | null
+  /** Set on `done` when it posted; null when it was cancelled. */
+  message_id: string | null
+}
+
+/** What the editor sends: kept pieces in source milliseconds. */
+export type SendClip = {
+  source: string
+  channelId: string
+  spans: { start: number; end: number }[]
+  preset: 'light' | 'sharp'
+  caption: string
+  gameId: string | null
+}
+
 /** Mirrors `clips::ffmpeg::ClipSupport`. */
 export type ClipSupport = { can_send: boolean; reason: string | null }
 /** The manual key (grouped in fours) and the QR for the authenticator app. */
@@ -160,6 +188,23 @@ export const api = {
   clipFilmstrip: (source: string) => invoke<{ path: string; tiles: number }>('clip_filmstrip', { source }),
   /** Deletes the preview and filmstrip temp files. */
   closeClipSource: (source: string) => invoke<void>('close_clip_source', { source }),
+  /** Start sending a clip; progress arrives as `clip://job` events. Rejects with a message to show. */
+  sendClip: (r: SendClip) =>
+    invoke<ClipJob>('send_clip', {
+      request: {
+        source: r.source,
+        channel_id: r.channelId,
+        spans: r.spans.map((s) => ({ start_ms: s.start, end_ms: s.end })),
+        preset: r.preset,
+        caption: r.caption,
+        game_id: r.gameId,
+      },
+    }),
+  retryClip: (id: string) => invoke<ClipJob>('retry_clip', { id }),
+  /** Stops it and deletes everything; a last `done` event with no `message_id` follows. */
+  cancelClip: (id: string) => invoke<void>('cancel_clip', { id }),
+  /** The jobs of this session (after a restart, the ones left over, failed). */
+  clipJobs: () => invoke<ClipJob[]>('clip_jobs'),
   searchQuotes: (serverId: string, q: string) => invoke<Message[]>('search_quotes', { serverId, q }),
   startQoty: (serverId: string, body: StartQotyRequest) => invoke<QotyEvent>('start_qoty', { serverId, body }),
   voteQoty: (eventId: string, messageId: string) => invoke<QotyEvent>('vote_qoty', { eventId, messageId }),

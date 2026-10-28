@@ -64,7 +64,7 @@ impl Encoder {
 }
 
 /// A kept piece of the source, in source milliseconds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Span {
     pub start_ms: u64,
     pub end_ms: u64,

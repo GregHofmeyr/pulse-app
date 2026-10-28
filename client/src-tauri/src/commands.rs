@@ -22,6 +22,8 @@ use crate::stream::audio::StreamAudio;
 use crate::voice::devices::{AudioConfig, DeviceInfo};
 use crate::voice::{AudioMode, VoiceError, VoiceManager, controls::Controls};
 
+type ClipJobs = crate::clips::jobs::Jobs<crate::clips::encode::FfmpegRunner>;
+
 /// Signed in: where, with which token, and as whom (`None` until login or the first Ready says).
 #[derive(Clone)]
 struct Session {
@@ -92,6 +94,8 @@ pub struct Core {
     /// The clip editor's open sources, and where their temp files go (`<app local data>/clips`).
     pub(crate) clip_sources: crate::clips::editor::Sources,
     clips_root: std::path::PathBuf,
+    /// The signed-in account's clip jobs, once its Ready named it (`start_clip_jobs`).
+    clip_jobs: watch::Sender<Option<ClipJobs>>,
     /// Takes a path off the asset scope for good (`forbid_file`); see `release_source`.
     forbid_asset: Box<dyn Fn(&std::path::Path) + Send + Sync>,
     signed_out: SignedOut,
@@ -119,6 +123,7 @@ impl Core {
             media_root,
             clip_sources: Default::default(),
             clips_root: std::path::PathBuf::new(),
+            clip_jobs: watch::channel(None).0,
             forbid_asset: Box::new(|_| {}),
             signed_out,
             mfa: PendingMfa::default(),
@@ -204,6 +209,64 @@ impl Core {
                 });
             }
             *self.last.lock().unwrap() = Some((s.api.base().to_string(), Some(me)));
+        }
+    }
+
+    /// The session `token` is ready: load its account's clip jobs from disk (once per session; a
+    /// reconnect's Ready keeps them). Jobs that were running when Pulse stopped come back failed.
+    fn start_clip_jobs(&self, app: &AppHandle, token: &str) {
+        use crate::clips::{encode::FfmpegRunner, ffmpeg::FfmpegPaths, jobs};
+        if self.clips_root.as_os_str().is_empty()
+            || self
+                .clip_jobs
+                .borrow()
+                .as_ref()
+                .is_some_and(|j| j.token() == token)
+        {
+            return;
+        }
+        let Some(s) = self
+            .inner
+            .lock()
+            .unwrap()
+            .clone()
+            .filter(|s| s.token == token)
+        else {
+            return;
+        };
+        let Some(me) = s.me else { return };
+        let dir = crate::media::scope_dir(&self.clips_root, s.api.base(), &me).join("jobs");
+        // Without ffmpeg (a broken install) a job can still upload and post; preparing fails.
+        let paths = ffmpeg_paths(app).unwrap_or(FfmpegPaths {
+            ffmpeg: Default::default(),
+            ffprobe: Default::default(),
+        });
+        let (emitter, allow, forbid) = (app.clone(), app.clone(), app.clone());
+        let hooks = jobs::Hooks {
+            emit: Box::new(move |job| {
+                let _ = emitter.emit("clip://job", job);
+            }),
+            allow_file: Box::new(move |p| {
+                let _ = allow.asset_protocol_scope().allow_file(p);
+            }),
+            forbid_file: Box::new(move |p| {
+                let _ = forbid.asset_protocol_scope().forbid_file(p);
+            }),
+        };
+        let loaded = jobs::Jobs::load(dir, FfmpegRunner(paths), s.api, s.token, hooks);
+        if let Some(old) = self.clip_jobs.send_replace(Some(loaded)) {
+            old.stop();
+        }
+    }
+
+    /// This session's clip jobs, waiting for them to load (the first Ready); `None` when signed out.
+    async fn clip_jobs(&self) -> Option<ClipJobs> {
+        let (_, token) = self.current().ok()?;
+        let mut rx = self.clip_jobs.subscribe();
+        let ready = rx.wait_for(|j| j.as_ref().is_some_and(|j| j.token() == token));
+        match tokio::time::timeout(std::time::Duration::from_secs(30), ready).await {
+            Ok(Ok(j)) => j.clone(),
+            _ => None,
         }
     }
 
@@ -351,6 +414,9 @@ impl Core {
     /// (the next launch tries again, as before).
     fn suspend(&self) {
         self.gateway.lock().unwrap().take();
+        if let Some(jobs) = self.clip_jobs.send_replace(None) {
+            jobs.stop();
+        }
         if let Some(t) = self.retry.lock().unwrap().take() {
             t.abort();
         }
@@ -390,6 +456,9 @@ impl Core {
             s.alive.store(false, Ordering::SeqCst);
         }
         self.last.lock().unwrap().take();
+        if let Some(jobs) = self.clip_jobs.send_replace(None) {
+            jobs.abandon();
+        }
         for e in self.clip_sources.drain() {
             self.release_source(e);
         }
@@ -443,6 +512,7 @@ async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>,
         match &u {
             GatewayUpdate::Ready(r) => {
                 app.state::<Core>().learn_me(&token, r.me.id);
+                app.state::<Core>().start_clip_jobs(&app, &token);
                 let _ = app.emit("pulse://ready", &**r);
             }
             GatewayUpdate::Event(e) => {
@@ -642,6 +712,10 @@ async fn unrestored_reason(api: &Api, token: &str) -> ApiError {
 #[tauri::command]
 pub async fn logout(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiError> {
     core.mfa.clear();
+    if let Some(jobs) = core.clip_jobs.send_replace(None) {
+        // while the token still works: their tickets are deleted on the server too
+        jobs.cancel_all().await;
+    }
     if let Ok((api, token)) = core.current() {
         let _ = api.logout(&token).await;
     }
@@ -1595,6 +1669,71 @@ pub fn close_clip_source(core: State<'_, Core>, source: String) {
     if let Some(e) = core.clip_sources.remove(&source) {
         core.release_source(e);
     }
+}
+
+/// What the editor's Trim & send asks for (`spans` are in source milliseconds).
+#[derive(serde::Deserialize)]
+pub struct SendClip {
+    source: String,
+    channel_id: ChannelId,
+    spans: Vec<crate::clips::encode::Span>,
+    preset: crate::clips::encode::Preset,
+    caption: String,
+    game_id: Option<GameId>,
+}
+
+const SIGN_IN_FOR_CLIPS: &str = "Sign in to share clips.";
+
+/// Start sending a clip of an open editor source (its path is copied, so closing the editor is fine).
+/// Progress arrives as `clip://job` events (the whole job).
+#[tauri::command]
+pub async fn send_clip(
+    core: State<'_, Core>,
+    request: SendClip,
+) -> Result<crate::clips::jobs::ClipJob, String> {
+    let source = core
+        .clip_sources
+        .get(&request.source)
+        .ok_or_else(|| crate::clips::editor::UNREADABLE.to_owned())?;
+    let jobs = core
+        .clip_jobs()
+        .await
+        .ok_or_else(|| SIGN_IN_FOR_CLIPS.to_owned())?;
+    jobs.send(crate::clips::jobs::NewJob {
+        source_path: source.path,
+        probe: source.probe,
+        channel_id: request.channel_id,
+        spans: request.spans,
+        preset: request.preset,
+        caption: request.caption,
+        game_id: request.game_id,
+    })
+}
+
+#[tauri::command]
+pub async fn retry_clip(
+    core: State<'_, Core>,
+    id: String,
+) -> Result<crate::clips::jobs::ClipJob, String> {
+    let jobs = core
+        .clip_jobs()
+        .await
+        .ok_or_else(|| SIGN_IN_FOR_CLIPS.to_owned())?;
+    jobs.retry(&id)
+}
+
+#[tauri::command]
+pub async fn cancel_clip(core: State<'_, Core>, id: String) -> Result<(), String> {
+    match core.clip_jobs().await {
+        Some(jobs) => jobs.cancel(&id).await,
+        None => Ok(()),
+    }
+}
+
+/// The clips being sent (after a restart, the ones left over, failed). Waits for them to load.
+#[tauri::command]
+pub async fn clip_jobs(core: State<'_, Core>) -> Result<Vec<crate::clips::jobs::ClipJob>, String> {
+    Ok(core.clip_jobs().await.map(|j| j.list()).unwrap_or_default())
 }
 
 #[tauri::command]
