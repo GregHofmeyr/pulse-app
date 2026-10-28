@@ -1,6 +1,7 @@
 # Clips (phase 1: trim and share): design
 
 Date: 2026-10-22. Status: approved 2026-10-22 (replay format filled in from the owner's check).
+Amended 2026-10-28 (owner): the "Original" preset is removed; Light and Sharp remain; the per-clip cap is 200 MB.
 
 Depends on: the **media store** (`2026-10-22-reactions-emoji-design.md` §5), whose R2 location this push builds;
 **reactions**; the **replies side panel** from the quotes design (§3.6 there), reused. **Built after both the
@@ -56,7 +57,7 @@ Phase 2 (actually capturing clips in Pulse) is a maybe. It needs research on whe
 | Where it's processed | **On the sender's PC** with ffmpeg; the original never uploads. |
 | Game | **Read from the clip's folder** (NVIDIA saves into a folder named after the game); a picker with the games the group has used, and "Add game" grows that list. |
 | Caption | Optional. |
-| Quality | Presets with size estimates; **default Light (720p60)**; Sharp (1080p60) and Original available. |
+| Quality | Two presets with size estimates: **default Light (720p60)** and Sharp (1080p60, the highest). No "Original" (source) preset (owner, 2026-10-28). |
 | Length | **Up to 1:30** after trimming. |
 | Keeping | **Forever.** |
 | Storage | **R2** (the media store's R2 location, built in this push). Budget: the owner has a $3 R2 alert; expected use is about 200 clips a year, a few GB. |
@@ -106,7 +107,8 @@ Approved mockups (git-ignored, owner's machine): `.superpowers/brainstorm/284608
 
 - Side panel: caption, game, quality (each preset shows an estimated size for the kept length), **Trim & send**.
 - Quality presets (**my calls** on exact settings): **Light** 720p, keep up to 60 fps, about 4 Mbps; **Sharp** 1080p,
-  up to 60 fps, about 8 Mbps; **Original** keeps the source resolution and fps at a high bitrate. Never upscale.
+  up to 60 fps, about 8 Mbps, the highest quality offered. There is no "Original" (source quality) preset (owner's
+  change, 2026-10-28). Never upscale.
   Audio: AAC 160 kbps stereo. Output: MP4 (H.264 for playback everywhere, with `faststart` so it starts playing before
   it's fully downloaded).
 - **Encoding (my calls):** ffmpeg bundled with the app (no install). It uses the GPU encoder when there is one (NVENC
@@ -172,8 +174,9 @@ Approved mockups (git-ignored, owner's machine): `.superpowers/brainstorm/284608
   (member of the server, size within limits), so the clip doesn't pass through the small VM. The upload runs in the
   Tauri core (Rust), not the webview, so the bucket needs no CORS rule and progress is reported to the UI. The server confirms the
   object exists and its size before the clip is posted.
-- **Limits (my calls):** 1:30 duration (checked on the client and against the uploaded metadata), 250 MB per clip
-  (Original at 1:30 fits), rate limit 20 clips per hour per person.
+- **Limits (my calls):** 1:30 duration (checked on the client and against the uploaded metadata), 200 MB per clip
+  (Sharp at 1:30 peaks well under it; re-derived 2026-10-28 when Original was dropped), rate limit 20 clips per hour
+  per person.
 - **Server settings → Storage:** that server's clip storage (GB, count) and its share of the estimated monthly R2 cost.
   Visible to everyone in the server (Pulse's rules are flat).
 - **The all-servers total** (storage and estimated cost) is for the owner only: a `just` command reading the database,
