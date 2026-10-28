@@ -10,6 +10,7 @@ import type { Member } from './protocol/Member'
 import type { Message } from './protocol/Message'
 import type { Mute } from './protocol/Mute'
 import type { Person } from './protocol/Person'
+import type { Profile } from './protocol/Profile'
 import type { QotyEvent } from './protocol/QotyEvent'
 import type { ReadState } from './protocol/ReadState'
 import type { Ready } from './protocol/Ready'
@@ -56,6 +57,8 @@ export type AppState = {
   history: Record<string, History>
   conn: ConnState
   people: Record<string, Person> // userId -> person (presence)
+  profiles: Record<string, Profile> // userId -> opened profile (cache)
+  roleColors: Record<string, Record<string, string>> // serverId -> userId -> role colour (empty until the roles push)
   reads: Record<string, ReadState> // channelId -> your private read point + counts
   mutes: Mute[]
   hidden: Record<string, true> // closed conversations
@@ -103,7 +106,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, profiles: {}, roleColors: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -547,6 +550,26 @@ function withoutTyping(s: AppState, channel: string, user: string | null): AppSt
   return { ...s.typing, [channel]: rest }
 }
 
+/** Cache an opened profile. */
+export function setProfile(s: AppState, p: Profile): AppState {
+  return { ...s, profiles: { ...s.profiles, [p.user.id]: p } }
+}
+
+/** A changed profile replaces the user wherever we hold them; nobody new is added. */
+function profileUpdated(s: AppState, d: Extract<Event, { t: 'ProfileUpdated' }>['d']): AppState {
+  const { user, card } = d
+  const cached = s.profiles[user.id]
+  return {
+    ...s,
+    me: s.me?.id === user.id ? user : s.me,
+    people: s.people[user.id] ? { ...s.people, [user.id]: { ...s.people[user.id], user } } : s.people,
+    members: Object.fromEntries(
+      Object.entries(s.members).map(([server, list]) => [server, list.some((m) => m.user.id === user.id) ? list.map((m) => (m.user.id === user.id ? { ...m, user } : m)) : list]),
+    ),
+    profiles: cached ? { ...s.profiles, [user.id]: { ...cached, user, card } } : s.profiles,
+  }
+}
+
 export function applyEvent(s: AppState, e: Event, now: number): AppState {
   switch (e.t) {
     case 'MessageCreated': {
@@ -675,7 +698,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, online: e.d.online, last_seen_at: e.d.last_seen_at ?? p.last_seen_at } } }
     }
     case 'ProfileUpdated':
-      return s // applied to people and members in a later task
+      return profileUpdated(s, e.d)
     case 'GroupMembersChanged':
       return { ...s, dmMembers: { ...s.dmMembers, [e.d.channel_id]: e.d.user_ids } }
     case 'ChannelUpdated':

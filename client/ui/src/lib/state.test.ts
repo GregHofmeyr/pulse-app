@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, type AppState, type Pending } from './state'
+import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, setProfile, type AppState, type Pending } from './state'
 import { feedKey, clipView, type ClipFilter } from './clips'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
@@ -1289,5 +1289,49 @@ describe('clips', () => {
     let s = open(base(), {}, [cm('M1')])
     s = applyEvent(s, { t: 'ThreadSeen', d: { user_id: 'U1', channel_id: 'K1', root_id: 'M1', last_seen_id: 'R2', mentions_cleared: 0, mentions: null } }, 0)
     expect(s.clipFeeds[feedKey('K1', {})].items[0].clip!.replies_seen).toBe('R2')
+  })
+})
+
+describe('profiles', () => {
+  const card = { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null }
+  const stats = { voice_seconds: 90, member_since: '2026-01-01T00:00:00Z', top_reaction: null, times_renamed: 2 }
+  const profileOf = (user: typeof me) => ({ user, card, stats, badges: [], name_archive: [] })
+  const sam = { ...me, id: 'U2', username: 'sam' }
+
+  it('ProfileUpdated updates people, members, me and a cached profile (its stats unchanged)', () => {
+    let s = applyReady(emptyState(), ready({
+      people: [{ user: sam, online: true, last_seen_at: null }],
+      members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: 'S' }] }, { server_id: 'S2', members: [{ user: sam, nickname: null }] }],
+    }))
+    s = setProfile(s, profileOf(sam))
+    s = setProfile(s, profileOf(me))
+    const newSam = { ...sam, avatar_hash: 'h1' }
+    const newCard = { ...card, pronouns: 'they/them' }
+    s = applyEvent(s, { t: 'ProfileUpdated', d: { user: newSam, card: newCard } }, 0)
+    expect(s.people.U2.user).toEqual(newSam)
+    expect(s.people.U2.online).toBe(true)
+    expect(s.members.S1[1]).toEqual({ user: newSam, nickname: 'S' })
+    expect(s.members.S2[0].user).toEqual(newSam)
+    expect(s.profiles.U2.user).toEqual(newSam)
+    expect(s.profiles.U2.card).toEqual(newCard)
+    expect(s.profiles.U2.stats).toEqual(stats)
+    const newMe = { ...me, avatar_hash: 'h2' }
+    s = applyEvent(s, { t: 'ProfileUpdated', d: { user: newMe, card } }, 0)
+    expect(s.me).toEqual(newMe)
+    expect(s.members.S1[0].user).toEqual(newMe)
+    expect(s.profiles.U1.user).toEqual(newMe)
+  })
+
+  it('ProfileUpdated for an unknown person adds nobody', () => {
+    const s0 = applyReady(emptyState(), ready())
+    const s = applyEvent(s0, { t: 'ProfileUpdated', d: { user: { ...sam, id: 'U9' }, card } }, 0)
+    expect(s.people).toEqual(s0.people)
+    expect(s.members).toEqual(s0.members)
+    expect(s.profiles).toEqual({})
+  })
+
+  it('setProfile caches', () => {
+    const p = profileOf(sam)
+    expect(setProfile(emptyState(), p).profiles.U2).toBe(p)
   })
 })

@@ -2,9 +2,10 @@
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 import type { Event } from './protocol/Event'
 import type { Message } from './protocol/Message'
+import type { Profile } from './protocol/Profile'
 import type { Ready } from './protocol/Ready'
 import type { ReportKind } from './protocol/ReportKind'
-import { applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, type AppState, type ConnState } from './state'
+import { applyEvent, applyReady, emptyState, restoreUnsent, setPendingStatus, setProfile, type AppState, type ConnState } from './state'
 import { api } from './tauri'
 import { loadUnsent, saveUnsent } from './unsent'
 import { isMuted, messageSound, onScreen, SOUND_GAP_MS } from './conversations'
@@ -120,6 +121,22 @@ $effect.root(() => {
     if (me && restoredFor === me.id) saveUnsent(me.id, pending)
   })
 })
+
+const profileLoads = new Map<string, Promise<Profile>>()
+/** Fetch `userId`'s profile into the cache; calls made while one is in flight share its request. */
+export function loadProfile(userId: string): Promise<Profile> {
+  const inflight = profileLoads.get(userId)
+  if (inflight) return inflight
+  const p = api.getProfile(userId).then((profile) => {
+    app.state = setProfile(app.state, profile)
+    return profile
+  })
+  profileLoads.set(userId, p)
+  // settled either way: the next call fetches again (so a failure isn't stuck)
+  const done = () => void profileLoads.delete(userId)
+  p.then(done, done)
+  return p
+}
 
 /** The core's (re)connected snapshot. */
 export function handleReady(r: Ready) {

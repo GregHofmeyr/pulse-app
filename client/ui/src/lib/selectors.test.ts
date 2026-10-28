@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState } from './state'
-import { callRoster, channelsFor, displayName, groupedWith, isLive, isMember, liveIn, mentionablesFor, nameOfIn, typingNames, voiceOccupants } from './selectors'
+import { roleColorFor, userOf, callRoster, channelsFor, displayName, groupedWith, isLive, isMember, liveIn, mentionablesFor, nameOfIn, typingNames, voiceOccupants } from './selectors'
 import type { Message } from './protocol/Message'
 import type { Ready } from './protocol/Ready'
 import type { StreamInfo } from './protocol/StreamInfo'
@@ -180,5 +180,24 @@ describe('channelsFor clips', () => {
     const g = channelsFor(st, 'S1')
     expect(g.clips.map((c) => c.id)).toEqual(['K1'])
     expect(g.text.map((c) => c.id)).not.toContain('K1')
+  })
+})
+
+describe('userOf and roleColorFor', () => {
+  it('userOf prefers people', () => {
+    const fresher = { ...sam, avatar_hash: 'new' }
+    const s = applyReady(emptyState(), { ...r, people: [{ user: fresher, online: false, last_seen_at: null }] })
+    expect(userOf(s, 'U2')).toEqual(fresher)
+    expect(userOf(applyReady(emptyState(), r), 'U2')).toEqual(sam) // members
+    expect(userOf(applyReady(emptyState(), { ...r, members: [] }), 'U1')).toEqual(me) // me
+    expect(userOf(s, 'nobody')).toBeNull()
+  })
+
+  it('roleColorFor reads the fixture map', () => {
+    const s = { ...applyReady(emptyState(), r), roleColors: { S1: { U2: '#ff0000' } } }
+    expect(roleColorFor(s, 'S1', 'U2')).toBe('#ff0000')
+    expect(roleColorFor(s, 'S1', 'U1')).toBeNull()
+    expect(roleColorFor(s, 'S2', 'U2')).toBeNull()
+    expect(roleColorFor(s, null, 'U2')).toBeNull()
   })
 })

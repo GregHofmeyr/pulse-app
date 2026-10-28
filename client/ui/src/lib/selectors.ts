@@ -1,6 +1,7 @@
 // Derived views over AppState. Pure, so they're tested without the UI.
 import type { Channel } from './protocol/Channel'
 import type { StreamInfo } from './protocol/StreamInfo'
+import type { User } from './protocol/User'
 import type { AppState } from './state'
 import type { Message } from './protocol/Message'
 
@@ -109,4 +110,19 @@ export function mentionablesFor(s: AppState, channelId: string): { id: string; n
 /** A name lookup for one server's views (`state` reads the current state); no author is "Pulse". */
 export function nameOfIn(state: () => AppState, serverId: string | null): (userId: string | null) => string {
   return (userId) => (userId ? displayName(state(), serverId, userId) : 'Pulse')
+}
+
+/** The freshest copy of a user we hold: people, then any server's members, then me. */
+export function userOf(s: AppState, id: string): User | null {
+  if (s.people[id]) return s.people[id].user
+  for (const list of Object.values(s.members)) {
+    const m = list.find((x) => x.user.id === id)
+    if (m) return m.user
+  }
+  return s.me?.id === id ? s.me : null
+}
+
+/** The user's role colour in a server, if any (always none until the roles push). */
+export function roleColorFor(s: AppState, serverId: string | null, userId: string): string | null {
+  return serverId ? (s.roleColors[serverId]?.[userId] ?? null) : null
 }

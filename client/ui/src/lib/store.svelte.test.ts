@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }))
 
-import { app, handleReady, resetState } from './store.svelte'
+import { invoke } from '@tauri-apps/api/core'
+import { app, handleReady, loadProfile, resetState } from './store.svelte'
 import { addPending, applyEvent, emptyState, removePending, type Pending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
@@ -118,5 +119,36 @@ describe('unsent messages in the store', () => {
     expect(app.state.pending['C1']).toBeUndefined()
     expect(localStorage.getItem('pulse.unsent.U2')).toBeNull()
     expect(stored('U1').C1).toHaveLength(1)
+  })
+})
+
+describe('loadProfile', () => {
+  const profile = (id: string) => ({
+    user: { id, username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } },
+    card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null },
+    stats: { voice_seconds: 0, member_since: '2026-01-01T00:00:00Z', top_reaction: null, times_renamed: 0 },
+    badges: [], name_archive: [],
+  })
+  const calls = () => vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'get_profile')
+
+  beforeEach(() => {
+    resetState()
+    vi.mocked(invoke).mockReset()
+  })
+
+  it('concurrent loadProfile calls share one request', async () => {
+    vi.mocked(invoke).mockImplementation((async () => profile('U2')) as never)
+    const [a, b] = await Promise.all([loadProfile('U2'), loadProfile('U2')])
+    expect(calls()).toHaveLength(1)
+    expect(a).toBe(b)
+    expect(app.state.profiles.U2).toBe(a)
+  })
+
+  it('a failed load is not stuck: the next call retries', async () => {
+    vi.mocked(invoke).mockImplementationOnce((async () => { throw new Error('boom') }) as never)
+    await expect(loadProfile('U2')).rejects.toThrow('boom')
+    vi.mocked(invoke).mockImplementation((async () => profile('U2')) as never)
+    expect((await loadProfile('U2')).user.id).toBe('U2')
+    expect(calls()).toHaveLength(2)
   })
 })
