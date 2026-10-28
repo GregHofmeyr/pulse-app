@@ -12,6 +12,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 use super::ffmpeg::{self, FfmpegPaths};
 use super::probe::Probe;
 use super::progress::{self, ProgressLine};
+use super::upload::CancellationFlag;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -331,43 +332,96 @@ impl Runner for FfmpegRunner {
         args: Vec<String>,
         on_line: &mut (dyn FnMut(&str) + Send),
     ) -> Result<(), RunFailed> {
-        let fail = |what: String| RunFailed { stderr_tail: what };
-        let mut cmd = ffmpeg::command(&self.0.ffmpeg, args);
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
-        let mut child = ffmpeg::spawn(&mut cmd).map_err(|e| fail(e.to_string()))?;
-        let (stdout, mut stderr) = (
-            child.stdout.take().expect("piped stdout"),
-            child.stderr.take().expect("piped stderr"),
-        );
-        // Both pipes are read at once, or a chatty one would block ffmpeg.
-        let lines = async {
-            // bytes, not `lines()`: a non-UTF-8 line must not end the reading (ffmpeg would block on a full pipe)
-            let mut reader = BufReader::new(stdout);
-            let mut raw = Vec::new();
-            loop {
-                raw.clear();
-                match reader.read_until(b'\n', &mut raw).await {
-                    Ok(1..) => on_line(String::from_utf8_lossy(&raw).trim_end()),
-                    _ => break,
-                }
-            }
-        };
-        let errors = async {
-            let (mut kept, mut buf) = (Vec::<u8>::new(), [0u8; 4096]);
-            while let Ok(n @ 1..) = stderr.read(&mut buf).await {
-                kept.extend_from_slice(&buf[..n]);
-                if kept.len() > 8192 {
-                    kept.drain(..kept.len() - 4096);
-                }
-            }
-            tail(&String::from_utf8_lossy(&kept), 2000)
-        };
-        let ((), stderr_tail) = tokio::join!(lines, errors);
-        match child.wait().await {
-            Ok(s) if s.success() => Ok(()),
-            Ok(_) => Err(RunFailed { stderr_tail }),
-            Err(e) => Err(fail(e.to_string())),
+        run_ffmpeg(&self.0, args, on_line, None).await
+    }
+}
+
+/// An [`FfmpegRunner`] that `stop` ends: the run in flight is killed and waited for, so ffmpeg has
+/// let go of its files (Windows won't delete them before) when `run` returns; later runs never start.
+pub struct StoppableRunner {
+    pub paths: FfmpegPaths,
+    pub stop: CancellationFlag,
+}
+
+impl Runner for StoppableRunner {
+    async fn run(
+        &self,
+        args: Vec<String>,
+        on_line: &mut (dyn FnMut(&str) + Send),
+    ) -> Result<(), RunFailed> {
+        if self.stop.is_cancelled() {
+            return Err(stopped());
         }
+        run_ffmpeg(&self.paths, args, on_line, Some(&self.stop)).await
+    }
+}
+
+fn stopped() -> RunFailed {
+    RunFailed {
+        stderr_tail: "stopped".to_owned(),
+    }
+}
+
+async fn run_ffmpeg(
+    paths: &FfmpegPaths,
+    args: Vec<String>,
+    on_line: &mut (dyn FnMut(&str) + Send),
+    stop: Option<&CancellationFlag>,
+) -> Result<(), RunFailed> {
+    let fail = |what: String| RunFailed { stderr_tail: what };
+    let mut cmd = ffmpeg::command(&paths.ffmpeg, args);
+    cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let mut child = ffmpeg::spawn(&mut cmd).map_err(|e| fail(e.to_string()))?;
+    let (stdout, mut stderr) = (
+        child.stdout.take().expect("piped stdout"),
+        child.stderr.take().expect("piped stderr"),
+    );
+    // Both pipes are read at once, or a chatty one would block ffmpeg.
+    let lines = async {
+        // bytes, not `lines()`: a non-UTF-8 line must not end the reading (ffmpeg would block on a full pipe)
+        let mut reader = BufReader::new(stdout);
+        let mut raw = Vec::new();
+        loop {
+            raw.clear();
+            match reader.read_until(b'\n', &mut raw).await {
+                Ok(1..) => on_line(String::from_utf8_lossy(&raw).trim_end()),
+                _ => break,
+            }
+        }
+    };
+    let errors = async {
+        let (mut kept, mut buf) = (Vec::<u8>::new(), [0u8; 4096]);
+        while let Ok(n @ 1..) = stderr.read(&mut buf).await {
+            kept.extend_from_slice(&buf[..n]);
+            if kept.len() > 8192 {
+                kept.drain(..kept.len() - 4096);
+            }
+        }
+        tail(&String::from_utf8_lossy(&kept), 2000)
+    };
+    let finished = async {
+        let ((), stderr_tail) = tokio::join!(lines, errors);
+        (stderr_tail, child.wait().await)
+    };
+    let stopping = async {
+        match stop {
+            Some(s) => s.cancelled().await,
+            None => std::future::pending().await,
+        }
+    };
+    let finished = tokio::select! {
+        f = finished => Some(f),
+        () = stopping => None,
+    };
+    let Some((stderr_tail, status)) = finished else {
+        // killed and waited for (`kill_on_drop` alone doesn't wait)
+        let _ = child.kill().await;
+        return Err(stopped());
+    };
+    match status {
+        Ok(s) if s.success() => Ok(()),
+        Ok(_) => Err(RunFailed { stderr_tail }),
+        Err(e) => Err(fail(e.to_string())),
     }
 }
 
@@ -783,6 +837,34 @@ mod tests {
         });
         let mut on_line = |_: &str| {};
         needs_send(r.run(Vec::new(), &mut on_line));
+        let s = StoppableRunner {
+            paths: r.0.clone(),
+            stop: CancellationFlag::new(),
+        };
+        needs_send(s.run(Vec::new(), &mut on_line));
+    }
+
+    /// Once stopped, the fallback chain's next encoder never starts an ffmpeg.
+    #[tokio::test]
+    async fn a_stopped_runner_starts_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let stop = CancellationFlag::new();
+        stop.cancel();
+        let r = StoppableRunner {
+            // would fail to spawn with an OS error, not "stopped"
+            paths: FfmpegPaths {
+                ffmpeg: dir.path().join("no-ffmpeg"),
+                ffprobe: dir.path().join("no-ffprobe"),
+            },
+            stop,
+        };
+        let got = run_with_fallback(&r, &CHAIN, 1_000, |e| vec![e.name().to_owned()], |_| {}).await;
+        assert_eq!(
+            got,
+            Err(EncodeError::Failed {
+                stderr_tail: "stopped".into()
+            })
+        );
     }
 
     #[test]

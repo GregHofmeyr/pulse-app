@@ -48,7 +48,7 @@ impl CancellationFlag {
         self.0.0.load(Ordering::SeqCst)
     }
 
-    async fn cancelled(&self) {
+    pub(crate) async fn cancelled(&self) {
         loop {
             let waiting = self.0.1.notified();
             if self.is_cancelled() {

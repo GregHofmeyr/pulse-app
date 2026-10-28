@@ -247,13 +247,13 @@ fn prepared(job_dir: &Path, s: &Saved) -> bool {
 
 /// Delete a folder. ffmpeg killed a moment ago may still hold `out.mp4.part` on Windows, so a
 /// failure is retried briefly. Blocking: call off the async threads.
-fn remove_folder(dir: &Path) {
+pub(crate) fn remove_folder(dir: &Path) {
     for attempt in 0..10 {
         match std::fs::remove_dir_all(dir) {
             Ok(()) => return,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
             Err(e) if attempt == 9 => {
-                tracing::warn!(error = %e, "clips: job folder not removed");
+                tracing::warn!(error = %e, "clips: folder not removed");
             }
             Err(_) => std::thread::sleep(Duration::from_millis(100)),
         }

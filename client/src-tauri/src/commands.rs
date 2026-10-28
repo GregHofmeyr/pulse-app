@@ -517,14 +517,16 @@ impl Core {
     /// (the next launch tries again, as before).
     fn suspend(&self) {
         self.gateway.lock().unwrap().take();
-        if let Some(jobs) = self.clip_jobs.send_replace(None) {
-            jobs.stop();
-        }
         if let Some(t) = self.retry.lock().unwrap().take() {
             t.abort();
         }
         if let Some(s) = self.inner.lock().unwrap().take() {
             s.alive.store(false, Ordering::SeqCst);
+        }
+        // after `inner`, as in `forget`: `install_clip_jobs` checks the session under that lock,
+        // so jobs installed before this are stopped here, and any later install is refused
+        if let Some(jobs) = self.clip_jobs.send_replace(None) {
+            jobs.stop();
         }
     }
 
@@ -2297,6 +2299,28 @@ mod tests {
             core.install_clip_jobs("t1", load_jobs(&dir, "t1").await)
                 .is_none()
         );
+    }
+
+    /// A pause (startup's server didn't answer) stops the session's installed jobs, and a load
+    /// that lands afterwards stays out, as after a sign-out.
+    #[tokio::test]
+    async fn clip_jobs_of_a_paused_session_are_stopped_and_never_installed() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, _) = signed_in(
+            root.path(),
+            "https://pulse.example.com",
+            Some(UserId::new()),
+        );
+        let dir = root.path().join("jobs");
+        assert!(
+            core.install_clip_jobs("t1", load_jobs(&dir, "t1").await)
+                .is_some()
+        );
+        let late = load_jobs(&dir, "t1").await;
+        core.suspend();
+        assert!(core.clip_jobs.borrow().is_none());
+        assert!(core.install_clip_jobs("t1", late).is_none());
+        assert!(core.clip_jobs.borrow().is_none());
     }
 
     /// Quitting stops clip work: the jobs go, every editor source closes, and it returns once

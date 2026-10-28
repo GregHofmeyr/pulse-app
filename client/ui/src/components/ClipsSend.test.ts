@@ -61,6 +61,8 @@ const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 const button = (text: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === text)!
 const editor = () => document.querySelector('[role="dialog"][aria-label="Share a clip"]')
 const chan = () => document.querySelector<HTMLElement>('.chan')!
+// jsdom has no scrollTo: a test that stubs it puts this back afterwards
+const realScrollTo = Object.getOwnPropertyDescriptor(Element.prototype, 'scrollTo')
 
 async function show() {
   cmp = mount(ClipsChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
@@ -98,6 +100,8 @@ afterEach(() => {
   if (cmp) unmount(cmp)
   cmp = undefined
   document.body.innerHTML = ''
+  if (realScrollTo) Object.defineProperty(Element.prototype, 'scrollTo', realScrollTo)
+  else delete (Element.prototype as Partial<Element>).scrollTo
 })
 
 describe('ClipsSend', () => {

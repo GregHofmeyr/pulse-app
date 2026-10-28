@@ -118,11 +118,33 @@ pub async fn output(mut cmd: Command) -> std::io::Result<std::process::Output> {
     spawn(&mut cmd)?.wait_with_output().await
 }
 
+/// [`spawn`] with no output kept, and wait for it to finish, unless `stop` resolves first: then
+/// it is killed and waited for (`None`), so it has let go of its files (Windows won't delete them
+/// before) when this returns.
+pub async fn status_until(
+    mut cmd: Command,
+    stop: impl Future<Output = ()>,
+) -> Option<std::io::Result<std::process::ExitStatus>> {
+    cmd.stdout(Stdio::null()).stderr(Stdio::null());
+    let mut child = match spawn(&mut cmd) {
+        Ok(c) => c,
+        Err(e) => return Some(Err(e)),
+    };
+    let status = tokio::select! {
+        s = child.wait() => Some(s),
+        () = stop => None,
+    };
+    if status.is_none() {
+        let _ = child.kill().await;
+    }
+    status
+}
+
 /// Put `child` in Pulse's kill-on-close job object (made on first use, never closed by us).
 #[cfg(windows)]
 fn contain(child: &tokio::process::Child) {
     use std::sync::OnceLock;
-    use windows::Win32::Foundation::HANDLE;
+    use windows::Win32::Foundation::{CloseHandle, HANDLE};
     use windows::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectExtendedLimitInformation,
@@ -136,13 +158,17 @@ fn contain(child: &tokio::process::Child) {
             let job = CreateJobObjectW(None, windows::core::PCWSTR::null()).ok()?;
             let mut info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION::default();
             info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
-            SetInformationJobObject(
+            if let Err(e) = SetInformationJobObject(
                 job,
                 JobObjectExtendedLimitInformation,
                 std::ptr::from_ref(&info).cast(),
                 std::mem::size_of::<JOBOBJECT_EXTENDED_LIMIT_INFORMATION>() as u32,
-            )
-            .ok()?;
+            ) {
+                // a job without kill-on-close is no use: don't keep (or leak) it
+                tracing::debug!(error = %e, "clips: kill-on-close job not set up");
+                let _ = CloseHandle(job);
+                return None;
+            }
             Some(job.0 as usize)
         }
     });

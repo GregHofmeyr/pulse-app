@@ -8,11 +8,12 @@ use std::time::Duration;
 
 use serde::Serialize;
 
-use super::encode::{self, CHAIN, Encoder, FfmpegRunner, WORKING, run_with_fallback};
+use super::encode::{self, CHAIN, Encoder, StoppableRunner, WORKING, run_with_fallback};
 use super::ffmpeg::FfmpegPaths;
 use super::preview::{self, PreviewPlan};
 use super::probe::{self, Probe};
 use super::progress;
+use super::upload::CancellationFlag;
 use super::{ffmpeg, game};
 
 pub const UNREADABLE: &str = "Pulse couldn't read that video.";
@@ -137,15 +138,10 @@ impl Sources {
     }
 }
 
-/// Delete a source's temp folder, off the async threads. Missing is fine.
+/// Delete a source's temp folder, off the async threads. Missing is fine; a failure is retried
+/// briefly (a just-killed ffmpeg may still hold a file on Windows).
 pub fn remove_dir_later(dir: PathBuf) {
-    tauri::async_runtime::spawn_blocking(move || {
-        if let Err(e) = std::fs::remove_dir_all(&dir)
-            && e.kind() != std::io::ErrorKind::NotFound
-        {
-            tracing::warn!(error = %e, "clips: temp files not removed");
-        }
-    });
+    tauri::async_runtime::spawn_blocking(move || super::jobs::remove_folder(&dir));
 }
 
 /// What the editor may open: an absolute path to a regular file with a video extension (the picker's
@@ -227,7 +223,7 @@ pub fn extension(path: &Path) -> String {
 
 /// Make `<dir>/preview.mp4` for a Remux or Encode source. Encode goes down the shared encoder chain
 /// (`encode::WORKING`, which remembers the encoder that works); a Remux has just the one run.
-/// Closing the source (`closed` resolves) stops ffmpeg: its run is dropped, which kills it.
+/// Closing the source (`closed` resolves) stops ffmpeg: it is killed and waited for before this returns.
 pub async fn make_preview(
     paths: &FfmpegPaths,
     entry: &Entry,
@@ -258,7 +254,11 @@ pub async fn make_preview(
             on_percent(pct);
         }
     };
-    let runner = FfmpegRunner(paths.clone());
+    let stop = CancellationFlag::new();
+    let runner = StoppableRunner {
+        paths: paths.clone(),
+        stop: stop.clone(),
+    };
     let kept_ms = entry.probe.duration_ms;
     let run = async {
         if encode_preview {
@@ -269,12 +269,17 @@ pub async fn make_preview(
             run_with_fallback(&runner, &CHAIN[..1], kept_ms, build, on_progress).await
         }
     };
+    tokio::pin!(run);
     let done = tokio::select! {
-        done = run => done,
-        () = closed => {
-            let _ = std::fs::remove_file(&out);
-            return Err(NO_PREVIEW.to_owned());
-        }
+        done = &mut run => Some(done),
+        () = closed => None,
+    };
+    let Some(done) = done else {
+        // closed: ffmpeg is killed and waited for, so the partial file can go
+        stop.cancel();
+        let _ = run.await;
+        let _ = std::fs::remove_file(&out);
+        return Err(NO_PREVIEW.to_owned());
     };
     if let Err(e) = done {
         tracing::warn!(error = ?e, "clips: preview not made");
@@ -284,7 +289,8 @@ pub async fn make_preview(
     Ok(out)
 }
 
-/// Make `<dir>/filmstrip.jpg`. Closing the source (`closed` resolves) stops ffmpeg.
+/// Make `<dir>/filmstrip.jpg`. Closing the source (`closed` resolves) stops ffmpeg: it is killed
+/// and waited for before this returns (and so is one that runs past the timeout).
 pub async fn make_filmstrip(
     ffmpeg_exe: &Path,
     entry: &Entry,
@@ -293,18 +299,20 @@ pub async fn make_filmstrip(
     let out = entry.dir.join("filmstrip.jpg");
     std::fs::create_dir_all(&entry.dir).map_err(|_| NO_FILMSTRIP.to_owned())?;
     let args = preview::filmstrip_args(&text(&entry.path), entry.probe.duration_ms, &text(&out));
-    let run = ffmpeg::output(ffmpeg::command(
+    let cmd = ffmpeg::command(
         ffmpeg_exe,
         ["-v", "error"]
             .into_iter()
             .chain(args.iter().map(String::as_str)),
-    ));
-    let made = tokio::select! {
-        made = tokio::time::timeout(FILMSTRIP_TIMEOUT, run) => made,
-        () = closed => return Err(NO_FILMSTRIP.to_owned()),
+    );
+    let stop = async {
+        tokio::select! {
+            () = closed => {}
+            () = tokio::time::sleep(FILMSTRIP_TIMEOUT) => {}
+        }
     };
-    match made {
-        Ok(Ok(o)) if o.status.success() && out.is_file() => Ok(out),
+    match ffmpeg::status_until(cmd, stop).await {
+        Some(Ok(s)) if s.success() && out.is_file() => Ok(out),
         _ => Err(NO_FILMSTRIP.to_owned()),
     }
 }
@@ -498,24 +506,14 @@ mod tests {
         panic!("the stand-in ffmpeg never started");
     }
 
-    /// Gone, or a zombie: either way it no longer runs.
+    /// Already exited and waited for (not running, not even a zombie) the moment the run returned:
+    /// on Windows a dying ffmpeg still holds its files, so they can only be deleted after this.
     #[cfg(target_os = "linux")]
-    async fn assert_stops(pid: u32) {
-        let stat = format!("/proc/{pid}/stat");
-        for _ in 0..250 {
-            match std::fs::read_to_string(&stat) {
-                Err(_) => return,
-                Ok(s)
-                    if s.rsplit(')')
-                        .next()
-                        .is_some_and(|r| r.trim_start().starts_with('Z')) =>
-                {
-                    return;
-                }
-                Ok(_) => tokio::time::sleep(Duration::from_millis(20)).await,
-            }
-        }
-        panic!("ffmpeg {pid} still running");
+    fn assert_exited(pid: u32) {
+        assert!(
+            !Path::new(&format!("/proc/{pid}")).exists(),
+            "ffmpeg {pid} hadn't exited when the run returned"
+        );
     }
 
     #[cfg(target_os = "linux")]
@@ -534,7 +532,7 @@ mod tests {
         .await
         .expect("the filmstrip stops when its source closes");
         assert_eq!(made, Err(NO_FILMSTRIP.to_owned()));
-        assert_stops(pid).await;
+        assert_exited(pid);
     }
 
     #[cfg(target_os = "linux")]
@@ -559,7 +557,7 @@ mod tests {
         .expect("the preview stops when its source closes");
         assert_eq!(made, Err(NO_PREVIEW.to_owned()));
         assert!(!dir.path().join("src/preview.mp4").exists());
-        assert_stops(pid).await;
+        assert_exited(pid);
     }
 
     #[test]
