@@ -2,13 +2,15 @@
 
 pub mod games;
 pub mod routes;
+pub mod sweep;
 
 use std::collections::HashMap;
 use std::time::Duration;
 
+use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{GameId, UserId};
 use pulse_protocol::rest::{Clip, Message};
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 use crate::error::{AppError, AppResult};
 
@@ -90,4 +92,31 @@ pub async fn attach(db: &SqlitePool, _me: Option<UserId>, msgs: &mut [Message]) 
         m.clip = by_msg.remove(&m.id.to_string());
     }
     Ok(())
+}
+
+/// What deleting a clip leaves for after the commit: the object to remove from storage and the
+/// replies' `MessageDeleted` events.
+pub struct ClipDeleted {
+    pub key: String,
+    pub replies: Vec<Event>,
+}
+
+/// Part of deleting a clip's message (the soft delete is the caller's): its reactions and `clips`
+/// row go and its replies are soft-deleted. The media row stays until the object is deleted.
+pub async fn on_delete(
+    tx: &mut SqliteConnection,
+    message_id: pulse_protocol::ids::MessageId,
+) -> AppResult<ClipDeleted> {
+    let id = message_id.to_string();
+    sqlx::query("DELETE FROM reactions WHERE message_id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    let key: String =
+        sqlx::query_scalar("DELETE FROM clips WHERE message_id = ? RETURNING video_key")
+            .bind(&id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let replies = crate::messages::threads::soft_delete_replies(tx, message_id).await?;
+    Ok(ClipDeleted { key, replies })
 }

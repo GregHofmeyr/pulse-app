@@ -537,6 +537,7 @@ async fn remove(
     }
     let (msg, ch) = own_message(&s.db, me, id).await?;
     let is_quote = msg.quote.is_some();
+    let is_clip = msg.clip.is_some();
     // Every delete changes counts others publish as absolutes (mark_read's unread, a mention
     // count, a quote's reactions and awards): publish in commit order. Deletes are rare.
     let _order = s.hub.in_order().await;
@@ -561,6 +562,11 @@ async fn remove(
     }
     let deleted = if is_quote {
         Some(crate::quotes::on_delete(&mut tx, id).await?)
+    } else {
+        None
+    };
+    let clip = if is_clip {
+        Some(crate::clips::on_delete(&mut tx, id).await?)
     } else {
         None
     };
@@ -612,7 +618,31 @@ async fn remove(
             crate::qoty::publish_updated(&s, event).await;
         }
     }
+    if let Some(clip) = clip {
+        for event in clip.replies {
+            s.hub.publish(&s.db, event).await;
+        }
+        drop(_order);
+        remove_clip_object(&s, &clip.key).await;
+    }
     Ok(StatusCode::NO_CONTENT)
+}
+
+/// Delete a deleted clip's video from storage, then its media row. A failure is logged, not
+/// returned (the delete has landed): the row stays and the sweeper retries.
+async fn remove_clip_object(s: &AppState, key: &str) {
+    let Some(r2) = &s.r2 else { return };
+    if let Err(e) = r2.delete(&crate::clips::object_key(key)).await {
+        tracing::warn!(error = ?e, "couldn't delete a deleted clip's object; the sweeper will retry");
+        return;
+    }
+    if let Err(e) = sqlx::query("DELETE FROM media WHERE hash = ? AND kind = 'clip'")
+        .bind(key)
+        .execute(&s.db)
+        .await
+    {
+        tracing::warn!(error = ?e, "couldn't delete a deleted clip's media row");
+    }
 }
 
 /// Replace each of `cards` (just created, about to be announced) that `rewritten` lists with its

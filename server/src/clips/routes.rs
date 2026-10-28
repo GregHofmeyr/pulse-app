@@ -2,12 +2,13 @@
 
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{delete, post};
+use axum::routing::{delete, post, put};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, ClipUploadId, MessageId, UserId};
 use pulse_protocol::rest::{
-    ChannelKind, Clip, ClipUpload, ClipUploadRequest, ConfirmClipRequest, Message, MessageKind,
+    ChannelKind, Clip, ClipUpload, ClipUploadRequest, ConfirmClipRequest, EditClipRequest, Message,
+    MessageKind,
 };
 use sqlx::SqlitePool;
 
@@ -21,7 +22,10 @@ use crate::auth::AuthUser;
 use crate::db::{begin_write, now, stamp};
 use crate::error::{AppError, AppResult};
 use crate::media::MediaKind;
-use crate::messages::{nonce, routes::load};
+use crate::messages::{
+    nonce,
+    routes::{load, own_message},
+};
 use crate::servers::routes::is_server_member;
 
 pub fn router() -> Router<AppState> {
@@ -29,6 +33,7 @@ pub fn router() -> Router<AppState> {
         .route("/channels/{id}/clips/uploads", post(create_ticket))
         .route("/clip-uploads/{id}", delete(cancel))
         .route("/clip-uploads/{id}/confirm", post(confirm))
+        .route("/clips/{message_id}", put(edit))
 }
 
 /// Clips `me` started in the last rolling hour: top-level messages in clips channels (deleted
@@ -385,4 +390,61 @@ async fn replay(
         .await?
         .map(Json)
         .ok_or(AppError::NotFound)
+}
+
+/// Change a clip's caption and game. The poster only; the same checks as confirm.
+async fn edit(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<MessageId>,
+    Json(req): Json<EditClipRequest>,
+) -> AppResult<Json<Message>> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    let (msg, ch) = own_message(&s.db, me, id).await?;
+    if msg.clip.is_none() {
+        return Err(AppError::NotFound);
+    }
+    let server = ch.server_id.ok_or(AppError::NotFound)?;
+    let caption = req.caption.trim().to_string();
+    if caption.chars().count() > CAPTION_MAX {
+        return Err(bad("Captions can be up to 300 characters."));
+    }
+    if let Some(game) = req.game_id
+        && !games::in_server(&s.db, server, game).await?
+    {
+        return Err(bad("That game isn't in this server."));
+    }
+    // Guarded: a delete that commits between our read and this write wins.
+    let mut tx = begin_write(&s.db).await?;
+    let changed = sqlx::query(
+        "UPDATE messages SET content = ?, edited_at = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
+    )
+    .bind(&caption)
+    .bind(now())
+    .bind(id.to_string())
+    .bind(me.to_string())
+    .execute(&mut *tx)
+    .await?
+    .rows_affected();
+    if changed == 0 {
+        return Err(AppError::NotFound);
+    }
+    sqlx::query("UPDATE clips SET game_id = ? WHERE message_id = ?")
+        .bind(req.game_id.map(|g| g.to_string()))
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let msg = load(&s.db, Some(me), id).await?.ok_or(AppError::NotFound)?;
+    s.hub
+        .publish(
+            &s.db,
+            Event::MessageUpdated {
+                message: msg.clone(),
+            },
+        )
+        .await;
+    Ok(Json(msg))
 }

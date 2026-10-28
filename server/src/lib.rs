@@ -91,6 +91,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
         tracing::warn!(error = %e, "Quote of the Year boot sweep failed; the sweeper will retry");
     }
     qoty::spawn_sweeper(state.clone(), qoty::SWEEP_EVERY);
+    clips::sweep::spawn(state.clone());
     streams::liveness::spawn(
         state.clone(),
         streams::liveness::CHECK_EVERY,

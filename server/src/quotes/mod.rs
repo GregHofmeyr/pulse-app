@@ -12,7 +12,6 @@ use pulse_protocol::ids::{LineId, MessageId, QotyEventId, ServerId, UserId};
 use pulse_protocol::rest::{LineMedia, Message, NewQuoteLine, Quote, QuoteLine};
 use sqlx::{SqliteConnection, SqlitePool};
 
-use crate::db::now;
 use crate::error::{AppError, AppResult};
 use crate::messages::MAX_LEN;
 
@@ -341,45 +340,7 @@ pub async fn on_delete(tx: &mut SqliteConnection, message_id: MessageId) -> AppR
     .execute(&mut *tx)
     .await?;
 
-    let replies: Vec<(String, String, Option<String>)> = sqlx::query_as(
-        "UPDATE messages SET content = '', deleted_at = ?
-         WHERE thread_root_id = ? AND deleted_at IS NULL
-         RETURNING id, channel_id, author_id",
-    )
-    .bind(now())
-    .bind(&id)
-    .fetch_all(&mut *tx)
-    .await?;
-    let mut mentioned: HashMap<String, Vec<UserId>> = HashMap::new();
-    for (msg, user) in sqlx::query_as::<_, (String, String)>(
-        "SELECT mt.message_id, mt.user_id FROM mentions mt JOIN messages m ON m.id = mt.message_id
-         WHERE m.thread_root_id = ? ORDER BY mt.rowid",
-    )
-    .bind(&id)
-    .fetch_all(&mut *tx)
-    .await?
-    {
-        mentioned
-            .entry(msg)
-            .or_default()
-            .push(user.parse().map_err(anyhow::Error::from)?);
-    }
-    let replies = replies
-        .into_iter()
-        .map(|(reply, channel, author)| {
-            Ok(Event::MessageDeleted {
-                channel_id: channel.parse().map_err(anyhow::Error::from)?,
-                author_id: author
-                    .as_deref()
-                    .map(str::parse)
-                    .transpose()
-                    .map_err(anyhow::Error::from)?,
-                mentions: mentioned.remove(&reply).unwrap_or_default(),
-                message_id: reply.parse().map_err(anyhow::Error::from)?,
-                thread_root_id: Some(message_id),
-            })
-        })
-        .collect::<AppResult<_>>()?;
+    let replies = crate::messages::threads::soft_delete_replies(&mut *tx, message_id).await?;
     Ok(Deleted {
         replies,
         qoty: qoty.iter().map(|e| parse_id(e)).collect::<AppResult<_>>()?,

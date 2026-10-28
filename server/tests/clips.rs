@@ -1166,3 +1166,496 @@ async fn two_confirms_at_once_post_one_clip() {
     }
     assert_eq!(created, 1);
 }
+
+// ---- Editing, deleting, sweeping ----
+
+async fn put_clip(
+    app: &TestApp,
+    token: &str,
+    id: pulse_protocol::ids::MessageId,
+    body: serde_json::Value,
+) -> reqwest::Response {
+    app.http
+        .put(app.url(&format!("/clips/{id}")))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn delete_message(
+    app: &TestApp,
+    token: &str,
+    id: pulse_protocol::ids::MessageId,
+) -> reqwest::Response {
+    app.http
+        .delete(app.url(&format!("/messages/{id}")))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn text(app: &TestApp, sql: &str, bind: &str) -> String {
+    sqlx::query_scalar(sql)
+        .bind(bind)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+async fn count(app: &TestApp, sql: &str, bind: &str) -> i64 {
+    sqlx::query_scalar(sql)
+        .bind(bind)
+        .fetch_one(&app.db)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn only_the_poster_edits() {
+    let w = world().await;
+    let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![1u8; 10]).await;
+    let game = add_game_ok(&w.app, &w.alex.1, w.server, "Rocket League").await;
+    let mut ws = hello(&w.app, &w.sam.1).await;
+
+    let body = json!({ "caption": "  new words ", "game_id": game.id });
+    assert_eq!(
+        put_clip(&w.app, &w.sam.1, clip.id, body.clone())
+            .await
+            .status(),
+        403
+    );
+
+    let r = put_clip(&w.app, &w.alex.1, clip.id, body).await;
+    assert_eq!(r.status(), 200);
+    let m: Message = r.json().await.unwrap();
+    assert_eq!(m.content, "new words");
+    assert!(m.edited_at.is_some());
+    let c = m.clip.clone().expect("clip");
+    assert_eq!(c.game_id, Some(game.id));
+    assert_eq!(c.thumb_hash, clip.clip.as_ref().unwrap().thumb_hash);
+
+    loop {
+        match next_frame_beating(&mut ws, Duration::from_secs(3))
+            .await
+            .expect("MessageUpdated")
+        {
+            ServerFrame::Event(Event::MessageUpdated { message }) => {
+                assert_eq!(message.id, clip.id);
+                assert_eq!(message.content, "new words");
+                assert_eq!(message.clip, m.clip);
+                break;
+            }
+            _ => continue,
+        }
+    }
+
+    // The same checks as confirm: caption length and a game from this server; a game can be cleared.
+    let long = "x".repeat(301);
+    assert_eq!(
+        put_clip(
+            &w.app,
+            &w.alex.1,
+            clip.id,
+            json!({"caption": long, "game_id": null})
+        )
+        .await
+        .status(),
+        400
+    );
+    let other = create_server(&w.app, &w.alex.1, "Other").await;
+    let foreign = add_game_ok(&w.app, &w.alex.1, other.id, "Elsewhere").await;
+    assert_eq!(
+        put_clip(
+            &w.app,
+            &w.alex.1,
+            clip.id,
+            json!({"caption": "ok", "game_id": foreign.id})
+        )
+        .await
+        .status(),
+        400
+    );
+    let r = put_clip(
+        &w.app,
+        &w.alex.1,
+        clip.id,
+        json!({"caption": "ok", "game_id": null}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(
+        r.json::<Message>().await.unwrap().clip.unwrap().game_id,
+        None
+    );
+
+    // Not a clip, and a deleted clip, are 404s.
+    let text_channel = general(&w.app, &w.alex.1, w.server).await;
+    let plain: Message = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/messages", text_channel.id),
+        json!({"content": "hi"}),
+    )
+    .await
+    .json()
+    .await
+    .unwrap();
+    assert_eq!(
+        put_clip(
+            &w.app,
+            &w.alex.1,
+            plain.id,
+            json!({"caption": "x", "game_id": null})
+        )
+        .await
+        .status(),
+        404
+    );
+    assert_eq!(
+        delete_message(&w.app, &w.alex.1, clip.id).await.status(),
+        204
+    );
+    assert_eq!(
+        put_clip(
+            &w.app,
+            &w.alex.1,
+            clip.id,
+            json!({"caption": "x", "game_id": null})
+        )
+        .await
+        .status(),
+        404
+    );
+}
+
+#[tokio::test]
+async fn clips_cant_be_edited_as_messages() {
+    let w = world().await;
+    let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![1u8; 10]).await;
+    let r = w
+        .app
+        .http
+        .patch(w.app.url(&format!("/messages/{}", clip.id)))
+        .bearer_auth(&w.alex.1)
+        .json(&json!({ "content": "sneaky" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 400);
+    assert_eq!(
+        error_message(r).await,
+        "clips are edited with their own route"
+    );
+}
+
+#[tokio::test]
+async fn deleting_a_clip_removes_object_reactions_and_replies() {
+    let w = world().await;
+    let s3 = w.app.s3.as_ref().unwrap();
+    let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![3u8; 10]).await;
+    let id = clip.id.to_string();
+    let key = text(
+        &w.app,
+        "SELECT video_key FROM clips WHERE message_id = ?",
+        &id,
+    )
+    .await;
+    let object = format!("clips/{key}.mp4");
+    assert!(s3.object(&object).is_some());
+    let reply = pulse_protocol::ids::MessageId::new();
+    sqlx::query(
+        "INSERT INTO reactions (message_id, user_id, emoji, created_at) VALUES (?, ?, 'x', ?)",
+    )
+    .bind(&id)
+    .bind(w.sam.0.to_string())
+    .bind(pulse_server::db::now())
+    .execute(&w.app.db)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO messages (id, channel_id, author_id, kind, content, created_at, thread_root_id)
+         VALUES (?, ?, ?, 'normal', 'a reply', ?, ?)",
+    )
+    .bind(reply.to_string())
+    .bind(w.channel.id.to_string())
+    .bind(w.sam.0.to_string())
+    .bind(pulse_server::db::now())
+    .bind(&id)
+    .execute(&w.app.db)
+    .await
+    .unwrap();
+    let mut ws = hello(&w.app, &w.sam.1).await;
+
+    assert_eq!(
+        delete_message(&w.app, &w.sam.1, clip.id).await.status(),
+        403
+    );
+    assert!(s3.object(&object).is_some());
+    assert_eq!(
+        delete_message(&w.app, &w.alex.1, clip.id).await.status(),
+        204
+    );
+
+    assert!(s3.object(&object).is_none(), "the object is gone");
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM reactions WHERE message_id = ?",
+            &id
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM clips WHERE message_id = ?",
+            &id
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        count(&w.app, "SELECT COUNT(*) FROM media WHERE hash = ?", &key).await,
+        0
+    );
+    let (content, deleted): (String, Option<String>) =
+        sqlx::query_as("SELECT content, deleted_at FROM messages WHERE id = ?")
+            .bind(reply.to_string())
+            .fetch_one(&w.app.db)
+            .await
+            .unwrap();
+    assert_eq!(content, "");
+    assert!(deleted.is_some());
+
+    let (mut got_clip, mut got_reply) = (false, false);
+    while let Some(f) = next_frame_beating(&mut ws, Duration::from_millis(600)).await {
+        if let ServerFrame::Event(Event::MessageDeleted {
+            message_id,
+            thread_root_id,
+            ..
+        }) = f
+        {
+            if message_id == clip.id && thread_root_id.is_none() {
+                got_clip = true;
+            }
+            if message_id == reply && thread_root_id == Some(clip.id) {
+                got_reply = true;
+            }
+        }
+    }
+    assert!(got_clip && got_reply);
+
+    let list: Vec<Message> = get_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/channels/{}/messages", w.channel.id),
+    )
+    .await;
+    assert!(
+        list.iter().all(|m| m.clip.is_none()),
+        "a deleted clip is a bare tombstone"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_object_delete_is_retried_by_the_sweeper() {
+    let w = world().await;
+    let s3 = w.app.s3.as_ref().unwrap();
+    let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![3u8; 10]).await;
+    let key = text(
+        &w.app,
+        "SELECT video_key FROM clips WHERE message_id = ?",
+        &clip.id.to_string(),
+    )
+    .await;
+    let object = format!("clips/{key}.mp4");
+
+    s3.set_down(true);
+    assert_eq!(
+        delete_message(&w.app, &w.alex.1, clip.id).await.status(),
+        204
+    );
+    s3.set_down(false);
+    assert!(s3.object(&object).is_some(), "the delete failed");
+    assert_eq!(
+        count(&w.app, "SELECT COUNT(*) FROM media WHERE hash = ?", &key).await,
+        1
+    );
+
+    let report = pulse_server::clips::sweep::run(
+        &w.app.state(),
+        chrono::Utc::now() + chrono::Duration::hours(2),
+    )
+    .await
+    .unwrap();
+    assert_eq!((report.tickets, report.orphans), (0, 1));
+    assert!(s3.object(&object).is_none());
+    assert_eq!(
+        count(&w.app, "SELECT COUNT(*) FROM media WHERE hash = ?", &key).await,
+        0
+    );
+}
+
+async fn age_ticket(app: &TestApp, up: &ClipUpload, hours: i64) {
+    sqlx::query("UPDATE clip_uploads SET created_at = ? WHERE id = ?")
+        .bind(pulse_server::db::stamp(
+            chrono::Utc::now() - chrono::Duration::hours(hours),
+        ))
+        .bind(up.id.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
+async fn expired_tickets_and_orphans_are_swept() {
+    let w = world().await;
+    let s3 = w.app.s3.as_ref().unwrap();
+    let old = ticket_ok(&w.app, &w.alex.1, w.channel.id, 10).await;
+    put_object(&w.app, &old, vec![1u8; 10]).await;
+    let old_object = format!("clips/{}.mp4", ticket_key(&w.app, &old).await);
+    age_ticket(&w.app, &old, 25).await;
+    let fresh = ticket_ok(&w.app, &w.alex.1, w.channel.id, 10).await;
+    put_object(&w.app, &fresh, vec![2u8; 10]).await;
+    let fresh_object = format!("clips/{}.mp4", ticket_key(&w.app, &fresh).await);
+
+    // A posted clip is never an orphan.
+    let kept = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![5u8; 10]).await;
+    let kept_key = text(
+        &w.app,
+        "SELECT video_key FROM clips WHERE message_id = ?",
+        &kept.id.to_string(),
+    )
+    .await;
+    // Real orphans: an object and a media row no clip references. One is under an hour old.
+    let stray = "a".repeat(32);
+    let recent = "b".repeat(32);
+    for (k, age) in [(&stray, 2), (&recent, 0)] {
+        s3.put_raw(&format!("clips/{k}.mp4"), vec![9u8; 4]);
+        sqlx::query(
+            "INSERT INTO media (hash, kind, location, content_type, size, width, height, frames, uploaded_by, created_at)
+             VALUES (?, 'clip', 'r2', 'video/mp4', 4, 16, 16, 1, ?, ?)",
+        )
+        .bind(k)
+        .bind(w.alex.0.to_string())
+        .bind(pulse_server::db::stamp(
+            chrono::Utc::now() - chrono::Duration::hours(age),
+        ))
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    }
+
+    let report = pulse_server::clips::sweep::run(&w.app.state(), chrono::Utc::now())
+        .await
+        .unwrap();
+    assert_eq!((report.tickets, report.orphans), (1, 1));
+    assert!(s3.object(&old_object).is_none());
+    assert_eq!(tickets(&w.app).await, 1);
+    assert!(s3.object(&fresh_object).is_some());
+    assert!(s3.object(&format!("clips/{stray}.mp4")).is_none());
+    assert_eq!(
+        count(&w.app, "SELECT COUNT(*) FROM media WHERE hash = ?", &stray).await,
+        0
+    );
+    assert!(
+        s3.object(&format!("clips/{recent}.mp4")).is_some(),
+        "under an hour old"
+    );
+    assert!(s3.object(&format!("clips/{kept_key}.mp4")).is_some());
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM media WHERE hash = ?",
+            &kept_key
+        )
+        .await,
+        1
+    );
+
+    // A failed delete keeps the rows for next time.
+    s3.set_down(true);
+    let later = chrono::Utc::now() + chrono::Duration::hours(30);
+    let report = pulse_server::clips::sweep::run(&w.app.state(), later)
+        .await
+        .unwrap();
+    assert_eq!((report.tickets, report.orphans), (0, 0));
+    assert_eq!(tickets(&w.app).await, 1);
+    s3.set_down(false);
+    let report = pulse_server::clips::sweep::run(&w.app.state(), later)
+        .await
+        .unwrap();
+    // The fresh ticket, and the recent stray (both now old enough).
+    assert_eq!((report.tickets, report.orphans), (1, 1));
+    assert_eq!(tickets(&w.app).await, 0);
+}
+
+#[tokio::test]
+async fn a_ticket_for_a_deleted_channel_is_swept() {
+    let w = world().await;
+    let s3 = w.app.s3.as_ref().unwrap();
+    let up = ticket_ok(&w.app, &w.alex.1, w.channel.id, 10).await;
+    put_object(&w.app, &up, vec![1u8; 10]).await;
+    let object = format!("clips/{}.mp4", ticket_key(&w.app, &up).await);
+    let thumb = upload_thumb(&w.app, &w.alex.1).await;
+
+    sqlx::query("DELETE FROM channels WHERE id = ?")
+        .bind(w.channel.id.to_string())
+        .execute(&w.app.db)
+        .await
+        .unwrap();
+    let channel: Option<String> =
+        sqlx::query_scalar("SELECT channel_id FROM clip_uploads WHERE id = ?")
+            .bind(up.id.to_string())
+            .fetch_one(&w.app.db)
+            .await
+            .unwrap();
+    assert_eq!(channel, None, "the ticket outlives its channel");
+    assert_eq!(
+        confirm(&w.app, &w.alex.1, &up, confirm_body(&thumb, None))
+            .await
+            .status(),
+        404
+    );
+
+    age_ticket(&w.app, &up, 25).await;
+    let report = pulse_server::clips::sweep::run(&w.app.state(), chrono::Utc::now())
+        .await
+        .unwrap();
+    assert_eq!(report.tickets, 1);
+    assert!(s3.object(&object).is_none());
+    assert_eq!(tickets(&w.app).await, 0);
+}
+
+/// The hourly count keeps counting a clip after it is deleted through the route (rows gone).
+#[tokio::test]
+async fn a_deleted_clip_still_counts_toward_the_hour() {
+    let w = world().await;
+    for _ in 0..19 {
+        upload_clip(&w.app, &w.alex.1, w.channel.id, vec![5u8; 10]).await;
+    }
+    let last = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![5u8; 10]).await;
+    assert_eq!(
+        delete_message(&w.app, &w.alex.1, last.id).await.status(),
+        204
+    );
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM clips WHERE message_id = ?",
+            &last.id.to_string()
+        )
+        .await,
+        0
+    );
+    assert_eq!(
+        ticket(&w.app, &w.alex.1, w.channel.id, 10, 1_000)
+            .await
+            .status(),
+        429
+    );
+}

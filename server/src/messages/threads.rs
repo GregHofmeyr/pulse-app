@@ -165,3 +165,53 @@ async fn seen(
     }
     Ok(StatusCode::NO_CONTENT)
 }
+
+/// Soft-delete every live reply in `root`'s thread and return the `MessageDeleted` events to
+/// publish once the transaction commits.
+pub(crate) async fn soft_delete_replies(
+    tx: &mut SqliteConnection,
+    root: MessageId,
+) -> AppResult<Vec<Event>> {
+    let id = root.to_string();
+    let replies: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "UPDATE messages SET content = '', deleted_at = ?
+         WHERE thread_root_id = ? AND deleted_at IS NULL
+         RETURNING id, channel_id, author_id",
+    )
+    .bind(crate::db::now())
+    .bind(&id)
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut mentioned: std::collections::HashMap<String, Vec<UserId>> =
+        std::collections::HashMap::new();
+    for (msg, user) in sqlx::query_as::<_, (String, String)>(
+        "SELECT mt.message_id, mt.user_id FROM mentions mt JOIN messages m ON m.id = mt.message_id
+         WHERE m.thread_root_id = ? ORDER BY mt.rowid",
+    )
+    .bind(&id)
+    .fetch_all(&mut *tx)
+    .await?
+    {
+        mentioned
+            .entry(msg)
+            .or_default()
+            .push(user.parse().map_err(anyhow::Error::from)?);
+    }
+    let replies: Vec<Event> = replies
+        .into_iter()
+        .map(|(reply, channel, author)| {
+            Ok(Event::MessageDeleted {
+                channel_id: channel.parse().map_err(anyhow::Error::from)?,
+                author_id: author
+                    .as_deref()
+                    .map(str::parse)
+                    .transpose()
+                    .map_err(anyhow::Error::from)?,
+                mentions: mentioned.remove(&reply).unwrap_or_default(),
+                message_id: reply.parse().map_err(anyhow::Error::from)?,
+                thread_root_id: Some(root),
+            })
+        })
+        .collect::<AppResult<_>>()?;
+    Ok(replies)
+}
