@@ -156,3 +156,18 @@ describe('ServerSettings dialog', () => {
     expect(document.querySelector('.content')!.textContent).toContain('No names are linked yet')
   })
 })
+
+describe('ServerSettings sections', () => {
+  it('ServerSettings has a Storage section', async () => {
+    invoke.mockReset()
+    invoke.mockResolvedValue({ bytes: 0, count: 0, est_monthly_usd: 0 })
+    app.state = emptyState()
+    cmp = mount(ServerSettings, { target: document.body, props: { server: { id: 'S1', name: 'Home', icon_hash: null }, onClose: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('nav button')].find((b) => b.textContent === 'Storage')!.click()
+    await new Promise((r) => setTimeout(r, 0))
+    flushSync()
+    expect(invoke).toHaveBeenCalledWith('clip_storage', { serverId: 'S1' })
+    expect(document.querySelector('.content h2')!.textContent).toBe('Storage')
+  })
+})
