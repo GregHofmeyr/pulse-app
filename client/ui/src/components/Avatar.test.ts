@@ -123,6 +123,25 @@ describe('Avatar', () => {
       remove.mockRestore()
     }
   })
+  it('a hover is forgotten when the picture stops animating', () => {
+    const update = (avatar_still: string | null) => {
+      app.state = applyEvent(app.state, { t: 'ProfileUpdated', d: { user: { id: 'U2', username: 'sam', avatar_hash: A, avatar_still, style: { font: null, colors: [] } }, card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null } } }, 0)
+      flushSync()
+    }
+    mountAv({}, { avatar_hash: A, avatar_still: S })
+    const img = document.querySelector('img')!
+    FakeIntersectionObserver.set(img, true)
+    img.closest('.av')!.dispatchEvent(new Event('pointerenter'))
+    flushSync()
+    expect(img.getAttribute('src')).toBe(url(A))
+    // still-only while hovered (its listeners go, so no pointerleave is heard), then animated again
+    update(null)
+    update(S)
+    const again = document.querySelector('img')!
+    FakeIntersectionObserver.set(again, true)
+    flushSync()
+    expect(again.getAttribute('src')).toBe(url(S))
+  })
   it('swaps the picture live on a ProfileUpdated', () => {
     const N = 'c'.repeat(64)
     mountAv({ place: 'card' }, { avatar_hash: A, avatar_still: null })
