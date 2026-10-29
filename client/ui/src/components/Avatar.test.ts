@@ -16,6 +16,8 @@ const A = 'a'.repeat(64)
 const S = 'b'.repeat(64)
 const url = (h: string) => `pulse-media://localhost/${h}`
 let cmp: ReturnType<typeof mount> | undefined
+const origAdd = EventTarget.prototype.addEventListener
+const origRemove = EventTarget.prototype.removeEventListener
 
 beforeEach(() => {
   app.state = emptyState()
@@ -89,6 +91,37 @@ describe('Avatar', () => {
     av.dispatchEvent(Object.assign(new Event('pointerup', { bubbles: true }), { pointerType: 'mouse' }))
     flushSync()
     expect(img.getAttribute('src')).toBe(url(A))
+  })
+  it('only an animated avatar watches the pointer', () => {
+    // the pointer listeners the avatar puts on its own element, live (added and not yet removed)
+    const live = new Map<string, number>()
+    const add = vi.spyOn(EventTarget.prototype, 'addEventListener').mockImplementation(function (this: EventTarget, type: string, ...rest: unknown[]) {
+      if (this instanceof HTMLElement && this.classList.contains('av') && type.startsWith('pointer')) live.set(type, (live.get(type) ?? 0) + 1)
+      return origAdd.call(this, type, ...(rest as [EventListener]))
+    })
+    const remove = vi.spyOn(EventTarget.prototype, 'removeEventListener').mockImplementation(function (this: EventTarget, type: string, ...rest: unknown[]) {
+      if (this instanceof HTMLElement && this.classList.contains('av') && type.startsWith('pointer')) live.set(type, (live.get(type) ?? 0) - 1)
+      return origRemove.call(this, type, ...(rest as [EventListener]))
+    })
+    const watching = () => [...live].filter(([, n]) => n > 0).map(([t]) => t).sort()
+    try {
+      for (const user of [{ avatar_hash: null, avatar_still: null }, { avatar_hash: A, avatar_still: null }, { avatar_hash: A, avatar_still: A }]) {
+        mountAv({}, user)
+        expect(watching(), JSON.stringify(user)).toEqual([])
+        unmount(cmp!)
+        cmp = undefined
+        document.body.innerHTML = ''
+      }
+      mountAv({}, { avatar_hash: A, avatar_still: S })
+      expect(watching()).toEqual(['pointercancel', 'pointerenter', 'pointerleave', 'pointerup'])
+      // it stops once the picture no longer animates
+      app.state = applyEvent(app.state, { t: 'ProfileUpdated', d: { user: { id: 'U2', username: 'sam', avatar_hash: A, avatar_still: null, style: { font: null, colors: [] } }, card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null } } }, 0)
+      flushSync()
+      expect(watching()).toEqual([])
+    } finally {
+      add.mockRestore()
+      remove.mockRestore()
+    }
   })
   it('swaps the picture live on a ProfileUpdated', () => {
     const N = 'c'.repeat(64)

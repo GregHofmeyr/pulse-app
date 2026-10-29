@@ -27,17 +27,36 @@
   const user = $derived(shown ?? userOf(app.state, id))
   const hash = $derived(user?.avatar_hash ?? null)
   const still = $derived(user?.avatar_still ?? null)
+  const animated = $derived(!!hash && !!still && still !== hash)
   let over = $state(false)
 
   // An animated avatar shows its still until the rule says otherwise; a still-only one never changes.
   const wire = $derived<Attachment<HTMLImageElement>>((img) => {
-    if (hash && still && still !== hash) return wireAnimated(img, mediaUrl(hash), mediaUrl(still), (s) => shouldAnimateProfile(place, s), () => over || !!hovered?.())
+    if (animated) return wireAnimated(img, mediaUrl(hash!), mediaUrl(still!), (s) => shouldAnimateProfile(place, s), () => over || !!hovered?.())
   })
+  // Only an animated avatar watches the pointer (it plays while hovered). A touch tap ends with the touch.
+  const track: Attachment<HTMLElement> = (el) => {
+    const enter = () => (over = true)
+    const leave = () => (over = false)
+    const up = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') over = false
+    }
+    el.addEventListener('pointerenter', enter)
+    el.addEventListener('pointerleave', leave)
+    el.addEventListener('pointerup', up)
+    el.addEventListener('pointercancel', leave)
+    return () => {
+      el.removeEventListener('pointerenter', enter)
+      el.removeEventListener('pointerleave', leave)
+      el.removeEventListener('pointerup', up)
+      el.removeEventListener('pointercancel', leave)
+      over = false
+    }
+  }
 </script>
 
 {#snippet face()}
-  <span class="av" style:width="{size}px" style:height="{size}px" style:font-size="{Math.round(size * 0.42)}px" style:background={hash ? undefined : avatarColor(id)} onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}
-    onpointerup={(e) => { if (e.pointerType === 'touch') over = false }} onpointercancel={() => (over = false)} role="presentation">
+  <span class="av" style:width="{size}px" style:height="{size}px" style:font-size="{Math.round(size * 0.42)}px" style:background={hash ? undefined : avatarColor(id)} {@attach animated && track}>
     {#if hash}
       <img src={mediaUrl(still ?? hash)} alt="" draggable="false" {@attach wire} />
     {:else}
