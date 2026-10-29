@@ -12,7 +12,7 @@ pub fn next_ulid() -> Ulid {
     // Overflow needs 2^80 IDs in one millisecond; fall back to a fresh ULID if it ever happens.
     g.get_or_insert_with(ulid::Generator::new)
         .generate()
-        .unwrap_or_else(|_| Ulid::new())
+        .unwrap_or_else(|_| Ulid::generate())
 }
 
 macro_rules! id {
