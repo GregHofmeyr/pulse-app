@@ -85,6 +85,16 @@ describe('bundled name fonts', () => {
     expect(onest).toContain('@fontsource/onest')
     expect(onest).toContain('SIL Open Font License 1.1')
   })
+
+  // The woff2 files keep their copyright (name ID 0) and licence URL (ID 14) but not the licence
+  // text (ID 13), so the OFL text travels with the app as THIRD_PARTY.md.
+  it('the installer bundles THIRD_PARTY.md, which carries the full OFL text', () => {
+    const conf = JSON.parse(readFileSync(new URL('../../src-tauri/tauri.conf.json', import.meta.url), 'utf8'))
+    expect(conf.bundle.resources).toEqual({ '../../THIRD_PARTY.md': 'THIRD_PARTY.md' })
+    const doc = readFileSync(new URL('../../../THIRD_PARTY.md', import.meta.url), 'utf8')
+    expect(doc).toContain('SIL OPEN FONT LICENSE Version 1.1')
+    expect(doc).toContain('PREAMBLE')
+  })
 })
 
 describe('NAME_FONTS table vs nameFonts.css', () => {
