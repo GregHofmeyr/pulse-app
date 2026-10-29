@@ -40,11 +40,15 @@
   import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { isMember, liveIn } from '../lib/selectors'
   import { avatarColor, initial } from '../lib/avatar'
+  import Avatar from '../components/Avatar.svelte'
+  import Name from '../components/Name.svelte'
   import { keybindsApi } from '../lib/keybinds'
   import { watchWindowFocus } from '../lib/windowFocus.svelte'
   import type { User } from '../lib/protocol/User'
 
   let { user, onLogout }: { user: User; onLogout: () => void } = $props()
+  // Signed in as `user`; app.state.me follows your profile edits (ProfileUpdated) once Ready has landed.
+  const me = $derived(app.state.me ?? user)
 
   const win = getCurrentWindow()
   let activeServerId = $state<string | null>(null)
@@ -461,8 +465,8 @@
       <VoiceStatus />
       <div class="me">
         <button bind:this={menuToggle} class="who-btn" data-tip="Account" data-menu-toggle aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
-          <span class="avatar" style:background={avatarColor(user.id)}>{initial(user.username)}</span>
-          <span class="who">{user.username}<small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
+          <Avatar id={me.id} name={me.username} size={34} />
+          <span class="who"><Name userId={me.id} serverId={null} text={me.username} interactive={false} /><small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
         </button>
         {#if voice.channelId}
           <button class="me-btn" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label={voice.controls.muted ? "Unmute" : "Mute"} onclick={() => voiceApi.toggleMute()}>
@@ -591,7 +595,6 @@
   /* two classes: .menu (declared below, for the upward account menu) must not win `bottom` back */
   .menu.head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; }
   .me { padding: 10px 10px 10px 12px; background: #17181c; display: flex; align-items: center; gap: 10px; }
-  .avatar { width: 34px; height: 34px; border-radius: 50%; color: #fff; font-weight: 700; display: grid; place-items: center; }
   .who { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
   .who small { font-size: 12px; font-weight: 400; color: var(--text-3); }
   .add { width: 36px; height: 36px; flex-shrink: 0; border: 1px dashed #3a3c44; border-radius: 10px; background: transparent; color: var(--text-3); display: grid; place-items: center; }

@@ -162,6 +162,23 @@ describe('Shell', () => {
 })
 
 describe('account menu', () => {
+  it('shows your profile picture and styled name, and follows your profile live', () => {
+    const atLogin = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    const pic = 'a'.repeat(64)
+    app.state = { ...emptyState(), me: { ...atLogin, avatar_hash: pic, style: { font: null, colors: ['#ff8800'] } } }
+    cmp = mount(Shell, { target: document.body, props: { user: atLogin, onLogout: () => {} } })
+    flushSync()
+    const btn = () => document.querySelector<HTMLButtonElement>('.who-btn')!
+    expect(btn().querySelector('img')?.getAttribute('src')).toContain(pic)
+    expect(btn().querySelector<HTMLElement>('.name')?.getAttribute('style')).toContain('color:')
+    expect(btn().textContent).toContain('alex')
+    // a ProfileUpdated for you swaps app.state.me: the panel follows without a restart
+    const next = 'b'.repeat(64)
+    app.state = { ...app.state, me: { ...app.state.me!, avatar_hash: next } }
+    flushSync()
+    expect(btn().querySelector('img')?.getAttribute('src')).toContain(next)
+  })
+
   it('esc_closes_the_account_menu_and_focus_returns_to_its_toggle', async () => {
     app.state = { ...emptyState() }
     cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
