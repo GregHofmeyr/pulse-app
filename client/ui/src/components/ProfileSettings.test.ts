@@ -367,6 +367,52 @@ describe('ProfileSettings', () => {
     expect(app.state.profiles.U1).toEqual(stored)
   })
 
+  it('a second way out during a Save wins over the first, and shows Saving… until it settles', async () => {
+    let answer!: (p: Profile) => void
+    handlers.update_profile = () => new Promise<Profile>((r) => (answer = r))
+    const onClose = await openSettings()
+    const section = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('nav button')].find((b) => b.textContent === label)!
+    click(option('Card theme', 'Berry'))
+    click(button('Save'))
+    click(closeButton())
+    await settle()
+    expect(document.querySelector('.content [role=status]')!.textContent).toBe('Saving your profile…')
+    expect(closeButton().getAttribute('aria-busy')).toBe('true')
+    click(section('Chat'))
+    await settle()
+    // the latest request is the one shown as waiting
+    expect(closeButton().hasAttribute('aria-busy')).toBe(false)
+    expect(section('Chat').getAttribute('aria-busy')).toBe('true')
+    answer(saved({ card: { ...saved().card, theme_top: '#c2457a', theme_bottom: '#3a1f5e' } }))
+    await vi.waitFor(() => {
+      flushSync()
+      expect(section('Chat').getAttribute('aria-current')).toBe('page')
+    })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(document.querySelector('.content [role=status]')).toBeNull()
+    expect(section('Chat').hasAttribute('aria-busy')).toBe(false)
+  })
+
+  it('asking for Profile again during a Save stays put', async () => {
+    let answer!: (p: Profile) => void
+    handlers.update_profile = () => new Promise<Profile>((r) => (answer = r))
+    const onClose = await openSettings()
+    const section = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('nav button')].find((b) => b.textContent === label)!
+    click(option('Card theme', 'Berry'))
+    click(button('Save'))
+    click(closeButton())
+    click(section('Profile'))
+    await settle()
+    expect(document.querySelector('.content [role=status]')).toBeNull()
+    answer(saved({ card: { ...saved().card, theme_top: '#c2457a', theme_bottom: '#3a1f5e' } }))
+    await vi.waitFor(() => {
+      flushSync()
+      expect(document.body.textContent).toContain('Saved')
+    })
+    expect(onClose).not.toHaveBeenCalled()
+    expect(section('Profile').getAttribute('aria-current')).toBe('page')
+  })
+
   it('closing during a Save that fails asks, with the error shown', async () => {
     let refuse!: (e: unknown) => void
     handlers.update_profile = () => new Promise<Profile>((_, r) => (refuse = r))

@@ -27,26 +27,35 @@
 
   // Unsaved profile changes: every way out (close, backdrop, Escape, another section) asks first.
   // A Save on its way is waited for: it isn't something to discard, and may yet fail and keep the draft.
+  // Meanwhile the latest way out asked for is the one taken (Profile again means stay), and it shows
+  // as busy.
+  type Way = { via: 'close' | Section; then: () => void }
   let profileDirty = $state(false)
   let profileSettling = $state<Promise<void> | null>(null)
   let leaving = $state<(() => void) | null>(null)
-  let waiting = false
-  async function leave(then: () => void) {
+  let waiting = $state<Way | null>(null)
+  async function leave(way: Way) {
     if (current === 'profile' && profileSettling) {
-      if (waiting) return
-      waiting = true
+      const first = !waiting
+      waiting = way
+      if (!first) return
       try {
         await profileSettling
         await tick() // the editor's dirty flag follows its answer
       } finally {
-        waiting = false
+        way = waiting!
+        waiting = null
       }
+      if (way.via === 'profile') return
     }
-    if (current === 'profile' && profileDirty) leaving = then
-    else then()
+    if (current === 'profile' && profileDirty) leaving = way.then
+    else way.then()
   }
-  const close = () => void leave(onClose)
-  const go = (s: Section) => s !== current && void leave(() => (current = s))
+  const close = () => void leave({ via: 'close', then: onClose })
+  function go(s: Section) {
+    if (s !== current) void leave({ via: s, then: () => (current = s) })
+    else if (waiting) waiting = { via: s, then: () => {} }
+  }
   // Escape while asking means "Keep editing".
   const escape = () => (leaving ? (leaving = null) : close())
   function discard() {
@@ -64,13 +73,15 @@
   <nav aria-label="Settings sections">
     <h1>Settings</h1>
     {#each sections as s}
-      <button class:on={current === s.key} aria-current={current === s.key ? 'page' : undefined}
+      <button class:on={current === s.key} aria-current={current === s.key ? 'page' : undefined} aria-busy={waiting?.via === s.key || undefined}
         onclick={() => go(s.key)}>{s.label}</button>
     {/each}
   </nav>
   <div class="content">
-    <button class="close" aria-label="Close settings" onclick={close}><Icon name="x" size={16} /></button>
-    {#if leaving}
+    <button class="close" aria-label="Close settings" aria-busy={waiting?.via === 'close' || undefined} onclick={close}><Icon name="x" size={16} /></button>
+    {#if waiting && waiting.via !== 'profile'}
+      <div class="confirm saving" role="status">Saving your profile…</div>
+    {:else if leaving}
       <div class="confirm" role="alert">
         <span>Discard your profile changes?</span>
         <button type="button" {@attach focusOnShow} onclick={() => (leaving = null)}>Keep editing</button>
@@ -100,6 +111,9 @@
   .confirm span { margin-right: auto; }
   .confirm button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-weight: 600; }
   .confirm button.danger { border-color: transparent; background: var(--danger); color: #fff; }
+  .confirm.saving { border-color: var(--bg-4); color: var(--text-2); }
+  /* the way out that waits for a Save */
+  nav button[aria-busy='true'], .close[aria-busy='true'] { cursor: progress; opacity: .6; }
   .close { position: absolute; top: 20px; right: 20px; width: 36px; height: 36px; border: 1px solid var(--bg-4); border-radius: 50%; background: transparent; color: var(--text-2); display: grid; place-items: center; z-index: 1; }
   @media (max-width: 640px) {
     .modal { flex-direction: column; }
