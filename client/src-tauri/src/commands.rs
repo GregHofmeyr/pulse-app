@@ -105,6 +105,8 @@ pub struct Core {
     clip_jobs: watch::Sender<Option<ClipJobs>>,
     /// Takes a path off the asset scope for good (`forbid_file`); see `release_source`.
     forbid_asset: Box<dyn Fn(&std::path::Path) + Send + Sync>,
+    /// Linux: the editor's videos over loopback HTTP (`video_url`); ended with their source.
+    pub(crate) videos: crate::video::Videos,
     signed_out: SignedOut,
     mfa: PendingMfa,
 }
@@ -132,6 +134,7 @@ impl Core {
             clips_root: std::path::PathBuf::new(),
             clip_jobs: watch::channel(None).0,
             forbid_asset: Box::new(|_| {}),
+            videos: crate::video::Videos::new(Box::new(|_| false)),
             signed_out,
             mfa: PendingMfa::default(),
         }
@@ -148,14 +151,32 @@ impl Core {
         self
     }
 
+    /// Serves local videos to the webview (`video_url`); `allowed` there is the asset scope.
+    pub fn with_videos(mut self, videos: crate::video::Videos) -> Self {
+        self.videos = videos;
+        self
+    }
+
     /// A source is done (closed, or the account signed out): its temp files are deleted and the
     /// webview can no longer load them. Only the per-id preview and filmstrip are forbidden, never the
-    /// user's own file: forbidding is permanent, and opening the same video again must work.
+    /// user's own file: forbidding is permanent, and opening the same video again must work. Its
+    /// video addresses end too (the file's only if no other open source has it).
     fn release_source(&self, e: crate::clips::editor::Entry) {
         for p in [&e.preview, &e.filmstrip].into_iter().flatten() {
             (self.forbid_asset)(p);
+            self.videos.revoke(p);
+        }
+        if !self.clip_sources.has_path(&e.path) {
+            self.videos.revoke(&e.path);
         }
         crate::clips::editor::remove_dir_later(e.dir);
+    }
+
+    /// The editor is done with source `id`.
+    fn close_clip_source(&self, id: &str) {
+        if let Some(e) = self.clip_sources.remove(id) {
+            self.release_source(e);
+        }
     }
 
     /// This account's clips folder (the same scoping as the media cache); `None` when signed out.
@@ -598,6 +619,7 @@ impl Core {
         for (e, _) in self.clip_sources.drain() {
             self.release_source(e);
         }
+        self.videos.revoke_all();
         (self.signed_out)();
         let s = session?;
         if let Some(me) = &s.me {
@@ -1932,12 +1954,25 @@ pub async fn clip_filmstrip(
     })
 }
 
+/// Linux: an `http://127.0.0.1` address the webview's `<video>` can play `path` from, if the
+/// webview may load it (it is on the asset scope). WebKitGTK won't play video over `asset://`; see
+/// `video`. `None` elsewhere (the UI uses the asset protocol) or for any other path.
+#[tauri::command]
+pub async fn video_url(core: State<'_, Core>, path: String) -> Result<Option<String>, String> {
+    #[cfg(target_os = "linux")]
+    let url = core.videos.url(std::path::Path::new(&path)).await;
+    #[cfg(not(target_os = "linux"))]
+    let url = {
+        let _ = (&core, &path);
+        None
+    };
+    Ok(url)
+}
+
 /// The editor is done with this source: its preview and filmstrip files are deleted.
 #[tauri::command]
 pub fn close_clip_source(core: State<'_, Core>, source: String) {
-    if let Some(e) = core.clip_sources.remove(&source) {
-        core.release_source(e);
-    }
+    core.close_clip_source(&source);
 }
 
 /// What the editor's Trim & send asks for (`spans` are in source milliseconds).
@@ -2509,6 +2544,81 @@ mod tests {
         );
         assert!(core.clip_jobs.borrow().is_none());
         assert!(core.clip_sources.ids().is_empty());
+    }
+
+    /// An editor source on `path`, with a preview at `preview`.
+    fn source_entry(
+        root: &std::path::Path,
+        id: &str,
+        path: &std::path::Path,
+        preview: Option<&std::path::Path>,
+    ) -> crate::clips::editor::Entry {
+        crate::clips::editor::Entry {
+            path: path.into(),
+            dir: root.join("sources").join(id),
+            probe: crate::clips::probe::Probe {
+                duration_ms: 1000,
+                width: 1,
+                height: 1,
+                fps: 1.0,
+                video_codec: "h264".into(),
+                audio: vec![],
+                format_name: String::new(),
+                title: None,
+                size: 1,
+            },
+            plan: crate::clips::preview::PreviewPlan::Remux,
+            preview: preview.map(Into::into),
+            filmstrip: None,
+        }
+    }
+
+    /// A Core whose webview may load anything (the video server's asset scope check).
+    fn with_videos(core: Core) -> Core {
+        core.with_videos(crate::video::Videos::new(Box::new(|_| true)))
+    }
+
+    /// Closing an editor source ends the video addresses of its file and its preview; another
+    /// open source on the same file keeps its own.
+    #[tokio::test]
+    async fn closing_a_clip_source_ends_its_video_urls() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, _) = signed_in(
+            root.path(),
+            "https://pulse.example.com",
+            Some(UserId::new()),
+        );
+        let core = with_videos(core);
+        let (file, preview) = (root.path().join("a.mkv"), root.path().join("p.mp4"));
+        core.clip_sources.insert(
+            "a".into(),
+            source_entry(root.path(), "a", &file, Some(&preview)),
+        );
+        core.clip_sources
+            .insert("b".into(), source_entry(root.path(), "b", &file, None));
+        assert!(core.videos.url(&file).await.is_some());
+        assert!(core.videos.url(&preview).await.is_some());
+        core.close_clip_source("a");
+        assert!(!core.videos.has_token(&preview));
+        assert!(core.videos.has_token(&file), "b still plays it");
+        core.close_clip_source("b");
+        assert!(!core.videos.has_token(&file));
+    }
+
+    /// Signing out ends every video address.
+    #[tokio::test]
+    async fn sign_out_ends_every_video_url() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, _) = signed_in(
+            root.path(),
+            "https://pulse.example.com",
+            Some(UserId::new()),
+        );
+        let core = with_videos(core);
+        let other = root.path().join("elsewhere.mp4");
+        assert!(core.videos.url(&other).await.is_some());
+        core.forget();
+        assert!(!core.videos.has_token(&other));
     }
 
     /// A Core with a sign-out hook that counts, signed in as `me` on `server`.

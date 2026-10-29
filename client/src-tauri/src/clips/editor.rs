@@ -128,6 +128,15 @@ impl Sources {
         all
     }
 
+    /// Whether an open source is this file.
+    pub fn has_path(&self, path: &Path) -> bool {
+        self.map
+            .lock()
+            .unwrap()
+            .values()
+            .any(|(e, _)| e.path == path)
+    }
+
     pub fn ids(&self) -> HashSet<String> {
         self.map.lock().unwrap().keys().cloned().collect()
     }

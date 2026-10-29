@@ -18,6 +18,7 @@ pub mod sounds;
 pub mod startup;
 pub mod stream;
 pub mod throttle;
+pub mod video;
 pub mod voice;
 pub mod webview_memory;
 
@@ -131,6 +132,7 @@ pub fn run() {
                 session::profile_dir(&app.path().app_cache_dir()?, profile.as_deref()).join("media");
             let h = app.handle().clone();
             let fh = app.handle().clone();
+            let vh = app.handle().clone();
             app.manage(
                 commands::Core::new(
                     session::Store::new(dir.clone(), profile.as_deref()),
@@ -143,7 +145,10 @@ pub fn run() {
                     Box::new(move |p| {
                         let _ = fh.asset_protocol_scope().forbid_file(p);
                     }),
-                ),
+                )
+                .with_videos(video::Videos::new(Box::new(move |p| {
+                    vh.asset_protocol_scope().is_allowed(p)
+                }))),
             );
             app.manage(voice::mictest::MicTest::default());
             app.manage(stream::PickerMemory::default());
@@ -302,6 +307,7 @@ pub fn run() {
             commands::prepare_preview,
             commands::clip_filmstrip,
             commands::close_clip_source,
+            commands::video_url,
             commands::send_clip,
             commands::retry_clip,
             commands::cancel_clip,
