@@ -1,4 +1,7 @@
 // @vitest-environment jsdom
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { compile } from 'svelte/compiler'
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
@@ -122,6 +125,18 @@ describe('ClipsHeader', () => {
     const p = header()
     button('Share a clip').click()
     expect(p.onShare).toHaveBeenCalled()
+  })
+
+  it('"Share a clip" is the accent button the rest of the app uses, not a native one', () => {
+    header()
+    const share = button('Share a clip')
+    const hash = [...share.classList].find((c) => c.startsWith('svelte-'))!
+    const src = readFileSync(resolve(__dirname, 'ClipsHeader.svelte'), 'utf8')
+    const css = compile(src, { filename: 'ClipsHeader.svelte', css: 'external', cssHash: () => hash }).css!.code
+    const rule = css.match(/\.share\.[\w-]+\s*\{([^}]*)\}/)?.[1] ?? ''
+    expect(rule).toMatch(/background: ?var\(--accent\)/)
+    expect(rule).toMatch(/color: ?var\(--on-accent\)/)
+    expect(rule).toMatch(/border: ?0/)
   })
 })
 

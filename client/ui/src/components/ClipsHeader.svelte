@@ -88,7 +88,7 @@
     <button type="button" class="tbtn" aria-label="List view" data-tip="List" aria-pressed={view === 'list'} onclick={() => setView('list')}><Icon name="list" size={16} /></button>
     <button type="button" class="tbtn" aria-label="Wall view" data-tip="Wall" aria-pressed={view === 'wall'} onclick={() => setView('wall')}><Icon name="grid" size={16} /></button>
   </div>
-  <button type="button" class="share primary" onclick={onShare}>Share a clip</button>
+  <button type="button" class="share" onclick={onShare}>Share a clip</button>
 </div>
 
 <style>
@@ -112,5 +112,6 @@
   .tbtn { width: 30px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .tbtn:hover { color: var(--text); }
   .tbtn[aria-pressed='true'] { background: var(--bg-4); color: var(--text); }
-  .share { height: 32px; padding: 0 14px; border-radius: 9px; font-size: 13px; font-weight: 600; white-space: nowrap; }
+  /* the app's accent button (as Save in Settings → Profile), at the header's 32 px */
+  .share { height: 32px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-size: 13px; font-weight: 600; white-space: nowrap; }
 </style>
