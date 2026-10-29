@@ -1,7 +1,8 @@
 <script lang="ts">
   // The clip editor: a large modal over a local video file. Cut it into pieces, drop what you don't want, pick a
   // quality, and Trim & send hands the kept spans to the core (which encodes and uploads in the background).
-  // The preview plays the LOCAL file through the asset protocol (not ClipPlayer, which plays posted clips).
+  // The preview plays the LOCAL file through the asset protocol (not ClipPlayer, which plays posted clips); on Linux,
+  // whose webview won't play video over asset://, from the core's loopback address instead (`api.videoUrl`).
   import { onDestroy, onMount } from 'svelte'
   import { convertFileSrc } from '@tauri-apps/api/core'
   import { listen } from '@tauri-apps/api/event'
@@ -50,6 +51,12 @@
   const why = $derived(block === 'over' ? OVER_COPY : block === 'empty' ? EMPTY_COPY : '')
   const fpsText = $derived(`${Math.round(source.fps * 100) / 100} fps`)
 
+  /** Where the <video> loads a local file from: the core's loopback address (Linux), else the asset protocol. */
+  async function playable(path: string): Promise<string> {
+    const url = await api.videoUrl(path).catch(() => null)
+    return url ?? convertFileSrc(path)
+  }
+
   /** Plays a prepared copy (remux / re-encode) instead of the original. */
   async function prepare() {
     triedPrepared = true
@@ -59,7 +66,8 @@
     src = null
     try {
       const path = await api.preparePreview(source.id)
-      if (!destroyed) src = convertFileSrc(path)
+      const url = await playable(path)
+      if (!destroyed) src = url
     } catch (e) {
       if (!destroyed) problem = errorText(e) || UNREADABLE
     } finally {
@@ -68,7 +76,7 @@
   }
 
   onMount(() => {
-    if (source.preview === 'direct') src = convertFileSrc(source.path)
+    if (source.preview === 'direct') void playable(source.path).then((url) => { if (!destroyed && !triedPrepared) src = url })
     else void prepare()
     api.clipFilmstrip(source.id).then((f) => { if (!destroyed) film = f ?? null }, () => {}) // the timeline works without it
     const off = listen<{ source: string; percent: number }>('clip://preview', (e) => {

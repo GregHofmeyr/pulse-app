@@ -117,6 +117,53 @@ describe('ClipEditor', () => {
     expect(video().getAttribute('src')).toBe('asset:///tmp/preview.mp4')
   })
 
+  // WebKitGTK won't play video over asset://: on Linux the core serves it over loopback HTTP.
+  it('plays a direct file from the address the core gives (Linux)', async () => {
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === 'video_url') return `http://127.0.0.1:4100/${(args as { path: string }).path.length}`
+      return undefined
+    })
+    await show()
+    expect(invoke).toHaveBeenCalledWith('video_url', { path: '/home/alex/Videos/Overwatch 2/replay.mp4' })
+    expect(video().getAttribute('src')).toBe('http://127.0.0.1:4100/40')
+  })
+
+  it('plays a prepared preview from the address the core gives (Linux)', async () => {
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === 'prepare_preview') return '/tmp/preview.mp4'
+      if (cmd === 'video_url') return (args as { path: string }).path === '/tmp/preview.mp4' ? 'http://127.0.0.1:4100/p' : null
+      return undefined
+    })
+    await show(source({ preview: 'remux' }))
+    expect(invoke).toHaveBeenCalledWith('video_url', { path: '/tmp/preview.mp4' })
+    expect(video().getAttribute('src')).toBe('http://127.0.0.1:4100/p')
+  })
+
+  it('without an address (Windows) or if asking fails, plays through the asset protocol', async () => {
+    invoke.mockImplementation(async (cmd) => (cmd === 'video_url' ? null : undefined))
+    await show()
+    expect(video().getAttribute('src')).toBe('asset:///home/alex/Videos/Overwatch 2/replay.mp4')
+    cmps.forEach((c) => unmount(c)); cmps = []; document.body.innerHTML = ''
+    invoke.mockImplementation(async (cmd) => { if (cmd === 'video_url') throw 'gone'; return undefined })
+    await show()
+    expect(video().getAttribute('src')).toBe('asset:///home/alex/Videos/Overwatch 2/replay.mp4')
+  })
+
+  it('a loopback address the player rejects still falls back to a prepared preview', async () => {
+    invoke.mockImplementation(async (cmd, args) => {
+      if (cmd === 'prepare_preview') return '/tmp/preview.mp4'
+      if (cmd === 'video_url') return `http://127.0.0.1:4100${(args as { path: string }).path}`
+      return undefined
+    })
+    await show()
+    video().dispatchEvent(new Event('error'))
+    await settle(); flushSync()
+    expect(video().getAttribute('src')).toBe('http://127.0.0.1:4100/tmp/preview.mp4')
+    video().dispatchEvent(new Event('error'))
+    flushSync()
+    expect(document.querySelector('[role=alert]')?.textContent).toContain("Pulse couldn't read that video.")
+  })
+
   it('shows the error when the video cannot be read at all', async () => {
     invoke.mockImplementation(async (cmd) => { if (cmd === 'prepare_preview') throw "Pulse couldn't read that video."; return undefined })
     await show(source({ preview: 'remux' }))
