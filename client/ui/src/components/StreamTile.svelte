@@ -1,11 +1,12 @@
 <script lang="ts">
   import { untrack } from 'svelte'
+  import Avatar from './Avatar.svelte'
   import Icon from './Icon.svelte'
   import LiveCard from './LiveCard.svelte'
   import Select from './Select.svelte'
   import { app } from '../lib/store.svelte'
   import { displayName, liveIn } from '../lib/selectors'
-  import { avatarColor, initial } from '../lib/avatar'
+  import { avatarColor } from '../lib/avatar'
   import { volumeLabel } from '../lib/voiceui'
   import { voice } from '../lib/voice.svelte'
   import { isWindows } from '../lib/stream/platform'
@@ -100,7 +101,7 @@
     <div class="backdrop" style:background={avatarColor(streamer)}></div>
     <span class="live-tag">LIVE</span>
     {#if viewers > 0}<span class="viewers"><Icon name="eye" size={14} label="Viewers" /> {viewers}</span>{/if}
-    <span class="av" style:background={avatarColor(streamer)}>{initial(name)}</span>
+    <Avatar id={streamer} {name} size={64} />
     <div class="who">{name}</div>
     {#if windows && inChannel}
       <button type="button" class="watch" aria-label="Watch {name}'s stream">Watch</button>
@@ -122,7 +123,6 @@
   .idle > :global(*:not(.backdrop)) { position: relative; }
   .live-tag { position: absolute; top: 10px; left: 12px; height: 18px; padding: 0 7px; border-radius: 5px; background: var(--danger); color: #fff; font-size: 11px; font-weight: 800; letter-spacing: .06em; line-height: 18px; }
   .viewers { position: absolute; top: 10px; right: 12px; display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-2); }
-  .av { width: 64px; height: 64px; border-radius: 50%; color: #fff; font-size: 26px; font-weight: 700; display: grid; place-items: center; }
   .who { font-weight: 600; }
   .watch { height: 34px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--ok); color: #0f2a1c; font-weight: 700; }
   .reason { margin: 0; font-size: 12px; color: var(--text-2); text-align: center; padding: 0 12px; }

@@ -26,6 +26,7 @@ import { stream, streamApi } from '../lib/stream/stream.svelte'
 import { callView } from '../lib/stream/viewer.svelte'
 import { diag, diagUi } from '../lib/stream/diag.svelte'
 import { testQoty } from '../lib/testReady'
+import { mediaUrl } from '../lib/emoji'
 import type { Ready } from '../lib/protocol/Ready'
 
 const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -113,6 +114,15 @@ describe('stream tiles', () => {
     cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
     flushSync()
     expect(q('[data-stream="U2"] .viewers')?.textContent?.trim()).toBe('2')
+  })
+
+  it('a_not_watching_tile_shows_the_streamers_profile_picture_live', () => {
+    mountPanel()
+    expect(q('[data-stream="U2"] .av')!.textContent!.trim()).toBe('S')
+    const pic = 'c'.repeat(64)
+    app.state = applyEvent(app.state, { t: 'ProfileUpdated', d: { user: { ...sam, avatar_hash: pic }, card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null } } }, 0)
+    flushSync()
+    expect(q('[data-stream="U2"] .av img')?.getAttribute('src')).toBe(mediaUrl(pic))
   })
 
   it('one_click_watches_the_stream', async () => {

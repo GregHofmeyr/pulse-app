@@ -55,9 +55,9 @@
     {#if hint}<p class="hint">{hint}</p>{/if}
     {#if fixed.length || picked.length}
       <div class="chips">
-        {#each fixed as id (id)}<span class="chip">{nameOf(id)}</span>{/each}
+        {#each fixed as id (id)}<span class="chip"><Avatar {id} name={nameOf(id)} size={16} />{nameOf(id)}</span>{/each}
         {#each picked as id (id)}
-          <button class="chip" aria-label="Remove {nameOf(id)}" onclick={() => toggle(id)}>{nameOf(id)} <Icon name="x" size={11} /></button>
+          <button class="chip" aria-label="Remove {nameOf(id)}" onclick={() => toggle(id)}><Avatar {id} name={nameOf(id)} size={16} />{nameOf(id)} <Icon name="x" size={11} /></button>
         {/each}
       </div>
     {/if}
@@ -93,7 +93,7 @@
   h2 { margin: 0; font-size: 17px; }
   .hint { margin: 0; font-size: 12px; color: var(--text-3); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
-  .chip { padding: 4px 10px; border: 0; border-radius: 20px; background: var(--bg-3); color: var(--text); font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
+  .chip { padding: 3px 10px 3px 3px; border: 0; border-radius: 20px; background: var(--bg-3); color: var(--text); font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
   .search { height: 36px; padding: 0 12px; border: 0; border-radius: 10px; background: var(--bg-2); color: var(--text); font: inherit; outline: none; }
   .list { overflow-y: auto; min-height: 120px; max-height: 320px; display: flex; flex-direction: column; gap: 2px; }
   .pick { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); text-align: left; }
