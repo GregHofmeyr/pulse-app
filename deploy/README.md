@@ -39,7 +39,9 @@ GitHub, Oracle Cloud (or xneelo), Cloudflare (DNS + R2), Tailscale, UptimeRobot.
 1. Tailscale: `sudo pacman -S tailscale && sudo systemctl enable --now tailscaled && sudo tailscale up`
    (log in with the personal account). MagicDNS is on by default, so the server is just `pulse`.
 2. Tools for backups: `sudo pacman -S age sqlite`.
-3. `just`, `ssh`, `scp`, `curl` and `dig` are all the other commands use.
+3. `just`, `ssh`, `scp`, `curl` and `dig` are all the other commands use, plus, for `just deploy` (it checks the
+   image's build provenance here first, section 7): `sudo pacman -S github-cli jq` and `gh auth login` once (any
+   GitHub account works; it only reads public attestations). `git` and `sha256sum` come with the system.
 
 ## 4. A new server
 
@@ -144,31 +146,41 @@ or call that is already open stays up until it drops. To close those at once, re
   server removes that participant. The app shows the call as disconnected and does not rejoin by itself (it never
   does after being removed); clicking the channel again joins normally.
 - **Build provenance.** `release-server.yml` signs a GitHub artifact attestation (SLSA build provenance, via
-  Sigstore) for the multi-arch image it publishes, and for each architecture's build. Before deploying,
-  `just deploy <tag>` runs `deploy/verify-image.sh`, which resolves the tag to its index digest straight from the
-  registry (nothing is pulled) and runs
+  Sigstore) for the multi-arch image it pushes (the index digest `imagetools create` reports), and for each
+  architecture's build. Before deploying, `just deploy <tag>` runs `deploy/verify-image.sh`, which resolves the tag to
+  its index digest straight from the registry (nothing is pulled; a tag that names a single image rather than an index
+  is refused) and runs
   `gh attestation verify oci://ghcr.io/greghofmeyr/pulse-server@<digest> --repo GregHofmeyr/pulse-app
-  --signer-workflow GregHofmeyr/pulse-app/.github/workflows/release-server.yml --deny-self-hosted-runners`.
-  For a `<sha7>` tag it also checks that every platform image is labelled with that commit. Anything else
-  stops the deploy with `REFUSED: …` before the server is contacted. `just verify-image <tag>` runs the same
-  check alone (it prints the verified digest). It needs `curl`, `jq` and a logged-in `gh` (`gh auth login`).
+  --cert-identity-regex '^https://github\.com/GregHofmeyr/pulse-app/\.github/workflows/release-server\.yml@refs/heads/main$'
+  --source-ref refs/heads/main --deny-self-hosted-runners`: built by this repo's release-server.yml, run from `main`,
+  on a GitHub-hosted runner. (Not `--signer-workflow`: gh matches that against the workflow on any branch.) For a
+  `<sha7>` tag it also checks that every platform image is labelled with that commit. The certificate records the commit
+  the run started on, which after a quick second push can be newer than the one it built, so the label is the
+  commit check. Every manifest and config it reads is hashed against the digest it was fetched by first. Anything else
+  stops the deploy with `REFUSED: …` before the server is contacted. `just verify-image <tag>` runs the same check
+  alone (it prints the verified digest). Tools: section 3.
 - Images are pinned by digest, so what runs is exactly what was verified, even if a tag moves. `just deploy` passes
   the verified digest to the server (`deploy.sh <tag> sha256:…`), which pulls `pulse-server@sha256:…` (never the
-  tag), tags it locally as `<tag>`, and writes `PULSE_IMAGE=…:<tag>@sha256:…` into `/srv/pulse/.env` (`PULSE_TAG`
-  stays, for humans; an old `.env` without `PULSE_IMAGE` just gets the line appended). It prints `pinned: …`, and the
-  final line reads `healthy: <tag> (commit …, sha256:…, provenance verified)`. LiveKit and Caddy are pinned in
-  `compose.yml`.
+  tag), tags it locally as `<tag>` and as its own `<commit>` (so an image that `latest` moved off isn't left untagged
+  for `docker image prune`; the newest 3 stay for rollbacks), and writes `PULSE_IMAGE=…:<tag>@sha256:…` into
+  `/srv/pulse/.env` (`PULSE_TAG` stays, for humans; an old `.env` without `PULSE_IMAGE` just gets the line appended). It
+  prints `pinned: …`, and the final line reads `healthy: <tag> (commit …, sha256:…, the digest the deploying machine
+  passed …)`. That is all the server can say: it has no `gh`, so provenance is checked by `just deploy` /
+  `just deploy-branch` on your machine before they pass the digest. LiveKit and Caddy are pinned in `compose.yml`.
 - **Images without provenance.** Everything built before attestations were added has none, so `just deploy <old sha7>`
-  refuses it. To roll back to one of those on purpose: `just deploy-unverified <sha7>`. It prints a loud warning,
-  skips the provenance check and lets the server pull the tag and pin whatever digest it resolves to (the old
-  behaviour, `deploy.sh <tag> --unverified`); the `healthy:` line then says `UNVERIFIED provenance`. Use it only
-  for those old builds: a new build that fails the check is exactly what the check is for. Only the last commit of each
-  push to `main` has an image: list them with
+  refuses it. When the commit is from before provenance (`git` checks: it doesn't contain the commit that added the
+  attest step to `release-server.yml`, found from history, so a squash merge is fine; run `git fetch` first), the
+  refusal says how to roll back to it on purpose: `CONFIRM=<sha7> just deploy-unverified <sha7>`. It takes only a
+  7-character commit (never `latest`), refuses without `CONFIRM` naming that same commit, prints a loud warning, skips
+  the provenance check and lets the server pull the tag and pin whatever digest it resolves to (the old behaviour,
+  `deploy.sh <sha7> --unverified`); the `healthy:` line then says `UNVERIFIED`. A newer commit that fails the check
+  gets no such hint: that is exactly what the check is for (did its release-server run fail at the attest step?).
+  Only the last commit of each push to `main` has an image: list them with
   `curl -s "https://ghcr.io/v2/greghofmeyr/pulse-server/tags/list" -H "Authorization: Bearer $(curl -s 'https://ghcr.io/token?scope=repository:greghofmeyr/pulse-server:pull' | jq -r .token)" | jq -r '.tags[]'`.
 - First deploy after provenance was added: wait for the first `release-server` run after that merge to finish (its
   summary lists the attestations). That build is the first attested one: `just deploy` (or `just deploy <its sha7>`)
-  then verifies. Until it has finished, `latest` is still an unattested build and `just deploy` refuses it; don't reach
-  for `deploy-unverified` to get past that, wait.
+  then verifies. Until it has finished, `latest` is still an unattested build and `just deploy` refuses it (with no
+  bypass hint: `latest` is a moving tag); wait.
 - Build inputs are pinned too. When bumping the Rust version, change it in three places together: `rust-toolchain.toml`
   (CI, the Windows release and local builds), the `rust:<version>-bookworm@sha256:…` line in `server.Dockerfile`, and, if
   the `tauri` crate's minor changed, `@tauri-apps/cli@<version>` in `release-windows.yml`. Dependabot opens PRs for
@@ -192,14 +204,17 @@ or call that is already open stays up until it drops. To close those at once, re
   server see "plz update :)".
 - Building a branch: running `release-server` by hand (workflow dispatch) on a branch other than `main` tags
   only `:<sha7>`. `:latest` moves only on a `main` build (after CI passes on `main`, or a manual run on `main`).
-  Deploy a branch build as `just deploy <sha7>`: a bare `just deploy` pulls `:latest`, which is `main`. Merge
-  that branch before anything else lands on `main`, or the next deploy of `main` drops it.
-- Roll back: `just deploy <previous sha7>` (`just deploy-unverified <previous sha7>` for a build from before
+  Deploy a branch build as `just deploy-branch <sha7>`: `just deploy` only accepts builds run from `main`.
+  `deploy-branch` checks the same attestation but lets the run come from any branch, prints which one, and takes only a
+  `<sha7>` (never `latest`). A bare `just deploy` pulls `:latest`, which is `main`. Merge that branch before anything
+  else lands on `main`, or the next deploy of `main` drops it.
+- Roll back: `just deploy <previous sha7>` (`CONFIRM=<sha7> just deploy-unverified <sha7>` for a build from before
   provenance, see above). If a database migration went wrong, also `just restore <backup>`
   (section 8) with the backup the deploy made.
 - A deploy that ran a new migration can't be rolled back by image alone: an older image refuses to start
   against a database migrated past what it knows (e.g. `0004_message_nonce`). Roll back with
-  `just restore <the backup that deploy made>` and then `just deploy <previous sha7>`.
+  `just restore <the backup that deploy made>` and then `just deploy <previous sha7>`, or, if that build is from
+  before provenance (its `just deploy` refusal says so), `CONFIRM=<previous sha7> just deploy-unverified <previous sha7>`.
 - `just logs` (or `just logs caddy` / `just logs livekit`) follows the live logs.
 - After changing `livekit.yaml`: `just deploy`, then `ssh pulse@pulse 'cd /srv/pulse && docker compose restart livekit'`.
   (A changed `LIVEKIT_NODE_IP` needs no restart: `just deploy` recreates LiveKit with it.)
