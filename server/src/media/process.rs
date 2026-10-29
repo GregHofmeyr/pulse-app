@@ -462,9 +462,7 @@ fn convert(
             }
         }
         None => {
-            let mut reader = ImageReader::with_format(Cursor::new(input), format);
-            reader.limits(limits());
-            let mut decoder = reader.into_decoder()?;
+            let mut decoder = still_decoder(input, format, limits())?;
             // A camera's EXIF orientation is honoured, as the webview does; unreadable EXIF is
             // treated as none, as browsers do.
             let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
@@ -502,6 +500,21 @@ fn convert(
         height,
         frames,
     })
+}
+
+/// A still's decoder under `limits`, with the image it decodes to reserved against them first, as
+/// `ImageReader::decode` does (`into_decoder` alone leaves that allocation unbounded).
+fn still_decoder(
+    input: &[u8],
+    format: ImageFormat,
+    mut limits: Limits,
+) -> image::ImageResult<impl ImageDecoder + '_> {
+    let mut reader = ImageReader::with_format(Cursor::new(input), format);
+    reader.limits(limits.clone());
+    let mut decoder = reader.into_decoder()?;
+    limits.reserve(decoder.total_bytes())?;
+    decoder.set_limits(limits)?;
+    Ok(decoder)
 }
 
 /// The size of a `(w, h)` image once `orientation` is applied: a quarter turn swaps the sides.
@@ -1198,6 +1211,24 @@ mod tests {
             h: 100,
         };
         assert!(avatar(&png(300, 150), Some(edge)).is_ok());
+    }
+
+    #[test]
+    fn a_still_reserves_its_decoded_size_against_the_allocation_limit() {
+        // 512×512 RGBA is 1 MiB once decoded: a byte short of that is refused before decoding.
+        let picture = png(512, 512);
+        let decoded = 512 * 512 * 4;
+        let mut tight = limits();
+        tight.max_alloc = Some(decoded - 1);
+        assert!(matches!(
+            still_decoder(&picture, ImageFormat::Png, tight).err(),
+            Some(ImageError::Limits(_))
+        ));
+        let mut enough = limits();
+        enough.max_alloc = Some(2 * decoded);
+        let decoder = still_decoder(&picture, ImageFormat::Png, enough).unwrap();
+        assert_eq!(decoder.total_bytes(), decoded);
+        assert!(DynamicImage::from_decoder(decoder).is_ok());
     }
 
     /// A `w`×`h` JPEG, left half red and right half blue, with an EXIF APP1 segment saying
