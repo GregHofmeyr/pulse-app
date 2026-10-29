@@ -105,6 +105,8 @@ pub struct Core {
     clip_jobs: watch::Sender<Option<ClipJobs>>,
     /// Takes a path off the asset scope for good (`forbid_file`); see `release_source`.
     forbid_asset: Box<dyn Fn(&std::path::Path) + Send + Sync>,
+    /// Linux: the editor's videos over loopback HTTP (`video_url`); ended with their source.
+    pub(crate) videos: crate::video::Videos,
     signed_out: SignedOut,
     mfa: PendingMfa,
 }
@@ -132,6 +134,7 @@ impl Core {
             clips_root: std::path::PathBuf::new(),
             clip_jobs: watch::channel(None).0,
             forbid_asset: Box::new(|_| {}),
+            videos: crate::video::Videos::new(Box::new(|_| false)),
             signed_out,
             mfa: PendingMfa::default(),
         }
@@ -148,6 +151,12 @@ impl Core {
         self
     }
 
+    /// Serves local videos to the webview (`video_url`); `allowed` there is the asset scope.
+    pub fn with_videos(mut self, videos: crate::video::Videos) -> Self {
+        self.videos = videos;
+        self
+    }
+
     /// A source is done (closed, or the account signed out): its temp files are deleted and the
     /// webview can no longer load them. Only the per-id preview and filmstrip are forbidden, never the
     /// user's own file: forbidding is permanent, and opening the same video again must work.
@@ -156,6 +165,34 @@ impl Core {
             (self.forbid_asset)(p);
         }
         crate::clips::editor::remove_dir_later(e.dir);
+    }
+
+    /// The editor is done with source `id`: its video addresses end too (after it is removed, so
+    /// a `video_url` racing this either made its token first, and it ends here, or makes none).
+    fn close_clip_source(&self, id: &str) {
+        if let Some(e) = self.clip_sources.remove(id) {
+            self.release_source(e);
+        }
+        self.videos.revoke(id);
+    }
+
+    /// Linux: the address the editor of source `source` plays `path` from, if `path` is that
+    /// source's file or preview. Paths are compared and kept canonical, so `./a.mkv` and `a.mkv`
+    /// share one token and the close ends it. `None` once the source has closed: the token is made
+    /// under the sources' lock (`Sources::while_open`), so a close is wholly before or after it.
+    pub async fn video_url(&self, source: &str, path: &std::path::Path) -> Option<String> {
+        let want = tokio::fs::canonicalize(path).await.ok()?;
+        let e = self.clip_sources.get(source)?;
+        let mut ours = false;
+        for p in [Some(&e.path), e.preview.as_ref()].into_iter().flatten() {
+            ours |= tokio::fs::canonicalize(p).await.is_ok_and(|p| p == want);
+        }
+        if !ours || !self.videos.start().await {
+            return None;
+        }
+        self.clip_sources
+            .while_open(source, || self.videos.grant(source, &want))
+            .flatten()
     }
 
     /// This account's clips folder (the same scoping as the media cache); `None` when signed out.
@@ -598,6 +635,7 @@ impl Core {
         for (e, _) in self.clip_sources.drain() {
             self.release_source(e);
         }
+        self.videos.revoke_all();
         (self.signed_out)();
         let s = session?;
         if let Some(me) = &s.me {
@@ -1932,12 +1970,30 @@ pub async fn clip_filmstrip(
     })
 }
 
+/// Linux: an `http://127.0.0.1` address the webview's `<video>` can play `path` from, if it is
+/// open editor source `source`'s file or preview and the webview may load it (it is on the asset
+/// scope). WebKitGTK won't play video over `asset://`; see `video`. `None` elsewhere (the UI uses
+/// the asset protocol), for any other path, or once the source has closed.
+#[tauri::command]
+pub async fn video_url(
+    core: State<'_, Core>,
+    source: String,
+    path: String,
+) -> Result<Option<String>, String> {
+    #[cfg(target_os = "linux")]
+    let url = core.video_url(&source, std::path::Path::new(&path)).await;
+    #[cfg(not(target_os = "linux"))]
+    let url = {
+        let _ = (&core, &source, &path);
+        None
+    };
+    Ok(url)
+}
+
 /// The editor is done with this source: its preview and filmstrip files are deleted.
 #[tauri::command]
 pub fn close_clip_source(core: State<'_, Core>, source: String) {
-    if let Some(e) = core.clip_sources.remove(&source) {
-        core.release_source(e);
-    }
+    core.close_clip_source(&source);
 }
 
 /// What the editor's Trim & send asks for (`spans` are in source milliseconds).
@@ -2509,6 +2565,160 @@ mod tests {
         );
         assert!(core.clip_jobs.borrow().is_none());
         assert!(core.clip_sources.ids().is_empty());
+    }
+
+    /// An editor source on `path`, with a preview at `preview`.
+    fn source_entry(
+        root: &std::path::Path,
+        id: &str,
+        path: &std::path::Path,
+        preview: Option<&std::path::Path>,
+    ) -> crate::clips::editor::Entry {
+        crate::clips::editor::Entry {
+            path: path.into(),
+            dir: root.join("sources").join(id),
+            probe: crate::clips::probe::Probe {
+                duration_ms: 1000,
+                width: 1,
+                height: 1,
+                fps: 1.0,
+                video_codec: "h264".into(),
+                audio: vec![],
+                format_name: String::new(),
+                title: None,
+                size: 1,
+            },
+            plan: crate::clips::preview::PreviewPlan::Remux,
+            preview: preview.map(Into::into),
+            filmstrip: None,
+        }
+    }
+
+    /// A Core whose webview may load anything (the video server's asset scope check).
+    fn with_videos(core: Core) -> Core {
+        core.with_videos(crate::video::Videos::new(Box::new(|_| true)))
+    }
+
+    /// A signed-in Core whose webview may load anything, and a 1-byte `a.mkv` in `root`.
+    fn videos_core(root: &std::path::Path) -> (Core, std::path::PathBuf) {
+        let (core, _) = signed_in(root, "https://pulse.example.com", Some(UserId::new()));
+        let file = root.join("a.mkv");
+        std::fs::write(&file, b"x").unwrap();
+        (with_videos(core), file)
+    }
+
+    /// Closing an editor source ends the video addresses it was given (its file's and its
+    /// preview's); another open source on the same file keeps its own.
+    #[tokio::test]
+    async fn closing_a_clip_source_ends_its_video_urls() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, file) = videos_core(root.path());
+        let preview = root.path().join("p.mp4");
+        std::fs::write(&preview, b"x").unwrap();
+        core.clip_sources.insert(
+            "a".into(),
+            source_entry(root.path(), "a", &file, Some(&preview)),
+        );
+        core.clip_sources
+            .insert("b".into(), source_entry(root.path(), "b", &file, None));
+        assert!(core.video_url("a", &file).await.is_some());
+        assert!(core.video_url("a", &preview).await.is_some());
+        assert!(core.video_url("b", &file).await.is_some());
+        assert_eq!(core.videos.tokens("a"), 2);
+        core.close_clip_source("a");
+        assert_eq!(core.videos.tokens("a"), 0);
+        assert_eq!(core.videos.tokens("b"), 1, "b still plays it");
+        core.close_clip_source("b");
+        assert_eq!(core.videos.tokens("b"), 0);
+    }
+
+    /// Only an open source's own file or preview gets an address: not another file, not an
+    /// unknown source, and not a source that has closed (a late `video_url` after the editor shut).
+    #[tokio::test]
+    async fn only_an_open_sources_file_or_preview_gets_a_video_url() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, file) = videos_core(root.path());
+        let other = root.path().join("elsewhere.mp4");
+        std::fs::write(&other, b"x").unwrap();
+        core.clip_sources
+            .insert("a".into(), source_entry(root.path(), "a", &file, None));
+        assert_eq!(core.video_url("a", &other).await, None);
+        assert_eq!(core.video_url("nope", &file).await, None);
+        assert_eq!(
+            core.video_url("a", &root.path().join("gone.mkv")).await,
+            None
+        );
+        core.close_clip_source("a");
+        assert_eq!(core.video_url("a", &file).await, None);
+        assert_eq!(core.videos.tokens("a"), 0);
+    }
+
+    /// `./a.mkv`, `x/../a.mkv` and a symlink are the same file: one address, ended by one close.
+    #[tokio::test]
+    async fn aliases_of_a_file_share_its_video_url_and_end_with_it() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, file) = videos_core(root.path());
+        std::fs::create_dir(root.path().join("x")).unwrap();
+        #[allow(unused_mut)]
+        let mut aliases = vec![
+            root.path().join(".").join("a.mkv"),
+            root.path().join("x").join("..").join("a.mkv"),
+        ];
+        #[cfg(unix)]
+        {
+            let link = root.path().join("link.mkv");
+            std::os::unix::fs::symlink(&file, &link).unwrap();
+            aliases.push(link);
+        }
+        core.clip_sources
+            .insert("a".into(), source_entry(root.path(), "a", &file, None));
+        let url = core.video_url("a", &file).await.unwrap();
+        for alias in aliases {
+            assert_eq!(
+                core.video_url("a", &alias).await.as_deref(),
+                Some(url.as_str()),
+                "{alias:?}"
+            );
+        }
+        assert_eq!(core.videos.tokens("a"), 1);
+        core.close_clip_source("a");
+        assert_eq!(core.videos.tokens("a"), 0);
+    }
+
+    /// `video_url` racing the editor's close never leaves an address behind: the token is made
+    /// under the sources' lock, so the close comes wholly before it (no token) or after (ended).
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn a_video_url_racing_its_close_leaves_nothing_behind() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, file) = videos_core(root.path());
+        let core = Arc::new(core);
+        for i in 0..400 {
+            let id = format!("s{i}");
+            core.clip_sources
+                .insert(id.clone(), source_entry(root.path(), &id, &file, None));
+            let (c, f, i2) = (core.clone(), file.clone(), id.clone());
+            let mint = tokio::spawn(async move { c.video_url(&i2, &f).await });
+            // close at a spread of moments through video_url's awaits (spinning: sleep is too coarse)
+            let at = std::time::Instant::now() + std::time::Duration::from_micros(i * 5);
+            while std::time::Instant::now() < at {
+                std::hint::spin_loop();
+            }
+            core.close_clip_source(&id);
+            let _ = mint.await.unwrap();
+            assert_eq!(core.videos.tokens(&id), 0, "{id}");
+        }
+    }
+
+    /// Signing out ends every video address.
+    #[tokio::test]
+    async fn sign_out_ends_every_video_url() {
+        let root = tempfile::tempdir().unwrap();
+        let (core, file) = videos_core(root.path());
+        core.clip_sources
+            .insert("a".into(), source_entry(root.path(), "a", &file, None));
+        assert!(core.video_url("a", &file).await.is_some());
+        core.forget();
+        assert_eq!(core.videos.tokens("a"), 0);
     }
 
     /// A Core with a sign-out hook that counts, signed in as `me` on `server`.

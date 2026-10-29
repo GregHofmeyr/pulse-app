@@ -47,9 +47,10 @@ ui-check:
     cd client/ui && pnpm install --frozen-lockfile && pnpm check && pnpm test
 
 # On Linux the UI comes from http://localhost here, and WebKitGTK won't show pulse-media images on an http page.
+# tauri.dev.conf.json's CSP replaces tauri.linux.conf.json's, so Linux adds its own copy (loopback clip video) on top.
 # hot-reloading client (on Linux avatars, banners and emoji are blank: use `just linux-client` for those)
 dev-client:
-    cd client/src-tauri && cargo tauri dev --config tauri.dev.conf.json
+    cd client/src-tauri && cargo tauri dev --config tauri.dev.conf.json {{ if os() == "linux" { "--config tauri.dev.linux.conf.json" } else { "" } }}
 
 # Built like an install (a tauri:// page, so media shows) but as a debug build, so clips use the system ffmpeg.
 # WebKitGTK plays video through GStreamer: without autoaudiosink (gst-plugins-good) any video crashes the page.

@@ -204,6 +204,9 @@ export const api = {
   preparePreview: (source: string) => invoke<string>('prepare_preview', { source }),
   /** One JPEG of `tiles` keyframe tiles, 72 px tall, loadable through the asset protocol. */
   clipFilmstrip: (source: string) => invoke<{ path: string; tiles: number }>('clip_filmstrip', { source }),
+  /** Linux: a loopback http address to play open source `source`'s file or preview from (WebKitGTK won't play video
+   *  over asset://); null elsewhere, for any other file, or once the source is closed (which ends the address). */
+  videoUrl: (source: string, path: string) => invoke<string | null>('video_url', { source, path }),
   /** Deletes the preview and filmstrip temp files. */
   closeClipSource: (source: string) => invoke<void>('close_clip_source', { source }),
   /** Start sending a clip; progress arrives as `clip://job` events. Rejects with a message to show. */
