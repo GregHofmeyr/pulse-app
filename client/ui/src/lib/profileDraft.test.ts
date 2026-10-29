@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { draftFrom, isDirty, previewCard, previewUser, toRequest, type Draft } from './profileDraft'
+import { charCount, draftFrom, editsSince, isDirty, normalBio, previewCard, previewUser, toRequest, type Draft } from './profileDraft'
 import type { Profile } from './protocol/Profile'
 import type { User } from './protocol/User'
 
@@ -13,6 +13,28 @@ const profile: Profile = {
 }
 
 describe('profileDraft', () => {
+  it('normalBio matches the server: endings, blank leading lines, trimmed end', () => {
+    expect(normalBio('a\r\nb\rc')).toBe('a\nb\nc')
+    expect(normalBio('\n  indented  \n\n')).toBe('  indented')
+    expect(normalBio('\n \n\r\n\n\n  a\nb\nc\nd\ne')).toBe('  a\nb\nc\nd\ne')
+    expect(normalBio('  \n\t')).toBe('')
+    expect(normalBio('one')).toBe('one')
+  })
+
+  it('charCount counts code points', () => {
+    expect(charCount('😀'.repeat(40))).toBe(40)
+    expect('😀'.repeat(40).length).toBe(80)
+  })
+
+  it('editsSince lists only the changed fields', () => {
+    const a = draftFrom(profile)
+    const b = { ...a, colors: [...a.colors], bio: 'new' }
+    expect(editsSince(a, b)).toEqual({ bio: 'new' })
+    b.colors[0] = '#000000'
+    expect(editsSince(a, b)).toEqual({ bio: 'new', colors: ['#000000', '#ff7fae'] })
+    expect(editsSince(a, a)).toEqual({})
+  })
+
   it('round trip draft → request', () => {
     const d = draftFrom(profile)
     expect(d).toEqual({

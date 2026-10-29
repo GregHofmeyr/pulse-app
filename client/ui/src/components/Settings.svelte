@@ -3,7 +3,7 @@
 </script>
 
 <script lang="ts">
-  import { onMount } from 'svelte'
+  import { onMount, tick } from 'svelte'
   import Icon from './Icon.svelte'
   import { modal } from '../lib/actions'
   import VoiceSettings from './VoiceSettings.svelte'
@@ -26,14 +26,27 @@
   ]
 
   // Unsaved profile changes: every way out (close, backdrop, Escape, another section) asks first.
+  // A Save on its way is waited for: it isn't something to discard, and may yet fail and keep the draft.
   let profileDirty = $state(false)
+  let profileSettling = $state<Promise<void> | null>(null)
   let leaving = $state<(() => void) | null>(null)
-  function leave(then: () => void) {
+  let waiting = false
+  async function leave(then: () => void) {
+    if (current === 'profile' && profileSettling) {
+      if (waiting) return
+      waiting = true
+      try {
+        await profileSettling
+        await tick() // the editor's dirty flag follows its answer
+      } finally {
+        waiting = false
+      }
+    }
     if (current === 'profile' && profileDirty) leaving = then
     else then()
   }
-  const close = () => leave(onClose)
-  const go = (s: Section) => s !== current && leave(() => (current = s))
+  const close = () => void leave(onClose)
+  const go = (s: Section) => s !== current && void leave(() => (current = s))
   // Escape while asking means "Keep editing".
   const escape = () => (leaving ? (leaving = null) : close())
   function discard() {
@@ -64,7 +77,7 @@
         <button type="button" class="danger" onclick={discard}>Discard</button>
       </div>
     {/if}
-    {#if current === 'profile'}<ProfileSettings bind:dirty={profileDirty} />
+    {#if current === 'profile'}<ProfileSettings bind:dirty={profileDirty} bind:settling={profileSettling} />
     {:else if current === 'appearance'}<AppearanceSettings />
     {:else if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else}<AdvancedSettings />{/if}
   </div>
@@ -81,7 +94,8 @@
   nav button { text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font-weight: 600; }
   nav button:hover { background: var(--bg-2); color: var(--text); }
   nav button.on { background: var(--bg-3); color: var(--text); }
-  .content { position: relative; flex: 1; min-width: 0; overflow-y: auto; padding: 28px 32px; }
+  /* --settings-pad-y: the profile editor's sticky footer sits flush with the bottom through it */
+  .content { --settings-pad-y: 28px; position: relative; flex: 1; min-width: 0; overflow-y: auto; padding: var(--settings-pad-y) 32px; }
   .confirm { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 48px 16px 0; padding: 10px 14px; border-radius: 12px; background: var(--bg-3); border: 1px solid var(--warn); font-weight: 600; }
   .confirm span { margin-right: auto; }
   .confirm button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-weight: 600; }

@@ -231,7 +231,6 @@ describe('ProfileSettings', () => {
     click(option('Name colour', 'Custom'))
     setColor(document.querySelector<HTMLInputElement>('.colour input[type=color]')!, '#000000')
     type(document.querySelector<HTMLInputElement>('input[aria-label="Pronouns"]')!, '')
-    expect(document.querySelector<HTMLInputElement>('input[aria-label="Pronouns"]')!.maxLength).toBe(40)
     click(button('Save'))
     click(button('Save')) // a second click while saving sends nothing
     expect(calls('update_profile')).toHaveLength(1)
@@ -298,6 +297,245 @@ describe('ProfileSettings', () => {
     expect(counter.textContent).toBe('191/190')
     expect(counter.classList.contains('over')).toBe(true)
     expect(button('Save').disabled).toBe(true)
+  })
+
+  /** Settings opened on the Profile section, loaded. */
+  async function openSettings(p: Profile = saved()) {
+    handlers.get_profile = () => p
+    app.state = { ...emptyState(), me: alex, people: { U1: { user: alex, online: true, last_seen_at: null } } } as never
+    const onClose = vi.fn()
+    cmp = mount(Settings, { target: document.body, props: { onClose, section: 'profile' } })
+    await vi.waitFor(() => {
+      flushSync()
+      if (!document.querySelector('.preview .card')) throw new Error('not loaded')
+    })
+    return onClose
+  }
+  const closeButton = () => document.querySelector<HTMLButtonElement>('button[aria-label="Close settings"]')!
+  const settle = () => vi.waitFor(() => { flushSync() })
+
+  it('edits made while a Save is on its way are kept on top of the answer', async () => {
+    let answer!: (p: Profile) => void
+    handlers.update_profile = () => new Promise<Profile>((r) => (answer = r))
+    const state = await open()
+    click(option('Name colour', 'Custom'))
+    setColor(document.querySelector<HTMLInputElement>('.colour input[type=color]')!, '#000000')
+    click(button('Save'))
+    click(option('Card theme', 'Berry')) // while saving
+    typeBio('typed meanwhile')
+    answer(saved({ user: { ...alex, style: { font: null, colors: ['#a8a8a8'] } } }))
+    await vi.waitFor(() => {
+      flushSync()
+      expect(button('Save').disabled).toBe(false)
+    })
+    expect(option('Card theme', 'Berry').getAttribute('aria-checked')).toBe('true')
+    expect(bioBox().textContent).toBe('typed meanwhile')
+    // what wasn't touched since takes the server's answer (the lightened colour)
+    expect(document.querySelector<HTMLInputElement>('.colour input[type=color]')!.value).toBe('#a8a8a8')
+    expect(document.body.textContent).toContain('Unsaved changes')
+    expect(state.dirty).toBe(true)
+    expect(app.state.profiles.U1.user.style.colors).toEqual(['#a8a8a8'])
+  })
+
+  it('the answer reaches the cache even if the editor has gone', async () => {
+    let answer!: (p: Profile) => void
+    handlers.update_profile = () => new Promise<Profile>((r) => (answer = r))
+    await open()
+    click(option('Card theme', 'Berry'))
+    click(button('Save'))
+    unmount(cmp!)
+    cmp = undefined
+    const stored = saved({ card: { ...saved().card, theme_top: '#c2457a', theme_bottom: '#3a1f5e' } })
+    answer(stored)
+    await vi.waitFor(() => expect(app.state.profiles.U1).toEqual(stored))
+  })
+
+  it('closing during a Save waits for it: no discard prompt when it goes through', async () => {
+    let answer!: (p: Profile) => void
+    handlers.update_profile = () => new Promise<Profile>((r) => (answer = r))
+    const onClose = await openSettings()
+    click(option('Card theme', 'Berry'))
+    click(button('Save'))
+    click(closeButton())
+    await settle()
+    expect(document.body.textContent).not.toContain('Discard your profile changes?')
+    expect(onClose).not.toHaveBeenCalled()
+    const stored = saved({ card: { ...saved().card, theme_top: '#c2457a', theme_bottom: '#3a1f5e' } })
+    answer(stored)
+    await vi.waitFor(() => expect(onClose).toHaveBeenCalledTimes(1))
+    expect(document.body.textContent).not.toContain('Discard your profile changes?')
+    expect(app.state.profiles.U1).toEqual(stored)
+  })
+
+  it('closing during a Save that fails asks, with the error shown', async () => {
+    let refuse!: (e: unknown) => void
+    handlers.update_profile = () => new Promise<Profile>((_, r) => (refuse = r))
+    const onClose = await openSettings()
+    click(option('Card theme', 'Berry'))
+    click(button('Save'))
+    click(closeButton())
+    refuse('Colours must look like #a1b2c3.')
+    await vi.waitFor(() => {
+      flushSync()
+      expect(document.body.textContent).toContain('Discard your profile changes?')
+    })
+    expect(document.querySelector('.footer [role=alert]')!.textContent).toBe('Colours must look like #a1b2c3.')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('closing during an upload asks first', async () => {
+    handlers.upload_avatar_media = () => new Promise<MediaInfo>(() => {})
+    const onClose = await openSettings()
+    await upload('Avatar')
+    await vi.waitFor(() => {
+      flushSync()
+      expect(document.body.textContent).toContain('Uploading…')
+    })
+    click(closeButton())
+    await settle()
+    expect(document.body.textContent).toContain('Discard your profile changes?')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
+  it('Escape while the discard prompt shows means Keep editing', async () => {
+    const onClose = await openSettings()
+    click(option('Card theme', 'Berry'))
+    click(closeButton())
+    await settle()
+    expect(document.body.textContent).toContain('Discard your profile changes?')
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.body.textContent).not.toContain('Discard your profile changes?')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(option('Card theme', 'Berry').getAttribute('aria-checked')).toBe('true')
+  })
+
+  it('Reset during an upload drops it when it lands', async () => {
+    let finish!: (m: MediaInfo) => void
+    handlers.upload_avatar_media = () => new Promise<MediaInfo>((r) => (finish = r))
+    const state = await open()
+    await upload('Avatar')
+    await vi.waitFor(() => {
+      flushSync()
+      expect(calls('upload_avatar_media')).toHaveLength(1)
+    })
+    expect(document.body.textContent).toContain('Uploading…')
+    expect(state.dirty).toBe(true)
+    click(button('Reset'))
+    expect(document.body.textContent).not.toContain('Uploading…')
+    finish(media('LATE'))
+    await settle()
+    await new Promise((r) => setTimeout(r, 0))
+    flushSync()
+    expect(previewLine().querySelector('img')).toBeNull()
+    expect(state.dirty).toBe(false)
+  })
+
+  it('Remove during an upload cancels it', async () => {
+    let finish!: (m: MediaInfo) => void
+    handlers.upload_avatar_media = () => new Promise<MediaInfo>((r) => (finish = r))
+    await open(saved({ user: { ...alex, avatar_hash: 'OLD' } }))
+    await upload('Avatar')
+    await vi.waitFor(() => {
+      flushSync()
+      expect(calls('upload_avatar_media')).toHaveLength(1)
+    })
+    click(button('Remove', document.querySelector('.avatar-field')!))
+    finish(media('LATE'))
+    await new Promise((r) => setTimeout(r, 0))
+    flushSync()
+    expect(previewLine().querySelector('img')).toBeNull()
+    expect(document.body.textContent).not.toContain('Uploading…')
+  })
+
+  it('Reset of a staged upload restores the saved picture', async () => {
+    handlers.upload_avatar_media = () => media('STAGED')
+    const state = await open(saved({ user: { ...alex, avatar_hash: 'OLD' } }))
+    await upload('Avatar')
+    await vi.waitFor(() => {
+      flushSync()
+      expect(previewLine().querySelector('img')?.getAttribute('src')).toContain('STAGED')
+    })
+    click(button('Reset'))
+    expect(previewLine().querySelector('img')!.getAttribute('src')).toContain('OLD')
+    expect(state.dirty).toBe(false)
+    expect(calls('update_profile')).toHaveLength(0)
+  })
+
+  it('more than 4 line breaks in the bio disables Save, blank leading lines not counted', async () => {
+    await open()
+    typeBio('\n\n\na\nb\nc\nd\ne')
+    expect(document.body.textContent).not.toContain('Your bio can have at most 4 line breaks.')
+    expect(button('Save').disabled).toBe(false)
+    typeBio('a\nb\nc\nd\ne\nf')
+    expect(document.querySelector('[role=alert]')!.textContent).toBe('Your bio can have at most 4 line breaks.')
+    expect(button('Save').disabled).toBe(true)
+  })
+
+  it('pronouns count characters, not UTF-16 units, up to 40', async () => {
+    await open()
+    const box = document.querySelector<HTMLInputElement>('input[aria-label="Pronouns"]')!
+    expect(box.maxLength).toBe(-1)
+    type(box, '😀'.repeat(40))
+    expect(document.body.textContent).not.toContain('Pronouns can be up to 40 characters.')
+    expect(button('Save').disabled).toBe(false)
+    type(box, '😀'.repeat(41))
+    expect(document.querySelector('[role=alert]')!.textContent).toBe('Pronouns can be up to 40 characters.')
+    expect(button('Save').disabled).toBe(true)
+  })
+
+  it('loads once you are known, and a failed load offers Retry', async () => {
+    handlers.get_profile = () => Promise.reject('offline')
+    app.state = emptyState()
+    cmp = mount(ProfileSettings, { target: document.body, props: {} })
+    flushSync()
+    expect(document.body.textContent).toContain('Loading…')
+    expect(calls('get_profile')).toHaveLength(0)
+    app.state = { ...emptyState(), me: alex, people: { U1: { user: alex, online: true, last_seen_at: null } } } as never
+    await vi.waitFor(() => {
+      flushSync()
+      expect(document.querySelector('[role=alert]')?.textContent).toContain('offline')
+    })
+    handlers.get_profile = () => saved()
+    click(button('Retry'))
+    await vi.waitFor(() => {
+      flushSync()
+      if (!document.querySelector('.preview .card')) throw new Error('not loaded')
+    })
+    expect(calls('get_profile')).toHaveLength(2)
+  })
+
+  it('radio groups: one tab stop each, arrow keys move and pick', async () => {
+    await open()
+    const radios = [...group('Card theme').querySelectorAll<HTMLButtonElement>('[role=radio]')]
+    expect(radios.filter((r) => r.tabIndex === 0)).toEqual([option('Card theme', 'Plain')])
+    const plain = radios.indexOf(option('Card theme', 'Plain'))
+    radios[plain].focus()
+    radios[plain].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', bubbles: true, cancelable: true }))
+    flushSync()
+    const next = radios[(plain + 1) % radios.length]
+    expect(document.activeElement).toBe(next)
+    expect(next.getAttribute('aria-checked')).toBe('true')
+    expect(next.tabIndex).toBe(0)
+    expect(radios[plain].tabIndex).toBe(-1)
+    // wraps backwards from the first
+    const fonts = [...group('Name font').querySelectorAll<HTMLButtonElement>('[role=radio]')]
+    fonts[0].focus()
+    fonts[0].dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowLeft', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.activeElement).toBe(fonts[fonts.length - 1])
+    expect(fonts[fonts.length - 1].getAttribute('aria-checked')).toBe('true')
+    const colours = [...group('Name colour').querySelectorAll<HTMLButtonElement>('[role=radio]')]
+    expect(colours.filter((r) => r.tabIndex === 0)).toEqual([option('Name colour', 'Default')])
+  })
+
+  it('the footer sits flush with Settings\' padding through a shared variable', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const settings = readFileSync(resolve(__dirname, 'Settings.svelte'), 'utf8')
+    const editor = readFileSync(resolve(__dirname, 'ProfileSettings.svelte'), 'utf8')
+    expect(settings).toMatch(/\.content \{[^}]*--settings-pad-y: 28px;[^}]*padding: var\(--settings-pad-y\) 32px/)
+    expect(editor).toMatch(/\.footer \{[^}]*bottom: calc\(-1 \* var\(--settings-pad-y, 28px\)\)/)
   })
 
   it('discard leaves the saved profile untouched', async () => {

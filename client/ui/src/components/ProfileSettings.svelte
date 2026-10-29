@@ -2,7 +2,7 @@
   // Settings → Profile (spec §4): settings on the left, a live preview on the right. Everything,
   // uploads included, is staged in the draft until Save sends it in one request; the store isn't
   // touched before then, so leaving without saving leaves you exactly as you were.
-  import { onDestroy, onMount } from 'svelte'
+  import { onDestroy, untrack } from 'svelte'
   import ProfileCard from './ProfileCard.svelte'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
@@ -12,18 +12,23 @@
   import { app, loadProfile } from '../lib/store.svelte'
   import { setProfile } from '../lib/state'
   import { api, errorText } from '../lib/tauri'
-  import { draftFrom, isDirty, previewCard, previewUser, toRequest, type Draft } from '../lib/profileDraft'
+  import { BIO_LINE_BREAKS_MAX, BIO_MAX, charCount, draftFrom, editsSince, isDirty, normalBio, previewCard, previewUser, PRONOUNS_MAX, toRequest, type Draft } from '../lib/profileDraft'
+  import { radioKeys } from '../lib/actions'
   import { presetFor, THEME_PRESETS } from '../lib/cardTheme'
   import { NAME_FONTS } from '../lib/nameFonts'
   import { lightenForName, NAME_GRADIENTS, NAME_SOLIDS, type NamePreset } from '../lib/nameStyle'
   import type { CropRect } from '../lib/crop'
   import type { Profile } from '../lib/protocol/Profile'
 
-  let { dirty = $bindable(false) }: { dirty?: boolean } = $props()
+  let { dirty = $bindable(false), settling = $bindable(null) }: {
+    /** Unsaved changes, an upload still in flight included: leaving would lose them. */
+    dirty?: boolean
+    /** A Save in flight: whoever closes the editor waits for it (it may still fail and keep the draft). */
+    settling?: Promise<void> | null
+  } = $props()
 
   type Kind = 'avatar' | 'banner'
   const ACCEPT = 'image/png,image/jpeg,image/gif,image/webp'
-  const BIO_MAX = 190
   const SAVED_MS = 2000
 
   let profile = $state.raw<Profile | null>(null)
@@ -42,15 +47,19 @@
   let savedTimer: ReturnType<typeof setTimeout> | undefined
   let bioBox = $state<EmojiBox>()
   let gone = false
+  /** Bumped per kind by each upload, Remove and Reset: an upload that lands after a newer one of these is dropped. */
+  const gen: Record<Kind, number> = { avatar: 0, banner: 0 }
 
   const me = $derived(app.state.me)
   const pu = $derived(me && draft ? previewUser(me, draft) : null)
   const pc = $derived(draft ? previewCard(draft) : null)
   const changed = $derived(!!draft && !!saved && isDirty(draft, saved))
+  const busy = $derived(uploading.avatar || uploading.banner)
   $effect(() => {
-    dirty = changed
+    dirty = changed || busy
   })
 
+  const fontKnown = $derived(!!draft && (draft.font === null || NAME_FONTS.some((f) => f.key === draft!.font)))
   const themeKey = $derived(draft && !customTheme ? presetFor(draft.themeTop, draft.themeBottom) : null)
   const same = (p: NamePreset) => draft !== null && p.colors.join() === draft.colors.join()
   const colourKey = $derived.by(() => {
@@ -62,10 +71,13 @@
     return gradient ? `gradient:${gradient.key}` : 'custom'
   })
   const lightened = $derived(colourKey === 'custom' && !!draft?.colors.some((c) => lightenForName(c) !== c.toLowerCase()))
-  // Counted as the server counts: characters, after trailing whitespace is trimmed.
-  const bioLength = $derived(draft ? [...draft.bio.trimEnd()].length : 0)
+  // Counted as the server counts: characters (code points) of the bio as it will be stored.
+  const bio = $derived(draft ? normalBio(draft.bio) : '')
+  const bioLength = $derived(charCount(bio))
   const bioOver = $derived(bioLength > BIO_MAX)
-  const busy = $derived(uploading.avatar || uploading.banner)
+  const bioBreaksOver = $derived((bio.match(/\n/g)?.length ?? 0) > BIO_LINE_BREAKS_MAX)
+  const pronounsOver = $derived(!!draft && charCount(draft.pronouns.trim()) > PRONOUNS_MAX)
+  const invalid = $derived(bioOver || bioBreaksOver || pronounsOver)
 
   function take(p: Profile) {
     profile = p
@@ -75,12 +87,20 @@
     customColour = false
   }
 
-  onMount(() => {
-    if (!me) return
-    loadProfile(me.id).then(
-      (p) => !gone && take(p),
-      (e) => !gone && (loadError = errorText(e)),
+  function load(id: string) {
+    loadError = null
+    loadProfile(id).then(
+      (p) => !gone && !profile && p.user.id === app.state.me?.id && take(p),
+      (e) => !gone && !profile && (loadError = errorText(e)),
     )
+  }
+  // Loads once you are known (you may not be yet when the editor opens).
+  let loadedFor: string | null = null
+  $effect(() => {
+    const id = me?.id
+    if (!id || id === loadedFor) return
+    loadedFor = id
+    untrack(() => load(id))
   })
   onDestroy(() => {
     gone = true
@@ -99,12 +119,13 @@
     cropping = null
     if (!pick) return
     const { file, kind } = pick
+    const g = ++gen[kind]
     uploadError[kind] = null
     uploading[kind] = true
     try {
       const bytes = new Uint8Array(await file.arrayBuffer())
       const info = await (kind === 'avatar' ? api.uploadAvatar(bytes, crop) : api.uploadBanner(bytes, crop))
-      if (!draft) return
+      if (!draft || gone || gen[kind] !== g) return // Reset or Remove since: dropped
       if (kind === 'avatar') {
         draft.avatarHash = info.hash
         draft.avatarStill = info.still_hash
@@ -113,14 +134,17 @@
         draft.bannerStill = info.still_hash
       }
     } catch (e) {
-      uploadError[kind] = errorText(e)
+      if (!gone && gen[kind] === g) uploadError[kind] = errorText(e)
     } finally {
-      uploading[kind] = false
+      if (!gone && gen[kind] === g) uploading[kind] = false
     }
   }
 
+  /** Clears the picture, and drops an upload of it still in flight. */
   function remove(kind: Kind) {
     if (!draft) return
+    gen[kind]++
+    uploading[kind] = false
     uploadError[kind] = null
     if (kind === 'avatar') draft.avatarHash = draft.avatarStill = null
     else draft.bannerHash = draft.bannerStill = null
@@ -154,29 +178,48 @@
 
   function reset() {
     if (!profile) return
+    gen.avatar++
+    gen.banner++
+    uploading = { avatar: false, banner: false }
     take(profile)
     uploadError = { avatar: null, banner: null }
     saveError = null
     showBio(saved!.bio)
   }
 
-  async function save() {
-    if (!draft || saving || !changed || bioOver || busy) return
+  function save() {
+    if (!draft || saving || !changed || invalid || busy) return
+    const p = send($state.snapshot(draft))
+    settling = p
+    void p.finally(() => {
+      if (!gone && settling === p) settling = null
+    })
+  }
+
+  /** Sends `sent`; edits made while it is on its way are kept on top of the answer. */
+  async function send(sent: Draft) {
     saving = true
     saveError = null
     try {
-      const answer = await api.updateProfile(toRequest(draft))
-      if (gone) return
+      const answer = await api.updateProfile(toRequest(sent))
+      // The cache gets the answer even if the editor has gone meanwhile: the save went through.
       app.state = setProfile(app.state, answer)
+      if (gone) return
+      const edits = draft ? editsSince(sent, $state.snapshot(draft)) : {}
+      const keepTheme = customTheme && ('themeTop' in edits || 'themeBottom' in edits)
+      const keepColour = customColour && 'colors' in edits
       take(answer)
-      showBio(answer.card.bio ?? '')
+      Object.assign(draft!, edits)
+      customTheme = keepTheme
+      customColour = keepColour
+      if (!('bio' in edits)) showBio(answer.card.bio ?? '')
       justSaved = true
       clearTimeout(savedTimer)
       savedTimer = setTimeout(() => (justSaved = false), SAVED_MS)
     } catch (e) {
-      saveError = errorText(e)
+      if (!gone) saveError = errorText(e)
     } finally {
-      saving = false
+      if (!gone) saving = false
     }
   }
 </script>
@@ -188,7 +231,8 @@
       <label class="btn" class:disabled={uploading[kind]}>Upload
         <input class="file" type="file" accept={ACCEPT} aria-label="Upload {kind}" disabled={uploading[kind]} onchange={(e) => pickFile(kind, e)} />
       </label>
-      <button type="button" class="btn" disabled={!hash || uploading[kind]} onclick={() => remove(kind)}>Remove</button>
+      <!-- during an upload, Remove cancels it -->
+      <button type="button" class="btn" disabled={!hash && !uploading[kind]} onclick={() => remove(kind)}>Remove</button>
       {#if uploading[kind]}<span class="muted" role="status">Uploading…</span>{/if}
     </div>
     {#if uploadError[kind]}<p class="error" role="alert">{uploadError[kind]}</p>{/if}
@@ -198,7 +242,7 @@
 <section class="settings-pane">
   <h2>Profile</h2>
   {#if loadError}
-    <p class="error" role="alert">{loadError}</p>
+    <p class="error" role="alert">{loadError} <button type="button" class="btn retry" onclick={() => me && load(me.id)}>Retry</button></p>
   {:else if !draft || !me || !pu || !pc || !profile}
     <p class="muted">Loading…</p>
   {:else}
@@ -209,12 +253,12 @@
 
         <div class="settings-field theme">
           <span class="settings-label">Card theme</span>
-          <div class="swatches" role="radiogroup" aria-label="Card theme">
+          <div class="swatches" role="radiogroup" aria-label="Card theme" tabindex="-1" onkeydown={radioKeys}>
             {#each THEME_PRESETS as p (p.key)}
-              <button type="button" role="radio" class="swatch" aria-label={p.label} title={p.label} aria-checked={themeKey === p.key}
+              <button type="button" role="radio" class="swatch" aria-label={p.label} title={p.label} aria-checked={themeKey === p.key} tabindex={themeKey === p.key ? 0 : -1}
                 style:background="linear-gradient({p.top}, {p.bottom})" onclick={() => setTheme(p.top, p.bottom)}></button>
             {/each}
-            <button type="button" role="radio" class="chip" aria-checked={themeKey === null} onclick={() => (customTheme = true)}>Custom</button>
+            <button type="button" role="radio" class="chip" aria-checked={themeKey === null} tabindex={themeKey === null ? 0 : -1} onclick={() => (customTheme = true)}>Custom</button>
           </div>
           {#if themeKey === null}
             <div class="row">
@@ -226,10 +270,10 @@
 
         <div class="settings-field">
           <span class="settings-label">Name font</span>
-          <div class="chips" role="radiogroup" aria-label="Name font">
-            <button type="button" role="radio" class="chip" aria-checked={draft.font === null} onclick={() => (draft!.font = null)}>Default</button>
+          <div class="chips" role="radiogroup" aria-label="Name font" tabindex="-1" onkeydown={radioKeys}>
+            <button type="button" role="radio" class="chip" aria-checked={draft.font === null} tabindex={fontKnown ? (draft.font === null ? 0 : -1) : 0} onclick={() => (draft!.font = null)}>Default</button>
             {#each NAME_FONTS as f (f.key)}
-              <button type="button" role="radio" class="chip" aria-checked={draft.font === f.key}
+              <button type="button" role="radio" class="chip" aria-checked={draft.font === f.key} tabindex={draft.font === f.key ? 0 : -1}
                 style="font-family: {f.family}; font-weight: {f.weight}; font-size: calc(13px * {f.scale})" onclick={() => (draft!.font = f.key)}>{f.label}</button>
             {/each}
           </div>
@@ -237,17 +281,17 @@
 
         <div class="settings-field colour">
           <span class="settings-label">Name colour</span>
-          <div class="swatches" role="radiogroup" aria-label="Name colour">
-            <button type="button" role="radio" class="chip" aria-checked={colourKey === 'default'} onclick={() => setColours([])}>Default</button>
+          <div class="swatches" role="radiogroup" aria-label="Name colour" tabindex="-1" onkeydown={radioKeys}>
+            <button type="button" role="radio" class="chip" aria-checked={colourKey === 'default'} tabindex={colourKey === 'default' ? 0 : -1} onclick={() => setColours([])}>Default</button>
             {#each NAME_SOLIDS as p (p.key)}
-              <button type="button" role="radio" class="swatch round" aria-label={p.label} title={p.label} aria-checked={colourKey === `solid:${p.key}`}
+              <button type="button" role="radio" class="swatch round" aria-label={p.label} title={p.label} aria-checked={colourKey === `solid:${p.key}`} tabindex={colourKey === `solid:${p.key}` ? 0 : -1}
                 style:background={p.colors[0]} onclick={() => setColours(p.colors)}></button>
             {/each}
             {#each NAME_GRADIENTS as p (p.key)}
-              <button type="button" role="radio" class="swatch round" aria-label="{p.label} gradient" title="{p.label} gradient" aria-checked={colourKey === `gradient:${p.key}`}
+              <button type="button" role="radio" class="swatch round" aria-label="{p.label} gradient" title="{p.label} gradient" aria-checked={colourKey === `gradient:${p.key}`} tabindex={colourKey === `gradient:${p.key}` ? 0 : -1}
                 style:background="linear-gradient(135deg, {p.colors[0]}, {p.colors[1]})" onclick={() => setColours(p.colors)}></button>
             {/each}
-            <button type="button" role="radio" class="chip" aria-checked={colourKey === 'custom'} onclick={pickCustomColour}>Custom</button>
+            <button type="button" role="radio" class="chip" aria-checked={colourKey === 'custom'} tabindex={colourKey === 'custom' ? 0 : -1} onclick={pickCustomColour}>Custom</button>
           </div>
           {#if colourKey === 'custom'}
             <Segmented label="Custom colour" value={draft.colors.length >= 2 ? 'gradient' : 'solid'} onchange={setCustomCount}
@@ -264,13 +308,16 @@
 
         <div class="settings-field">
           <span class="settings-label">Pronouns</span>
-          <input class="text" type="text" aria-label="Pronouns" maxlength="40" bind:value={draft.pronouns} />
+          <!-- counted in characters, as the server counts (maxlength counts UTF-16 units) -->
+          <input class="text" type="text" aria-label="Pronouns" aria-invalid={pronounsOver} bind:value={draft.pronouns} />
+          {#if pronounsOver}<p class="error" role="alert">Pronouns can be up to 40 characters.</p>{/if}
         </div>
 
         <div class="settings-field">
           <span class="settings-label">Bio</span>
           <EmojiBox bind:this={bioBox} bind:text={draft.bio} label="Bio" class="bio" />
           <small class="counter" class:over={bioOver}>{bioLength}/{BIO_MAX}</small>
+          {#if bioBreaksOver}<p class="error" role="alert">Your bio can have at most 4 line breaks.</p>{/if}
         </div>
       </div>
 
@@ -291,8 +338,8 @@
       <span class="state">
         {#if changed}Unsaved changes{:else if justSaved}<span class="ok" role="status">Saved</span>{/if}
       </span>
-      <button type="button" class="btn" disabled={!changed || saving} onclick={reset}>Reset</button>
-      <button type="button" class="btn primary" disabled={!changed || saving || bioOver || busy} onclick={() => void save()}>Save</button>
+      <button type="button" class="btn" disabled={!(changed || busy) || saving} onclick={reset}>Reset</button>
+      <button type="button" class="btn primary" disabled={!changed || saving || invalid || busy} onclick={save}>Save</button>
     </div>
   {/if}
 </section>
@@ -333,10 +380,12 @@
   .line { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 12px; background: var(--bg-2); }
   .said { min-width: 0; display: flex; flex-direction: column; font-weight: 600; }
   .said p { margin: 2px 0 0; font-weight: 400; color: var(--text); }
-  .footer { position: sticky; bottom: -28px; display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 12px 0; background: var(--bg-1); border-top: 1px solid var(--line); }
+  /* flush with the bottom of Settings' scrolling content, whatever its padding */
+  .footer { position: sticky; bottom: calc(-1 * var(--settings-pad-y, 28px)); display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 12px 0; background: var(--bg-1); border-top: 1px solid var(--line); }
   .footer .error { flex-basis: 100%; }
   .state { margin-right: auto; color: var(--warn); font-weight: 600; font-size: 13px; }
   .state .ok { color: var(--ok); }
   .muted { color: var(--text-3); font-size: 13px; }
   .error { margin: 0; color: var(--danger); font-size: 13px; }
+  .retry { height: 28px; margin-left: 8px; }
 </style>

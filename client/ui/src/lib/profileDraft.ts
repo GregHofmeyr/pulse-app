@@ -69,3 +69,31 @@ export function previewCard(d: Draft): CardProfile {
     bio: orNull(d.bio),
   }
 }
+
+/** Most characters in pronouns and a bio, and most line breaks in a bio (the server's limits). */
+export const PRONOUNS_MAX = 40
+export const BIO_MAX = 190
+export const BIO_LINE_BREAKS_MAX = 4
+
+/** A bio as the server stores it: line endings as `\n`, blank leading lines dropped (the first text
+ * line keeps its leading space), the end trimmed. Its characters and line breaks are what count. */
+export function normalBio(s: string): string {
+  const t = s.replace(/\r\n?/g, '\n')
+  const first = t.search(/\S/)
+  if (first < 0) return ''
+  return t.slice(t.lastIndexOf('\n', first) + 1).trimEnd()
+}
+
+/** Characters as the server counts them (Unicode code points, not UTF-16 units). */
+export const charCount = (s: string) => [...s].length
+
+/** The fields of `now` that differ from `before` (edits made since `before` was taken). */
+export function editsSince(before: Draft, now: Draft): Partial<Draft> {
+  const out: Partial<Draft> = {}
+  for (const k of Object.keys(before) as (keyof Draft)[]) {
+    if (k === 'colors') {
+      if (now.colors.join() !== before.colors.join()) out.colors = [...now.colors]
+    } else if (now[k] !== before[k]) (out as Record<string, unknown>)[k] = now[k]
+  }
+  return out
+}
