@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Self-test for deploy.sh's helpers (`just deploy-check` and CI run it). Needs nothing but bash.
+# Self-test for deploy.sh's and verify-image.sh's helpers (`just deploy-check` and CI run it). Needs bash and jq;
+# docker, curl and gh are stubbed, nothing touches the network.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=/dev/null
@@ -393,5 +394,387 @@ else
   failed=1
 fi
 unset -f docker
+
+# --- image provenance: deploy.sh TAG DIGEST|--unverified, deploy/verify-image.sh, and the justfile's deploy recipes ---
+d64=sha256:$(printf 'a%.0s' {1..64})
+other64=sha256:$(printf 'b%.0s' {1..64})
+# pass DESCRIPTION / fail DESCRIPTION
+pass() { echo "ok   $1"; }
+fail() { echo "FAIL $1"; failed=1; }
+
+# check_args TAG PIN (deploy.sh)
+expect_args() {
+  local want=$1 got; shift
+  if check_args "$@" 2>/dev/null; then got=ok; else got=refused; fi
+  if [ "$got" = "$want" ]; then pass "args $want: $*"; else fail "args want $want, got $got: $*"; fi
+}
+expect_args ok latest "$d64"
+expect_args ok a5959d1 --unverified
+expect_args refused latest --unverified
+expect_args refused v1 --unverified
+expect_args refused latest
+expect_args refused latest ''
+expect_args refused '' "$d64"
+expect_args refused latest "${d64:0:70}"
+expect_args refused latest "${d64}0"
+expect_args refused latest "SHA256:${d64#sha256:}"
+expect_args refused latest "sha256:$(printf 'A%.0s' {1..64})"
+expect_args refused latest "$d64;reboot"
+expect_args refused latest unverified
+expect_args refused 'latest;reboot' "$d64"
+expect_args refused '-latest' "$d64"
+# deploy.sh itself stops on bad arguments before it goes near /srv/pulse (not present here: a cd would say so)
+for args in "latest" "latest sha256:abc" "x;y --unverified" "latest --unverified"; do
+  # shellcheck disable=SC2086 # split on purpose
+  if out=$(bash "$here/deploy.sh" $args 2>&1); then
+    fail "deploy.sh accepted: $args"
+  elif [[ $out == *"No such file"* || $out == *"/srv/pulse"* ]]; then
+    fail "deploy.sh got past its argument check: $args: $out"
+  else
+    pass "deploy.sh refuses before touching anything: $args"
+  fi
+done
+
+# pull_image with docker stubbed. The stub answers `image inspect` only for exactly stub_ref (anything else is "No such
+# image", as docker says), with inspect_out as the RepoDigests and stub_rev as the revision label.
+# shellcheck disable=SC2329 # invoked by pull_image
+docker() {
+  echo "PULSE_IMAGE=${PULSE_IMAGE:-} $*" >>"$tmp/docker.log"
+  case $1 in
+    compose) return "$pull_rc" ;;
+    image)
+      if [ "$2" != inspect ] || [ "$3" != --format ] || [ "$5" != "$stub_ref" ]; then
+        echo "Error: No such image: ${5:-}" >&2
+        return 1
+      fi
+      case $4 in
+        *RepoDigests*) [ "${#inspect_out[@]}" -eq 0 ] || printf '%s\n' "${inspect_out[@]}" ;;
+        *image.revision*) echo "$stub_rev" ;;
+        *) return 1 ;;
+      esac ;;
+    tag) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+# expect_pull ok|refused WANT-OUTPUT DESCRIPTION TAG PIN
+expect_pull() {
+  local want=$1 want_out=$2 desc=$3 got out
+  shift 3
+  : >"$tmp/docker.log"
+  if out=$(pull_image "$@" 2>/dev/null); then got=ok; else got=refused; fi
+  if [ "$got" = "$want" ] && [ "$out" = "$want_out" ]; then
+    pass "pull $want: $desc"
+  else
+    fail "pull $desc: want $want '$want_out', got $got '$out'"
+  fi
+}
+# docker_saw LINE: the stub was called with exactly LINE
+docker_saw() { grep -qxF "$1" "$tmp/docker.log"; }
+# shellcheck disable=SC2154 # repo comes from the sourced deploy.sh
+stub_ref=$repo@$d64 pull_rc=0 stub_rev=abc1234def0 inspect_out=("$repo@$other64" "$repo@$d64")
+expect_pull ok "$repo:latest@$d64" "a verified digest is pulled and pinned exactly" latest "$d64"
+if docker_saw "PULSE_IMAGE=$repo@$d64 compose pull -q" && docker_saw "PULSE_IMAGE= tag $repo@$d64 $repo:latest"; then
+  pass "pull by digest (never the tag), then tagged locally as the tag"
+else
+  fail "pull by digest: docker saw $(tr '\n' '|' <"$tmp/docker.log")"
+fi
+if docker_saw "PULSE_IMAGE= tag $repo@$d64 $repo:abc1234"; then
+  pass "the deployed image is also tagged with its own commit (so a moved latest doesn't leave it dangling)"
+else
+  fail "no commit tag: docker saw $(tr '\n' '|' <"$tmp/docker.log")"
+fi
+inspect_out=("$repo@$other64")
+expect_pull refused "" "the pulled image isn't known by the verified digest" latest "$d64"
+if grep -q ' tag ' "$tmp/docker.log"; then fail "a mismatched image was tagged"; fi
+pull_rc=1 inspect_out=("$repo@$d64")
+expect_pull refused "" "a failed pull doesn't fall through to a local copy (digest)" latest "$d64"
+stub_ref=$repo:a5959d1
+expect_pull refused "" "a failed pull doesn't fall through to a local copy (--unverified)" a5959d1 --unverified
+pull_rc=0 inspect_out=("$repo@$other64" "other/repo@$d64") stub_rev=a5959d1ffff
+expect_pull ok "$repo:a5959d1@$other64" "--unverified pins whatever the tag resolves to" a5959d1 --unverified
+if docker_saw "PULSE_IMAGE=$repo:a5959d1 compose pull -q" && docker_saw "PULSE_IMAGE= tag $repo:a5959d1 $repo:a5959d1"; then
+  pass "--unverified pulls the tag and tags it with its commit"
+else
+  fail "--unverified pull: docker saw $(tr '\n' '|' <"$tmp/docker.log")"
+fi
+inspect_out=()
+expect_pull refused "" "--unverified without a registry digest" a5959d1 --unverified
+stub_ref=$repo@$d64 inspect_out=("$repo@$d64") stub_rev=
+expect_pull ok "$repo:latest@$d64" "an image without a revision label still deploys" latest "$d64"
+if grep -q " tag $repo@$d64 $repo:[0-9a-f]\{7\}$" "$tmp/docker.log"; then fail "tagged a commit from no label"; fi
+# the stub really is exact: inspecting a different ref than the one pulled fails
+stub_ref=$repo:latest inspect_out=("$repo@$d64")
+expect_pull refused "" "inspect by any other ref than the pulled digest finds nothing" latest "$d64"
+unset -f docker
+# prune_old_images then keeps the newest 3 by image id: with every deployed image carrying its commit tag, the stub
+# lists what docker would after deploys of c1..c5 (latest moved each time, no image left untagged).
+# shellcheck disable=SC2329 # invoked by prune_old_images
+docker() {
+  case $1 in
+    images) printf '%s\n' id5 id5 id4 id3 id2 id1 ;; # id5 is both latest and c5
+    rmi) shift 2; echo "$*" >"$tmp/removed" ;;
+    image) echo prune >>"$tmp/pruned" ;;
+  esac
+}
+rm -f "$tmp/removed" "$tmp/pruned"
+prune_old_images
+if [ "$(cat "$tmp/removed" 2>/dev/null)" = "id2 id1" ]; then
+  pass "prune keeps the 3 newest commit-tagged images and removes the rest"
+else
+  fail "prune removed '$(cat "$tmp/removed" 2>/dev/null)', want 'id2 id1'"
+fi
+unset -f docker
+
+# --- verify-image.sh helpers ---
+# shellcheck source=/dev/null
+VERIFY_IMAGE_LIB=1 source "$here/verify-image.sh"
+# expect_fn ok|refused FUNCTION ARGS...
+expect_fn() {
+  local want=$1 fn=$2 got; shift 2
+  if "$fn" "$@" 2>/dev/null; then got=ok; else got=refused; fi
+  if [ "$got" = "$want" ]; then pass "$fn $want: $*"; else fail "$fn want $want, got $got: $*"; fi
+}
+# _ship's checks (the last thing before a remote command line)
+expect_fn ok check_ship_args latest "$d64"
+expect_fn ok check_ship_args a5959d1 --unverified
+expect_fn refused check_ship_args latest --unverified
+expect_fn refused check_ship_args latest
+expect_fn refused check_ship_args latest "${d64}0"
+expect_fn refused check_ship_args latest "$d64 x"
+expect_fn refused check_ship_args 'a;b' "$d64"
+expect_fn refused check_ship_args '' "$d64"
+expect_fn refused check_ship_args "\$(id)" --unverified
+# deploy-unverified: a <sha7>, never latest, and CONFIRM must repeat it
+expect_fn ok check_unverified_args a5959d1 a5959d1
+expect_fn refused check_unverified_args a5959d1 ''
+expect_fn refused check_unverified_args a5959d1 f15d174
+expect_fn refused check_unverified_args latest latest
+expect_fn refused check_unverified_args A5959D1 A5959D1
+expect_fn refused check_unverified_args a5959d12 a5959d12
+# header_value: case-insensitive names, CR stripped, parameters dropped
+printf 'HTTP/2 200\r\nContent-Type: application/vnd.oci.image.index.v1+json; charset=utf-8\r\nDOCKER-CONTENT-DIGEST: %s\r\n\r\n' "$d64" >"$tmp/h"
+if [ "$(header_value "$tmp/h" docker-content-digest)" = "$d64" ] &&
+  [ "$(header_value "$tmp/h" content-type)" = application/vnd.oci.image.index.v1+json ] &&
+  [ -z "$(header_value "$tmp/h" location)" ]; then
+  pass "header_value reads headers in any case, without CR or parameters"
+else
+  fail "header_value: '$(header_value "$tmp/h" docker-content-digest)' '$(header_value "$tmp/h" content-type)'"
+fi
+# provenance_status on a throwaway history: A (no attest) -> B (adds the attest step) -> C, and D branched off A
+g=$tmp/git
+git init -q -b main "$g"
+gitc() { git -C "$g" -c user.name=selftest -c user.email=selftest -c commit.gpgsign=false "$@"; }
+mkdir -p "$g/.github/workflows"
+echo build >"$g/.github/workflows/release-server.yml"
+gitc add -A && gitc commit -q -m A && cA=$(gitc rev-parse --short=7 HEAD)
+gitc checkout -q -b side && echo side >"$g/x" && gitc add -A && gitc commit -q -m D && cD=$(gitc rev-parse --short=7 HEAD)
+gitc checkout -q main
+echo '      - uses: actions/attest-build-provenance@0000000000000000000000000000000000000000 # v4' >>"$g/.github/workflows/release-server.yml"
+gitc add -A && gitc commit -q -m B && cB=$(gitc rev-parse --short=7 HEAD)
+echo c >"$g/y" && gitc add -A && gitc commit -q -m C && cC=$(gitc rev-parse --short=7 HEAD)
+# no origin/main yet: nothing can be told, so no bypass is offered
+got=$(provenance_status "$cA" "$g")
+if [ "$got" = unknown ]; then pass "provenance_status: unknown without origin/main"; else fail "provenance_status without origin/main: $got"; fi
+# origin/main is C; HEAD is then left on the stale side branch D, whose own history has no attest step
+gitc update-ref refs/remotes/origin/main "$cC"
+gitc checkout -q side
+# (with HEAD on the stale side branch: the answers must come from origin/main)
+for want in "predates $cA" "predates $cD" "has $cB" "has $cC" "unknown 0000000"; do
+  got=$(provenance_status "${want#* }" "$g")
+  if [ "$got" = "${want%% *}" ]; then pass "provenance_status: ${want%% *} for $(
+    case ${want#* } in "$cA") echo "a commit before the attest step" ;; "$cD") echo "a side branch without it" ;;
+      "$cB") echo "the commit that adds it" ;; "$cC") echo "a later commit" ;; *) echo "a commit not in the checkout" ;; esac)"
+  else fail "provenance_status ${want#* }: want ${want%% *}, got $got"; fi
+done
+
+# --- verify-image.sh end to end, with curl, gh and ssh stubbed (STUB_* steer them) and real jq/git ---
+# The registry stub serves bodies from $blobs by digest; store BODY puts one there and prints its digest.
+bin=$tmp/bin blobs=$tmp/blobs
+mkdir -p "$bin" "$blobs"
+store() { printf '%s' "$1" >"$tmp/body" && d=$(sha256_of "$tmp/body") && mv "$tmp/body" "$blobs/$d" && echo "$d"; }
+# image REV1 REV2: an index of two platform images (plus an attestation manifest) labelled REV1, REV2; prints its digest
+image() {
+  local c1 c2 m1 m2 att
+  c1=$(store "{\"config\":{\"Labels\":{\"org.opencontainers.image.revision\":\"$1\"}}}")
+  c2=$(store "{\"config\":{\"Labels\":{\"org.opencontainers.image.revision\":\"$2\"},\"x\":2}}")
+  m1=$(store "{\"config\":{\"digest\":\"$c1\"}}")
+  m2=$(store "{\"config\":{\"digest\":\"$c2\"},\"x\":2}")
+  att=$(store '{"attestation":true}')
+  store "{\"mediaType\":\"application/vnd.oci.image.index.v1+json\",\"manifests\":[{\"digest\":\"$m1\",\"platform\":{\"os\":\"linux\"}},{\"digest\":\"$att\",\"platform\":{\"os\":\"unknown\"}},{\"digest\":\"$m2\",\"platform\":{\"os\":\"linux\"}}]}"
+}
+cat >"$bin/curl" <<'EOF'
+#!/usr/bin/env bash
+out= accept= head=0 url=
+while [ $# -gt 0 ]; do
+  case $1 in
+    -o) out=$2; shift ;;
+    -H) case $2 in Accept:*) accept=${2#Accept: } ;; esac; shift ;;
+    -fsSI) head=1 ;;
+    https://*) url=$1 ;;
+  esac
+  shift
+done
+echo "curl head=$head accept=$accept $url" >>"$STUB_LOG"
+case $url in
+  */token*) [ -z "${STUB_TOKEN_FAIL:-}" ] || exit 22; echo "${STUB_TOKEN_BODY:-{\"token\":\"t\"\}}" ;;
+  */manifests/* | */blobs/*)
+    if [ "$head" = 1 ]; then
+      [ -n "$STUB_DIGEST" ] || exit 22
+      printf 'HTTP/2 200\r\ncontent-type: %s\r\nDocker-Content-Digest: %s\r\n\r\n' \
+        "${STUB_TYPE:-application/vnd.oci.image.index.v1+json}" "$STUB_DIGEST"
+    else
+      d=${url##*/}
+      [ -f "$STUB_BLOBS/$d" ] || exit 22
+      cat "$STUB_BLOBS/$d" >"${out:-/dev/stdout}"
+      if [ "$d" = "${STUB_CORRUPT:-}" ]; then printf ' ' >>"${out:-/dev/stdout}"; fi
+    fi ;;
+  *) exit 22 ;;
+esac
+EOF
+cat >"$bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "gh $*" >>"$STUB_LOG"
+echo "gh verification output" >&2
+[ "$STUB_GH_RC" = 0 ] || exit "$STUB_GH_RC"
+case " $* " in
+  *" --format json "*) echo '[{"verificationResult":{"signature":{"certificate":{"sourceRepositoryRef":"refs/heads/spike"}}}}]' ;;
+  *) echo "Verification succeeded!" ;;
+esac
+EOF
+# shellcheck disable=SC2016 # expanded by the stub, not here
+printf '#!/bin/sh\necho "ssh $*" >>"$STUB_LOG"; exit 1\n' >"$bin/ssh"
+cp "$bin/ssh" "$bin/scp"
+chmod +x "$bin/curl" "$bin/gh" "$bin/ssh" "$bin/scp"
+export STUB_LOG=$tmp/stub.log STUB_BLOBS=$blobs
+good=$(image abc1234def abc1234def)
+# expect_verify ok|refused DESCRIPTION ARGS... [-- NAME=VALUE...]: verify-image.sh ARGS with the stubs; on ok stdout must
+# be the index digest (STUB_DIGEST), on refusal empty with a REFUSED line. Never any ssh.
+expect_verify() {
+  local want=$1 desc=$2 got out args=() envs=()
+  shift 2
+  while [ $# -gt 0 ] && [ "$1" != -- ]; do args+=("$1"); shift; done
+  [ $# -eq 0 ] || { shift; envs=("$@"); }
+  : >"$STUB_LOG"
+  if out=$(env PATH="$bin:$PATH" STUB_DIGEST="$good" STUB_GH_RC=0 VERIFY_IMAGE_GIT_DIR="$g" "${envs[@]}" \
+    bash "$here/verify-image.sh" "${args[@]}" 2>"$tmp/verify.err"); then got=ok; else got=refused; fi
+  if [ "$got" != "$want" ]; then
+    fail "verify $desc: want $want, got $got: $(tr '\n' ' ' <"$tmp/verify.err")"
+  elif [ "$want" = ok ] && [ "$out" != "$good" ]; then
+    fail "verify $desc: stdout '$out', want only the digest"
+  elif [ "$want" = refused ] && { [ -n "$out" ] || ! grep -q '^REFUSED: ' "$tmp/verify.err"; }; then
+    fail "verify $desc: a refusal must print nothing on stdout and say REFUSED; stdout '$out'"
+  elif grep -q '^ssh' "$STUB_LOG"; then
+    fail "verify $desc: ran ssh"
+  else
+    pass "verify $want: $desc"
+  fi
+}
+# err_has TEXT / err_lacks TEXT: about the last expect_verify's stderr
+err_has() { if grep -qF -- "$1" "$tmp/verify.err"; then pass "  ...says: $1"; else fail "  ...doesn't say '$1': $(cat "$tmp/verify.err")"; fi; }
+err_lacks() { if grep -qF -- "$1" "$tmp/verify.err"; then fail "  ...says '$1': $(cat "$tmp/verify.err")"; else pass "  ...doesn't say: $1"; fi; }
+log_has() { if grep -qxF -- "$1" "$STUB_LOG"; then pass "  ...called: $2"; else fail "  ...no call '$1'; log: $(cat "$STUB_LOG")"; fi; }
+no_gh() { if grep -q '^gh' "$STUB_LOG"; then fail "  ...gh ran"; else pass "  ...gh never ran"; fi; }
+
+main_re='^https://github\.com/GregHofmeyr/pulse-app/\.github/workflows/release-server\.yml@refs/heads/main$'
+branch_re='^https://github\.com/GregHofmeyr/pulse-app/\.github/workflows/release-server\.yml@refs/heads/.+$'
+expect_verify ok "an attested tag gives its index digest" latest
+log_has "gh attestation verify oci://$repo@$good --repo GregHofmeyr/pulse-app --cert-identity-regex $main_re --source-ref refs/heads/main --deny-self-hosted-runners" \
+  "gh with this digest, this repo, release-server.yml anchored to main, source ref main, GitHub-hosted runners"
+if grep '^curl head=1 ' "$STUB_LOG" | grep -qF 'application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json'; then
+  pass "  ...the HEAD request accepts the index types"
+else
+  fail "  ...the HEAD request's Accept lacks the index types: $(grep '^curl head=1' "$STUB_LOG")"
+fi
+expect_verify refused "no main attestation, latest" latest -- STUB_GH_RC=1
+err_has "moving tag"
+err_lacks "deploy-unverified"
+expect_verify refused "no attestation, a commit from before provenance" "$cA" -- STUB_GH_RC=1
+err_has "CONFIRM=$cA just deploy-unverified $cA"
+expect_verify refused "no attestation, a side-branch commit without the attest step" "$cD" -- STUB_GH_RC=1
+err_has "just deploy-unverified $cD"
+expect_verify refused "no attestation, a commit that has the attest step" "$cC" -- STUB_GH_RC=1
+err_lacks "deploy-unverified"
+err_has "just deploy-branch $cC"
+expect_verify refused "no attestation, a commit not in the checkout" 0000000 -- STUB_GH_RC=1
+err_lacks "deploy-unverified"
+err_has "isn't in this checkout"
+expect_verify refused "a tag the registry doesn't have" f15d174 -- STUB_DIGEST=
+no_gh
+expect_verify refused "a registry digest that isn't sha256 hex" latest -- STUB_DIGEST=sha256:zz
+expect_verify refused "a tag naming a single image, not an index" latest -- STUB_TYPE=application/vnd.oci.image.manifest.v1+json
+err_has "single image"
+no_gh
+expect_verify refused "the registry token fetch fails" latest -- STUB_TOKEN_FAIL=1
+no_gh
+expect_verify refused "the registry gives no token" latest -- 'STUB_TOKEN_BODY={}'
+expect_verify refused "not a tag" 'x;y'
+if [ -s "$STUB_LOG" ]; then fail "  ...a bad tag reached the network: $(cat "$STUB_LOG")"; fi
+expect_verify ok "a sha7 tag whose images carry that commit" abc1234
+# a body that doesn't hash to the digest it was fetched by is never read
+expect_verify refused "the index body doesn't match its digest" abc1234 -- "STUB_CORRUPT=$good"
+err_has "doesn't hash to"
+corrupt_cfg=$(jq -r '.config.digest' "$blobs/$(jq -r '.manifests[0].digest' "$blobs/$good")")
+expect_verify refused "a config body doesn't match its digest" abc1234 -- "STUB_CORRUPT=$corrupt_cfg"
+other=$(image 0000000def 0000000def)
+expect_verify refused "a sha7 tag whose images carry another commit" abc1234 -- "STUB_DIGEST=$other"
+mixed=$(image abc1234def 0000000def)
+expect_verify refused "a sha7 tag with one platform from another commit" abc1234 -- "STUB_DIGEST=$mixed"
+nolabel=$(image '' '')
+expect_verify refused "a sha7 tag with no commit label" abc1234 -- "STUB_DIGEST=$nolabel"
+# --branch: any branch of this repo's release-server.yml, says which, sha7 only
+expect_verify ok "--branch: a hand-run branch build" --branch abc1234
+log_has "gh attestation verify oci://$repo@$good --repo GregHofmeyr/pulse-app --cert-identity-regex $branch_re --format json --deny-self-hosted-runners" \
+  "gh with release-server.yml on any branch, anchored"
+err_has "from branch: refs/heads/spike"
+expect_verify refused "--branch: latest" --branch latest
+if [ -s "$STUB_LOG" ]; then fail "  ...--branch latest reached the network"; fi
+expect_verify refused "--branch: no attestation" --branch "$cA" -- STUB_GH_RC=1
+err_lacks "deploy-branch $cA"
+# gh missing: a PATH holding only what the script needs before its tool check (and no gh)
+nogh=$tmp/nogh
+mkdir -p "$nogh"
+ln -s "$bin/curl" "$nogh/curl"
+for t in jq dirname; do ln -s "$(command -v "$t")" "$nogh/$t"; done
+: >"$STUB_LOG"
+if out=$(env PATH="$nogh" STUB_DIGEST="$good" "$BASH" "$here/verify-image.sh" latest 2>&1); then
+  fail "verify-image.sh ran without gh: $out"
+elif [[ $out == *"REFUSED: gh is not installed"* ]] && [ ! -s "$STUB_LOG" ]; then
+  pass "verify refused: gh missing, before any network"
+else
+  fail "verify without gh: $out"
+fi
+
+# --- the workflow attests what verify-image.sh checks, and the justfile runs the checks before any ssh ---
+release=$root/.github/workflows/release-server.yml
+# shellcheck disable=SC2016 # literal workflow expressions
+if [ "$(grep -c 'uses: actions/attest-build-provenance@[0-9a-f]\{40\} # v' "$release")" -ge 2 ] &&
+  grep -q 'subject-digest: ${{ steps.merge.outputs.digest }}' "$release" &&
+  grep -q 'subject-digest: ${{ steps.build.outputs.digest }}' "$release" &&
+  [ "$(grep -c '^      id-token: write' "$release")" -eq 2 ] &&
+  [ "$(grep -c '^      attestations: write' "$release")" -eq 2 ] &&
+  ! sed -n '/^permissions:/,/^[a-z]/p' "$release" | grep -q 'write' &&
+  grep -q -- '--metadata-file' "$release" &&
+  sed -n '/^concurrency:/,/^[a-z]/p' "$release" | grep -q 'cancel-in-progress: false'; then
+  pass "release-server.yml: SHA-pinned attest steps on the pushed digests, id-token+attestations write on both jobs only, one release at a time"
+else
+  fail "release-server.yml no longer attests what verify-image.sh checks (or its permissions/concurrency drifted)"
+fi
+# recipe NAME: one justfile recipe's body (its header line up to the next blank line)
+recipe() { awk -v name="$1" 'index($0, name) == 1 && $0 ~ /:$/ { on = 1 } on && /^$/ { exit } on { print }' "$root/justfile"; }
+# before_ssh NAME CHECK: CHECK appears in recipe NAME before its first ssh, scp or nested just
+before_ssh() {
+  recipe "$1" | awk -v check="$2" 'index($0, check) { seen = 1 } /(^|[ ;(])(ssh|scp|just) / { exit !seen } END { exit !seen }'
+}
+# shellcheck disable=SC2016 # literal recipe text
+{
+  rc=0; before_ssh '_ship ' 'check_ship_args "$tag" "$pin"' || rc=$?
+  result "$rc" "justfile: _ship checks its tag and digest before any ssh"
+  rc=0; before_ssh 'deploy-unverified ' 'check_unverified_args "$tag" "${CONFIRM:-}"' || rc=$?
+  result "$rc" "justfile: deploy-unverified needs a sha7 and CONFIRM before anything else"
+  rc=0; before_ssh 'deploy ' 'digest=$(bash deploy/verify-image.sh "$tag")' || rc=$?
+  result "$rc" "justfile: deploy verifies (main) before shipping"
+  rc=0; before_ssh 'deploy-branch ' 'digest=$(bash deploy/verify-image.sh --branch "$tag")' || rc=$?
+  result "$rc" "justfile: deploy-branch verifies (any branch) before shipping"
+}
 
 exit "$failed"
