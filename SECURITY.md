@@ -439,10 +439,13 @@ below the configured minimum (2 GB by default). The check comes after sign-in an
     for one open editor source: only that source's own file or its preview, compared by canonical path, so aliases of
     a file share one token. Tokens are only given for files the webview may already load through the asset protocol,
     and that is checked again as each request starts. Closing the editor ends its tokens (one asked for while it
-    closes is never given out); signing out ends all of them. Ending a token cuts off a response already streaming,
-    even to a client that has stopped reading; any write that takes over 30 s drops the client anyway. At most 32
-    connections are served at once; more are closed unanswered. Nothing in a request is used as a file path. A test
-    (`client/src-tauri/tests/csp.rs`) keeps the Linux CSP equal to the base CSP plus that one source.
+    closes is never left working); signing out ends all of them. Ending a token cuts off its response, at any point
+    after the request was read, even to a client that has stopped reading; any write that takes over 30 s drops the
+    client anyway. At most 32 connections are served at once; more are closed unanswered. Another process on the same
+    machine can hold all 32, which stops the editor's video from playing (voice and chat are untouched); that is
+    accepted, because a local process can already do that and worse to the app, so it is outside what this server
+    defends against. Nothing in a request is used as a file path. A test (`client/src-tauri/tests/csp.rs`) keeps the
+    Linux CSP equal to the base CSP plus that one source.
 - **Tauri capabilities.** The main window gets an explicit list, not `core:default`. It is exactly:
   - `core:event:allow-listen` and `core:event:allow-unlisten` (the UI listens to events from the Rust core);
   - `core:window:allow-is-focused` (focus state);
