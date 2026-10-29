@@ -338,17 +338,21 @@ async fn serve(inner: Arc<Inner>, mut conn: TcpStream) {
     headers.extend([kind, ranges, ("Content-Length", len.to_string())]);
     let write_timeout = inner.limits.write_timeout;
     let head = head(status, &headers);
-    let sent = tokio::time::timeout(write_timeout, conn.write_all(head.as_bytes())).await;
-    if !matches!(sent, Ok(Ok(()))) || head_only {
-        let _ = conn.shutdown().await;
-        return;
-    }
-    if file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
-        return;
-    }
-    // Each write has `write_timeout`, and revoking ends the copy even mid-write (a client that
-    // stops reading would otherwise hold it in `write_all`): either way the connection is dropped.
-    let body = async {
+    // Everything from the head on is raced against the revoke (subscribed now, so a revoke since
+    // `open` counts too), and each write has `write_timeout`: a client that stops reading would
+    // otherwise hold the response in `write_all`. Either way the connection is dropped.
+    let mut revoked = grant.revoked.subscribe();
+    let respond = async {
+        let sent = tokio::time::timeout(write_timeout, conn.write_all(head.as_bytes())).await;
+        if !matches!(sent, Ok(Ok(()))) {
+            return false;
+        }
+        if head_only {
+            return true;
+        }
+        if file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
+            return false;
+        }
         let mut left = len;
         let mut buf = vec![0u8; CHUNK];
         while left > 0 {
@@ -365,10 +369,11 @@ async fn serve(inner: Arc<Inner>, mut conn: TcpStream) {
         }
         true
     };
-    let mut revoked = grant.revoked.subscribe();
     let finished = tokio::select! {
-        finished = body => finished,
+        // a revoke already made wins over a response that could also go on
+        biased;
         _ = revoked.wait_for(|r| *r) => false,
+        finished = respond => finished,
     };
     if finished {
         let _ = conn.shutdown().await;
@@ -1009,7 +1014,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = big(dir.path());
         let limits = Limits {
-            write_timeout: Duration::from_millis(500),
+            // well past `stalled`'s 300 ms, so the response is still there when it looks
+            write_timeout: Duration::from_secs(2),
             ..LIMITS
         };
         let v = videos_with(Arc::new(Mutex::new(vec![path.clone()])), limits);
