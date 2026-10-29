@@ -16,7 +16,11 @@ use pulse_server::media;
 use sqlx::sqlite::SqliteConnectOptions;
 use tokio_tungstenite::tungstenite::Message as Ws;
 
-async fn ready_of(app: &TestApp, token: &str) -> Ready {
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// A gateway connection that has said hello, and the `Ready` it got.
+async fn hello(app: &TestApp, token: &str) -> (Socket, Ready) {
     let (mut ws, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
         .await
         .unwrap();
@@ -28,11 +32,15 @@ async fn ready_of(app: &TestApp, token: &str) -> Ready {
     ws.send(Ws::text(f)).await.unwrap();
     loop {
         match next_frame_beating(&mut ws, Duration::from_secs(3)).await {
-            Some(ServerFrame::Ready(r)) => return r,
+            Some(ServerFrame::Ready(r)) => return (ws, r),
             Some(_) => continue,
             None => panic!("expected Ready"),
         }
     }
+}
+
+async fn ready_of(app: &TestApp, token: &str) -> Ready {
+    hello(app, token).await.1
 }
 
 fn styled(u: &User, id: pulse_protocol::ids::UserId) {
@@ -315,9 +323,17 @@ async fn name_archive_and_renames() {
     let t_new = ago(100);
     exec(&app, q, &["h1", &sa.id.to_string(), &u, &u, "Old", &t_old]).await;
     exec(&app, q, &["h2", &sb.id.to_string(), &u, &by, "New", &t_new]).await;
+    // A cleared nickname (new_nick NULL) is a rename, but has no name to archive.
+    let cleared = "INSERT INTO nickname_history (id, server_id, target_user_id, changed_by, old_nick, new_nick, changed_at) VALUES (?, ?, ?, ?, 'Old', NULL, ?)";
+    exec(
+        &app,
+        cleared,
+        &["h3", &sa.id.to_string(), &u, &u, &ago(150)],
+    )
+    .await;
 
     let p = profile_of(&app, &alex, alex_id).await;
-    assert_eq!(p.stats.times_renamed, 2);
+    assert_eq!(p.stats.times_renamed, 3);
     assert_eq!(p.name_archive.len(), 2);
     assert_eq!(p.name_archive[0].name, "New");
     assert_eq!(p.name_archive[0].server_id, sb.id);
@@ -452,26 +468,8 @@ async fn refused(app: &TestApp, token: &str, body: &UpdateProfileRequest, msg: &
     assert_eq!(r.json::<ApiError>().await.unwrap().message, msg);
 }
 
-type Socket =
-    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
-
 async fn connected(app: &TestApp, token: &str) -> Socket {
-    let (mut ws, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
-        .await
-        .unwrap();
-    let f = serde_json::to_string(&ClientFrame::Hello {
-        token: token.into(),
-        client_version: pulse_protocol::PROTOCOL_VERSION,
-    })
-    .unwrap();
-    ws.send(Ws::text(f)).await.unwrap();
-    loop {
-        if let Some(ServerFrame::Ready(_)) =
-            next_frame_beating(&mut ws, Duration::from_secs(3)).await
-        {
-            return ws;
-        }
-    }
+    hello(app, token).await.0
 }
 
 async fn profile_event(ws: &mut Socket) -> Event {
@@ -720,7 +718,7 @@ async fn saving_is_rate_limited() {
 }
 
 #[tokio::test]
-async fn bio_line_endings_are_normalised_and_only_its_end_is_trimmed() {
+async fn bio_line_endings_are_normalised_and_blank_lines_trimmed_at_both_ends() {
     let app = spawn().await;
     let (_, alex) = register(&app, "alex").await;
     let mut r = request();
@@ -735,5 +733,11 @@ async fn bio_line_endings_are_normalised_and_only_its_end_is_trimmed() {
     let mut r = request();
     r.bio = Some("\n  indented  \n\n".into());
     let p: Profile = put_profile(&app, &alex, &r).await.json().await.unwrap();
-    assert_eq!(p.card.bio.as_deref(), Some("\n  indented"));
+    assert_eq!(p.card.bio.as_deref(), Some("  indented"));
+
+    // Blank leading lines are dropped, so they don't count towards the 4 line breaks.
+    let mut r = request();
+    r.bio = Some("\n \n\r\n\n\n  a\nb\nc\nd\ne".into());
+    let p: Profile = put_profile(&app, &alex, &r).await.json().await.unwrap();
+    assert_eq!(p.card.bio.as_deref(), Some("  a\nb\nc\nd\ne"));
 }

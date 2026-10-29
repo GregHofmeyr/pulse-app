@@ -14,6 +14,11 @@ describe('nameStyle', () => {
       ['#7f7f7f', '#a8a8a8'],
       ['#2a9d8f', '#64b7ad'],
       ['#ffffff', '#ffffff'],
+      // Either side of the 0.39 boundary.
+      ['#a8a8a8', '#a8a8a8'],
+      ['#a7a7a7', '#a8a8a8'],
+      ['#40c040', '#40c040'],
+      ['#3fbf3f', '#41c041'],
     ]) expect(lightenForName(from), from).toBe(to)
   })
 

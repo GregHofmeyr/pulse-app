@@ -7,8 +7,10 @@ use std::io::Cursor;
 use image::codecs::gif::GifDecoder;
 use image::codecs::webp::WebPDecoder;
 use image::imageops::{self, FilterType};
+use image::metadata::Orientation;
 use image::{
-    AnimationDecoder, Frames, ImageDecoder, ImageError, ImageFormat, ImageReader, Limits, RgbaImage,
+    AnimationDecoder, DynamicImage, Frames, ImageDecoder, ImageError, ImageFormat, ImageReader,
+    Limits, RgbaImage,
 };
 
 /// Largest upload accepted (before processing).
@@ -94,6 +96,9 @@ pub enum ProcessError {
     TooManyFrames,
     #[error("that animation is too big once converted (512 KB at most); try a shorter one")]
     OutputTooBig,
+    /// A still over its kind's cap; each kind turns it into an error naming its own limit.
+    #[error("that picture is too big once converted")]
+    StillOutputTooBig,
     #[error("that image is too big once converted; try a smaller or shorter one")]
     QuoteOutputTooBig,
     #[error("that image's dimensions are too large (4096×4096 at most)")]
@@ -108,6 +113,10 @@ pub enum ProcessError {
     AvatarOutputTooBig,
     #[error("that animation is too big once converted (2 MB at most); try a shorter one")]
     BannerOutputTooBig,
+    #[error("that picture is too big once converted (512 KB at most); try a simpler one")]
+    AvatarStillTooBig,
+    #[error("that picture is too big once converted (1 MB at most); try a simpler one")]
+    BannerStillTooBig,
     #[error("The crop is outside the image.")]
     CropOutside,
 }
@@ -282,7 +291,9 @@ pub fn quote_image(input: &[u8]) -> Result<Processed, ProcessError> {
 /// [`quote_image`] with the profile injected, so tests can use small caps.
 fn quote_with(input: &[u8], profile: &Profile) -> Result<Processed, ProcessError> {
     convert(input, None, MAX_DECODED_PIXELS, profile).map_err(|e| match e {
-        ProcessError::OutputTooBig => ProcessError::QuoteOutputTooBig,
+        ProcessError::OutputTooBig | ProcessError::StillOutputTooBig => {
+            ProcessError::QuoteOutputTooBig
+        }
         e => e,
     })
 }
@@ -304,7 +315,13 @@ fn avatar_with(
     crop: Option<Crop>,
     profile: &Profile,
 ) -> Result<Processed, ProcessError> {
-    profile_with(input, crop, profile, ProcessError::AvatarOutputTooBig)
+    profile_with(
+        input,
+        crop,
+        profile,
+        ProcessError::AvatarStillTooBig,
+        ProcessError::AvatarOutputTooBig,
+    )
 }
 
 fn banner_with(
@@ -312,7 +329,13 @@ fn banner_with(
     crop: Option<Crop>,
     profile: &Profile,
 ) -> Result<Processed, ProcessError> {
-    profile_with(input, crop, profile, ProcessError::BannerOutputTooBig)
+    profile_with(
+        input,
+        crop,
+        profile,
+        ProcessError::BannerStillTooBig,
+        ProcessError::BannerOutputTooBig,
+    )
 }
 
 /// [`convert`] for a profile picture, with the errors that name its limits.
@@ -320,19 +343,24 @@ fn profile_with(
     input: &[u8],
     crop: Option<Crop>,
     profile: &Profile,
-    output_too_big: ProcessError,
+    still_too_big: ProcessError,
+    animation_too_big: ProcessError,
 ) -> Result<Processed, ProcessError> {
     convert(input, crop, MAX_DECODED_PIXELS, profile).map_err(|e| match e {
         ProcessError::TooBig => ProcessError::ProfileTooBig,
         ProcessError::TooManyFrames => ProcessError::ProfileTooManyFrames,
-        ProcessError::OutputTooBig => output_too_big,
+        ProcessError::StillOutputTooBig => still_too_big,
+        ProcessError::OutputTooBig => animation_too_big,
         e => e,
     })
 }
 
 /// [`emoji`] with the animation pixel budget injected, so tests needn't decode 100 Mpx.
 fn emoji_with_budget(input: &[u8], max_decoded_pixels: u64) -> Result<Processed, ProcessError> {
-    convert(input, None, max_decoded_pixels, &EMOJI)
+    convert(input, None, max_decoded_pixels, &EMOJI).map_err(|e| match e {
+        ProcessError::StillOutputTooBig => ProcessError::OutputTooBig,
+        e => e,
+    })
 }
 
 /// The pipeline every kind shares: sniff, bound, decode, crop, fit, re-encode.
@@ -356,15 +384,19 @@ fn convert(
     let mut reader = ImageReader::with_format(Cursor::new(input), format);
     reader.limits(limits());
     let (logical_w, logical_h) = reader.into_dimensions()?;
-    if let Some(c) = crop {
-        let inside = c.w >= 1
-            && c.h >= 1
-            && u64::from(c.x) + u64::from(c.w) <= u64::from(logical_w)
-            && u64::from(c.y) + u64::from(c.h) <= u64::from(logical_h);
-        if !inside {
-            return Err(ProcessError::CropOutside);
+    // The crop is in the pixels the user saw: an animation as stored, a still upright (its EXIF
+    // orientation applied, as the webview draws it), so a still's is checked once that is known.
+    let check_crop = |(w, h): (u32, u32)| match crop {
+        Some(c)
+            if c.w < 1
+                || c.h < 1
+                || u64::from(c.x) + u64::from(c.w) > u64::from(w)
+                || u64::from(c.y) + u64::from(c.h) > u64::from(h) =>
+        {
+            Err(ProcessError::CropOutside)
         }
-    }
+        _ => Ok(()),
+    };
 
     let frames: Option<Frames> = match format {
         ImageFormat::Gif => {
@@ -382,6 +414,7 @@ fn convert(
     let mut fitted = Vec::new();
     match frames {
         Some(frames) => {
+            check_crop((logical_w, logical_h))?;
             let mut decoded = 0u64;
             let mut n = 0u32;
             let mut fitted_pixels = 0u64;
@@ -433,7 +466,14 @@ fn convert(
         None => {
             let mut reader = ImageReader::with_format(Cursor::new(input), format);
             reader.limits(limits());
-            let img = cropped(reader.decode()?.into_rgba8(), crop);
+            let mut decoder = reader.into_decoder()?;
+            // A camera's EXIF orientation is honoured, as the webview does; unreadable EXIF is
+            // treated as none, as browsers do.
+            let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+            check_crop(oriented((logical_w, logical_h), orientation))?;
+            let mut img = DynamicImage::from_decoder(decoder)?;
+            img.apply_orientation(orientation);
+            let img = cropped(img.into_rgba8(), crop);
             fitted.push(((profile.fit)(&img, profile.still_box), 0));
         }
     }
@@ -450,7 +490,11 @@ fn convert(
         profile.still_max
     };
     if webp.len() > max_output {
-        return Err(ProcessError::OutputTooBig);
+        return Err(if frames > 1 {
+            ProcessError::OutputTooBig
+        } else {
+            ProcessError::StillOutputTooBig
+        });
     }
     let (width, height) = fitted[0].0.dimensions();
     Ok(Processed {
@@ -460,6 +504,17 @@ fn convert(
         height,
         frames,
     })
+}
+
+/// The size of a `(w, h)` image once `orientation` is applied: a quarter turn swaps the sides.
+fn oriented((w, h): (u32, u32), orientation: Orientation) -> (u32, u32) {
+    match orientation {
+        Orientation::Rotate90
+        | Orientation::Rotate270
+        | Orientation::Rotate90FlipH
+        | Orientation::Rotate270FlipH => (h, w),
+        _ => (w, h),
+    }
 }
 
 /// Browsers show GIF delays of 10 ms or less as 100 ms; keep that, so a GIF looks the same after
@@ -860,7 +915,7 @@ mod tests {
             Err(ProcessError::QuoteOutputTooBig)
         ));
         assert!(quote_with(&noisy_gif(3, 64), &still_capped).is_ok());
-        // Emoji keep their own error.
+        // The shared pipeline says still or animation; each kind names its own limit.
         assert!(matches!(
             convert(
                 &noisy_png(64),
@@ -871,7 +926,7 @@ mod tests {
                     ..EMOJI
                 }
             ),
-            Err(ProcessError::OutputTooBig)
+            Err(ProcessError::StillOutputTooBig)
         ));
     }
 
@@ -1004,6 +1059,14 @@ mod tests {
             (
                 ProcessError::BannerOutputTooBig,
                 "that animation is too big once converted (2 MB at most); try a shorter one",
+            ),
+            (
+                ProcessError::AvatarStillTooBig,
+                "that picture is too big once converted (512 KB at most); try a simpler one",
+            ),
+            (
+                ProcessError::BannerStillTooBig,
+                "that picture is too big once converted (1 MB at most); try a simpler one",
             ),
             (ProcessError::CropOutside, "The crop is outside the image."),
         ] {
@@ -1139,6 +1202,87 @@ mod tests {
         assert!(avatar(&png(300, 150), Some(edge)).is_ok());
     }
 
+    /// A `w`×`h` JPEG, left half red and right half blue, with an EXIF APP1 segment saying
+    /// `orientation` (as a phone camera writes it) right after the SOI marker.
+    fn jpeg_with_orientation(w: u32, h: u32, orientation: u16) -> Vec<u8> {
+        let img = image::RgbImage::from_fn(w, h, |x, _| {
+            if x < w / 2 {
+                image::Rgb([255, 0, 0])
+            } else {
+                image::Rgb([0, 0, 255])
+            }
+        });
+        let mut jpeg = Cursor::new(Vec::new());
+        img.write_to(&mut jpeg, ImageFormat::Jpeg).unwrap();
+        let jpeg = jpeg.into_inner();
+        // TIFF header (big-endian), one IFD entry: Orientation (0x0112), SHORT, count 1.
+        let mut tiff = b"MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01".to_vec();
+        tiff.extend_from_slice(&orientation.to_be_bytes());
+        tiff.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+        let mut app1 = b"Exif\0\0".to_vec();
+        app1.extend_from_slice(&tiff);
+        let mut out = jpeg[..2].to_vec();
+        out.extend_from_slice(&[0xFF, 0xE1]);
+        out.extend_from_slice(&((app1.len() + 2) as u16).to_be_bytes());
+        out.extend_from_slice(&app1);
+        out.extend_from_slice(&jpeg[2..]);
+        out
+    }
+
+    #[test]
+    fn a_still_is_cropped_and_converted_upright_per_its_exif_orientation() {
+        // Stored 64×32 landscape; orientation 6 (rotate 90° clockwise) shows a 32×64 portrait
+        // with the red half on top and the blue half below.
+        let photo = jpeg_with_orientation(64, 32, 6);
+        assert_eq!(
+            ImageReader::new(Cursor::new(&photo))
+                .with_guessed_format()
+                .unwrap()
+                .into_decoder()
+                .unwrap()
+                .orientation()
+                .unwrap(),
+            Orientation::Rotate90
+        );
+        // The bottom square of the portrait: past the stored height, inside the upright one.
+        let bottom = Crop {
+            x: 0,
+            y: 32,
+            w: 32,
+            h: 32,
+        };
+        let p = avatar(&photo, Some(bottom)).unwrap();
+        let px = centre(&p.webp);
+        assert!(
+            px[2] > 190 && px[0] < 60,
+            "bottom should be blue, got {px:?}"
+        );
+        let top = Crop { y: 0, ..bottom };
+        let px = centre(&avatar(&photo, Some(top)).unwrap().webp);
+        assert!(px[0] > 190 && px[2] < 60, "top should be red, got {px:?}");
+        // A crop that fits the stored (sideways) size but not the upright one is outside.
+        let wide = Crop {
+            x: 0,
+            y: 0,
+            w: 64,
+            h: 32,
+        };
+        assert!(matches!(
+            avatar(&photo, Some(wide)),
+            Err(ProcessError::CropOutside)
+        ));
+        // Uncropped, a banner is covered from the upright picture: its middle band is the seam
+        // between red (above) and blue (below), so the top-centre pixel is red.
+        let p = banner(&photo, None).unwrap();
+        let img = image::load_from_memory_with_format(&p.webp, ImageFormat::WebP)
+            .unwrap()
+            .to_rgba8();
+        let top_px = img.get_pixel(img.width() / 2, 2).0;
+        assert!(top_px[0] > 190 && top_px[2] < 60, "{top_px:?}");
+        let bottom_px = img.get_pixel(img.width() / 2, img.height() - 3).0;
+        assert!(bottom_px[2] > 190 && bottom_px[0] < 60, "{bottom_px:?}");
+    }
+
     #[test]
     fn profile_uploads_refuse_what_they_should() {
         assert!(matches!(
@@ -1172,7 +1316,7 @@ mod tests {
         };
         assert!(matches!(
             avatar_with(&noisy_png(64), None, &still_capped),
-            Err(ProcessError::AvatarOutputTooBig)
+            Err(ProcessError::AvatarStillTooBig)
         ));
         let anim_capped = Profile {
             anim_max: tiny,
@@ -1191,7 +1335,7 @@ mod tests {
         };
         assert!(matches!(
             banner_with(&noisy_png(64), None, &still_capped),
-            Err(ProcessError::BannerOutputTooBig)
+            Err(ProcessError::BannerStillTooBig)
         ));
         let anim_capped = Profile {
             anim_max: tiny,

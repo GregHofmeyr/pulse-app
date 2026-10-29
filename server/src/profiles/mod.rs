@@ -163,14 +163,16 @@ fn text(s: Option<String>) -> Option<String> {
     s.map(|s| s.trim().to_owned()).filter(|s| !s.is_empty())
 }
 
-/// A bio with `\r\n` and lone `\r` as `\n`, its end trimmed (leading space is kept), or `None`
-/// if nothing is left.
+/// A bio with `\r\n` and lone `\r` as `\n`, its blank leading lines dropped (so they don't count
+/// as line breaks; the first text line keeps its leading space) and its end trimmed, or `None` if
+/// nothing is left.
 fn bio_text(s: Option<String>) -> Option<String> {
     s.map(|s| {
-        s.replace("\r\n", "\n")
-            .replace('\r', "\n")
-            .trim_end()
-            .to_owned()
+        let s = s.replace("\r\n", "\n").replace('\r', "\n");
+        let start = s
+            .find(|c: char| !c.is_whitespace())
+            .map_or(s.len(), |i| s[..i].rfind('\n').map_or(0, |n| n + 1));
+        s[start..].trim_end().to_owned()
     })
     .filter(|s| !s.is_empty())
 }

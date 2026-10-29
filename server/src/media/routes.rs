@@ -93,10 +93,7 @@ async fn upload_quote(
     user: AuthUser,
     body: Result<Bytes, BytesRejection>,
 ) -> AppResult<Json<MediaInfo>> {
-    upload(state, user, body, MediaKind::Quote, |b| {
-        process::quote_image(b)
-    })
-    .await
+    upload(state, user, body, MediaKind::Quote, process::quote_image).await
 }
 
 /// A clip's poster: same limits and processing as a quote image, stored as `clip_thumb`.
@@ -105,9 +102,13 @@ async fn upload_clip_thumb(
     user: AuthUser,
     body: Result<Bytes, BytesRejection>,
 ) -> AppResult<Json<MediaInfo>> {
-    upload(state, user, body, MediaKind::ClipThumb, |b| {
-        process::quote_image(b)
-    })
+    upload(
+        state,
+        user,
+        body,
+        MediaKind::ClipThumb,
+        process::quote_image,
+    )
     .await
 }
 
@@ -144,8 +145,8 @@ impl CropQuery {
 /// An avatar: cropped if asked, then covered to 256×256; see [`process::avatar`].
 async fn upload_avatar(
     state: State<AppState>,
-    Query(q): Query<CropQuery>,
     user: AuthUser,
+    Query(q): Query<CropQuery>,
     body: Result<Bytes, BytesRejection>,
 ) -> AppResult<Json<MediaInfo>> {
     let crop = q.crop()?;
@@ -158,8 +159,8 @@ async fn upload_avatar(
 /// A banner: cropped if asked, then covered; see [`process::banner`].
 async fn upload_banner(
     state: State<AppState>,
-    Query(q): Query<CropQuery>,
     user: AuthUser,
+    Query(q): Query<CropQuery>,
     body: Result<Bytes, BytesRejection>,
 ) -> AppResult<Json<MediaInfo>> {
     let crop = q.crop()?;
