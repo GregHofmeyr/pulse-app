@@ -46,8 +46,18 @@ dev-s3:
 ui-check:
     cd client/ui && pnpm install --frozen-lockfile && pnpm check && pnpm test
 
+# On Linux the UI comes from http://localhost here, and WebKitGTK won't show pulse-media images on an http page.
+# hot-reloading client (on Linux avatars, banners and emoji are blank: use `just linux-client` for those)
 dev-client:
     cd client/src-tauri && cargo tauri dev --config tauri.dev.conf.json
+
+# Built like an install (a tauri:// page, so media shows) but as a debug build, so clips use the system ffmpeg.
+# WebKitGTK plays video through GStreamer: without autoaudiosink (gst-plugins-good) any video crashes the page.
+# the Linux client against the live server, for testing on Linux
+linux-client:
+    gst-inspect-1.0 autoaudiosink >/dev/null 2>&1 || echo "warning: GStreamer has no autoaudiosink (install gst-plugins-good): videos will crash the page" >&2
+    cd client/src-tauri && VITE_DEFAULT_SERVER=https://pulsechat.co.za cargo tauri build --debug --no-bundle
+    PULSE_DEV_FFMPEG_DIR=/usr/bin ./target/debug/pulse-app
 
 # print a single-use invite for the local dev server
 invite:
