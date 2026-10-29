@@ -1502,7 +1502,7 @@ dependencies = [
  "tract-core 0.21.4",
  "tract-hir 0.21.4",
  "tract-onnx 0.21.4",
- "tract-pulse",
+ "tract-pulse 0.21.4",
 ]
 
 [[package]]
@@ -5184,7 +5184,7 @@ dependencies = [
  "tract-core 0.21.4",
  "tract-hir 0.21.4",
  "tract-onnx 0.23.9",
- "tract-pulse",
+ "tract-pulse 0.23.9",
  "url",
  "wasapi",
  "webkit2gtk",
@@ -7900,7 +7900,22 @@ dependencies = [
  "downcast-rs 1.2.1",
  "lazy_static",
  "log",
- "tract-pulse-opl",
+ "tract-pulse-opl 0.21.4",
+]
+
+[[package]]
+name = "tract-pulse"
+version = "0.23.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4aac1fbddf2c1de23c75e2acde2d908ee9ba02f741d5b6cc8aa4fea7cff91c7c"
+dependencies = [
+ "downcast-rs 2.0.2",
+ "erased-serde",
+ "lazy_static",
+ "log",
+ "serde",
+ "tract-pulse-opl 0.23.9",
+ "tract-transformers",
 ]
 
 [[package]]
@@ -7912,6 +7927,17 @@ dependencies = [
  "downcast-rs 1.2.1",
  "lazy_static",
  "tract-nnef 0.21.4",
+]
+
+[[package]]
+name = "tract-pulse-opl"
+version = "0.23.9"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "15e8ff82ba43c343f132de3707805c7912e85afa55832f93b57176887f5e9f56"
+dependencies = [
+ "downcast-rs 2.0.2",
+ "lazy_static",
+ "tract-nnef 0.23.9",
 ]
 
 [[package]]
