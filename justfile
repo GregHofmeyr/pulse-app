@@ -114,13 +114,54 @@ disk:
     if [ "$used" -ge 80 ]; then echo "WARNING: server disk ${used}% full" >&2; exit 1; fi
     du -sh target ../pulse-app-*/target 2>/dev/null || true
 
-# back up, then run image TAG (a 7-char commit or `latest`); prints the commit that's live
-deploy tag="latest":
+# back up, then run image TAG (a 7-char commit or `latest`) once its provenance (built by release-server.yml on main) checks out; prints the commit that's live
+deploy $tag="latest":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Checked here, before anything is copied or ssh'd: a refusal leaves the server untouched. The server then pulls
+    # and pins exactly this digest; it never looks the tag up again.
+    digest=$(bash deploy/verify-image.sh "$tag")
+    just _ship "$tag" "$digest"
+
+# run a hand-run branch build SHA7 once its provenance (built by release-server.yml on some branch) checks out; prints the branch
+deploy-branch $tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    digest=$(bash deploy/verify-image.sh --branch "$tag")
+    just _ship "$tag" "$digest"
+
+# check TAG's provenance (main builds) without deploying: prints the verified digest; never contacts the server
+verify-image $tag="latest":
+    bash deploy/verify-image.sh "$tag"
+
+# run image SHA7 WITHOUT checking provenance: only for builds from before provenance existed. Needs CONFIRM=SHA7.
+deploy-unverified $tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    VERIFY_IMAGE_LIB=1 source deploy/verify-image.sh
+    check_unverified_args "$tag" "${CONFIRM:-}"
+    cat >&2 <<EOF
+    ########################################################################################################
+    WARNING: deploying pulse-server:$tag WITHOUT checking its build provenance.
+    Nothing proves this image was built by release-server.yml from this repo. Use this only to roll back
+    to a build from before provenance existed (deploy/README.md, section 7).
+    ########################################################################################################
+    EOF
+    just _ship "$tag" --unverified
+
+# Private: the shared second half of deploy, deploy-branch and deploy-unverified. PIN is a sha256 digest (which this
+# recipe does NOT verify: deploy and deploy-branch do, before calling it) or --unverified. Don't run it directly.
+_ship $tag $pin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # both end up in a remote command line: check them here too
+    VERIFY_IMAGE_LIB=1 source deploy/verify-image.sh
+    check_ship_args "$tag" "$pin"
     # Checks the server's .env (LIVEKIT_NODE_IP, PULSE_TOTP_KEY) with this deploy.sh before anything is copied, so a
     # refusal leaves /srv/pulse exactly as it was.
     ssh {{prod}} 'bash -s -- --check-env' < deploy/deploy.sh
     scp deploy/compose.yml deploy/Caddyfile deploy/livekit.yaml deploy/backup.sh deploy/deploy.sh {{prod}}:/srv/pulse/
-    ssh {{prod}} '/srv/pulse/deploy.sh {{tag}}'
+    ssh {{prod}} "/srv/pulse/deploy.sh $tag $pin"
 
 # outside-in checks of the live server
 smoke:

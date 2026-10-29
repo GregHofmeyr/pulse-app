@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # Runs on the server (`just deploy TAG`): back up, pull TAG, switch to it, wait until healthy.
+# `deploy.sh TAG DIGEST`: DIGEST (sha256:…) is what `just deploy` resolved TAG to and verified on the deploying
+# machine (deploy/verify-image.sh); exactly that digest is pulled and pinned, and the tag is never looked up again.
+# `deploy.sh SHA7 --unverified` (`just deploy-unverified SHA7`, for images built before provenance existed): pull the tag
+# and pin whatever digest it resolves to now. This script can't check provenance itself (no gh here): the healthy line
+# says which of the two it was given, not more.
 set -euo pipefail
 repo=ghcr.io/greghofmeyr/pulse-server
 
@@ -103,6 +108,65 @@ prune_old_images() {
   docker image prune -f >/dev/null 2>&1 || true
 }
 
+# is_digest VALUE: a canonical sha256 digest (it lands in .env and a docker reference, so nothing else gets through)
+is_digest() { [[ $1 =~ ^sha256:[0-9a-f]{64}$ ]]; }
+
+# check_args TAG PIN: TAG is a registry tag; PIN is a digest, or --unverified with a <sha7> TAG (never a moving tag).
+# Runs before anything else on the server.
+check_args() {
+  if [ -z "${1:-}" ] || [ -z "${2:-}" ]; then
+    echo "usage: deploy.sh TAG DIGEST   (or deploy.sh TAG --unverified)" >&2
+    return 1
+  fi
+  if ! [[ $1 =~ ^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$ ]]; then
+    echo "'$1' is not an image tag" >&2
+    return 1
+  fi
+  if [ "$2" = --unverified ]; then
+    [[ $1 =~ ^[0-9a-f]{7}$ ]] && return 0
+    echo "--unverified takes a 7-character commit, not '$1'" >&2
+    return 1
+  fi
+  if ! is_digest "$2"; then
+    echo "'$2' is not a sha256 digest (or --unverified)" >&2
+    return 1
+  fi
+}
+
+# pull_image TAG PIN: pull the image and print the reference to pin in .env (repo:TAG@sha256:…). With a digest, that
+# exact digest is pulled and pinned. With --unverified, TAG is pulled and pinned to the digest it resolved to.
+# A mistyped tag or a digest the registry doesn't have fails here, before .env or the running server change.
+# The image is also tagged locally as repo:<its commit> (the revision label): `latest` moves on every deploy, and an
+# image left without any tag counts as dangling, which `docker image prune` deletes. With a commit tag of its own each
+# deployed image stays until prune_old_images retires it as the 4th newest.
+pull_image() {
+  local tag=$1 pin=$2 ref found
+  if [ "$pin" = --unverified ]; then ref=$repo:$tag; else ref=$repo@$pin; fi
+  # PULSE_IMAGE from the shell wins over .env, so this pulls REF and not the previously pinned digest.
+  # explicit return: the caller runs this in $(…), where set -e doesn't reach (a failed pull must not fall through to
+  # an older local copy of the tag)
+  PULSE_IMAGE=$ref docker compose pull -q >&2 || return 1
+  found=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$ref" | grep "^$repo@sha256:" || true)
+  if [ "$pin" != --unverified ]; then
+    # the pulled image must be known by exactly the verified digest
+    found=$(grep -Fx "$repo@$pin" <<<"$found" || true)
+    # Tag it locally as a tag pull would have: an image known only by digest counts as dangling to
+    # `docker image prune`, which would then delete the rollback images prune_old_images keeps.
+    [ -z "$found" ] || docker tag "$ref" "$repo:$tag" >&2 || return 1
+  fi
+  found=$(head -n1 <<<"$found")
+  if [ -z "$found" ]; then
+    echo "no registry digest for $ref; refusing to deploy an unpinned image" >&2
+    return 1
+  fi
+  local rev
+  rev=$(docker image inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' "$ref" || true)
+  if [[ $rev =~ ^[0-9a-f]{7} ]]; then
+    docker tag "$ref" "$repo:${rev:0:7}" >&2 || echo "WARNING: couldn't tag $ref as $repo:${rev:0:7}" >&2
+  fi
+  echo "$repo:$tag@${found#*@}"
+}
+
 # Sourced by the self-test with DEPLOY_SH_LIB=1: define the functions, run nothing.
 [ -n "${DEPLOY_SH_LIB:-}" ] && return 0
 
@@ -115,22 +179,21 @@ if [ "${1:-}" = --check-env ]; then
   exit
 fi
 
-tag=${1:?usage: deploy.sh TAG}
+check_args "$@"
+tag=$1 pin=$2
+# what this script was given, in words that don't claim more: provenance is checked (or not) on the deploying machine
+if [ "$pin" = --unverified ]; then
+  provenance="UNVERIFIED: whatever the tag named (just deploy-unverified)"
+else
+  provenance="the digest the deploying machine passed (just deploy / deploy-branch verify its provenance first)"
+fi
 cd /srv/pulse
 check_node_ip .env
 check_totp_key .env
 check_clips_env .env
 ./backup.sh run
-# Pull first: a mistyped tag fails here and leaves .env and the running server untouched.
-# PULSE_IMAGE from the shell wins over .env, so this pulls TAG and not the previously pinned digest.
-PULSE_IMAGE=$repo:$tag docker compose pull -q
-# Pin to the digest of what was just pulled, so compose runs exactly this image even if the tag moves.
-digest=$(docker image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$repo:$tag" | grep "^$repo@sha256:" | head -n1 || true)
-if [ -z "$digest" ]; then
-  echo "no registry digest for $repo:$tag; refusing to deploy an unpinned image" >&2
-  exit 1
-fi
-image=$repo:$tag@${digest#*@}
+# Pull first, then pin to the digest, so compose runs exactly this image even if the tag moves.
+image=$(pull_image "$tag" "$pin")
 set_env .env PULSE_TAG "$tag"
 set_env .env PULSE_IMAGE "$image"
 echo "pinned: $image"
@@ -140,7 +203,7 @@ for _ in $(seq 1 30); do
   if curl -fsS http://127.0.0.1:7890/health >/dev/null; then
     rev=$(docker inspect --format '{{index .Config.Labels "org.opencontainers.image.revision"}}' \
       "$(docker compose ps -q pulse-server)")
-    echo "healthy: $tag (commit ${rev:0:7}, ${image#*@})"
+    echo "healthy: $tag (commit ${rev:0:7}, ${image#*@}, $provenance)"
     prune_old_images
     df -h / | awk 'NR==2 {print "disk: " $5 " used, " $4 " free"}'
     exit 0
