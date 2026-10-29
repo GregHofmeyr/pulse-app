@@ -8,9 +8,10 @@
 //!   and that is checked again on every request: a forbidden path stops working at once.
 //! - `revoke` (an editor source closed) and `revoke_all` (sign-out) end tokens, and stop a
 //!   response in flight. Nothing from the request ever names a file: only the token map does.
-//! - Just `GET` and `HEAD`, one request per connection (`Connection: close`). The head is capped
-//!   at 8 KB and must arrive within 10 s; peers that aren't loopback are dropped. `Host` must be
-//!   `127.0.0.1:<port>` or `localhost:<port>` (else 421), so a DNS-rebound page can't read a video.
+//! - Just `GET` and `HEAD`, one request per connection (`Connection: close`), at most 32
+//!   connections at once (more are closed unanswered). The head is capped at 8 KB and must arrive
+//!   within 10 s; peers that aren't loopback are dropped. `Host` must be `127.0.0.1:<port>` or
+//!   `localhost:<port>` (else 421), so a DNS-rebound page can't read a video.
 //! - Ranges: `bytes=a-b`, `bytes=a-` and `bytes=-n` get a 206, one past the end a 416. Several
 //!   ranges at once (GStreamer never asks) get the whole file (200): ignoring Range is always allowed.
 
@@ -27,14 +28,28 @@ use std::{
 use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::OnceCell,
+    sync::{OnceCell, Semaphore},
 };
 
 /// The request line and headers, at most.
 const MAX_HEAD: usize = 8 * 1024;
 /// How long a client has to send them.
 const HEAD_TIMEOUT: Duration = Duration::from_secs(10);
+/// Connections served at once; one more is closed at once. The editor plays one or two videos.
+const MAX_CONNS: usize = 32;
 const CHUNK: usize = 64 * 1024;
+
+/// The server's limits (tests shorten them).
+#[derive(Clone, Copy)]
+struct Limits {
+    head_timeout: Duration,
+    max_conns: usize,
+}
+
+const LIMITS: Limits = Limits {
+    head_timeout: HEAD_TIMEOUT,
+    max_conns: MAX_CONNS,
+};
 
 /// Whether the webview may load this file (the asset scope).
 pub type Allowed = Box<dyn Fn(&Path) -> bool + Send + Sync>;
@@ -48,7 +63,9 @@ struct Inner {
     allowed: Allowed,
     files: Mutex<Files>,
     addr: OnceCell<SocketAddr>,
-    head_timeout: Duration,
+    limits: Limits,
+    /// One per connection being served.
+    conns: Arc<Semaphore>,
 }
 
 #[derive(Default)]
@@ -66,16 +83,17 @@ struct Grant {
 
 impl Videos {
     pub fn new(allowed: Allowed) -> Self {
-        Self::with_head_timeout(allowed, HEAD_TIMEOUT)
+        Self::with_limits(allowed, LIMITS)
     }
 
-    fn with_head_timeout(allowed: Allowed, head_timeout: Duration) -> Self {
+    fn with_limits(allowed: Allowed, limits: Limits) -> Self {
         Self {
             inner: Arc::new(Inner {
                 allowed,
                 files: Mutex::default(),
                 addr: OnceCell::new(),
-                head_timeout,
+                limits,
+                conns: Arc::new(Semaphore::new(limits.max_conns)),
             }),
         }
     }
@@ -139,7 +157,8 @@ fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// Bind `127.0.0.1:0` and accept until the `Videos` is dropped.
+/// Bind `127.0.0.1:0` and serve from a task of its own. The task holds the `Videos` weakly: once
+/// it is dropped the next connection ends the task (and closes the port); until then it waits.
 async fn start(inner: &Arc<Inner>) -> std::io::Result<SocketAddr> {
     let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await?;
     let addr = listener.local_addr()?;
@@ -150,8 +169,13 @@ async fn start(inner: &Arc<Inner>) -> std::io::Result<SocketAddr> {
 
 async fn accept(listener: TcpListener, inner: Weak<Inner>) {
     loop {
-        let Ok((conn, peer)) = listener.accept().await else {
-            continue;
+        let (conn, peer) = match listener.accept().await {
+            Ok(c) => c,
+            // e.g. out of file descriptors: wait for some to free up rather than spin
+            Err(_) => {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+                continue;
+            }
         };
         let Some(inner) = inner.upgrade() else {
             return;
@@ -160,7 +184,14 @@ async fn accept(listener: TcpListener, inner: Weak<Inner>) {
         if !peer.ip().is_loopback() {
             continue;
         }
-        tokio::spawn(serve(inner, conn));
+        // full: this one is dropped (closed) at once
+        let Ok(permit) = inner.conns.clone().try_acquire_owned() else {
+            continue;
+        };
+        tokio::spawn(async move {
+            serve(inner, conn).await;
+            drop(permit);
+        });
     }
 }
 
@@ -236,7 +267,7 @@ fn parse_head(head: &str) -> Option<Request> {
 }
 
 async fn serve(inner: Arc<Inner>, mut conn: TcpStream) {
-    let read = tokio::time::timeout(inner.head_timeout, read_head(&mut conn)).await;
+    let read = tokio::time::timeout(inner.limits.head_timeout, read_head(&mut conn)).await;
     let req = match read {
         Ok(Head::Ok(req)) => req,
         Ok(Head::Malformed) => return empty(&mut conn, "400 Bad Request", &[]).await,
@@ -458,9 +489,19 @@ mod tests {
 
     /// The webview may load everything in `allowed`.
     fn videos(allowed: Arc<Mutex<Vec<PathBuf>>>) -> Videos {
-        Videos::with_head_timeout(
+        videos_with(
+            allowed,
+            Limits {
+                head_timeout: Duration::from_millis(300),
+                ..LIMITS
+            },
+        )
+    }
+
+    fn videos_with(allowed: Arc<Mutex<Vec<PathBuf>>>, limits: Limits) -> Videos {
+        Videos::with_limits(
             Box::new(move |p| allowed.lock().unwrap().iter().any(|a| a == p)),
-            Duration::from_millis(300),
+            limits,
         )
     }
 
@@ -849,6 +890,46 @@ mod tests {
             .expect("the server dropped the connection")
             .unwrap();
         assert!(rest.is_empty());
+    }
+
+    /// Every connection being served is back (its permit returned), within a few seconds.
+    async fn all_let_go(v: &Videos) {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        while v.inner.conns.available_permits() < v.inner.limits.max_conns {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "a connection is still being served"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn connections_past_the_cap_are_closed_and_the_rest_still_served() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = video(dir.path(), "replay.mp4");
+        let limits = Limits {
+            head_timeout: Duration::from_secs(30),
+            max_conns: 2,
+        };
+        let v = videos_with(Arc::new(Mutex::new(vec![path.clone()])), limits);
+        let url = v.url(&path).await.unwrap();
+        let (host, _) = split(&url);
+        // two that never send a head hold both places
+        let idle = [
+            TcpStream::connect(&host).await.unwrap(),
+            TcpStream::connect(&host).await.unwrap(),
+        ];
+        let mut extra = TcpStream::connect(&host).await.unwrap();
+        let mut rest = Vec::new();
+        tokio::time::timeout(Duration::from_secs(5), extra.read_to_end(&mut rest))
+            .await
+            .expect("the one past the cap is closed at once")
+            .ok();
+        assert!(rest.is_empty(), "no reply");
+        drop(idle);
+        all_let_go(&v).await;
+        assert_eq!(request(&url, "GET", None).await.status, 200);
     }
 
     #[test]
