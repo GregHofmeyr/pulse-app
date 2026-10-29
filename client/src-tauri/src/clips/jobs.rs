@@ -989,8 +989,10 @@ mod tests {
             }
             self.live.fetch_add(1, Ordering::SeqCst);
             let _live = Live(self.live.clone());
-            // the clip keeps 12.5 s: the steps go up to half of it
+            // the clip keeps 12.5 s: the steps go up to half of it (each block as ffmpeg prints it: frames
+            // written, then the output time)
             for i in 1..=self.steps {
+                on_line(&format!("frame={}", 375 * i / self.steps));
                 on_line(&format!("out_time_us={}", 6_250_000 * i / self.steps));
             }
             if self

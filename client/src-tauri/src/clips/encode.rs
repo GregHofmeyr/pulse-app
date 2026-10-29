@@ -11,7 +11,7 @@ use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
 
 use super::ffmpeg::{self, FfmpegPaths};
 use super::probe::Probe;
-use super::progress::{self, ProgressLine};
+use super::progress::Tracker;
 use super::upload::CancellationFlag;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -472,9 +472,25 @@ impl Default for WorkingEncoder {
     }
 }
 
-/// Try each encoder of `start` in turn. A failed run moves on to the next only when it printed no progress
-/// (the encoder could not start: no such GPU, busy); one that failed mid-encode is the end. Progress is
-/// reported as the fraction of `kept_ms` of output written, 0 to 1. Returns the encoder that worked.
+/// Whether a failed run moves on to the next encoder: it made no real progress (see [`Tracker`]), or ffmpeg
+/// says the encoder never opened. Either way nothing of the export was written, so the next encoder is safe
+/// to try; a run that failed mid-encode is the end.
+pub fn falls_back(advanced: bool, stderr: &str) -> bool {
+    !advanced || encoder_never_opened(stderr)
+}
+
+/// ffmpeg's words for an encoder that could not open: "Error while opening encoder" (6.x and 7.x+, with
+/// "Cannot load libcuda.so.1" and the like before it) and "Could not open encoder before EOF" (7.x+).
+fn encoder_never_opened(stderr: &str) -> bool {
+    ["Error while opening encoder", "Could not open encoder"]
+        .iter()
+        .any(|m| stderr.contains(m))
+}
+
+/// Try each encoder of `start` in turn. A failed run moves on to the next only when it failed before real
+/// progress ([`falls_back`]: the encoder could not start: no such GPU, no driver, busy); one that failed
+/// mid-encode is the end. Progress is reported as the fraction of `kept_ms` of output written, 0 to 1, and
+/// only once video frames are written. Returns the encoder that worked.
 pub async fn run_with_fallback<R: Runner>(
     runner: &R,
     start: &[Encoder],
@@ -487,16 +503,15 @@ pub async fn run_with_fallback<R: Runner>(
         stderr_tail: String::new(),
     };
     for &enc in start {
-        let mut progressed = false;
+        let mut tracker = Tracker::default();
         let mut on_line = |line: &str| {
-            if let Some(ProgressLine::OutTimeUs(us @ 1..)) = progress::parse(line) {
-                progressed = true;
+            if let Some(us) = tracker.feed(line) {
                 on_progress((us as f64 / total_us).clamp(0.0, 1.0) as f32);
             }
         };
         match runner.run(build(enc), &mut on_line).await {
             Ok(()) => return Ok(enc),
-            Err(failed) if progressed => {
+            Err(failed) if !falls_back(tracker.advanced(), &failed.stderr_tail) => {
                 return Err(EncodeError::Failed {
                     stderr_tail: failed.stderr_tail,
                 });
@@ -721,6 +736,7 @@ mod tests {
     struct Fake {
         script: Mutex<Vec<(Vec<&'static str>, bool)>>,
         calls: Mutex<Vec<String>>,
+        stderr: &'static str,
     }
 
     impl Fake {
@@ -728,7 +744,14 @@ mod tests {
             Self {
                 script: Mutex::new(script),
                 calls: Mutex::default(),
+                stderr: "boom",
             }
+        }
+
+        /// Every failed run prints `stderr`.
+        fn failing_with(mut self, stderr: &'static str) -> Self {
+            self.stderr = stderr;
+            self
         }
     }
 
@@ -747,7 +770,7 @@ mod tests {
                 Ok(())
             } else {
                 Err(RunFailed {
-                    stderr_tail: "boom".into(),
+                    stderr_tail: self.stderr.into(),
                 })
             }
         }
@@ -761,7 +784,10 @@ mod tests {
             (vec!["out_time_us=0"], false),
             (vec!["out_time_us=N/A"], false),
             (vec![], false),
-            (vec!["out_time_us=2000000", "progress=end"], true),
+            (
+                vec!["frame=60", "out_time_us=2000000", "progress=end"],
+                true,
+            ),
         ]);
         let mut seen = Vec::new();
         let got = run_with_fallback(
@@ -788,7 +814,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_mid_encode_failure_does_not_fall_back() {
-        let fake = Fake::new(vec![(vec!["out_time_us=1000000"], false)]);
+        let fake = Fake::new(vec![(vec!["frame=30", "out_time_us=1000000"], false)]);
         let got =
             run_with_fallback(&fake, &CHAIN, 4_000, |e| vec![e.name().to_owned()], |_| {}).await;
         assert!(matches!(got, Err(EncodeError::Failed { .. })));
@@ -812,7 +838,13 @@ mod tests {
     #[tokio::test]
     async fn progress_is_a_clamped_fraction_of_the_kept_time() {
         let fake = Fake::new(vec![(
-            vec!["out_time_us=1000000", "out_time_us=9000000", "progress=end"],
+            vec![
+                "frame=30",
+                "out_time_us=1000000",
+                "frame=270",
+                "out_time_us=9000000",
+                "progress=end",
+            ],
             true,
         )]);
         let mut seen = Vec::new();
@@ -906,9 +938,89 @@ mod tests {
         store.remember(Encoder::Nvenc);
         assert_eq!(store.chain()[0], Encoder::Mf);
         // a mid-encode failure remembers nothing new
-        let fake = Fake::new(vec![(vec!["out_time_us=1"], false)]);
+        let fake = Fake::new(vec![(vec!["frame=1", "out_time_us=1"], false)]);
         assert!(store.run(&fake, 1000, build, |_| {}).await.is_err());
         assert_eq!(store.chain()[0], Encoder::Mf);
+    }
+
+    /// What CI's ffmpeg (no GPU) printed for the two-piece export: h264_nvenc opens lazily on the first
+    /// filtered frame, after the audio has been encoded and a progress block printed.
+    const NVENC_NO_LIBCUDA: &str = "[h264_nvenc @ 0x55d0c0a0] Cannot load libcuda.so.1\n\
+[vost#0:0/h264_nvenc @ 0x55d0c0b0] Error while opening encoder - maybe incorrect parameters such as bit_rate, \
+rate, width or height.\nError while filtering: Operation not permitted\n[out#0/mp4 @ 0x55d0c0c0] Nothing was \
+written into output file, because at least one of its streams received no packets.\n";
+
+    /// The progress block printed before that failure: audio time, no video frame.
+    const AUDIO_ONLY_BLOCK: [&str; 5] = [
+        "frame=0",
+        "total_size=0",
+        "out_time_us=369625",
+        "out_time_ms=369625",
+        "progress=end",
+    ];
+
+    #[test]
+    fn an_encoder_that_failed_to_open_falls_back() {
+        assert!(falls_back(false, NVENC_NO_LIBCUDA));
+        // even if something had looked like progress, an encoder that never opened wrote nothing
+        assert!(falls_back(true, NVENC_NO_LIBCUDA));
+        assert!(falls_back(false, "boom"));
+        // the 6.x wording of ffmpeg, and 7.x's lazy-open message
+        assert!(falls_back(
+            true,
+            "Error while opening encoder for output stream #0:0 - maybe incorrect parameters"
+        ));
+        assert!(falls_back(
+            true,
+            "[vost#0:0/h264_amf] Could not open encoder before EOF"
+        ));
+        // a real failure after frames were written is the end
+        assert!(!falls_back(
+            true,
+            "[out#0/mp4] Error writing trailer: No space left on device"
+        ));
+    }
+
+    #[tokio::test]
+    async fn audio_progress_before_the_gpu_encoder_fails_to_open_still_falls_back() {
+        let fake = Fake::new(vec![
+            (AUDIO_ONLY_BLOCK.to_vec(), false),
+            (
+                vec!["frame=150", "out_time_us=5000000", "progress=end"],
+                true,
+            ),
+        ])
+        .failing_with(NVENC_NO_LIBCUDA);
+        let mut seen = Vec::new();
+        let got = run_with_fallback(
+            &fake,
+            &CHAIN,
+            5_000,
+            |e| vec![e.name().to_owned()],
+            |f| seen.push(f),
+        )
+        .await;
+        assert_eq!(got, Ok(Encoder::Amf));
+        assert_eq!(*fake.calls.lock().unwrap(), ["h264_nvenc", "h264_amf"]);
+        // the audio-only time of the failed attempt never reached the progress bar
+        assert_eq!(seen, [1.0]);
+    }
+
+    #[tokio::test]
+    async fn an_encoder_that_failed_to_open_is_not_remembered() {
+        let store = WorkingEncoder::new();
+        let build = |e: Encoder| vec![e.name().to_owned()];
+        let fake = Fake::new(vec![
+            (AUDIO_ONLY_BLOCK.to_vec(), false),
+            (AUDIO_ONLY_BLOCK.to_vec(), false),
+            (vec!["frame=1", "out_time_us=1000"], true),
+        ])
+        .failing_with(NVENC_NO_LIBCUDA);
+        assert_eq!(
+            store.run(&fake, 1000, build, |_| {}).await,
+            Ok(Encoder::Qsv)
+        );
+        assert_eq!(store.chain()[0], Encoder::Qsv);
     }
 
     #[test]
