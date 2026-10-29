@@ -336,20 +336,20 @@ fn range(header: Option<&str>, size: u64) -> Range {
     let (a, b) = (a.trim(), b.trim());
     if a.is_empty() {
         // the last n bytes
-        return match b.parse::<u64>() {
-            Ok(0) => Range::Unsatisfiable,
-            Ok(_) if size == 0 => Range::Unsatisfiable,
-            Ok(n) => Range::Part(size - n.min(size), size - 1),
-            Err(_) => Range::Whole,
+        return match number(b) {
+            Some(0) => Range::Unsatisfiable,
+            Some(_) if size == 0 => Range::Unsatisfiable,
+            Some(n) => Range::Part(size - n.min(size), size - 1),
+            None => Range::Whole,
         };
     }
-    let Ok(first) = a.parse::<u64>() else {
+    let Some(first) = number(a) else {
         return Range::Whole;
     };
     let last = match b {
         "" => None,
-        b => match b.parse::<u64>() {
-            Ok(last) if last >= first => Some(last),
+        b => match number(b) {
+            Some(last) if last >= first => Some(last),
             _ => return Range::Whole,
         },
     };
@@ -357,6 +357,13 @@ fn range(header: Option<&str>, size: u64) -> Range {
         return Range::Unsatisfiable;
     }
     Range::Part(first, last.map_or(size - 1, |l| l.min(size - 1)))
+}
+
+/// A range bound: digits only (`u64::from_str` would also take a leading `+`).
+fn number(s: &str) -> Option<u64> {
+    (!s.is_empty() && s.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| s.parse().ok())
+        .flatten()
 }
 
 fn head(status: &str, headers: &[(&str, String)]) -> String {
@@ -599,6 +606,10 @@ mod tests {
             "bytes=x-y",
             "items=0-9",
             "bytes=",
+            // only digits: Rust's u64 parse would take a leading +
+            "bytes=+100-1099",
+            "bytes=100-+1099",
+            "bytes=-+500",
         ] {
             let r = request(&url, "GET", Some(range)).await;
             assert_eq!(r.status, 200, "{range}");
