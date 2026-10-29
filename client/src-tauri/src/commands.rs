@@ -1421,13 +1421,20 @@ pub async fn update_profile(
     core.check(&app, api.update_profile(&token, &request).await)
 }
 
-/// The `x-pulse-crop` header is `x,y,w,h`; absent means no crop.
+/// The `x-pulse-crop` header is `x,y,w,h` (ASCII digits only); absent means no crop.
 fn parse_crop(header: Option<&str>) -> Result<Option<CropRect>, ApiError> {
     let Some(h) = header else { return Ok(None) };
     let bad = || ApiError::Rejected("bad crop".into());
     let n = h
         .split(',')
-        .map(|p| p.trim().parse::<u32>().map_err(|_| bad()))
+        .map(|p| {
+            let p = p.trim();
+            // `u32::from_str` takes a leading '+'; the header is digits and nothing else.
+            if p.is_empty() || !p.bytes().all(|b| b.is_ascii_digit()) {
+                return Err(bad());
+            }
+            p.parse::<u32>().map_err(|_| bad())
+        })
         .collect::<Result<Vec<_>, _>>()?;
     let [x, y, w, h] = n[..] else {
         return Err(bad());
@@ -2163,6 +2170,9 @@ mod tests {
         );
         assert!(parse_crop(Some("1,2,3")).is_err());
         assert!(parse_crop(Some("1,2,3,4,5")).is_err());
+        for bad in ["+1,2,3,4", "1,-2,3,4", "1,2,3,", "1,2,3,٤", "1,2,0x3,4"] {
+            assert!(parse_crop(Some(bad)).is_err(), "{bad}");
+        }
     }
 
     #[test]

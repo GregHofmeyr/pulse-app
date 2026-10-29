@@ -150,6 +150,8 @@ pub fn path_only(url: &reqwest::Url) -> String {
 
 /// What an emoji upload over the server's body limit says.
 pub const TOO_BIG: &str = "Files can be 2 MB at most";
+/// What an avatar or banner upload over the server's body limit says (its plain-text 413 isn't
+/// our JSON error, so the core supplies the words).
 pub const PROFILE_TOO_BIG: &str = "Profile pictures and banners can be up to 8 MB.";
 
 /// Which profile picture an upload is for: the media route's last segment.
@@ -3209,6 +3211,29 @@ mod tests {
         assert_eq!(read.user.avatar_hash.as_deref(), Some(avatar.hash.as_str()));
         assert_eq!(read.card.pronouns.as_deref(), Some("they/them"));
         assert_eq!(read.card.bio.as_deref(), Some("hi"));
+    }
+
+    #[tokio::test]
+    async fn a_crop_outside_the_picture_reaches_the_server_and_is_refused() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let past = CropRect {
+            x: 0,
+            y: 0,
+            w: 2,
+            h: 1,
+        };
+        let err = api
+            .upload_profile_media(
+                &token,
+                ProfileMediaKind::Avatar,
+                crate::media::tests::PNG.to_vec(),
+                Some(past),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(err.to_string(), "The crop is outside the image.");
     }
 
     #[tokio::test]
