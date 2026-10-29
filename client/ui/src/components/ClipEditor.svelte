@@ -53,7 +53,7 @@
 
   /** Where the <video> loads a local file from: the core's loopback address (Linux), else the asset protocol. */
   async function playable(path: string): Promise<string> {
-    const url = await api.videoUrl(path).catch(() => null)
+    const url = await api.videoUrl(source.id, path).catch(() => null)
     return url ?? convertFileSrc(path)
   }
 

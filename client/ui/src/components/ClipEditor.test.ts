@@ -124,7 +124,7 @@ describe('ClipEditor', () => {
       return undefined
     })
     await show()
-    expect(invoke).toHaveBeenCalledWith('video_url', { path: '/home/alex/Videos/Overwatch 2/replay.mp4' })
+    expect(invoke).toHaveBeenCalledWith('video_url', { source: 'S-1', path: '/home/alex/Videos/Overwatch 2/replay.mp4' })
     expect(video().getAttribute('src')).toBe('http://127.0.0.1:4100/40')
   })
 
@@ -135,7 +135,7 @@ describe('ClipEditor', () => {
       return undefined
     })
     await show(source({ preview: 'remux' }))
-    expect(invoke).toHaveBeenCalledWith('video_url', { path: '/tmp/preview.mp4' })
+    expect(invoke).toHaveBeenCalledWith('video_url', { source: 'S-1', path: '/tmp/preview.mp4' })
     expect(video().getAttribute('src')).toBe('http://127.0.0.1:4100/p')
   })
 

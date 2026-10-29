@@ -128,13 +128,11 @@ impl Sources {
         all
     }
 
-    /// Whether an open source is this file.
-    pub fn has_path(&self, path: &Path) -> bool {
-        self.map
-            .lock()
-            .unwrap()
-            .values()
-            .any(|(e, _)| e.path == path)
+    /// `f()` if source `id` is open, run under the sources' lock: a close (`remove`, `drain`)
+    /// comes wholly before it (`None`) or after it.
+    pub fn while_open<T>(&self, id: &str, f: impl FnOnce() -> T) -> Option<T> {
+        let map = self.map.lock().unwrap();
+        map.contains_key(id).then(f)
     }
 
     pub fn ids(&self) -> HashSet<String> {

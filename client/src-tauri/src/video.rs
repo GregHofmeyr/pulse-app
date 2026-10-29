@@ -75,7 +75,8 @@ struct Inner {
 #[derive(Default)]
 struct Files {
     by_token: HashMap<String, Grant>,
-    by_path: HashMap<PathBuf, String>,
+    /// (owner, canonical path) → token
+    by_key: HashMap<(String, PathBuf), String>,
 }
 
 #[derive(Clone)]
@@ -102,21 +103,29 @@ impl Videos {
         }
     }
 
-    /// `http://127.0.0.1:<port>/<token>` for `path` (the same token while it lasts), starting the
-    /// server if needed. `None` if the webview may not load `path`, or the server can't start.
-    pub async fn url(&self, path: &Path) -> Option<String> {
+    /// Start the server if it isn't running. `false` if it can't start.
+    pub async fn start(&self) -> bool {
+        match self.inner.addr.get_or_try_init(|| start(&self.inner)).await {
+            Ok(_) => true,
+            Err(e) => {
+                tracing::warn!(error = %e, "video server unavailable");
+                false
+            }
+        }
+    }
+
+    /// `http://127.0.0.1:<port>/<token>` for `path` on behalf of `owner` (an editor source; the
+    /// same token while it lasts). Synchronous, so the caller can make it under its own lock
+    /// (`Core::video_url`). `path` must be canonical, so that aliases of one file share a token.
+    /// `None` if the webview may not load `path`, or the server isn't started.
+    pub fn grant(&self, owner: &str, path: &Path) -> Option<String> {
+        let addr = *self.inner.addr.get()?;
         if !(self.inner.allowed)(path) {
             return None;
         }
-        let addr = match self.inner.addr.get_or_try_init(|| start(&self.inner)).await {
-            Ok(addr) => *addr,
-            Err(e) => {
-                tracing::warn!(error = %e, "video server unavailable");
-                return None;
-            }
-        };
         let mut files = self.inner.files.lock().unwrap();
-        let token = match files.by_path.get(path) {
+        let key = (owner.to_owned(), path.to_path_buf());
+        let token = match files.by_key.get(&key) {
             Some(t) => t.clone(),
             None => {
                 let t = hex(&rand::random::<[u8; 32]>());
@@ -125,33 +134,39 @@ impl Videos {
                     revoked: Arc::new(watch::Sender::new(false)),
                 };
                 files.by_token.insert(t.clone(), grant);
-                files.by_path.insert(path.to_path_buf(), t.clone());
+                files.by_key.insert(key, t.clone());
                 t
             }
         };
         Some(format!("http://{addr}/{token}"))
     }
 
-    /// `path`'s token stops working: a request for it is a 404 from now on, and a response in
+    /// `owner`'s tokens stop working: a request for one is a 404 from now on, and a response in
     /// flight ends.
-    pub fn revoke(&self, path: &Path) {
-        let mut files = self.inner.files.lock().unwrap();
-        if let Some(t) = files.by_path.remove(path)
-            && let Some(g) = files.by_token.remove(&t)
-        {
-            g.revoked.send_replace(true);
-        }
+    pub fn revoke(&self, owner: &str) {
+        let files = &mut *self.inner.files.lock().unwrap();
+        files.by_key.retain(|(o, _), t| {
+            if o != owner {
+                return true;
+            }
+            if let Some(g) = files.by_token.remove(t) {
+                g.revoked.send_replace(true);
+            }
+            false
+        });
     }
 
+    /// How many tokens `owner` has.
     #[cfg(test)]
-    pub(crate) fn has_token(&self, path: &Path) -> bool {
-        self.inner.files.lock().unwrap().by_path.contains_key(path)
+    pub(crate) fn tokens(&self, owner: &str) -> usize {
+        let files = self.inner.files.lock().unwrap();
+        files.by_key.keys().filter(|(o, _)| o == owner).count()
     }
 
     /// Every token stops working (sign-out).
     pub fn revoke_all(&self) {
         let mut files = self.inner.files.lock().unwrap();
-        files.by_path.clear();
+        files.by_key.clear();
         for (_, g) in files.by_token.drain() {
             g.revoked.send_replace(true);
         }
@@ -572,11 +587,20 @@ mod tests {
         send(&host, raw.as_bytes()).await
     }
 
+    /// The editor source the tests' tokens are for.
+    const OWNER: &str = "a";
+
+    /// Start the server and grant `path` to `OWNER`.
+    async fn url_for(v: &Videos, path: &Path) -> Option<String> {
+        assert!(v.start().await);
+        v.grant(OWNER, path)
+    }
+
     async fn setup() -> (tempfile::TempDir, PathBuf, Videos, String) {
         let dir = tempfile::tempdir().unwrap();
         let path = video(dir.path(), "replay.mp4");
         let v = videos(Arc::new(Mutex::new(vec![path.clone()])));
-        let url = v.url(&path).await.unwrap();
+        let url = url_for(&v, &path).await.unwrap();
         (dir, path, v, url)
     }
 
@@ -585,15 +609,33 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (a, b) = (video(dir.path(), "a.mp4"), video(dir.path(), "b.mp4"));
         let v = videos(Arc::new(Mutex::new(vec![a.clone(), b.clone()])));
-        let url = v.url(&a).await.unwrap();
+        let url = url_for(&v, &a).await.unwrap();
         let (host, path) = split(&url);
         assert!(host.starts_with("127.0.0.1:"));
         let token = path.strip_prefix('/').unwrap();
         assert!(token.len() == 64 && token.bytes().all(|c| c.is_ascii_hexdigit()));
-        assert_eq!(v.url(&a).await.unwrap(), url);
-        let other = v.url(&b).await.unwrap();
+        assert_eq!(url_for(&v, &a).await.unwrap(), url);
+        let other = url_for(&v, &b).await.unwrap();
         assert_ne!(other, url);
         assert_eq!(split(&other).0, host, "one server");
+    }
+
+    #[tokio::test]
+    async fn each_owner_has_its_own_token_and_revoking_ends_only_its_own() {
+        let (_dir, path, v, url) = setup().await;
+        let theirs = v.grant("b", &path).unwrap();
+        assert_ne!(theirs, url);
+        v.revoke("b");
+        assert_eq!(request(&theirs, "GET", None).await.status, 404);
+        assert_eq!(request(&url, "GET", None).await.status, 200);
+    }
+
+    #[tokio::test]
+    async fn no_token_before_the_server_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = video(dir.path(), "replay.mp4");
+        let v = videos(Arc::new(Mutex::new(vec![path.clone()])));
+        assert_eq!(v.grant(OWNER, &path), None);
     }
 
     #[tokio::test]
@@ -601,7 +643,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = video(dir.path(), "replay.mp4");
         let v = videos(Arc::new(Mutex::new(vec![])));
-        assert_eq!(v.url(&path).await, None);
+        assert_eq!(url_for(&v, &path).await, None);
     }
 
     #[tokio::test]
@@ -750,9 +792,9 @@ mod tests {
     #[tokio::test]
     async fn a_revoked_path_is_404_and_gets_a_new_token_next_time() {
         let (_dir, path, v, url) = setup().await;
-        v.revoke(&path);
+        v.revoke(OWNER);
         assert_eq!(request(&url, "GET", None).await.status, 404);
-        let again = v.url(&path).await.unwrap();
+        let again = url_for(&v, &path).await.unwrap();
         assert_ne!(again, url);
         assert_eq!(request(&again, "GET", None).await.status, 200);
     }
@@ -762,7 +804,10 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let (a, b) = (video(dir.path(), "a.mp4"), video(dir.path(), "b.webm"));
         let v = videos(Arc::new(Mutex::new(vec![a.clone(), b.clone()])));
-        let (ua, ub) = (v.url(&a).await.unwrap(), v.url(&b).await.unwrap());
+        let (ua, ub) = (
+            url_for(&v, &a).await.unwrap(),
+            url_for(&v, &b).await.unwrap(),
+        );
         v.revoke_all();
         assert_eq!(request(&ua, "GET", None).await.status, 404);
         assert_eq!(request(&ub, "GET", None).await.status, 404);
@@ -774,10 +819,10 @@ mod tests {
         let path = video(dir.path(), "replay.mp4");
         let allowed = Arc::new(Mutex::new(vec![path.clone()]));
         let v = videos(allowed.clone());
-        let url = v.url(&path).await.unwrap();
+        let url = url_for(&v, &path).await.unwrap();
         allowed.lock().unwrap().clear();
         assert_eq!(request(&url, "GET", None).await.status, 404);
-        assert_eq!(v.url(&path).await, None);
+        assert_eq!(url_for(&v, &path).await, None);
     }
 
     #[tokio::test]
@@ -794,14 +839,14 @@ mod tests {
         let path = dir.path().join("big.mp4");
         std::fs::write(&path, vec![7u8; 64 * 1024 * 1024]).unwrap();
         let v = videos(Arc::new(Mutex::new(vec![path.clone()])));
-        let url = v.url(&path).await.unwrap();
+        let url = url_for(&v, &path).await.unwrap();
         let (host, target) = split(&url);
         let mut conn = TcpStream::connect(&host).await.unwrap();
         let raw = format!("GET {target} HTTP/1.1\r\nHost: {host}\r\n\r\n");
         conn.write_all(raw.as_bytes()).await.unwrap();
         let mut first = [0u8; 1024];
         let _ = conn.read(&mut first).await.unwrap();
-        v.revoke(&path);
+        v.revoke(OWNER);
         let mut rest = Vec::new();
         tokio::time::timeout(Duration::from_secs(10), conn.read_to_end(&mut rest))
             .await
@@ -816,7 +861,7 @@ mod tests {
         let path = dir.path().join("empty.mkv");
         std::fs::write(&path, b"").unwrap();
         let v = videos(Arc::new(Mutex::new(vec![path.clone()])));
-        let url = v.url(&path).await.unwrap();
+        let url = url_for(&v, &path).await.unwrap();
         let r = request(&url, "GET", None).await;
         assert_eq!((r.status, r.header("content-length")), (200, Some("0")));
         assert_eq!(r.header("content-type"), Some("video/x-matroska"));
@@ -923,7 +968,7 @@ mod tests {
     /// A GET of a file far bigger than the socket buffers, from a client that then reads nothing:
     /// the server is soon stuck writing.
     async fn stalled(v: &Videos, path: &Path) -> TcpStream {
-        let url = v.url(path).await.unwrap();
+        let url = url_for(v, path).await.unwrap();
         let (host, target) = split(&url);
         let mut conn = TcpStream::connect(&host).await.unwrap();
         let raw = format!("GET {target} HTTP/1.1\r\nHost: {host}\r\n\r\n");
@@ -948,12 +993,11 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = big(dir.path());
         let v = videos(Arc::new(Mutex::new(vec![path.clone()])));
-        for revoke in [
-            &(|v: &Videos, p: &Path| v.revoke(p)) as &dyn Fn(&Videos, &Path),
-            &|v, _| v.revoke_all(),
-        ] {
+        for revoke in [&(|v: &Videos| v.revoke(OWNER)) as &dyn Fn(&Videos), &|v| {
+            v.revoke_all()
+        }] {
             let _conn = stalled(&v, &path).await;
-            revoke(&v, &path);
+            revoke(&v);
             all_let_go(&v).await;
         }
     }
@@ -981,7 +1025,7 @@ mod tests {
             ..LIMITS
         };
         let v = videos_with(Arc::new(Mutex::new(vec![path.clone()])), limits);
-        let url = v.url(&path).await.unwrap();
+        let url = url_for(&v, &path).await.unwrap();
         let (host, _) = split(&url);
         // two that never send a head hold both places
         let idle = [
