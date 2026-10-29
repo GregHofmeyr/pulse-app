@@ -34,6 +34,10 @@
   let profileSettling = $state<Promise<void> | null>(null)
   let leaving = $state<(() => void) | null>(null)
   let waiting = $state<Way | null>(null)
+  // A Save puts away a discard prompt shown before it: what is left to discard is asked once it settles.
+  $effect(() => {
+    if (profileSettling) leaving = null
+  })
   async function leave(way: Way) {
     if (current === 'profile' && profileSettling) {
       const first = !waiting

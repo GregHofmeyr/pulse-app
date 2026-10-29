@@ -393,6 +393,44 @@ describe('ProfileSettings', () => {
     expect(section('Chat').hasAttribute('aria-busy')).toBe(false)
   })
 
+  it('a Save started while the discard prompt shows puts the prompt away for good', async () => {
+    let answer!: (p: Profile) => void
+    handlers.update_profile = () => new Promise<Profile>((r) => (answer = r))
+    const onClose = await openSettings()
+    const section = (label: string) => [...document.querySelectorAll<HTMLButtonElement>('nav button')].find((b) => b.textContent === label)!
+    click(option('Card theme', 'Berry'))
+    click(closeButton())
+    await settle()
+    expect(document.body.textContent).toContain('Discard your profile changes?')
+    click(button('Save'))
+    await settle()
+    expect(document.body.textContent).not.toContain('Discard your profile changes?')
+    answer(saved({ card: { ...saved().card, theme_top: '#c2457a', theme_bottom: '#3a1f5e' } }))
+    await vi.waitFor(() => {
+      flushSync()
+      expect(document.body.textContent).toContain('Saved')
+    })
+    expect(document.body.textContent).not.toContain('Discard your profile changes?')
+    expect(onClose).not.toHaveBeenCalled()
+
+    // and a way out asked for during the next Save isn't met by an older prompt either
+    click(option('Card theme', 'Forest'))
+    click(closeButton())
+    await settle()
+    expect(document.body.textContent).toContain('Discard your profile changes?')
+    click(button('Save'))
+    click(section('Chat'))
+    await settle()
+    expect(document.body.textContent).not.toContain('Discard your profile changes?')
+    answer(saved())
+    await vi.waitFor(() => {
+      flushSync()
+      expect(section('Chat').getAttribute('aria-current')).toBe('page')
+    })
+    expect(document.body.textContent).not.toContain('Discard your profile changes?')
+    expect(onClose).not.toHaveBeenCalled()
+  })
+
   it('asking for Profile again during a Save stays put', async () => {
     let answer!: (p: Profile) => void
     handlers.update_profile = () => new Promise<Profile>((r) => (answer = r))
