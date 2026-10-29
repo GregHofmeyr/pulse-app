@@ -431,7 +431,14 @@ below the configured minimum (2 GB by default). The check comes after sign-in an
   - `default-src 'self'`;
   - no `unsafe-eval` and no inline scripts (inline styles are allowed: `style-src 'self' 'unsafe-inline'`);
   - images only from the app itself, `data:` and the app's emoji cache;
-  - `connect-src` limited to the app's own IPC and the voice server.
+  - `connect-src` limited to the app's own IPC and the voice server;
+  - on Linux only, `media-src` also allows `http://127.0.0.1:*`. The Linux webview (WebKitGTK) will not play video from
+    the asset protocol, so the clip editor plays the local file from a server in the Rust core instead. It listens on
+    `127.0.0.1` at a random port and serves only `GET` and `HEAD` of `/<token>`. A token is 32 random bytes and names
+    one file. Tokens are only given for files the webview may already load through the asset protocol, and that is
+    checked again on every request. Closing the editor ends its tokens; signing out ends all of them. Nothing in a
+    request is used as a file path. A test (`client/src-tauri/tests/csp.rs`) keeps the Linux CSP equal to the base
+    CSP plus that one source.
 - **Tauri capabilities.** The main window gets an explicit list, not `core:default`. It is exactly:
   - `core:event:allow-listen` and `core:event:allow-unlisten` (the UI listens to events from the Rust core);
   - `core:window:allow-is-focused` (focus state);

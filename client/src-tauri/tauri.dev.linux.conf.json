@@ -1,0 +1,7 @@
+{
+  "app": {
+    "security": {
+      "csp": "default-src 'self' ipc: http://ipc.localhost; img-src 'self' data: pulse-media: http://pulse-media.localhost asset: http://asset.localhost; media-src 'self' mediastream: blob: asset: http://asset.localhost https://*.r2.cloudflarestorage.com http://127.0.0.1:7895 http://127.0.0.1:*; style-src 'self' 'unsafe-inline'; font-src 'self'; connect-src ipc: http://ipc.localhost wss://voice.pulsechat.co.za https://voice.pulsechat.co.za ws://127.0.0.1:7880 http://127.0.0.1:7880 ws://localhost:7880 http://localhost:7880"
+    }
+  }
+}
