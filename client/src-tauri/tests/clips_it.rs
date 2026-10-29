@@ -4,8 +4,13 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use pulse_client::clips::encode::{self, CHAIN, FfmpegRunner, Preset, Span, run_with_fallback};
+use std::sync::Mutex;
+
+use pulse_client::clips::encode::{
+    self, CHAIN, Encoder, FfmpegRunner, Preset, RunFailed, Runner, Span, run_with_fallback,
+};
 use pulse_client::clips::ffmpeg::{self, FfmpegPaths};
+use pulse_client::clips::probe::Probe;
 use pulse_client::clips::{preview, probe};
 
 fn tools() -> FfmpegPaths {
@@ -58,16 +63,10 @@ fn top_level_boxes(path: &Path) -> Vec<String> {
     names
 }
 
-#[tokio::test]
-#[ignore = "needs ffmpeg and ffprobe (PULSE_DEV_FFMPEG_DIR or PATH)"]
-async fn exports_two_pieces_as_light() {
-    let t = tools();
-    let dir = tempfile::tempdir().unwrap();
-    let (src, out) = (dir.path().join("src.mp4"), dir.path().join("out.mp4"));
-
-    // 10 s of 1440p60 with two audio tracks
+/// 10 s of 1440p60 with two audio tracks (and a title tag), probed.
+fn two_track_source(t: &FfmpegPaths, src: &Path) -> Probe {
     ffmpeg_ok(
-        &t,
+        t,
         &[
             "-f",
             "lavfi",
@@ -111,21 +110,35 @@ async fn exports_two_pieces_as_light() {
                 .unwrap()
                 .stdout,
         ),
-        std::fs::metadata(&src).unwrap().len(),
+        std::fs::metadata(src).unwrap().len(),
     )
     .expect("probe the source");
     assert_eq!((p.width, p.height, p.audio.len()), (2560, 1440, 2));
+    p
+}
 
-    let kept = [
-        Span {
-            start_ms: 1_000,
-            end_ms: 3_000,
-        },
-        Span {
-            start_ms: 6_000,
-            end_ms: 9_000,
-        },
-    ];
+/// The two pieces both two-piece exports keep: 5 s.
+const KEPT: [Span; 2] = [
+    Span {
+        start_ms: 1_000,
+        end_ms: 3_000,
+    },
+    Span {
+        start_ms: 6_000,
+        end_ms: 9_000,
+    },
+];
+
+#[tokio::test]
+#[ignore = "needs ffmpeg and ffprobe (PULSE_DEV_FFMPEG_DIR or PATH)"]
+async fn exports_two_pieces_as_light() {
+    let t = tools();
+    let dir = tempfile::tempdir().unwrap();
+    let (src, out) = (dir.path().join("src.mp4"), dir.path().join("out.mp4"));
+
+    let p = two_track_source(&t, &src);
+
+    let kept = KEPT;
     let mut last = 0.0f32;
     let used = run_with_fallback(
         &FfmpegRunner(t.clone()),
@@ -291,4 +304,100 @@ async fn exports_a_rotated_source_as_portrait_light() {
             .iter()
             .all(|s| s["codec_type"] != "audio")
     );
+}
+
+/// One run: its progress lines and outcome.
+type Attempt = (Vec<String>, Result<(), RunFailed>);
+
+/// An [`FfmpegRunner`] that keeps each attempt's progress lines and outcome.
+struct Recording {
+    inner: FfmpegRunner,
+    attempts: Mutex<Vec<Attempt>>,
+}
+
+impl Runner for Recording {
+    async fn run(
+        &self,
+        args: Vec<String>,
+        on_line: &mut (dyn FnMut(&str) + Send),
+    ) -> Result<(), RunFailed> {
+        let mut lines = Vec::new();
+        let got = self
+            .inner
+            .run(args, &mut |l: &str| {
+                lines.push(l.to_owned());
+                on_line(l);
+            })
+            .await;
+        self.attempts.lock().unwrap().push((lines, got.clone()));
+        got
+    }
+}
+
+/// A GPU encoder that cannot open (no NVIDIA driver, an AMD or Intel GPU) fails lazily, on the first
+/// filtered frame, after the audio has been encoded and a progress block with audio time printed. That must
+/// still fall back. The GPU's failure is stood in for by libx264 with a preset that does not exist, which
+/// fails to open the same way on every machine (with or without a GPU).
+#[tokio::test]
+#[ignore = "needs ffmpeg and ffprobe (PULSE_DEV_FFMPEG_DIR or PATH)"]
+async fn an_encoder_that_cannot_open_falls_back_to_the_next() {
+    let t = tools();
+    let dir = tempfile::tempdir().unwrap();
+    let (src, out) = (dir.path().join("src.mp4"), dir.path().join("out.mp4"));
+    let p = two_track_source(&t, &src);
+    let runner = Recording {
+        inner: FfmpegRunner(t.clone()),
+        attempts: Mutex::default(),
+    };
+    let mut last = 0.0f32;
+    let used = run_with_fallback(
+        &runner,
+        &[Encoder::Nvenc, Encoder::X264],
+        5_000,
+        |enc| {
+            let mut a = encode::args(&p, &src, &KEPT, Preset::Light, Encoder::X264, &out);
+            if enc == Encoder::Nvenc {
+                let at = a.iter().position(|x| x == "veryfast").expect("x264 preset");
+                a[at] = "no-such-preset".to_owned();
+            }
+            a
+        },
+        |f| last = f,
+    )
+    .await
+    .expect("export");
+    assert_eq!(used, Encoder::X264);
+    assert!(last > 0.5, "progress reached {last}");
+
+    let attempts = runner.attempts.lock().unwrap();
+    assert_eq!(attempts.len(), 2);
+    let (lines, got) = &attempts[0];
+    let stderr = &got
+        .as_ref()
+        .expect_err("the first encoder fails")
+        .stderr_tail;
+    assert!(stderr.contains("Error while opening encoder"), "{stderr}");
+    // the trap: audio time was reported before the encoder failed to open
+    assert!(
+        lines.iter().any(|l| l
+            .strip_prefix("out_time_us=")
+            .and_then(|v| v.parse::<u64>().ok())
+            .is_some_and(|us| us > 0)),
+        "expected audio-only progress before the open failure: {lines:?}"
+    );
+    assert!(attempts[1].1.is_ok());
+
+    let j = ffprobe_json(&t, &out);
+    let v = j["streams"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["codec_type"] == "video")
+        .unwrap();
+    assert_eq!(
+        (v["width"].as_u64(), v["height"].as_u64()),
+        (Some(1280), Some(720))
+    );
+    let secs: f64 = j["format"]["duration"].as_str().unwrap().parse().unwrap();
+    assert!((secs - 5.0).abs() < 0.1, "duration {secs}");
 }
