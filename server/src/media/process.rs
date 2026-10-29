@@ -28,6 +28,9 @@ const MAX_ALLOC: u64 = 256 * 1024 * 1024;
 /// while a 4096² screen is refused at its 6th frame.
 const MAX_DECODED_PIXELS: u64 = 100_000_000;
 const QUALITY: f32 = 80.0;
+/// Most pixels an animated quote's, avatar's or banner's fitted frames may total (all are held
+/// until encoded): about 128 MB of RGBA per upload being processed.
+pub const ANIM_MAX_FITTED_PIXELS: u64 = 32_000_000;
 
 /// Quote image: a still is fitted within this on its long side (never enlarged)...
 pub const QUOTE_MAX_SIDE: u32 = 1600;
@@ -35,9 +38,6 @@ pub const QUOTE_MAX_OUTPUT: usize = 1024 * 1024;
 /// ...and an animation within this, since every frame is kept.
 pub const QUOTE_ANIM_MAX_SIDE: u32 = 640;
 pub const QUOTE_ANIM_MAX_OUTPUT: usize = 4 * 1024 * 1024;
-/// Most pixels an animated quote's fitted frames may total (all are held until encoded): about
-/// 128 MB of RGBA per upload being processed.
-pub const QUOTE_ANIM_MAX_FITTED_PIXELS: u64 = 32_000_000;
 
 /// Avatar and banner uploads: input bounds (the 4096 px side limit is shared with emoji).
 pub const PROFILE_MAX_INPUT: usize = 8 * 1024 * 1024;
@@ -53,8 +53,6 @@ pub const BANNER_ANIM_W: u32 = 600;
 pub const BANNER_ANIM_H: u32 = 240;
 pub const BANNER_MAX_OUTPUT: usize = 1024 * 1024;
 pub const BANNER_ANIM_MAX_OUTPUT: usize = 2 * 1024 * 1024;
-/// Most pixels an animated avatar's or banner's fitted frames may total (about 128 MB of RGBA).
-pub const PROFILE_ANIM_MAX_FITTED_PIXELS: u64 = 32_000_000;
 
 /// Largest Go Live preview upload accepted.
 pub const PREVIEW_MAX_INPUT: usize = 100 * 1024;
@@ -250,7 +248,7 @@ const QUOTE: Profile = Profile {
     still_max: QUOTE_MAX_OUTPUT,
     anim_box: (QUOTE_ANIM_MAX_SIDE, QUOTE_ANIM_MAX_SIDE),
     anim_max: QUOTE_ANIM_MAX_OUTPUT,
-    anim_max_pixels: QUOTE_ANIM_MAX_FITTED_PIXELS,
+    anim_max_pixels: ANIM_MAX_FITTED_PIXELS,
 };
 
 /// Avatars: covered to a square.
@@ -262,7 +260,7 @@ const AVATAR: Profile = Profile {
     still_max: AVATAR_MAX_OUTPUT,
     anim_box: (AVATAR_SIDE, AVATAR_SIDE),
     anim_max: AVATAR_ANIM_MAX_OUTPUT,
-    anim_max_pixels: PROFILE_ANIM_MAX_FITTED_PIXELS,
+    anim_max_pixels: ANIM_MAX_FITTED_PIXELS,
 };
 
 /// Banners: covered to a wide box, smaller when animated.
@@ -274,7 +272,7 @@ const BANNER: Profile = Profile {
     still_max: BANNER_MAX_OUTPUT,
     anim_box: (BANNER_ANIM_W, BANNER_ANIM_H),
     anim_max: BANNER_ANIM_MAX_OUTPUT,
-    anim_max_pixels: PROFILE_ANIM_MAX_FITTED_PIXELS,
+    anim_max_pixels: ANIM_MAX_FITTED_PIXELS,
 };
 
 /// Process an emoji upload. CPU-bound: call it off the async runtime.
