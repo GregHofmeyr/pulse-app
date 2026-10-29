@@ -13,6 +13,8 @@
 
   const WIDTH = 300
   const GAP = 8
+  /** Room round the card for its glow (the .pop padding): a scrolling box clips shadows at its edge. */
+  const GLOW_ROOM = 26
 
   const target = $derived(profileUi.card)
   const cached = $derived(target ? app.state.profiles[target.userId] : undefined)
@@ -59,7 +61,7 @@
     if (!returnTo && a instanceof HTMLElement && a !== document.body && !el.contains(a)) returnTo = a
     shown = el
     el.focus()
-    const measure = () => (height = el.offsetHeight)
+    const measure = () => (height = el.offsetHeight - 2 * GLOW_ROOM)
     measure()
     const ro = typeof ResizeObserver === 'function' ? new ResizeObserver(measure) : null
     ro?.observe(el)
@@ -68,7 +70,7 @@
   // Re-measure once the loaded card replaces the skeleton (where there is no ResizeObserver).
   $effect(() => {
     void cached
-    if (shown) height = shown.offsetHeight
+    if (shown) height = shown.offsetHeight - 2 * GLOW_ROOM
   })
   $effect(() => {
     if (target) return
@@ -113,6 +115,9 @@
 
 <style>
   /* above every modal and the full profile (stacking.test.ts) */
-  .pop { position: fixed; z-index: 55; outline: none; max-height: calc(100vh - 16px); overflow: auto; }
+  /* padding: room for the card's glow (GLOW_ROOM), given back by the margin so the card sits at pos; the room
+     isn't a target, so a press there is outside the card */
+  .pop { position: fixed; z-index: 55; outline: none; max-height: calc(100vh - 16px + 52px); overflow: auto; padding: 26px; margin: -26px; pointer-events: none; }
+  .pop > :global(*) { pointer-events: auto; }
   .err { margin: 6px 0 0; padding: 6px 10px; border-radius: 8px; background: var(--bg-3); color: var(--text-2); font-size: 12px; max-width: 300px; }
 </style>

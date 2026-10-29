@@ -205,7 +205,7 @@ describe('ProfileCard', () => {
   })
 
   it('your own card (quick and full) has Edit profile; it closes the card and the full profile and asks for Settings → Profile', () => {
-    const edit = (el: HTMLElement) => [...el.querySelectorAll('button')].find((b) => b.textContent === 'Edit profile')
+    const edit = (el: HTMLElement) => [...el.querySelectorAll('button')].find((b) => b.textContent?.trim() === 'Edit profile')
     expect(edit(show())).toBeUndefined() // someone else's
     unmount(cmp!)
     cmp = undefined
@@ -222,6 +222,38 @@ describe('ProfileCard', () => {
     expect(profileUi.edit).toBe(true)
     expect(profileUi.card).toBeNull()
     expect(profileUi.full).toBeNull()
+  })
+
+  it('the bio is plain text under the name, not a panel', () => {
+    const bio = show({ card: card({ bio: 'hello there' }) }).querySelector('.bio')!
+    expect(bio.textContent).toContain('hello there')
+    expect(bio.classList.contains('panel')).toBe(false)
+  })
+
+  it('your quick card groups Edit profile, your status (coming soon) and Badges in one box', () => {
+    const el = show({ user: alex })
+    const rows = [...el.querySelectorAll<HTMLButtonElement>('.actions button')]
+    expect(rows.map((b) => b.textContent?.trim())).toEqual(['Edit profile', 'Online', 'Badges'])
+    // status choices (online, do not disturb, invisible) aren't built yet: the row is there, inert
+    expect(rows[1].getAttribute('aria-disabled')).toBe('true')
+    rows[1].click()
+    expect(profileUi.full).toBeNull()
+    // Badges opens the full profile, where the trophy case is
+    rows[2].click()
+    expect(profileUi.full).toEqual({ userId: 'U1', serverId: null })
+    // your own card needs no separate link: the avatar and Badges open the full profile
+    expect([...el.querySelectorAll('button')].some((b) => b.textContent === 'View full profile')).toBe(false)
+  })
+
+  it('your full card keeps Edit profile and status, without Badges (the trophy case is beside it)', () => {
+    const rows = [...show({ user: alex, size: 'full' }).querySelectorAll('.actions button')].map((b) => b.textContent?.trim())
+    expect(rows).toEqual(['Edit profile', 'Online'])
+  })
+
+  it("someone else's card has no actions box", () => {
+    const el = show()
+    expect(el.querySelector('.actions')).toBeNull()
+    expect([...el.querySelectorAll('button')].some((b) => b.textContent === 'View full profile')).toBe(true)
   })
 })
 
@@ -287,7 +319,8 @@ describe('ProfileCardPopover', () => {
       openCard('U2', null, anchor)
       flushSync()
       const top = parseInt((document.querySelector('.pop') as HTMLElement).style.top)
-      expect(top + 507).toBeLessThanOrEqual(window.innerHeight - 8)
+      // the measured box holds the card plus 26px of room for its glow on each side
+      expect(top + 507 - 52).toBeLessThanOrEqual(window.innerHeight - 8)
       expect(top).toBeGreaterThanOrEqual(8)
     } finally {
       h.mockRestore()

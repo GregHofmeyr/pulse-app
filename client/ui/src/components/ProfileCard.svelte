@@ -120,7 +120,7 @@
       <div class="panel skeleton" aria-hidden="true"><span></span><span></span></div>
     {:else if bioHtml}
       <!-- renderMarkdown output is DOMPurify-sanitised (the message renderer's allow-list) -->
-      <div class="panel bio" {@attach animateEmojiIn(bioHtml)}>{@html bioHtml}</div>
+      <div class="bio" {@attach animateEmojiIn(bioHtml)}>{@html bioHtml}</div>
     {/if}
     {#if stats || voiceRoom}
       <dl class="panel info">
@@ -131,11 +131,16 @@
         {#if voiceRoom}<div class="room"><Icon name="speaker" size={14} /><span>In {voiceRoom}</span></div>{/if}
       </dl>
     {/if}
-    {#if !preview && (size === 'quick' || mine)}
-      <div class="links">
-        {#if size === 'quick'}<button type="button" class="full-link" onclick={viewFull}>View full profile</button>{/if}
-        {#if mine}<button type="button" class="full-link" onclick={editProfile}>Edit profile</button>{/if}
+    {#if !preview && mine}
+      <!-- your own card: one box of actions, like Discord's; the avatar and Badges open the full profile -->
+      <div class="actions">
+        <button type="button" onclick={editProfile}><Icon name="pencil" size={16} /><span>Edit profile</span></button>
+        <!-- online / do not disturb / invisible (and invisible to chosen people) aren't built yet -->
+        <button type="button" aria-disabled="true" data-tip="Status options are coming soon"><span class="status"></span><span>Online</span><Icon name="chevronRight" size={14} /></button>
+        {#if size === 'quick'}<button type="button" onclick={viewFull}><Icon name="trophy" size={16} /><span>Badges</span></button>{/if}
       </div>
+    {:else if !preview && size === 'quick'}
+      <button type="button" class="full-link" onclick={viewFull}>View full profile</button>
     {/if}
     {#if !preview && !mine}
       <input class="msg" type="text" placeholder="Message @{name}" aria-label="Message @{name}" bind:value={draft} disabled={sending}
@@ -161,8 +166,9 @@
   /* the banner fades into the card over its bottom 40% */
   .banner::after { content: ''; position: absolute; inset: 0; background: linear-gradient(to bottom, transparent 60%, var(--card-top)); pointer-events: none; }
   .body { padding: 0 16px 16px; display: flex; flex-direction: column; gap: 10px; }
-  .ring { align-self: flex-start; margin-top: -46px; position: relative; border-radius: 50%; padding: 6px; background: var(--card-top); }
-  .ring :global(.pres) { border-color: var(--card-top); border-width: 3px; }
+  /* a thin cut-out round the avatar, and a status dot about a fifth of it (Discord's proportions) */
+  .ring { align-self: flex-start; margin-top: -44px; position: relative; border-radius: 50%; padding: 4px; background: var(--card-top); }
+  .ring :global(.pres) { width: 24%; height: 24%; right: 2px; bottom: 2px; border-color: var(--card-top); border-width: 3px; }
   .who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
   /* Name's card size is 1.15em: this makes it 20 px, bold */
   .who :global(.name) { font-weight: 700; }
@@ -171,7 +177,7 @@
   .badges { display: flex; flex-wrap: wrap; gap: 6px; }
   .badge { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--panel-top); color: var(--card-text); }
   .panel { border-radius: 10px; padding: 10px 12px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); font-size: 13px; }
-  .bio { line-height: 1.4; overflow-wrap: anywhere; }
+  .bio { font-size: 13.5px; line-height: 1.4; overflow-wrap: anywhere; }
   .bio :global(p) { margin: 0; }
   .bio :global(p + p) { margin-top: 4px; }
   .skeleton { display: flex; flex-direction: column; gap: 8px; }
@@ -182,9 +188,15 @@
   dt { color: var(--card-text-2); }
   dd { margin: 0; }
   .info .room { justify-content: flex-start; align-items: center; gap: 6px; color: var(--ok); }
-  .links { align-self: flex-start; display: flex; gap: 16px; }
   .avatar-link { border: 0; cursor: pointer; }
-  .full-link { background: none; border: 0; padding: 0; color: var(--card-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .actions { display: flex; flex-direction: column; padding: 4px; border-radius: 10px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); }
+  .actions button { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--card-text); font: inherit; font-size: 13.5px; font-weight: 600; text-align: left; cursor: pointer; }
+  .actions button + button { box-shadow: 0 -1px 0 rgb(242 243 246 / .08); }
+  .actions button:hover:not([aria-disabled='true']) { background: rgb(242 243 246 / .08); }
+  .actions button[aria-disabled='true'] { cursor: default; }
+  .actions span:not(.status) { flex: 1; }
+  .status { width: 10px; height: 10px; margin: 0 3px; border-radius: 50%; background: var(--ok); }
+  .full-link { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--card-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
   .full-link:hover { text-decoration: underline; }
   .msg { height: 36px; border-radius: 10px; border: 1px solid rgb(242 243 246 / .14); background: var(--panel-bottom); color: var(--card-text); padding: 0 12px; font: inherit; font-size: 13px; }
   .msg::placeholder { color: var(--card-text-2); opacity: .75; }
