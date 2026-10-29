@@ -2,10 +2,24 @@
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: async () => undefined }))
+// Only the profile pane asks for anything: your profile.
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: async (cmd: string) =>
+    cmd === 'get_profile'
+      ? {
+        user: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } },
+        card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null },
+        stats: { voice_seconds: 0, member_since: '2026-10-03T00:00:00Z', top_reaction: null, times_renamed: 0 },
+        badges: [],
+        name_archive: [],
+      }
+      : undefined,
+}))
 
 import Settings from './Settings.svelte'
 import { motion, setAnimateMode } from '../lib/animate.svelte'
+import { app, resetState } from '../lib/store.svelte'
+import { emptyState } from '../lib/state'
 
 let cmp: ReturnType<typeof mount> | undefined
 beforeEach(() => {
@@ -100,5 +114,79 @@ describe('Settings sections', () => {
     ;([...document.querySelectorAll('nav button')][1] as HTMLButtonElement).click()
     flushSync()
     expect(document.querySelector('input[role=switch]')).not.toBeNull()
+  })
+})
+
+describe('Settings: leaving the profile editor', () => {
+  const alex = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+  const confirmText = 'Discard your profile changes?'
+  const byText = (t: string) => [...document.querySelectorAll<HTMLButtonElement>('button')].find((b) => b.textContent?.trim() === t)!
+  const esc = () => document.activeElement!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+
+  async function openDirty(onClose = vi.fn()) {
+    resetState()
+    app.state = { ...emptyState(), me: alex, people: { U1: { user: alex, online: true, last_seen_at: null } } } as never
+    cmp = mount(Settings, { target: document.body, props: { onClose, section: 'profile' } })
+    await vi.waitFor(() => {
+      flushSync()
+      if (!document.querySelector('.preview .card')) throw new Error('not loaded')
+    })
+    const berry = [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Card theme"] [role=radio]')].find((b) => b.getAttribute('aria-label') === 'Berry')!
+    berry.click()
+    flushSync()
+    return onClose
+  }
+  const ways: [string, () => void][] = [
+    ['close button', () => document.querySelector<HTMLButtonElement>('button[aria-label="Close settings"]')!.click()],
+    ['backdrop', () => document.querySelector<HTMLElement>('[data-backdrop]')!.click()],
+    ['Escape', esc],
+    ['another section', () => byText('Chat').click()],
+  ]
+
+  it('every way out asks when dirty', async () => {
+    for (const [what, leave] of ways) {
+      const onClose = await openDirty()
+      leave()
+      flushSync()
+      expect(document.body.textContent, what).toContain(confirmText)
+      expect(onClose, what).not.toHaveBeenCalled()
+      // Keep editing stays, draft and all
+      byText('Keep editing').click()
+      flushSync()
+      expect(document.body.textContent, what).not.toContain(confirmText)
+      expect(document.querySelector('nav button[aria-current=page]')!.textContent, what).toBe('Profile')
+      expect(document.body.textContent, what).toContain('Unsaved changes')
+      // asked again, Discard leaves
+      leave()
+      flushSync()
+      byText('Discard').click()
+      flushSync()
+      if (what === 'another section') {
+        expect(onClose, what).not.toHaveBeenCalled()
+        expect(document.querySelector('nav button[aria-current=page]')!.textContent, what).toBe('Chat')
+        // nothing left to ask about: Escape now just closes
+        esc()
+        expect(onClose, what).toHaveBeenCalledTimes(1)
+      } else {
+        expect(onClose, what).toHaveBeenCalledTimes(1)
+      }
+      unmount(cmp!)
+      cmp = undefined
+      document.body.innerHTML = ''
+    }
+  })
+
+  it('a clean profile pane leaves without asking', async () => {
+    resetState()
+    app.state = { ...emptyState(), me: alex } as never
+    const onClose = vi.fn()
+    cmp = mount(Settings, { target: document.body, props: { onClose, section: 'profile' } })
+    await vi.waitFor(() => {
+      flushSync()
+      if (!document.querySelector('.preview .card')) throw new Error('not loaded')
+    })
+    esc()
+    expect(onClose).toHaveBeenCalledTimes(1)
+    expect(document.body.textContent).not.toContain(confirmText)
   })
 })

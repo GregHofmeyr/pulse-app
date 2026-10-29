@@ -1,3 +1,7 @@
+<script lang="ts" module>
+  export type Section = 'profile' | 'appearance' | 'voice' | 'keybinds' | 'chat' | 'advanced'
+</script>
+
 <script lang="ts">
   import { onMount } from 'svelte'
   import Icon from './Icon.svelte'
@@ -7,8 +11,7 @@
   import ChatSettings from './ChatSettings.svelte'
   import AdvancedSettings from './AdvancedSettings.svelte'
   import AppearanceSettings from './AppearanceSettings.svelte'
-
-  type Section = 'profile' | 'appearance' | 'voice' | 'keybinds' | 'chat' | 'advanced'
+  import ProfileSettings from './ProfileSettings.svelte'
   let { onClose, section = 'voice' }: { onClose: () => void; section?: Section } = $props()
 
   let current = $state<Section>('voice')
@@ -21,22 +24,47 @@
     { key: 'chat', label: 'Chat' },
     { key: 'advanced', label: 'Advanced' },
   ]
+
+  // Unsaved profile changes: every way out (close, backdrop, Escape, another section) asks first.
+  let profileDirty = $state(false)
+  let leaving = $state<(() => void) | null>(null)
+  function leave(then: () => void) {
+    if (current === 'profile' && profileDirty) leaving = then
+    else then()
+  }
+  const close = () => leave(onClose)
+  const go = (s: Section) => s !== current && leave(() => (current = s))
+  // Escape while asking means "Keep editing".
+  const escape = () => (leaving ? (leaving = null) : close())
+  function discard() {
+    const then = leaving
+    leaving = null
+    profileDirty = false
+    then?.()
+  }
+  const focusOnShow = (el: HTMLElement) => el.focus()
 </script>
 
 <div class="overlay">
-<div class="backdrop" role="presentation" data-backdrop onclick={onClose}></div>
-<div class="modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1" use:modal={onClose}>
+<div class="backdrop" role="presentation" data-backdrop onclick={close}></div>
+<div class="modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1" use:modal={escape}>
   <nav aria-label="Settings sections">
     <h1>Settings</h1>
     {#each sections as s}
       <button class:on={current === s.key} aria-current={current === s.key ? 'page' : undefined}
-        onclick={() => (current = s.key)}>{s.label}</button>
+        onclick={() => go(s.key)}>{s.label}</button>
     {/each}
   </nav>
   <div class="content">
-    <button class="close" aria-label="Close settings" onclick={onClose}><Icon name="x" size={16} /></button>
-    <!-- a placeholder until the profile editor is built -->
-    {#if current === 'profile'}<section class="settings-pane"><h2>Profile</h2></section>
+    <button class="close" aria-label="Close settings" onclick={close}><Icon name="x" size={16} /></button>
+    {#if leaving}
+      <div class="confirm" role="alert">
+        <span>Discard your profile changes?</span>
+        <button type="button" {@attach focusOnShow} onclick={() => (leaving = null)}>Keep editing</button>
+        <button type="button" class="danger" onclick={discard}>Discard</button>
+      </div>
+    {/if}
+    {#if current === 'profile'}<ProfileSettings bind:dirty={profileDirty} />
     {:else if current === 'appearance'}<AppearanceSettings />
     {:else if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else}<AdvancedSettings />{/if}
   </div>
@@ -54,6 +82,10 @@
   nav button:hover { background: var(--bg-2); color: var(--text); }
   nav button.on { background: var(--bg-3); color: var(--text); }
   .content { position: relative; flex: 1; min-width: 0; overflow-y: auto; padding: 28px 32px; }
+  .confirm { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 48px 16px 0; padding: 10px 14px; border-radius: 12px; background: var(--bg-3); border: 1px solid var(--warn); font-weight: 600; }
+  .confirm span { margin-right: auto; }
+  .confirm button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-weight: 600; }
+  .confirm button.danger { border-color: transparent; background: var(--danger); color: #fff; }
   .close { position: absolute; top: 20px; right: 20px; width: 36px; height: 36px; border: 1px solid var(--bg-4); border-radius: 50%; background: transparent; color: var(--text-2); display: grid; place-items: center; z-index: 1; }
   @media (max-width: 640px) {
     .modal { flex-direction: column; }

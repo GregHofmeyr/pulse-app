@@ -5,15 +5,19 @@
   import { nameCss, resolveNameStyle } from '../lib/nameStyle'
   import { openCard } from '../lib/profileCard.svelte'
 
-  let { userId, serverId, text, interactive = true, size = 'normal' }: {
+  import type { User } from '../lib/protocol/User'
+
+  let { userId, serverId, text, interactive = true, size = 'normal', user }: {
     userId: string
     serverId: string | null
     text?: string
     interactive?: boolean
     size?: 'normal' | 'card'
+    /** Style the name as this user instead of the stored one (the profile editor's preview). */
+    user?: User
   } = $props()
 
-  const css = $derived(nameCss(resolveNameStyle(userOf(app.state, userId), { roleColor: roleColorFor(app.state, serverId, userId), showStyles: appearance.showNameStyles })))
+  const css = $derived(nameCss(resolveNameStyle(user ?? userOf(app.state, userId), { roleColor: roleColorFor(app.state, serverId, userId), showStyles: appearance.showNameStyles })))
   const label = $derived(text ?? displayName(app.state, serverId, userId))
 </script>
 

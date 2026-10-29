@@ -11,7 +11,7 @@
   import VoicePanel from '../components/VoicePanel.svelte'
   import TextChannel from '../components/TextChannel.svelte'
   import ClipsChannel from '../components/ClipsChannel.svelte'
-  import Settings from '../components/Settings.svelte'
+  import Settings, { type Section } from '../components/Settings.svelte'
   import FullProfile from '../components/FullProfile.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
   import { clickOutside } from '../lib/actions'
@@ -56,7 +56,7 @@
   // The animation freeze while you stream; here so it outlives the voice panel. Returning the stop
   // is what ends it with the shell: a `{ followLiveFreeze() }` body would leak it.
   $effect(() => followLiveFreeze())
-  let settingsSection = $state<'voice' | 'keybinds'>('voice')
+  let settingsSection = $state<Section>('voice')
   // Nothing is bound by default: until they've chosen, nudge people to pick their keys (Windows;
   // on Linux the compositor binds them).
   let pickKeys = $state(false)
@@ -69,7 +69,7 @@
       /* the nudge is optional */
     }
   }
-  function openSettings(section: 'voice' | 'keybinds' = 'voice') {
+  function openSettings(section: Section = 'voice') {
     settingsSection = section
     settingsOpen = true
   }

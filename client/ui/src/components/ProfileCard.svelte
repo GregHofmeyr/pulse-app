@@ -1,6 +1,7 @@
 <script lang="ts">
   // A person's card (spec §3.1). Pure: everything comes from props, except names and avatars (which
-  // read the store, so they follow a ProfileUpdated) and where they are in voice. Used by the quick
+  // read the store, so they follow a ProfileUpdated, except in the preview, which draws `user`) and
+  // where they are in voice. Used by the quick
   // card popover, the full profile and the editor's preview.
   import type { Attachment } from 'svelte/attachments'
   import Avatar from './Avatar.svelte'
@@ -95,9 +96,9 @@
     {#if banner}<img src={mediaUrl(bannerStill ?? banner)} alt="" draggable="false" {@attach wireBanner} />{/if}
   </div>
   <div class="body">
-    <span class="ring"><Avatar id={user.id} name={user.username} size={80} place="card" {online} /></span>
+    <span class="ring"><Avatar id={user.id} name={user.username} size={80} place="card" {online} user={preview ? user : undefined} /></span>
     <div class="who">
-      <Name userId={user.id} {serverId} text={name} interactive={false} size="card" />
+      <Name userId={user.id} {serverId} text={name} interactive={false} size="card" user={preview ? user : undefined} />
       <div class="handle">{user.username}{card.pronouns ? ` · ${card.pronouns}` : ''}</div>
     </div>
     {#if badges.length}

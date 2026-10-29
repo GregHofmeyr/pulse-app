@@ -7,7 +7,9 @@
   import { openCard } from '../lib/profileCard.svelte'
   import type { Attachment } from 'svelte/attachments'
 
-  let { id, name, size = 30, online = null, place = 'list', interactive = false, serverId = null, hovered }: {
+  import type { User } from '../lib/protocol/User'
+
+  let { id, name, size = 30, online = null, place = 'list', interactive = false, serverId = null, hovered, user: shown }: {
     id: string
     name: string
     size?: number
@@ -17,10 +19,12 @@
     serverId?: string | null
     /** In a list: whether the pointer is over this person's row (the avatar animates then too). */
     hovered?: () => boolean
+    /** Draw this user instead of the stored one (the profile editor's preview). */
+    user?: User
   } = $props()
 
   // Read from the store so a ProfileUpdated swaps the picture live.
-  const user = $derived(userOf(app.state, id))
+  const user = $derived(shown ?? userOf(app.state, id))
   const hash = $derived(user?.avatar_hash ?? null)
   const still = $derived(user?.avatar_still ?? null)
   let over = $state(false)
