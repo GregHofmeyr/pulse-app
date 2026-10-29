@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# Self-test for deploy.sh's helpers (`just deploy-check` and CI run it). Needs nothing but bash.
+# Self-test for deploy.sh's and verify-image.sh's helpers (`just deploy-check` and CI run it). Needs bash and jq;
+# docker, curl and gh are stubbed, nothing touches the network.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 # shellcheck source=/dev/null
@@ -393,5 +394,173 @@ else
   failed=1
 fi
 unset -f docker
+
+# --- image provenance: deploy.sh TAG DIGEST|--unverified, and deploy/verify-image.sh ---
+d64=sha256:$(printf 'a%.0s' {1..64})
+other64=sha256:$(printf 'b%.0s' {1..64})
+# check_args TAG PIN
+expect_args() {
+  local want=$1 got; shift
+  if check_args "$@" 2>/dev/null; then got=ok; else got=refused; fi
+  if [ "$got" = "$want" ]; then echo "ok   args $want: $*"; else echo "FAIL args want $want, got $got: $*"; failed=1; fi
+}
+expect_args ok latest "$d64"
+expect_args ok a5959d1 --unverified
+expect_args refused latest
+expect_args refused latest ''
+expect_args refused '' "$d64"
+expect_args refused latest "${d64:0:70}"
+expect_args refused latest "${d64}0"
+expect_args refused latest "SHA256:${d64#sha256:}"
+expect_args refused latest "sha256:$(printf 'A%.0s' {1..64})"
+expect_args refused latest "$d64;reboot"
+expect_args refused latest unverified
+expect_args refused 'latest;reboot' "$d64"
+expect_args refused '-latest' "$d64"
+# deploy.sh itself stops on bad arguments before it goes near /srv/pulse (not present here: a cd would say so)
+for args in "latest" "latest sha256:abc" "x;y --unverified"; do
+  # shellcheck disable=SC2086 # split on purpose
+  if out=$(bash "$here/deploy.sh" $args 2>&1); then
+    echo "FAIL deploy.sh accepted: $args"; failed=1
+  elif [[ $out == *"No such file"* || $out == *"/srv/pulse"* ]]; then
+    echo "FAIL deploy.sh got past its argument check: $args: $out"; failed=1
+  else
+    echo "ok   deploy.sh refuses before touching anything: $args"
+  fi
+done
+
+# pull_image with docker stubbed: pull_rc is the pull's status, inspect_out the RepoDigests docker reports.
+# shellcheck disable=SC2329 # invoked by pull_image
+docker() {
+  echo "PULSE_IMAGE=${PULSE_IMAGE:-} $*" >>"$tmp/docker.log"
+  case $1 in
+    compose) return "$pull_rc" ;;
+    image) printf '%s\n' "${inspect_out[@]}" ;;
+    tag) return 0 ;;
+  esac
+}
+# expect_pull ok|refused WANT-OUTPUT DESCRIPTION TAG PIN
+expect_pull() {
+  local want=$1 want_out=$2 desc=$3 got out
+  shift 3
+  : >"$tmp/docker.log"
+  if out=$(pull_image "$@" 2>/dev/null); then got=ok; else got=refused; fi
+  if [ "$got" = "$want" ] && [ "$out" = "$want_out" ]; then
+    echo "ok   pull $want: $desc"
+  else
+    echo "FAIL pull $desc: want $want '$want_out', got $got '$out'"; failed=1
+  fi
+}
+# shellcheck disable=SC2154 # repo comes from the sourced deploy.sh
+pull_rc=0 inspect_out=("$repo@$other64" "$repo@$d64")
+expect_pull ok "$repo:abc1234@$d64" "a verified digest is pulled and pinned exactly" abc1234 "$d64"
+if grep -qx "PULSE_IMAGE=$repo@$d64 compose pull -q" "$tmp/docker.log" &&
+  grep -qx "PULSE_IMAGE= tag $repo@$d64 $repo:abc1234" "$tmp/docker.log"; then
+  echo "ok   pull by digest (never the tag), then tagged locally for prune_old_images"
+else
+  echo "FAIL pull by digest: docker saw $(tr '\n' '|' <"$tmp/docker.log")"; failed=1
+fi
+inspect_out=("$repo@$other64")
+expect_pull refused "" "the pulled image isn't known by the verified digest" abc1234 "$d64"
+if grep -q ' tag ' "$tmp/docker.log"; then echo "FAIL a mismatched image was tagged"; failed=1; fi
+pull_rc=1 inspect_out=("$repo@$d64")
+expect_pull refused "" "a failed pull doesn't fall through to a local copy (digest)" abc1234 "$d64"
+expect_pull refused "" "a failed pull doesn't fall through to a local copy (--unverified)" a5959d1 --unverified
+pull_rc=0 inspect_out=("$repo@$other64" "other/repo@$d64")
+expect_pull ok "$repo:a5959d1@$other64" "--unverified pins whatever the tag resolves to" a5959d1 --unverified
+if grep -qx "PULSE_IMAGE=$repo:a5959d1 compose pull -q" "$tmp/docker.log"; then
+  echo "ok   --unverified pulls the tag"
+else
+  echo "FAIL --unverified pull: docker saw $(tr '\n' '|' <"$tmp/docker.log")"; failed=1
+fi
+inspect_out=()
+expect_pull refused "" "--unverified without a registry digest" a5959d1 --unverified
+unset -f docker
+
+# verify-image.sh end to end with curl and gh stubbed (STUB_* below steer them): stdout must be exactly the digest
+# on success and empty on any refusal, gh must be asked for this repo's release-server.yml, and nothing ssh's.
+bin=$tmp/bin
+mkdir -p "$bin"
+cat >"$bin/curl" <<'EOF'
+#!/usr/bin/env bash
+url=${*: -1} head=0
+for a in "$@"; do [ "$a" = -fsSI ] && head=1; done
+echo "curl $url" >>"$STUB_LOG"
+case $url in
+  */token*) echo '{"token":"t"}' ;;
+  */manifests/*)
+    if [ "$head" = 1 ]; then
+      [ -n "$STUB_DIGEST" ] || exit 22
+      printf 'HTTP/2 200\r\nDocker-Content-Digest: %s\r\n\r\n' "$STUB_DIGEST"
+    elif [ "${url##*/}" = "$STUB_DIGEST" ]; then
+      printf '{"manifests":[{"digest":"sha256:m1","platform":{"os":"linux"}},{"digest":"sha256:att","platform":{"os":"unknown"}},{"digest":"sha256:m2","platform":{"os":"linux"}}]}'
+    else
+      printf '{"config":{"digest":"sha256:cfg-%s"}}' "${url##*:}"
+    fi ;;
+  */blobs/sha256:cfg-m2) printf '{"config":{"Labels":{"org.opencontainers.image.revision":"%s"}}}' "${STUB_REV2:-$STUB_REV}" ;;
+  */blobs/*) printf '{"config":{"Labels":{"org.opencontainers.image.revision":"%s"}}}' "$STUB_REV" ;;
+  *) exit 22 ;;
+esac
+EOF
+cat >"$bin/gh" <<'EOF'
+#!/usr/bin/env bash
+echo "gh $*" >>"$STUB_LOG"
+echo "gh verification output" >&2
+exit "$STUB_GH_RC"
+EOF
+# shellcheck disable=SC2016 # expanded by the stub, not here
+printf '#!/bin/sh\necho "ssh $*" >>"$STUB_LOG"; exit 1\n' >"$bin/ssh"
+chmod +x "$bin/curl" "$bin/gh" "$bin/ssh"
+export STUB_LOG=$tmp/stub.log
+# expect_verify ok|refused DESCRIPTION TAG [STUB settings as NAME=VALUE...]: on ok, stdout must be the digest
+expect_verify() {
+  local want=$1 desc=$2 tag=$3 got out
+  shift 3
+  : >"$STUB_LOG"
+  if out=$(env PATH="$bin:$PATH" STUB_DIGEST="$d64" STUB_GH_RC=0 STUB_REV= STUB_REV2= "$@" \
+    bash "$here/verify-image.sh" "$tag" 2>"$tmp/verify.err"); then got=ok; else got=refused; fi
+  if [ "$got" != "$want" ]; then
+    echo "FAIL verify $desc: want $want, got $got: $(tr '\n' ' ' <"$tmp/verify.err")"; failed=1
+  elif [ "$want" = ok ] && [ "$out" != "$d64" ]; then
+    echo "FAIL verify $desc: stdout '$out', want only the digest"; failed=1
+  elif [ "$want" = refused ] && { [ -n "$out" ] || ! grep -q '^REFUSED: ' "$tmp/verify.err"; }; then
+    echo "FAIL verify $desc: a refusal must print nothing on stdout and say REFUSED; stdout '$out'"; failed=1
+  elif grep -q '^ssh' "$STUB_LOG"; then
+    echo "FAIL verify $desc: ran ssh"; failed=1
+  else
+    echo "ok   verify $want: $desc"
+  fi
+}
+gh_ok="gh attestation verify oci://$repo@$d64 --repo GregHofmeyr/pulse-app --signer-workflow GregHofmeyr/pulse-app/.github/workflows/release-server.yml --deny-self-hosted-runners"
+expect_verify ok "an attested tag gives its digest" latest
+if grep -qxF "$gh_ok" "$STUB_LOG"; then
+  echo "ok   verify asks gh for this digest, this repo, release-server.yml, GitHub-hosted runners"
+else
+  echo "FAIL verify called gh as: $(grep '^gh' "$STUB_LOG")"; failed=1
+fi
+expect_verify refused "no attestation (gh refuses)" latest STUB_GH_RC=1
+if grep -q 'just deploy-unverified latest' "$tmp/verify.err"; then
+  echo "ok   the refusal names the escape hatch"
+else
+  echo "FAIL the refusal doesn't name just deploy-unverified: $(cat "$tmp/verify.err")"; failed=1
+fi
+expect_verify refused "a tag the registry doesn't have" f15d174 STUB_DIGEST=
+if grep -q '^gh' "$STUB_LOG"; then echo "FAIL gh ran for a missing tag"; failed=1; fi
+expect_verify refused "a registry digest that isn't sha256 hex" latest "STUB_DIGEST=sha256:zz"
+expect_verify refused "not a tag" 'x;y'
+if [ -s "$STUB_LOG" ]; then echo "FAIL a bad tag reached the network: $(cat "$STUB_LOG")"; failed=1; fi
+expect_verify ok "a sha7 tag whose images carry that commit" abc1234 STUB_REV=abc1234def
+expect_verify refused "a sha7 tag whose images carry another commit" abc1234 STUB_REV=0000000def
+expect_verify refused "a sha7 tag with one platform from another commit" abc1234 STUB_REV=abc1234def STUB_REV2=0000000def
+expect_verify refused "a sha7 tag with no commit label" abc1234
+# the workflow verify-image.sh trusts is the one that attests
+release=$root/.github/workflows/release-server.yml
+# shellcheck disable=SC2016 # a literal workflow expression
+if [ "$(grep -c 'uses: actions/attest-build-provenance@[0-9a-f]\{40\} ' "$release")" -ge 2 ] &&
+  grep -q 'subject-digest: ${{ steps.merge.outputs.digest }}' "$release"; then
+  echo "ok   release-server.yml attests the merged index (and the per-arch builds), action pinned by SHA"
+else
+  echo "FAIL release-server.yml no longer attests what verify-image.sh checks"; failed=1
+fi
 
 exit "$failed"

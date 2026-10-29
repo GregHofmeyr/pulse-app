@@ -133,19 +133,42 @@ or call that is already open stays up until it drops. To close those at once, re
 
 - Every push to `main` that passes CI builds `ghcr.io/greghofmeyr/pulse-server:<7-char commit>` and `:latest`
   (`.github/workflows/release-server.yml`, about ten minutes).
-- `just deploy` runs `latest`; `just deploy <sha7>` runs a specific build. Each deploy takes a backup first,
-  pulls (a mistyped sha fails here and changes nothing), pins the image (below), restarts in a few seconds, and prints the commit
-  that's now live. Right after a merge, `latest` is still the previous build until the image workflow
+- `just deploy` runs `latest`; `just deploy <sha7>` runs a specific build. Each deploy first checks the image's build
+  provenance on this machine (below; a mistyped sha or an unattested image stops here, before anything is copied or
+  ssh'd), then takes a backup, pulls exactly the verified digest, pins it (below), restarts in a few seconds, and prints
+  the commit that's now live. Right after a merge, `latest` is still the previous build until the image workflow
   finishes (about ten minutes): check the printed commit. Clients reconnect on their own and voice keeps going.
 - One-time, for the deploy that first adds `0006_livekit_grants`: deploy while nobody's in a call, or expect
   them to rejoin once. Calls connected before it carry no grant id, so the next time LiveKit fully reconnects one
   (a network change or a long drop, not a quick resume), or a token fetched just before the deploy is used, the
   server removes that participant. The app shows the call as disconnected and does not rejoin by itself (it never
   does after being removed); clicking the channel again joins normally.
-- Images are pinned by digest, so what runs is exactly what was pulled, even if a tag moves. `deploy.sh` looks up
-  the digest of the pulled `pulse-server:<tag>` and writes `PULSE_IMAGE=…:<tag>@sha256:…` into `/srv/pulse/.env`
-  (`PULSE_TAG` stays, for humans; an old `.env` without `PULSE_IMAGE` just gets the line appended). It prints
-  `pinned: …` and the digest on the final `healthy:` line. LiveKit and Caddy are pinned in `compose.yml`.
+- **Build provenance.** `release-server.yml` signs a GitHub artifact attestation (SLSA build provenance, via
+  Sigstore) for the multi-arch image it publishes, and for each architecture's build. Before deploying,
+  `just deploy <tag>` runs `deploy/verify-image.sh`, which resolves the tag to its index digest straight from the
+  registry (nothing is pulled) and runs
+  `gh attestation verify oci://ghcr.io/greghofmeyr/pulse-server@<digest> --repo GregHofmeyr/pulse-app
+  --signer-workflow GregHofmeyr/pulse-app/.github/workflows/release-server.yml --deny-self-hosted-runners`.
+  For a `<sha7>` tag it also checks that every platform image is labelled with that commit. Anything else
+  stops the deploy with `REFUSED: …` before the server is contacted. `just verify-image <tag>` runs the same
+  check alone (it prints the verified digest). It needs `curl`, `jq` and a logged-in `gh` (`gh auth login`).
+- Images are pinned by digest, so what runs is exactly what was verified, even if a tag moves. `just deploy` passes
+  the verified digest to the server (`deploy.sh <tag> sha256:…`), which pulls `pulse-server@sha256:…` (never the
+  tag), tags it locally as `<tag>`, and writes `PULSE_IMAGE=…:<tag>@sha256:…` into `/srv/pulse/.env` (`PULSE_TAG`
+  stays, for humans; an old `.env` without `PULSE_IMAGE` just gets the line appended). It prints `pinned: …`, and the
+  final line reads `healthy: <tag> (commit …, sha256:…, provenance verified)`. LiveKit and Caddy are pinned in
+  `compose.yml`.
+- **Images without provenance.** Everything built before attestations were added has none, so `just deploy <old sha7>`
+  refuses it. To roll back to one of those on purpose: `just deploy-unverified <sha7>`. It prints a loud warning,
+  skips the provenance check and lets the server pull the tag and pin whatever digest it resolves to (the old
+  behaviour, `deploy.sh <tag> --unverified`); the `healthy:` line then says `UNVERIFIED provenance`. Use it only
+  for those old builds: a new build that fails the check is exactly what the check is for. Only the last commit of each
+  push to `main` has an image: list them with
+  `curl -s "https://ghcr.io/v2/greghofmeyr/pulse-server/tags/list" -H "Authorization: Bearer $(curl -s 'https://ghcr.io/token?scope=repository:greghofmeyr/pulse-server:pull' | jq -r .token)" | jq -r '.tags[]'`.
+- First deploy after provenance was added: wait for the first `release-server` run after that merge to finish (its
+  summary lists the attestations). That build is the first attested one: `just deploy` (or `just deploy <its sha7>`)
+  then verifies. Until it has finished, `latest` is still an unattested build and `just deploy` refuses it; don't reach
+  for `deploy-unverified` to get past that, wait.
 - Build inputs are pinned too. When bumping the Rust version, change it in three places together: `rust-toolchain.toml`
   (CI, the Windows release and local builds), the `rust:<version>-bookworm@sha256:…` line in `server.Dockerfile`, and, if
   the `tauri` crate's minor changed, `@tauri-apps/cli@<version>` in `release-windows.yml`. Dependabot opens PRs for
@@ -171,7 +194,8 @@ or call that is already open stays up until it drops. To close those at once, re
   only `:<sha7>`. `:latest` moves only on a `main` build (after CI passes on `main`, or a manual run on `main`).
   Deploy a branch build as `just deploy <sha7>`: a bare `just deploy` pulls `:latest`, which is `main`. Merge
   that branch before anything else lands on `main`, or the next deploy of `main` drops it.
-- Roll back: `just deploy <previous sha7>`. If a database migration went wrong, also `just restore <backup>`
+- Roll back: `just deploy <previous sha7>` (`just deploy-unverified <previous sha7>` for a build from before
+  provenance, see above). If a database migration went wrong, also `just restore <backup>`
   (section 8) with the backup the deploy made.
 - A deploy that ran a new migration can't be rolled back by image alone: an older image refuses to start
   against a database migrated past what it knows (e.g. `0004_message_nonce`). Roll back with

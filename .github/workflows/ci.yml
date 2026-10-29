@@ -59,6 +59,8 @@ jobs:
               # deploy-selftest.sh checks the LiveKit pins in these agree with deploy/compose.yml
               - 'docker-compose.yml'
               - '.github/workflows/release-windows.yml'
+              # and that this one still attests what deploy/verify-image.sh checks
+              - '.github/workflows/release-server.yml'
               # the Windows installer's ffmpeg fetch (release-windows.yml) and its self-test
               - 'scripts/fetch-ffmpeg*.sh'
               - '.github/workflows/ci.yml'

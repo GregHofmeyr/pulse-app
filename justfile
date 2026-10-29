@@ -114,13 +114,45 @@ disk:
     if [ "$used" -ge 80 ]; then echo "WARNING: server disk ${used}% full" >&2; exit 1; fi
     du -sh target ../pulse-app-*/target 2>/dev/null || true
 
-# back up, then run image TAG (a 7-char commit or `latest`); prints the commit that's live
-deploy tag="latest":
+# back up, then run image TAG (a 7-char commit or `latest`) once its build provenance checks out; prints the commit that's live
+deploy $tag="latest":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Checked here, before anything is copied or ssh'd: a refusal leaves the server untouched. The server then pulls
+    # and pins exactly this digest; it never looks the tag up again.
+    digest=$(bash deploy/verify-image.sh "$tag")
+    just _ship "$tag" "$digest"
+
+# check TAG's build provenance without deploying: prints the verified digest; never contacts the server
+verify-image $tag="latest":
+    bash deploy/verify-image.sh "$tag"
+
+# run image TAG WITHOUT checking its build provenance: only to roll back to a build from before provenance existed
+deploy-unverified $tag:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    cat >&2 <<EOF
+    ########################################################################################################
+    WARNING: deploying pulse-server:$tag WITHOUT checking its build provenance.
+    Nothing proves this image was built by release-server.yml from this repo. Use this only to roll back
+    to a build from before provenance existed (deploy/README.md, section 7); anything newer: just deploy $tag
+    ########################################################################################################
+    EOF
+    just _ship "$tag" --unverified
+
+# the shared second half of deploy and deploy-unverified: PIN is a verified sha256 digest or --unverified
+_ship $tag $pin:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # both end up in a remote command line: check them here too
+    VERIFY_IMAGE_LIB=1 source deploy/verify-image.sh
+    is_tag "$tag" || { echo "'$tag' is not an image tag" >&2; exit 1; }
+    [ "$pin" = --unverified ] || is_digest "$pin" || { echo "'$pin' is not a sha256 digest" >&2; exit 1; }
     # Checks the server's .env (LIVEKIT_NODE_IP, PULSE_TOTP_KEY) with this deploy.sh before anything is copied, so a
     # refusal leaves /srv/pulse exactly as it was.
     ssh {{prod}} 'bash -s -- --check-env' < deploy/deploy.sh
     scp deploy/compose.yml deploy/Caddyfile deploy/livekit.yaml deploy/backup.sh deploy/deploy.sh {{prod}}:/srv/pulse/
-    ssh {{prod}} '/srv/pulse/deploy.sh {{tag}}'
+    ssh {{prod}} "/srv/pulse/deploy.sh $tag $pin"
 
 # outside-in checks of the live server
 smoke:

@@ -1,7 +1,8 @@
 name: release-server
 
 # After ci passes on main: build the server image natively for amd64 + arm64 (no QEMU) and
-# publish ghcr.io/greghofmeyr/pulse-server:<sha7> and :latest.
+# publish ghcr.io/greghofmeyr/pulse-server:<sha7> and :latest, each with a signed build-provenance attestation that
+# `just deploy` checks before it deploys anything (deploy/verify-image.sh).
 on:
   workflow_run:
     workflows: [ci]
@@ -9,9 +10,9 @@ on:
     branches: [main]
   workflow_dispatch:
 
+# Per job below: only the jobs that push and attest get packages, id-token and attestations write.
 permissions:
   contents: read
-  packages: write
 
 env:
   IMAGE: ghcr.io/greghofmeyr/pulse-server
@@ -32,6 +33,11 @@ jobs:
           - { runner: ubuntu-24.04, platform: linux/amd64, arch: amd64 }
           - { runner: ubuntu-24.04-arm, platform: linux/arm64, arch: arm64 }
     runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: read
+      packages: write # push the image and its attestation
+      id-token: write # the OIDC token Sigstore signs the attestation with
+      attestations: write # store the attestation in this repo
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
         with:
@@ -52,6 +58,15 @@ jobs:
           labels: org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha || github.sha }}
           cache-from: type=gha,scope=${{ matrix.arch }}
           cache-to: type=gha,mode=max,scope=${{ matrix.arch }}
+      # This arch's own build (its push-by-digest index). What deploys is the merged index the publish job attests;
+      # this one says where each half came from.
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          # storage records exist only for organisation-owned repositories
+          create-storage-record: false
       - run: mkdir -p /tmp/digests && touch "/tmp/digests/${DIGEST#sha256:}"
         env:
           DIGEST: ${{ steps.build.outputs.digest }}
@@ -64,6 +79,11 @@ jobs:
   publish:
     needs: build
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write # push the multi-arch index and its attestation
+      id-token: write # the OIDC token Sigstore signs the attestation with
+      attestations: write # store the attestation in this repo
     steps:
       - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
@@ -77,6 +97,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
       - name: multi-arch tags
+        id: merge
         working-directory: /tmp/digests
         env:
           SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
@@ -89,3 +110,14 @@ jobs:
           docker buildx imagetools create "${tags[@]}" \
             $(printf "$IMAGE@sha256:%s " *)
           docker buildx imagetools inspect "$IMAGE:${SHA::7}"
+          # the index digest the tags now point at: what `just deploy` resolves a tag to and verifies
+          digest=$(docker buildx imagetools inspect "$IMAGE:${SHA::7}" --format '{{json .Manifest}}' | jq -r .digest)
+          [[ $digest =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "no index digest for $IMAGE:${SHA::7}: '$digest'" >&2; exit 1; }
+          echo "digest=$digest" >>"$GITHUB_OUTPUT"
+      - uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-name: ${{ env.IMAGE }}
+          subject-digest: ${{ steps.merge.outputs.digest }}
+          push-to-registry: true
+          # storage records exist only for organisation-owned repositories
+          create-storage-record: false
