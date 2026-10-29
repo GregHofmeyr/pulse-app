@@ -9,7 +9,8 @@
 //! - `revoke` (an editor source closed) and `revoke_all` (sign-out) end tokens, and stop a
 //!   response in flight. Nothing from the request ever names a file: only the token map does.
 //! - Just `GET` and `HEAD`, one request per connection (`Connection: close`). The head is capped
-//!   at 8 KB and must arrive within 10 s; peers that aren't loopback are dropped.
+//!   at 8 KB and must arrive within 10 s; peers that aren't loopback are dropped. `Host` must be
+//!   `127.0.0.1:<port>` or `localhost:<port>` (else 421), so a DNS-rebound page can't read a video.
 //! - Ranges: `bytes=a-b`, `bytes=a-` and `bytes=-n` get a 206, one past the end a 416. Several
 //!   ranges at once (GStreamer never asks) get the whole file (200): ignoring Range is always allowed.
 
@@ -167,6 +168,7 @@ async fn accept(listener: TcpListener, inner: Weak<Inner>) {
 struct Request {
     method: String,
     target: String,
+    host: Option<String>,
     range: Option<String>,
 }
 
@@ -213,16 +215,22 @@ fn parse_head(head: &str) -> Option<Request> {
     if method.is_empty() || line.next().is_some() || !version.starts_with("HTTP/1.") {
         return None;
     }
-    let mut range = None;
+    let (mut host, mut range) = (None, None);
     for l in lines {
         let (name, value) = l.split_once(':')?;
-        if name.eq_ignore_ascii_case("range") {
+        if name.eq_ignore_ascii_case("host") {
+            // two is malformed (RFC 9112 3.2)
+            if host.replace(value.trim().to_owned()).is_some() {
+                return None;
+            }
+        } else if name.eq_ignore_ascii_case("range") {
             range = Some(value.trim().to_owned());
         }
     }
     Some(Request {
         method: method.to_owned(),
         target: target.to_owned(),
+        host,
         range,
     })
 }
@@ -238,6 +246,16 @@ async fn serve(inner: Arc<Inner>, mut conn: TcpStream) {
         // stuck or gone: no reply
         Ok(Head::Gone) | Err(_) => return,
     };
+    // DNS rebinding: a page on another name that resolves to 127.0.0.1 can reach this port, but
+    // its requests carry its own name
+    let port = conn.local_addr().map_or(0, |a| a.port());
+    match req.host.as_deref() {
+        None => return empty(&mut conn, "400 Bad Request", &[]).await,
+        Some(host) if !is_our_host(host, port) => {
+            return empty(&mut conn, "421 Misdirected Request", &[]).await;
+        }
+        Some(_) => {}
+    }
     let head_only = match req.method.as_str() {
         "GET" => false,
         "HEAD" => true,
@@ -291,6 +309,13 @@ async fn serve(inner: Arc<Inner>, mut conn: TcpStream) {
         left -= n as u64;
     }
     let _ = conn.shutdown().await;
+}
+
+/// `127.0.0.1:<port>` or `localhost:<port>`, with this server's port.
+fn is_our_host(host: &str, port: u16) -> bool {
+    host.rsplit_once(':').is_some_and(|(name, p)| {
+        (name == "127.0.0.1" || name.eq_ignore_ascii_case("localhost")) && p == port.to_string()
+    })
 }
 
 /// The file `/<token>` names, if the token is live and the webview may still load the file.
@@ -756,6 +781,42 @@ mod tests {
         let r = send(&host, raw.as_bytes()).await;
         assert_eq!(r.status, 431);
         assert!(r.body.is_empty());
+    }
+
+    /// DNS rebinding: a page on some other name that resolves to 127.0.0.1 sends its own Host.
+    #[tokio::test]
+    async fn only_a_loopback_host_with_our_port_is_served() {
+        let (_dir, _path, _v, url) = setup().await;
+        let (host, target) = split(&url);
+        let port = host.rsplit_once(':').unwrap().1.to_owned();
+        let ok = format!("localhost:{port}");
+        let r = send(
+            &host,
+            format!("GET {target} HTTP/1.1\r\nhost: {ok}\r\n\r\n").as_bytes(),
+        )
+        .await;
+        assert_eq!(r.status, 200, "{ok}");
+        for bad in [
+            format!("evil.example:{port}"),
+            "127.0.0.1:1".to_owned(),
+            "127.0.0.1".to_owned(),
+            format!("127.0.0.2:{port}"),
+            format!("[::1]:{port}"),
+            format!("127.0.0.1:{port}.evil.example"),
+            String::new(),
+        ] {
+            let raw = format!("GET {target} HTTP/1.1\r\nHost: {bad}\r\n\r\n");
+            let r = send(&host, raw.as_bytes()).await;
+            assert_eq!(r.status, 421, "{bad:?}");
+            assert!(r.body.is_empty(), "{bad:?}");
+        }
+        // none at all, or two
+        for raw in [
+            format!("GET {target} HTTP/1.1\r\n\r\n"),
+            format!("GET {target} HTTP/1.1\r\nHost: {host}\r\nHost: {host}\r\n\r\n"),
+        ] {
+            assert_eq!(send(&host, raw.as_bytes()).await.status, 400, "{raw:?}");
+        }
     }
 
     #[tokio::test]
