@@ -28,8 +28,9 @@
 {/if}
 
 <style>
-  /* The font scale evens out the fonts; the line height stays at the parent's, so rows keep their height. */
-  .name { display: inline-block; font-size: calc(1em * var(--name-scale, 1)); line-height: calc(1.4em / var(--name-scale, 1)); vertical-align: bottom; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  /* The font scale evens out the fonts; the line height stays at the parent's, so rows keep their height.
+     fit-content: a stretching parent (a flex column) would widen the box, and a gradient spans the box, not the text. */
+  .name { display: inline-block; width: fit-content; font-size: calc(1em * var(--name-scale, 1)); line-height: calc(1.4em / var(--name-scale, 1)); vertical-align: bottom; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   /* line height in the card's own em: still the parent's 1.4 */
   .name.card { font-size: calc(1.15em * var(--name-scale, 1)); line-height: calc(1.4em / (1.15 * var(--name-scale, 1))); }
   button.name { background: none; border: 0; padding: 0; margin: 0; font-family: inherit; font-weight: inherit; color: inherit; cursor: pointer; text-align: left; }

@@ -1,5 +1,8 @@
 // @vitest-environment jsdom
 import { flushSync, mount, unmount } from 'svelte'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { compile } from 'svelte/compiler'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import Name from './Name.svelte'
 import { app } from '../lib/store.svelte'
@@ -85,5 +88,19 @@ describe('Name', () => {
     setup({ font: null, colors: [] })
     expect(show({ interactive: false, text: 'Sammy' }).tagName).toBe('SPAN')
     expect(document.querySelector('.name')!.textContent).toBe('Sammy')
+  })
+
+  it('hugs its text even in a stretching parent, so a gradient spans the name itself', () => {
+    // A flex column (the card, the editor preview, the account panel) stretches its children: a
+    // stretched name paints its gradient across the whole row and shows only the first colour.
+    setup({ font: null, colors: ['#ff0000', '#0000ff'] })
+    const el = show({ interactive: false, text: 'Sammy' })
+    const hash = [...el.classList].find((c) => c.startsWith('svelte-'))!
+    const src = readFileSync(resolve(__dirname, 'Name.svelte'), 'utf8')
+    const style = document.createElement('style')
+    style.textContent = compile(src, { filename: 'Name.svelte', css: 'external', cssHash: () => hash }).css!.code
+    document.head.append(style)
+    expect(getComputedStyle(el).width).toBe('fit-content')
+    style.remove()
   })
 })
