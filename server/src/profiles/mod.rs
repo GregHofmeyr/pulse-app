@@ -31,13 +31,15 @@ struct ProfileRow {
 /// servers (plan reconciliation 16).
 pub async fn load_profile(db: &SqlitePool, user: UserId) -> AppResult<Option<Profile>> {
     let id = user.to_string();
+    // One read transaction, so the card, stats, badges and archive are a single snapshot.
+    let mut tx = db.begin().await?;
     let Some(row) = sqlx::query_as::<_, ProfileRow>(&format!(
         "SELECT {USER_COLS}, u.banner_hash, bn.still_hash AS banner_still, u.theme_top, \
          u.theme_bottom, u.pronouns, u.bio, u.created_at \
          FROM users u {USER_JOIN} LEFT JOIN media bn ON bn.hash = u.banner_hash WHERE u.id = ?"
     ))
     .bind(&id)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await?
     else {
         return Ok(None);
@@ -49,7 +51,7 @@ pub async fn load_profile(db: &SqlitePool, user: UserId) -> AppResult<Option<Pro
     )
     .bind(now())
     .bind(&id)
-    .fetch_one(db)
+    .fetch_one(&mut *tx)
     .await?;
 
     let top_reaction: Option<String> = sqlx::query_scalar(
@@ -58,7 +60,7 @@ pub async fn load_profile(db: &SqlitePool, user: UserId) -> AppResult<Option<Pro
          GROUP BY r.emoji ORDER BY COUNT(*) DESC, MAX(r.created_at) DESC LIMIT 1",
     )
     .bind(&id)
-    .fetch_optional(db)
+    .fetch_optional(&mut *tx)
     .await?;
 
     let archive: Vec<(String, Option<String>, String, String)> = sqlx::query_as(
@@ -66,7 +68,7 @@ pub async fn load_profile(db: &SqlitePool, user: UserId) -> AppResult<Option<Pro
          WHERE target_user_id = ? ORDER BY changed_at DESC, id DESC",
     )
     .bind(&id)
-    .fetch_all(db)
+    .fetch_all(&mut *tx)
     .await?;
     let times_renamed = archive.len() as u32;
     let name_archive = archive
@@ -88,7 +90,7 @@ pub async fn load_profile(db: &SqlitePool, user: UserId) -> AppResult<Option<Pro
          ORDER BY earned_at, badge_key",
     )
     .bind(&id)
-    .fetch_all(db)
+    .fetch_all(&mut *tx)
     .await?
     .into_iter()
     .map(|(key, earned_at, first_earner)| Badge {
@@ -97,6 +99,7 @@ pub async fn load_profile(db: &SqlitePool, user: UserId) -> AppResult<Option<Pro
         first_earner,
     })
     .collect();
+    tx.commit().await?;
 
     Ok(Some(Profile {
         user: row.user.into_user()?,
