@@ -73,12 +73,15 @@ check_unverified_args() {
 
 # provenance_status SHA7 [GIT_DIR]: "predates" when that commit doesn't contain the first commit that made
 # release-server.yml attest (its image can't have an attestation), "has" when it does, "unknown" when the commit isn't
-# in the checkout. Found from history rather than a recorded sha, so it survives a squash or rebase merge.
+# in the checkout. Found from history rather than a recorded sha, so it survives a squash or rebase merge. The history
+# searched is origin/main's (what release-server.yml builds from), not HEAD's: a stale or unrelated local branch must not
+# make a post-provenance commit look older. No origin/main (or not fetched) → "unknown", which offers no bypass.
 provenance_status() {
   local dir=${2:-$here/..} commit first
   commit=$(git -C "$dir" rev-parse --verify --quiet "$1^{commit}" 2>/dev/null) || { echo unknown; return 0; }
-  first=$(git -C "$dir" log --format=%H --reverse -S'actions/attest-build-provenance@' -- "$workflow_path" 2>/dev/null |
-    head -n1 || true)
+  git -C "$dir" rev-parse --verify --quiet refs/remotes/origin/main >/dev/null 2>&1 || { echo unknown; return 0; }
+  first=$(git -C "$dir" log refs/remotes/origin/main --format=%H --reverse -S'actions/attest-build-provenance@' \
+    -- "$workflow_path" 2>/dev/null | head -n1 || true)
   if [ -z "$first" ]; then
     echo unknown
   elif git -C "$dir" merge-base --is-ancestor "$first" "$commit"; then

@@ -181,6 +181,8 @@ or call that is already open stays up until it drops. To close those at once, re
   summary lists the attestations). That build is the first attested one: `just deploy` (or `just deploy <its sha7>`)
   then verifies. Until it has finished, `latest` is still an unattested build and `just deploy` refuses it (with no
   bypass hint: `latest` is a moving tag); wait.
+- Releases run one at a time (the workflow's concurrency group). When pushes to `main` land back to back, GitHub keeps
+  only the newest waiting run, so a middle commit can end up with no image at all: deploy the newer one.
 - Build inputs are pinned too. When bumping the Rust version, change it in three places together: `rust-toolchain.toml`
   (CI, the Windows release and local builds), the `rust:<version>-bookworm@sha256:…` line in `server.Dockerfile`, and, if
   the `tauri` crate's minor changed, `@tauri-apps/cli@<version>` in `release-windows.yml`. Dependabot opens PRs for

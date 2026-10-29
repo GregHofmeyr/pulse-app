@@ -49,6 +49,9 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          # pinned: the publish job needs `imagetools create --metadata-file` (buildx >= v0.35); same in both jobs
+          version: v0.38.1
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io
@@ -102,6 +105,9 @@ jobs:
           merge-multiple: true
           path: /tmp/digests
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+        with:
+          # pinned: the publish job needs `imagetools create --metadata-file` (buildx >= v0.35); same in both jobs
+          version: v0.38.1
       - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
         with:
           registry: ghcr.io

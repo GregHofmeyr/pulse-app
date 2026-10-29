@@ -572,6 +572,13 @@ gitc checkout -q main
 echo '      - uses: actions/attest-build-provenance@0000000000000000000000000000000000000000 # v4' >>"$g/.github/workflows/release-server.yml"
 gitc add -A && gitc commit -q -m B && cB=$(gitc rev-parse --short=7 HEAD)
 echo c >"$g/y" && gitc add -A && gitc commit -q -m C && cC=$(gitc rev-parse --short=7 HEAD)
+# no origin/main yet: nothing can be told, so no bypass is offered
+got=$(provenance_status "$cA" "$g")
+if [ "$got" = unknown ]; then pass "provenance_status: unknown without origin/main"; else fail "provenance_status without origin/main: $got"; fi
+# origin/main is C; HEAD is then left on the stale side branch D, whose own history has no attest step
+gitc update-ref refs/remotes/origin/main "$cC"
+gitc checkout -q side
+# (with HEAD on the stale side branch: the answers must come from origin/main)
 for want in "predates $cA" "predates $cD" "has $cB" "has $cC" "unknown 0000000"; do
   got=$(provenance_status "${want#* }" "$g")
   if [ "$got" = "${want%% *}" ]; then pass "provenance_status: ${want%% *} for $(
