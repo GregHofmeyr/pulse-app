@@ -4,7 +4,7 @@
   // a second fetch; a cache cleared on reconnect refetches.
   import { untrack } from 'svelte'
   import ProfileCard from './ProfileCard.svelte'
-  import { app, loadProfile } from '../lib/store.svelte'
+  import { app, loadProfile, revalidateProfile } from '../lib/store.svelte'
   import { userOf } from '../lib/selectors'
   import { DEFAULT_THEME } from '../lib/cardTheme'
   import { errorText } from '../lib/tauri'
@@ -33,10 +33,14 @@
     return { left: Math.round(left), top: Math.round(top) }
   })
 
-  // Fetch when there is nothing cached (shared with any load already in flight).
+  const has = $derived(!!cached)
+  // On each open: fetch when there is nothing cached (shared with any load already in flight), else
+  // show the cached card and refresh it in the background if it is over 5 minutes old.
   $effect(() => {
-    const id = target?.userId
-    if (!id || cached) return
+    const t = target
+    if (!t) return
+    if (has) return untrack(() => revalidateProfile(t.userId))
+    const id = t.userId
     untrack(() => {
       failed = null
       loadProfile(id).catch((e) => {
@@ -85,11 +89,9 @@
   function onDown(e: PointerEvent | Event) {
     const t = e.target as Node
     // a press on the name or avatar that opened it is left to its click, which closes it (openCard toggles)
-    if (!target || !pop || pop.contains(t) || returnTo?.contains(t) || onAnchor(e, target.anchor)) return
+    if (!target || !pop || pop.contains(t) || target.opener.contains(t)) return
     closeCard()
   }
-  // The anchor may not have taken focus on click (WebKit doesn't focus buttons): its rectangle decides then.
-  const onAnchor = (e: Event, r: DOMRect) => e instanceof MouseEvent && e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom
   function viewFull() {
     if (!target) return
     const { userId, serverId } = target
@@ -110,6 +112,7 @@
 {/if}
 
 <style>
-  .pop { position: fixed; z-index: 40; outline: none; max-height: calc(100vh - 16px); overflow: auto; }
+  /* above every modal and the full profile (stacking.test.ts) */
+  .pop { position: fixed; z-index: 55; outline: none; max-height: calc(100vh - 16px); overflow: auto; }
   .err { margin: 6px 0 0; padding: 6px 10px; border-radius: 8px; background: var(--bg-3); color: var(--text-2); font-size: 12px; max-width: 300px; }
 </style>

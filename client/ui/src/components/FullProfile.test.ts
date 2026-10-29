@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) })
 import { invoke } from '@tauri-apps/api/core'
 import FullProfile from './FullProfile.svelte'
 import { app, resetState } from '../lib/store.svelte'
-import { emptyState } from '../lib/state'
+import { applyEvent, emptyState } from '../lib/state'
 import { closeCard, closeFull } from '../lib/profileCard.svelte'
 import type { User } from '../lib/protocol/User'
 import type { Profile } from '../lib/protocol/Profile'
@@ -124,6 +124,52 @@ describe('FullProfile', () => {
     vi.mocked(invoke).mockImplementation((async (cmd: string) => (cmd === 'get_profile' ? profile() : undefined)) as never)
     show(null)
     await vi.waitFor(() => expect(calls('get_profile')).toHaveLength(1))
+  })
+
+  it('rows identical but for who renamed them are both kept', () => {
+    show(profile({ name_archive: [
+      { server_id: 'S1', name: 'Same', changed_by: 'U1', changed_at: '2026-10-20T00:00:00Z' },
+      { server_id: 'S1', name: 'Same', changed_by: 'U2', changed_at: '2026-10-20T00:00:00Z' },
+    ] }))
+    expect(panel('Name Archive')!.querySelectorAll('li')).toHaveLength(2)
+  })
+
+  it('a server you are not in reads "a server"', () => {
+    show(profile({ name_archive: [{ server_id: 'S9', name: 'Elsewhere', changed_by: 'U2', changed_at: '2026-10-20T00:00:00Z' }] }))
+    expect(panel('Name Archive')!.querySelector('li')!.textContent).toContain('a server')
+  })
+
+  it('restyles live on a ProfileUpdated', () => {
+    show()
+    const styled = { ...sam, style: { font: 'fredoka', colors: ['#a3d8ff'] } }
+    const card = { ...profile().card, bio: 'new bio', theme_top: '#8a3cff', theme_bottom: '#ff8a2a' }
+    app.state = applyEvent(app.state, { t: 'ProfileUpdated', d: { user: styled, card } }, 0)
+    flushSync()
+    expect(document.querySelector('.card .name')!.getAttribute('style')).toContain('Fredoka')
+    expect(document.querySelector('.bio')!.textContent).toContain('new bio')
+    expect((document.querySelector('.modal') as HTMLElement).style.getPropertyValue('--glow-top')).toBe('#8a3cff')
+    expect(panel('Stats')!.textContent).toContain('2.5 h') // stats kept
+  })
+
+  it('a failed load with nothing cached offers Retry', async () => {
+    vi.mocked(invoke).mockImplementation((async (cmd: string) => { if (cmd === 'get_profile') throw 'offline' }) as never)
+    show(null)
+    await vi.waitFor(() => expect(document.querySelector('[role="alert"]')?.textContent).toContain('offline'))
+    vi.mocked(invoke).mockImplementation((async (cmd: string) => (cmd === 'get_profile' ? profile() : undefined)) as never)
+    const retry = [...document.querySelectorAll('button')].find((b) => b.textContent === 'Retry')!
+    retry.click()
+    await vi.waitFor(() => expect(panel('Stats')).toBeDefined())
+    expect(calls('get_profile')).toHaveLength(2)
+    expect(document.querySelector('[role="alert"]')).toBeNull()
+  })
+
+  it('the board background is the theme\'s tinted surface', async () => {
+    const { readFileSync } = await import('node:fs')
+    const { resolve } = await import('node:path')
+    const src = readFileSync(resolve(__dirname, 'FullProfile.svelte'), 'utf8')
+    const modal = /\.modal \{([^}]*)\}/.exec(src)![1]
+    expect(modal).toContain('background: linear-gradient(var(--card-top), var(--card-bottom))')
+    expect(modal).not.toContain('var(--bg-1)')
   })
 
   it('Escape closes', () => {

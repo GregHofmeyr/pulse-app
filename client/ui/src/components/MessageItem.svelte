@@ -87,10 +87,13 @@
     const css = new Map(cssKey.split('\n').map((l) => l.split('\t') as [string, string]))
     styleMentions(node, (n) => { const id = look(n); return id && css.has(id) ? id : null }, (id) => css.get(id)!)
   }
-  function openMention(e: MouseEvent) {
+  function openMention(e: MouseEvent | KeyboardEvent) {
+    if (e instanceof KeyboardEvent && e.key !== 'Enter' && e.key !== ' ') return
     const pill = (e.target as Element).closest('.mention')
     const id = pill && lookup(mentionName(pill))
-    if (pill && id) openCard(id, serverId, pill)
+    if (!pill || !id) return
+    if (e instanceof KeyboardEvent) e.preventDefault() // Space mustn't scroll
+    openCard(id, serverId, pill)
   }
 
   let focusIn = $state(false)
@@ -196,9 +199,9 @@
         {:else}
           <!-- renderMessage output is DOMPurify-sanitised (allow-list, cached per message); the only {@html} in the app. -->
           {@const html = renderMessage(message, mentionNames, app.state.customEmoji)}
-          <!-- a mention pill opens its person's card (a pointer shortcut: the author's name is the keyboard route) -->
-          <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-          <div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention}>{@html html}</div>
+          <!-- a mention pill opens its person's card, by click or (focused: styleMentions makes known pills buttons) Enter or Space -->
+          <!-- svelte-ignore a11y_no_static_element_interactions -->
+          <div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention} onkeydown={openMention}>{@html html}</div>
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
         {#if !pending}<ReactionRow {message} {meId} {nameOf} onError={showError} />{/if}

@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { modal } from '../lib/actions'
-  import { ASPECT, initialCrop, panCrop, zoomCrop, type CropRect } from '../lib/crop'
+  import { ASPECT, initialCrop, panCrop, roundCrop, zoomCrop, type CropRect } from '../lib/crop'
 
   let { file, kind, onApply, onCancel }: {
     file: File
@@ -19,19 +19,26 @@
   let stage = $state<HTMLDivElement>()
   let natW = $state(0)
   let natH = $state(0)
+  /** In fractional source pixels while it moves; rounded on Apply. */
   let crop = $state<CropRect | null>(null)
   let drag: { x: number; y: number } | null = null
+  /** The file couldn't be read or decoded as a picture: only Cancel is left. */
+  let unreadable = $state(false)
 
   // The CSP allows data: images and not blob:, so the picture goes in as a data URL.
   onMount(() => {
     if (tooBig) return
     const reader = new FileReader()
     reader.onload = () => (src = String(reader.result))
+    reader.onerror = () => (unreadable = true)
     reader.readAsDataURL(file)
   })
 
   function loaded() {
-    if (!img?.naturalWidth || !img.naturalHeight) return
+    if (!img?.naturalWidth || !img.naturalHeight) {
+      unreadable = true
+      return
+    }
     natW = img.naturalWidth
     natH = img.naturalHeight
     crop = initialCrop(natW, natH, aspect)
@@ -102,13 +109,15 @@
   <div class="modal" role="dialog" aria-modal="true" aria-label={kind === 'avatar' ? 'Crop avatar' : 'Crop banner'} tabindex="-1" use:modal={onCancel}>
     {#if tooBig}
       <p class="error" role="alert">Profile pictures and banners can be up to 8 MB.</p>
+    {:else if unreadable}
+      <p class="error" role="alert">That file isn't a picture Pulse can read (PNG, JPEG, GIF or WebP).</p>
     {:else}
       <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
       <div class="stage" role="application" aria-label="Crop area" tabindex="0" bind:this={stage}
         onpointerdown={down} onpointermove={move} onpointerup={up} onpointercancel={up} onkeydown={key}>
         {#if src}
           <div class="frame">
-            <img bind:this={img} {src} alt="" draggable="false" onload={loaded} />
+            <img bind:this={img} {src} alt="" draggable="false" onload={loaded} onerror={() => (unreadable = true)} />
             {#if crop}
               <div class="box" class:round={kind === 'avatar'}
                 style:left={pct(crop.x, natW)} style:top={pct(crop.y, natH)}
@@ -124,7 +133,9 @@
     {/if}
     <div class="actions">
       <button type="button" onclick={onCancel}>Cancel</button>
-      <button type="button" class="primary" disabled={!crop} onclick={() => crop && onApply(crop)}>Apply</button>
+      {#if !tooBig && !unreadable}
+        <button type="button" class="primary" disabled={!crop} onclick={() => crop && onApply(roundCrop($state.snapshot(crop), natW, natH))}>Apply</button>
+      {/if}
     </div>
   </div>
 </div>
@@ -135,12 +146,12 @@
   .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
   .modal { position: relative; width: min(520px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 22px; border-radius: 16px; background: var(--bg-2); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; }
   .stage { display: grid; place-items: center; background: #000; border-radius: 10px; overflow: hidden; touch-action: none; cursor: grab; outline-offset: 2px; }
-  .frame { position: relative; display: block; line-height: 0; }
+  /* its overflow clips the crop box's shadow */
+  .frame { position: relative; display: block; line-height: 0; overflow: hidden; }
   img { display: block; max-width: 100%; max-height: 50vh; user-select: none; }
-  /* the shadow dims everything outside the crop; the frame's overflow clips it */
+  /* the shadow dims everything outside the crop */
   .box { position: absolute; box-sizing: border-box; border: 2px solid #fff; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .6); pointer-events: none; }
   .box.round { border-radius: 50%; }
-  .frame { overflow: hidden; }
   .zoom { display: flex; align-items: center; gap: 12px; color: var(--text-3); font-size: 12px; font-weight: 600; }
   .zoom input { flex: 1; }
   .error { margin: 0; color: var(--text-2); }

@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { ASPECT, initialCrop, panCrop, zoomCrop, type CropRect } from './crop'
+import { ASPECT, initialCrop, panCrop, roundCrop, zoomCrop, type CropRect } from './crop'
 
-const inside = (c: CropRect, w: number, h: number) =>
-  [c.x, c.y, c.w, c.h].every(Number.isInteger) && c.x >= 0 && c.y >= 0 && c.w >= 1 && c.h >= 1 && c.x + c.w <= w && c.y + c.h <= h
+const within = (c: CropRect, w: number, h: number) => c.x >= 0 && c.y >= 0 && c.w >= 1 && c.h >= 1 && c.x + c.w <= w && c.y + c.h <= h
+const inside = (c: CropRect, w: number, h: number) => [c.x, c.y, c.w, c.h].every(Number.isInteger) && within(c, w, h)
 
 describe('crop', () => {
   it('initial crop is centred and maximal for both aspects', () => {
@@ -39,18 +39,29 @@ describe('crop', () => {
     expect(zoomCrop(z, 1000, 1000, 1, 0.001, { x: 0, y: 0 })).toEqual({ x: 0, y: 0, w: 1000, h: 1000 })
   })
 
-  it('results are integers inside the image', () => {
+  it('stays inside the image while moving, and rounds to integers inside it', () => {
     for (const [w, h] of [[801, 603], [333, 1001], [4096, 77], [50, 50]]) {
       for (const a of [ASPECT.avatar, ASPECT.banner]) {
         let c = initialCrop(w, h, a)
         expect(inside(c, w, h)).toBe(true)
         for (const f of [1.37, 0.83, 3.3, 0.5, 7.1]) {
           c = zoomCrop(c, w, h, a, f, { x: w * 0.3, y: h * 0.8 })
-          expect(inside(c, w, h)).toBe(true)
+          expect(within(c, w, h)).toBe(true)
+          expect(inside(roundCrop(c, w, h), w, h)).toBe(true)
           c = panCrop(c, w, h, 12.7, -33.3)
-          expect(inside(c, w, h)).toBe(true)
+          expect(within(c, w, h)).toBe(true)
+          expect(inside(roundCrop(c, w, h), w, h)).toBe(true)
         }
       }
     }
+  })
+
+  it('sub-pixel moves add up (nothing is rounded away mid-drag)', () => {
+    let c = initialCrop(800, 600, ASPECT.avatar)
+    for (let i = 0; i < 10; i++) c = panCrop(c, 800, 600, -0.4, 0)
+    expect(roundCrop(c, 800, 600)).toEqual({ x: 96, y: 0, w: 600, h: 600 })
+    let z = initialCrop(800, 600, ASPECT.avatar)
+    for (let i = 0; i < 20; i++) z = zoomCrop(z, 800, 600, 1, 1.001, { x: 400, y: 300 })
+    expect(roundCrop(z, 800, 600).w).toBe(Math.round(600 / 1.001 ** 20))
   })
 })

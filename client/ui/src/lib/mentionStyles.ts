@@ -30,14 +30,21 @@ export function mentionName(pill: Element): string {
 }
 
 /**
- * Sets each known `.mention` pill's style to its person's name CSS (`css`); unknown names are left
- * alone. A gradient clips its background to the text, so the pill background moves to a wrapper.
+ * Sets each known `.mention` pill's style to its person's name CSS (`css`) and makes it a focusable
+ * button; unknown names are left alone (and not focusable). A gradient clips its background to the text, so the pill background moves to a wrapper.
  * Safe to run again on the same DOM (a profile changed): it restyles, wraps or unwraps as needed.
  */
 export function styleMentions(root: HTMLElement, lookup: (name: string) => string | null, css: (userId: string) => string): void {
   for (const pill of root.querySelectorAll<HTMLElement>('.mention')) {
     const id = lookup(mentionName(pill))
-    if (!id) continue
+    if (!id) {
+      pill.removeAttribute('tabindex')
+      pill.removeAttribute('role')
+      continue
+    }
+    // A known pill opens its person's card: reachable by keyboard too (Enter or Space, in MessageItem).
+    pill.setAttribute('tabindex', '0')
+    pill.setAttribute('role', 'button')
     const style = css(id)
     const gradient = style.includes('background-clip: text')
     const wrap = pill.parentElement?.classList.contains(WRAP) ? pill.parentElement : null

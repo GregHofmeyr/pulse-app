@@ -55,9 +55,16 @@ describe('Name', () => {
   it('show name styles off renders plain', () => {
     setup({ font: 'fredoka', colors: ['#ffbe7a'] })
     appearance.showNameStyles = false
-    const s = show({ interactive: false }).getAttribute('style')!
+    const s = show({ interactive: false }).getAttribute('style') ?? ''
     expect(s).not.toContain('Fredoka')
-    
+    expect(s).not.toMatch(/color|gradient/)
+    unmount(cmp!)
+    cmp = undefined
+    // a role colour still shows
+    setup({ font: 'fredoka', colors: ['#ffbe7a'] }, '#a3d8ff')
+    const r = show({ interactive: false }).getAttribute('style')!
+    expect(r).toContain('color: rgb(163, 216, 255)')
+    expect(r).not.toContain('Fredoka')
   })
   it('restyles live when the profile changes', () => {
     setup({ font: null, colors: [] })

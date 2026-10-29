@@ -7,7 +7,7 @@
   import Name from './Name.svelte'
   import Icon from './Icon.svelte'
   import { modal } from '../lib/actions'
-  import { app, loadProfile } from '../lib/store.svelte'
+  import { app, loadProfile, revalidateProfile } from '../lib/store.svelte'
   import { userOf } from '../lib/selectors'
   import { DEFAULT_THEME, cardVars } from '../lib/cardTheme'
   import { twemojiUrl } from '../lib/emoji'
@@ -26,16 +26,19 @@
   const vars = $derived(Object.entries(cardVars(card.theme_top, card.theme_bottom)).map(([k, v]) => `${k}: ${v}`).join('; '))
   let failed = $state<string | null>(null)
 
-  // Fetch only when nothing is cached (shared with any load already in flight).
+  function load(id: string) {
+    failed = null
+    loadProfile(id).catch((e) => {
+      if (userId === id) failed = errorText(e)
+    })
+  }
+  const has = $derived(!!cached)
+  // Fetch when nothing is cached (shared with any load already in flight); a cached profile shows at
+  // once and is refreshed in the background if it is over 5 minutes old.
   $effect(() => {
     const id = userId
-    if (cached) return
-    untrack(() => {
-      failed = null
-      loadProfile(id).catch((e) => {
-        if (userId === id) failed = errorText(e)
-      })
-    })
+    if (has) return untrack(() => revalidateProfile(id))
+    untrack(() => load(id))
   })
 
   // Newest first, whatever order the server sent.
@@ -52,7 +55,7 @@
       {#if user}
         <ProfileCard {user} {card} badges={cached?.badges ?? []} {stats} {serverId} size="full" loading={!cached && !failed} {onClose} />
       {/if}
-      {#if failed && !cached}<p class="err" role="alert">{failed}</p>{/if}
+      {#if failed && !cached}<p class="err" role="alert">{failed} <button type="button" class="retry" onclick={() => load(userId)}>Retry</button></p>{/if}
     </div>
     <div class="right">
       {#if stats}
@@ -85,7 +88,7 @@
         <section class="board">
           <h2>Name Archive</h2>
           <ul class="archive">
-            {#each archive as e (e.changed_at + e.name + e.server_id)}
+            {#each archive as e, i (`${i}\t${e.changed_at}\t${e.name}\t${e.server_id}\t${e.changed_by}`)}
               <li>
                 <strong>{e.name}</strong>
                 <span>{serverName(e.server_id)}</span>
@@ -105,10 +108,13 @@
 </div>
 
 <style>
-  /* flex-centred (not transform): WebKitGTK blurs text on sub-pixel transforms */
-  .overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 32px 16px; }
+  /* flex-centred (not transform): WebKitGTK blurs text on sub-pixel transforms. Above every other
+     modal (it opens from names inside them, e.g. QOTY voting); the quick card sits above it
+     (stacking.test.ts). */
+  .overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 32px 16px; }
   .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
-  .modal { position: relative; width: min(880px, calc(100vw - 32px)); height: min(600px, calc(100vh - 64px)); display: flex; gap: 16px; padding: 16px; background: var(--bg-1); border-radius: 16px; border: 1px solid var(--bg-3); overflow: hidden; outline: none; }
+  /* the Board background: the theme's tinted surface (spec §3.2) */
+  .modal { position: relative; width: min(880px, calc(100vw - 32px)); height: min(600px, calc(100vh - 64px)); display: flex; gap: 16px; padding: 16px; background: linear-gradient(var(--card-top), var(--card-bottom)); border-radius: 16px; border: 1px solid var(--bg-3); overflow: hidden; outline: none; }
   .left { flex: 0 0 340px; overflow-y: auto; }
   .right { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }
   .close { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border: 1px solid var(--bg-4); border-radius: 50%; background: var(--bg-1); color: var(--text-2); display: grid; place-items: center; z-index: 1; }
@@ -122,6 +128,7 @@
   .archive li { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
   .archive span, .archive time { color: var(--card-text-2); }
   .err { margin: 6px 0 0; padding: 6px 10px; border-radius: 8px; background: var(--bg-3); color: var(--text-2); font-size: 12px; }
+  .retry { margin-left: 6px; padding: 2px 10px; border-radius: 6px; border: 1px solid var(--bg-4); background: var(--bg-2); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
   @media (max-width: 760px) {
     .modal { flex-direction: column; overflow-y: auto; }
     .left { flex: none; }

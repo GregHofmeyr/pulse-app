@@ -10,7 +10,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) })
 import { invoke } from '@tauri-apps/api/core'
 import ProfileCard from './ProfileCard.svelte'
 import ProfileCardPopover from './ProfileCardPopover.svelte'
-import { app, noteProfileUpdate, resetState, ui } from '../lib/store.svelte'
+import { app, noteProfileUpdate, PROFILE_STALE_MS, resetState, ui } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
 import { closeCard, closeFull, openCard, profileUi } from '../lib/profileCard.svelte'
 import { mixHex, NEAR_BLACK, THEME_PRESETS } from '../lib/cardTheme'
@@ -107,6 +107,29 @@ describe('ProfileCard', () => {
     // a room you can't see (not in your channels) isn't named
     app.state = { ...app.state, channels: {}, } as never
     expect(show().querySelector('.room')).toBeNull()
+    unmount(cmp!)
+    cmp = undefined
+    // nor is a group call (no server), even one you're in
+    app.state = {
+      ...app.state,
+      channels: { G1: { id: 'G1', server_id: null, kind: 'group', name: 'Pals', position: 0 } },
+      voice: { G1: [{ user_id: 'U2', flags: { muted: false, deafened: false } }] },
+    } as never
+    expect(show().querySelector('.room')).toBeNull()
+  })
+
+  it('the name keeps their own colour (never a role colour) and their nickname', () => {
+    const styled = { ...sam, style: { font: null, colors: ['#ffc4a3'] } }
+    app.state = {
+      ...app.state,
+      people: { ...app.state.people, U2: { user: styled, online: true, last_seen_at: null } },
+      members: { S1: [{ user: styled, nickname: 'Sammy' }] },
+      roleColors: { S1: { U2: '#a3d8ff' } },
+    } as never
+    const name = show({ user: styled, serverId: 'S1' }).querySelector('.name')!
+    expect(name.textContent).toBe('Sammy')
+    expect(name.getAttribute('style')).toContain('rgb(255, 196, 163)')
+    expect(name.getAttribute('style')).not.toContain('rgb(163, 216, 255)')
   })
 
   it('the message box sends to the DM and switches to it', async () => {
@@ -147,6 +170,7 @@ describe('ProfileCard', () => {
   it('a malicious bio renders inert', () => {
     const el = show({ card: card({ bio: '<img src=x onerror=alert(1)> [click](javascript:alert(1))' }) })
     const bio = el.querySelector('.bio')!
+    expect(bio.textContent).toContain('click')
     expect(bio.querySelector('[onerror]')).toBeNull()
     expect([...bio.querySelectorAll('a')].some((a) => /^\s*javascript:/i.test(a.getAttribute('href') ?? ''))).toBe(false)
   })
@@ -271,6 +295,71 @@ describe('ProfileCardPopover', () => {
     expect(profileUi.card).toBeNull()
   })
 
+  it('a press inside what had focus (not the opener) closes it', () => {
+    vi.mocked(invoke).mockImplementation((() => new Promise(() => {})) as never)
+    cmp = mount(ProfileCardPopover, { target: document.body })
+    const box = document.createElement('textarea')
+    const anchor = document.createElement('button')
+    document.body.append(box, anchor)
+    box.focus()
+    openCard('U2', null, anchor)
+    flushSync()
+    box.dispatchEvent(new Event('pointerdown', { bubbles: true }))
+    flushSync()
+    expect(profileUi.card).toBeNull()
+  })
+
+  it('toggling compares the opener, not its rectangle', () => {
+    const rect = () => ({ left: 10, right: 50, top: 10, bottom: 30, width: 40, height: 20, x: 10, y: 10, toJSON() {} })
+    const a = document.createElement('button')
+    const b = document.createElement('button')
+    a.getBoundingClientRect = rect
+    b.getBoundingClientRect = rect
+    openCard('U2', null, a)
+    openCard('U2', null, b) // another element at the same spot: moves the card, doesn't close it
+    expect(profileUi.card?.opener).toBe(b)
+    let top = 10
+    b.getBoundingClientRect = () => ({ ...rect(), top: (top += 100), y: top })
+    openCard('U2', null, b) // the same element, scrolled since: closes
+    expect(profileUi.card).toBeNull()
+  })
+
+  it('a cached card shows at once and refreshes in the background once over 5 minutes old', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(5_000_000)
+    try {
+      vi.mocked(invoke).mockImplementation((async (cmd: string) => (cmd === 'get_profile' ? profile(sam, card({ bio: 'fresh' })) : undefined)) as never)
+      cmp = mount(ProfileCardPopover, { target: document.body })
+      const anchor = document.createElement('button')
+      document.body.append(anchor)
+      openCard('U2', null, anchor)
+      flushSync()
+      await vi.waitFor(() => expect(document.querySelector('.bio')?.textContent).toContain('fresh'))
+      expect(calls('get_profile')).toHaveLength(1)
+      closeCard()
+      flushSync()
+      // reopened within 5 minutes: no request
+      now.mockReturnValue(5_000_000 + PROFILE_STALE_MS - 1)
+      openCard('U2', null, anchor)
+      flushSync()
+      await tick()
+      expect(calls('get_profile')).toHaveLength(1)
+      closeCard()
+      flushSync()
+      // reopened later: the cached card at once, then one background request
+      vi.mocked(invoke).mockImplementation((async (cmd: string) => (cmd === 'get_profile' ? profile(sam, card({ bio: 'newer' })) : undefined)) as never)
+      now.mockReturnValue(5_000_000 + 2 * PROFILE_STALE_MS)
+      openCard('U2', null, anchor)
+      flushSync()
+      expect(document.querySelector('.bio')!.textContent).toContain('fresh')
+      expect(document.querySelector('.skeleton')).toBeNull()
+      await vi.waitFor(() => expect(document.querySelector('.bio')?.textContent).toContain('newer'))
+      await tick()
+      expect(calls('get_profile')).toHaveLength(2)
+    } finally {
+      now.mockRestore()
+    }
+  })
+
   it('a window resize closes it', () => {
     vi.mocked(invoke).mockImplementation((() => new Promise(() => {})) as never)
     cmp = mount(ProfileCardPopover, { target: document.body })
@@ -285,8 +374,9 @@ describe('ProfileCardPopover', () => {
     vi.mocked(invoke).mockImplementation((() => new Promise(() => {})) as never)
     cmp = mount(ProfileCardPopover, { target: document.body })
     const outside = document.createElement('div')
-    document.body.append(outside)
-    openCard('U2', null, document.body)
+    const anchor = document.createElement('button')
+    document.body.append(outside, anchor)
+    openCard('U2', null, anchor)
     flushSync()
     outside.dispatchEvent(new Event('pointerdown', { bubbles: true }))
     flushSync()

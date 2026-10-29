@@ -8,7 +8,7 @@ vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 
 import Avatar from './Avatar.svelte'
 import { app } from '../lib/store.svelte'
-import { emptyState } from '../lib/state'
+import { applyEvent, emptyState } from '../lib/state'
 import { profileUi, closeCard } from '../lib/profileCard.svelte'
 import { motion } from '../lib/animate.svelte'
 
@@ -68,6 +68,48 @@ describe('Avatar', () => {
     FakeIntersectionObserver.set(img, true)
     flushSync()
     expect(img.getAttribute('src')).toBe(url(A))
+  })
+  it('a touch tap does not leave a list avatar animating', () => {
+    mountAv({}, { avatar_hash: A, avatar_still: S })
+    const img = document.querySelector('img')!
+    FakeIntersectionObserver.set(img, true)
+    const av = img.closest('.av')!
+    av.dispatchEvent(new Event('pointerenter'))
+    flushSync()
+    expect(img.getAttribute('src')).toBe(url(A))
+    av.dispatchEvent(Object.assign(new Event('pointerup', { bubbles: true }), { pointerType: 'touch' }))
+    flushSync()
+    expect(img.getAttribute('src')).toBe(url(S))
+    av.dispatchEvent(new Event('pointerenter'))
+    av.dispatchEvent(new Event('pointercancel'))
+    flushSync()
+    expect(img.getAttribute('src')).toBe(url(S))
+    // a mouse button release over it keeps it playing
+    av.dispatchEvent(new Event('pointerenter'))
+    av.dispatchEvent(Object.assign(new Event('pointerup', { bubbles: true }), { pointerType: 'mouse' }))
+    flushSync()
+    expect(img.getAttribute('src')).toBe(url(A))
+  })
+  it('swaps the picture live on a ProfileUpdated', () => {
+    const N = 'c'.repeat(64)
+    mountAv({ place: 'card' }, { avatar_hash: A, avatar_still: null })
+    expect(document.querySelector('img')!.getAttribute('src')).toBe(url(A))
+    app.state = applyEvent(app.state, { t: 'ProfileUpdated', d: { user: { id: 'U2', username: 'sam', avatar_hash: N, avatar_still: null, style: { font: null, colors: [] } }, card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null } } }, 0)
+    flushSync()
+    expect(document.querySelector('img')!.getAttribute('src')).toBe(url(N))
+  })
+  it('holds the still under reduced motion, even on a card', () => {
+    motion.reducedMotion = true
+    try {
+      mountAv({ place: 'card' }, { avatar_hash: A, avatar_still: S })
+      const img = document.querySelector('img')!
+      FakeIntersectionObserver.set(img, true)
+      img.closest('.av')!.dispatchEvent(new Event('pointerenter'))
+      flushSync()
+      expect(img.getAttribute('src')).toBe(url(S))
+    } finally {
+      motion.reducedMotion = false
+    }
   })
   it('interactive avatar opens the card', () => {
     mountAv({ interactive: true, serverId: 'S1' }, { avatar_hash: null, avatar_still: null })

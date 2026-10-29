@@ -36,7 +36,8 @@
 </script>
 
 {#snippet face()}
-  <span class="av" style:width="{size}px" style:height="{size}px" style:font-size="{Math.round(size * 0.42)}px" style:background={hash ? undefined : avatarColor(id)} onpointerenter={() => (over = true)} onpointerleave={() => (over = false)} role="presentation">
+  <span class="av" style:width="{size}px" style:height="{size}px" style:font-size="{Math.round(size * 0.42)}px" style:background={hash ? undefined : avatarColor(id)} onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}
+    onpointerup={(e) => { if (e.pointerType === 'touch') over = false }} onpointercancel={() => (over = false)} role="presentation">
     {#if hash}
       <img src={mediaUrl(still ?? hash)} alt="" draggable="false" {@attach wire} />
     {:else}

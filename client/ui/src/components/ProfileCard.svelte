@@ -47,11 +47,12 @@
   const name = $derived((serverId && app.state.members[serverId]?.find((m) => m.user.id === user.id)?.nickname) || user.username)
   const online = $derived(app.state.people[user.id]?.online ?? null)
   const bioHtml = $derived(card.bio ? renderMarkdown(card.bio, [], app.state.customEmoji) : '')
-  // The voice room they're in, only if it is one of your channels (one you can see).
+  // The server voice room they're in, only if it is one of your channels (one you can see); a
+  // group call is never named.
   const voiceRoom = $derived.by(() => {
     for (const [id, list] of Object.entries(app.state.voice)) {
       const ch = app.state.channels[id]
-      if (ch && list.some((m) => m.user_id === user.id)) return ch.name
+      if (ch?.server_id && ch.kind === 'voice' && list.some((m) => m.user_id === user.id)) return ch.name
     }
     return null
   })
@@ -98,7 +99,8 @@
   <div class="body">
     <span class="ring"><Avatar id={user.id} name={user.username} size={80} place="card" {online} user={preview ? user : undefined} /></span>
     <div class="who">
-      <Name userId={user.id} {serverId} text={name} interactive={false} size="card" user={preview ? user : undefined} />
+      <!-- No server for the style: a card shows the person's own colour, never a role colour (spec §2) -->
+      <Name userId={user.id} serverId={null} text={name} interactive={false} size="card" user={preview ? user : undefined} />
       <div class="handle">{user.username}{card.pronouns ? ` · ${card.pronouns}` : ''}</div>
     </div>
     {#if badges.length}

@@ -12,18 +12,25 @@ const clamp = (v: number, lo: number, hi: number) => Math.min(Math.max(v, lo), h
 /** The widest crop of `aspect` that fits the image. */
 const maxWidth = (imgW: number, imgH: number, aspect: number) => Math.min(imgW, imgH * aspect)
 
-/** Rounds to whole pixels and keeps the rectangle inside the image. */
+/** Keeps the rectangle inside the image, in fractional pixels (so small drags and zoom steps add up). */
 function fit(x: number, y: number, w: number, h: number, imgW: number, imgH: number): CropRect {
-  const iw = clamp(Math.round(w), 1, imgW)
-  const ih = clamp(Math.round(h), 1, imgH)
-  return { x: clamp(Math.round(x), 0, imgW - iw), y: clamp(Math.round(y), 0, imgH - ih), w: iw, h: ih }
+  const fw = clamp(w, 1, imgW)
+  const fh = clamp(h, 1, imgH)
+  return { x: clamp(x, 0, imgW - fw), y: clamp(y, 0, imgH - fh), w: fw, h: fh }
 }
 
-/** The largest centred rectangle of `aspect`. */
+/** `c` in whole pixels, still inside the image: what is sent on Apply. */
+export function roundCrop(c: CropRect, imgW: number, imgH: number): CropRect {
+  const w = clamp(Math.round(c.w), 1, imgW)
+  const h = clamp(Math.round(c.h), 1, imgH)
+  return { x: clamp(Math.round(c.x), 0, imgW - w), y: clamp(Math.round(c.y), 0, imgH - h), w, h }
+}
+
+/** The largest centred rectangle of `aspect`, in whole pixels. */
 export function initialCrop(imgW: number, imgH: number, aspect: number): CropRect {
   const w = Math.max(1, Math.floor(maxWidth(imgW, imgH, aspect)))
   const h = w / aspect
-  return fit((imgW - w) / 2, (imgH - h) / 2, w, h, imgW, imgH)
+  return roundCrop(fit((imgW - w) / 2, (imgH - h) / 2, w, h, imgW, imgH), imgW, imgH)
 }
 
 /** Zooms in by `factor` (above 1 shrinks the rectangle, below 1 grows it) about `focus`, a point in the image. */
