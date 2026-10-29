@@ -6,6 +6,9 @@ describe('profileFormat', () => {
   it('formats voice time', () => {
     expect(formatVoice(0)).toBe('0 min')
     expect(formatVoice(1800)).toBe('30 min')
+    expect(formatVoice(3570)).toBe('59 min')
+    expect(formatVoice(3599)).toBe('59 min')
+    expect(formatVoice(3600)).toBe('1.0 h')
     expect(formatVoice(9000)).toBe('2.5 h')
     expect(formatVoice(514800)).toBe('143 h')
   })
@@ -14,5 +17,7 @@ describe('profileFormat', () => {
   })
   it('unknown badge keys are title-cased with the trophy', () => {
     expect(badgeInfo('early_bird')).toEqual({ name: 'Early Bird', icon: 'trophy' })
+    expect(badgeInfo('')).toEqual({ name: 'Badge', icon: 'trophy' })
+    expect(badgeInfo('__')).toEqual({ name: 'Badge', icon: 'trophy' })
   })
 })

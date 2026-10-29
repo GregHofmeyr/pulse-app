@@ -134,8 +134,20 @@ $effect.root(() => {
 const profileLoads = new Map<string, Promise<Profile>>()
 /** The newest ProfileUpdated seen per user while that user's load is in flight. */
 const updatedDuringLoad = new Map<string, { user: User; card: CardProfile }>()
-/** Bumped by resetState: a load started before it must not write into the new state. */
+/** When each cached profile was last fetched (ms), for background revalidation. */
+const profileFetchedAt = new Map<string, number>()
+/** A cached profile older than this is refetched in the background when it is opened. */
+export const PROFILE_STALE_MS = 5 * 60_000
+/** Bumped by resetState and on every Ready: a load started before it must not write into the new state. */
 let loadEpoch = 0
+
+/** Forget every profile load in flight (their answers are dropped) and every fetch time. */
+function forgetProfileLoads() {
+  loadEpoch++
+  profileLoads.clear()
+  updatedDuringLoad.clear()
+  profileFetchedAt.clear()
+}
 
 /** Remember a ProfileUpdated that lands while the user's profile is loading, so the older response can't undo it. */
 export function noteProfileUpdate(e: Event) {
@@ -152,6 +164,7 @@ export function loadProfile(userId: string): Promise<Profile> {
     const newer = updatedDuringLoad.get(userId)
     const profile = newer ? { ...fetched, user: newer.user, card: newer.card } : fetched
     app.state = setProfile(app.state, profile)
+    profileFetchedAt.set(userId, Date.now())
     return profile
   })
   profileLoads.set(userId, p)
@@ -165,8 +178,25 @@ export function loadProfile(userId: string): Promise<Profile> {
   return p
 }
 
+/** On opening a cached profile: refetch it in the background if it was fetched over
+ * [PROFILE_STALE_MS] ago, so stats don't wait for a reconnect. The cached copy stays on screen
+ * meanwhile; a failure keeps it. Shares any load in flight. A copy cached some other way (the
+ * editor's save answer) is as fresh as now. */
+export function revalidateProfile(userId: string) {
+  if (!app.state.profiles[userId]) return
+  const at = profileFetchedAt.get(userId)
+  if (at === undefined) {
+    profileFetchedAt.set(userId, Date.now())
+    return
+  }
+  if (Date.now() - at < PROFILE_STALE_MS) return
+  loadProfile(userId).catch(() => {})
+}
+
 /** The core's (re)connected snapshot. */
 export function handleReady(r: Ready) {
+  // Ready clears the profile cache: a load from before it must not refill it with older data.
+  forgetProfileLoads()
   const before = app.state.streams
   // A different user than the one on screen: nothing of theirs carries over (no sign-out was seen).
   const prev = app.state.me
@@ -236,9 +266,7 @@ export async function startListening(): Promise<UnlistenFn> {
 
 export function resetState() {
   restoredFor = null // the next Ready restores again
-  loadEpoch++
-  profileLoads.clear()
-  updatedDuringLoad.clear()
+  forgetProfileLoads()
   app.state = emptyState()
   // a held crash report belongs to the session (and server) it was offered in: the next sign-in
   // asks again if the core still has it for that server

@@ -560,13 +560,15 @@ export function setProfile(s: AppState, p: Profile): AppState {
 function profileUpdated(s: AppState, d: Extract<Event, { t: 'ProfileUpdated' }>['d']): AppState {
   const { user, card } = d
   const cached = s.profiles[user.id]
+  const holds = (list: AppState['members'][string]) => list.some((m) => m.user.id === user.id)
   return {
     ...s,
     me: s.me?.id === user.id ? user : s.me,
     people: s.people[user.id] ? { ...s.people, [user.id]: { ...s.people[user.id], user } } : s.people,
-    members: Object.fromEntries(
-      Object.entries(s.members).map(([server, list]) => [server, list.some((m) => m.user.id === user.id) ? list.map((m) => (m.user.id === user.id ? { ...m, user } : m)) : list]),
-    ),
+    // Unchanged (the same object) unless some server's list holds the user.
+    members: Object.values(s.members).some(holds)
+      ? Object.fromEntries(Object.entries(s.members).map(([server, list]) => [server, holds(list) ? list.map((m) => (m.user.id === user.id ? { ...m, user } : m)) : list]))
+      : s.members,
     profiles: cached ? { ...s.profiles, [user.id]: { ...cached, user, card } } : s.profiles,
   }
 }

@@ -1325,9 +1325,19 @@ describe('profiles', () => {
   it('ProfileUpdated for an unknown person adds nobody', () => {
     const s0 = applyReady(emptyState(), ready())
     const s = applyEvent(s0, { t: 'ProfileUpdated', d: { user: { ...sam, id: 'U9' }, card } }, 0)
-    expect(s.people).toEqual(s0.people)
-    expect(s.members).toEqual(s0.members)
+    expect(s.people).toBe(s0.people)
+    expect(s.members).toBe(s0.members)
     expect(s.profiles).toEqual({})
+  })
+
+  it('ProfileUpdated keeps member lists that do not hold the user', () => {
+    const s0 = applyReady(emptyState(), ready({
+      members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: null }] }, { server_id: 'S2', members: [{ user: me, nickname: null }] }],
+    }))
+    const s = applyEvent(s0, { t: 'ProfileUpdated', d: { user: { ...sam, avatar_hash: 'h' }, card } }, 0)
+    expect(s.members).not.toBe(s0.members)
+    expect(s.members.S2).toBe(s0.members.S2)
+    expect(s.members.S1[0]).toBe(s0.members.S1[0])
   })
 
   it('setProfile caches', () => {

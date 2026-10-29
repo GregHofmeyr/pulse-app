@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => undefined) }))
 
 import { invoke } from '@tauri-apps/api/core'
-import { app, handleReady, loadProfile, noteProfileUpdate, queueMessage, resetState } from './store.svelte'
+import { app, handleReady, loadProfile, noteProfileUpdate, PROFILE_STALE_MS, queueMessage, resetState, revalidateProfile } from './store.svelte'
 import { addPending, applyEvent, emptyState, removePending, type Pending } from './state'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
@@ -194,5 +194,52 @@ describe('loadProfile', () => {
     vi.mocked(invoke).mockImplementation((async () => profile('U2')) as never)
     await loadProfile('U2')
     expect(calls()).toHaveLength(2)
+  })
+
+  it('a load that resolves after a reconnect (Ready) does not refill the cache', async () => {
+    let resolve!: (p: unknown) => void
+    vi.mocked(invoke).mockImplementation((() => new Promise((r) => (resolve = r))) as never)
+    const load = loadProfile('U2')
+    const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    handleReady({
+      me, servers: [], channels: [], members: [], dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
+    } as Ready)
+    resolve(profile('U2'))
+    await load
+    expect(app.state.profiles).toEqual({})
+    vi.mocked(invoke).mockImplementation((async () => profile('U2')) as never)
+    await loadProfile('U2')
+    expect(calls()).toHaveLength(2)
+  })
+
+  it('revalidates a cached profile in the background only once it is over 5 minutes old', async () => {
+    const now = vi.spyOn(Date, 'now').mockReturnValue(1_000_000)
+    try {
+      vi.mocked(invoke).mockImplementation((async () => profile('U2')) as never)
+      revalidateProfile('U2') // nothing cached: not a revalidation
+      expect(calls()).toHaveLength(0)
+      await loadProfile('U2')
+      now.mockReturnValue(1_000_000 + PROFILE_STALE_MS - 1)
+      revalidateProfile('U2')
+      expect(calls()).toHaveLength(1)
+      now.mockReturnValue(1_000_000 + PROFILE_STALE_MS)
+      revalidateProfile('U2')
+      revalidateProfile('U2') // shares the one in flight
+      expect(calls()).toHaveLength(2)
+      const cached = app.state.profiles.U2
+      expect(cached).toBeDefined() // kept on screen meanwhile
+      await vi.waitFor(() => expect(app.state.profiles.U2).not.toBe(cached))
+      revalidateProfile('U2') // just refetched: fresh again
+      expect(calls()).toHaveLength(2)
+      // a copy cached without a fetch (the editor's save answer) starts its clock when first opened
+      app.state = { ...app.state, profiles: { ...app.state.profiles, U3: { ...profile('U3') } } }
+      revalidateProfile('U3')
+      expect(calls()).toHaveLength(2)
+      now.mockReturnValue(1_000_000 + 2 * PROFILE_STALE_MS + 1)
+      revalidateProfile('U3')
+      expect(calls()).toHaveLength(3)
+    } finally {
+      now.mockRestore()
+    }
   })
 })

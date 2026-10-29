@@ -1,5 +1,5 @@
 <script lang="ts">
-  import Icon from './Icon.svelte'
+  import Icon, { type IconName } from './Icon.svelte'
   import type { Channel } from '../lib/protocol/Channel'
   import { app, clock } from '../lib/store.svelte'
   import { callRoster, channelsFor, isMember } from '../lib/selectors'
@@ -92,7 +92,7 @@
   }
 </script>
 
-{#snippet channelRow(c: Channel, icon: string)}
+{#snippet channelRow(c: Channel, icon: IconName)}
   {@const read = app.state.reads[c.id]}
   {@const muted = isMuted(app.state, c, clock.nowIso)}
   <button class="row" class:active={c.id === activeChannelId} class:unread={(read?.unread ?? 0) > 0 && !muted} class:muted
