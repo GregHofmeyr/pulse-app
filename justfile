@@ -55,7 +55,7 @@ dev-client:
 # WebKitGTK plays video through GStreamer: without autoaudiosink (gst-plugins-good) any video crashes the page.
 # the Linux client against the live server, for testing on Linux
 linux-client:
-    gst-inspect-1.0 autoaudiosink >/dev/null 2>&1 || echo "warning: GStreamer has no autoaudiosink (install gst-plugins-good): videos will crash the page" >&2
+    @gst-inspect-1.0 autoaudiosink >/dev/null 2>&1 || echo "warning: GStreamer has no autoaudiosink (install gst-plugins-good): videos will crash the page" >&2
     cd client/src-tauri && VITE_DEFAULT_SERVER=https://pulsechat.co.za cargo tauri build --debug --no-bundle
     PULSE_DEV_FFMPEG_DIR=/usr/bin ./target/debug/pulse-app
 
