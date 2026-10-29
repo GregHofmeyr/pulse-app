@@ -2,6 +2,7 @@
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CropDialog from './CropDialog.svelte'
+import { pngOf, pngTags } from '../lib/testPng'
 
 let comp: ReturnType<typeof mount> | undefined
 beforeEach(() => {
@@ -142,6 +143,24 @@ describe('CropDialog', () => {
     expect(document.querySelector('[role="alert"]')!.textContent).toBe("That file isn't a picture Pulse can read (PNG, JPEG, GIF or WebP).")
     expect(document.querySelector('img')).toBeNull()
     expect([...document.querySelectorAll('button')].map((b) => b.textContent)).toEqual(['Cancel'])
+  })
+
+  it("shows a PNG without its eXIf (as the server crops it), and other files as they are", async () => {
+    const shown = async (f: File) => {
+      comp = mount(CropDialog, { target: document.body, props: { file: f, kind: 'avatar', onApply: vi.fn(), onCancel: vi.fn() } })
+      const src = await vi.waitFor(() => {
+        const s = document.querySelector('img')?.getAttribute('src')
+        if (!s) throw new Error('no image yet')
+        return s
+      })
+      unmount(comp)
+      comp = undefined
+      return Uint8Array.from(atob(src.slice(src.indexOf(',') + 1)), (c) => c.charCodeAt(0))
+    }
+    const png = await shown(new File([pngOf(['IHDR', 'eXIf', 'IDAT', 'IEND'])], 'a.png', { type: 'image/png' }))
+    expect(pngTags(png)).toEqual(['IHDR', 'IDAT', 'IEND'])
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0, 8, 69, 120, 105, 102, 0, 0, 0xff, 0xd9])
+    expect([...(await shown(new File([jpeg], 'a.jpg', { type: 'image/jpeg' })))]).toEqual([...jpeg])
   })
 
   it('a file the reader fails on says so too', async () => {

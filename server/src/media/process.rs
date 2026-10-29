@@ -366,7 +366,7 @@ fn convert(
     let mut reader = ImageReader::with_format(Cursor::new(input), format);
     reader.limits(limits());
     let (logical_w, logical_h) = reader.into_dimensions()?;
-    // The crop is in the pixels the user saw: an animation as stored, a still upright (its EXIF
+    // The crop is in the pixels the user saw: an animation as stored, a JPEG upright (its EXIF
     // orientation applied, as the webview draws it), so a still's is checked once that is known.
     let check_crop = |(w, h): (u32, u32)| match crop {
         Some(c)
@@ -447,9 +447,14 @@ fn convert(
         }
         None => {
             let mut decoder = still_decoder(input, format, limits())?;
-            // A camera's EXIF orientation is honoured, as the webview does; unreadable EXIF is
-            // treated as none, as browsers do.
-            let orientation = decoder.orientation().unwrap_or(Orientation::NoTransforms);
+            // A JPEG's EXIF orientation (a phone camera's) is honoured, as every webview does;
+            // unreadable EXIF is treated as none, as browsers do. A PNG's or WebP's isn't:
+            // neither webview turns a WebP, only WebView2 turns a PNG by its eXIf, and the crop
+            // dialog shows a PNG without it, so the crop is in its stored pixels everywhere.
+            let orientation = match format {
+                ImageFormat::Jpeg => decoder.orientation().unwrap_or(Orientation::NoTransforms),
+                _ => Orientation::NoTransforms,
+            };
             check_crop(oriented((logical_w, logical_h), orientation))?;
             let mut img = DynamicImage::from_decoder(decoder)?;
             img.apply_orientation(orientation);
@@ -1215,9 +1220,8 @@ mod tests {
         assert!(DynamicImage::from_decoder(decoder).is_ok());
     }
 
-    /// A `w`×`h` JPEG, left half red and right half blue, with an EXIF APP1 segment saying
-    /// `orientation` (as a phone camera writes it) right after the SOI marker.
-    fn jpeg_with_orientation(w: u32, h: u32, orientation: u16) -> Vec<u8> {
+    /// A `w`×`h` picture, left half red and right half blue, encoded as `format`.
+    fn halves(w: u32, h: u32, format: ImageFormat) -> Vec<u8> {
         let img = image::RgbImage::from_fn(w, h, |x, _| {
             if x < w / 2 {
                 image::Rgb([255, 0, 0])
@@ -1225,13 +1229,25 @@ mod tests {
                 image::Rgb([0, 0, 255])
             }
         });
-        let mut jpeg = Cursor::new(Vec::new());
-        img.write_to(&mut jpeg, ImageFormat::Jpeg).unwrap();
-        let jpeg = jpeg.into_inner();
-        // TIFF header (big-endian), one IFD entry: Orientation (0x0112), SHORT, count 1.
+        let mut out = Cursor::new(Vec::new());
+        img.write_to(&mut out, format).unwrap();
+        out.into_inner()
+    }
+
+    /// EXIF data (a big-endian TIFF header and one IFD entry: Orientation, SHORT, count 1)
+    /// saying `orientation`.
+    fn exif_tiff(orientation: u16) -> Vec<u8> {
         let mut tiff = b"MM\0\x2a\0\0\0\x08\0\x01\x01\x12\0\x03\0\0\0\x01".to_vec();
         tiff.extend_from_slice(&orientation.to_be_bytes());
         tiff.extend_from_slice(&[0, 0, 0, 0, 0, 0]);
+        tiff
+    }
+
+    /// [`halves`] as a JPEG with an EXIF APP1 segment saying `orientation` (as a phone camera
+    /// writes it) right after the SOI marker.
+    fn jpeg_with_orientation(w: u32, h: u32, orientation: u16) -> Vec<u8> {
+        let jpeg = halves(w, h, ImageFormat::Jpeg);
+        let tiff = exif_tiff(orientation);
         let mut app1 = b"Exif\0\0".to_vec();
         app1.extend_from_slice(&tiff);
         let mut out = jpeg[..2].to_vec();
@@ -1240,6 +1256,97 @@ mod tests {
         out.extend_from_slice(&app1);
         out.extend_from_slice(&jpeg[2..]);
         out
+    }
+
+    /// [`halves`] as a PNG with an `eXIf` chunk saying `orientation`, before its image data.
+    fn png_with_orientation(w: u32, h: u32, orientation: u16) -> Vec<u8> {
+        let png = halves(w, h, ImageFormat::Png);
+        let at = png.windows(4).position(|t| t == b"IDAT").unwrap() - 4;
+        let mut body = b"eXIf".to_vec();
+        body.extend_from_slice(&exif_tiff(orientation));
+        let mut out = png[..at].to_vec();
+        out.extend_from_slice(&(body.len() as u32 - 4).to_be_bytes());
+        out.extend_from_slice(&body);
+        out.extend_from_slice(&crc32(&body).to_be_bytes());
+        out.extend_from_slice(&png[at..]);
+        out
+    }
+
+    /// The CRC-32 a PNG chunk ends with.
+    fn crc32(bytes: &[u8]) -> u32 {
+        !bytes.iter().fold(!0u32, |c, &b| {
+            (0..8).fold(c ^ u32::from(b), |c, _| {
+                if c & 1 == 1 {
+                    (c >> 1) ^ 0xEDB8_8320
+                } else {
+                    c >> 1
+                }
+            })
+        })
+    }
+
+    /// [`halves`] as an extended WebP (a VP8X header, then a lossless image) with an `EXIF` chunk
+    /// saying `orientation`.
+    fn webp_with_orientation(w: u32, h: u32, orientation: u16) -> Vec<u8> {
+        let plain = halves(w, h, ImageFormat::WebP);
+        let chunk = |tag: &[u8], data: &[u8]| {
+            let mut c = tag.to_vec();
+            c.extend_from_slice(&(data.len() as u32).to_le_bytes());
+            c.extend_from_slice(data);
+            if data.len() % 2 == 1 {
+                c.push(0);
+            }
+            c
+        };
+        // VP8X: the EXIF flag, then the canvas size less one, 24 bits each.
+        let mut vp8x = vec![0x08, 0, 0, 0];
+        vp8x.extend_from_slice(&(w - 1).to_le_bytes()[..3]);
+        vp8x.extend_from_slice(&(h - 1).to_le_bytes()[..3]);
+        let mut body = b"WEBP".to_vec();
+        body.extend(chunk(b"VP8X", &vp8x));
+        body.extend_from_slice(&plain[12..]);
+        body.extend(chunk(b"EXIF", &exif_tiff(orientation)));
+        let mut out = b"RIFF".to_vec();
+        out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+        out.extend(body);
+        out
+    }
+
+    #[test]
+    fn only_a_jpegs_exif_orientation_is_applied() {
+        // The webviews agree only on JPEG: WebView2 turns a PNG by its eXIf and WebKitGTK
+        // doesn't, and neither turns a WebP. So a PNG or WebP is cropped as stored (and the crop
+        // dialog shows a PNG without its eXIf, so it matches on every platform).
+        for (photo, format) in [
+            (png_with_orientation(64, 32, 6), ImageFormat::Png),
+            (webp_with_orientation(64, 32, 6), ImageFormat::WebP),
+        ] {
+            let mut reader = ImageReader::with_format(Cursor::new(&photo), format);
+            reader.limits(limits());
+            assert_eq!(
+                reader.into_decoder().unwrap().orientation().unwrap(),
+                Orientation::Rotate90,
+                "{format:?} carries the orientation"
+            );
+            // Its stored right half: blue, where an upright 32×64 would refuse the crop.
+            let right = Crop {
+                x: 32,
+                y: 0,
+                w: 32,
+                h: 32,
+            };
+            let px = centre(&avatar(&photo, Some(right)).unwrap().webp);
+            assert!(px[2] > 190 && px[0] < 60, "{format:?}: {px:?}");
+            let below = Crop {
+                x: 0,
+                y: 32,
+                ..right
+            };
+            assert!(
+                matches!(avatar(&photo, Some(below)), Err(ProcessError::CropOutside)),
+                "{format:?}"
+            );
+        }
     }
 
     #[test]

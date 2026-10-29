@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from 'svelte'
   import { modal } from '../lib/actions'
-  import { ASPECT, initialCrop, panCrop, roundCrop, zoomCrop, type CropRect } from '../lib/crop'
+  import { ASPECT, initialCrop, panCrop, roundCrop, withoutPngExif, zoomCrop, type CropRect } from '../lib/crop'
 
   let { file, kind, onApply, onCancel }: {
     file: File
@@ -25,13 +25,17 @@
   /** The file couldn't be read or decoded as a picture: only Cancel is left. */
   let unreadable = $state(false)
 
-  // The CSP allows data: images and not blob:, so the picture goes in as a data URL.
+  // The CSP allows data: images and not blob:, so the picture goes in as a data URL. A PNG's eXIf
+  // is left out: the server ignores its orientation, and this way every webview does too.
   onMount(() => {
     if (tooBig) return
     const reader = new FileReader()
     reader.onload = () => (src = String(reader.result))
     reader.onerror = () => (unreadable = true)
-    reader.readAsDataURL(file)
+    file.arrayBuffer().then(
+      (b) => reader.readAsDataURL(new Blob([withoutPngExif(new Uint8Array(b))], { type: file.type })),
+      () => (unreadable = true),
+    )
   })
 
   function loaded() {

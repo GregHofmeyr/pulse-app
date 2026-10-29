@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { ASPECT, initialCrop, panCrop, roundCrop, zoomCrop, type CropRect } from './crop'
+import { ASPECT, initialCrop, panCrop, roundCrop, withoutPngExif, zoomCrop, type CropRect } from './crop'
+import { pngChunk, pngOf, pngTags } from './testPng'
 
 const within = (c: CropRect, w: number, h: number) => c.x >= 0 && c.y >= 0 && c.w >= 1 && c.h >= 1 && c.x + c.w <= w && c.y + c.h <= h
 const inside = (c: CropRect, w: number, h: number) => [c.x, c.y, c.w, c.h].every(Number.isInteger) && within(c, w, h)
@@ -63,5 +64,26 @@ describe('crop', () => {
     let z = initialCrop(800, 600, ASPECT.avatar)
     for (let i = 0; i < 20; i++) z = zoomCrop(z, 800, 600, 1, 1.001, { x: 400, y: 300 })
     expect(roundCrop(z, 800, 600).w).toBe(Math.round(600 / 1.001 ** 20))
+  })
+})
+
+describe('withoutPngExif', () => {
+  it('drops a PNG\'s eXIf chunks and keeps the rest as it was', () => {
+    const png = pngOf(['IHDR', 'eXIf', 'IDAT', 'eXIf', 'IEND'])
+    const out = withoutPngExif(png)
+    expect(pngTags(out)).toEqual(['IHDR', 'IDAT', 'IEND'])
+    expect([...out]).toEqual([...pngOf(['IHDR', 'IDAT', 'IEND'])])
+  })
+  it('leaves anything else alone', () => {
+    const plain = pngOf(['IHDR', 'IDAT', 'IEND'])
+    expect(withoutPngExif(plain)).toBe(plain)
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 0xe1, 0, 8, 69, 120, 105, 102, 0, 0])
+    expect(withoutPngExif(jpeg)).toBe(jpeg)
+    expect(withoutPngExif(new Uint8Array())).toEqual(new Uint8Array())
+  })
+  it('keeps whatever follows a chunk it cannot read', () => {
+    const cut = new Uint8Array([...pngOf(['IHDR', 'eXIf']), ...pngChunk('IDAT').subarray(0, 9)])
+    const out = withoutPngExif(cut)
+    expect([...out]).toEqual([...pngOf(['IHDR']), ...pngChunk('IDAT').subarray(0, 9)])
   })
 })
