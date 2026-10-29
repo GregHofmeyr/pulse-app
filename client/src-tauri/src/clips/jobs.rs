@@ -1133,6 +1133,41 @@ mod tests {
             }
         }
 
+        /// How many events there are so far: a mark for [`Rig::seen`].
+        fn mark(&self) -> usize {
+            self.events.lock().unwrap().len()
+        }
+
+        /// The first event of job `id` from `from` on that satisfies `f`, and the mark just past it
+        /// (10 s at most). Unlike [`Rig::until`] it finds a stage the job only passed through: the
+        /// fake store can carry a job from Uploading to Done between two looks at its last event.
+        async fn seen(
+            &self,
+            id: &str,
+            from: usize,
+            f: impl Fn(&ClipJob) -> bool,
+        ) -> (ClipJob, usize) {
+            for _ in 0..1000 {
+                let hit = self
+                    .events
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .enumerate()
+                    .skip(from)
+                    .find(|(_, j)| j.id == id && f(j))
+                    .map(|(i, j)| (j.clone(), i + 1));
+                if let Some(hit) = hit {
+                    return hit;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+            panic!(
+                "job {id} never got there: {:?}",
+                self.events.lock().unwrap()
+            );
+        }
+
         /// The last event of job `id` once it satisfies `f` (10 s at most).
         async fn until(&self, id: &str, f: impl Fn(&ClipJob) -> bool) -> ClipJob {
             for _ in 0..1000 {
@@ -1680,9 +1715,10 @@ mod tests {
             Some("That game isn't in this server.")
         );
         assert_eq!(r.saved(&job.id)["uploaded"], true);
+        let from = r.mark();
         jobs.retry(&job.id).unwrap();
-        r.until(&job.id, |j| j.stage == Stage::Posting).await;
-        r.until(&job.id, |j| j.stage == Stage::Failed).await;
+        let (_, from) = r.seen(&job.id, from, |j| j.stage == Stage::Posting).await;
+        r.seen(&job.id, from, |j| j.stage == Stage::Failed).await;
         assert_eq!(r.puts(), 1, "Retry confirms again, it doesn't upload again");
     }
 
@@ -1714,7 +1750,7 @@ mod tests {
         runner.pause = Duration::from_millis(700);
         let jobs = r.jobs_with(runner).await;
         let job = jobs.send(r.request()).unwrap();
-        r.until(&job.id, |j| j.stage == Stage::Uploading).await;
+        r.seen(&job.id, 0, |j| j.stage == Stage::Uploading).await;
         let preparing: Vec<f32> = r
             .events
             .lock()
