@@ -94,9 +94,6 @@ pub enum ProcessError {
     TooManyFrames,
     #[error("that animation is too big once converted (512 KB at most); try a shorter one")]
     OutputTooBig,
-    /// A still over its kind's cap; each kind turns it into an error naming its own limit.
-    #[error("that picture is too big once converted")]
-    StillOutputTooBig,
     #[error("that image is too big once converted; try a smaller or shorter one")]
     QuoteOutputTooBig,
     #[error("that image's dimensions are too large (4096×4096 at most)")]
@@ -224,6 +221,9 @@ struct Profile {
     anim_max: usize,
     /// Most pixels the fitted frames of an animation may total.
     anim_max_pixels: u64,
+    /// The errors for a still or an animation over its cap, each naming the kind's own limit.
+    still_too_big: fn() -> ProcessError,
+    anim_too_big: fn() -> ProcessError,
 }
 
 /// Emoji: a transparent square, still or animated.
@@ -237,6 +237,9 @@ const EMOJI: Profile = Profile {
     anim_max: MAX_OUTPUT,
     // 300 frames of 128², already its natural bound.
     anim_max_pixels: u64::MAX,
+    // A 128² still can't really pass 512 KB; it reads as the limit it shares with animations.
+    still_too_big: || ProcessError::OutputTooBig,
+    anim_too_big: || ProcessError::OutputTooBig,
 };
 
 /// Quote images: aspect kept, never enlarged, fitted on the long side to the box's width.
@@ -249,6 +252,8 @@ const QUOTE: Profile = Profile {
     anim_box: (QUOTE_ANIM_MAX_SIDE, QUOTE_ANIM_MAX_SIDE),
     anim_max: QUOTE_ANIM_MAX_OUTPUT,
     anim_max_pixels: ANIM_MAX_FITTED_PIXELS,
+    still_too_big: || ProcessError::QuoteOutputTooBig,
+    anim_too_big: || ProcessError::QuoteOutputTooBig,
 };
 
 /// Avatars: covered to a square.
@@ -261,6 +266,8 @@ const AVATAR: Profile = Profile {
     anim_box: (AVATAR_SIDE, AVATAR_SIDE),
     anim_max: AVATAR_ANIM_MAX_OUTPUT,
     anim_max_pixels: ANIM_MAX_FITTED_PIXELS,
+    still_too_big: || ProcessError::AvatarStillTooBig,
+    anim_too_big: || ProcessError::AvatarOutputTooBig,
 };
 
 /// Banners: covered to a wide box, smaller when animated.
@@ -273,6 +280,8 @@ const BANNER: Profile = Profile {
     anim_box: (BANNER_ANIM_W, BANNER_ANIM_H),
     anim_max: BANNER_ANIM_MAX_OUTPUT,
     anim_max_pixels: ANIM_MAX_FITTED_PIXELS,
+    still_too_big: || ProcessError::BannerStillTooBig,
+    anim_too_big: || ProcessError::BannerOutputTooBig,
 };
 
 /// Process an emoji upload. CPU-bound: call it off the async runtime.
@@ -288,61 +297,37 @@ pub fn quote_image(input: &[u8]) -> Result<Processed, ProcessError> {
 
 /// [`quote_image`] with the profile injected, so tests can use small caps.
 fn quote_with(input: &[u8], profile: &Profile) -> Result<Processed, ProcessError> {
-    convert(input, None, MAX_DECODED_PIXELS, profile).map_err(|e| match e {
-        ProcessError::OutputTooBig | ProcessError::StillOutputTooBig => {
-            ProcessError::QuoteOutputTooBig
-        }
-        e => e,
-    })
+    convert(input, None, MAX_DECODED_PIXELS, profile)
 }
 
 /// Process an avatar upload: an optional crop on every frame, then covered to 256×256. CPU-bound:
 /// call it off the async runtime.
 pub fn avatar(input: &[u8], crop: Option<Crop>) -> Result<Processed, ProcessError> {
-    profile_with(
-        input,
-        crop,
-        &AVATAR,
-        ProcessError::AvatarStillTooBig,
-        ProcessError::AvatarOutputTooBig,
-    )
+    profile_with(input, crop, &AVATAR)
 }
 
 /// Process a banner upload: an optional crop on every frame, then covered to 960×384 (600×240
 /// when animated). CPU-bound: call it off the async runtime.
 pub fn banner(input: &[u8], crop: Option<Crop>) -> Result<Processed, ProcessError> {
-    profile_with(
-        input,
-        crop,
-        &BANNER,
-        ProcessError::BannerStillTooBig,
-        ProcessError::BannerOutputTooBig,
-    )
+    profile_with(input, crop, &BANNER)
 }
 
-/// [`convert`] for a profile picture, with the errors that name its limits.
+/// [`convert`] for a profile picture, with the input errors that name its limits.
 fn profile_with(
     input: &[u8],
     crop: Option<Crop>,
     profile: &Profile,
-    still_too_big: ProcessError,
-    animation_too_big: ProcessError,
 ) -> Result<Processed, ProcessError> {
     convert(input, crop, MAX_DECODED_PIXELS, profile).map_err(|e| match e {
         ProcessError::TooBig => ProcessError::ProfileTooBig,
         ProcessError::TooManyFrames => ProcessError::ProfileTooManyFrames,
-        ProcessError::StillOutputTooBig => still_too_big,
-        ProcessError::OutputTooBig => animation_too_big,
         e => e,
     })
 }
 
 /// [`emoji`] with the animation pixel budget injected, so tests needn't decode 100 Mpx.
 fn emoji_with_budget(input: &[u8], max_decoded_pixels: u64) -> Result<Processed, ProcessError> {
-    convert(input, None, max_decoded_pixels, &EMOJI).map_err(|e| match e {
-        ProcessError::StillOutputTooBig => ProcessError::OutputTooBig,
-        e => e,
-    })
+    convert(input, None, max_decoded_pixels, &EMOJI)
 }
 
 /// The pipeline every kind shares: sniff, bound, decode, crop, fit, re-encode.
@@ -476,9 +461,9 @@ fn convert(
     };
     if webp.len() > max_output {
         return Err(if frames > 1 {
-            ProcessError::OutputTooBig
+            (profile.anim_too_big)()
         } else {
-            ProcessError::StillOutputTooBig
+            (profile.still_too_big)()
         });
     }
     let (width, height) = fitted[0].0.dimensions();
@@ -915,7 +900,7 @@ mod tests {
             Err(ProcessError::QuoteOutputTooBig)
         ));
         assert!(quote_with(&noisy_gif(3, 64), &still_capped).is_ok());
-        // The shared pipeline says still or animation; each kind names its own limit.
+        // An emoji's still over its cap reads as the limit it shares with animations.
         assert!(matches!(
             convert(
                 &noisy_png(64),
@@ -926,7 +911,7 @@ mod tests {
                     ..EMOJI
                 }
             ),
-            Err(ProcessError::StillOutputTooBig)
+            Err(ProcessError::OutputTooBig)
         ));
     }
 
@@ -1429,32 +1414,27 @@ mod tests {
 
     #[test]
     fn profile_output_caps() {
-        // Each kind's still and animation caps are separate, and an output past one names it.
+        // Only the size caps are overridden: the errors are AVATAR's and BANNER's own. A still
+        // obeys the still cap and an animation the animation cap, each named in the kind's terms.
         let tiny = 2_000;
         let (still, anim) = (noisy_png(64), noisy_gif(3, 64));
-        // A kind's base profile, and its still and animation errors.
-        type Errors = fn() -> (ProcessError, ProcessError);
-        let kinds: [(Profile, Errors); 2] = [
-            (AVATAR, || {
-                (
-                    ProcessError::AvatarStillTooBig,
-                    ProcessError::AvatarOutputTooBig,
-                )
-            }),
-            (BANNER, || {
-                (
-                    ProcessError::BannerStillTooBig,
-                    ProcessError::BannerOutputTooBig,
-                )
-            }),
-        ];
-        for (kind, errors) in kinds {
-            let process = |input: &[u8], profile: Profile| {
-                let (still_too_big, animation_too_big) = errors();
-                profile_with(input, None, &profile, still_too_big, animation_too_big)
-                    .map(|_| ())
-                    .map_err(|e| e.to_string())
-            };
+        let process = |input: &[u8], profile: Profile| {
+            profile_with(input, None, &profile)
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+        };
+        for (kind, still_too_big, anim_too_big) in [
+            (
+                AVATAR,
+                ProcessError::AvatarStillTooBig,
+                ProcessError::AvatarOutputTooBig,
+            ),
+            (
+                BANNER,
+                ProcessError::BannerStillTooBig,
+                ProcessError::BannerOutputTooBig,
+            ),
+        ] {
             let still_capped = || Profile {
                 still_max: tiny,
                 ..kind
@@ -1463,9 +1443,12 @@ mod tests {
                 anim_max: tiny,
                 ..kind
             };
-            assert_eq!(process(&still, still_capped()), Err(errors().0.to_string()));
+            assert_eq!(
+                process(&still, still_capped()),
+                Err(still_too_big.to_string())
+            );
             assert_eq!(process(&still, anim_capped()), Ok(()));
-            assert_eq!(process(&anim, anim_capped()), Err(errors().1.to_string()));
+            assert_eq!(process(&anim, anim_capped()), Err(anim_too_big.to_string()));
             assert_eq!(process(&anim, still_capped()), Ok(()));
         }
     }
