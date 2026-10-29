@@ -40,6 +40,7 @@ import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
 import { callView, joinAndWatch, openFull, showToast, watchStream } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 import Waiting from './Waiting.svelte'
+import { closeCard, editProfile, profileUi } from '../lib/profileCard.svelte'
 
 let cmp: ReturnType<typeof mount> | undefined
 let offs: (() => void)[] = []
@@ -168,7 +169,7 @@ describe('account menu', () => {
     app.state = { ...emptyState(), me: { ...atLogin, avatar_hash: pic, style: { font: null, colors: ['#ff8800'] } } }
     cmp = mount(Shell, { target: document.body, props: { user: atLogin, onLogout: () => {} } })
     flushSync()
-    const btn = () => document.querySelector<HTMLButtonElement>('.who-btn')!
+    const btn = () => document.querySelector<HTMLElement>('.me')!
     expect(btn().querySelector('img')?.getAttribute('src')).toContain(pic)
     expect(btn().querySelector<HTMLElement>('.name')?.getAttribute('style')).toContain('color:')
     expect(btn().textContent).toContain('alex')
@@ -177,6 +178,34 @@ describe('account menu', () => {
     app.state = { ...app.state, me: { ...app.state.me!, avatar_hash: next } }
     flushSync()
     expect(btn().querySelector('img')?.getAttribute('src')).toContain(next)
+  })
+
+  it('your avatar opens your quick card; your name still opens the account menu', () => {
+    const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    app.state = { ...emptyState(), me }
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+    flushSync()
+    const avatar = document.querySelector<HTMLButtonElement>('.me button.me-avatar')!
+    avatar.click()
+    flushSync()
+    expect(profileUi.card).toMatchObject({ userId: 'U1', serverId: null, opener: avatar })
+    expect(document.querySelector('.me [role=menu]')).toBeNull()
+    closeCard()
+    document.querySelector<HTMLButtonElement>('.who-btn')!.click()
+    flushSync()
+    expect(document.querySelector('.me [role=menu]')).not.toBeNull()
+    expect(profileUi.card).toBeNull()
+  })
+
+  it('Edit profile on your card opens Settings on Profile', () => {
+    const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    app.state = { ...emptyState(), me }
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+    flushSync()
+    editProfile()
+    flushSync()
+    expect(document.querySelector('[aria-current=page]')?.textContent).toContain('Profile')
+    expect(profileUi.edit).toBe(false)
   })
 
   it('esc_closes_the_account_menu_and_focus_returns_to_its_toggle', async () => {

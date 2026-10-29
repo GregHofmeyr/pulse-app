@@ -190,6 +190,39 @@ describe('ProfileCard', () => {
     b.click()
     expect(profileUi.full).toEqual({ userId: 'U2', serverId: 'S1' })
   })
+
+  it("the quick card's avatar opens the full profile too; the full card's and the preview's don't", () => {
+    const el = show({ serverId: 'S1' })
+    el.querySelector<HTMLButtonElement>('button.avatar-link')!.click()
+    expect(profileUi.full).toEqual({ userId: 'U2', serverId: 'S1' })
+    closeFull()
+    unmount(cmp!)
+    cmp = undefined
+    expect(show({ size: 'full' }).querySelector('button.avatar-link')).toBeNull()
+    unmount(cmp!)
+    cmp = undefined
+    expect(show({ preview: true }).querySelector('button.avatar-link')).toBeNull()
+  })
+
+  it('your own card (quick and full) has Edit profile; it closes the card and the full profile and asks for Settings → Profile', () => {
+    const edit = (el: HTMLElement) => [...el.querySelectorAll('button')].find((b) => b.textContent === 'Edit profile')
+    expect(edit(show())).toBeUndefined() // someone else's
+    unmount(cmp!)
+    cmp = undefined
+    expect(edit(show({ user: alex, preview: true }))).toBeUndefined()
+    unmount(cmp!)
+    cmp = undefined
+    expect(edit(show({ user: alex, size: 'full' }))).toBeDefined()
+    unmount(cmp!)
+    cmp = undefined
+    profileUi.card = { userId: 'U1', serverId: null, anchor: new DOMRect(), opener: document.body }
+    profileUi.full = { userId: 'U1', serverId: null }
+    const onClose = vi.fn()
+    edit(show({ user: alex, onClose }))!.click()
+    expect(profileUi.edit).toBe(true)
+    expect(profileUi.card).toBeNull()
+    expect(profileUi.full).toBeNull()
+  })
 })
 
 describe('ProfileCardPopover', () => {

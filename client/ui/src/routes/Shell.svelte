@@ -26,7 +26,7 @@
   import GroupMembers from '../components/GroupMembers.svelte'
   // Profiles: the quick card and the full profile
   import ProfileCardPopover from '../components/ProfileCardPopover.svelte'
-  import { closeFull, profileUi } from '../lib/profileCard.svelte'
+  import { closeFull, openCard, profileUi } from '../lib/profileCard.svelte'
   import { onMount, tick, untrack } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { findWatch, followLiveFreeze, stream, streamApi } from '../lib/stream/stream.svelte'
@@ -325,6 +325,14 @@
       callView.goTo = null
     })
   })
+  // Edit profile on your own card asked for Settings → Profile.
+  $effect(() => {
+    if (!profileUi.edit) return
+    untrack(() => {
+      profileUi.edit = false
+      openSettings('profile')
+    })
+  })
   // A jump to a message (lib/jump.ts) asked for its channel.
   $effect(() => {
     const id = ui.goTo
@@ -464,8 +472,9 @@
       {/if}
       <VoiceStatus />
       <div class="me">
+        <!-- your avatar opens your quick card (like anyone's); the rest opens the account menu -->
+        <button type="button" class="me-avatar" aria-label="Your profile" data-tip="Your profile" onclick={(e) => openCard(me.id, null, e.currentTarget)}><Avatar id={me.id} name={me.username} size={34} /></button>
         <button bind:this={menuToggle} class="who-btn" data-tip="Account" data-menu-toggle aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
-          <Avatar id={me.id} name={me.username} size={34} />
           <span class="who"><Name userId={me.id} serverId={null} text={me.username} interactive={false} /><small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
         </button>
         {#if voice.channelId}
@@ -600,7 +609,8 @@
   .add { width: 36px; height: 36px; flex-shrink: 0; border: 1px dashed #3a3c44; border-radius: 10px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .add:hover { color: var(--text); border-color: var(--text-3); }
   .me { position: relative; }
-  .who-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 4px 6px 4px 0; border: 0; border-radius: 10px; background: transparent; text-align: left; }
+  .me-avatar { flex-shrink: 0; display: flex; padding: 0; border: 0; border-radius: 50%; background: none; }
+  .who-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 4px 6px; border: 0; border-radius: 10px; background: transparent; text-align: left; }
   .who-btn:hover { background: var(--bg-2); }
   .who-btn .who { overflow: hidden; }
   .menu { position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 10; min-width: 200px; padding: 6px; background: #2e3037; border: 1px solid #3d4048; border-radius: 12px; box-shadow: 0 18px 48px rgba(8, 9, 12, .5); display: flex; flex-direction: column; }

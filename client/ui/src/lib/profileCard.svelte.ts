@@ -3,7 +3,8 @@
 export type CardTarget = { userId: string; serverId: string | null; anchor: DOMRect; opener: Element }
 export type FullTarget = { userId: string; serverId: string | null }
 
-export const profileUi: { card: CardTarget | null; full: FullTarget | null } = $state({ card: null, full: null })
+/** `edit`: your own card asked for Settings → Profile (the shell opens it and clears this). */
+export const profileUi: { card: CardTarget | null; full: FullTarget | null; edit: boolean } = $state({ card: null, full: null, edit: false })
 
 /** Opens the quick card for `userId` next to `el`; the same name or avatar again closes it. */
 export function openCard(userId: string, serverId: string | null, el: Element): void {
@@ -22,4 +23,11 @@ export function closeCard(): void {
 
 export function closeFull(): void {
   profileUi.full = null
+}
+
+/** Edit profile, from your own card: the card and the full profile give way to Settings → Profile. */
+export function editProfile(): void {
+  profileUi.card = null
+  profileUi.full = null
+  profileUi.edit = true
 }

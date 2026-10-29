@@ -15,7 +15,7 @@
   import { animateEmojiIn, shouldAnimateProfile, wireAnimated } from '../lib/animate.svelte'
   import { formatMemberSince, formatVoice } from '../lib/profileFormat'
   import { badgeInfo } from '../lib/badges'
-  import { openFull } from '../lib/profileCard.svelte'
+  import { editProfile, openFull } from '../lib/profileCard.svelte'
   import type { User } from '../lib/protocol/User'
   import type { CardProfile } from '../lib/protocol/CardProfile'
   import type { Badge } from '../lib/protocol/Badge'
@@ -97,7 +97,12 @@
     {#if banner}<img src={mediaUrl(bannerStill ?? banner)} alt="" draggable="false" {@attach wireBanner} />{/if}
   </div>
   <div class="body">
-    <span class="ring"><Avatar id={user.id} name={user.username} size={80} place="card" {online} user={preview ? user : undefined} /></span>
+    {#if !preview && size === 'quick'}
+      <!-- the avatar is a way in to the full profile too -->
+      <button type="button" class="ring avatar-link" aria-label="View full profile" onclick={viewFull}><Avatar id={user.id} name={user.username} size={80} place="card" {online} /></button>
+    {:else}
+      <span class="ring"><Avatar id={user.id} name={user.username} size={80} place="card" {online} user={preview ? user : undefined} /></span>
+    {/if}
     <div class="who">
       <!-- No server for the style: a card shows the person's own colour, never a role colour (spec §2) -->
       <Name userId={user.id} serverId={null} text={name} interactive={false} size="card" user={preview ? user : undefined} />
@@ -126,8 +131,11 @@
         {#if voiceRoom}<div class="room"><Icon name="speaker" size={14} /><span>In {voiceRoom}</span></div>{/if}
       </dl>
     {/if}
-    {#if !preview && size === 'quick'}
-      <button type="button" class="full-link" onclick={viewFull}>View full profile</button>
+    {#if !preview && (size === 'quick' || mine)}
+      <div class="links">
+        {#if size === 'quick'}<button type="button" class="full-link" onclick={viewFull}>View full profile</button>{/if}
+        {#if mine}<button type="button" class="full-link" onclick={editProfile}>Edit profile</button>{/if}
+      </div>
     {/if}
     {#if !preview && !mine}
       <input class="msg" type="text" placeholder="Message @{name}" aria-label="Message @{name}" bind:value={draft} disabled={sending}
@@ -174,7 +182,9 @@
   dt { color: var(--card-text-2); }
   dd { margin: 0; }
   .info .room { justify-content: flex-start; align-items: center; gap: 6px; color: var(--ok); }
-  .full-link { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--card-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  .links { align-self: flex-start; display: flex; gap: 16px; }
+  .avatar-link { border: 0; cursor: pointer; }
+  .full-link { background: none; border: 0; padding: 0; color: var(--card-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
   .full-link:hover { text-decoration: underline; }
   .msg { height: 36px; border-radius: 10px; border: 1px solid rgb(242 243 246 / .14); background: var(--panel-bottom); color: var(--card-text); padding: 0 12px; font: inherit; font-size: 13px; }
   .msg::placeholder { color: var(--card-text-2); opacity: .75; }
