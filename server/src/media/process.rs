@@ -436,6 +436,8 @@ fn convert(
             // unreadable EXIF is treated as none, as browsers do. A PNG's or WebP's isn't:
             // neither webview turns a WebP, only WebView2 turns a PNG by its eXIf, and the crop
             // dialog shows a PNG without it, so the crop is in its stored pixels everywhere.
+            // This is the shared pipeline, so emoji and quote images (no crop, no preview) follow
+            // the same rule: a JPEG upright, a PNG or WebP as stored.
             let orientation = match format {
                 ImageFormat::Jpeg => decoder.orientation().unwrap_or(Orientation::NoTransforms),
                 _ => Orientation::NoTransforms,
@@ -1189,6 +1191,9 @@ mod tests {
 
     #[test]
     fn a_still_reserves_its_decoded_size_against_the_allocation_limit() {
+        // A seam test: it checks still_decoder, which convert's still path goes through. With the
+        // real 256 MiB limit and 4096 px sides no upload can reach the reserve, so no convert test
+        // could tell the old inline into_decoder (which skipped it) from this.
         // 512×512 RGBA is 1 MiB once decoded: a byte short of that is refused before decoding.
         let picture = png(512, 512);
         let decoded = 512 * 512 * 4;
@@ -1331,6 +1336,29 @@ mod tests {
                 matches!(avatar(&photo, Some(below)), Err(ProcessError::CropOutside)),
                 "{format:?}"
             );
+        }
+    }
+
+    #[test]
+    fn emoji_and_quotes_turn_only_a_jpeg_by_its_exif_orientation() {
+        // Stored 64×32 (red left, blue right); orientation 6 would make it a 32×64 portrait.
+        for (photo, turned) in [
+            (jpeg_with_orientation(64, 32, 6), true),
+            (png_with_orientation(64, 32, 6), false),
+            (webp_with_orientation(64, 32, 6), false),
+        ] {
+            let q = quote_image(&photo).unwrap();
+            assert_eq!(q.height > q.width, turned, "quote {}×{}", q.width, q.height);
+            // The emoji square is the picture fitted inside it: a wide band stored, a tall one
+            // turned, so a point left of centre is red only as stored.
+            let e = image::load_from_memory_with_format(
+                &emoji(&photo).unwrap().webp,
+                ImageFormat::WebP,
+            )
+            .unwrap()
+            .to_rgba8();
+            let px = e.get_pixel(SIZE / 8, SIZE / 2).0;
+            assert_eq!(px[3] > 200 && px[0] > 190, !turned, "emoji {px:?}");
         }
     }
 
