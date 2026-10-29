@@ -299,38 +299,22 @@ fn quote_with(input: &[u8], profile: &Profile) -> Result<Processed, ProcessError
 /// Process an avatar upload: an optional crop on every frame, then covered to 256×256. CPU-bound:
 /// call it off the async runtime.
 pub fn avatar(input: &[u8], crop: Option<Crop>) -> Result<Processed, ProcessError> {
-    avatar_with(input, crop, &AVATAR)
-}
-
-/// Process a banner upload: an optional crop on every frame, then covered to 960×384 (600×240
-/// when animated). CPU-bound: call it off the async runtime.
-pub fn banner(input: &[u8], crop: Option<Crop>) -> Result<Processed, ProcessError> {
-    banner_with(input, crop, &BANNER)
-}
-
-fn avatar_with(
-    input: &[u8],
-    crop: Option<Crop>,
-    profile: &Profile,
-) -> Result<Processed, ProcessError> {
     profile_with(
         input,
         crop,
-        profile,
+        &AVATAR,
         ProcessError::AvatarStillTooBig,
         ProcessError::AvatarOutputTooBig,
     )
 }
 
-fn banner_with(
-    input: &[u8],
-    crop: Option<Crop>,
-    profile: &Profile,
-) -> Result<Processed, ProcessError> {
+/// Process a banner upload: an optional crop on every frame, then covered to 960×384 (600×240
+/// when animated). CPU-bound: call it off the async runtime.
+pub fn banner(input: &[u8], crop: Option<Crop>) -> Result<Processed, ProcessError> {
     profile_with(
         input,
         crop,
-        profile,
+        &BANNER,
         ProcessError::BannerStillTooBig,
         ProcessError::BannerOutputTooBig,
     )
@@ -1338,42 +1322,44 @@ mod tests {
 
     #[test]
     fn profile_output_caps() {
+        // Each kind's still and animation caps are separate, and an output past one names it.
         let tiny = 2_000;
-        let still_capped = Profile {
-            still_max: tiny,
-            ..AVATAR
-        };
-        assert!(matches!(
-            avatar_with(&noisy_png(64), None, &still_capped),
-            Err(ProcessError::AvatarStillTooBig)
-        ));
-        let anim_capped = Profile {
-            anim_max: tiny,
-            ..AVATAR
-        };
-        assert!(avatar_with(&noisy_png(64), None, &anim_capped).is_ok());
-        assert!(matches!(
-            avatar_with(&noisy_gif(3, 64), None, &anim_capped),
-            Err(ProcessError::AvatarOutputTooBig)
-        ));
-        assert!(avatar_with(&noisy_gif(3, 64), None, &still_capped).is_ok());
-
-        let still_capped = Profile {
-            still_max: tiny,
-            ..BANNER
-        };
-        assert!(matches!(
-            banner_with(&noisy_png(64), None, &still_capped),
-            Err(ProcessError::BannerStillTooBig)
-        ));
-        let anim_capped = Profile {
-            anim_max: tiny,
-            ..BANNER
-        };
-        assert!(banner_with(&noisy_png(64), None, &anim_capped).is_ok());
-        assert!(matches!(
-            banner_with(&noisy_gif(3, 64), None, &anim_capped),
-            Err(ProcessError::BannerOutputTooBig)
-        ));
+        let (still, anim) = (noisy_png(64), noisy_gif(3, 64));
+        // A kind's base profile, and its still and animation errors.
+        type Errors = fn() -> (ProcessError, ProcessError);
+        let kinds: [(Profile, Errors); 2] = [
+            (AVATAR, || {
+                (
+                    ProcessError::AvatarStillTooBig,
+                    ProcessError::AvatarOutputTooBig,
+                )
+            }),
+            (BANNER, || {
+                (
+                    ProcessError::BannerStillTooBig,
+                    ProcessError::BannerOutputTooBig,
+                )
+            }),
+        ];
+        for (kind, errors) in kinds {
+            let process = |input: &[u8], profile: Profile| {
+                let (still_too_big, animation_too_big) = errors();
+                profile_with(input, None, &profile, still_too_big, animation_too_big)
+                    .map(|_| ())
+                    .map_err(|e| e.to_string())
+            };
+            let still_capped = || Profile {
+                still_max: tiny,
+                ..kind
+            };
+            let anim_capped = || Profile {
+                anim_max: tiny,
+                ..kind
+            };
+            assert_eq!(process(&still, still_capped()), Err(errors().0.to_string()));
+            assert_eq!(process(&still, anim_capped()), Ok(()));
+            assert_eq!(process(&anim, anim_capped()), Err(errors().1.to_string()));
+            assert_eq!(process(&anim, still_capped()), Ok(()));
+        }
     }
 }

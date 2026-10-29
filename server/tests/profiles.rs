@@ -43,17 +43,21 @@ async fn ready_of(app: &TestApp, token: &str) -> Ready {
     hello(app, token).await.1
 }
 
-fn styled(u: &User, id: pulse_protocol::ids::UserId) {
+const FONT: &str = "pacifico";
+const COLOURS: [&str; 2] = ["#ffc4a3", "#ff7fae"];
+
+/// `u` is user `id` with the name style above and the animated `avatar`.
+fn styled(u: &User, id: pulse_protocol::ids::UserId, avatar: &MediaInfo) {
     assert_eq!(u.id, id);
     assert_eq!(
         u.style,
         NameStyle {
-            font: Some("pacifico".into()),
-            colors: vec!["#ffc4a3".into(), "#ff7fae".into()],
+            font: Some(FONT.into()),
+            colors: COLOURS.map(String::from).to_vec(),
         }
     );
-    assert_eq!(u.avatar_hash.as_deref(), Some("avatar-full"));
-    assert_eq!(u.avatar_still.as_deref(), Some("avatar-still"));
+    assert_eq!(u.avatar_hash.as_ref(), Some(&avatar.hash));
+    assert_eq!(u.avatar_still, avatar.still_hash);
 }
 
 #[tokio::test]
@@ -71,21 +75,14 @@ async fn ready_carries_name_styles() {
     .await;
     assert_eq!(r.status(), 204);
 
-    for q in [
-        "INSERT INTO media (hash, kind, content_type, size, width, height, frames, still_hash, created_at) \
-         VALUES ('avatar-still', 'avatar', 'image/webp', 1, 256, 256, 1, NULL, '2026-10-01T00:00:00.000Z')",
-        "INSERT INTO media (hash, kind, content_type, size, width, height, frames, still_hash, created_at) \
-         VALUES ('avatar-full', 'avatar', 'image/webp', 1, 256, 256, 4, 'avatar-still', '2026-10-01T00:00:00.000Z')",
-    ] {
-        sqlx::query(q).execute(&app.db).await.unwrap();
-    }
-    sqlx::query(
-        "UPDATE users SET name_font = 'pacifico', name_color = '#ffc4a3,#ff7fae', avatar_hash = 'avatar-full' WHERE id = ?",
+    let avatar = upload(&app, &alex, "avatar", gif()).await;
+    assert!(avatar.still_hash.is_some());
+    exec(
+        &app,
+        "UPDATE users SET name_font = ?, name_color = ?, avatar_hash = ? WHERE id = ?",
+        &[FONT, &COLOURS.join(","), &avatar.hash, &alex_id.to_string()],
     )
-    .bind(alex_id.to_string())
-    .execute(&app.db)
-    .await
-    .unwrap();
+    .await;
 
     let ready = ready_of(&app, &sam).await;
     styled(
@@ -96,6 +93,7 @@ async fn ready_carries_name_styles() {
             .unwrap()
             .user,
         alex_id,
+        &avatar,
     );
     let m = ready
         .members
@@ -103,10 +101,10 @@ async fn ready_carries_name_styles() {
         .flat_map(|sm| sm.members.iter())
         .find(|m| m.user.id == alex_id)
         .unwrap();
-    styled(&m.user, alex_id);
+    styled(&m.user, alex_id, &avatar);
 
     let me: User = get_json(&app, &alex, "/me").await;
-    styled(&me, alex_id);
+    styled(&me, alex_id, &avatar);
 }
 
 #[tokio::test]
@@ -229,10 +227,11 @@ async fn stats_total_across_servers() {
     let q = "INSERT INTO voice_sessions (id, user_id, channel_id, joined_at, left_at) VALUES (?, ?, ?, ?, ?)";
     exec(&app, q, &["s1", &u, &a, &ago(7200), &ago(3600)]).await;
     exec(&app, q, &["s2", &u, &b, &ago(5400), &ago(3600)]).await;
+    // Still in voice: counted up to now.
     exec(
         &app,
-        "INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES ('s3', ?, ?, ?)",
-        &[&u, &a, &ago(60)],
+        "INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES (?, ?, ?, ?)",
+        &["s3", &u, &a, &ago(60)],
     )
     .await;
 
@@ -324,11 +323,11 @@ async fn name_archive_and_renames() {
     exec(&app, q, &["h1", &sa.id.to_string(), &u, &u, "Old", &t_old]).await;
     exec(&app, q, &["h2", &sb.id.to_string(), &u, &by, "New", &t_new]).await;
     // A cleared nickname (new_nick NULL) is a rename, but has no name to archive.
-    let cleared = "INSERT INTO nickname_history (id, server_id, target_user_id, changed_by, old_nick, new_nick, changed_at) VALUES (?, ?, ?, ?, 'Old', NULL, ?)";
+    let cleared = "INSERT INTO nickname_history (id, server_id, target_user_id, changed_by, old_nick, new_nick, changed_at) VALUES (?, ?, ?, ?, ?, NULL, ?)";
     exec(
         &app,
         cleared,
-        &["h3", &sa.id.to_string(), &u, &u, &ago(150)],
+        &["h3", &sa.id.to_string(), &u, &u, "Old", &ago(150)],
     )
     .await;
 
@@ -349,17 +348,17 @@ async fn badges_come_from_user_badges() {
     let app = spawn().await;
     let (alex_id, alex) = register(&app, "alex").await;
     assert!(profile_of(&app, &alex, alex_id).await.badges.is_empty());
-    let t = ago(30);
+    let (key, t) = ("founder", ago(30));
     exec(
         &app,
-        "INSERT INTO user_badges (user_id, badge_key, earned_at, first_earner) VALUES (?, 'founder', ?, 1)",
-        &[&alex_id.to_string(), &t],
+        "INSERT INTO user_badges (user_id, badge_key, earned_at, first_earner) VALUES (?, ?, ?, 1)",
+        &[&alex_id.to_string(), key, &t],
     )
     .await;
     assert_eq!(
         profile_of(&app, &alex, alex_id).await.badges,
         vec![Badge {
-            key: "founder".into(),
+            key: key.into(),
             earned_at: t,
             first_earner: true
         }]
@@ -370,25 +369,24 @@ async fn badges_come_from_user_badges() {
 async fn card_carries_theme_and_banner_still() {
     let app = spawn().await;
     let (alex_id, alex) = register(&app, "alex").await;
-    exec(&app,
-        "INSERT INTO media (hash, kind, content_type, size, width, height, frames, still_hash, created_at) VALUES ('b-still', 'banner', 'image/webp', 1, 960, 384, 1, NULL, '2026-10-01T00:00:00.000Z')", &[]).await;
-    exec(&app,
-        "INSERT INTO media (hash, kind, content_type, size, width, height, frames, still_hash, created_at) VALUES ('b-full', 'banner', 'image/webp', 1, 600, 240, 4, 'b-still', '2026-10-01T00:00:00.000Z')", &[]).await;
+    let banner = upload(&app, &alex, "banner", gif()).await;
+    let (pronouns, bio) = ("they/them", "hi");
     exec(
         &app,
-        "UPDATE users SET banner_hash = 'b-full', pronouns = 'they/them', bio = 'hi' WHERE id = ?",
-        &[&alex_id.to_string()],
+        "UPDATE users SET banner_hash = ?, pronouns = ?, bio = ? WHERE id = ?",
+        &[&banner.hash, pronouns, bio, &alex_id.to_string()],
     )
     .await;
     let c = profile_of(&app, &alex, alex_id).await.card;
-    assert_eq!(c.banner_hash.as_deref(), Some("b-full"));
-    assert_eq!(c.banner_still.as_deref(), Some("b-still"));
+    assert_eq!(c.banner_hash, Some(banner.hash));
+    assert!(c.banner_still.is_some());
+    assert_eq!(c.banner_still, banner.still_hash);
     assert_eq!(
         (c.theme_top.as_str(), c.theme_bottom.as_str()),
         ("#3a3d46", "#16171b")
     );
-    assert_eq!(c.pronouns.as_deref(), Some("they/them"));
-    assert_eq!(c.bio.as_deref(), Some("hi"));
+    assert_eq!(c.pronouns.as_deref(), Some(pronouns));
+    assert_eq!(c.bio.as_deref(), Some(bio));
 }
 
 #[tokio::test]
@@ -426,18 +424,43 @@ fn png() -> Vec<u8> {
     out.into_inner()
 }
 
-async fn upload_kind(app: &TestApp, token: &str, kind: &str) -> String {
+/// A three-frame animation, so the upload gets a still.
+fn gif() -> Vec<u8> {
+    use image::codecs::gif::GifEncoder;
+    use image::{Delay, Frame};
+    let mut out = Vec::new();
+    {
+        let mut enc = GifEncoder::new(&mut out);
+        for shade in [0, 80, 160] {
+            let img = RgbaImage::from_pixel(64, 32, Rgba([shade, 40, 90, 255]));
+            enc.encode_frame(Frame::from_parts(
+                img,
+                0,
+                0,
+                Delay::from_numer_denom_ms(50, 1),
+            ))
+            .unwrap();
+        }
+    }
+    out
+}
+
+async fn upload(app: &TestApp, token: &str, kind: &str, body: Vec<u8>) -> MediaInfo {
     let r = app
         .http
         .post(app.url(&format!("/media/{kind}")))
         .bearer_auth(token)
         .header("content-type", "application/octet-stream")
-        .body(png())
+        .body(body)
         .send()
         .await
         .unwrap();
     assert_eq!(r.status(), 200);
-    r.json::<MediaInfo>().await.unwrap().hash
+    r.json().await.unwrap()
+}
+
+async fn upload_kind(app: &TestApp, token: &str, kind: &str) -> String {
+    upload(app, token, kind, png()).await.hash
 }
 
 fn request() -> UpdateProfileRequest {
@@ -606,10 +629,8 @@ async fn bad_input_is_refused() {
     .await;
 
     let expired = "That picture has expired. Upload it again.";
-    exec(&app,
-        "INSERT INTO media (hash, kind, content_type, size, width, height, frames, still_hash, created_at) VALUES ('an-emoji', 'emoji', 'image/webp', 1, 128, 128, 1, NULL, '2026-10-01T00:00:00.000Z')", &[]).await;
     let mut r = request();
-    r.avatar_hash = Some("an-emoji".into());
+    r.avatar_hash = Some(upload_kind(&app, &alex, "emoji").await);
     refused(&app, &alex, &r, expired).await;
 
     let av = upload_kind(&app, &alex, "avatar").await;
@@ -662,13 +683,14 @@ async fn a_swept_upload_is_refused_on_save() {
     let app = spawn().await;
     let (id, alex) = register(&app, "alex").await;
     let hash = upload_kind(&app, &alex, "avatar").await;
+    let grace = Duration::from_secs(24 * 3600);
     exec(
         &app,
-        "UPDATE media SET created_at = '2020-01-01T00:00:00.000Z'",
-        &[],
+        "UPDATE media SET created_at = ?",
+        &[&ago(2 * 24 * 3600)],
     )
     .await;
-    media::cleanup(&app.db, &app.cfg.media_dir, Duration::from_secs(24 * 3600))
+    media::cleanup(&app.db, &app.cfg.media_dir, grace)
         .await
         .unwrap();
     let mut r = request();
@@ -692,13 +714,14 @@ async fn the_current_avatar_is_always_accepted() {
     let mut r = request();
     r.avatar_hash = Some(hash);
     assert_eq!(put_profile(&app, &alex, &r).await.status(), 200);
+    let grace = Duration::from_secs(24 * 3600);
     exec(
         &app,
-        "UPDATE media SET created_at = '2020-01-01T00:00:00.000Z'",
-        &[],
+        "UPDATE media SET created_at = ?",
+        &[&ago(2 * 24 * 3600)],
     )
     .await;
-    media::cleanup(&app.db, &app.cfg.media_dir, Duration::from_secs(24 * 3600))
+    media::cleanup(&app.db, &app.cfg.media_dir, grace)
         .await
         .unwrap();
     assert_eq!(put_profile(&app, &alex, &r).await.status(), 200);
