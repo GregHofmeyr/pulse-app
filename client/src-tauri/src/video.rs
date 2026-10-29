@@ -5,9 +5,12 @@
 //!
 //! - A token is 32 random bytes (64 hex digits) naming exactly one file. Tokens are given only for
 //!   paths the webview may load through the asset protocol anyway (`allowed`, the asset scope),
-//!   and that is checked again on every request: a forbidden path stops working at once.
-//! - `revoke` (an editor source closed) and `revoke_all` (sign-out) end tokens, and stop a
-//!   response in flight. Nothing from the request ever names a file: only the token map does.
+//!   and that is checked again as each request starts: a forbidden path gets no new response (one
+//!   already streaming runs on until its token is revoked).
+//! - `revoke` (an editor source closed) and `revoke_all` (sign-out) end tokens: later requests
+//!   get a 404 and a response in flight is cut off, even one stuck writing to a client that
+//!   stopped reading. Any body write that takes over 30 s drops the client too. Nothing from the
+//!   request ever names a file: only the token map does.
 //! - Just `GET` and `HEAD`, one request per connection (`Connection: close`), at most 32
 //!   connections at once (more are closed unanswered). The head is capped at 8 KB and must arrive
 //!   within 10 s; peers that aren't loopback are dropped. `Host` must be `127.0.0.1:<port>` or
@@ -19,22 +22,21 @@ use std::{
     collections::HashMap,
     net::{Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
-    sync::{
-        Arc, Mutex, Weak,
-        atomic::{AtomicBool, Ordering},
-    },
+    sync::{Arc, Mutex, Weak},
     time::Duration,
 };
 use tokio::{
     io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
-    sync::{OnceCell, Semaphore},
+    sync::{OnceCell, Semaphore, watch},
 };
 
 /// The request line and headers, at most.
 const MAX_HEAD: usize = 8 * 1024;
 /// How long a client has to send them.
 const HEAD_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long one write of the body may take: a client that stops reading is dropped.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 /// Connections served at once; one more is closed at once. The editor plays one or two videos.
 const MAX_CONNS: usize = 32;
 const CHUNK: usize = 64 * 1024;
@@ -43,11 +45,13 @@ const CHUNK: usize = 64 * 1024;
 #[derive(Clone, Copy)]
 struct Limits {
     head_timeout: Duration,
+    write_timeout: Duration,
     max_conns: usize,
 }
 
 const LIMITS: Limits = Limits {
     head_timeout: HEAD_TIMEOUT,
+    write_timeout: WRITE_TIMEOUT,
     max_conns: MAX_CONNS,
 };
 
@@ -77,8 +81,8 @@ struct Files {
 #[derive(Clone)]
 struct Grant {
     path: PathBuf,
-    /// Cleared when revoked: a response in flight stops at its next chunk.
-    live: Arc<AtomicBool>,
+    /// Set when revoked: a response in flight stops, even mid-write.
+    revoked: Arc<watch::Sender<bool>>,
 }
 
 impl Videos {
@@ -118,7 +122,7 @@ impl Videos {
                 let t = hex(&rand::random::<[u8; 32]>());
                 let grant = Grant {
                     path: path.to_path_buf(),
-                    live: Arc::new(AtomicBool::new(true)),
+                    revoked: Arc::new(watch::Sender::new(false)),
                 };
                 files.by_token.insert(t.clone(), grant);
                 files.by_path.insert(path.to_path_buf(), t.clone());
@@ -128,13 +132,14 @@ impl Videos {
         Some(format!("http://{addr}/{token}"))
     }
 
-    /// `path`'s token stops working (a request for it is a 404 from now on).
+    /// `path`'s token stops working: a request for it is a 404 from now on, and a response in
+    /// flight ends.
     pub fn revoke(&self, path: &Path) {
         let mut files = self.inner.files.lock().unwrap();
         if let Some(t) = files.by_path.remove(path)
             && let Some(g) = files.by_token.remove(&t)
         {
-            g.live.store(false, Ordering::SeqCst);
+            g.revoked.send_replace(true);
         }
     }
 
@@ -148,7 +153,7 @@ impl Videos {
         let mut files = self.inner.files.lock().unwrap();
         files.by_path.clear();
         for (_, g) in files.by_token.drain() {
-            g.live.store(false, Ordering::SeqCst);
+            g.revoked.send_replace(true);
         }
     }
 }
@@ -314,32 +319,43 @@ async fn serve(inner: Arc<Inner>, mut conn: TcpStream) {
         }
     };
     headers.extend([kind, ranges, ("Content-Length", len.to_string())]);
-    if conn
-        .write_all(head(status, &headers).as_bytes())
-        .await
-        .is_err()
-        || head_only
-    {
+    let write_timeout = inner.limits.write_timeout;
+    let head = head(status, &headers);
+    let sent = tokio::time::timeout(write_timeout, conn.write_all(head.as_bytes())).await;
+    if !matches!(sent, Ok(Ok(()))) || head_only {
         let _ = conn.shutdown().await;
         return;
     }
     if file.seek(std::io::SeekFrom::Start(start)).await.is_err() {
         return;
     }
-    let mut left = len;
-    let mut buf = vec![0u8; CHUNK];
-    while left > 0 && grant.live.load(Ordering::SeqCst) {
-        let want = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
-        let n = match file.read(&mut buf[..want]).await {
-            Ok(0) | Err(_) => break,
-            Ok(n) => n,
-        };
-        if conn.write_all(&buf[..n]).await.is_err() {
-            return;
+    // Each write has `write_timeout`, and revoking ends the copy even mid-write (a client that
+    // stops reading would otherwise hold it in `write_all`): either way the connection is dropped.
+    let body = async {
+        let mut left = len;
+        let mut buf = vec![0u8; CHUNK];
+        while left > 0 {
+            let want = buf.len().min(usize::try_from(left).unwrap_or(usize::MAX));
+            let n = match file.read(&mut buf[..want]).await {
+                Ok(0) | Err(_) => break,
+                Ok(n) => n,
+            };
+            let wrote = tokio::time::timeout(write_timeout, conn.write_all(&buf[..n])).await;
+            if !matches!(wrote, Ok(Ok(()))) {
+                return false;
+            }
+            left -= n as u64;
         }
-        left -= n as u64;
+        true
+    };
+    let mut revoked = grant.revoked.subscribe();
+    let finished = tokio::select! {
+        finished = body => finished,
+        _ = revoked.wait_for(|r| *r) => false,
+    };
+    if finished {
+        let _ = conn.shutdown().await;
     }
-    let _ = conn.shutdown().await;
 }
 
 /// `127.0.0.1:<port>` or `localhost:<port>`, with this server's port.
@@ -753,7 +769,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_path_taken_off_the_scope_stops_working_at_once() {
+    async fn a_path_taken_off_the_scope_is_404_from_then_on() {
         let dir = tempfile::tempdir().unwrap();
         let path = video(dir.path(), "replay.mp4");
         let allowed = Arc::new(Mutex::new(vec![path.clone()]));
@@ -904,6 +920,57 @@ mod tests {
         }
     }
 
+    /// A GET of a file far bigger than the socket buffers, from a client that then reads nothing:
+    /// the server is soon stuck writing.
+    async fn stalled(v: &Videos, path: &Path) -> TcpStream {
+        let url = v.url(path).await.unwrap();
+        let (host, target) = split(&url);
+        let mut conn = TcpStream::connect(&host).await.unwrap();
+        let raw = format!("GET {target} HTTP/1.1\r\nHost: {host}\r\n\r\n");
+        conn.write_all(raw.as_bytes()).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        assert_eq!(
+            v.inner.conns.available_permits(),
+            v.inner.limits.max_conns - 1,
+            "still being served"
+        );
+        conn
+    }
+
+    fn big(dir: &Path) -> PathBuf {
+        let path = dir.join("big.mp4");
+        std::fs::write(&path, vec![7u8; 64 * 1024 * 1024]).unwrap();
+        path
+    }
+
+    #[tokio::test]
+    async fn revoking_ends_a_response_stuck_on_a_client_that_stopped_reading() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = big(dir.path());
+        let v = videos(Arc::new(Mutex::new(vec![path.clone()])));
+        for revoke in [
+            &(|v: &Videos, p: &Path| v.revoke(p)) as &dyn Fn(&Videos, &Path),
+            &|v, _| v.revoke_all(),
+        ] {
+            let _conn = stalled(&v, &path).await;
+            revoke(&v, &path);
+            all_let_go(&v).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn a_client_that_stops_reading_is_dropped_after_the_write_timeout() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = big(dir.path());
+        let limits = Limits {
+            write_timeout: Duration::from_millis(500),
+            ..LIMITS
+        };
+        let v = videos_with(Arc::new(Mutex::new(vec![path.clone()])), limits);
+        let _conn = stalled(&v, &path).await;
+        all_let_go(&v).await;
+    }
+
     #[tokio::test]
     async fn connections_past_the_cap_are_closed_and_the_rest_still_served() {
         let dir = tempfile::tempdir().unwrap();
@@ -911,6 +978,7 @@ mod tests {
         let limits = Limits {
             head_timeout: Duration::from_secs(30),
             max_conns: 2,
+            ..LIMITS
         };
         let v = videos_with(Arc::new(Mutex::new(vec![path.clone()])), limits);
         let url = v.url(&path).await.unwrap();
