@@ -3,14 +3,16 @@
 //! work and the same file plays from `http://`. So on Linux the clip editor's `<video>` gets
 //! `http://127.0.0.1:<port>/<token>` (`commands::video_url`); Windows keeps the asset protocol.
 //!
-//! - A token is 32 random bytes (64 hex digits) naming exactly one file. Tokens are given only for
-//!   paths the webview may load through the asset protocol anyway (`allowed`, the asset scope),
-//!   and that is checked again as each request starts: a forbidden path gets no new response (one
-//!   already streaming runs on until its token is revoked).
-//! - `revoke` (an editor source closed) and `revoke_all` (sign-out) end tokens: later requests
-//!   get a 404 and a response in flight is cut off, even one stuck writing to a client that
-//!   stopped reading. Any body write that takes over 30 s drops the client too. Nothing from the
-//!   request ever names a file: only the token map does.
+//! - A token is 32 random bytes (64 hex digits) naming exactly one file, for one owner: an open
+//!   editor source (`Core::video_url` gives one only for that source's own file or preview, by
+//!   canonical path). Tokens are given only for paths the webview may load through the asset
+//!   protocol anyway (`allowed`, the asset scope), and that is checked again as each request
+//!   starts: a forbidden path gets no new response (one already streaming runs on until its token
+//!   is revoked).
+//! - `revoke` (an editor source closed: all its tokens) and `revoke_all` (sign-out) end tokens:
+//!   later requests get a 404 and a response in flight is cut off, even one stuck writing to a
+//!   client that stopped reading. Any body write that takes over 30 s drops the client too.
+//!   Nothing from the request ever names a file: only the token map does.
 //! - Just `GET` and `HEAD`, one request per connection (`Connection: close`), at most 32
 //!   connections at once (more are closed unanswered). The head is capped at 8 KB and must arrive
 //!   within 10 s; peers that aren't loopback are dropped. `Host` must be `127.0.0.1:<port>` or

@@ -434,11 +434,15 @@ below the configured minimum (2 GB by default). The check comes after sign-in an
   - `connect-src` limited to the app's own IPC and the voice server;
   - on Linux only, `media-src` also allows `http://127.0.0.1:*`. The Linux webview (WebKitGTK) will not play video from
     the asset protocol, so the clip editor plays the local file from a server in the Rust core instead. It listens on
-    `127.0.0.1` at a random port and serves only `GET` and `HEAD` of `/<token>`. A token is 32 random bytes and names
-    one file. Tokens are only given for files the webview may already load through the asset protocol, and that is
-    checked again on every request. Closing the editor ends its tokens; signing out ends all of them. Nothing in a
-    request is used as a file path. A test (`client/src-tauri/tests/csp.rs`) keeps the Linux CSP equal to the base
-    CSP plus that one source.
+    `127.0.0.1` at a random port and serves only `GET` and `HEAD` of `/<token>`, and only with a `Host` of
+    `127.0.0.1:<port>` or `localhost:<port>` (against DNS rebinding). A token is 32 random bytes and names one file
+    for one open editor source: only that source's own file or its preview, compared by canonical path, so aliases of
+    a file share one token. Tokens are only given for files the webview may already load through the asset protocol,
+    and that is checked again as each request starts. Closing the editor ends its tokens (one asked for while it
+    closes is never given out); signing out ends all of them. Ending a token cuts off a response already streaming,
+    even to a client that has stopped reading; any write that takes over 30 s drops the client anyway. At most 32
+    connections are served at once; more are closed unanswered. Nothing in a request is used as a file path. A test
+    (`client/src-tauri/tests/csp.rs`) keeps the Linux CSP equal to the base CSP plus that one source.
 - **Tauri capabilities.** The main window gets an explicit list, not `core:default`. It is exactly:
   - `core:event:allow-listen` and `core:event:allow-unlisten` (the UI listens to events from the Rust core);
   - `core:window:allow-is-focused` (focus state);
