@@ -34,7 +34,8 @@
   let profileSettling = $state<Promise<void> | null>(null)
   let leaving = $state<(() => void) | null>(null)
   let waiting = $state<Way | null>(null)
-  // A Save puts away a discard prompt shown before it: what is left to discard is asked once it settles.
+  // A Save puts away a discard prompt shown before it, like "Keep editing": that way out is dropped. A way out
+  // asked for during the Save is taken (or asked about, if still unsaved) once it settles.
   $effect(() => {
     if (profileSettling) leaving = null
   })
