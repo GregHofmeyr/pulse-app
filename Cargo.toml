@@ -64,10 +64,12 @@ opt-level = 3
 [profile.dev.package.blake2]
 opt-level = 3
 
-# Release builds (installer, test kit, server image). Fat LTO + one codegen unit: smaller, slightly
-# faster code (tract/ndarray generics are otherwise duplicated across 16 units); it costs build
-# time only. strip: the Linux binary carried ~20 MB of symbols (Windows writes no PDB). Panics still
-# unwind: a panicking tokio task (gateway, outbox, voice) must not take the whole app down.
+# Release builds (installer, test kit, server image). Fat LTO + one codegen unit: smaller code
+# (tract/ndarray generics are otherwise duplicated across 16 units) for about 3x the build time.
+# Measured with strip: Linux binary -33 MB, Windows -2.8 MB; speed was not measured. strip also
+# drops symbol names from native backtraces; nothing reads them today (crash reports carry the
+# panic message and file:line, which survive it). Panics still unwind: a panicking tokio task
+# (gateway, outbox, voice) must not take the whole app down.
 [profile.release]
 lto = "fat"
 codegen-units = 1
