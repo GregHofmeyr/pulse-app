@@ -1,4 +1,5 @@
-//! Live connection to the server: Hello → Ready → events, heartbeats that must be answered in time, reconnect with backoff.
+//! Live connection to the server: Hello → Ready → events, heartbeats that must be answered in
+//! time, reconnect with backoff.
 
 use std::time::Duration;
 
@@ -205,7 +206,6 @@ pub enum ConnState {
 
 enum Cmd {
     Send(ClientFrame),
-    ReconnectNow,
     /// Window focused / network back: prove the connection now (or stop waiting out a backoff).
     Probe,
     Stop,
@@ -374,7 +374,7 @@ impl GatewayHandle {
                 };
                 let _ = tx.send(GatewayUpdate::Connection(state));
                 n = n.saturating_add(1);
-                // Wait out the backoff, unless told to reconnect now / probe, or stop.
+                // Wait out the backoff, unless probed, or stopped.
                 let sleep = tokio::time::sleep(delay);
                 tokio::pin!(sleep);
                 loop {
@@ -382,7 +382,18 @@ impl GatewayHandle {
                         _ = &mut sleep => break,
                         c = cmd_rx.recv() => match c {
                             None | Some(Cmd::Stop) => return,
-                            Some(Cmd::ReconnectNow | Cmd::Probe) => break,
+                            Some(Cmd::Probe) => {
+                                // Probes queued behind this one (focus flapping) buy no extra
+                                // retries: each would cut the next, longer wait short as well.
+                                loop {
+                                    match cmd_rx.try_recv() {
+                                        Ok(Cmd::Stop) | Err(mpsc::error::TryRecvError::Disconnected) => return,
+                                        Ok(Cmd::Probe | Cmd::Send(_)) => {}
+                                        Err(mpsc::error::TryRecvError::Empty) => break,
+                                    }
+                                }
+                                break;
+                            }
                             Some(Cmd::Send(_)) => {} // dropped while offline
                         },
                     }
@@ -398,10 +409,6 @@ impl GatewayHandle {
 
     pub fn send(&self, f: ClientFrame) {
         let _ = self.cmd.send(Cmd::Send(f));
-    }
-
-    pub fn reconnect_now(&self) {
-        let _ = self.cmd.send(Cmd::ReconnectNow);
     }
 
     /// Check the connection now (window focused, network back): a dead one is noticed within
@@ -486,16 +493,10 @@ async fn session(
     let mut deadline = Instant::now() + t.dead_after;
     let mut live = Liveness::new(t.ack_min);
     loop {
+        // Frames first, deadlines last: after the process stalls (sleep, a busy machine) a frame
+        // and an expired deadline can both be ready, and the frame proves the link is alive.
         tokio::select! {
-            _ = tokio::time::sleep_until(deadline) => return lost(),
-            _ = until(live.due) => {
-                tracing::info!(rtt = ?live.rtt, "gateway: no answer in time; reconnecting");
-                return lost();
-            }
-            _ = beat.tick() => {
-                if ws.send(Ws::text(heartbeat.clone())).await.is_err() { return lost() }
-                live.sent(Instant::now(), live.ack_wait());
-            }
+            biased;
             frame = next_frame(&mut ws) => {
                 let now = Instant::now();
                 deadline = now + t.dead_after;
@@ -511,7 +512,6 @@ async fn session(
             }
             c = cmd_rx.recv() => match c {
                 None | Some(Cmd::Stop) => { let _ = ws.close(None).await; return End::Stop }
-                Some(Cmd::ReconnectNow) => return lost(),
                 Some(Cmd::Probe) => {
                     if ws.send(Ws::text(heartbeat.clone())).await.is_err() { return lost() }
                     live.sent(Instant::now(), live.probe_wait(t.probe_ack));
@@ -521,6 +521,15 @@ async fn session(
                     if ws.send(Ws::text(f)).await.is_err() { return lost() }
                 }
             },
+            _ = beat.tick() => {
+                if ws.send(Ws::text(heartbeat.clone())).await.is_err() { return lost() }
+                live.sent(Instant::now(), live.ack_wait());
+            }
+            _ = tokio::time::sleep_until(deadline) => return lost(),
+            _ = until(live.due) => {
+                tracing::info!(rtt = ?live.rtt, "gateway: no answer in time; reconnecting");
+                return lost();
+            }
         }
     }
 }
@@ -1089,6 +1098,41 @@ mod tests {
         wait_for(|| app.voice.declared(me).muted).await;
     }
 
+    /// The after-Ready frames are asked for again on each Ready, not captured once: muting while
+    /// connected (or offline) is what the next reconnect declares.
+    #[tokio::test]
+    async fn after_ready_frames_are_read_afresh_on_each_ready() {
+        use pulse_protocol::gateway::VoiceFlags;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let app = testing::spawn().await;
+        let (me, token) = testing::register(&app, "alex").await;
+        let muted = std::sync::Arc::new(AtomicBool::new(false));
+        let after: AfterReady = {
+            let muted = muted.clone();
+            std::sync::Arc::new(move || {
+                vec![ClientFrame::VoiceState {
+                    flags: VoiceFlags {
+                        muted: muted.load(Ordering::SeqCst),
+                        deafened: false,
+                    },
+                }]
+            })
+        };
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _gw = GatewayHandle::spawn_full(
+            format!("http://{}", app.addr),
+            token,
+            tx,
+            quick(Duration::from_secs(60)),
+            after,
+        );
+        next_ready(&mut rx).await;
+        muted.store(true, Ordering::SeqCst);
+        app.hub.close_all(1012);
+        next_ready(&mut rx).await;
+        wait_for(|| app.voice.declared(me).muted).await;
+    }
+
     fn quick(heartbeat: Duration) -> Tuning {
         Tuning {
             unit: Duration::from_millis(50),
@@ -1247,6 +1291,73 @@ mod tests {
             t.elapsed() < Duration::from_secs(4),
             "waited {:?}",
             t.elapsed()
+        );
+    }
+
+    /// Focus flapping (alt-tab a few times) queues several probes during one backoff wait. They
+    /// buy one retry, not one each: the queued rest must not cut the next waits short too.
+    #[tokio::test]
+    async fn probes_queued_in_one_wait_cause_one_retry() {
+        // nobody listening: every try fails at once
+        let addr = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            l.local_addr().unwrap()
+        };
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let gw = GatewayHandle::spawn_tuning(
+            format!("http://{addr}"),
+            "t".into(),
+            tx,
+            Tuning {
+                unit: Duration::from_secs(10), // waits of 8 s and more: far beyond this test
+                ..Tuning::default()
+            },
+        );
+        while !matches!(
+            next(&mut rx).await,
+            GatewayUpdate::Connection(ConnState::Reconnecting)
+        ) {}
+        for _ in 0..3 {
+            gw.probe();
+        }
+        assert!(
+            reconnecting_within(&mut rx, Duration::from_secs(2)).await,
+            "the probe didn't retry"
+        );
+        assert!(
+            !reconnecting_within(&mut rx, Duration::from_secs(1)).await,
+            "a queued probe cut the next wait short"
+        );
+    }
+
+    /// Up but dropped within `healthy_after` (accepted, then cut off): retried on the cold
+    /// schedule's first step, not at once as after a healthy session.
+    #[tokio::test]
+    async fn a_brief_session_is_retried_after_the_first_backoff_step() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let _gw = GatewayHandle::spawn_tuning(
+            format!("http://{}", app.addr),
+            token,
+            tx,
+            Tuning {
+                unit: Duration::from_secs(1), // first step 0.8-1.2 s
+                ..quick(Duration::from_secs(60))
+            },
+        );
+        next_ready(&mut rx).await;
+        app.hub.close_all(1012); // well within healthy_after (10 s)
+        while !matches!(
+            next(&mut rx).await,
+            GatewayUpdate::Connection(ConnState::Reconnecting)
+        ) {}
+        let lost = std::time::Instant::now();
+        next_ready(&mut rx).await;
+        assert!(
+            lost.elapsed() >= Duration::from_millis(700),
+            "a brief session was retried at once ({:?})",
+            lost.elapsed()
         );
     }
 
