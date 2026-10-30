@@ -76,3 +76,29 @@ describe('the global scrollbar', () => {
     expect(files.filter((f) => /::-webkit-scrollbar|scrollbar-(width|color)/.test(readFileSync(f, 'utf8'))).map((f) => f.slice(__dirname.length + 1))).toEqual([])
   })
 })
+
+describe('motion', () => {
+  it('buttons ease colours and opacity only, never a property that moves layout', () => {
+    const button = styleRules(sheet.cssRules).filter((r) => r.selectorText === 'button').map((r) => r.style.getPropertyValue('transition')).find(Boolean)
+    expect(button).toBeDefined()
+    const props = button!.split(',').map((t) => t.trim().split(/\s+/)[0])
+    expect(props.sort()).toEqual(['background-color', 'border-color', 'color', 'opacity'])
+  })
+
+  it('reduced motion finishes animations and transitions at once, but leaves the spinners to slow down', () => {
+    const media = [...sheet.cssRules].find((r): r is CSSMediaRule => r instanceof CSSMediaRule && /prefers-reduced-motion: ?reduce/.test(r.conditionText))
+    expect(media).toBeDefined()
+    const all = styleRules(media!.cssRules)[0]
+    expect(all.selectorText).toContain('*:not(.spinner)')
+    expect(all.style.getPropertyValue('animation-duration')).toBe('0.01ms')
+    expect(all.style.getPropertyPriority('animation-duration')).toBe('important')
+    expect(all.style.getPropertyValue('transition-duration')).toBe('0.01ms')
+  })
+
+  it('while streaming or unfocused, transitions snap (nothing can be left mid-fade)', () => {
+    const pause = styleRules(sheet.cssRules).find((r) => r.selectorText.includes('.streaming *'))!
+    expect(pause.selectorText).toContain('.unfocused *')
+    expect(pause.style.getPropertyValue('transition')).toBe('none')
+    expect(pause.style.getPropertyPriority('transition')).toBe('important')
+  })
+})

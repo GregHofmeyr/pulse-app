@@ -64,6 +64,14 @@
 html, body, #app { margin: 0; height: 100%; overflow: hidden; }
 button, input { font: inherit; color: inherit; }
 button { cursor: pointer; }
+/* Hover and press ease in on every button that doesn't set its own transition. Colours and
+   opacity only: nothing that moves layout. Under .streaming / .unfocused (below) it snaps. */
+button { transition: background-color var(--dur) var(--ease), color var(--dur) var(--ease), border-color var(--dur) var(--ease), opacity var(--dur) var(--ease); }
+/* Reduced motion: animations and transitions finish at once. The joining spinners are left out:
+   they slow down instead (their own rule), so they still show something is happening. */
+@media (prefers-reduced-motion: reduce) {
+  *:not(.spinner), *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
 :focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 /* One minimal scrollbar everywhere (lists, messages, settings, menus, pickers, modals, the message
