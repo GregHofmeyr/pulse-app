@@ -184,7 +184,11 @@ pub fn build_filter(user: Option<&str>) -> EnvFilter {
     let capped = user
         .map(cap_libraries)
         .and_then(|s| EnvFilter::try_new(s).ok());
-    let mut filter = capped.unwrap_or_else(|| EnvFilter::new("info,livekit=warn,libwebrtc=warn"));
+    // pulseaudio::client::reactor logs every client's normal disconnect (each device list) as an
+    // error; real audio failures reach the log through cpal's stream errors instead.
+    let mut filter = capped.unwrap_or_else(|| {
+        EnvFilter::new("info,livekit=warn,libwebrtc=warn,pulseaudio::client::reactor=off")
+    });
     // appended last: a target directive beats a global `off`/`warn`, and nothing else names it
     if let Ok(d) = format!("{SESSION_TARGET}=info").parse() {
         filter = filter.add_directive(d);
@@ -605,11 +609,33 @@ mod tests {
             }
             ("rustls", Level::DEBUG) => tracing::enabled!(target: "rustls", Level::DEBUG),
             ("ui", Level::WARN) => tracing::enabled!(target: "ui", Level::WARN),
+            ("pulseaudio::client::reactor", Level::ERROR) => {
+                tracing::enabled!(target: "pulseaudio::client::reactor", Level::ERROR)
+            }
+            ("pulseaudio::client", Level::INFO) => {
+                tracing::enabled!(target: "pulseaudio::client", Level::INFO)
+            }
             ("pulse_client::gateway", Level::TRACE) => {
                 tracing::enabled!(target: "pulse_client::gateway", Level::TRACE)
             }
             _ => panic!("unprobed {target} {level}"),
         }
+    }
+
+    /// The PulseAudio client logs its own normal disconnect (every device list) as an error;
+    /// that must not read as a failure in bug reports. Its other lines stay.
+    #[test]
+    fn the_pulseaudio_reactor_is_silenced_by_default() {
+        assert!(!enabled(
+            build_filter(None),
+            "pulseaudio::client::reactor",
+            Level::ERROR
+        ));
+        assert!(enabled(
+            build_filter(None),
+            "pulseaudio::client",
+            Level::INFO
+        ));
     }
 
     #[test]
