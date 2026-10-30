@@ -29,9 +29,11 @@ pub const CLICK_EVENT: &str = "pulse://notification-click";
 pub const POWERSHELL_APP_ID: &str =
     "{1AC14E77-02E7-4E5D-B744-2EB1AE5198B7}\\WindowsPowerShell\\v1.0\\powershell.exe";
 
-// The page cuts the body at 140 characters; these only stop a broken page from sending pages of text.
-const TITLE_MAX: usize = 200;
-const BODY_MAX: usize = 400;
+// The page cuts the body (lib/notify.ts, 140 graphemes); these, in characters, are far above
+// anything it sends (139 family emoji and "…" are 696), so its cut is the only one. They only stop
+// a broken page from sending pages of text.
+const TITLE_MAX: usize = 1000;
+const BODY_MAX: usize = 2000;
 /// Channel and message ids are 26-character ULIDs; Windows takes a tag of up to 64.
 const ID_MAX: usize = 64;
 
@@ -73,10 +75,15 @@ fn clean(n: Notice) -> Option<Notice> {
     if !id_ok(&n.channel_id) {
         return None;
     }
-    let flat = |s: &str, max| {
-        crate::logging::one_line(&s.replace(['\r', '\n', '\t'], " "), max)
-            .trim()
-            .to_string()
+    let flat = |s: &str, max: usize| {
+        let line = crate::logging::one_line(&s.replace(['\r', '\n', '\t'], " "), usize::MAX);
+        let line = line.trim();
+        if line.chars().count() <= max {
+            return line.to_string();
+        }
+        let mut cut: String = line.chars().take(max - 1).collect();
+        cut.push('…');
+        cut
     };
     Some(Notice {
         title: flat(&n.title, TITLE_MAX),
@@ -184,10 +191,39 @@ mod tests {
         })
         .unwrap();
         assert!(!n.title.contains('\u{202E}'));
-        assert!(n.title.len() <= TITLE_MAX);
-        assert!(n.body.len() <= BODY_MAX);
         assert_eq!(n.channel_id, "C1");
         assert_eq!(n.thread_id.as_deref(), Some("Q1"));
+    }
+
+    #[test]
+    fn what_the_page_cut_is_never_cut_again() {
+        // the page's longest body: 139 family emoji (18 bytes each) and its "…"
+        let body = format!("{}…", "👨‍👩‍👧".repeat(139));
+        let name = "👨‍👩‍👧".repeat(32);
+        let n = clean(Notice {
+            title: name.clone(),
+            body: body.clone(),
+            channel_id: "C1".into(),
+            thread_id: None,
+        })
+        .unwrap();
+        assert_eq!(n.body, body);
+        assert_eq!(n.title, name);
+    }
+
+    #[test]
+    fn a_runaway_text_is_cut_on_a_character_with_its_ellipsis() {
+        let n = clean(Notice {
+            title: "é".repeat(TITLE_MAX + 50),
+            body: "😀".repeat(BODY_MAX + 50),
+            channel_id: "C1".into(),
+            thread_id: None,
+        })
+        .unwrap();
+        assert_eq!(n.body.chars().count(), BODY_MAX);
+        assert!(n.body.ends_with("😀…"));
+        assert_eq!(n.title.chars().count(), TITLE_MAX);
+        assert!(n.title.ends_with("é…"));
     }
 
     #[test]
