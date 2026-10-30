@@ -135,11 +135,11 @@
     onkeydown={onKey}
   />
   {#if shown}
-    <ul id="game-list" role="listbox" aria-label="Games">
+    <ul id="game-list" class="menu-surface" role="listbox" aria-label="Games">
       {#each rows as r, i ('game' in r ? r.game.id : 'add')}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <!-- mousedown keeps the input focused so the click lands before blur closes the list -->
-        <li role="option" aria-selected={i === hi} class:hi={i === hi} class:add={'add' in r} onmousedown={(e) => e.preventDefault()} onclick={() => choose(r)}>
+        <li role="option" class="menu-item" aria-selected={i === hi} class:hi={i === hi} class:add={'add' in r} onmousedown={(e) => e.preventDefault()} onclick={() => choose(r)}>
           {'game' in r ? r.game.name : `Add '${r.add}'`}
         </li>
       {/each}
@@ -151,9 +151,8 @@
 <style>
   .picker { position: relative; }
   input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font: inherit; }
-  ul { position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px; list-style: none; max-height: 180px; overflow-y: auto; background: var(--bg-3); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-pop); }
-  li { padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 14px; }
-  li.hi, li:hover { background: var(--bg-4); }
+  ul { position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px); margin: 0; list-style: none; max-height: 180px; overflow-y: auto; }
+  li { cursor: pointer; }
   li.add { color: var(--accent); }
   .err { margin: 4px 0 0; font-size: 12px; color: var(--warn); }
 </style>

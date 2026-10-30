@@ -133,10 +133,10 @@
   }
 </script>
 
-<div bind:this={el} class="menu" role="menu" aria-label="Actions for {name}" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px"
+<div bind:this={el} class="menu menu-surface" role="menu" aria-label="Actions for {name}" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px"
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
   <!-- the card opens beside the row or tile the menu came from -->
-  <button type="button" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>
+  <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>
   {#each ids as id (id)}
     {#if id === 'volume'}
       <div class="slider" role="none">
@@ -146,9 +146,9 @@
           oninput={(e) => voiceApi.setVolume(userId, clampVolume(+e.currentTarget.value))} />
       </div>
     {:else if id === 'local-mute'}
-      <button type="button" role="menuitem" data-item="local-mute" onclick={() => pick(() => voiceApi.setLocalMute(userId, !muted))}>{muted ? 'Unmute for me' : 'Mute for me'}</button>
+      <button type="button" class="menu-item" role="menuitem" data-item="local-mute" onclick={() => pick(() => voiceApi.setLocalMute(userId, !muted))}>{muted ? 'Unmute for me' : 'Mute for me'}</button>
     {:else if id === 'message'}
-      <button type="button" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>
+      <button type="button" class="menu-item" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>
     {:else if id === 'stream-volume'}
       <div class="slider" role="none">
         <span class="lbl">Stream volume</span><strong>{volumeLabel(streamVolume)}</strong>
@@ -157,40 +157,39 @@
       </div>
     {:else if id === 'watch'}
       {#if watchReason}
-        <button type="button" role="menuitem" data-item="watch" aria-disabled="true" class="off">Watch <small>{watchReason}</small></button>
+        <button type="button" class="menu-item off" role="menuitem" data-item="watch" aria-disabled="true">Watch <small>{watchReason}</small></button>
       {:else if inChannel}
-        <button type="button" role="menuitem" data-item="watch" onclick={() => pick(() => streamApi.watch(channelId, userId))}>Watch</button>
+        <button type="button" class="menu-item" role="menuitem" data-item="watch" onclick={() => pick(() => streamApi.watch(channelId, userId))}>Watch</button>
       {:else}
-        <button type="button" role="menuitem" data-item="watch" onclick={() => pick(() => joinAndWatch(channelId, userId))}>Join &amp; watch</button>
+        <button type="button" class="menu-item" role="menuitem" data-item="watch" onclick={() => pick(() => joinAndWatch(channelId, userId))}>Join &amp; watch</button>
       {/if}
     {:else if id === 'stop-watching'}
-      <button type="button" role="menuitem" data-item="stop-watching" onclick={() => pick(() => streamApi.unwatch(channelId, userId))}>Stop watching</button>
+      <button type="button" class="menu-item" role="menuitem" data-item="stop-watching" onclick={() => pick(() => streamApi.unwatch(channelId, userId))}>Stop watching</button>
     {:else if id === 'full-view'}
-      <button type="button" role="menuitem" data-item="full-view" onclick={() => pick(() => { openFull({ channelId, streamer: userId }); callView.goTo = channelId })}>Full view</button>
+      <button type="button" class="menu-item" role="menuitem" data-item="full-view" onclick={() => pick(() => { openFull({ channelId, streamer: userId }); callView.goTo = channelId })}>Full view</button>
     {:else if id === 'mute'}
-      <button type="button" role="menuitem" data-item="mute" onclick={() => pick(() => voiceApi.toggleMute())}>{voice.controls.muted ? 'Unmute' : 'Mute'}</button>
+      <button type="button" class="menu-item" role="menuitem" data-item="mute" onclick={() => pick(() => voiceApi.toggleMute())}>{voice.controls.muted ? 'Unmute' : 'Mute'}</button>
     {:else if id === 'deafen'}
-      <button type="button" role="menuitem" data-item="deafen" onclick={() => pick(() => voiceApi.toggleDeafen())}>{voice.controls.deafened ? 'Undeafen' : 'Deafen'}</button>
+      <button type="button" class="menu-item" role="menuitem" data-item="deafen" onclick={() => pick(() => voiceApi.toggleDeafen())}>{voice.controls.deafened ? 'Undeafen' : 'Deafen'}</button>
     {:else if id === 'go-live'}
       {#if windows}
-        <button type="button" role="menuitem" data-item="go-live" onclick={() => pick(() => pickSource(channelId))}>Go Live</button>
+        <button type="button" class="menu-item" role="menuitem" data-item="go-live" onclick={() => pick(() => pickSource(channelId))}>Go Live</button>
       {:else}
-        <button type="button" role="menuitem" data-item="go-live" aria-disabled="true" class="off">Go Live <small>Streaming from Linux isn't supported yet</small></button>
+        <button type="button" class="menu-item off" role="menuitem" data-item="go-live" aria-disabled="true">Go Live <small>Streaming from Linux isn't supported yet</small></button>
       {/if}
     {:else if id === 'stop-streaming'}
-      <button type="button" role="menuitem" data-item="stop-streaming" onclick={() => pick(() => streamApi.stop())}>Stop streaming</button>
+      <button type="button" class="menu-item" role="menuitem" data-item="stop-streaming" onclick={() => pick(() => streamApi.stop())}>Stop streaming</button>
     {:else if id === 'voice-settings'}
-      <button type="button" role="menuitem" data-item="voice-settings" onclick={() => pick(onVoiceSettings)}>Voice settings</button>
+      <button type="button" class="menu-item" role="menuitem" data-item="voice-settings" onclick={() => pick(onVoiceSettings)}>Voice settings</button>
     {/if}
   {/each}
 </div>
 
 <style>
-  .menu { position: fixed; z-index: 60; min-width: 220px; max-width: 280px; padding: 6px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 12px; box-shadow: var(--shadow-menu); display: flex; flex-direction: column; gap: 2px; font-size: 13px; outline: none; }
-  .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font: inherit; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .menu button:hover, .menu button:focus-visible { background: var(--bg-4); }
-  .menu button.off { color: var(--text-3); cursor: not-allowed; height: auto; min-height: 32px; flex-direction: column; align-items: flex-start; justify-content: center; padding: 6px 10px; gap: 2px; }
-  .menu button.off small { font-size: 11px; }
+  .menu { position: fixed; z-index: 60; min-width: 220px; max-width: 280px; gap: 2px; font-size: 13px; outline: none; }
+  .menu-item { justify-content: space-between; }
+  .menu-item.off { color: var(--text-3); cursor: not-allowed; height: auto; min-height: 32px; flex-direction: column; align-items: flex-start; justify-content: center; padding: 6px 10px; gap: 2px; }
+  .menu-item.off small { font-size: 11px; }
   .slider { padding: 6px 10px 8px; display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; color: var(--text-2); }
   .slider input { grid-column: 1 / -1; accent-color: var(--accent); }
   .slider input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }

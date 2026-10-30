@@ -53,7 +53,7 @@
   onpointerdown={(e) => !pop?.contains(e.target as Node) && !anchor.contains(e.target as Node) && onClose()} />
 
 {#if info}
-  <div bind:this={pop} class="pop" role="dialog" aria-label="Live stream" style:left="{left}px" style:top="{top}px">
+  <div bind:this={pop} class="pop menu-surface" role="dialog" aria-label="Live stream" style:left="{left}px" style:top="{top}px">
     {#if preview}<img src={preview} alt="Stream preview" />{:else}<div class="none">No preview yet</div>{/if}
     <div class="meta">
       <span>{info.settings.height}p{info.settings.fps}</span>
@@ -68,7 +68,7 @@
 {/if}
 
 <style>
-  .pop { position: fixed; z-index: 30; width: 280px; padding: 10px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 14px; box-shadow: var(--shadow-menu); display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
+  .pop { position: fixed; z-index: 30; width: 280px; padding: 10px; gap: 8px; font-size: 13px; }
   img, .none { width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; background: var(--bg-1); object-fit: cover; }
   .none { display: grid; place-items: center; background: var(--bg-4); color: var(--text-2); }
   .meta { display: flex; justify-content: space-between; color: var(--text-2); }

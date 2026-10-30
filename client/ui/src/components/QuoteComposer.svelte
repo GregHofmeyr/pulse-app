@@ -395,9 +395,9 @@
               aria-autocomplete="list" aria-label="Who said it?" placeholder="who said it?" autocomplete="off" bind:value={r.query}
               onfocus={() => (r.open = true)} onblur={() => { r.open = false; resolveTyped(r) }} oninput={() => { r.open = true; r.hi = 0 }} onkeydown={(e) => whyKey(e, r)} />
             {#if r.open}
-              <div class="opts" id="opts-{r.key}" role="listbox" aria-label="Members">
+              <div class="opts menu-surface" id="opts-{r.key}" role="listbox" aria-label="Members">
                 {#each options(r) as o, i (o.id ?? 'plain')}
-                  <button type="button" id="opt-{r.key}-{i}" role="option" aria-selected={i === r.hi} class:hi={i === r.hi} tabindex="-1"
+                  <button type="button" class="menu-item" id="opt-{r.key}-{i}" role="option" aria-selected={i === r.hi} class:hi={i === r.hi} tabindex="-1"
                     onmousedown={(e) => e.preventDefault()} onclick={() => choose(r, o)}>{label(o)}</button>
                 {/each}
               </div>
@@ -442,9 +442,7 @@
   .picker { position: relative; width: 170px; flex-shrink: 0; }
   .who { width: 100%; flex: none; }
   .chip { max-width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--quote-green-deep); color: var(--text); font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .opts { position: absolute; bottom: calc(100% + 4px); left: 0; right: 0; z-index: 20; padding: 4px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 10px; box-shadow: var(--shadow-pop); display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
-  .opts button { min-height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; font: inherit; }
-  .opts button:hover, .opts button.hi { background: var(--bg-4); }
+  .opts { position: absolute; bottom: calc(100% + 4px); left: 0; right: 0; z-index: 20; gap: 2px; }
   .ibtn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); cursor: pointer; }
   .ibtn:hover { background: var(--bg-4); color: var(--text); }
   .pic { position: relative; flex-shrink: 0; }

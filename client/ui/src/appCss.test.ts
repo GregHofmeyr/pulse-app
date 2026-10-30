@@ -102,3 +102,18 @@ describe('motion', () => {
     expect(pause.style.getPropertyPriority('transition')).toBe('important')
   })
 })
+
+describe('shared surfaces', () => {
+  it('menus are the raised family-A surface, and an item lightens on hover (a darker hover read as a hole)', () => {
+    const surface = rule('.menu-surface')
+    expect(surface.getPropertyValue('background')).toBe('var(--surface-menu)')
+    expect(surface.getPropertyValue('box-shadow')).toBe('var(--shadow-menu)')
+    expect(rule('.menu-item:hover:not(:disabled)').getPropertyValue('background')).toBe('var(--bg-4)')
+  })
+
+  it('dialogs are a bg-2 panel with a drop shadow', () => {
+    const modal = rule('.modal')
+    expect(modal.getPropertyValue('background')).toBe('var(--bg-2)')
+    expect(modal.getPropertyValue('box-shadow')).toBe('var(--shadow-menu)')
+  })
+})

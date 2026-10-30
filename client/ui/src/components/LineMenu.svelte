@@ -110,34 +110,32 @@
   }
 </script>
 
-<div bind:this={el} class="menu" role="menu" aria-label="Line actions" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px"
+<div bind:this={el} class="menu menu-surface" role="menu" aria-label="Line actions" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px"
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
   {#if picking}
     <input type="text" class="find" data-item aria-label="Find a member" placeholder="Find a member" autocomplete="off" bind:value={query} />
     <div role="group" aria-label="Members">
       {#each matches as m (m.id)}
-        <button type="button" role="menuitem" data-item onclick={() => pick(() => onLink(m.id))}>{m.name}</button>
+        <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(() => onLink(m.id))}>{m.name}</button>
       {:else}
         <span class="none">No one by that name</span>
       {/each}
     </div>
   {:else}
     {#if award}
-      <button type="button" role="menuitem" data-item onclick={() => pick(onAward)}>{award === 'give' ? 'Give quote award' : 'Take back award'}</button>
+      <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onAward)}>{award === 'give' ? 'Give quote award' : 'Take back award'}</button>
     {/if}
-    {#if onCopy}<button type="button" role="menuitem" data-item onclick={() => pick(onCopy)}>Copy</button>{/if}
+    {#if onCopy}<button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onCopy)}>Copy</button>{/if}
     {#if link === 'link'}
-      <button type="button" role="menuitem" data-item onclick={startPicking}>Link to a member…</button>
+      <button type="button" class="menu-item" role="menuitem" data-item onclick={startPicking}>Link to a member…</button>
     {:else if link === 'unlink'}
-      <button type="button" role="menuitem" data-item onclick={() => pick(onUnlink)}>Unlink</button>
+      <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onUnlink)}>Unlink</button>
     {/if}
   {/if}
 </div>
 
 <style>
-  .menu { position: fixed; z-index: 60; min-width: 200px; max-width: 280px; padding: 6px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 12px; box-shadow: var(--shadow-menu); display: flex; flex-direction: column; gap: 2px; font-size: 13px; outline: none; }
-  .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font: inherit; display: flex; align-items: center; gap: 8px; }
-  .menu button:hover, .menu button:focus-visible { background: var(--bg-4); }
+  .menu { position: fixed; z-index: 60; min-width: 200px; max-width: 280px; gap: 2px; font-size: 13px; outline: none; }
   .find { height: 32px; margin-bottom: 2px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg-2); color: var(--text); font: inherit; outline: none; }
   [role='group'] { display: flex; flex-direction: column; gap: 2px; }
   .none { padding: 6px 10px; color: var(--text-3); }

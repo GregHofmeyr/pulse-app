@@ -36,7 +36,7 @@
     <span>{current?.label}</span><Icon name="chevron" size={16} />
   </button>
   {#if open}
-    <ul class="list" role="listbox" aria-label={label}>
+    <ul class="list menu-surface" role="listbox" aria-label={label}>
       {#each options as o, i}
         <li role="option" aria-selected={o.value === value} class:active={i === active}
           onmousedown={(e) => { e.preventDefault(); pick(o) }} onmouseenter={() => (active = i)}>
@@ -51,7 +51,8 @@
   .select { position: relative; }
   .trigger { width: 100%; height: 42px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--line-soft); color: var(--text); display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 400; letter-spacing: 0; text-align: left; }
   .trigger:hover { border-color: #44474f; }
-  .list { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 10px; box-shadow: 0 12px 32px rgba(8, 9, 12, .5); max-height: 240px; overflow-y: auto; }
+  /* its options keep the trigger's 14px */
+  .list { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; max-height: 240px; overflow-y: auto; }
   .select[data-drop='up'] .list { top: auto; bottom: calc(100% + 4px); }
   li { padding: 9px 10px; border-radius: 8px; font-size: 14px; font-weight: 400; letter-spacing: 0; color: var(--text-2); cursor: pointer; }
   li.active { background: var(--bg-4); color: var(--text); }

@@ -148,16 +148,16 @@
 
 <div class="wrap">
   {#if open}
-    <div class="mentions" role="listbox" aria-label="Mention someone">
+    <div class="mentions menu-surface" role="listbox" aria-label="Mention someone">
       {#each options as o, i (o.id)}
-        <button role="option" aria-selected={i === pick} class:on={i === pick}
+        <button class="menu-item" role="option" aria-selected={i === pick} class:hi={i === pick}
           onmousedown={(e) => { e.preventDefault(); void choose(o.name) }}><span>@<Name userId={o.id} {serverId} text={o.name} interactive={false} /></span></button>
       {/each}
     </div>
   {:else if emojiOpen}
-    <div class="mentions" role="listbox" aria-label="Insert emoji">
+    <div class="mentions menu-surface" role="listbox" aria-label="Insert emoji">
       {#each emojiOptions as o, i ('u' in o ? o.u : o.id)}
-        <button role="option" aria-selected={i === pick} class:on={i === pick}
+        <button class="menu-item" role="option" aria-selected={i === pick} class:hi={i === pick}
           onmousedown={(e) => { e.preventDefault(); void chooseEmoji(o) }}>
           {#if 'u' in o}
             <img src={twemojiUrl(withSkin(o, tone))} alt="" draggable="false" /><span>:{o.n}:</span>
@@ -184,9 +184,8 @@
 
 <style>
   .wrap { position: relative; margin: 4px 18px 16px; background: var(--bg-3); border-radius: 12px; }
-  .mentions { position: absolute; left: 0; bottom: calc(100% + 6px); min-width: 200px; padding: 6px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--bg-3); border-radius: 10px; box-shadow: var(--shadow-pop); z-index: 5; }
-  .mentions button { display: flex; align-items: center; gap: 8px; text-align: left; padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font: inherit; }
-  .mentions button.on { background: var(--bg-4); color: var(--text); }
+  .mentions { position: absolute; left: 0; bottom: calc(100% + 6px); min-width: 200px; z-index: 5; }
+  .mentions .menu-item { font-size: 14px; }
   .mentions img { width: 20px; height: 20px; }
   .mentions small { margin-left: auto; padding-left: 12px; color: var(--text-3); font-size: 11px; }
   .emoji-btn { position: absolute; right: 8px; bottom: 8px; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }

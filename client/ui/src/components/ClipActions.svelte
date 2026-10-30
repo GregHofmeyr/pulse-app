@@ -65,13 +65,13 @@
   <button bind:this={opener} type="button" class="icon-btn icon-btn-sm" aria-label="Clip actions" aria-haspopup="menu" aria-expanded={menu} data-menu-toggle
     onclick={() => (menu = !menu)}><Icon name="dots" size={15} /></button>
   {#if menu}
-    <div class="menu" role="menu" use:clickOutside={closeMenu}>
-      <button type="button" role="menuitem" onclick={startEdit}><Icon name="pencil" size={14} />Edit</button>
-      <button type="button" role="menuitem" class="danger" onclick={() => void askDelete()}><Icon name="trash" size={14} />Delete</button>
+    <div class="menu menu-surface" role="menu" use:clickOutside={closeMenu}>
+      <button type="button" class="menu-item" role="menuitem" onclick={startEdit}><Icon name="pencil" size={14} />Edit</button>
+      <button type="button" class="menu-item danger" role="menuitem" onclick={() => void askDelete()}><Icon name="trash" size={14} />Delete</button>
     </div>
   {/if}
   {#if asking}
-    <div class="ask" role="alertdialog" aria-label="Delete clip" use:clickOutside={() => { if (!busy) asking = false }}>
+    <div class="ask menu-surface" role="alertdialog" aria-label="Delete clip" use:clickOutside={() => { if (!busy) asking = false }}>
       <p>Delete this clip? Its replies go too.</p>
       <button bind:this={keep} type="button" class="btn btn-secondary keep" disabled={busy} onclick={() => (asking = false)}>Cancel</button>
       <button type="button" class="btn btn-danger go" disabled={busy} onclick={() => void remove()}>Delete</button>
@@ -98,11 +98,8 @@
 
 <style>
   .clip-actions { position: relative; }
-  .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 140px; padding: 4px; display: flex; flex-direction: column; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); }
-  .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--text); display: flex; align-items: center; gap: 8px; font-size: 13px; text-align: left; }
-  .menu button:hover, .menu button:focus-visible { background: var(--bg-4); }
-  .menu .danger { color: var(--danger); }
-  .ask { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: 240px; padding: 10px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); }
+  .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 140px; }
+  .ask { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: 240px; padding: 10px; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
   .ask p { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--text); }
   .ask .err { margin: 4px 0 0; color: var(--danger); }
   .overlay { position: fixed; inset: 0; z-index: 30; }

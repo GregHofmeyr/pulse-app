@@ -156,6 +156,15 @@ button { transition: background-color var(--dur) var(--ease), color var(--dur) v
 .modal { position: relative; max-height: calc(100vh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--bg-2); box-shadow: var(--shadow-menu); outline: none; }
 .modal-title { margin: 0; font-size: 18px; font-weight: 600; }
 
+/* Menus and popovers (owner pick 3, family A): a raised surface, a hover that lightens to bg-4.
+   Each component keeps its own position, width and z-index. */
+.menu-surface { padding: 6px; display: flex; flex-direction: column; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 12px; box-shadow: var(--shadow-menu); }
+.menu-item { height: 32px; flex-shrink: 0; padding: 0 10px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; }
+.menu-item:hover:not(:disabled), .menu-item:focus-visible, .menu-item.hi { background: var(--bg-4); }
+.menu-item.danger { color: var(--danger-text); }
+.menu-label { padding: 6px 10px 2px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
+.menu-sep { height: 1px; margin: 4px 6px; background: var(--line-menu); }
+
 /* A button that reads as a link. */
 .link-btn { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .link-btn:hover { text-decoration-thickness: 2px; }

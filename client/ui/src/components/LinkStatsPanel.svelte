@@ -55,7 +55,7 @@
   }
 </script>
 
-<div class="panel" role="dialog" aria-label="Connection details" tabindex="-1" bind:this={panel} {onkeydown}>
+<div class="panel menu-surface" role="dialog" aria-label="Connection details" tabindex="-1" bind:this={panel} {onkeydown}>
   <dl>
     <dt>Ping</dt>
     <dd class="ping {ping.level}">{ping.text}</dd>
@@ -78,7 +78,7 @@
 </div>
 
 <style>
-  .panel { outline: none; position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 15; padding: 14px; background: var(--bg-1); border: 1px solid var(--bg-4); border-radius: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow-pop); }
+  .panel { outline: none; position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 15; padding: 14px; gap: 8px; }
   dl { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 13px; }
   dt { color: var(--text-3); }
   dd { margin: 0; font-weight: 600; text-align: right; overflow-wrap: anywhere; }

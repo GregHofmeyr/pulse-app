@@ -71,10 +71,10 @@
       <button type="button" class="chip" aria-pressed={!!filter.author} aria-haspopup="menu" aria-expanded={people} data-menu-toggle
         onclick={() => (people = !people)}>{personLabel}</button>
       {#if people}
-        <div class="menu" role="menu" aria-label="By person" use:clickOutside={() => (people = false)}>
-          <button type="button" role="menuitemradio" aria-checked={!filter.author} onclick={() => pickAuthor(null)}>Everyone</button>
+        <div class="menu menu-surface" role="menu" aria-label="By person" use:clickOutside={() => (people = false)}>
+          <button type="button" class="menu-item" role="menuitemradio" aria-checked={!filter.author} onclick={() => pickAuthor(null)}>Everyone</button>
           {#each authors as a (a.id)}
-            <button type="button" role="menuitemradio" aria-checked={filter.author === a.id} onclick={() => pickAuthor(a.id)}>
+            <button type="button" class="menu-item" role="menuitemradio" aria-checked={filter.author === a.id} onclick={() => pickAuthor(a.id)}>
               <span class="name">{a.name}</span> <span class="count">{a.count}</span>
             </button>
           {/each}
@@ -100,10 +100,8 @@
   .chip:hover { background: var(--bg-3); color: var(--text); }
   .chip[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
   .person { position: relative; }
-  .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; padding: 4px; display: flex; flex-direction: column; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); }
-  .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--text); display: flex; align-items: center; gap: 8px; font-size: 13px; text-align: left; }
-  .menu button:hover, .menu button:focus-visible { background: var(--bg-4); }
-  .menu button[aria-checked='true'] { color: var(--accent); }
+  .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; }
+  .menu-item[aria-checked='true'] { color: var(--accent); }
   .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
   .grow { flex: 1; }

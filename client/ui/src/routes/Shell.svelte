@@ -457,8 +457,8 @@
           <button bind:this={serverToggle} class="head-btn" data-menu-toggle aria-haspopup="menu" aria-expanded={serverMenuOpen}
             onclick={() => (serverMenuOpen = !serverMenuOpen)}>{activeServer.name}<Icon name="chevron" size={14} /></button>
           {#if serverMenuOpen}
-            <div class="menu head-menu" role="menu" use:clickOutside={closeServerMenu}>
-              <button role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsOpen = true }}>Server settings</button>
+            <div class="menu head-menu menu-surface" role="menu" use:clickOutside={closeServerMenu}>
+              <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsOpen = true }}>Server settings</button>
             </div>
           {/if}
         {:else}Direct messages{/if}
@@ -489,10 +489,10 @@
         {/if}
         <button class="icon-btn me-btn" aria-label="Settings" onclick={() => openSettings()}><Icon name="gear" /></button>
         {#if menuOpen}
-          <div class="menu" role="menu" use:clickOutside={closeAccountMenu}>
-            <button role="menuitem" onclick={() => { menuOpen = false; openSettings() }}>Settings</button>
-            <button role="menuitem" class="warn" onclick={() => { menuOpen = false; reportOpen = true }}>Report a bug</button>
-            <button role="menuitem" class="danger" onclick={logout}>Log out</button>
+          <div class="menu menu-surface" role="menu" use:clickOutside={closeAccountMenu}>
+            <button class="menu-item" role="menuitem" onclick={() => { menuOpen = false; openSettings() }}>Settings</button>
+            <button class="menu-item warn" role="menuitem" onclick={() => { menuOpen = false; reportOpen = true }}>Report a bug</button>
+            <button class="menu-item danger" role="menuitem" onclick={logout}>Log out</button>
           </div>
         {/if}
       </div>
@@ -565,14 +565,14 @@
 {#if serverMenu}
   {@const id = serverMenu.id}
   <div class="ctx-backdrop" role="presentation" onclick={() => (serverMenu = null)}></div>
-  <div class="ctx" role="menu" use:clickOutside={() => (serverMenu = null)} style:left="{serverMenu.x}px" style:top="{serverMenu.y}px">
+  <div class="ctx menu-surface" role="menu" use:clickOutside={() => (serverMenu = null)} style:left="{serverMenu.x}px" style:top="{serverMenu.y}px">
     {#if serverMuted(id)}
-      <button role="menuitem" onclick={() => muteServer(id, 'off')}>Unmute server</button>
+      <button class="menu-item" role="menuitem" onclick={() => muteServer(id, 'off')}>Unmute server</button>
     {:else}
-      <span class="ctx-lbl">Mute server</span>
-      <button role="menuitem" onclick={() => muteServer(id, 1)}>For 1 hour</button>
-      <button role="menuitem" onclick={() => muteServer(id, 8)}>For 8 hours</button>
-      <button role="menuitem" onclick={() => muteServer(id, null)}>Until I turn it back on</button>
+      <span class="menu-label">Mute server</span>
+      <button class="menu-item" role="menuitem" onclick={() => muteServer(id, 1)}>For 1 hour</button>
+      <button class="menu-item" role="menuitem" onclick={() => muteServer(id, 8)}>For 8 hours</button>
+      <button class="menu-item" role="menuitem" onclick={() => muteServer(id, null)}>Until I turn it back on</button>
     {/if}
   </div>
 {/if}
@@ -615,10 +615,9 @@
   .who-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 4px 6px; border: 0; border-radius: 10px; background: transparent; text-align: left; }
   .who-btn:hover { background: var(--bg-2); }
   .who-btn .who { overflow: hidden; }
-  .menu { position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 10; min-width: 200px; padding: 6px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 12px; box-shadow: var(--shadow-menu); display: flex; flex-direction: column; }
-  .menu button { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font-size: 13px; font-weight: 400; }
-  .menu button:hover { background: var(--bg-4); }
-  .menu .danger { color: var(--danger-text); }
+  .menu { position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 10; min-width: 200px; }
+  /* not the bold of the header it can sit under */
+  .menu button { font-weight: 400; }
   .menu .warn { color: var(--warn); }
   .auto-report button { border: 0; background: none; color: inherit; font-size: 15px; line-height: 1; padding: 0 0 0 6px; }
   .auto-report button.link { font-size: inherit; font-weight: 600; text-decoration: underline; padding: 0 2px; }
@@ -638,8 +637,5 @@
   .tab .dot { margin-left: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); display: inline-block; }
   .notice { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 40; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); }
   .ctx-backdrop { position: fixed; inset: 0; z-index: 44; }
-  .ctx { position: fixed; z-index: 45; width: 210px; padding: 6px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--bg-3); border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, .4); }
-  .ctx button { text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font: inherit; font-size: 13px; }
-  .ctx button:hover { background: var(--bg-3); color: var(--text); }
-  .ctx-lbl { padding: 6px 10px 2px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); text-transform: uppercase; }
+  .ctx { position: fixed; z-index: 45; width: 210px; }
 </style>
