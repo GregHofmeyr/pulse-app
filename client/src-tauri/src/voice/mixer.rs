@@ -229,7 +229,12 @@ impl MixerInput {
         for s in samples {
             p.meter.add(*s as f32 / i16::MAX as f32 * p.gain);
         }
-        // a full ring means the speakers aren't pulling (a reopen): keep the newest
+        // A full ring means the speakers aren't pulling (a reopen). Only this push's newest part
+        // that still fits goes in: the producer can't evict, so once the ring is full the OLDEST
+        // audio stays and newer pushes are lost. After a stall longer than the ring (2 × cap),
+        // the speakers resume on stale audio (trimmed to the cap, then cut back to the target at
+        // the next window: at most the cap's worth plays) before jumping to the present. Rare (an
+        // output reopen) and self-limiting.
         let newest = &samples[samples.len().saturating_sub(p.ring.slots())..];
         if let Ok(chunk) = p.ring.write_chunk_uninit(newest.len()) {
             chunk.fill_from_iter(newest.iter().copied());
@@ -719,7 +724,7 @@ mod tests {
     }
 
     #[test]
-    fn overflow_keeps_the_newest_audio_bounded() {
+    fn an_oversized_push_keeps_its_newest_audio_bounded() {
         let (input, mut m) = mixer_with(1000, 10, &["a"]); // cap = 10 samples
         let samples: Vec<i16> = (0..25).collect();
         input.push("a", &samples);
@@ -727,11 +732,23 @@ mod tests {
         let mut out = [0.0f32; 10];
         m.mix_into(&mut out, 1, 1.0);
         // the newest 10 are kept, faded in from what was cut: last = 0.1 x 14 + 0.9 x 24 = 23
-        // (the crossfade truncates to i16, so 22.99.. plays as 22)
+        // (the crossfade truncates to i16: 23 in f32 can land a hair under, and play as 22)
+        let last = (out[9] * i16::MAX as f32).round();
+        assert!(last == 22.0 || last == 23.0, "{last}");
+    }
+
+    /// The known limit (see `push_in`): with the speakers stalled, the ring fills and keeps its
+    /// OLDEST audio; later pushes are lost until the speakers pull again.
+    #[test]
+    fn a_full_ring_keeps_its_oldest_audio_until_the_speakers_pull() {
+        let (input, mut m) = mixer_with(1000, 10, &["a"]); // cap 10, ring 20
+        input.push("a", &(0..20).collect::<Vec<i16>>());
+        input.push("a", &[1000; 10]); // the ring is full: lost
+        let mut out = [0.0f32; 10];
+        m.mix_into(&mut out, 1, 1.0);
         assert!(
-            (out[9] * i16::MAX as f32 - 23.0).abs() < 1.5,
-            "{}",
-            out[9] * i16::MAX as f32
+            out.iter().all(|v| v * (i16::MAX as f32) < 20.5),
+            "the later push played: {out:?}"
         );
     }
 
@@ -757,6 +774,27 @@ mod tests {
         assert!((out[0] - 0.25).abs() < 1e-3);
         assert_eq!(input.max_buffered(), 0, "fill is published after each pull");
         assert_eq!(input.pushed_total(), 480);
+    }
+
+    /// The speakers never wait on the command list either: a network task holding it (a volume
+    /// change, a join) only delays that change to a later pull; what is playing plays on.
+    #[test]
+    fn a_held_command_list_does_not_stop_playback() {
+        let (input, mut m) = mixer_with(48_000, 200, &["a"]);
+        m.buffered("a"); // the add is taken in
+        input.push("a", &[8192; 480]);
+        let cmds = input.cmds.clone();
+        let held = cmds.lock().unwrap();
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut out = vec![0.0f32; 480];
+            m.mix_into(&mut out, 1, 1.0);
+            let _ = tx.send(out);
+        });
+        let out = rx.recv_timeout(std::time::Duration::from_millis(500));
+        drop(held);
+        let out = out.expect("the speakers waited on the command list");
+        assert!((out[0] - 0.25).abs() < 1e-3, "{}", out[0]);
     }
 
     #[test]

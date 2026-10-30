@@ -22,11 +22,8 @@ use super::processor::RawTx;
 pub const STALL_AFTER: Duration = Duration::from_secs(2);
 pub const INTERNAL_RATE: u32 = 48_000;
 
-/// Mic chunks carry the device rate they were captured at.
 /// A broken device can fail every callback; log its error at most this often.
 const STREAM_ERROR_EVERY: std::time::Duration = std::time::Duration::from_secs(10);
-
-pub type MicChunk = (u32, Vec<i16>);
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AudioConfig {
@@ -418,7 +415,9 @@ impl Shared {
     }
 
     pub fn set_mic_sink(&self, sink: Option<Box<dyn super::processor::FrameSink>>) {
-        *self.mic_sink.lock().unwrap() = sink;
+        let old = std::mem::replace(&mut *self.mic_sink.lock().unwrap(), sink);
+        // dropped after the lock: the processor's next frame doesn't wait on its teardown
+        drop(old);
     }
 
     /// (mic rms, speaker rms) since the last call.
@@ -483,8 +482,19 @@ impl Shared {
         let master = if on { 1.0 } else { 0.0 };
         let ch = channels.max(1);
         let frames = out.len() / ch;
-        match self.mixer.try_lock() {
-            Ok(mut mixer) => {
+        let mixer = match self.mixer.try_lock() {
+            Ok(mixer) => Some(mixer),
+            // A panic mid-mix poisoned it. Its state is plain queues: play on (and say so) rather
+            // than play silence for the rest of the call.
+            Err(std::sync::TryLockError::Poisoned(e)) => {
+                self.mixer.clear_poison();
+                tracing::error!("voice: the speaker mix panicked; carrying on");
+                Some(e.into_inner())
+            }
+            Err(std::sync::TryLockError::WouldBlock) => None,
+        };
+        match mixer {
+            Some(mut mixer) => {
                 if rate == INTERNAL_RATE || frames == 0 {
                     mixer.mix_into(out, channels, master);
                 } else {
@@ -495,7 +505,7 @@ impl Shared {
                     }
                 }
             }
-            Err(_) => {
+            None => {
                 out.fill(0.0);
                 self.mix_busy.fetch_add(1, Ordering::Relaxed);
             }
@@ -1358,14 +1368,38 @@ mod tests {
             let mut out = vec![0f32; 960]; // 10 ms stereo at 48 kHz
             let mut playout = super::super::playout::Playout::new(48_000);
             s2.on_output(&mut out, 2, 48_000, &mut Vec::new(), &mut playout);
-            let _ = tx.send(());
+            let _ = tx.send(out);
         });
-        let done = rx.recv_timeout(Duration::from_millis(500)).is_ok();
+        let out = rx.recv_timeout(Duration::from_millis(500));
         drop((held_sources, held_controls, held_meter));
-        assert!(
-            done,
-            "the speaker callback blocked on a lock the network side holds"
-        );
+        let out = out.expect("the speaker callback blocked on a lock the network side holds");
+        // and it didn't just skip the mix: the peer's audio played (unmuted, as last seen)
+        let want = 100.0 / i16::MAX as f32;
+        assert!(out.iter().all(|v| (v - want).abs() < 1e-4), "{:?}", &out[..4]);
+    }
+
+    /// A panic while mixing poisons the mixer's lock: the speakers must not then play silence
+    /// for the rest of the call.
+    #[test]
+    fn a_poisoned_mixer_still_plays() {
+        let s = Shared::new(&AudioConfig::default(), Default::default(), 200);
+        s.mix_in
+            .add_source(s.mix_in.generation(), "a", "a", SourceKind::Voice);
+        let s2 = s.clone();
+        let _ = std::thread::spawn(move || {
+            let _held = s2.mixer.lock().unwrap();
+            panic!("a bug mid-mix (expected in this test)");
+        })
+        .join();
+        assert!(s.mixer.is_poisoned());
+        let mut playout = super::super::playout::Playout::new(48_000);
+        for _ in 0..2 {
+            s.mix_in.push("a", &[100; 480]);
+            let mut out = vec![0f32; 480];
+            s.on_output(&mut out, 1, 48_000, &mut Vec::new(), &mut playout);
+            assert!(out[0] > 0.0, "silent after the panic");
+        }
+        assert_eq!(s.take_mix_busy(), 0);
     }
 
     fn play(s: &Shared, ms: usize) {

@@ -1851,7 +1851,8 @@ impl VoiceManager {
         }
     }
 
-    /// Mic audio waiting to go to LiveKit right now, in ms (tests; the log has the worst per window).
+    /// Mic audio waiting for the processor right now, in ms: the send-side queue we own (frames
+    /// go straight to WebRTC after it). Tests; the log has the worst per window.
     pub async fn send_queue_ms(&self) -> u32 {
         match self.session.lock().await.as_ref() {
             Some(s) => s.pipeline.shared.mic_queue.current(),

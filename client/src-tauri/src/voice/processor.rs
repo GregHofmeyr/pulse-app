@@ -416,15 +416,15 @@ fn fill_gap(shared: &Shared, gap: &mut GapFill, silence: &[i16]) {
         return;
     };
     let due = gap.silence_due(now);
-    for _ in 0..due {
-        s.send(silence);
-    }
+    let sent = (0..due).filter(|_| s.send(silence)).count();
     if due > 0 {
         gap.silence_sent(due);
+        let relaxed = std::sync::atomic::Ordering::Relaxed;
+        shared.stats.silence_fill.fetch_add(sent as u64, relaxed);
         shared
             .stats
-            .silence_fill
-            .fetch_add(due as u64, std::sync::atomic::Ordering::Relaxed);
+            .send_drops
+            .fetch_add((due - sent) as u64, relaxed);
     }
 }
 
@@ -492,7 +492,7 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
             .stats
             .lag_drops
             .fetch_add(late as u64, std::sync::atomic::Ordering::Relaxed);
-        // blocks waiting = ms behind
+        // blocks waiting × 10 = ms behind (`on_input` hands over 10 ms blocks at any device rate)
         shared.mic_queue.record(queue.len() as u32 * 10);
 
         // live config
@@ -1148,6 +1148,50 @@ mod tests {
             1,
             "only the frame after the room connected"
         );
+    }
+
+    /// Silence the room refuses isn't silence sent: it counts as send drops, like a refused
+    /// mic frame, so the path line's `fill` stays what listeners actually got.
+    #[test]
+    fn refused_silence_counts_as_send_drops_not_fill() {
+        struct Refuse;
+        impl FrameSink for Refuse {
+            fn send(&mut self, _: &[i16]) -> bool {
+                false
+            }
+        }
+        use std::sync::atomic::Ordering::Relaxed;
+        let sh = off();
+        sh.set_mic_sink(Some(Box::new(Refuse)));
+        let mut gap = GapFill::new(Instant::now() - Duration::from_millis(105));
+        fill_gap(&sh, &mut gap, &[0; FRAME]);
+        assert_eq!(sh.stats.silence_fill.load(Relaxed), 0);
+        assert_eq!(sh.stats.send_drops.load(Relaxed), 10);
+    }
+
+    /// A room switch swaps the sink: the old one (a LiveKit source) is dropped after the sink
+    /// lock is released, so its teardown can't hold up the processor's next frame.
+    #[test]
+    fn the_old_mic_sink_is_dropped_outside_the_lock() {
+        use std::sync::atomic::{AtomicBool, Ordering::SeqCst};
+        struct Probe(std::sync::Weak<Shared>, Arc<AtomicBool>);
+        impl FrameSink for Probe {
+            fn send(&mut self, _: &[i16]) -> bool {
+                true
+            }
+        }
+        impl Drop for Probe {
+            fn drop(&mut self) {
+                if let Some(s) = self.0.upgrade() {
+                    self.1.store(s.mic_sink.try_lock().is_ok(), SeqCst);
+                }
+            }
+        }
+        let sh = off();
+        let free = Arc::new(AtomicBool::new(false));
+        sh.set_mic_sink(Some(Box::new(Probe(Arc::downgrade(&sh), free.clone()))));
+        sh.set_mic_sink(None);
+        assert!(free.load(SeqCst), "dropped while the sink lock was held");
     }
 
     /// The mic stalls (a device reopen): the stream to WebRTC stays continuous with silence.
