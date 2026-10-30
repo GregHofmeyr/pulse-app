@@ -40,6 +40,8 @@
 
   // Join tokens are fetched when the pointer rests on a voice channel, not while it sweeps past.
   const prefetch = hoverPrefetch((id) => voiceApi.prefetch(id))
+  /** Hover and focus both start a prefetch; the channel you're already in needs no token. */
+  const restOn = (id: string) => { if (member && id !== voiceChannelId) prefetch.enter(id) }
   const mutedForMe = (userId: string) => !!voice.localMutes[userId] && userId !== app.state.me?.id
   /** A voice row is a button: its label is all a screen reader reads, so it carries the state too. */
   const occupantLabel = (p: { userId: string; name: string; muted: boolean; deafened: boolean }) =>
@@ -141,8 +143,7 @@
     {@const people = member ? callRoster(app.state, serverId, c.id, self) : []}
     <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId}
       data-tip={c.id === voiceChannelId ? 'You’re here' : `Join ${c.name}`}
-      onmouseenter={() => { if (member && c.id !== voiceChannelId) prefetch.enter(c.id) }}
-      onfocus={() => { if (member && c.id !== voiceChannelId) prefetch.enter(c.id) }}
+      onmouseenter={() => restOn(c.id)} onfocus={() => restOn(c.id)}
       onmouseleave={() => prefetch.leave(c.id)} onblur={() => prefetch.leave(c.id)}
       onclick={() => { prefetch.cancel(); onJoinVoice(c.id) }} ondblclick={() => onSelect(c.id)}>
       <span class="ico"><Icon name="speaker" size={17} /></span><span class="grow">{c.name}</span>
