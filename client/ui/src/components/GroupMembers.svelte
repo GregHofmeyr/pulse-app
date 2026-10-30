@@ -48,6 +48,7 @@
   .who { flex: 1; min-width: 0; font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .who small { color: var(--text-3); font-weight: 400; }
   .x { width: 26px; height: 26px; border: 0; border-radius: 7px; background: var(--bg-4); color: var(--text-2); display: grid; place-items: center; opacity: 0; }
+  .x:hover { color: var(--text); }
   .row:hover .x, .x:focus-visible { opacity: 1; }
   .err { margin: 8px 10px; font-size: 12px; color: var(--danger-text); }
 </style>

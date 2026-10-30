@@ -633,6 +633,7 @@
   .me-btn:hover { background: var(--bg-2); }
   .me-btn.on { color: var(--danger-text); }
   .ghost { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
+  .ghost:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
   .content { position: relative; flex: 1; min-width: 0; background: var(--bg-2); display: flex; flex-direction: column; }
   .empty { margin: auto; color: var(--text-3); }
   .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }

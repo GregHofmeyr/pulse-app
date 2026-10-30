@@ -247,6 +247,7 @@
   .foot .qoty-btn, .confirm .qoty-btn { height: 34px; }
   .qoty-btn.danger { background: var(--danger); color: var(--text); box-shadow: 0 2px 0 color-mix(in srgb, var(--danger) 55%, var(--bg-0)); }
   .ghost { height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 13px; }
+  .ghost:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
   .ghost:disabled { opacity: .6; }
 
   /* motion (off under reduced motion: no .animated, no .popped) */

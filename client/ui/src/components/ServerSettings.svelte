@@ -35,6 +35,7 @@
   nav { width: 200px; flex-shrink: 0; padding: 24px 12px; background: var(--bg-0); display: flex; flex-direction: column; gap: 2px; }
   h1 { margin: 0 10px 12px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   nav button { text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font-weight: 600; }
+  nav button:hover { background: var(--bg-2); color: var(--text); }
   nav button.on { background: var(--bg-3); color: var(--text); }
   .content { position: relative; flex: 1; min-width: 0; overflow-y: auto; padding: 28px 32px; }
   .close { position: absolute; top: 20px; right: 20px; width: 36px; height: 36px; border: 1px solid var(--bg-4); border-radius: 50%; background: transparent; color: var(--text-2); display: grid; place-items: center; z-index: 1; }

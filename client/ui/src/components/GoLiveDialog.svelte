@@ -135,5 +135,6 @@
   .primary { height: 38px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
   .primary:disabled { opacity: .6; }
   .ghost { height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); }
+  .ghost:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
   .ghost:disabled { opacity: .6; }
 </style>

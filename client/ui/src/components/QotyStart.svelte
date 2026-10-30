@@ -126,6 +126,7 @@
   .err { margin: 0; font-size: 13px; color: var(--danger); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
   .ghost { height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); }
+  .ghost:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
   .go { height: 38px; padding: 0 18px; border-radius: 10px; font-size: 14px; }
   .ghost:disabled { opacity: .6; }
 </style>

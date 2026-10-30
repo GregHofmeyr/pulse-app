@@ -336,6 +336,7 @@
   .problem { position: absolute; inset: auto 12px 12px; text-align: center; color: var(--warn); }
   .controls { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
   .ico { width: 32px; height: 32px; border-radius: 8px; border: 0; background: var(--bg-3); color: var(--text); display: grid; place-items: center; cursor: pointer; }
+  .ico:hover { background: var(--bg-4); }
   .act { height: 32px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text); display: inline-flex; align-items: center; gap: 6px; cursor: pointer; font: inherit; font-size: 13px; }
   .act:disabled { opacity: 0.45; cursor: default; }
   .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }

@@ -362,6 +362,8 @@
   .btn { display: inline-flex; align-items: center; height: 34px; padding: 0 14px; border: 1px solid var(--bg-4); border-radius: 10px; background: transparent; color: var(--text); font-weight: 600; cursor: pointer; }
   .btn:disabled, .btn.disabled { opacity: .5; cursor: default; }
   .btn.primary { border-color: transparent; background: var(--accent); color: var(--on-accent); }
+  .btn:not(.primary):not(.disabled):hover:not(:disabled) { background: var(--bg-3); }
+  .btn.primary:not(.disabled):hover:not(:disabled) { filter: brightness(1.08); }
   /* the file input sits under its label, which is the button people see */
   label.btn { position: relative; }
   label.btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }

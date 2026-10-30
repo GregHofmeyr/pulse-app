@@ -32,6 +32,7 @@
   .who { display: flex; flex-direction: column; font-size: 15px; font-weight: 500; min-width: 0; }
   .who small { font-size: 11px; color: var(--text-3); font-weight: 400; }
   .msg { margin-left: auto; width: 28px; height: 28px; border: 0; border-radius: 8px; background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; opacity: 0; }
+  .msg:hover { background: var(--bg-4); color: var(--text); }
   .row:hover .msg, .msg:focus-visible { opacity: 1; }
   .row:hover { background: var(--bg-2); }
 </style>

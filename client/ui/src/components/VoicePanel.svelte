@@ -147,7 +147,7 @@
   .status.warn { color: var(--warn); background: var(--warn-soft); }
   .error { margin: 12px 18px 0; color: var(--danger-text); font-size: 13px; }
   .eye { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
-  .eye:hover { background: var(--bg-2); color: var(--text); }
+  .eye:hover { background: var(--bg-3); color: var(--text); }
   .eye[aria-pressed='true'] { color: var(--text); }
   .grid-wrap { flex: 1; min-height: 0; overflow-y: auto; container-type: inline-size; }
   .grid { padding: 20px; display: grid; grid-template-columns: 1fr; align-items: start; gap: 14px; }

@@ -446,7 +446,7 @@
   .opts button { min-height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; font: inherit; }
   .opts button:hover, .opts button.hi { background: var(--bg-3); }
   .ibtn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); cursor: pointer; }
-  .ibtn:hover { background: var(--bg-2); color: var(--text); }
+  .ibtn:hover { background: var(--bg-4); color: var(--text); }
   .pic { position: relative; flex-shrink: 0; }
   .thumb { display: block; width: 44px; height: 44px; object-fit: cover; border-radius: 8px; }
   .x { position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--bg-1); color: var(--text); }

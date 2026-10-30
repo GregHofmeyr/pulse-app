@@ -17,5 +17,6 @@
 <style>
   .seg { display: inline-flex; align-self: flex-start; border: 1px solid var(--bg-4); border-radius: 10px; overflow: hidden; }
   .seg button { padding: 8px 14px; border: 0; background: transparent; color: var(--text-2); font-weight: 600; }
+  .seg button:not(.on):hover { background: var(--bg-3); color: var(--text); }
   .seg button.on { background: var(--accent); color: var(--on-accent); }
 </style>

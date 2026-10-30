@@ -107,6 +107,7 @@
   .foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
   .foot .hint { margin-right: auto; }
   .ghost { height: 36px; padding: 0 14px; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); font-weight: 600; }
+  .ghost:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
   .primary { height: 36px; padding: 0 16px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 700; }
   .primary:disabled { opacity: .45; }
 </style>

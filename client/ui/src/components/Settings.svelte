@@ -115,6 +115,7 @@
   .confirm { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 48px 16px 0; padding: 10px 14px; border-radius: 12px; background: var(--bg-3); border: 1px solid var(--warn); font-weight: 600; }
   .confirm span { margin-right: auto; }
   .confirm button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-weight: 600; }
+  .confirm button:not(.danger):hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
   .confirm button.danger { border-color: transparent; background: var(--danger); color: var(--on-danger); }
   .confirm.saving { border-color: var(--bg-4); color: var(--text-2); }
   /* the way out that waits for a Save */
