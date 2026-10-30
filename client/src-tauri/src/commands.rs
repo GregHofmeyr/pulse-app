@@ -1,6 +1,6 @@
 //! Tauri commands: the UI's only way to reach the server. Tokens stay in here.
 
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use pulse_protocol::gateway::ClientFrame;
@@ -39,6 +39,20 @@ struct Session {
     me: Option<UserId>,
     /// False once this session has ended: a media fetch it started must not land afterwards.
     alive: Arc<AtomicBool>,
+}
+
+/// Numbers each start of something that a later start replaces; only the newest is current.
+#[derive(Default)]
+struct Generation(AtomicU64);
+
+impl Generation {
+    fn next(&self) -> u64 {
+        self.0.fetch_add(1, Ordering::SeqCst) + 1
+    }
+
+    fn is_current(&self, n: u64) -> bool {
+        self.0.load(Ordering::SeqCst) == n
+    }
 }
 
 /// Runs on every sign-out: clears what the webview cached (see `media::clear_webview_cache`).
@@ -93,6 +107,10 @@ pub struct Core {
     ui_attached: watch::Sender<bool>,
     /// setup and restore_session may both try to start the stored session: one at a time.
     starting: Mutex<()>,
+    /// The running gateway's `forward`; bumped whenever that gateway is replaced or stopped.
+    epoch: Generation,
+    /// restore_session calls (one per page load).
+    restores: Generation,
     /// The latest session's server and account in this run (kept across `suspend`, reset by a
     /// sign-out): signing in as anyone else clears the webview's cache first.
     last: Mutex<Option<(String, Option<UserId>)>>,
@@ -128,6 +146,8 @@ impl Core {
             boot: watch::channel(Boot::starting()).0,
             ui_attached: watch::channel(false).0,
             starting: Mutex::new(()),
+            epoch: Generation::default(),
+            restores: Generation::default(),
             last: Mutex::new(None),
             media_root,
             clip_sources: Default::default(),
@@ -452,7 +472,8 @@ impl Core {
         );
         // Replacing an old handle drops (and stops) it.
         *self.gateway.lock().unwrap() = Some(handle);
-        tauri::async_runtime::spawn(forward(app.clone(), rx, token));
+        let epoch = self.epoch.next();
+        tauri::async_runtime::spawn(forward(app.clone(), rx, token, epoch));
         let app2 = app.clone();
         let timer = tauri::async_runtime::spawn(async move {
             let mut tick = tokio::time::interval(std::time::Duration::from_secs(15));
@@ -557,6 +578,7 @@ impl Core {
     /// (the next launch tries again, as before).
     fn suspend(&self) {
         self.gateway.lock().unwrap().take();
+        self.epoch.next();
         if let Some(t) = self.retry.lock().unwrap().take() {
             t.abort();
         }
@@ -578,6 +600,7 @@ impl Core {
     /// Forget the session locally (logout, or the server said our token is dead).
     fn deactivate(&self, app: &AppHandle) {
         self.gateway.lock().unwrap().take();
+        self.epoch.next();
         if let Some(t) = self.retry.lock().unwrap().take() {
             t.abort();
         }
@@ -678,11 +701,23 @@ impl Core {
     }
 }
 
-/// Gateway updates → Tauri events for the UI.
-async fn forward(app: AppHandle, mut rx: mpsc::UnboundedReceiver<GatewayUpdate>, token: String) {
+/// Gateway updates → Tauri events for the UI. `epoch`: this gateway's `Core::epoch`.
+async fn forward(
+    app: AppHandle,
+    mut rx: mpsc::UnboundedReceiver<GatewayUpdate>,
+    token: String,
+    epoch: u64,
+) {
+    // Everything waits for the UI, not just the emits: the connection state bug reports quote,
+    // and a LoggedOut's sign-out (`deactivate`), happen once it listens (within the webview's boot).
     let mut attached = app.state::<Core>().ui_listening();
     let _ = attached.wait_for(|a| *a).await;
     while let Some(u) = rx.recv().await {
+        // Replaced (a reload restarts the gateway) or stopped: what the old one had queued is
+        // stale, and must not reach the new page or decide the new boot.
+        if !app.state::<Core>().epoch.is_current(epoch) {
+            return;
+        }
         match &u {
             GatewayUpdate::Ready(r) => {
                 app.state::<Core>().learn_me(&token, r.me.id);
@@ -828,12 +863,19 @@ pub async fn restore_session(
     voice: State<'_, VoiceManager>,
 ) -> Result<Restored, ApiError> {
     crate::startup::mark("restore_begin");
+    let this = core.restores.next();
     // Runs once per page load: a reload (renderer crash) can't leave the old page's meters
     // counted or its status panel's 1 s link polling running.
     voice.reset_page_views();
     // The UI listens before it calls this. Already attached = the webview reloaded.
     let reload = core.ui_attached.send_replace(true);
-    let Some(server) = core.start_stored(&app, reload) else {
+    // Keychain read, under a lock setup may hold through its own: not on an async worker.
+    let h = app.clone();
+    let server =
+        tauri::async_runtime::spawn_blocking(move || h.state::<Core>().start_stored(&h, reload))
+            .await
+            .map_err(|_| ApiError::Network(crate::api::CONNECT_FAILED.into()))?;
+    let Some(server) = server else {
         return Ok(Restored::LoggedOut);
     };
     let mut boot = core.boot.subscribe();
@@ -856,6 +898,11 @@ pub async fn restore_session(
                 .await
                 .map(Restored::Ready)
                 .map_err(|e| e.while_restoring(&server))
+        }
+        // The page reloaded while this waited (a slow startup): the new page's restore owns the
+        // session now, and giving up here would stop the gateway it just started.
+        _ if !core.restores.is_current(this) => {
+            Err(ApiError::Network(crate::api::CONNECT_FAILED.into()))
         }
         _ => {
             let why = match core.current() {
@@ -2208,6 +2255,16 @@ pub async fn reopen_qoty(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_the_newest_generation_is_current() {
+        let g = Generation::default();
+        let first = g.next();
+        assert!(g.is_current(first));
+        let second = g.next();
+        assert!(!g.is_current(first), "superseded");
+        assert!(g.is_current(second));
+    }
 
     #[test]
     fn crop_header_parses() {
