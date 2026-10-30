@@ -6,7 +6,7 @@
 //! (KDE's does), so a replacement sent from a new connection, as notify-rust's `show` does,
 //! would lose its click; and one thread per notification would pile up behind a busy chat.
 
-use super::{Click, Failure, Notice, OnClick};
+use super::{Click, Failure, KEEP, Notice, OnClick};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use zbus::blocking::{Connection, MessageIterator};
@@ -15,8 +15,6 @@ use zbus::zvariant::Value;
 const DEST: &str = "org.freedesktop.Notifications";
 const PATH: &str = "/org/freedesktop/Notifications";
 const IFACE: &str = "org.freedesktop.Notifications";
-/// How many of our notification ids are remembered for a click.
-const KEEP: usize = 64;
 
 /// Which notification each conversation has on screen, and where a click on each of ours leads.
 #[derive(Default)]

@@ -1,6 +1,48 @@
 //! The Windows toast's XML: a title line and a body line. Kept apart from the WinRT calls so
 //! it is tested on every platform.
 
+use super::KEEP;
+use std::collections::{HashMap, VecDeque};
+
+/// The newest toast per conversation, for at most [KEEP] conversations: the oldest goes first.
+pub struct KeepNewest<V> {
+    by_channel: HashMap<String, V>,
+    order: VecDeque<String>,
+}
+
+impl<V> Default for KeepNewest<V> {
+    fn default() -> Self {
+        KeepNewest {
+            by_channel: HashMap::new(),
+            order: VecDeque::new(),
+        }
+    }
+}
+
+impl<V> KeepNewest<V> {
+    pub fn insert(&mut self, channel: String, v: V) {
+        if self.by_channel.insert(channel.clone(), v).is_some() {
+            self.order.retain(|c| *c != channel);
+        }
+        self.order.push_back(channel);
+        while self.order.len() > KEEP {
+            if let Some(old) = self.order.pop_front() {
+                self.by_channel.remove(&old);
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.by_channel.len()
+    }
+
+    #[cfg(test)]
+    fn contains(&self, channel: &str) -> bool {
+        self.by_channel.contains_key(channel)
+    }
+}
+
 /// XML 1.0's `Char`: tab, newline, carriage return and everything from space up, except
 /// U+FFFE and U+FFFF (a Rust `char` is never a surrogate).
 fn xml_char(c: char) -> bool {
@@ -43,6 +85,30 @@ mod tests {
             toast_xml("sam", "hello"),
             r#"<toast><visual><binding template="ToastGeneric"><text>sam</text><text>hello</text></binding></visual><audio silent="true"/></toast>"#
         );
+    }
+
+    #[test]
+    fn kept_toasts_are_capped_and_the_oldest_conversation_goes() {
+        let mut k = KeepNewest::default();
+        for i in 0..KEEP + 3 {
+            k.insert(format!("C{i}"), i);
+        }
+        assert_eq!(k.len(), KEEP);
+        assert!(!k.contains("C0") && !k.contains("C1") && !k.contains("C2"));
+        assert!(k.contains("C3") && k.contains(&format!("C{}", KEEP + 2)));
+    }
+
+    #[test]
+    fn a_new_toast_for_a_kept_conversation_replaces_it_and_makes_it_newest() {
+        let mut k = KeepNewest::default();
+        for i in 0..KEEP {
+            k.insert(format!("C{i}"), i);
+        }
+        k.insert("C0".into(), 100);
+        assert_eq!(k.len(), KEEP);
+        k.insert("NEW".into(), 0);
+        // C1 was the oldest now, not C0
+        assert!(k.contains("C0") && !k.contains("C1"));
     }
 
     #[test]

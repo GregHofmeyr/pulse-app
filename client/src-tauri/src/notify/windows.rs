@@ -4,9 +4,8 @@
 //! Built on the `windows` crate rather than tauri-winrt-notification: that wrapper has no tag or
 //! group, and replacing needs both. It is the same handful of WinRT calls.
 
-use super::toast::toast_xml;
+use super::toast::{KeepNewest, toast_xml};
 use super::{Click, Failure, Notice, OnClick};
-use std::collections::HashMap;
 use windows::Data::Xml::Dom::XmlDocument;
 use windows::Foundation::TypedEventHandler;
 use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
@@ -18,8 +17,9 @@ pub struct Backend {
     app_id: HSTRING,
     on_click: OnClick,
     /// The newest toast per conversation: kept so its click handler lives while it's on screen
-    /// (an unpackaged app only hears a click through the object it showed).
-    shown: HashMap<String, ToastNotification>,
+    /// (an unpackaged app only hears a click through the object it showed). For the newest
+    /// [super::KEEP] conversations only, so a long session doesn't hold one for every chat.
+    shown: KeepNewest<ToastNotification>,
 }
 
 impl Backend {
@@ -27,7 +27,7 @@ impl Backend {
         Backend {
             app_id: HSTRING::from(app_id),
             on_click,
-            shown: HashMap::new(),
+            shown: KeepNewest::default(),
         }
     }
 

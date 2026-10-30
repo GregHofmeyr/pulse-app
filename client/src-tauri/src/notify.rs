@@ -36,6 +36,10 @@ const TITLE_MAX: usize = 1000;
 const BODY_MAX: usize = 2000;
 /// Channel and message ids are 26-character ULIDs; Windows takes a tag of up to 64.
 const ID_MAX: usize = 64;
+/// How many conversations' notifications are remembered (for their clicks, and on Windows their
+/// toast objects); the oldest is let go first.
+#[cfg_attr(not(any(windows, target_os = "linux", test)), allow(dead_code))]
+const KEEP: usize = 64;
 
 /// What the page asks to show.
 #[derive(Deserialize, Clone, Debug, PartialEq)]
