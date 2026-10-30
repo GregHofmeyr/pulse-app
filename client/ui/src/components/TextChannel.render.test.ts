@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 // The rendered-message cache as the channel uses it: mention pills follow who can be mentioned,
-// and an event that touches no message (typing) renders none again.
+// and an event that touches no message (typing) renders none again. Also the typing line's timer.
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
@@ -21,7 +21,7 @@ vi.mock('../lib/markdown', async (importOriginal) => {
 
 import TextChannel from './TextChannel.svelte'
 import { app, resetState } from '../lib/store.svelte'
-import { addHistory, applyEvent, applyReady, emptyState, markHistory } from '../lib/state'
+import { addHistory, applyEvent, applyReady, emptyState, markHistory, TYPING_TTL_MS } from '../lib/state'
 
 const user = (id: string, username: string): User => ({ id, username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const me = user('U1', 'alex')
@@ -68,5 +68,28 @@ describe('TextChannel: rendered messages', () => {
     app.state = applyEvent(app.state, { t: 'UserCreated', d: { user: user('U3', 'jo') } }, 0)
     flushSync()
     expect(pills()).toEqual(['@kim', '@jo'])
+  })
+
+  it('the typing line fades each person on time, re-arming its one timer for the next', async () => {
+    vi.useFakeTimers()
+    try {
+      const typing = () => document.querySelector('.typing')?.textContent?.trim()
+      app.state = applyEvent(app.state, { t: 'MemberJoined', d: { server_id: 'S1', member: { user: user('U3', 'jo'), nickname: null } } }, 0)
+      app.state = applyEvent(app.state, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U2' } }, Date.now())
+      flushSync()
+      await vi.advanceTimersByTimeAsync(2000)
+      app.state = applyEvent(app.state, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U3' } }, Date.now())
+      flushSync()
+      expect(typing()).toBe('sam, jo are typing…')
+      await vi.advanceTimersByTimeAsync(TYPING_TTL_MS - 2000 + 100) // sam's ran out
+      flushSync()
+      expect(typing()).toBe('jo is typing…')
+      await vi.advanceTimersByTimeAsync(2000) // jo's too: the timer was armed again for it
+      flushSync()
+      expect(typing()).toBe('')
+      expect(vi.getTimerCount()).toBe(0) // nobody typing: no timer left
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
