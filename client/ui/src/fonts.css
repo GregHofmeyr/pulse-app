@@ -1,7 +1,8 @@
 /* Onest, bundled locally (the app makes no third-party requests). Only the subsets the UI and
-   latin-script names use, woff2 only (WebView2 and WebKitGTK both read it): the full set was 48
-   files / 583 KB. Ranges are copied from @fontsource/onest so the same glyphs come from the same
-   face; other scripts (Cyrillic, Vietnamese) fall back to system-ui. */
+   latin-script names use, woff2 only (WebView2 and WebKitGTK both read it): the full set (7 subsets
+   x 4 weights, woff2 + woff: 56 files in the package) came to 48 files / 583 KB in the build. Ranges
+   are copied from @fontsource/onest so the same glyphs come from the same face; other scripts
+   (Cyrillic, Vietnamese) fall back to system-ui. */
 @font-face {
   font-family: 'Onest';
   font-style: normal;

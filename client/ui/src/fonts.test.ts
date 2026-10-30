@@ -5,7 +5,10 @@ import { createRequire } from 'node:module'
 import { describe, expect, it } from 'vitest'
 
 const read = (rel: string) => readFileSync(new URL(rel, import.meta.url), 'utf8')
-const upstream = readFileSync(createRequire(import.meta.url).resolve('@fontsource/onest/400.css'), 'utf8')
+const require = createRequire(import.meta.url)
+const upstreamCss = (weight: string) => readFileSync(require.resolve(`@fontsource/onest/${weight}.css`), 'utf8')
+const WEIGHTS = ['400', '500', '600', '700']
+const SUBSETS = ['latin', 'latin-ext', 'symbols']
 
 const faces = (css: string) =>
   [...css.matchAll(/@font-face\s*{([^}]*)}/g)].map(([, body]) => ({
@@ -22,19 +25,28 @@ describe('bundled fonts', () => {
     expect(main).not.toMatch(/@fontsource\/onest\/\d+\.css/)
   })
 
-  it('ships only latin, latin-ext and symbols, as woff2, for the four weights the UI uses', () => {
+  it('ships only latin, latin-ext and symbols, as woff2, each once for each of the four weights the UI uses', () => {
     const ours = faces(read('./fonts.css'))
-    expect(ours).toHaveLength(12)
     for (const f of ours) {
       expect(f.urls).toHaveLength(1)
       expect(f.urls[0]).toMatch(/\.woff2$/)
-      expect(['latin', 'latin-ext', 'symbols']).toContain(subsetOf(f.urls[0]))
+      // the face's file is the one for its own weight
+      expect(f.urls[0]).toContain(`-${f.weight}-normal.`)
     }
-    expect(new Set(ours.map((f) => f.weight))).toEqual(new Set(['400', '500', '600', '700']))
+    const pairs = ours.map((f) => `${f.weight} ${subsetOf(f.urls[0])}`).sort()
+    expect(pairs).toEqual(WEIGHTS.flatMap((w) => SUBSETS.map((sub) => `${w} ${sub}`)).sort())
   })
 
-  it('uses the same unicode ranges as @fontsource, so those glyphs come from the same face', () => {
-    const ranges = new Map(faces(upstream).map((f) => [subsetOf(f.urls[0]), f.range]))
-    for (const f of faces(read('./fonts.css'))) expect(f.range).toBe(ranges.get(subsetOf(f.urls[0])))
+  it('every file it points at is in the package', () => {
+    for (const f of faces(read('./fonts.css'))) expect(() => require.resolve(f.urls[0])).not.toThrow()
+  })
+
+  it('uses the same unicode ranges as @fontsource, weight by weight, so those glyphs come from the same face', () => {
+    const ranges = new Map(WEIGHTS.flatMap((w) => faces(upstreamCss(w)).map((f) => [`${w} ${subsetOf(f.urls[0])}`, f.range])))
+    for (const f of faces(read('./fonts.css'))) {
+      const want = ranges.get(`${f.weight} ${subsetOf(f.urls[0])}`)
+      expect(want).toBeTruthy()
+      expect(f.range).toBe(want)
+    }
   })
 })
