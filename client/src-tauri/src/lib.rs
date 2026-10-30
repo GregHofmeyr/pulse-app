@@ -10,6 +10,7 @@ pub mod ipc;
 pub mod keybinds;
 pub mod logging;
 pub mod media;
+pub mod notify;
 pub mod outbox;
 pub mod qr;
 pub mod reports;
@@ -66,18 +67,23 @@ fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri:
     Ok(())
 }
 
+/// Unminimise, show and focus the main window: a second launch, or a clicked notification.
+fn bring_to_front(app: &tauri::AppHandle) {
+    use tauri::Manager;
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unminimize();
+        let _ = win.show();
+        let _ = win.set_focus();
+    }
+}
+
 pub fn run() {
     startup::begin();
     let mut builder = tauri::Builder::default();
     // Must be the first plugin: a second launch exits before anything else starts.
     if session::single_instance(std::env::var("PULSE_PROFILE").ok().as_deref()) {
         builder = builder.plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-            use tauri::Manager;
-            if let Some(win) = app.get_webview_window("main") {
-                let _ = win.unminimize();
-                let _ = win.show();
-                let _ = win.set_focus();
-            }
+            bring_to_front(app)
         }));
     }
     builder
@@ -145,6 +151,16 @@ pub fn run() {
                     vh.asset_protocol_scope().is_allowed(p)
                 }))),
             );
+            // A clicked notification brings the window up, then the page opens the conversation.
+            let h = app.handle().clone();
+            app.manage(notify::Notifier::new(
+                notify::app_id(&app.config().identifier, cfg!(debug_assertions)),
+                std::sync::Arc::new(move |click: notify::Click| {
+                    use tauri::Emitter;
+                    bring_to_front(&h);
+                    let _ = h.emit(notify::CLICK_EVENT, click);
+                }),
+            ));
             app.manage(voice::mictest::MicTest::default());
             app.manage(stream::PickerMemory::default());
             let h = app.handle().clone();
@@ -328,6 +344,7 @@ pub fn run() {
             stream::stream_preview_get,
             stream::stream_log,
             logging::ui_log,
+            notify::notify_message,
             stream::stream_picker_window,
             stream::stream_audio_start,
             stream::stream_audio_stop,
