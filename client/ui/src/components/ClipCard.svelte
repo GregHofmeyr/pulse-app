@@ -104,7 +104,7 @@
   .media :global(.clip) { border-radius: 0; }
   .thumb { position: absolute; inset: 0; padding: 0; border: 0; background: #000; cursor: pointer; display: block; }
   .thumb img { width: 100%; height: 100%; object-fit: cover; display: block; }
-  .play { position: absolute; inset: 0; margin: auto; width: 46px; height: 46px; border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; display: grid; place-items: center; opacity: .85; }
+  .play { position: absolute; inset: 0; margin: auto; width: 46px; height: 46px; border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; display: grid; place-items: center; opacity: .85; transition: opacity var(--dur) var(--ease), background-color var(--dur) var(--ease); }
   .thumb:hover .play, .thumb:focus-visible .play { opacity: 1; background: rgba(0, 0, 0, .75); }
   .duration { position: absolute; right: 8px; bottom: 8px; padding: 1px 6px; border-radius: 6px; background: rgba(0, 0, 0, .75); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
   .fs { position: absolute; right: 8px; top: 8px; width: 28px; height: 28px; border: 0; border-radius: 8px; background: rgba(0, 0, 0, .6); color: #fff; display: grid; place-items: center; opacity: 0; }

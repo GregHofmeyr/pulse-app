@@ -238,7 +238,7 @@
   .unsent-reply { margin: 4px 0 0 10px; padding: 0; border: 0; background: none; color: var(--danger); font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
   .unsent-reply:hover { text-decoration: underline; }
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger); }
-  .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: 8px; }
+  .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: 8px; transition: opacity var(--dur) var(--ease); }
   .quote:hover .actions, .actions.open { opacity: 1; pointer-events: auto; }
   .actions button { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .actions button:hover { color: var(--text); }
