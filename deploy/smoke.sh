@@ -15,11 +15,17 @@ port_open() { timeout 3 bash -c "</dev/tcp/$ip/$1" 2>/dev/null; }
 port_closed() { ! port_open "$1"; }
 health_ok() { [[ $(curl -fsS "https://$DOMAIN/health") == ok ]]; }
 voice_answers() { curl -fsS -o /dev/null "https://voice.$DOMAIN/"; }
+# The gateway is a WebSocket behind Caddy: the upgrade must come back 101 (then curl gives up waiting, by design).
+gateway_upgrades() {
+  [[ $(curl -s -o /dev/null -w '%{http_code}' -m 3 --http1.1 -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+    -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: c21va2UtdGVzdC1rZXktMTY=' "https://$DOMAIN/gateway") == 101 ]]
+}
 webhook_hidden() { [[ $(curl -s -o /dev/null -w '%{http_code}' -X POST "https://$DOMAIN/livekit/webhook") == 404 ]]; }
 
 echo "$DOMAIN → ${ip:-no A record}"
 check "https://$DOMAIN/health" health_ok
 check "https://voice.$DOMAIN answers" voice_answers
+check "gateway WebSocket upgrades" gateway_upgrades
 check "webhook hidden from the internet" webhook_hidden
 check "port 7890 closed" port_closed 7890
 check "port 7880 closed" port_closed 7880

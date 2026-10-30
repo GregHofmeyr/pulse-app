@@ -180,6 +180,8 @@ jobs:
         run: docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh scripts/fetch-ffmpeg*.sh
       - name: deploy.sh self-test
         run: bash deploy/deploy-selftest.sh
+      - name: backup.sh self-test
+        run: bash deploy/backup-selftest.sh
       - name: fetch-ffmpeg.sh self-test
         run: bash scripts/fetch-ffmpeg-test.sh
 

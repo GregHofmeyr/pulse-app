@@ -99,6 +99,7 @@ deploy-check:
         -v "$PWD/deploy/Caddyfile:/etc/caddy/Caddyfile:ro" "$caddy_image" caddy validate --config /etc/caddy/Caddyfile
     docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.11.0 deploy/*.sh
     bash deploy/deploy-selftest.sh
+    bash deploy/backup-selftest.sh
 
 # --- production (pulsechat.co.za); see deploy/README.md ---
 prod := "pulse@pulse"
