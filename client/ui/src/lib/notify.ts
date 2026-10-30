@@ -13,6 +13,14 @@ export type NotifyPrefs = { enabled: boolean; showText: boolean }
 
 export const BODY_MAX = 140
 
+const segmenter = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(undefined, { granularity: 'grapheme' }) : null
+
+/** What a reader counts as characters: a family, a flag or a skin-toned emoji is one, so a cut
+ *  never leaves half of one. (Code points where there's no segmenter.) */
+function graphemes(s: string): string[] {
+  return segmenter ? Array.from(segmenter.segment(s), (x) => x.segment) : Array.from(s)
+}
+
 /** The notification for a new message, or null when none should go out. `more`: how many earlier
  *  messages this one stands in for ("sam and 3 more"). */
 export function notifyMessage(s: AppState, v: AlertInput, prefs: NotifyPrefs, more = 0): Notice | null {
@@ -43,8 +51,7 @@ export function notificationBody(m: Message, me: string, showText: boolean): str
   if (!showText) return m.mentions.includes(me) ? 'Mentioned you' : 'New message'
   const text = m.content.replace(new RegExp(TOKEN_RE, 'g'), ':$2:').replace(/\s+/g, ' ').trim()
   if (text) {
-    // by code point, so an emoji is never cut in half
-    const chars = Array.from(text)
+    const chars = graphemes(text)
     return chars.length > BODY_MAX ? chars.slice(0, BODY_MAX - 1).join('') + '…' : text
   }
   if (m.clip) return 'sent a clip'

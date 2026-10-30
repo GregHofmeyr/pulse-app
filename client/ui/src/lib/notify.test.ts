@@ -98,6 +98,14 @@ describe('notificationBody', () => {
     expect(Array.from(b)).toHaveLength(140)
     expect(Array.from(b).slice(0, 139).every((c) => c === '😀')).toBe(true)
   })
+  it('never splits a combined emoji (a family, a flag, a skin tone) when cutting', () => {
+    for (const e of ['👨‍👩‍👧', '🇿🇦', '👍🏽']) {
+      const b = notificationBody(msg('DM1', 'U1', { content: e.repeat(200) }), 'ME', true)
+      expect(b).toBe(e.repeat(139) + '…')
+    }
+  })
+  it('140 combined emoji exactly stay whole', () =>
+    expect(notificationBody(msg('DM1', 'U1', { content: '👨‍👩‍👧'.repeat(140) }), 'ME', true)).toBe('👨‍👩‍👧'.repeat(140)))
   it('140 characters exactly stay whole', () =>
     expect(notificationBody(msg('DM1', 'U1', { content: 'b'.repeat(140) }), 'ME', true)).toBe('b'.repeat(140)))
   it('a message with no text reads by what it carries', () => {
