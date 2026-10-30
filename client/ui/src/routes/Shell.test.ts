@@ -34,6 +34,7 @@ import Shell from './Shell.svelte'
 import LivePopover from '../components/LivePopover.svelte'
 import { app, startListening } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
+import { CONN_PILL_DELAY_MS } from '../lib/conn'
 import { startVoiceListening, voice } from '../lib/voice.svelte'
 import { stream, streamApi } from '../lib/stream/stream.svelte'
 import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
@@ -131,6 +132,37 @@ describe('Shell', () => {
     app.state = { ...app.state, conn: { rate_limited: 4 } }
     flushSync()
     expect(document.querySelector('.conn')!.textContent).toBe('Too many attempts, retrying in 4s…')
+  })
+
+  it('a quick reconnect doesn\'t flash the pill: it shows once the connection has been down a moment', () => {
+    vi.useFakeTimers()
+    try {
+      app.state = { ...emptyState(), conn: 'connected' }
+      cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
+      flushSync()
+      app.state = { ...app.state, conn: 'connecting' }
+      flushSync()
+      expect(document.querySelector('.conn')).toBeNull()
+      vi.advanceTimersByTime(CONN_PILL_DELAY_MS - 100)
+      flushSync()
+      // back before the delay: it never showed
+      app.state = { ...app.state, conn: 'connected' }
+      flushSync()
+      vi.advanceTimersByTime(1000)
+      flushSync()
+      expect(document.querySelector('.conn')).toBeNull()
+      // down for longer: it shows, and goes once connected
+      app.state = { ...app.state, conn: 'connecting' }
+      flushSync()
+      vi.advanceTimersByTime(CONN_PILL_DELAY_MS)
+      flushSync()
+      expect(document.querySelector('.conn')!.textContent).toBe('Connecting…')
+      app.state = { ...app.state, conn: 'connected' }
+      flushSync()
+      expect(document.querySelector('.conn')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('the retry countdown ticks down and is replaced when the next attempt starts', () => {

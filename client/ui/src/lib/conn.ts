@@ -1,5 +1,8 @@
 import type { ConnState } from './state'
 
+/** How long the connection is down before the top bar says so: a quick reconnect doesn't flash it. */
+export const CONN_PILL_DELAY_MS = 600
+
 /** The server turned this connection away (and we're still retrying). */
 export function isRefusal(c: ConnState): boolean {
   return c === 'too_many_devices' || typeof c === 'object'

@@ -39,6 +39,7 @@
   import { applyEvent, dropClipJob, setClipJob, trimHistory } from '../lib/state'
   import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { isMember, liveIn } from '../lib/selectors'
+  import { CONN_PILL_DELAY_MS, isRefusal } from '../lib/conn'
   import { avatarColor, initial } from '../lib/avatar'
   import Avatar from '../components/Avatar.svelte'
   import Name from '../components/Name.svelte'
@@ -61,6 +62,23 @@
   // is what ends it with the shell: a `{ followLiveFreeze() }` body would leak it.
   $effect(() => followLiveFreeze())
   let settingsSection = $state<Section>('voice')
+  // The reconnecting pill waits CONN_PILL_DELAY_MS, so a blip doesn't flash it; a refusal shows at
+  // once (it says why). A JS timer, not a CSS delay, which the .unfocused pause would hold back.
+  const connDown = $derived(app.state.conn !== 'connected')
+  const connRefused = $derived(isRefusal(app.state.conn))
+  let connShown = $state(false)
+  $effect(() => {
+    if (!connDown) {
+      connShown = false
+      return
+    }
+    if (connRefused) {
+      connShown = true
+      return
+    }
+    const t = setTimeout(() => (connShown = true), CONN_PILL_DELAY_MS)
+    return () => clearTimeout(t)
+  })
   // Nothing is bound by default: until they've chosen, nudge people to pick their keys (Windows;
   // on Linux the compositor binds them).
   let pickKeys = $state(false)
@@ -435,7 +453,7 @@
       <button class="add" aria-label="Create a server" title="Create a server" onclick={() => (creating = true)}><Icon name="plus" size={16} /></button>
     </nav>
     <div class="grow" data-tauri-drag-region></div>
-    {#if app.state.conn !== 'connected'}
+    {#if connDown && connShown}
       <span class="conn" role="status"><ConnText /></span>
     {/if}
     {#if pickKeys}
