@@ -53,6 +53,18 @@ describe('dialog footer buttons', () => {
     expect(readFileSync(resolve(__dirname, '../routes/Shell.svelte'), 'utf8')).toContain('<button class="primary" disabled={!newName.trim()}>Create</button>')
   })
 
+  it('the people picker search shows focus (it turned the focus ring off and had no other sign)', () => {
+    const app = document.createElement('style')
+    app.textContent = readFileSync(resolve(__dirname, '../app.css'), 'utf8')
+    document.head.prepend(app)
+    const s = scoped('PeoplePicker.svelte')
+    document.body.innerHTML = `<div><input class="search ${s}"></div>`
+    const input = document.querySelector<HTMLInputElement>('input')!
+    input.focus()
+    expect(getComputedStyle(input).outline).toBe('2px solid var(--accent)')
+    app.remove()
+  })
+
   it('the voice settings primary looks disabled when it is', () => {
     const s = scoped('VoiceSettings.svelte')
     expect(probe(`<div><button data-probe class="primary ${s}" disabled></button></div>`).opacity).toBe('0.5')
