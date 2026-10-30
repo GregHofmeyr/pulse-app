@@ -1311,13 +1311,10 @@ impl VoiceManager {
                 // leaves its signal tasks running until LiveKit gives up on the participant
                 // (~15 s; never ACTIVE, so no one sees it). The SDK hands out nothing to close
                 // before `connect` returns, so there is nothing to call here.
-                tokio::time::timeout(
-                    CONNECT_TIMEOUT,
-                    Room::connect(&url, &token, RoomOptions::default()),
-                )
-                .await
-                .map_err(|_| VoiceError::Timeout("connecting to voice"))?
-                .map_err(|e| VoiceError::Connect(e.to_string()))
+                tokio::time::timeout(CONNECT_TIMEOUT, Room::connect(&url, &token, room_options()))
+                    .await
+                    .map_err(|_| VoiceError::Timeout("connecting to voice"))?
+                    .map_err(|e| VoiceError::Connect(e.to_string()))
             });
             *self.connecting.lock().unwrap() = Some(connecting);
             // guarded: a cancelled join closes it
@@ -1917,8 +1914,35 @@ fn source_kind(s: TrackSource) -> SourceKind {
     }
 }
 
+/// `PULSE_VOICE_RELAY_ONLY=1`: calls go only through the server's TURN relay. A diagnostic, for
+/// checking the path people on networks that block direct UDP depend on.
+pub const RELAY_ONLY_ENV: &str = "PULSE_VOICE_RELAY_ONLY";
+
+fn relay_only(value: Option<&str>) -> bool {
+    value == Some("1")
+}
+
+/// Options for every LiveKit room we join (voice and stream audio).
+pub(crate) fn room_options() -> RoomOptions {
+    let mut opts = RoomOptions::default();
+    if relay_only(std::env::var(RELAY_ONLY_ENV).ok().as_deref()) {
+        tracing::warn!("voice: relay only ({RELAY_ONLY_ENV})");
+        opts.rtc_config.ice_transport_type =
+            livekit::webrtc::peer_connection_factory::IceTransportsType::Relay;
+    }
+    opts
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn relay_only_takes_exactly_1() {
+        assert!(super::relay_only(Some("1")));
+        for v in [None, Some("0"), Some(""), Some("true")] {
+            assert!(!super::relay_only(v), "{v:?}");
+        }
+    }
+
     use super::*;
 
     #[test]

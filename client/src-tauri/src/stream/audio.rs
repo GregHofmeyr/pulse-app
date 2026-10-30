@@ -514,7 +514,7 @@ impl StreamAudio {
             Self::leave_locked(&mut st).await;
         }
         let t = super::ticket_with_retry(api, token, channel, StreamRole::A).await?;
-        let mut opts = RoomOptions::default();
+        let mut opts = crate::voice::room_options();
         opts.auto_subscribe = false; // only the streams we watch
         // bounded: the state lock is held meanwhile, and leave (on exit, too) waits for it
         let (room, events) =

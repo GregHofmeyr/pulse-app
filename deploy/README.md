@@ -61,7 +61,8 @@ GitHub, Oracle Cloud (or xneelo), Cloudflare (DNS + R2), Tailscale, UptimeRobot.
    expiry*. Tailscale keys expire after 180 days by default; once public SSH is closed, an expired key
    would lock you out (the only way back in is the cloud provider's serial console).
 7. `just close-public-ssh` closes port 22 on the server itself; then delete the TCP 22 rule from the cloud
-   firewall too. From now on the server is only reachable for SSH over Tailscale.
+   firewall too. From now on the server is only reachable for SSH over Tailscale. (The saved firewall rules also
+   hold Tailscale's own `ts-*` chains; Tailscale recreates those when it starts, so that's harmless.)
 
 ## 5. DNS (Cloudflare)
 
@@ -83,8 +84,13 @@ The orange-cloud proxy can't carry voice; never turn it on for these.
    to clients as-is (it did before this setting too). `ip -6 addr show scope global` on the server shows
    whether there is one. If there is, the cloud firewall must allow the same ports over IPv6, or clients just
    fall back to IPv4.
-3. `just deploy` → ends with `healthy: latest`. Caddy fetches the certificates on the first request.
+3. `just deploy` → ends with `healthy: <tag> (commit …, sha256:…, provenance …)`. Caddy fetches the certificates on
+   the first request.
 4. `just smoke` → every line `ok`.
+   Once, and after firewall changes: a call through the TURN relay, the path for people whose network blocks
+   direct UDP. Start a client with `PULSE_VOICE_RELAY_ONLY=1` (Windows: `set PULSE_VOICE_RELAY_ONLY=1` then run
+   Pulse from that prompt), join a call with someone, and check you hear each other. Its log says
+   `voice: relay only`. Only UDP 3478 has to be open for this: the relay and LiveKit talk on the server itself.
 5. `just invite-prod` → a code for the first account.
 
 `PULSE_TOTP_KEY` (64 hex characters) is already in `.env`; `just deploy` refuses to go on without it. Copy it
@@ -252,6 +258,13 @@ Setup, once:
 5. `just backup-now` → `backed up pulse-<time>.db.age`.
 6. `just restore-drill` → downloads the latest, decrypts it here, checks it: `integrity ok: N users, M messages`.
    Do this now and then; an untested backup is a hope. `RCLONE_CONFIG_R2_NO_HEAD` in `backup.sh` drops rclone's post-upload check, so the drill is the integrity check of what reached R2.
+7. A backup that silently stops is the failure nobody notices. healthchecks.io (free) → New check: period 1 day,
+   grace 2 hours, alert by email. Put its ping URL in `.env` as `BACKUP_PING_URL=https://hc-ping.com/<uuid>`.
+   Each good backup pings it, a failed one pings `<url>/fail` (an alert at once); no ping for a day also alerts.
+   Then `just backup-now` and check the check turns green.
+
+Only one backup runs at a time: a deploy's backup waits (up to 10 minutes) for a nightly one to finish. Files a
+killed backup left behind (power loss mid-run) are removed by the next one, plaintext snapshots included.
 
 Restoring for real: `just restore daily/pulse-<time>.db.age`. The restored database needs the `PULSE_TOTP_KEY` it was
 written under (same server: already in `.env`; new server: section 12; otherwise see "Lost key"). The server stops for
@@ -315,7 +328,8 @@ access through your Tailscale identity, and the backup key in NordPass.
 
 ## 12. Moving to another host
 
-1. Section 4 on the new VM (it gets its own Tailscale name; use `ubuntu@<name>` until the old one is gone).
+1. Section 4 on the new VM. Tailscale names it `pulse-1`, since `pulse` is taken; use `ubuntu@pulse-1` until the
+   old one is gone.
 2. `just backup-now` on the old server.
 3. Deploy to the new one and restore onto it, pointing the recipes at it:
    copy `PULSE_TOTP_KEY` from the old `.env` or your offline copy into the new one (replacing the one setup.sh
@@ -324,4 +338,5 @@ access through your Tailscale identity, and the backup key in NordPass.
    `PULSE_PROD=pulse@<new-name> just restore <that backup>`.
 4. Switch the two Cloudflare A records to the new IP (they take effect within minutes). The new server's
    `.env` has its own `LIVEKIT_NODE_IP`, set in section 6.
-5. Delete the old VM and remove it from Tailscale.
+5. Delete the old VM and remove it from Tailscale, then rename the new machine to `pulse` (admin console →
+   Machines → ⋯ → Edit machine name) so `pulse@pulse` and the recipes reach it again.
