@@ -113,7 +113,7 @@
 <div bind:this={el} class="menu menu-surface" role="menu" aria-label="Line actions" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px"
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
   {#if picking}
-    <input type="text" class="find" data-item aria-label="Find a member" placeholder="Find a member" autocomplete="off" bind:value={query} />
+    <input type="text" class="input input-sm find" data-item aria-label="Find a member" placeholder="Find a member" autocomplete="off" bind:value={query} />
     <div role="group" aria-label="Members">
       {#each matches as m (m.id)}
         <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(() => onLink(m.id))}>{m.name}</button>
@@ -136,7 +136,7 @@
 
 <style>
   .menu { position: fixed; z-index: 60; min-width: 200px; max-width: 280px; gap: 2px; font-size: 13px; outline: none; }
-  .find { height: 32px; margin-bottom: 2px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg-2); color: var(--text); font: inherit; outline: none; }
+  .find { margin-bottom: 2px; }
   [role='group'] { display: flex; flex-direction: column; gap: 2px; }
   .none { padding: 6px 10px; color: var(--text-3); }
 </style>

@@ -407,7 +407,7 @@
       </span>
       {#if renaming}
         <!-- svelte-ignore a11y_autofocus -->
-        <input class="rename" maxlength="64" placeholder={conversationName({ ...app.state, channels: { ...app.state.channels, [channelId]: { ...channel!, name: null } } }, channelId)}
+        <input class="input input-sm rename" maxlength="64" placeholder={conversationName({ ...app.state, channels: { ...app.state.channels, [channelId]: { ...channel!, name: null } } }, channelId)}
           bind:value={renameValue} autofocus onblur={saveRename}
           onkeydown={(e) => { if (e.key === 'Enter') void saveRename(); if (e.key === 'Escape') renaming = false }} />
       {:else}
@@ -509,7 +509,7 @@
   .title { color: var(--text); font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .editable { border: 0; background: none; padding: 2px 4px; margin-left: -4px; border-radius: 6px; font: inherit; font-size: 15px; font-weight: 600; color: var(--text); }
   .editable:hover { background: var(--bg-3); }
-  .rename { height: 30px; min-width: 220px; padding: 0 8px; border: 1px solid var(--accent); border-radius: 8px; background: var(--bg-2); color: var(--text); font: inherit; font-weight: 600; outline: none; }
+  .rename { min-width: 220px; font-weight: 600; }
   .pile { display: flex; }
   .pile :global(.av) { box-shadow: 0 0 0 2px var(--bg-1); }
   .pile :global(.av + .av) { margin-left: -7px; }

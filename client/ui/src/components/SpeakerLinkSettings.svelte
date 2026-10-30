@@ -64,7 +64,7 @@
         {#if changing === l.name_key}
           <div class="pick">
             <!-- svelte-ignore a11y_autofocus -->
-            <input type="text" aria-label="Find a member" placeholder="Find a member" autocomplete="off" autofocus bind:value={query} onkeydown={(e) => findKey(e, l)} />
+            <input type="text" class="input input-sm" aria-label="Find a member" placeholder="Find a member" autocomplete="off" autofocus bind:value={query} onkeydown={(e) => findKey(e, l)} />
             <div class="matches" role="group" aria-label="Members">
               {#each matches as m (m.id)}
                 <button type="button" class="btn btn-secondary" onclick={() => repoint(l, m.id)}>{m.name}</button>
@@ -94,7 +94,6 @@
   .name { font-weight: 600; }
   small { color: var(--text-3); }
   .pick { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
-  input { height: 32px; padding: 0 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--bg-2); color: var(--text); outline: none; }
   .matches { display: flex; flex-wrap: wrap; gap: 4px; }
   .none { padding: 6px 4px; color: var(--text-3); font-size: 13px; }
 </style>

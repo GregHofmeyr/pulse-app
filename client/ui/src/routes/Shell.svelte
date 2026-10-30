@@ -540,7 +540,7 @@
   <div class="backdrop modal-backdrop" role="presentation" onclick={() => (creating = false)}></div>
   <form class="modal dialog" onsubmit={createServer} aria-label="Create a server">
     <h2 class="modal-title">Create a server</h2>
-    <label>NAME <input bind:value={newName} maxlength="64" required placeholder="Game Night" /></label>
+    <label>NAME <input class="input" bind:value={newName} maxlength="64" required placeholder="Game Night" /></label>
     {#if createError}<p class="error">{createError}</p>{/if}
     <div class="dialog-actions">
       <button type="button" class="btn btn-lg btn-secondary" onclick={() => (creating = false)}>Cancel</button>
@@ -624,7 +624,6 @@
   .overlay { position: fixed; inset: 0; z-index: 20; }
   .dialog { width: min(420px, calc(100vw - 32px)); gap: 14px; }
   .dialog label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
-  .dialog input { height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-2); font-size: 14px; font-weight: 400; letter-spacing: 0; }
   .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
   .me-btn { color: var(--text-2); }
   .me-btn.on, .me-btn.on:hover { color: var(--danger-text); }

@@ -146,7 +146,7 @@
 {:else if view === 'password'}
   <form onsubmit={start}>
     <p class="q">Enter your password to start.</p>
-    <label>Password <input type="password" bind:value={password} required autocomplete="current-password" /></label>
+    <label>Password <input class="input input-sm" type="password" bind:value={password} required autocomplete="current-password" /></label>
     <div class="actions">
       <button class="btn btn-primary" disabled={busy}>Continue</button>
       <button type="button" class="btn btn-secondary" disabled={busy} onclick={reset}>Cancel</button>
@@ -163,7 +163,7 @@
       {/each}
     </svg>
     <p class="key"><code>{setup.secret}</code></p>
-    <label>Code <input bind:value={code} required inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" /></label>
+    <label>Code <input class="input input-sm" bind:value={code} required inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" /></label>
     <div class="actions">
       <button class="btn btn-primary" disabled={busy}>Turn on</button>
       <button type="button" class="btn btn-secondary" disabled={busy} onclick={reset}>Cancel</button>
@@ -188,7 +188,7 @@
         : 'Enter a code from your authenticator app, or a recovery code.'}
     </p>
     <label>Code
-      <input bind:value={code} required autocomplete="one-time-code" autocapitalize="off" spellcheck="false"
+      <input class="input input-sm" bind:value={code} required autocomplete="one-time-code" autocapitalize="off" spellcheck="false"
         placeholder={view === 'regen' ? '6-digit code' : '6-digit code or recovery code'} />
     </label>
     <div class="actions">
@@ -203,7 +203,7 @@
   h3 { margin: 28px 0 10px; font-size: 15px; }
   form { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
   label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text-2); }
-  input { height: 32px; width: 240px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font-size: 13px; }
+  input { width: 240px; }
   .q { margin: 0 0 10px; font-size: 13px; color: var(--text-2); }
   form .q { margin: 0; }
   .hint { margin: 6px 0 0; font-size: 13px; color: var(--text-3); }

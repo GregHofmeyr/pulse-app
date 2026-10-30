@@ -172,7 +172,7 @@
       {#if adding}
         <div class="add">
           <!-- svelte-ignore a11y_autofocus -->
-          <input aria-label="Search quotes" placeholder="Search this server's quotes" autofocus bind:value={query} oninput={search} />
+          <input class="input" aria-label="Search quotes" placeholder="Search this server's quotes" autofocus bind:value={query} oninput={search} />
           <div class="results">
             {#each offered as m (m.id)}
               {@const p = quotePreview(app.state, serverId, m)}
@@ -231,7 +231,6 @@
   .vote.on { border-color: transparent; background: var(--quote-green); color: var(--on-quote-green); box-shadow: 0 2px 0 var(--quote-green-deep); }
   .none { margin: 0; color: var(--text-3); font-size: 13px; }
   .add { display: flex; flex-direction: column; gap: 6px; }
-  .add input { height: 38px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-2); }
   .results { display: flex; flex-direction: column; max-height: 200px; overflow-y: auto; }
   .results button { display: flex; gap: 8px; align-items: baseline; padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; text-align: left; }
   .results button:hover { background: var(--bg-3); }

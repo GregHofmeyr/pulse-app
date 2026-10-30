@@ -249,7 +249,6 @@
   .picker { width: 360px; height: 420px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 28px rgba(0, 0, 0, 0.45); overflow: hidden; color: var(--text); outline: none; }
   .top { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
   .search { flex: 1; min-width: 0; background: var(--bg-0); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; }
-  .search:focus { outline: none; border-color: var(--accent); }
   .tones { display: flex; gap: 3px; }
   .tone { width: 14px; height: 14px; padding: 0; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
   .tone.on { border-color: var(--accent); }

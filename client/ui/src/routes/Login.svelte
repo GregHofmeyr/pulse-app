@@ -79,20 +79,20 @@
 
     {#if step === 'code'}
       <label>Code
-        <input bind:value={code} required placeholder="6-digit code or recovery code" autocomplete="one-time-code"
+        <input class="input" bind:value={code} required placeholder="6-digit code or recovery code" autocomplete="one-time-code"
           inputmode="text" autocapitalize="off" spellcheck="false" />
       </label>
       {#if error}<p class="error" role="alert">{error}</p>{/if}
       <button class="primary" disabled={busy}>{busy ? '…' : 'Verify'}</button>
       <button type="button" class="link" disabled={busy} onclick={() => back()}>Back</button>
     {:else}
-      <label>Server <input bind:value={serverUrl} required autocomplete="url" /></label>
+      <label>Server <input class="input" bind:value={serverUrl} required autocomplete="url" /></label>
       {#if mode === 'register'}
-        <label>Invite code <input bind:value={inviteCode} required autocomplete="off" /></label>
+        <label>Invite code <input class="input" bind:value={inviteCode} required autocomplete="off" /></label>
       {/if}
-      <label>Username <input bind:value={username} required autocomplete="username" autocapitalize="off" spellcheck="false" /></label>
+      <label>Username <input class="input" bind:value={username} required autocomplete="username" autocapitalize="off" spellcheck="false" /></label>
       <label>Password
-        <input type="password" bind:value={password} required minlength={mode === 'register' ? 8 : undefined}
+        <input class="input" type="password" bind:value={password} required minlength={mode === 'register' ? 8 : undefined}
           autocomplete={mode === 'login' ? 'current-password' : 'new-password'} />
       </label>
 
@@ -117,7 +117,8 @@
   .logo { width: 34px; height: 34px; border-radius: 10px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
   h1 { margin: 0; font-size: 20px; font-weight: 600; }
   label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
-  input { height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-1); font-size: 14px; font-weight: 400; letter-spacing: 0; }
+  /* the sign-in card's bigger size, beside its 42px button */
+  input { height: 40px; }
   .primary { height: 42px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; margin-top: 4px; }
   .primary:disabled { opacity: .6; }
   .link { background: none; border: 0; color: var(--text-3); font-size: 13px; }

@@ -287,7 +287,7 @@
       <aside class="side">
         <label class="field">
           <span>Caption</span>
-          <textarea rows="3" maxlength={MAX_CAPTION} placeholder="Say something about it (optional)" bind:value={caption}></textarea>
+          <textarea class="input" rows="3" maxlength={MAX_CAPTION} placeholder="Say something about it (optional)" bind:value={caption}></textarea>
           <small>{caption.length} / {MAX_CAPTION}</small>
         </label>
 
@@ -343,7 +343,7 @@
   .side { display: flex; flex-direction: column; gap: 14px; }
   .field { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
   .field > span, legend { font-size: 12px; font-weight: 600; color: var(--text-2); padding: 0; }
-  textarea { resize: none; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font: inherit; }
+  textarea { resize: none; }
   small { align-self: flex-end; color: var(--text-3); font-size: 11px; }
   .preset { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bg-4); font-size: 14px; cursor: pointer; font-variant-numeric: tabular-nums; }
   .preset.on { border-color: var(--accent); }

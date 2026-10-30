@@ -88,3 +88,28 @@ describe('dialog footer buttons', () => {
     }
   })
 })
+
+describe('text fields', () => {
+  it('every field shows the same focus ring: none turns it off or keeps an always-on accent border', () => {
+    const fields: [string, string][] = [
+      ['ChannelList.svelte', 'input input-sm new'],
+      ['LineMenu.svelte', 'input input-sm find'],
+      ['TextChannel.svelte', 'input input-sm rename'],
+      ['PeoplePicker.svelte', 'input search'],
+      ['EmojiPicker.svelte', 'search'],
+    ]
+    for (const [file, cls] of fields) {
+      const s = scoped(file)
+      document.body.innerHTML = `<div><input class="${cls} ${s}"></div>`
+      const input = document.querySelector<HTMLInputElement>('input')!
+      expect(getComputedStyle(input).borderColor, file).not.toBe('var(--accent)')
+      input.focus()
+      expect(getComputedStyle(input).outline, file).toBe('2px solid var(--accent)')
+      // the probe matches what the template renders
+      expect(source(file), file).toContain(`class="${cls}"`)
+      // jsdom drops a border shorthand that holds a var(), so the accent border is checked in the source
+      const own = cls.split(' ').at(-1)
+      expect(source(file), file).not.toMatch(new RegExp(`\\.${own}(:focus)? \\{[^}]*(var\\(--accent\\)|outline: none)`))
+    }
+  })
+})

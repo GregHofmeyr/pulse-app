@@ -165,6 +165,14 @@ button { transition: background-color var(--dur) var(--ease), color var(--dur) v
 .menu-label { padding: 6px 10px 2px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
 .menu-sep { height: 1px; margin: 4px 6px; background: var(--line-menu); }
 
+/* Text fields: 36px, or -sm 32px. Keyboard focus is the global outline ring above (owner pick 6),
+   the same on every field: no accent border, and no field turns the ring off. */
+.input { height: 36px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--bg-1); color: var(--text); font: inherit; font-size: 14px; font-weight: 400; letter-spacing: 0; }
+.input:hover:not(:disabled) { border-color: var(--line-menu); }
+.input:disabled { opacity: .6; }
+.input-sm { height: 32px; padding: 0 10px; border-radius: 8px; font-size: 13px; }
+textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
+
 /* A button that reads as a link. */
 .link-btn { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .link-btn:hover { text-decoration-thickness: 2px; }

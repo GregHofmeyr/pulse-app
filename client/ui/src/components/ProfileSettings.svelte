@@ -309,7 +309,7 @@
         <div class="settings-field">
           <span class="settings-label">Pronouns</span>
           <!-- counted in characters, as the server counts (maxlength counts UTF-16 units) -->
-          <input class="text" type="text" aria-label="Pronouns" aria-invalid={pronounsOver} bind:value={draft.pronouns} />
+          <input class="input text" type="text" aria-label="Pronouns" aria-invalid={pronounsOver} bind:value={draft.pronouns} />
           {#if pronounsOver}<p class="error" role="alert">Pronouns can be up to 40 characters.</p>{/if}
         </div>
 
@@ -371,8 +371,7 @@
   .chip { height: 30px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 15px; background: transparent; color: var(--text-2); cursor: pointer; }
   .chip[aria-checked='true'] { background: var(--bg-3); border-color: var(--accent); color: var(--text); }
   input[type='color'] { width: 44px; height: 30px; padding: 0 2px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; cursor: pointer; }
-  .text { height: 36px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--bg-0); color: var(--text); }
-  .settings-field :global(.bio) { min-height: 72px; max-height: 160px; overflow-y: auto; padding: 8px 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--bg-0); white-space: pre-wrap; }
+  .settings-field :global(.bio) { min-height: 72px; max-height: 160px; overflow-y: auto; padding: 8px 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--bg-1); white-space: pre-wrap; }
   .counter { align-self: flex-end; }
   .counter.over { color: var(--danger-text); font-weight: 600; }
   .line { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 12px; background: var(--bg-2); }

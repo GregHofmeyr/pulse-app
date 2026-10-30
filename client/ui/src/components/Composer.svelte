@@ -173,7 +173,7 @@
     <div class="replying">Replying to <strong>{replyingTo}</strong>
       <button class="icon-btn icon-btn-xs" aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={13} /></button></div>
   {/if}
-  <EmojiBox bind:this={box} bind:text class="input" label={placeholder} {placeholder}
+  <EmojiBox bind:this={box} bind:text class="composer-input" label={placeholder} {placeholder}
     onkeydown={key} oninput={input} onclick={syncCaret} oncaret={(at) => (caret = at)}
     onkeyup={(e) => { if (e.key.startsWith('Arrow') && !shown) syncCaret() }} />
   <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={20} /></button>
@@ -196,5 +196,5 @@
   /* the composer is bg-3: one step up from it */
   .replying button:hover { background: var(--bg-4); }
   /* grows with what's in it (images included), up to 200px, then scrolls */
-  .wrap :global(.input) { min-height: 48px; max-height: 200px; padding: 14px 48px 14px 14px; }
+  .wrap :global(.composer-input) { min-height: 48px; max-height: 200px; padding: 14px 48px 14px 14px; }
 </style>

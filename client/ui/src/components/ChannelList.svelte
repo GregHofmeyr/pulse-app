@@ -109,7 +109,7 @@
     {#if member}<button class="add" aria-label="Create text channel" onclick={() => startAdd('text')}><Icon name="plus" size={14} /></button>{/if}
   </div>
   {#if adding === 'text'}
-    <input class="new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-channel" maxlength="64" aria-label="New text channel name" />
+    <input class="input input-sm new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-channel" maxlength="64" aria-label="New text channel name" />
     {#if addError}<small class="err">{addError}</small>{/if}
   {/if}
   {#each lists.text as c (c.id)}{@render channelRow(c, "hash")}{/each}
@@ -118,7 +118,7 @@
     {#if member}<button class="add" aria-label="Create quotes channel" onclick={() => startAdd('quotes')}><Icon name="quote" size={14} /></button>{/if}
   </div>
   {#if adding === 'quotes'}
-    <input class="new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-quotes" maxlength="64" aria-label="New quotes channel name" />
+    <input class="input input-sm new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-quotes" maxlength="64" aria-label="New quotes channel name" />
     {#if addError}<small class="err">{addError}</small>{/if}
   {/if}
   {#each lists.quotes as c (c.id)}{@render channelRow(c, "quote")}{/each}
@@ -127,7 +127,7 @@
     {#if member}<button class="add" aria-label="Create clips channel" onclick={() => startAdd('clips')}><Icon name="film" size={14} /></button>{/if}
   </div>
   {#if adding === 'clips'}
-    <input class="new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-clips" maxlength="64" aria-label="New clips channel name" />
+    <input class="input input-sm new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-clips" maxlength="64" aria-label="New clips channel name" />
     {#if addError}<small class="err">{addError}</small>{/if}
   {/if}
   {#each lists.clips as c (c.id)}{@render channelRow(c, "film")}{/each}
@@ -136,7 +136,7 @@
     {#if member}<button class="add" aria-label="Create voice channel" onclick={() => startAdd('voice')}><Icon name="plus" size={14} /></button>{/if}
   </div>
   {#if adding === 'voice'}
-    <input class="new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="Channel name" maxlength="64" aria-label="New voice channel name" />
+    <input class="input input-sm new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="Channel name" maxlength="64" aria-label="New voice channel name" />
     {#if addError}<small class="err">{addError}</small>{/if}
   {/if}
   {#each lists.voice as c (c.id)}
@@ -182,7 +182,7 @@
   .label.voice { padding-top: 16px; }
   .add { width: 20px; height: 20px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; padding: 0; }
   .add:hover { color: var(--text); background: var(--bg-2); }
-  .new { height: 32px; margin: 2px 4px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg-2); font-size: 14px; }
+  .new { margin: 2px 4px; }
   .err { padding: 0 10px; color: var(--danger-text); font-size: 12px; }
   .row { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: #9a9eab; display: flex; align-items: center; gap: 8px; text-align: left; font-size: 14px; }
   .row:hover { background: var(--bg-2); color: var(--text); }

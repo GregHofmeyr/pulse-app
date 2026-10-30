@@ -63,12 +63,12 @@
 <h3>Password</h3>
 {#if open}
   <form onsubmit={submit}>
-    <label>Current password <input type="password" bind:value={current} required autocomplete="current-password" /></label>
-    <label>New password <input type="password" bind:value={next} required minlength="8" autocomplete="new-password" /></label>
-    <label>Confirm new password <input type="password" bind:value={confirm} required autocomplete="new-password" /></label>
+    <label>Current password <input class="input input-sm" type="password" bind:value={current} required autocomplete="current-password" /></label>
+    <label>New password <input class="input input-sm" type="password" bind:value={next} required minlength="8" autocomplete="new-password" /></label>
+    <label>Confirm new password <input class="input input-sm" type="password" bind:value={confirm} required autocomplete="new-password" /></label>
     {#if twoFactorOn !== false}
       <label>Code
-        <input bind:value={code} required={twoFactorOn === true} autocomplete="one-time-code" autocapitalize="off" spellcheck="false"
+        <input class="input input-sm" bind:value={code} required={twoFactorOn === true} autocomplete="one-time-code" autocapitalize="off" spellcheck="false"
           placeholder={twoFactorOn ? '6-digit code or recovery code' : 'only if two-factor is on'} />
       </label>
     {/if}
@@ -88,7 +88,7 @@
   h3 { margin: 28px 0 10px; font-size: 15px; }
   form { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
   label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text-2); }
-  input { height: 32px; width: 240px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font-size: 13px; }
+  input { width: 240px; }
   .q { margin: 0; font-size: 13px; color: var(--text-2); }
   .actions { display: flex; gap: 8px; }
   .ok { margin: 10px 0 0; font-size: 13px; color: var(--text-2); }

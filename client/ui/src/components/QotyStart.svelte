@@ -81,7 +81,7 @@
     {#if !reopen}
       <label class="field">
         <span class="lbl">Year</span>
-        <input type="number" aria-label="Year" min="1970" max="9999" bind:value={year} disabled={busy} />
+        <input class="input" type="number" aria-label="Year" min="1970" max="9999" bind:value={year} disabled={busy} />
       </label>
     {:else}
       <p class="hint">Votes and added quotes are kept. Pick how long it runs this time.</p>
@@ -92,7 +92,7 @@
     </div>
     {#if length === 'custom'}
       <div class="custom">
-        <input type="number" aria-label="Custom length" min="1" bind:value={amount} disabled={busy} />
+        <input class="input" type="number" aria-label="Custom length" min="1" bind:value={amount} disabled={busy} />
         <Segmented label="Unit" options={UNITS} value={unit} onchange={(v) => (unit = v)} />
       </div>
       <p class="hint" class:bad={minutes === undefined}>Anything from 5 minutes to 14 days.</p>
@@ -113,7 +113,6 @@
   h1 { flex: 1; }
   .field { display: flex; flex-direction: column; gap: 6px; }
   .lbl { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
-  input { height: 38px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-2); }
   .field input { width: 120px; }
   .custom { display: flex; align-items: center; gap: 10px; }
   .custom input { width: 96px; }

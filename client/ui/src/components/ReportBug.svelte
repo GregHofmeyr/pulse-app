@@ -31,7 +31,7 @@
       <h1 class="modal-title">Report a bug</h1>
       <button type="button" class="icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" /></button>
     </div>
-    <textarea bind:value={text} maxlength="4000" rows="6" required placeholder="What happened? What were you doing?" disabled={busy || done}></textarea>
+    <textarea class="input" bind:value={text} maxlength="4000" rows="6" required placeholder="What happened? What were you doing?" disabled={busy || done}></textarea>
     <p class="note">Includes your app version, system info and recent app log.</p>
     {#if st.message}<p class:ok={done} class:err={st.step === 'failed'} role="status">{st.message}</p>{/if}
     <div class="actions">
@@ -51,7 +51,7 @@
   .modal { width: min(460px, 100%); }
   form { display: contents; }
   .top { display: flex; align-items: center; justify-content: space-between; }
-  textarea { resize: vertical; min-height: 120px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-1); font: inherit; font-size: 14px; color: var(--text); }
+  textarea { resize: vertical; min-height: 120px; padding: 10px 12px; }
   .note { margin: 0; font-size: 12px; color: var(--text-3); }
   .ok { margin: 0; font-size: 13px; color: var(--ok); word-break: break-all; }
   .err { margin: 0; font-size: 13px; color: var(--danger-text); }

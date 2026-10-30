@@ -129,7 +129,7 @@
         <img src={mediaUrl(uploaded.hash)} alt="Preview at 32 pixels" width="32" height="32" />
       </div>
       <label>Name
-        <input bind:value={newName} maxlength="32" aria-label="Emoji name" aria-describedby="emoji-name-hint" aria-invalid={!validName}
+        <input class="input input-sm" bind:value={newName} maxlength="32" aria-label="Emoji name" aria-describedby="emoji-name-hint" aria-invalid={!validName}
           oninput={edited} onkeydown={(e) => { if (e.key === 'Enter') void save(); else if (e.key === 'Escape') { e.preventDefault(); cancelAdd() } }} />
       </label>
       <!-- always present (emptied when fine): a live region added along with its text often isn't announced -->
@@ -156,7 +156,7 @@
           <img src={mediaUrl(e.still_hash ?? e.hash!)} alt={e.name} width="32" height="32" />
           <div class="meta">
             {#if renaming?.id === e.id}
-              <input class="rename" aria-label="Rename emoji" bind:value={renaming.name} maxlength="32" use:focus
+              <input class="input input-sm rename" aria-label="Rename emoji" bind:value={renaming.name} maxlength="32" use:focus
                 aria-describedby="emoji-rename-hint" aria-invalid={!isValidEmojiName(renaming.name.trim())} oninput={edited}
                 onkeydown={(ev) => { if (ev.key === 'Enter') void commitRename(); else if (ev.key === 'Escape') { ev.preventDefault(); renaming = null; error = '' } }} />
             {:else}
@@ -191,11 +191,10 @@
   .file { display: inline-flex; align-items: center; height: 36px; padding: 0 16px; margin-bottom: 20px; border-radius: 8px; background: var(--bg-3); font-weight: 600; font-size: 13px; cursor: pointer; }
   .file.off { opacity: .5; cursor: default; }
   .file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-  .file:focus-within { outline: 2px solid var(--text-3); }
+  .file:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
   .add { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; padding: 16px; border: 1px solid var(--bg-4); border-radius: 12px; }
   .previews { display: flex; align-items: flex-end; gap: 16px; }
   .add label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }
-  input:not([type='file']) { height: 34px; padding: 0 10px; border: 1px solid var(--bg-4); border-radius: 8px; background: var(--bg-0); color: var(--text); }
   .row { display: flex; gap: 8px; }
   .name-hint { color: var(--danger-text); font-size: 12px; }
   /* empty but kept (a live region must exist before its text): take back the flex gap */

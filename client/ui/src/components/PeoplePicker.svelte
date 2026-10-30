@@ -62,7 +62,7 @@
       </div>
     {/if}
     <!-- svelte-ignore a11y_autofocus -->
-    <input class="search" placeholder="Search people" bind:value={q} autofocus />
+    <input class="input search" placeholder="Search people" bind:value={q} autofocus />
     <div class="list">
       {#each people as p (p.user.id)}
         {@const isIn = disabled.includes(p.user.id)}
@@ -92,8 +92,6 @@
   .hint { margin: 0; font-size: 12px; color: var(--text-3); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { padding: 3px 10px 3px 3px; border: 0; border-radius: 20px; background: var(--bg-3); color: var(--text); font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
-  /* keeps the global focus ring: it is the only sign the box has focus */
-  .search { height: 36px; padding: 0 12px; border: 0; border-radius: 10px; background: var(--bg-2); color: var(--text); font: inherit; }
   .list { overflow-y: auto; min-height: 120px; max-height: 320px; display: flex; flex-direction: column; gap: 2px; }
   .pick { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); text-align: left; }
   .pick:hover:not(:disabled) { background: var(--bg-3); }

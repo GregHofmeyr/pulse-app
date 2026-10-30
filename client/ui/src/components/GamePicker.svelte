@@ -119,6 +119,7 @@
 
 <div class="picker">
   <input
+    class="input"
     type="text"
     role="combobox"
     aria-label="Game"
@@ -150,7 +151,7 @@
 
 <style>
   .picker { position: relative; }
-  input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font: inherit; }
+  input { width: 100%; }
   ul { position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px); margin: 0; list-style: none; max-height: 180px; overflow-y: auto; }
   li { cursor: pointer; }
   li.add { color: var(--accent); }

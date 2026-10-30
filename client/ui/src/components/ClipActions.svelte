@@ -85,7 +85,7 @@
     <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={cancelEdit}></div>
     <div class="modal" role="dialog" aria-modal="true" aria-label="Edit clip" tabindex="-1" use:modal={cancelEdit}>
       <h1 class="modal-title">Edit clip</h1>
-      <textarea aria-label="Caption" placeholder="Say something about it (optional)" maxlength={MAX_CAPTION} rows="3" bind:value={caption} disabled={busy}></textarea>
+      <textarea class="input" aria-label="Caption" placeholder="Say something about it (optional)" maxlength={MAX_CAPTION} rows="3" bind:value={caption} disabled={busy}></textarea>
       <GamePicker {serverId} value={game} onChange={(id) => (game = id)} />
       {#if error}<p class="err" role="alert">{error}</p>{/if}
       <div class="foot">
@@ -104,7 +104,7 @@
   .ask .err { margin: 4px 0 0; color: var(--danger-text); }
   .overlay { position: fixed; inset: 0; z-index: 30; }
   .modal { width: min(420px, 100%); }
-  textarea { resize: vertical; min-height: 64px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font: inherit; }
+  textarea { resize: vertical; min-height: 64px; }
   .err { margin: 0; font-size: 12px; color: var(--danger-text); }
   .foot { display: flex; justify-content: flex-end; gap: 8px; }
 </style>
