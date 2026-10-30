@@ -82,6 +82,8 @@
   })
   const cssFor = (id: string) => nameCss(resolveNameStyle(userOf(app.state, id), { roleColor: roleColorFor(app.state, serverId, id), showStyles: appearance.showNameStyles }))
   const mentionCss = $derived(mentioned.map((id) => `${id}\t${cssFor(id)}`).join('\n'))
+  // Only the emoji slice, so the {@html} below re-renders on an emoji change, not on every state update.
+  const customEmoji = $derived(app.state.customEmoji)
   const mentionsIn = (_html: string, look: (name: string) => string | null, cssKey: string): Attachment<HTMLElement> => (node) => {
     if (!cssKey || !node.querySelector('.mention')) return
     const css = new Map(cssKey.split('\n').map((l) => l.split('\t') as [string, string]))
@@ -198,7 +200,7 @@
           {#if editError}<p class="err" role="alert">{editError}</p>{/if}
         {:else}
           <!-- renderMessage output is DOMPurify-sanitised (allow-list, cached per message); the only {@html} in the app. -->
-          {@const html = renderMessage(message, mentionNames, app.state.customEmoji)}
+          {@const html = renderMessage(message, mentionNames, customEmoji)}
           <!-- a mention pill opens its person's card, by click or (focused: styleMentions makes known pills buttons) Enter or Space -->
           <!-- svelte-ignore a11y_no_static_element_interactions -->
           <div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention} onkeydown={openMention}>{@html html}</div>
