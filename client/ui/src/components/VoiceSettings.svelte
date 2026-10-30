@@ -162,6 +162,7 @@
   .warn { margin: -8px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 13px; }
   .check { display: flex; align-items: center; gap: 12px; padding: 16px; background: var(--bg-2); border-radius: 14px; }
   .primary { height: 38px; padding: 0 16px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .primary:disabled { opacity: .5; }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .toggles { display: flex; flex-direction: column; }
   .row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }

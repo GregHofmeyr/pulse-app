@@ -43,4 +43,18 @@ describe('dialog footer buttons', () => {
     expect(save().color).toBe('var(--on-accent)')
     expect(save('disabled').opacity).toBe('0.5')
   })
+
+  it('Create server, disabled until it has a name, looks disabled', () => {
+    const s = scoped('../routes/Shell.svelte')
+    const create = (dis = '') => probe(`<div><button data-probe class="primary ${s}" ${dis}></button></div>`)
+    expect(create().opacity).toBe('1')
+    expect(create('disabled').opacity).toBe('0.5')
+    // the probe matches what the template renders
+    expect(readFileSync(resolve(__dirname, '../routes/Shell.svelte'), 'utf8')).toContain('<button class="primary" disabled={!newName.trim()}>Create</button>')
+  })
+
+  it('the voice settings primary looks disabled when it is', () => {
+    const s = scoped('VoiceSettings.svelte')
+    expect(probe(`<div><button data-probe class="primary ${s}" disabled></button></div>`).opacity).toBe('0.5')
+  })
 })

@@ -638,6 +638,7 @@
   .empty { margin: auto; color: var(--text-3); }
   .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .primary { height: 40px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .primary:disabled { opacity: .5; }
   .error { color: var(--danger-text); }
   .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-grid; place-items: center; }
   .tab .invc { color: var(--accent); display: grid; margin-left: -2px; }
