@@ -148,9 +148,10 @@ impl MicChain {
         if self.idle {
             // Back from idle: bring the denoiser's state up to date (output discarded) first.
             self.idle = false;
-            for mut b in std::mem::take(&mut self.recent) {
-                self.denoiser.process(&mut b);
+            for b in self.recent.iter_mut() {
+                self.denoiser.process(b);
             }
+            self.recent.clear(); // keeps its capacity for the next mute
         }
         let energy = |b: &[f32]| b.iter().map(|v| v * v).sum::<f32>();
         let ns_in = energy(block);
@@ -268,8 +269,10 @@ pub struct StrongWorker {
 
 impl Denoiser for StrongWorker {
     fn process(&mut self, block: &mut [f32]) -> Option<f32> {
+        // dead: the block passes raw, so the gate judges its own level (not the worker's last)
         if self.dead || self.tx.send(block.to_vec()).is_err() {
             self.dead = true;
+            self.level = None;
             return None;
         }
         match self.rx.recv() {
@@ -280,6 +283,7 @@ impl Denoiser for StrongWorker {
             }
             Err(_) => {
                 self.dead = true;
+                self.level = None;
                 None
             }
         }
@@ -701,6 +705,41 @@ mod tests {
         assert_eq!(s.gate_open_pct.map(f64::round), Some(100.0));
     }
 
+    /// The path line's ns/gate figures cover mic-open time only: a window spent muted reads "-",
+    /// whether the denoiser idled (no meter on screen) or ran for the meter. And the processor
+    /// takes the idle branch only while nobody looks at the meter.
+    #[test]
+    fn a_muted_window_has_no_ns_or_gate_figures() {
+        let shared = shared_with(AudioConfig {
+            noise_suppression: NsLevel::Off,
+            auto_sensitivity: false,
+            sensitivity: 0.0, // would always be open
+            ..Default::default()
+        });
+        shared.controls.lock().unwrap().toggle_mute();
+        let seen = collecting(&shared);
+        let (raw_tx, _h) = spawn(shared.clone());
+        let tone: Vec<f32> = (0..480).map(|i| 0.1 * (i as f32 * 0.0576).sin()).collect();
+        let feed = |n| {
+            for _ in 0..n {
+                raw_tx.send((48_000, tone.clone(), Instant::now())).unwrap();
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+        feed(10);
+        assert!(wait_frames(&seen, 10) >= 10);
+        assert_eq!(shared.take_levels().0, 0.0, "idle: nothing cleaned, nothing metered");
+        shared.controls.lock().unwrap().watch_meters(true);
+        feed(10);
+        assert!(wait_frames(&seen, 20) >= 20);
+        assert!(
+            shared.take_levels().0 > 0.0,
+            "meter open: the chain runs and the meter shows its level"
+        );
+        let s = shared.stats.take(0);
+        assert_eq!((s.ns_atten_db, s.gate_open_pct), (None, None));
+    }
+
     struct Loud;
     impl Denoiser for Loud {
         fn process(&mut self, block: &mut [f32]) -> Option<f32> {
@@ -809,6 +848,26 @@ mod tests {
         assert_eq!(*seen.borrow(), want);
         let mut next = vec![0.5f32; FRAME];
         c.process(&mut next, true, Instant::now());
+        assert_eq!(seen.borrow().len(), want.len() + 1, "replayed only once");
+    }
+
+    /// Muted, then the settings page opens (meter on, still muted): the denoiser wakes with the
+    /// same replay, the meter gets the cleaned level, and still nothing goes out.
+    #[test]
+    fn waking_into_meter_only_replays_once_and_sends_nothing() {
+        let (d, seen, _) = spy(false);
+        let mut c = MicChain::new(NsLevel::Off, false, 0.0, 1.0);
+        c.set_denoiser(NsLevel::Standard, d);
+        for k in 0..20 {
+            c.idle(&mut vec![k as f32 / 100.0; FRAME]);
+        }
+        let mut b = vec![0.5f32; FRAME];
+        let out = c.process(&mut b, false, Instant::now());
+        let want: Vec<f32> = (12..20).map(|k| k as f32 / 100.0).chain([0.5]).collect();
+        assert_eq!(*seen.borrow(), want);
+        assert!(!out.sent && !out.judged && b.iter().all(|v| *v == 0.0));
+        assert!((out.level - 0.5).abs() < 1e-3, "the meter shows {}", out.level);
+        c.process(&mut vec![0.5f32; FRAME], false, Instant::now());
         assert_eq!(seen.borrow().len(), want.len() + 1, "replayed only once");
     }
 
@@ -959,6 +1018,43 @@ mod tests {
         assert_eq!(onset_lag_on(&mut c, t0, &mut k), 3, "Strong");
         c.set_denoiser(NsLevel::Standard, Box::new(Lagging::new(1, 1)));
         assert_eq!(onset_lag_on(&mut c, t0, &mut k), 2, "back to Standard");
+    }
+
+    /// Settings flip auto ↔ manual mid-call: the pre-roll follows the mode each time (auto's
+    /// comes from the engine's delay; manual keeps the full 20 ms behind it).
+    #[test]
+    fn switching_auto_and_manual_mid_stream_settles_to_each_modes_lag() {
+        let mut c = MicChain::new(NsLevel::Off, true, 0.02, 1.0);
+        let (t0, mut k) = (Instant::now(), 0);
+        c.set_denoiser(NsLevel::Strong, Box::new(Lagging::new(3, 2)));
+        assert_eq!(onset_lag_on(&mut c, t0, &mut k), 3, "auto");
+        c.configure(false, 0.02, 1.0);
+        assert_eq!(onset_lag_on(&mut c, t0, &mut k), 5, "manual");
+        c.configure(true, 0.02, 1.0);
+        assert_eq!(onset_lag_on(&mut c, t0, &mut k), 3, "auto again");
+    }
+
+    /// Mute and unmute after an engine switch: nothing leaks while muted (meter open or not), and
+    /// the new engine's onset lag holds after unmuting.
+    #[test]
+    fn mute_and_unmute_after_an_engine_switch() {
+        let mut c = MicChain::new(NsLevel::Off, true, 0.02, 1.0);
+        let (t0, mut k) = (Instant::now(), 0);
+        c.set_denoiser(NsLevel::Standard, Box::new(Lagging::new(1, 1)));
+        assert_eq!(onset_lag_on(&mut c, t0, &mut k), 2, "Standard");
+        c.set_denoiser(NsLevel::Strong, Box::new(Lagging::new(3, 2)));
+        for _ in 0..20 {
+            // muted with the meter open: cleaned and metered, not sent
+            let mut b = vec![0.1f32; FRAME];
+            let out = c.process(&mut b, false, t0 + Duration::from_millis(k * 10));
+            k += 1;
+            assert!(!out.sent && b.iter().all(|v| *v == 0.0), "leaked while muted");
+        }
+        for _ in 0..20 {
+            c.idle(&mut vec![0.001f32; FRAME]); // muted, meter closed
+            k += 1;
+        }
+        assert_eq!(onset_lag_on(&mut c, t0, &mut k), 3, "Strong after unmute");
     }
 
     #[test]
@@ -1171,6 +1267,23 @@ mod tests {
         w.process(&mut b);
         assert!(w.failed());
         assert_eq!(b, vec![0.3f32; FRAME], "audio passes through untouched");
+    }
+
+    /// A worker that dies mid-call passes the raw block: the gate must judge that block's own
+    /// level, not the last level the worker reported before it died.
+    #[test]
+    fn dead_strong_worker_forgets_its_last_level() {
+        let (tx, worker_in) = std::sync::mpsc::channel::<Vec<f32>>();
+        drop(worker_in);
+        let (_out_tx, rx) = std::sync::mpsc::channel();
+        let mut w = StrongWorker {
+            tx,
+            rx,
+            dead: false,
+            level: Some(0.5), // loud speech, just before it died
+        };
+        w.process(&mut vec![0.0f32; FRAME]);
+        assert_eq!(w.decision_level(), None, "the raw block's level decides");
     }
 
     struct Dead;

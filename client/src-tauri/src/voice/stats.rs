@@ -81,7 +81,8 @@ pub struct Pipeline {
 
 /// Block energies are f32 sums of squares; stored as integers so the audio side stays lock-free.
 const ENERGY_SCALE: f64 = 1e9;
-/// Below this the window had no real input (≈ −100 dBFS over a 5 s window).
+/// Below this the window had no real input: a sum of squares of 1e-6 over a fully open 5 s window
+/// (240 000 samples) is ≈ −114 dBFS RMS; with less of the window open, the cut-off sits higher.
 const SILENT_ENERGY: u64 = 1_000;
 /// "Removed everything" reads as this instead of −∞.
 const ATTEN_FLOOR_DB: f64 = -60.0;
@@ -120,6 +121,8 @@ impl Pipeline {
     pub fn take(&self, underrun_ms: u64) -> Summary {
         let mut recv = std::mem::take(&mut *self.recv_ms.lock().unwrap_or_else(|e| e.into_inner()));
         recv.sort_unstable();
+        // two swaps, not one snapshot: a block recorded between them lands half in each window
+        // (≤ 1 of ~500 blocks; fine for a diagnostic, and it keeps the audio side lock-free)
         let (ns_in, ns_out) = (self.ns_in.swap(0, Relaxed), self.ns_out.swap(0, Relaxed));
         let (judged, passed) = (
             self.gate_judged.swap(0, Relaxed),
@@ -160,7 +163,9 @@ pub struct Summary {
     pub chain_us: Option<u64>,
     /// Denoiser output vs input power over the window, dB (negative = removed; floor −60).
     pub ns_atten_db: Option<f64>,
-    /// Share of mic-open 10 ms blocks the voice gate let through.
+    /// Share of mic-open 10 ms blocks the voice gate let through. The 100 ms fade-out after the
+    /// hold counts as open (audio still went out), so it reads up to 10 blocks per close above
+    /// the time the gate was fully open.
     pub gate_open_pct: Option<f64>,
 }
 
