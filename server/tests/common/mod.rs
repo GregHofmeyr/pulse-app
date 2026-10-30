@@ -14,9 +14,16 @@ pub struct ServerProcess {
     pub addr: std::net::SocketAddr,
     pub db_url: String,
     _dir: Option<tempfile::TempDir>,
+    /// The child's stdout and stderr.
+    log: tempfile::NamedTempFile,
 }
 
 impl ServerProcess {
+    /// What the server has printed so far.
+    pub fn log(&self) -> String {
+        std::fs::read_to_string(self.log.path()).unwrap_or_default()
+    }
+
     pub fn url(&self, path: &str) -> String {
         format!("http://{}{}", self.addr, path)
     }
@@ -60,46 +67,79 @@ pub async fn spawn_binary() -> ServerProcess {
 }
 
 /// Like `spawn_binary`, on an existing database and with extra environment (e.g. `PULSE_TOTP_KEY`).
+/// The server binds port 0 and the port is read back from its "listening" line, so no other
+/// process can take it between picking and binding. Its output goes to a file, shown if it fails
+/// to start.
 pub async fn spawn_binary_on(
     db_url: String,
     env: &[(&str, &str)],
     dir: Option<tempfile::TempDir>,
 ) -> ServerProcess {
-    let addr = free_addr();
-    let child = binary(&db_url, addr)
+    let log = tempfile::NamedTempFile::new().unwrap();
+    // One handle for both streams, so they share an offset instead of overwriting each other.
+    let out = log.reopen().unwrap();
+    let child = binary(&db_url, ANY_PORT.parse().unwrap())
+        // The "listening" line is info, from our own crate.
+        .env("RUST_LOG", "warn,pulse_server=info")
         .envs(env.iter().copied())
         .arg("serve")
+        .stdout(out.try_clone().unwrap())
+        .stderr(out)
         .spawn()
         .unwrap();
     let mut p = ServerProcess {
         child,
-        addr,
+        addr: ANY_PORT.parse().unwrap(),
         db_url,
         _dir: dir,
+        log,
+    };
+    let deadline = Instant::now() + Duration::from_secs(15);
+    let still_starting = |p: &mut ServerProcess| {
+        if let Some(status) = p.child.try_wait().unwrap() {
+            panic!("server exited early: {status}\n{}", p.log());
+        }
+        assert!(
+            Instant::now() < deadline,
+            "server didn't come up in 15 s\n{}",
+            p.log()
+        );
+    };
+    p.addr = loop {
+        if let Some(addr) = listening_addr(&p.log()) {
+            break addr;
+        }
+        still_starting(&mut p);
+        tokio::time::sleep(Duration::from_millis(20)).await;
     };
     let http = reqwest::Client::new();
-    let deadline = Instant::now() + Duration::from_secs(15);
     loop {
-        if let Ok(r) = http.get(format!("http://{addr}/health")).send().await
+        if let Ok(r) = http.get(p.url("/health")).send().await
             && r.status() == 200
         {
             break;
         }
-        if let Some(status) = p.child.try_wait().unwrap() {
-            panic!("server exited early: {status}");
-        }
-        assert!(Instant::now() < deadline, "server didn't come up in 15 s");
+        still_starting(&mut p);
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     p
 }
 
-/// Bind :0 to find a free port, then release it for the child.
-fn free_addr() -> std::net::SocketAddr {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .unwrap()
-        .local_addr()
-        .unwrap()
+/// Let the OS pick the port when the server binds.
+const ANY_PORT: &str = "127.0.0.1:0";
+
+/// The address in the server's "pulse-app-server listening addr=127.0.0.1:<port>" line. Only the
+/// digits after the host are read, so colour codes around the field name don't matter.
+fn listening_addr(log: &str) -> Option<std::net::SocketAddr> {
+    const HOST: &str = "127.0.0.1:";
+    let line = log
+        .lines()
+        .find(|l| l.contains("pulse-app-server listening"))?;
+    let port: String = line[line.find(HOST)? + HOST.len()..]
+        .chars()
+        .take_while(char::is_ascii_digit)
+        .collect();
+    format!("{HOST}{port}").parse().ok()
 }
 
 /// Run the binary with `args` until it exits; returns (exit success, stderr + stdout). Panics if
@@ -110,7 +150,7 @@ pub fn run_binary(
     args: &[&str],
     timeout: Duration,
 ) -> (bool, String) {
-    let mut child = binary(db_url, free_addr())
+    let mut child = binary(db_url, ANY_PORT.parse().unwrap())
         .envs(env.iter().copied())
         .args(args)
         .stdout(Stdio::piped())

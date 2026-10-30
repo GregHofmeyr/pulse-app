@@ -125,6 +125,16 @@ async fn binary_refuses_to_start_without_the_right_key() {
     assert_eq!(r.status(), 200);
 }
 
+/// A binary that fails to start says why in the harness's panic: its output isn't thrown away.
+#[tokio::test]
+#[should_panic(expected = "PULSE_TOTP_KEY is not set")]
+async fn a_binary_that_fails_to_start_shows_its_output() {
+    let (_d, url, db) = fresh().await;
+    add_user(&db, "alex", Some((&key(KEY_A), true))).await;
+    db.close().await;
+    spawn_binary_on(url, &[], None).await;
+}
+
 #[tokio::test]
 async fn binary_without_two_factor_users_starts_without_a_key() {
     let (_d, url, db) = fresh().await;

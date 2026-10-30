@@ -40,13 +40,19 @@ async fn connected_socket(p: &ServerProcess) -> Socket {
     ))
     .await
     .unwrap();
-    loop {
-        if let Some(Ok(Ws::Text(t))) = ws.next().await
-            && t.contains("\"Ready\"")
-        {
-            return ws;
+    // Bounded, and a socket that ends before Ready fails the test instead of spinning on `None`.
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            match ws.next().await {
+                Some(Ok(Ws::Text(t))) if t.contains("\"Ready\"") => return,
+                Some(Ok(_)) => continue,
+                other => panic!("gateway ended before Ready: {other:?}\n{}", p.log()),
+            }
         }
-    }
+    })
+    .await
+    .unwrap_or_else(|_| panic!("no Ready within 10 s\n{}", p.log()));
+    ws
 }
 
 async fn stops_cleanly_on(signal: &str) {

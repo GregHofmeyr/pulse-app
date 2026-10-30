@@ -63,7 +63,8 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     auth::two_factor::check_key(&db, cfg.totp_key.as_ref()).await?;
     let started_at = db::now();
     let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
-    tracing::info!(addr = %cfg.bind, "pulse-app-server listening");
+    // The bound address, not the configured one: with port 0 (the tests) it names the real port.
+    tracing::info!(addr = %listener.local_addr()?, "pulse-app-server listening");
     let hub = gateway::Hub::default();
     // A failure here (e.g. a dev machine without /data) only matters once someone uploads.
     if let Err(e) = std::fs::create_dir_all(&cfg.media_dir) {
