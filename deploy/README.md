@@ -257,7 +257,8 @@ Setup, once:
    `R2_BUCKET=pulse-backups`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`.
 5. `just backup-now` → `backed up pulse-<time>.db.age`.
 6. `just restore-drill` → downloads the latest, decrypts it here, checks it: `integrity ok: N users, M messages`.
-   Do this now and then; an untested backup is a hope. `RCLONE_CONFIG_R2_NO_HEAD` in `backup.sh` drops rclone's post-upload check, so the drill is the integrity check of what reached R2.
+   Do this now and then; an untested backup is a hope. `RCLONE_CONFIG_R2_NO_HEAD` in `backup.sh` drops
+   rclone's post-upload check, so the drill is the integrity check of what reached R2.
 7. A backup that silently stops is the failure nobody notices. healthchecks.io (free) → New check: period 1 day,
    grace 2 hours, alert by email. Put its ping URL in `.env` as `BACKUP_PING_URL=https://hc-ping.com/<uuid>`.
    Each good backup pings it, a failed one pings `<url>/fail` (an alert at once); no ping for a day also alerts.
