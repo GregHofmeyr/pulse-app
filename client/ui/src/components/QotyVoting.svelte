@@ -217,6 +217,7 @@
   .live { background: var(--quote-green); }
   .grow { flex: 1; }
   .close { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; }
+  .close:hover { background: var(--bg-4); color: var(--text); }
   .status { margin: -4px 0 0; color: var(--text-3); font-size: 12.5px; }
   .options { display: flex; flex-direction: column; gap: 8px; }
   .opt { position: relative; overflow: hidden; display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); }

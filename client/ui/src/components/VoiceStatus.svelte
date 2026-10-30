@@ -86,7 +86,9 @@
   .vc-text strong.bad { color: var(--danger); }
   .vc-text small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 9px; background: var(--surface-menu); color: var(--danger); display: grid; place-items: center; }
+  .vc-leave:hover { background: var(--bg-4); }
   .vc-dismiss { width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .vc-dismiss:hover { background: var(--bg-3); color: var(--text); }
   .vc-mic { margin: -4px 8px 8px; padding: 8px 12px; border-radius: 10px; background: var(--bg-2); border-left: 3px solid var(--warn); font-size: 12px; line-height: 1.4; color: var(--text-2); }
   .vc-mic strong { color: var(--warn); }
   .vc-retry { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 600; }

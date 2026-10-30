@@ -114,6 +114,7 @@
   .mark { font-size: 34px; padding-top: 12px; color: var(--quote-green); }
   h1 { flex: 1; margin: 0; font-size: 18px; font-weight: 600; }
   .close { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; }
+  .close:hover { background: var(--bg-4); color: var(--text); }
   .field { display: flex; flex-direction: column; gap: 6px; }
   .lbl { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
   input { height: 38px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-2); }

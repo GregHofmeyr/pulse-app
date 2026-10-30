@@ -244,4 +244,5 @@
   .actions button:hover { color: var(--text); }
   .lightbox { position: fixed; inset: 0; z-index: 70; background: rgba(10, 11, 13, .85); display: grid; place-items: center; cursor: zoom-out; outline: none; }
   .close { position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border: 0; border-radius: 10px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
+  .close:hover { background: var(--bg-4); color: var(--text); }
 </style>

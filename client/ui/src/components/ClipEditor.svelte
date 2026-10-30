@@ -327,6 +327,7 @@
   .file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
   .file span { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
   .close { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; cursor: pointer; }
+  .close:hover { background: var(--bg-4); color: var(--text); }
   .body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; padding: 16px 18px 18px; }
   .stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
   .screen { position: relative; background: #000; border-radius: 10px; aspect-ratio: 16 / 9; max-height: 52vh; width: 100%; display: grid; place-items: center; overflow: hidden; }

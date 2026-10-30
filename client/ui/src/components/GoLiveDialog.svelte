@@ -122,6 +122,7 @@
   .top { display: flex; align-items: center; justify-content: space-between; }
   h1 { margin: 0; font-size: 18px; font-weight: 600; }
   .close { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; }
+  .close:hover { background: var(--bg-4); color: var(--text); }
   video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; object-fit: contain; }
   .source { display: flex; align-items: center; gap: 10px; }
   .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-size: 13px; }

@@ -158,9 +158,11 @@
   .bar-wrap { height: 84px; flex-shrink: 0; display: grid; place-items: center; }
   .controls { padding: 8px; background: var(--bg-inset); border-radius: 18px; display: flex; gap: 8px; }
   .ctl { width: 48px; height: 48px; border: 0; border-radius: 14px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
+  .ctl:hover { background: var(--bg-4); }
   .ctl.on { background: var(--danger); color: var(--on-danger); }
   .leave { width: 64px; height: 48px; border: 0; border-radius: 14px; background: var(--danger); color: var(--on-danger); display: grid; place-items: center; }
   .golive { height: 48px; padding: 0 16px; border: 0; border-radius: 14px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
   .golive.off { opacity: .5; cursor: not-allowed; }
+  .ctl.on:hover, .leave:hover, .golive:not(.off):hover { filter: brightness(1.1); }
   .primary { height: 44px; padding: 0 22px; border: 0; border-radius: 12px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
 </style>
