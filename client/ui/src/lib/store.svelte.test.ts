@@ -11,6 +11,12 @@ import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 
 describe('app store', () => {
+  // `app` is one module-wide store: start each test from a fresh state, whatever ran before
+  beforeEach(() => {
+    resetState()
+    flushSync()
+  })
+
   it('holds the reducer output as-is (no deep proxy)', () => {
     const s = emptyState()
     app.state = s
