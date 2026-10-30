@@ -4,7 +4,7 @@
 //! Built on the `windows` crate rather than tauri-winrt-notification: that wrapper has no tag or
 //! group, and replacing needs both. It is the same handful of WinRT calls.
 
-use super::toast::{KeepNewest, toast_xml};
+use super::toast::{KeepNewest, refusal, toast_xml};
 use super::{Click, Failure, Notice, OnClick};
 use windows::Data::Xml::Dom::XmlDocument;
 use windows::Foundation::TypedEventHandler;
@@ -37,8 +37,19 @@ impl Backend {
         let toast = self
             .build(n)
             .map_err(|e| Failure::BadNotice(e.to_string()))?;
-        ToastNotificationManager::CreateToastNotifierWithId(&self.app_id)
-            .and_then(|notifier| notifier.Show(&toast))
+        let notifier = ToastNotificationManager::CreateToastNotifierWithId(&self.app_id)
+            .map_err(|e| Failure::Refused(e.to_string()))?;
+        // Show() succeeds even when Windows then drops the toast (off for the app or the user,
+        // or an AppUserModelID no shortcut carries, as with a copied exe): the notifier's setting
+        // is the only sign of that. An unregistered id is expected to read as "disabled by
+        // manifest" (not verified on a real machine). A setting that can't be read, or one newer
+        // than we know, doesn't stop the toast: better shown than lost on a guess. If Windows
+        // reads "enabled" and still drops it, there is nothing left to detect.
+        if let Some(why) = notifier.Setting().ok().and_then(|s| refusal(s.0)) {
+            return Err(Failure::Refused(why.into()));
+        }
+        notifier
+            .Show(&toast)
             .map_err(|e| Failure::Refused(e.to_string()))?;
         self.shown.insert(n.channel_id.clone(), toast);
         Ok(())

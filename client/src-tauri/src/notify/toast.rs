@@ -43,6 +43,18 @@ impl<V> KeepNewest<V> {
     }
 }
 
+/// Why the notifier won't show toasts, from its `NotificationSetting` (0 = enabled). A value
+/// newer than these isn't taken as a refusal.
+pub fn refusal(setting: i32) -> Option<&'static str> {
+    match setting {
+        1 => Some("notifications are off for Pulse"),
+        2 => Some("notifications are off for this user"),
+        3 => Some("notifications are off by group policy"),
+        4 => Some("Windows doesn't know this app (no Start menu shortcut with its AppUserModelID)"),
+        _ => None,
+    }
+}
+
 /// XML 1.0's `Char`: tab, newline, carriage return and everything from space up, except
 /// U+FFFE and U+FFFF (a Rust `char` is never a surrogate).
 fn xml_char(c: char) -> bool {
@@ -85,6 +97,21 @@ mod tests {
             toast_xml("sam", "hello"),
             r#"<toast><visual><binding template="ToastGeneric"><text>sam</text><text>hello</text></binding></visual><audio silent="true"/></toast>"#
         );
+    }
+
+    #[test]
+    fn the_notifiers_setting_says_whether_it_will_show() {
+        // Windows' NotificationSetting values
+        assert_eq!(refusal(0), None);
+        assert_eq!(refusal(1), Some("notifications are off for Pulse"));
+        assert_eq!(refusal(2), Some("notifications are off for this user"));
+        assert_eq!(refusal(3), Some("notifications are off by group policy"));
+        assert_eq!(
+            refusal(4),
+            Some("Windows doesn't know this app (no Start menu shortcut with its AppUserModelID)")
+        );
+        // a value newer than we know doesn't stop a toast
+        assert_eq!(refusal(9), None);
     }
 
     #[test]
