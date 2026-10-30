@@ -374,12 +374,23 @@ mod tests {
     }
 
     /// A peer that rejoins arrives as a new stream (new SSRC) whose counters start over: all of
-    /// them belong to this window (summed totals "shrank" and the window was skipped).
+    /// them belong to this window. (The old cross-peer sums "shrank" here, and the window was
+    /// skipped.)
     #[test]
     fn a_new_stream_counts_from_zero() {
         let (_, first) = summarize(&[], &[jb(1, 100.0, 50.0, 48_000)], &Totals::default());
         let (s, _) = summarize(&[], &[jb(3, 4800.0, 2400.0, 240_000)], &first);
         assert_eq!(s.buffer_ms.map(f64::round), Some(20.0));
+    }
+
+    /// The same SSRC with counters lower than last time (the stream restarted under it): the new
+    /// counters are all this window's, not a negative delta.
+    #[test]
+    fn a_stream_whose_counters_went_backwards_counts_in_full() {
+        let (_, first) = summarize(&[], &[jb(4, 1000.0, 500.0, 480_000)], &Totals::default());
+        let (s, _) = summarize(&[], &[jb(4, 4800.0, 2400.0, 240_000)], &first);
+        assert_eq!(s.buffer_ms.map(f64::round), Some(20.0));
+        assert_eq!(s.target_ms.map(f64::round), Some(10.0));
     }
 
     /// A stream missing from one snapshot (stats are best-effort) and back with continuing counters

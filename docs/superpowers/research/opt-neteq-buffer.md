@@ -2,10 +2,10 @@
 
 Date: 2026-10-16. Build: ba9ad36. livekit-server v1.13 (dev, host network). libwebrtc 0.3.50.
 
-Verdict: standing-delay. `buffer` tracks the measured lag within 3-10 ms, so it is audio people hear, not a
+Verdict: **standing delay** (Step 6's "standing-delay" rule, not "artifact"). `buffer` tracks the measured lag within 3-10 ms, so it is audio people hear, not a
 statistic. On the bare path the excess over `target` is only about 10 ms (accel 0). DTX gaps and a realistic gate
 pattern do not inflate it. The field's 80-100 over 20-40 did not reproduce here. What does inflate it: a send stall with no frames raises NetEq's `target` and `buffer`
-by the stall length and keeps them there (stall 200 ms → target 200, 500 ms → 520, still there 30 s later,
+by about the stall length and keeps them there (stall 200 ms → target 200, 500 ms → 520, still there 30 s later,
 accel 0). In the probe, the "Bursts 520 ms" result came from exactly this. RTP timestamps count samples, so a
 send that stops and restarts makes every later packet look late by the gap, and NetEq's inter-arrival estimate
 takes that as the network's delay.
@@ -17,7 +17,7 @@ Per inbound stream (SSRC), per 5 s window: Δ jitterBufferDelay / Δ jitterBuffe
 ## Runs
 The four Step 6 runs. Probe at 2a79a40 (Continuous, then Bursts, on one stream).
 
-| pattern | netem one-way ms | lag p50 | lag p90 | jb from lag | buffer | target | accel ms/5s | silent % | onsets |
+| pattern | netem qdisc delay ms (each lo crossing) | lag p50 | lag p90 | jb from lag | buffer | target | accel ms/5s | silent % | onsets |
 |---|---|---|---|---|---|---|---|---|---|
 | Continuous | 0 | 50 | 50 | 40 | 30 | 20 | 0 | 0 | 30 |
 | Bursts | 0 | 528 | 528 | 518 | 488 | 520 | 0 | 0 | 14 |
@@ -35,7 +35,7 @@ Experiments, no netem. Probe at ba9ad36 unless marked; every test run is a fresh
 
 | run | pattern | lag p50 | lag p90 | jb from lag | buffer | target | accel ms/5s | silent % | send pkt/s | onsets |
 |---|---|---|---|---|---|---|---|---|---|---|
-| (a) order swapped, old probe (500 ms stall between) | Bursts | 48 | 48 | 38 | 30 | 20 | 0 | 0 | 28 | 14 |
+| (a) order swapped (`PROBE_PATTERNS=bursts,continuous`), old probe with its 500 ms stall between (now `PROBE_STALL_MS=500`) | Bursts | 48 | 48 | 38 | 30 | 20 | 0 | 0 | 28 | 14 |
 | | Continuous | 447 | 528 | 437 | 433 | 520 | 0 | 0 | 50 | 30 |
 | (b) gate-like: talk 1-2 s, gaps 0.3-2 s seeded, 100 ms fade | Gated | 43 | 43 | 33 | 30 | 20 | 0 | 0 | 34 | 11 |
 | (c) −60 dBFS noise in the gaps, not zeros | Noise | 50 | 50 | 40 | 30 | 20 | 0 | 0 | 37 | 14 |
@@ -68,7 +68,7 @@ The baseline's 80-100 ms `buffer` over a 20-40 ms `target` did not reproduce on 
 excess was 10 ms, with accel 0.
 
 ## For the playout task
-- Standing excess over target on the bare path: about 10 ms (Continuous, 80 ms one-way netem), accel 0 ms per 5 s.
+- Standing excess over target on the bare path: about 10 ms (Continuous, netem 40 ms per lo crossing: 80 ms sender to receiver), accel 0 ms per 5 s.
 - Real and sticky: any send stall that lets RTP timestamps fall behind wall-clock time adds its full length to
   NetEq's target and buffer (200 → +180 ms, 500 → +500 ms). Accel stays 0, so NetEq never drains it. It also lasts
   at least 30 s.
