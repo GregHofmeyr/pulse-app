@@ -420,7 +420,7 @@
     {#if isQuotes}
       <button class="hbtn" class:on={leaderboardOpen} aria-label="Leaderboard" data-tip="Leaderboard" data-menu-toggle aria-haspopup="dialog" aria-expanded={leaderboardOpen}
         onclick={() => (leaderboardOpen = !leaderboardOpen)}><Icon name="trophy" size={17} /></button>
-      {#if !qotyLive}<button class="qoty" onclick={onStartQoty}>Start Quote of the Year</button>{/if}
+      {#if !qotyLive}<button class="qoty-btn qoty" onclick={onStartQoty}>Start Quote of the Year</button>{/if}
     {/if}
     {#if isPrivate}
       <button class="hbtn" aria-label="Add people" data-tip="Add people" onclick={onAddPeople}><Icon name="userPlus" size={17} /></button>
@@ -516,7 +516,8 @@
   .grow { flex: 1; }
   .hbtn { width: 32px; height: 32px; border: 0; border-radius: 9px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .hbtn:hover, .hbtn.on { background: var(--bg-3); color: var(--text); }
-  .qoty { height: 30px; padding: 0 12px; border: 0; border-radius: 9px; background: var(--quote-green); color: var(--on-quote-green); font-size: 13px; font-weight: 700; white-space: nowrap; }
+  /* the shared .qoty-btn, at this header's 30px */
+  .qoty { height: 30px; padding: 0 12px; }
   .newline { display: flex; align-items: center; gap: 8px; margin: 6px 18px; color: var(--danger); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
   .newline::before, .newline::after { content: ''; flex: 1; height: 1px; background: var(--danger); opacity: .6; }
   .jump { align-self: center; margin-top: -40px; position: relative; z-index: 2; padding: 6px 12px; border: 0; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; box-shadow: 0 4px 14px rgba(0, 0, 0, .35); }

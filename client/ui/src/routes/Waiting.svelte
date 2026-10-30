@@ -13,6 +13,6 @@
 
 <style>
   .waiting { height: 100%; display: grid; place-content: center; justify-items: center; gap: 16px; background: var(--bg-0); color: var(--text); text-align: center; padding: 24px; }
-  .out { background: none; border: 1px solid var(--line); color: var(--text-2); border-radius: var(--radius); padding: 6px 14px; font: inherit; font-size: 13px; }
+  .out { background: none; border: 1px solid var(--bg-4); color: var(--text-2); border-radius: 8px; padding: 6px 14px; font: inherit; font-size: 13px; }
   .out:hover, .out:focus-visible { color: var(--text); }
 </style>
