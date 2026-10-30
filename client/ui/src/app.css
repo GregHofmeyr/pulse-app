@@ -113,6 +113,11 @@ button { transition: background-color var(--dur) var(--ease), color var(--dur) v
 .switch.on { background: var(--accent); }
 .switch.on span { left: 23px; background: var(--on-accent); }
 .switch:disabled { opacity: .5; }
+/* The same switch as a checkbox (role="switch"), where a form control fits better than a button. */
+input.switch { appearance: none; margin: 0; cursor: pointer; }
+input.switch::after { content: ''; position: absolute; top: 3px; left: 3px; width: 18px; height: 18px; border-radius: 50%; background: var(--text-2); transition: left .12s; }
+input.switch:checked { background: var(--accent); }
+input.switch:checked::after { left: 23px; background: var(--on-accent); }
 /* Quote of the Year: the filled green button, the big quote mark and the LIVE chip, shared by the
    banner, voting window, voice strip, winner card and start dialog (each sets its own size). */
 .qoty-btn { height: 32px; padding: 0 14px; border: 0; border-radius: 8px; background: var(--quote-green); color: var(--on-quote-green); font-size: 13px; font-weight: 700; white-space: nowrap; box-shadow: 0 2px 0 var(--quote-green-deep); }

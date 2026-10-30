@@ -158,6 +158,16 @@ describe('shared surfaces', () => {
     expect(rule('.menu-item:hover:not(:disabled)').getPropertyValue('background')).toBe('var(--bg-4)')
   })
 
+  it('one switch: the checkbox form (Appearance) is the same 44x24 switch as the button form', () => {
+    expect(rule('.switch').getPropertyValue('width')).toBe('44px')
+    expect(rule('input.switch').getPropertyValue('appearance')).toBe('none')
+    expect(rule('input.switch:checked').getPropertyValue('background')).toBe('var(--accent)')
+    expect(rule('input.switch:checked::after').getPropertyValue('background')).toBe('var(--on-accent)')
+    const appearance = readFileSync(resolve(__dirname, 'components/AppearanceSettings.svelte'), 'utf8')
+    expect(appearance).toContain('<input type="checkbox" role="switch" class="switch"')
+    expect(appearance).not.toMatch(/input\[role='switch'\]/)
+  })
+
   it('dialogs are a bg-2 panel with a drop shadow', () => {
     const modal = rule('.modal')
     expect(modal.getPropertyValue('background')).toBe('var(--bg-2)')
