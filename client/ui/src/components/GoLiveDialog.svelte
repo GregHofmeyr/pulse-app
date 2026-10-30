@@ -127,7 +127,7 @@
   .source { display: flex; align-items: center; gap: 10px; }
   .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-size: 13px; }
   fieldset { margin: 0; padding: 0; border: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }
-  legend { float: left; width: 96px; padding: 0; color: var(--text-3); font-size: 12px; font-weight: 600; }
+  legend { float: left; width: 96px; padding: 0; color: var(--text-2); font-size: 12px; font-weight: 600; }
   label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
   input { accent-color: var(--accent); }
   .err { margin: 0; font-size: 13px; color: var(--warn); }

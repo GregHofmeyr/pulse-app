@@ -345,7 +345,7 @@
   .readout.over { color: var(--danger); font-weight: 600; }
   .side { display: flex; flex-direction: column; gap: 14px; }
   .field { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
-  .field > span, legend { font-size: 12px; font-weight: 600; color: var(--text-3); padding: 0; }
+  .field > span, legend { font-size: 12px; font-weight: 600; color: var(--text-2); padding: 0; }
   textarea { resize: none; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font: inherit; }
   small { align-self: flex-end; color: var(--text-3); font-size: 11px; }
   .preset { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bg-4); font-size: 14px; cursor: pointer; font-variant-numeric: tabular-nums; }

@@ -198,7 +198,7 @@
   .file:focus-within { outline: 2px solid var(--text-3); }
   .add { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; padding: 16px; border: 1px solid var(--bg-4); border-radius: 12px; }
   .previews { display: flex; align-items: flex-end; gap: 16px; }
-  .add label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-3); }
+  .add label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }
   input:not([type='file']) { height: 34px; padding: 0 10px; border: 1px solid var(--bg-4); border-radius: 8px; background: var(--bg-0); color: var(--text); }
   .row { display: flex; gap: 8px; }
   .name-hint { color: var(--danger-text); font-size: 12px; }

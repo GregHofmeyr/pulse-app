@@ -156,7 +156,7 @@
   /* the shadow dims everything outside the crop */
   .box { position: absolute; box-sizing: border-box; border: 2px solid #fff; box-shadow: 0 0 0 9999px rgba(0, 0, 0, .6); pointer-events: none; }
   .box.round { border-radius: 50%; }
-  .zoom { display: flex; align-items: center; gap: 12px; color: var(--text-3); font-size: 12px; font-weight: 600; }
+  .zoom { display: flex; align-items: center; gap: 12px; color: var(--text-2); font-size: 12px; font-weight: 600; }
   .zoom input { flex: 1; }
   .error { margin: 0; color: var(--text-2); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
