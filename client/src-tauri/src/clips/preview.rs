@@ -88,28 +88,48 @@ pub fn args(
     a.into_iter().map(str::to_owned).collect()
 }
 
-/// One JPEG of 24 keyframe tiles, 72 px tall, spread over the source.
-pub fn filmstrip_args(src: &str, duration_ms: u64, out_jpg: &str) -> Vec<String> {
-    let step = duration_ms as f64 / 1000.0 / f64::from(FILMSTRIP_TILES);
-    let filter = format!(
-        "select='isnan(prev_selected_t)+gte(t-prev_selected_t,{step:.3})',scale=-2:72,tile={FILMSTRIP_TILES}x1"
-    );
-    [
-        "-skip_frame",
-        "nokey",
-        "-i",
-        src,
-        "-vf",
-        &filter,
-        "-frames:v",
-        "1",
-        "-q:v",
-        "5",
-        "-y",
-        out_jpg,
-    ]
-    .map(str::to_owned)
-    .to_vec()
+/// Decoding more frames than this for the filmstrip takes too long (about 4 s at 1080p); past it only
+/// keyframes are decoded.
+const FILMSTRIP_FULL_DECODE_FRAMES: f64 = 3_600.0;
+
+/// One JPEG of 24 tiles, 72 px tall, evenly spaced over the source. `fps` resamples to one frame per
+/// tile and the cloned last frame fills any tile past it, so no tile comes out black. A short source
+/// decodes every frame, so each tile is its own moment; a long one decodes keyframes only, which is
+/// cheap, and its tiles are far enough apart that the nearest keyframe is as good.
+pub fn filmstrip_args(src: &str, duration_ms: u64, fps: f64, out_jpg: &str) -> Vec<String> {
+    let seconds = duration_ms as f64 / 1000.0;
+    // a rate the probe couldn't read counts as a high one, so a long source stays cheap
+    let fps = if fps.is_finite() && fps > 0.0 {
+        fps
+    } else {
+        60.0
+    };
+    let decode: &[&str] = if seconds * fps <= FILMSTRIP_FULL_DECODE_FRAMES {
+        // the deblocking filter is invisible at 72 px and skipping it saves a quarter of the decode
+        &["-skip_loop_filter", "all", "-flags2", "fast"]
+    } else {
+        &["-skip_frame", "nokey"]
+    };
+    let rate = f64::from(FILMSTRIP_TILES) / seconds.max(0.001);
+    let filter =
+        format!("tpad=stop_mode=clone:stop=-1,fps={rate:.6},scale=-2:72,tile={FILMSTRIP_TILES}x1");
+    decode
+        .iter()
+        .copied()
+        .chain([
+            "-i",
+            src,
+            "-vf",
+            &filter,
+            "-frames:v",
+            "1",
+            "-q:v",
+            "5",
+            "-y",
+            out_jpg,
+        ])
+        .map(str::to_owned)
+        .collect()
 }
 
 /// One JPEG frame at `at_source_ms`, at most 640 px on its long side.
@@ -279,16 +299,59 @@ mod tests {
     }
 
     #[test]
-    fn filmstrip_args_for_a_41_second_source() {
+    fn a_short_source_filmstrip_decodes_every_frame() {
+        // 25 s at 30 fps is 750 frames: within budget, so each tile is the frame at its own moment
+        // (a keyframe-only pass gave one tile per keyframe and left the rest black).
         assert_eq!(
-            filmstrip_args("in.mp4", 41_000, "film.jpg"),
+            filmstrip_args("in.mp4", 25_000, 30.0, "film.jpg"),
+            v(&[
+                "-skip_loop_filter",
+                "all",
+                "-flags2",
+                "fast",
+                "-i",
+                "in.mp4",
+                "-vf",
+                "tpad=stop_mode=clone:stop=-1,fps=0.960000,scale=-2:72,tile=24x1",
+                "-frames:v",
+                "1",
+                "-q:v",
+                "5",
+                "-y",
+                "film.jpg"
+            ])
+        );
+    }
+
+    #[test]
+    fn an_unknown_frame_rate_counts_as_60_for_the_filmstrip_budget() {
+        // 2 minutes: within budget at 30 fps, over it at 60; a probe that found no rate must not
+        // send an hour-long recording down the decode-everything path.
+        for fps in [0.0, f64::NAN] {
+            assert_eq!(
+                filmstrip_args("in.mp4", 120_000, fps, "f.jpg")[..2],
+                v(&["-skip_frame", "nokey"])
+            );
+        }
+        assert_eq!(
+            filmstrip_args("in.mp4", 120_000, 30.0, "f.jpg")[0],
+            "-skip_loop_filter"
+        );
+    }
+
+    #[test]
+    fn a_long_source_filmstrip_decodes_keyframes_only() {
+        // 41 minutes at 60 fps is far over budget; tiles are 102.5 s apart, so the nearest keyframe
+        // is as good as the exact frame. The last one is cloned so the tail never comes out black.
+        assert_eq!(
+            filmstrip_args("in.mp4", 2_460_000, 60.0, "film.jpg"),
             v(&[
                 "-skip_frame",
                 "nokey",
                 "-i",
                 "in.mp4",
                 "-vf",
-                "select='isnan(prev_selected_t)+gte(t-prev_selected_t,1.708)',scale=-2:72,tile=24x1",
+                "tpad=stop_mode=clone:stop=-1,fps=0.009756,scale=-2:72,tile=24x1",
                 "-frames:v",
                 "1",
                 "-q:v",

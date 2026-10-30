@@ -204,12 +204,93 @@ async fn exports_two_pieces_as_light() {
     );
     ffmpeg_ok(
         &t,
-        &preview::filmstrip_args(&src.to_string_lossy(), 10_000, &strip.to_string_lossy())
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>(),
+        &preview::filmstrip_args(
+            &src.to_string_lossy(),
+            10_000,
+            60.0,
+            &strip.to_string_lossy(),
+        )
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>(),
     );
     assert!(thumb.is_file() && strip.is_file());
+}
+
+/// The average brightness (0..255) of each of the filmstrip's tiles, read back through ffmpeg.
+fn tile_brightness(t: &FfmpegPaths, strip: &Path) -> Vec<f64> {
+    let out = Command::new(&t.ffmpeg)
+        .args(["-hide_banner", "-loglevel", "error", "-nostdin", "-i"])
+        .arg(strip)
+        .args(["-f", "rawvideo", "-pix_fmt", "gray", "-"])
+        .output()
+        .expect("run ffmpeg");
+    assert!(out.status.success());
+    let tiles = preview::FILMSTRIP_TILES as usize;
+    let (height, width) = (72, out.stdout.len() / 72);
+    let tile = width / tiles;
+    (0..tiles)
+        .map(|i| {
+            let sum: u64 = (0..height)
+                .flat_map(|y| &out.stdout[y * width + i * tile..y * width + (i + 1) * tile])
+                .map(|&p| u64::from(p))
+                .sum();
+            sum as f64 / (height * tile) as f64
+        })
+        .collect()
+}
+
+/// A recording with a keyframe only every 5 s (common for game captures): the filmstrip still fills
+/// every tile, and the tiles show different moments rather than one per keyframe.
+#[test]
+#[ignore = "needs ffmpeg and ffprobe (PULSE_DEV_FFMPEG_DIR or PATH)"]
+fn a_filmstrip_of_a_sparse_keyframe_source_has_no_black_tiles() {
+    let t = tools();
+    let dir = tempfile::tempdir().unwrap();
+    let (src, strip) = (dir.path().join("gop5.mp4"), dir.path().join("strip.jpg"));
+    ffmpeg_ok(
+        &t,
+        &[
+            "-f",
+            "lavfi",
+            "-i",
+            "testsrc2=size=1280x720:rate=30:duration=25",
+            "-c:v",
+            "libx264",
+            "-g",
+            "150",
+            "-keyint_min",
+            "150",
+            "-sc_threshold",
+            "0",
+            &src.to_string_lossy(),
+        ],
+    );
+    let p = probe::parse(
+        &String::from_utf8_lossy(
+            &Command::new(&t.ffprobe)
+                .args(probe::args(&src.to_string_lossy()))
+                .output()
+                .unwrap()
+                .stdout,
+        ),
+        std::fs::metadata(&src).unwrap().len(),
+    )
+    .unwrap();
+    ffmpeg_ok(
+        &t,
+        &preview::filmstrip_args(
+            &src.to_string_lossy(),
+            p.duration_ms,
+            p.fps,
+            &strip.to_string_lossy(),
+        )
+        .iter()
+        .map(String::as_str)
+        .collect::<Vec<_>>(),
+    );
+    let tiles = tile_brightness(&t, &strip);
+    assert!(tiles.iter().all(|&b| b > 20.0), "black tiles: {tiles:.0?}");
 }
 
 /// A phone clip: stored 2560x1440 with a 90 degree display rotation, so it shows as portrait 1440x2560.

@@ -305,7 +305,12 @@ pub async fn make_filmstrip(
 ) -> Result<PathBuf, String> {
     let out = entry.dir.join("filmstrip.jpg");
     std::fs::create_dir_all(&entry.dir).map_err(|_| NO_FILMSTRIP.to_owned())?;
-    let args = preview::filmstrip_args(&text(&entry.path), entry.probe.duration_ms, &text(&out));
+    let args = preview::filmstrip_args(
+        &text(&entry.path),
+        entry.probe.duration_ms,
+        entry.probe.fps,
+        &text(&out),
+    );
     let cmd = ffmpeg::command(
         ffmpeg_exe,
         ["-v", "error"]
