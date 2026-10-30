@@ -140,7 +140,7 @@ describe('NotifyThrottle', () => {
 
   it('a single message notifies at once and nothing follows', () => {
     const { sent, t } = setup()
-    t.offer('DM1', notice('DM1', 'one'))
+    t.offer('DM1', 'one', notice('DM1', 'one'))
     expect(sent).toEqual([{ title: 'sam', body: 'one', channelId: 'DM1' }])
     vi.advanceTimersByTime(20_000)
     expect(sent).toHaveLength(1)
@@ -149,7 +149,7 @@ describe('NotifyThrottle', () => {
   it('a burst of 10: the first at once, then one replacement with the newest and "and 9 more"', () => {
     const { sent, t } = setup()
     for (let i = 1; i <= 10; i++) {
-      t.offer('DM1', notice('DM1', `m${i}`))
+      t.offer('DM1', `m${i}`, notice('DM1', `m${i}`))
       vi.advanceTimersByTime(100)
     }
     expect(sent).toHaveLength(1)
@@ -162,38 +162,66 @@ describe('NotifyThrottle', () => {
 
   it('a replacement opens a new window; the count keeps growing while the chain goes on', () => {
     const { sent, t } = setup()
-    t.offer('G1', notice('G1', 'a'))
-    t.offer('G1', notice('G1', 'b'))
-    t.offer('G1', notice('G1', 'c'))
+    t.offer('G1', 'a', notice('G1', 'a'))
+    t.offer('G1', 'b', notice('G1', 'b'))
+    t.offer('G1', 'c', notice('G1', 'c'))
     vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
     expect(sent.at(-1)).toMatchObject({ title: 'sam and 2 more', body: 'c' })
-    t.offer('G1', notice('G1', 'd'))
-    t.offer('G1', notice('G1', 'e'))
+    t.offer('G1', 'd', notice('G1', 'd'))
+    t.offer('G1', 'e', notice('G1', 'e'))
     expect(sent).toHaveLength(2)
     vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
     expect(sent.at(-1)).toMatchObject({ title: 'sam and 4 more', body: 'e' })
     vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
     // the chain ended: the next one stands alone and goes at once
-    t.offer('G1', notice('G1', 'f'))
+    t.offer('G1', 'f', notice('G1', 'f'))
     expect(sent.at(-1)).toMatchObject({ title: 'sam', body: 'f' })
     expect(sent).toHaveLength(4)
   })
 
   it('conversations are throttled separately', () => {
     const { sent, t } = setup()
-    t.offer('DM1', notice('DM1', 'x'))
-    t.offer('G1', notice('G1', 'y'))
+    t.offer('DM1', 'x', notice('DM1', 'x'))
+    t.offer('G1', 'y', notice('G1', 'y'))
     expect(sent.map((n) => n.channelId)).toEqual(['DM1', 'G1'])
+  })
+
+  it('the newest was deleted: the replacement shows the newest one left, and counts only those', () => {
+    const { sent, t } = setup()
+    for (const x of ['a', 'b', 'c']) t.offer('DM1', x, notice('DM1', x))
+    t.forget('DM1', 'c')
+    vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
+    expect(sent.at(-1)).toEqual({ title: 'sam and 1 more', body: 'b', channelId: 'DM1' })
+  })
+
+  it('everything after the first was deleted: no replacement, and the next message goes at once', () => {
+    const { sent, t } = setup()
+    for (const x of ['a', 'b', 'c']) t.offer('DM1', x, notice('DM1', x))
+    t.forget('DM1', 'b')
+    t.forget('DM1', 'c')
+    vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
+    expect(sent).toHaveLength(1)
+    t.offer('DM1', 'd', notice('DM1', 'd'))
+    expect(sent.at(-1)).toMatchObject({ title: 'sam', body: 'd' })
+  })
+
+  it("a deletion in another conversation, or of a message it never had, changes nothing", () => {
+    const { sent, t } = setup()
+    for (const x of ['a', 'b']) t.offer('DM1', x, notice('DM1', x))
+    t.forget('G1', 'b')
+    t.forget('DM1', 'zzz')
+    vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
+    expect(sent.at(-1)).toMatchObject({ title: 'sam and 1 more', body: 'b' })
   })
 
   it('clear() cancels a pending replacement; the next message goes at once', () => {
     const { sent, t } = setup()
-    t.offer('DM1', notice('DM1', 'a'))
-    t.offer('DM1', notice('DM1', 'b'))
+    t.offer('DM1', 'a', notice('DM1', 'a'))
+    t.offer('DM1', 'b', notice('DM1', 'b'))
     t.clear()
     vi.advanceTimersByTime(NOTIFY_WINDOW_MS * 2)
     expect(sent).toHaveLength(1)
-    t.offer('DM1', notice('DM1', 'c'))
+    t.offer('DM1', 'c', notice('DM1', 'c'))
     expect(sent.at(-1)).toMatchObject({ title: 'sam', body: 'c' })
   })
 })

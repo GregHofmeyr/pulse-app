@@ -62,12 +62,14 @@ export function notificationBody(m: Message, me: string, showText: boolean): str
 
 export const NOTIFY_WINDOW_MS = 4000
 
-type Window = { timer: ReturnType<typeof setTimeout>; shown: number; pending: number; newest: ((more: number) => Notice) | null }
+type Pending = { id: string; build: (more: number) => Notice }
+type Window = { timer: ReturnType<typeof setTimeout>; shown: number; pending: Pending[] }
 
 /** Keeps a busy conversation from burying the desktop: its first message notifies at once and opens
  *  a [NOTIFY_WINDOW_MS] window. Whatever arrives inside it is counted, and when it ends one
  *  notification (the newest, "and N more") replaces the last and opens the next window. N counts
- *  every message of the run not shown: the OS entry was replaced, so the earlier ones are gone. */
+ *  every message of the run not shown: the OS entry was replaced, so the earlier ones are gone.
+ *  A message deleted before its window ends doesn't count, and isn't the one shown. */
 export class NotifyThrottle {
   private windows = new Map<string, Window>()
 
@@ -76,16 +78,21 @@ export class NotifyThrottle {
     private windowMs = NOTIFY_WINDOW_MS,
   ) {}
 
-  /** A new message for conversation `key`; `build(more)` makes its notification. */
-  offer(key: string, build: (more: number) => Notice): void {
+  /** A new message `id` for conversation `key`; `build(more)` makes its notification. */
+  offer(key: string, id: string, build: (more: number) => Notice): void {
     const w = this.windows.get(key)
     if (w) {
-      w.pending++
-      w.newest = build
+      w.pending.push({ id, build })
       return
     }
     this.send(build(0))
-    this.open(key, { shown: 1, pending: 0, newest: null })
+    this.open(key, 1)
+  }
+
+  /** Message `id` of conversation `key` was deleted: a replacement still to come leaves it out. */
+  forget(key: string, id: string): void {
+    const w = this.windows.get(key)
+    if (w) w.pending = w.pending.filter((p) => p.id !== id)
   }
 
   /** Drops every window and pending replacement (the window got focus, or you signed out). */
@@ -94,15 +101,16 @@ export class NotifyThrottle {
     this.windows.clear()
   }
 
-  private open(key: string, w: Omit<Window, 'timer'>) {
+  private open(key: string, shown: number) {
     const timer = setTimeout(() => {
       const cur = this.windows.get(key)
       if (cur?.timer !== timer) return
       this.windows.delete(key)
-      if (!cur.pending || !cur.newest) return
-      this.send(cur.newest(cur.shown + cur.pending - 1))
-      this.open(key, { shown: cur.shown + cur.pending, pending: 0, newest: null })
+      const newest = cur.pending.at(-1)
+      if (!newest) return
+      this.send(newest.build(cur.shown + cur.pending.length - 1))
+      this.open(key, cur.shown + cur.pending.length)
     }, this.windowMs)
-    this.windows.set(key, { ...w, timer })
+    this.windows.set(key, { timer, shown, pending: [] })
   }
 }

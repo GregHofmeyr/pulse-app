@@ -114,6 +114,16 @@ describe('message notifications', () => {
     expect(notified()).toHaveLength(1)
   })
 
+  it("a message deleted within the window isn't shown by the replacement", () => {
+    maybeAlert(created('DM1', 'a'))
+    maybeAlert(created('DM1', 'b'))
+    const c = created('DM1', 'oops')
+    maybeAlert(c)
+    maybeAlert({ t: 'MessageUpdated', d: { message: { ...c.d.message, deleted: true, content: '' } } })
+    vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
+    expect(notified().at(-1)).toEqual({ title: 'sam and 1 more', body: 'b', channelId: 'DM1' })
+  })
+
   it('message text off: no text in the replacement either', () => {
     setNotificationText(false)
     maybeAlert(created('DM1', 'secret one'))

@@ -83,6 +83,7 @@ const notifications = new NotifyThrottle((notice) => void api.notifyMessage(noti
 
 /** A new message: the message sound, and a desktop notification while the window isn't focused. */
 export function maybeAlert(e: Event) {
+  if (e.t === 'MessageUpdated' && e.d.message.deleted) return notifications.forget(e.d.message.channel_id, e.d.message.id)
   if (e.t !== 'MessageCreated') return
   const m = e.d.message
   const ch = app.state.channels[m.channel_id]
@@ -112,7 +113,7 @@ export function maybeAlert(e: Event) {
   }
   const s = app.state
   const notice = notifyMessage(s, v, notifyPrefs)
-  if (notice) notifications.offer(m.channel_id, (more) => (more ? (notifyMessage(s, v, notifyPrefs, more) ?? notice) : notice))
+  if (notice) notifications.offer(m.channel_id, m.id, (more) => (more ? (notifyMessage(s, v, notifyPrefs, more) ?? notice) : notice))
 }
 
 /** A clicked notification (the core has brought the window up): open its conversation, and a
