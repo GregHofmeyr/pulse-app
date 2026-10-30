@@ -55,6 +55,15 @@ impl MemPolicy {
         self.go_low()
     }
 
+    /// The target as last decided (what the webview should have right now).
+    pub fn target(&self) -> Target {
+        if self.low {
+            Target::Low
+        } else {
+            Target::Normal
+        }
+    }
+
     pub fn timer_fired(&mut self, generation: u64) -> Action {
         if generation == self.generation {
             self.go_low()
@@ -100,7 +109,7 @@ fn apply(
 ) {
     match action {
         Action::Nothing => {}
-        Action::Set(target) => set_target(win, target),
+        Action::Set(_) => set_target(win, policy),
         Action::Arm(generation) => {
             let (win, policy) = (win.clone(), policy.clone());
             tauri::async_runtime::spawn(async move {
@@ -112,28 +121,51 @@ fn apply(
     }
 }
 
+/// WebView2 Runtime older than 114 (no ICoreWebView2_19): said once, then never tried again.
 #[cfg(windows)]
-fn set_target(win: &tauri::WebviewWindow, target: Target) {
+static UNSUPPORTED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Apply the policy's current target. It is read on the webview's thread, at the moment of
+/// applying: a focus change racing the background timer (both decided, then queued here in
+/// either order) still leaves the webview on the latest decision.
+#[cfg(windows)]
+fn set_target(win: &tauri::WebviewWindow, policy: &std::sync::Arc<std::sync::Mutex<MemPolicy>>) {
+    use std::sync::atomic::Ordering;
     use webview2_com::Microsoft::Web::WebView2::Win32::{
         COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW, COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
         ICoreWebView2_19,
     };
     use windows_core::Interface;
-    let level = match target {
-        Target::Low => COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
-        Target::Normal => COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
-    };
+    if UNSUPPORTED.load(Ordering::Relaxed) {
+        return;
+    }
+    let policy = policy.clone();
     let sent = win.with_webview(move |wv| {
-        // SAFETY: plain COM calls on the webview's own thread (with_webview runs us there).
-        let set = unsafe {
-            wv.controller()
-                .CoreWebView2()
-                .and_then(|core| core.cast::<ICoreWebView2_19>())
-                .and_then(|v19| v19.SetMemoryUsageTargetLevel(level))
+        let target = policy.lock().unwrap().target();
+        let level = match target {
+            Target::Low => COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_LOW,
+            Target::Normal => COREWEBVIEW2_MEMORY_USAGE_TARGET_LEVEL_NORMAL,
         };
-        match set {
+        // SAFETY: plain COM calls on the webview's own thread (with_webview runs us there).
+        let v19 = match unsafe { wv.controller().CoreWebView2() } {
+            Ok(core) => core.cast::<ICoreWebView2_19>(),
+            Err(e) => {
+                tracing::warn!(?target, error = %e, "webview memory target not set");
+                return;
+            }
+        };
+        let Ok(v19) = v19 else {
+            // older runtimes just stay on Normal; every later call would fail the same way
+            if !UNSUPPORTED.swap(true, Ordering::Relaxed) {
+                tracing::warn!(
+                    "webview memory target: needs WebView2 Runtime 114+; left on Normal"
+                );
+            }
+            return;
+        };
+        // SAFETY: as above.
+        match unsafe { v19.SetMemoryUsageTargetLevel(level) } {
             Ok(()) => tracing::info!(?target, "webview memory target"),
-            // ICoreWebView2_19 needs WebView2 Runtime 114+; older runtimes just stay on Normal.
             Err(e) => tracing::warn!(?target, error = %e, "webview memory target not set"),
         }
     });
@@ -183,6 +215,16 @@ mod tests {
             "the first timer stays stale"
         );
         assert_eq!(p.timer_fired(g2), Action::Set(Target::Low));
+    }
+
+    #[test]
+    fn the_target_follows_the_latest_decision() {
+        let mut p = MemPolicy::default();
+        assert_eq!(p.target(), Target::Normal);
+        p.minimised();
+        assert_eq!(p.target(), Target::Low);
+        p.focused();
+        assert_eq!(p.target(), Target::Normal);
     }
 
     #[test]
