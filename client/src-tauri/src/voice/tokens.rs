@@ -13,6 +13,10 @@ use crate::api::Api;
 /// The server's tokens last 10 min, but one only needs to be valid when the join starts. A
 /// short shelf life keeps a token minted before a permission change from being used much later.
 pub const FRESH_FOR: Duration = Duration::from_secs(120);
+/// How long a click waits for a prefetch still in flight. A token takes one round trip; one this
+/// late is stuck (a dead connection, a server not answering), and a fresh fetch is the better bet
+/// than waiting out the 15 s request timeout.
+pub const PREFETCH_WAIT: Duration = Duration::from_secs(2);
 
 type Fetch = Shared<BoxFuture<'static, Option<VoiceTokenResponse>>>;
 
@@ -29,6 +33,8 @@ impl Entry {
         self.channel == channel
             && self.session == session
             && now.saturating_duration_since(self.started) < FRESH_FOR
+            // finished and failed: nothing to wait for, so the next hover fetches again
+            && !matches!(self.fetch.peek(), Some(None))
     }
 }
 
@@ -66,6 +72,17 @@ impl TokenCache {
         channel: ChannelId,
         now: Instant,
     ) -> Option<VoiceTokenResponse> {
+        self.take_within(session, channel, now, PREFETCH_WAIT).await
+    }
+
+    /// [`take`](Self::take), waiting at most `wait` for a prefetch still in flight.
+    async fn take_within(
+        &self,
+        session: &str,
+        channel: ChannelId,
+        now: Instant,
+        wait: Duration,
+    ) -> Option<VoiceTokenResponse> {
         let fetch = {
             let mut slot = self.entry.lock().unwrap();
             if !slot.as_ref().is_some_and(|e| e.fits(session, channel, now)) {
@@ -73,7 +90,7 @@ impl TokenCache {
             }
             slot.take()?.fetch
         };
-        fetch.await
+        tokio::time::timeout(wait, fetch).await.ok().flatten()
     }
 
     pub fn clear(&self) {
@@ -163,5 +180,49 @@ mod tests {
         let now = Instant::now();
         c.prefetch(&api, &token, text, now);
         assert!(c.take(&token, text, now).await.is_none());
+    }
+
+    /// A failed prefetch doesn't hold the slot for FRESH_FOR: hovering again fetches again.
+    #[tokio::test]
+    async fn a_failed_prefetch_is_fetched_again_on_the_next_hover() {
+        let (_app, api, token, lounge, _) = setup().await;
+        // nothing listens here: the first prefetch fails at once
+        let dead = {
+            let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            Api::new(&format!("http://{}", l.local_addr().unwrap()))
+        };
+        let c = TokenCache::default();
+        let now = Instant::now();
+        c.prefetch(&dead, &token, lounge, now);
+        let failed = c.entry.lock().unwrap().as_ref().unwrap().fetch.clone();
+        assert!(failed.await.is_none());
+        c.prefetch(&api, &token, lounge, now);
+        assert!(
+            c.take(&token, lounge, now).await.is_some(),
+            "not fetched again"
+        );
+    }
+
+    /// A prefetch stuck on a server that never answers doesn't hold the click for the whole
+    /// request timeout: past the wait, the join fetches normally.
+    #[tokio::test]
+    async fn a_click_waits_only_so_long_for_a_stuck_prefetch() {
+        let (_app, _, token, lounge, _) = setup().await;
+        // accepts (the OS backlog) but never answers
+        let silent = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let stuck = Api::new(&format!("http://{}", silent.local_addr().unwrap()));
+        let c = TokenCache::default();
+        let now = Instant::now();
+        c.prefetch(&stuck, &token, lounge, now);
+        let t0 = Instant::now();
+        let got = c
+            .take_within(&token, lounge, now, Duration::from_millis(200))
+            .await;
+        assert!(got.is_none());
+        assert!(
+            t0.elapsed() < Duration::from_secs(2),
+            "waited {:?}",
+            t0.elapsed()
+        );
     }
 }
