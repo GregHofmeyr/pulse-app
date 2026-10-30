@@ -18,7 +18,7 @@
   import { addHistory, addOlder, appendNewer, markHistory, reachLatest, PAGE, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
   import { liveQoty } from '../lib/quotes'
-  import { groupedWith, mentionablesFor, nameOfIn, nextTypingExpiry, stableList, typingNames } from '../lib/selectors'
+  import { groupedWith, keepStable, mentionablesFor, nameOfIn, nextTypingExpiry, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -116,8 +116,8 @@
   // Who can be @mentioned here: a DM/group's members, or everyone for server channels.
   const mentionables = $derived(mentionablesFor(app.state, channelId))
   // Same names → same array, so an unrelated event (typing, presence) doesn't re-render every message.
-  let lastNames: string[] = []
-  const mentionNames = $derived((lastNames = stableList(lastNames, mentionables.map((p) => p.name))))
+  const sameNames = keepStable<string>()
+  const mentionNames = $derived(sameNames(mentionables.map((p) => p.name)))
 
   // --- DM/group header ---
   const isPrivate = $derived(channel?.server_id === null)

@@ -79,6 +79,15 @@ describe('stableList', () => {
     expect(stableList(a, b)).toBe(b)
     expect(stableList(a, ['alex', 'sam'])).not.toBe(a)
   })
+  it('keepStable remembers the list it last handed out', async () => {
+    const { keepStable } = await import('./selectors')
+    const same = keepStable<string>()
+    const a = same(['sam', 'alex'])
+    expect(same(['sam', 'alex'])).toBe(a)
+    const b = same(['sam'])
+    expect(b).toEqual(['sam'])
+    expect(same(['sam'])).toBe(b)
+  })
 })
 
 describe('nextTypingExpiry', () => {

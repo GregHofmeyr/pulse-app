@@ -11,7 +11,7 @@
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { addPending, addReplies, closeThread, holdThread, maxIdOf, PAGE, pendingMessage, removePending, threadOf, tracksUnread, type Pending } from '../lib/state'
   import { overlayShown } from '../lib/escape'
-  import { groupedWith, mentionablesFor, nameOfIn, stableList } from '../lib/selectors'
+  import { groupedWith, keepStable, mentionablesFor, nameOfIn } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -139,8 +139,8 @@
 
   // Everyone in the server can be @mentioned (as in its text channels).
   const mentionables = $derived(mentionablesFor(app.state, channelId))
-  let lastNames: string[] = []
-  const mentionNames = $derived((lastNames = stableList(lastNames, mentionables.map((p) => p.name))))
+  const sameNames = keepStable<string>()
+  const mentionNames = $derived(sameNames(mentionables.map((p) => p.name)))
 
   // `replyToId` stays inside the thread: it's never the quote unless the person picked it.
   function post(text: string, replyToId: string | null) {

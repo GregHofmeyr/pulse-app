@@ -73,6 +73,13 @@ export function stableList<T>(prev: T[], next: T[]): T[] {
   return prev.length === next.length && prev.every((v, i) => v === next[i]) ? prev : next
 }
 
+/** `stableList` with its memory: each call compares with the list it handed out last time. For a
+ * `$derived` whose identity should only change with its items. */
+export function keepStable<T>(): (next: T[]) => T[] {
+  let prev: T[] = []
+  return (next) => (prev = stableList(prev, next))
+}
+
 /** When the next typing indicator in `channelId` runs out (ms timestamp), or null if nobody is typing. */
 export function nextTypingExpiry(s: AppState, channelId: string, now: number): number | null {
   const live = Object.values(s.typing[channelId] ?? {}).filter((until) => until > now)
