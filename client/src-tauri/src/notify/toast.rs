@@ -16,9 +16,10 @@ fn escape(s: &str) -> String {
     out
 }
 
+/// Silent: Pulse already plays its own message sound, so one alert makes one sound.
 pub fn toast_xml(title: &str, body: &str) -> String {
     format!(
-        r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual></toast>"#,
+        r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual><audio silent="true"/></toast>"#,
         escape(title),
         escape(body)
     )
@@ -32,7 +33,7 @@ mod tests {
     fn two_text_lines_in_the_generic_template() {
         assert_eq!(
             toast_xml("sam", "hello"),
-            r#"<toast><visual><binding template="ToastGeneric"><text>sam</text><text>hello</text></binding></visual></toast>"#
+            r#"<toast><visual><binding template="ToastGeneric"><text>sam</text><text>hello</text></binding></visual><audio silent="true"/></toast>"#
         );
     }
 
