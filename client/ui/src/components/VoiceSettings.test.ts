@@ -6,6 +6,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: unknown) => invoke(cmd, args) }))
 
 import VoiceSettings from './VoiceSettings.svelte'
+import { voice } from '../lib/voice.svelte'
 
 const meterCalls = () => invoke.mock.calls.filter(([cmd]) => cmd === 'watch_voice_meters').map(([, a]) => a)
 
@@ -27,6 +28,20 @@ describe('VoiceSettings meter subscription', () => {
       unmount(c)
     }
     expect(meterCalls()).toEqual([{ on: true }, { on: false }, { on: true }, { on: false }, { on: true }, { on: false }])
+  })
+
+  it('reopening starts the meter from zero, not from the level last seen before it closed', () => {
+    voice.levels = { mic: 0.2, speaker: 0.5 }
+    voice.gateOpen = true
+    const c = mount(VoiceSettings, { target: document.body })
+    try {
+      flushSync()
+      const fill = document.querySelector<HTMLElement>('.meter .fill')!
+      expect(fill.style.width).toBe('0%')
+      expect(fill.classList.contains('over')).toBe(false)
+    } finally {
+      unmount(c)
+    }
   })
 })
 

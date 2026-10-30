@@ -223,5 +223,12 @@ export const voiceApi = {
     voice.joinFailed = null
   },
   /** Levels are only sent while something shows them: call with true when a meter appears, false when it goes. */
-  watchMeters: (on: boolean) => invoke('watch_voice_meters', { on }),
+  watchMeters(on: boolean) {
+    // a meter that appears starts from zero, not from the last level seen before the previous one closed
+    if (on) {
+      voice.levels = { mic: 0, speaker: 0 }
+      voice.gateOpen = false
+    }
+    return invoke('watch_voice_meters', { on })
+  },
 }
