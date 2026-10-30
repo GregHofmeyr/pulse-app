@@ -15,9 +15,9 @@
 {/if}
 
 <style>
-  .caption { color: #dcdee5; line-height: 1.45; overflow-wrap: anywhere; }
+  .caption { color: var(--text-body); line-height: 1.45; overflow-wrap: anywhere; }
   .caption :global(p) { margin: 0; }
   .caption :global(a) { color: var(--accent); }
-  .caption :global(code) { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; background: #17181c; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+  .caption :global(code) { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; background: var(--bg-inset); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
   .caption :global(img.emoji) { width: 1.375em; height: 1.375em; vertical-align: -0.3em; object-fit: contain; }
 </style>

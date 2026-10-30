@@ -95,5 +95,5 @@
   button:hover { background: var(--bg-3); }
   button:disabled { opacity: .6; }
   .ok { margin: 10px 0 0; font-size: 13px; color: var(--text-2); }
-  .err { margin: 10px 0 0; font-size: 13px; color: #f2616b; }
+  .err { margin: 10px 0 0; font-size: 13px; color: var(--danger-text); }
 </style>

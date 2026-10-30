@@ -49,5 +49,5 @@
   .who small { color: var(--text-3); font-weight: 400; }
   .x { width: 26px; height: 26px; border: 0; border-radius: 7px; background: var(--bg-4); color: var(--text-2); display: grid; place-items: center; opacity: 0; }
   .row:hover .x, .x:focus-visible { opacity: 1; }
-  .err { margin: 8px 10px; font-size: 12px; color: #f2616b; }
+  .err { margin: 8px 10px; font-size: 12px; color: var(--danger-text); }
 </style>

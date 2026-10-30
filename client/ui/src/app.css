@@ -15,6 +15,30 @@
   --warn: #e8b04a;
   --ok: #4fd18b;
   --radius: 14px;
+  /* Error and danger text: lighter than --danger, which is for fills. */
+  --danger-text: #f2616b;
+  /* Text on a --danger or --ok fill. */
+  --on-danger: #fff;
+  --on-ok: #0f2a1c;
+  --warn-soft: rgba(232, 176, 74, .12);
+  /* --accent at 15%, as plain rgba() for the same reason as the scrollbar thumb below. */
+  --accent-soft: rgba(139, 156, 255, .15);
+  /* Context menus, popovers and the Select list. */
+  --surface-menu: #2e3037;
+  --line-menu: #3d4048;
+  --shadow-menu: 0 18px 48px rgba(8, 9, 12, .5);
+  --shadow-pop: 0 8px 24px rgba(0, 0, 0, .35);
+  /* Row separators in settings, and the sidebar header rule. */
+  --line-soft: #26282e;
+  /* Below --bg-0: code blocks, the voice control dock, the account bar. */
+  --bg-inset: #17181c;
+  /* Message, clip caption and quote body text. */
+  --text-body: #dcdee5;
+  /* Behind a modal. */
+  --scrim: rgba(10, 11, 13, .6);
+  /* Hover and press feedback. */
+  --dur: 140ms;
+  --ease: cubic-bezier(.2, .8, .2, 1);
   /* Quotes: the award and Quote of the Year green, its mid and deep shades (the pixel spill), and the text that sits on the green. */
   --quote-green: #39d98a;
   --quote-green-mid: #22a865;

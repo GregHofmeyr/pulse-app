@@ -211,11 +211,11 @@
   button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-size: 13px; }
   button:hover { background: var(--bg-3); }
   button:disabled { opacity: .6; }
-  button.danger { color: #f2616b; }
+  button.danger { color: var(--danger-text); }
   .qr { display: block; border-radius: 6px; }
   .key { margin: 0; font-size: 13px; }
   .key code, .codes code { font-family: ui-monospace, monospace; letter-spacing: .04em; }
   .codes { list-style: none; margin: 0 0 10px; padding: 0; display: grid; grid-template-columns: repeat(2, max-content); gap: 4px 24px; font-size: 13px; }
   .ok { margin: 10px 0 10px; font-size: 13px; color: var(--text-2); }
-  .err { margin: 10px 0 0; font-size: 13px; color: #f2616b; }
+  .err { margin: 10px 0 0; font-size: 13px; color: var(--danger-text); }
 </style>

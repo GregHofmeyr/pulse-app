@@ -49,7 +49,7 @@
 <style>
   /* flex-centred (not transform): WebKitGTK blurs transformed text */
   .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; }
-  .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
+  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
   .modal { position: relative; width: min(460px, 100%); padding: 22px; border-radius: 16px; background: var(--bg-2); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; }
   form { display: contents; }
   .top { display: flex; align-items: center; justify-content: space-between; }

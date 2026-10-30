@@ -170,7 +170,7 @@
   .hint { margin: 0; font-size: 13px; color: var(--text-3); }
   code { font-family: ui-monospace, monospace; font-size: 12px; padding: 2px 6px; border-radius: 6px; background: var(--bg-3); color: var(--text-2); }
   .list { display: flex; flex-direction: column; }
-  .row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid #26282e; }
+  .row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
   .row strong { flex: 1; font-weight: 600; }
   .key { min-width: 160px; height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-2); color: var(--text); font-weight: 600; letter-spacing: .02em; }
   .key.recording { border-color: var(--accent); color: var(--accent); }
@@ -180,6 +180,6 @@
   .clear { width: 32px; height: 32px; border-radius: 50%; border: 0; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .clear:disabled { opacity: .3; }
   small { font-size: 12px; color: var(--text-3); }
-  .error { margin: 0; color: #f2616b; font-size: 13px; }
-  .warn { margin: 0; padding: 10px 12px; border-radius: 10px; background: rgba(232, 176, 74, .12); color: var(--warn); font-size: 13px; }
+  .error { margin: 0; color: var(--danger-text); font-size: 13px; }
+  .warn { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 13px; }
 </style>

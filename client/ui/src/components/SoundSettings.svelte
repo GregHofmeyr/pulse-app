@@ -79,6 +79,6 @@
   .vol strong { color: var(--text); letter-spacing: 0; }
   input[type='range'] { accent-color: var(--accent); }
   .events { display: flex; flex-direction: column; }
-  .row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid #26282e; }
+  .row { display: flex; align-items: center; gap: 16px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
   .row strong { flex: 1; font-weight: 600; }
 </style>

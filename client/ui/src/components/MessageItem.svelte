@@ -257,10 +257,10 @@
   .meta { display: flex; align-items: baseline; gap: 8px; margin-bottom: 2px; }
   .meta strong { font-size: 14.5px; }
   .time { font-size: 11px; color: var(--text-3); }
-  .content { color: #dcdee5; line-height: 1.5; overflow-wrap: anywhere; }
+  .content { color: var(--text-body); line-height: 1.5; overflow-wrap: anywhere; }
   .content :global(p) { margin: 0; }
-  .content :global(code) { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; background: #17181c; border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
-  .content :global(pre) { background: #17181c; border-radius: 8px; padding: 10px; overflow-x: auto; }
+  .content :global(code) { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; background: var(--bg-inset); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
+  .content :global(pre) { background: var(--bg-inset); border-radius: 8px; padding: 10px; overflow-x: auto; }
   .content :global(pre code) { border: 0; padding: 0; }
   .content :global(a) { color: var(--accent); }
   .content :global(blockquote) { margin: 4px 0; padding-left: 10px; border-left: 3px solid var(--bg-4); color: var(--text-2); }
@@ -285,7 +285,7 @@
   .content :global(img.emoji.big) { width: 48px; height: 48px; }
   .content :global(.emoji-gone) { color: var(--text-3); background: var(--bg-3); border-radius: 4px; padding: 0 4px; font-size: .9em; }
   .content :global(.emoji-gone.big) { font-size: 1.25em; }
-  .content :global(.mention) { color: var(--accent); background: rgba(139, 156, 255, .15); border-radius: 4px; padding: 0 3px; font-weight: 600; font-size: calc(1em * var(--name-scale, 1)); line-height: calc(1.5em / var(--name-scale, 1)); vertical-align: baseline; cursor: pointer; }
+  .content :global(.mention) { color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 0 3px; font-weight: 600; font-size: calc(1em * var(--name-scale, 1)); line-height: calc(1.5em / var(--name-scale, 1)); vertical-align: baseline; cursor: pointer; }
   /* a gradient name clips its background to the text: the pill background is on this wrapper instead */
-  .content :global(.mention-wrap) { background: rgba(139, 156, 255, .15); border-radius: 4px; padding: 0 3px; }
+  .content :global(.mention-wrap) { background: var(--accent-soft); border-radius: 4px; padding: 0 3px; }
 </style>

@@ -78,7 +78,7 @@
 </div>
 
 <style>
-  .panel { outline: none; position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 15; padding: 14px; background: var(--bg-1); border: 1px solid var(--bg-4); border-radius: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
+  .panel { outline: none; position: absolute; left: 0; right: 0; bottom: calc(100% + 6px); z-index: 15; padding: 14px; background: var(--bg-1); border: 1px solid var(--bg-4); border-radius: 12px; display: flex; flex-direction: column; gap: 8px; box-shadow: var(--shadow-pop); }
   dl { margin: 0; display: grid; grid-template-columns: 1fr auto; gap: 4px 12px; font-size: 13px; }
   dt { color: var(--text-3); }
   dd { margin: 0; font-weight: 600; text-align: right; overflow-wrap: anywhere; }

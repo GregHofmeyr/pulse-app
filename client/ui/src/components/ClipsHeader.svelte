@@ -100,7 +100,7 @@
   .chip:hover { background: var(--bg-3); color: var(--text); }
   .chip[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
   .person { position: relative; }
-  .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; padding: 4px; display: flex; flex-direction: column; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
+  .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; padding: 4px; display: flex; flex-direction: column; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); }
   .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--text); display: flex; align-items: center; gap: 8px; font-size: 13.5px; text-align: left; }
   .menu button:hover, .menu button:focus-visible { background: var(--bg-4); }
   .menu button[aria-checked='true'] { color: var(--accent); }

@@ -352,7 +352,7 @@
   .send { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
   .why { margin: 0; font-size: 13px; color: var(--text-2); }
   .why.over { color: var(--danger); }
-  .primary { height: 40px; border: 0; border-radius: 10px; background: var(--ok); color: #0f2a1c; font-weight: 700; cursor: pointer; }
+  .primary { height: 40px; border: 0; border-radius: 10px; background: var(--ok); color: var(--on-ok); font-weight: 700; cursor: pointer; }
   .primary:disabled { opacity: 0.5; cursor: default; }
   @media (max-width: 860px) { .body { grid-template-columns: minmax(0, 1fr); } }
 </style>

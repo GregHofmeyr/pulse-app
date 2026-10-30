@@ -100,18 +100,18 @@
   .clip-actions { position: relative; }
   .dots { width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .dots:hover, .dots[aria-expanded='true'] { background: var(--bg-3); color: var(--text); }
-  .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 140px; padding: 4px; display: flex; flex-direction: column; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
+  .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 140px; padding: 4px; display: flex; flex-direction: column; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); }
   .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--text); display: flex; align-items: center; gap: 8px; font-size: 13.5px; text-align: left; }
   .menu button:hover, .menu button:focus-visible { background: var(--bg-4); }
   .menu .danger { color: var(--danger); }
-  .ask { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: 240px; padding: 10px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 8px 24px rgba(0, 0, 0, .35); }
+  .ask { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: 240px; padding: 10px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); }
   .ask p { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--text); }
   .ask button { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 13px; }
-  .ask .go { border: 0; background: var(--danger); color: #fff; font-weight: 600; }
+  .ask .go { border: 0; background: var(--danger); color: var(--on-danger); font-weight: 600; }
   .ask .err { margin: 4px 0 0; color: var(--danger); }
   /* flex-centred (not transform): WebKitGTK blurs transformed text */
   .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; }
-  .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
+  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
   .modal { position: relative; width: min(420px, 100%); padding: 20px; border-radius: 16px; background: var(--bg-1); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; outline: none; }
   h1 { margin: 0; font-size: 17px; font-weight: 600; }
   textarea { resize: vertical; min-height: 64px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font: inherit; }

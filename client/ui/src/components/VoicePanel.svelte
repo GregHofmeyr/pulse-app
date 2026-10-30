@@ -144,8 +144,8 @@
   .head { height: 52px; flex-shrink: 0; padding: 0 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--ok); }
   .title { color: var(--text); font-size: 15px; font-weight: 600; flex: 1; }
   .status { font-size: 12px; font-weight: 600; color: var(--ok); padding: 4px 10px; border-radius: 12px; background: rgba(79, 209, 139, .12); }
-  .status.warn { color: var(--warn); background: rgba(232, 176, 74, .12); }
-  .error { margin: 12px 18px 0; color: #f2616b; font-size: 13px; }
+  .status.warn { color: var(--warn); background: var(--warn-soft); }
+  .error { margin: 12px 18px 0; color: var(--danger-text); font-size: 13px; }
   .eye { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .eye:hover { background: var(--bg-2); color: var(--text); }
   .eye[aria-pressed='true'] { color: var(--text); }
@@ -156,11 +156,11 @@
   .link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; }
   .empty { margin: 20px; color: var(--text-3); }
   .bar-wrap { height: 84px; flex-shrink: 0; display: grid; place-items: center; }
-  .controls { padding: 8px; background: #17181c; border-radius: 18px; display: flex; gap: 8px; }
+  .controls { padding: 8px; background: var(--bg-inset); border-radius: 18px; display: flex; gap: 8px; }
   .ctl { width: 48px; height: 48px; border: 0; border-radius: 14px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
-  .ctl.on { background: var(--danger); color: #fff; }
-  .leave { width: 64px; height: 48px; border: 0; border-radius: 14px; background: var(--danger); color: #fff; display: grid; place-items: center; }
-  .golive { height: 48px; padding: 0 16px; border: 0; border-radius: 14px; background: var(--ok); color: #0f2a1c; font-weight: 700; }
+  .ctl.on { background: var(--danger); color: var(--on-danger); }
+  .leave { width: 64px; height: 48px; border: 0; border-radius: 14px; background: var(--danger); color: var(--on-danger); display: grid; place-items: center; }
+  .golive { height: 48px; padding: 0 16px; border: 0; border-radius: 14px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
   .golive.off { opacity: .5; cursor: not-allowed; }
-  .primary { height: 44px; padding: 0 22px; border: 0; border-radius: 12px; background: var(--ok); color: #0f2a1c; font-weight: 700; }
+  .primary { height: 44px; padding: 0 22px; border: 0; border-radius: 12px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
 </style>

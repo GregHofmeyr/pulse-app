@@ -88,7 +88,7 @@
 
 <style>
   .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 32px 16px; }
-  .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
+  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
   .dialog { position: relative; width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 64px); display: flex; flex-direction: column; gap: 10px; padding: 20px; background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: 16px; }
   h2 { margin: 0; font-size: 17px; }
   .hint { margin: 0; font-size: 12px; color: var(--text-3); }

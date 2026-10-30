@@ -183,7 +183,7 @@
   .add { width: 20px; height: 20px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; padding: 0; }
   .add:hover { color: var(--text); background: var(--bg-2); }
   .new { height: 32px; margin: 2px 4px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg-2); font-size: 14px; }
-  .err { padding: 0 10px; color: #f2616b; font-size: 12px; }
+  .err { padding: 0 10px; color: var(--danger-text); font-size: 12px; }
   .row { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: #9a9eab; display: flex; align-items: center; gap: 8px; text-align: left; font-size: 14px; }
   .row:hover { background: var(--bg-2); color: var(--text); }
   .row.active { background: var(--bg-3); color: var(--text); font-weight: 500; }
@@ -200,10 +200,10 @@
   .spinner { width: 12px; height: 12px; border-radius: 50%; border: 2px solid var(--text-3); border-top-color: transparent; animation: spin .8s linear infinite; }
   @keyframes spin { to { transform: rotate(360deg); } }
   @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
-  .flag { color: #f2616b; display: flex; }
+  .flag { color: var(--danger-text); display: flex; }
   .flag.for-me { color: var(--warn); }
   .row.unread { color: var(--text); font-weight: 600; }
   .row.muted { opacity: .5; }
   .mic { color: var(--text-3); display: grid; }
-  .pill { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; }
+  .pill { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: grid; place-items: center; }
 </style>

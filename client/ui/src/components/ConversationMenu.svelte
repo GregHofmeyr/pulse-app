@@ -80,10 +80,10 @@
   .menu.ctx { position: fixed; right: auto; z-index: 45; }
   button { text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font: inherit; font-size: 13px; }
   button:hover { background: var(--bg-3); color: var(--text); }
-  .danger { color: #f2616b; }
+  .danger { color: var(--danger-text); }
   .lbl { padding: 6px 10px 2px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); text-transform: uppercase; }
   .sep { height: 1px; margin: 4px 6px; background: var(--bg-3); }
   .q { margin: 6px 8px; font-size: 13px; color: var(--text-2); }
   .row { display: flex; gap: 4px; }
-  .err { margin: 6px 8px 2px; font-size: 12px; color: #f2616b; }
+  .err { margin: 6px 8px 2px; font-size: 12px; color: var(--danger-text); }
 </style>

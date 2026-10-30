@@ -112,6 +112,6 @@
   .acts button { flex: 1; height: 30px; border: 0; border-radius: 8px; background: var(--bg-3); color: var(--text-2); font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 5px; }
   .acts button:hover:not(:disabled) { background: var(--bg-4); color: var(--text); }
   .acts button:disabled { opacity: .45; }
-  .error { color: #f2616b; font-size: 13px; }
+  .error { color: var(--danger-text); font-size: 13px; }
   .empty { padding: 24px 2px; color: var(--text-3); }
 </style>

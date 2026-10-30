@@ -525,7 +525,7 @@
   .start { padding: 16px 18px; color: var(--text-3); font-size: 13px; }
   .typing { height: 22px; padding: 0 18px; font-size: 12px; color: var(--text-3); }
   .typing strong { color: var(--text); }
-  .error { margin: 0 18px 4px; color: #f2616b; font-size: 13px; }
+  .error { margin: 0 18px 4px; color: var(--danger-text); font-size: 13px; }
   /* a jumped-to message: a fading highlight, or a static outline under reduced motion */
   .list :global(.jump-flash) { animation: jump-flash 2s ease-out; }
   .list :global(.jump-flash.still) { animation: none; outline: 2px solid var(--accent); outline-offset: -2px; }

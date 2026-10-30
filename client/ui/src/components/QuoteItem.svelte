@@ -221,7 +221,7 @@
   .line { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 2px 6px; margin-left: -6px; border-radius: 8px; outline: none; }
   .line:hover, .line:focus-visible, .line:focus-within { background: rgba(255, 255, 255, .03); }
   .line:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
-  .said { min-width: 0; color: #dcdee5; line-height: 1.5; overflow-wrap: anywhere; }
+  .said { min-width: 0; color: var(--text-body); line-height: 1.5; overflow-wrap: anywhere; }
   .by { display: flex; align-items: center; gap: 8px; flex-shrink: 0; color: var(--text-2); }
   .speaker::before { content: '— '; color: var(--text-3); }
   .trophy { color: var(--quote-green); font-size: 12.5px; font-weight: 600; }

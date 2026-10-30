@@ -117,7 +117,7 @@
 <style>
   /* flex-centred (not transform): WebKitGTK blurs transformed text */
   .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; }
-  .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
+  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
   .modal { position: relative; width: min(480px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 22px; border-radius: 16px; background: var(--bg-2); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; }
   .top { display: flex; align-items: center; justify-content: space-between; }
   h1 { margin: 0; font-size: 18px; font-weight: 600; }
@@ -131,7 +131,7 @@
   input { accent-color: var(--accent); }
   .err { margin: 0; font-size: 13px; color: var(--warn); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
-  .primary { height: 38px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--ok); color: #0f2a1c; font-weight: 700; }
+  .primary { height: 38px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
   .primary:disabled { opacity: .6; }
   .ghost { height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); }
   .ghost:disabled { opacity: .6; }

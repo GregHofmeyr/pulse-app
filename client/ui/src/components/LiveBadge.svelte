@@ -41,5 +41,5 @@
 
 <style>
   .wrap { display: inline-flex; }
-  .live { height: 16px; padding: 0 6px; border: 0; border-radius: 4px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 800; letter-spacing: .06em; line-height: 16px; cursor: pointer; }
+  .live { height: 16px; padding: 0 6px; border: 0; border-radius: 4px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 800; letter-spacing: .06em; line-height: 16px; cursor: pointer; }
 </style>

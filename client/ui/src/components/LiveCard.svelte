@@ -72,7 +72,7 @@
   .viewers { margin: 0; font-size: 13px; color: var(--text-2); }
   .warn { margin: 0; font-size: 13px; color: var(--warn); }
   .ghost { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
-  .stop { height: 30px; padding: 0 16px; border: 0; border-radius: 8px; background: var(--danger); color: #fff; font-weight: 600; }
+  .stop { height: 30px; padding: 0 16px; border: 0; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-weight: 600; }
   /* the tile variant: the preview fills the tile; the rows float over it as top and bottom bars */
   .card.tile { position: absolute; inset: 0; margin: 0; padding: 0; max-width: none; width: auto; gap: 0; border: 0; border-radius: 0; background: #000; align-self: stretch; }
   .tile .preview { position: absolute; inset: 0; }

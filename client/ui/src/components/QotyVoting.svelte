@@ -206,7 +206,7 @@
 <style>
   /* flex-centred (not transform): WebKitGTK blurs transformed text */
   .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; }
-  .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
+  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
   .modal { position: relative; width: min(620px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 46px 20px 18px; border-radius: 16px; background: var(--bg-1); border: 1px solid color-mix(in srgb, var(--quote-green) 35%, transparent); display: flex; flex-direction: column; gap: 12px; outline: none; }
   /* 88 cells across ≈ 7 px each at full width, 5 down: the solid run and its thinning both show */
   .spill { position: absolute; left: 0; right: 0; top: 0; height: 35px; overflow: hidden; border-radius: 16px 16px 0 0; }

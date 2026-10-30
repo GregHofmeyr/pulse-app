@@ -49,9 +49,9 @@
 
 <style>
   .select { position: relative; }
-  .trigger { width: 100%; height: 42px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: #26282e; color: var(--text); display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 400; letter-spacing: 0; text-align: left; }
+  .trigger { width: 100%; height: 42px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--line-soft); color: var(--text); display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 400; letter-spacing: 0; text-align: left; }
   .trigger:hover { border-color: #44474f; }
-  .list { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; background: #2e3037; border: 1px solid #3d4048; border-radius: 10px; box-shadow: 0 12px 32px rgba(8, 9, 12, .5); max-height: 240px; overflow-y: auto; }
+  .list { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 10px; box-shadow: 0 12px 32px rgba(8, 9, 12, .5); max-height: 240px; overflow-y: auto; }
   .select[data-drop='up'] .list { top: auto; bottom: calc(100% + 4px); }
   li { padding: 9px 10px; border-radius: 7px; font-size: 14px; font-weight: 400; letter-spacing: 0; color: var(--text-2); cursor: pointer; }
   li.active { background: var(--bg-4); color: var(--text); }

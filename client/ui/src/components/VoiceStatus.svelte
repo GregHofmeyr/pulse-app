@@ -85,7 +85,7 @@
   .vc-text strong.warn { color: var(--warn); }
   .vc-text strong.bad { color: var(--danger); }
   .vc-text small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 9px; background: #2e3037; color: var(--danger); display: grid; place-items: center; }
+  .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 9px; background: var(--surface-menu); color: var(--danger); display: grid; place-items: center; }
   .vc-dismiss { width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .vc-mic { margin: -4px 8px 8px; padding: 8px 12px; border-radius: 10px; background: var(--bg-2); border-left: 3px solid var(--warn); font-size: 12px; line-height: 1.4; color: var(--text-2); }
   .vc-mic strong { color: var(--warn); }

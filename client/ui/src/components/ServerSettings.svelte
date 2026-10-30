@@ -30,7 +30,7 @@
 <style>
   /* flex-centred (not transform): WebKitGTK blurs text on sub-pixel transforms */
   .overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 32px 16px; }
-  .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
+  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
   .modal { position: relative; width: min(940px, calc(100vw - 32px)); height: min(720px, calc(100vh - 64px)); display: flex; background: var(--bg-1); border-radius: 16px; border: 1px solid var(--bg-3); overflow: hidden; }
   nav { width: 200px; flex-shrink: 0; padding: 24px 12px; background: var(--bg-0); display: flex; flex-direction: column; gap: 2px; }
   h1 { margin: 0 10px 12px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -442,7 +442,7 @@
   .picker { position: relative; width: 170px; flex-shrink: 0; }
   .who { width: 100%; flex: none; }
   .chip { max-width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--quote-green-deep); color: var(--text); font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .opts { position: absolute; bottom: calc(100% + 4px); left: 0; right: 0; z-index: 20; padding: 4px; background: #2e3037; border: 1px solid #3d4048; border-radius: 10px; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+  .opts { position: absolute; bottom: calc(100% + 4px); left: 0; right: 0; z-index: 20; padding: 4px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 10px; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
   .opts button { min-height: 30px; padding: 0 8px; border: 0; border-radius: 6px; background: transparent; color: var(--text); text-align: left; font: inherit; }
   .opts button:hover, .opts button.hi { background: var(--bg-3); }
   .ibtn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); cursor: pointer; }

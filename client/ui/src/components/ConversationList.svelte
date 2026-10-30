@@ -88,6 +88,6 @@
   .stack .s0 { position: absolute; left: 0; top: 0; }
   .stack .s1 { position: absolute; left: 11px; top: 11px; border-radius: 50%; box-shadow: 0 0 0 2px var(--bg-1); }
   .mute { color: var(--text-3); display: grid; }
-  .pill { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--danger); color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+  .pill { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--danger); color: var(--on-danger); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
   .empty { padding: 12px 10px; font-size: 13px; color: var(--text-3); }
 </style>

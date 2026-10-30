@@ -108,7 +108,7 @@
 <style>
   /* flex-centred (not transform): WebKitGTK blurs transformed text */
   .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; }
-  .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
+  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
   .modal { position: relative; width: min(440px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 22px; border-radius: 16px; background: var(--bg-1); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 14px; outline: none; }
   .top { display: flex; align-items: center; gap: 10px; }
   .mark { font-size: 34px; padding-top: 12px; color: var(--quote-green); }

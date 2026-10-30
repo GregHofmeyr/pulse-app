@@ -170,7 +170,7 @@
   .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ctl { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); white-space: nowrap; }
   input[type='range'] { width: 120px; accent-color: var(--accent); }
-  .stop { flex-shrink: 0; white-space: nowrap; height: 32px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--danger); color: #fff; font-weight: 700; }
+  .stop { flex-shrink: 0; white-space: nowrap; height: 32px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--danger); color: var(--on-danger); font-weight: 700; }
   .stage { position: relative; flex: 1; min-height: 0; }
   .host { position: absolute; inset: 0; }
   .unfocus { position: absolute; inset: 0; cursor: zoom-out; }

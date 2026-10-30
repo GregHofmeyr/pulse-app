@@ -186,7 +186,7 @@
 </div>
 
 <style>
-  .menu { position: fixed; z-index: 60; min-width: 220px; max-width: 280px; padding: 6px; background: #2e3037; border: 1px solid #3d4048; border-radius: 12px; box-shadow: 0 18px 48px rgba(8, 9, 12, .5); display: flex; flex-direction: column; gap: 2px; font-size: 13px; outline: none; }
+  .menu { position: fixed; z-index: 60; min-width: 220px; max-width: 280px; padding: 6px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 12px; box-shadow: var(--shadow-menu); display: flex; flex-direction: column; gap: 2px; font-size: 13px; outline: none; }
   .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font: inherit; display: flex; align-items: center; justify-content: space-between; gap: 8px; }
   .menu button:hover, .menu button:focus-visible { background: var(--bg-3); }
   .menu button.off { color: var(--text-3); cursor: not-allowed; height: auto; min-height: 32px; flex-direction: column; align-items: flex-start; justify-content: center; padding: 6px 10px; gap: 2px; }

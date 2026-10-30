@@ -85,7 +85,7 @@
   .avatar-btn[aria-disabled='true'] { cursor: default; }
   .avatar-btn :global(.av) { transition: box-shadow .12s; }
   .tile.speaking :global(.av) { box-shadow: 0 0 0 4px var(--bg-1), 0 0 0 7px var(--ok); }
-  .badge { position: absolute; right: -4px; bottom: -4px; width: 28px; height: 28px; border-radius: 50%; background: var(--danger); color: #fff; border: 4px solid var(--bg-1); display: grid; place-items: center; }
+  .badge { position: absolute; right: -4px; bottom: -4px; width: 28px; height: 28px; border-radius: 50%; background: var(--danger); color: var(--on-danger); border: 4px solid var(--bg-1); display: grid; place-items: center; }
   .name { display: flex; align-items: center; gap: 8px; font-weight: 600; max-width: 90%; }
   .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .joining { font-size: 12px; font-weight: 400; color: var(--text-2); }

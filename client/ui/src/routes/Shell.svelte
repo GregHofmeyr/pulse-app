@@ -588,7 +588,7 @@
   .chip { width: 22px; height: 22px; border-radius: 7px; color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
   .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
   .grow { flex: 1; align-self: stretch; }
-  .conn { font-size: 12px; font-weight: 600; color: var(--warn); padding: 4px 10px; border-radius: 12px; background: rgba(232, 176, 74, .12); margin-right: 6px; }
+  .conn { font-size: 12px; font-weight: 600; color: var(--warn); padding: 4px 10px; border-radius: 12px; background: var(--warn-soft); margin-right: 6px; }
   .win { width: 32px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .win:hover { background: var(--bg-2); color: var(--text); }
   .body { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 0 8px 8px; }
@@ -599,13 +599,13 @@
   /* a real box (aria-controls points at it; a display:contents one leaves the accessibility tree) */
   .right-panel { display: flex; flex-shrink: 0; min-height: 0; }
   .right-panel[hidden], .right-panel:empty { display: none; }
-  .panel-head { position: relative; height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid #26282e; }
+  .panel-head { position: relative; height: 52px; flex-shrink: 0; padding: 0 16px; display: flex; align-items: center; font-size: 15px; font-weight: 600; border-bottom: 1px solid var(--line-soft); }
   /* the hover is a rounded pill inside the header, with the text where the padding put it */
   .head-btn { flex: 1; min-width: 0; height: 40px; margin: 0 -8px; padding: 0 8px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
   .head-btn:hover { background: var(--bg-2); }
   /* two classes: .menu (declared below, for the upward account menu) must not win `bottom` back */
   .menu.head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; }
-  .me { padding: 10px 10px 10px 12px; background: #17181c; display: flex; align-items: center; gap: 10px; }
+  .me { padding: 10px 10px 10px 12px; background: var(--bg-inset); display: flex; align-items: center; gap: 10px; }
   .who { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
   .who small { font-size: 12px; font-weight: 400; color: var(--text-3); }
   .add { width: 36px; height: 36px; flex-shrink: 0; border: 1px dashed var(--bg-4); border-radius: 10px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
@@ -615,15 +615,15 @@
   .who-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 4px 6px; border: 0; border-radius: 10px; background: transparent; text-align: left; }
   .who-btn:hover { background: var(--bg-2); }
   .who-btn .who { overflow: hidden; }
-  .menu { position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 10; min-width: 200px; padding: 6px; background: #2e3037; border: 1px solid #3d4048; border-radius: 12px; box-shadow: 0 18px 48px rgba(8, 9, 12, .5); display: flex; flex-direction: column; }
+  .menu { position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 10; min-width: 200px; padding: 6px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 12px; box-shadow: var(--shadow-menu); display: flex; flex-direction: column; }
   .menu button { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font-size: 13px; font-weight: 400; }
   .menu button:hover { background: var(--bg-4); }
-  .menu .danger { color: #f2616b; }
+  .menu .danger { color: var(--danger-text); }
   .menu .warn { color: var(--warn); }
   .auto-report button { border: 0; background: none; color: inherit; font-size: 15px; line-height: 1; padding: 0 0 0 6px; }
   .auto-report button.link { font-size: inherit; font-weight: 600; text-decoration: underline; padding: 0 2px; }
   .overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px; }
-  .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
+  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
   .dialog { position: relative; width: min(420px, calc(100vw - 32px)); padding: 24px; background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: 16px; display: flex; flex-direction: column; gap: 14px; }
   .dialog h2 { margin: 0; font-size: 18px; }
   .dialog label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
@@ -631,14 +631,14 @@
   .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
   .me-btn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .me-btn:hover { background: var(--bg-2); }
-  .me-btn.on { color: #f2616b; }
+  .me-btn.on { color: var(--danger-text); }
   .ghost { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
   .content { position: relative; flex: 1; min-width: 0; background: var(--bg-2); display: flex; flex-direction: column; }
   .empty { margin: auto; color: var(--text-3); }
   .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .primary { height: 40px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
-  .error { color: #f2616b; }
-  .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: #fff; font-size: 10px; font-weight: 700; display: inline-grid; place-items: center; }
+  .error { color: var(--danger-text); }
+  .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-grid; place-items: center; }
   .tab .invc { color: var(--accent); display: grid; margin-left: -2px; }
   .tab .dot { margin-left: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); display: inline-block; }
   .notice { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 40; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); }

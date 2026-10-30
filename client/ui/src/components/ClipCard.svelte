@@ -109,7 +109,7 @@
   .duration { position: absolute; right: 8px; bottom: 8px; padding: 1px 6px; border-radius: 6px; background: rgba(0, 0, 0, .75); color: #fff; font-size: 11.5px; font-variant-numeric: tabular-nums; pointer-events: none; }
   .fs { position: absolute; right: 8px; top: 8px; width: 28px; height: 28px; border: 0; border-radius: 7px; background: rgba(0, 0, 0, .6); color: #fff; display: grid; place-items: center; opacity: 0; }
   .card:hover .fs, .fs:focus-visible { opacity: 1; }
-  .badge-new { position: absolute; left: 8px; top: 8px; padding: 1px 7px; border-radius: 8px; background: var(--danger); color: #fff; font-size: 10.5px; font-weight: 700; text-transform: uppercase; pointer-events: none; }
+  .badge-new { position: absolute; left: 8px; top: 8px; padding: 1px 7px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10.5px; font-weight: 700; text-transform: uppercase; pointer-events: none; }
   .info { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
   .meta { display: flex; align-items: center; gap: 6px; min-height: 28px; }
   .who { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

@@ -103,7 +103,7 @@
 <style>
   /* flex-centred (not transform): WebKitGTK blurs text on sub-pixel transforms */
   .overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 32px 16px; }
-  .backdrop { position: absolute; inset: 0; background: rgba(10, 11, 13, .6); }
+  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
   .modal { position: relative; width: min(940px, calc(100vw - 32px)); height: min(720px, calc(100vh - 64px)); display: flex; background: var(--bg-1); border-radius: 16px; border: 1px solid var(--bg-3); overflow: hidden; }
   nav { width: 200px; flex-shrink: 0; padding: 24px 12px; background: var(--bg-0); display: flex; flex-direction: column; gap: 2px; }
   h1 { margin: 0 10px 12px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
@@ -115,7 +115,7 @@
   .confirm { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 48px 16px 0; padding: 10px 14px; border-radius: 12px; background: var(--bg-3); border: 1px solid var(--warn); font-weight: 600; }
   .confirm span { margin-right: auto; }
   .confirm button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-weight: 600; }
-  .confirm button.danger { border-color: transparent; background: var(--danger); color: #fff; }
+  .confirm button.danger { border-color: transparent; background: var(--danger); color: var(--on-danger); }
   .confirm.saving { border-color: var(--bg-4); color: var(--text-2); }
   /* the way out that waits for a Save */
   nav button[aria-busy='true'], .close[aria-busy='true'] { cursor: progress; opacity: .6; }

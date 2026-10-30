@@ -38,9 +38,9 @@
 
 <style>
   .stack { position: fixed; right: 18px; bottom: 18px; z-index: 40; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
-  .toast { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px; background: #2e3037; border: 1px solid #3d4048; border-radius: 12px; box-shadow: 0 12px 32px rgba(8, 9, 12, .5); font-size: 13px; }
+  .toast { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 12px; box-shadow: 0 12px 32px rgba(8, 9, 12, .5); font-size: 13px; }
   .toast.err { border-color: var(--danger); }
-  .watch { height: 28px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--ok); color: #0f2a1c; font-weight: 700; }
+  .watch { height: 28px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
   .watch.off { opacity: .5; cursor: not-allowed; }
   .x { border: 0; background: transparent; color: var(--text-3); font-size: 16px; padding: 0 2px; }
 </style>

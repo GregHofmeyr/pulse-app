@@ -172,7 +172,7 @@
   .chip:hover { border-color: var(--text-3); }
   .chip.locked { cursor: default; opacity: .7; }
   .chip.locked:hover { border-color: var(--bg-4); }
-  .chip.mine { border-color: var(--accent); background: rgba(139, 156, 255, .15); color: var(--text); }
+  .chip.mine { border-color: var(--accent); background: var(--accent-soft); color: var(--text); }
   .chip img { width: 16px; height: 16px; }
   .gone { color: var(--text-3); font-size: 12px; }
   .suggest { opacity: .45; padding: 0 6px; }

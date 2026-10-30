@@ -186,11 +186,11 @@
   h2 { margin: 0 0 8px; font-size: 20px; }
   .count { color: var(--text-3); font-size: 13px; }
   .hint { margin: 0 0 16px; color: var(--text-3); font-size: 13px; }
-  .error { margin: 0 0 12px; color: #f2616b; font-size: 13px; }
+  .error { margin: 0 0 12px; color: var(--danger-text); font-size: 13px; }
   .empty { color: var(--text-3); }
   button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-size: 13px; }
   button:hover { background: var(--bg-3); }
-  button.danger { color: #f2616b; }
+  button.danger { color: var(--danger-text); }
   button.primary { background: var(--accent); border-color: transparent; color: var(--on-accent); font-weight: 600; }
   .file { display: inline-flex; align-items: center; height: 36px; padding: 0 16px; margin-bottom: 20px; border-radius: 8px; background: var(--bg-3); font-weight: 600; font-size: 13px; cursor: pointer; }
   .file.off { opacity: .5; cursor: default; }
@@ -201,7 +201,7 @@
   .add label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-3); }
   input:not([type='file']) { height: 34px; padding: 0 10px; border: 1px solid var(--bg-4); border-radius: 8px; background: var(--bg-0); color: var(--text); }
   .row { display: flex; gap: 8px; }
-  .name-hint { color: #f2616b; font-size: 12px; }
+  .name-hint { color: var(--danger-text); font-size: 12px; }
   /* empty but kept (a live region must exist before its text): take back the flex gap */
   .add .name-hint:empty { margin-top: -12px; }
   .full { margin: -12px 0 20px; color: var(--text-3); font-size: 13px; }
