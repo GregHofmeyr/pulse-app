@@ -5,7 +5,7 @@
 //! group, and replacing needs both. It is the same handful of WinRT calls.
 
 use super::toast::toast_xml;
-use super::{Click, Notice, OnClick};
+use super::{Click, Failure, Notice, OnClick};
 use std::collections::HashMap;
 use windows::Data::Xml::Dom::XmlDocument;
 use windows::Foundation::TypedEventHandler;
@@ -31,11 +31,20 @@ impl Backend {
         }
     }
 
-    pub fn show(&mut self, n: &Notice) -> Result<(), String> {
-        self.try_show(n).map_err(|e| e.to_string())
+    pub fn show(&mut self, n: &Notice) -> Result<(), Failure> {
+        // A toast that won't build is this notice's problem; a notifier that won't show it is
+        // the system's.
+        let toast = self
+            .build(n)
+            .map_err(|e| Failure::BadNotice(e.to_string()))?;
+        ToastNotificationManager::CreateToastNotifierWithId(&self.app_id)
+            .and_then(|notifier| notifier.Show(&toast))
+            .map_err(|e| Failure::Refused(e.to_string()))?;
+        self.shown.insert(n.channel_id.clone(), toast);
+        Ok(())
     }
 
-    fn try_show(&mut self, n: &Notice) -> windows::core::Result<()> {
+    fn build(&self, n: &Notice) -> windows::core::Result<ToastNotification> {
         let doc = XmlDocument::new()?;
         doc.LoadXml(&HSTRING::from(toast_xml(&n.title, &n.body)))?;
         let toast = ToastNotification::CreateToastNotification(&doc)?;
@@ -52,8 +61,6 @@ impl Backend {
                 Ok(())
             },
         ))?;
-        ToastNotificationManager::CreateToastNotifierWithId(&self.app_id)?.Show(&toast)?;
-        self.shown.insert(n.channel_id.clone(), toast);
-        Ok(())
+        Ok(toast)
     }
 }

@@ -1,6 +1,6 @@
 //! No desktop notifications on this platform.
 
-use super::{Notice, OnClick};
+use super::{Failure, Notice, OnClick};
 
 pub struct Backend;
 
@@ -9,7 +9,7 @@ impl Backend {
         Backend
     }
 
-    pub fn show(&mut self, _n: &Notice) -> Result<(), String> {
+    pub fn show(&mut self, _n: &Notice) -> Result<(), Failure> {
         Ok(())
     }
 }

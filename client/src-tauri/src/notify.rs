@@ -93,13 +93,55 @@ fn clean(n: Notice) -> Option<Notice> {
     })
 }
 
-/// True only the first time: the system refusing (notifications off for the app, no
-/// notification service) is said once per session, then Pulse stays quiet. Messages still ding.
-fn first_failure(flag: &AtomicBool) -> bool {
-    !flag.swap(true, Ordering::Relaxed)
+/// Why a notification didn't show.
+#[derive(Debug)]
+pub enum Failure {
+    /// The system won't show any: notifications off for the app or the user, an app Windows
+    /// doesn't know, no notification service. Says so once per session; messages still ding.
+    Refused(String),
+    /// The system couldn't take this one (its content). Says so every time (budgeted), so it
+    /// never hides a refusal that comes later.
+    BadNotice(String),
 }
 
-static FAILED: AtomicBool = AtomicBool::new(false);
+impl std::fmt::Display for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Failure::Refused(e) | Failure::BadNotice(e) => f.write_str(e),
+        }
+    }
+}
+
+/// Whether to log `f`: a refusal only the first time (`refused_said` remembers), anything else
+/// always.
+fn should_warn(f: &Failure, refused_said: &AtomicBool) -> bool {
+    match f {
+        Failure::Refused(_) => !refused_said.swap(true, Ordering::Relaxed),
+        Failure::BadNotice(_) => true,
+    }
+}
+
+static REFUSED_SAID: AtomicBool = AtomicBool::new(false);
+static BAD_NOTICE_LOG: std::sync::Mutex<Option<crate::logging::LineBudget>> =
+    std::sync::Mutex::new(None);
+
+fn log_failure(f: &Failure) {
+    if !should_warn(f, &REFUSED_SAID) {
+        return;
+    }
+    match f {
+        Failure::Refused(e) => {
+            tracing::warn!(error = %e, "notifications: the system won't show them (no more warnings about this this session)")
+        }
+        Failure::BadNotice(e) => crate::logging::log_budgeted(
+            &BAD_NOTICE_LOG,
+            5,
+            0.1,
+            || tracing::warn!(error = %e, "notifications: the system couldn't take one"),
+            |n| tracing::warn!("notifications: {n} lines dropped (too many)"),
+        ),
+    }
+}
 
 /// Hands notices to the worker thread; never blocks.
 pub struct Notifier {
@@ -114,10 +156,8 @@ impl Notifier {
             .spawn(move || {
                 let mut backend = Backend::new(app_id, on_click);
                 for n in rx {
-                    if let Err(e) = backend.show(&n)
-                        && first_failure(&FAILED)
-                    {
-                        tracing::warn!(error = %e, "notifications: the system didn't show one (no more warnings this session)");
+                    if let Err(f) = backend.show(&n) {
+                        log_failure(&f);
                     }
                 }
             });
@@ -259,10 +299,20 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_warns_once() {
+    fn a_refusal_warns_once() {
         let flag = std::sync::atomic::AtomicBool::new(false);
-        assert!(first_failure(&flag));
-        assert!(!first_failure(&flag));
-        assert!(!first_failure(&flag));
+        let refused = Failure::Refused("off for this app".into());
+        assert!(should_warn(&refused, &flag));
+        assert!(!should_warn(&refused, &flag));
+        assert!(!should_warn(&refused, &flag));
+    }
+
+    #[test]
+    fn a_bad_notice_never_hides_a_later_refusal() {
+        let flag = std::sync::atomic::AtomicBool::new(false);
+        let bad = Failure::BadNotice("the toast didn't load".into());
+        assert!(should_warn(&bad, &flag));
+        assert!(should_warn(&bad, &flag));
+        assert!(should_warn(&Failure::Refused("off".into()), &flag));
     }
 }

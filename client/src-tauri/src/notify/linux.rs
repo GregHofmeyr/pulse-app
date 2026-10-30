@@ -6,7 +6,7 @@
 //! (KDE's does), so a replacement sent from a new connection, as notify-rust's `show` does,
 //! would lose its click; and one thread per notification would pile up behind a busy chat.
 
-use super::{Click, Notice, OnClick};
+use super::{Click, Failure, Notice, OnClick};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use zbus::blocking::{Connection, MessageIterator};
@@ -85,9 +85,11 @@ impl Backend {
         }
     }
 
-    /// Blocks on D-Bus: called on the notifier thread only.
-    pub fn show(&mut self, n: &Notice) -> Result<(), String> {
-        let conn = self.connection().map_err(|e| e.to_string())?;
+    /// Blocks on D-Bus: called on the notifier thread only. Every failure is the service's (none
+    /// running, or it refused): the text was cleaned (no control characters), so D-Bus takes it.
+    pub fn show(&mut self, n: &Notice) -> Result<(), Failure> {
+        let refused = |e: zbus::Error| Failure::Refused(e.to_string());
+        let conn = self.connection().map_err(refused)?;
         if self.markup.is_none() {
             // asked again next time if the service isn't there yet
             if let Ok(reply) =
@@ -126,8 +128,8 @@ impl Backend {
                     -1i32,
                 ),
             )
-            .map_err(|e| e.to_string())?;
-        let id: u32 = reply.body().deserialize().map_err(|e| e.to_string())?;
+            .map_err(refused)?;
+        let id: u32 = reply.body().deserialize().map_err(refused)?;
         lock(&self.tracker).shown(
             id,
             Click {
