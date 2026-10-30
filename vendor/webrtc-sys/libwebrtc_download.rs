@@ -22,10 +22,10 @@ use sha2::{Digest, Sha256};
 /// run `sha256sum` on it, cross-check against the asset digest GitHub shows on the release page
 /// (or `gh release view <WEBRTC_TAG> -R livekit/rust-sdks --json assets`), and update the tag and
 /// hashes here together. A triple without an entry fails the build.
-const WEBRTC_TAG: &str = "webrtc-89d790b";
+const WEBRTC_TAG: &str = "webrtc-a545de4";
 const PINNED_SHA256: &[(&str, &str)] = &[
-    ("linux-x64-release", "b167adad5291cea0e4d66a0454d9d52d2ad714e6b0ed70f4410317d3ebde70c5"),
-    ("win-x64-release", "5c2349c960bae4f06f71c102f58552d0d09c912a142811acfcadfb7c883cbf58"),
+    ("linux-x64-release", "2ece73b9a72a2cacd73d0c62ac3a414e202f37885c3c8f49dddb43c1443ac0bd"),
+    ("win-x64-release", "862403fcb248c7d8803487e4c22b8821c6130e89100cb9c69be95ef45ff46146"),
 ];
 
 /// Written next to the extracted directory once the archive it came from has been verified. A

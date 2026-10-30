@@ -62,5 +62,5 @@ unknown-git = "deny"
 allow-registry = ["https://github.com/rust-lang/crates.io-index"]
 # DeepFilterNet (libDF) is not on crates.io; pinned by rev in client/src-tauri/Cargo.toml.
 allow-git = ["https://github.com/Rikorose/DeepFilterNet"]
-# vendor/webrtc-sys and vendor/webrtc-sys-build are local path crates patched in via [patch.crates-io];
+# vendor/webrtc-sys is a local path crate patched in via [patch.crates-io];
 # path sources need no entry.

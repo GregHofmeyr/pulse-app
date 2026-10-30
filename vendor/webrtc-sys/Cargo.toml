@@ -12,7 +12,7 @@
 [package]
 edition = "2021"
 name = "webrtc-sys"
-version = "0.3.47"
+version = "0.3.52"
 build = "build.rs"
 autolib = false
 autobins = false
@@ -55,11 +55,11 @@ version = "0.3"
 version = "0.3.22"
 
 [build-dependencies.webrtc-sys-build]
-version = "0.3.19"
+version = "0.3.21"
 
 # Pulse: libwebrtc_download.rs (SHA-256-verified libwebrtc download). Same versions and features
-# the vendored webrtc-sys-build (vendor/webrtc-sys-build) already pulls in, so no new crates enter
-# the build. zip is 9.x there and here (zip <= 9.0.4: GHSA-m665-v7pm-7grj).
+# webrtc-sys-build already pulls in, so no new crates enter the build. zip at 9.0.5 or later
+# (zip <= 9.0.4: GHSA-m665-v7pm-7grj).
 [build-dependencies.sha2]
 version = "0.10"
 

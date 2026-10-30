@@ -7,8 +7,8 @@ publish = false
 [workspace]
 
 [dependencies]
-livekit = "0.9.3"
-livekit-api = "0.8.1"
+livekit = "0.9.7"
+livekit-api = "0.9.1"
 tokio = { version = "1", features = ["full"] }
 futures = "0.3"
 anyhow = "1"
@@ -16,8 +16,6 @@ clap = { version = "4", features = ["derive"] }
 cpal = "0.15"
 hound = "3"
 
-# Same patched webrtc-sys / webrtc-sys-build as the app (see the root Cargo.toml): the SHA-256
-# verified libwebrtc download, and zip 9 instead of zip 0.6 (GHSA-m665-v7pm-7grj).
+# Same patched webrtc-sys as the app (see the root Cargo.toml): the SHA-256 verified libwebrtc download.
 [patch.crates-io]
 webrtc-sys = { path = "../../vendor/webrtc-sys" }
-webrtc-sys-build = { path = "../../vendor/webrtc-sys-build" }

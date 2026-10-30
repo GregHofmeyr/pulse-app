@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 members = ["protocol", "server", "client/src-tauri"]
-exclude = ["spikes", "vendor/webrtc-sys", "vendor/webrtc-sys-build"]
+exclude = ["spikes", "vendor/webrtc-sys"]
 
 [workspace.package]
 edition = "2024"
@@ -89,10 +89,7 @@ strip = true
 # libwebrtc crate logs every line at debug whatever its severity, so even its warnings and errors
 # only show with `PULSE_LOG=libwebrtc=debug`, never in a default log or bug report.
 #
-# webrtc-sys-build (webrtc-sys's build-dependency: libwebrtc URL, cache dir, defines) is vendored
-# only to move it from zip 0.6 to zip 9 (GHSA-m665-v7pm-7grj, zip <= 9.0.4), read-side deflate
-# only. Its code is upstream's (comments aside): zip 9 kept the ZipArchive::new/extract API it uses.
-# Drop the vendored copy once an upstream webrtc-sys-build release depends on zip >= 9.0.5.
+# webrtc-sys-build is upstream's again (0.3.21 is on zip 9; the lockfile keeps zip at 9.0.5 or
+# later, past GHSA-m665-v7pm-7grj).
 [patch.crates-io]
 webrtc-sys = { path = "vendor/webrtc-sys" }
-webrtc-sys-build = { path = "vendor/webrtc-sys-build" }
