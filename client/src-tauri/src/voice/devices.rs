@@ -1375,7 +1375,11 @@ mod tests {
         let out = out.expect("the speaker callback blocked on a lock the network side holds");
         // and it didn't just skip the mix: the peer's audio played (unmuted, as last seen)
         let want = 100.0 / i16::MAX as f32;
-        assert!(out.iter().all(|v| (v - want).abs() < 1e-4), "{:?}", &out[..4]);
+        assert!(
+            out.iter().all(|v| (v - want).abs() < 1e-4),
+            "{:?}",
+            &out[..4]
+        );
     }
 
     /// A panic while mixing poisons the mixer's lock: the speakers must not then play silence

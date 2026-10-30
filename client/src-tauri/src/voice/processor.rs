@@ -728,7 +728,11 @@ mod tests {
         };
         feed(10);
         assert!(wait_frames(&seen, 10) >= 10);
-        assert_eq!(shared.take_levels().0, 0.0, "idle: nothing cleaned, nothing metered");
+        assert_eq!(
+            shared.take_levels().0,
+            0.0,
+            "idle: nothing cleaned, nothing metered"
+        );
         shared.controls.lock().unwrap().watch_meters(true);
         feed(10);
         assert!(wait_frames(&seen, 20) >= 20);
@@ -866,7 +870,11 @@ mod tests {
         let want: Vec<f32> = (12..20).map(|k| k as f32 / 100.0).chain([0.5]).collect();
         assert_eq!(*seen.borrow(), want);
         assert!(!out.sent && !out.judged && b.iter().all(|v| *v == 0.0));
-        assert!((out.level - 0.5).abs() < 1e-3, "the meter shows {}", out.level);
+        assert!(
+            (out.level - 0.5).abs() < 1e-3,
+            "the meter shows {}",
+            out.level
+        );
         c.process(&mut vec![0.5f32; FRAME], false, Instant::now());
         assert_eq!(seen.borrow().len(), want.len() + 1, "replayed only once");
     }
@@ -1048,7 +1056,10 @@ mod tests {
             let mut b = vec![0.1f32; FRAME];
             let out = c.process(&mut b, false, t0 + Duration::from_millis(k * 10));
             k += 1;
-            assert!(!out.sent && b.iter().all(|v| *v == 0.0), "leaked while muted");
+            assert!(
+                !out.sent && b.iter().all(|v| *v == 0.0),
+                "leaked while muted"
+            );
         }
         for _ in 0..20 {
             c.idle(&mut vec![0.001f32; FRAME]); // muted, meter closed

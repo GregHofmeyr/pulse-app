@@ -23,29 +23,39 @@ fn dev_livekit(scheme: &str) -> String {
 struct PausedLiveKit;
 
 impl PausedLiveKit {
-    fn compose(cmd: &str) {
-        let st = Command::new("docker")
+    fn compose(cmd: &str) -> bool {
+        Command::new("docker")
             .current_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../.."))
             .args(["compose", cmd, "livekit"])
             .status()
-            .expect("docker");
-        assert!(st.success(), "docker compose {cmd} livekit failed");
+            .is_ok_and(|st| st.success())
     }
 
     fn new() -> Self {
-        Self::compose("pause");
+        assert!(
+            Self::compose("pause"),
+            "docker compose pause livekit failed"
+        );
         Self
     }
 }
 
 impl Drop for PausedLiveKit {
     fn drop(&mut self) {
-        Self::compose("unpause");
+        if !Self::compose("unpause") {
+            // a panic here while the test is already failing would abort the run, hiding why
+            eprintln!("docker compose unpause livekit failed: run it by hand");
+            assert!(
+                std::thread::panicking(),
+                "docker compose unpause livekit failed"
+            );
+        }
     }
 }
 
 /// R2: against a server that just stops answering, LiveKit's own reconnect can hang for minutes
-/// and never report a disconnect. Voice gives up on it after a minute and rejoins by itself.
+/// and never report a disconnect. Voice gives up on it (after a minute; 5 s here) and rejoins by
+/// itself.
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn a_livekit_that_stops_answering_is_rejoined() {
@@ -63,7 +73,10 @@ async fn a_livekit_that_stops_answering_is_rejoined() {
         .into_iter()
         .find(|c| c.name.as_deref() == Some("Lounge"))
         .unwrap();
-    let vm = std::sync::Arc::new(VoiceManager::new(std::sync::Arc::new(|_| {})));
+    let vm = std::sync::Arc::new(
+        VoiceManager::new(std::sync::Arc::new(|_| {}))
+            .with_reconnect_give_up(Duration::from_secs(5)),
+    );
     let runner = {
         let vm = vm.clone();
         tokio::spawn(async move { vm.run_rejoins().await })
@@ -80,7 +93,7 @@ async fn a_livekit_that_stops_answering_is_rejoined() {
     .await
     .unwrap();
     let paused = PausedLiveKit::new();
-    // LiveKit notices in ~15 s (ping timeout), then we give it a minute
+    // LiveKit notices in ~15 s (ping timeout), then we give it 5 s
     tokio::time::timeout(Duration::from_secs(120), async {
         while vm.rejoining().is_none() {
             tokio::time::sleep(Duration::from_millis(100)).await;

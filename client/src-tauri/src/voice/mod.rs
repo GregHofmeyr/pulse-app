@@ -115,7 +115,10 @@ trait CloseRoom: Send + Sync + 'static {
 
 impl CloseRoom for Room {
     async fn close_room(&self) {
-        let _ = self.close().await;
+        // nothing to retry (the room is let go either way), but a bug report should show it
+        if let Err(e) = self.close().await {
+            tracing::warn!(error = %e, room = %self.name(), "voice: room close failed");
+        }
     }
 }
 
@@ -281,23 +284,37 @@ fn stop_audio_keep_devices(pipeline_alive: &AtomicBool, shared: &Shared, rx: &Mu
 /// audio (the next join builds a fresh pipeline), then `hand_over` it to the rejoin loop (true if
 /// taken). Handed over, its devices are left for the rejoin to close with a wait; otherwise they
 /// close now. A session already ended (left, or switched away from: its pipeline went on to the
-/// next room) keeps its hands off the pipeline. Returns whether it was handed over.
+/// next room) keeps its hands off the pipeline.
 fn drop_call(
     alive: &AtomicBool,
     (pipeline_alive, shared): (&AtomicBool, &Shared),
     io: &Mutex<Option<AudioIo>>,
     rx: &Mutex<RxTasks>,
     hand_over: impl FnOnce() -> bool,
-) -> bool {
+) -> Dropped {
     if !alive.swap(false, Ordering::SeqCst) {
-        return false;
+        return Dropped::AlreadyOver;
     }
     stop_audio_keep_devices(pipeline_alive, shared, rx);
-    let handed_over = hand_over();
-    if !handed_over {
+    if hand_over() {
+        Dropped::HandedOver
+    } else {
         io.lock().unwrap().take();
+        Dropped::Ended
     }
-    handed_over
+}
+
+/// What `drop_call` did, and so what the UI is told.
+#[derive(Debug, PartialEq, Eq)]
+enum Dropped {
+    /// To the rejoin loop: "reconnecting".
+    HandedOver,
+    /// For good: "disconnected".
+    Ended,
+    /// Something else ended the session first (a leave, a switch, a rejoin replacing it, a failed
+    /// publish) and reports it itself: a "disconnected" here would be a stray one (LiveKit says
+    /// "disconnected" for our own close too), flashing mid-rejoin.
+    AlreadyOver,
 }
 
 /// What the background mic publish needs to report how it went.
@@ -336,8 +353,11 @@ async fn report_publish<R: CloseRoom>(
     };
     let e = match published {
         Ok(()) => {
-            w.retries.store(0, Ordering::SeqCst);
+            // A leave clearing `alive` just after this check lets these two land right before its
+            // "disconnected" (the leave's close comes first): harmless, the UI ends on that.
             if w.alive.load(Ordering::SeqCst) {
+                // only a live session's publish ends a streak (not a late one from a dead session)
+                w.retries.store(0, Ordering::SeqCst);
                 (w.events)(VoiceEvent::Stage {
                     stage: JoinStage::Connected,
                     attempt: None,
@@ -624,11 +644,17 @@ async fn keep_if_usable(kept: Option<Arc<Pipeline>>, mode: AudioMode) -> Option<
     let p = kept?;
     let turn = tokio::time::timeout(SETTLE_WAIT, p.reopener.one_at_a_time.lock()).await;
     let waited_out = turn.is_ok();
-    if turn.is_ok_and(|_turn| p.usable_for(mode)) {
+    let usable = waited_out && p.usable_for(mode);
+    if !usable {
+        // Cleared while still holding the turn: a reopen queued behind it then sees `alive` false
+        // and opens nothing, so the settle below doesn't wait a whole one out (SETTLE_WAIT twice).
+        // Its watchdog and following stop on `alive` too (Settings may still hold a handle on it).
+        p.alive.store(false, Ordering::SeqCst);
+    }
+    drop(turn);
+    if usable {
         return Some(p);
     }
-    // its watchdog and following stop on `alive` too (Settings may still hold a handle on it)
-    p.alive.store(false, Ordering::SeqCst);
     if waited_out {
         // a reopen that started since (the watchdog's, Settings') ends now: it closes what it opened
         p.reopener.settle().await;
@@ -722,6 +748,7 @@ pub enum AudioMode {
     /// No devices (tests / headless): mixer pulled on a timer at this rate.
     Null(u32),
     /// `Null` that takes this long to open (tests: a slow device open during a join).
+    #[doc(hidden)]
     SlowNull(u32, Duration),
 }
 
@@ -988,6 +1015,13 @@ impl VoiceManager {
         }
     }
 
+    /// Tests: give up on LiveKit's own reconnect after `after` instead of `RECONNECT_GIVE_UP`.
+    #[doc(hidden)]
+    pub fn with_reconnect_give_up(mut self, after: Duration) -> Self {
+        self.reconnect_give_up = after;
+        self
+    }
+
     /// Pipelines built by this manager (tests: a switch must reuse the one it has).
     pub fn pipelines_built(&self) -> u64 {
         self.built.load(Ordering::Relaxed)
@@ -1008,6 +1042,9 @@ impl VoiceManager {
 
     /// Same, on the blocking pool (it takes tens of ms): for a hover, ahead of the click.
     pub fn warm_runtime(&self) {
+        if self.lk.get().is_some() {
+            return; // already warm: every hover after the first lands here
+        }
         let lk = self.lk.clone();
         tokio::task::spawn_blocking(move || {
             lk.get_or_init(livekit::rtc_engine::lk_runtime::LkRuntime::instance);
@@ -1120,14 +1157,15 @@ impl VoiceManager {
         }
         match outcome {
             Ok((session, open_room, connected)) => {
-                // a stall that outlived the last room: the UI cleared its banner on joining
-                let stalled = session.pipeline.stalled.load(Ordering::SeqCst);
+                let pipeline = session.pipeline.clone();
                 *self.live.lock().unwrap() = Some(session.alive.clone());
                 *self.session.lock().await = Some(session);
                 open_room.disarm();
                 self.emit_stage(JoinStage::StartingAudio, None);
                 self.emit_state(Some(channel), Connection::Connected);
-                if stalled {
+                // A stall that outlived the last room: the UI cleared its banner on joining. Read
+                // right before saying so (no await between): a recovery reported meanwhile wins.
+                if pipeline.stalled.load(Ordering::SeqCst) {
                     (self.events)(VoiceEvent::DeviceStalled);
                 }
                 // the mic publish reports from here on, so never before "connected"
@@ -1287,8 +1325,8 @@ impl VoiceManager {
                     (p, true)
                 }
                 None => {
-                    self.built.fetch_add(1, Ordering::Relaxed);
                     let p = Pipeline::build(&cfg, mode, controls, events).await?;
+                    self.built.fetch_add(1, Ordering::Relaxed); // built ones only
                     (Arc::new(p), false)
                 }
             };
@@ -1489,14 +1527,15 @@ impl VoiceManager {
                 };
                 // The call is gone: handed to the rejoin loop if `rejoin` (and that loop runs).
                 let lost = |rejoin: bool| {
-                    let handed_over =
-                        drop_call(&alive, (&pipeline_alive, &shared), &io, &rx, || {
-                            rejoin && dropped.as_ref().is_some_and(|d| d.send(epoch).is_ok())
-                        });
-                    if handed_over {
-                        events(state(Connection::Reconnecting, Some(channel)));
-                    } else {
-                        events(state(Connection::Disconnected, None));
+                    let outcome = drop_call(&alive, (&pipeline_alive, &shared), &io, &rx, || {
+                        rejoin && dropped.as_ref().is_some_and(|d| d.send(epoch).is_ok())
+                    });
+                    match outcome {
+                        Dropped::HandedOver => {
+                            events(state(Connection::Reconnecting, Some(channel)))
+                        }
+                        Dropped::Ended => events(state(Connection::Disconnected, None)),
+                        Dropped::AlreadyOver => {}
                     }
                 };
                 loop {
@@ -2148,6 +2187,28 @@ mod tests {
         assert!(closed.load(Ordering::SeqCst), "finished before the close");
     }
 
+    /// The user's own join starts the rejoin publish streak afresh (even one that then fails):
+    /// an old streak must not cut a later call's rejoins short.
+    #[tokio::test]
+    async fn a_users_join_resets_the_publish_retries() {
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let vm = VoiceManager::new(Arc::new(|_| {}));
+        vm.publish_retries.store(PUBLISH_RETRIES, Ordering::SeqCst);
+        let joined = vm
+            .join(
+                &api,
+                &token,
+                ChannelId::new(), // no such channel
+                AudioConfig::default(),
+                AudioMode::Null(48_000),
+            )
+            .await;
+        assert!(joined.is_err());
+        assert_eq!(vm.publish_retries.load(Ordering::SeqCst), 0);
+    }
+
     /// A join waits for the last cancelled join's connect (and its close) before it connects:
     /// a stale connect landing after it would replace it at LiveKit (same identity). Leave
     /// still cancels the join while it waits.
@@ -2419,6 +2480,24 @@ mod tests {
         reopen.await.unwrap();
     }
 
+    /// A switch goes on with the pipeline it has and applies the join's settings to it (Null:
+    /// no devices to reopen).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn a_kept_pipeline_adopts_the_joins_settings() {
+        let p = null_pipeline().await;
+        let mut cfg = p.cfg.lock().unwrap().clone();
+        cfg.auto_sensitivity = false;
+        cfg.sensitivity = 0.07;
+        let kept = keep_if_usable(Some(p.clone()), AudioMode::Null(48_000)).await;
+        kept.expect("not kept").adopt(&cfg).await.unwrap();
+        assert_eq!(p.cfg.lock().unwrap().sensitivity, 0.07);
+        let proc = p.shared.proc_cfg.lock().unwrap().clone();
+        assert!(
+            !proc.auto && proc.threshold == 0.07,
+            "the processor wasn't told"
+        );
+    }
+
     /// A room that closes at once, noting when its close started.
     struct TimedRoom(Mutex<Option<Instant>>);
     impl CloseRoom for TimedRoom {
@@ -2462,7 +2541,7 @@ mod tests {
             &session.rx,
             || true,
         );
-        assert!(handed);
+        assert_eq!(handed, Dropped::HandedOver);
         assert!(!p.alive.load(Ordering::SeqCst), "the pipeline is done for");
         assert!(
             p.io.lock().unwrap().is_some(),
@@ -2488,14 +2567,39 @@ mod tests {
             closed,
         ));
         let (session, _room) = session_on(p.clone());
-        assert!(!drop_call(
+        let ended = drop_call(
             &session.alive,
             (&p.alive, &p.shared),
             &p.io,
             &session.rx,
-            || false
-        ));
+            || false,
+        );
+        assert_eq!(ended, Dropped::Ended);
         assert!(p.io.lock().unwrap().is_none(), "devices left open");
+    }
+
+    /// LiveKit's "disconnected" for a session something else already ended (a leave's or a
+    /// rejoin's close of it, a failed publish): nothing to hand over, nothing to report (that
+    /// one says what happened), and the pipeline (maybe the next room's) is left alone.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dropping_a_session_already_ended_does_nothing() {
+        let (p, _raw_tx) = deviceless_pipeline();
+        let (session, _room) = session_on(p.clone());
+        session.alive.store(false, Ordering::SeqCst); // a leave got there first
+        let mut asked = false;
+        let outcome = drop_call(
+            &session.alive,
+            (&p.alive, &p.shared),
+            &p.io,
+            &session.rx,
+            || {
+                asked = true;
+                true
+            },
+        );
+        assert_eq!(outcome, Dropped::AlreadyOver);
+        assert!(!asked, "handed to the rejoin loop");
+        assert!(p.alive.load(Ordering::SeqCst), "the pipeline was stopped");
     }
 
     /// The user's Leave during a device reopen (up to SETTLE_WAIT): out of the room at once, not
@@ -2537,6 +2641,25 @@ mod tests {
             weak.upgrade().is_some(),
             "torn down when its last user went"
         );
+        // Other tests' rooms may hold the runtime at the same time, which would keep it up on
+        // its own: check that what keeps it up is our handle on the very runtime LiveKit uses.
+        let ours = vm.lk.get().expect("no handle kept");
+        assert!(Arc::ptr_eq(ours, &LkRuntime::instance()));
+    }
+
+    /// A hover warms the runtime off the async threads, and keeps it the same way.
+    #[tokio::test]
+    async fn hovering_warms_and_keeps_the_webrtc_runtime() {
+        use livekit::rtc_engine::lk_runtime::LkRuntime;
+        let vm = VoiceManager::new(Arc::new(|_| {}));
+        vm.warm_runtime();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while vm.lk.get().is_none() && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+        let ours = vm.lk.get().expect("never warmed");
+        assert!(Arc::ptr_eq(ours, &LkRuntime::instance()));
+        vm.warm_runtime(); // warm already: nothing to do
     }
 
     #[tokio::test]
@@ -2682,6 +2805,15 @@ mod tests {
         let r = reported_as(Ok(()), true, true, Some(3), 1).await;
         assert_eq!(r.retries, 0);
         assert!(r.handed_back.is_empty());
+    }
+
+    /// A late "published" from a session already torn down says nothing about the rejoin that
+    /// replaced it: that one's streak of failed publishes stands.
+    #[tokio::test]
+    async fn a_dead_sessions_late_publish_leaves_the_retries_alone() {
+        let r = reported_as(Ok(()), true, false, Some(3), 2).await;
+        assert_eq!(r.retries, 2);
+        assert!(r.events.is_empty(), "{:?}", r.events);
     }
 
     /// "Connected" was already shown: a mic that never made it in ends the call, and says why.
