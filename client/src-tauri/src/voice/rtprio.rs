@@ -14,26 +14,28 @@ pub struct Registration {
     pub task: Option<&'static str>,
 }
 
-/// Register the calling thread; `what` names it in the log (once per kind per run: the processor
-/// thread is respawned for every call).
+/// Register the calling thread; `what` names it in the log. Success is logged once per kind per
+/// run (the processor thread is respawned for every call); a refusal every time, since one that
+/// comes after an earlier success is what a "choppy under load" report needs to show.
 pub fn promote(what: &'static str) -> Registration {
     let (r, err) = register();
-    if first_time(what) {
-        match (r.task, err) {
-            (Some(task), _) => {
-                tracing::info!(
-                    thread = what,
-                    task,
-                    "audio thread: real-time priority (MMCSS)"
-                )
-            }
-            (None, Some(error)) => tracing::warn!(
+    match (r.task, err) {
+        (Some(task), _) if first_time(what) => {
+            tracing::info!(
                 thread = what,
-                %error,
-                "audio thread: MMCSS refused; normal priority"
-            ),
-            (None, None) => tracing::debug!(thread = what, "audio thread: no MMCSS on this OS"),
+                task,
+                "audio thread: real-time priority (MMCSS)"
+            )
         }
+        (None, Some(error)) => tracing::warn!(
+            thread = what,
+            %error,
+            "audio thread: MMCSS refused; normal priority"
+        ),
+        (None, None) if first_time(what) => {
+            tracing::debug!(thread = what, "audio thread: no MMCSS on this OS")
+        }
+        _ => {}
     }
     r
 }

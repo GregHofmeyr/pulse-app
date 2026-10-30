@@ -1002,9 +1002,24 @@ fn stream_errors(what: &'static str) -> impl FnMut(cpal::Error) + Send + 'static
     let mut t = crate::throttle::Throttle::new(STREAM_ERROR_EVERY);
     move |e| {
         if let Some(repeated) = t.hit(std::time::Instant::now()) {
-            tracing::warn!(error = %e, repeated, "{what} stream error");
+            if routine_stream_error(e.kind()) {
+                tracing::info!(error = %e, repeated, "{what} stream error");
+            } else {
+                tracing::warn!(error = %e, repeated, "{what} stream error");
+            }
         }
     }
+}
+
+/// Stream errors that are part of normal life, logged at info rather than warn so a bug report
+/// doesn't read them as a regression: an under/overrun (a glitch the stream plays on through) and
+/// an invalidated stream (WASAPI's word for "the default device changed"; device following and the
+/// watchdog reopen it).
+fn routine_stream_error(kind: cpal::ErrorKind) -> bool {
+    matches!(
+        kind,
+        cpal::ErrorKind::Xrun | cpal::ErrorKind::StreamInvalidated
+    )
 }
 
 /// The pipeline works in f32; the device may want anything cpal supports.
@@ -1057,6 +1072,8 @@ fn build_input(
         F::F64 => typed::<f64>(dev, &c, on_data),
         F::I8 => typed::<i8>(dev, &c, on_data),
         F::I16 => typed::<i16>(dev, &c, on_data),
+        // cpal 0.18 reads WASAPI 24-bit as a 32-bit container: a packed 3-byte format would be
+        // misread. Shared-mode mix formats are float in practice (upstream's to fix if not).
         F::I24 => typed::<cpal::I24>(dev, &c, on_data),
         F::U24 => typed::<cpal::U24>(dev, &c, on_data),
         F::I32 => typed::<i32>(dev, &c, on_data),
@@ -1822,6 +1839,18 @@ mod tests {
         let mut back = Vec::new();
         to_f32(&dev, &mut back);
         back
+    }
+
+    /// cpal 0.18 reports xruns and device changes through the error callback: at warn, every
+    /// bug report would show them as if something broke.
+    #[test]
+    fn routine_stream_errors_are_not_warnings() {
+        use cpal::ErrorKind as K;
+        assert!(routine_stream_error(K::Xrun));
+        assert!(routine_stream_error(K::StreamInvalidated));
+        for k in [K::DeviceNotAvailable, K::RealtimeDenied, K::BackendError] {
+            assert!(!routine_stream_error(k), "{k:?}");
+        }
     }
 
     /// A clipped +1.0 must land on the format's top code, not one past it: dasp maps +1.0 to
