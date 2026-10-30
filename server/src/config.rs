@@ -56,16 +56,14 @@ pulse_protocol::redacting_debug!(ClipStoreConfig { endpoint, bucket, region, key
 impl Config {
     pub fn from_env() -> anyhow::Result<Self> {
         let var = |k: &str, d: &str| std::env::var(k).unwrap_or_else(|_| d.to_string());
+        let livekit_url = var("PULSE_LIVEKIT_URL", "ws://localhost:7880");
         Ok(Self {
             db_url: var("PULSE_DB_URL", "sqlite://pulse.db"),
             bind: var("PULSE_BIND", "127.0.0.1:7890")
                 .parse()
                 .context("PULSE_BIND")?,
-            livekit_api_url: var(
-                "PULSE_LIVEKIT_API_URL",
-                &var("PULSE_LIVEKIT_URL", "ws://localhost:7880"),
-            ),
-            livekit_url: var("PULSE_LIVEKIT_URL", "ws://localhost:7880"),
+            livekit_api_url: var("PULSE_LIVEKIT_API_URL", &livekit_url),
+            livekit_url,
             livekit_key: std::env::var("PULSE_LIVEKIT_KEY").context("PULSE_LIVEKIT_KEY")?,
             livekit_secret: std::env::var("PULSE_LIVEKIT_SECRET")
                 .context("PULSE_LIVEKIT_SECRET")?,
