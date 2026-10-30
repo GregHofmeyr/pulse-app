@@ -68,10 +68,17 @@ invite:
 voice-smoke:
     ./scripts/voice-smoke.sh
 
-# voice integration test against the dev LiveKit (real WebRTC, fake peer)
+# the voice tests that open this machine's real mic and speakers (they can be heard): voice-it skips them
+real_device_tests := "--skip mic_test_queue_on_real_devices --skip real_devices_are_not_reopened_without_a_reason --skip reopening_one_side_leaves_the_other_alone"
+
+# voice integration test against the dev LiveKit (real WebRTC, fake peer); no real audio devices
 voice-it: dev-livekit
-    cargo test -p pulse-client --test voice_it --test voice_outage_it --test stream_it -- --ignored --nocapture
+    cargo test -p pulse-client --test voice_it --test voice_outage_it --test stream_it -- --ignored --nocapture {{ real_device_tests }}
     cargo test -p pulse-server --test livekit_ice --test stream_liveness_it -- --ignored --nocapture
+
+# the real-device voice probes on their own (mic and speakers open; PULSE_IT_INPUT / PULSE_IT_OUTPUT pick devices)
+voice-it-devices: dev-livekit
+    cargo test -p pulse-client --test voice_it -- --ignored --nocapture --exact mic_test_queue_on_real_devices real_devices_are_not_reopened_without_a_reason reopening_one_side_leaves_the_other_alone
 
 # This checkout's dev LiveKit then listens on 17880-17882 and 13478 instead of 7880-7882 and 3478, and sends its
 # webhooks to 17890, where nothing listens (the tests' servers use ephemeral ports and don't need them), not to
