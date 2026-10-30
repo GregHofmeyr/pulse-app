@@ -200,11 +200,13 @@
     ui.openChannelId = activeChannelId
   })
   // Leaving a channel trims it to its newest messages (scrolling up there fetches older ones again).
+  // Done when the next channel opens, not in a teardown: a teardown on the shell going away (sign-out)
+  // is handed the state from before the reset, and writing that back restores the old session.
+  let shown: string | null = null
   $effect(() => {
-    const left = activeChannelId
-    return () => {
-      if (left) untrack(() => (app.state = trimHistory(app.state, left)))
-    }
+    const left = shown
+    shown = activeChannelId
+    if (left && left !== shown) untrack(() => (app.state = trimHistory(app.state, left)))
   })
   const home = $derived(homeBadge(app.state, nowIso))
 

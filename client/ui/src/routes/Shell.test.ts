@@ -744,3 +744,49 @@ describe('clips being sent', () => {
     }
   })
 })
+
+describe('trimming history on leave', () => {
+  const msgs = (channel_id: string, n: number) => Array.from({ length: n }, (_, i) => ({
+    id: `M${String(i).padStart(4, '0')}`, channel_id, author_id: 'U2', kind: 'normal' as const, content: `m${i}`, reply_to_id: null,
+    created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null,
+  }))
+
+  it('leaving a channel trims it to its newest messages', async () => {
+    const { ui } = await import('../lib/store.svelte')
+    const { addHistory, KEEP_ON_LEAVE } = await import('../lib/state')
+    const { testMe: me, testReady } = await import('../lib/testReady')
+    app.state = applyReady(emptyState(), testReady([
+      { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },
+      { id: 'T2', server_id: 'S1', kind: 'text', name: 'random', position: 1 },
+    ]))
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+    ui.goTo = 'T1'
+    flushSync()
+    await tick()
+    app.state = addHistory(app.state, 'T1', msgs('T1', KEEP_ON_LEAVE + 50))
+    ui.goTo = 'T2'
+    flushSync()
+    expect(app.state.messages['T1']).toHaveLength(KEEP_ON_LEAVE)
+    expect(app.state.messages['T1'][0].id).toBe('M0050') // the newest are kept
+  })
+
+  it('signing out does not write the old session back over the reset state', async () => {
+    const { resetState, ui } = await import('../lib/store.svelte')
+    const { addHistory } = await import('../lib/state')
+    const { testMe: me, testReady } = await import('../lib/testReady')
+    app.state = applyReady(emptyState(), testReady([{ id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }]))
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+    ui.goTo = 'T1'
+    flushSync()
+    await tick()
+    app.state = addHistory(app.state, 'T1', msgs('T1', 150))
+    flushSync()
+    // App's onLogout resets the state and drops the shell in one go: the shell's teardown runs
+    // before that update settles, where Svelte hands it the state from before the reset
+    resetState()
+    unmount(cmp)
+    cmp = undefined
+    expect(app.state.me).toBeNull()
+    expect(app.state.messages).toEqual({})
+  })
+})
