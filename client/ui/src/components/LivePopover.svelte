@@ -70,7 +70,7 @@
 <style>
   .pop { position: fixed; z-index: 30; width: 280px; padding: 10px; background: #2e3037; border: 1px solid #3d4048; border-radius: 14px; box-shadow: 0 18px 48px rgba(8, 9, 12, .5); display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
   img, .none { width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; background: var(--bg-1); object-fit: cover; }
-  .none { display: grid; place-items: center; color: var(--text-3); background: #4a4d57; color: var(--text-2); }
+  .none { display: grid; place-items: center; background: var(--bg-4); color: var(--text-2); }
   .meta { display: flex; justify-content: space-between; color: var(--text-2); }
   .watch { height: 34px; border: 0; border-radius: 10px; background: var(--ok); color: #0f2a1c; font-weight: 700; }
   .watch.off { opacity: .5; cursor: not-allowed; }

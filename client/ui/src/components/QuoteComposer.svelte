@@ -449,7 +449,7 @@
   .ibtn:hover { background: var(--bg-2); color: var(--text); }
   .pic { position: relative; flex-shrink: 0; }
   .thumb { display: block; width: 44px; height: 44px; object-fit: cover; border-radius: 8px; }
-  .x { position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--bg-1, #1e1f24); color: var(--text); }
+  .x { position: absolute; top: -5px; right: -5px; width: 18px; height: 18px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--bg-1); color: var(--text); }
   .foot { display: flex; align-items: center; gap: 8px; }
   .spacer { flex: 1; }
   .foot button, .warn button { height: 28px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--bg-2); color: var(--text); font: inherit; font-size: 13px; }
@@ -458,5 +458,5 @@
   .warn { padding: 8px 10px; border-radius: 8px; background: var(--bg-2); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
   .warn p { flex-basis: 100%; margin: 0; }
   .note { margin: 0; font-size: 12px; color: var(--text-3); }
-  .err { margin: 0; font-size: 12px; color: var(--danger, #f0716b); }
+  .err { margin: 0; font-size: 12px; color: var(--danger); }
 </style>

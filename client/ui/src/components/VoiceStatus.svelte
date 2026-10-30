@@ -73,7 +73,7 @@
 {/if}
 
 <style>
-  .vc { position: relative; margin: 0 8px 8px; padding: 10px 10px 10px 14px; background: #232429; border-radius: 12px; display: flex; align-items: center; gap: 10px; }
+  .vc { position: relative; margin: 0 8px 8px; padding: 10px 10px 10px 14px; background: var(--bg-2); border-radius: 12px; display: flex; align-items: center; gap: 10px; }
   .vc-main { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 0; border: 0; background: transparent; color: inherit; text-align: left; }
   button.vc-main { cursor: pointer; }
   .vc-bars { display: flex; align-items: flex-end; gap: 2px; height: 14px; }
@@ -87,7 +87,7 @@
   .vc-text small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 9px; background: #2e3037; color: var(--danger); display: grid; place-items: center; }
   .vc-dismiss { width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
-  .vc-mic { margin: -4px 8px 8px; padding: 8px 12px; border-radius: 10px; background: #232429; border-left: 3px solid var(--warn); font-size: 12px; line-height: 1.4; color: var(--text-2); }
+  .vc-mic { margin: -4px 8px 8px; padding: 8px 12px; border-radius: 10px; background: var(--bg-2); border-left: 3px solid var(--warn); font-size: 12px; line-height: 1.4; color: var(--text-2); }
   .vc-mic strong { color: var(--warn); }
   .vc-retry { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 600; }
 </style>

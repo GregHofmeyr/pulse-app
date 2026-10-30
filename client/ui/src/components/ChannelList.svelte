@@ -186,7 +186,7 @@
   .err { padding: 0 10px; color: #f2616b; font-size: 12px; }
   .row { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: #9a9eab; display: flex; align-items: center; gap: 8px; text-align: left; font-size: 14px; }
   .row:hover { background: var(--bg-2); color: var(--text); }
-  .row.active { background: var(--bg-3); color: #f1f2f5; font-weight: 500; }
+  .row.active { background: var(--bg-3); color: var(--text); font-weight: 500; }
   .row.live .ico { color: var(--ok); }
   .ico { color: var(--text-3); display: flex; }
   .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

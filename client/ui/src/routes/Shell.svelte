@@ -584,11 +584,11 @@
   nav { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
   .tab { height: 36px; padding: 0 12px 0 10px; border-radius: 10px; border: 1px solid transparent; background: transparent; color: var(--text-2); display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; white-space: nowrap; }
   .tab:hover { background: var(--bg-2); }
-  .tab.active { background: #262830; border-color: var(--bg-4); color: #f6f7f9; font-weight: 600; }
+  .tab.active { background: var(--bg-3); border-color: var(--bg-4); color: var(--text); font-weight: 600; }
   .chip { width: 22px; height: 22px; border-radius: 7px; color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
   .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
   .grow { flex: 1; align-self: stretch; }
-  .conn { font-size: 12px; font-weight: 600; color: #e8b04a; padding: 4px 10px; border-radius: 12px; background: rgba(232, 176, 74, .12); margin-right: 6px; }
+  .conn { font-size: 12px; font-weight: 600; color: var(--warn); padding: 4px 10px; border-radius: 12px; background: rgba(232, 176, 74, .12); margin-right: 6px; }
   .win { width: 32px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .win:hover { background: var(--bg-2); color: var(--text); }
   .body { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 0 8px 8px; }
@@ -608,7 +608,7 @@
   .me { padding: 10px 10px 10px 12px; background: #17181c; display: flex; align-items: center; gap: 10px; }
   .who { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
   .who small { font-size: 12px; font-weight: 400; color: var(--text-3); }
-  .add { width: 36px; height: 36px; flex-shrink: 0; border: 1px dashed #3a3c44; border-radius: 10px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .add { width: 36px; height: 36px; flex-shrink: 0; border: 1px dashed var(--bg-4); border-radius: 10px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .add:hover { color: var(--text); border-color: var(--text-3); }
   .me { position: relative; }
   .me-avatar { flex-shrink: 0; display: flex; padding: 0; border: 0; border-radius: 50%; background: none; }

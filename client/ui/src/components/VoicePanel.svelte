@@ -144,7 +144,7 @@
   .head { height: 52px; flex-shrink: 0; padding: 0 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--ok); }
   .title { color: var(--text); font-size: 15px; font-weight: 600; flex: 1; }
   .status { font-size: 12px; font-weight: 600; color: var(--ok); padding: 4px 10px; border-radius: 12px; background: rgba(79, 209, 139, .12); }
-  .status.warn { color: #e8b04a; background: rgba(232, 176, 74, .12); }
+  .status.warn { color: var(--warn); background: rgba(232, 176, 74, .12); }
   .error { margin: 12px 18px 0; color: #f2616b; font-size: 13px; }
   .eye { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .eye:hover { background: var(--bg-2); color: var(--text); }

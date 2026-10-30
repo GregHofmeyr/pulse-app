@@ -50,7 +50,7 @@
 {/if}
 
 <style>
-  .prompt { font-size: 12px; font-weight: 600; color: #e8b04a; padding: 4px 10px; border-radius: 12px; background: rgba(232, 176, 74, .12); margin-right: 6px; }
+  .prompt { font-size: 12px; font-weight: 600; color: var(--warn); padding: 4px 10px; border-radius: 12px; background: rgba(232, 176, 74, .12); margin-right: 6px; }
   button.link { border: 0; background: none; color: inherit; font-size: inherit; font-weight: 600; text-decoration: underline; padding: 0 2px; }
   button:disabled { opacity: .6; }
   .err { display: block; margin-top: 2px; font-weight: 500; color: #f2616b; }

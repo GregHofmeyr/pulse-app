@@ -123,7 +123,7 @@
   .link { background: none; border: 0; color: var(--text-3); font-size: 13px; }
   .link:hover { color: var(--text); }
   .error { margin: 0; color: #f2616b; font-size: 13px; }
-  .notice { margin: 0; color: #e8b04a; font-size: 13px; }
+  .notice { margin: 0; color: var(--warn); font-size: 13px; }
   .report { background: none; border: 0; color: var(--warn); font-size: 13px; opacity: .8; }
   .report:hover { opacity: 1; }
 </style>

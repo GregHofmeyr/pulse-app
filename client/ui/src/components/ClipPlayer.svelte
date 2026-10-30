@@ -201,8 +201,8 @@
   .fail { position: absolute; inset: auto 0 8px; margin: 0; text-align: center; color: #fff; font-size: 13px; }
   .bar { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(0, 0, 0, 0.85); color: #fff; }
   .ico { background: none; border: 0; color: inherit; cursor: pointer; padding: 2px; display: grid; place-items: center; }
-  .seek { flex: 1; min-width: 40px; accent-color: var(--accent, #6b8afd); }
-  .vol { width: 70px; accent-color: var(--accent, #6b8afd); }
+  .seek { flex: 1; min-width: 40px; accent-color: var(--accent); }
+  .vol { width: 70px; accent-color: var(--accent); }
   .time { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .compact .bar { padding: 4px 6px; gap: 4px; }
 </style>

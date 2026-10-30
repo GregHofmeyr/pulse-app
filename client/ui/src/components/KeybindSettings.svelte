@@ -181,5 +181,5 @@
   .clear:disabled { opacity: .3; }
   small { font-size: 12px; color: var(--text-3); }
   .error { margin: 0; color: #f2616b; font-size: 13px; }
-  .warn { margin: 0; padding: 10px 12px; border-radius: 10px; background: rgba(232, 176, 74, .12); color: #e8b04a; font-size: 13px; }
+  .warn { margin: 0; padding: 10px 12px; border-radius: 10px; background: rgba(232, 176, 74, .12); color: var(--warn); font-size: 13px; }
 </style>
