@@ -93,12 +93,21 @@ describe('stableList', () => {
 describe('nextTypingExpiry', () => {
   it('is the earliest live expiry, or null when nobody is typing', async () => {
     const { nextTypingExpiry } = await import('./selectors')
-    let t = applyEvent(applyReady(emptyState(), r), { t: 'Typing', d: { channel_id: 'C1', user_id: 'U2' } }, 1000)
-    t = applyEvent(t, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U1' } }, 3000)
+    let t = applyEvent(applyReady(emptyState(), r), { t: 'Typing', d: { channel_id: 'C1', user_id: 'U2' } }, 3000)
+    t = applyEvent(t, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U3' } }, 1000) // added later, runs out first
     expect(nextTypingExpiry(t, 'C1', 2000)).toBe(7000)
     expect(nextTypingExpiry(t, 'C1', 7000)).toBe(9000)
     expect(nextTypingExpiry(t, 'C1', 9000)).toBeNull()
     expect(nextTypingExpiry(t, 'C2', 0)).toBeNull()
+  })
+
+  it('ignores your own typing, which is never shown', async () => {
+    const { nextTypingExpiry } = await import('./selectors')
+    let t = applyEvent(applyReady(emptyState(), r), { t: 'Typing', d: { channel_id: 'C1', user_id: 'U2' } }, 3000)
+    t = applyEvent(t, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U1' } }, 1000)
+    expect(nextTypingExpiry(t, 'C1', 2000)).toBe(9000)
+    t = applyEvent(applyReady(emptyState(), r), { t: 'Typing', d: { channel_id: 'C1', user_id: 'U1' } }, 1000)
+    expect(nextTypingExpiry(t, 'C1', 2000)).toBeNull()
   })
 })
 

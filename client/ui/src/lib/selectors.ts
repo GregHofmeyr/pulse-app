@@ -80,9 +80,12 @@ export function keepStable<T>(): (next: T[]) => T[] {
   return (next) => (prev = stableList(prev, next))
 }
 
-/** When the next typing indicator in `channelId` runs out (ms timestamp), or null if nobody is typing. */
+/** When the next typing indicator in `channelId` runs out (ms timestamp), or null if nobody is typing.
+ * Your own typing is left out, as in `typingNames`: it's never shown, so its expiry needs no wakeup. */
 export function nextTypingExpiry(s: AppState, channelId: string, now: number): number | null {
-  const live = Object.values(s.typing[channelId] ?? {}).filter((until) => until > now)
+  const live = Object.entries(s.typing[channelId] ?? {})
+    .filter(([user, until]) => until > now && user !== s.me?.id)
+    .map(([, until]) => until)
   return live.length ? Math.min(...live) : null
 }
 
