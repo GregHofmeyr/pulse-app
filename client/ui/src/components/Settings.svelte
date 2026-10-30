@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  export type Section = 'profile' | 'appearance' | 'voice' | 'keybinds' | 'chat' | 'advanced'
+  export type Section = 'profile' | 'appearance' | 'voice' | 'keybinds' | 'chat' | 'notifications' | 'advanced'
 </script>
 
 <script lang="ts">
@@ -9,6 +9,7 @@
   import VoiceSettings from './VoiceSettings.svelte'
   import KeybindSettings from './KeybindSettings.svelte'
   import ChatSettings from './ChatSettings.svelte'
+  import NotificationSettings from './NotificationSettings.svelte'
   import AdvancedSettings from './AdvancedSettings.svelte'
   import AppearanceSettings from './AppearanceSettings.svelte'
   import ProfileSettings from './ProfileSettings.svelte'
@@ -22,6 +23,7 @@
     { key: 'voice', label: 'Voice & Audio' },
     { key: 'keybinds', label: 'Keybinds' },
     { key: 'chat', label: 'Chat' },
+    { key: 'notifications', label: 'Notifications' },
     { key: 'advanced', label: 'Advanced' },
   ]
 
@@ -95,7 +97,7 @@
     {/if}
     {#if current === 'profile'}<ProfileSettings bind:dirty={profileDirty} bind:settling={profileSettling} />
     {:else if current === 'appearance'}<AppearanceSettings />
-    {:else if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else}<AdvancedSettings />{/if}
+    {:else if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else if current === 'notifications'}<NotificationSettings />{:else}<AdvancedSettings />{/if}
   </div>
 </div>
 </div>
