@@ -51,4 +51,15 @@ describe('StreamToast', () => {
     expect(b.dataset.tip).toBeUndefined()
     expect(b.textContent).toBe('Watch')
   })
+
+  it('dismiss is the X icon (not a "×" glyph) and still dismisses', () => {
+    cmp = mount(StreamToast, { target: document.body })
+    flushSync()
+    const x = document.querySelector<HTMLButtonElement>('.toast button[aria-label="Dismiss"]')!
+    expect(x.querySelector('svg[aria-hidden="true"]')).not.toBeNull()
+    expect(x.textContent?.trim()).toBe('')
+    x.click()
+    flushSync()
+    expect(toasts.list).toEqual([])
+  })
 })

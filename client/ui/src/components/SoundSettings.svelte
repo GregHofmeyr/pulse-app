@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
+  import Icon from './Icon.svelte'
   import {
     SOUND_LABELS, SOUND_NAMES, SOUND_SETS, loadSoundPrefs, previewSet, saveSoundPrefs, stopPreview,
     type SoundName, type SoundSetId,
@@ -46,7 +47,7 @@
           <strong>{s.label}</strong>
           <small id="sound-set-{s.id}-blurb">{s.blurb}</small>
         </div>
-        <button class="play" aria-label="Preview {s.label}" title="Preview" onclick={() => previewSet(s.id)}>▶</button>
+        <button class="play" aria-label="Preview {s.label}" title="Preview" onclick={() => previewSet(s.id)}><Icon name="play" size={14} /></button>
       </div>
     {/each}
   </div>
@@ -75,7 +76,7 @@
   .set.selected { border-color: var(--accent); }
   .pick { flex: 1; display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 12px; cursor: pointer; }
   .set.selected .pick strong { color: var(--accent); }
-  .play { width: 32px; height: 32px; flex-shrink: 0; border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent); font-size: 12px; }
+  .play { width: 32px; height: 32px; flex-shrink: 0; border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
   .vol strong { color: var(--text); letter-spacing: 0; }
   input[type='range'] { accent-color: var(--accent); }
   .events { display: flex; flex-direction: column; }

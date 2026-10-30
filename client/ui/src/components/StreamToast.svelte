@@ -4,6 +4,7 @@
   import { watchDisabledReason } from '../lib/stream/viewer'
   import { voice } from '../lib/voice.svelte'
   import { stream } from '../lib/stream/stream.svelte'
+  import Icon from './Icon.svelte'
 
   // Neutral one-liners from the stream store ("<name> stopped streaming", watch errors) fade after a few seconds.
   const MESSAGE_MS = 4_000
@@ -30,7 +31,7 @@
         <!-- out of that call (you've left since), this joins it again first -->
         <button type="button" class="watch" onclick={() => watchStream(t.channelId, t.streamer)}>{voice.channelId === t.channelId ? 'Watch' : 'Join & watch'}</button>
       {/if}
-      <button type="button" class="x" aria-label="Dismiss" onclick={() => removeToast(t.channelId, t.streamer)}>×</button>
+      <button type="button" class="x" aria-label="Dismiss" onclick={() => removeToast(t.channelId, t.streamer)}><Icon name="x" size={14} /></button>
     </div>
   {/each}
   {#if message}<div class="toast" role="status" class:err={!!stream.watchError}><span>{message}</span></div>{/if}
@@ -42,5 +43,6 @@
   .toast.err { border-color: var(--danger); }
   .watch { height: 28px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
   .watch.off { opacity: .5; cursor: not-allowed; }
-  .x { border: 0; background: transparent; color: var(--text-3); font-size: 16px; padding: 0 2px; }
+  .x { width: 24px; height: 24px; flex-shrink: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .x:hover { background: var(--bg-4); color: var(--text); }
 </style>
