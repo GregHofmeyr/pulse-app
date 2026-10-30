@@ -61,7 +61,7 @@
     </div>
     {#if !mine}
       <!-- aria-disabled, not disabled: a disabled button swallows the hover that shows the reason -->
-      <button type="button" class="watch" class:off={!!reason} aria-disabled={!!reason} data-tip={reason ?? undefined} onclick={watch}>{inChannel || reason ? 'Watch' : 'Join & watch'}</button>
+      <button type="button" class="btn btn-primary watch" class:off={!!reason} aria-disabled={!!reason} data-tip={reason ?? undefined} onclick={watch}>{inChannel || reason ? 'Watch' : 'Join & watch'}</button>
       {#if reason}<small>{reason}</small>{/if}
     {/if}
   </div>
@@ -72,7 +72,5 @@
   img, .none { width: 100%; aspect-ratio: 16 / 9; border-radius: 8px; background: var(--bg-1); object-fit: cover; }
   .none { display: grid; place-items: center; background: var(--bg-4); color: var(--text-2); }
   .meta { display: flex; justify-content: space-between; color: var(--text-2); }
-  .watch { height: 34px; border: 0; border-radius: 10px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
-  .watch.off { opacity: .5; cursor: not-allowed; }
   small { color: var(--text-3); text-align: center; }
 </style>

@@ -189,7 +189,7 @@
       {#if confirming}
         <div class="confirm" role="group" aria-label="End voting" aria-describedby="{uid}-end-q">
           <p id="{uid}-end-q">End voting now? Everyone's votes are final.</p>
-          <button type="button" class="ghost" bind:this={cancelButton} aria-describedby="{uid}-end-q" disabled={ending} onclick={() => void unask()}>Cancel</button>
+          <button type="button" class="btn btn-secondary" bind:this={cancelButton} aria-describedby="{uid}-end-q" disabled={ending} onclick={() => void unask()}>Cancel</button>
           <button type="button" class="qoty-btn danger" aria-describedby="{uid}-end-q" disabled={ending} onclick={end}>End voting</button>
         </div>
       {:else}
@@ -246,9 +246,7 @@
   .confirm p { flex: 1; margin: 0; font-size: 13px; }
   .foot .qoty-btn, .confirm .qoty-btn { height: 34px; }
   .qoty-btn.danger { background: var(--danger); color: var(--text); box-shadow: 0 2px 0 color-mix(in srgb, var(--danger) 55%, var(--bg-0)); }
-  .ghost { height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 13px; }
-  .ghost:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
-  .ghost:disabled { opacity: .6; }
+  .confirm .btn { height: 34px; }
 
   /* motion (off under reduced motion: no .animated, no .popped) */
   .animated .fill { transition: width .35s steps(7, end); }

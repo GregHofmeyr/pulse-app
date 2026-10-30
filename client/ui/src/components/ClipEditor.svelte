@@ -310,7 +310,7 @@
         <div class="send">
           {#if why}<p class="why" class:over={block === 'over'}>{why}</p>{/if}
           {#if sendError}<p class="why over" role="alert">{sendError}</p>{/if}
-          <button type="button" class="primary" disabled={block !== null || sending} onclick={send}>{sending ? 'Starting…' : 'Trim & send'}</button>
+          <button type="button" class="btn btn-lg btn-primary" disabled={block !== null || sending} onclick={send}>{sending ? 'Starting…' : 'Trim & send'}</button>
         </div>
       </aside>
     </div>
@@ -354,7 +354,5 @@
   .send { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
   .why { margin: 0; font-size: 13px; color: var(--text-2); }
   .why.over { color: var(--danger); }
-  .primary { height: 40px; border: 0; border-radius: 10px; background: var(--ok); color: var(--on-ok); font-weight: 700; cursor: pointer; }
-  .primary:disabled { opacity: 0.5; cursor: default; }
   @media (max-width: 860px) { .body { grid-template-columns: minmax(0, 1fr); } }
 </style>

@@ -228,11 +228,11 @@
   <div class="settings-field {kind}-field">
     <span class="settings-label">{title}</span>
     <div class="row">
-      <label class="btn" class:disabled={uploading[kind]}>Upload
+      <label class="btn btn-secondary upload" class:disabled={uploading[kind]}>Upload
         <input class="file" type="file" accept={ACCEPT} aria-label="Upload {kind}" disabled={uploading[kind]} onchange={(e) => pickFile(kind, e)} />
       </label>
       <!-- during an upload, Remove cancels it -->
-      <button type="button" class="btn" disabled={!hash && !uploading[kind]} onclick={() => remove(kind)}>Remove</button>
+      <button type="button" class="btn btn-secondary" disabled={!hash && !uploading[kind]} onclick={() => remove(kind)}>Remove</button>
       {#if uploading[kind]}<span class="muted" role="status">Uploading…</span>{/if}
     </div>
     {#if uploadError[kind]}<p class="error" role="alert">{uploadError[kind]}</p>{/if}
@@ -242,7 +242,7 @@
 <section class="settings-pane">
   <h2>Profile</h2>
   {#if loadError}
-    <p class="error" role="alert">{loadError} <button type="button" class="btn retry" onclick={() => me && load(me.id)}>Retry</button></p>
+    <p class="error" role="alert">{loadError} <button type="button" class="btn btn-secondary retry" onclick={() => me && load(me.id)}>Retry</button></p>
   {:else if !draft || !me || !pu || !pc || !profile}
     <p class="muted">Loading…</p>
   {:else}
@@ -338,8 +338,8 @@
       <span class="state">
         {#if changed}Unsaved changes{:else if justSaved}<span class="ok" role="status">Saved</span>{/if}
       </span>
-      <button type="button" class="btn" disabled={!(changed || busy) || saving} onclick={reset}>Reset</button>
-      <button type="button" class="btn primary" disabled={!changed || saving || invalid || busy} onclick={save}>Save</button>
+      <button type="button" class="btn btn-lg btn-secondary" disabled={!(changed || busy) || saving} onclick={reset}>Reset</button>
+      <button type="button" class="btn btn-lg btn-primary" disabled={!changed || saving || invalid || busy} onclick={save}>Save</button>
     </div>
   {/if}
 </section>
@@ -359,14 +359,10 @@
     .preview { position: static; order: -1; }
   }
   .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .btn { display: inline-flex; align-items: center; height: 34px; padding: 0 14px; border: 1px solid var(--bg-4); border-radius: 10px; background: transparent; color: var(--text); font-weight: 600; cursor: pointer; }
-  .btn:disabled, .btn.disabled { opacity: .5; cursor: default; }
-  .btn.primary { border-color: transparent; background: var(--accent); color: var(--on-accent); }
-  .btn:not(.primary):not(.disabled):hover:not(:disabled) { background: var(--bg-3); }
-  .btn.primary:not(.disabled):hover:not(:disabled) { filter: brightness(1.08); }
   /* the file input sits under its label, which is the button people see */
-  label.btn { position: relative; }
-  label.btn:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .upload { position: relative; cursor: pointer; }
+  .upload:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .upload.disabled { opacity: .5; cursor: default; }
   .file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   .swatches, .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .swatch { width: 40px; height: 28px; border-radius: 8px; border: 2px solid transparent; padding: 0; cursor: pointer; }

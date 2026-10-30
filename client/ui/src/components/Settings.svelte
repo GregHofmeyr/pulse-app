@@ -89,8 +89,8 @@
     {:else if leaving}
       <div class="confirm" role="alert">
         <span>Discard your profile changes?</span>
-        <button type="button" {@attach focusOnShow} onclick={() => (leaving = null)}>Keep editing</button>
-        <button type="button" class="danger" onclick={discard}>Discard</button>
+        <button type="button" class="btn btn-secondary" {@attach focusOnShow} onclick={() => (leaving = null)}>Keep editing</button>
+        <button type="button" class="btn btn-danger" onclick={discard}>Discard</button>
       </div>
     {/if}
     {#if current === 'profile'}<ProfileSettings bind:dirty={profileDirty} bind:settling={profileSettling} />
@@ -114,9 +114,6 @@
   .content { --settings-pad-y: 28px; position: relative; flex: 1; min-width: 0; overflow-y: auto; padding: var(--settings-pad-y) 32px; }
   .confirm { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 48px 16px 0; padding: 10px 14px; border-radius: 12px; background: var(--bg-3); border: 1px solid var(--warn); font-weight: 600; }
   .confirm span { margin-right: auto; }
-  .confirm button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-weight: 600; }
-  .confirm button:not(.danger):hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
-  .confirm button.danger { border-color: transparent; background: var(--danger); color: var(--on-danger); }
   .confirm.saving { border-color: var(--bg-4); color: var(--text-2); }
   /* the way out that waits for a Save */
   nav button[aria-busy='true'], .close[aria-busy='true'] { cursor: progress; opacity: .6; }

@@ -123,10 +123,12 @@ button { transition: background-color var(--dur) var(--ease), color var(--dur) v
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text); font-size: 13px; font-weight: 600; white-space: nowrap; }
 .btn-lg { height: 36px; padding: 0 16px; border-radius: 10px; font-size: 14px; }
 .btn:disabled { opacity: .5; cursor: default; }
+/* aria-disabled, not disabled, where a tooltip must still show the reason on hover */
+.btn[aria-disabled='true'] { opacity: .5; cursor: not-allowed; }
 .btn-primary { background: var(--accent); color: var(--on-accent); }
 .btn-danger { background: var(--danger); color: var(--on-danger); }
-.btn-primary:hover:not(:disabled), .btn-danger:hover:not(:disabled) { filter: brightness(1.08); }
-.btn-primary:active:not(:disabled), .btn-danger:active:not(:disabled) { filter: brightness(.95); }
+.btn-primary:hover:not(:disabled):not([aria-disabled='true']), .btn-danger:hover:not(:disabled):not([aria-disabled='true']) { filter: brightness(1.08); }
+.btn-primary:active:not(:disabled):not([aria-disabled='true']), .btn-danger:active:not(:disabled):not([aria-disabled='true']) { filter: brightness(.95); }
 .btn-secondary { border-color: var(--bg-4); color: var(--text-2); }
 .btn-secondary:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
 .btn-quiet { background: var(--bg-3); color: var(--text-2); }

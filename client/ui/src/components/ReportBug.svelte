@@ -36,11 +36,11 @@
     {#if st.message}<p class:ok={done} class:err={st.step === 'failed'} role="status">{st.message}</p>{/if}
     <div class="actions">
       {#if st.step === 'failed' && !saveOnly}
-        <button type="button" class="primary" onclick={save}>Save report</button>
+        <button type="button" class="btn btn-lg btn-primary" onclick={save}>Save report</button>
       {:else if done}
-        <button type="button" class="primary" onclick={onClose}>Done</button>
+        <button type="button" class="btn btn-lg btn-primary" onclick={onClose}>Done</button>
       {:else}
-        <button class="primary" disabled={busy || !text.trim()}>{busy ? '…' : saveOnly ? 'Save report' : 'Send'}</button>
+        <button class="btn btn-lg btn-primary" disabled={busy || !text.trim()}>{busy ? '…' : saveOnly ? 'Save report' : 'Send'}</button>
       {/if}
     </div>
   </form></div>
@@ -61,6 +61,4 @@
   .ok { margin: 0; font-size: 13px; color: var(--ok); word-break: break-all; }
   .err { margin: 0; font-size: 13px; color: var(--warn); }
   .actions { display: flex; justify-content: flex-end; }
-  .primary { height: 38px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--warn); color: #1d1606; font-weight: 600; }
-  .primary:disabled { opacity: .6; }
 </style>

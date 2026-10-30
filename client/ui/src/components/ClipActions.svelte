@@ -73,8 +73,8 @@
   {#if asking}
     <div class="ask" role="alertdialog" aria-label="Delete clip" use:clickOutside={() => { if (!busy) asking = false }}>
       <p>Delete this clip? Its replies go too.</p>
-      <button bind:this={keep} type="button" class="keep" disabled={busy} onclick={() => (asking = false)}>Cancel</button>
-      <button type="button" class="go" disabled={busy} onclick={() => void remove()}>Delete</button>
+      <button bind:this={keep} type="button" class="btn btn-secondary keep" disabled={busy} onclick={() => (asking = false)}>Cancel</button>
+      <button type="button" class="btn btn-danger go" disabled={busy} onclick={() => void remove()}>Delete</button>
       {#if error}<p class="err" role="alert">{error}</p>{/if}
     </div>
   {/if}
@@ -89,8 +89,8 @@
       <GamePicker {serverId} value={game} onChange={(id) => (game = id)} />
       {#if error}<p class="err" role="alert">{error}</p>{/if}
       <div class="foot">
-        <button type="button" class="ghost" disabled={busy} onclick={cancelEdit}>Cancel</button>
-        <button type="button" class="primary" disabled={busy} onclick={() => void save()}>Save</button>
+        <button type="button" class="btn btn-lg btn-secondary" disabled={busy} onclick={cancelEdit}>Cancel</button>
+        <button type="button" class="btn btn-lg btn-primary" disabled={busy} onclick={() => void save()}>Save</button>
       </div>
     </div>
   </div>
@@ -106,8 +106,6 @@
   .menu .danger { color: var(--danger); }
   .ask { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: 240px; padding: 10px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); }
   .ask p { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--text); }
-  .ask button { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 13px; }
-  .ask .go { border: 0; background: var(--danger); color: var(--on-danger); font-weight: 600; }
   .ask .err { margin: 4px 0 0; color: var(--danger); }
   /* flex-centred (not transform): WebKitGTK blurs transformed text */
   .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; }
@@ -117,8 +115,4 @@
   textarea { resize: vertical; min-height: 64px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font: inherit; }
   .err { margin: 0; font-size: 12px; color: var(--danger); }
   .foot { display: flex; justify-content: flex-end; gap: 8px; }
-  .ghost { height: 34px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); }
-  .ghost:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
-  .primary { height: 34px; padding: 0 16px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
-  .primary:disabled, .ghost:disabled { opacity: .5; }
 </style>

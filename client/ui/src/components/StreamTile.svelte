@@ -104,10 +104,10 @@
     <Avatar id={streamer} {name} size={64} />
     <div class="who">{name}</div>
     {#if windows && inChannel}
-      <button type="button" class="watch" aria-label="Watch {name}'s stream">Watch</button>
+      <button type="button" class="btn btn-lg btn-primary watch" aria-label="Watch {name}'s stream">Watch</button>
     {:else if windows}
       <!-- joins that voice channel (leaving yours), then opens the stream in full view -->
-      <button type="button" class="watch" aria-label="Join and watch {name}'s stream" onclick={() => joinAndWatch(channelId, streamer)}>Join &amp; watch</button>
+      <button type="button" class="btn btn-lg btn-primary watch" aria-label="Join and watch {name}'s stream" onclick={() => joinAndWatch(channelId, streamer)}>Join &amp; watch</button>
     {:else}
       <p class="reason">{reason}</p>
     {/if}
@@ -124,7 +124,6 @@
   .live-tag { position: absolute; top: 10px; left: 12px; height: 18px; padding: 0 7px; border-radius: 4px; background: var(--danger); color: var(--on-danger); font-size: 11px; font-weight: 800; letter-spacing: .06em; line-height: 18px; }
   .viewers { position: absolute; top: 10px; right: 12px; display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-2); }
   .who { font-weight: 600; }
-  .watch { height: 34px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
   .reason { margin: 0; font-size: 12px; color: var(--text-2); text-align: center; padding: 0 12px; }
   .watching { background: #000; }
   .host { position: absolute; inset: 0; cursor: zoom-in; }

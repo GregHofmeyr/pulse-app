@@ -503,7 +503,7 @@
       {#if activeServerId && !member}
         <div class="join">
           <p>You're not in <strong>{activeServer?.name}</strong> yet.</p>
-          <button class="primary" onclick={join}>Join server</button>
+          <button class="btn btn-lg btn-primary" onclick={join}>Join server</button>
           {#if error}<p class="error">{error}</p>{/if}
         </div>
       {:else if activeChannel?.kind === 'voice'}
@@ -543,8 +543,8 @@
     <label>NAME <input bind:value={newName} maxlength="64" required placeholder="Game Night" /></label>
     {#if createError}<p class="error">{createError}</p>{/if}
     <div class="dialog-actions">
-      <button type="button" class="ghost" onclick={() => (creating = false)}>Cancel</button>
-      <button class="primary" disabled={!newName.trim()}>Create</button>
+      <button type="button" class="btn btn-lg btn-secondary" onclick={() => (creating = false)}>Cancel</button>
+      <button class="btn btn-lg btn-primary" disabled={!newName.trim()}>Create</button>
     </div>
   </form>
   </div>
@@ -632,13 +632,9 @@
   .me-btn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .me-btn:hover { background: var(--bg-2); }
   .me-btn.on { color: var(--danger-text); }
-  .ghost { height: 30px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
-  .ghost:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
   .content { position: relative; flex: 1; min-width: 0; background: var(--bg-2); display: flex; flex-direction: column; }
   .empty { margin: auto; color: var(--text-3); }
   .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
-  .primary { height: 40px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
-  .primary:disabled { opacity: .5; }
   .error { color: var(--danger-text); }
   .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-grid; place-items: center; }
   .tab .invc { color: var(--accent); display: grid; margin-left: -2px; }

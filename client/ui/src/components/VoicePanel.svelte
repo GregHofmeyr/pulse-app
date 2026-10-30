@@ -161,8 +161,9 @@
   .ctl:hover { background: var(--bg-4); }
   .ctl.on { background: var(--danger); color: var(--on-danger); }
   .leave { width: 64px; height: 48px; border: 0; border-radius: 14px; background: var(--danger); color: var(--on-danger); display: grid; place-items: center; }
-  .golive { height: 48px; padding: 0 16px; border: 0; border-radius: 14px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
+  .golive { height: 48px; padding: 0 16px; border: 0; border-radius: 14px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
   .golive.off { opacity: .5; cursor: not-allowed; }
   .ctl.on:hover, .leave:hover, .golive:not(.off):hover { filter: brightness(1.1); }
-  .primary { height: 44px; padding: 0 22px; border: 0; border-radius: 12px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
+  .primary { height: 44px; padding: 0 22px; border: 0; border-radius: 12px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .primary:hover { filter: brightness(1.08); }
 </style>

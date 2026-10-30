@@ -89,7 +89,7 @@
     <video bind:this={video} muted autoplay playsinline></video>
     <div class="source">
       <span class="label" title={picked.label}>{picked.label}</span>
-      <button type="button" class="ghost" disabled={busy} onclick={changeSource}>Change source</button>
+      <button type="button" class="btn btn-secondary" disabled={busy} onclick={changeSource}>Change source</button>
     </div>
 
     <fieldset disabled={busy}>
@@ -108,8 +108,8 @@
 
     {#if pickError || stream.error}<p class="err" role="alert">{pickError || stream.error}</p>{/if}
     <div class="actions">
-      <button type="button" class="ghost" disabled={busy} onclick={cancel}>Cancel</button>
-      <button type="button" class="primary" disabled={busy} onclick={goLive}>{busy ? 'Starting…' : stream.error ? 'Retry' : 'Go Live'}</button>
+      <button type="button" class="btn btn-lg btn-secondary" disabled={busy} onclick={cancel}>Cancel</button>
+      <button type="button" class="btn btn-lg btn-primary" disabled={busy} onclick={goLive}>{busy ? 'Starting…' : stream.error ? 'Retry' : 'Go Live'}</button>
     </div>
   </div>
 </div>
@@ -132,9 +132,4 @@
   input { accent-color: var(--accent); }
   .err { margin: 0; font-size: 13px; color: var(--warn); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
-  .primary { height: 38px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
-  .primary:disabled { opacity: .6; }
-  .ghost { height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); }
-  .ghost:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
-  .ghost:disabled { opacity: .6; }
 </style>
