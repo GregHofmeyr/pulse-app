@@ -137,7 +137,7 @@
 <style>
   .menu { position: fixed; z-index: 60; min-width: 200px; max-width: 280px; padding: 6px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 12px; box-shadow: var(--shadow-menu); display: flex; flex-direction: column; gap: 2px; font-size: 13px; outline: none; }
   .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text); text-align: left; font: inherit; display: flex; align-items: center; gap: 8px; }
-  .menu button:hover, .menu button:focus-visible { background: var(--bg-3); }
+  .menu button:hover, .menu button:focus-visible { background: var(--bg-4); }
   .find { height: 32px; margin-bottom: 2px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--accent); background: var(--bg-2); color: var(--text); font: inherit; outline: none; }
   [role='group'] { display: flex; flex-direction: column; gap: 2px; }
   .none { padding: 6px 10px; color: var(--text-3); }

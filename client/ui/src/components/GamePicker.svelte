@@ -151,7 +151,7 @@
 <style>
   .picker { position: relative; }
   input { width: 100%; box-sizing: border-box; height: 34px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font: inherit; }
-  ul { position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px; list-style: none; max-height: 180px; overflow-y: auto; background: var(--bg-3); border: 1px solid var(--line); border-radius: 8px; }
+  ul { position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px); margin: 0; padding: 4px; list-style: none; max-height: 180px; overflow-y: auto; background: var(--bg-3); border: 1px solid var(--line); border-radius: 8px; box-shadow: var(--shadow-pop); }
   li { padding: 6px 8px; border-radius: 6px; cursor: pointer; font-size: 14px; }
   li.hi, li:hover { background: var(--bg-4); }
   li.add { color: var(--accent); }
