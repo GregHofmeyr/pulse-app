@@ -95,6 +95,12 @@ describe('renderMessage (cached)', () => {
     expect(renderMessage(msg('01C', '@sam'), ['sam'])).toContain('<span class="mention">@sam</span>')
   })
 
+  it('new text under the same id and edited_at renders again (the key does not trust edited_at alone)', () => {
+    expect(renderMessage(msg('01D', 'first'))).toContain('first')
+    expect(renderMessage(msg('01D', 'other'))).toContain('other') // same length
+    expect(renderMessage(msg('01D', 'a longer text'))).toContain('a longer text')
+  })
+
   it('is bounded: the least recently shown entries are evicted', () => {
     renderMessage(msg('KEEP', 'kept'))
     for (let i = 0; i < RENDER_CACHE_MAX; i++) {

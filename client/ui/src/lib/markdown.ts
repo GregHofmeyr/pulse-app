@@ -122,14 +122,25 @@ export function renderMarkdown(src: string, mentionNames: string[] = [], custom:
 /** Most rendered messages kept (a few long channels' worth); the least recently shown go first. */
 export const RENDER_CACHE_MAX = 2000
 const rendered = new Map<string, string>()
-// (id, edited_at) -> the custom emoji ids its text renders: finding them may need a lex, which a
+// a message version -> the custom emoji ids its text renders: finding them may need a lex, which a
 // cache hit must not pay for again. Same bound and LRU order as `rendered`.
 const emojiRefs = new Map<string, string[]>()
-const namesKeys = new WeakMap<string[], string>()
+// A mentionable-name list -> a short number for the cache key: a server's whole member list would
+// otherwise be copied into every entry. The same names (any array) get the same number.
+const namesIds = new Map<string, number>()
+const namesKeys = new WeakMap<string[], number>()
+
+/** One version of a message's text: its id and edit time, plus the text's length and a hash of it,
+ * so new text under an unchanged `edited_at` can't be served the old HTML. */
+function versionKey(m: Pick<Message, 'id' | 'edited_at' | 'content'>): string {
+  let h = 0x811c9dc5 // FNV-1a, 32-bit
+  for (let i = 0; i < m.content.length; i++) h = Math.imul(h ^ m.content.charCodeAt(i), 0x01000193)
+  return `${m.id}\u0001${m.edited_at ?? ''}\u0001${m.content.length}:${(h >>> 0).toString(36)}`
+}
 
 /** `renderMarkdown` for a message, cached: a re-render (someone typing, presence, a channel
- * revisit) reuses the HTML instead of re-running marked + DOMPurify. An edit changes `edited_at`,
- * and a different set of mentionable names is a different entry, so neither can show stale HTML.
+ * revisit) reuses the HTML instead of re-running marked + DOMPurify. An edit changes the text (and
+ * `edited_at`), and a different set of mentionable names is a different entry, so neither can show stale HTML.
  * So is a change to a custom emoji the message uses (a delete turns its image into a chip). */
 export function renderMessage(
   m: Pick<Message, 'id' | 'edited_at' | 'content'>,
@@ -138,10 +149,13 @@ export function renderMessage(
 ): string {
   let names = namesKeys.get(mentionNames)
   if (names === undefined) {
-    names = mentionNames.join('\u0000')
+    const joined = mentionNames.join('\u0000')
+    names = namesIds.get(joined)
+    if (names === undefined) namesIds.set(joined, (names = namesIds.size))
     namesKeys.set(mentionNames, names)
   }
-  const key = `${m.id}\u0001${m.edited_at ?? ''}\u0001${names}\u0001${emojiKey(m, customEmoji)}`
+  const v = versionKey(m)
+  const key = `${v}\u0001${names}\u0001${emojiKey(m, v, customEmoji)}`
   const hit = rendered.get(key)
   if (hit !== undefined) {
     rendered.delete(key) // re-insert: Map order is the LRU order
@@ -155,9 +169,8 @@ export function renderMessage(
 }
 
 /** The state of each custom emoji a message's text renders, for its cache key. */
-function emojiKey(m: Pick<Message, 'id' | 'edited_at' | 'content'>, custom: Record<string, CustomEmoji>): string {
+function emojiKey(m: Pick<Message, 'content'>, v: string, custom: Record<string, CustomEmoji>): string {
   if (!m.content.includes('<')) return ''
-  const v = `${m.id}\u0001${m.edited_at ?? ''}`
   let ids = emojiRefs.get(v)
   if (ids) emojiRefs.delete(v) // re-insert: Map order is the LRU order
   else ids = renderedEmojiIds(m.content)
