@@ -1,54 +1,66 @@
-//! Linux: freedesktop notifications over D-Bus (notify-rust on zbus). Each conversation keeps
-//! one notification, replaced in place (its id), and one thread waits for its click or close.
+//! Linux: freedesktop notifications over D-Bus (zbus, pure Rust). Each conversation keeps one
+//! notification, replaced in place by id.
+//!
+//! One connection sends every notification and one thread on it hears the clicks. Some
+//! notification services send the click only to the connection that sent the notification
+//! (KDE's does), so a replacement sent from a new connection, as notify-rust's `show` does,
+//! would lose its click; and one thread per notification would pile up behind a busy chat.
 
 use super::{Click, Notice, OnClick};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
+use zbus::blocking::{Connection, MessageIterator};
+use zbus::zvariant::Value;
 
-/// Which notification each conversation has on screen, and where a click on it leads.
+const DEST: &str = "org.freedesktop.Notifications";
+const PATH: &str = "/org/freedesktop/Notifications";
+const IFACE: &str = "org.freedesktop.Notifications";
+/// How many of our notification ids are remembered for a click.
+const KEEP: usize = 64;
+
+/// Which notification each conversation has on screen, and where a click on each of ours leads.
 #[derive(Default)]
-struct Replacer {
-    by_channel: HashMap<String, Entry>,
+struct Tracker {
+    by_channel: HashMap<String, u32>,
+    by_id: HashMap<u32, Click>,
+    /// Oldest first, for forgetting beyond [KEEP].
+    order: VecDeque<u32>,
 }
 
-struct Entry {
-    id: u32,
-    click: Click,
-}
-
-impl Replacer {
+impl Tracker {
     /// The id to replace for `channel` (its notification still on screen, as far as we know).
     fn replaces_id(&self, channel: &str) -> Option<u32> {
-        self.by_channel.get(channel).map(|e| e.id)
+        self.by_channel.get(channel).copied()
     }
 
-    /// The daemon shows `id` for `click`'s conversation. True: start a waiter for `id`. False: it
-    /// replaced the one already being waited on, which now leads to `click`.
-    fn shown(&mut self, id: u32, click: Click) -> bool {
-        if let Some(e) = self.by_channel.get_mut(&click.channel_id)
-            && e.id == id
-        {
-            e.click = click;
-            return false;
+    /// The service shows `id` for `click`'s conversation (new, or replaced in place).
+    fn shown(&mut self, id: u32, click: Click) {
+        self.by_channel.insert(click.channel_id.clone(), id);
+        if self.by_id.insert(id, click).is_none() {
+            self.order.push_back(id);
         }
-        self.by_channel
-            .insert(click.channel_id.clone(), Entry { id, click });
-        true
+        while self.order.len() > KEEP {
+            let Some(old) = self.order.pop_front() else {
+                break;
+            };
+            self.by_id.remove(&old);
+            self.by_channel.retain(|_, v| *v != old);
+        }
     }
 
-    /// The waiter for `id` saw it clicked or closed: forget it; a click leads to its newest target.
-    fn ended(&mut self, id: u32, clicked: bool) -> Option<Click> {
-        let channel = self
-            .by_channel
-            .iter()
-            .find(|(_, e)| e.id == id)
-            .map(|(c, _)| c.clone())?;
-        let e = self.by_channel.remove(&channel)?;
-        clicked.then_some(e.click)
+    /// `id` was clicked: where it leads, if it is ours.
+    fn clicked(&self, id: u32) -> Option<Click> {
+        self.by_id.get(&id).cloned()
+    }
+
+    /// `id` closed: the next one for its conversation is a new notification. Its click target is
+    /// kept, for services that say "closed" for an id they only replaced.
+    fn closed(&mut self, id: u32) {
+        self.by_channel.retain(|_, v| *v != id);
     }
 }
 
-/// For daemons that read the body as markup: `<`, `>` and `&` from a message stay text.
+/// For services that read the body as markup: `<`, `>` and `&` from a message stay text.
 fn escape_markup(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
@@ -56,16 +68,18 @@ fn escape_markup(s: &str) -> String {
 }
 
 pub struct Backend {
-    replacer: Arc<Mutex<Replacer>>,
+    conn: Option<Connection>,
+    tracker: Arc<Mutex<Tracker>>,
     on_click: OnClick,
-    /// Asked once: whether the daemon reads the body as markup.
+    /// Whether the service reads the body as markup, once it has answered.
     markup: Option<bool>,
 }
 
 impl Backend {
     pub fn new(_app_id: String, on_click: OnClick) -> Self {
         Backend {
-            replacer: Arc::default(),
+            conn: None,
+            tracker: Arc::default(),
             on_click,
             markup: None,
         }
@@ -73,55 +87,106 @@ impl Backend {
 
     /// Blocks on D-Bus: called on the notifier thread only.
     pub fn show(&mut self, n: &Notice) -> Result<(), String> {
-        let markup = *self.markup.get_or_insert_with(|| {
-            notify_rust::get_capabilities()
-                .map(|c| c.iter().any(|x| x == "body-markup"))
-                .unwrap_or(false)
-        });
-        let replaces = lock(&self.replacer).replaces_id(&n.channel_id);
-        let mut note = notify_rust::Notification::new();
-        note.appname("Pulse")
-            .summary(&n.title)
-            .body(&if markup {
-                escape_markup(&n.body)
-            } else {
-                n.body.clone()
-            })
-            // "default" is a click on the notification itself
-            .action("default", "Open")
-            .hint(notify_rust::Hint::Category("im.received".into()));
-        if let Some(id) = replaces {
-            note.id(id);
+        let conn = self.connection().map_err(|e| e.to_string())?;
+        if self.markup.is_none() {
+            // asked again next time if the service isn't there yet
+            if let Ok(reply) =
+                conn.call_method(Some(DEST), PATH, Some(IFACE), "GetCapabilities", &())
+                && let Ok(caps) = reply.body().deserialize::<Vec<String>>()
+            {
+                self.markup = Some(caps.iter().any(|c| c == "body-markup"));
+            }
         }
-        let handle = note.show().map_err(|e| e.to_string())?;
-        let id = handle.id();
-        let click = Click {
-            channel_id: n.channel_id.clone(),
-            thread_id: n.thread_id.clone(),
+        let body = if self.markup == Some(true) {
+            escape_markup(&n.body)
+        } else {
+            n.body.clone()
         };
-        if !lock(&self.replacer).shown(id, click) {
-            return Ok(());
+        let replaces = lock(&self.tracker).replaces_id(&n.channel_id).unwrap_or(0);
+        let mut hints: HashMap<&str, Value> = HashMap::new();
+        hints.insert("category", Value::from("im.received"));
+        // Pulse plays its own message sound
+        hints.insert("suppress-sound", Value::from(true));
+        // "default" is a click on the notification itself
+        let actions = ["default", "Open"];
+        let reply = conn
+            .call_method(
+                Some(DEST),
+                PATH,
+                Some(IFACE),
+                "Notify",
+                &(
+                    "Pulse",
+                    replaces,
+                    "",
+                    &n.title,
+                    &body,
+                    &actions[..],
+                    hints,
+                    -1i32,
+                ),
+            )
+            .map_err(|e| e.to_string())?;
+        let id: u32 = reply.body().deserialize().map_err(|e| e.to_string())?;
+        lock(&self.tracker).shown(
+            id,
+            Click {
+                channel_id: n.channel_id.clone(),
+                thread_id: n.thread_id.clone(),
+            },
+        );
+        Ok(())
+    }
+
+    /// The session bus connection, made (with its click listener) on first use.
+    fn connection(&mut self) -> zbus::Result<Connection> {
+        if let Some(c) = &self.conn {
+            return Ok(c.clone());
         }
-        let replacer = self.replacer.clone();
+        let conn = Connection::session()?;
+        let rule = zbus::MatchRule::builder()
+            .msg_type(zbus::message::Type::Signal)
+            .interface(IFACE)?
+            .path(PATH)?
+            .build();
+        let signals = MessageIterator::for_match_rule(rule, &conn, None)?;
+        let tracker = self.tracker.clone();
         let on_click = self.on_click.clone();
-        // Waiting for the click blocks until the notification is clicked or closed: its own thread.
         std::thread::Builder::new()
-            .name("pulse-notify-wait".into())
-            .spawn(move || {
-                let mut clicked = false;
-                handle.wait_for_action(|action| clicked = action == "default");
-                let target = lock(&replacer).ended(id, clicked);
-                if let Some(c) = target {
-                    on_click(c);
-                }
-            })
-            .map(|_| ())
-            .map_err(|e| e.to_string())
+            .name("pulse-notify-listen".into())
+            .spawn(move || listen(signals, &tracker, &on_click))
+            .map_err(|e| zbus::Error::Failure(e.to_string()))?;
+        self.conn = Some(conn.clone());
+        Ok(conn)
     }
 }
 
-fn lock(r: &Mutex<Replacer>) -> std::sync::MutexGuard<'_, Replacer> {
-    r.lock().unwrap_or_else(|e| e.into_inner())
+/// Clicks and closes, for the app's lifetime (every app's notifications pass by: only ours count).
+fn listen(signals: MessageIterator, tracker: &Mutex<Tracker>, on_click: &OnClick) {
+    for msg in signals {
+        let Ok(msg) = msg else { continue };
+        let header = msg.header();
+        match header.member().map(|m| m.as_str()) {
+            Some("ActionInvoked") => {
+                if let Ok((id, action)) = msg.body().deserialize::<(u32, String)>()
+                    && action == "default"
+                    && let Some(c) = lock(tracker).clicked(id)
+                {
+                    on_click(c);
+                }
+            }
+            Some("NotificationClosed") => {
+                if let Ok((id, _reason)) = msg.body().deserialize::<(u32, u32)>() {
+                    lock(tracker).closed(id);
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+fn lock(t: &Mutex<Tracker>) -> std::sync::MutexGuard<'_, Tracker> {
+    t.lock().unwrap_or_else(|e| e.into_inner())
 }
 
 #[cfg(test)]
@@ -136,56 +201,69 @@ mod tests {
     }
 
     #[test]
-    fn the_first_one_replaces_nothing_and_gets_a_waiter() {
-        let mut r = Replacer::default();
-        assert_eq!(r.replaces_id("C1"), None);
-        assert!(r.shown(7, click("C1", None)));
-        assert_eq!(r.replaces_id("C1"), Some(7));
-        assert_eq!(r.replaces_id("C2"), None);
+    fn the_first_one_replaces_nothing() {
+        let mut t = Tracker::default();
+        assert_eq!(t.replaces_id("C1"), None);
+        t.shown(7, click("C1", None));
+        assert_eq!(t.replaces_id("C1"), Some(7));
+        assert_eq!(t.replaces_id("C2"), None);
     }
 
     #[test]
-    fn a_replacement_reuses_the_waiter_and_a_click_gets_the_newest() {
-        let mut r = Replacer::default();
-        assert!(r.shown(7, click("C1", None)));
-        // the daemon replaced 7 in place: the waiter on 7 is still there
-        assert!(!r.shown(7, click("C1", Some("Q1"))));
-        assert!(!r.shown(7, click("C1", Some("Q2"))));
-        assert_eq!(r.ended(7, true), Some(click("C1", Some("Q2"))));
-        // delivered once
-        assert_eq!(r.ended(7, true), None);
-        assert_eq!(r.replaces_id("C1"), None);
+    fn a_click_leads_to_the_newest_replacement() {
+        let mut t = Tracker::default();
+        t.shown(7, click("C1", None));
+        t.shown(7, click("C1", Some("Q1")));
+        t.shown(7, click("C1", Some("Q2")));
+        assert_eq!(t.clicked(7), Some(click("C1", Some("Q2"))));
     }
 
     #[test]
-    fn closed_forgets_the_conversation() {
-        let mut r = Replacer::default();
-        assert!(r.shown(7, click("C1", None)));
-        assert_eq!(r.ended(7, false), None);
-        assert_eq!(r.replaces_id("C1"), None);
-        // a new one after that starts its own waiter
-        assert!(r.shown(9, click("C1", None)));
+    fn another_apps_notification_is_not_ours() {
+        let mut t = Tracker::default();
+        t.shown(7, click("C1", None));
+        assert_eq!(t.clicked(99), None);
     }
 
     #[test]
-    fn a_new_id_for_the_conversation_gets_a_new_waiter() {
-        let mut r = Replacer::default();
-        assert!(r.shown(7, click("C1", None)));
-        // the daemon didn't replace (or 7 was gone): a different id
-        assert!(r.shown(8, click("C1", Some("Q1"))));
-        // the old waiter ending changes nothing for the new one
-        assert_eq!(r.ended(7, true), None);
-        assert_eq!(r.replaces_id("C1"), Some(8));
-        assert_eq!(r.ended(8, true), Some(click("C1", Some("Q1"))));
+    fn closed_stops_replacing_but_a_late_click_still_leads_there() {
+        // some daemons say "closed" for an id they replaced in place: the one on screen must
+        // still open its conversation
+        let mut t = Tracker::default();
+        t.shown(7, click("C1", Some("Q1")));
+        t.closed(7);
+        assert_eq!(t.replaces_id("C1"), None);
+        assert_eq!(t.clicked(7), Some(click("C1", Some("Q1"))));
+    }
+
+    #[test]
+    fn a_closed_id_does_not_touch_a_newer_one() {
+        let mut t = Tracker::default();
+        t.shown(7, click("C1", None));
+        t.shown(8, click("C1", None));
+        t.closed(7);
+        assert_eq!(t.replaces_id("C1"), Some(8));
     }
 
     #[test]
     fn conversations_are_separate() {
-        let mut r = Replacer::default();
-        assert!(r.shown(7, click("C1", None)));
-        assert!(r.shown(8, click("C2", None)));
-        assert_eq!(r.ended(8, true), Some(click("C2", None)));
-        assert_eq!(r.replaces_id("C1"), Some(7));
+        let mut t = Tracker::default();
+        t.shown(7, click("C1", None));
+        t.shown(8, click("C2", None));
+        assert_eq!(t.clicked(8), Some(click("C2", None)));
+        assert_eq!(t.replaces_id("C1"), Some(7));
+    }
+
+    #[test]
+    fn it_remembers_a_bounded_number_of_ids() {
+        let mut t = Tracker::default();
+        for id in 0..(KEEP as u32 + 10) {
+            t.shown(id, click(&format!("C{id}"), None));
+        }
+        assert_eq!(t.clicked(0), None);
+        assert_eq!(t.replaces_id("C0"), None);
+        let last = KEEP as u32 + 9;
+        assert_eq!(t.clicked(last), Some(click(&format!("C{last}"), None)));
     }
 
     #[test]
