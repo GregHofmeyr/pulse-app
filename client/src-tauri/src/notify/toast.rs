@@ -1,6 +1,12 @@
 //! The Windows toast's XML: a title line and a body line. Kept apart from the WinRT calls so
 //! it is tested on every platform.
 
+/// XML 1.0's `Char`: tab, newline, carriage return and everything from space up, except
+/// U+FFFE and U+FFFF (a Rust `char` is never a surrogate).
+fn xml_char(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{FFFD}' | '\u{10000}'..)
+}
+
 fn escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -10,7 +16,9 @@ fn escape(s: &str) -> String {
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
             '\'' => out.push_str("&apos;"),
-            c => out.push(c),
+            c if xml_char(c) => out.push(c),
+            // XML 1.0 can't hold it even escaped, and one would make the whole toast fail to load
+            _ => {}
         }
     }
     out
@@ -34,6 +42,19 @@ mod tests {
         assert_eq!(
             toast_xml("sam", "hello"),
             r#"<toast><visual><binding template="ToastGeneric"><text>sam</text><text>hello</text></binding></visual><audio silent="true"/></toast>"#
+        );
+    }
+
+    #[test]
+    fn characters_xml_cannot_hold_are_left_out() {
+        // (lone surrogates can't be in a Rust string, so these are all that's left to drop)
+        let x = toast_xml("sam\u{FFFE}", "a\u{FFFF}b\u{0}c\u{1}d\u{B}e\u{1F}f");
+        assert!(x.contains("<text>sam</text>"));
+        assert!(x.contains("<text>abcdef</text>"));
+        // tab, newline, emoji and the rest of Unicode stay
+        assert!(
+            toast_xml("t", "a\tb\nc😀\u{FFFD}\u{E000}")
+                .contains("<text>a\tb\nc😀\u{FFFD}\u{E000}</text>")
         );
     }
 
