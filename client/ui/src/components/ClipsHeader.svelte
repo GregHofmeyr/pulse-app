@@ -96,18 +96,18 @@
   .ico { display: flex; }
   .title { color: var(--text); font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
   .chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-left: 6px; }
-  .chip { height: 28px; padding: 0 11px; border-radius: 14px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12.5px; font-weight: 600; white-space: nowrap; }
+  .chip { height: 28px; padding: 0 11px; border-radius: 14px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; font-weight: 600; white-space: nowrap; }
   .chip:hover { background: var(--bg-3); color: var(--text); }
   .chip[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
   .person { position: relative; }
   .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; padding: 4px; display: flex; flex-direction: column; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); }
-  .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--text); display: flex; align-items: center; gap: 8px; font-size: 13.5px; text-align: left; }
+  .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--text); display: flex; align-items: center; gap: 8px; font-size: 13px; text-align: left; }
   .menu button:hover, .menu button:focus-visible { background: var(--bg-4); }
   .menu button[aria-checked='true'] { color: var(--accent); }
   .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
   .grow { flex: 1; }
-  .err { color: var(--danger); font-size: 12.5px; }
+  .err { color: var(--danger); font-size: 12px; }
   .toggle { display: flex; padding: 2px; border-radius: 10px; background: var(--bg-2); }
   .tbtn { width: 30px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .tbtn:hover { color: var(--text); }

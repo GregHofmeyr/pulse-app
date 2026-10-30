@@ -224,13 +224,13 @@
   .said { min-width: 0; color: var(--text-body); line-height: 1.5; overflow-wrap: anywhere; }
   .by { display: flex; align-items: center; gap: 8px; flex-shrink: 0; color: var(--text-2); }
   .speaker::before { content: '— '; color: var(--text-3); }
-  .trophy { color: var(--quote-green); font-size: 12.5px; font-weight: 600; }
+  .trophy { color: var(--quote-green); font-size: 12px; font-weight: 600; }
   .lbtn { width: 24px; height: 24px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; opacity: 0; }
   .line:hover .lbtn, .line:focus-within .lbtn { opacity: 1; }
   .lbtn:hover { background: var(--bg-3); color: var(--text); }
   .picbtn { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 8px; }
   .caption { margin: 4px 0 0; font-size: 13px; color: var(--text-2); }
-  .win { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: 10px; background: var(--quote-green); color: var(--on-quote-green); font-size: 11.5px; font-weight: 700; }
+  .win { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: 10px; background: var(--quote-green); color: var(--on-quote-green); font-size: 11px; font-weight: 700; }
   .edited { font-size: 11px; color: var(--text-3); }
   .replies { margin-top: 4px; padding: 0; border: 0; background: none; color: var(--accent); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
   .replies:hover { text-decoration: underline; }

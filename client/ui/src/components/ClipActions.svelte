@@ -101,7 +101,7 @@
   .dots { width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .dots:hover, .dots[aria-expanded='true'] { background: var(--bg-3); color: var(--text); }
   .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 140px; padding: 4px; display: flex; flex-direction: column; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); }
-  .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--text); display: flex; align-items: center; gap: 8px; font-size: 13.5px; text-align: left; }
+  .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--text); display: flex; align-items: center; gap: 8px; font-size: 13px; text-align: left; }
   .menu button:hover, .menu button:focus-visible { background: var(--bg-4); }
   .menu .danger { color: var(--danger); }
   .ask { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: 240px; padding: 10px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); }
@@ -115,7 +115,7 @@
   .modal { position: relative; width: min(420px, 100%); padding: 20px; border-radius: 16px; background: var(--bg-1); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; outline: none; }
   h1 { margin: 0; font-size: 18px; font-weight: 600; }
   textarea { resize: vertical; min-height: 64px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font: inherit; }
-  .err { margin: 0; font-size: 12.5px; color: var(--danger); }
+  .err { margin: 0; font-size: 12px; color: var(--danger); }
   .foot { display: flex; justify-content: flex-end; gap: 8px; }
   .ghost { height: 34px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); }
   .ghost:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }

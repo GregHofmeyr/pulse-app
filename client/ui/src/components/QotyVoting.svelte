@@ -218,7 +218,7 @@
   .grow { flex: 1; }
   .close { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; }
   .close:hover { background: var(--bg-4); color: var(--text); }
-  .status { margin: -4px 0 0; color: var(--text-3); font-size: 12.5px; }
+  .status { margin: -4px 0 0; color: var(--text-3); font-size: 12px; }
   .options { display: flex; flex-direction: column; gap: 8px; }
   .opt { position: relative; overflow: hidden; display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); }
   .opt.mine { border-color: var(--quote-green); }
@@ -231,7 +231,7 @@
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .vote:disabled { opacity: .6; }
   .count { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .vote { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--quote-green); background: transparent; color: var(--quote-green); font-size: 12.5px; font-weight: 700; white-space: nowrap; }
+  .vote { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--quote-green); background: transparent; color: var(--quote-green); font-size: 13px; font-weight: 700; white-space: nowrap; }
   .vote.on { border-color: transparent; background: var(--quote-green); color: var(--on-quote-green); box-shadow: 0 2px 0 var(--quote-green-deep); }
   .none { margin: 0; color: var(--text-3); font-size: 13px; }
   .add { display: flex; flex-direction: column; gap: 6px; }
@@ -243,7 +243,7 @@
   .r-by { color: var(--text-3); font-size: 12px; }
   .err { margin: 0; font-size: 13px; color: var(--danger); }
   .foot, .confirm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
-  .confirm p { flex: 1; margin: 0; font-size: 13.5px; }
+  .confirm p { flex: 1; margin: 0; font-size: 13px; }
   .foot .qoty-btn, .confirm .qoty-btn { height: 34px; }
   .qoty-btn.danger { background: var(--danger); color: var(--text); box-shadow: 0 2px 0 color-mix(in srgb, var(--danger) 55%, var(--bg-0)); }
   .ghost { height: 34px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 13px; }

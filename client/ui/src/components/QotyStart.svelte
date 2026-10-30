@@ -121,7 +121,7 @@
   .field input { width: 120px; }
   .custom { display: flex; align-items: center; gap: 10px; }
   .custom input { width: 96px; }
-  .hint { margin: 0; font-size: 12.5px; color: var(--text-3); }
+  .hint { margin: 0; font-size: 12px; color: var(--text-3); }
   .hint.bad { color: var(--warn); }
   .err { margin: 0; font-size: 13px; color: var(--danger); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }

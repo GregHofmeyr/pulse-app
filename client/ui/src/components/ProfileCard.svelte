@@ -177,7 +177,7 @@
   .badges { display: flex; flex-wrap: wrap; gap: 6px; }
   .badge { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--panel-top); color: var(--card-text); }
   .panel { border-radius: 10px; padding: 10px 12px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); font-size: 13px; }
-  .bio { font-size: 13.5px; line-height: 1.4; overflow-wrap: anywhere; }
+  .bio { font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
   .bio :global(p) { margin: 0; }
   .bio :global(p + p) { margin-top: 4px; }
   .skeleton { display: flex; flex-direction: column; gap: 8px; }
@@ -190,7 +190,7 @@
   .info .room { justify-content: flex-start; align-items: center; gap: 6px; color: var(--ok); }
   .avatar-link { border: 0; cursor: pointer; }
   .actions { display: flex; flex-direction: column; padding: 4px; border-radius: 10px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); }
-  .actions button { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--card-text); font: inherit; font-size: 13.5px; font-weight: 600; text-align: left; cursor: pointer; }
+  .actions button { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--card-text); font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
   .actions button + button { box-shadow: 0 -1px 0 rgb(242 243 246 / .08); }
   .actions button:hover:not([aria-disabled='true']) { background: rgb(242 243 246 / .08); }
   .actions button[aria-disabled='true'] { cursor: default; }
