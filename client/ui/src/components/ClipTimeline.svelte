@@ -49,10 +49,31 @@
     return Math.min(Math.max(((clientX - r.left) / r.width) * duration, 0), duration)
   }
 
-  function click(e: MouseEvent, i: number) {
-    const p = cut.pieces[i]
+  // A press on a piece selects it (restoring a dropped one) and seeks there; holding and dragging
+  // then scrubs the playhead along the whole timeline. The click that follows the release is
+  // already handled; a keyboard press (no pointer, detail 0) still selects and seeks.
+  let scrubbing = false
+  function press(e: PointerEvent, i: number) {
+    if (e.button !== 0) return
+    scrubbing = true
+    ;(e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId)
     onSelect(i)
-    onSeek(timeAt(e.clientX) ?? p.start)
+    onSeek(timeAt(e.clientX) ?? cut.pieces[i].start)
+  }
+  function scrub(e: PointerEvent) {
+    if (!scrubbing) return
+    const t = timeAt(e.clientX)
+    if (t !== null) onSeek(t)
+  }
+  function release(e: PointerEvent) {
+    if (!scrubbing) return
+    scrubbing = false
+    ;(e.currentTarget as HTMLElement).releasePointerCapture?.(e.pointerId)
+  }
+  function click(e: MouseEvent, i: number) {
+    if (e.detail !== 0) return
+    onSelect(i)
+    onSeek(cut.pieces[i].start)
   }
 
   let dragging: number | null = null
@@ -108,6 +129,10 @@
         style:width="{pct(p.end - p.start)}%"
         aria-label="{p.dropped ? 'Dropped piece' : 'Piece'} {formatDuration(p.start)} to {formatDuration(p.end)}"
         aria-pressed={cut.selected === i}
+        onpointerdown={(e) => press(e, i)}
+        onpointermove={scrub}
+        onpointerup={release}
+        onpointercancel={release}
         onclick={(e) => click(e, i)}
       ></button>
     {/each}

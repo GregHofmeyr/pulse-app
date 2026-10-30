@@ -289,6 +289,56 @@ describe('ClipEditor', () => {
     expect(onClose).toHaveBeenCalledTimes(1)
   })
 
+  // jsdom has no layout: give the timeline a 1000 px wide track (41 s, so 1 px is 41 ms)
+  const wideTrack = () => {
+    const track = document.querySelector<HTMLElement>('[data-track]')!
+    track.getBoundingClientRect = () => ({ left: 0, width: 1000, top: 0, height: 60, right: 1000, bottom: 60, x: 0, y: 0, toJSON() {} }) as DOMRect
+  }
+  const pointer = (el: HTMLElement, type: string, clientX: number) =>
+    el.dispatchEvent(new MouseEvent(type, { clientX, button: 0, bubbles: true, detail: type === 'click' ? 1 : 0 }))
+
+  it('pressing and dragging along the timeline scrubs the playhead', async () => {
+    await show()
+    wideTrack()
+    const piece = pieces()[0]
+    piece.setPointerCapture = () => {}
+    piece.releasePointerCapture = () => {}
+    pointer(piece, 'pointerdown', 100)
+    expect(video()._t).toBeCloseTo(4.1, 2)
+    pointer(piece, 'pointermove', 500)
+    expect(video()._t).toBeCloseTo(20.5, 2)
+    pointer(piece, 'pointermove', 1200) // past the end: held at the end
+    expect(video()._t).toBeCloseTo(41, 2)
+    pointer(piece, 'pointermove', 900)
+    pointer(piece, 'pointerup', 900)
+    pointer(piece, 'click', 900)
+    flushSync()
+    expect(video()._t).toBeCloseTo(36.9, 2)
+    // moving the pointer after letting go doesn't scrub
+    pointer(piece, 'pointermove', 200)
+    expect(video()._t).toBeCloseTo(36.9, 2)
+    expect(pieces()).toHaveLength(1)
+  })
+
+  it('a scrub that starts on a dropped piece restores it once, as a click does', async () => {
+    await show()
+    at(10)
+    key('c'); key('Delete')
+    wideTrack()
+    const piece = pieces()[1]
+    piece.setPointerCapture = () => {}
+    piece.releasePointerCapture = () => {}
+    pointer(piece, 'pointerdown', 400)
+    pointer(piece, 'pointermove', 600)
+    pointer(piece, 'pointerup', 600)
+    pointer(piece, 'click', 600)
+    flushSync()
+    expect(pieces()[1].dataset.dropped).toBeUndefined()
+    // one undo step brings the drop back (a second select would have stacked another)
+    key('z', { ctrlKey: true })
+    expect(pieces()[1].dataset.dropped).toBe('true')
+  })
+
   it('dragging an edge is one undo step', async () => {
     await show()
     at(10); key('c')
