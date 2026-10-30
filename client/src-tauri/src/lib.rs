@@ -20,6 +20,7 @@ pub mod stream;
 pub mod throttle;
 pub mod video;
 pub mod voice;
+pub mod webview_crash;
 pub mod webview_memory;
 
 /// Keeps the log writer alive (dropping it flushes and stops logging).
@@ -41,15 +42,9 @@ fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri:
         .background_color(tauri::window::Color(0x14, 0x15, 0x19, 0xff))
         .data_directory(profile_dir.join("webview"))
         .build()?;
-    // WebKitGTK: if the page renderer crashes, reload instead of leaving a dead window.
-    #[cfg(target_os = "linux")]
-    win.with_webview(|wv| {
-        use webkit2gtk::WebViewExt;
-        wv.inner().connect_web_process_terminated(|view, reason| {
-            tracing::error!(?reason, "web renderer died; reloading");
-            view.reload();
-        });
-    })?;
+    // If the page's process dies, reload (or restart) instead of leaving a dead window.
+    #[cfg(any(target_os = "linux", windows))]
+    webview_crash::install(&win)?;
     // Focus decides message sounds and read marking: log each change the window reports (the page
     // logs what it holds, and why each message did or didn't ding), so a missed sound can be told
     // apart from a focus the window never lost.
