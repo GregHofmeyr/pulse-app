@@ -7,7 +7,13 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
+#[cfg(target_os = "linux")]
+mod linux;
+#[cfg(target_os = "linux")]
+use linux::Backend;
+#[cfg(not(target_os = "linux"))]
 mod none;
+#[cfg(not(target_os = "linux"))]
 use none::Backend;
 
 /// Emitted to the page when a notification is clicked (after the window is brought up).
