@@ -69,11 +69,11 @@
 {#if confirming}
   <p class="q">Are you sure? Every other device signed in to this account goes back to the login screen. This one stays signed in.</p>
   <div class="actions">
-    <button class="danger" disabled={busy} onclick={signOutOthers}>Sign out</button>
-    <button disabled={busy} onclick={() => (confirming = false)}>Cancel</button>
+    <button class="btn btn-secondary btn-danger-text" disabled={busy} onclick={signOutOthers}>Sign out</button>
+    <button class="btn btn-secondary" disabled={busy} onclick={() => (confirming = false)}>Cancel</button>
   </div>
 {:else}
-  <button class="danger" onclick={() => { confirming = true; result = ''; error = '' }}>Sign out all other devices</button>
+  <button class="btn btn-secondary btn-danger-text" onclick={() => { confirming = true; result = ''; error = '' }}>Sign out all other devices</button>
 {/if}
 {#if result}<p class="ok" role="status">{result}</p>{/if}
 {#if error}<p class="err" role="alert">{error}</p>{/if}
@@ -90,10 +90,6 @@
   .hint { margin: 6px 0 0 26px; font-size: 13px; color: var(--text-3); }
   .q { margin: 0 0 10px; font-size: 13px; color: var(--text-2); }
   .actions { display: flex; gap: 8px; }
-  button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-size: 13px; }
-  button:hover { background: var(--bg-3); }
-  button:disabled { opacity: .6; }
-  button.danger { color: var(--danger-text); }
   .ok { margin: 10px 0 0; font-size: 13px; color: var(--text-2); }
   .err { margin: 10px 0 0; font-size: 13px; color: var(--danger-text); }
 </style>

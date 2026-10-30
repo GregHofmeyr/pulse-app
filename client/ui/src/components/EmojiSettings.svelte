@@ -135,8 +135,8 @@
       <!-- always present (emptied when fine): a live region added along with its text often isn't announced -->
       <small id="emoji-name-hint" class="name-hint" aria-live="polite">{validName ? '' : NAME_RULE}</small>
       <div class="row">
-        <button class="primary" disabled={busy} onclick={save}>Save</button>
-        <button onclick={cancelAdd}>Cancel</button>
+        <button class="btn btn-primary" disabled={busy} onclick={save}>Save</button>
+        <button class="btn btn-secondary" onclick={cancelAdd}>Cancel</button>
       </div>
     </div>
   {:else}
@@ -169,11 +169,11 @@
           </div>
           {#if confirming === e.id}
             <span class="q">Delete :{e.name}:?</span>
-            <button class="danger" onclick={() => remove(e.id)}>Delete</button>
-            <button onclick={() => { confirming = null; error = '' }}>Cancel</button>
+            <button class="btn btn-secondary btn-danger-text" onclick={() => remove(e.id)}>Delete</button>
+            <button class="btn btn-secondary" onclick={() => { confirming = null; error = '' }}>Cancel</button>
           {:else}
-            <button aria-label="Rename :{e.name}:" onclick={() => (renaming = { id: e.id, name: e.name })}>Rename</button>
-            <button aria-label="Delete :{e.name}:" onclick={() => (confirming = e.id)}>Delete</button>
+            <button class="btn btn-secondary" aria-label="Rename :{e.name}:" onclick={() => (renaming = { id: e.id, name: e.name })}>Rename</button>
+            <button class="btn btn-secondary" aria-label="Delete :{e.name}:" onclick={() => (confirming = e.id)}>Delete</button>
           {/if}
         </li>
       {/each}
@@ -188,10 +188,6 @@
   .hint { margin: 0 0 16px; color: var(--text-3); font-size: 13px; }
   .error { margin: 0 0 12px; color: var(--danger-text); font-size: 13px; }
   .empty { color: var(--text-3); }
-  button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-size: 13px; }
-  button:hover { background: var(--bg-3); }
-  button.danger { color: var(--danger-text); }
-  button.primary { background: var(--accent); border-color: transparent; color: var(--on-accent); font-weight: 600; }
   .file { display: inline-flex; align-items: center; height: 36px; padding: 0 16px; margin-bottom: 20px; border-radius: 8px; background: var(--bg-3); font-weight: 600; font-size: 13px; cursor: pointer; }
   .file.off { opacity: .5; cursor: default; }
   .file input { position: absolute; width: 1px; height: 1px; opacity: 0; }

@@ -127,7 +127,7 @@
 
 {#if view === 'status' && !status && error}
   <p class="err" role="alert">{error}</p>
-  <button onclick={refresh}>Try again</button>
+  <button class="btn btn-secondary" onclick={refresh}>Try again</button>
 {:else if view === 'status' && !status}
   <p class="hint" role="status">Checking…</p>
 {:else if view === 'status' && status}
@@ -136,20 +136,20 @@
   {:else if status.enabled}
     <p class="q">Two-factor authentication is on. {status.recovery_codes_left} recovery code{status.recovery_codes_left === 1 ? '' : 's'} left.</p>
     <div class="actions">
-      <button onclick={() => open('regen')}>New recovery codes</button>
-      <button class="danger" onclick={() => open('disable')}>Turn off</button>
+      <button class="btn btn-secondary" onclick={() => open('regen')}>New recovery codes</button>
+      <button class="btn btn-secondary btn-danger-text" onclick={() => open('disable')}>Turn off</button>
     </div>
   {:else}
     <p class="q">Ask for a code from an authenticator app when you log in, on top of your password.</p>
-    <button onclick={() => open('password')}>Set up</button>
+    <button class="btn btn-secondary" onclick={() => open('password')}>Set up</button>
   {/if}
 {:else if view === 'password'}
   <form onsubmit={start}>
     <p class="q">Enter your password to start.</p>
     <label>Password <input type="password" bind:value={password} required autocomplete="current-password" /></label>
     <div class="actions">
-      <button disabled={busy}>Continue</button>
-      <button type="button" disabled={busy} onclick={reset}>Cancel</button>
+      <button class="btn btn-primary" disabled={busy}>Continue</button>
+      <button type="button" class="btn btn-secondary" disabled={busy} onclick={reset}>Cancel</button>
     </div>
   </form>
 {:else if view === 'scan' && setup}
@@ -165,8 +165,8 @@
     <p class="key"><code>{setup.secret}</code></p>
     <label>Code <input bind:value={code} required inputmode="numeric" autocomplete="one-time-code" placeholder="6-digit code" /></label>
     <div class="actions">
-      <button disabled={busy}>Turn on</button>
-      <button type="button" disabled={busy} onclick={reset}>Cancel</button>
+      <button class="btn btn-primary" disabled={busy}>Turn on</button>
+      <button type="button" class="btn btn-secondary" disabled={busy} onclick={reset}>Cancel</button>
     </div>
   </form>
 {:else if view === 'codes'}
@@ -176,8 +176,8 @@
   </ul>
   {#if signedOutNote}<p class="ok" role="status">{signedOutNote}</p>{/if}
   <div class="actions">
-    <button onclick={copy}>{copyNote === 'ok' ? 'Copied' : 'Copy'}</button>
-    <button onclick={saved}>I've saved these</button>
+    <button class="btn btn-secondary" onclick={copy}>{copyNote === 'ok' ? 'Copied' : 'Copy'}</button>
+    <button class="btn btn-primary" onclick={saved}>I've saved these</button>
   </div>
   {#if copyNote === 'fail'}<p class="hint" role="status">Couldn't copy: select and copy them by hand.</p>{/if}
 {:else if view === 'regen' || view === 'disable'}
@@ -192,8 +192,8 @@
         placeholder={view === 'regen' ? '6-digit code' : '6-digit code or recovery code'} />
     </label>
     <div class="actions">
-      <button class:danger={view === 'disable'} disabled={busy}>{view === 'regen' ? 'Get new codes' : 'Turn off'}</button>
-      <button type="button" disabled={busy} onclick={reset}>Cancel</button>
+      <button class="btn {view === 'disable' ? 'btn-secondary btn-danger-text' : 'btn-primary'}" disabled={busy}>{view === 'regen' ? 'Get new codes' : 'Turn off'}</button>
+      <button type="button" class="btn btn-secondary" disabled={busy} onclick={reset}>Cancel</button>
     </div>
   </form>
 {/if}
@@ -208,10 +208,6 @@
   form .q { margin: 0; }
   .hint { margin: 6px 0 0; font-size: 13px; color: var(--text-3); }
   .actions { display: flex; gap: 8px; }
-  button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-size: 13px; }
-  button:hover { background: var(--bg-3); }
-  button:disabled { opacity: .6; }
-  button.danger { color: var(--danger-text); }
   .qr { display: block; border-radius: 6px; }
   .key { margin: 0; font-size: 13px; }
   .key code, .codes code { font-family: ui-monospace, monospace; letter-spacing: .04em; }

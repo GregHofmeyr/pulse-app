@@ -67,16 +67,16 @@
             <input type="text" aria-label="Find a member" placeholder="Find a member" autocomplete="off" autofocus bind:value={query} onkeydown={(e) => findKey(e, l)} />
             <div class="matches" role="group" aria-label="Members">
               {#each matches as m (m.id)}
-                <button type="button" onclick={() => repoint(l, m.id)}>{m.name}</button>
+                <button type="button" class="btn btn-secondary" onclick={() => repoint(l, m.id)}>{m.name}</button>
               {:else}
                 <span class="none">No one by that name</span>
               {/each}
             </div>
-            <button type="button" onclick={() => (changing = null)}>Cancel</button>
+            <button type="button" class="btn btn-secondary" onclick={() => (changing = null)}>Cancel</button>
           </div>
         {:else}
-          <button type="button" onclick={() => startChange(l)}>Change</button>
-          <button type="button" class="danger" onclick={() => void attempt(() => api.unlinkSpeaker(server.id, l.name_key))}>Undo</button>
+          <button type="button" class="btn btn-secondary" onclick={() => startChange(l)}>Change</button>
+          <button type="button" class="btn btn-secondary btn-danger-text" onclick={() => void attempt(() => api.unlinkSpeaker(server.id, l.name_key))}>Undo</button>
         {/if}
       </li>
     {/each}
@@ -93,9 +93,6 @@
   .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .name { font-weight: 600; }
   small { color: var(--text-3); }
-  button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-size: 13px; }
-  button:hover { background: var(--bg-3); }
-  button.danger { color: var(--danger); }
   .pick { display: flex; align-items: flex-start; gap: 8px; flex-wrap: wrap; }
   input { height: 32px; padding: 0 10px; border: 1px solid var(--accent); border-radius: 8px; background: var(--bg-2); color: var(--text); outline: none; }
   .matches { display: flex; flex-wrap: wrap; gap: 4px; }

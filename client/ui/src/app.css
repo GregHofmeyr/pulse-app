@@ -117,3 +117,35 @@ button { transition: background-color var(--dur) var(--ease), color var(--dur) v
 .qoty-btn:disabled { opacity: .6; }
 .qoty-mark { font-family: Georgia, serif; font-weight: 700; line-height: .6; }
 .qoty-live { font: 700 10px/1 ui-monospace, monospace; letter-spacing: .12em; color: var(--on-quote-green); border-radius: 4px; padding: 3px 5px; }
+
+/* Buttons: .btn is the 32px inline size, .btn-lg the 36px dialog-footer size. Every main action is
+   the accent (no green go/live buttons). Login and the voice dock keep their own, bigger, sizes. */
+.btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 32px; padding: 0 12px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--text); font-size: 13px; font-weight: 600; white-space: nowrap; }
+.btn-lg { height: 36px; padding: 0 16px; border-radius: 10px; font-size: 14px; }
+.btn:disabled { opacity: .5; cursor: default; }
+.btn-primary { background: var(--accent); color: var(--on-accent); }
+.btn-danger { background: var(--danger); color: var(--on-danger); }
+.btn-primary:hover:not(:disabled), .btn-danger:hover:not(:disabled) { filter: brightness(1.08); }
+.btn-primary:active:not(:disabled), .btn-danger:active:not(:disabled) { filter: brightness(.95); }
+.btn-secondary { border-color: var(--bg-4); color: var(--text-2); }
+.btn-secondary:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
+.btn-quiet { background: var(--bg-3); color: var(--text-2); }
+.btn-quiet:hover:not(:disabled) { background: var(--bg-4); color: var(--text); }
+/* a destructive action that isn't the main one: red text on a secondary button */
+.btn.btn-danger-text, .btn.btn-danger-text:hover:not(:disabled) { color: var(--danger-text); }
+
+/* Icon-only buttons: 32px, or -sm 28px, or -xs 24px. The hover is one step up from the bg-0 to bg-2
+   surfaces they sit on. */
+.icon-btn { width: 32px; height: 32px; flex-shrink: 0; padding: 0; display: inline-grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); }
+.icon-btn-sm { width: 28px; height: 28px; }
+.icon-btn-xs { width: 24px; height: 24px; border-radius: 6px; }
+.icon-btn.round { border-radius: 50%; }
+.icon-btn:hover:not(:disabled), .icon-btn[aria-expanded='true'] { background: var(--bg-3); color: var(--text); }
+.icon-btn:disabled { opacity: .5; cursor: default; }
+/* a dialog's X: class="icon-btn round modal-close" */
+.modal-close { background: var(--bg-3); color: var(--text-2); }
+.modal-close:hover:not(:disabled) { background: var(--bg-4); color: var(--text); }
+
+/* A button that reads as a link. */
+.link-btn { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
+.link-btn:hover { text-decoration-thickness: 2px; }

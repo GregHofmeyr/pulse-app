@@ -74,13 +74,13 @@
     {/if}
     <p class="q">Every other device signed in to this account goes back to the login screen. This one stays signed in.</p>
     <div class="actions">
-      <button disabled={busy}>Change</button>
-      <button type="button" disabled={busy} onclick={cancel}>Cancel</button>
+      <button class="btn btn-primary" disabled={busy}>Change</button>
+      <button type="button" class="btn btn-secondary" disabled={busy} onclick={cancel}>Cancel</button>
     </div>
   </form>
   {#if error}<p class="err" role="alert">{error}</p>{/if}
 {:else}
-  <button onclick={start}>Change password</button>
+  <button class="btn btn-secondary" onclick={start}>Change password</button>
   {#if done}<p class="ok" role="status">Password changed. Other devices were signed out.</p>{/if}
 {/if}
 
@@ -91,9 +91,6 @@
   input { height: 32px; width: 240px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font-size: 13px; }
   .q { margin: 0; font-size: 13px; color: var(--text-2); }
   .actions { display: flex; gap: 8px; }
-  button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-size: 13px; }
-  button:hover { background: var(--bg-3); }
-  button:disabled { opacity: .6; }
   .ok { margin: 10px 0 0; font-size: 13px; color: var(--text-2); }
   .err { margin: 10px 0 0; font-size: 13px; color: var(--danger-text); }
 </style>
