@@ -368,15 +368,15 @@ async fn real_devices_are_not_reopened_without_a_reason() {
         .find(|c| c.name.as_deref() == Some("Lounge"))
         .unwrap();
     let vm = VoiceManager::new(std::sync::Arc::new(|_| {}));
-    vm.join(
-        &api,
-        &token,
-        lounge.id,
-        AudioConfig::default(),
-        AudioMode::Real,
-    )
-    .await
-    .unwrap();
+    // PULSE_IT_INPUT / PULSE_IT_OUTPUT: named devices (e.g. virtual ones) instead of the defaults
+    let audio = AudioConfig {
+        input: std::env::var("PULSE_IT_INPUT").ok(),
+        output: std::env::var("PULSE_IT_OUTPUT").ok(),
+        ..Default::default()
+    };
+    vm.join(&api, &token, lounge.id, audio, AudioMode::Real)
+        .await
+        .unwrap();
     tokio::time::sleep(Duration::from_secs(9)).await; // four device checks
     let n = vm.reopens().await;
     vm.leave().await;

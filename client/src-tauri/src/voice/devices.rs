@@ -229,24 +229,71 @@ fn to_i16(v: f32) -> i16 {
     (v.clamp(-1.0, 1.0) * i16::MAX as f32) as i16
 }
 
-/// A device's name as settings and lists use it. cpal 0.18 dropped `name()`: on Linux (ALSA) the
-/// stable name is the PCM id ("default", what 0.15 returned and `usable` filters on); elsewhere the
-/// friendly name (`description().name()`, the same property 0.15 read on Windows).
-pub fn device_name(d: &cpal::Device) -> Option<String> {
-    #[cfg(target_os = "linux")]
-    {
-        d.id().ok().map(|id| id.id().to_string())
-    }
-    #[cfg(not(target_os = "linux"))]
-    {
-        d.description().ok().map(|desc| desc.name().to_string())
+/// Where a device comes from, for naming it. On Linux cpal talks to the sound server over the
+/// PulseAudio protocol (PipeWire serves it too), which knows real devices; ALSA is only the fallback
+/// when no sound server answers, and lists plumbing names (jack, pipewire, hdmi:CARD=…).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[cfg_attr(not(target_os = "linux"), allow(dead_code))] // Pulse and ALSA exist on Linux only
+enum Backend {
+    Pulse,
+    Alsa,
+    /// WASAPI and the rest: friendly names.
+    Other,
+}
+
+fn backend(d: &cpal::Device) -> Backend {
+    match d.id().map(|id| id.host()) {
+        #[cfg(target_os = "linux")]
+        Ok(cpal::HostId::PulseAudio) => Backend::Pulse,
+        #[cfg(target_os = "linux")]
+        Ok(cpal::HostId::Alsa) => Backend::Alsa,
+        _ => Backend::Other,
     }
 }
 
-/// cpal's Linux (ALSA) backend lists plumbing names (jack, pipewire, hdmi:CARD=…), not real devices —
-/// on Linux we offer the system default only and the OS picks the device. Windows lists friendly names.
-fn usable(name: &str) -> bool {
-    !cfg!(target_os = "linux") || name == "default"
+/// The name settings store and lists show. ALSA keeps the PCM id ("default", what cpal 0.15
+/// returned); everything else the friendly name, falling back to the id.
+fn display_name(backend: Backend, id: Option<&str>, description: Option<&str>) -> Option<String> {
+    match backend {
+        Backend::Alsa => id,
+        Backend::Pulse | Backend::Other => description.or(id),
+    }
+    .map(str::to_owned)
+}
+
+/// Offered in the device lists: on ALSA only the system default (the OS picks the device); on the
+/// sound server everything but the monitors of outputs, which aren't microphones.
+fn offered(backend: Backend, id: &str) -> bool {
+    match backend {
+        Backend::Alsa => id == "default",
+        Backend::Pulse => !id.ends_with(".monitor"),
+        Backend::Other => true,
+    }
+}
+
+/// A device's name as settings and lists use it (see `display_name`).
+pub fn device_name(d: &cpal::Device) -> Option<String> {
+    let id = d.id().ok();
+    let desc = d.description().ok();
+    display_name(
+        backend(d),
+        id.as_ref().map(|i| i.id()),
+        desc.as_ref().map(|d| d.name()),
+    )
+}
+
+fn usable(d: &cpal::Device) -> bool {
+    d.id().is_ok_and(|id| offered(backend(d), id.id()))
+}
+
+/// The sound server's default buffering is up to 2 s; ask for 10 ms callbacks instead (ALSA and
+/// WASAPI already run near that by default).
+fn stream_config(dev: &cpal::Device, cfg: &cpal::SupportedStreamConfig) -> cpal::StreamConfig {
+    let mut c = cfg.config();
+    if backend(dev) == Backend::Pulse {
+        c.buffer_size = cpal::BufferSize::Fixed(c.sample_rate / 100);
+    }
+    c
 }
 
 fn list(
@@ -255,8 +302,8 @@ fn list(
 ) -> Vec<DeviceInfo> {
     names
         .map(|it| {
-            it.filter_map(|d| device_name(&d))
-                .filter(|n| usable(n))
+            it.filter(usable)
+                .filter_map(|d| device_name(&d))
                 .map(|name| DeviceInfo {
                     is_default: Some(&name) == default.as_ref(),
                     name,
@@ -997,7 +1044,7 @@ fn build_input(
             None,
         )?)
     }
-    let c = cfg.config();
+    let c = stream_config(dev, cfg);
     use cpal::SampleFormat as F;
     match cfg.sample_format() {
         // f32 straight through (the common case: no copy)
@@ -1044,7 +1091,7 @@ pub fn build_output(
             None,
         )?)
     }
-    let c = cfg.config();
+    let c = stream_config(dev, cfg);
     use cpal::SampleFormat as F;
     match cfg.sample_format() {
         F::F32 => Ok(dev.build_output_stream(
@@ -1702,26 +1749,68 @@ mod tests {
         );
     }
 
-    /// cpal 0.18 dropped `Device::name()`. Settings store names, so a device must keep the name
-    /// 0.15 gave it: on Linux the ALSA PCM id (what `usable` filters on), not the description.
+    /// The sound server names devices by what they are ("Arctis Nova 7P Mic"), not by their
+    /// internal id; ALSA keeps the PCM id settings stored before.
+    #[test]
+    fn devices_are_named_by_what_they_are() {
+        let pulse = Some("alsa_input.usb-SteelSeries_Arctis-00.mono-chat");
+        assert_eq!(
+            display_name(Backend::Pulse, pulse, Some("Arctis Nova 7P Mic")).as_deref(),
+            Some("Arctis Nova 7P Mic")
+        );
+        assert_eq!(
+            display_name(Backend::Pulse, pulse, None).as_deref(),
+            pulse,
+            "no description: the id"
+        );
+        assert_eq!(
+            display_name(Backend::Alsa, Some("default"), Some("Default Audio Device")).as_deref(),
+            Some("default")
+        );
+        assert_eq!(
+            display_name(
+                Backend::Other,
+                Some("{0.0.1.00000000}"),
+                Some("Headset (Arctis)")
+            )
+            .as_deref(),
+            Some("Headset (Arctis)")
+        );
+    }
+
+    #[test]
+    fn output_monitors_and_alsa_plumbing_are_not_offered() {
+        assert!(offered(
+            Backend::Pulse,
+            "alsa_input.usb-SteelSeries_Arctis-00.mono-chat"
+        ));
+        assert!(!offered(
+            Backend::Pulse,
+            "alsa_output.pci-0000_00_1f.3.analog-stereo.monitor"
+        ));
+        assert!(offered(Backend::Alsa, "default"));
+        assert!(!offered(Backend::Alsa, "hdmi:CARD=PCH,DEV=0"));
+        assert!(offered(Backend::Other, "anything"));
+    }
+
+    /// On this machine's sound server: real names, no monitors, the default among them.
     /// Real devices: run explicitly (`--ignored`).
     #[cfg(target_os = "linux")]
     #[test]
     #[ignore]
-    fn linux_device_names_stay_alsa_pcm_ids() {
-        use cpal::traits::HostTrait;
-        let host = cpal::default_host();
-        let names: Vec<String> = host
-            .output_devices()
-            .into_iter()
-            .flatten()
-            .filter_map(|d| device_name(&d))
-            .collect();
-        assert!(!names.is_empty(), "no ALSA devices listed");
-        for n in &names {
-            assert!(!n.contains(' '), "a description, not a PCM id: {n:?}");
+    fn linux_lists_real_devices_from_the_sound_server() {
+        let inputs = list_inputs();
+        let outputs = list_outputs();
+        println!("inputs {inputs:?}\noutputs {outputs:?}");
+        assert!(!outputs.is_empty(), "no outputs listed");
+        assert!(outputs.iter().any(|d| d.is_default), "{outputs:?}");
+        for d in inputs.iter().chain(&outputs) {
+            assert!(
+                !d.name.starts_with("Monitor of"),
+                "a monitor offered: {d:?}"
+            );
+            assert_ne!(d.name, "default", "ALSA fallback, not the sound server");
         }
-        assert!(names.iter().any(|n| n == "default"), "{names:?}");
     }
 
     fn round_trip<T: cpal::SizedSample + cpal::FromSample<f32>>(src: &[f32]) -> Vec<f32>

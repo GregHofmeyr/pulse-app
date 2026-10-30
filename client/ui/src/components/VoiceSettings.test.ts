@@ -60,3 +60,47 @@ describe('VoiceSettings sounds', () => {
     document.body.innerHTML = ''
   })
 })
+
+describe('VoiceSettings on Linux', () => {
+  const ua = Object.getOwnPropertyDescriptor(window.navigator, 'userAgent')
+  const asLinux = () => Object.defineProperty(window.navigator, 'userAgent', { value: 'Mozilla/5.0 (X11; Linux x86_64)', configurable: true })
+  const restore = () => {
+    if (ua) Object.defineProperty(window.navigator, 'userAgent', ua)
+    else delete (window.navigator as { userAgent?: string }).userAgent
+  }
+  const devices = (inputs: string[], outputs: string[]) =>
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'list_audio_devices'
+        ? { inputs: inputs.map((name) => ({ name, is_default: false })), outputs: outputs.map((name) => ({ name, is_default: false })) }
+        : undefined,
+    )
+  const settle = async () => {
+    for (let i = 0; i < 3; i++) await Promise.resolve()
+    flushSync()
+  }
+  const hint = () => [...document.querySelectorAll('.hint')].find((p) => p.textContent?.includes('system sound settings'))
+
+  it('lists the sound server devices and drops the system-settings hint', async () => {
+    asLinux()
+    devices(['Laptop Mic'], ['Earbuds'])
+    const c = mount(VoiceSettings, { target: document.body })
+    await settle()
+    expect(hint()).toBeUndefined()
+    unmount(c)
+    document.body.innerHTML = ''
+    restore()
+    invoke.mockImplementation(async () => undefined)
+  })
+
+  it('without a sound server (only ALSA default) the hint still says to use system settings', async () => {
+    asLinux()
+    devices(['default'], ['default'])
+    const c = mount(VoiceSettings, { target: document.body })
+    await settle()
+    expect(hint()).toBeDefined()
+    unmount(c)
+    document.body.innerHTML = ''
+    restore()
+    invoke.mockImplementation(async () => undefined)
+  })
+})

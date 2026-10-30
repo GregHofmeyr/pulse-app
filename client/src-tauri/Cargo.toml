@@ -79,6 +79,9 @@ image = { version = "0.25", default-features = false, features = ["png", "gif"] 
 libc = "0.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
+# Linux: talk to the sound server (PulseAudio, or PipeWire's pulse server) for real device names;
+# ALSA stays the fallback. A pure-Rust client: no libpulse needed at build or run time.
+cpal = { version = "0.18.2", features = ["pulseaudio"] }
 webkit2gtk = "2.0"
 
 [target.'cfg(windows)'.dependencies]

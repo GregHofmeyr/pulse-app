@@ -23,6 +23,9 @@
   })
   let error = $state('')
   const linux = navigator.userAgent.includes('Linux')
+  // Linux lists real devices through the sound server; only ALSA's fallback has nothing but "default"
+  let listed = $state(false)
+  const noSoundServer = $derived(linux && listed && [...inputs, ...outputs].every((d) => d.name === 'default'))
 
   // The in-call meter: the core only sends levels while this page is open.
   onMount(() => {
@@ -37,6 +40,7 @@
     } catch {
       /* device list is optional */
     }
+    listed = true
   })
   onDestroy(() => {
     if (testing) void voiceApi.stopMicTest()
@@ -89,7 +93,7 @@
       options={[{ value: null, label: 'System default' }, ...outputs.filter((d) => d.name !== 'default').map((d) => ({ value: d.name, label: d.name }))]} />
   </div>
 </div>
-{#if linux}<p class="hint">On Linux, pick your mic and headphones in your system sound settings. Pulse follows the system default.</p>{/if}
+{#if noSoundServer}<p class="hint">No sound server found, so pick your mic and headphones in your system sound settings. Pulse follows the system default.</p>{/if}
 
 <div class="two">
   <label>INPUT GAIN <strong>{(cfg.input_gain_pct / 100).toFixed(1)}×</strong>
