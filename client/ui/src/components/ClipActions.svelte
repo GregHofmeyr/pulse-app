@@ -81,10 +81,10 @@
 </div>
 
 {#if editing}
-  <div class="overlay">
-    <div class="backdrop" role="presentation" data-backdrop onclick={cancelEdit}></div>
+  <div class="overlay modal-overlay">
+    <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={cancelEdit}></div>
     <div class="modal" role="dialog" aria-modal="true" aria-label="Edit clip" tabindex="-1" use:modal={cancelEdit}>
-      <h1>Edit clip</h1>
+      <h1 class="modal-title">Edit clip</h1>
       <textarea aria-label="Caption" placeholder="Say something about it (optional)" maxlength={MAX_CAPTION} rows="3" bind:value={caption} disabled={busy}></textarea>
       <GamePicker {serverId} value={game} onChange={(id) => (game = id)} />
       {#if error}<p class="err" role="alert">{error}</p>{/if}
@@ -105,11 +105,8 @@
   .ask { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: 240px; padding: 10px; display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); }
   .ask p { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--text); }
   .ask .err { margin: 4px 0 0; color: var(--danger); }
-  /* flex-centred (not transform): WebKitGTK blurs transformed text */
-  .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; }
-  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
-  .modal { position: relative; width: min(420px, 100%); padding: 20px; border-radius: 16px; background: var(--bg-1); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; outline: none; }
-  h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  .overlay { position: fixed; inset: 0; z-index: 30; }
+  .modal { width: min(420px, 100%); }
   textarea { resize: vertical; min-height: 64px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font: inherit; }
   .err { margin: 0; font-size: 12px; color: var(--danger); }
   .foot { display: flex; justify-content: flex-end; gap: 8px; }

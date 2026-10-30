@@ -69,13 +69,13 @@
   }
 </script>
 
-<div class="overlay">
-  <div class="backdrop" role="presentation" data-backdrop onclick={cancel}></div>
+<div class="overlay modal-overlay">
+  <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={cancel}></div>
   <!-- not a <form>: the length buttons (Segmented) would submit it -->
   <div class="modal" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" use:modal={cancel}>
     <div class="top">
       <span class="qoty-mark mark" aria-hidden="true">“</span>
-      <h1>{title}</h1>
+      <h1 class="modal-title">{title}</h1>
       <button type="button" class="icon-btn round modal-close" aria-label="Cancel" disabled={busy} onclick={cancel}><Icon name="x" /></button>
     </div>
     {#if !reopen}
@@ -106,13 +106,11 @@
 </div>
 
 <style>
-  /* flex-centred (not transform): WebKitGTK blurs transformed text */
-  .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; }
-  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
-  .modal { position: relative; width: min(440px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 22px; border-radius: 16px; background: var(--bg-1); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 14px; outline: none; }
+  .overlay { position: fixed; inset: 0; z-index: 30; }
+  .modal { width: min(440px, 100%); gap: 14px; }
   .top { display: flex; align-items: center; gap: 10px; }
   .mark { font-size: 34px; padding-top: 12px; color: var(--quote-green); }
-  h1 { flex: 1; margin: 0; font-size: 18px; font-weight: 600; }
+  h1 { flex: 1; }
   .field { display: flex; flex-direction: column; gap: 6px; }
   .lbl { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
   input { height: 38px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-2); }

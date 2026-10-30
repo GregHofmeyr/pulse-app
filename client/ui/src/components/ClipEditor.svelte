@@ -220,8 +220,8 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="overlay">
-  <div class="backdrop" role="presentation" data-backdrop onclick={close}></div>
+<div class="overlay modal-overlay">
+  <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={close}></div>
   <div class="modal" role="dialog" aria-modal="true" aria-label="Share a clip" tabindex="-1" use:modal={close}>
     <header>
       <div class="file">
@@ -318,10 +318,9 @@
 </div>
 
 <style>
-  /* flex-centred (not transform): WebKitGTK blurs transformed text */
-  .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; }
-  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
-  .modal { position: relative; width: min(1180px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; border-radius: 16px; background: var(--bg-2); border: 1px solid var(--line); display: flex; flex-direction: column; outline: none; }
+  .overlay { position: fixed; inset: 0; z-index: 30; }
+  /* the header and body set their own padding */
+  .modal { width: min(1180px, 100%); padding: 0; gap: 0; }
   header { display: flex; align-items: center; gap: 12px; padding: 14px 18px; border-bottom: 1px solid var(--line); }
   .file { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }

@@ -536,10 +536,10 @@
 <ProfileCardPopover />
 {#if profileUi.full}<FullProfile userId={profileUi.full.userId} serverId={profileUi.full.serverId} onClose={closeFull} />{/if}
 {#if creating}
-  <div class="overlay">
-  <div class="backdrop" role="presentation" onclick={() => (creating = false)}></div>
-  <form class="dialog" onsubmit={createServer} aria-label="Create a server">
-    <h2>Create a server</h2>
+  <div class="overlay modal-overlay">
+  <div class="backdrop modal-backdrop" role="presentation" onclick={() => (creating = false)}></div>
+  <form class="modal dialog" onsubmit={createServer} aria-label="Create a server">
+    <h2 class="modal-title">Create a server</h2>
     <label>NAME <input bind:value={newName} maxlength="64" required placeholder="Game Night" /></label>
     {#if createError}<p class="error">{createError}</p>{/if}
     <div class="dialog-actions">
@@ -622,10 +622,8 @@
   .menu .warn { color: var(--warn); }
   .auto-report button { border: 0; background: none; color: inherit; font-size: 15px; line-height: 1; padding: 0 0 0 6px; }
   .auto-report button.link { font-size: inherit; font-weight: 600; text-decoration: underline; padding: 0 2px; }
-  .overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 16px; }
-  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
-  .dialog { position: relative; width: min(420px, calc(100vw - 32px)); padding: 24px; background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: 16px; display: flex; flex-direction: column; gap: 14px; }
-  .dialog h2 { margin: 0; font-size: 18px; }
+  .overlay { position: fixed; inset: 0; z-index: 20; }
+  .dialog { width: min(420px, calc(100vw - 32px)); gap: 14px; }
   .dialog label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
   .dialog input { height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-2); font-size: 14px; font-weight: 400; letter-spacing: 0; }
   .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }

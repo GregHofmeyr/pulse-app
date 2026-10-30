@@ -47,8 +47,8 @@
   const customOf = (key: string) => app.state.customEmoji[key.slice(7)]
 </script>
 
-<div class="overlay">
-  <div class="backdrop" role="presentation" data-backdrop onclick={onClose}></div>
+<div class="overlay modal-overlay">
+  <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={onClose}></div>
   <div class="modal" role="dialog" aria-modal="true" aria-label="Profile of {user?.username ?? 'user'}" tabindex="-1" use:modal={onClose} style={vars}>
     <button class="close icon-btn round modal-close" aria-label="Close profile" onclick={onClose}><Icon name="x" size={16} /></button>
     <div class="left">
@@ -108,13 +108,11 @@
 </div>
 
 <style>
-  /* flex-centred (not transform): WebKitGTK blurs text on sub-pixel transforms. Above every other
-     modal (it opens from names inside them, e.g. QOTY voting); the quick card sits above it
-     (stacking.test.ts). */
-  .overlay { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; padding: 32px 16px; }
-  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
+  /* Above every other modal (it opens from names inside them, e.g. QOTY voting); the quick card
+     sits above it (stacking.test.ts). */
+  .overlay { position: fixed; inset: 0; z-index: 50; padding: 32px 16px; }
   /* the Board background: the theme's tinted surface (spec §3.2) */
-  .modal { position: relative; width: min(880px, calc(100vw - 32px)); height: min(600px, calc(100vh - 64px)); display: flex; gap: 16px; padding: 16px; background: linear-gradient(var(--card-top), var(--card-bottom)); border-radius: 16px; border: 1px solid var(--bg-3); overflow: hidden; outline: none; }
+  .modal { width: min(880px, calc(100vw - 32px)); height: min(600px, calc(100vh - 64px)); flex-direction: row; gap: 16px; padding: 16px; background: linear-gradient(var(--card-top), var(--card-bottom)); overflow: hidden; }
   /* padding: room for the card's glow (a scrolling box clips shadows at its edge), given back by the margin */
   .left { flex: 0 0 calc(340px + 52px); overflow-y: auto; padding: 26px; margin: -26px; }
   .right { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }

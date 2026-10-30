@@ -72,8 +72,8 @@
   const focusOnShow = (el: HTMLElement) => el.focus()
 </script>
 
-<div class="overlay">
-<div class="backdrop" role="presentation" data-backdrop onclick={close}></div>
+<div class="overlay modal-overlay">
+<div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={close}></div>
 <div class="modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1" use:modal={escape}>
   <nav aria-label="Settings sections">
     <h1>Settings</h1>
@@ -101,10 +101,9 @@
 </div>
 
 <style>
-  /* flex-centred (not transform): WebKitGTK blurs text on sub-pixel transforms */
-  .overlay { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; padding: 32px 16px; }
-  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
-  .modal { position: relative; width: min(940px, calc(100vw - 32px)); height: min(720px, calc(100vh - 64px)); display: flex; background: var(--bg-1); border-radius: 16px; border: 1px solid var(--bg-3); overflow: hidden; }
+  .overlay { position: fixed; inset: 0; z-index: 20; padding: 32px 16px; }
+  /* a window, not a dialog: bg-1 (the panes and the profile footer are drawn for it), nav and content set their own padding */
+  .modal { width: min(940px, calc(100vw - 32px)); height: min(720px, calc(100vh - 64px)); flex-direction: row; gap: 0; padding: 0; background: var(--bg-1); overflow: hidden; }
   nav { width: 200px; flex-shrink: 0; padding: 24px 12px; background: var(--bg-0); display: flex; flex-direction: column; gap: 2px; }
   h1 { margin: 0 10px 12px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
   nav button { text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font-weight: 600; }

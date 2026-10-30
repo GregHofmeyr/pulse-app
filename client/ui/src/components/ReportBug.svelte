@@ -24,11 +24,11 @@
   }
 </script>
 
-<div class="overlay">
-  <div class="backdrop" role="presentation" onclick={onClose}></div>
+<div class="overlay modal-overlay">
+  <div class="backdrop modal-backdrop" role="presentation" onclick={onClose}></div>
   <div class="modal" role="dialog" aria-label="Report a bug"><form onsubmit={send}>
     <div class="top">
-      <h1>Report a bug</h1>
+      <h1 class="modal-title">Report a bug</h1>
       <button type="button" class="icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" /></button>
     </div>
     <textarea bind:value={text} maxlength="4000" rows="6" required placeholder="What happened? What were you doing?" disabled={busy || done}></textarea>
@@ -47,13 +47,10 @@
 </div>
 
 <style>
-  /* flex-centred (not transform): WebKitGTK blurs transformed text */
-  .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; }
-  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
-  .modal { position: relative; width: min(460px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 22px; border-radius: 16px; background: var(--bg-2); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; }
+  .overlay { position: fixed; inset: 0; z-index: 30; }
+  .modal { width: min(460px, 100%); }
   form { display: contents; }
   .top { display: flex; align-items: center; justify-content: space-between; }
-  h1 { margin: 0; font-size: 18px; font-weight: 600; }
   textarea { resize: vertical; min-height: 120px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-1); font: inherit; font-size: 14px; color: var(--text); }
   .note { margin: 0; font-size: 12px; color: var(--text-3); }
   .ok { margin: 0; font-size: 13px; color: var(--ok); word-break: break-all; }

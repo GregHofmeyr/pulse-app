@@ -127,14 +127,14 @@
 </script>
 
 {#if e}
-  <div class="overlay">
-    <div class="backdrop" role="presentation" data-backdrop onclick={onClose}></div>
+  <div class="overlay modal-overlay">
+    <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={onClose}></div>
     <div class="modal qoty-voting" class:animated={!motion.reducedMotion} role="dialog" aria-modal="true" aria-label="Quote of the Year {e.year}"
       tabindex="-1" use:modal={escape}>
       <div class="spill"><PixelSpill seed={e.id} cols={5} rows={88} down /></div>
       <div class="top">
         <span class="qoty-mark mark" aria-hidden="true">“</span>
-        <h1>Quote of the Year {e.year}</h1>
+        <h1 class="modal-title">Quote of the Year {e.year}</h1>
         <span class="qoty-live live">LIVE</span>
         <span class="grow"></span>
         <button type="button" class="icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" /></button>
@@ -204,16 +204,14 @@
 {/if}
 
 <style>
-  /* flex-centred (not transform): WebKitGTK blurs transformed text */
-  .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; }
-  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
-  .modal { position: relative; width: min(620px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 46px 20px 18px; border-radius: 16px; background: var(--bg-1); border: 1px solid color-mix(in srgb, var(--quote-green) 35%, transparent); display: flex; flex-direction: column; gap: 12px; outline: none; }
+  .overlay { position: fixed; inset: 0; z-index: 30; }
+  /* its own look: the green border and spill, and bg-1 under the bg-2 options */
+  .modal { width: min(620px, 100%); padding: 46px 20px 18px; background: var(--bg-1); border-color: color-mix(in srgb, var(--quote-green) 35%, transparent); }
   /* 88 cells across ≈ 7 px each at full width, 5 down: the solid run and its thinning both show */
   .spill { position: absolute; left: 0; right: 0; top: 0; height: 35px; overflow: hidden; border-radius: 16px 16px 0 0; }
   .spill :global(.pixel-spill) { width: 100%; height: 100%; }
   .top { position: relative; display: flex; align-items: center; gap: 10px; }
   .mark { font-size: 34px; padding-top: 12px; color: var(--quote-green); }
-  h1 { margin: 0; font-size: 18px; font-weight: 600; }
   .live { background: var(--quote-green); }
   .grow { flex: 1; }
   .status { margin: -4px 0 0; color: var(--text-3); font-size: 12px; }

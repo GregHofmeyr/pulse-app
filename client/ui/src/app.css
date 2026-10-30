@@ -148,6 +148,14 @@ button { transition: background-color var(--dur) var(--ease), color var(--dur) v
 .modal-close { background: var(--bg-3); color: var(--text-2); }
 .modal-close:hover:not(:disabled) { background: var(--bg-4); color: var(--text); }
 
+/* Dialogs: a bg-2 panel with a soft shadow over a scrim. Flex-centred, not transform-centred:
+   WebKitGTK blurs transformed text. Each component keeps its own `position: fixed; inset: 0;
+   z-index` on the overlay (stacking.test.ts reads them there) and sets the panel's width. */
+.modal-overlay { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; }
+.modal-backdrop { position: absolute; inset: 0; background: var(--scrim); }
+.modal { position: relative; max-height: calc(100vh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--bg-2); box-shadow: var(--shadow-menu); outline: none; }
+.modal-title { margin: 0; font-size: 18px; font-weight: 600; }
+
 /* A button that reads as a link. */
 .link-btn { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .link-btn:hover { text-decoration-thickness: 2px; }

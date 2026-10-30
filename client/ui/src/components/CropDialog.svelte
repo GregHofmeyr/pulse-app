@@ -108,8 +108,8 @@
   const pct = (v: number, of: number) => `${(v / of) * 100}%`
 </script>
 
-<div class="overlay">
-  <div class="backdrop" role="presentation" data-backdrop onclick={onCancel}></div>
+<div class="overlay modal-overlay">
+  <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={onCancel}></div>
   <div class="modal" role="dialog" aria-modal="true" aria-label={kind === 'avatar' ? 'Crop avatar' : 'Crop banner'} tabindex="-1" use:modal={onCancel}>
     {#if tooBig}
       <p class="error" role="alert">Profile pictures and banners can be up to 8 MB.</p>
@@ -145,10 +145,8 @@
 </div>
 
 <style>
-  /* flex-centred (not transform): WebKitGTK blurs transformed text */
-  .overlay { position: fixed; inset: 0; z-index: 40; display: grid; place-items: center; padding: 16px; }
-  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
-  .modal { position: relative; width: min(520px, 100%); max-height: calc(100vh - 32px); overflow-y: auto; padding: 22px; border-radius: 16px; background: var(--bg-2); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; }
+  .overlay { position: fixed; inset: 0; z-index: 40; }
+  .modal { width: min(520px, 100%); }
   .stage { display: grid; place-items: center; background: #000; border-radius: 10px; overflow: hidden; touch-action: none; cursor: grab; outline-offset: 2px; }
   /* its overflow clips the crop box's shadow */
   .frame { position: relative; display: block; line-height: 0; overflow: hidden; }

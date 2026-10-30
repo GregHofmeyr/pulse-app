@@ -48,10 +48,10 @@
   }
 </script>
 
-<div class="overlay">
-  <div class="backdrop" role="presentation" onclick={onClose}></div>
-  <div class="dialog" role="dialog" aria-label={title}>
-    <h2>{title}</h2>
+<div class="overlay modal-overlay">
+  <div class="backdrop modal-backdrop" role="presentation" onclick={onClose}></div>
+  <div class="modal" role="dialog" aria-label={title}>
+    <h2 class="modal-title">{title}</h2>
     {#if hint}<p class="hint">{hint}</p>{/if}
     {#if fixed.length || picked.length}
       <div class="chips">
@@ -87,10 +87,8 @@
 </div>
 
 <style>
-  .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 32px 16px; }
-  .backdrop { position: absolute; inset: 0; background: var(--scrim); }
-  .dialog { position: relative; width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 64px); display: flex; flex-direction: column; gap: 10px; padding: 20px; background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: 16px; }
-  h2 { margin: 0; font-size: 18px; }
+  .overlay { position: fixed; inset: 0; z-index: 30; padding: 32px 16px; }
+  .modal { width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 64px); gap: 10px; }
   .hint { margin: 0; font-size: 12px; color: var(--text-3); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { padding: 3px 10px 3px 3px; border: 0; border-radius: 20px; background: var(--bg-3); color: var(--text); font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
@@ -98,8 +96,8 @@
   .search { height: 36px; padding: 0 12px; border: 0; border-radius: 10px; background: var(--bg-2); color: var(--text); font: inherit; }
   .list { overflow-y: auto; min-height: 120px; max-height: 320px; display: flex; flex-direction: column; gap: 2px; }
   .pick { display: flex; align-items: center; gap: 10px; padding: 6px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); text-align: left; }
-  .pick:hover:not(:disabled) { background: var(--bg-2); }
-  .pick.sel { background: var(--bg-3); color: var(--text); }
+  .pick:hover:not(:disabled) { background: var(--bg-3); }
+  .pick.sel { background: var(--bg-4); color: var(--text); }
   .pick:disabled { opacity: .45; }
   .nm { flex: 1; font-weight: 500; }
   .nm small { color: var(--text-3); font-weight: 400; }
