@@ -9,6 +9,8 @@
   --text: #e8e9ed;
   --text-2: #b9bcc6;
   --text-3: #8e92a0;
+  /* Unselected channel and conversation rows in the sidebar: between --text-2 and --text-3. */
+  --text-row: #9a9eab;
   --accent: #8b9cff;
   --on-accent: #141519;
   --danger: #d93a42;

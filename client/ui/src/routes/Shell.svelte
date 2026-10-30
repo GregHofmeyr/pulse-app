@@ -584,7 +584,8 @@
   nav { display: flex; align-items: center; gap: 6px; min-width: 0; overflow: hidden; }
   .tab { height: 36px; padding: 0 12px 0 10px; border-radius: 10px; border: 1px solid transparent; background: transparent; color: var(--text-2); display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 500; white-space: nowrap; }
   .tab:hover { background: var(--bg-2); }
-  .tab.active { background: var(--bg-3); border-color: var(--bg-4); color: var(--text); font-weight: 600; }
+  /* background and colour only: a bolder weight would widen the tab and nudge the ones after it */
+  .tab.active { background: var(--bg-3); border-color: var(--bg-4); color: var(--text); }
   .chip { width: 22px; height: 22px; border-radius: 6px; color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
   .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
   .grow { flex: 1; align-self: stretch; }
