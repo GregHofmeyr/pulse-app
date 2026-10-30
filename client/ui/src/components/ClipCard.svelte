@@ -85,7 +85,7 @@
         <span class="who">{#if message.author_id}<Name userId={message.author_id} serverId={serverId || null} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</span>
         {#if game}<span class="game">{game}</span>{/if}
         <span class="grow"></span>
-        {#if onOpenReplies}<button type="button" class="reply" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={15} /></button>{/if}
+        {#if onOpenReplies}<button type="button" class="icon-btn icon-btn-sm" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={15} /></button>{/if}
         {#if mine}<ClipActions {message} {serverId} />{/if}
       </div>
       <span class="time">{when}{#if message.edited_at} · edited{/if}</span>
@@ -115,8 +115,6 @@
   .who { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .game { padding: 1px 8px; border-radius: 10px; background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; white-space: nowrap; }
   .grow { flex: 1; }
-  .reply { width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
-  .reply:hover { background: var(--bg-3); color: var(--text); }
   .time { font-size: 11px; color: var(--text-3); }
   .err { margin: 0; font-size: 12px; color: var(--danger); }
 </style>

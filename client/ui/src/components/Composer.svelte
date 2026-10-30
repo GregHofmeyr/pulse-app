@@ -171,7 +171,7 @@
   {/if}
   {#if replyingTo}
     <div class="replying">Replying to <strong>{replyingTo}</strong>
-      <button aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={13} /></button></div>
+      <button class="icon-btn icon-btn-xs" aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={13} /></button></div>
   {/if}
   <EmojiBox bind:this={box} bind:text class="input" label={placeholder} {placeholder}
     onkeydown={key} oninput={input} onclick={syncCaret} oncaret={(at) => (caret = at)}
@@ -193,8 +193,9 @@
   .emoji-btn:hover { color: var(--text); }
   .replying { display: flex; align-items: center; gap: 6px; padding: 8px 14px 0; font-size: 12px; color: var(--text-3); }
   .replying strong { color: var(--text-2); }
-  .replying button { margin-left: auto; width: 22px; height: 22px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
-  .replying button:hover { background: var(--bg-4); color: var(--text); }
+  .replying button { margin-left: auto; }
+  /* the composer is bg-3: one step up from it */
+  .replying button:hover { background: var(--bg-4); }
   /* grows with what's in it (images included), up to 200px, then scrolls */
   .wrap :global(.input) { min-height: 48px; max-height: 200px; padding: 14px 48px 14px 14px; }
 </style>

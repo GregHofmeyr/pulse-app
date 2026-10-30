@@ -21,7 +21,7 @@
     {/each}
   </nav>
   <div class="content">
-    <button class="close" aria-label="Close server settings" onclick={onClose}><Icon name="x" size={16} /></button>
+    <button class="close icon-btn round modal-close" aria-label="Close server settings" onclick={onClose}><Icon name="x" size={16} /></button>
     {#if section === 'Emoji'}<EmojiSettings {server} />{:else if section === 'Storage'}<StorageSettings {server} />{:else}<SpeakerLinkSettings {server} />{/if}
   </div>
 </div>
@@ -38,8 +38,7 @@
   nav button:hover { background: var(--bg-2); color: var(--text); }
   nav button.on { background: var(--bg-3); color: var(--text); }
   .content { position: relative; flex: 1; min-width: 0; overflow-y: auto; padding: 28px 32px; }
-  .close { position: absolute; top: 20px; right: 20px; width: 36px; height: 36px; border: 1px solid var(--bg-4); border-radius: 50%; background: transparent; color: var(--text-2); display: grid; place-items: center; z-index: 1; }
-  .close:hover { background: var(--bg-3); color: var(--text); }
+  .close { position: absolute; top: 20px; right: 20px; z-index: 1; }
   @media (max-width: 640px) {
     .modal { flex-direction: column; }
     nav { width: auto; flex-direction: row; padding: 12px; }

@@ -480,14 +480,14 @@
           <span class="who"><Name userId={me.id} serverId={null} text={me.username} interactive={false} /><small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
         </button>
         {#if voice.channelId}
-          <button class="me-btn" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label={voice.controls.muted ? "Unmute" : "Mute"} onclick={() => voiceApi.toggleMute()}>
+          <button class="icon-btn me-btn" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label={voice.controls.muted ? "Unmute" : "Mute"} onclick={() => voiceApi.toggleMute()}>
             <Icon name={voice.controls.muted ? 'micOff' : 'mic'} />
           </button>
-          <button class="me-btn" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label={voice.controls.deafened ? "Undeafen" : "Deafen"} onclick={() => voiceApi.toggleDeafen()}>
+          <button class="icon-btn me-btn" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label={voice.controls.deafened ? "Undeafen" : "Deafen"} onclick={() => voiceApi.toggleDeafen()}>
             <Icon name={voice.controls.deafened ? 'headphonesOff' : 'headphones'} />
           </button>
         {/if}
-        <button class="me-btn" aria-label="Settings" onclick={() => openSettings()}><Icon name="gear" /></button>
+        <button class="icon-btn me-btn" aria-label="Settings" onclick={() => openSettings()}><Icon name="gear" /></button>
         {#if menuOpen}
           <div class="menu" role="menu" use:clickOutside={closeAccountMenu}>
             <button role="menuitem" onclick={() => { menuOpen = false; openSettings() }}>Settings</button>
@@ -629,9 +629,8 @@
   .dialog label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
   .dialog input { height: 40px; padding: 0 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-2); font-size: 14px; font-weight: 400; letter-spacing: 0; }
   .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
-  .me-btn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); display: grid; place-items: center; }
-  .me-btn:hover { background: var(--bg-2); }
-  .me-btn.on { color: var(--danger-text); }
+  .me-btn { color: var(--text-2); }
+  .me-btn.on, .me-btn.on:hover { color: var(--danger-text); }
   .content { position: relative; flex: 1; min-width: 0; background: var(--bg-2); display: flex; flex-direction: column; }
   .empty { margin: auto; color: var(--text-3); }
   .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }

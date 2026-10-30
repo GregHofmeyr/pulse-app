@@ -228,7 +228,7 @@
         <strong title={source.file_name}>{source.file_name}</strong>
         <span>{formatDuration(source.duration_ms)} · {source.width}×{source.height} · {fpsText} · {formatBytes(source.size)}</span>
       </div>
-      <button type="button" class="close" aria-label="Close" disabled={sending} onclick={close}><Icon name="x" /></button>
+      <button type="button" class="icon-btn round modal-close" aria-label="Close" disabled={sending} onclick={close}><Icon name="x" /></button>
     </header>
 
     <div class="body">
@@ -326,8 +326,6 @@
   .file { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .file strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 15px; }
   .file span { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
-  .close { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; cursor: pointer; }
-  .close:hover { background: var(--bg-4); color: var(--text); }
   .body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; padding: 16px 18px 18px; }
   .stage { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
   .screen { position: relative; background: #000; border-radius: 10px; aspect-ratio: 16 / 9; max-height: 52vh; width: 100%; display: grid; place-items: center; overflow: hidden; }

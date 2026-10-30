@@ -80,7 +80,7 @@
         {stageLabel(voice.stage)}
       </span>
     {/if}
-    <button type="button" class="eye" aria-pressed={showEveryone} aria-label="Show non-streaming participants" data-tip="Show non-streaming participants" onclick={() => setShowEveryone(!showEveryone)}>
+    <button type="button" class="icon-btn eye" aria-pressed={showEveryone} aria-label="Show non-streaming participants" data-tip="Show non-streaming participants" onclick={() => setShowEveryone(!showEveryone)}>
       <Icon name={showEveryone ? 'eye' : 'eyeOff'} size={18} />
     </button>
   </div>
@@ -146,8 +146,6 @@
   .status { font-size: 12px; font-weight: 600; color: var(--ok); padding: 4px 10px; border-radius: 12px; background: rgba(79, 209, 139, .12); }
   .status.warn { color: var(--warn); background: var(--warn-soft); }
   .error { margin: 12px 18px 0; color: var(--danger-text); font-size: 13px; }
-  .eye { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
-  .eye:hover { background: var(--bg-3); color: var(--text); }
   .eye[aria-pressed='true'] { color: var(--text); }
   .grid-wrap { flex: 1; min-height: 0; overflow-y: auto; container-type: inline-size; }
   .grid { padding: 20px; display: grid; grid-template-columns: 1fr; align-items: start; gap: 14px; }

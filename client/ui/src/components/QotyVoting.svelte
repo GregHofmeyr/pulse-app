@@ -137,7 +137,7 @@
         <h1>Quote of the Year {e.year}</h1>
         <span class="qoty-live live">LIVE</span>
         <span class="grow"></span>
-        <button type="button" class="close" aria-label="Close" onclick={onClose}><Icon name="x" /></button>
+        <button type="button" class="icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" /></button>
       </div>
       <!-- only the count is live: the time left ticks every minute -->
       <p class="status">{leftLabel(e.ends_at, Date.parse(clock.nowIso))} · <span aria-live="polite">{e.voters} of {e.members} have voted</span></p>
@@ -216,8 +216,6 @@
   h1 { margin: 0; font-size: 18px; font-weight: 600; }
   .live { background: var(--quote-green); }
   .grow { flex: 1; }
-  .close { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; }
-  .close:hover { background: var(--bg-4); color: var(--text); }
   .status { margin: -4px 0 0; color: var(--text-3); font-size: 12px; }
   .options { display: flex; flex-direction: column; gap: 8px; }
   .opt { position: relative; overflow: hidden; display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); }

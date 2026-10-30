@@ -153,7 +153,7 @@
             onclick={() => record(a.key)}>
             {recording === a.key ? held || 'Press keys…' : bindLabel(binds[a.key])}
           </button>
-          <button class="clear" aria-label="Remove {a.label} bind" title="Remove" disabled={!enabled || !binds[a.key] || !!recording}
+          <button class="icon-btn round clear" aria-label="Remove {a.label} bind" title="Remove" disabled={!enabled || !binds[a.key] || !!recording}
             onclick={() => binds && save({ ...binds, [a.key]: null })}><Icon name="x" size={14} /></button>
         </div>
       {/each}
@@ -177,9 +177,7 @@
   .key:disabled { opacity: .4; }
   .master > div { flex: 1; display: flex; flex-direction: column; gap: 2px; }
   .master small { line-height: 1.4; }
-  .clear { width: 32px; height: 32px; border-radius: 50%; border: 0; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .clear:disabled { opacity: .3; }
-  .clear:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
   small { font-size: 12px; color: var(--text-3); }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .warn { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 13px; }

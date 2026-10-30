@@ -418,18 +418,18 @@
     {/if}
     <span class="grow"></span>
     {#if isQuotes}
-      <button class="hbtn" class:on={leaderboardOpen} aria-label="Leaderboard" data-tip="Leaderboard" data-menu-toggle aria-haspopup="dialog" aria-expanded={leaderboardOpen}
+      <button class="icon-btn hbtn" class:on={leaderboardOpen} aria-label="Leaderboard" data-tip="Leaderboard" data-menu-toggle aria-haspopup="dialog" aria-expanded={leaderboardOpen}
         onclick={() => (leaderboardOpen = !leaderboardOpen)}><Icon name="trophy" size={17} /></button>
       {#if !qotyLive}<button class="qoty-btn qoty" onclick={onStartQoty}>Start Quote of the Year</button>{/if}
     {/if}
     {#if isPrivate}
-      <button class="hbtn" aria-label="Add people" data-tip="Add people" onclick={onAddPeople}><Icon name="userPlus" size={17} /></button>
+      <button class="icon-btn" aria-label="Add people" data-tip="Add people" onclick={onAddPeople}><Icon name="userPlus" size={17} /></button>
     {/if}
-    <button class="hbtn" class:on={muted} aria-label={muted ? 'Unmute' : 'Mute'} data-tip={muted ? 'Muted — click to unmute' : 'Mute'} data-menu-toggle
+    <button class="icon-btn hbtn" class:on={muted} aria-label={muted ? 'Unmute' : 'Mute'} data-tip={muted ? 'Muted — click to unmute' : 'Mute'} data-menu-toggle
       aria-haspopup={muted ? undefined : 'menu'} aria-expanded={menu === 'mute'}
       onclick={() => (muted ? void api.clearMute('channel', channelId) : (menu = menu === 'mute' ? null : 'mute'))}><Icon name={muted ? 'bellOff' : 'bell'} size={17} /></button>
     {#if isPrivate}
-      <button class="hbtn" aria-label="More" aria-haspopup="menu" aria-expanded={menu === 'manage'} data-tip="More" data-menu-toggle
+      <button class="icon-btn" aria-label="More" aria-haspopup="menu" aria-expanded={menu === 'manage'} data-tip="More" data-menu-toggle
         onclick={() => (menu = menu === 'manage' ? null : 'manage')}><Icon name="dots" size={17} /></button>
     {/if}
     {#if leaderboardOpen && serverId}
@@ -514,8 +514,7 @@
   .pile :global(.av) { box-shadow: 0 0 0 2px var(--bg-1); }
   .pile :global(.av + .av) { margin-left: -7px; }
   .grow { flex: 1; }
-  .hbtn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
-  .hbtn:hover, .hbtn.on { background: var(--bg-3); color: var(--text); }
+  .hbtn.on { background: var(--bg-3); color: var(--text); }
   /* the shared .qoty-btn, at this header's 30px */
   .qoty { height: 30px; padding: 0 12px; }
   .newline { display: flex; align-items: center; gap: 8px; margin: 6px 18px; color: var(--danger); font-size: 11px; font-weight: 700; letter-spacing: .04em; }

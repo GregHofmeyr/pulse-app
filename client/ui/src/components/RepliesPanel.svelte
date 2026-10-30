@@ -179,7 +179,7 @@
   <div class="head">
     <Icon name="reply" size={16} /><span class="title">Replies</span>
     <span class="grow"></span>
-    <button class="hbtn" aria-label="Close replies" data-tip="Close" onclick={onClose}><Icon name="x" size={16} /></button>
+    <button class="icon-btn" aria-label="Close replies" data-tip="Close" onclick={onClose}><Icon name="x" size={16} /></button>
   </div>
   <div class="pinned">
     {#if root.clip}
@@ -218,8 +218,6 @@
   .head { height: 52px; flex-shrink: 0; padding: 0 12px 0 18px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--bg-3); color: var(--text-3); }
   .title { color: var(--text); font-size: 15px; font-weight: 600; }
   .grow { flex: 1; }
-  .hbtn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
-  .hbtn:hover { background: var(--bg-3); color: var(--text); }
   /* a long quote scrolls on its own, so the replies always get room */
   .pinned { flex-shrink: 0; max-height: 40%; overflow-y: auto; padding: 8px 0 6px; border-bottom: 1px solid var(--bg-3); }
   .list { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 0; display: flex; flex-direction: column; }

@@ -29,7 +29,7 @@
   <div class="modal" role="dialog" aria-label="Report a bug"><form onsubmit={send}>
     <div class="top">
       <h1>Report a bug</h1>
-      <button type="button" class="close" aria-label="Close" onclick={onClose}><Icon name="x" /></button>
+      <button type="button" class="icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" /></button>
     </div>
     <textarea bind:value={text} maxlength="4000" rows="6" required placeholder="What happened? What were you doing?" disabled={busy || done}></textarea>
     <p class="note">Includes your app version, system info and recent app log.</p>
@@ -54,8 +54,6 @@
   form { display: contents; }
   .top { display: flex; align-items: center; justify-content: space-between; }
   h1 { margin: 0; font-size: 18px; font-weight: 600; }
-  .close { width: 32px; height: 32px; border-radius: 50%; border: 0; background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; }
-  .close:hover { background: var(--bg-4); color: var(--text); }
   textarea { resize: vertical; min-height: 120px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-1); font: inherit; font-size: 14px; color: var(--text); }
   .note { margin: 0; font-size: 12px; color: var(--text-3); }
   .ok { margin: 0; font-size: 13px; color: var(--ok); word-break: break-all; }

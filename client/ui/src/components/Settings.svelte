@@ -83,7 +83,7 @@
     {/each}
   </nav>
   <div class="content">
-    <button class="close" aria-label="Close settings" aria-busy={waiting?.via === 'close' || undefined} onclick={close}><Icon name="x" size={16} /></button>
+    <button class="close icon-btn round modal-close" aria-label="Close settings" aria-busy={waiting?.via === 'close' || undefined} onclick={close}><Icon name="x" size={16} /></button>
     {#if waiting && waiting.via !== 'profile'}
       <div class="confirm saving" role="status">Saving your profile…</div>
     {:else if leaving}
@@ -117,8 +117,7 @@
   .confirm.saving { border-color: var(--bg-4); color: var(--text-2); }
   /* the way out that waits for a Save */
   nav button[aria-busy='true'], .close[aria-busy='true'] { cursor: progress; opacity: .6; }
-  .close { position: absolute; top: 20px; right: 20px; width: 36px; height: 36px; border: 1px solid var(--bg-4); border-radius: 50%; background: transparent; color: var(--text-2); display: grid; place-items: center; z-index: 1; }
-  .close:hover { background: var(--bg-3); color: var(--text); }
+  .close { position: absolute; top: 20px; right: 20px; z-index: 1; }
   @media (max-width: 640px) {
     .modal { flex-direction: column; }
     nav { width: auto; flex-direction: row; padding: 12px; }

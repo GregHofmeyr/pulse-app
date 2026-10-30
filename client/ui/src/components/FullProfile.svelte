@@ -50,7 +50,7 @@
 <div class="overlay">
   <div class="backdrop" role="presentation" data-backdrop onclick={onClose}></div>
   <div class="modal" role="dialog" aria-modal="true" aria-label="Profile of {user?.username ?? 'user'}" tabindex="-1" use:modal={onClose} style={vars}>
-    <button class="close" aria-label="Close profile" onclick={onClose}><Icon name="x" size={16} /></button>
+    <button class="close icon-btn round modal-close" aria-label="Close profile" onclick={onClose}><Icon name="x" size={16} /></button>
     <div class="left">
       {#if user}
         <ProfileCard {user} {card} badges={cached?.badges ?? []} {stats} {serverId} size="full" loading={!cached && !failed} {onClose} />
@@ -118,8 +118,7 @@
   /* padding: room for the card's glow (a scrolling box clips shadows at its edge), given back by the margin */
   .left { flex: 0 0 calc(340px + 52px); overflow-y: auto; padding: 26px; margin: -26px; }
   .right { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }
-  .close { position: absolute; top: 12px; right: 12px; width: 32px; height: 32px; border: 1px solid var(--bg-4); border-radius: 50%; background: var(--bg-1); color: var(--text-2); display: grid; place-items: center; z-index: 1; }
-  .close:hover { background: var(--bg-3); color: var(--text); }
+  .close { position: absolute; top: 12px; right: 12px; z-index: 1; }
   .board { border-radius: 12px; padding: 14px 16px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); color: var(--card-text); }
   h2 { margin: 0 0 10px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--card-text-2); }
   dl { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }

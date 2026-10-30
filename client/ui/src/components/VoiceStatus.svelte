@@ -46,8 +46,8 @@
     {#if failed}
       <span class="vc-bars warn"><span></span><span></span><span></span></span>
       <span class="vc-text"><strong class="bad">Couldn't connect</strong><small title={failed.error}>{failed.error}</small></span>
-      <button class="vc-retry" onclick={() => voiceApi.retry()}>Retry</button>
-      <button class="vc-dismiss" aria-label="Dismiss" onclick={() => voiceApi.dismissFailure()}><Icon name="x" size={14} /></button>
+      <button class="btn btn-primary" onclick={() => voiceApi.retry()}>Retry</button>
+      <button class="icon-btn icon-btn-sm" aria-label="Dismiss" onclick={() => voiceApi.dismissFailure()}><Icon name="x" size={14} /></button>
     {:else}
       {#if clickable}
         <button class="vc-main" aria-haspopup="dialog" aria-expanded={open} data-voice-status-trigger bind:this={trigger} onkeydown={(e) => { if (open && e.key === 'Escape' && !e.defaultPrevented) { e.preventDefault(); close(true) } }} onclick={() => (open = !open)}>
@@ -87,9 +87,6 @@
   .vc-text small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 8px; background: var(--surface-menu); color: var(--danger); display: grid; place-items: center; }
   .vc-leave:hover { background: var(--bg-4); }
-  .vc-dismiss { width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
-  .vc-dismiss:hover { background: var(--bg-3); color: var(--text); }
   .vc-mic { margin: -4px 8px 8px; padding: 8px 12px; border-radius: 10px; background: var(--bg-2); border-left: 3px solid var(--warn); font-size: 12px; line-height: 1.4; color: var(--text-2); }
   .vc-mic strong { color: var(--warn); }
-  .vc-retry { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 600; }
 </style>
