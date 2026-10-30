@@ -65,17 +65,27 @@ export const SOUND_GAP_MS = 2000
 export const onScreen = (v: { message: Message; open: boolean; openThread: string | null }) =>
   v.message.thread_root_id ? v.openThread === v.message.thread_root_id : v.open
 
-export function messageSound(v: {
-  message: Message; me: string; channel: Channel; open: boolean; openThread: string | null; focused: boolean; muted: boolean; lastPlayedAt: number; now: number
-}): boolean {
+export type AlertInput = {
+  message: Message; me: string; channel: Channel; open: boolean; openThread: string | null; focused: boolean; muted: boolean
+}
+
+/** Whether a new message is worth alerting you to (the message sound and the desktop notification):
+ *  someone else's message in a DM or group, or one mentioning you anywhere, unless you're reading it
+ *  in the focused window. A mute lets only mentions through. */
+export function shouldAlert(v: AlertInput): boolean {
   const m = v.message
-  if (m.kind !== 'normal' || m.author_id === v.me) return false
+  if (m.kind !== 'normal' || m.deleted || m.author_id === v.me) return false
   if (onScreen(v) && v.focused) return false
   const mentioned = m.mentions.includes(v.me)
   const isPrivate = v.channel.server_id === null
   if (!isPrivate && !mentioned) return false
   if (v.muted && !mentioned) return false
-  return v.now - v.lastPlayedAt >= SOUND_GAP_MS
+  return true
+}
+
+/** The message sound: an alert, at most one per [SOUND_GAP_MS]. */
+export function messageSound(v: AlertInput & { lastPlayedAt: number; now: number }): boolean {
+  return shouldAlert(v) && v.now - v.lastPlayedAt >= SOUND_GAP_MS
 }
 
 /** "just now", "15m ago", "3h ago", "3d ago". */

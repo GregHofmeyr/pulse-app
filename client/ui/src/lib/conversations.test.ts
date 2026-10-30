@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState } from './state'
-import { conversationName, conversations, homeBadge, inVoice, isMuted, messageSound, serverBadge, shouldMarkRead } from './conversations'
+import { conversationName, conversations, homeBadge, inVoice, isMuted, messageSound, serverBadge, shouldAlert, shouldMarkRead } from './conversations'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 
@@ -121,6 +121,26 @@ describe('conversations', () => {
     expect(messageSound({ ...base, muted: true, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(false)
     expect(messageSound({ ...base, muted: true, message: msg('A', 'DM1', 'U1', { mentions: ['ME'] }), channel: dm })).toBe(true)
     expect(messageSound({ ...base, lastPlayedAt: 9_000, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(false)
+  })
+
+  it('alert (sound or notification, no gap): DMs, groups and mentions; never own/system/deleted/open-and-focused/muted', () => {
+    const s = applyReady(emptyState(), ready())
+    const base = { me: 'ME', open: false, openThread: null, focused: true, muted: false }
+    const dm = s.channels['DM1'], text = s.channels['T1'], group = s.channels['G1']
+    expect(shouldAlert({ ...base, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(true)
+    expect(shouldAlert({ ...base, message: msg('A', 'G1', 'U1'), channel: group })).toBe(true)
+    expect(shouldAlert({ ...base, message: msg('A', 'T1', 'U1'), channel: text })).toBe(false)
+    expect(shouldAlert({ ...base, message: msg('A', 'T1', 'U1', { mentions: ['ME'] }), channel: text })).toBe(true)
+    expect(shouldAlert({ ...base, message: msg('A', 'DM1', 'ME'), channel: dm })).toBe(false)
+    expect(shouldAlert({ ...base, message: msg('A', 'DM1', null, { kind: 'system' }), channel: dm })).toBe(false)
+    expect(shouldAlert({ ...base, message: msg('A', 'DM1', 'U1', { deleted: true }), channel: dm })).toBe(false)
+    expect(shouldAlert({ ...base, open: true, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(false)
+    expect(shouldAlert({ ...base, open: true, focused: false, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(true)
+    expect(shouldAlert({ ...base, muted: true, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(false)
+    expect(shouldAlert({ ...base, muted: true, message: msg('A', 'DM1', 'U1', { mentions: ['ME'] }), channel: dm })).toBe(true)
+    // the 2 s gap is the sound's own: a sound just played doesn't stop an alert
+    expect(messageSound({ ...base, lastPlayedAt: 9_000, now: 10_000, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(false)
+    expect(shouldAlert({ ...base, message: msg('A', 'DM1', 'U1'), channel: dm })).toBe(true)
   })
 
   it('no sound for a reply while its panel is open and focused', () => {
