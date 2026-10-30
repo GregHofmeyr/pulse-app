@@ -113,7 +113,7 @@
   .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 16px; }
   .backdrop { position: absolute; inset: 0; background: var(--scrim); }
   .modal { position: relative; width: min(420px, 100%); padding: 20px; border-radius: 16px; background: var(--bg-1); border: 1px solid var(--line); display: flex; flex-direction: column; gap: 12px; outline: none; }
-  h1 { margin: 0; font-size: 17px; font-weight: 600; }
+  h1 { margin: 0; font-size: 18px; font-weight: 600; }
   textarea { resize: vertical; min-height: 64px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font: inherit; }
   .err { margin: 0; font-size: 12.5px; color: var(--danger); }
   .foot { display: flex; justify-content: flex-end; gap: 8px; }

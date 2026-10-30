@@ -90,7 +90,7 @@
   .overlay { position: fixed; inset: 0; z-index: 30; display: grid; place-items: center; padding: 32px 16px; }
   .backdrop { position: absolute; inset: 0; background: var(--scrim); }
   .dialog { position: relative; width: min(420px, calc(100vw - 32px)); max-height: calc(100vh - 64px); display: flex; flex-direction: column; gap: 10px; padding: 20px; background: var(--bg-1); border: 1px solid var(--bg-3); border-radius: 16px; }
-  h2 { margin: 0; font-size: 17px; }
+  h2 { margin: 0; font-size: 18px; }
   .hint { margin: 0; font-size: 12px; color: var(--text-3); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; }
   .chip { padding: 3px 10px 3px 3px; border: 0; border-radius: 20px; background: var(--bg-3); color: var(--text); font-size: 12px; display: inline-flex; align-items: center; gap: 4px; }
