@@ -118,5 +118,6 @@
   .err { margin: 0; font-size: 12.5px; color: var(--danger); }
   .foot { display: flex; justify-content: flex-end; gap: 8px; }
   .ghost { height: 34px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); }
-  .primary { height: 34px; padding: 0 16px; border-radius: 10px; }
+  .primary { height: 34px; padding: 0 16px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .primary:disabled, .ghost:disabled { opacity: .5; }
 </style>

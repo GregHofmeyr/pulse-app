@@ -191,7 +191,7 @@
   button { height: 32px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; color: var(--text); font-size: 13px; }
   button:hover { background: var(--bg-3); }
   button.danger { color: #f2616b; }
-  button.primary { background: var(--accent, #5865f2); border-color: transparent; color: #fff; }
+  button.primary { background: var(--accent); border-color: transparent; color: var(--on-accent); font-weight: 600; }
   .file { display: inline-flex; align-items: center; height: 36px; padding: 0 16px; margin-bottom: 20px; border-radius: 8px; background: var(--bg-3); font-weight: 600; font-size: 13px; cursor: pointer; }
   .file.off { opacity: .5; cursor: default; }
   .file input { position: absolute; width: 1px; height: 1px; opacity: 0; }

@@ -160,4 +160,8 @@
   .zoom input { flex: 1; }
   .error { margin: 0; color: var(--text-2); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
+  .actions button { height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); }
+  .actions button:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
+  .actions .primary, .actions .primary:hover:not(:disabled) { border: 0; background: var(--accent); color: var(--on-accent); font-weight: 600; }
+  .actions button:disabled { opacity: .5; }
 </style>
