@@ -220,7 +220,7 @@
   {/if}
   {#if feed?.start && items.length === 0 && pending.length === 0}<p class="empty">{unfiltered ? 'No clips yet. Share one!' : 'No clips match.'}</p>{/if}
   {#if failedKey === key}
-    <p class="error" role="alert">{error} <button type="button" class="retry" onclick={() => (failedKey = null)}>Try again</button></p>
+    <p class="error" role="alert">{error} <button type="button" class="link-btn" onclick={() => (failedKey = null)}>Try again</button></p>
   {/if}
 </div>
 
@@ -239,5 +239,4 @@
     .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
   .error { margin: 8px 18px; color: var(--danger-text); font-size: 13px; }
-  .retry { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; }
 </style>

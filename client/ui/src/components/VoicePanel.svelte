@@ -93,7 +93,7 @@
   {:else}
     <div class="grid-wrap">
       {#if nobodyStreaming(tiles, showEveryone)}
-        <p class="empty">Nobody's streaming — <button type="button" class="link" onclick={() => setShowEveryone(true)}>show everyone</button></p>
+        <p class="empty">Nobody's streaming — <button type="button" class="link-btn" onclick={() => setShowEveryone(true)}>show everyone</button></p>
       {:else}
         <div class="grid">
           {#each tiles as t (t.kind === 'user' ? `u:${t.entry.userId}` : `s:${t.streamer}`)}
@@ -151,7 +151,6 @@
   .grid { padding: 20px; display: grid; grid-template-columns: 1fr; align-items: start; gap: 14px; }
   @container (min-width: 560px) { .grid { grid-template-columns: repeat(2, 1fr); } }
   @container (min-width: 900px) { .grid { grid-template-columns: repeat(3, 1fr); } }
-  .link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; }
   .empty { margin: 20px; color: var(--text-3); }
   .bar-wrap { height: 84px; flex-shrink: 0; display: grid; place-items: center; }
   .controls { padding: 8px; background: var(--bg-inset); border-radius: 16px; display: flex; gap: 8px; }

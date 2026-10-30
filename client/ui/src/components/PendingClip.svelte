@@ -68,7 +68,7 @@
     {#if game}<span class="game">{game}</span>{/if}
     {#if job.stage === 'failed'}
       <p class="failed" role="alert">
-        Upload failed — <button type="button" class="link" disabled={retrying || cancelling} onclick={() => void retry()}>Retry</button>
+        Upload failed — <button type="button" class="link-btn" disabled={retrying || cancelling} onclick={() => void retry()}>Retry</button>
       </p>
       {#if job.error}<p class="why">{job.error}</p>{/if}
     {:else if status}
@@ -96,9 +96,8 @@
   .bar span { display: block; height: 100%; background: var(--accent); transition: width .2s; }
   .failed { margin: 0; font-size: 12px; color: var(--danger-text); }
   .why { margin: 0; font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
-  .link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; }
   .actions { align-self: stretch; display: flex; justify-content: flex-end; }
   .cancel { padding: 4px 10px; border: 0; border-radius: 8px; background: var(--bg-3); color: var(--text-2); font-size: 12px; }
   .cancel:hover:not(:disabled) { color: var(--text); }
-  .cancel:disabled, .link:disabled { opacity: .5; }
+  .cancel:disabled, .link-btn:disabled { opacity: .5; }
 </style>
