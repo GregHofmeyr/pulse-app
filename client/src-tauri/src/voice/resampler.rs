@@ -3,8 +3,6 @@
 use audioadapter_buffers::direct::InterleavedSlice;
 use rubato::{Fft, FixedSync, Resampler};
 
-use super::devices::INTERNAL_RATE;
-
 /// Band-limited (FFT/sinc) resampling: keeps the highs that make speech crisp, and carries its
 /// state across calls so block edges are seamless. Input is consumed in fixed 10 ms chunks.
 pub struct StreamResampler {
@@ -55,40 +53,6 @@ impl StreamResampler {
     }
 }
 
-/// Mic chunks (i16 at their device's rate) → `INTERNAL_RATE`, rebuilt when the device rate changes.
-#[derive(Default)]
-pub struct ToInternal {
-    rate: u32,
-    rs: Option<StreamResampler>,
-    out: Vec<f32>,
-}
-
-impl ToInternal {
-    pub fn process(&mut self, rate: u32, chunk: &[i16]) -> Vec<i16> {
-        if rate == INTERNAL_RATE {
-            self.rs = None;
-            return chunk.to_vec();
-        }
-        if self.rs.is_none() || self.rate != rate {
-            self.rate = rate;
-            self.rs = Some(StreamResampler::new(rate, INTERNAL_RATE));
-        }
-        let input: Vec<f32> = chunk.iter().map(|s| *s as f32 / i16::MAX as f32).collect();
-        self.out.clear();
-        if let Some(rs) = self.rs.as_mut() {
-            rs.push(&input, &mut self.out);
-        }
-        self.out
-            .iter()
-            .map(|v| {
-                (v * i16::MAX as f32)
-                    .round()
-                    .clamp(i16::MIN as f32, i16::MAX as f32) as i16
-            })
-            .collect()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -128,19 +92,6 @@ mod tests {
                 "{from}->{to}: 15 kHz changed by {loss_db:.2} dB"
             );
         }
-    }
-
-    /// Mic chunks carry their device's rate, which changes when the user switches devices.
-    #[test]
-    fn to_internal_follows_device_rate_changes() {
-        let mut m = ToInternal::default();
-        let mut n = 0;
-        for _ in 0..100 {
-            n += m.process(44_100, &[1000; 441]).len(); // 1 s at 44.1 kHz
-        }
-        assert!((47_000..=48_000).contains(&n), "44.1 kHz second gave {n}");
-        let native = m.process(48_000, &[7; 480]);
-        assert_eq!(native, vec![7; 480], "48 kHz passes through untouched");
     }
 
     /// Voice is latency-sensitive: a click must come out within 25 ms (our 10 ms chunking included).

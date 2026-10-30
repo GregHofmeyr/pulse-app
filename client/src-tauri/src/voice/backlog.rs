@@ -2,8 +2,6 @@
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
-use tokio::sync::mpsc::UnboundedReceiver;
-
 #[derive(Default)]
 pub struct QueueGauge {
     now_ms: AtomicU32,
@@ -85,21 +83,6 @@ pub fn crossfade(old: &[i16], new: &mut [i16]) {
     }
 }
 
-/// Drop the oldest queued items until at most `keep` remain. Returns how many were dropped and
-/// the first of them: it continues the audio sent just before, so it's what to fade from.
-/// Queued audio only drains at real time, so a backlog left alone is delay for the rest of the call.
-pub fn drop_stale<T>(rx: &mut UnboundedReceiver<T>, keep: usize) -> (usize, Option<T>) {
-    let (mut dropped, mut first) = (0, None);
-    while rx.len() > keep {
-        let Ok(item) = rx.try_recv() else { break };
-        if first.is_none() {
-            first = Some(item);
-        }
-        dropped += 1;
-    }
-    (dropped, first)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -170,31 +153,6 @@ mod tests {
             vec![-10_000; 480 - FADE][..],
             "the rest untouched"
         );
-    }
-
-    #[test]
-    fn stale_audio_beyond_the_slack_is_dropped_oldest_first() {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        for i in 0..30 {
-            tx.send(i).unwrap();
-        }
-        assert_eq!(
-            drop_stale(&mut rx, 10),
-            (20, Some(0)),
-            "count + the first dropped (to fade from)"
-        );
-        assert_eq!(rx.try_recv().unwrap(), 20, "the newest audio is kept");
-        assert_eq!(rx.len(), 9);
-    }
-
-    #[test]
-    fn a_queue_within_the_slack_is_left_alone() {
-        let (tx, mut rx) = tokio::sync::mpsc::unbounded_channel();
-        for i in 0..10 {
-            tx.send(i).unwrap();
-        }
-        assert_eq!(drop_stale(&mut rx, 10), (0, None));
-        assert_eq!(rx.len(), 10);
     }
 
     #[test]
