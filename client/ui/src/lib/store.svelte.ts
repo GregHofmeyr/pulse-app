@@ -11,6 +11,8 @@ import { addPending, applyEvent, applyReady, emptyState, restoreUnsent, setPendi
 import { api } from './tauri'
 import { loadUnsent, saveUnsent } from './unsent'
 import { isMuted, messageSound, onScreen, SOUND_GAP_MS } from './conversations'
+import { notifyMessage, NotifyThrottle } from './notify'
+import { notifyPrefs } from './notifyPrefs.svelte'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { noteReactionEvent } from './reactions'
 import { loadSoundPrefs, playSound } from './voiceui'
@@ -38,6 +40,8 @@ export const ui = $state({
   openThreadId: null as string | null,
   /** A request to switch to this channel (the shell does it and clears it). */
   goTo: null as string | null,
+  /** A request to open this quote's replies panel (its channel's view does it and clears it). */
+  openReplies: null as { channelId: string; rootId: string } | null,
   jump: null as JumpRequest | null,
   autoReported: false,
   /** Last session's crash report, held because automatic sending is off: ask Send / Don't send. */
@@ -74,7 +78,11 @@ function logSoundDecision(v: Parameters<typeof messageSound>[0], play: boolean) 
   )
 }
 
-function maybeSound(e: Event) {
+/** One desktop notification per conversation per few seconds (lib/notify.ts). */
+const notifications = new NotifyThrottle((notice) => void api.notifyMessage(notice))
+
+/** A new message: the message sound, and a desktop notification while the window isn't focused. */
+export function maybeAlert(e: Event) {
   if (e.t !== 'MessageCreated') return
   const m = e.d.message
   const ch = app.state.channels[m.channel_id]
@@ -102,6 +110,18 @@ function maybeSound(e: Event) {
     lastPlayedAt = now
     playSound('message')
   }
+  const s = app.state
+  const notice = notifyMessage(s, v, notifyPrefs)
+  if (notice) notifications.offer(m.channel_id, (more) => (more ? (notifyMessage(s, v, notifyPrefs, more) ?? notice) : notice))
+}
+
+/** A clicked notification (the core has brought the window up): open its conversation, and a
+ *  reply's replies panel. Gone, or signed out since: the window coming up is all. */
+export function handleNotificationClick(c: { channelId: string; threadId: string | null }) {
+  const ch = app.state.channels[c.channelId]
+  if (!ch || !app.state.me) return
+  ui.goTo = c.channelId
+  if (c.threadId && ch.kind === 'quotes') ui.openReplies = { channelId: c.channelId, rootId: c.threadId }
 }
 
 /** Open (or reuse) your DM with `userId`; resolves to its channel id. */
@@ -124,6 +144,10 @@ export function queueMessage(channelId: string, text: string, replyToId: string 
 // never overwrites what an earlier run left.
 let restoredFor: string | null = null
 $effect.root(() => {
+  // Back at the window, or notifications switched off: no "and N more" still to come.
+  $effect(() => {
+    if (windowFocus.focused || !notifyPrefs.enabled) notifications.clear()
+  })
   $effect(() => {
     const me = app.state.me
     const pending = app.state.pending
@@ -223,7 +247,7 @@ export async function startListening(): Promise<UnlistenFn> {
   const offs: UnlistenFn[] = await Promise.all([
     listen<Ready>('pulse://ready', (e) => handleReady(e.payload)),
     listen<Event>('pulse://event', (e) => {
-      maybeSound(e.payload)
+      maybeAlert(e.payload)
       noteProfileUpdate(e.payload)
       noteReactionEvent(e.payload, app.state.me?.id)
       app.state = applyEvent(app.state, e.payload, Date.now())
@@ -232,6 +256,7 @@ export async function startListening(): Promise<UnlistenFn> {
     }),
     // LiveKit closed stream audio's connection under us
     listen<{ channel_id: string }>('stream://audio_closed', (e) => void streamApi.onAudioClosed(e.payload.channel_id)),
+    listen<{ channelId: string; threadId: string | null }>('pulse://notification-click', (e) => handleNotificationClick(e.payload)),
     listen<ConnState>('pulse://conn', (e) => {
       app.connAt = Date.now()
       app.state = { ...app.state, conn: e.payload }
@@ -266,6 +291,8 @@ export async function startListening(): Promise<UnlistenFn> {
 
 export function resetState() {
   restoredFor = null // the next Ready restores again
+  notifications.clear() // signed out: nothing more about the last account's messages
+  ui.openReplies = null
   forgetProfileLoads()
   app.state = emptyState()
   // a held crash report belongs to the session (and server) it was offered in: the next sign-in

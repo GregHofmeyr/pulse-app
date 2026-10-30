@@ -316,3 +316,53 @@ describe('TextChannel: jump to a message', () => {
     expect([...document.querySelectorAll('button')].some((b) => b.textContent === 'Jump to present')).toBe(false)
   })
 })
+
+describe("TextChannel: a notification's reply opens its quote's replies", () => {
+  beforeEach(() => {
+    Element.prototype.scrollTo = () => {}
+    Element.prototype.scrollIntoView = () => {}
+    resetState()
+    ui.jump = null
+    ui.openReplies = null
+    invoke.mockReset()
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_replies' ? [] : undefined))
+    ui.openChannelId = 'C1'
+    windowFocus.focused = true
+  })
+  afterEach(() => {
+    if (cmp) unmount(cmp)
+    cmp = undefined
+    document.body.innerHTML = ''
+  })
+
+  it('a loaded quote: its panel opens and the request is cleared', async () => {
+    app.state = loadLatest(ready('quotes'), 'C1', newestFirst(1, 5, quote))
+    show()
+    ui.openReplies = { channelId: 'C1', rootId: 'M0003' }
+    await settle()
+    expect(document.querySelector('.replies-panel .quote')?.getAttribute('data-message-id')).toBe('M0003')
+    expect(ui.openReplies).toBeNull()
+  })
+
+  it('a quote not loaded: its window is fetched, then the panel opens', async () => {
+    app.state = loadLatest(ready('quotes'), 'C1', newestFirst(100, 5, quote))
+    invoke.mockImplementation(async (cmd: string) =>
+      cmd === 'list_messages_around' ? newestFirst(1, 5, quote) : cmd === 'list_replies' ? [] : undefined)
+    show()
+    ui.openReplies = { channelId: 'C1', rootId: 'M0003' }
+    await settle()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('list_messages_around', expect.objectContaining({ channelId: 'C1', messageId: 'M0003' }))
+    expect(document.querySelector('.replies-panel .quote')?.getAttribute('data-message-id')).toBe('M0003')
+    expect(ui.openReplies).toBeNull()
+  })
+
+  it("another channel's request is left alone", async () => {
+    app.state = loadLatest(ready('quotes'), 'C1', newestFirst(1, 5, quote))
+    show()
+    ui.openReplies = { channelId: 'C2', rootId: 'M0003' }
+    await settle()
+    expect(document.querySelector('.replies-panel')).toBeNull()
+    expect(ui.openReplies).toEqual({ channelId: 'C2', rootId: 'M0003' })
+  })
+})

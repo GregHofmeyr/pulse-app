@@ -301,6 +301,29 @@
     repliesOpener = at instanceof HTMLElement && list?.contains(at) ? at : null
     repliesOpen = m
   }
+  // A clicked notification for a reply asked for its quote's panel: open it once the quote is in
+  // the list, fetching the history around it first if it isn't (once per request).
+  let fetchedFor: string | null = null
+  $effect(() => {
+    const r = ui.openReplies
+    if (!r || r.channelId !== channelId) return
+    const root = byId.get(r.rootId)
+    untrack(() => {
+      if (root) {
+        ui.openReplies = null
+        fetchedFor = null
+        openReplies(root)
+      } else if (fetchedFor !== r.rootId) {
+        fetchedFor = r.rootId
+        void jumpTo(channelId, r.rootId)
+      }
+    })
+  })
+  $effect(() => () => {
+    untrack(() => {
+      if (ui.openReplies?.channelId === channelId) ui.openReplies = null
+    })
+  })
   let chan: HTMLDivElement
   async function closeReplies() {
     const id = repliesOpen?.id

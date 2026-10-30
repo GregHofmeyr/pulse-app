@@ -28,6 +28,7 @@ import type { ClipUrl } from './protocol/ClipUrl'
 import type { ClipFacets } from './protocol/ClipFacets'
 import type { ClipView } from './protocol/ClipView'
 import type { ClipStorage } from './protocol/ClipStorage'
+import type { Notice } from './notify'
 
 /** `login` / `login_mfa`: signed in, waiting for the second step, or (second step only) the ticket is gone. */
 export type LoginResult = { status: 'ready'; user: User } | { status: 'mfa_required' } | { status: 'expired' }
@@ -143,6 +144,8 @@ export const api = {
   deleteEmoji: (id: string) => invoke<void>('delete_emoji', { id }),
   /** One line in the app log (what happened and why, never what the user typed); best effort. A failure is `warn`. */
   uiLog: (line: string, level: 'warn' | 'info' = 'warn') => invoke<void>('ui_log', { line, info: level === 'info' }).catch(() => {}),
+  /** A desktop notification (lib/notify.ts decided it); best effort, a refusal only dings. */
+  notifyMessage: (notice: Notice) => invoke<void>('notify_message', { notice }).catch(() => {}),
   /** `emoji`: a Unicode emoji or `custom:<id>`. */
   addReaction: (messageId: string, emoji: string) => invoke<void>('add_reaction', { messageId, emoji }),
   removeReaction: (messageId: string, emoji: string) => invoke<void>('remove_reaction', { messageId, emoji }),
