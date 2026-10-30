@@ -318,6 +318,8 @@ pub struct Shared {
     pub(crate) mic_sink: Mutex<Option<Box<dyn super::processor::FrameSink>>>,
     /// Mic audio waiting to be processed (ms), worst per stats window: the send-side delay we own.
     pub mic_queue: super::backlog::QueueGauge,
+    /// "No audio from your mic": fed by the processor, reported by the call's meter loop.
+    pub mic_silence: Mutex<super::micsilence::MicSilence>,
 }
 
 impl Shared {
@@ -349,6 +351,7 @@ impl Shared {
                 version: 0,
             }),
             ns_status: Mutex::new((None, false)),
+            mic_silence: Mutex::default(),
             echo_ref: Mutex::new(EchoRef::default()),
             gate_open: Default::default(),
             watchdog: Watchdog::new(Instant::now()),
@@ -640,6 +643,10 @@ fn open_half(
     raw_tx: RawTx,
 ) -> anyhow::Result<Half> {
     let side = if input { "input" } else { "output" };
+    if input {
+        // a different (or reopened) mic gets judged afresh
+        shared.mic_silence.lock().unwrap().restart();
+    }
     Parked::spawn(
         if input { "pulse-audio-in" } else { "pulse-audio-out" },
         Duration::from_secs(5),

@@ -7,6 +7,7 @@ pub mod devices;
 pub mod gate;
 pub mod linkstats;
 pub mod meter;
+pub mod micsilence;
 pub mod mictest;
 pub mod mixer;
 pub mod netstats;
@@ -780,6 +781,10 @@ pub enum VoiceEvent {
     },
     DeviceStalled,
     DeviceRecovered,
+    /// Our unmuted mic is delivering nothing but digital silence (or is again delivering sound).
+    MicSilent {
+        silent: bool,
+    },
     /// Whether our mic is in the room. "Connected" comes first; the publish follows ~1 RTT later.
     /// A failed publish ends the call (`error` says why).
     Mic {
@@ -1608,6 +1613,8 @@ impl VoiceManager {
         // levels for the UI meter + speaking ring (FINDINGS rule 2); the device watchdog is the
         // pipeline's
         let me_id = room.local_participant().identity().to_string();
+        // a new call judges the mic afresh ("heard" in the last call says nothing about this one)
+        shared.mic_silence.lock().unwrap().restart();
         {
             let (shared, events, alive) = (shared.clone(), self.events.clone(), alive.clone());
             tasks.push(tokio::spawn(async move {
@@ -1631,6 +1638,9 @@ impl VoiceManager {
                             active: st.active,
                             note: st.note,
                         });
+                    }
+                    if let Some(silent) = shared.mic_silence.lock().unwrap().take_change() {
+                        events(VoiceEvent::MicSilent { silent });
                     }
                     // Ring = actually audible: received levels per peer + what we really send.
                     let mut levels = shared.mix_in.take_peer_levels();

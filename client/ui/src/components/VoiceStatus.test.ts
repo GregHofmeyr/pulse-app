@@ -53,6 +53,7 @@ beforeEach(async () => {
   voice.stage = { stage: 'disconnected', attempt: null }
   voice.link = null
   voice.connection = 'disconnected'
+  voice.micSilent = false
   windowFocus.focused = true
   cmp = mount(VoiceStatus, { target: document.body })
   flushSync()
@@ -272,6 +273,28 @@ describe('VoiceStatus panel behaviour', () => {
     voice.stage = { stage: 'connecting', attempt: null }
     flushSync()
     expect(document.querySelector('.vc-text small')?.textContent).toBe('Games')
+  })
+
+  it('an_unmuted_mic_sending_nothing_is_flagged', () => {
+    connect()
+    expect(document.querySelector('.vc-mic')).toBeNull()
+    emit({ kind: 'mic_silent', silent: true })
+    flushSync()
+    const hint = document.querySelector('.vc-mic')
+    expect(hint?.getAttribute('role')).toBe('status')
+    expect(hint?.textContent).toContain('No sound from your mic')
+    emit({ kind: 'mic_silent', silent: false })
+    flushSync()
+    expect(document.querySelector('.vc-mic')).toBeNull()
+  })
+
+  it('leaving_the_call_drops_the_mic_warning', () => {
+    connect()
+    emit({ kind: 'mic_silent', silent: true })
+    emit({ kind: 'state', channel_id: null, connection: 'disconnected', controls: { muted: false, deafened: false } })
+    flushSync()
+    expect(voice.micSilent).toBe(false)
+    expect(document.querySelector('.vc-mic')).toBeNull()
   })
 
   it('the_failed_state_can_be_dismissed', () => {

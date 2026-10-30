@@ -1145,3 +1145,61 @@ async fn two_tracks_from_one_person_both_play() {
     room.close().await.unwrap();
     vm.leave().await;
 }
+
+/// A mic that delivers only digital silence while unmuted (the null devices send zeros) raises the
+/// "no sound from your mic" warning, through the real call loop; muting clears it.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn a_silent_mic_is_reported_and_muting_clears_it() {
+    let _turn = livekit_turn().await;
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = dev_livekit("ws");
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, token) = testing::register(&app, "alex").await;
+    let s = testing::create_server(&app, &token, "Main").await;
+    let api = Api::new(&format!("http://{}", app.addr));
+    let lounge = api
+        .channels(&token, s.id)
+        .await
+        .unwrap()
+        .into_iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap();
+
+    let seen = Arc::new(Mutex::new(Vec::<bool>::new()));
+    let log = seen.clone();
+    let vm = VoiceManager::new(Arc::new(move |e| {
+        if let VoiceEvent::MicSilent { silent } = e {
+            log.lock().unwrap().push(silent);
+        }
+    }));
+    vm.join(
+        &api,
+        &token,
+        lounge.id,
+        AudioConfig::default(),
+        AudioMode::Null(48_000),
+    )
+    .await
+    .unwrap();
+    tokio::time::sleep(Duration::from_secs(5)).await;
+    assert!(
+        seen.lock().unwrap().is_empty(),
+        "not before 10 s of silence"
+    );
+    let warned = eventually(Duration::from_secs(10), || {
+        let seen = seen.clone();
+        async move { seen.lock().unwrap().last() == Some(&true) }
+    })
+    .await;
+    assert!(warned, "silent mic reported: {:?}", seen.lock().unwrap());
+    vm.toggle_mute().await;
+    let cleared = eventually(Duration::from_secs(2), || {
+        let seen = seen.clone();
+        async move { seen.lock().unwrap().last() == Some(&false) }
+    })
+    .await;
+    assert!(cleared, "muting clears it: {:?}", seen.lock().unwrap());
+    vm.leave().await;
+}

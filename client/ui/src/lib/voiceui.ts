@@ -89,6 +89,7 @@ export type VoiceEvent =
   | { kind: 'noise_suppression'; active: NsLevel; note: string | null }
   | { kind: 'device_stalled' }
   | { kind: 'device_recovered' }
+  | { kind: 'mic_silent'; silent: boolean }
   | { kind: 'mic'; live: boolean; error: string | null }
 
 export const clampVolume = (pct: number) => Math.round(Math.min(200, Math.max(0, pct)))

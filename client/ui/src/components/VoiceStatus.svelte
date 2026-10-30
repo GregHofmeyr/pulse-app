@@ -4,6 +4,7 @@
   import { app } from '../lib/store.svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { stageLabel } from '../lib/voicestage'
+  import { isWindows } from '../lib/stream/platform'
 
   // during a switch, the channel being joined
   const channelId = $derived(voice.joining ?? voice.channelId ?? voice.joinFailed?.channelId ?? null)
@@ -63,6 +64,12 @@
     {/if}
     {#if open && clickable}<LinkStatsPanel {channelName} onClose={close} triggerSelector={TRIGGER} />{/if}
   </div>
+  {#if voice.micSilent && voice.channelId}
+    <p class="vc-mic" role="status">
+      <strong>No sound from your mic.</strong>
+      Check it isn't muted on the headset{isWindows() ? ", and that Windows lets apps use the microphone (Settings → Privacy → Microphone)" : ''}.
+    </p>
+  {/if}
 {/if}
 
 <style>
@@ -80,5 +87,7 @@
   .vc-text small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 9px; background: #2e3037; color: var(--danger); display: grid; place-items: center; }
   .vc-dismiss { width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .vc-mic { margin: -4px 8px 8px; padding: 8px 12px; border-radius: 10px; background: #232429; border-left: 3px solid var(--warn); font-size: 12px; line-height: 1.4; color: var(--text-2); }
+  .vc-mic strong { color: var(--warn); }
   .vc-retry { height: 30px; padding: 0 12px; border: 0; border-radius: 8px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 600; }
 </style>

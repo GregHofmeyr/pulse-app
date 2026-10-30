@@ -20,6 +20,8 @@ export const voice = $state({
   /** Suppression actually running (Strong can be loading or have fallen back) and why. */
   ns: { active: null as NsLevel | null, note: null as string | null },
   stalled: false,
+  /** Unmuted, yet the mic delivers only digital silence (privacy switch, hardware mute, dead mic). */
+  micSilent: false,
   /** Our mic is in the room (shows a moment after connected). */
   micLive: false,
   error: '',
@@ -84,6 +86,7 @@ export async function startVoiceListening() {
         if (prev.channelId !== e.channel_id) void streamApi.onVoiceChanged(e.channel_id)
         if (!e.channel_id) voice.speaking = new Set()
         if (!e.channel_id) voice.micLive = false
+        if (!e.channel_id) voice.micSilent = false
         break
       }
       case 'link':
@@ -108,6 +111,9 @@ export async function startVoiceListening() {
         break
       case 'device_recovered':
         voice.stalled = false
+        break
+      case 'mic_silent':
+        voice.micSilent = e.silent
         break
       case 'mic':
         voice.micLive = e.live
