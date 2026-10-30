@@ -31,9 +31,31 @@ pub struct VoiceState {
     /// Last flags each user declared, in a room or not: the client announces them right after
     /// joining, which can beat LiveKit's join webhook.
     declared: Arc<Mutex<HashMap<UserId, VoiceFlags>>>,
+    /// While a LiveKit snapshot is being restored: the sids that left since it was taken, which
+    /// the snapshot may still list. `None` the rest of the time, so nothing piles up. Locked
+    /// after `rooms`.
+    left_since_snapshot: Arc<Mutex<Option<HashSet<String>>>>,
+}
+
+/// Records leaves from [`VoiceState::snapshot`] until dropped.
+#[must_use]
+pub struct Snapshot(VoiceState);
+
+impl Drop for Snapshot {
+    fn drop(&mut self) {
+        *self.0.left_since_snapshot.lock().unwrap() = None;
+    }
 }
 
 impl VoiceState {
+    /// Call just before asking LiveKit who is connected, and hold the guard until the answer is
+    /// applied: a leave that lands in between keeps [`Self::restore`] from adding that
+    /// connection back. One snapshot at a time (the boot try, then the retries, in turn).
+    pub fn snapshot(&self) -> Snapshot {
+        *self.left_since_snapshot.lock().unwrap() = Some(HashSet::new());
+        Snapshot(self.clone())
+    }
+
     /// Record `user`'s connection `sid`; true if they weren't already in the room.
     pub fn join(&self, channel: ChannelId, user: UserId, sid: &str) -> bool {
         let flags = self.declared(user);
@@ -53,11 +75,16 @@ impl VoiceState {
     }
 
     /// Add `user` from LiveKit's room list unless a webhook already placed them (its `sid` is
-    /// newer than our snapshot). True if added.
+    /// newer than our snapshot) or that connection has left since the snapshot. True if added.
     pub fn restore(&self, channel: ChannelId, user: UserId, sid: &str) -> bool {
         let flags = self.declared(user);
         let mut rooms = self.rooms.lock().unwrap();
         if rooms.values().any(|r| r.contains_key(&user)) {
+            return false;
+        }
+        if let Some(left) = self.left_since_snapshot.lock().unwrap().as_ref()
+            && left.contains(sid)
+        {
             return false;
         }
         rooms.entry(channel).or_default().insert(
@@ -73,6 +100,11 @@ impl VoiceState {
     /// Remove `user` if `sid` is their current connection (an empty `sid` matches any).
     pub fn leave(&self, channel: ChannelId, user: UserId, sid: &str) -> Left {
         let mut rooms = self.rooms.lock().unwrap();
+        if let Some(left) = self.left_since_snapshot.lock().unwrap().as_mut()
+            && !sid.is_empty()
+        {
+            left.insert(sid.to_owned());
+        }
         let Some(room) = rooms.get_mut(&channel) else {
             return Left::NotPresent;
         };

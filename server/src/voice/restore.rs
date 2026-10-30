@@ -97,7 +97,8 @@ pub async fn fetch(url: &str, key: &str, secret: &str, budget: Duration) -> anyh
 /// Make `voice` and `voice_sessions` agree with `live`. Session rows opened before `started_at`
 /// (this boot) stay open for people still in a call and close at zero length for the rest (we
 /// can't know when they left); server-channel calls with no open row get one from LiveKit's join
-/// time. Returns who was newly added to `voice`.
+/// time. Returns who was newly added to `voice` (not those a webhook placed first, nor
+/// connections that left since [`VoiceState::snapshot`]).
 pub async fn apply(
     db: &SqlitePool,
     voice: &VoiceState,
@@ -124,6 +125,30 @@ pub async fn apply(
         .map(|(p, _)| (p.user.to_string(), p.channel.to_string()))
         .collect();
 
+    let mut added = Vec::new();
+    let written = write(db, voice, &known, &here, started_at, &mut added).await;
+    if let Err(e) = written {
+        // Nothing was written: take back the presence added on the way, so a retry adds it again.
+        for p in &added {
+            voice.leave(p.channel, p.user, &p.sid);
+        }
+        return Err(e);
+    }
+    Ok(added)
+}
+
+/// [`apply`]'s transaction. Each person goes into `voice` before the commit, and gets a new row
+/// only if this added them: a join webhook that placed them first writes its own row (it may be
+/// waiting on this transaction's lock to do so), and one that lands after finds them present and
+/// writes none. Either way, one open row.
+async fn write(
+    db: &SqlitePool,
+    voice: &VoiceState,
+    known: &[(&LiveParticipant, bool)],
+    here: &HashSet<(String, String)>,
+    started_at: &str,
+    added: &mut Vec<LiveParticipant>,
+) -> anyhow::Result<()> {
     let mut tx = crate::db::begin_write(db).await?;
     let open: Vec<(String, String, String)> = sqlx::query_as(
         "SELECT id, user_id, channel_id FROM voice_sessions WHERE left_at IS NULL AND joined_at < ?",
@@ -139,7 +164,11 @@ pub async fn apply(
                 .await?;
         }
     }
-    for (p, record) in &known {
+    for &(p, record) in known {
+        if !voice.restore(p.channel, p.user, &p.sid) {
+            continue;
+        }
+        added.push(p.clone());
         if !record {
             continue;
         }
@@ -163,12 +192,7 @@ pub async fn apply(
         }
     }
     tx.commit().await?;
-
-    Ok(known
-        .into_iter()
-        .filter(|(p, _)| voice.restore(p.channel, p.user, &p.sid))
-        .map(|(p, _)| p.clone())
-        .collect())
+    Ok(())
 }
 
 /// Stand in for the join and leave webhooks missed while the server was down. Each participant
@@ -212,6 +236,8 @@ async fn check_grants(
 /// Ask LiveKit, check grants, apply, and announce whoever was added (clients connected by then
 /// catch up).
 pub async fn sync(s: &AppState, started_at: &str, budget: Duration) -> anyhow::Result<usize> {
+    // Before asking LiveKit: a leave webhook from here on keeps its connection out of the restore.
+    let _snapshot = s.voice.snapshot();
     let joined = session::joined_grants(&s.db).await?;
     let live = fetch(
         &s.cfg.livekit_api_url,

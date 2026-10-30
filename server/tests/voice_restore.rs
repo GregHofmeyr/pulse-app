@@ -513,3 +513,103 @@ async fn participants_still_connecting_are_not_restored() {
         "left to its own join webhook"
     );
 }
+
+fn live(channel: ChannelId, user: UserId, sid: &str) -> restore::LiveParticipant {
+    restore::LiveParticipant {
+        channel,
+        user,
+        sid: sid.into(),
+        joined_at: "2026-01-01T00:00:00.000Z".into(),
+    }
+}
+
+/// A join webhook that lands while a background restore applies: it has placed the user in
+/// memory and its row insert is waiting on the restore's write lock. Whoever places the user
+/// writes the row, so the restore opens none (two open rows would double the stats).
+#[tokio::test]
+async fn a_restore_opens_no_row_for_someone_a_webhook_placed() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    app.voice.join(l.id, a_id, "PA_new");
+
+    let added = restore::apply(
+        &app.db,
+        &app.voice,
+        &[live(l.id, a_id, "PA_old")],
+        &pulse_server::db::now(),
+    )
+    .await
+    .unwrap();
+
+    assert!(added.is_empty());
+    assert!(
+        session(&app, a_id).await.is_empty(),
+        "the webhook's to write"
+    );
+}
+
+/// A leave webhook that lands between LiveKit's answer and the apply: the snapshot still lists
+/// them, but they're gone. Restoring them would leave a ghost in the call until the next restart.
+#[tokio::test]
+async fn a_leave_after_the_snapshot_is_not_undone_by_the_restore() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    let snapshot = app.voice.snapshot();
+    assert_eq!(app.voice.leave(l.id, a_id, "PA_1"), Left::NotPresent);
+
+    let added = restore::apply(
+        &app.db,
+        &app.voice,
+        &[live(l.id, a_id, "PA_1")],
+        &pulse_server::db::now(),
+    )
+    .await
+    .unwrap();
+    drop(snapshot);
+
+    assert!(added.is_empty());
+    assert!(app.voice_members(l.id).is_empty());
+    assert!(session(&app, a_id).await.is_empty());
+}
+
+/// A DM call is restored to presence but, like its webhooks, never feeds the stats.
+#[tokio::test]
+async fn a_dm_call_is_restored_without_a_session_row() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let (b_id, _) = register(&app, "sam").await;
+    let dm = create_dm(&app, &a, &[b_id]).await;
+    let lk = fake_livekit(vec![(dm.id.to_string(), vec![participant(a_id, "PA_1")])]).await;
+
+    let n = restore::sync(&state_with(&app, lk), &pulse_server::db::now(), BUDGET)
+        .await
+        .unwrap();
+
+    assert_eq!(n, 1);
+    assert!(app.voice_members(dm.id).contains(&a_id));
+    assert!(session(&app, a_id).await.is_empty());
+}
+
+/// LiveKit answers at boot: presence is restored before serving, and the fallback (closing every
+/// open row) doesn't run.
+#[tokio::test]
+async fn livekit_up_at_boot_restores_without_the_fallback() {
+    let app = spawn().await;
+    let (a_id, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    open_session(&app, "VS1", a_id, l.id).await;
+    let lk = fake_livekit(vec![(l.id.to_string(), vec![participant(a_id, "PA_1")])]).await;
+
+    restore::on_startup(&state_with(&app, lk), &pulse_server::db::now())
+        .await
+        .unwrap();
+
+    assert!(app.voice_members(l.id).contains(&a_id));
+    assert_eq!(
+        session(&app, a_id).await,
+        vec![("VS1".into(), "2026-01-01T00:00:00.000Z".into(), None)],
+        "still open"
+    );
+}
