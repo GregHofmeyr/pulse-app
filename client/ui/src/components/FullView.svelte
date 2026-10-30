@@ -114,7 +114,7 @@
     <!-- between the corner toggles; when the panels leave too little room it wraps, the toggles stay put -->
     <div class="controls">
       <div class="lead">
-        <button type="button" class="back" onclick={closeFull}><Icon name="chevronLeft" size={16} /> Back</button>
+        <button type="button" class="btn btn-quiet back" onclick={closeFull}><Icon name="chevronLeft" size={16} /> Back</button>
         <strong class="name">{name}</strong>
       </div>
       <div class="trail">
@@ -127,7 +127,7 @@
           Volume <strong>{volumeLabel(volume)}</strong>
           <input type="range" min="0" max="200" step="5" value={volume} aria-label="Stream volume" oninput={(e) => streamApi.setStreamVolume(streamer, +e.currentTarget.value)} />
         </label>
-        <button type="button" class="stop" onclick={stop}>Stop watching</button>
+        <button type="button" class="btn btn-danger stop" onclick={stop}>Stop watching</button>
       </div>
     </div>
     {#if panels?.hasRight}
@@ -162,7 +162,7 @@
   .panel-toggle:hover { background: var(--bg-3); color: var(--text); }
   .panel-toggle[aria-pressed='true'] { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
   .panel-toggle[aria-pressed='true']:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
-  .back { flex-shrink: 0; white-space: nowrap; height: 32px; padding: 0 12px 0 8px; border: 0; border-radius: 10px; background: var(--bg-3); color: var(--text); font-weight: 600; display: flex; align-items: center; gap: 4px; }
+  .back { flex-shrink: 0; white-space: nowrap; padding-left: 8px; gap: 4px; }
   /* rows of 42px (the quality select's height): 52px in all on one row, as before, with the corner toggles centred on the first */
   .controls { flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 14px; }
   .lead, .trail { display: flex; align-items: center; gap: 14px; min-width: 0; min-height: 42px; }
@@ -170,7 +170,7 @@
   .name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .ctl { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-2); white-space: nowrap; }
   input[type='range'] { width: 120px; accent-color: var(--accent); }
-  .stop { flex-shrink: 0; white-space: nowrap; height: 32px; padding: 0 14px; border: 0; border-radius: 10px; background: var(--danger); color: var(--on-danger); font-weight: 700; }
+  .stop { flex-shrink: 0; white-space: nowrap; }
   .stage { position: relative; flex: 1; min-height: 0; }
   .host { position: absolute; inset: 0; }
   .unfocus { position: absolute; inset: 0; cursor: zoom-out; }

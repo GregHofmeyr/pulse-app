@@ -74,7 +74,7 @@
     <dt>Connection type</dt>
     <dd>{link?.transport ? transportLabel(link.transport) : '—'}</dd>
   </dl>
-  <button class="copy" disabled={!link} onclick={copy}>{copied ? 'Copied' : 'Copy details'}</button>
+  <button class="btn btn-secondary copy" disabled={!link} onclick={copy}>{copied ? 'Copied' : 'Copy details'}</button>
 </div>
 
 <style>
@@ -87,7 +87,4 @@
   .bad { color: var(--danger); }
   .spark { width: 100%; height: 36px; color: var(--accent); background: var(--bg-2); border-radius: 6px; }
   .span { color: var(--text-3); font-size: 11px; margin-top: -4px; }
-  .copy { height: 30px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
-  .copy:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
-  .copy:disabled { opacity: .5; }
 </style>

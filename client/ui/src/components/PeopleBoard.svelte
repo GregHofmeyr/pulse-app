@@ -80,11 +80,11 @@
               </div>
             </div>
             <div class="acts">
-              <button onclick={() => message(p.user.id)}><Icon name="message" size={14} /> Message</button>
+              <button class="btn btn-quiet" onclick={() => message(p.user.id)}><Icon name="message" size={14} /> Message</button>
               {#if voice}
-                <button onclick={() => onJoinVoice(voice.channelId, voice.serverId)}><Icon name="speaker" size={14} /> Join</button>
+                <button class="btn btn-quiet" onclick={() => onJoinVoice(voice.channelId, voice.serverId)}><Icon name="speaker" size={14} /> Join</button>
               {:else}
-                <button disabled title="Calls arrive soon"><Icon name="phone" size={14} /> Call</button>
+                <button class="btn btn-quiet" disabled title="Calls arrive soon"><Icon name="phone" size={14} /> Call</button>
               {/if}
             </div>
           </div>
@@ -109,9 +109,7 @@
   .text strong { font-size: 14px; }
   .status { font-size: 12px; color: var(--text-3); display: flex; align-items: center; gap: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .acts { display: flex; gap: 6px; }
-  .acts button { flex: 1; height: 30px; border: 0; border-radius: 8px; background: var(--bg-3); color: var(--text-2); font-size: 12px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 5px; }
-  .acts button:hover:not(:disabled) { background: var(--bg-4); color: var(--text); }
-  .acts button:disabled { opacity: .45; }
+  .acts .btn { flex: 1; gap: 5px; }
   .error { color: var(--danger-text); font-size: 13px; }
   .empty { padding: 24px 2px; color: var(--text-3); }
 </style>

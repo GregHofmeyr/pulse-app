@@ -26,7 +26,7 @@
   const over = (id: string) => () => hovered === id
 </script>
 
-<button class="new" onclick={onNew}><Icon name="plus" size={15} /> New message</button>
+<button class="btn btn-lg btn-quiet new" onclick={onNew}><Icon name="plus" size={15} /> New message</button>
 
 <div class="list">
   {#each list as c (c.channel.id)}
@@ -72,8 +72,7 @@
 {/if}
 
 <style>
-  .new { margin: 4px 8px 8px; height: 36px; border: 0; border-radius: 10px; background: var(--bg-3); color: var(--text-2); font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 6px; }
-  .new:hover { color: var(--text); background: var(--bg-4); }
+  .new { margin: 4px 8px 8px; font-size: 13px; }
   .list { flex: 1; min-height: 0; overflow-y: auto; padding: 0 6px; display: flex; flex-direction: column; gap: 1px; }
   .row { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); text-align: left; }
   .row:hover { background: var(--bg-2); }

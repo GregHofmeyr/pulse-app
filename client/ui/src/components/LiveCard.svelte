@@ -37,7 +37,7 @@
       <strong>You're live</strong>
       <span class="meta">{live.res}p{live.fps}</span>
       <span class="spacer"></span>
-      <button type="button" class="ghost" onclick={toggleHidden}>{hidden ? 'Show preview' : 'Hide preview'}</button>
+      <button type="button" class="btn btn-secondary ghost" onclick={toggleHidden}>{hidden ? 'Show preview' : 'Hide preview'}</button>
     </div>
     {#if !hidden}
       <div class="preview">
@@ -51,12 +51,12 @@
     {#if live.encoderWarning}<p class="warn" role="status">Your GPU encoder isn't being used, so this will cost game FPS</p>{/if}
     <div class="row">
       {#if live.audio}
-        <button type="button" class="ghost" aria-pressed={live.audioMuted} onclick={() => streamApi.setAudioMuted(!live.audioMuted)}>
+        <button type="button" class="btn btn-secondary ghost" aria-pressed={live.audioMuted} onclick={() => streamApi.setAudioMuted(!live.audioMuted)}>
           {live.audioMuted ? 'Unmute stream audio' : 'Mute stream audio'}
         </button>
       {/if}
       <span class="spacer"></span>
-      <button type="button" class="stop" onclick={() => streamApi.stop()}>Stop</button>
+      <button type="button" class="btn btn-danger" onclick={() => streamApi.stop()}>Stop</button>
     </div>
   </section>
 {/if}
@@ -71,9 +71,6 @@
   video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; object-fit: contain; }
   .viewers { margin: 0; font-size: 13px; color: var(--text-2); }
   .warn { margin: 0; font-size: 13px; color: var(--warn); }
-  .ghost { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; }
-  .ghost:hover:not(:disabled) { background: var(--bg-3); color: var(--text); }
-  .stop { height: 30px; padding: 0 16px; border: 0; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-weight: 600; }
   /* the tile variant: the preview fills the tile; the rows float over it as top and bottom bars */
   .card.tile { position: absolute; inset: 0; margin: 0; padding: 0; max-width: none; width: auto; gap: 0; border: 0; border-radius: 0; background: #000; align-self: stretch; }
   .tile .preview { position: absolute; inset: 0; }
@@ -83,6 +80,7 @@
   .tile .viewers { margin-top: auto; font-size: 12px; padding-bottom: 0; background: rgba(0, 0, 0, .55); }
   .tile .warn { font-size: 12px; }
   .tile .row:last-child { background: rgba(0, 0, 0, .55); }
+  /* over the video: white, and shorter to fit the bars */
   .tile .ghost { color: #fff; border-color: rgba(255, 255, 255, .4); height: 26px; }
   .tile .meta { color: rgba(255, 255, 255, .8); }
 </style>
