@@ -76,7 +76,7 @@
   </section>
 {/snippet}
 
-<div class="leaderboard menu-surface" role="dialog" aria-label="Leaderboard" use:clickOutside={onClose}>
+<div class="leaderboard menu-surface pop-in" role="dialog" aria-label="Leaderboard" use:clickOutside={onClose}>
   <h2>Leaderboard</h2>
   {#if error}
     <p class="error" role="alert">{error}</p>

@@ -11,9 +11,9 @@
   let section = $state<(typeof sections)[number]>('Emoji')
 </script>
 
-<div class="overlay modal-overlay">
+<div class="overlay modal-overlay fade-in">
 <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={onClose}></div>
-<div class="modal" role="dialog" aria-modal="true" aria-label="Server settings" tabindex="-1" use:modal={onClose}>
+<div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Server settings" tabindex="-1" use:modal={onClose}>
   <nav aria-label="Server settings sections">
     <h1>{server.name}</h1>
     {#each sections as s (s)}

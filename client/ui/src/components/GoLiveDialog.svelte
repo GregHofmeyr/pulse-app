@@ -79,9 +79,9 @@
 
 <svelte:window onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); cancel() } }} />
 
-<div class="overlay modal-overlay">
+<div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" onclick={cancel}></div>
-  <div class="modal" role="dialog" aria-label="Go Live">
+  <div class="modal pop-in" role="dialog" aria-label="Go Live">
     <div class="top">
       <h1 class="modal-title">Go Live</h1>
       <button type="button" class="icon-btn round modal-close" aria-label="Cancel" disabled={busy} onclick={cancel}><Icon name="x" /></button>

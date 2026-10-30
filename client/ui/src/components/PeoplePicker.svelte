@@ -48,9 +48,9 @@
   }
 </script>
 
-<div class="overlay modal-overlay">
+<div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" onclick={onClose}></div>
-  <div class="modal" role="dialog" aria-label={title}>
+  <div class="modal pop-in" role="dialog" aria-label={title}>
     <h2 class="modal-title">{title}</h2>
     {#if hint}<p class="hint">{hint}</p>{/if}
     {#if fixed.length || picked.length}

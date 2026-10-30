@@ -47,9 +47,9 @@
   const customOf = (key: string) => app.state.customEmoji[key.slice(7)]
 </script>
 
-<div class="overlay modal-overlay">
+<div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={onClose}></div>
-  <div class="modal" role="dialog" aria-modal="true" aria-label="Profile of {user?.username ?? 'user'}" tabindex="-1" use:modal={onClose} style={vars}>
+  <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Profile of {user?.username ?? 'user'}" tabindex="-1" use:modal={onClose} style={vars}>
     <button class="close icon-btn round modal-close" aria-label="Close profile" onclick={onClose}><Icon name="x" size={16} /></button>
     <div class="left">
       {#if user}

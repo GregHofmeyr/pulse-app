@@ -173,6 +173,19 @@ button { transition: background-color var(--dur) var(--ease), color var(--dur) v
 .input-sm { height: 32px; padding: 0 10px; border-radius: 8px; font-size: 13px; }
 textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
 
+/* Entrances (owner pick 7): menus, popovers and dialogs fade and grow in (.pop-in), overlays and
+   toasts fade in (.fade-in). From only: each ends on the element's own opacity and transform. */
+@keyframes pop-in { from { opacity: 0; transform: scale(.96); } }
+@keyframes fade-in { from { opacity: 0; } }
+.pop-in { animation: pop-in var(--dur) var(--ease); }
+.fade-in { animation: fade-in var(--dur) var(--ease); }
+/* Off, not paused: the pause above would hold them on their first, invisible frame (a stream
+   toast arrives while you're in a game). */
+.streaming .pop-in, .streaming .fade-in, .unfocused .pop-in, .unfocused .fade-in { animation: none !important; }
+@media (prefers-reduced-motion: reduce) {
+  .pop-in, .fade-in { animation: none !important; }
+}
+
 /* A button that reads as a link. */
 .link-btn { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; text-underline-offset: 2px; }
 .link-btn:hover { text-decoration-thickness: 2px; }

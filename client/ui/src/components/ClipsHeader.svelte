@@ -71,7 +71,7 @@
       <button type="button" class="chip" aria-pressed={!!filter.author} aria-haspopup="menu" aria-expanded={people} data-menu-toggle
         onclick={() => (people = !people)}>{personLabel}</button>
       {#if people}
-        <div class="menu menu-surface" role="menu" aria-label="By person" use:clickOutside={() => (people = false)}>
+        <div class="menu menu-surface pop-in" role="menu" aria-label="By person" use:clickOutside={() => (people = false)}>
           <button type="button" class="menu-item" role="menuitemradio" aria-checked={!filter.author} onclick={() => pickAuthor(null)}>Everyone</button>
           {#each authors as a (a.id)}
             <button type="button" class="menu-item" role="menuitemradio" aria-checked={filter.author === a.id} onclick={() => pickAuthor(a.id)}>

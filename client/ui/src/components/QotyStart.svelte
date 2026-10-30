@@ -69,10 +69,10 @@
   }
 </script>
 
-<div class="overlay modal-overlay">
+<div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={cancel}></div>
   <!-- not a <form>: the length buttons (Segmented) would submit it -->
-  <div class="modal" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" use:modal={cancel}>
+  <div class="modal pop-in" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" use:modal={cancel}>
     <div class="top">
       <span class="qoty-mark mark" aria-hidden="true">“</span>
       <h1 class="modal-title">{title}</h1>

@@ -395,7 +395,7 @@
               aria-autocomplete="list" aria-label="Who said it?" placeholder="who said it?" autocomplete="off" bind:value={r.query}
               onfocus={() => (r.open = true)} onblur={() => { r.open = false; resolveTyped(r) }} oninput={() => { r.open = true; r.hi = 0 }} onkeydown={(e) => whyKey(e, r)} />
             {#if r.open}
-              <div class="opts menu-surface" id="opts-{r.key}" role="listbox" aria-label="Members">
+              <div class="opts menu-surface pop-in" id="opts-{r.key}" role="listbox" aria-label="Members">
                 {#each options(r) as o, i (o.id ?? 'plain')}
                   <button type="button" class="menu-item" id="opt-{r.key}-{i}" role="option" aria-selected={i === r.hi} class:hi={i === r.hi} tabindex="-1"
                     onmousedown={(e) => e.preventDefault()} onclick={() => choose(r, o)}>{label(o)}</button>

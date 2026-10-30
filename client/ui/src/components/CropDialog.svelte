@@ -108,9 +108,9 @@
   const pct = (v: number, of: number) => `${(v / of) * 100}%`
 </script>
 
-<div class="overlay modal-overlay">
+<div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={onCancel}></div>
-  <div class="modal" role="dialog" aria-modal="true" aria-label={kind === 'avatar' ? 'Crop avatar' : 'Crop banner'} tabindex="-1" use:modal={onCancel}>
+  <div class="modal pop-in" role="dialog" aria-modal="true" aria-label={kind === 'avatar' ? 'Crop avatar' : 'Crop banner'} tabindex="-1" use:modal={onCancel}>
     {#if tooBig}
       <p class="error" role="alert">Profile pictures and banners can be up to 8 MB.</p>
     {:else if unreadable}

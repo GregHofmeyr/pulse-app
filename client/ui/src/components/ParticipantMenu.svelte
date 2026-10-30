@@ -67,7 +67,8 @@
 
   onMount(() => {
     if (!el) return
-    const r = el.getBoundingClientRect()
+    // the layout size: the .pop-in entrance scales the box while it runs
+    const r = { width: el.offsetWidth, height: el.offsetHeight }
     left = Math.max(8, Math.min(x, window.innerWidth - r.width - 8))
     top = Math.max(8, Math.min(y, window.innerHeight - r.height - 8))
     focusItem(0)
@@ -133,7 +134,7 @@
   }
 </script>
 
-<div bind:this={el} class="menu menu-surface" role="menu" aria-label="Actions for {name}" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px"
+<div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Actions for {name}" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px"
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
   <!-- the card opens beside the row or tile the menu came from -->
   <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>

@@ -22,7 +22,7 @@
 
 <div class="stack" aria-live="polite">
   {#each toasts.list as t (t.channelId + t.streamer)}
-    <div class="toast" role="status">
+    <div class="toast fade-in" role="status">
       <span><strong>{t.name}</strong> is live</span>
       {#if !windows}
         <!-- aria-disabled, not disabled: a disabled button swallows the hover that shows the reason -->
@@ -34,7 +34,7 @@
       <button type="button" class="x" aria-label="Dismiss" onclick={() => removeToast(t.channelId, t.streamer)}><Icon name="x" size={14} /></button>
     </div>
   {/each}
-  {#if message}<div class="toast" role="status" class:err={!!stream.watchError}><span>{message}</span></div>{/if}
+  {#if message}<div class="toast fade-in" role="status" class:err={!!stream.watchError}><span>{message}</span></div>{/if}
 </div>
 
 <style>

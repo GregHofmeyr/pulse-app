@@ -136,7 +136,7 @@
     onkeydown={onKey}
   />
   {#if shown}
-    <ul id="game-list" class="menu-surface" role="listbox" aria-label="Games">
+    <ul id="game-list" class="menu-surface pop-in" role="listbox" aria-label="Games">
       {#each rows as r, i ('game' in r ? r.game.id : 'add')}
         <!-- svelte-ignore a11y_click_events_have_key_events -->
         <!-- mousedown keeps the input focused so the click lands before blur closes the list -->

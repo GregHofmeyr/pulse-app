@@ -217,7 +217,7 @@
     {/key}
   {/if}
   {#if dragging}<div class="drop-zone" aria-hidden="true"><span>Drop a video to share it</span></div>{/if}
-  {#if notice.text}<p class="notice" role="status">{notice.text}</p>{/if}
+  {#if notice.text}<p class="notice fade-in" role="status">{notice.text}</p>{/if}
 </div>
 <div class="editor-host" bind:this={editorHost}>
   {#if source}

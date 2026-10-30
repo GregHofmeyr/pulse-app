@@ -457,7 +457,7 @@
           <button bind:this={serverToggle} class="head-btn" data-menu-toggle aria-haspopup="menu" aria-expanded={serverMenuOpen}
             onclick={() => (serverMenuOpen = !serverMenuOpen)}>{activeServer.name}<Icon name="chevron" size={14} /></button>
           {#if serverMenuOpen}
-            <div class="menu head-menu menu-surface" role="menu" use:clickOutside={closeServerMenu}>
+            <div class="menu head-menu menu-surface pop-in" role="menu" use:clickOutside={closeServerMenu}>
               <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsOpen = true }}>Server settings</button>
             </div>
           {/if}
@@ -489,7 +489,7 @@
         {/if}
         <button class="icon-btn me-btn" aria-label="Settings" onclick={() => openSettings()}><Icon name="gear" /></button>
         {#if menuOpen}
-          <div class="menu menu-surface" role="menu" use:clickOutside={closeAccountMenu}>
+          <div class="menu menu-surface pop-in" role="menu" use:clickOutside={closeAccountMenu}>
             <button class="menu-item" role="menuitem" onclick={() => { menuOpen = false; openSettings() }}>Settings</button>
             <button class="menu-item warn" role="menuitem" onclick={() => { menuOpen = false; reportOpen = true }}>Report a bug</button>
             <button class="menu-item danger" role="menuitem" onclick={logout}>Log out</button>
@@ -536,9 +536,9 @@
 <ProfileCardPopover />
 {#if profileUi.full}<FullProfile userId={profileUi.full.userId} serverId={profileUi.full.serverId} onClose={closeFull} />{/if}
 {#if creating}
-  <div class="overlay modal-overlay">
+  <div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" onclick={() => (creating = false)}></div>
-  <form class="modal dialog" onsubmit={createServer} aria-label="Create a server">
+  <form class="modal dialog pop-in" onsubmit={createServer} aria-label="Create a server">
     <h2 class="modal-title">Create a server</h2>
     <label>NAME <input class="input" bind:value={newName} maxlength="64" required placeholder="Game Night" /></label>
     {#if createError}<p class="error">{createError}</p>{/if}
@@ -561,11 +561,11 @@
   <PeoplePicker title="Add people" fixed={pickerOthers} hint="They'll see the group's history." action="Add"
     onDone={pickerDone} onClose={() => (picker = null)} />
 {/if}
-{#if notice}<div class="notice" role="status">{notice}</div>{/if}
+{#if notice}<div class="notice fade-in" role="status">{notice}</div>{/if}
 {#if serverMenu}
   {@const id = serverMenu.id}
   <div class="ctx-backdrop" role="presentation" onclick={() => (serverMenu = null)}></div>
-  <div class="ctx menu-surface" role="menu" use:clickOutside={() => (serverMenu = null)} style:left="{serverMenu.x}px" style:top="{serverMenu.y}px">
+  <div class="ctx menu-surface pop-in" role="menu" use:clickOutside={() => (serverMenu = null)} style:left="{serverMenu.x}px" style:top="{serverMenu.y}px">
     {#if serverMuted(id)}
       <button class="menu-item" role="menuitem" onclick={() => muteServer(id, 'off')}>Unmute server</button>
     {:else}

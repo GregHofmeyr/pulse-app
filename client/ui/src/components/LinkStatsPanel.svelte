@@ -55,7 +55,7 @@
   }
 </script>
 
-<div class="panel menu-surface" role="dialog" aria-label="Connection details" tabindex="-1" bind:this={panel} {onkeydown}>
+<div class="panel menu-surface pop-in" role="dialog" aria-label="Connection details" tabindex="-1" bind:this={panel} {onkeydown}>
   <dl>
     <dt>Ping</dt>
     <dd class="ping {ping.level}">{ping.text}</dd>

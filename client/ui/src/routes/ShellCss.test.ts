@@ -25,14 +25,14 @@ const el = (html: string) => {
 
 describe('the server name menu', () => {
   it('drops down from the header with its own height (not squeezed between top and bottom)', () => {
-    const menu = el('<div class="panel-head $s"><div data-probe class="menu head-menu menu-surface $s"><button class="$s">Server settings</button></div></div>')
+    const menu = el('<div class="panel-head $s"><div data-probe class="menu head-menu menu-surface pop-in $s"><button class="$s">Server settings</button></div></div>')
     const s = getComputedStyle(menu)
     expect(s.top).toBe('calc(100% + 4px)')
     expect(s.bottom).toBe('auto')
     // its items read like the account menu's, not the bold header they sit under
     expect(getComputedStyle(menu.querySelector('button')!).fontWeight).toBe('400')
     // the probe matches what the template renders
-    expect(src).toContain('class="menu head-menu menu-surface"')
+    expect(src).toContain('class="menu head-menu menu-surface pop-in"')
   })
 
   it('the account menu still opens upward', () => {

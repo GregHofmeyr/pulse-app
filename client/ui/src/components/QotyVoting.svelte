@@ -127,9 +127,9 @@
 </script>
 
 {#if e}
-  <div class="overlay modal-overlay">
+  <div class="overlay modal-overlay fade-in">
     <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={onClose}></div>
-    <div class="modal qoty-voting" class:animated={!motion.reducedMotion} role="dialog" aria-modal="true" aria-label="Quote of the Year {e.year}"
+    <div class="modal qoty-voting pop-in" class:animated={!motion.reducedMotion} role="dialog" aria-modal="true" aria-label="Quote of the Year {e.year}"
       tabindex="-1" use:modal={escape}>
       <div class="spill"><PixelSpill seed={e.id} cols={5} rows={88} down /></div>
       <div class="top">

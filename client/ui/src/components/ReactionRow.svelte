@@ -141,7 +141,7 @@
           {/if}
           <span class="n">{r.count}</span>
         </button>
-        {#if tipFor === r.emoji && tipText}<span class="tip" id={tipId(r.emoji)} role="tooltip">{tipText}{#if why}<span class="why">{why}</span>{/if}</span>{/if}
+        {#if tipFor === r.emoji && tipText}<span class="tip fade-in" id={tipId(r.emoji)} role="tooltip">{tipText}{#if why}<span class="why">{why}</span>{/if}</span>{/if}
       </span>
     {/each}
     {#each suggest as key (key)}

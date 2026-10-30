@@ -36,7 +36,7 @@
     <span>{current?.label}</span><Icon name="chevron" size={16} />
   </button>
   {#if open}
-    <ul class="list menu-surface" role="listbox" aria-label={label}>
+    <ul class="list menu-surface pop-in" role="listbox" aria-label={label}>
       {#each options as o, i}
         <li role="option" aria-selected={o.value === value} class:active={i === active}
           onmousedown={(e) => { e.preventDefault(); pick(o) }} onmouseenter={() => (active = i)}>

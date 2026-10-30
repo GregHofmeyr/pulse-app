@@ -46,7 +46,8 @@
 
   function place() {
     if (!el) return
-    const r = el.getBoundingClientRect()
+    // the layout size: the .pop-in entrance scales the box while it runs
+    const r = { width: el.offsetWidth, height: el.offsetHeight }
     left = Math.max(8, Math.min(x0, window.innerWidth - r.width - 8))
     top = Math.max(8, Math.min(y0, window.innerHeight - r.height - 8))
   }
@@ -110,7 +111,7 @@
   }
 </script>
 
-<div bind:this={el} class="menu menu-surface" role="menu" aria-label="Line actions" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px"
+<div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Line actions" tabindex="-1" style:position="fixed" style:left="{left}px" style:top="{top}px"
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
   {#if picking}
     <input type="text" class="input input-sm find" data-item aria-label="Find a member" placeholder="Find a member" autocomplete="off" bind:value={query} />

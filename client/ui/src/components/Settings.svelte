@@ -72,9 +72,9 @@
   const focusOnShow = (el: HTMLElement) => el.focus()
 </script>
 
-<div class="overlay modal-overlay">
+<div class="overlay modal-overlay fade-in">
 <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={close}></div>
-<div class="modal" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1" use:modal={escape}>
+<div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Settings" tabindex="-1" use:modal={escape}>
   <nav aria-label="Settings sections">
     <h1>Settings</h1>
     {#each sections as s}

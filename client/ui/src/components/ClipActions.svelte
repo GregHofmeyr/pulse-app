@@ -65,13 +65,13 @@
   <button bind:this={opener} type="button" class="icon-btn icon-btn-sm" aria-label="Clip actions" aria-haspopup="menu" aria-expanded={menu} data-menu-toggle
     onclick={() => (menu = !menu)}><Icon name="dots" size={15} /></button>
   {#if menu}
-    <div class="menu menu-surface" role="menu" use:clickOutside={closeMenu}>
+    <div class="menu menu-surface pop-in" role="menu" use:clickOutside={closeMenu}>
       <button type="button" class="menu-item" role="menuitem" onclick={startEdit}><Icon name="pencil" size={14} />Edit</button>
       <button type="button" class="menu-item danger" role="menuitem" onclick={() => void askDelete()}><Icon name="trash" size={14} />Delete</button>
     </div>
   {/if}
   {#if asking}
-    <div class="ask menu-surface" role="alertdialog" aria-label="Delete clip" use:clickOutside={() => { if (!busy) asking = false }}>
+    <div class="ask menu-surface pop-in" role="alertdialog" aria-label="Delete clip" use:clickOutside={() => { if (!busy) asking = false }}>
       <p>Delete this clip? Its replies go too.</p>
       <button bind:this={keep} type="button" class="btn btn-secondary keep" disabled={busy} onclick={() => (asking = false)}>Cancel</button>
       <button type="button" class="btn btn-danger go" disabled={busy} onclick={() => void remove()}>Delete</button>
@@ -81,9 +81,9 @@
 </div>
 
 {#if editing}
-  <div class="overlay modal-overlay">
+  <div class="overlay modal-overlay fade-in">
     <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={cancelEdit}></div>
-    <div class="modal" role="dialog" aria-modal="true" aria-label="Edit clip" tabindex="-1" use:modal={cancelEdit}>
+    <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Edit clip" tabindex="-1" use:modal={cancelEdit}>
       <h1 class="modal-title">Edit clip</h1>
       <textarea class="input" aria-label="Caption" placeholder="Say something about it (optional)" maxlength={MAX_CAPTION} rows="3" bind:value={caption} disabled={busy}></textarea>
       <GamePicker {serverId} value={game} onChange={(id) => (game = id)} />

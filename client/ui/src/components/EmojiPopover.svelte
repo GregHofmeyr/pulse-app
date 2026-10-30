@@ -21,6 +21,6 @@
   const style = untrack(() => popoverStyle(anchor.getBoundingClientRect(), SIZE, { width: window.innerWidth, height: window.innerHeight }))
 </script>
 
-<div class="emoji-popover" use:clickOutside={onClose} {style}>
+<div class="emoji-popover pop-in" use:clickOutside={onClose} {style}>
   <EmojiPicker {onPick} {onClose} servers={app.state.servers} memberOf={memberServers(app.state)} />
 </div>

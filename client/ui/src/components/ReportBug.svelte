@@ -24,9 +24,9 @@
   }
 </script>
 
-<div class="overlay modal-overlay">
+<div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" onclick={onClose}></div>
-  <div class="modal" role="dialog" aria-label="Report a bug"><form onsubmit={send}>
+  <div class="modal pop-in" role="dialog" aria-label="Report a bug"><form onsubmit={send}>
     <div class="top">
       <h1 class="modal-title">Report a bug</h1>
       <button type="button" class="icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" /></button>

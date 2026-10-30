@@ -148,14 +148,14 @@
 
 <div class="wrap">
   {#if open}
-    <div class="mentions menu-surface" role="listbox" aria-label="Mention someone">
+    <div class="mentions menu-surface pop-in" role="listbox" aria-label="Mention someone">
       {#each options as o, i (o.id)}
         <button class="menu-item" role="option" aria-selected={i === pick} class:hi={i === pick}
           onmousedown={(e) => { e.preventDefault(); void choose(o.name) }}><span>@<Name userId={o.id} {serverId} text={o.name} interactive={false} /></span></button>
       {/each}
     </div>
   {:else if emojiOpen}
-    <div class="mentions menu-surface" role="listbox" aria-label="Insert emoji">
+    <div class="mentions menu-surface pop-in" role="listbox" aria-label="Insert emoji">
       {#each emojiOptions as o, i ('u' in o ? o.u : o.id)}
         <button class="menu-item" role="option" aria-selected={i === pick} class:hi={i === pick}
           onmousedown={(e) => { e.preventDefault(); void chooseEmoji(o) }}>

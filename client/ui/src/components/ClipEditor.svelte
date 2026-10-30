@@ -220,9 +220,9 @@
 
 <svelte:window onkeydown={onKey} />
 
-<div class="overlay modal-overlay">
+<div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={close}></div>
-  <div class="modal" role="dialog" aria-modal="true" aria-label="Share a clip" tabindex="-1" use:modal={close}>
+  <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Share a clip" tabindex="-1" use:modal={close}>
     <header>
       <div class="file">
         <strong title={source.file_name}>{source.file_name}</strong>

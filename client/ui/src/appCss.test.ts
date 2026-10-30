@@ -101,6 +101,33 @@ describe('motion', () => {
     expect(pause.style.getPropertyValue('transition')).toBe('none')
     expect(pause.style.getPropertyPriority('transition')).toBe('important')
   })
+
+  it('entrances are switched off, not paused, while streaming or unfocused (paused, they would stay invisible)', () => {
+    expect(rule('.pop-in').getPropertyValue('animation')).toMatch(/^pop-in /)
+    expect(rule('.fade-in').getPropertyValue('animation')).toMatch(/^fade-in /)
+    for (const sel of ['.streaming .pop-in', '.streaming .fade-in', '.unfocused .pop-in', '.unfocused .fade-in']) {
+      const off = rule(sel)
+      expect(off.getPropertyValue('animation'), sel).toBe('none')
+      expect(off.getPropertyPriority('animation'), sel).toBe('important')
+    }
+    // more specific than the `.streaming *` pause, so it wins over it
+    const pause = styleRules(sheet.cssRules).find((r) => r.selectorText.includes('.streaming *'))!
+    expect(pause.selectorText.split(',').map((s) => s.trim())).toContain('.streaming *')
+  })
+
+  it('entrances are off under reduced motion', () => {
+    const media = [...sheet.cssRules].filter((r): r is CSSMediaRule => r instanceof CSSMediaRule && /prefers-reduced-motion: ?reduce/.test(r.conditionText))
+    const off = media.flatMap((m) => styleRules(m.cssRules)).find((r) => r.selectorText.split(',').map((s) => s.trim()).includes('.pop-in'))
+    expect(off?.selectorText).toContain('.fade-in')
+    expect(off!.style.getPropertyValue('animation')).toBe('none')
+    expect(off!.style.getPropertyPriority('animation')).toBe('important')
+  })
+
+  it('the stream toast, which shows while you are in a game, uses the shared entrance (so it is exempt)', () => {
+    const toast = readFileSync(resolve(__dirname, 'components/StreamToast.svelte'), 'utf8')
+    expect(toast.match(/class="toast fade-in"/g)).toHaveLength(2)
+    expect(toast).not.toMatch(/animation:/)
+  })
 })
 
 describe('error text', () => {

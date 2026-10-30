@@ -53,7 +53,7 @@
   onpointerdown={(e) => !pop?.contains(e.target as Node) && !anchor.contains(e.target as Node) && onClose()} />
 
 {#if info}
-  <div bind:this={pop} class="pop menu-surface" role="dialog" aria-label="Live stream" style:left="{left}px" style:top="{top}px">
+  <div bind:this={pop} class="pop menu-surface pop-in" role="dialog" aria-label="Live stream" style:left="{left}px" style:top="{top}px">
     {#if preview}<img src={preview} alt="Stream preview" />{:else}<div class="none">No preview yet</div>{/if}
     <div class="meta">
       <span>{info.settings.height}p{info.settings.fps}</span>

@@ -39,7 +39,7 @@
     run(() => api.setMute('channel', channel.id, hours === null ? null : new Date(Date.now() + hours * 3_600_000).toISOString()))
 </script>
 
-<div class="menu menu-surface" class:ctx={!!at} role="menu" use:clickOutside={onClose}
+<div class="menu menu-surface pop-in" class:ctx={!!at} role="menu" use:clickOutside={onClose}
   style:left={at ? `${at.x}px` : null} style:top={at ? `${at.y}px` : null}>
   {#if confirmLeave}
     <p class="q">Leave {conversationName(app.state, channel.id)}? You'll lose access to its history.</p>

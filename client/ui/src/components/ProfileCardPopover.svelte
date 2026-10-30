@@ -106,7 +106,7 @@
 <svelte:window onkeydown={onKey} onpointerdowncapture={onDown} onresize={() => target && closeCard()} />
 
 {#if target && user}
-  <div bind:this={pop} class="pop" role="dialog" aria-label="Profile of {user.username}" tabindex="-1" {@attach opened} style:left="{pos.left}px" style:top="{pos.top}px">
+  <div bind:this={pop} class="pop pop-in" role="dialog" aria-label="Profile of {user.username}" tabindex="-1" {@attach opened} style:left="{pos.left}px" style:top="{pos.top}px">
     <ProfileCard {user} card={cached?.card ?? PLACEHOLDER} badges={cached?.badges ?? []} stats={cached?.stats ?? null} serverId={target.serverId}
       loading={!cached && !failed} onViewFull={viewFull} onClose={closeCard} />
     {#if failed && !cached}<p class="err" role="alert">{failed}</p>{/if}
