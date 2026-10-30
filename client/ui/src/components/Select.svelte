@@ -53,7 +53,7 @@
   .trigger:hover { border-color: #44474f; }
   .list { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 10px; box-shadow: 0 12px 32px rgba(8, 9, 12, .5); max-height: 240px; overflow-y: auto; }
   .select[data-drop='up'] .list { top: auto; bottom: calc(100% + 4px); }
-  li { padding: 9px 10px; border-radius: 7px; font-size: 14px; font-weight: 400; letter-spacing: 0; color: var(--text-2); cursor: pointer; }
+  li { padding: 9px 10px; border-radius: 8px; font-size: 14px; font-weight: 400; letter-spacing: 0; color: var(--text-2); cursor: pointer; }
   li.active { background: var(--bg-4); color: var(--text); }
   li[aria-selected='true'] { color: var(--text); font-weight: 600; }
 </style>

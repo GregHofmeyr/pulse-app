@@ -218,7 +218,7 @@
   .head { height: 52px; flex-shrink: 0; padding: 0 12px 0 18px; display: flex; align-items: center; gap: 8px; border-bottom: 1px solid var(--bg-3); color: var(--text-3); }
   .title { color: var(--text); font-size: 15px; font-weight: 600; }
   .grow { flex: 1; }
-  .hbtn { width: 32px; height: 32px; border: 0; border-radius: 9px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .hbtn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .hbtn:hover { background: var(--bg-3); color: var(--text); }
   /* a long quote scrolls on its own, so the replies always get room */
   .pinned { flex-shrink: 0; max-height: 40%; overflow-y: auto; padding: 8px 0 6px; border-bottom: 1px solid var(--bg-3); }

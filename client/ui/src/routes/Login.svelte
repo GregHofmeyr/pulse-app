@@ -110,7 +110,7 @@
 <style>
   main { height: 100%; display: grid; place-items: center; align-content: center; gap: 14px; background: var(--bg-0); }
   .card {
-    width: 360px; padding: 28px; border-radius: 18px; background: var(--bg-2);
+    width: 360px; padding: 28px; border-radius: 16px; background: var(--bg-2);
     border: 1px solid var(--line); display: flex; flex-direction: column; gap: 14px;
   }
   .brand { display: flex; align-items: center; gap: 12px; margin-bottom: 6px; }

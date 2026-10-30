@@ -156,7 +156,7 @@
   .link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; }
   .empty { margin: 20px; color: var(--text-3); }
   .bar-wrap { height: 84px; flex-shrink: 0; display: grid; place-items: center; }
-  .controls { padding: 8px; background: var(--bg-inset); border-radius: 18px; display: flex; gap: 8px; }
+  .controls { padding: 8px; background: var(--bg-inset); border-radius: 16px; display: flex; gap: 8px; }
   .ctl { width: 48px; height: 48px; border: 0; border-radius: 14px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
   .ctl:hover { background: var(--bg-4); }
   .ctl.on { background: var(--danger); color: var(--on-danger); }

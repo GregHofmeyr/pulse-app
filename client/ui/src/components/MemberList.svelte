@@ -27,7 +27,7 @@
 <style>
   .members { width: 240px; flex-shrink: 0; background: var(--bg-1); border-radius: var(--radius); padding: 8px; overflow-y: auto; }
   .label { padding: 14px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); }
-  .row { height: 44px; padding: 0 10px; border-radius: 9px; display: flex; align-items: center; gap: 10px; }
+  .row { height: 44px; padding: 0 10px; border-radius: 10px; display: flex; align-items: center; gap: 10px; }
   /* 15 px: a styled name font (script, pixel) blurs at smaller sizes */
   .who { display: flex; flex-direction: column; font-size: 15px; font-weight: 500; min-width: 0; }
   .who small { font-size: 11px; color: var(--text-3); font-weight: 400; }

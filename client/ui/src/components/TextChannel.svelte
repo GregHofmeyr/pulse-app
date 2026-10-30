@@ -514,7 +514,7 @@
   .pile :global(.av) { box-shadow: 0 0 0 2px var(--bg-1); }
   .pile :global(.av + .av) { margin-left: -7px; }
   .grow { flex: 1; }
-  .hbtn { width: 32px; height: 32px; border: 0; border-radius: 9px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .hbtn { width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .hbtn:hover, .hbtn.on { background: var(--bg-3); color: var(--text); }
   /* the shared .qoty-btn, at this header's 30px */
   .qoty { height: 30px; padding: 0 12px; }

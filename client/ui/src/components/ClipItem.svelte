@@ -82,7 +82,7 @@
   .game { padding: 1px 8px; border-radius: 10px; background: var(--bg-3); color: var(--text-2); font-size: 11.5px; font-weight: 600; }
   .time, .edited { font-size: 11px; color: var(--text-3); }
   .grow { flex: 1; }
-  .reply { width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .reply { width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .reply:hover { background: var(--bg-3); color: var(--text); }
   .player { width: 100%; max-width: 640px; }
   .compact .player { max-width: 100%; }

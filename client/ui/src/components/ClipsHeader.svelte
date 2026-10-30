@@ -101,15 +101,15 @@
   .chip[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
   .person { position: relative; }
   .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; padding: 4px; display: flex; flex-direction: column; background: var(--bg-3); border: 1px solid var(--line); border-radius: 10px; box-shadow: var(--shadow-pop); }
-  .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 7px; background: none; color: var(--text); display: flex; align-items: center; gap: 8px; font-size: 13.5px; text-align: left; }
+  .menu button { height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--text); display: flex; align-items: center; gap: 8px; font-size: 13.5px; text-align: left; }
   .menu button:hover, .menu button:focus-visible { background: var(--bg-4); }
   .menu button[aria-checked='true'] { color: var(--accent); }
   .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
   .grow { flex: 1; }
   .err { color: var(--danger); font-size: 12.5px; }
-  .toggle { display: flex; padding: 2px; border-radius: 9px; background: var(--bg-2); }
-  .tbtn { width: 30px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .toggle { display: flex; padding: 2px; border-radius: 10px; background: var(--bg-2); }
+  .tbtn { width: 30px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .tbtn:hover { color: var(--text); }
   .tbtn[aria-pressed='true'] { background: var(--bg-4); color: var(--text); }
   /* the app's accent button (as Save in Settings → Profile), at the header's 32 px */

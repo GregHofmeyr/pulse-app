@@ -103,7 +103,7 @@
   .pick:disabled { opacity: .45; }
   .nm { flex: 1; font-weight: 500; }
   .nm small { color: var(--text-3); font-weight: 400; }
-  .box { width: 16px; height: 16px; border-radius: 5px; border: 2px solid var(--bg-4); }
+  .box { width: 16px; height: 16px; border-radius: 4px; border: 2px solid var(--bg-4); }
   .pick.sel .box { background: var(--accent); border-color: var(--accent); }
   .foot { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
   .foot .hint { margin-right: auto; }

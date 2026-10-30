@@ -107,7 +107,7 @@
   .play { position: absolute; inset: 0; margin: auto; width: 46px; height: 46px; border-radius: 50%; background: rgba(0, 0, 0, .55); color: #fff; display: grid; place-items: center; opacity: .85; }
   .thumb:hover .play, .thumb:focus-visible .play { opacity: 1; background: rgba(0, 0, 0, .75); }
   .duration { position: absolute; right: 8px; bottom: 8px; padding: 1px 6px; border-radius: 6px; background: rgba(0, 0, 0, .75); color: #fff; font-size: 11.5px; font-variant-numeric: tabular-nums; pointer-events: none; }
-  .fs { position: absolute; right: 8px; top: 8px; width: 28px; height: 28px; border: 0; border-radius: 7px; background: rgba(0, 0, 0, .6); color: #fff; display: grid; place-items: center; opacity: 0; }
+  .fs { position: absolute; right: 8px; top: 8px; width: 28px; height: 28px; border: 0; border-radius: 8px; background: rgba(0, 0, 0, .6); color: #fff; display: grid; place-items: center; opacity: 0; }
   .card:hover .fs, .fs:focus-visible { opacity: 1; }
   .badge-new { position: absolute; left: 8px; top: 8px; padding: 1px 7px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10.5px; font-weight: 700; text-transform: uppercase; pointer-events: none; }
   .info { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
@@ -115,7 +115,7 @@
   .who { font-size: 13px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .game { padding: 1px 8px; border-radius: 10px; background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; white-space: nowrap; }
   .grow { flex: 1; }
-  .reply { width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .reply { width: 28px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .reply:hover { background: var(--bg-3); color: var(--text); }
   .time { font-size: 11px; color: var(--text-3); }
   .err { margin: 0; font-size: 12px; color: var(--danger); }

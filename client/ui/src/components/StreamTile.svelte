@@ -121,7 +121,7 @@
   .idle.blocked { cursor: default; }
   .backdrop { position: absolute; inset: 0; opacity: .22; }
   .idle > :global(*:not(.backdrop)) { position: relative; }
-  .live-tag { position: absolute; top: 10px; left: 12px; height: 18px; padding: 0 7px; border-radius: 5px; background: var(--danger); color: var(--on-danger); font-size: 11px; font-weight: 800; letter-spacing: .06em; line-height: 18px; }
+  .live-tag { position: absolute; top: 10px; left: 12px; height: 18px; padding: 0 7px; border-radius: 4px; background: var(--danger); color: var(--on-danger); font-size: 11px; font-weight: 800; letter-spacing: .06em; line-height: 18px; }
   .viewers { position: absolute; top: 10px; right: 12px; display: flex; align-items: center; gap: 4px; font-size: 12px; color: var(--text-2); }
   .who { font-weight: 600; }
   .watch { height: 34px; padding: 0 18px; border: 0; border-radius: 10px; background: var(--ok); color: var(--on-ok); font-weight: 700; }
