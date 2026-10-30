@@ -6,6 +6,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import StorageSettings from './StorageSettings.svelte'
+import { LOADING_DELAY_MS } from '../lib/loading'
 
 const server = { id: 'S1', name: 'Home', icon_hash: null }
 let cmp: ReturnType<typeof mount> | undefined
@@ -47,14 +48,38 @@ describe('StorageSettings', () => {
     expect(document.querySelector('[role=alert]')!.textContent).toBe("Clips storage isn't set up on this server.")
   })
 
-  it('says loading until the answer arrives', async () => {
-    invoke.mockReset()
-    let done!: (v: unknown) => void
-    invoke.mockReturnValue(new Promise((r) => { done = r }))
-    mountIt()
-    expect(document.querySelector('.loading')!.textContent).toBe('Loading…')
-    done({ bytes: 0, count: 0, est_monthly_usd: 0 })
-    await vi.waitFor(() => expect(document.querySelector('.loading')).toBeNull())
+  it('says loading once the answer is slow, until it arrives', async () => {
+    vi.useFakeTimers()
+    try {
+      invoke.mockReset()
+      let done!: (v: unknown) => void
+      invoke.mockReturnValue(new Promise((r) => { done = r }))
+      mountIt()
+      // not at once: a quick answer would only flash it
+      expect(document.querySelector('.loading')).toBeNull()
+      vi.advanceTimersByTime(LOADING_DELAY_MS)
+      flushSync()
+      expect(document.querySelector('.loading')!.textContent).toBe('Loading…')
+      done({ bytes: 0, count: 0, est_monthly_usd: 0 })
+      await vi.waitFor(() => expect(document.querySelector('.loading')).toBeNull())
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('a quick answer never shows loading', async () => {
+    vi.useFakeTimers()
+    try {
+      invoke.mockReset()
+      invoke.mockResolvedValue({ bytes: 0, count: 0, est_monthly_usd: 0 })
+      mountIt()
+      await vi.waitFor(() => expect(document.body.textContent).toContain('0 clips'))
+      vi.advanceTimersByTime(LOADING_DELAY_MS * 2)
+      flushSync()
+      expect(document.querySelector('.loading')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('a cent exactly shows the amount, just under says under a cent', async () => {

@@ -8,6 +8,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import Leaderboard from './Leaderboard.svelte'
+import { LOADING_DELAY_MS } from '../lib/loading'
 import { app, handleReady, resetState } from '../lib/store.svelte'
 import { testMe, testReady } from '../lib/testReady'
 
@@ -139,6 +140,21 @@ describe('Leaderboard', () => {
     invoke.mockImplementation(async () => { throw { status: 500, message: 'boom' } })
     await show()
     expect(document.querySelector('[role=alert]')).toBeTruthy()
+  })
+
+  it('says loading only once the board is slow to come', () => {
+    vi.useFakeTimers()
+    try {
+      invoke.mockImplementation(() => new Promise(() => {}))
+      cmp = mount(Leaderboard, { target: document.body, props: { serverId: 'S1', onOpen, onClose } })
+      flushSync()
+      expect(document.body.textContent).not.toContain('Loading…')
+      vi.advanceTimersByTime(LOADING_DELAY_MS)
+      flushSync()
+      expect(document.body.textContent).toContain('Loading…')
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('Escape closes', async () => {

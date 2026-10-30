@@ -7,6 +7,7 @@
   import { nameOfIn } from '../lib/selectors'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
+  import { LOADING_DELAY_MS } from '../lib/loading'
   import type { Leaderboard } from '../lib/protocol/Leaderboard'
   import type { Message } from '../lib/protocol/Message'
   import type { QuoteSpeaker } from '../lib/protocol/QuoteSpeaker'
@@ -21,6 +22,12 @@
 
   let board = $state<Leaderboard | null>(null)
   let error = $state('')
+  // "Loading…" only once the board is slow to come, so a quick one doesn't flash it
+  let slow = $state(false)
+  $effect(() => {
+    const timer = setTimeout(() => (slow = true), LOADING_DELAY_MS)
+    return () => clearTimeout(timer)
+  })
   $effect(() => {
     const id = serverId
     api.leaderboard(id).then(
@@ -74,7 +81,7 @@
   {#if error}
     <p class="error" role="alert">{error}</p>
   {:else if !board}
-    <p class="none">Loading…</p>
+    {#if slow}<p class="none">Loading…</p>{/if}
   {:else if empty}
     <p class="none">No quotes yet. Post one and get the board going.</p>
   {:else}
