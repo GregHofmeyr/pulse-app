@@ -22,8 +22,6 @@ export const voice = $state({
   stalled: false,
   /** Unmuted, yet the mic delivers only digital silence (privacy switch, hardware mute, dead mic). */
   micSilent: false,
-  /** Our mic is in the room (shows a moment after connected). */
-  micLive: false,
   error: '',
   /** Join progress, folded from the core's stage and state events. */
   stage: { stage: 'disconnected', attempt: null } as StageState,
@@ -85,7 +83,6 @@ export async function startVoiceListening() {
         // a stream never outlives your voice channel: leaving or switching ends yours and what you watch
         if (prev.channelId !== e.channel_id) void streamApi.onVoiceChanged(e.channel_id)
         if (!e.channel_id) voice.speaking = new Set()
-        if (!e.channel_id) voice.micLive = false
         if (!e.channel_id) voice.micSilent = false
         break
       }
@@ -116,7 +113,7 @@ export async function startVoiceListening() {
         voice.micSilent = e.silent
         break
       case 'mic':
-        voice.micLive = e.live
+        // only a failure matters to the UI: a live mic needs no indicator of its own
         if (e.error) voice.error = e.error
         break
     }

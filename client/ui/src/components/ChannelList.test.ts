@@ -53,7 +53,6 @@ beforeEach(async () => {
   voice.link = null
   voice.error = ''
   voice.connection = 'disconnected'
-  voice.micLive = false
   voice.volumes = {}
   voice.localMutes = {}
   cmp = mount(ChannelList, {
