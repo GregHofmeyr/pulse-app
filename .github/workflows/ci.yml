@@ -9,9 +9,12 @@ on:
     # dependency jobs run on a schedule; rust/ui/deploy need `changes`, which is skipped.
     - cron: '0 6 * * 1'
 
+# A PR's newer push supersedes its older run. Each push to main gets a run of its own: its path filter
+# only sees that push's own changes, so a cancelled (or queued-and-dropped) run would leave them
+# unchecked; main broke that way when several merges landed within seconds.
 concurrency:
-  group: ci-${{ github.event_name }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: ${{ github.event_name == 'push' && format('ci-push-{0}', github.sha) || format('ci-{0}-{1}', github.event_name, github.ref) }}
+  cancel-in-progress: ${{ github.event_name != 'push' }}
 
 permissions:
   contents: read

@@ -120,9 +120,16 @@ jobs:
           SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: |
           # Only main moves :latest (what `just deploy` pulls by default). A manual run on any other
-          # branch (e.g. the screen-share spike) publishes :<sha7> only, to deploy by sha.
+          # branch (e.g. the screen-share spike) publishes :<sha7> only, to deploy by sha. Each commit
+          # on main has its own ci run and they can finish out of order, so only main's tip moves
+          # :latest: a slower run for an older commit must not move it back.
           tags=(-t "$IMAGE:${SHA::7}")
-          if [ "$GITHUB_REF" = refs/heads/main ]; then tags+=(-t "$IMAGE:latest"); fi
+          tip=$(git ls-remote "https://github.com/$GITHUB_REPOSITORY" refs/heads/main | cut -f1)
+          if [ "$GITHUB_REF" = refs/heads/main ] && [ "$tip" = "$SHA" ]; then
+            tags+=(-t "$IMAGE:latest")
+          else
+            echo "not moving :latest: $SHA isn't main's tip ($tip)"
+          fi
           # The digest of the index this command pushed (its metadata file), not a re-read of the tag: that is what
           # gets attested below, and what `just deploy` resolves the tag to and verifies.
           meta=$RUNNER_TEMP/index-metadata.json
