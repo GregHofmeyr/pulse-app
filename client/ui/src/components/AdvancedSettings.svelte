@@ -50,46 +50,55 @@
   }
 </script>
 
-<h2>Advanced</h2>
-<label class="row">
-  <input type="checkbox" checked={diagUi.on} onchange={(e) => setDiagOverlay(e.currentTarget.checked)} />
-  <span>Stream diagnostics</span>
-</label>
-<p class="hint">Shows live numbers on streams you share or watch. They are always written to the log for bug reports.</p>
-
-<label class="row crash">
-  <input type="checkbox" checked={autoSend ?? false} disabled={autoSend === null}
-    onchange={(e) => setAutoSend(e.currentTarget.checked)} />
-  <span>Send crash reports automatically</span>
-</label>
-<p class="hint">If Pulse crashes or closes unexpectedly, a report with the app log goes to the server the next time you sign in. Off: it is saved on this computer and you're asked whether to send it.</p>
-{#if reportError}<p class="err" role="alert">{reportError}</p>{/if}
-
-<h3>Sessions</h3>
-{#if confirming}
-  <p class="q">Are you sure? Every other device signed in to this account goes back to the login screen. This one stays signed in.</p>
-  <div class="actions">
-    <button class="btn btn-secondary btn-danger-text" disabled={busy} onclick={signOutOthers}>Sign out</button>
-    <button class="btn btn-secondary" disabled={busy} onclick={() => (confirming = false)}>Cancel</button>
+<section class="settings-pane">
+  <h2>Advanced</h2>
+  <div class="settings-field">
+    <label class="row">
+      <input type="checkbox" checked={diagUi.on} onchange={(e) => setDiagOverlay(e.currentTarget.checked)} />
+      <span>Stream diagnostics</span>
+    </label>
+    <p class="hint">Shows live numbers on streams you share or watch. They are always written to the log for bug reports.</p>
   </div>
-{:else}
-  <button class="btn btn-secondary btn-danger-text" onclick={() => { confirming = true; result = ''; error = '' }}>Sign out all other devices</button>
-{/if}
-{#if result}<p class="ok" role="status">{result}</p>{/if}
-{#if error}<p class="err" role="alert">{error}</p>{/if}
 
-<ChangePassword />
+  <div class="settings-field">
+    <label class="row">
+      <input type="checkbox" checked={autoSend ?? false} disabled={autoSend === null}
+        onchange={(e) => setAutoSend(e.currentTarget.checked)} />
+      <span>Send crash reports automatically</span>
+    </label>
+    <p class="hint">If Pulse crashes or closes unexpectedly, a report with the app log goes to the server the next time you sign in. Off: it is saved on this computer and you're asked whether to send it.</p>
+    {#if reportError}<p class="err" role="alert">{reportError}</p>{/if}
+  </div>
 
-<TwoFactorSettings />
+  <div>
+    <h3>Sessions</h3>
+    {#if confirming}
+      <p class="q">Are you sure? Every other device signed in to this account goes back to the login screen. This one stays signed in.</p>
+      <div class="actions">
+        <button class="btn btn-secondary btn-danger-text" disabled={busy} onclick={signOutOthers}>Sign out</button>
+        <button class="btn btn-secondary" disabled={busy} onclick={() => (confirming = false)}>Cancel</button>
+      </div>
+    {:else}
+      <button class="btn btn-secondary btn-danger-text" onclick={() => { confirming = true; result = ''; error = '' }}>Sign out all other devices</button>
+    {/if}
+    {#if result}<p class="ok" role="status">{result}</p>{/if}
+    {#if error}<p class="err" role="alert">{error}</p>{/if}
+  </div>
+
+  <div><ChangePassword /></div>
+
+  <div><TwoFactorSettings /></div>
+</section>
 
 <style>
-  h2 { margin: 0 0 16px; font-size: 20px; }
-  h3 { margin: 28px 0 10px; font-size: 15px; }
-  .row.crash { margin-top: 20px; }
+  /* the pane's 20px gap plus this: the 28px between sections it had */
+  h3 { margin: 8px 0 10px; font-size: 15px; }
   .row { display: flex; align-items: center; gap: 10px; font-weight: 600; }
-  .hint { margin: 6px 0 0 26px; font-size: 13px; color: var(--text-3); }
+  /* under the checkbox's label, not the box */
+  .hint { margin: -2px 0 0 26px; font-size: 12px; color: var(--text-3); }
   .q { margin: 0 0 10px; font-size: 13px; color: var(--text-2); }
   .actions { display: flex; gap: 8px; }
   .ok { margin: 10px 0 0; font-size: 13px; color: var(--text-2); }
-  .err { margin: 10px 0 0; font-size: 13px; color: var(--danger-text); }
+  .err { margin: 2px 0 0; font-size: 13px; color: var(--danger-text); }
+  .settings-field .err { margin: 0 0 0 26px; }
 </style>

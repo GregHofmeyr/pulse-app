@@ -48,46 +48,48 @@
   }
 </script>
 
-<h2>Quote speakers</h2>
-<p class="hint">Names in quotes that belong to a member. Undoing a link puts the plain name back on its lines.</p>
-{#if error}<p class="error" role="alert">{error}</p>{/if}
-{#if links.length === 0}
-  <p class="empty">No names are linked yet. Link one from a quote line's menu.</p>
-{:else}
-  <ul>
-    {#each links as l (l.name_key)}
-      <li class="link">
-        <div class="meta">
-          <span><span class="name">{l.name}</span> → {nameOf(l.user_id)}</span>
-          <small>linked by {nameOf(l.linked_by)}</small>
-        </div>
-        {#if changing === l.name_key}
-          <div class="pick">
-            <!-- svelte-ignore a11y_autofocus -->
-            <input type="text" class="input input-sm" aria-label="Find a member" placeholder="Find a member" autocomplete="off" autofocus bind:value={query} onkeydown={(e) => findKey(e, l)} />
-            <div class="matches" role="group" aria-label="Members">
-              {#each matches as m (m.id)}
-                <button type="button" class="btn btn-secondary" onclick={() => repoint(l, m.id)}>{m.name}</button>
-              {:else}
-                <span class="none">No one by that name</span>
-              {/each}
-            </div>
-            <button type="button" class="btn btn-secondary" onclick={() => (changing = null)}>Cancel</button>
+<section class="settings-pane">
+  <h2>Quote speakers</h2>
+  <p class="hint">Names in quotes that belong to a member. Undoing a link puts the plain name back on its lines.</p>
+  {#if error}<p class="error" role="alert">{error}</p>{/if}
+  {#if links.length === 0}
+    <p class="empty">No names are linked yet. Link one from a quote line's menu.</p>
+  {:else}
+    <ul>
+      {#each links as l (l.name_key)}
+        <li class="link">
+          <div class="meta">
+            <span><span class="name">{l.name}</span> → {nameOf(l.user_id)}</span>
+            <small>linked by {nameOf(l.linked_by)}</small>
           </div>
-        {:else}
-          <button type="button" class="btn btn-secondary" onclick={() => startChange(l)}>Change</button>
-          <button type="button" class="btn btn-secondary btn-danger-text" onclick={() => void attempt(() => api.unlinkSpeaker(server.id, l.name_key))}>Undo</button>
-        {/if}
-      </li>
-    {/each}
-  </ul>
-{/if}
+          {#if changing === l.name_key}
+            <div class="pick">
+              <!-- svelte-ignore a11y_autofocus -->
+              <input type="text" class="input input-sm" aria-label="Find a member" placeholder="Find a member" autocomplete="off" autofocus bind:value={query} onkeydown={(e) => findKey(e, l)} />
+              <div class="matches" role="group" aria-label="Members">
+                {#each matches as m (m.id)}
+                  <button type="button" class="btn btn-secondary" onclick={() => repoint(l, m.id)}>{m.name}</button>
+                {:else}
+                  <span class="none">No one by that name</span>
+                {/each}
+              </div>
+              <button type="button" class="btn btn-secondary" onclick={() => (changing = null)}>Cancel</button>
+            </div>
+          {:else}
+            <button type="button" class="btn btn-secondary" onclick={() => startChange(l)}>Change</button>
+            <button type="button" class="btn btn-secondary btn-danger-text" onclick={() => void attempt(() => api.unlinkSpeaker(server.id, l.name_key))}>Undo</button>
+          {/if}
+        </li>
+      {/each}
+    </ul>
+  {/if}
+</section>
 
 <style>
-  h2 { margin: 0 0 8px; font-size: 20px; }
-  .hint { margin: 0 0 16px; color: var(--text-3); font-size: 13px; }
-  .error { margin: 0 0 12px; color: var(--danger-text); font-size: 13px; }
-  .empty { color: var(--text-3); }
+  /* close under the title, as a subtitle */
+  .hint { margin: -12px 0 0; color: var(--text-3); font-size: 12px; }
+  .error { margin: 0; color: var(--danger-text); font-size: 13px; }
+  .empty { margin: 0; color: var(--text-3); }
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--bg-0); flex-wrap: wrap; }
   .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }

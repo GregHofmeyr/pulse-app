@@ -120,7 +120,7 @@
 <svelte:window onkeydowncapture={onKeyDown} onkeyupcapture={onKeyUp} onmousedowncapture={onMouseDown}
   onmouseupcapture={onMouseAfter} onauxclickcapture={onMouseAfter} onblur={() => recording && stop()} />
 
-<section class="pane">
+<section class="settings-pane">
   <h2>Keybinds</h2>
   {#if binds}
     <div class="row master">
@@ -165,9 +165,7 @@
 </section>
 
 <style>
-  .pane { display: flex; flex-direction: column; gap: 16px; }
-  h2 { margin: 0; font-size: 20px; font-weight: 600; }
-  .hint { margin: 0; font-size: 13px; color: var(--text-3); }
+  .hint { margin: 0; font-size: 12px; color: var(--text-3); }
   code { font-family: ui-monospace, monospace; font-size: 12px; padding: 2px 6px; border-radius: 6px; background: var(--bg-3); color: var(--text-2); }
   .list { display: flex; flex-direction: column; }
   .row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
@@ -178,7 +176,6 @@
   .master > div { flex: 1; display: flex; flex-direction: column; gap: 2px; }
   .master small { line-height: 1.4; }
   .clear:disabled { opacity: .3; }
-  small { font-size: 12px; color: var(--text-3); }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .warn { margin: 0; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 13px; }
 </style>

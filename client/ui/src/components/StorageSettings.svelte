@@ -29,19 +29,22 @@
   const cost = (usd: number) => (usd < 0.01 ? 'under $0.01' : `about $${usd.toFixed(2)}`)
 </script>
 
-<h2>Storage</h2>
-<h3>Clips</h3>
-{#if error}
-  <p class="error" role="alert">{error}</p>
-{:else if !usage}
-  {#if slow}<p class="loading">Loading…</p>{/if}
-{:else}
-  <p>{usage.count} {usage.count === 1 ? 'clip' : 'clips'} · {formatBytes(usage.bytes)} · {cost(usage.est_monthly_usd)} a month at R2's list price</p>
-{/if}
+<section class="settings-pane">
+  <h2>Storage</h2>
+  <div class="settings-field">
+    <h3>Clips</h3>
+    {#if error}
+      <p class="error" role="alert">{error}</p>
+    {:else if !usage}
+      {#if slow}<p class="loading">Loading…</p>{/if}
+    {:else}
+      <p>{usage.count} {usage.count === 1 ? 'clip' : 'clips'} · {formatBytes(usage.bytes)} · {cost(usage.est_monthly_usd)} a month at R2's list price</p>
+    {/if}
+  </div>
+</section>
 
 <style>
-  h2 { margin: 0 0 8px; font-size: 20px; }
-  h3 { margin: 16px 0 6px; font-size: 15px; }
+  h3 { margin: 0; font-size: 15px; }
   p { margin: 0; color: var(--text-2); }
-  .error { margin: 0 0 12px; color: var(--danger-text); font-size: 13px; }
+  .error { color: var(--danger-text); font-size: 13px; }
 </style>

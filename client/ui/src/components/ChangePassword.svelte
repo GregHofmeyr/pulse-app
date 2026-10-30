@@ -85,7 +85,7 @@
 {/if}
 
 <style>
-  h3 { margin: 28px 0 10px; font-size: 15px; }
+  h3 { margin: 8px 0 10px; font-size: 15px; }
   form { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
   label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text-2); }
   input { width: 240px; }

@@ -112,7 +112,7 @@
   const when = (iso: string) => new Date(iso).toLocaleDateString()
 </script>
 
-<section>
+<section class="settings-pane">
   <header>
     <h2>Emoji</h2>
     <span class="count" aria-label="Emoji used">{emoji.length} / {MAX}</span>
@@ -183,23 +183,24 @@
 
 <style>
   header { display: flex; align-items: baseline; gap: 12px; }
-  h2 { margin: 0 0 8px; font-size: 20px; }
+  h2 { margin: 0; font-size: 20px; font-weight: 600; }
   .count { color: var(--text-3); font-size: 13px; }
-  .hint { margin: 0 0 16px; color: var(--text-3); font-size: 13px; }
-  .error { margin: 0 0 12px; color: var(--danger-text); font-size: 13px; }
-  .empty { color: var(--text-3); }
-  .file { display: inline-flex; align-items: center; height: 36px; padding: 0 16px; margin-bottom: 20px; border-radius: 8px; background: var(--bg-3); font-weight: 600; font-size: 13px; cursor: pointer; }
+  /* close under the title, as a subtitle */
+  .hint { margin: -12px 0 0; color: var(--text-3); font-size: 12px; }
+  .error { margin: 0; color: var(--danger-text); font-size: 13px; }
+  .empty { margin: 0; color: var(--text-3); }
+  .file { display: inline-flex; align-items: center; height: 36px; padding: 0 16px; align-self: flex-start; border-radius: 8px; background: var(--bg-3); font-weight: 600; font-size: 13px; cursor: pointer; }
   .file.off { opacity: .5; cursor: default; }
   .file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
   .file:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
-  .add { display: flex; flex-direction: column; gap: 12px; margin-bottom: 20px; padding: 16px; border: 1px solid var(--bg-4); border-radius: 12px; }
+  .add { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--bg-4); border-radius: 12px; }
   .previews { display: flex; align-items: flex-end; gap: 16px; }
   .add label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }
   .row { display: flex; gap: 8px; }
   .name-hint { color: var(--danger-text); font-size: 12px; }
   /* empty but kept (a live region must exist before its text): take back the flex gap */
   .add .name-hint:empty { margin-top: -12px; }
-  .full { margin: -12px 0 20px; color: var(--text-3); font-size: 13px; }
+  .full { margin: -12px 0 0; color: var(--text-3); font-size: 13px; }
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   li { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; background: var(--bg-0); }
   li img { object-fit: contain; }
