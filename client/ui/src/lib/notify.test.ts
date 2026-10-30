@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { applyReady, emptyState } from './state'
-import { notificationBody, notificationTitle, notifyMessage } from './notify'
+import { NOTIFY_WINDOW_MS, NotifyThrottle, notificationBody, notificationTitle, notifyMessage, type Notice } from './notify'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 
@@ -116,5 +116,76 @@ describe('notificationBody', () => {
   })
   it('text off reaches the payload', () => {
     expect(notifyMessage(s, v(msg('DM1', 'U1', { content: 'secret' })), { enabled: true, showText: false })?.body).toBe('New message')
+  })
+})
+
+describe('NotifyThrottle', () => {
+  beforeEach(() => vi.useFakeTimers())
+  afterEach(() => vi.useRealTimers())
+  const notice = (key: string, text: string) => (more: number): Notice => ({ title: more ? `sam and ${more} more` : 'sam', body: text, channelId: key })
+  function setup() {
+    const sent: Notice[] = []
+    return { sent, t: new NotifyThrottle((n) => sent.push(n)) }
+  }
+
+  it('the window is 4 s', () => expect(NOTIFY_WINDOW_MS).toBe(4000))
+
+  it('a single message notifies at once and nothing follows', () => {
+    const { sent, t } = setup()
+    t.offer('DM1', notice('DM1', 'one'))
+    expect(sent).toEqual([{ title: 'sam', body: 'one', channelId: 'DM1' }])
+    vi.advanceTimersByTime(20_000)
+    expect(sent).toHaveLength(1)
+  })
+
+  it('a burst of 10: the first at once, then one replacement with the newest and "and 9 more"', () => {
+    const { sent, t } = setup()
+    for (let i = 1; i <= 10; i++) {
+      t.offer('DM1', notice('DM1', `m${i}`))
+      vi.advanceTimersByTime(100)
+    }
+    expect(sent).toHaveLength(1)
+    vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
+    expect(sent).toHaveLength(2)
+    expect(sent[1]).toEqual({ title: 'sam and 9 more', body: 'm10', channelId: 'DM1' })
+    vi.advanceTimersByTime(NOTIFY_WINDOW_MS * 3)
+    expect(sent).toHaveLength(2)
+  })
+
+  it('a replacement opens a new window; the count keeps growing while the chain goes on', () => {
+    const { sent, t } = setup()
+    t.offer('G1', notice('G1', 'a'))
+    t.offer('G1', notice('G1', 'b'))
+    t.offer('G1', notice('G1', 'c'))
+    vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
+    expect(sent.at(-1)).toMatchObject({ title: 'sam and 2 more', body: 'c' })
+    t.offer('G1', notice('G1', 'd'))
+    t.offer('G1', notice('G1', 'e'))
+    expect(sent).toHaveLength(2)
+    vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
+    expect(sent.at(-1)).toMatchObject({ title: 'sam and 4 more', body: 'e' })
+    vi.advanceTimersByTime(NOTIFY_WINDOW_MS)
+    // the chain ended: the next one stands alone and goes at once
+    t.offer('G1', notice('G1', 'f'))
+    expect(sent.at(-1)).toMatchObject({ title: 'sam', body: 'f' })
+    expect(sent).toHaveLength(4)
+  })
+
+  it('conversations are throttled separately', () => {
+    const { sent, t } = setup()
+    t.offer('DM1', notice('DM1', 'x'))
+    t.offer('G1', notice('G1', 'y'))
+    expect(sent.map((n) => n.channelId)).toEqual(['DM1', 'G1'])
+  })
+
+  it('clear() cancels a pending replacement; the next message goes at once', () => {
+    const { sent, t } = setup()
+    t.offer('DM1', notice('DM1', 'a'))
+    t.offer('DM1', notice('DM1', 'b'))
+    t.clear()
+    vi.advanceTimersByTime(NOTIFY_WINDOW_MS * 2)
+    expect(sent).toHaveLength(1)
+    t.offer('DM1', notice('DM1', 'c'))
+    expect(sent.at(-1)).toMatchObject({ title: 'sam', body: 'c' })
   })
 })

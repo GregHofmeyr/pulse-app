@@ -52,3 +52,50 @@ export function notificationBody(m: Message, me: string, showText: boolean): str
   if (m.qoty_card) return 'posted the Quote of the Year card'
   return 'New message'
 }
+
+export const NOTIFY_WINDOW_MS = 4000
+
+type Window = { timer: ReturnType<typeof setTimeout>; shown: number; pending: number; newest: ((more: number) => Notice) | null }
+
+/** Keeps a busy conversation from burying the desktop: its first message notifies at once and opens
+ *  a [NOTIFY_WINDOW_MS] window. Whatever arrives inside it is counted, and when it ends one
+ *  notification (the newest, "and N more") replaces the last and opens the next window. N counts
+ *  every message of the run not shown: the OS entry was replaced, so the earlier ones are gone. */
+export class NotifyThrottle {
+  private windows = new Map<string, Window>()
+
+  constructor(
+    private send: (n: Notice) => void,
+    private windowMs = NOTIFY_WINDOW_MS,
+  ) {}
+
+  /** A new message for conversation `key`; `build(more)` makes its notification. */
+  offer(key: string, build: (more: number) => Notice): void {
+    const w = this.windows.get(key)
+    if (w) {
+      w.pending++
+      w.newest = build
+      return
+    }
+    this.send(build(0))
+    this.open(key, { shown: 1, pending: 0, newest: null })
+  }
+
+  /** Drops every window and pending replacement (the window got focus, or you signed out). */
+  clear(): void {
+    for (const w of this.windows.values()) clearTimeout(w.timer)
+    this.windows.clear()
+  }
+
+  private open(key: string, w: Omit<Window, 'timer'>) {
+    const timer = setTimeout(() => {
+      const cur = this.windows.get(key)
+      if (cur?.timer !== timer) return
+      this.windows.delete(key)
+      if (!cur.pending || !cur.newest) return
+      this.send(cur.newest(cur.shown + cur.pending - 1))
+      this.open(key, { shown: cur.shown + cur.pending, pending: 0, newest: null })
+    }, this.windowMs)
+    this.windows.set(key, { ...w, timer })
+  }
+}
