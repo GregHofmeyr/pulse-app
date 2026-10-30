@@ -11,9 +11,15 @@ use std::sync::mpsc;
 mod linux;
 #[cfg(target_os = "linux")]
 use linux::Backend;
-#[cfg(not(target_os = "linux"))]
+#[cfg(any(windows, test))]
+mod toast;
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows::Backend;
+#[cfg(not(any(target_os = "linux", windows)))]
 mod none;
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 use none::Backend;
 
 /// Emitted to the page when a notification is clicked (after the window is brought up).

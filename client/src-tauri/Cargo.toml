@@ -114,6 +114,10 @@ windows = { version = "0.62", features = [
     "Win32_System_Com",
     # clips (clips/ffmpeg.rs): ffmpeg children in a kill-on-close job object.
     "Win32_System_JobObjects",
+    # message toasts (notify/windows.rs).
+    "Foundation",
+    "Data_Xml_Dom",
+    "UI_Notifications",
 ] }
 # WebView2 memory target (webview_memory.rs). Keep these on the versions tauri/wry use (see
 # Cargo.lock), or the COM types don't match (E0308).
