@@ -94,7 +94,7 @@
   .status { margin: 0; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
   .bar { align-self: stretch; height: 4px; border-radius: 2px; background: var(--bg-3); overflow: hidden; }
   .bar span { display: block; height: 100%; background: var(--accent); transition: width .2s; }
-  .failed { margin: 0; font-size: 12px; color: var(--danger); }
+  .failed { margin: 0; font-size: 12px; color: var(--danger-text); }
   .why { margin: 0; font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
   .link { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; }
   .actions { align-self: stretch; display: flex; justify-content: flex-end; }

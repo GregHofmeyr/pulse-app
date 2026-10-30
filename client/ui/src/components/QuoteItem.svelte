@@ -234,9 +234,9 @@
   .replies { margin-top: 4px; padding: 0; border: 0; background: none; color: var(--accent); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
   .replies:hover { text-decoration: underline; }
   .new { padding: 0 6px; border-radius: 8px; background: var(--quote-green); color: var(--on-quote-green); font-size: 10px; font-weight: 700; text-transform: uppercase; }
-  .unsent-reply { margin: 4px 0 0 10px; padding: 0; border: 0; background: none; color: var(--danger); font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
+  .unsent-reply { margin: 4px 0 0 10px; padding: 0; border: 0; background: none; color: var(--danger-text); font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
   .unsent-reply:hover { text-decoration: underline; }
-  .err { margin: 2px 0 0; font-size: 12px; color: var(--danger); }
+  .err { margin: 2px 0 0; font-size: 12px; color: var(--danger-text); }
   .actions { position: absolute; top: -10px; right: 18px; display: flex; opacity: 0; pointer-events: none; background: var(--bg-3); border: 1px solid var(--bg-4); border-radius: 8px; transition: opacity var(--dur) var(--ease); }
   .quote:hover .actions, .actions.open { opacity: 1; pointer-events: auto; }
   .actions button { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }

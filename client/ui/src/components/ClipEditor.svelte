@@ -339,7 +339,7 @@
   .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
   .grow { flex: 1; }
   .readout { font-size: 13px; font-variant-numeric: tabular-nums; color: var(--text-2); }
-  .readout.over { color: var(--danger); font-weight: 600; }
+  .readout.over { color: var(--danger-text); font-weight: 600; }
   .side { display: flex; flex-direction: column; gap: 14px; }
   .field { display: flex; flex-direction: column; gap: 6px; margin: 0; padding: 0; border: 0; min-width: 0; }
   .field > span, legend { font-size: 12px; font-weight: 600; color: var(--text-2); padding: 0; }
@@ -350,6 +350,6 @@
   input[type='radio'] { accent-color: var(--accent); }
   .send { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
   .why { margin: 0; font-size: 13px; color: var(--text-2); }
-  .why.over { color: var(--danger); }
+  .why.over { color: var(--danger-text); }
   @media (max-width: 860px) { .body { grid-template-columns: minmax(0, 1fr); } }
 </style>

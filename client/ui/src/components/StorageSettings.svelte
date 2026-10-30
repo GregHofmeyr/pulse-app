@@ -43,5 +43,5 @@
   h2 { margin: 0 0 8px; font-size: 20px; }
   h3 { margin: 16px 0 6px; font-size: 15px; }
   p { margin: 0; color: var(--text-2); }
-  .error { margin: 0 0 12px; color: var(--danger); font-size: 13px; }
+  .error { margin: 0 0 12px; color: var(--danger-text); font-size: 13px; }
 </style>

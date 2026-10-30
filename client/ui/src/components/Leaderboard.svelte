@@ -133,5 +133,5 @@
   .year { flex-shrink: 0; padding: 1px 7px; border-radius: 10px; background: var(--quote-green); color: var(--on-quote-green); font-size: 11px; font-weight: 700; }
   .person { display: flex; justify-content: space-between; gap: 8px; padding: 4px 8px; font-size: 13px; }
   .none { margin: 2px 8px; color: var(--text-3); font-size: 13px; }
-  .error { margin: 2px 8px; color: var(--danger); font-size: 13px; }
+  .error { margin: 2px 8px; color: var(--danger-text); font-size: 13px; }
 </style>

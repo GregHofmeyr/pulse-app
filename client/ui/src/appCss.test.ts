@@ -103,6 +103,26 @@ describe('motion', () => {
   })
 })
 
+describe('error text', () => {
+  it('is --danger-text (readable on every surface); --danger is for fills, borders and the red NEW divider and hang-up icon', () => {
+    const files: string[] = []
+    const walk = (dir: string) => {
+      for (const e of readdirSync(dir, { withFileTypes: true })) {
+        if (e.isDirectory()) walk(join(dir, e.name))
+        else if (e.name.endsWith('.svelte')) files.push(join(dir, e.name))
+      }
+    }
+    walk(__dirname)
+    const allowed = /^\s*\.(newline|vc-leave) /
+    const offenders = files.flatMap((f) =>
+      readFileSync(f, 'utf8').split('\n')
+        .filter((l) => /(^|[\s;{])color: var\(--danger\)/.test(l) && !allowed.test(l))
+        .map((l) => `${f.slice(__dirname.length + 1)}: ${l.trim()}`),
+    )
+    expect(offenders).toEqual([])
+  })
+})
+
 describe('shared surfaces', () => {
   it('menus are the raised family-A surface, and an item lightens on hover (a darker hover read as a hole)', () => {
     const surface = rule('.menu-surface')

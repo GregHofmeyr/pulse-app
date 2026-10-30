@@ -84,7 +84,7 @@
   dd { margin: 0; font-weight: 600; text-align: right; overflow-wrap: anywhere; }
   .good { color: var(--ok); }
   .warn { color: var(--warn); }
-  .bad { color: var(--danger); }
+  .bad { color: var(--danger-text); }
   .spark { width: 100%; height: 36px; color: var(--accent); background: var(--bg-2); border-radius: 6px; }
   .span { color: var(--text-3); font-size: 11px; margin-top: -4px; }
 </style>

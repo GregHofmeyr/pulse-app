@@ -116,5 +116,5 @@
   .game { padding: 1px 8px; border-radius: 10px; background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; white-space: nowrap; }
   .grow { flex: 1; }
   .time { font-size: 11px; color: var(--text-3); }
-  .err { margin: 0; font-size: 12px; color: var(--danger); }
+  .err { margin: 0; font-size: 12px; color: var(--danger-text); }
 </style>

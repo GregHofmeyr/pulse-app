@@ -105,7 +105,7 @@
   .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
   .grow { flex: 1; }
-  .err { color: var(--danger); font-size: 12px; }
+  .err { color: var(--danger-text); font-size: 12px; }
   .toggle { display: flex; padding: 2px; border-radius: 10px; background: var(--bg-2); }
   .tbtn { width: 30px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .tbtn:hover { color: var(--text); }

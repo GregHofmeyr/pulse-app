@@ -30,6 +30,6 @@
   .replies { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--accent); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
   .replies:hover { text-decoration: underline; }
   .new { padding: 0 6px; border-radius: 8px; background: var(--accent); color: var(--on-accent); font-size: 10px; font-weight: 700; text-transform: uppercase; }
-  .unsent-reply { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--danger); font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
+  .unsent-reply { align-self: flex-start; padding: 0; border: 0; background: none; color: var(--danger-text); font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
   .unsent-reply:hover { text-decoration: underline; }
 </style>

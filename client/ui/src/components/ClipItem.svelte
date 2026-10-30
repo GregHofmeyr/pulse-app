@@ -84,5 +84,5 @@
   .grow { flex: 1; }
   .player { width: 100%; max-width: 640px; }
   .compact .player { max-width: 100%; }
-  .err { margin: 0; font-size: 12px; color: var(--danger); }
+  .err { margin: 0; font-size: 12px; color: var(--danger-text); }
 </style>

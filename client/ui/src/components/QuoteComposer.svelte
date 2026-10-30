@@ -456,5 +456,5 @@
   .warn { padding: 8px 10px; border-radius: 8px; background: var(--bg-2); display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 13px; }
   .warn p { flex-basis: 100%; margin: 0; }
   .note { margin: 0; font-size: 12px; color: var(--text-3); }
-  .err { margin: 0; font-size: 12px; color: var(--danger); }
+  .err { margin: 0; font-size: 12px; color: var(--danger-text); }
 </style>

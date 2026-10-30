@@ -222,5 +222,5 @@
   .pinned { flex-shrink: 0; max-height: 40%; overflow-y: auto; padding: 8px 0 6px; border-bottom: 1px solid var(--bg-3); }
   .list { flex: 1; min-height: 0; overflow-y: auto; padding: 8px 0; display: flex; flex-direction: column; }
   .empty { margin: auto 18px 8px; color: var(--text-3); font-size: 13px; }
-  .error { margin: 0 18px 4px; color: var(--danger); font-size: 13px; }
+  .error { margin: 0 18px 4px; color: var(--danger-text); font-size: 13px; }
 </style>

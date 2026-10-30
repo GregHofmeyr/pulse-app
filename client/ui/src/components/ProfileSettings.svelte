@@ -374,7 +374,7 @@
   .text { height: 36px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--bg-0); color: var(--text); }
   .settings-field :global(.bio) { min-height: 72px; max-height: 160px; overflow-y: auto; padding: 8px 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--bg-0); white-space: pre-wrap; }
   .counter { align-self: flex-end; }
-  .counter.over { color: var(--danger); font-weight: 600; }
+  .counter.over { color: var(--danger-text); font-weight: 600; }
   .line { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 12px; background: var(--bg-2); }
   .said { min-width: 0; display: flex; flex-direction: column; font-weight: 600; }
   .said p { margin: 2px 0 0; font-weight: 400; color: var(--text); }
@@ -384,6 +384,6 @@
   .state { margin-right: auto; color: var(--warn); font-weight: 600; font-size: 13px; }
   .state .ok { color: var(--ok); }
   .muted { color: var(--text-3); font-size: 13px; }
-  .error { margin: 0; color: var(--danger); font-size: 13px; }
+  .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .retry { height: 28px; margin-left: 8px; }
 </style>

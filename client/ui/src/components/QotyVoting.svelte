@@ -237,7 +237,7 @@
   .results button:hover { background: var(--bg-3); }
   .r-said { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .r-by { color: var(--text-3); font-size: 12px; }
-  .err { margin: 0; font-size: 13px; color: var(--danger); }
+  .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .foot, .confirm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .confirm p { flex: 1; margin: 0; font-size: 13px; }
   .foot .qoty-btn, .confirm .qoty-btn { height: 34px; }

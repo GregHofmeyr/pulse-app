@@ -125,6 +125,6 @@
   legend { float: left; width: 96px; padding: 0; color: var(--text-2); font-size: 12px; font-weight: 600; }
   label { display: flex; align-items: center; gap: 6px; font-size: 14px; }
   input { accent-color: var(--accent); }
-  .err { margin: 0; font-size: 13px; color: var(--warn); }
+  .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

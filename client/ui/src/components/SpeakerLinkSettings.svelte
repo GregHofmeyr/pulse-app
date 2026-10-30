@@ -86,7 +86,7 @@
 <style>
   h2 { margin: 0 0 8px; font-size: 20px; }
   .hint { margin: 0 0 16px; color: var(--text-3); font-size: 13px; }
-  .error { margin: 0 0 12px; color: var(--danger); font-size: 13px; }
+  .error { margin: 0 0 12px; color: var(--danger-text); font-size: 13px; }
   .empty { color: var(--text-3); }
   ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
   li { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 10px; background: var(--bg-0); flex-wrap: wrap; }

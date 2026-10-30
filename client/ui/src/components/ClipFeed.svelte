@@ -238,6 +238,6 @@
   @media (max-width: 899.98px) {
     .grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   }
-  .error { margin: 8px 18px; color: var(--danger); font-size: 13px; }
+  .error { margin: 8px 18px; color: var(--danger-text); font-size: 13px; }
   .retry { padding: 0; border: 0; background: none; color: var(--accent); font: inherit; text-decoration: underline; }
 </style>

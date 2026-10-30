@@ -246,7 +246,7 @@
 
 <style>
   .status { display: flex; gap: 10px; align-items: baseline; padding: 0 18px 4px 72px; font-size: 12px; color: var(--text-3); }
-  .status .fail { color: var(--danger); }
+  .status .fail { color: var(--danger-text); }
   .status button { border: 0; background: none; padding: 0; font-size: 12px; color: var(--text-2); text-decoration: underline; }
   .msg { padding: 8px 18px 2px; position: relative; }
   .msg.grouped { padding-top: 1px; }
@@ -277,7 +277,7 @@
   /* about two lines to start, grows with what's in it (images included) up to 200px, then scrolls */
   .body :global(.edit) { min-height: 58px; max-height: 200px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; }
   .body :global(.edit:focus-visible) { border-color: var(--accent); }
-  .err { margin: 2px 0 0; font-size: 12px; color: var(--danger); }
+  .err { margin: 2px 0 0; font-size: 12px; color: var(--danger-text); }
   .hint { font-size: 11px; color: var(--text-3); }
   .system { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }
   .msg.mentioned { background: rgba(139, 156, 255, .08); box-shadow: inset 2px 0 0 var(--accent); }

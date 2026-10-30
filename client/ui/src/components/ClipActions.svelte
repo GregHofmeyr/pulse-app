@@ -101,10 +101,10 @@
   .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 140px; }
   .ask { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: 240px; padding: 10px; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
   .ask p { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--text); }
-  .ask .err { margin: 4px 0 0; color: var(--danger); }
+  .ask .err { margin: 4px 0 0; color: var(--danger-text); }
   .overlay { position: fixed; inset: 0; z-index: 30; }
   .modal { width: min(420px, 100%); }
   textarea { resize: vertical; min-height: 64px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); color: var(--text); font: inherit; }
-  .err { margin: 0; font-size: 12px; color: var(--danger); }
+  .err { margin: 0; font-size: 12px; color: var(--danger-text); }
   .foot { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

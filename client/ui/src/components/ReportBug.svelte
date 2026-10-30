@@ -54,6 +54,6 @@
   textarea { resize: vertical; min-height: 120px; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-1); font: inherit; font-size: 14px; color: var(--text); }
   .note { margin: 0; font-size: 12px; color: var(--text-3); }
   .ok { margin: 0; font-size: 13px; color: var(--ok); word-break: break-all; }
-  .err { margin: 0; font-size: 13px; color: var(--warn); }
+  .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .actions { display: flex; justify-content: flex-end; }
 </style>
