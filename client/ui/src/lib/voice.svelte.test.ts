@@ -60,3 +60,23 @@ describe('removed from a conversation', () => {
     expect(h.calls).toEqual([])
   })
 })
+
+describe('the mic event', () => {
+  const mic = (live: boolean, error: string | null) => h.handlers['voice://event']({ payload: { kind: 'mic', live, error } })
+  beforeEach(async () => {
+    Object.assign(voice, { channelId: 'V1', error: '', stage: { stage: 'starting_audio', attempt: null } })
+    await startVoiceListening()
+  })
+
+  it('a mic that failed to publish shows its error, and you are still in the room', () => {
+    mic(false, 'Microphone unavailable')
+    expect(voice.error).toBe('Microphone unavailable')
+    expect(voice.stage.stage).toBe('connected')
+  })
+
+  it('a mic that went live leaves the error alone', () => {
+    voice.error = 'earlier trouble'
+    mic(true, null)
+    expect(voice.error).toBe('earlier trouble')
+  })
+})
