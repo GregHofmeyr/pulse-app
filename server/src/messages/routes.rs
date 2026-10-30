@@ -366,7 +366,7 @@ async fn send(
     // An outbox retry of a send that already landed (e.g. the proxy said 502 after we committed):
     // hand back the original instead of posting twice. Under the write lock, check-then-insert is
     // atomic; the unique index is the backstop.
-    if let Some(existing) = nonce::existing(&mut tx, me, req.nonce.as_deref()).await? {
+    if let Some(existing) = nonce::existing(&mut tx, me, id, req.nonce.as_deref()).await? {
         tx.rollback().await?;
         // Not re-published: the first send already fanned it out, and a second MessageCreated
         // would double-count unreads on other clients.

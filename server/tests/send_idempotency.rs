@@ -154,3 +154,45 @@ async fn oversized_nonce_is_400() {
     let r = send_nonce(&t.app, &t.a, t.g, "x", &"n".repeat(65)).await;
     assert_eq!(r.status(), 400);
 }
+
+#[tokio::test]
+async fn empty_nonce_is_400() {
+    let t = setup().await;
+    let r = send_nonce(&t.app, &t.a, t.g, "x", "").await;
+    assert_eq!(r.status(), 400);
+}
+
+/// A nonce names one send, so a retry gets the original whatever it carries: the outbox never
+/// changes a queued message, and an edit goes through its own route.
+#[tokio::test]
+async fn same_nonce_with_other_content_returns_the_original() {
+    let t = setup().await;
+    let first: Message = send_nonce(&t.app, &t.a, t.g, "hello", "n-text")
+        .await
+        .json()
+        .await
+        .unwrap();
+    let again: Message = send_nonce(&t.app, &t.a, t.g, "goodbye", "n-text")
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(again.id, first.id);
+    assert_eq!(again.content, "hello");
+    assert_eq!(normal_rows(&t.app, t.g).await, 1);
+}
+
+/// A nonce reused in another channel isn't a retry of that send: 409, and the other channel's
+/// message isn't handed back as if it had been posted here.
+#[tokio::test]
+async fn same_nonce_in_another_channel_is_409() {
+    let t = setup().await;
+    let r = send_nonce(&t.app, &t.a, t.g, "x", "n-chan").await;
+    assert_eq!(r.status(), 200);
+    let dm = create_dm(&t.app, &t.a, &[t.b_id]).await.id;
+
+    let r = send_nonce(&t.app, &t.a, dm, "x", "n-chan").await;
+
+    assert_eq!(r.status(), 409);
+    assert_eq!(normal_rows(&t.app, dm).await, 0);
+}

@@ -332,7 +332,7 @@ async fn confirm(
     // As in `send`: publishes (and the absolute unread counts) go out in commit order.
     let _order = s.hub.in_order().await;
     let mut tx = begin_write(&s.db).await?;
-    if let Some(existing) = nonce::existing(&mut tx, me, req.nonce.as_deref()).await? {
+    if let Some(existing) = nonce::existing(&mut tx, me, channel, req.nonce.as_deref()).await? {
         tx.rollback().await?;
         return replay(&s, me, id, existing.to_string()).await;
     }

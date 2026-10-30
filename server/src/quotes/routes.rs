@@ -67,7 +67,7 @@ async fn post_quote(
     let mut tx = crate::db::begin_write(&s.db).await?;
     // An outbox retry of a post that already landed: hand back the original (see `send`).
     if let Some(existing) =
-        crate::messages::nonce::existing(&mut tx, me, req.nonce.as_deref()).await?
+        crate::messages::nonce::existing(&mut tx, me, id, req.nonce.as_deref()).await?
     {
         tx.rollback().await?;
         return load(&s.db, Some(me), existing)
