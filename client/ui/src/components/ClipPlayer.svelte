@@ -192,7 +192,9 @@
   .clip { display: flex; flex-direction: column; background: #000; border-radius: 8px; overflow: hidden; outline-offset: 2px; max-width: 100%; }
   .clip:fullscreen { border-radius: 0; justify-content: center; }
   .screen { position: relative; background: #000; max-height: 70vh; width: 100%; }
-  .clip:fullscreen .screen { max-height: none; flex: 1; aspect-ratio: auto !important; }
+  /* min-height 0 lets the screen shrink below the clip's aspect height, so the bar stays on screen; the
+     aspect ratio is left alone: WebKit doesn't recompute it once an override is lifted */
+  .clip:fullscreen .screen { max-height: none; flex: 1; min-height: 0; }
   video, img { width: 100%; height: 100%; object-fit: contain; display: block; }
   .big { position: absolute; inset: 0; margin: auto; width: 56px; height: 56px; border-radius: 50%; border: 0; background: rgba(0, 0, 0, 0.6); color: #fff; display: grid; place-items: center; cursor: pointer; }
   .big:hover { background: rgba(0, 0, 0, 0.8); }
