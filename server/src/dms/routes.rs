@@ -288,7 +288,24 @@ async fn remove_member(
             )
             .await;
     }
-    if unmuted > 0 {
+    // Committed: the rest only tells people. A failure there is logged, not returned: the removal
+    // stands, and the client's retry would only get a 404.
+    if let Err(e) = announce_removal(&s, me, id, user, unmuted > 0, remaining == 0).await {
+        tracing::warn!(error = %e, channel = %id, "member removed, but announcing it failed");
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// The events and the system line for a committed [`remove_member`].
+async fn announce_removal(
+    s: &AppState,
+    me: UserId,
+    id: ChannelId,
+    user: UserId,
+    unmuted: bool,
+    emptied: bool,
+) -> AppResult<()> {
+    if unmuted {
         s.hub
             .publish(
                 &s.db,
@@ -308,8 +325,8 @@ async fn remove_member(
             },
         )
         .await;
-    if remaining == 0 {
-        return Ok(StatusCode::NO_CONTENT);
+    if emptied {
+        return Ok(());
     }
     s.hub
         .publish(
@@ -335,8 +352,8 @@ async fn remove_member(
             serde_json::json!({"type": "member_removed", "by": me, "user": user}),
         )
     };
-    crate::messages::system::post(&s, id, content, payload).await?;
-    Ok(StatusCode::NO_CONTENT)
+    crate::messages::system::post(s, id, content, payload).await?;
+    Ok(())
 }
 
 async fn rename(
