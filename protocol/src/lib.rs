@@ -100,6 +100,11 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::NameArchiveEntry::export_all(&cfg)?;
     rest::Profile::export_all(&cfg)?;
     rest::UpdateProfileRequest::export_all(&cfg)?;
+    rest::SearchHas::export_all(&cfg)?;
+    rest::SearchRequest::export_all(&cfg)?;
+    rest::HighlightRange::export_all(&cfg)?;
+    rest::SearchHit::export_all(&cfg)?;
+    rest::SearchResults::export_all(&cfg)?;
     Ok(())
 }
 

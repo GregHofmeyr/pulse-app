@@ -901,6 +901,88 @@ pub struct LeaderboardWin {
     pub speakers: Vec<QuoteSpeaker>,
 }
 
+// ---------- Message search ----------
+
+/// What a search result must carry (`has:` in the box). Sent as one comma-separated `has`
+/// parameter of these words.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum SearchHas {
+    Clip,
+    Quote,
+    Link,
+}
+
+impl SearchHas {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Clip => "clip",
+            Self::Quote => "quote",
+            Self::Link => "link",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<Self> {
+        Some(match s {
+            "clip" => Self::Clip,
+            "quote" => Self::Quote,
+            "link" => Self::Link,
+            _ => return None,
+        })
+    }
+}
+
+/// One search, as the UI hands it to the core: the box's filters already parsed out of `q`.
+/// All of them must match. Which route (server or conversation) is the caller's choice.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+pub struct SearchRequest {
+    /// The words: all must appear (prefix matches); a "quoted phrase" must appear as is.
+    #[serde(default)]
+    pub q: String,
+    /// Written by (in a quotes channel, also said by) this person.
+    #[serde(default)]
+    pub from: Option<UserId>,
+    /// One channel of the server (server search only).
+    #[serde(default)]
+    pub in_channel: Option<ChannelId>,
+    #[serde(default)]
+    pub has: Vec<SearchHas>,
+    /// Messages that pinged this person.
+    #[serde(default)]
+    pub mentions: Option<UserId>,
+    /// The `next_cursor` of the page before.
+    #[serde(default)]
+    pub cursor: Option<MessageId>,
+}
+
+/// A matched stretch of [`SearchHit::text`], in UTF-16 code units (JavaScript string offsets).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct HighlightRange {
+    pub start: u32,
+    pub end: u32,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SearchHit {
+    pub message: Message,
+    /// The searchable text as shown: custom emoji as `:name:`, then any quote image captions,
+    /// one per line. Plain text: the client never renders it as HTML.
+    pub text: String,
+    pub highlights: Vec<HighlightRange>,
+    /// For a reply in a quote's or clip's thread: that quote or clip.
+    pub root: Option<Message>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SearchResults {
+    /// Newest first. A page can be shorter than the page size and still have more after it.
+    pub hits: Vec<SearchHit>,
+    /// Pass as `cursor` for the next page; `None` once there is nothing older.
+    pub next_cursor: Option<MessageId>,
+    /// How many match, counted up to 51 (show "50+" at 51). First page only.
+    pub total: Option<u32>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1043,5 +1125,20 @@ mod tests {
             assert!(d.contains("expires_at"), "{d}");
         }
         assert!(up.contains("video/mp4"), "{up}");
+    }
+
+    /// The `has` filter travels as one comma-separated query parameter of these words.
+    #[test]
+    fn search_has_round_trips() {
+        for (h, w) in [
+            (SearchHas::Clip, "clip"),
+            (SearchHas::Quote, "quote"),
+            (SearchHas::Link, "link"),
+        ] {
+            assert_eq!(serde_json::to_string(&h).unwrap(), format!("\"{w}\""));
+            assert_eq!(h.as_str(), w);
+            assert_eq!(SearchHas::parse(w), Some(h));
+        }
+        assert_eq!(SearchHas::parse("emoji"), None);
     }
 }
