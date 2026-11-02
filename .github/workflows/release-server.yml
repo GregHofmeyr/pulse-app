@@ -52,7 +52,7 @@ jobs:
         with:
           # pinned: the publish job needs `imagetools create --metadata-file` (buildx >= v0.35); same in both jobs
           version: v0.38.1
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -108,7 +108,7 @@ jobs:
         with:
           # pinned: the publish job needs `imagetools create --metadata-file` (buildx >= v0.35); same in both jobs
           version: v0.38.1
-      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3.7.0
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
