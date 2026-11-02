@@ -32,7 +32,7 @@
     if (serverId) return (app.state.members[serverId] ?? []).map((m) => ({ id: m.user.id, name: m.nickname ?? m.user.username, alt: m.user.username }))
     const ids = app.state.dmMembers[channelId] ?? []
     return ids
-      .map((id) => ({ id, name: id === app.state.me?.id ? app.state.me.username : (app.state.people[id]?.user.username ?? '') }))
+      .map((id) => ({ id, name: id === app.state.me?.id ? app.state.me.username : (app.state.people[id]?.user.username ?? ''), alt: undefined as string | undefined }))
       .filter((p) => p.name)
   })
   const channels = $derived(
@@ -119,7 +119,7 @@
         if (c) addChip({ key: 'in', id: c.id, label: c.name })
         else left.push(`in:${f.value}`)
       } else {
-        const p = people.find((x) => x.name.toLowerCase() === v || ('alt' in x && x.alt?.toLowerCase() === v))
+        const p = people.find((x) => x.name.toLowerCase() === v || x.alt?.toLowerCase() === v)
         if (p) addChip({ key: f.key, id: p.id, label: p.name })
         else left.push(`${f.key}:${f.value}`)
       }
