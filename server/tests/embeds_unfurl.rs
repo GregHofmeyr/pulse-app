@@ -27,7 +27,13 @@ impl Env {
     async fn unfurl(&self, url: &str) -> Option<Unfurled> {
         self.app
             .embeds
-            .unfurl(&self.app.db, &self.app.cfg.media_dir, self.alex, url)
+            .unfurl(
+                &self.app.db,
+                &self.app.cfg.media_dir,
+                self.alex,
+                &self.app.limits.link_thumb_user,
+                url,
+            )
             .await
     }
 }

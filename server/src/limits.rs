@@ -100,6 +100,9 @@ pub struct LimitsConfig {
     /// Messages per user whose links get previews fetched (sends and edits with links). Over
     /// it, the message still posts; it just gets no previews.
     pub unfurl_user: Rate,
+    /// Link preview thumbnails fetched and stored per user (each is a file on disk). Over it,
+    /// previews come without one.
+    pub link_thumb_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -137,6 +140,7 @@ impl Default for LimitsConfig {
             // The box searches on Enter (and Load more), so a person stays far below this.
             search_user: Rate::new(20, 2.0),
             unfurl_user: Rate::per_minute(20),
+            link_thumb_user: Rate::per_hour(60),
         }
     }
 }
@@ -168,6 +172,7 @@ impl LimitsConfig {
             clip_url_user: r,
             search_user: r,
             unfurl_user: r,
+            link_thumb_user: r,
         }
     }
 }
@@ -312,6 +317,7 @@ pub struct Limits {
     pub clip_url_user: Limiter,
     pub search_user: Limiter,
     pub unfurl_user: Limiter,
+    pub link_thumb_user: Limiter,
 }
 
 impl Limits {
@@ -339,6 +345,7 @@ impl Limits {
             clip_url_user: Limiter::new(c.clip_url_user),
             search_user: Limiter::new(c.search_user),
             unfurl_user: Limiter::new(c.unfurl_user),
+            link_thumb_user: Limiter::new(c.link_thumb_user),
         }
     }
 }

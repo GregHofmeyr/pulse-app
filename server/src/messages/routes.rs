@@ -531,6 +531,8 @@ async fn edit(
     // The edit has landed: a failure here is logged, not a failed request.
     if let Err(e) = crate::embeds::attach(&s.db, std::slice::from_mut(&mut msg)).await {
         tracing::error!(error = ?e, %id, "couldn't read an edited message's previews");
+        // `msg` still has the previews read before the edit: drop those it edited away.
+        crate::embeds::keep_linked(&mut msg.embeds, &msg.content);
     }
     s.hub
         .publish(

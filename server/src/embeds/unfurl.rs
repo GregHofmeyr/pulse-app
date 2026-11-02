@@ -54,12 +54,14 @@ struct Text {
 }
 
 /// `url`'s preview (`url` normalised by the caller), or `None` when there's nothing to show.
+/// `thumb_ok` is asked just before a thumbnail would be fetched; `false` leaves it out.
 pub(super) async fn run(
     fetcher: &Fetcher,
     endpoints: &Endpoints,
     db: &SqlitePool,
     media_dir: &Path,
     by: UserId,
+    thumb_ok: &(impl Fn() -> bool + Sync),
     url: &str,
 ) -> Option<Unfurled> {
     let mut link = Url::parse(url).ok()?;
@@ -112,7 +114,8 @@ pub(super) async fn run(
         }
     };
     let thumb = match &text.image {
-        Some(img) => thumb(fetcher, db, media_dir, by, img).await,
+        Some(img) if thumb_ok() => thumb(fetcher, db, media_dir, by, img).await,
+        Some(_) => None,
         None => None,
     };
     Some(match d {

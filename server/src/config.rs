@@ -141,6 +141,15 @@ pub struct EmbedConfig {
     pub endpoints: Endpoints,
     /// The whole of one fetch, redirects included.
     pub timeout: Duration,
+    /// The whole of one link's preview (its fetches one after another, and the thumbnail's
+    /// processing), once it has a slot.
+    pub link_deadline: Duration,
+    /// Most links unfurled at once, server-wide.
+    pub max_concurrent: usize,
+    /// Most links waiting for one of those slots; a link past that gets no preview.
+    pub max_waiting: usize,
+    /// Most messages one user has previews being fetched for at once; another gets none.
+    pub per_user_in_flight: usize,
     /// Tests only (empty from the environment): addresses the fetcher may reach although they
     /// aren't public, such as a fake provider on loopback.
     pub allowed_ips: Vec<IpAddr>,
@@ -157,6 +166,10 @@ impl Default for EmbedConfig {
             public_url: None,
             endpoints: Endpoints::default(),
             timeout: Duration::from_secs(5),
+            link_deadline: Duration::from_secs(10),
+            max_concurrent: 4,
+            max_waiting: 32,
+            per_user_in_flight: 2,
             allowed_ips: Vec::new(),
             extra_ports: Vec::new(),
             hosts: Vec::new(),

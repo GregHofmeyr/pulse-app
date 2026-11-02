@@ -12,6 +12,7 @@ pub mod unfurl;
 use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use pulse_protocol::gateway::Event;
@@ -25,6 +26,7 @@ pub use unfurl::Unfurled;
 use crate::AppState;
 use crate::config::{EmbedConfig, Endpoints};
 use crate::error::AppResult;
+use crate::limits::Limiter;
 
 /// How long a preview is reused for the same link...
 pub const CACHE_TTL: Duration = Duration::from_secs(24 * 3600);
@@ -32,16 +34,54 @@ pub const CACHE_TTL: Duration = Duration::from_secs(24 * 3600);
 pub const CACHE_FAILURE_TTL: Duration = Duration::from_secs(3600);
 /// Most links remembered; the oldest goes first.
 pub const CACHE_MAX: usize = 1000;
-/// Most links unfurled at once, server-wide.
-pub const MAX_CONCURRENT: usize = 4;
 
-/// Builds link previews: the guarded fetcher, the oEmbed endpoints, a cache by normalised URL
-/// and a cap on how many run at once. One per server (`AppState::embeds`).
+/// Builds link previews: the guarded fetcher, the oEmbed endpoints, a cache by normalised URL,
+/// and the bounds on the work (see [`EmbedConfig`]): how many links run at once and how many
+/// may wait for that, a deadline per link, and how many messages one user has in flight. One
+/// per server (`AppState::embeds`).
 pub struct Unfurler {
     fetcher: fetch::Fetcher,
     endpoints: Endpoints,
     cache: Mutex<HashMap<String, Cached>>,
     slots: Semaphore,
+    /// Links waiting for a slot now.
+    waiting: AtomicUsize,
+    max_waiting: usize,
+    deadline: Duration,
+    /// Messages each user has previews being fetched for.
+    in_flight: Mutex<HashMap<UserId, usize>>,
+    per_user_in_flight: usize,
+}
+
+/// A message's place among its sender's in-flight unfurls, given back on drop.
+pub struct InFlight<'a> {
+    unfurler: &'a Unfurler,
+    user: UserId,
+}
+
+impl Drop for InFlight<'_> {
+    fn drop(&mut self) {
+        let mut map = self
+            .unfurler
+            .in_flight
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        if let Some(n) = map.get_mut(&self.user) {
+            *n -= 1;
+            if *n == 0 {
+                map.remove(&self.user);
+            }
+        }
+    }
+}
+
+/// Counts a link as waiting for a slot while it lives.
+struct Waiting<'a>(&'a AtomicUsize);
+
+impl Drop for Waiting<'_> {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
 }
 
 struct Cached {
@@ -67,30 +107,87 @@ impl Unfurler {
             fetcher: fetch::Fetcher::new(cfg),
             endpoints: cfg.endpoints.clone(),
             cache: Mutex::new(HashMap::new()),
-            slots: Semaphore::new(MAX_CONCURRENT),
+            slots: Semaphore::new(cfg.max_concurrent),
+            waiting: AtomicUsize::new(0),
+            max_waiting: cfg.max_waiting,
+            deadline: cfg.link_deadline,
+            in_flight: Mutex::new(HashMap::new()),
+            per_user_in_flight: cfg.per_user_in_flight,
         }
     }
 
+    /// A place for one more of `user`'s messages among the unfurls in flight, `None` when they
+    /// already have as many as they may.
+    pub fn claim(&self, user: UserId) -> Option<InFlight<'_>> {
+        let mut map = self.in_flight.lock().unwrap_or_else(|e| e.into_inner());
+        let n = map.entry(user).or_insert(0);
+        if *n >= self.per_user_in_flight {
+            return None;
+        }
+        *n += 1;
+        Some(InFlight {
+            unfurler: self,
+            user,
+        })
+    }
+
     /// `url`'s preview, from the cache when it's fresh there, else built (thumbnail stored as
-    /// media uploaded `by` the sender). `None` for no preview. A cached thumbnail may have been
-    /// cleaned up since: [`store`] checks before keeping it.
+    /// media uploaded `by` the sender, if `thumbs` lets them have one more). `None` for no
+    /// preview, also when too many links are already waiting for a slot. A cached thumbnail may
+    /// have been cleaned up since: [`store`] checks before keeping it.
     pub async fn unfurl(
         &self,
         db: &SqlitePool,
         media_dir: &Path,
         by: UserId,
+        thumbs: &Limiter,
         url: &str,
     ) -> Option<Unfurled> {
         let key = links::normalise(url)?;
         if let Some(hit) = self.cached(&key) {
             return hit;
         }
-        let value = {
-            // Never closed, so this only waits.
-            let _slot = self.slots.acquire().await.ok()?;
-            unfurl::run(&self.fetcher, &self.endpoints, db, media_dir, by, &key).await
+        let _slot = match self.slots.try_acquire() {
+            Ok(slot) => slot,
+            Err(_) => {
+                let _waiting = Waiting(&self.waiting);
+                if self.waiting.fetch_add(1, Ordering::SeqCst) >= self.max_waiting {
+                    tracing::debug!("too many link previews waiting; this one gets none");
+                    return None;
+                }
+                // Never closed, so this only waits.
+                self.slots.acquire().await.ok()?
+            }
         };
-        self.remember(key, value.clone());
+        // A preview made without its thumbnail only because of the limit isn't remembered, so
+        // the next sender of the link can have it whole.
+        let thumb_refused = AtomicBool::new(false);
+        let thumb_ok = || {
+            let ok = thumbs.hit(&by.to_string());
+            if !ok {
+                thumb_refused.store(true, Ordering::Relaxed);
+            }
+            ok
+        };
+        let run = unfurl::run(
+            &self.fetcher,
+            &self.endpoints,
+            db,
+            media_dir,
+            by,
+            &thumb_ok,
+            &key,
+        );
+        // One deadline over all of the link's fetches; past it, the link gave no preview.
+        let value = tokio::time::timeout(self.deadline, run)
+            .await
+            .unwrap_or_else(|_| {
+                tracing::debug!("a link preview ran past its deadline");
+                None
+            });
+        if !thumb_refused.load(Ordering::Relaxed) {
+            self.remember(key, value.clone());
+        }
         value
     }
 
@@ -321,18 +418,22 @@ pub async fn attach(db: &SqlitePool, msgs: &mut [Message]) -> AppResult<()> {
     Ok(())
 }
 
+/// Keep only the previews whose link is still in `content` (after an edit, when the stored ones
+/// couldn't be read back: better fewer previews than ones for links no longer there).
+pub fn keep_linked(embeds: &mut Vec<LinkEmbed>, content: &str) {
+    let links = links::extract(content);
+    embeds.retain(|e| links.contains(&e.url));
+}
+
 /// After a message is sent or edited (and committed, and its own event published): fetch
 /// previews for its links in the background, then store them and publish `MessageUpdated`.
-/// `content` is the message's content as committed. Nothing happens when it has no links, when
-/// `author` is over the unfurl limit (the message stays as it is, without previews), or when
-/// the disk is too full for thumbnails.
+/// `content` is the message's content as committed. Nothing happens when it has no links (or
+/// none without a preview row already), when `author` already has as many messages' previews
+/// in flight as they may or is over the unfurl limit (the message stays as it is, without
+/// previews), or when the disk is too full for thumbnails.
 pub fn spawn_unfurl(s: &AppState, message_id: MessageId, author: UserId, content: String) {
     let links = links::extract(&content);
     if links.is_empty() {
-        return;
-    }
-    if !s.limits.unfurl_user.hit(&author.to_string()) {
-        tracing::debug!(%message_id, "over the unfurl limit; no previews");
         return;
     }
     if let Err(e) = crate::media::writes_ok(&s.cfg) {
@@ -367,8 +468,21 @@ async fn unfurl_message(
     if todo.is_empty() {
         return Ok(());
     }
+    // Only now that there's something to fetch: an edit that keeps its links costs nothing.
+    let Some(_in_flight) = s.embeds.claim(author) else {
+        tracing::debug!(%message_id, "too many unfurls in flight for the sender; no previews");
+        return Ok(());
+    };
+    if !s.limits.unfurl_user.hit(&author.to_string()) {
+        tracing::debug!(%message_id, "over the unfurl limit; no previews");
+        return Ok(());
+    }
+    let thumbs = &s.limits.link_thumb_user;
     let unfurled = futures::future::join_all(todo.into_iter().map(|(position, url)| async move {
-        let got = s.embeds.unfurl(&s.db, &s.cfg.media_dir, author, &url).await;
+        let got = s
+            .embeds
+            .unfurl(&s.db, &s.cfg.media_dir, author, thumbs, &url)
+            .await;
         got.map(|e| (position, url, e))
     }))
     .await;
@@ -457,5 +571,34 @@ mod tests {
         for k in [EmbedKind::Card, EmbedKind::Player] {
             assert_eq!(parse_kind(kind_str(k)), k);
         }
+        assert_eq!(parse_kind(kind_str(EmbedKind::Unknown)), EmbedKind::Card);
+    }
+
+    fn card(url: &str) -> LinkEmbed {
+        LinkEmbed {
+            url: url.into(),
+            provider: EmbedProvider::Generic,
+            kind: EmbedKind::Card,
+            provider_id: None,
+            title: None,
+            description: None,
+            site_name: None,
+            author: None,
+            thumb: None,
+            start: None,
+            vertical: false,
+        }
+    }
+
+    /// The fallback when an edit's previews can't be read back: the ones it had, less those
+    /// whose link the edit took out.
+    #[test]
+    fn keep_linked_drops_previews_of_links_edited_away() {
+        let (a, b) = ("https://a.example.com/x", "https://b.example.com/y");
+        let mut embeds = vec![card(a), card(b)];
+        keep_linked(&mut embeds, "now only https://B.example.com/y#top");
+        assert_eq!(embeds, vec![card(b)]);
+        keep_linked(&mut embeds, "no links");
+        assert!(embeds.is_empty());
     }
 }

@@ -9,7 +9,7 @@ use futures::SinkExt;
 use pulse_protocol::gateway::{ClientFrame, Event, ServerFrame};
 use pulse_protocol::ids::{ChannelId, MessageId, UserId};
 use pulse_protocol::rest::{Channel, ClipUpload, EmbedProvider, MediaInfo, Message};
-use pulse_server::config::Config;
+use pulse_server::config::{Config, EmbedConfig};
 use pulse_server::limits::{LimitsConfig, Rate};
 use pulse_server::testing::fake_provider::{FakeProvider, YOUTUBE_ID};
 use serde_json::json;
@@ -86,9 +86,14 @@ async fn setup() -> Env {
 
 /// alex and sam in a server, on an app whose unfurler reads the fake provider.
 async fn setup_with(limits: LimitsConfig) -> Env {
+    setup_full(limits, |c| c).await
+}
+
+/// [`setup_with`], with the fake's `EmbedConfig` changed by `embeds`.
+async fn setup_full(limits: LimitsConfig, embeds: impl FnOnce(EmbedConfig) -> EmbedConfig) -> Env {
     let fake = FakeProvider::start().await;
     let app = spawn_with(Config {
-        embeds: fake.config(),
+        embeds: embeds(fake.config()),
         limits,
         ..test_config()
     })
@@ -163,6 +168,21 @@ async fn hello(app: &TestApp, token: &str) -> Socket {
             Some(ServerFrame::Ready(_)) => return ws,
             Some(_) => continue,
             None => panic!("expected Ready"),
+        }
+    }
+}
+
+/// The next `MessageUpdated` for `id` on `ws` (up to 5 s).
+async fn next_update(ws: &mut Socket, id: MessageId) -> Message {
+    loop {
+        match next_frame_beating(ws, Duration::from_secs(5))
+            .await
+            .expect("a MessageUpdated")
+        {
+            ServerFrame::Event(Event::MessageUpdated { message }) if message.id == id => {
+                return message;
+            }
+            _ => continue,
         }
     }
 }
@@ -244,6 +264,8 @@ async fn a_private_ip_link_gets_no_card_and_the_message_is_unchanged() {
 async fn editing_adds_new_cards_and_drops_removed_ones() {
     let env = setup().await;
     let (one, two) = (env.page(1), env.page(2));
+    // Listening from before the send, so the cards' own update is seen go by first.
+    let mut ws = hello(&env.app, &env.sam_t).await;
     let m = send(
         &env.app,
         &env.alex_t,
@@ -251,9 +273,8 @@ async fn editing_adds_new_cards_and_drops_removed_ones() {
         &format!("{one} and {YOUTUBE}"),
     )
     .await;
-    wait_for_embeds(&env, &env.alex_t, env.ch, m.id, 2).await;
+    assert_eq!(next_update(&mut ws, m.id).await.embeds.len(), 2);
 
-    let mut ws = hello(&env.app, &env.sam_t).await;
     let r = env
         .edit(&env.alex_t, m.id, &format!("{YOUTUBE} and now {two}"))
         .await;
@@ -325,10 +346,10 @@ async fn an_edit_during_the_fetch_drops_the_stale_card() {
 async fn hidden_stays_hidden_through_edits_and_for_everyone() {
     let env = setup().await;
     let (one, two) = (env.page(1), env.page(2));
-    let m = send(&env.app, &env.alex_t, env.ch, &format!("{one} {YOUTUBE}")).await;
-    wait_for_embeds(&env, &env.alex_t, env.ch, m.id, 2).await;
-
     let mut ws = hello(&env.app, &env.sam_t).await;
+    let m = send(&env.app, &env.alex_t, env.ch, &format!("{one} {YOUTUBE}")).await;
+    assert_eq!(next_update(&mut ws, m.id).await.embeds.len(), 2);
+
     // Matched after normalising (the fragment isn't part of the link).
     let r = env
         .hide(&env.alex_t, m.id, Some(&format!("{one}#top")))
@@ -535,4 +556,226 @@ async fn quotes_and_clips_get_no_previews() {
     assert!(env.rows(quote.id).await.is_empty());
     assert!(env.rows(clip.id).await.is_empty());
     assert!(!env.requested("n=1") && !env.requested("n=2"));
+}
+
+/// How many times the fake served its thumbnail.
+fn thumb_hits(env: &Env) -> usize {
+    env.fake
+        .requests()
+        .iter()
+        .filter(|r| r.starts_with("/thumb.png"))
+        .count()
+}
+
+/// Edits that keep the same links have nothing to fetch, so they spend nothing: a later edit
+/// that adds a link still gets its preview under a small limit.
+#[tokio::test]
+async fn edits_that_keep_the_links_spend_no_unfurl_budget() {
+    let env = setup_with(LimitsConfig {
+        unfurl_user: Rate::new(2, 0.0001),
+        ..LimitsConfig::unlimited()
+    })
+    .await;
+    let (one, two) = (env.page(1), env.page(2));
+    let m = send(&env.app, &env.alex_t, env.ch, &format!("see {one}")).await;
+    wait_for_embeds(&env, &env.alex_t, env.ch, m.id, 1).await;
+    for text in ["sea", "see,", "see:", "look at"] {
+        let r = env.edit(&env.alex_t, m.id, &format!("{text} {one}")).await;
+        assert_eq!(r.status(), 200);
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    let r = env
+        .edit(&env.alex_t, m.id, &format!("look at {one} and {two}"))
+        .await;
+    assert_eq!(r.status(), 200);
+    let got = wait_for_embeds(&env, &env.alex_t, env.ch, m.id, 2).await;
+    assert_eq!(urls(&got), vec![one.as_str(), two.as_str()]);
+}
+
+/// A link whose preview takes too long is given up on, and its slot goes to the next one long
+/// before the fetch itself would time out.
+#[tokio::test]
+async fn a_preview_past_its_deadline_frees_its_slot() {
+    // Long enough for a whole preview (thumbnail processing included, in a debug build), far
+    // shorter than one fetch may take.
+    let env = setup_full(LimitsConfig::unlimited(), |c| EmbedConfig {
+        link_deadline: Duration::from_millis(1500),
+        timeout: Duration::from_secs(30),
+        max_concurrent: 1,
+        ..c
+    })
+    .await;
+    let held = env.fake.url("site.test", "/held");
+    let stuck = send(&env.app, &env.alex_t, env.ch, &held).await;
+    until("the held fetch", || env.requested("/held")).await;
+    let t = Instant::now();
+    let m = send(&env.app, &env.sam_t, env.ch, &env.page(1)).await;
+    wait_for_embeds(&env, &env.sam_t, env.ch, m.id, 1).await;
+    assert!(
+        t.elapsed() < Duration::from_secs(4),
+        "waited {:?} for the slot",
+        t.elapsed()
+    );
+    assert!(env.rows(stuck.id).await.is_empty());
+}
+
+/// One user's previews are fetched for at most two messages at once; a third message gets
+/// none, and nobody else is held up.
+#[tokio::test]
+async fn one_user_has_at_most_two_unfurls_in_flight() {
+    let env = setup().await;
+    let held = |n: u32| env.fake.url("site.test", &format!("/held?n={n}"));
+    let a = send(&env.app, &env.alex_t, env.ch, &held(1)).await;
+    let b = send(&env.app, &env.alex_t, env.ch, &held(2)).await;
+    until("both held fetches", || {
+        env.requested("/held?n=1") && env.requested("/held?n=2")
+    })
+    .await;
+    let dropped = send(&env.app, &env.alex_t, env.ch, &env.page(3)).await;
+    // sam isn't affected.
+    let other = send(&env.app, &env.sam_t, env.ch, &env.page(4)).await;
+    wait_for_embeds(&env, &env.sam_t, env.ch, other.id, 1).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(!env.requested("n=3"), "the third message isn't fetched");
+
+    env.fake.release();
+    wait_for_embeds(&env, &env.alex_t, env.ch, a.id, 1).await;
+    wait_for_embeds(&env, &env.alex_t, env.ch, b.id, 1).await;
+    assert!(env.rows(dropped.id).await.is_empty());
+    // Done, alex's next message gets its preview again.
+    let next = send(&env.app, &env.alex_t, env.ch, &env.page(5)).await;
+    wait_for_embeds(&env, &env.alex_t, env.ch, next.id, 1).await;
+}
+
+/// When every slot is busy, only so many links wait for one; past that a link gets no preview
+/// (and isn't remembered as having none: sent again later, it gets one).
+#[tokio::test]
+async fn the_wait_for_a_slot_is_bounded() {
+    let env = setup_full(LimitsConfig::unlimited(), |c| EmbedConfig {
+        max_concurrent: 1,
+        max_waiting: 1,
+        ..c
+    })
+    .await;
+    let held = |n: u32| env.fake.url("site.test", &format!("/held?n={n}"));
+    let a = send(&env.app, &env.alex_t, env.ch, &held(1)).await;
+    until("the held fetch", || env.requested("/held?n=1")).await;
+    let b = send(&env.app, &env.sam_t, env.ch, &held(2)).await;
+    // b is waiting for the slot: nothing to see from outside but time.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let dropped = send(&env.app, &env.alex_t, env.ch, &env.page(3)).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    env.fake.release();
+    wait_for_embeds(&env, &env.alex_t, env.ch, a.id, 1).await;
+    wait_for_embeds(&env, &env.sam_t, env.ch, b.id, 1).await;
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    assert!(env.rows(dropped.id).await.is_empty());
+    assert!(!env.requested("n=3"), "the dropped link isn't fetched");
+
+    let again = send(&env.app, &env.alex_t, env.ch, &env.page(3)).await;
+    wait_for_embeds(&env, &env.alex_t, env.ch, again.id, 1).await;
+}
+
+/// Thumbnails cost disk: over the per-user limit, previews still come, without one.
+#[tokio::test]
+async fn over_the_thumbnail_limit_a_card_comes_without_one() {
+    let env = setup_with(LimitsConfig {
+        link_thumb_user: Rate::new(1, 0.0001),
+        ..LimitsConfig::unlimited()
+    })
+    .await;
+    let first = send(&env.app, &env.alex_t, env.ch, &env.page(1)).await;
+    let got = wait_for_embeds(&env, &env.alex_t, env.ch, first.id, 1).await;
+    assert!(got.embeds[0].thumb.is_some());
+    assert_eq!(thumb_hits(&env), 1);
+
+    let second = send(&env.app, &env.alex_t, env.ch, &env.page(2)).await;
+    let got = wait_for_embeds(&env, &env.alex_t, env.ch, second.id, 1).await;
+    let e = &got.embeds[0];
+    assert_eq!(e.title.as_deref(), Some("A page & more"));
+    assert!(e.thumb.is_none(), "{e:?}");
+    assert_eq!(thumb_hits(&env), 1, "the thumbnail isn't fetched");
+
+    // sam has his own allowance.
+    let his = send(&env.app, &env.sam_t, env.ch, &env.page(3)).await;
+    let got = wait_for_embeds(&env, &env.sam_t, env.ch, his.id, 1).await;
+    assert!(got.embeds[0].thumb.is_some());
+}
+
+/// A message deleted while its previews are fetched gets none: no rows, and no update with
+/// previews goes out for it.
+#[tokio::test]
+async fn a_delete_during_the_fetch_stores_nothing() {
+    let env = setup().await;
+    let held = env.fake.url("site.test", "/held");
+    let m = send(&env.app, &env.alex_t, env.ch, &format!("wait for {held}")).await;
+    until("the held fetch", || env.requested("/held")).await;
+    let mut ws = hello(&env.app, &env.sam_t).await;
+    let r = env
+        .app
+        .http
+        .delete(env.app.url(&format!("/messages/{}", m.id)))
+        .bearer_auth(&env.alex_t)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+
+    let before = thumb_hits(&env);
+    env.fake.release();
+    until("the held page's thumbnail", || thumb_hits(&env) > before).await;
+    let deadline = Instant::now() + Duration::from_millis(800);
+    while Instant::now() < deadline {
+        if let Some(ServerFrame::Event(Event::MessageUpdated { message })) =
+            next_frame_beating(&mut ws, Duration::from_millis(200)).await
+        {
+            assert!(
+                message.id != m.id || message.embeds.is_empty(),
+                "previews published for a deleted message: {message:?}"
+            );
+        }
+    }
+    assert!(env.rows(m.id).await.is_empty());
+}
+
+/// Hiding a preview while another link of the same message is being fetched: the fetch's store
+/// lands and the hidden one stays hidden.
+#[tokio::test]
+async fn a_hide_during_a_fetch_survives_its_store() {
+    let env = setup().await;
+    let page = env.page(1);
+    let held = env.fake.url("site.test", "/held");
+    let m = send(&env.app, &env.alex_t, env.ch, &page).await;
+    wait_for_embeds(&env, &env.alex_t, env.ch, m.id, 1).await;
+    let r = env
+        .edit(&env.alex_t, m.id, &format!("{page} and {held}"))
+        .await;
+    assert_eq!(r.status(), 200);
+    until("the held fetch", || env.requested("/held")).await;
+
+    let r = env.hide(&env.alex_t, m.id, Some(&page)).await;
+    assert_eq!(r.status(), 200);
+    let mut ws = hello(&env.app, &env.sam_t).await;
+    env.fake.release();
+    loop {
+        match next_frame_beating(&mut ws, Duration::from_secs(5))
+            .await
+            .expect("the store's MessageUpdated")
+        {
+            ServerFrame::Event(Event::MessageUpdated { message }) if message.id == m.id => {
+                assert_eq!(urls(&message), vec![held.as_str()]);
+                break;
+            }
+            _ => continue,
+        }
+    }
+    assert_eq!(
+        env.rows(m.id).await,
+        vec![(page.clone(), true), (held.clone(), false)]
+    );
+    assert_eq!(
+        urls(&env.read(&env.sam_t, env.ch, m.id).await),
+        vec![held.as_str()]
+    );
 }
