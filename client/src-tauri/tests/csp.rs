@@ -85,3 +85,25 @@ fn the_base_csps_allow_no_loopback_media() {
         assert!(!media_src(&csp(name)).contains(&LOOPBACK), "{name}");
     }
 }
+
+const ALL: [&str; 4] = [
+    "tauri.conf.json",
+    "tauri.dev.conf.json",
+    "tauri.linux.conf.json",
+    "tauri.dev.linux.conf.json",
+];
+
+/// Link-preview players are iframes of the server's embed page, and only production's: the one
+/// frame source every config allows (link embeds spec, "Settled after the builder check").
+#[test]
+fn every_csp_frames_only_the_embed_page_origin() {
+    for name in ALL {
+        let csp = csp(name);
+        let framing: Vec<&str> = csp
+            .split(';')
+            .map(str::trim)
+            .filter(|d| d.starts_with("frame-src") || d.starts_with("child-src"))
+            .collect();
+        assert_eq!(framing, ["frame-src https://pulsechat.co.za"], "{name}");
+    }
+}

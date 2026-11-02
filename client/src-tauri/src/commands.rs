@@ -1168,6 +1168,29 @@ pub async fn delete_message(
     core.check(&app, api.delete_message(&token, message_id).await)
 }
 
+/// Removes your message's preview for `url`, or all of them (`None`), for everyone.
+#[tauri::command]
+pub async fn hide_embed(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    url: Option<String>,
+) -> Result<Message, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.hide_embed(&token, message_id, url.as_deref()).await,
+    )
+}
+
+/// Where link-preview players load from: the embed page's origin, only when signed in to the
+/// server the app CSP allows framing (`None` otherwise: play opens the link instead).
+#[tauri::command]
+pub fn embed_origin(core: State<'_, Core>) -> Option<String> {
+    let (api, _) = core.current().ok()?;
+    crate::embed_window::embed_origin_for(api.base()).map(str::to_owned)
+}
+
 /// Tell others you're typing (the UI throttles to 1 per 3 s).
 #[tauri::command]
 pub fn send_typing(core: State<'_, Core>, channel_id: pulse_protocol::ids::ChannelId) {

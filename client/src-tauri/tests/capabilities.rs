@@ -13,6 +13,8 @@ fn capability_files() -> Vec<std::path::PathBuf> {
     files
 }
 
+/// Also what keeps the link-preview pop-out (window `embed`, a remote page) without any
+/// capability: no file may name it, by label or wildcard, nor add `webviews` or `remote` scopes.
 #[test]
 fn only_the_default_capability_exists_and_targets_main() {
     let files = capability_files();

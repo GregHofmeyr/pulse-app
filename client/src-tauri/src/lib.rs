@@ -3,6 +3,7 @@ pub mod backoff;
 pub mod bindmatch;
 pub mod clips;
 pub mod commands;
+pub mod embed_window;
 pub mod gateway;
 pub mod hookwatch;
 pub mod hotkeys;
@@ -34,14 +35,14 @@ static FOCUS_LOG_BUDGET: std::sync::Mutex<Option<logging::LineBudget>> =
 
 /// The main window is built here rather than in tauri.conf.json so each profile gets its own
 /// webview storage (settings, per-user volumes) and so we can recover if the renderer dies.
-fn create_main_window(app: &tauri::App, profile_dir: &std::path::Path) -> tauri::Result<()> {
+fn create_main_window(app: &tauri::App, data_dir: &std::path::Path) -> tauri::Result<()> {
     let win = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
         .title("Pulse")
         .inner_size(1280.0, 800.0)
         .min_inner_size(900.0, 560.0)
         .decorations(false)
         .background_color(tauri::window::Color(0x14, 0x15, 0x19, 0xff))
-        .data_directory(profile_dir.join("webview"))
+        .data_directory(data_dir.to_path_buf())
         .build()?;
     // If the page's process dies, reload (or restart) instead of leaving a dead window.
     #[cfg(any(target_os = "linux", windows))]
@@ -115,7 +116,10 @@ pub fn run() {
             app.state::<reports::settings::Store>().log_loaded();
             startup::mark("logging_ready"); // (since process start: covers crash checks + log setup)
             let webview_dir = session::profile_dir(&app.path().app_local_data_dir()?, profile.as_deref());
-            create_main_window(app, &webview_dir)?;
+            // The link-preview pop-out shares the main webview's data directory.
+            let webview_data = webview_dir.join("webview");
+            create_main_window(app, &webview_data)?;
+            app.manage(embed_window::WebviewData(webview_data));
             startup::mark("window_built");
             let emitter = app.handle().clone();
             let outbox = outbox::Outbox::new(std::sync::Arc::new(
@@ -249,6 +253,9 @@ pub fn run() {
             commands::send_message,
             commands::edit_message,
             commands::delete_message,
+            commands::hide_embed,
+            commands::embed_origin,
+            embed_window::open_embed_window,
             commands::join_voice,
             commands::leave_voice,
             commands::prefetch_voice,

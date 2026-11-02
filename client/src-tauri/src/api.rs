@@ -9,15 +9,15 @@ use pulse_protocol::rest::{
     AddGameRequest, AddMembersRequest, AddQotyOptionRequest, ChangePasswordRequest, Channel,
     ChannelKind, ClipFacets, ClipStorage, ClipUpload, ClipUploadRequest, ClipUrl, ClipView,
     ConfirmClipRequest, CreateDmRequest, CreateEmojiRequest, CustomEmoji, EditClipRequest,
-    EditMessageRequest, EditQuoteRequest, Game, GoLiveRequest, Leaderboard, LinkSpeakerRequest,
-    LoginMfaRequest, LoginRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired,
-    MuteTarget, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse,
-    RegisterRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest, SearchRequest,
-    SearchResults, SendMessageRequest, Server, SessionResponse, SetClipViewRequest, SetMuteRequest,
-    StartQotyRequest, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
-    ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
-    TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, User, VoiceTokenResponse,
-    WatchRequest,
+    EditMessageRequest, EditQuoteRequest, Game, GoLiveRequest, HideEmbedRequest, Leaderboard,
+    LinkSpeakerRequest, LoginMfaRequest, LoginRequest, MarkReadRequest, MediaInfo, Member, Message,
+    MfaRequired, MuteTarget, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest,
+    RecoveryCodesResponse, RegisterRequest, RenameChannelRequest, RenameEmojiRequest,
+    ReopenQotyRequest, SearchRequest, SearchResults, SendMessageRequest, Server, SessionResponse,
+    SetClipViewRequest, SetMuteRequest, StartQotyRequest, StreamInfo, StreamRole, StreamSettings,
+    StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
+    TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, User,
+    VoiceTokenResponse, WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -596,6 +596,27 @@ impl Api {
         Self::parse(
             self.http
                 .patch(format!("{}/messages/{id}", self.base))
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Removes the preview for `url` from your own message, or all of them (`None`), for everyone.
+    pub async fn hide_embed(
+        &self,
+        token: &str,
+        message_id: MessageId,
+        url: Option<&str>,
+    ) -> Result<Message, ApiError> {
+        let body = HideEmbedRequest {
+            url: url.map(Into::into),
+        };
+        Self::parse(
+            self.http
+                .post(format!("{}/messages/{message_id}/embeds/hide", self.base))
                 .bearer_auth(token)
                 .json(&body)
                 .send()
@@ -2574,6 +2595,60 @@ mod tests {
         );
         api.delete_message(&token, m.id).await.unwrap();
         assert!(api.messages(&token, g.id, None).await.unwrap()[0].deleted);
+    }
+
+    #[tokio::test]
+    async fn hide_one_preview_then_the_rest() {
+        use pulse_protocol::rest::{EmbedKind, EmbedProvider};
+        use pulse_server::embeds::Unfurled;
+        let app = testing::spawn().await;
+        let (_, token) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &token, "Main").await;
+        let g = testing::general(&app, &token, s.id).await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        // No links in the text: nothing is fetched; the previews are stored as the unfurler would.
+        let m = api
+            .send_message(
+                &token,
+                g.id,
+                &SendMessageRequest {
+                    content: "look".into(),
+                    reply_to_id: None,
+                    nonce: None,
+                    thread_root_id: None,
+                },
+            )
+            .await
+            .unwrap();
+        let card = |title: &str| Unfurled {
+            provider: EmbedProvider::Generic,
+            kind: EmbedKind::Card,
+            provider_id: None,
+            title: Some(title.into()),
+            description: None,
+            site_name: None,
+            author: None,
+            thumb: None,
+            start: None,
+            vertical: false,
+        };
+        let rows = vec![
+            (0, "https://example.com/a".to_string(), card("A")),
+            (1, "https://example.com/b".to_string(), card("B")),
+        ];
+        assert!(
+            pulse_server::embeds::store(&app.db, m.id, "look", rows)
+                .await
+                .unwrap()
+        );
+        let after = api
+            .hide_embed(&token, m.id, Some("https://example.com/a"))
+            .await
+            .unwrap();
+        let urls: Vec<_> = after.embeds.iter().map(|e| e.url.as_str()).collect();
+        assert_eq!(urls, ["https://example.com/b"]);
+        let after = api.hide_embed(&token, m.id, None).await.unwrap();
+        assert!(after.embeds.is_empty());
     }
 
     #[tokio::test]
