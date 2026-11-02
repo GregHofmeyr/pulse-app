@@ -388,7 +388,7 @@ pub fn used_in(content: &str) -> Vec<String> {
         push_standard(&rest[..start], &mut push);
         rest = &rest[start..];
         match custom_token(rest) {
-            Some((id, len)) => {
+            Some((_, id, len)) => {
                 push(format!("custom:{id}"));
                 rest = &rest[len..];
             }
@@ -408,15 +408,16 @@ fn push_standard(text: &str, push: &mut impl FnMut(String)) {
     }
 }
 
-/// `<:name:id>` or `<a:name:id>` at the start of `s`: the id and the token's length.
-fn custom_token(s: &str) -> Option<(&str, usize)> {
+/// `<:name:id>` or `<a:name:id>` at the start of `s`: the name, the id and the token's length.
+/// (Search shows the name in place of the token.)
+pub(crate) fn custom_token(s: &str) -> Option<(&str, &str, usize)> {
     let end = s.find('>')?;
     let inner = s[1..end]
         .strip_prefix("a:")
         .or_else(|| s[1..end].strip_prefix(':'))?;
     let (name, id) = inner.split_once(':')?;
     let word = |w: &str| !w.is_empty() && w.chars().all(|c| c.is_ascii_alphanumeric() || c == '_');
-    (word(name) && word(id)).then_some((id, end + 1))
+    (word(name) && word(id)).then_some((name, id, end + 1))
 }
 
 /// Of `keys`, those `user` may use: standard emoji, and live custom emoji of servers `user` is
