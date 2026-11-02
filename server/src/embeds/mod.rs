@@ -4,6 +4,7 @@
 pub mod fetch;
 pub mod links;
 pub mod meta;
+pub mod page;
 pub mod providers;
 pub mod routes;
 pub mod unfurl;

@@ -302,6 +302,19 @@ check_compose_hardening() {
 check_caddy_config_volume() {
   compose_service "$1" caddy | grep -Eq '^ +- \./caddy/config:/config$'
 }
+# check_compose_public_url FILE: the server knows its public origin (the embed page and Twitch's parent=); without
+# PULSE_PUBLIC_URL the embed page answers 404 and the app's players have nothing to load.
+check_compose_public_url() {
+  # shellcheck disable=SC2016 # a literal compose expression
+  compose_service "$1" pulse-server | grep -Eq '^ +PULSE_PUBLIC_URL: https://\$\{PULSE_DOMAIN:\?\}$'
+}
+# check_caddy_embed FILE: the main site passes /embed/* to the server like everything else (no respond or handle
+# for it in front of the proxy).
+check_caddy_embed() {
+  local site
+  site=$(caddy_site "$1" "{\$PULSE_DOMAIN}")
+  grep -q 'reverse_proxy 127.0.0.1:7890' <<<"$site" && ! grep -Eq '^[[:space:]]*[a-z_]+[[:space:]]+/embed' <<<"$site"
+}
 # result STATUS DESCRIPTION: STATUS 0 is a pass.
 result() {
   if [ "$1" -eq 0 ]; then echo "ok   $2"; else echo "FAIL $2"; failed=1; fi
@@ -316,6 +329,10 @@ rc=0; check_compose_hardening "$compose" || rc=$?
 result "$rc" "compose: caps dropped, no-new-privileges, pids and memory ceilings"
 rc=0; check_caddy_config_volume "$compose" || rc=$?
 result "$rc" "compose: caddy mounts its /config volume (the admin socket's home)"
+rc=0; check_compose_public_url "$compose" || rc=$?
+result "$rc" "compose: the server gets PULSE_PUBLIC_URL (the embed page)"
+rc=0; check_caddy_embed "$caddyfile" || rc=$?
+result "$rc" "Caddy passes /embed/* to the server"
 # and the checks catch drift: each must refuse a copy broken by the given sed expression.
 # refused DESCRIPTION: the previous check (rc) must have failed.
 refused() { if [ "$rc" -ne 0 ]; then echo "ok   drift caught: $1"; else echo "FAIL drift not caught: $1"; failed=1; fi; }
@@ -328,6 +345,10 @@ sed '/respond \/twirp/d' "$caddyfile" >"$drift"
 rc=0; check_caddy_twirp "$drift" || rc=$?; refused "/twirp/ not blocked"
 sed '/respond \/twirp/d; s#^\([[:space:]]*\)reverse_proxy 127.0.0.1:7880$#&\n\1respond /twirp/* 404#' "$caddyfile" >"$drift"
 rc=0; check_caddy_twirp "$drift" || rc=$?; refused "/twirp/ blocked after the proxy"
+sed '/PULSE_PUBLIC_URL/d' "$compose" >"$drift"
+rc=0; check_compose_public_url "$drift" || rc=$?; refused "no PULSE_PUBLIC_URL"
+sed 's#^\([[:space:]]*\)respond /livekit/webhook\* 404$#&\n\1respond /embed/* 404#' "$caddyfile" >"$drift"
+rc=0; check_caddy_embed "$drift" || rc=$?; refused "/embed/ blocked"
 sed '/^  livekit:/,/^  caddy:/{/cap_drop/d}' "$compose" >"$drift"
 rc=0; check_compose_hardening "$drift" 2>/dev/null || rc=$?; refused "livekit keeps its capabilities"
 sed '/^  pulse-server:/,/^  livekit:/{/security_opt/d}' "$compose" >"$drift"

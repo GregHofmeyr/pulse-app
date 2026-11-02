@@ -426,12 +426,35 @@ below the configured minimum (2 GB by default). The check comes after sign-in an
 - **Remote images.** Remote images are never loaded. Only bundled emoji and the client's own emoji cache can be images.
 - **Links.** Links must be `http(s):` or `mailto:`.
 
+**Link-embed page.** `GET /embed/<provider>/<id>` is the one page the server serves without a session. It is a small
+static page that frames a provider's official player (YouTube, TikTok, Spotify, SoundCloud, Twitch clips, Instagram),
+and the app frames it, so the player gets an HTTPS parent with a real origin.
+- **Off by default.** It answers only when `PULSE_PUBLIC_URL` (the server's public origin) is set; otherwise every
+  path gives the normal 404. The deployment sets it to `https://<domain>`.
+- **No open redirect or open frame.** The player URL is built only from a fixed template per provider and an id that
+  must match that provider's exact shape (length and characters). An unknown provider, a generic link or an id that
+  doesn't match gets a 404. The page never answers with a redirect. The only query value read is a YouTube `start`
+  (digits only, at most a week in seconds); a `start` anywhere else, or a malformed one, gets a 404. Other query
+  values are ignored, never passed on. Twitch's `parent=` is the host of `PULSE_PUBLIC_URL`, never anything from the
+  request.
+- **The page itself.** No script. The player URL is HTML-escaped into the iframe's `src`. The response carries
+  `Content-Security-Policy: default-src 'none'; style-src 'unsafe-inline'; frame-src <that provider's player origin>;
+  frame-ancestors http://tauri.localhost https://tauri.localhost tauri:; base-uri 'none'; form-action 'none'`, so it
+  can frame only that one player and can be framed only by the app. It also sends
+  `Referrer-Policy: strict-origin-when-cross-origin` (the same in a `<meta>`), `X-Content-Type-Options: nosniff` and
+  `Cache-Control: public, max-age=3600`.
+- **What it reveals.** Nothing about Pulse's users or messages: it only reflects a provider id the caller already
+  holds. The provider learns the viewer's IP address and our origin when the player loads, which happens only after
+  the member clicks play.
+
 **Client webview lockdown.**
 - **Content Security Policy.** The UI runs under a strict CSP:
   - `default-src 'self'`;
   - no `unsafe-eval` and no inline scripts (inline styles are allowed: `style-src 'self' 'unsafe-inline'`);
   - images only from the app itself, `data:` and the app's emoji cache;
   - `connect-src` limited to the app's own IPC and the voice server;
+  - `frame-src https://pulsechat.co.za` only: the app may frame nothing but the server's link-embed page (section 4),
+    which frames the provider's player in turn;
   - on Linux only, `media-src` also allows `http://127.0.0.1:*`. The Linux webview (WebKitGTK) will not play video from
     the asset protocol, so the clip editor plays the local file from a server in the Rust core instead. It listens on
     `127.0.0.1` at a random port and serves only `GET` and `HEAD` of `/<token>`, and only with a `Host` of

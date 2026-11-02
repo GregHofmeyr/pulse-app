@@ -36,6 +36,8 @@ services:
       PULSE_LIVEKIT_KEY: pulse
       PULSE_LIVEKIT_SECRET: ${LIVEKIT_SECRET:?}
       PULSE_TOTP_KEY: ${PULSE_TOTP_KEY:?}
+      # The server's public origin: serves the link-embed page (/embed/...) and is Twitch's player parent.
+      PULSE_PUBLIC_URL: https://${PULSE_DOMAIN:?}
       # Clips storage (deploy/README.md, "Clips storage"). The server treats an empty bucket, key or secret as "not
       # configured" whatever the endpoint is; deploy.sh refuses a half-filled set.
       PULSE_CLIPS_S3_ENDPOINT: https://${R2_ACCOUNT_ID:-unset}.r2.cloudflarestorage.com

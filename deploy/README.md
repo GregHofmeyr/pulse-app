@@ -15,7 +15,8 @@ One small Ubuntu server, three containers (Docker Compose, all on host networkin
 | `livekit` | voice | 7880 (signalling, firewalled; reached through Caddy), 7881/tcp, 7882/udp, 3478/udp (public) |
 
 - `https://pulsechat.co.za` → Caddy → pulse-server. `/livekit/webhook` is answered with 404 by Caddy; LiveKit
-  posts there over loopback.
+  posts there over loopback. The public link-embed page (`/embed/<provider>/<id>`) goes through like the rest; compose
+  sets `PULSE_PUBLIC_URL=https://${PULSE_DOMAIN}` for it (without it the page answers 404).
 - `wss://voice.pulsechat.co.za` → Caddy → LiveKit signalling. Audio goes straight to LiveKit over UDP.
 - Firewall allow-list: `80/tcp 443/tcp 7881/tcp 7882/udp 3478/udp 41641/udp` (41641 = Tailscale). SSH only
   over Tailscale.
