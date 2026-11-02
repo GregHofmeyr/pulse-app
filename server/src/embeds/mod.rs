@@ -221,9 +221,10 @@ pub fn parse_provider(s: &str) -> EmbedProvider {
     }
 }
 
+/// An `EmbedKind` as stored. The unfurler never builds `Unknown`; it would be stored as a card.
 pub fn kind_str(k: EmbedKind) -> &'static str {
     match k {
-        EmbedKind::Card => "card",
+        EmbedKind::Card | EmbedKind::Unknown => "card",
         EmbedKind::Player => "player",
     }
 }

@@ -36,7 +36,7 @@ export function providerLabel(e: LinkEmbed): string {
   return e.site_name?.trim() || host(e.url)
 }
 
-/** A player this build knows, with its id: gets a play button. */
+/** A player this build knows, with its id: gets a play button. Any other kind (`unknown` too) is a card. */
 export function playable(e: LinkEmbed): boolean {
   return e.kind === 'player' && isPlayerProvider(e.provider) && !!e.provider_id
 }
@@ -44,11 +44,14 @@ export function playable(e: LinkEmbed): boolean {
 /** Instagram plays in a capability-free pop-out window, not inline. */
 export const popsOut = (e: LinkEmbed): boolean => e.provider === 'instagram'
 
-/** Our embed page for this player (YouTube keeps its start time). */
+/** The longest start the embed page takes (a week, the server's `page::MAX_START`). */
+export const MAX_START = 7 * 86400
+
+/** Our embed page for this player (YouTube keeps its start time, when the page would take it). */
 export function playerSrc(origin: string, e: LinkEmbed): string {
   const base = `${origin.replace(/\/+$/, '')}/embed/${e.provider}/${encodeURIComponent(e.provider_id ?? '')}`
   const start = e.provider === 'youtube' && e.start && e.start > 0 ? Math.floor(e.start) : 0
-  return start ? `${base}?start=${start}` : base
+  return start && start <= MAX_START ? `${base}?start=${start}` : base
 }
 
 /** The player's shape: 16:9, 9:16 (TikTok, Shorts, reels) or a fixed-height audio strip. */

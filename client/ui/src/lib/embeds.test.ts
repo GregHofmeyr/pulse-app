@@ -40,6 +40,8 @@ describe('playable', () => {
     expect(playable(e({ provider_id: null }))).toBe(false)
     expect(playable(e({ provider_id: '' }))).toBe(false)
     expect(playable(e({ kind: 'card' }))).toBe(false)
+    // A kind a newer server sends that this build doesn't know is shown as a card.
+    expect(playable(e({ kind: 'unknown' }))).toBe(false)
   })
 })
 
@@ -55,6 +57,10 @@ describe('playerSrc', () => {
   it('keeps a YouTube start, and only for YouTube', () => {
     expect(playerSrc(ORIGIN, e({ start: 42 }))).toBe('https://pulsechat.co.za/embed/youtube/dQw4w9WgXcQ?start=42')
     expect(playerSrc(ORIGIN, e({ start: 0 }))).toBe('https://pulsechat.co.za/embed/youtube/dQw4w9WgXcQ')
+    // The embed page takes a start of at most a week; past that the player starts at the top.
+    expect(playerSrc(ORIGIN, e({ start: 604800 }))).toBe('https://pulsechat.co.za/embed/youtube/dQw4w9WgXcQ?start=604800')
+    expect(playerSrc(ORIGIN, e({ start: 604801 }))).toBe('https://pulsechat.co.za/embed/youtube/dQw4w9WgXcQ')
+    expect(playerSrc(ORIGIN, e({ start: 4294967295 }))).toBe('https://pulsechat.co.za/embed/youtube/dQw4w9WgXcQ')
     expect(playerSrc(ORIGIN, e({ provider: 'tiktok', provider_id: '7300000000000000000', start: 42 })))
       .toBe('https://pulsechat.co.za/embed/tiktok/7300000000000000000')
   })

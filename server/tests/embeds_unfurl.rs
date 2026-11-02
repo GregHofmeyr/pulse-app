@@ -58,9 +58,9 @@ async fn setup() -> Env {
     }
 }
 
-/// The thumbnail is a `link_thumb` media row with its file on disk, fitted to 640 wide.
+/// The thumbnail is a `link_thumb` media row with its file on disk, fitted to 480 wide.
 async fn assert_stored_thumb(env: &Env, thumb: &EmbedThumb) {
-    assert_eq!((thumb.width, thumb.height), (640, 360));
+    assert_eq!((thumb.width, thumb.height), (480, 270));
     let kind: String = sqlx::query_scalar("SELECT kind FROM media WHERE hash = ?")
         .bind(&thumb.hash)
         .fetch_one(&env.app.db)

@@ -4,6 +4,11 @@
 //! - `http`/`https` on ports 80 and 443 only, no credentials in the URL;
 //! - our own DNS resolution, refusing a name if *any* answer isn't public, and connecting to the
 //!   checked answers (a resolver inside the client, so no second lookup can rebind the name);
+//! - IP-literal hosts (including the number and short forms the URL parser reads as IPv4, such
+//!   as `2130706433` or `127.1`) checked the same way. "Public" is [`is_public`]: not private,
+//!   loopback, link-local, carrier-grade NAT, benchmarking, multicast or reserved, and no IPv6
+//!   form that reaches IPv4 or tunnels elsewhere (mapped, compatible, NAT64 `64:ff9b::/96` and
+//!   `64:ff9b:1::/48`, 6to4 `2002::/16`, Teredo `2001::/32`) or discards (`100::/64`);
 //! - redirects followed by hand, each one checked again;
 //! - one timeout over the whole fetch, size caps, and only the content type asked for.
 
@@ -132,20 +137,27 @@ impl From<reqwest::Error> for FetchError {
 
 /// Whether `ip` is an address on the public internet. False for this host, private and
 /// carrier-grade NAT ranges, link-local (cloud metadata), benchmarking, multicast and reserved
-/// ranges, and for IPv6 forms that carry one of those IPv4 addresses (mapped, compatible, NAT64).
+/// ranges, for IPv6 forms that carry one of those IPv4 addresses (mapped, compatible, NAT64),
+/// and for all of the IPv6 prefixes whose far side we can't check: local-use NAT64
+/// (`64:ff9b:1::/48`), 6to4 (`2002::/16`), Teredo (`2001::/32`) and discard-only (`100::/64`).
 pub fn is_public(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => v4_public(v4),
         IpAddr::V6(v6) => match embedded_v4(v6) {
             Some(v4) => v4_public(v4),
             None => {
-                let first = v6.segments()[0];
+                let s = v6.segments();
+                let first = s[0];
                 !(v6.is_unspecified()
                     || v6.is_loopback()
                     || first & 0xfe00 == 0xfc00 // unique local
                     || first & 0xffc0 == 0xfe80 // link-local
                     || first & 0xffc0 == 0xfec0 // site-local (deprecated)
-                    || first & 0xff00 == 0xff00) // multicast
+                    || first & 0xff00 == 0xff00 // multicast
+                    || first == 0x2002 // 6to4
+                    || (first == 0x2001 && s[1] == 0) // Teredo
+                    || s[..3] == [0x64, 0xff9b, 1] // local-use NAT64
+                    || s[..4] == [0x100, 0, 0, 0]) // discard-only
             }
         },
     }
@@ -469,6 +481,17 @@ mod tests {
             "::10.0.0.1",
             "64:ff9b::10.0.0.1",
             "64:ff9b::127.0.0.1",
+            // Tunnels and translators that reach IPv4 (or anything) on the far side.
+            "2002::1",
+            "2002:7f00:1::1",
+            "2002:cb00:7109::1",
+            "64:ff9b:1::a00:1",
+            "64:ff9b:1:ffff::1",
+            "2001::1",
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+            // Discard-only.
+            "100::1",
+            "100::ffff:ffff:ffff:ffff",
         ] {
             assert!(!is_public(ip.parse().unwrap()), "{ip}");
         }
@@ -487,6 +510,10 @@ mod tests {
             "2001:db8::1",
             "::ffff:192.0.2.1",
             "64:ff9b::203.0.113.9",
+            "2001:1::1",
+            "2003::1",
+            "64:ff9b:2::1",
+            "100:0:0:1::1",
         ] {
             assert!(is_public(ip.parse().unwrap()), "{ip}");
         }

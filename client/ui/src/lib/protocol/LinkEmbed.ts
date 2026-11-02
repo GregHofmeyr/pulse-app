@@ -9,7 +9,8 @@ import type { EmbedThumb } from "./EmbedThumb";
  */
 export type LinkEmbed = { 
 /**
- * The link as it appears in the message.
+ * The message's link, normalised (parsed and printed back as a URL: scheme and host
+ * lowercased, a default port dropped, no fragment), so it may differ from the text as typed.
  */
 url: string, provider: EmbedProvider, kind: EmbedKind, 
 /**

@@ -70,35 +70,59 @@ pub fn page_meta(html: &str) -> PageMeta {
     }
     let pick = |keys: &[&str]| keys.iter().find_map(|k| tags.get(k));
     PageMeta {
-        title: pick(&["og:title", "twitter:title", "title"]),
-        description: pick(&["og:description", "twitter:description", "description"]),
-        site_name: pick(&["og:site_name"]),
-        image: pick(&[
-            "og:image",
-            "og:image:url",
-            "og:image:secure_url",
-            "twitter:image",
-            "twitter:image:src",
-        ]),
+        title: pick(&TITLE_KEYS),
+        description: pick(&DESCRIPTION_KEYS),
+        site_name: pick(&SITE_NAME_KEYS),
+        image: pick(&IMAGE_KEYS),
     }
 }
 
-/// The tags seen so far, first one of each name kept.
+/// The tags each field reads, best first.
+const TITLE_KEYS: [&str; 3] = ["og:title", "twitter:title", "title"];
+const DESCRIPTION_KEYS: [&str; 3] = ["og:description", "twitter:description", "description"];
+const SITE_NAME_KEYS: [&str; 1] = ["og:site_name"];
+const IMAGE_KEYS: [&str; 5] = [
+    "og:image",
+    "og:image:url",
+    "og:image:secure_url",
+    "twitter:image",
+    "twitter:image:src",
+];
+/// Every tag [`page_meta`] reads; the rest aren't kept (a page can carry any number of them).
+const KEYS: [&str; 12] = [
+    TITLE_KEYS[0],
+    TITLE_KEYS[1],
+    TITLE_KEYS[2],
+    DESCRIPTION_KEYS[0],
+    DESCRIPTION_KEYS[1],
+    DESCRIPTION_KEYS[2],
+    SITE_NAME_KEYS[0],
+    IMAGE_KEYS[0],
+    IMAGE_KEYS[1],
+    IMAGE_KEYS[2],
+    IMAGE_KEYS[3],
+    IMAGE_KEYS[4],
+];
+
+/// The first value of each tag in [`KEYS`] seen so far.
 #[derive(Default)]
-struct Tags(Vec<(String, String)>);
+struct Tags([Option<String>; KEYS.len()]);
 
 impl Tags {
+    /// Keep `value` if `key` is one that's read and the first of its name.
     fn first(&mut self, key: &str, value: String) {
-        if !self.0.iter().any(|(k, _)| k == key) {
-            self.0.push((key.to_owned(), value));
+        if let Some(i) = KEYS.iter().position(|k| *k == key)
+            && self.0[i].is_none()
+        {
+            self.0[i] = Some(value);
         }
     }
     /// A tag's value, if it has any text.
     fn get(&self, key: &str) -> Option<String> {
-        self.0
-            .iter()
-            .find(|(k, _)| k == key)
-            .map(|(_, v)| v.trim().to_owned())
+        let i = KEYS.iter().position(|k| *k == key)?;
+        self.0[i]
+            .as_deref()
+            .map(|v| v.trim().to_owned())
             .filter(|v| !v.is_empty())
     }
 }
@@ -310,6 +334,29 @@ mod tests {
                <title>T</title>"#,
         );
         assert_eq!(m.title.as_deref(), Some("T"));
+    }
+
+    /// A hostile page of tens of thousands of distinct meta names reads in linear time: only
+    /// the names the preview uses are kept.
+    #[test]
+    fn a_megabyte_of_distinct_meta_names_parses_quickly() {
+        let mut html = String::from("<html><head>");
+        let tail = r#"<meta property="og:title" content="Found it"></head>"#;
+        let mut n = 0;
+        while html.len() + tail.len() + 40 < 1 << 20 {
+            html.push_str(&format!(r#"<meta name="k{n}" content="v">"#));
+            n += 1;
+        }
+        html.push_str(tail);
+        assert!(n > 30_000, "{n}");
+        let t = std::time::Instant::now();
+        let m = page_meta(&html);
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(1),
+            "{:?}",
+            t.elapsed()
+        );
+        assert_eq!(m.title.as_deref(), Some("Found it"));
     }
 
     #[test]

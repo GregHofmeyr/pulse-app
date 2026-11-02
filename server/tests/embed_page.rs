@@ -124,7 +124,7 @@ async fn each_provider_frames_its_official_player() {
         ),
         (
             "/embed/twitch/FunnyClip-abc_12",
-            "https://clips.twitch.tv/embed?clip=FunnyClip-abc_12&amp;parent=pulse.example.com&amp;parent=tauri.localhost&amp;autoplay=true",
+            "https://clips.twitch.tv/embed?clip=FunnyClip-abc_12&amp;parent=pulse.example.com&amp;parent=tauri.localhost&amp;parent=localhost&amp;autoplay=true",
             "https://clips.twitch.tv",
         ),
         (
@@ -253,7 +253,7 @@ async fn twitch_parent_is_the_public_host() {
     let (src, csp) = page(&app, "/embed/twitch/Clip1").await;
     assert_eq!(
         src,
-        "https://clips.twitch.tv/embed?clip=Clip1&amp;parent=chat.example.com&amp;parent=tauri.localhost&amp;autoplay=true"
+        "https://clips.twitch.tv/embed?clip=Clip1&amp;parent=chat.example.com&amp;parent=tauri.localhost&amp;parent=localhost&amp;autoplay=true"
     );
     assert_eq!(csp, csp_for("https://clips.twitch.tv"));
 }

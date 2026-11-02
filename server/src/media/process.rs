@@ -57,8 +57,8 @@ pub const BANNER_ANIM_MAX_OUTPUT: usize = 2 * 1024 * 1024;
 /// Link preview thumbnails (fetched by the server, not uploaded): input as large as the fetcher
 /// takes an image, the first frame only, fitted within a square on the long side.
 pub const LINK_THUMB_MAX_INPUT: usize = 8 * 1024 * 1024;
-pub const LINK_THUMB_SIDE: u32 = 640;
-pub const LINK_THUMB_MAX_OUTPUT: usize = 1024 * 1024;
+pub const LINK_THUMB_SIDE: u32 = 480;
+pub const LINK_THUMB_MAX_OUTPUT: usize = 256 * 1024;
 
 /// Largest Go Live preview upload accepted.
 pub const PREVIEW_MAX_INPUT: usize = 100 * 1024;
@@ -742,16 +742,17 @@ mod tests {
     }
 
     #[test]
-    fn link_thumb_fits_within_640_and_never_enlarges() {
+    fn link_thumb_fits_within_480_and_never_enlarges() {
+        assert_eq!((LINK_THUMB_SIDE, LINK_THUMB_MAX_OUTPUT), (480, 256 * 1024));
         let p = link_thumb(&png(2000, 1000)).unwrap();
-        assert_eq!((p.width, p.height, p.frames), (640, 320, 1));
+        assert_eq!((p.width, p.height, p.frames), (480, 240, 1));
         assert!(p.still.is_none() && is_webp(&p.webp));
         let out = image::load_from_memory_with_format(&p.webp, ImageFormat::WebP).unwrap();
-        assert_eq!((out.width(), out.height()), (640, 320));
+        assert_eq!((out.width(), out.height()), (480, 240));
         let p = link_thumb(&png(100, 50)).unwrap();
         assert_eq!((p.width, p.height), (100, 50));
         let p = link_thumb(&png(300, 1200)).unwrap();
-        assert_eq!((p.width, p.height), (160, 640));
+        assert_eq!((p.width, p.height), (120, 480));
     }
 
     #[test]

@@ -51,6 +51,29 @@ pub fn popout_url(provider: EmbedProvider, id: &str) -> Option<String> {
     ok.then(|| format!("https://www.instagram.com/{kind}/{code}/embed/"))
 }
 
+/// Where the pop-out may go: Instagram's pages and redirects (on `instagram.com` or a subdomain,
+/// or `facebook.com`'s, for its login and consent pages) and its media on `*.cdninstagram.com`;
+/// https on the default port, no credentials. Anything else, another site or a `javascript:` or
+/// `data:` URL, is refused.
+pub fn popout_may_navigate(u: &url::Url) -> bool {
+    let under = |host: &str, domain: &str| {
+        host.strip_suffix(domain)
+            .is_some_and(|rest| rest.is_empty() || rest.ends_with('.'))
+    };
+    let Some(url::Host::Domain(host)) = u.host() else {
+        return false;
+    };
+    u.scheme() == "https"
+        && u.port().is_none()
+        && u.username().is_empty()
+        && u.password().is_none()
+        && (under(host, "instagram.com")
+            || under(host, "facebook.com")
+            || host
+                .strip_suffix(".cdninstagram.com")
+                .is_some_and(|sub| !sub.is_empty()))
+}
+
 /// The main window's webview data directory. The pop-out uses the same one: WebView2 allows one
 /// environment per data directory with the same options, and one is enough.
 pub struct WebviewData(pub PathBuf);
@@ -87,8 +110,8 @@ pub async fn open_embed_window(
         .title("Pulse – Instagram")
         .inner_size(420.0, 760.0)
         .data_directory(data.0.clone())
-        // Instagram's own links and redirects stay on https; nothing else loads.
-        .on_navigation(|u| u.scheme() == "https")
+        // Instagram's own pages, redirects and media only; nothing else loads.
+        .on_navigation(popout_may_navigate)
         // window.open / target=_blank: refused (no further windows from remote content).
         .on_new_window(|_, _| NewWindowResponse::Deny)
         .build()
@@ -167,6 +190,41 @@ mod tests {
         }
         assert!(popout_url(Instagram, &format!("p:{}", "a".repeat(64))).is_some());
         assert!(popout_url(Instagram, "p:abcde").is_some());
+    }
+
+    #[test]
+    fn the_popout_stays_on_instagram_and_facebook() {
+        for ok in [
+            "https://www.instagram.com/p/Cabc_12-x/embed/",
+            "https://instagram.com/accounts/login/",
+            "https://help.instagram.com/x",
+            "https://scontent-jnb1-1.cdninstagram.com/v/t51/a.jpg",
+            "https://www.facebook.com/plugins/x",
+            "https://facebook.com/",
+            "https://m.facebook.com/x",
+        ] {
+            assert!(popout_may_navigate(&url::Url::parse(ok).unwrap()), "{ok}");
+        }
+        for bad in [
+            "http://www.instagram.com/p/Cabc_12-x/embed/",
+            "https://example.com/",
+            "https://instagram.com.example.com/",
+            "https://evilinstagram.com/",
+            "https://notfacebook.com/",
+            "https://cdninstagram.com.example.test/a.jpg",
+            "https://www.instagram.com:8443/",
+            "https://alex@www.instagram.com/",
+            "https://192.0.2.1/",
+            "javascript:alert(1)",
+            "data:text/html,hi",
+            "file:///etc/passwd",
+            "about:blank",
+        ] {
+            assert!(
+                !popout_may_navigate(&url::Url::parse(bad).unwrap()),
+                "{bad}"
+            );
+        }
     }
 
     #[test]

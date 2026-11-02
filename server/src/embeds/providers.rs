@@ -10,7 +10,7 @@ pub struct Detected {
     pub provider: EmbedProvider,
     /// Valid for [`valid_id`].
     pub id: String,
-    /// Where a YouTube video starts, in seconds.
+    /// Where a YouTube video starts, in seconds (at most `page::MAX_START`).
     pub start: Option<u32>,
     /// A 9:16 player (TikTok, Shorts, reels).
     pub vertical: bool,
@@ -93,7 +93,9 @@ fn yt(id: &str, url: &Url, vertical: bool) -> Detected {
         id: id.into(),
         start: param("t")
             .or_else(|| param("start"))
-            .and_then(|t| seconds(&t)),
+            .and_then(|t| seconds(&t))
+            // The embed page refuses more; a start it can't play is no start.
+            .filter(|&s| s <= super::page::MAX_START),
         vertical,
     }
 }
@@ -301,7 +303,7 @@ pub fn player_url(
                 return None;
             }
             format!(
-                "https://clips.twitch.tv/embed?clip={id}&parent={parent_host}&parent=tauri.localhost&autoplay=true"
+                "https://clips.twitch.tv/embed?clip={id}&parent={parent_host}&parent=tauri.localhost&parent=localhost&autoplay=true"
             )
         }
         EmbedProvider::Instagram => {
@@ -376,6 +378,18 @@ mod tests {
             det(&format!("https://www.youtube.com/watch?v={YT}&t=soon")),
             plain
         );
+        // So is one past the embed page's limit (a week).
+        assert_eq!(
+            det(&format!("https://www.youtube.com/watch?v={YT}&t=604800")),
+            known(Youtube, YT, Some(604_800), false)
+        );
+        for t in ["604801", "168h0m1s", "4294967295"] {
+            assert_eq!(
+                det(&format!("https://www.youtube.com/watch?v={YT}&t={t}")),
+                plain,
+                "{t}"
+            );
+        }
         assert_eq!(
             det(&format!("https://www.youtube.com/shorts/{YT}")),
             known(Youtube, YT, None, true)
@@ -629,7 +643,7 @@ mod tests {
         assert_eq!(
             player_url(Twitch, "FunnyClip-abc_12", None, "pulse.example.com").as_deref(),
             Some(
-                "https://clips.twitch.tv/embed?clip=FunnyClip-abc_12&parent=pulse.example.com&parent=tauri.localhost&autoplay=true"
+                "https://clips.twitch.tv/embed?clip=FunnyClip-abc_12&parent=pulse.example.com&parent=tauri.localhost&parent=localhost&autoplay=true"
             )
         );
         assert_eq!(

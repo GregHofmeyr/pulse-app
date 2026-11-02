@@ -214,7 +214,11 @@ async fn oembed(fetcher: &Fetcher, endpoint: &str, target: &str, json: bool) -> 
 /// The card text of the page at `url`, `None` when it can't be fetched.
 async fn page(fetcher: &Fetcher, url: &str) -> Option<Text> {
     let got = fetcher.get(url, Want::Html).await.ok()?;
-    let m = meta::page_meta(&String::from_utf8_lossy(&got.body));
+    // Up to a megabyte of markup to scan: off the async workers.
+    let body = got.body;
+    let m = tokio::task::spawn_blocking(move || meta::page_meta(&String::from_utf8_lossy(&body)))
+        .await
+        .ok()?;
     Some(Text {
         title: m.title.and_then(|s| meta::clean(&s, meta::TITLE_MAX)),
         description: m

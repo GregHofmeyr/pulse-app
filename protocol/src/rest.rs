@@ -931,6 +931,9 @@ pub enum EmbedKind {
     Card,
     /// A card whose thumbnail starts the provider's player (through the server's embed page).
     Player,
+    /// A kind this build doesn't know: shown as a card.
+    #[serde(other)]
+    Unknown,
 }
 
 /// A preview's thumbnail: a `link_thumb` media hash, a still WebP.
@@ -945,7 +948,8 @@ pub struct EmbedThumb {
 /// tags. Plain text throughout: the client never renders any of it as HTML.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct LinkEmbed {
-    /// The link as it appears in the message.
+    /// The message's link, normalised (parsed and printed back as a URL: scheme and host
+    /// lowercased, a default port dropped, no fragment), so it may differ from the text as typed.
     pub url: String,
     pub provider: EmbedProvider,
     pub kind: EmbedKind,
@@ -1229,6 +1233,19 @@ mod tests {
         .unwrap();
         assert_eq!(e.provider, EmbedProvider::Unknown);
         assert_eq!(e.kind, EmbedKind::Player);
+    }
+
+    /// A kind a newer server knows reads as `Unknown` here (shown as a card), rather than an
+    /// error that would lose the whole message.
+    #[test]
+    fn an_unknown_embed_kind_parses() {
+        let e: LinkEmbed = serde_json::from_str(
+            r#"{"url":"https://example.com/a","provider":"youtube","kind":"gallery",
+            "provider_id":"dQw4w9WgXcQ"}"#,
+        )
+        .unwrap();
+        assert_eq!(e.kind, EmbedKind::Unknown);
+        assert_eq!(e.provider, EmbedProvider::Youtube);
     }
 
     /// Everything after `kind` may be left out.

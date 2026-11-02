@@ -131,6 +131,35 @@ async fn fake() -> Fake {
             "/small.png",
             get(|| async { ([(header::CONTENT_TYPE, "image/png")], vec![1u8; 64]) }),
         )
+        .route(
+            // 10 chunks 150 ms apart: each one well inside the timeout, the whole body not.
+            "/drip",
+            get(|| async {
+                let chunks = futures::stream::unfold(0u32, |n| async move {
+                    if n == 10 {
+                        return None;
+                    }
+                    tokio::time::sleep(Duration::from_millis(150)).await;
+                    Some((
+                        Ok::<_, std::io::Error>(Bytes::from_static(b"<p>drip</p>")),
+                        n + 1,
+                    ))
+                });
+                html(Body::from_stream(chunks))
+            }),
+        )
+        .route(
+            // A redirect after 250 ms, `n` times: every hop inside the timeout, the chain not.
+            "/slow-hop/{n}",
+            get(|Path(n): Path<u32>| async move {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+                if n == 0 {
+                    html("<html></html>")
+                } else {
+                    found(format!("/slow-hop/{}", n - 1))
+                }
+            }),
+        )
         .route("/short", get(|| async { found(TIKTOK.into()) }))
         .route("/short-chain", get(|| async { found("/short".into()) }))
         .layer(middleware::from_fn_with_state(hits.clone(), count));
@@ -172,6 +201,25 @@ async fn refuses_private_loopback_link_local_and_metadata_addresses() {
     ] {
         let r = fetcher.get(&f.url(host, "/page"), Want::Html).await;
         assert!(matches!(r, Err(FetchError::Blocked)), "{host}: {r:?}");
+    }
+    assert_eq!(f.hits(), 0);
+}
+
+/// Hosts the URL parser reads as IPv4 (a bare number, hex, a short form) are loopback here,
+/// and refused like the dotted form, before any request.
+#[tokio::test]
+async fn refuses_loopback_written_as_a_number_or_short_form() {
+    let f = fake().await;
+    let fetcher = Fetcher::new(&EmbedConfig {
+        allowed_ips: vec![],
+        ..cfg(&f)
+    });
+    for host in ["2130706433", "0x7f.1", "127.1"] {
+        let url = f.url(host, "/page");
+        let r = fetcher.get(&url, Want::Html).await;
+        assert!(matches!(r, Err(FetchError::Blocked)), "{url}: {r:?}");
+        let r = fetcher.resolve_redirects(&url).await;
+        assert!(matches!(r, Err(FetchError::Blocked)), "{url}: {r:?}");
     }
     assert_eq!(f.hits(), 0);
 }
@@ -239,6 +287,68 @@ async fn times_out() {
     let r = fetcher.get(&f.url("site.test", "/slow"), Want::Html).await;
     assert!(matches!(r, Err(FetchError::Timeout)), "{r:?}");
     assert!(t.elapsed() < Duration::from_secs(2), "{:?}", t.elapsed());
+}
+
+/// The timeout is over the whole fetch: a body that keeps dripping, each piece in time, is cut
+/// off at it.
+#[tokio::test]
+async fn the_timeout_covers_a_dripping_body() {
+    let f = fake().await;
+    let fetcher = Fetcher::new(&EmbedConfig {
+        timeout: Duration::from_millis(600),
+        ..cfg(&f)
+    });
+    let t = Instant::now();
+    let r = fetcher.get(&f.url("site.test", "/drip"), Want::Html).await;
+    assert!(matches!(r, Err(FetchError::Timeout)), "{r:?}");
+    assert!(
+        t.elapsed() < Duration::from_millis(1200),
+        "{:?}",
+        t.elapsed()
+    );
+}
+
+/// ...and over every redirect hop together, not each one alone.
+#[tokio::test]
+async fn the_timeout_covers_a_chain_of_slow_redirects() {
+    let f = fake().await;
+    let fetcher = Fetcher::new(&EmbedConfig {
+        timeout: Duration::from_millis(600),
+        ..cfg(&f)
+    });
+    // One slow hop alone is fine.
+    fetcher
+        .get(&f.url("site.test", "/slow-hop/1"), Want::Html)
+        .await
+        .unwrap();
+    for (what, r) in [
+        (
+            "get",
+            fetcher
+                .get(&f.url("site.test", "/slow-hop/4"), Want::Html)
+                .await
+                .map(|_| ()),
+        ),
+        (
+            "resolve_redirects",
+            fetcher
+                .resolve_redirects(&f.url("site.test", "/slow-hop/4"))
+                .await
+                .map(|_| ()),
+        ),
+    ] {
+        assert!(matches!(r, Err(FetchError::Timeout)), "{what}: {r:?}");
+    }
+    let t = Instant::now();
+    let r = fetcher
+        .get(&f.url("site.test", "/slow-hop/4"), Want::Html)
+        .await;
+    assert!(matches!(r, Err(FetchError::Timeout)), "{r:?}");
+    assert!(
+        t.elapsed() < Duration::from_millis(1000),
+        "{:?}",
+        t.elapsed()
+    );
 }
 
 #[tokio::test]
