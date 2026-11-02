@@ -12,14 +12,21 @@ use pulse_protocol::rest::{
     EditMessageRequest, EditQuoteRequest, Game, GoLiveRequest, Leaderboard, LinkSpeakerRequest,
     LoginMfaRequest, LoginRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired,
     MuteTarget, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse,
-    RegisterRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest,
-    SendMessageRequest, Server, SessionResponse, SetClipViewRequest, SetMuteRequest,
+    RegisterRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest, SearchRequest,
+    SearchResults, SendMessageRequest, Server, SessionResponse, SetClipViewRequest, SetMuteRequest,
     StartQotyRequest, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
     ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
     TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, User, VoiceTokenResponse,
     WatchRequest,
 };
 use serde::de::DeserializeOwned;
+
+/// Where a message search looks: one whole server, or one DM or group on its own.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SearchScope {
+    Server(ServerId),
+    Conversation(ChannelId),
+}
 
 /// What a password login led to. Not `Debug`: both variants hold a credential.
 pub enum LoginOutcome {
@@ -1210,6 +1217,50 @@ impl Api {
         self.url(&["messages", &message.to_string(), "reactions", emoji])
     }
 
+    // ---------- Search ----------
+
+    /// Search one server, or one DM or group, newest first (`req.cursor` pages back).
+    pub async fn search(
+        &self,
+        token: &str,
+        scope: SearchScope,
+        req: &SearchRequest,
+    ) -> Result<SearchResults, ApiError> {
+        let url = match scope {
+            SearchScope::Server(s) => self.url(&["servers", &s.to_string(), "search"])?,
+            SearchScope::Conversation(c) => self.url(&["channels", &c.to_string(), "search"])?,
+        };
+        let mut q: Vec<(&str, String)> = Vec::new();
+        if !req.q.trim().is_empty() {
+            q.push(("q", req.q.clone()));
+        }
+        if let Some(u) = req.from {
+            q.push(("from", u.to_string()));
+        }
+        if let Some(c) = req.in_channel {
+            q.push(("in", c.to_string()));
+        }
+        if !req.has.is_empty() {
+            let has: Vec<&str> = req.has.iter().map(|h| h.as_str()).collect();
+            q.push(("has", has.join(",")));
+        }
+        if let Some(u) = req.mentions {
+            q.push(("mentions", u.to_string()));
+        }
+        if let Some(c) = &req.cursor {
+            q.push(("cursor", c.clone()));
+        }
+        Self::parse(
+            self.http
+                .get(url)
+                .query(&q)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     // ---------- Quotes ----------
 
     /// A slice of the channel's main list centred on `message`; `None` when the server has no such
@@ -1884,6 +1935,69 @@ mod tests {
             log: String::new(),
         };
         assert_eq!(api.create_report(&token, &req).await.unwrap().id.len(), 26);
+    }
+
+    #[tokio::test]
+    async fn search_finds_and_filters() {
+        use pulse_protocol::rest::SearchHas;
+        let app = testing::spawn().await;
+        let (alex_id, alex) = testing::register(&app, "alex").await;
+        let (sam_id, sam) = testing::register(&app, "sam").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        api.join_server(&sam, s.id).await.unwrap();
+        let g = testing::general(&app, &alex, s.id).await;
+        let mine = testing::send(&app, &alex, g.id, "pizza tonight").await;
+        let theirs = testing::send(&app, &sam, g.id, "pizza please").await;
+        let all = api
+            .search(
+                &alex,
+                SearchScope::Server(s.id),
+                &SearchRequest {
+                    q: "pizza".into(),
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            all.hits.iter().map(|h| h.message.id).collect::<Vec<_>>(),
+            vec![theirs.id, mine.id]
+        );
+        let req = SearchRequest {
+            q: "pizza".into(),
+            from: Some(sam_id),
+            has: vec![],
+            ..Default::default()
+        };
+        let from = api
+            .search(&alex, SearchScope::Server(s.id), &req)
+            .await
+            .unwrap();
+        assert_eq!(from.hits.len(), 1);
+        // A conversation is searched on its own.
+        let dm = api.create_dm(&alex, vec![sam_id]).await.unwrap();
+        testing::send(&app, &sam, dm.id, "pizza in private").await;
+        let dm_hits = api
+            .search(&alex, SearchScope::Conversation(dm.id), &req)
+            .await
+            .unwrap();
+        assert_eq!(dm_hits.hits[0].text, "pizza in private");
+        // Every filter reaches the server: `has` too.
+        let none = api
+            .search(
+                &alex,
+                SearchScope::Server(s.id),
+                &SearchRequest {
+                    from: Some(alex_id),
+                    in_channel: Some(g.id),
+                    has: vec![SearchHas::Link, SearchHas::Clip],
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        assert!(none.hits.is_empty());
     }
 
     #[tokio::test]

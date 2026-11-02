@@ -297,6 +297,7 @@ pub fn run() {
             commands::unlink_speaker,
             commands::leaderboard,
             commands::search_quotes,
+            commands::search_messages,
             commands::start_qoty,
             commands::vote_qoty,
             commands::unvote_qoty,

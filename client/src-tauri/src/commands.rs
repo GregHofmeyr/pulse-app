@@ -8,15 +8,16 @@ use pulse_protocol::ids::{ChannelId, GameId, LineId, MessageId, QotyEventId, Ser
 use pulse_protocol::rest::{
     Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji, EditClipRequest,
     EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest, MediaInfo, Member, Message,
-    MuteTarget, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse, Server,
-    SetMuteRequest, StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus,
+    MuteTarget, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse, SearchRequest,
+    SearchResults, Server, SetMuteRequest, StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus,
     UpdateProfileRequest, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
 
 use crate::api::{
-    Api, ApiError, CropRect, LoginOutcome, MfaOutcome, ProfileMediaKind, check_server_url,
+    Api, ApiError, CropRect, LoginOutcome, MfaOutcome, ProfileMediaKind, SearchScope,
+    check_server_url,
 };
 use crate::gateway::{Boot, ConnState, GatewayHandle, GatewayUpdate};
 use crate::qr::QrMatrix;
@@ -2183,6 +2184,28 @@ pub async fn search_quotes(
 ) -> Result<Vec<Message>, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.search_quotes(&token, server_id, &q).await)
+}
+
+/// Message search: a server's (`server_id`) or one DM or group's (`channel_id`).
+#[tauri::command]
+pub async fn search_messages(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: Option<ServerId>,
+    channel_id: Option<ChannelId>,
+    query: SearchRequest,
+) -> Result<SearchResults, ApiError> {
+    let scope = match (server_id, channel_id) {
+        (Some(s), _) => SearchScope::Server(s),
+        (None, Some(c)) => SearchScope::Conversation(c),
+        (None, None) => {
+            return Err(ApiError::Rejected(
+                "search a server or a conversation".into(),
+            ));
+        }
+    };
+    let (api, token) = core.current()?;
+    core.check(&app, api.search(&token, scope, &query).await)
 }
 
 #[tauri::command]
