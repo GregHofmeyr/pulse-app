@@ -8,7 +8,6 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use pulse_protocol::rest::EmbedProvider;
-use tauri::webview::NewWindowResponse;
 use tauri::{AppHandle, Manager, State, WebviewUrl, WebviewWindowBuilder};
 
 /// The one origin the app CSP lets players frame (`frame-src` in every tauri*.conf.json).
@@ -112,8 +111,9 @@ pub async fn open_embed_window(
         .data_directory(data.0.clone())
         // Instagram's own pages, redirects and media only; nothing else loads.
         .on_navigation(popout_may_navigate)
-        // window.open / target=_blank: refused (no further windows from remote content).
-        .on_new_window(|_, _| NewWindowResponse::Deny)
+        // window.open / target=_blank ("View on Instagram"): never another window; a web link
+        // opens in the browser.
+        .on_new_window(|u, _| crate::links::new_window(u))
         .build()
         .map_err(|e| e.to_string())?;
     Ok(())

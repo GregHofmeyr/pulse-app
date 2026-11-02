@@ -115,6 +115,8 @@ windows = { version = "0.62", features = [
     "Win32_System_Com",
     # clips (clips/ffmpeg.rs): ffmpeg children in a kill-on-close job object.
     "Win32_System_JobObjects",
+    # links open in the default browser (links.rs).
+    "Win32_UI_Shell",
     # message toasts (notify/windows.rs).
     "Foundation",
     "Data_Xml_Dom",

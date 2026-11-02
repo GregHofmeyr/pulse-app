@@ -9,6 +9,7 @@ pub mod hookwatch;
 pub mod hotkeys;
 pub mod ipc;
 pub mod keybinds;
+pub mod links;
 pub mod logging;
 pub mod media;
 pub mod notify;
@@ -43,6 +44,9 @@ fn create_main_window(app: &tauri::App, data_dir: &std::path::Path) -> tauri::Re
         .decorations(false)
         .background_color(tauri::window::Color(0x14, 0x15, 0x19, 0xff))
         .data_directory(data_dir.to_path_buf())
+        // Links (target=_blank) and a page navigating to a website open in the browser instead.
+        .on_new_window(|u, _| links::new_window(u))
+        .on_navigation(links::main_navigation)
         .build()?;
     // If the page's process dies, reload (or restart) instead of leaving a dead window.
     #[cfg(any(target_os = "linux", windows))]
