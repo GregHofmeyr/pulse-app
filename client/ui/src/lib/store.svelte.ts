@@ -42,6 +42,9 @@ export const ui = $state({
   goTo: null as string | null,
   /** A request to open this quote's replies panel (its channel's view does it and clears it). */
   openReplies: null as { channelId: string; rootId: string } | null,
+  /** A request to open this clip's panel (its clips channel's view does it and clears it): a clips
+   *  channel has no history to jump in. */
+  openClip: null as { channelId: string; clip: Message } | null,
   jump: null as JumpRequest | null,
   autoReported: false,
   /** Last session's crash report, held because automatic sending is off: ask Send / Don't send. */
@@ -294,6 +297,7 @@ export function resetState() {
   restoredFor = null // the next Ready restores again
   notifications.clear() // signed out: nothing more about the last account's messages
   ui.openReplies = null
+  ui.openClip = null
   forgetProfileLoads()
   app.state = emptyState()
   // a held crash report belongs to the session (and server) it was offered in: the next sign-in

@@ -28,6 +28,8 @@ import type { ClipUrl } from './protocol/ClipUrl'
 import type { ClipFacets } from './protocol/ClipFacets'
 import type { ClipView } from './protocol/ClipView'
 import type { ClipStorage } from './protocol/ClipStorage'
+import type { SearchRequest } from './protocol/SearchRequest'
+import type { SearchResults } from './protocol/SearchResults'
 import type { Notice } from './notify'
 
 /** `login` / `login_mfa`: signed in, waiting for the second step, or (second step only) the ticket is gone. */
@@ -230,6 +232,9 @@ export const api = {
   /** The jobs of this session (after a restart, the ones left over, failed). */
   clipJobs: () => invoke<ClipJob[]>('clip_jobs'),
   searchQuotes: (serverId: string, q: string) => invoke<Message[]>('search_quotes', { serverId, q }),
+  /** Message search in one server (`serverId`) or one DM or group (`channelId`). */
+  searchMessages: (scope: { serverId: string | null; channelId: string | null }, query: SearchRequest) =>
+    invoke<SearchResults>('search_messages', { ...scope, query }),
   startQoty: (serverId: string, body: StartQotyRequest) => invoke<QotyEvent>('start_qoty', { serverId, body }),
   voteQoty: (eventId: string, messageId: string) => invoke<QotyEvent>('vote_qoty', { eventId, messageId }),
   unvoteQoty: (eventId: string) => invoke<QotyEvent>('unvote_qoty', { eventId }),
