@@ -7,6 +7,7 @@
   import Name from './Name.svelte'
   import { api, errorText } from '../lib/tauri'
   import { isMuted } from '../lib/conversations'
+  import { isCollapsed, toggleSection } from '../lib/sidebarSections.svelte'
   import LiveBadge from './LiveBadge.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
   import { menuPoint } from '../lib/participantMenu'
@@ -92,7 +93,17 @@
       openMenu(channelId, p.userId, e, e.currentTarget as HTMLElement)
     }
   }
+  /** In a collapsed section only these rows stay: the channel you're on, and unread ones. */
+  const keep = (c: Channel, kind: string) =>
+    !isCollapsed(serverId, kind) || c.id === activeChannelId || ((app.state.reads[c.id]?.unread ?? 0) > 0 && !isMuted(app.state, c, clock.nowIso))
 </script>
+
+{#snippet heading(kind: string, text: string)}
+  {@const open = !isCollapsed(serverId, kind)}
+  <button type="button" class="section" aria-expanded={open} onclick={() => toggleSection(serverId, kind)}>
+    <span class="caret" class:shut={!open}><Icon name="chevron" size={11} /></span>{text}
+  </button>
+{/snippet}
 
 {#snippet channelRow(c: Channel, icon: IconName)}
   {@const read = app.state.reads[c.id]}
@@ -105,34 +116,34 @@
   </button>
 {/snippet}
 <div class="list">
-  <div class="label">TEXT CHANNELS
+  <div class="label">{@render heading('text', 'TEXT CHANNELS')}
     {#if member}<button class="add" aria-label="Create text channel" onclick={() => startAdd('text')}><Icon name="plus" size={14} /></button>{/if}
   </div>
   {#if adding === 'text'}
     <input class="input input-sm new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-channel" maxlength="64" aria-label="New text channel name" />
     {#if addError}<small class="err">{addError}</small>{/if}
   {/if}
-  {#each lists.text as c (c.id)}{@render channelRow(c, "hash")}{/each}
+  {#each lists.text as c (c.id)}{#if keep(c, 'text')}{@render channelRow(c, "hash")}{/if}{/each}
 
-  <div class="label voice">QUOTES
+  <div class="label voice">{@render heading('quotes', 'QUOTES')}
     {#if member}<button class="add" aria-label="Create quotes channel" onclick={() => startAdd('quotes')}><Icon name="quote" size={14} /></button>{/if}
   </div>
   {#if adding === 'quotes'}
     <input class="input input-sm new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-quotes" maxlength="64" aria-label="New quotes channel name" />
     {#if addError}<small class="err">{addError}</small>{/if}
   {/if}
-  {#each lists.quotes as c (c.id)}{@render channelRow(c, "quote")}{/each}
+  {#each lists.quotes as c (c.id)}{#if keep(c, 'quotes')}{@render channelRow(c, "quote")}{/if}{/each}
 
-  <div class="label voice">CLIPS
+  <div class="label voice">{@render heading('clips', 'CLIPS')}
     {#if member}<button class="add" aria-label="Create clips channel" onclick={() => startAdd('clips')}><Icon name="film" size={14} /></button>{/if}
   </div>
   {#if adding === 'clips'}
     <input class="input input-sm new" use:focus bind:value={draft} onkeydown={submitAdd} onblur={() => (adding = null)} placeholder="new-clips" maxlength="64" aria-label="New clips channel name" />
     {#if addError}<small class="err">{addError}</small>{/if}
   {/if}
-  {#each lists.clips as c (c.id)}{@render channelRow(c, "film")}{/each}
+  {#each lists.clips as c (c.id)}{#if keep(c, 'clips')}{@render channelRow(c, "film")}{/if}{/each}
 
-  <div class="label voice">VOICE CHANNELS
+  <div class="label voice">{@render heading('voice', 'VOICE CHANNELS')}
     {#if member}<button class="add" aria-label="Create voice channel" onclick={() => startAdd('voice')}><Icon name="plus" size={14} /></button>{/if}
   </div>
   {#if adding === 'voice'}
@@ -140,6 +151,7 @@
     {#if addError}<small class="err">{addError}</small>{/if}
   {/if}
   {#each lists.voice as c (c.id)}
+    {#if !isCollapsed(serverId, 'voice') || c.id === voiceChannelId}
     {@const people = member ? callRoster(app.state, serverId, c.id, self) : []}
     <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId}
       data-tip={c.id === voiceChannelId ? 'You’re here' : `Join ${c.name}`}
@@ -169,6 +181,7 @@
         {/if}
       </div>
     {/each}
+    {/if}
   {/each}
 </div>
 {#if menu}
@@ -180,6 +193,11 @@
   .label { padding: 12px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); }
   .label { display: flex; align-items: center; justify-content: space-between; }
   .label.voice { padding-top: 16px; }
+  /* the heading's name hides and shows the section */
+  .section { display: flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: inherit; font: inherit; letter-spacing: inherit; cursor: pointer; }
+  .section:hover { color: var(--text-2); }
+  .caret { display: flex; transition: transform var(--dur) var(--ease); }
+  .caret.shut { transform: rotate(-90deg); }
   .add { width: 20px; height: 20px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; padding: 0; }
   .add:hover { color: var(--text); background: var(--bg-2); }
   .new { margin: 2px 4px; }
