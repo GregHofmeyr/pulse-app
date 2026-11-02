@@ -83,7 +83,7 @@ The client makes outbound connections only, all to the Pulse server and its Live
   (`turn:<server IP>:3478`).
   - The client configures no ICE servers of its own. It uses the list LiveKit sends when it joins.
   - LiveKit adds public STUN servers (Twilio's and Google's) to that list only when it has no UDP TURN and no STUN
-    servers configured. Ours has UDP TURN and no `stun_servers` (LiveKit v1.13.10, `pkg/service/roommanager.go`,
+    servers configured. Ours has UDP TURN and no `stun_servers` (LiveKit v1.13.11, `pkg/service/roommanager.go`,
     `iceServersForParticipant`).
   - A test checks both LiveKit configurations (production and development) for this. Another test, run against a real
     LiveKit, checks that the ICE servers in the join response are only our own.
@@ -306,7 +306,7 @@ ties each of those tokens to the session that asked for it:
   every participant carrying one of that session's grant IDs, from voice and screen share alike.
   - This is best-effort and takes at most 2 seconds. If LiveKit can't be reached in that time, the sign-out still
     succeeds and the miss is logged. That device then stays in its call until it leaves.
-- **Rejoining.** Removing a participant does not invalidate the LiveKit token it holds (LiveKit v1.13.10 has no
+- **Rejoining.** Removing a participant does not invalidate the LiveKit token it holds (LiveKit v1.13.11 has no
   working way to revoke one). So every join is checked: LiveKit tells the server about each join, and a participant is
   removed again unless its grant ID belongs to a live session and was issued for that exact room and identity. This
   covers a signed-out device rejoining with a token it kept, and an expired session.
@@ -510,8 +510,8 @@ below the configured minimum (2 GB by default). The check comes after sign-in an
   if that address is missing or malformed, or is a private, loopback, link-local, carrier-grade NAT, multicast or
   reserved address. (Documentation-only ranges such as TEST-NET pass this check.)
 - **TURN relay limits.** Pulse sets no TURN relay options of its own, so the defaults of the pinned LiveKit release
-  (v1.13.10) apply. The following is LiveKit's code, not Pulse's (`pkg/service/turn.go` and
-  `pkg/service/turnrelay.go` at tag `v1.13.10`), and it is not tested in this repository.
+  (v1.13.11) apply. The following is LiveKit's code, not Pulse's (`pkg/service/turn.go` and
+  `pkg/service/turnrelay.go` at tag `v1.13.11`), and it is not tested in this repository.
   - **Restricted peers are refused.** The TURN permission check refuses relaying to loopback, link-local unicast and
     multicast, multicast, private (RFC 1918 and IPv6 unique-local) and unspecified addresses. It also refuses
     `0.0.0.0/8`, `100.64.0.0/10` (carrier-grade NAT, which includes the VPN's addresses), `198.18.0.0/15`,
@@ -551,7 +551,7 @@ below the configured minimum (2 GB by default). The check comes after sign-in an
     repository (`vendor/webrtc-sys/libwebrtc_download.rs`, for Linux x64 and Windows x64). It fails on a mismatch, and
     for any target without a pin. A libwebrtc built locally from source (`LK_CUSTOM_WEBRTC`) skips the download.
   - **Test kit.** The build output is a test kit zip containing the installer. The kit also includes a LiveKit server
-    binary (v1.13.10), for running a local test server. The release job checks the downloaded archive against a
+    binary (v1.13.11), for running a local test server. The release job checks the downloaded archive against a
     pinned SHA-256 before extracting it, and fails on a mismatch. The installer does not install it.
   - **Test kit LiveKit.** The kit's LiveKit config keeps signalling, UDP media and TURN on loopback, and its own
     TURN means clients are given no third-party STUN server. LiveKit's ICE-TCP port (7881) still listens on every
