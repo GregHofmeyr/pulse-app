@@ -42,6 +42,8 @@ function show(content = 'hello') {
 }
 const alert = () => document.querySelector('[role="alert"]')
 const btn = (label: string) => document.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)!
+/** Delete without the question (Shift+click; the question has its own tests in DeleteButton.test.ts). */
+const deleteNow = () => btn('Delete').dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true }))
 const box = () => document.querySelector<HTMLElement>('[role="textbox"][aria-label="Edit message"]')
 /** The text the edit box holds (what a save would send). */
 const value = () => serialize(box()!)
@@ -125,7 +127,7 @@ describe('MessageItem errors', () => {
   it('failed_delete_shows_inline_error_that_hides_after_5s', async () => {
     onDelete.mockRejectedValue('cannot delete')
     show()
-    btn('Delete').click()
+    deleteNow()
     await settle()
     expect(alert()?.textContent).toBe('cannot delete')
     vi.advanceTimersByTime(INLINE_ERROR_MS - 1); flushSync()
@@ -137,9 +139,9 @@ describe('MessageItem errors', () => {
   it('a_newer_error_restarts_the_clock', async () => {
     onDelete.mockRejectedValue('cannot delete')
     show()
-    btn('Delete').click(); await settle()
+    deleteNow(); await settle()
     vi.advanceTimersByTime(INLINE_ERROR_MS - 1000)
-    btn('Delete').click(); await settle()
+    deleteNow(); await settle()
     vi.advanceTimersByTime(INLINE_ERROR_MS - 1000); flushSync()
     expect(alert()).not.toBeNull()
     vi.advanceTimersByTime(1000); flushSync()
@@ -149,7 +151,7 @@ describe('MessageItem errors', () => {
   it('unmounting_clears_the_timer', async () => {
     onDelete.mockRejectedValue('cannot delete')
     show()
-    btn('Delete').click(); await settle()
+    deleteNow(); await settle()
     expect(vi.getTimerCount()).toBe(1)
     unmount(cmp!); cmp = undefined
     expect(vi.getTimerCount()).toBe(0)

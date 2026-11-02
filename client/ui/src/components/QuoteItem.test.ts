@@ -195,6 +195,11 @@ describe('QuoteItem', () => {
     expect(document.querySelector('button[aria-label="Edit"]')).toBeTruthy()
     document.querySelector<HTMLButtonElement>('button[aria-label="Delete"]')!.click()
     await settle()
+    // asked first: a quote takes its replies with it
+    expect(onDelete).not.toHaveBeenCalled()
+    expect(document.querySelector('[role="alertdialog"]')?.textContent).toContain('Delete this quote? Its replies go too.')
+    document.querySelector<HTMLButtonElement>('[role="alertdialog"] button.go')!.click()
+    await settle()
     expect(onDelete).toHaveBeenCalled()
     document.querySelector<HTMLButtonElement>('button[aria-label="Edit"]')!.click()
     expect(onEdit).toHaveBeenCalled()
@@ -226,7 +231,8 @@ describe('QuoteItem', () => {
   it('a failed delete shows on the quote', async () => {
     onDelete.mockRejectedValueOnce(new Error('nope'))
     show(quote([line()]))
-    document.querySelector<HTMLButtonElement>('button[aria-label="Delete"]')!.click()
+    // Shift+click: no question
+    document.querySelector<HTMLButtonElement>('button[aria-label="Delete"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true }))
     await settle(); flushSync()
     expect(document.querySelector('[role=alert]')).toBeTruthy()
   })

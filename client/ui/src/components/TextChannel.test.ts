@@ -168,7 +168,8 @@ describe('TextChannel: a failed delete', () => {
     app.state = markHistory(addHistory(app.state, 'C1', [{ ...msg(1), author_id: 'U1' }]), 'C1', true)
     const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
     flushSync()
-    document.querySelector<HTMLButtonElement>('button[aria-label="Delete"]')!.click()
+    // Shift+click: delete without the question
+    document.querySelector<HTMLButtonElement>('button[aria-label="Delete"]')!.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, shiftKey: true }))
     for (let i = 0; i < 5; i++) await tick()
     flushSync()
     expect(invoke).toHaveBeenCalledWith('delete_message', { messageId: 'M0001' })

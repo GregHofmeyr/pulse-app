@@ -5,6 +5,7 @@
 <script lang="ts">
   import { actionBarFocus } from '../lib/focus'
   import Icon from './Icon.svelte'
+  import DeleteButton from './DeleteButton.svelte'
   import EmojiBox from './EmojiBox.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
   import ReactionRow from './ReactionRow.svelte'
@@ -227,7 +228,7 @@
           {#if mine}
             <button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={15} /></button>
             {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={15} /></button>{/if}
-            <button aria-label="Delete" onclick={() => void del()}><Icon name="trash" size={15} /></button>
+            <DeleteButton what={message.thread_root_id ? 'reply' : 'message'} onConfirm={() => void del()} />
           {/if}
         </div>
         {#if picking && smileBtn}

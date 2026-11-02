@@ -1,6 +1,7 @@
 <script lang="ts">
   import { actionBarFocus } from '../lib/focus'
   import Avatar from './Avatar.svelte'
+  import DeleteButton from './DeleteButton.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
   import Icon from './Icon.svelte'
   import LineMenu from './LineMenu.svelte'
@@ -180,7 +181,7 @@
           <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={15} /></button>
           {#if onReply}<button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>{/if}
           {#if mine && onEdit}<button aria-label="Edit" onclick={onEdit}><Icon name="pencil" size={15} /></button>{/if}
-          {#if mine && onDelete}<button aria-label="Delete" onclick={() => void attempt(onDelete)}><Icon name="trash" size={15} /></button>{/if}
+          {#if mine && onDelete}<DeleteButton what="quote" note="Its replies go too." onConfirm={() => void attempt(onDelete)} />{/if}
         </div>
         {#if picking && smileBtn}
           <EmojiPopover anchor={smileBtn} onPick={pick} onClose={() => (picking = false)} />
