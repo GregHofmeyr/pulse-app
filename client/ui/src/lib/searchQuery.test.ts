@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { activeTerm, chipText, filterRows, parseText, replaceTerm, toRequest, type Chip } from './searchQuery'
+import { activeTerm, chipText, filterRows, hasSearchableWords, parseText, replaceTerm, toRequest, type Chip } from './searchQuery'
 
 describe('parseText', () => {
   it('keeps plain words and quoted phrases as the words', () => {
@@ -17,8 +17,10 @@ describe('parseText', () => {
   it('leaves a filter with no value as words', () => {
     expect(parseText('from: pizza')).toEqual({ words: 'from: pizza', filters: [] })
   })
-  it('accepts a leading # on in:', () => {
+  it('accepts a leading # on in: and a leading @ on a person', () => {
     expect(parseText('in:#general').filters).toEqual([{ key: 'in', value: 'general' }])
+    expect(parseText('from:@sam mentions:@alex').filters).toEqual([{ key: 'from', value: 'sam' }, { key: 'mentions', value: 'alex' }])
+    expect(activeTerm('from:@sa', 8).value).toBe('sa')
   })
 })
 
@@ -34,6 +36,15 @@ describe('activeTerm', () => {
   })
   it('is a plain word otherwise', () => {
     expect(activeTerm('piz', 3)).toEqual({ start: 0, filter: null, value: '', token: 'piz' })
+  })
+})
+
+describe('hasSearchableWords', () => {
+  it('needs a letter or a digit: emoji and punctuation alone find nothing', () => {
+    expect(hasSearchableWords('pizza')).toBe(true)
+    expect(hasSearchableWords('Zoë 42')).toBe(true)
+    expect(hasSearchableWords('🔥 ?! ""')).toBe(false)
+    expect(hasSearchableWords('  ')).toBe(false)
   })
 })
 

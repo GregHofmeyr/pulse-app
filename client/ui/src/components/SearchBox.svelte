@@ -6,14 +6,14 @@
   // The channel header's search field: words plus filter chips, with a suggestion list (a combobox)
   // that offers the filters, then who / which channel / what kind for the one being typed. Enter runs
   // the search; the results show in the right-hand panel (SearchResults).
-  import { tick } from 'svelte'
+  import { tick, untrack } from 'svelte'
   import Avatar from './Avatar.svelte'
   import Icon from './Icon.svelte'
   import Name from './Name.svelte'
   import { app } from '../lib/store.svelte'
   import { closeSearch, runSearch, search, type SearchScope } from '../lib/search.svelte'
   import { rankNames } from '../lib/mentions'
-  import { activeTerm, chipText, filterRows, HAS_VALUES, parseText, replaceTerm, type Chip, type FilterKey } from '../lib/searchQuery'
+  import { activeTerm, chipText, filterRows, HAS_VALUES, hasSearchableWords, parseText, replaceTerm, type Chip, type FilterKey } from '../lib/searchQuery'
 
   let { serverId, channelId }: {
     /** The server searched; null in a DM or group, which is searched on its own. */
@@ -45,9 +45,16 @@
   )
 
   let input: HTMLInputElement
-  let text = $state('')
-  let caret = $state(0)
-  let chips = $state<Chip[]>([])
+  // The box is rebuilt with its channel view, and clicking a result in another channel does that:
+  // while those results are open, start from what produced them, so they can be refined.
+  const sameScope = (s: SearchScope | null) =>
+    !!s && (s.kind === 'server' ? s.serverId === serverId : !serverId && s.channelId === channelId)
+  const resume = untrack(() => search.open && sameScope(search.scope))
+  let text = $state(untrack(() => (resume ? search.words : '')))
+  let caret = $state(untrack(() => text.length))
+  let chips = $state<Chip[]>(untrack(() => (resume ? [...search.chips] : [])))
+  /** Words that can't find anything were entered: say what to type instead. */
+  let hint = $state(false)
   let focused = $state(false)
   let active = $state(-1)
   /** Esc closed the list: it stays shut until the text or the caret moves. */
@@ -85,6 +92,8 @@
     text = next.text
     caret = next.caret
     await tick()
+    // A result clicked meanwhile can rebuild the channel header, and this box with it.
+    if (!input?.isConnected) return
     input.value = text
     input.setSelectionRange(caret, caret)
     input.focus()
@@ -130,6 +139,12 @@
   function run() {
     const words = absorbTyped()
     if (!words.trim() && !chips.length) return
+    // Emoji or punctuation alone can't match anything (the index holds words): say so rather than
+    // send a search the server can only refuse.
+    if (!chips.length && !hasSearchableWords(words)) {
+      hint = true
+      return
+    }
     void setText({ text: words, caret: words.length })
     dismissedAt = `${words}\u0000${words.length}`
     void runSearch(scope, words, chips)
@@ -155,9 +170,14 @@
     if (e.key === 'Escape') {
       e.preventDefault()
       e.stopPropagation()
+      // One step back each time: the list, the results, what's typed, then the box itself.
       if (open) dismissedAt = here
       else if (search.open) closeSearch()
-      else input.blur()
+      else if (text || chips.length) {
+        chips = []
+        hint = false
+        void setText({ text: '', caret: 0 })
+      } else input.blur()
       return
     }
     if (e.key === 'Backspace' && input.selectionStart === 0 && input.selectionEnd === 0 && chips.length) {
@@ -171,8 +191,10 @@
     input.focus()
   }
 
-  // Ctrl+F (the find key people try first) focuses the box instead of the page's own find.
+  // Ctrl+F (the find key people try first) focuses the box instead of the page's own find. Not
+  // while a dialog is open over it (or something else took the key): the box is behind it.
   function globalKey(e: KeyboardEvent) {
+    if (e.defaultPrevented || document.querySelector('[aria-modal="true"], .modal-overlay')) return
     if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && e.key.toLowerCase() === 'f') {
       e.preventDefault()
       input.focus()
@@ -189,17 +211,17 @@
     <span class="chip">{chipText(c)}<button type="button" tabindex="-1" aria-label="Remove {chipText(c)}" onclick={() => removeChip(i)}><Icon name="x" size={11} /></button></span>
   {/each}
   <input bind:this={input} class="field" type="text" {placeholder} aria-label={placeholder} autocomplete="off" spellcheck="false"
-    role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded={open} aria-controls="{uid}-list"
+    role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? `${uid}-list` : undefined}
     aria-activedescendant={open && active >= 0 ? optionId(active) : undefined}
     value={text}
-    oninput={() => { text = input.value; sync() }}
+    oninput={() => { text = input.value; hint = false; sync() }}
     onkeydown={keydown}
     onkeyup={(e) => { if (e.key.startsWith('Arrow') && !open) sync() }}
     onclick={sync}
     onfocus={() => (focused = true)}
     onblur={() => (focused = false)} />
   {#if open}
-    <div id="{uid}-list" class="list menu-surface pop-in" role="listbox" aria-label={term.filter ? 'Suggestions' : 'Search filters'}>
+  <div id="{uid}-list" class="list menu-surface pop-in" role="listbox" aria-label={term.filter ? 'Suggestions' : 'Search filters'}>
       {#each options as o, i (i)}
         <div id={optionId(i)} class="menu-item" class:hi={i === active} role="option" tabindex="-1" aria-selected={i === active}
           onmousedown={(e) => { e.preventDefault(); choose(o) }} onmousemove={() => (active = i)}>
@@ -214,8 +236,9 @@
           {/if}
         </div>
       {/each}
-    </div>
+  </div>
   {/if}
+  <p class="hint" aria-live="polite">{hint ? 'Type a word or pick a filter' : ''}</p>
 </div>
 
 <style>
@@ -230,6 +253,8 @@
   .chip button:hover { background: var(--bg-4); color: var(--text); }
   .list { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: 320px; max-height: 320px; overflow-y: auto; }
   .list .menu-item { cursor: pointer; }
+  .hint { position: absolute; top: calc(100% + 4px); left: 0; z-index: 19; margin: 0; font-size: 12px; color: var(--text-3); white-space: nowrap; pointer-events: none; }
+  .hint:empty { display: none; }
   .syntax { color: var(--text); font-weight: 600; }
   .list small { margin-left: auto; padding-left: 12px; color: var(--text-3); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 </style>

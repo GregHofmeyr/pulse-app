@@ -201,14 +201,86 @@ describe('SearchBox', () => {
     expect(e.defaultPrevented).toBe(true)
   })
 
-  it('Escape closes the list, then the results', async () => {
+  it('Escape closes the list, then the results, then clears the box, then leaves it', async () => {
     const input = show()
     input.focus()
+    type(input, 'from:sam')
+    key(input, 'Enter')
     type(input, 'pizza')
     key(input, 'Enter')
     await tick()
     expect(search.open).toBe(true)
+    input.focus()
+    flushSync()
     key(input, 'Escape')
     expect(search.open).toBe(false)
+    expect(input.value).toBe('pizza')
+    key(input, 'Escape')
+    expect(input.value).toBe('')
+    expect(chips()).toEqual([])
+    expect(document.activeElement).toBe(input)
+    key(input, 'Escape') // the filter list it reopened on the empty box
+    key(input, 'Escape')
+    expect(document.activeElement).not.toBe(input)
+  })
+
+  it('a click into another channel keeps what was searched in the box', async () => {
+    const input = show()
+    input.focus()
+    type(input, 'from:sam')
+    key(input, 'Enter')
+    type(input, 'pizza')
+    key(input, 'Enter')
+    await tick()
+    // The channel view (and its box) is rebuilt for the result's channel.
+    unmount(cmp!)
+    cmp = undefined
+    const again = show('S1', 'C2')
+    expect(again.value).toBe('pizza')
+    expect(chips()).toEqual(['from: sam'])
+  })
+
+  it('starts empty when the open results belong to another scope', () => {
+    Object.assign(search, { open: true, scope: { kind: 'conversation', channelId: 'D1' }, words: 'pizza', chips: [] })
+    expect(show().value).toBe('')
+  })
+
+  it('emoji or punctuation alone says to type a word instead of searching', () => {
+    const input = show()
+    input.focus()
+    type(input, '🔥 ?') // no filter starts with "?": the list is closed
+    key(input, 'Enter')
+    expect(invoke).not.toHaveBeenCalled()
+    expect(document.querySelector('.hint')!.textContent).toContain('Type a word or pick a filter')
+    type(input, '🔥 pizza')
+    expect(document.querySelector('.hint')?.textContent ?? '').toBe('')
+  })
+
+  it('a person typed with @ still becomes a chip', async () => {
+    const input = show()
+    input.focus()
+    type(input, 'from:@sam pizza') // the list is closed on "pizza"
+    key(input, 'Enter')
+    await tick()
+    expect(chips()).toEqual(['from: sam'])
+  })
+
+  it('aria-controls names the list only while there is one', () => {
+    const input = show()
+    expect(input.hasAttribute('aria-controls')).toBe(false)
+    input.focus()
+    flushSync()
+    expect(document.getElementById(input.getAttribute('aria-controls')!)?.getAttribute('role')).toBe('listbox')
+  })
+
+  it('Ctrl+F leaves an open dialog alone', () => {
+    const input = show()
+    const dialog = document.createElement('div')
+    dialog.setAttribute('aria-modal', 'true')
+    document.body.append(dialog)
+    const e = new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true })
+    window.dispatchEvent(e)
+    expect(document.activeElement).not.toBe(input)
+    expect(e.defaultPrevented).toBe(false)
   })
 })

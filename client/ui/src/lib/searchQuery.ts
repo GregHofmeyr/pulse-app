@@ -46,7 +46,7 @@ export function parseText(text: string): { words: string; filters: { key: Filter
   for (const term of split(text)) {
     const m = term.startsWith('"') ? null : FILTER_RE.exec(term)
     const key = m?.[1].toLowerCase()
-    const value = key === 'in' ? m![2].replace(/^#/, '') : m?.[2]
+    const value = m ? bare(key as FilterKey, m[2]) : undefined
     if (m && key && KEYS.has(key) && value) filters.push({ key: key as FilterKey, value })
     else words.push(term)
   }
@@ -62,7 +62,18 @@ export function activeTerm(text: string, caret: number): { start: number; filter
   const m = /^(from|mentions|has|in):(.*)$/i.exec(token)
   if (!m) return { start, filter: null, value: '', token }
   const filter = m[1].toLowerCase() as FilterKey
-  return { start, filter, value: filter === 'in' ? m[2].replace(/^#/, '') : m[2], token }
+  return { start, filter, value: bare(filter, m[2]), token }
+}
+
+/** A filter's value without the mark people type out of habit: `#` before a channel, `@` before a person. */
+function bare(key: FilterKey, value: string): string {
+  return key === 'in' ? value.replace(/^#/, '') : key === 'has' ? value : value.replace(/^@/, '')
+}
+
+/** Whether the words can find anything: the index holds letters and digits only, so emoji or
+ *  punctuation alone match nothing. */
+export function hasSearchableWords(words: string): boolean {
+  return /[\p{L}\p{N}]/u.test(words)
 }
 
 /** Replace text[start, end) with `insert`; the caret goes after it. Dropping a term (`insert` '')

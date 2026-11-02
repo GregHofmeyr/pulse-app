@@ -76,6 +76,14 @@ vitest.
     seconds), and the channel filter is `+m.channel_id IN (…)` (as an index term it built a throwaway index
     over `messages` per query). A first page that isn't full is its own count. Bench (debug build, 50k):
     typical queries 3–14 ms; a filter-only search that matches nothing walks every doc (~95 ms).
+18. **After review:** `search_docs` carries `channel_id` (index `(channel_id, doc)`), so a DM or `in:` search
+    walks that channel's docs newest first rather than every match everywhere; one row past the page decides
+    `next_cursor`; a hit is dropped only when its missing words start a custom emoji id; "[image]" in quote
+    content isn't indexed (nor a literal "[image]" in a message); `has:link` ignores case. In the box: it
+    reopens with the open search's words and chips after a result click rebuilds it; Esc steps back (list,
+    results, text, then blur); `from:@sam` works; emoji or punctuation alone shows "Type a word or pick a
+    filter" instead of searching; Ctrl+F leaves an open dialog alone; the listbox stays in the page, hidden.
+    A typed filter naming nobody still becomes plain words (kept: the owner asked for a forgiving box).
 16. **Name matching for the dropdown:** a new `rankNames` in `lib/mentions.ts`: case-insensitive substring, prefix
     matches first, then by position, then alphabetical. The composer's `suggest` (prefix-only) is left as is.
 
