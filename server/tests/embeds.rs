@@ -609,11 +609,18 @@ async fn a_preview_past_its_deadline_frees_its_slot() {
     let stuck = send(&env.app, &env.alex_t, env.ch, &held).await;
     until("the held fetch", || env.requested("/held")).await;
     let t = Instant::now();
-    let m = send(&env.app, &env.sam_t, env.ch, &env.page(1)).await;
-    wait_for_embeds(&env, &env.sam_t, env.ch, m.id, 1).await;
+    send(&env.app, &env.sam_t, env.ch, &env.page(1)).await;
+    // The slot is free once the next link's fetch starts. Not "once its card is stored": that
+    // card has the same short deadline, which thumbnail work on a busy CI runner can overrun.
+    until("the next link's fetch", || env.requested("/page?n=1")).await;
     assert!(
         t.elapsed() < Duration::from_secs(4),
         "waited {:?} for the slot",
+        t.elapsed()
+    );
+    assert!(
+        t.elapsed() >= Duration::from_millis(1000),
+        "the next fetch started at {:?}, before the stuck one's deadline",
         t.elapsed()
     );
     assert!(env.rows(stuck.id).await.is_empty());
