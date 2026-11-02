@@ -32,7 +32,7 @@ sha2 = "0.10"
 livekit = { version = "0.9.7", features = ["rustls-tls-native-roots"] }
 # Not used directly: livekit 0.9.7 asks for ^0.1.7, but 0.1.8 (cut with livekit 0.10) removed a field
 # 0.9.7 still sets. Drop this pin when moving to livekit 0.10.
-livekit-signaling = "=0.1.7"
+livekit-signaling = "=0.1.8"
 cpal = "0.18.2"
 os_info = "3"
 anyhow.workspace = true
