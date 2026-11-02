@@ -1,6 +1,9 @@
 //! Link embeds: previews of the links in a message (migration 0012), stored per message and link
 //! and sent out in the message's `embeds`.
 
+pub mod links;
+pub mod providers;
+
 use std::collections::HashMap;
 
 use pulse_protocol::ids::MessageId;
