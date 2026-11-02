@@ -41,7 +41,8 @@ struct Params {
     /// Comma-separated `SearchHas` words.
     has: Option<String>,
     mentions: Option<UserId>,
-    cursor: Option<MessageId>,
+    /// A doc number from `next_cursor`.
+    cursor: Option<String>,
 }
 
 /// A search, checked: what to match and where.
@@ -51,7 +52,8 @@ struct Search {
     from: Option<UserId>,
     has: Vec<SearchHas>,
     mentions: Option<UserId>,
-    cursor: Option<MessageId>,
+    /// Only docs below this (the page before ended there).
+    cursor: Option<i64>,
 }
 
 impl Search {
@@ -92,32 +94,44 @@ impl Search {
             from: p.from,
             has,
             mentions: p.mentions,
-            cursor: p.cursor,
+            cursor: p
+                .cursor
+                .as_deref()
+                .map(|c| {
+                    c.parse()
+                        .map_err(|_| AppError::BadRequest("bad cursor".into()))
+                })
+                .transpose()?,
         })
     }
 
-    /// `FROM … WHERE …` over the searchable messages of `channels` that match. The index's own
-    /// table leads when there are words, so the match narrows the rows first.
+    /// The doc number results are ordered and paged by: the FTS rowid when there are words (FTS5
+    /// walks it backwards and stops after a page), else `search_docs`' own key.
+    fn key(&self) -> &'static str {
+        if self.fts.is_some() { "s.rowid" } else { "d.doc" }
+    }
+
+    /// `FROM … WHERE …` over the searchable messages of `channels` that match. CROSS JOIN fixes
+    /// the order: the index (or the doc list, newest first) leads and every other table is a
+    /// lookup. Left to itself, SQLite may start from `messages` and run the MATCH once per row,
+    /// which on 50k messages took seconds.
     fn push_from_where<'a>(&'a self, q: &mut QueryBuilder<'a, Sqlite>, channels: &'a [String]) {
+        const LOOKUPS: &str = " CROSS JOIN messages m ON m.id = d.message_id
+                      CROSS JOIN channels c ON c.id = m.channel_id";
         match &self.fts {
             Some(expr) => {
-                q.push(
-                    " FROM message_search s JOIN search_docs d ON d.doc = s.rowid
-                      JOIN messages m ON m.id = d.message_id
-                      JOIN channels c ON c.id = m.channel_id
-                      WHERE message_search MATCH ",
-                );
-                q.push_bind(expr.as_str());
+                q.push(" FROM message_search s CROSS JOIN search_docs d ON d.doc = s.rowid")
+                    .push(LOOKUPS)
+                    .push(" WHERE message_search MATCH ")
+                    .push_bind(expr.as_str());
             }
             None => {
-                q.push(
-                    " FROM messages m JOIN search_docs d ON d.message_id = m.id
-                      JOIN channels c ON c.id = m.channel_id
-                      WHERE 1 = 1",
-                );
+                q.push(" FROM search_docs d").push(LOOKUPS).push(" WHERE 1 = 1");
             }
         }
-        q.push(" AND m.channel_id IN (");
+        // The unary + keeps this a filter on the row found by id: as an index term it made SQLite
+        // build a throwaway index over all of `messages` on every filter-only search (~50 ms).
+        q.push(" AND +m.channel_id IN (");
         let mut list = q.separated(", ");
         for c in channels {
             list.push_bind(c.as_str());
@@ -220,34 +234,31 @@ async fn run(
             total: search.cursor.is_none().then_some(0),
         });
     }
-    let cols = COLS
-        .split(", ")
-        .map(|c| format!("m.{c}"))
-        .collect::<Vec<_>>()
-        .join(", ");
-    let mut q = QueryBuilder::new(format!("SELECT {cols}"));
+    // Docs are numbered in posting order, so newest first is doc order, and the cursor is the
+    // last doc read.
+    let key = search.key();
+    let mut q = QueryBuilder::new(format!("SELECT {key}, m.id"));
     search.push_from_where(&mut q, &channels);
-    // ULIDs sort by time: newest first, and the cursor is a plain comparison.
     if let Some(c) = search.cursor {
-        q.push(" AND m.id < ").push_bind(c.to_string());
+        q.push(format!(" AND {key} < ")).push_bind(c);
     }
-    q.push(" ORDER BY m.id DESC LIMIT ").push_bind(PAGE);
-    let rows: Vec<Row> = q.build_query_as().fetch_all(&s.db).await?;
+    q.push(format!(" ORDER BY {key} DESC LIMIT ")).push_bind(PAGE);
+    let page: Vec<(i64, String)> = q.build_query_as().fetch_all(&s.db).await?;
     // Read past even if every hit on the page is dropped below: the next page starts after it.
-    let next_cursor = if rows.len() as i64 == PAGE {
-        Some(rows[rows.len() - 1].0.parse::<MessageId>().map_err(anyhow::Error::from)?)
-    } else {
-        None
-    };
+    let next_cursor = (page.len() as i64 == PAGE).then(|| page[page.len() - 1].0.to_string());
+    let rows = rows_in_order(s, &page).await?;
 
-    let total = if search.cursor.is_none() {
+    let total = if search.cursor.is_some() {
+        None
+    } else if (page.len() as i64) < PAGE {
+        // A first page that isn't full holds every match: no second walk to count them.
+        Some(page.len() as u32)
+    } else {
         let mut q = QueryBuilder::new("SELECT COUNT(*) FROM (SELECT 1");
         search.push_from_where(&mut q, &channels);
         q.push(" LIMIT ").push_bind(COUNT_CAP).push(")");
         let n: i64 = q.build_query_scalar().fetch_one(&s.db).await?;
         Some(n as u32)
-    } else {
-        None
     };
 
     let messages = fill(&s.db, Some(me), rows).await?;
@@ -278,6 +289,30 @@ async fn run(
         next_cursor,
         total,
     })
+}
+
+/// The page's messages, in the page's order. One deleted since the page was read is left out
+/// (its row comes back deleted, and a deleted message is never a hit).
+async fn rows_in_order(s: &AppState, page: &[(i64, String)]) -> AppResult<Vec<Row>> {
+    if page.is_empty() {
+        return Ok(vec![]);
+    }
+    let mut q = QueryBuilder::new(format!(
+        "SELECT {COLS} FROM messages WHERE deleted_at IS NULL AND id IN ("
+    ));
+    let mut list = q.separated(", ");
+    for (_, id) in page {
+        list.push_bind(id.as_str());
+    }
+    q.push(")");
+    let mut rows: HashMap<String, Row> = q
+        .build_query_as::<Row>()
+        .fetch_all(&s.db)
+        .await?
+        .into_iter()
+        .map(|r| (r.0.clone(), r))
+        .collect();
+    Ok(page.iter().filter_map(|(_, id)| rows.remove(id)).collect())
 }
 
 /// The quotes and clips the page's thread replies belong to (same channel, so as readable).

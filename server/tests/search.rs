@@ -245,10 +245,10 @@ async fn paging_is_stable() {
     assert_eq!(p1.total, Some(51), "counted up to 51");
     // A new match arriving between pages doesn't shift the next page.
     send(&f.app, &f.alex.1, f.general.id, "pizza new").await;
-    let c1 = p1.next_cursor.unwrap();
+    let c1 = p1.next_cursor.clone().unwrap();
     let p2 = server_search(&f, &f.alex.1, &format!("q=pizza&cursor={c1}")).await;
     assert_eq!(p2.total, None, "the count is on the first page only");
-    let p3 = server_search(&f, &f.alex.1, &format!("q=pizza&cursor={}", p2.next_cursor.unwrap())).await;
+    let p3 = server_search(&f, &f.alex.1, &format!("q=pizza&cursor={}", p2.next_cursor.clone().unwrap())).await;
     assert_eq!(p3.next_cursor, None);
     let all: Vec<MessageId> = [&p1, &p2, &p3].iter().flat_map(|p| ids(p)).collect();
     assert_eq!(all, sent);
@@ -364,7 +364,7 @@ async fn custom_emoji_id_doesnt_match() {
 #[tokio::test]
 async fn empty_search_400() {
     let f = setup().await;
-    for q in ["", "q=", "q=%20--%20"] {
+    for q in ["", "q=", "q=%20--%20", "q=pizza&cursor=not-a-cursor"] {
         let r = get(&f.app, &f.alex.1, &format!("/servers/{}/search?{q}", f.server)).await;
         assert_eq!(r.status(), 400, "{q}");
     }

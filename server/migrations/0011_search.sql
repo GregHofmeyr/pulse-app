@@ -9,7 +9,9 @@
 -- table can drop a row by rowid without being handed the old text back. The FTS rowid is
 -- `search_docs.doc`, not `messages.rowid`: `messages` has a TEXT primary key, so its implicit
 -- rowid may change under VACUUM (and in a `VACUUM INTO` backup), while an INTEGER PRIMARY KEY
--- doesn't. No foreign key on `message_id`: the triggers own these rows, and a cascade running
+-- doesn't. Docs are numbered in posting order (the build below goes by message id, and a new
+-- message gets the next one), so the newest-first order of a search is the FTS rowid order,
+-- which FTS5 can walk backwards and stop after a page. No foreign key on `message_id`: the triggers own these rows, and a cascade running
 -- before them would hide the doc they need to find the FTS row.
 CREATE TABLE search_docs (
     doc        INTEGER PRIMARY KEY,
@@ -32,12 +34,14 @@ BEGIN
 END;
 
 -- An edit, a delete or anything else that changes what is searchable: drop the old entry, and
--- add the new one if the message is still searchable.
+-- add the new one if the message is still searchable. An edited message keeps its doc: docs
+-- follow posting order, and search pages newest first by them.
 CREATE TRIGGER search_message_update AFTER UPDATE OF id, content, kind, deleted_at ON messages
 BEGIN
     DELETE FROM message_search WHERE rowid = (SELECT doc FROM search_docs WHERE message_id = old.id);
-    DELETE FROM search_docs WHERE message_id = old.id;
-    INSERT INTO search_docs (message_id)
+    DELETE FROM search_docs WHERE message_id = old.id
+        AND NOT (new.id = old.id AND new.kind = 'normal' AND new.deleted_at IS NULL);
+    INSERT OR IGNORE INTO search_docs (message_id)
         SELECT new.id WHERE new.kind = 'normal' AND new.deleted_at IS NULL;
     INSERT INTO message_search (rowid, body)
         SELECT d.doc, new.content || COALESCE(char(10) || (

@@ -950,9 +950,9 @@ pub struct SearchRequest {
     /// Messages that pinged this person.
     #[serde(default)]
     pub mentions: Option<UserId>,
-    /// The `next_cursor` of the page before.
+    /// The `next_cursor` of the page before (opaque).
     #[serde(default)]
-    pub cursor: Option<MessageId>,
+    pub cursor: Option<String>,
 }
 
 /// A matched stretch of [`SearchHit::text`], in UTF-16 code units (JavaScript string offsets).
@@ -977,8 +977,8 @@ pub struct SearchHit {
 pub struct SearchResults {
     /// Newest first. A page can be shorter than the page size and still have more after it.
     pub hits: Vec<SearchHit>,
-    /// Pass as `cursor` for the next page; `None` once there is nothing older.
-    pub next_cursor: Option<MessageId>,
+    /// Pass as `cursor` for the next page (opaque); `None` once there is nothing older.
+    pub next_cursor: Option<String>,
     /// How many match, counted up to 51 (show "50+" at 51). First page only.
     pub total: Option<u32>,
 }

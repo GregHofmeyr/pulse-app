@@ -74,6 +74,22 @@ async fn edit_reindexes() {
     assert_eq!(hits(&db, "tacos").await, vec!["M1"]);
 }
 
+/// Search pages newest first by doc number: an edit must not move a message to the front.
+#[tokio::test]
+async fn edit_keeps_its_place() {
+    let (_d, db) = fresh().await;
+    exec(&db, &msg("M1", "C", "pizza tonight")).await;
+    exec(&db, &msg("M2", "C", "pizza later")).await;
+    exec(&db, "UPDATE messages SET content = 'pizza now' WHERE id = 'M1'").await;
+    let order: Vec<String> =
+        sqlx::query_scalar("SELECT message_id FROM search_docs ORDER BY doc")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(order, vec!["M1", "M2"]);
+    assert_eq!(hits(&db, "now").await, vec!["M1"]);
+}
+
 #[tokio::test]
 async fn soft_delete_unindexes() {
     let (_d, db) = fresh().await;

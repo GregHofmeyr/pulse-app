@@ -69,6 +69,13 @@ vitest.
 15. **Clicking a hit:** a plain message or quote → `jumpTo`. A reply in a quote → `ui.openReplies` (the notification
     click path). A clip, or a reply in a clip → switch to the clips channel and open that clip's replies panel
     (clips channels have no jump list); hits for thread replies carry their `root` message for this.
+17. **Newest first is doc order, and the cursor is opaque** (added after the 50k bench): docs are numbered
+    in posting order and an edit keeps its doc, so FTS5 can walk its rowid backwards and stop after a page
+    instead of sorting every match by message id. `next_cursor` / `cursor` are the last doc number as a
+    string. Every join is a CROSS JOIN (left alone, SQLite drove from `messages` and ran MATCH per row:
+    seconds), and the channel filter is `+m.channel_id IN (…)` (as an index term it built a throwaway index
+    over `messages` per query). A first page that isn't full is its own count. Bench (debug build, 50k):
+    typical queries 3–14 ms; a filter-only search that matches nothing walks every doc (~95 ms).
 16. **Name matching for the dropdown:** a new `rankNames` in `lib/mentions.ts`: case-insensitive substring, prefix
     matches first, then by position, then alphabetical. The composer's `suggest` (prefix-only) is left as is.
 
