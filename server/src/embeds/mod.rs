@@ -3,15 +3,191 @@
 
 pub mod fetch;
 pub mod links;
+pub mod meta;
 pub mod providers;
+pub mod unfurl;
 
 use std::collections::HashMap;
+use std::path::Path;
+use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
-use pulse_protocol::ids::MessageId;
+use pulse_protocol::ids::{MessageId, UserId};
 use pulse_protocol::rest::{EmbedKind, EmbedProvider, EmbedThumb, LinkEmbed, Message};
 use sqlx::{SqliteConnection, SqlitePool};
+use tokio::sync::Semaphore;
 
+pub use unfurl::Unfurled;
+
+use crate::config::{EmbedConfig, Endpoints};
 use crate::error::AppResult;
+
+/// How long a preview is reused for the same link...
+pub const CACHE_TTL: Duration = Duration::from_secs(24 * 3600);
+/// ...and a link that gave none.
+pub const CACHE_FAILURE_TTL: Duration = Duration::from_secs(3600);
+/// Most links remembered; the oldest goes first.
+pub const CACHE_MAX: usize = 1000;
+/// Most links unfurled at once, server-wide.
+pub const MAX_CONCURRENT: usize = 4;
+
+/// Builds link previews: the guarded fetcher, the oEmbed endpoints, a cache by normalised URL
+/// and a cap on how many run at once. One per server (`AppState::embeds`).
+pub struct Unfurler {
+    fetcher: fetch::Fetcher,
+    endpoints: Endpoints,
+    cache: Mutex<HashMap<String, Cached>>,
+    slots: Semaphore,
+}
+
+struct Cached {
+    at: Instant,
+    /// `None`: the link gave no preview.
+    value: Option<Unfurled>,
+}
+
+impl Cached {
+    fn fresh(&self, now: Instant) -> bool {
+        let ttl = if self.value.is_some() {
+            CACHE_TTL
+        } else {
+            CACHE_FAILURE_TTL
+        };
+        now.duration_since(self.at) < ttl
+    }
+}
+
+impl Unfurler {
+    pub fn new(cfg: &EmbedConfig) -> Self {
+        Unfurler {
+            fetcher: fetch::Fetcher::new(cfg),
+            endpoints: cfg.endpoints.clone(),
+            cache: Mutex::new(HashMap::new()),
+            slots: Semaphore::new(MAX_CONCURRENT),
+        }
+    }
+
+    /// `url`'s preview, from the cache when it's fresh there, else built (thumbnail stored as
+    /// media uploaded `by` the sender). `None` for no preview. A cached thumbnail may have been
+    /// cleaned up since: [`store`] checks before keeping it.
+    pub async fn unfurl(
+        &self,
+        db: &SqlitePool,
+        media_dir: &Path,
+        by: UserId,
+        url: &str,
+    ) -> Option<Unfurled> {
+        let key = links::normalise(url)?;
+        if let Some(hit) = self.cached(&key) {
+            return hit;
+        }
+        let value = {
+            // Never closed, so this only waits.
+            let _slot = self.slots.acquire().await.ok()?;
+            unfurl::run(&self.fetcher, &self.endpoints, db, media_dir, by, &key).await
+        };
+        self.remember(key, value.clone());
+        value
+    }
+
+    /// `Some(value)` when `key` is cached and fresh.
+    fn cached(&self, key: &str) -> Option<Option<Unfurled>> {
+        let cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        cache
+            .get(key)
+            .filter(|c| c.fresh(Instant::now()))
+            .map(|c| c.value.clone())
+    }
+
+    fn remember(&self, key: String, value: Option<Unfurled>) {
+        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let now = Instant::now();
+        if cache.len() >= CACHE_MAX && !cache.contains_key(&key) {
+            cache.retain(|_, c| c.fresh(now));
+            if cache.len() >= CACHE_MAX
+                && let Some(oldest) = cache
+                    .iter()
+                    .min_by_key(|(_, c)| c.at)
+                    .map(|(k, _)| k.clone())
+            {
+                cache.remove(&oldest);
+            }
+        }
+        cache.insert(key, Cached { at: now, value });
+    }
+}
+
+/// Write a message's previews: `rows` are (position among its links, the link, its preview).
+/// Nothing is written, and `false` returned, unless the message is still live with
+/// `content_when_read` (an edit or delete during the fetch wins). A thumbnail whose media row is
+/// gone (cleaned up while cached) is dropped; one that's there has its cleanup clock restarted in
+/// the same transaction, so it can't go before the row referencing it is in. A row already there
+/// for the link is updated, keeping its `hidden`.
+pub async fn store(
+    db: &SqlitePool,
+    message_id: MessageId,
+    content_when_read: &str,
+    rows: Vec<(usize, String, Unfurled)>,
+) -> AppResult<bool> {
+    let mut tx = crate::db::begin_write(db).await?;
+    let content: Option<String> =
+        sqlx::query_scalar("SELECT content FROM messages WHERE id = ? AND deleted_at IS NULL")
+            .bind(message_id.to_string())
+            .fetch_optional(&mut *tx)
+            .await?;
+    if content.as_deref() != Some(content_when_read) {
+        return Ok(false);
+    }
+    let now = crate::db::now();
+    for (position, url, mut e) in rows {
+        if let Some(t) = &e.thumb {
+            let touched = sqlx::query("UPDATE media SET created_at = ? WHERE hash = ?")
+                .bind(&now)
+                .bind(&t.hash)
+                .execute(&mut *tx)
+                .await?
+                .rows_affected();
+            if touched == 0 {
+                e.thumb = None;
+            }
+        }
+        let thumb = e.thumb.as_ref();
+        sqlx::query(
+            "INSERT INTO link_embeds (message_id, position, url, provider, provider_id, kind,
+                                      title, description, site_name, author, thumb_hash,
+                                      thumb_width, thumb_height, start_secs, vertical, fetched_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             ON CONFLICT (message_id, url) DO UPDATE SET
+                position = excluded.position, provider = excluded.provider,
+                provider_id = excluded.provider_id, kind = excluded.kind, title = excluded.title,
+                description = excluded.description, site_name = excluded.site_name,
+                author = excluded.author, thumb_hash = excluded.thumb_hash,
+                thumb_width = excluded.thumb_width, thumb_height = excluded.thumb_height,
+                start_secs = excluded.start_secs, vertical = excluded.vertical,
+                fetched_at = excluded.fetched_at",
+        )
+        .bind(message_id.to_string())
+        .bind(position as i64)
+        .bind(&url)
+        .bind(provider_str(e.provider))
+        .bind(&e.provider_id)
+        .bind(kind_str(e.kind))
+        .bind(&e.title)
+        .bind(&e.description)
+        .bind(&e.site_name)
+        .bind(&e.author)
+        .bind(thumb.map(|t| &t.hash))
+        .bind(thumb.map(|t| t.width as i64))
+        .bind(thumb.map(|t| t.height as i64))
+        .bind(e.start.map(i64::from))
+        .bind(e.vertical)
+        .bind(&now)
+        .execute(&mut *tx)
+        .await?;
+    }
+    tx.commit().await?;
+    Ok(true)
+}
 
 /// An `EmbedProvider` as stored (its wire name). `Unknown` is never stored.
 pub fn provider_str(p: EmbedProvider) -> &'static str {

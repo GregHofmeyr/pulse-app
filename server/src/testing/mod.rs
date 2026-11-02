@@ -1,5 +1,6 @@
 //! Test harness: a real server on an ephemeral port with a fresh temp-file SQLite.
 
+pub mod fake_provider;
 pub mod fake_s3;
 
 use std::net::SocketAddr;
@@ -20,6 +21,8 @@ pub struct TestApp {
     pub voice: crate::voice::VoiceState,
     pub streams: crate::streams::state::StreamState,
     pub limits: Arc<crate::limits::Limits>,
+    /// The server's link unfurler (the same one its routes use), for calling it directly.
+    pub embeds: Arc<crate::embeds::Unfurler>,
     /// The fake S3 behind `cfg.clips`, unless the test brought its own store or none.
     pub s3: Option<fake_s3::FakeS3>,
     _dir: tempfile::TempDir,
@@ -47,6 +50,7 @@ impl TestApp {
             voice: self.voice.clone(),
             streams: self.streams.clone(),
             limits: self.limits.clone(),
+            embeds: self.embeds.clone(),
             r2: self
                 .cfg
                 .clips
@@ -131,7 +135,9 @@ async fn spawn_inner(mut cfg: Config, dir: tempfile::TempDir, with_clips: bool) 
     let voice = crate::voice::VoiceState::default();
     let streams = crate::streams::state::StreamState::default();
     let limits = Arc::new(crate::limits::Limits::new(&cfg.limits));
+    let embeds = Arc::new(crate::embeds::Unfurler::new(&cfg.embeds));
     let state = AppState {
+        embeds: embeds.clone(),
         r2: cfg
             .clips
             .as_ref()
@@ -160,6 +166,7 @@ async fn spawn_inner(mut cfg: Config, dir: tempfile::TempDir, with_clips: bool) 
         voice,
         streams,
         limits,
+        embeds,
         s3,
         _dir: dir,
     }

@@ -17,4 +17,6 @@ pub struct AppState {
     pub limits: Arc<crate::limits::Limits>,
     /// Clip video storage; `None` when the server has none configured.
     pub r2: Option<crate::media::r2::R2>,
+    /// Link previews: the guarded fetcher and its cache.
+    pub embeds: Arc<crate::embeds::Unfurler>,
 }

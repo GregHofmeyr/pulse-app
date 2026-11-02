@@ -84,6 +84,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
         db,
         r2,
         limits: std::sync::Arc::new(limits::Limits::new(&cfg.limits)),
+        embeds: std::sync::Arc::new(embeds::Unfurler::new(&cfg.embeds)),
         cfg: std::sync::Arc::new(cfg),
         hub: hub.clone(),
         voice: voice::VoiceState::default(),

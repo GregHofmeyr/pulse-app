@@ -54,6 +54,12 @@ pub const BANNER_ANIM_H: u32 = 240;
 pub const BANNER_MAX_OUTPUT: usize = 1024 * 1024;
 pub const BANNER_ANIM_MAX_OUTPUT: usize = 2 * 1024 * 1024;
 
+/// Link preview thumbnails (fetched by the server, not uploaded): input as large as the fetcher
+/// takes an image, the first frame only, fitted within a square on the long side.
+pub const LINK_THUMB_MAX_INPUT: usize = 8 * 1024 * 1024;
+pub const LINK_THUMB_SIDE: u32 = 640;
+pub const LINK_THUMB_MAX_OUTPUT: usize = 1024 * 1024;
+
 /// Largest Go Live preview upload accepted.
 pub const PREVIEW_MAX_INPUT: usize = 100 * 1024;
 /// Box a preview is fitted into (the client sends exactly this).
@@ -310,6 +316,65 @@ pub fn avatar(input: &[u8], crop: Option<Crop>) -> Result<Processed, ProcessErro
 /// when animated). CPU-bound: call it off the async runtime.
 pub fn banner(input: &[u8], crop: Option<Crop>) -> Result<Processed, ProcessError> {
     profile_with(input, crop, &BANNER)
+}
+
+/// Process a link preview's thumbnail: PNG, JPEG, GIF or WebP, the first frame of an animation
+/// only, fitted within [`LINK_THUMB_SIDE`]² (aspect kept, never enlarged) and re-encoded as a
+/// still WebP. Same decode bounds as uploads. CPU-bound: call it off the async runtime.
+pub fn link_thumb(input: &[u8]) -> Result<Processed, ProcessError> {
+    if input.len() > LINK_THUMB_MAX_INPUT {
+        return Err(ProcessError::ProfileTooBig);
+    }
+    let format = image::guess_format(input).map_err(|_| ProcessError::UnsupportedType)?;
+    if !matches!(
+        format,
+        ImageFormat::Png | ImageFormat::Jpeg | ImageFormat::Gif | ImageFormat::WebP
+    ) {
+        return Err(ProcessError::UnsupportedType);
+    }
+    // Dimensions come from the header alone, before anything is decoded.
+    let mut reader = ImageReader::with_format(Cursor::new(input), format);
+    reader.limits(limits());
+    reader.into_dimensions()?;
+    let first_frame = |mut frames: Frames| -> Result<RgbaImage, ProcessError> {
+        Ok(frames.next().ok_or(ProcessError::Corrupt)??.into_buffer())
+    };
+    let img = match format {
+        ImageFormat::Gif => {
+            let mut d = GifDecoder::new(Cursor::new(input))?;
+            d.set_limits(limits())?;
+            first_frame(d.into_frames())?
+        }
+        ImageFormat::WebP if WebPDecoder::new(Cursor::new(input))?.has_animation() => {
+            let mut d = WebPDecoder::new(Cursor::new(input))?;
+            d.set_limits(limits())?;
+            first_frame(d.into_frames())?
+        }
+        _ => {
+            // A JPEG upright by its EXIF, as in `convert`.
+            let mut decoder = still_decoder(input, format, limits())?;
+            let orientation = match format {
+                ImageFormat::Jpeg => decoder.orientation().unwrap_or(Orientation::NoTransforms),
+                _ => Orientation::NoTransforms,
+            };
+            let mut img = DynamicImage::from_decoder(decoder)?;
+            img.apply_orientation(orientation);
+            img.into_rgba8()
+        }
+    };
+    let fitted = fit_long_side(&img, LINK_THUMB_SIDE);
+    let (width, height) = fitted.dimensions();
+    let webp = encode(&[(fitted, 0)])?;
+    if webp.len() > LINK_THUMB_MAX_OUTPUT {
+        return Err(ProcessError::QuoteOutputTooBig);
+    }
+    Ok(Processed {
+        webp,
+        still: None,
+        width,
+        height,
+        frames: 1,
+    })
 }
 
 /// [`convert`] for a profile picture, with the input errors that name its limits.
@@ -674,6 +739,50 @@ mod tests {
             assert_eq!(f.delay().numer_denom_ms(), (50, 1));
             assert_eq!(f.buffer().dimensions(), (128, 128));
         }
+    }
+
+    #[test]
+    fn link_thumb_fits_within_640_and_never_enlarges() {
+        let p = link_thumb(&png(2000, 1000)).unwrap();
+        assert_eq!((p.width, p.height, p.frames), (640, 320, 1));
+        assert!(p.still.is_none() && is_webp(&p.webp));
+        let out = image::load_from_memory_with_format(&p.webp, ImageFormat::WebP).unwrap();
+        assert_eq!((out.width(), out.height()), (640, 320));
+        let p = link_thumb(&png(100, 50)).unwrap();
+        assert_eq!((p.width, p.height), (100, 50));
+        let p = link_thumb(&png(300, 1200)).unwrap();
+        assert_eq!((p.width, p.height), (160, 640));
+    }
+
+    #[test]
+    fn link_thumb_takes_an_animations_first_frame_only() {
+        let p = link_thumb(&gif(3, 40)).unwrap();
+        assert_eq!((p.width, p.height, p.frames), (40, 40, 1));
+        assert!(p.still.is_none());
+        let dec = image::codecs::webp::WebPDecoder::new(Cursor::new(&p.webp)).unwrap();
+        assert!(!dec.has_animation());
+        // The first frame is blue (shade 0); later ones are redder.
+        let out = image::load_from_memory_with_format(&p.webp, ImageFormat::WebP).unwrap();
+        let px = out.to_rgba8().get_pixel(20, 20).0;
+        assert!(px[2] > 200 && px[0] < 40, "{px:?}");
+        // An animated WebP too.
+        let anim = emoji(&gif(3, 40)).unwrap().webp;
+        let p = link_thumb(&anim).unwrap();
+        assert_eq!(p.frames, 1);
+        let dec = image::codecs::webp::WebPDecoder::new(Cursor::new(&p.webp)).unwrap();
+        assert!(!dec.has_animation());
+    }
+
+    #[test]
+    fn link_thumb_refuses_what_isnt_an_image_or_is_too_big() {
+        assert!(matches!(
+            link_thumb(b"<html>"),
+            Err(ProcessError::UnsupportedType)
+        ));
+        assert!(matches!(
+            link_thumb(&vec![0u8; LINK_THUMB_MAX_INPUT + 1]),
+            Err(ProcessError::ProfileTooBig)
+        ));
     }
 
     #[test]
