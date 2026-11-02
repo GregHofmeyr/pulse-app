@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -33,11 +33,13 @@ pub struct Config {
     /// Where clip videos live (S3-compatible, Cloudflare R2). `None` = clips storage isn't set up
     /// on this server.
     pub clips: Option<ClipStoreConfig>,
+    /// Link previews: the embed page's origin and the fetcher's settings.
+    pub embeds: EmbedConfig,
 }
 
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
-    limits, stream_media_timeout, media_dir, media_min_free_bytes, totp_key, clips ;
+    limits, stream_media_timeout, media_dir, media_min_free_bytes, totp_key, clips, embeds ;
     livekit_secret
 });
 
@@ -75,6 +77,10 @@ impl Config {
             media_min_free_bytes: 2 * 1024 * 1024 * 1024,
             totp_key: totp_key(std::env::var("PULSE_TOTP_KEY").ok().as_deref())?,
             clips: ClipStoreConfig::from_env()?,
+            embeds: EmbedConfig {
+                public_url: public_url(std::env::var("PULSE_PUBLIC_URL").ok().as_deref())?,
+                ..EmbedConfig::default()
+            },
         })
     }
 }
@@ -125,6 +131,85 @@ fn clip_store(get: impl Fn(&str) -> Option<String>) -> anyhow::Result<Option<Cli
     }))
 }
 
+/// Link previews. Nothing secret in here.
+#[derive(Clone, Debug)]
+pub struct EmbedConfig {
+    /// The server's public origin (`PULSE_PUBLIC_URL`): where the embed page is served from and
+    /// Twitch's `parent=`. `None` = no embed page.
+    pub public_url: Option<reqwest::Url>,
+    /// The providers' oEmbed endpoints.
+    pub endpoints: Endpoints,
+    /// The whole of one fetch, redirects included.
+    pub timeout: Duration,
+    /// Tests only (empty from the environment): addresses the fetcher may reach although they
+    /// aren't public, such as a fake provider on loopback.
+    pub allowed_ips: Vec<IpAddr>,
+    /// Tests only: ports allowed besides 80 and 443.
+    pub extra_ports: Vec<u16>,
+    /// Tests only: fixed DNS answers, used instead of resolving these names. A name may appear
+    /// more than once (several answers).
+    pub hosts: Vec<(String, IpAddr)>,
+}
+
+impl Default for EmbedConfig {
+    fn default() -> Self {
+        Self {
+            public_url: None,
+            endpoints: Endpoints::default(),
+            timeout: Duration::from_secs(5),
+            allowed_ips: Vec::new(),
+            extra_ports: Vec::new(),
+            hosts: Vec::new(),
+        }
+    }
+}
+
+/// oEmbed endpoint bases, without query.
+#[derive(Clone, Debug)]
+pub struct Endpoints {
+    pub youtube: String,
+    pub tiktok: String,
+    pub spotify: String,
+    pub soundcloud: String,
+    pub instagram: String,
+}
+
+impl Default for Endpoints {
+    fn default() -> Self {
+        Self {
+            youtube: "https://www.youtube.com/oembed".into(),
+            tiktok: "https://www.tiktok.com/oembed".into(),
+            spotify: "https://open.spotify.com/oembed".into(),
+            soundcloud: "https://soundcloud.com/oembed".into(),
+            instagram: "https://graph.facebook.com/v25.0/instagram_oembed".into(),
+        }
+    }
+}
+
+/// `PULSE_PUBLIC_URL`: unset or empty = none; else an `http(s)` origin (a host, maybe a port, no
+/// path, query or credentials). The error names the variable, never its value.
+fn public_url(raw: Option<&str>) -> anyhow::Result<Option<reqwest::Url>> {
+    let raw = match raw {
+        None | Some("") => return Ok(None),
+        Some(v) => v,
+    };
+    let origin = reqwest::Url::parse(raw).ok().filter(|u| {
+        matches!(u.scheme(), "http" | "https")
+            && u.host_str().is_some_and(|h| !h.is_empty())
+            && u.path() == "/"
+            && u.query().is_none()
+            && u.fragment().is_none()
+            && u.username().is_empty()
+            && u.password().is_none()
+    });
+    match origin {
+        Some(u) => Ok(Some(u)),
+        None => anyhow::bail!(
+            "PULSE_PUBLIC_URL must be an http(s) origin: scheme and host, maybe a port, no path or query"
+        ),
+    }
+}
+
 /// Unset or empty = no key. A malformed one is an error that names the variable, never its value.
 fn totp_key(raw: Option<&str>) -> anyhow::Result<Option<TotpKey>> {
     match raw {
@@ -150,6 +235,40 @@ mod tests {
         assert!(!msg.contains(bad));
     }
 
+    #[test]
+    fn public_url_env() {
+        assert!(public_url(None).unwrap().is_none());
+        assert!(public_url(Some("")).unwrap().is_none());
+        for ok in [
+            "https://example.com",
+            "https://example.com/",
+            "http://pulse.example.test:8080",
+        ] {
+            let u = public_url(Some(ok)).unwrap().unwrap();
+            assert_eq!(u.path(), "/", "{ok}");
+        }
+        assert_eq!(
+            public_url(Some("https://example.com"))
+                .unwrap()
+                .unwrap()
+                .host_str(),
+            Some("example.com")
+        );
+        for bad in [
+            "https://example.com/pulse",
+            "https://example.com/?q=1",
+            "https://example.com/#x",
+            "ftp://example.com",
+            "https://alex:pw@example.com",
+            "example.com",
+            "not a url",
+        ] {
+            let msg = format!("{:#}", public_url(Some(bad)).unwrap_err());
+            assert!(msg.contains("PULSE_PUBLIC_URL"), "{msg}");
+            assert!(!msg.contains(bad), "{msg}");
+        }
+    }
+
     /// Debug output can end up in logs: never the LiveKit API secret.
     #[test]
     fn debug_never_shows_the_livekit_secret() {
@@ -168,6 +287,7 @@ mod tests {
             media_min_free_bytes: 1,
             totp_key: Some(TotpKey::parse(&"ab".repeat(32)).unwrap()),
             clips: None,
+            embeds: EmbedConfig::default(),
         };
         let d = format!("{cfg:?}");
         assert!(!d.contains("SECRET"), "{d}");
