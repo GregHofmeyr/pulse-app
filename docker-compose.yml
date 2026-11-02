@@ -1,7 +1,7 @@
 services:
   livekit:
     # Same image as production (deploy/compose.yml), so `just voice-it` tests what ships.
-    image: livekit/livekit-server:v1.13.10@sha256:89ca9ce0791e18d6e03bf6e2c49ceb27e1c754eae8bd50c989386c1a5963791a
+    image: livekit/livekit-server:v1.13.11@sha256:25cd902de7cacbd5f1f779f6a6ac1eae20ba8f56b0935934ce6b0ab80d1e3d20
     # host networking so LiveKit can reach the server on 127.0.0.1:7890; bound to loopback in the config
     network_mode: host
     volumes:
