@@ -5,6 +5,7 @@ pub mod fetch;
 pub mod links;
 pub mod meta;
 pub mod providers;
+pub mod routes;
 pub mod unfurl;
 
 use std::collections::HashMap;
@@ -12,6 +13,7 @@ use std::path::Path;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{MessageId, UserId};
 use pulse_protocol::rest::{EmbedKind, EmbedProvider, EmbedThumb, LinkEmbed, Message};
 use sqlx::{SqliteConnection, SqlitePool};
@@ -19,6 +21,7 @@ use tokio::sync::Semaphore;
 
 pub use unfurl::Unfurled;
 
+use crate::AppState;
 use crate::config::{EmbedConfig, Endpoints};
 use crate::error::AppResult;
 
@@ -312,6 +315,106 @@ pub async fn attach(db: &SqlitePool, msgs: &mut [Message]) -> AppResult<()> {
     }
     for m in msgs.iter_mut().filter(|m| !m.deleted) {
         m.embeds = by_msg.remove(&m.id.to_string()).unwrap_or_default();
+    }
+    Ok(())
+}
+
+/// After a message is sent or edited (and committed, and its own event published): fetch
+/// previews for its links in the background, then store them and publish `MessageUpdated`.
+/// `content` is the message's content as committed. Nothing happens when it has no links, when
+/// `author` is over the unfurl limit (the message stays as it is, without previews), or when
+/// the disk is too full for thumbnails.
+pub fn spawn_unfurl(s: &AppState, message_id: MessageId, author: UserId, content: String) {
+    let links = links::extract(&content);
+    if links.is_empty() {
+        return;
+    }
+    if !s.limits.unfurl_user.hit(&author.to_string()) {
+        tracing::debug!(%message_id, "over the unfurl limit; no previews");
+        return;
+    }
+    if let Err(e) = crate::media::writes_ok(&s.cfg) {
+        tracing::warn!(error = ?e, %message_id, "low on disk; no previews");
+        return;
+    }
+    let s = s.clone();
+    tokio::spawn(async move {
+        if let Err(e) = unfurl_message(&s, message_id, author, &content, links).await {
+            tracing::warn!(error = ?e, %message_id, "couldn't add link previews");
+        }
+    });
+}
+
+async fn unfurl_message(
+    s: &AppState,
+    message_id: MessageId,
+    author: UserId,
+    content: &str,
+    links: Vec<String>,
+) -> AppResult<()> {
+    // A link that already has a row keeps it: it was fetched before, or hidden (and stays so).
+    let have: Vec<String> = sqlx::query_scalar("SELECT url FROM link_embeds WHERE message_id = ?")
+        .bind(message_id.to_string())
+        .fetch_all(&s.db)
+        .await?;
+    let todo: Vec<(usize, String)> = links
+        .into_iter()
+        .enumerate()
+        .filter(|(_, url)| !have.contains(url))
+        .collect();
+    if todo.is_empty() {
+        return Ok(());
+    }
+    let unfurled = futures::future::join_all(todo.into_iter().map(|(position, url)| async move {
+        let got = s.embeds.unfurl(&s.db, &s.cfg.media_dir, author, &url).await;
+        got.map(|e| (position, url, e))
+    }))
+    .await;
+    let rows: Vec<_> = unfurled.into_iter().flatten().collect();
+    if rows.is_empty() || !store(&s.db, message_id, content, rows).await? {
+        return Ok(());
+    }
+    // Loaded and published in order with edits and hides, so an older copy never goes out last.
+    let _order = s.hub.in_order().await;
+    if let Some(message) = crate::messages::routes::load(&s.db, None, message_id).await?
+        && !message.deleted
+    {
+        s.hub
+            .publish(&s.db, Event::MessageUpdated { message })
+            .await;
+    }
+    Ok(())
+}
+
+/// Part of an edit to `content` (the UPDATE is the caller's, in `tx`): previews of links no
+/// longer in it go, unless hidden (hidden is kept per link, so it holds if the link comes back);
+/// the ones that stay take their new place among its links.
+pub async fn on_edit(tx: &mut SqliteConnection, id: MessageId, content: &str) -> AppResult<()> {
+    let keep = links::extract(content);
+    let rows: Vec<(String, bool)> =
+        sqlx::query_as("SELECT url, hidden FROM link_embeds WHERE message_id = ?")
+            .bind(id.to_string())
+            .fetch_all(&mut *tx)
+            .await?;
+    for (url, hidden) in rows {
+        match keep.iter().position(|k| *k == url) {
+            Some(position) => {
+                sqlx::query("UPDATE link_embeds SET position = ? WHERE message_id = ? AND url = ?")
+                    .bind(position as i64)
+                    .bind(id.to_string())
+                    .bind(&url)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            None if !hidden => {
+                sqlx::query("DELETE FROM link_embeds WHERE message_id = ? AND url = ?")
+                    .bind(id.to_string())
+                    .bind(&url)
+                    .execute(&mut *tx)
+                    .await?;
+            }
+            None => {}
+        }
     }
     Ok(())
 }

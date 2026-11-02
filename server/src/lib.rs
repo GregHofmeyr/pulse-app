@@ -54,6 +54,7 @@ pub fn router(state: AppState) -> Router {
         .merge(clips::routes::router())
         .merge(profiles::routes::router())
         .merge(search::routes::router())
+        .merge(embeds::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)

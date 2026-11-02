@@ -97,6 +97,9 @@ pub struct LimitsConfig {
     /// Message searches per user. Reads are otherwise free, but a search can scan far more rows
     /// than a page of history.
     pub search_user: Rate,
+    /// Messages per user whose links get previews fetched (sends and edits with links). Over
+    /// it, the message still posts; it just gets no previews.
+    pub unfurl_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -133,6 +136,7 @@ impl Default for LimitsConfig {
             clip_url_user: Rate::new(60, 1.0),
             // The box searches on Enter (and Load more), so a person stays far below this.
             search_user: Rate::new(20, 2.0),
+            unfurl_user: Rate::per_minute(20),
         }
     }
 }
@@ -163,6 +167,7 @@ impl LimitsConfig {
             voice_state_user: r,
             clip_url_user: r,
             search_user: r,
+            unfurl_user: r,
         }
     }
 }
@@ -306,6 +311,7 @@ pub struct Limits {
     pub voice_state_user: Limiter,
     pub clip_url_user: Limiter,
     pub search_user: Limiter,
+    pub unfurl_user: Limiter,
 }
 
 impl Limits {
@@ -332,6 +338,7 @@ impl Limits {
             voice_state_user: Limiter::new(c.voice_state_user),
             clip_url_user: Limiter::new(c.clip_url_user),
             search_user: Limiter::new(c.search_user),
+            unfurl_user: Limiter::new(c.unfurl_user),
         }
     }
 }

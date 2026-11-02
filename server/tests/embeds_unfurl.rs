@@ -7,6 +7,7 @@ use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::{EmbedKind, EmbedProvider, EmbedThumb, Message};
 use pulse_server::config::Config;
 use pulse_server::embeds::{self, Unfurled};
+use pulse_server::limits::{LimitsConfig, Rate};
 use pulse_server::media;
 use pulse_server::testing::fake_provider::{
     FakeProvider, SPOTIFY_ID, TIKTOK_ID, TIKTOK_URL, YOUTUBE_ID,
@@ -32,10 +33,16 @@ impl Env {
 }
 
 /// alex with a server and its `#general`, on an app whose unfurler reads the fake provider.
+/// Sends don't unfurl on their own here (no `unfurl_user` tokens): these tests call the
+/// unfurler and `store` themselves (`tests/embeds.rs` covers the automatic path).
 async fn setup() -> Env {
     let fake = FakeProvider::start().await;
     let app = spawn_with(Config {
         embeds: fake.config(),
+        limits: LimitsConfig {
+            unfurl_user: Rate::new(0, 0.0),
+            ..LimitsConfig::unlimited()
+        },
         ..test_config()
     })
     .await;

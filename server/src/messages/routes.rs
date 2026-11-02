@@ -460,6 +460,8 @@ async fn send(
         // Still under this send's `in_order` guard (tokio's mutex isn't reentrant).
         crate::emoji::publish_frequent(&s, me).await;
     }
+    // Previews follow as a MessageUpdated (after this send's events: the task takes `in_order`).
+    crate::embeds::spawn_unfurl(&s, msg.id, me, msg.content.clone());
     Ok(Json(msg))
 }
 
@@ -506,6 +508,9 @@ async fn edit(
     }
     msg.content = clean(&req.content)?;
     msg.edited_at = Some(now());
+    // In order with the unfurl's and hides' publishes, so the last update out is the newest.
+    let _order = s.hub.in_order().await;
+    let mut tx = crate::db::begin_write(&s.db).await?;
     // Guarded: a delete that commits between our read and this write wins.
     let changed = sqlx::query(
         "UPDATE messages SET content = ?, edited_at = ? WHERE id = ? AND author_id = ? AND deleted_at IS NULL",
@@ -514,11 +519,18 @@ async fn edit(
     .bind(&msg.edited_at)
     .bind(id.to_string())
     .bind(me.to_string())
-    .execute(&s.db)
+    .execute(&mut *tx)
     .await?
     .rows_affected();
     if changed == 0 {
         return Err(AppError::NotFound);
+    }
+    // Previews of links edited away go with the same write.
+    crate::embeds::on_edit(&mut tx, id, &msg.content).await?;
+    tx.commit().await?;
+    // The edit has landed: a failure here is logged, not a failed request.
+    if let Err(e) = crate::embeds::attach(&s.db, std::slice::from_mut(&mut msg)).await {
+        tracing::error!(error = ?e, %id, "couldn't read an edited message's previews");
     }
     s.hub
         .publish(
@@ -528,6 +540,9 @@ async fn edit(
             },
         )
         .await;
+    drop(_order);
+    // New links' previews follow as another MessageUpdated.
+    crate::embeds::spawn_unfurl(&s, id, me, msg.content.clone());
     Ok(Json(msg))
 }
 
