@@ -60,6 +60,34 @@ describe('DeleteButton', () => {
     expect(onConfirm).not.toHaveBeenCalled()
   })
 
+  it('floats over the chat (fixed, by the bin), so opening it never changes the list\'s size', () => {
+    const trash = show()
+    trash.getBoundingClientRect = () => ({ left: 600, right: 630, top: 100, bottom: 128, width: 30, height: 28, x: 600, y: 100, toJSON() {} }) as DOMRect
+    click(trash)
+    const box = ask()!
+    expect(box.style.position).toBe('fixed')
+    expect(box.style.top).toBe('134px') // below the bin
+    expect(box.style.left).toBe('390px') // right edges line up (240 wide)
+  })
+
+  it('near the bottom of the window it opens above the bin', () => {
+    const trash = show()
+    const h = window.innerHeight
+    trash.getBoundingClientRect = () => ({ left: 600, right: 630, top: h - 40, bottom: h - 12, width: 30, height: 28, x: 600, y: h - 40, toJSON() {} }) as DOMRect
+    click(trash)
+    expect(ask()!.style.top).toBe('')
+    expect(ask()!.style.bottom).toBe('46px') // 6 px above the bin's top
+  })
+
+  it('scrolling closes it (it would drift away from its message)', () => {
+    vi.useFakeTimers()
+    click(show())
+    vi.advanceTimersByTime(1)
+    document.dispatchEvent(new Event('scroll'))
+    flushSync()
+    expect(ask()).toBeNull()
+  })
+
   it('Shift+click deletes straight away, as on Discord', () => {
     click(show(), { shiftKey: true })
     expect(onConfirm).toHaveBeenCalledTimes(1)

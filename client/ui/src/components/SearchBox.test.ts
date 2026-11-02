@@ -173,15 +173,29 @@ describe('SearchBox', () => {
     expect(input.getAttribute('aria-label')).toBe('Search Main')
   })
 
-  it('a real pointer move still highlights a row, and Enter picks it', async () => {
+  it('hovering a row (a real pointer move) never makes it the one Enter picks: Enter searches', async () => {
     const input = show()
     input.focus()
-    type(input, '')
+    type(input, 'from:sam')
+    key(input, 'Enter') // picks sam: the filter rows come back
+    await tick()
     options()[1].dispatchEvent(new MouseEvent('mousemove', { clientX: 10, clientY: 10, bubbles: true }))
     options()[1].dispatchEvent(new MouseEvent('mousemove', { clientX: 12, clientY: 14, bubbles: true }))
     flushSync()
-    expect(options()[1].classList.contains('hi')).toBe(true)
+    expect(options().some((o) => o.classList.contains('hi'))).toBe(false)
+    expect(input.getAttribute('aria-activedescendant')).toBeNull()
     key(input, 'Enter')
+    await tick()
+    expect(input.value).toBe('')
+    expect(invoke).toHaveBeenCalledWith('search_messages', expect.objectContaining({ query: expect.objectContaining({ from: 'U2' }) }))
+  })
+
+  it('a click still picks the row under the pointer', async () => {
+    const input = show()
+    input.focus()
+    type(input, '')
+    options()[1].dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+    flushSync()
     await tick()
     expect(input.value).toMatch(/^\w+:$/)
   })

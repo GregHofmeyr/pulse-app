@@ -56,6 +56,9 @@
   /** Words that can't find anything were entered: say what to type instead. */
   let hint = $state(false)
   let focused = $state(false)
+  /** The row Enter picks: set by typing and the arrow keys only. The mouse hovers (CSS) and clicks,
+   *  but never makes a row the one Enter picks: a pointer resting on the list would take the Enter
+   *  that was meant to search. */
   let active = $state(-1)
   /** Esc closed the list: it stays shut until the text or the caret moves. */
   let dismissedAt = $state<string | null>(null)
@@ -84,16 +87,6 @@
   })
   const optionId = (i: number) => `${uid}-opt-${i}`
 
-  // Only a pointer that really moved highlights a row: when the list changes under a still pointer
-  // (a click on a name brings the filter rows back), the browser sends a mousemove too, and that
-  // row would then take the next Enter instead of the search.
-  let pointer = ''
-  function hover(e: MouseEvent, i: number) {
-    const at = `${e.clientX},${e.clientY}`
-    if (at === pointer) return
-    pointer = at
-    active = i
-  }
 
   function sync() {
     caret = input.selectionStart ?? text.length
@@ -235,7 +228,7 @@
   <div id="{uid}-list" class="list menu-surface pop-in" role="listbox" aria-label={term.filter ? 'Suggestions' : 'Search filters'}>
       {#each options as o, i (i)}
         <div id={optionId(i)} class="menu-item" class:hi={i === active} role="option" tabindex="-1" aria-selected={i === active}
-          onmousedown={(e) => { e.preventDefault(); choose(o) }} onmousemove={(e) => hover(e, i)}>
+          onmousedown={(e) => { e.preventDefault(); choose(o) }}>
           {#if o.kind === 'filter'}
             <span class="syntax">{o.syntax}</span> <small>{o.hint}</small>
           {:else if o.kind === 'person'}
