@@ -9,7 +9,7 @@
   import RepliesPanel from './RepliesPanel.svelte'
   import { clipView, type ClipFilter } from '../lib/clips'
   import { InlineError } from '../lib/inlineError.svelte'
-  import { app, onAppEvent } from '../lib/store.svelte'
+  import { app, onAppEvent, ui } from '../lib/store.svelte'
   import { api, errorText, type ClipSource } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -83,6 +83,20 @@
     const back = (opener?.isConnected ? opener : null) ?? chan?.querySelector<HTMLElement>(`[data-clip-id="${id}"] button`)
     back?.focus()
   }
+  // A search result asked for one of this channel's clips: its panel shows the clip and its replies.
+  $effect(() => {
+    const r = ui.openClip
+    if (!r || r.channelId !== channelId) return
+    untrack(() => {
+      ui.openClip = null
+      openReplies(r.clip)
+    })
+  })
+  $effect(() => () => {
+    untrack(() => {
+      if (ui.openClip?.channelId === channelId) ui.openClip = null
+    })
+  })
   // A deleted clip's thread is gone with it.
   $effect(() => {
     if (repliesRoot?.deleted) void closeReplies()

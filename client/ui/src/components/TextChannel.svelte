@@ -11,6 +11,7 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
+  import SearchBox from './SearchBox.svelte'
   import { app, clock, queueMessage, ui } from '../lib/store.svelte'
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
@@ -455,6 +456,7 @@
       <button class="icon-btn" aria-label="More" aria-haspopup="menu" aria-expanded={menu === 'manage'} data-tip="More" data-menu-toggle
         onclick={() => (menu = menu === 'manage' ? null : 'manage')}><Icon name="dots" size={17} /></button>
     {/if}
+    <SearchBox {serverId} {channelId} />
     {#if leaderboardOpen && serverId}
       <Leaderboard {serverId} onOpen={openLeaderboardEntry} onClose={() => (leaderboardOpen = false)} />
     {/if}

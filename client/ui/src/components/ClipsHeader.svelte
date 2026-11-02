@@ -2,6 +2,7 @@
   // A clips channel's header: its name, the filter chips (All, each game used here, By person ▾), the
   // list/wall toggle and "Share a clip".
   import Icon from './Icon.svelte'
+  import SearchBox from './SearchBox.svelte'
   import { clickOutside } from '../lib/actions'
   import { clipFilter, type ClipFilter } from '../lib/clips'
   import { displayName } from '../lib/selectors'
@@ -89,6 +90,7 @@
     <button type="button" class="tbtn" aria-label="Wall view" data-tip="Wall" aria-pressed={view === 'wall'} onclick={() => setView('wall')}><Icon name="grid" size={16} /></button>
   </div>
   <button type="button" class="share" onclick={onShare}>Share a clip</button>
+  <SearchBox {serverId} {channelId} />
 </div>
 
 <style>

@@ -24,6 +24,8 @@
   import PeopleBoard from '../components/PeopleBoard.svelte'
   import PeoplePicker from '../components/PeoplePicker.svelte'
   import GroupMembers from '../components/GroupMembers.svelte'
+  import SearchResults from '../components/SearchResults.svelte'
+  import { closeSearch, search } from '../lib/search.svelte'
   // Profiles: the quick card and the full profile
   import ProfileCardPopover from '../components/ProfileCardPopover.svelte'
   import { closeFull, openCard, profileUi } from '../lib/profileCard.svelte'
@@ -151,7 +153,7 @@
     get left() { return panels.left },
     get right() { return panels.right },
     get leftName() { return leftName },
-    get hasRight() { return !!(activeServerId || activeChannel?.kind === 'group') },
+    get hasRight() { return !!(search.open || activeServerId || activeChannel?.kind === 'group') },
     toggle: (side) => (panels[side] = !panels[side]),
   })
   let serverMenuOpen = $state(false)
@@ -353,6 +355,15 @@
       openSettings('profile')
     })
   })
+  // Search covers one server, or one conversation: going elsewhere closes its results (a result's
+  // click stays in the same scope, so it never does). Signing out closes them too.
+  $effect(() => {
+    const sc = search.scope
+    if (!search.open || !sc) return
+    const stays = sc.kind === 'server' ? activeServerId === sc.serverId : activeServerId === null && activeChannelId === sc.channelId
+    if (!stays) untrack(closeSearch)
+  })
+  $effect(() => () => untrack(closeSearch))
   // A jump to a message (lib/jump.ts) asked for its channel.
   $effect(() => {
     const id = ui.goTo
@@ -541,7 +552,7 @@
     </main>
 
     <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap -->
-    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel}>{#if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}</div>
+    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel}>{#if search.open}<SearchResults />{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}</div>
   </div>
 </div>
 <StreamToast />
