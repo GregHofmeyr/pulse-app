@@ -5,6 +5,7 @@
   import SearchBox from './SearchBox.svelte'
   import { clickOutside } from '../lib/actions'
   import { clipFilter, type ClipFilter } from '../lib/clips'
+  import { clipFilters, setClipFiltersShown } from '../lib/clipFiltersShown.svelte'
   import { displayName } from '../lib/selectors'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
@@ -35,6 +36,10 @@
   const authors = $derived((facets?.authors ?? []).map((a) => ({ id: a.user_id, count: a.count, name: displayName(app.state, serverId, a.user_id) })))
   const personLabel = $derived(filter.author ? `${displayName(app.state, serverId, filter.author)} ▾` : 'By person ▾')
 
+  // The channel's name hides and shows the chips (remembered on this device). Hidden, a filter
+  // that is on still shows, so a filtered list never looks like everything.
+  const shown = $derived(clipFilters.shown)
+
   let people = $state(false)
   let error = $state('')
 
@@ -62,13 +67,15 @@
 
 <div class="head">
   <span class="ico"><Icon name="film" size={18} /></span>
-  <span class="title">{channel?.name ?? ''}</span>
+  <button type="button" class="title" aria-expanded={shown} data-tip={shown ? 'Hide filters' : 'Show filters'} onclick={() => setClipFiltersShown(!shown)}>
+    <span class="title-text">{channel?.name ?? ''}</span><span class="caret" class:up={shown}><Icon name="chevron" size={14} /></span>
+  </button>
   <div class="chips" role="group" aria-label="Filter clips">
-    <button type="button" class="chip" aria-pressed={!filter.game && !filter.author} onclick={() => onFilter({})}>All</button>
+    {#if shown}<button type="button" class="chip" aria-pressed={!filter.game && !filter.author} onclick={() => onFilter({})}>All</button>{/if}
     {#each gameChips as g (g.id)}
-      <button type="button" class="chip" aria-pressed={filter.game === g.id} onclick={() => pickGame(g.id)}>{g.name}</button>
+      {#if shown || filter.game === g.id}<button type="button" class="chip" aria-pressed={filter.game === g.id} onclick={() => pickGame(g.id)}>{g.name}</button>{/if}
     {/each}
-    <div class="person">
+    {#if shown || filter.author}<div class="person">
       <button type="button" class="chip" aria-pressed={!!filter.author} aria-haspopup="menu" aria-expanded={people} data-menu-toggle
         onclick={() => (people = !people)}>{personLabel}</button>
       {#if people}
@@ -81,7 +88,7 @@
           {/each}
         </div>
       {/if}
-    </div>
+    </div>{/if}
   </div>
   <span class="grow"></span>
   {#if error}<span class="err" role="alert">{error}</span>{/if}
@@ -96,7 +103,11 @@
 <style>
   .head { min-height: 52px; flex-shrink: 0; padding: 8px 18px; box-sizing: border-box; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--text-3); }
   .ico { display: flex; }
-  .title { color: var(--text); font-size: 15px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px; }
+  .title { display: flex; align-items: center; gap: 4px; max-width: 240px; padding: 2px 6px; margin-left: -6px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 15px; font-weight: 600; }
+  .title:hover { background: var(--bg-3); }
+  .title-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .caret { display: flex; flex-shrink: 0; color: var(--text-3); transition: transform var(--dur) var(--ease); }
+  .caret.up { transform: rotate(180deg); }
   .chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-left: 6px; }
   .chip { height: 28px; padding: 0 11px; border-radius: 14px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; font-weight: 600; white-space: nowrap; }
   .chip:hover { background: var(--bg-3); color: var(--text); }

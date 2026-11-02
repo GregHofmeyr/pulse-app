@@ -24,6 +24,7 @@ import ClipsChannel from './ClipsChannel.svelte'
 import { app, startListening } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { clipView } from '../lib/clips'
+import { setClipFiltersShown } from '../lib/clipFiltersShown.svelte'
 import { reactiveProps } from '../lib/testProps.svelte'
 import { testMe, testReady } from '../lib/testReady'
 
@@ -49,6 +50,7 @@ beforeEach(() => {
   invoke.mockReset()
   invoke.mockImplementation(async (cmd: string) => (cmd === 'list_clips' ? [] : cmd === 'clip_facets' ? facets : undefined))
   app.state = applyReady(emptyState(), ready())
+  setClipFiltersShown(true) // the per-device choice: each test starts with the chips shown
 })
 afterEach(() => {
   if (cmp) unmount(cmp)
@@ -68,6 +70,37 @@ function header(over: Record<string, unknown> = {}) {
 }
 
 describe('ClipsHeader', () => {
+  it('the title hides and shows the filter chips, remembered on this device', () => {
+    localStorage.clear()
+    app.state = { ...app.state, clipFacets: { C1: facets } }
+    header()
+    const title = document.querySelector<HTMLButtonElement>('button.title')!
+    expect(title.getAttribute('aria-expanded')).toBe('true')
+    title.click()
+    flushSync()
+    expect(title.getAttribute('aria-expanded')).toBe('false')
+    expect(document.querySelectorAll('.chip').length).toBe(0)
+    // a new header (another visit) starts hidden
+    unmount(cmp!)
+    cmp = undefined
+    header()
+    expect(document.querySelectorAll('.chip').length).toBe(0)
+    document.querySelector<HTMLButtonElement>('button.title')!.click()
+    flushSync()
+    expect([...document.querySelectorAll('.chip')].map((c) => c.textContent?.trim())).toEqual(['All', 'Apex', 'Rocket League', 'By person ▾'])
+    localStorage.clear()
+  })
+
+  it('hidden, a filter that is on still shows (so you know the list is filtered)', () => {
+    localStorage.clear()
+    app.state = { ...app.state, clipFacets: { C1: facets } }
+    header({ filter: { game: 'G2' } })
+    document.querySelector<HTMLButtonElement>('button.title')!.click()
+    flushSync()
+    expect([...document.querySelectorAll('.chip')].map((c) => c.textContent?.trim())).toEqual(['Rocket League'])
+    localStorage.clear()
+  })
+
   it('chips filter by game and person', () => {
     app.state = { ...app.state, clipFacets: { C1: facets } }
     const p = header()
