@@ -12,7 +12,7 @@ RUN sed -i 's#members = \["protocol", "server", "client/src-tauri"\]#members = [
 RUN cargo build --release -p pulse-server --bin pulse-app-server \
  && cp target/release/pulse-app-server /pulse-app-server
 
-FROM debian:bookworm-20261020-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8
+FROM debian:bookworm-20261027-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3
 RUN apt-get update \
  && apt-get install -y --no-install-recommends ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
