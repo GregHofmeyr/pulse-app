@@ -1294,7 +1294,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d045de693cb712d0b22c6a64be5b953f67b3ce00ab5ad3dd5d8b441886ab8e1a"
 dependencies = [
  "quote",
- "syn 3.0.6",
+ "syn 2.0.119",
 ]
 
 [[package]]
@@ -5189,7 +5189,7 @@ dependencies = [
  "livekit-api",
  "livekit-signaling",
  "log",
- "ndarray 0.15.6",
+ "ndarray 0.17.2",
  "nnnoiseless",
  "os_info",
  "pulse-protocol",
