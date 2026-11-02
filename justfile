@@ -57,7 +57,9 @@ dev-client:
 # the Linux client against the live server, for testing on Linux
 linux-client:
     @gst-inspect-1.0 autoaudiosink >/dev/null 2>&1 || echo "warning: GStreamer has no autoaudiosink (install gst-plugins-good): videos will crash the page" >&2
-    cd client/src-tauri && VITE_DEFAULT_SERVER=https://pulsechat.co.za cargo tauri build --debug --no-bundle
+    # waits for any other build in this checkout (the shared lock), and stays out of the desktop's way
+    mkdir -p target
+    cd client/src-tauri && VITE_DEFAULT_SERVER=https://pulsechat.co.za flock ../../target/.cargo-serial nice -n 10 cargo tauri build --debug --no-bundle
     PULSE_DEV_FFMPEG_DIR=/usr/bin ./target/debug/pulse-app
 
 # print a single-use invite for the local dev server
