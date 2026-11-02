@@ -348,6 +348,25 @@ pub fn spawn_cleanup(db: SqlitePool, dir: PathBuf) {
 mod tests {
     use super::*;
 
+    /// Media hashes are content addresses (file names and DB keys): the digest must never change
+    /// across sha2 bumps. FIPS 180-2 test vectors.
+    #[test]
+    fn content_hash_is_plain_sha256_hex() {
+        let h = |b: &[u8]| hex::encode(Sha256::digest(b));
+        assert_eq!(
+            h(b""),
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        );
+        assert_eq!(
+            h(b"abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+        assert_eq!(
+            h(&[b'a'; 1_000_000]),
+            "cdc76e5c9914fb9281a1c7e284d73e67f1809a48a497200e046d39ccc7112cd0"
+        );
+    }
+
     #[test]
     fn db_dir_from_url() {
         assert_eq!(db_dir("sqlite:///data/pulse.db"), Some("/data".into()));

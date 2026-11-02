@@ -44,6 +44,19 @@ if ! docker compose ps --status running --services | grep -qx pulse-server; then
   exit 0
 fi
 
+# Every deploy backs up too, so a busy day leaves many dailies. Past the last two days, keep one database and one
+# media backup per day (the newest); the 14-day cut and the weeklies above do the rest.
+thin_daily() {
+  local today keep_from
+  today=${BACKUP_TODAY:-$(date -u +%Y%m%d)} # BACKUP_TODAY: backup-selftest.sh only
+  keep_from=$(date -u -d "$today -1 day" +%Y%m%d)
+  # name → "day kind name"; sorted, the newest of each (day, kind) comes last
+  rclone lsf "$remote/daily" |
+    sed -nE -e 's/^(pulse-media-([0-9]{8})T[0-9]{6}Z\..*)$/\2 media \1/p' -e 's/^(pulse-([0-9]{8})T[0-9]{6}Z\..*)$/\2 db \1/p' | sort |
+    awk -v from="$keep_from" '$1 < from { key = $1 " " $2; if (key == prev) print last; prev = key; last = $NF }' |
+    while read -r name; do rclone deletefile "$remote/daily/$name"; done
+}
+
 # BACKUP_PING_URL (optional, e.g. a healthchecks.io check): pinged after a good backup and at URL/fail after a
 # failed one, so a backup that stops running (or keeps failing) raises an alert instead of going unnoticed.
 ping() {
@@ -80,6 +93,7 @@ rclone copyto "$snap.age" "$remote/daily/pulse-$ts.db.age"
 if [[ $(date -u +%u) == 7 ]]; then rclone copyto "$snap.age" "$remote/weekly/pulse-$ts.db.age"; fi
 rclone delete "$remote/daily" --min-age 14d
 rclone delete "$remote/weekly" --min-age 56d
+thin_daily
 echo "backed up pulse-$ts.db.age"
 
 # Uploaded emoji live outside the database; no media directory yet means nothing was ever uploaded.

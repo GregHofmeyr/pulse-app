@@ -32,9 +32,9 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 clap = { version = "4", features = ["derive"] }
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 futures = "0.3"
-argon2 = "0.5"
+argon2 = "0.6"
 rand = "0.9"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 bytes = "1"
 base64 = "0.22"
@@ -51,7 +51,7 @@ unicode-segmentation = "1"
 unicode-normalization = "0.1"
 totp-rs = { version = "6", default-features = false, features = ["std"] }
 chacha20poly1305 = { version = "0.10", default-features = false, features = ["alloc"] }
-hmac = { version = "0.12", optional = true }
+hmac = { version = "0.13", optional = true }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "1", features = ["fs"] }
@@ -59,7 +59,7 @@ rustix = { version = "1", features = ["fs"] }
 [dev-dependencies]
 livekit-api = { version = "0.9.1", default-features = false, features = ["access-token"] }
 base64 = "0.22"
-sha2 = "0.10"
+sha2 = "0.11"
 tokio-tungstenite = "0.29"
 futures = "0.3"
 pulse-server = { path = ".", features = ["testing"] }

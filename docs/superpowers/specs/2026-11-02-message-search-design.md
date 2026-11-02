@@ -53,6 +53,15 @@ in".
   - `mentions:sam`: messages that pinged sam, i.e. the `mentions` table, including reply pings. An `@sam` added
     later by an edit isn't counted, matching notifications. **(settled after builder check)**
   - `before:2026-10-01` / `after:…`: optional. The builder may leave these out if they make the box fussy.
+- **The filter picker (owner, 2026-11-02: "like Discord").** When the box is focused and empty, or at the start of
+  a new term, a dropdown lists the filters as clickable rows. Each row shows the syntax and a short line, e.g.
+  "from: user / From a specific user". Clicking a row (or Enter/Tab, with arrow keys moving the highlight) puts
+  that filter in the box. While its value is being typed, the dropdown suggests matches:
+  - members, with avatar and name style, for `from:` and `mentions:`. Match on any part of the name, prefix
+    matches first. This is "especially helpful for those names you can't remember".
+  - channels for `in:`;
+  - the fixed list for `has:`.
+  Picking a suggestion completes the chip. Fully keyboard-driven, with combobox/listbox semantics.
 - Filters show as chips once completed, removable with ✕ or backspace.
 - A search with only filters and no words works ("everything from sam").
 - Typing a filter word shows a short hint list of the filters (a small popover), so they're discoverable without

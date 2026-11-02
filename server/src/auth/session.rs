@@ -345,3 +345,15 @@ pub async fn revoke_others_in(
         grants,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    /// Stored session rows are keyed by this digest: a change would sign everyone out.
+    #[test]
+    fn token_hash_is_stable_sha256_hex() {
+        assert_eq!(
+            super::hash_token("abc"),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+}

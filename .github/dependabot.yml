@@ -8,6 +8,13 @@ updates:
     groups:
       cargo-minor-patch:
         update-types: [minor, patch]
+    # Deliberate pins, explained in client/src-tauri/Cargo.toml: drop these with the pins.
+    ignore:
+      # livekit 0.9.7 needs =0.1.7 (0.1.8 removed a field it sets); lift with livekit 0.10.
+      - dependency-name: livekit-signaling
+      # Must match the ndarray 0.15 that deep_filter and tract 0.21.4 use (#31).
+      - dependency-name: ndarray
+        versions: [">= 0.16"]
 
   - package-ecosystem: npm
     directory: /client/ui

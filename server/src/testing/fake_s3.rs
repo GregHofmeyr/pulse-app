@@ -13,7 +13,7 @@ use axum::body::Body;
 use axum::extract::State;
 use axum::http::{HeaderMap, Method, Request, StatusCode, header};
 use axum::response::Response;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::{Digest, Sha256};
 
 pub const FAKE_BUCKET: &str = "pulse-clips-test";
