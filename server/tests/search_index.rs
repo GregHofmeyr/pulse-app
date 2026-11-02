@@ -38,10 +38,18 @@ async fn fresh() -> (tempfile::TempDir, SqlitePool) {
 
 fn base_rows() -> Vec<String> {
     vec![
-        format!("INSERT INTO users (id, username, password_hash, created_at) VALUES ('U', 'alex', 'x', '{TS}')"),
-        format!("INSERT INTO servers (id, name, created_by, created_at) VALUES ('S', 'Main', 'U', '{TS}')"),
-        format!("INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('C', 'S', 'text', 'general', 0, '{TS}')"),
-        format!("INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('Q', 'S', 'quotes', 'quotes', 1, '{TS}')"),
+        format!(
+            "INSERT INTO users (id, username, password_hash, created_at) VALUES ('U', 'alex', 'x', '{TS}')"
+        ),
+        format!(
+            "INSERT INTO servers (id, name, created_by, created_at) VALUES ('S', 'Main', 'U', '{TS}')"
+        ),
+        format!(
+            "INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('C', 'S', 'text', 'general', 0, '{TS}')"
+        ),
+        format!(
+            "INSERT INTO channels (id, server_id, kind, name, position, created_at) VALUES ('Q', 'S', 'quotes', 'quotes', 1, '{TS}')"
+        ),
     ]
 }
 
@@ -70,7 +78,10 @@ async fn edit_reindexes() {
     let (_d, db) = fresh().await;
     exec(&db, &msg("M1", "C", "pizza tonight")).await;
     exec(&db, "UPDATE messages SET content = 'tacos tonight', edited_at = '2026-10-02T00:00:00.000Z' WHERE id = 'M1'").await;
-    assert!(hits(&db, "pizza").await.is_empty(), "the old words are gone");
+    assert!(
+        hits(&db, "pizza").await.is_empty(),
+        "the old words are gone"
+    );
     assert_eq!(hits(&db, "tacos").await, vec!["M1"]);
 }
 
@@ -80,12 +91,15 @@ async fn edit_keeps_its_place() {
     let (_d, db) = fresh().await;
     exec(&db, &msg("M1", "C", "pizza tonight")).await;
     exec(&db, &msg("M2", "C", "pizza later")).await;
-    exec(&db, "UPDATE messages SET content = 'pizza now' WHERE id = 'M1'").await;
-    let order: Vec<String> =
-        sqlx::query_scalar("SELECT message_id FROM search_docs ORDER BY doc")
-            .fetch_all(&db)
-            .await
-            .unwrap();
+    exec(
+        &db,
+        "UPDATE messages SET content = 'pizza now' WHERE id = 'M1'",
+    )
+    .await;
+    let order: Vec<String> = sqlx::query_scalar("SELECT message_id FROM search_docs ORDER BY doc")
+        .fetch_all(&db)
+        .await
+        .unwrap();
     assert_eq!(order, vec!["M1", "M2"]);
     assert_eq!(hits(&db, "now").await, vec!["M1"]);
 }
@@ -94,13 +108,24 @@ async fn edit_keeps_its_place() {
 async fn soft_delete_unindexes() {
     let (_d, db) = fresh().await;
     exec(&db, &msg("M1", "C", "pizza tonight")).await;
-    exec(&db, &format!("UPDATE messages SET content = '', deleted_at = '{TS}' WHERE id = 'M1'")).await;
+    exec(
+        &db,
+        &format!("UPDATE messages SET content = '', deleted_at = '{TS}' WHERE id = 'M1'"),
+    )
+    .await;
     assert!(hits(&db, "pizza").await.is_empty());
     // Even with words left behind, a deleted message stays out.
     exec(&db, &msg("M2", "C", "pizza again")).await;
-    exec(&db, &format!("UPDATE messages SET deleted_at = '{TS}' WHERE id = 'M2'")).await;
+    exec(
+        &db,
+        &format!("UPDATE messages SET deleted_at = '{TS}' WHERE id = 'M2'"),
+    )
+    .await;
     assert!(hits(&db, "pizza").await.is_empty());
-    let docs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM search_docs").fetch_one(&db).await.unwrap();
+    let docs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM search_docs")
+        .fetch_one(&db)
+        .await
+        .unwrap();
     assert_eq!(docs, 0);
 }
 
@@ -110,7 +135,10 @@ async fn hard_delete_unindexes() {
     exec(&db, &msg("M1", "C", "pizza tonight")).await;
     exec(&db, "DELETE FROM messages WHERE id = 'M1'").await;
     assert!(hits(&db, "pizza").await.is_empty());
-    let docs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM search_docs").fetch_one(&db).await.unwrap();
+    let docs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM search_docs")
+        .fetch_one(&db)
+        .await
+        .unwrap();
     assert_eq!(docs, 0);
 }
 
@@ -129,7 +157,11 @@ async fn quote_captions_indexed_and_follow_edits() {
         exec(&db, q).await;
     }
     assert_eq!(hits(&db, "goat").await, vec!["M1"]);
-    exec(&db, "UPDATE quote_lines SET caption = 'a sheep' WHERE id = 'L1'").await;
+    exec(
+        &db,
+        "UPDATE quote_lines SET caption = 'a sheep' WHERE id = 'L1'",
+    )
+    .await;
     assert!(hits(&db, "goat").await.is_empty());
     assert_eq!(hits(&db, "sheep").await, vec!["M1"]);
     // The content is still there alongside the caption.
@@ -146,7 +178,11 @@ async fn deleted_quote_unindexed() {
         exec(&db, q).await;
     }
     // A quote's delete: the soft delete, then its lines go (quotes::on_delete).
-    exec(&db, &format!("UPDATE messages SET content = '', deleted_at = '{TS}' WHERE id = 'M1'")).await;
+    exec(
+        &db,
+        &format!("UPDATE messages SET content = '', deleted_at = '{TS}' WHERE id = 'M1'"),
+    )
+    .await;
     exec(&db, "DELETE FROM quote_lines WHERE message_id = 'M1'").await;
     assert!(hits(&db, "honest").await.is_empty());
     assert!(hits(&db, "goat").await.is_empty());
@@ -168,7 +204,11 @@ async fn accent_and_prefix_match() {
     assert_eq!(hits(&db, "zoe").await, vec!["M1"]);
     assert_eq!(hits(&db, "\"clip\"*").await, vec!["M1"]);
     assert_eq!(hits(&db, "\"cl\"*").await, vec!["M1"], "two-letter prefix");
-    assert_eq!(hits(&db, "\"caf\"*").await, vec!["M1"], "three-letter prefix");
+    assert_eq!(
+        hits(&db, "\"caf\"*").await,
+        vec!["M1"],
+        "three-letter prefix"
+    );
 }
 
 /// The live database is migrated once: 0011 builds the index from what is already there.
@@ -197,7 +237,11 @@ async fn migration_backfills_existing() {
     rows.push(format!("INSERT INTO messages (id, channel_id, author_id, content, created_at, deleted_at) VALUES ('M2', 'C', 'U', 'pizza leftovers', '{TS}', '{TS}')"));
     rows.push(format!("INSERT INTO messages (id, channel_id, kind, content, created_at) VALUES ('M3', 'C', 'system', 'pizza card', '{TS}')"));
     rows.push(msg("M4", "Q", "[image]"));
-    rows.extend(caption_line("L1", "M4", "pizza goat").split(';').map(String::from));
+    rows.extend(
+        caption_line("L1", "M4", "pizza goat")
+            .split(';')
+            .map(String::from),
+    );
     for q in rows {
         sqlx::query(&q).execute(&mut conn).await.unwrap();
     }

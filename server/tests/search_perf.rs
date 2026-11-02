@@ -83,7 +83,10 @@ async fn typical_queries_take_under_50ms() {
         .unwrap();
     }
     tx.commit().await.unwrap();
-    println!("filled {MESSAGES} messages (indexed by the triggers) in {:?}", started.elapsed());
+    println!(
+        "filled {MESSAGES} messages (indexed by the triggers) in {:?}",
+        started.elapsed()
+    );
 
     let common = &words[0];
     // (query, typical): typical ones must meet the budget; the last one is printed only.
@@ -111,7 +114,11 @@ async fn typical_queries_take_under_50ms() {
         }
         times.sort();
         let median = times[times.len() / 2];
-        let note = if *typical { "" } else { "  [worst case, not budgeted]" };
+        let note = if *typical {
+            ""
+        } else {
+            "  [worst case, not budgeted]"
+        };
         println!("{q:<40} median {median:>10.2?}  (matches counted: {hits}){note}");
         if *typical {
             worst = worst.max(median);

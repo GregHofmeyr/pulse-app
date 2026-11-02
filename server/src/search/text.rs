@@ -189,7 +189,10 @@ mod tests {
             ]
         );
         // An unclosed quote runs to the end; an empty one is nothing.
-        assert_eq!(terms(r#"a "" "b c"#), vec![w("a"), Term::Phrase(vec!["b".into(), "c".into()])]);
+        assert_eq!(
+            terms(r#"a "" "b c"#),
+            vec![w("a"), Term::Phrase(vec!["b".into(), "c".into()])]
+        );
         assert_eq!(terms(&"x ".repeat(40)).len(), MAX_TERMS);
     }
 
@@ -215,7 +218,10 @@ mod tests {
     #[test]
     fn display_reduces_custom_emoji() {
         assert_eq!(
-            display_text("gg <:party_time:01JABCDEF> <a:spin:01JXYZ> <b>", &["a goat".into()]),
+            display_text(
+                "gg <:party_time:01JABCDEF> <a:spin:01JXYZ> <b>",
+                &["a goat".into()]
+            ),
             "gg :party_time: :spin: <b>\na goat"
         );
         assert!(has_custom_emoji("hi <:party:01J>"));

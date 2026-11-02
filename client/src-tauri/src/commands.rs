@@ -9,8 +9,8 @@ use pulse_protocol::rest::{
     Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji, EditClipRequest,
     EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest, MediaInfo, Member, Message,
     MuteTarget, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse, SearchRequest,
-    SearchResults, Server, SetMuteRequest, StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus,
-    UpdateProfileRequest, User,
+    SearchResults, Server, SetMuteRequest, StartQotyRequest, TwoFactorEnabledResponse,
+    TwoFactorStatus, UpdateProfileRequest, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};

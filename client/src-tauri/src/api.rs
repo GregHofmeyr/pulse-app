@@ -1250,15 +1250,7 @@ impl Api {
         if let Some(c) = &req.cursor {
             q.push(("cursor", c.clone()));
         }
-        Self::parse(
-            self.http
-                .get(url)
-                .query(&q)
-                .bearer_auth(token)
-                .send()
-                .await,
-        )
-        .await
+        Self::parse(self.http.get(url).query(&q).bearer_auth(token).send().await).await
     }
 
     // ---------- Quotes ----------

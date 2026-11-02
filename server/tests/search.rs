@@ -52,7 +52,12 @@ async fn get(app: &TestApp, token: &str, path: &str) -> reqwest::Response {
 }
 
 async fn server_search(f: &Fx, token: &str, query: &str) -> SearchResults {
-    get_json(&f.app, token, &format!("/servers/{}/search?{query}", f.server)).await
+    get_json(
+        &f.app,
+        token,
+        &format!("/servers/{}/search?{query}", f.server),
+    )
+    .await
 }
 
 fn ids(r: &SearchResults) -> Vec<MessageId> {
@@ -85,10 +90,19 @@ async fn clip(f: &Fx, ch: ChannelId, caption: &str) -> MessageId {
     let id = MessageId::new();
     let ts = pulse_server::db::now();
     for q in [
-        format!("INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES ('{id}', '{ch}', '{}', '{caption}', '{ts}')", f.alex.0),
-        format!("INSERT INTO media (hash, kind, location, content_type, size, width, height, frames, created_at) VALUES ('v{id}', 'clip', 'r2', 'video/mp4', 1, 1, 1, 1, '{ts}')"),
-        format!("INSERT INTO media (hash, kind, content_type, size, width, height, frames, created_at) VALUES ('t{id}', 'clip_thumb', 'image/webp', 1, 1, 1, 1, '{ts}')"),
-        format!("INSERT INTO clips (message_id, video_key, thumb_hash, duration_ms, width, height) VALUES ('{id}', 'v{id}', 't{id}', 1000, 1, 1)"),
+        format!(
+            "INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES ('{id}', '{ch}', '{}', '{caption}', '{ts}')",
+            f.alex.0
+        ),
+        format!(
+            "INSERT INTO media (hash, kind, location, content_type, size, width, height, frames, created_at) VALUES ('v{id}', 'clip', 'r2', 'video/mp4', 1, 1, 1, 1, '{ts}')"
+        ),
+        format!(
+            "INSERT INTO media (hash, kind, content_type, size, width, height, frames, created_at) VALUES ('t{id}', 'clip_thumb', 'image/webp', 1, 1, 1, 1, '{ts}')"
+        ),
+        format!(
+            "INSERT INTO clips (message_id, video_key, thumb_hash, duration_ms, width, height) VALUES ('{id}', 'v{id}', 't{id}', 1000, 1, 1)"
+        ),
     ] {
         sqlx::query(&q).execute(&f.app.db).await.unwrap();
     }
@@ -106,7 +120,10 @@ async fn finds_words_newest_first() {
     assert_eq!(r.total, Some(2));
     assert_eq!(r.next_cursor, None);
     assert_eq!(r.hits[0].text, "Pizzas are great");
-    assert_eq!(r.hits[0].highlights, vec![HighlightRange { start: 0, end: 6 }]);
+    assert_eq!(
+        r.hits[0].highlights,
+        vec![HighlightRange { start: 0, end: 6 }]
+    );
     // All words must appear.
     let r = server_search(&f, &f.alex.1, "q=pizza+great").await;
     assert_eq!(ids(&r), vec![b.id]);
@@ -131,11 +148,32 @@ async fn from_matches_quote_speakers_and_links() {
     let f = setup().await;
     let q = channel(&f, "quotes", "quotes").await;
     // alex posts both: one where sam is the member speaker, one said by a plain name.
-    let said = quote(&f, &f.alex.1, q.id, json!([{ "speaker_id": f.sam.0, "text": "I never lose" }])).await;
-    let named = quote(&f, &f.alex.1, q.id, json!([{ "speaker_name": "Sammy", "text": "rematch" }])).await;
+    let said = quote(
+        &f,
+        &f.alex.1,
+        q.id,
+        json!([{ "speaker_id": f.sam.0, "text": "I never lose" }]),
+    )
+    .await;
+    let named = quote(
+        &f,
+        &f.alex.1,
+        q.id,
+        json!([{ "speaker_name": "Sammy", "text": "rematch" }]),
+    )
+    .await;
     let r = server_search(&f, &f.alex.1, &format!("from={}", f.sam.0)).await;
-    assert_eq!(ids(&r), vec![said.id], "a linked name only counts once linked");
-    let r = post_json_put(&f, &format!("/servers/{}/speaker-links", f.server), json!({ "name": "Sammy", "user_id": f.sam.0 })).await;
+    assert_eq!(
+        ids(&r),
+        vec![said.id],
+        "a linked name only counts once linked"
+    );
+    let r = post_json_put(
+        &f,
+        &format!("/servers/{}/speaker-links", f.server),
+        json!({ "name": "Sammy", "user_id": f.sam.0 }),
+    )
+    .await;
     assert!(r.status().is_success(), "{}", r.status());
     let r = server_search(&f, &f.alex.1, &format!("from={}", f.sam.0)).await;
     assert_eq!(ids(&r), vec![named.id, said.id]);
@@ -170,10 +208,22 @@ async fn has_clip_quote_link() {
     let f = setup().await;
     let q = channel(&f, "quotes", "quotes").await;
     let c = channel(&f, "clips", "clips").await;
-    let link = send(&f.app, &f.alex.1, f.general.id, "see https://example.com now").await;
+    let link = send(
+        &f.app,
+        &f.alex.1,
+        f.general.id,
+        "see https://example.com now",
+    )
+    .await;
     let www = send(&f.app, &f.alex.1, f.general.id, "or www.example.com").await;
     send(&f.app, &f.alex.1, f.general.id, "no link here").await;
-    let qt = quote(&f, &f.alex.1, q.id, json!([{ "speaker_id": f.sam.0, "text": "a link to nothing" }])).await;
+    let qt = quote(
+        &f,
+        &f.alex.1,
+        q.id,
+        json!([{ "speaker_id": f.sam.0, "text": "a link to nothing" }]),
+    )
+    .await;
     let cl = clip(&f, c.id, "nice link shot").await;
     let r = server_search(&f, &f.alex.1, "has=link").await;
     assert_eq!(ids(&r), vec![www.id, link.id]);
@@ -181,10 +231,18 @@ async fn has_clip_quote_link() {
     assert_eq!(ids(&r), vec![qt.id]);
     let r = server_search(&f, &f.alex.1, "has=clip").await;
     assert_eq!(ids(&r), vec![cl]);
-    assert!(r.hits[0].message.clip.is_some(), "the clip part comes along");
+    assert!(
+        r.hits[0].message.clip.is_some(),
+        "the clip part comes along"
+    );
     let r = server_search(&f, &f.alex.1, "q=link&has=clip,quote").await;
     assert!(r.hits.is_empty(), "both must hold");
-    let r = get(&f.app, &f.alex.1, &format!("/servers/{}/search?has=emoji", f.server)).await;
+    let r = get(
+        &f.app,
+        &f.alex.1,
+        &format!("/servers/{}/search?has=emoji", f.server),
+    )
+    .await;
     assert_eq!(r.status(), 400);
 }
 
@@ -237,7 +295,11 @@ async fn paging_is_stable() {
     let f = setup().await;
     let mut sent = Vec::new();
     for i in 0..60 {
-        sent.push(send(&f.app, &f.alex.1, f.general.id, &format!("pizza {i}")).await.id);
+        sent.push(
+            send(&f.app, &f.alex.1, f.general.id, &format!("pizza {i}"))
+                .await
+                .id,
+        );
     }
     sent.reverse();
     let p1 = server_search(&f, &f.alex.1, "q=pizza").await;
@@ -248,7 +310,12 @@ async fn paging_is_stable() {
     let c1 = p1.next_cursor.clone().unwrap();
     let p2 = server_search(&f, &f.alex.1, &format!("q=pizza&cursor={c1}")).await;
     assert_eq!(p2.total, None, "the count is on the first page only");
-    let p3 = server_search(&f, &f.alex.1, &format!("q=pizza&cursor={}", p2.next_cursor.clone().unwrap())).await;
+    let p3 = server_search(
+        &f,
+        &f.alex.1,
+        &format!("q=pizza&cursor={}", p2.next_cursor.clone().unwrap()),
+    )
+    .await;
     assert_eq!(p3.next_cursor, None);
     let all: Vec<MessageId> = [&p1, &p2, &p3].iter().flat_map(|p| ids(p)).collect();
     assert_eq!(all, sent);
@@ -267,8 +334,18 @@ async fn deleted_never_shows() {
         .await
         .unwrap();
     assert_eq!(r.status(), 204);
-    assert!(server_search(&f, &f.alex.1, "q=pizza").await.hits.is_empty());
-    assert!(server_search(&f, &f.alex.1, &format!("from={}", f.alex.0)).await.hits.is_empty());
+    assert!(
+        server_search(&f, &f.alex.1, "q=pizza")
+            .await
+            .hits
+            .is_empty()
+    );
+    assert!(
+        server_search(&f, &f.alex.1, &format!("from={}", f.alex.0))
+            .await
+            .hits
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -277,12 +354,22 @@ async fn dm_not_member_404() {
     let (_, jo) = register(&f.app, "jo").await;
     let dm = create_dm(&f.app, &f.alex.1, &[f.sam.0]).await;
     send(&f.app, &f.alex.1, dm.id, "pizza between us").await;
-    let mine: SearchResults = get_json(&f.app, &f.sam.1, &format!("/channels/{}/search?q=pizza", dm.id)).await;
+    let mine: SearchResults = get_json(
+        &f.app,
+        &f.sam.1,
+        &format!("/channels/{}/search?q=pizza", dm.id),
+    )
+    .await;
     assert_eq!(mine.hits.len(), 1);
     let r = get(&f.app, &jo, &format!("/channels/{}/search?q=pizza", dm.id)).await;
     assert_eq!(r.status(), 404);
     // And a DM's messages never show in a server's search.
-    assert!(server_search(&f, &f.alex.1, "q=pizza").await.hits.is_empty());
+    assert!(
+        server_search(&f, &f.alex.1, "q=pizza")
+            .await
+            .hits
+            .is_empty()
+    );
 }
 
 #[tokio::test]
@@ -294,13 +381,21 @@ async fn left_group_404() {
     let r = f
         .app
         .http
-        .delete(f.app.url(&format!("/channels/{}/members/{}", group.id, f.sam.0)))
+        .delete(
+            f.app
+                .url(&format!("/channels/{}/members/{}", group.id, f.sam.0)),
+        )
         .bearer_auth(&f.sam.1)
         .send()
         .await
         .unwrap();
     assert!(r.status().is_success(), "{}", r.status());
-    let r = get(&f.app, &f.sam.1, &format!("/channels/{}/search?q=pizza", group.id)).await;
+    let r = get(
+        &f.app,
+        &f.sam.1,
+        &format!("/channels/{}/search?q=pizza", group.id),
+    )
+    .await;
     assert_eq!(r.status(), 404);
 }
 
@@ -311,18 +406,31 @@ async fn other_server_never_in_results() {
     let og = general(&f.app, &f.sam.1, other.id).await;
     send(&f.app, &f.sam.1, og.id, "pizza elsewhere").await;
     let here = send(&f.app, &f.sam.1, f.general.id, "pizza here").await;
-    assert_eq!(ids(&server_search(&f, &f.alex.1, "q=pizza").await), vec![here.id]);
+    assert_eq!(
+        ids(&server_search(&f, &f.alex.1, "q=pizza").await),
+        vec![here.id]
+    );
     // Naming the other server's channel with `in` finds nothing either.
     let r = server_search(&f, &f.alex.1, &format!("q=pizza&in={}", og.id)).await;
     assert!(r.hits.is_empty());
-    let r = get(&f.app, &f.alex.1, &format!("/servers/{}/search?q=pizza", ServerId::new())).await;
+    let r = get(
+        &f.app,
+        &f.alex.1,
+        &format!("/servers/{}/search?q=pizza", ServerId::new()),
+    )
+    .await;
     assert_eq!(r.status(), 404);
 }
 
 #[tokio::test]
 async fn server_channel_on_channel_route_400() {
     let f = setup().await;
-    let r = get(&f.app, &f.alex.1, &format!("/channels/{}/search?q=pizza", f.general.id)).await;
+    let r = get(
+        &f.app,
+        &f.alex.1,
+        &format!("/channels/{}/search?q=pizza", f.general.id),
+    )
+    .await;
     assert_eq!(r.status(), 400);
 }
 
@@ -330,7 +438,13 @@ async fn server_channel_on_channel_route_400() {
 async fn thread_reply_carries_root() {
     let f = setup().await;
     let q = channel(&f, "quotes", "quotes").await;
-    let root = quote(&f, &f.alex.1, q.id, json!([{ "speaker_id": f.sam.0, "text": "honest" }])).await;
+    let root = quote(
+        &f,
+        &f.alex.1,
+        q.id,
+        json!([{ "speaker_id": f.sam.0, "text": "honest" }]),
+    )
+    .await;
     let r = post_json(
         &f.app,
         &f.sam.1,
@@ -353,7 +467,13 @@ async fn thread_reply_carries_root() {
 #[tokio::test]
 async fn custom_emoji_id_doesnt_match() {
     let f = setup().await;
-    let m = send(&f.app, &f.alex.1, f.general.id, "gg <:party:01JABCDEFGHJKMNPQRSTVWXYZ0>").await;
+    let m = send(
+        &f.app,
+        &f.alex.1,
+        f.general.id,
+        "gg <:party:01JABCDEFGHJKMNPQRSTVWXYZ0>",
+    )
+    .await;
     let r = server_search(&f, &f.alex.1, "q=party").await;
     assert_eq!(ids(&r), vec![m.id]);
     assert_eq!(r.hits[0].text, "gg :party:");
@@ -365,7 +485,12 @@ async fn custom_emoji_id_doesnt_match() {
 async fn empty_search_400() {
     let f = setup().await;
     for q in ["", "q=", "q=%20--%20", "q=pizza&cursor=not-a-cursor"] {
-        let r = get(&f.app, &f.alex.1, &format!("/servers/{}/search?{q}", f.server)).await;
+        let r = get(
+            &f.app,
+            &f.alex.1,
+            &format!("/servers/{}/search?{q}", f.server),
+        )
+        .await;
         assert_eq!(r.status(), 400, "{q}");
     }
 }

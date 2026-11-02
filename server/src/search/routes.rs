@@ -84,9 +84,7 @@ impl Search {
             && has.is_empty()
             && p.mentions.is_none()
         {
-            return Err(AppError::BadRequest(
-                "search for a word or a filter".into(),
-            ));
+            return Err(AppError::BadRequest("search for a word or a filter".into()));
         }
         Ok(Self {
             terms,
@@ -108,7 +106,11 @@ impl Search {
     /// The doc number results are ordered and paged by: the FTS rowid when there are words (FTS5
     /// walks it backwards and stops after a page), else `search_docs`' own key.
     fn key(&self) -> &'static str {
-        if self.fts.is_some() { "s.rowid" } else { "d.doc" }
+        if self.fts.is_some() {
+            "s.rowid"
+        } else {
+            "d.doc"
+        }
     }
 
     /// `FROM … WHERE …` over the searchable messages of `channels` that match. CROSS JOIN fixes
@@ -126,7 +128,9 @@ impl Search {
                     .push_bind(expr.as_str());
             }
             None => {
-                q.push(" FROM search_docs d").push(LOOKUPS).push(" WHERE 1 = 1");
+                q.push(" FROM search_docs d")
+                    .push(LOOKUPS)
+                    .push(" WHERE 1 = 1");
             }
         }
         // The unary + keeps this a filter on the row found by id: as an index term it made SQLite
@@ -158,7 +162,9 @@ impl Search {
         for h in &self.has {
             q.push(match h {
                 SearchHas::Clip => " AND EXISTS (SELECT 1 FROM clips x WHERE x.message_id = m.id)",
-                SearchHas::Quote => " AND EXISTS (SELECT 1 FROM quotes x WHERE x.message_id = m.id)",
+                SearchHas::Quote => {
+                    " AND EXISTS (SELECT 1 FROM quotes x WHERE x.message_id = m.id)"
+                }
                 SearchHas::Link => {
                     " AND (instr(m.content, 'http://') > 0 OR instr(m.content, 'https://') > 0
                        OR instr(lower(m.content), 'www.') > 0)"
@@ -166,9 +172,11 @@ impl Search {
             });
         }
         if let Some(u) = self.mentions {
-            q.push(" AND EXISTS (SELECT 1 FROM mentions x WHERE x.message_id = m.id AND x.user_id = ")
-                .push_bind(u.to_string())
-                .push(")");
+            q.push(
+                " AND EXISTS (SELECT 1 FROM mentions x WHERE x.message_id = m.id AND x.user_id = ",
+            )
+            .push_bind(u.to_string())
+            .push(")");
         }
     }
 }
@@ -223,10 +231,7 @@ async fn run(
     search: &Search,
     channels: &[Channel],
 ) -> AppResult<SearchResults> {
-    let channels: Vec<String> = channels
-        .iter()
-        .map(|c| c.id.to_string())
-        .collect();
+    let channels: Vec<String> = channels.iter().map(|c| c.id.to_string()).collect();
     if channels.is_empty() {
         return Ok(SearchResults {
             hits: vec![],
@@ -242,7 +247,8 @@ async fn run(
     if let Some(c) = search.cursor {
         q.push(format!(" AND {key} < ")).push_bind(c);
     }
-    q.push(format!(" ORDER BY {key} DESC LIMIT ")).push_bind(PAGE);
+    q.push(format!(" ORDER BY {key} DESC LIMIT "))
+        .push_bind(PAGE);
     let page: Vec<(i64, String)> = q.build_query_as().fetch_all(&s.db).await?;
     // Read past even if every hit on the page is dropped below: the next page starts after it.
     let next_cursor = (page.len() as i64 == PAGE).then(|| page[page.len() - 1].0.to_string());
