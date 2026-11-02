@@ -18,6 +18,7 @@ vi.mock('@tauri-apps/api/core', () => ({
 
 import Settings from './Settings.svelte'
 import { motion, setAnimateMode } from '../lib/animate.svelte'
+import { previews, setShowPreviews } from '../lib/linkPreviews.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 
@@ -68,6 +69,22 @@ describe('Settings: Chat', () => {
     flushSync()
     expect(motion.mode).toBe('never')
     expect(localStorage.getItem('pulse.animateEmoji')).toBe('never')
+  })
+
+  it('Show link previews: On by default, Off hides them and persists', () => {
+    setShowPreviews(true)
+    localStorage.clear()
+    cmp = mount(Settings, { target: document.body, props: { onClose: () => {}, section: 'chat' } })
+    flushSync()
+    const opts = () => [...document.querySelectorAll<HTMLButtonElement>('[role=radiogroup][aria-label="Show link previews"] [role=radio]')]
+    expect(opts().map((o) => o.textContent)).toEqual(['On', 'Off'])
+    expect(opts()[0].getAttribute('aria-checked')).toBe('true')
+    opts()[1].click()
+    flushSync()
+    expect(previews.show).toBe(false)
+    expect(localStorage.getItem('pulse.linkPreviews')).toBe('off')
+    expect(opts()[1].getAttribute('aria-checked')).toBe('true')
+    setShowPreviews(true)
   })
 })
 

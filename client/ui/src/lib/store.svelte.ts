@@ -18,6 +18,7 @@ import { noteReactionEvent } from './reactions'
 import { loadSoundPrefs, playSound } from './voiceui'
 import { streamApi } from './stream/stream.svelte'
 import { windowFocus } from './windowFocus.svelte'
+import { forgetEmbedOrigin } from './linkPreviews.svelte'
 
 // The reducer (state.ts) is pure and never mutates: hold its output as-is (`$state.raw`) instead
 // of deep-proxying it. Reassigning `app.state` is the only way to change it, and the only way that
@@ -299,6 +300,7 @@ export function resetState() {
   ui.openReplies = null
   ui.openClip = null
   forgetProfileLoads()
+  forgetEmbedOrigin() // the next account may be on another server
   app.state = emptyState()
   // a held crash report belongs to the session (and server) it was offered in: the next sign-in
   // asks again if the core still has it for that server

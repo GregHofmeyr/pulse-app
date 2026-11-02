@@ -8,11 +8,13 @@
   import EmojiBox from './EmojiBox.svelte'
   import EmojiPopover from './EmojiPopover.svelte'
   import ReactionRow from './ReactionRow.svelte'
+  import LinkEmbed from './LinkEmbed.svelte'
+  import { previews } from '../lib/linkPreviews.svelte'
   import { reactionKey, type Std } from '../lib/emoji'
   import { pickAdds, react } from '../lib/reactions'
   import { untrack } from 'svelte'
   import { app } from '../lib/store.svelte'
-  import { errorText } from '../lib/tauri'
+  import { api, errorText } from '../lib/tauri'
   import { InlineError } from '../lib/inlineError.svelte'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import { renderMessage } from '../lib/markdown'
@@ -114,6 +116,14 @@
       showError(errorText(e))
     }
   }
+  async function hideEmbeds() {
+    try {
+      await api.hideEmbed(message.id, null)
+    } catch (e) {
+      showError(errorText(e))
+    }
+  }
+  const embeds = $derived(!pending && !message.deleted && previews.show ? (message.embeds ?? []) : [])
   const time = $derived(new Date(message.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }))
 
   let editBox: EmojiBox | undefined = $state()
@@ -206,6 +216,7 @@
           <div class="content" {@attach animateEmojiIn(html)} {@attach mentionsIn(html, lookup, mentionCss)} onclick={openMention} onkeydown={openMention}>{@html html}</div>
           {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         {/if}
+        {#each embeds as e (e.url)}<LinkEmbed embed={e} messageId={message.id} {mine} onError={showError} />{/each}
         {#if !pending}<ReactionRow {message} {meId} {nameOf} onError={showError} />{/if}
         {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
       </div>
@@ -215,6 +226,7 @@
           <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>
           {#if mine}
             <button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={15} /></button>
+            {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={15} /></button>{/if}
             <button aria-label="Delete" onclick={() => void del()}><Icon name="trash" size={15} /></button>
           {/if}
         </div>

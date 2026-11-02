@@ -31,6 +31,7 @@ import type { ClipStorage } from './protocol/ClipStorage'
 import type { SearchRequest } from './protocol/SearchRequest'
 import type { SearchResults } from './protocol/SearchResults'
 import type { Notice } from './notify'
+import type { EmbedProvider } from './protocol/EmbedProvider'
 
 /** `login` / `login_mfa`: signed in, waiting for the second step, or (second step only) the ticket is gone. */
 export type LoginResult = { status: 'ready'; user: User } | { status: 'mfa_required' } | { status: 'expired' }
@@ -132,6 +133,12 @@ export const api = {
     invoke<void>('send_message', { channelId, content, replyToId, nonce }),
   editMessage: (messageId: string, content: string) => invoke<Message>('edit_message', { messageId, content }),
   deleteMessage: (messageId: string) => invoke<void>('delete_message', { messageId }),
+  /** Hides one link's preview on your own message, or all of them (`url` null); the update also arrives as MessageUpdated. */
+  hideEmbed: (messageId: string, url: string | null) => invoke<Message>('hide_embed', { messageId, url }),
+  /** Our embed page's origin, only when signed in to the server the app's CSP allows framing; else null. */
+  embedOrigin: () => invoke<string | null>('embed_origin'),
+  /** Instagram plays in a capability-free pop-out window (one at a time). */
+  openEmbedWindow: (provider: EmbedProvider, id: string) => invoke<void>('open_embed_window', { provider, id }),
   sendTyping: (channelId: string) => invoke<void>('send_typing', { channelId }),
   /** The raw file goes as the request body (a JSON number array would be slow at 2 MB). */
   uploadEmojiMedia: (bytes: Uint8Array) => invoke<MediaInfo>('upload_emoji_media', bytes),

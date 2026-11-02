@@ -3,6 +3,7 @@ import { flushSync, mount, tick, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Message } from '../lib/protocol/Message'
 import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
+import type { LinkEmbed } from '../lib/protocol/LinkEmbed'
 
 const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => undefined)
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
@@ -14,6 +15,7 @@ import { offsetOf, positionAt, serialize } from '../lib/composerDom'
 import { appearance } from '../lib/appearance.svelte'
 import { motion } from '../lib/animate.svelte'
 import { closeCard, profileUi } from '../lib/profileCard.svelte'
+import { setShowPreviews } from '../lib/linkPreviews.svelte'
 
 const ce = (id: string, name: string): CustomEmoji => ({
   id, server_id: 'S1', name, hash: id.repeat(64).slice(0, 64), still_hash: null, animated: false, added_by: null, created_at: '2026-10-01T00:00:00Z',
@@ -592,5 +594,58 @@ describe('mention pill CSS', () => {
     } finally {
       style.remove()
     }
+  })
+})
+
+describe('link previews', () => {
+  const card = (url: string): LinkEmbed => ({
+    url, provider: 'generic', kind: 'card', provider_id: null, title: 'A page', description: null, site_name: 'Example',
+    author: null, thumb: null, start: null, vertical: false,
+  })
+  function showEmbeds(mine: boolean, embeds = [card('https://example.com/a'), card('https://example.com/b')]) {
+    const m = msg({ content: 'see https://example.com/a and https://example.com/b', embeds })
+    app.state = { ...emptyState(), messages: { C1: [m] } }
+    cmp = mount(MessageItem, { target: document.body, props: {
+      message: m, serverId: null, name: 'alex', nameOf: (id: string | null) => id ?? '', replyTo: null,
+      grouped: false, mine, onReply: () => {}, onEdit, onDelete, meId: mine ? 'U1' : 'U9',
+    } })
+    flushSync()
+  }
+  afterEach(() => setShowPreviews(true))
+
+  it('shows a card per embed', () => {
+    showEmbeds(false)
+    expect(document.querySelectorAll('.embed')).toHaveLength(2)
+  })
+
+  it('shows none with the setting off', () => {
+    setShowPreviews(false)
+    showEmbeds(true)
+    expect(document.querySelectorAll('.embed')).toHaveLength(0)
+    expect(btn('Remove previews')).toBeNull()
+  })
+
+  it('"Remove previews" only on your own message, and it hides them all', async () => {
+    showEmbeds(false)
+    expect(btn('Remove previews')).toBeNull()
+    unmount(cmp!)
+    document.body.innerHTML = ''
+    showEmbeds(true)
+    btn('Remove previews').click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('hide_embed', { messageId: 'M1', url: null })
+  })
+
+  it('no "Remove previews" without embeds', () => {
+    showEmbeds(true, [])
+    expect(btn('Remove previews')).toBeNull()
+  })
+
+  it('a failed "Remove previews" shows why', async () => {
+    showEmbeds(true)
+    invoke.mockImplementation(async (c: string) => { if (c === 'hide_embed') throw 'nope' })
+    btn('Remove previews').click()
+    await settle()
+    expect(alert()?.textContent).toBe('nope')
   })
 })
