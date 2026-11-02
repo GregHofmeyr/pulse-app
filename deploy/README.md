@@ -202,12 +202,9 @@ or call that is already open stays up until it drops. To close those at once, re
   `HEAD /v2/<repo>/manifests/<tag>` on the registry with the OCI index and manifest-list `Accept` headers and read
   `Docker-Content-Digest`. Check that the index lists `linux/arm64` (the server is ARM64). Then update
   `compose.yml` (CI and `just deploy-check` read the Caddy image from it), run `just deploy-check`, `just deploy`.
-- LiveKit lives in three places that move together: `deploy/compose.yml` (production), the root `docker-compose.yml`
-  (dev and `just voice-it`; same `image:` line, so the tests run what ships), and `release-windows.yml`
-  (`LIVEKIT_VERSION` and `LIVEKIT_WINDOWS_SHA256`, the Windows test kit's binary). Dependabot bumps both compose
-  files in one PR; add the `release-windows.yml` change to it by hand (the comment there says how to get the
-  SHA-256). `deploy-selftest.sh` (CI and `just deploy-check`) fails if the two image lines differ or the version
-  isn't their tag; it can't check the SHA-256.
+- LiveKit lives in two places that move together: `deploy/compose.yml` (production) and the root
+  `docker-compose.yml` (dev and `just voice-it`; same `image:` line, so the tests run what ships). Dependabot bumps
+  both in one PR. `deploy-selftest.sh` (CI and `just deploy-check`) fails if the two image lines differ.
 - Order for a release: deploy the server first, then send friends the new installer. Clients older than the
   server see "plz update :)".
 - Building a branch: running `release-server` by hand (workflow dispatch) on a branch other than `main` tags

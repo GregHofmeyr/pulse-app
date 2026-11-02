@@ -550,12 +550,6 @@ below the configured minimum (2 GB by default). The check comes after sign-in an
     (tag `webrtc-89d790b`). Before extracting it, the build checks the archive's SHA-256 against a value pinned in the
     repository (`vendor/webrtc-sys/libwebrtc_download.rs`, for Linux x64 and Windows x64). It fails on a mismatch, and
     for any target without a pin. A libwebrtc built locally from source (`LK_CUSTOM_WEBRTC`) skips the download.
-  - **Test kit.** The build output is a test kit zip containing the installer. The kit also includes a LiveKit server
-    binary (v1.13.11), for running a local test server. The release job checks the downloaded archive against a
-    pinned SHA-256 before extracting it, and fails on a mismatch. The installer does not install it.
-  - **Test kit LiveKit.** The kit's LiveKit config keeps signalling, UDP media and TURN on loopback, and its own
-    TURN means clients are given no third-party STUN server. LiveKit's ICE-TCP port (7881) still listens on every
-    interface; LiveKit gives no way to restrict it. A test checks this config like the production and dev ones.
 - **Rust dependencies.** `cargo-deny` checks advisories, licences, wildcard version requirements and sources
   (`deny.toml`). Only crates.io and one pinned git dependency are allowed as sources.
   - **Ignored advisories.** Each ignored advisory is listed there with its reason.

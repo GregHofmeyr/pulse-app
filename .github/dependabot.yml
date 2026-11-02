@@ -45,8 +45,7 @@ updates:
         update-types: [minor, patch]
 
   # image: lines in deploy/compose.yml (livekit, caddy) and the dev docker-compose.yml (livekit, kept
-  # identical to prod: deploy-selftest.sh fails CI if they differ). The group puts both in one PR;
-  # release-windows.yml's LIVEKIT_VERSION + SHA-256 are bumped by hand in it (deploy/README.md).
+  # identical to prod: deploy-selftest.sh fails CI if they differ). The group puts both in one PR.
   - package-ecosystem: docker-compose
     directories: [/deploy, /]
     schedule:

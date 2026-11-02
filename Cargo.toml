@@ -64,7 +64,7 @@ opt-level = 3
 [profile.dev.package.blake2]
 opt-level = 3
 
-# Release builds (installer, test kit, server image). Fat LTO + one codegen unit: smaller code
+# Release builds (installer, server image). Fat LTO + one codegen unit: smaller code
 # (tract/ndarray generics are otherwise duplicated across 16 units) for about 3x the build time.
 # Measured with strip: Linux binary -33 MB, Windows -2.8 MB; speed was not measured. strip also
 # drops symbol names from native backtraces; nothing reads them today (crash reports carry the
