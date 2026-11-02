@@ -62,6 +62,11 @@ linux-client:
     cd client/src-tauri && VITE_DEFAULT_SERVER=https://pulsechat.co.za flock ../../target/.cargo-serial nice -n 10 cargo tauri build --debug --no-bundle
     PULSE_DEV_FFMPEG_DIR=/usr/bin ./target/debug/pulse-app
 
+# start the last `just linux-client` build again, without building
+linux-run:
+    @test -x target/debug/pulse-app || { echo "no build yet: run just linux-client first" >&2; exit 1; }
+    PULSE_DEV_FFMPEG_DIR=/usr/bin ./target/debug/pulse-app
+
 # print a single-use invite for the local dev server
 invite:
     cargo run -q -p pulse-server --bin pulse-app-server -- create-invite
