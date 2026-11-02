@@ -620,3 +620,72 @@ describe('TextChannel: quotes channel', () => {
     expect(document.querySelector<HTMLTextAreaElement>('textarea.qtext')!.value).toBe('half written')
   })
 })
+
+describe('TextChannel: coming back to a channel', () => {
+  const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+  const ready = {
+    me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
+    channels: [{ id: 'C1', server_id: 'S1', kind: 'text' as const, name: 'general', position: 0 }],
+    members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
+    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
+  }
+  // jsdom has no layout (every height 0 reads as "at the bottom"): give the list a real one, a long
+  // history in a short window, opened at the top as a fresh element is.
+  const sizes = { scrollHeight: 5000, clientHeight: 500 }
+  const saved: Record<string, PropertyDescriptor | undefined> = {}
+  beforeEach(() => {
+    for (const k of Object.keys(sizes) as (keyof typeof sizes)[]) {
+      saved[k] = Object.getOwnPropertyDescriptor(Element.prototype, k)
+      Object.defineProperty(Element.prototype, k, { configurable: true, get(this: Element) { return this.classList.contains('list') ? sizes[k] : 0 } })
+    }
+  })
+  afterEach(() => {
+    for (const [k, d] of Object.entries(saved)) {
+      if (d) Object.defineProperty(Element.prototype, k, d)
+      else delete (Element.prototype as unknown as Record<string, unknown>)[k]
+    }
+    document.body.innerHTML = ''
+  })
+
+  it('opens at the newest messages when its history is already loaded (no fetch to scroll after)', async () => {
+    resetState()
+    app.state = markHistory(addHistory(applyReady(emptyState(), ready), 'C1', page(100, 50)), 'C1', false)
+    const scrolled: Array<{ el: Element; top?: number }> = []
+    Element.prototype.scrollTo = function (this: Element, o?: ScrollToOptions | number) {
+      scrolled.push({ el: this, top: typeof o === 'object' ? o.top : undefined })
+    } as Element['scrollTo']
+    invoke.mockClear()
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    for (let i = 0; i < 3; i++) await tick()
+    expect(invoke).not.toHaveBeenCalledWith('list_messages', expect.anything()) // loaded: nothing fetched
+    const list = document.querySelector('.list')!
+    expect(scrolled.some((s) => s.el === list && s.top === 5000)).toBe(true)
+    unmount(c)
+  })
+
+  it('scrolled more than a screen up with nothing new, offers "Jump to present"; near the bottom it goes', async () => {
+    resetState()
+    app.state = markHistory(addHistory(applyReady(emptyState(), ready), 'C1', page(100, 50)), 'C1', false)
+    const tops: number[] = []
+    Element.prototype.scrollTo = function (this: Element, o?: ScrollToOptions | number) {
+      if (typeof o === 'object' && o.top !== undefined) tops.push(o.top)
+    } as Element['scrollTo']
+    const c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })
+    flushSync()
+    const list = document.querySelector<HTMLElement>('.list')!
+    const jumpBtn = () => [...document.querySelectorAll<HTMLButtonElement>('button.jump')].find((b) => b.textContent === 'Jump to present')
+    list.scrollTop = 4400 // 100 px from the bottom
+    list.dispatchEvent(new Event('scroll'))
+    flushSync()
+    expect(jumpBtn()).toBeUndefined()
+    list.scrollTop = 3000 // 1500 px up: three screens
+    list.dispatchEvent(new Event('scroll'))
+    flushSync()
+    expect(jumpBtn()).toBeDefined()
+    tops.length = 0
+    jumpBtn()!.click()
+    expect(tops).toContain(5000)
+    unmount(c)
+  })
+})

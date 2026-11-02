@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { tick, untrack } from 'svelte'
+  import { onMount, tick, untrack } from 'svelte'
   import Icon from './Icon.svelte'
   import MessageItem from './MessageItem.svelte'
   import QuoteComposer from './QuoteComposer.svelte'
@@ -87,6 +87,14 @@
     )
   })
 
+  // Coming back to a channel whose history is still loaded: nothing is fetched, so nothing above
+  // scrolls, and a fresh list opens at the top. Open at the newest, like a first visit (a jump that
+  // brought you here scrolls to its message itself).
+  onMount(() => {
+    if (!untrack(() => history?.loaded) || ui.jump?.channelId === channelId) return
+    void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
+  })
+
   // stick to the bottom when new messages arrive and we were already near it
   $effect(() => {
     void messages.length
@@ -150,6 +158,8 @@
   let anchored = $state(untrack(() => channelId in app.state.reads)) // brand-new chats start without a line
   const newIndex = $derived(anchored ? firstUnreadIndex(messages, anchor, app.state.me?.id ?? '') : -1)
   let atBottom = $state(true)
+  /** More than a screen above the newest: "Jump to present" shows even with nothing new below. */
+  let farUp = $state(false)
   let wasWatching = false
   $effect(() => {
     const now = windowFocus.focused && atBottom
@@ -177,7 +187,9 @@
     }
   })
   function onScroll() {
-    atBottom = list.scrollHeight - list.scrollTop - list.clientHeight < 40
+    const below = list.scrollHeight - list.scrollTop - list.clientHeight
+    atBottom = below < 40
+    farUp = below > list.clientHeight
     void maybeLoadOlder()
     if (atBottom) void maybeLoadNewer()
   }
@@ -497,7 +509,8 @@
     {/each}
   </div>
   {#if detached}<button class="jump" onclick={toPresent}>Jump to present</button>
-  {:else if unreadBelow > 0}<button class="jump" onclick={jump}>{unreadBelow} new · Jump</button>{/if}
+  {:else if unreadBelow > 0}<button class="jump" onclick={jump}>{unreadBelow} new · Jump</button>
+  {:else if farUp}<button class="jump" onclick={jump}>Jump to present</button>{/if}
   {#if jumpNotice}<p class="jump-notice" role="status">{jumpNotice}</p>{/if}
   <div class="typing" aria-live="polite">
     {#if typers.length}<strong>{typers.join(', ')}</strong> {typers.length > 1 ? 'are' : 'is'} typing…{/if}
