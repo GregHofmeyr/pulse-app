@@ -28,7 +28,7 @@ const me = user('U1', 'alex')
 const sam = user('U2', 'sam')
 const msg = (id: string, content: string): Message => ({
   id, channel_id: 'C1', author_id: 'U1', kind: 'normal', content,
-  reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null,
+  reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [],
 })
 const card = { banner_hash: null, banner_still: null, theme_top: '#000000', theme_bottom: '#000000', pronouns: null, bio: null }
 const pills = () => [...document.querySelectorAll('.mention')].map((e) => e.textContent)

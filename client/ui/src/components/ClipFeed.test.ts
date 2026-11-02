@@ -32,7 +32,7 @@ const ready = (lastRead: string | null = null) =>
 const clip = (id: string, over: Partial<Message> = {}): Message => ({
   id, channel_id: 'C1', author_id: 'U2', kind: 'normal', content: `caption ${id}`, reply_to_id: null,
   created_at: '2026-10-01T10:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null,
-  quote: null, qoty_card: null,
+  quote: null, qoty_card: null, embeds: [],
   clip: { thumb_hash: id.toLowerCase().padEnd(64, '0'), duration_ms: 65000, width: 1280, height: 720, size: 1000, game_id: 'G1', reply_count: 0, last_reply_id: null, replies_seen: null },
   ...over,
 })

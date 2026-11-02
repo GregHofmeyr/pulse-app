@@ -328,6 +328,7 @@ async fn confirm(
             replies_seen: None,
         }),
         qoty_card: None,
+        embeds: vec![],
     };
     // As in `send`: publishes (and the absolute unread counts) go out in commit order.
     let _order = s.hub.in_order().await;

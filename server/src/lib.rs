@@ -4,6 +4,7 @@ pub mod clips;
 pub mod config;
 pub mod db;
 pub mod dms;
+pub mod embeds;
 pub mod emoji;
 pub mod error;
 pub mod gateway;

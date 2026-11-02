@@ -6,7 +6,7 @@ import type { Message } from './protocol/Message'
 
 const clip = (game: string | null, author = 'U2'): Message => ({
   id: 'M1', channel_id: 'K1', author_id: author, kind: 'normal', content: '', reply_to_id: null,
-  created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null,
+  created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, embeds: [],
   clip: { thumb_hash: '', duration_ms: 1000, width: 1, height: 1, size: 1, game_id: game, reply_count: 0, last_reply_id: null, replies_seen: null },
 })
 

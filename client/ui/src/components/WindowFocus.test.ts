@@ -35,7 +35,7 @@ const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, 
 const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const msg = (id: string, channel_id: string): Message => ({
   id, channel_id, author_id: 'U2', kind: 'normal', content: 'hi', reply_to_id: null,
-  created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null,
+  created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [],
 })
 function ready() {
   app.state = applyReady(emptyState(), {

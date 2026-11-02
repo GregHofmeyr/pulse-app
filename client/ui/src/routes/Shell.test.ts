@@ -780,7 +780,7 @@ describe('clips being sent', () => {
 describe('trimming history on leave', () => {
   const msgs = (channel_id: string, n: number) => Array.from({ length: n }, (_, i) => ({
     id: `M${String(i).padStart(4, '0')}`, channel_id, author_id: 'U2', kind: 'normal' as const, content: `m${i}`, reply_to_id: null,
-    created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null,
+    created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [],
   }))
 
   it('leaving a channel trims it to its newest messages', async () => {

@@ -14,7 +14,7 @@ import { testReady } from './testReady'
 
 const msg = (id: string, channel = 'C1', more: Partial<Message> = {}): Message => ({
   id, channel_id: channel, author_id: 'U2', kind: 'normal', content: `text ${id}`,
-  reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null,
+  reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [],
   ...more,
 })
 const hit = (m: Message, root: Message | null = null): SearchHit => ({ message: m, text: m.content, highlights: [], root })

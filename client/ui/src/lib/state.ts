@@ -858,7 +858,7 @@ export function pendingMessage(p: Pending, channelId: string, meId: string): Mes
   return {
     id: `pending:${p.nonce}`, channel_id: channelId, author_id: meId, kind: 'normal', content: p.content,
     reply_to_id: p.reply_to_id, created_at: p.created_at, edited_at: null, deleted: false, mentions: [], reactions: [],
-    thread_root_id: p.thread_root_id, quote: null, qoty_card: null, clip: null,
+    thread_root_id: p.thread_root_id, quote: null, qoty_card: null, clip: null, embeds: [],
   }
 }
 

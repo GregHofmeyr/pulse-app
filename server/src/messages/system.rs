@@ -56,6 +56,7 @@ pub async fn insert(
         thread_root_id: None,
         quote: None,
         clip: None,
+        embeds: vec![],
         qoty_card: qoty_card(&stored),
     };
     sqlx::query("INSERT INTO messages (id, channel_id, author_id, kind, content, system_payload, created_at) VALUES (?, ?, NULL, 'system', ?, ?, ?)")

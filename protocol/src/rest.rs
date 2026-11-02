@@ -319,6 +319,10 @@ pub struct Message {
     /// Set when this message is a clip.
     #[serde(default)]
     pub clip: Option<Clip>,
+    /// Previews of the links in the content, in the order they appear (the server adds them
+    /// after the send; the sender can hide them).
+    #[serde(default)]
+    pub embeds: Vec<LinkEmbed>,
 }
 
 /// One emoji on a message: a Unicode emoji or `custom:<id>`.
@@ -901,6 +905,79 @@ pub struct LeaderboardWin {
     pub speakers: Vec<QuoteSpeaker>,
 }
 
+// ---------- Link embeds ----------
+
+/// Who a link preview is from. A provider this build doesn't know reads as `Unknown`: a card at
+/// most, never a player.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbedProvider {
+    Youtube,
+    Tiktok,
+    Spotify,
+    Soundcloud,
+    Twitch,
+    Instagram,
+    /// Any other site: an OpenGraph card.
+    Generic,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum EmbedKind {
+    /// Title, description and thumbnail only.
+    Card,
+    /// A card whose thumbnail starts the provider's player (through the server's embed page).
+    Player,
+}
+
+/// A preview's thumbnail: a `link_thumb` media hash, a still WebP.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct EmbedThumb {
+    pub hash: String,
+    pub width: u32,
+    pub height: u32,
+}
+
+/// One link's preview, built by the server from the provider's oEmbed or the page's OpenGraph
+/// tags. Plain text throughout: the client never renders any of it as HTML.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct LinkEmbed {
+    /// The link as it appears in the message.
+    pub url: String,
+    pub provider: EmbedProvider,
+    pub kind: EmbedKind,
+    /// The provider's validated id for its player (a player has one).
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub title: Option<String>,
+    #[serde(default)]
+    pub description: Option<String>,
+    #[serde(default)]
+    pub site_name: Option<String>,
+    #[serde(default)]
+    pub author: Option<String>,
+    #[serde(default)]
+    pub thumb: Option<EmbedThumb>,
+    /// YouTube start, seconds.
+    #[serde(default)]
+    pub start: Option<u32>,
+    /// A 9:16 player (TikTok, Shorts, reels).
+    #[serde(default)]
+    pub vertical: bool,
+}
+
+/// `POST /messages/{id}/embeds/hide`: the sender hides one preview, or all of them.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+pub struct HideEmbedRequest {
+    /// The preview's `url`; `None` hides every preview on the message.
+    #[serde(default)]
+    pub url: Option<String>,
+}
+
 // ---------- Message search ----------
 
 /// What a search result must carry (`has:` in the box). Sent as one comma-separated `has`
@@ -1140,5 +1217,45 @@ mod tests {
             assert_eq!(SearchHas::parse(w), Some(h));
         }
         assert_eq!(SearchHas::parse("emoji"), None);
+    }
+
+    /// A provider a newer server knows reads as `Unknown` here (a card at most, never a player).
+    #[test]
+    fn an_unknown_embed_provider_parses() {
+        let e: LinkEmbed = serde_json::from_str(
+            r#"{"url":"https://vimeo.example/1","provider":"vimeo","kind":"player",
+            "provider_id":"1","title":"t","vertical":false}"#,
+        )
+        .unwrap();
+        assert_eq!(e.provider, EmbedProvider::Unknown);
+        assert_eq!(e.kind, EmbedKind::Player);
+    }
+
+    /// Everything after `kind` may be left out.
+    #[test]
+    fn a_bare_link_embed_parses() {
+        let e: LinkEmbed = serde_json::from_str(
+            r#"{"url":"https://example.com/a","provider":"generic","kind":"card"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            e,
+            LinkEmbed {
+                url: "https://example.com/a".into(),
+                provider: EmbedProvider::Generic,
+                kind: EmbedKind::Card,
+                provider_id: None,
+                title: None,
+                description: None,
+                site_name: None,
+                author: None,
+                thumb: None,
+                start: None,
+                vertical: false,
+            }
+        );
+        let json = serde_json::to_value(&e).unwrap();
+        assert_eq!(json["provider"], "generic");
+        assert_eq!(json["kind"], "card");
     }
 }

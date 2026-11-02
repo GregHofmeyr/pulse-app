@@ -105,6 +105,11 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::HighlightRange::export_all(&cfg)?;
     rest::SearchHit::export_all(&cfg)?;
     rest::SearchResults::export_all(&cfg)?;
+    rest::EmbedProvider::export_all(&cfg)?;
+    rest::EmbedKind::export_all(&cfg)?;
+    rest::EmbedThumb::export_all(&cfg)?;
+    rest::LinkEmbed::export_all(&cfg)?;
+    rest::HideEmbedRequest::export_all(&cfg)?;
     Ok(())
 }
 

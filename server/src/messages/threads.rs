@@ -255,6 +255,14 @@ pub(crate) async fn soft_delete_replies(
     .bind(&id)
     .fetch_all(&mut *tx)
     .await?;
+    // Every reply in the thread is deleted now: their link previews go, as a delete's do.
+    sqlx::query(
+        "DELETE FROM link_embeds
+         WHERE message_id IN (SELECT id FROM messages WHERE thread_root_id = ?)",
+    )
+    .bind(&id)
+    .execute(&mut *tx)
+    .await?;
     let mut mentioned: HashMap<String, Vec<UserId>> = HashMap::new();
     for (msg, user) in sqlx::query_as::<_, (String, String)>(
         "SELECT mt.message_id, mt.user_id FROM mentions mt JOIN messages m ON m.id = mt.message_id

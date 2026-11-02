@@ -33,7 +33,7 @@ const created = (channel: string, content: string, extra: Partial<Message> = {})
     nonce: null,
     message: {
       id: `M${++n}`, channel_id: channel, author_id: 'U1', kind: 'normal' as const, content, reply_to_id: null, created_at: '2026-10-30T10:00:00Z', edited_at: null,
-      deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, ...extra,
+      deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [], ...extra,
     },
   },
 })

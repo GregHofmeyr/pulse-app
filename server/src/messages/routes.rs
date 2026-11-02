@@ -86,6 +86,7 @@ fn from_row(r: Row) -> AppResult<Message> {
         thread_root_id: thread_root_id.as_deref().map(parse).transpose()?,
         quote: None,
         clip: None,
+        embeds: vec![],
         qoty_card: match system_payload {
             Some(p) if system && deleted_at.is_none() => super::system::qoty_card(&p),
             _ => None,
@@ -119,6 +120,7 @@ pub(crate) async fn load(
     let mut one = [m];
     crate::quotes::attach(db, me, &mut one).await?;
     crate::clips::attach(db, me, &mut one).await?;
+    crate::embeds::attach(db, &mut one).await?;
     let [m] = one;
     Ok(Some(m))
 }
@@ -175,6 +177,7 @@ pub(crate) async fn fill(
     }
     crate::quotes::attach(db, me, &mut page).await?;
     crate::clips::attach(db, me, &mut page).await?;
+    crate::embeds::attach(db, &mut page).await?;
     Ok(page)
 }
 
@@ -342,6 +345,7 @@ async fn send(
         thread_root_id: req.thread_root_id,
         quote: None,
         clip: None,
+        embeds: vec![],
         qoty_card: None,
     };
     // A reply's ThreadSeen is a delta, so it must reach clients in commit order with the
@@ -570,6 +574,7 @@ async fn remove(
     } else {
         None
     };
+    crate::embeds::on_delete(&mut tx, id).await?;
     tx.commit().await?;
     let mut deleted = deleted;
     if let Some(mut ended) = overdue {
@@ -694,6 +699,7 @@ mod tests {
             thread_root_id: None,
             quote: None,
             clip: None,
+            embeds: vec![],
             qoty_card: None,
         }
     }

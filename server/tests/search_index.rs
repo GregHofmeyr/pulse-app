@@ -286,7 +286,7 @@ async fn migration_backfills_existing() {
         .fetch_one(&db)
         .await
         .unwrap();
-    assert_eq!(v, 11);
+    assert!(v >= 11, "0011 applied: {v}");
     assert_eq!(hits(&db, "pizza").await, vec!["M1", "M4"]);
     assert_eq!(hits(&db, "goat").await, vec!["M4"]);
     // And the triggers run from here on.

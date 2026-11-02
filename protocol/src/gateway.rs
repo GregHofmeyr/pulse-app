@@ -689,6 +689,19 @@ mod tests {
         assert!(m.clip.is_none());
     }
 
+    /// A pre-embeds server's `Message` still parses, with no previews.
+    #[test]
+    fn a_message_without_embeds_parses() {
+        let (c, m_id) = (ChannelId::new(), MessageId::new());
+        let m: Message = serde_json::from_str(&format!(
+            r#"{{"id":"{m_id}","channel_id":"{c}","author_id":null,"kind":"normal",
+            "content":"https://example.com","reply_to_id":null,
+            "created_at":"2026-11-02T00:00:00.000Z","edited_at":null,"deleted":false}}"#
+        ))
+        .unwrap();
+        assert!(m.embeds.is_empty());
+    }
+
     #[test]
     fn clip_events_are_scoped() {
         use crate::rest::{ClipView, Game};

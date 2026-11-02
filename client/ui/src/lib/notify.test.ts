@@ -7,7 +7,7 @@ import type { Message } from './protocol/Message'
 const user = (id: string, username: string) => ({ id, username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const msg = (channel: string, author: string | null, extra: Partial<Message> = {}): Message => ({
   id: 'M1', channel_id: channel, author_id: author, kind: 'normal', content: 'hello', reply_to_id: null,
-  created_at: '2026-10-30T10:00:00Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, ...extra,
+  created_at: '2026-10-30T10:00:00Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [], ...extra,
 })
 function ready(): Ready {
   return {

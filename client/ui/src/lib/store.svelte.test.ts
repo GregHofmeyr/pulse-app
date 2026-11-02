@@ -80,7 +80,7 @@ describe('unsent messages in the store', () => {
     app.state = removePending(app.state, 'C1', 'a')
     flushSync()
     expect(stored('U1').C1.map((p: Pending) => p.nonce)).toEqual(['b'])
-    const m: Message = { id: 'M1', channel_id: 'C1', author_id: 'U1', kind: 'normal', content: 'x', reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null }
+    const m: Message = { id: 'M1', channel_id: 'C1', author_id: 'U1', kind: 'normal', content: 'x', reply_to_id: null, created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [] }
     app.state = applyEvent(app.state, { t: 'MessageCreated', d: { message: m, nonce: 'b' } }, 0)
     flushSync()
     expect(localStorage.getItem('pulse.unsent.U1')).toBeNull()

@@ -33,6 +33,8 @@ pub enum MediaKind {
     Avatar,
     /// A profile banner: on disk, with an animation's still.
     Banner,
+    /// A link preview's thumbnail, fetched by the server: on disk, always a still.
+    LinkThumb,
 }
 
 /// Where a media row's bytes live.
@@ -60,6 +62,7 @@ impl MediaKind {
             Self::ClipThumb => "clip_thumb",
             Self::Avatar => "avatar",
             Self::Banner => "banner",
+            Self::LinkThumb => "link_thumb",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -70,15 +73,19 @@ impl MediaKind {
             "clip_thumb" => Some(Self::ClipThumb),
             "avatar" => Some(Self::Avatar),
             "banner" => Some(Self::Banner),
+            "link_thumb" => Some(Self::LinkThumb),
             _ => None,
         }
     }
     pub fn location(self) -> Location {
         match self {
             Self::Clip => Location::R2,
-            Self::Emoji | Self::Quote | Self::ClipThumb | Self::Avatar | Self::Banner => {
-                Location::Disk
-            }
+            Self::Emoji
+            | Self::Quote
+            | Self::ClipThumb
+            | Self::Avatar
+            | Self::Banner
+            | Self::LinkThumb => Location::Disk,
         }
     }
 }
@@ -297,6 +304,7 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
                          WHERE media_hash IS NOT NULL)
            AND hash NOT IN (SELECT avatar_hash FROM users WHERE avatar_hash IS NOT NULL)
            AND hash NOT IN (SELECT banner_hash FROM users WHERE banner_hash IS NOT NULL)
+           AND hash NOT IN (SELECT thumb_hash FROM link_embeds WHERE thumb_hash IS NOT NULL)
            AND hash NOT IN (SELECT p.still_hash FROM media p
                             WHERE p.still_hash IS NOT NULL
                               AND (p.created_at > ?1
@@ -390,6 +398,11 @@ mod tests {
         );
         assert_eq!(MediaKind::parse("avatar"), Some(MediaKind::Avatar));
         assert_eq!(MediaKind::parse("banner"), Some(MediaKind::Banner));
+        assert_eq!(
+            MediaKind::parse(MediaKind::LinkThumb.as_str()),
+            Some(MediaKind::LinkThumb)
+        );
+        assert_eq!(MediaKind::LinkThumb.location(), Location::Disk);
         assert_eq!(MediaKind::parse("avatars"), None);
     }
 
