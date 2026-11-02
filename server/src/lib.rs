@@ -16,6 +16,7 @@ pub mod qoty;
 pub mod quotes;
 pub mod reads;
 pub mod reports;
+pub mod search;
 pub mod servers;
 pub mod state;
 pub mod streams;
@@ -51,6 +52,7 @@ pub fn router(state: AppState) -> Router {
         .merge(clips::games::router())
         .merge(clips::routes::router())
         .merge(profiles::routes::router())
+        .merge(search::routes::router())
         .fallback(|| async { AppError::NotFound })
         .layer(tower_http::trace::TraceLayer::new_for_http())
         .with_state(state)

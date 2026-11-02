@@ -47,12 +47,48 @@ pub async fn is_channel_member(
     Ok(hit.is_some())
 }
 
+/// Whether `user` may read `ch`: a DM or group only if they are in it; a server channel always.
+/// Everything that reads messages (listing, search) goes through this one rule.
+pub async fn can_read(db: &SqlitePool, user: UserId, ch: &Channel) -> AppResult<bool> {
+    Ok(!ch.kind.is_private() || is_channel_member(db, user, ch.id).await?)
+}
+
 /// The channel, if `user` may see it. Missing and forbidden look identical (404) so private
 /// channels never leak their existence. Server channels are visible to every user.
 pub async fn channel_for(db: &SqlitePool, user: UserId, id: ChannelId) -> AppResult<Channel> {
     let ch = load_channel(db, id).await?.ok_or(AppError::NotFound)?;
-    if ch.kind.is_private() && !is_channel_member(db, user, id).await? {
+    if !can_read(db, user, &ch).await? {
         return Err(AppError::NotFound);
     }
     Ok(ch)
+}
+
+/// The channels of `server` that hold messages and `user` may read ([`can_read`]), in order.
+/// 404 when there is no such server.
+pub async fn readable_server_channels(
+    db: &SqlitePool,
+    user: UserId,
+    server: ServerId,
+) -> AppResult<Vec<Channel>> {
+    let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM servers WHERE id = ?")
+        .bind(server.to_string())
+        .fetch_optional(db)
+        .await?;
+    if exists.is_none() {
+        return Err(AppError::NotFound);
+    }
+    let rows: Vec<ChannelRow> = sqlx::query_as(&format!(
+        "SELECT {CHANNEL_COLS} FROM channels WHERE server_id = ? ORDER BY position, id"
+    ))
+    .bind(server.to_string())
+    .fetch_all(db)
+    .await?;
+    let mut out = Vec::new();
+    for ch in rows.into_iter().map(channel_from_row) {
+        let ch = ch?;
+        if ch.kind.is_server_chat() && can_read(db, user, &ch).await? {
+            out.push(ch);
+        }
+    }
+    Ok(out)
 }
