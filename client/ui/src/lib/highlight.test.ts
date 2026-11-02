@@ -22,9 +22,9 @@ describe('segments', () => {
 
 describe('lineWithHit', () => {
   it('is the first line with a match, its ranges moved to it', () => {
-    expect(lineWithHit('“a” — sam\n“pizza” — jo', [r(11, 16)])).toEqual({ text: '“pizza” — jo', highlights: [r(1, 6)] })
+    expect(lineWithHit('“a” — sam\n“pizza” — jo', [r(11, 16)])).toEqual({ text: '“pizza” — jo', highlights: [r(1, 6)], index: 1 })
   })
   it('is the first line when nothing matched', () => {
-    expect(lineWithHit('one\ntwo', [])).toEqual({ text: 'one', highlights: [] })
+    expect(lineWithHit('one\ntwo', [])).toEqual({ text: 'one', highlights: [], index: 0 })
   })
 })

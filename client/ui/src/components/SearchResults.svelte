@@ -23,6 +23,13 @@
     const isQuote = !!h.message.quote || (kind === 'quotes' && !h.message.thread_root_id)
     return isQuote ? lineWithHit(h.text, h.highlights) : { text: h.text, highlights: h.highlights }
   }
+  /** An image line's picture when the line a quote card shows is one (its text reads "[image]"):
+   *  content has one line per quote line, in order (server `quotes::render_content`). */
+  function lineImage(h: SearchHit, s: { text: string; index?: number }) {
+    if (s.text !== '[image]' || s.index === undefined) return null
+    const media = h.message.quote?.lines[s.index]?.media
+    return media ? (media.still_hash ?? media.hash) : null
+  }
   function label(h: SearchHit): string | null {
     if (!h.message.thread_root_id) return null
     return app.state.channels[h.message.channel_id]?.kind === 'clips' ? 'reply in clip' : 'reply in quote'
@@ -62,6 +69,7 @@
         {@const s = shown(h)}
         {@const where = app.state.channels[h.message.channel_id]}
         {@const tag = label(h)}
+        {@const pic = lineImage(h, s)}
         <button type="button" class="result" onclick={() => openHit(h)}>
           {#if h.message.author_id}<Avatar id={h.message.author_id} name={author(h)} size={28} />{:else}<span class="av-gap"></span>{/if}
           <span class="main">
@@ -71,7 +79,8 @@
               <span class="when">{relativeTime(h.message.created_at, nowMs)}</span>
             </span>
             {#if tag}<span class="label">{tag}</span>{/if}
-            <span class="text" class:one-line={s.text !== h.text}>{#each segments(s.text, s.highlights) as seg, i (i)}{#if seg.hit}<mark>{seg.text}</mark>{:else}{seg.text}{/if}{/each}</span>
+            {#if pic}<img class="line-thumb" src={mediaUrl(pic)} alt="" loading="lazy" decoding="async" />
+            {:else}<span class="text" class:one-line={s.text !== h.text}>{#each segments(s.text, s.highlights) as seg, i (i)}{#if seg.hit}<mark>{seg.text}</mark>{:else}{seg.text}{/if}{/each}</span>{/if}
             {#if h.message.clip}<img class="thumb" src={mediaUrl(h.message.clip.thumb_hash)} alt="" loading="lazy" decoding="async" />{/if}
           </span>
         </button>
@@ -101,6 +110,8 @@
   .text.one-line { -webkit-line-clamp: 1; line-clamp: 1; }
   mark { background: var(--accent-soft); color: var(--text); border-radius: 3px; box-shadow: 0 0 0 1px var(--accent-soft); }
   .thumb { width: 120px; aspect-ratio: 16 / 9; object-fit: cover; border-radius: 6px; background: var(--bg-3); }
+  /* a quote's image line: the picture whole, small */
+  .line-thumb { max-width: 120px; max-height: 90px; object-fit: contain; border-radius: 6px; background: var(--bg-3); }
   .state { padding: 24px 12px; display: flex; flex-direction: column; align-items: center; gap: 10px; color: var(--text-3); font-size: 13px; text-align: center; margin: 0; }
   .state p { margin: 0; }
   .state.err { padding: 8px; color: var(--danger-text); }

@@ -31,7 +31,7 @@ export function segments(text: string, ranges: HighlightRange[]): Segment[] {
 
 /** One line of a multi-line text (a quote's lines): the first with a match, else the first, with the
  *  ranges that fall in it moved to its own offsets. */
-export function lineWithHit(text: string, ranges: HighlightRange[]): { text: string; highlights: HighlightRange[] } {
+export function lineWithHit(text: string, ranges: HighlightRange[]): { text: string; highlights: HighlightRange[]; index: number } {
   let start = 0
   const lines = text.split('\n').map((line) => {
     const l = { text: line, start }
@@ -40,6 +40,7 @@ export function lineWithHit(text: string, ranges: HighlightRange[]): { text: str
   })
   const inLine = (l: { text: string; start: number }) =>
     ranges.filter((r) => r.end > l.start && r.start < l.start + l.text.length).map((r) => ({ start: Math.max(0, r.start - l.start), end: Math.min(l.text.length, r.end - l.start) }))
-  const pick = lines.find((l) => inLine(l).length) ?? lines[0]
-  return { text: pick.text, highlights: inLine(pick) }
+  const found = lines.findIndex((l) => inLine(l).length)
+  const index = found < 0 ? 0 : found
+  return { text: lines[index].text, highlights: inLine(lines[index]), index }
 }

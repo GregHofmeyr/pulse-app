@@ -73,6 +73,19 @@ describe('SearchResults', () => {
     expect([...c.querySelectorAll('mark')].map((m) => m.textContent)).toEqual(['pizza'])
   })
 
+  it('an image quote line shows its picture, not "[image]"', () => {
+    const line = (over: object) => ({ id: 'L1', speaker_id: 'U2', speaker_name: null, text: null, media: null, caption: null, awards: 0, awarders: [], ...over })
+    const q = msg('M9', 'Q1', {
+      content: '[image]\n“pizza time” — sam',
+      quote: { lines: [line({ id: 'L1', media: { hash: 'a'.repeat(64), still_hash: null, width: 40, height: 30 } }), line({ id: 'L2', text: 'pizza time' })], year: 2026 } as unknown as Message['quote'],
+    })
+    show({ hits: [hit(q, q.content, [])], total: 1 }) // nothing matched in a line: the first one shows
+    const card = cards()[0]
+    expect(card.textContent).not.toContain('[image]')
+    const img = card.querySelector<HTMLImageElement>('img.line-thumb')!
+    expect(img.getAttribute('src')).toContain('a'.repeat(64))
+  })
+
   it('never renders the text as HTML', () => {
     const evil = '<img src=x onerror="window.pwned=1"> pizza'
     show({ hits: [hit(msg('M1', 'C1', { content: evil }), evil, [{ start: 0, end: 4 }])], total: 1 })
