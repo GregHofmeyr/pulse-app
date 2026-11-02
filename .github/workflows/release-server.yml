@@ -48,7 +48,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ github.event.workflow_run.head_sha || github.sha }}
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           # pinned: the publish job needs `imagetools create --metadata-file` (buildx >= v0.35); same in both jobs
           version: v0.38.1
@@ -104,7 +104,7 @@ jobs:
           pattern: digest-*
           merge-multiple: true
           path: /tmp/digests
-      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
         with:
           # pinned: the publish job needs `imagetools create --metadata-file` (buildx >= v0.35); same in both jobs
           version: v0.38.1
