@@ -25,6 +25,8 @@
   --warn-soft: rgba(232, 176, 74, .12);
   /* --accent at 15%, as plain rgba() for the same reason as the scrollbar thumb below. */
   --accent-soft: rgba(139, 156, 255, .15);
+  /* the message box and edit box's focus edge: the accent, faint (they're focused nearly all the time) */
+  --focus-soft: rgba(139, 156, 255, .45);
   /* Context menus, popovers and the Select list. */
   --surface-menu: #2e3037;
   --line-menu: #3d4048;

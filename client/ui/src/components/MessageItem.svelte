@@ -288,7 +288,7 @@
   .actions button:hover { color: var(--text); }
   /* about two lines to start, grows with what's in it (images included) up to 200px, then scrolls */
   .body :global(.edit) { min-height: 58px; max-height: 200px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; }
-  .body :global(.edit:focus-visible) { border-color: var(--accent); }
+  .body :global(.edit:focus) { border-color: var(--focus-soft); }
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger-text); }
   .hint { font-size: 11px; color: var(--text-3); }
   .system { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }
