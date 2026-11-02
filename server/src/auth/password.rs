@@ -41,3 +41,41 @@ pub async fn verify_async(password: String, stored: String) -> bool {
         .await
         .unwrap_or(false)
 }
+
+#[cfg(test)]
+mod tests {
+    /// Made by argon2 0.5.3 (`hash` above) before the 0.6 bump. Stored hashes in `users` look like
+    /// this, so every later argon2 must still verify it.
+    const PHC_0_5_3: &str = "$argon2id$v=19$m=19456,t=2,p=1$JaAIg0p3Bn/Hc1JEYRxrqw$SPHlswzl7Je6czRCD9kXbg9Se9JjG9ez6th3pT3FJ/Y";
+    const PASSWORD: &str = "correct horse battery staple";
+
+    #[test]
+    fn hash_from_argon2_0_5_still_verifies() {
+        assert!(super::verify(PASSWORD, PHC_0_5_3));
+        assert!(!super::verify("correct horse battery stapler", PHC_0_5_3));
+    }
+
+    #[test]
+    fn new_hashes_keep_the_stored_parameters() {
+        let h = super::hash(PASSWORD).unwrap();
+        // argon2id v19, 19 MiB, 2 passes, 1 lane: same as the hashes already stored.
+        let rest = h
+            .strip_prefix("$argon2id$v=19$m=19456,t=2,p=1$")
+            .unwrap_or_else(|| panic!("parameters changed: {h}"));
+        let (salt, out) = rest.split_once('$').unwrap();
+        assert_eq!(salt.len(), 22, "16-byte salt"); // unpadded B64
+        assert_eq!(out.len(), 43, "32-byte output");
+        assert!(super::verify(PASSWORD, &h));
+        assert!(!super::verify("wrong", &h));
+    }
+
+    #[test]
+    fn garbage_never_verifies() {
+        assert!(!super::verify(PASSWORD, ""));
+        assert!(!super::verify(PASSWORD, "x"));
+        assert!(!super::verify(
+            PASSWORD,
+            "$argon2id$v=19$m=19456,t=2,p=1$bad"
+        ));
+    }
+}
