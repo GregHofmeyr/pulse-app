@@ -28,3 +28,7 @@ just dev-client           # the app; "Got an invite?" to register
 | `just voice-it-alt` | the same, with this checkout's LiveKit on 17880–17882 (beside another checkout's on 7880) |
 
 Ports: LiveKit 7880–7882 + TURN 3478/udp, server 7890, Vite 1420. Linux hotkeys: [`docs/linux-hotkeys.md`](docs/linux-hotkeys.md).
+
+## Licence
+
+Pulse is MIT licensed ([LICENSE](LICENSE)). Bundled third-party components keep their own licences ([THIRD_PARTY.md](THIRD_PARTY.md)).

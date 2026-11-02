@@ -46,7 +46,7 @@ confidence-threshold = 0.8
 # r-efi is "MIT OR Apache-2.0 OR LGPL-2.1-or-later": satisfied via MIT, LGPL stays out of the list.
 
 [licenses.private]
-# Our own crates are `publish = false` with a proprietary licence; ignore them for licence checks.
+# Our own crates are `publish = false` (MIT, see LICENSE); ignore them for licence checks.
 ignore = true
 
 [bans]
