@@ -34,7 +34,7 @@ chrono = { version = "0.4", default-features = false, features = ["clock", "std"
 futures = "0.3"
 argon2 = "0.5"
 rand = "0.9"
-sha2 = "0.10"
+sha2 = "0.11"
 hex = "0.4"
 bytes = "1"
 base64 = "0.22"
@@ -58,7 +58,7 @@ rustix = { version = "1", features = ["fs"] }
 [dev-dependencies]
 livekit-api = { version = "0.9.1", default-features = false, features = ["access-token"] }
 base64 = "0.22"
-sha2 = "0.10"
+sha2 = "0.11"
 tokio-tungstenite = "0.29"
 futures = "0.3"
 pulse-server = { path = ".", features = ["testing"] }
