@@ -130,9 +130,11 @@ impl Search {
                 .push(" WHERE d.channel_id = ")
                 .push_bind(only.as_str());
             if let Some(expr) = &self.fts {
-                q.push(" AND d.doc IN (SELECT rowid FROM message_search WHERE message_search MATCH ")
-                    .push_bind(expr.as_str())
-                    .push(")");
+                q.push(
+                    " AND d.doc IN (SELECT rowid FROM message_search WHERE message_search MATCH ",
+                )
+                .push_bind(expr.as_str())
+                .push(")");
             }
         } else {
             match &self.fts {
@@ -143,7 +145,9 @@ impl Search {
                         .push_bind(expr.as_str());
                 }
                 None => {
-                    q.push(" FROM search_docs d").push(LOOKUPS).push(" WHERE 1 = 1");
+                    q.push(" FROM search_docs d")
+                        .push(LOOKUPS)
+                        .push(" WHERE 1 = 1");
                 }
             }
             // The unary + keeps this a filter on the doc being walked: as an index term SQLite

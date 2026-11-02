@@ -314,7 +314,11 @@ async fn one_channel_searches_page_newest_first() {
     let mut mine = Vec::new();
     for i in 0..30 {
         send(&f.app, &f.alex.1, f.general.id, &format!("pizza noise {i}")).await;
-        mine.push(send(&f.app, &f.sam.1, dm.id, &format!("pizza dm {i}")).await.id);
+        mine.push(
+            send(&f.app, &f.sam.1, dm.id, &format!("pizza dm {i}"))
+                .await
+                .id,
+        );
     }
     mine.reverse();
     let path = |q: &str| format!("/channels/{}/search?{q}", dm.id);
@@ -322,7 +326,10 @@ async fn one_channel_searches_page_newest_first() {
     let p2: SearchResults = get_json(
         &f.app,
         &f.alex.1,
-        &path(&format!("q=pizza&cursor={}", p1.next_cursor.clone().unwrap())),
+        &path(&format!(
+            "q=pizza&cursor={}",
+            p1.next_cursor.clone().unwrap()
+        )),
     )
     .await;
     assert_eq!(p1.total, Some(30));

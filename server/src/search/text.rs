@@ -142,7 +142,8 @@ pub fn matched_only_by_emoji_ids(content: &str, shown: &str, terms: &[Term]) -> 
         .filter(|t| !highlights(shown, std::slice::from_ref(*t)).1)
         .peekable();
     missing.peek().is_some()
-        && missing.all(|t| matches!(t, Term::Word(w) if ids.iter().any(|id| id.starts_with(w.as_str()))))
+        && missing
+            .all(|t| matches!(t, Term::Word(w) if ids.iter().any(|id| id.starts_with(w.as_str()))))
 }
 
 /// Where the terms are in `text`, merged and in order, and whether every term was found.
@@ -276,11 +277,23 @@ mod tests {
         let content = "Łódź trip <:party:01JABC>";
         let shown = display_text(content, &[]);
         assert!(matched_only_by_emoji_ids(content, &shown, &terms("01j")));
-        assert!(matched_only_by_emoji_ids(content, &shown, &terms("trip 01jab")));
+        assert!(matched_only_by_emoji_ids(
+            content,
+            &shown,
+            &terms("trip 01jab")
+        ));
         assert!(!matched_only_by_emoji_ids(content, &shown, &terms("lodz")));
-        assert!(!matched_only_by_emoji_ids(content, &shown, &terms("lodz 01j")));
+        assert!(!matched_only_by_emoji_ids(
+            content,
+            &shown,
+            &terms("lodz 01j")
+        ));
         assert!(!matched_only_by_emoji_ids(content, &shown, &terms("trip")));
         // A phrase can't be an id's start.
-        assert!(!matched_only_by_emoji_ids(content, &shown, &terms("\"01jabc\"")));
+        assert!(!matched_only_by_emoji_ids(
+            content,
+            &shown,
+            &terms("\"01jabc\"")
+        ));
     }
 }

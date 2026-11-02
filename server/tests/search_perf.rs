@@ -130,7 +130,11 @@ async fn typical_queries_take_under_50ms() {
         } else {
             "  [worst case, not budgeted]"
         };
-        let q = if path.starts_with("/channels") { format!("dm {}", &path[path.find('?').unwrap()..]) } else { format!("server {}", &path[path.find('?').unwrap()..]) };
+        let q = if path.starts_with("/channels") {
+            format!("dm {}", &path[path.find('?').unwrap()..])
+        } else {
+            format!("server {}", &path[path.find('?').unwrap()..])
+        };
         println!("{q:<70} median {median:>10.2?}  (matches counted: {hits}){note}");
         if *typical {
             worst = worst.max(median);
