@@ -24,11 +24,12 @@ cat >"$tmp/bin/age" <<'EOF'
 #!/usr/bin/env bash
 cp "$5" "$4"
 EOF
-# rclone: FAIL_RCLONE=1 fails the upload
+# rclone: FAIL_RCLONE=1 fails the upload; `lsf …/daily` lists $FAKE_DAILY (one name per line)
 cat >"$tmp/bin/rclone" <<'EOF'
 #!/usr/bin/env bash
 echo "rclone $*" >>"$LOG"
 [[ $1 == copyto && ${FAIL_RCLONE:-} == 1 ]] && exit 1
+[[ $1 == lsf && $2 == */daily ]] && printf '%s' "${FAKE_DAILY:-}"
 exit 0
 EOF
 cat >"$tmp/bin/curl" <<'EOF'
@@ -44,7 +45,7 @@ setup() {
   printf 'AGE_RECIPIENT=age1test\nR2_BUCKET=b\n%s\n' "${1:-}" >"$tmp/srv/.env"
   : >"$tmp/log"
 }
-run() { PATH="$tmp/bin:$PATH" PULSE_DIR="$tmp/srv" LOG="$tmp/log" BACKUP_LOCK_WAIT=1 bash "$here/backup.sh" run >"$tmp/out" 2>&1; }
+run() { PATH="$tmp/bin:$PATH" PULSE_DIR="$tmp/srv" LOG="$tmp/log" BACKUP_LOCK_WAIT=1 BACKUP_TODAY=20261110 bash "$here/backup.sh" run >"$tmp/out" 2>&1; }
 leftovers() { find "$tmp/srv/data" -name 'backup-*' -o -name 'media-*' | grep -q .; }
 pass() { echo "ok   $1"; }
 fail() {
@@ -84,5 +85,23 @@ if ! run && ! grep -q 'rclone copyto' "$tmp/log" && grep -qx 'curl https://hc.ex
   pass "a backup already running isn't overlapped (and its files are left alone)"
 else fail "a backup already running isn't overlapped (and its files are left alone)"; fi
 exec 8>&-
+
+setup
+export FAKE_DAILY='pulse-20261102T010000Z.db.age
+pulse-20261102T120000Z.db.age
+pulse-media-20261102T010000Z.tgz.age
+pulse-media-20261102T120000Z.tgz.age
+pulse-20261105T010000Z.db.age
+pulse-20261109T010000Z.db.age
+pulse-20261109T090000Z.db.age
+pulse-20261110T010000Z.db.age
+pulse-20261110T090000Z.db.age
+'
+if run && grep -qx 'rclone deletefile r2:b/daily/pulse-20261102T010000Z.db.age' "$tmp/log" &&
+  grep -qx 'rclone deletefile r2:b/daily/pulse-media-20261102T010000Z.tgz.age' "$tmp/log" &&
+  [[ $(grep -c '^rclone deletefile' "$tmp/log") == 2 ]]; then
+  pass "older days keep one database and one media backup each; the last two days keep all"
+else fail "older days keep one database and one media backup each; the last two days keep all"; fi
+unset FAKE_DAILY
 
 exit $failed

@@ -239,7 +239,7 @@ Docker and Tailscale come from vendor repositories that unattended upgrades don'
 
 Nightly at about 03:00 (and before every deploy): a consistent snapshot of the database and a tarball of the
 uploaded media (`data/media`, e.g. custom emoji; skipped until something has been uploaded), each encrypted with
-**age** for your key and uploaded to **Cloudflare R2**. 14 daily and 8 weekly copies of each are kept. The server can
+**age** for your key and uploaded to **Cloudflare R2**. 14 daily and 8 weekly copies of each are kept. Deploys back up too: everything from the last two days is kept, and older days keep their newest copy of each. The server can
 encrypt but never decrypt. A plaintext copy never stays on the server, even if a step fails.
 
 **`PULSE_TOTP_KEY` is not in the backups.** The database holds the 2FA secrets only encrypted with it, so keep a
