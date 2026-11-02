@@ -127,11 +127,22 @@ pub fn display_text(content: &str, captions: &[String]) -> String {
     out
 }
 
-/// Whether `content` holds a custom emoji token (whose id the index also holds as a word).
-pub fn has_custom_emoji(content: &str) -> bool {
-    content
+/// Whether a hit matched only through custom emoji ids: the index holds `<:name:ID>`'s id as a
+/// word, so "01j" finds every message with a custom emoji. True when some term is missing from
+/// what the hit shows (`shown`) and every missing one is a word that starts one of `content`'s
+/// emoji ids. A term missing for another reason (this folding and the index's differ on a few
+/// letters, such as ł and ø) is not a reason to drop a real match.
+pub fn matched_only_by_emoji_ids(content: &str, shown: &str, terms: &[Term]) -> bool {
+    let ids: Vec<String> = content
         .match_indices('<')
-        .any(|(i, _)| custom_token(&content[i..]).is_some())
+        .filter_map(|(i, _)| custom_token(&content[i..]).map(|(_, id, _)| fold(id)))
+        .collect();
+    let mut missing = terms
+        .iter()
+        .filter(|t| !highlights(shown, std::slice::from_ref(*t)).1)
+        .peekable();
+    missing.peek().is_some()
+        && missing.all(|t| matches!(t, Term::Word(w) if ids.iter().any(|id| id.starts_with(w.as_str()))))
 }
 
 /// Where the terms are in `text`, merged and in order, and whether every term was found.
@@ -224,8 +235,6 @@ mod tests {
             ),
             "gg :party_time: :spin: <b>\na goat"
         );
-        assert!(has_custom_emoji("hi <:party:01J>"));
-        assert!(!has_custom_emoji("hi <b> :party:"));
     }
 
     #[test]
@@ -258,5 +267,20 @@ mod tests {
         // A custom emoji's id is only in the stored text, not in what's shown.
         let shown = display_text("look <:party:01JABC>", &[]);
         assert!(!highlights(&shown, &terms("01j")).1);
+    }
+
+    /// A hit is dropped only when the words it lacks on screen are the start of an emoji id: a
+    /// word this folding misses (ł, ø: the index folds them, NFD doesn't) is still a real match.
+    #[test]
+    fn drops_only_hits_matched_by_emoji_ids() {
+        let content = "Łódź trip <:party:01JABC>";
+        let shown = display_text(content, &[]);
+        assert!(matched_only_by_emoji_ids(content, &shown, &terms("01j")));
+        assert!(matched_only_by_emoji_ids(content, &shown, &terms("trip 01jab")));
+        assert!(!matched_only_by_emoji_ids(content, &shown, &terms("lodz")));
+        assert!(!matched_only_by_emoji_ids(content, &shown, &terms("lodz 01j")));
+        assert!(!matched_only_by_emoji_ids(content, &shown, &terms("trip")));
+        // A phrase can't be an id's start.
+        assert!(!matched_only_by_emoji_ids(content, &shown, &terms("\"01jabc\"")));
     }
 }

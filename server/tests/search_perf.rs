@@ -47,6 +47,9 @@ async fn typical_queries_take_under_50ms() {
         channels.push(c.id);
     }
 
+    // A quiet DM beside the busy server: one message in 50 (1k of the 50k).
+    let dm = create_dm(&app, &alex, &[sam_id]).await.id;
+
     let words = vocabulary();
     let mut seed: u64 = 0x2545_f491_4f6c_dd1d;
     let mut next = move || {
@@ -74,7 +77,7 @@ async fn typical_queries_take_under_50ms() {
             "INSERT INTO messages (id, channel_id, author_id, content, created_at) VALUES (?, ?, ?, ?, ?)",
         )
         .bind(pulse_protocol::ids::MessageId::new().to_string())
-        .bind(channels[i % channels.len()].to_string())
+        .bind(if i % 50 == 7 { dm } else { channels[i % channels.len()] }.to_string())
         .bind(author.to_string())
         .bind(text.join(" "))
         .bind(pulse_server::db::now())
@@ -89,26 +92,34 @@ async fn typical_queries_take_under_50ms() {
     );
 
     let common = &words[0];
-    // (query, typical): typical ones must meet the budget; the last one is printed only.
+    let server = |q: &str| format!("/servers/{}/search?{q}", s.id);
+    let in_dm = |q: &str| format!("/channels/{dm}/search?{q}");
+    let general = channels[0];
+    // (path, typical): typical ones must meet the budget; the others are printed only.
     let queries = [
-        (format!("q={common}"), true),
-        ("q=zebracorn".to_string(), true),
-        (format!("q={common}+{}", words[1]), true),
-        (format!("q={}", &common[..2]), true),
-        (format!("from={sam_id}"), true),
-        (format!("q={common}&from={sam_id}"), true),
-        ("q=zebracorn&has=link".to_string(), true),
+        (server(&format!("q={common}")), true),
+        (server("q=zebracorn"), true),
+        (server(&format!("q={common}+{}", words[1])), true),
+        (server(&format!("q={}", &common[..2])), true),
+        (server(&format!("from={sam_id}")), true),
+        (server(&format!("q={common}&from={sam_id}")), true),
+        (server("q=zebracorn&has=link"), true),
+        (server(&format!("q=zebracorn&in={general}")), true),
+        (server(&format!("q={common}&in={general}")), true),
+        (in_dm(&format!("q={common}")), true),
+        (in_dm("q=zebracorn"), true),
+        (in_dm(&format!("from={sam_id}")), true),
+        (in_dm("has=link"), true),
         // A filter-only search nothing matches walks every doc: the worst case, not a typical one.
-        ("has=link".to_string(), false),
+        (server("has=link"), false),
     ];
     let mut worst = Duration::ZERO;
-    for (q, typical) in &queries {
-        let path = format!("/servers/{}/search?{q}", s.id);
+    for (path, typical) in &queries {
         let mut times = Vec::new();
         let mut hits = 0;
         for _ in 0..7 {
             let t = Instant::now();
-            let r: SearchResults = get_json(&app, &alex, &path).await;
+            let r: SearchResults = get_json(&app, &alex, path).await;
             times.push(t.elapsed());
             hits = r.total.unwrap_or(0);
         }
@@ -119,7 +130,8 @@ async fn typical_queries_take_under_50ms() {
         } else {
             "  [worst case, not budgeted]"
         };
-        println!("{q:<40} median {median:>10.2?}  (matches counted: {hits}){note}");
+        let q = if path.starts_with("/channels") { format!("dm {}", &path[path.find('?').unwrap()..]) } else { format!("server {}", &path[path.find('?').unwrap()..]) };
+        println!("{q:<70} median {median:>10.2?}  (matches counted: {hits}){note}");
         if *typical {
             worst = worst.max(median);
         }

@@ -103,44 +103,58 @@ impl Search {
         })
     }
 
-    /// The doc number results are ordered and paged by: the FTS rowid when there are words (FTS5
-    /// walks it backwards and stops after a page), else `search_docs`' own key.
-    fn key(&self) -> &'static str {
-        if self.fts.is_some() {
+    /// The doc number results are ordered and paged by: the FTS rowid for words across several
+    /// channels (FTS5 walks it backwards and stops after a page), else `search_docs`' own key.
+    fn key(&self, channels: &[String]) -> &'static str {
+        if self.fts.is_some() && channels.len() > 1 {
             "s.rowid"
         } else {
             "d.doc"
         }
     }
 
-    /// `FROM … WHERE …` over the searchable messages of `channels` that match. CROSS JOIN fixes
-    /// the order: the index (or the doc list, newest first) leads and every other table is a
-    /// lookup. Left to itself, SQLite may start from `messages` and run the MATCH once per row,
-    /// which on 50k messages took seconds.
+    /// `FROM … WHERE …` over the searchable messages of `channels` that match, walkable newest
+    /// first. CROSS JOIN fixes the order, so every table after the first is a lookup: left to
+    /// itself, SQLite may start from `messages` and run the MATCH once per row (seconds on 50k).
+    /// - One channel (a DM, or `in:`): its own docs lead, newest first through
+    ///   `search_docs_channel`, so a quiet DM doesn't walk the whole server's matches; the words
+    ///   are a set looked up per doc.
+    /// - Several channels with words: the index leads, in rowid order.
+    /// - Several channels, filters only: every doc, newest first.
     fn push_from_where<'a>(&'a self, q: &mut QueryBuilder<'a, Sqlite>, channels: &'a [String]) {
         const LOOKUPS: &str = " CROSS JOIN messages m ON m.id = d.message_id
                       CROSS JOIN channels c ON c.id = m.channel_id";
-        match &self.fts {
-            Some(expr) => {
-                q.push(" FROM message_search s CROSS JOIN search_docs d ON d.doc = s.rowid")
-                    .push(LOOKUPS)
-                    .push(" WHERE message_search MATCH ")
-                    .push_bind(expr.as_str());
+        if let [only] = channels {
+            q.push(" FROM search_docs d INDEXED BY search_docs_channel")
+                .push(LOOKUPS)
+                .push(" WHERE d.channel_id = ")
+                .push_bind(only.as_str());
+            if let Some(expr) = &self.fts {
+                q.push(" AND d.doc IN (SELECT rowid FROM message_search WHERE message_search MATCH ")
+                    .push_bind(expr.as_str())
+                    .push(")");
             }
-            None => {
-                q.push(" FROM search_docs d")
-                    .push(LOOKUPS)
-                    .push(" WHERE 1 = 1");
+        } else {
+            match &self.fts {
+                Some(expr) => {
+                    q.push(" FROM message_search s CROSS JOIN search_docs d ON d.doc = s.rowid")
+                        .push(LOOKUPS)
+                        .push(" WHERE message_search MATCH ")
+                        .push_bind(expr.as_str());
+                }
+                None => {
+                    q.push(" FROM search_docs d").push(LOOKUPS).push(" WHERE 1 = 1");
+                }
             }
+            // The unary + keeps this a filter on the doc being walked: as an index term SQLite
+            // would read `search_docs_channel` and sort, losing the early stop.
+            q.push(" AND +d.channel_id IN (");
+            let mut list = q.separated(", ");
+            for c in channels {
+                list.push_bind(c.as_str());
+            }
+            q.push(")");
         }
-        // The unary + keeps this a filter on the row found by id: as an index term it made SQLite
-        // build a throwaway index over all of `messages` on every filter-only search (~50 ms).
-        q.push(" AND +m.channel_id IN (");
-        let mut list = q.separated(", ");
-        for c in channels {
-            list.push_bind(c.as_str());
-        }
-        q.push(")");
         if let Some(from) = self.from {
             // In a quotes channel "who said it" is the speaker: a member line, or a plain name
             // linked to that member now. The poster counts too.
@@ -166,7 +180,8 @@ impl Search {
                     " AND EXISTS (SELECT 1 FROM quotes x WHERE x.message_id = m.id)"
                 }
                 SearchHas::Link => {
-                    " AND (instr(m.content, 'http://') > 0 OR instr(m.content, 'https://') > 0
+                    " AND (instr(lower(m.content), 'http://') > 0
+                       OR instr(lower(m.content), 'https://') > 0
                        OR instr(lower(m.content), 'www.') > 0)"
                 }
             });
@@ -241,23 +256,26 @@ async fn run(
     }
     // Docs are numbered in posting order, so newest first is doc order, and the cursor is the
     // last doc read.
-    let key = search.key();
+    let key = search.key(&channels);
     let mut q = QueryBuilder::new(format!("SELECT {key}, m.id"));
     search.push_from_where(&mut q, &channels);
     if let Some(c) = search.cursor {
         q.push(format!(" AND {key} < ")).push_bind(c);
     }
+    // One more than a page says whether there is a next one (no empty "Load more").
     q.push(format!(" ORDER BY {key} DESC LIMIT "))
-        .push_bind(PAGE);
-    let page: Vec<(i64, String)> = q.build_query_as().fetch_all(&s.db).await?;
+        .push_bind(PAGE + 1);
+    let mut page: Vec<(i64, String)> = q.build_query_as().fetch_all(&s.db).await?;
+    let more = page.len() as i64 > PAGE;
+    page.truncate(PAGE as usize);
     // Read past even if every hit on the page is dropped below: the next page starts after it.
-    let next_cursor = (page.len() as i64 == PAGE).then(|| page[page.len() - 1].0.to_string());
+    let next_cursor = more.then(|| page[page.len() - 1].0.to_string());
     let rows = rows_in_order(s, &page).await?;
 
     let total = if search.cursor.is_some() {
         None
-    } else if (page.len() as i64) < PAGE {
-        // A first page that isn't full holds every match: no second walk to count them.
+    } else if !more {
+        // A first page with nothing after it holds every match: no second walk to count them.
         Some(page.len() as u32)
     } else {
         let mut q = QueryBuilder::new("SELECT COUNT(*) FROM (SELECT 1");
@@ -277,12 +295,13 @@ async fn run(
             .flat_map(|q| q.lines.iter().filter_map(|l| l.caption.clone()))
             .collect();
         let shown = text::display_text(&message.content, &captions);
-        let (highlights, all) = text::highlights(&shown, &search.terms);
         // The index also holds custom emoji ids as words: a hit that only matched one of those
-        // has none of the words in what it shows.
-        if !all && text::has_custom_emoji(&message.content) {
+        // has none of the words in what it shows. (`total` was counted before this, so it can
+        // count such a hit: rare, and only ever over.)
+        if text::matched_only_by_emoji_ids(&message.content, &shown, &search.terms) {
             continue;
         }
+        let (highlights, _) = text::highlights(&shown, &search.terms);
         hits.push(SearchHit {
             root: message.thread_root_id.and_then(|r| roots.get(&r).cloned()),
             message,

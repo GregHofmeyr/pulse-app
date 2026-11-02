@@ -152,7 +152,7 @@ async fn system_lines_excluded() {
 #[tokio::test]
 async fn quote_captions_indexed_and_follow_edits() {
     let (_d, db) = fresh().await;
-    exec(&db, &msg("M1", "Q", "[image]")).await;
+    exec(&db, &msg("M1", "Q", "“look” — alex\n[image]")).await;
     for q in caption_line("L1", "M1", "the famous goat").split(';') {
         exec(&db, q).await;
     }
@@ -165,9 +165,41 @@ async fn quote_captions_indexed_and_follow_edits() {
     assert!(hits(&db, "goat").await.is_empty());
     assert_eq!(hits(&db, "sheep").await, vec!["M1"]);
     // The content is still there alongside the caption.
-    assert_eq!(hits(&db, "image").await, vec!["M1"]);
+    assert_eq!(hits(&db, "look").await, vec!["M1"]);
     exec(&db, "DELETE FROM quote_lines WHERE id = 'L1'").await;
     assert!(hits(&db, "sheep").await.is_empty());
+    assert_eq!(hits(&db, "look").await, vec!["M1"]);
+}
+
+/// A quote's picture lines read "[image]" in its content: that isn't a word anyone said, so
+/// searching "image" mustn't find every picture quote.
+#[tokio::test]
+async fn image_placeholder_not_indexed() {
+    let (_d, db) = fresh().await;
+    exec(&db, &msg("M1", "Q", "“hi” — alex\n[image]")).await;
+    for q in caption_line("L1", "M1", "goat").split(';') {
+        exec(&db, q).await;
+    }
+    assert!(hits(&db, "image").await.is_empty());
+    assert_eq!(hits(&db, "goat").await, vec!["M1"]);
+    assert_eq!(hits(&db, "hi").await, vec!["M1"]);
+}
+
+/// Scoped searches (a DM, `in:`) walk one channel's docs, so each doc knows its channel.
+#[tokio::test]
+async fn docs_carry_their_channel() {
+    let (_d, db) = fresh().await;
+    exec(&db, &msg("M1", "C", "pizza")).await;
+    exec(&db, &msg("M2", "Q", "pizza")).await;
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT message_id, channel_id FROM search_docs ORDER BY doc")
+            .fetch_all(&db)
+            .await
+            .unwrap();
+    assert_eq!(
+        rows,
+        vec![("M1".into(), "C".into()), ("M2".into(), "Q".into())]
+    );
 }
 
 #[tokio::test]

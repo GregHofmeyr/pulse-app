@@ -217,6 +217,8 @@ async fn has_clip_quote_link() {
     .await;
     let www = send(&f.app, &f.alex.1, f.general.id, "or www.example.com").await;
     send(&f.app, &f.alex.1, f.general.id, "no link here").await;
+    // Typed in capitals, it is still a link.
+    let caps = send(&f.app, &f.alex.1, f.general.id, "HTTPS://EXAMPLE.COM").await;
     let qt = quote(
         &f,
         &f.alex.1,
@@ -226,7 +228,7 @@ async fn has_clip_quote_link() {
     .await;
     let cl = clip(&f, c.id, "nice link shot").await;
     let r = server_search(&f, &f.alex.1, "has=link").await;
-    assert_eq!(ids(&r), vec![www.id, link.id]);
+    assert_eq!(ids(&r), vec![caps.id, www.id, link.id]);
     let r = server_search(&f, &f.alex.1, "has=quote").await;
     assert_eq!(ids(&r), vec![qt.id]);
     let r = server_search(&f, &f.alex.1, "has=clip").await;
@@ -288,6 +290,50 @@ async fn combined_filters() {
     )
     .await;
     assert_eq!(ids(&r), vec![hit.id]);
+}
+
+/// A last page that is exactly full says there is nothing after it (no empty "Load more").
+#[tokio::test]
+async fn an_exactly_full_last_page_has_no_cursor() {
+    let f = setup().await;
+    for i in 0..25 {
+        send(&f.app, &f.alex.1, f.general.id, &format!("pizza {i}")).await;
+    }
+    let r = server_search(&f, &f.alex.1, "q=pizza").await;
+    assert_eq!(r.hits.len(), 25);
+    assert_eq!(r.next_cursor, None);
+    assert_eq!(r.total, Some(25));
+}
+
+/// A DM is searched on its own docs (and a server's `in:` on one channel's), newest first,
+/// with words or with filters only.
+#[tokio::test]
+async fn one_channel_searches_page_newest_first() {
+    let f = setup().await;
+    let dm = create_dm(&f.app, &f.alex.1, &[f.sam.0]).await;
+    let mut mine = Vec::new();
+    for i in 0..30 {
+        send(&f.app, &f.alex.1, f.general.id, &format!("pizza noise {i}")).await;
+        mine.push(send(&f.app, &f.sam.1, dm.id, &format!("pizza dm {i}")).await.id);
+    }
+    mine.reverse();
+    let path = |q: &str| format!("/channels/{}/search?{q}", dm.id);
+    let p1: SearchResults = get_json(&f.app, &f.alex.1, &path("q=pizza")).await;
+    let p2: SearchResults = get_json(
+        &f.app,
+        &f.alex.1,
+        &path(&format!("q=pizza&cursor={}", p1.next_cursor.clone().unwrap())),
+    )
+    .await;
+    assert_eq!(p1.total, Some(30));
+    let got: Vec<MessageId> = ids(&p1).into_iter().chain(ids(&p2)).collect();
+    assert_eq!(got, mine);
+    let only_from: SearchResults =
+        get_json(&f.app, &f.alex.1, &path(&format!("from={}", f.sam.0))).await;
+    assert_eq!(ids(&only_from), mine[..25].to_vec());
+    let r = server_search(&f, &f.alex.1, &format!("q=pizza&in={}", f.general.id)).await;
+    assert_eq!(r.total, Some(30));
+    assert!(r.hits.iter().all(|h| h.message.channel_id == f.general.id));
 }
 
 #[tokio::test]
