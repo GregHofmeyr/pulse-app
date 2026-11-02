@@ -84,6 +84,17 @@
   })
   const optionId = (i: number) => `${uid}-opt-${i}`
 
+  // Only a pointer that really moved highlights a row: when the list changes under a still pointer
+  // (a click on a name brings the filter rows back), the browser sends a mousemove too, and that
+  // row would then take the next Enter instead of the search.
+  let pointer = ''
+  function hover(e: MouseEvent, i: number) {
+    const at = `${e.clientX},${e.clientY}`
+    if (at === pointer) return
+    pointer = at
+    active = i
+  }
+
   function sync() {
     caret = input.selectionStart ?? text.length
   }
@@ -210,7 +221,7 @@
   {#each chips as c, i (chipText(c))}
     <span class="chip">{chipText(c)}<button type="button" tabindex="-1" aria-label="Remove {chipText(c)}" onclick={() => removeChip(i)}><Icon name="x" size={11} /></button></span>
   {/each}
-  <input bind:this={input} class="field" type="text" {placeholder} aria-label={placeholder} autocomplete="off" spellcheck="false"
+  <input bind:this={input} class="field" type="text" placeholder={chips.length ? '' : placeholder} aria-label={placeholder} autocomplete="off" spellcheck="false"
     role="combobox" aria-autocomplete="list" aria-haspopup="listbox" aria-expanded={open} aria-controls={open ? `${uid}-list` : undefined}
     aria-activedescendant={open && active >= 0 ? optionId(active) : undefined}
     value={text}
@@ -224,7 +235,7 @@
   <div id="{uid}-list" class="list menu-surface pop-in" role="listbox" aria-label={term.filter ? 'Suggestions' : 'Search filters'}>
       {#each options as o, i (i)}
         <div id={optionId(i)} class="menu-item" class:hi={i === active} role="option" tabindex="-1" aria-selected={i === active}
-          onmousedown={(e) => { e.preventDefault(); choose(o) }} onmousemove={() => (active = i)}>
+          onmousedown={(e) => { e.preventDefault(); choose(o) }} onmousemove={(e) => hover(e, i)}>
           {#if o.kind === 'filter'}
             <span class="syntax">{o.syntax}</span> <small>{o.hint}</small>
           {:else if o.kind === 'person'}
@@ -246,7 +257,7 @@
   .search { position: relative; width: 240px; min-width: 0; height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--bg-4); border-radius: 8px; background: var(--bg-1); color: var(--text-3); transition: width var(--dur) var(--ease); }
   .search:hover { border-color: var(--line-menu); }
   .search.focused { width: 320px; outline: 2px solid var(--accent); outline-offset: 2px; }
-  .field { flex: 1; min-width: 60px; height: 100%; padding: 0; border: 0; background: none; color: var(--text); font-size: 13px; outline: none; }
+  .field { flex: 1; min-width: 60px; height: 100%; padding: 0; border: 0; background: none; color: var(--text); font-size: 13px; outline: none; text-overflow: ellipsis; }
   .field::placeholder { color: var(--text-3); }
   .chip { flex-shrink: 0; display: inline-flex; align-items: center; gap: 2px; height: 22px; padding: 0 2px 0 7px; border-radius: 6px; background: var(--accent-soft); color: var(--text); font-size: 12px; white-space: nowrap; }
   .chip button { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--text-2); }

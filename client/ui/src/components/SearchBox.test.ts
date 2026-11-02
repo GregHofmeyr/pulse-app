@@ -139,6 +139,53 @@ describe('SearchBox', () => {
     expect(optionText()[0]).toContain('from: user')
   })
 
+  it('after a click picks a name, Enter searches: the filter list now under the still pointer stays unpicked', async () => {
+    const input = show()
+    input.focus()
+    type(input, 'from:sa')
+    const at = { clientX: 40, clientY: 60, bubbles: true, cancelable: true }
+    options()[0].dispatchEvent(new MouseEvent('mousemove', at))
+    options()[0].dispatchEvent(new MouseEvent('mousedown', at))
+    flushSync()
+    await tick()
+    expect(chips()).toEqual(['from: sam'])
+    // the browser sends a mousemove when the list changes under a pointer that didn't move
+    options()[0].dispatchEvent(new MouseEvent('mousemove', at))
+    flushSync()
+    expect(options().some((o) => o.classList.contains('hi'))).toBe(false)
+    key(input, 'Enter')
+    await tick()
+    expect(chips()).toEqual(['from: sam'])
+    expect(invoke).toHaveBeenCalledWith('search_messages', {
+      serverId: 'S1', channelId: null,
+      query: { q: '', from: 'U2', in_channel: null, has: [], mentions: null, cursor: null },
+    })
+  })
+
+  it('with a chip in the box the placeholder goes (it would spill out); the field keeps its name', async () => {
+    const input = show()
+    input.focus()
+    type(input, 'from:sam')
+    key(input, 'Enter')
+    await tick()
+    expect(chips()).toEqual(['from: sam'])
+    expect(input.placeholder).toBe('')
+    expect(input.getAttribute('aria-label')).toBe('Search Main')
+  })
+
+  it('a real pointer move still highlights a row, and Enter picks it', async () => {
+    const input = show()
+    input.focus()
+    type(input, '')
+    options()[1].dispatchEvent(new MouseEvent('mousemove', { clientX: 10, clientY: 10, bubbles: true }))
+    options()[1].dispatchEvent(new MouseEvent('mousemove', { clientX: 12, clientY: 14, bubbles: true }))
+    flushSync()
+    expect(options()[1].classList.contains('hi')).toBe(true)
+    key(input, 'Enter')
+    await tick()
+    expect(input.value).toMatch(/^\w+:$/)
+  })
+
   it('Backspace in an empty box removes the last chip; ✕ removes one', async () => {
     const input = show()
     input.focus()
