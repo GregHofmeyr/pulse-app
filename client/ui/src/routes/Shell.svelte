@@ -368,6 +368,16 @@
     if (!stays) untrack(closeSearch)
   })
   $effect(() => () => untrack(closeSearch))
+  // Something asked for a line to show for a moment (a jump into a deleted channel).
+  $effect(() => {
+    const line = ui.notice
+    if (!line) return
+    untrack(() => {
+      notice = line
+      ui.notice = null
+      setTimeout(() => (notice = ''), 4000)
+    })
+  })
   // A jump to a message (lib/jump.ts) asked for its channel.
   $effect(() => {
     const id = ui.goTo

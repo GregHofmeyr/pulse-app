@@ -6,6 +6,7 @@ import type { UpdateProfileRequest } from './protocol/UpdateProfileRequest'
 import type { CropRect } from './crop'
 import type { Server } from './protocol/Server'
 import type { Channel } from './protocol/Channel'
+import type { DeletedChannel } from './protocol/DeletedChannel'
 import type { Member } from './protocol/Member'
 import type { Message } from './protocol/Message'
 import type { StreamInfo } from './protocol/StreamInfo'
@@ -101,8 +102,13 @@ export const api = {
   removeMember: (channelId: string, userId: string) => invoke<void>('remove_member', { channelId, userId }),
   /** A group's name (null = back to the members' names), or a server channel's (always one). */
   renameChannel: (channelId: string, name: string | null) => invoke<Channel>('rename_channel', { channelId, name }),
-  /** A server channel, with everything in it; everyone hears ChannelDeleted. */
+  /** A server channel, to its server's Recently deleted; everyone hears ChannelDeleted. */
   deleteChannel: (channelId: string) => invoke<void>('delete_channel', { channelId }),
+  listDeletedChannels: (serverId: string) => invoke<DeletedChannel[]>('list_deleted_channels', { serverId }),
+  /** Back from Recently deleted, with everything in it; everyone hears ChannelRestored. */
+  restoreChannel: (channelId: string) => invoke<Channel>('restore_channel', { channelId }),
+  /** A channel in Recently deleted, for good (the server owner only). */
+  purgeChannel: (channelId: string) => invoke<void>('purge_channel', { channelId }),
   markRead: (channelId: string, messageId: string) => invoke<void>('mark_read', { channelId, messageId }),
   setMute: (targetKind: 'server' | 'channel', targetId: string, until: string | null) => invoke<void>('set_mute', { targetKind, targetId, until }),
   clearMute: (targetKind: 'server' | 'channel', targetId: string) => invoke<void>('clear_mute', { targetKind, targetId }),

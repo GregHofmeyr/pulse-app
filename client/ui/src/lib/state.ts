@@ -697,6 +697,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'ClipViewChanged':
       return { ...s, clipViews: { ...s.clipViews, [e.d.channel_id]: e.d.view } }
     case 'ChannelCreated':
+    // Back from Recently deleted: its history loads when it's opened; our counts and mutes in it
+    // follow as ReadStateUpdated and MutesChanged.
+    case 'ChannelRestored':
       return { ...s, channels: { ...s.channels, [e.d.channel.id]: e.d.channel } }
     case 'ServerCreated':
       return s.servers.some((x) => x.id === e.d.server.id) ? s : { ...s, servers: [...s.servers, e.d.server] }

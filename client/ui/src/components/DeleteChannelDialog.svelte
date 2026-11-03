@@ -1,6 +1,7 @@
 <script lang="ts">
-  // Asks before a server channel is deleted, with everything in it. A dialog, not the floating
-  // question a message's delete has: it's bigger and can't be undone. Cancel has the focus first.
+  // Asks before a server channel is deleted. A dialog, not the floating question a message's delete
+  // has: it's bigger, and it goes for everyone. It moves to the server's Recently deleted, from where
+  // it can be restored. Cancel has the focus first.
   import { modal } from '../lib/actions'
   import { api, errorText } from '../lib/tauri'
   import type { Channel } from '../lib/protocol/Channel'
@@ -8,12 +9,7 @@
   let { channel, onClose }: { channel: Channel; onClose: () => void } = $props()
 
   const label = $derived(channel.kind === 'voice' ? channel.name : `#${channel.name}`)
-  const goes = $derived(
-    channel.kind === 'voice' ? 'Anyone in it is disconnected.'
-    : channel.kind === 'quotes' ? 'Its quotes go too.'
-    : channel.kind === 'clips' ? 'Its clips go too.'
-    : 'Its messages go too.',
-  )
+  const kicks = $derived(channel.kind === 'voice' ? 'Anyone in it is disconnected. ' : '')
   let busy = $state(false)
   let error = $state('')
 
@@ -39,7 +35,7 @@
   <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={cancel}></div>
   <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Delete {label}" tabindex="-1" use:modal={cancel}>
     <h1 class="modal-title">Delete {label}</h1>
-    <p>Delete {label}? {goes} This can't be undone.</p>
+    <p>Delete {label}? {kicks}It moves to Recently deleted for 7 days, where the server owner or you can restore it.</p>
     {#if error}<p class="err" role="alert">{error}</p>{/if}
     <div class="actions">
       <button type="button" class="btn btn-lg btn-secondary" disabled={busy} onclick={cancel}>Cancel</button>
