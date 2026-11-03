@@ -10,6 +10,9 @@
   import QotyStrip from './QotyStrip.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
   import SoundboardPopover from './SoundboardPopover.svelte'
+  import SoundDialog from './SoundDialog.svelte'
+  import SoundTidy from './SoundTidy.svelte'
+  import type { Sound } from '../lib/protocol/Sound'
   import StreamTile from './StreamTile.svelte'
   import UserTile from './UserTile.svelte'
   import { loadShowEveryone, saveShowEveryone } from '../lib/stream/prefs'
@@ -70,9 +73,19 @@
 
   let sbOpen = $state(false)
   let sbBtn = $state<HTMLButtonElement>()
+  // The dialogs live outside the popover (its click-outside would otherwise close it under them),
+  // so opening one closes the popover.
+  let sbDialog = $state<{ kind: 'add'; serverId: string } | { kind: 'edit'; sound: Sound } | { kind: 'tidy'; serverId: string } | null>(null)
+  const openDialog = (d: NonNullable<typeof sbDialog>) => {
+    sbOpen = false
+    sbDialog = d
+  }
   // leaving the call takes the button away, and the popover with it
   $effect(() => {
-    if (!inHere) sbOpen = false
+    if (!inHere) {
+    sbOpen = false
+    sbDialog = null
+  }
   })
 
   const inCall = $derived(inHere && voice.connection === 'connected')
@@ -147,8 +160,19 @@
 </div>
 
 {#if sbOpen && sbBtn}
-  <!-- Task 9 fills the add/edit/tidy hooks with its dialogs -->
-  <SoundboardPopover anchor={sbBtn} onClose={() => (sbOpen = false)} />
+  <SoundboardPopover
+    anchor={sbBtn}
+    onClose={() => (sbOpen = false)}
+    onAdd={(serverId) => openDialog({ kind: 'add', serverId })}
+    onEdit={(sound) => openDialog({ kind: 'edit', sound })}
+    onTidy={(serverId) => openDialog({ kind: 'tidy', serverId })}
+  />
+{/if}
+
+{#if sbDialog?.kind === 'tidy'}
+  <SoundTidy serverId={sbDialog.serverId} onClose={() => (sbDialog = null)} />
+{:else if sbDialog}
+  <SoundDialog mode={sbDialog} onClose={() => (sbDialog = null)} />
 {/if}
 
 {#if menu}
