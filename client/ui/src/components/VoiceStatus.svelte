@@ -42,6 +42,13 @@
 </script>
 
 {#if visible}
+  <!-- above the call row (#139): the notice grows upward, so the row and hang-up button don't move -->
+  {#if voice.micSilent && voice.channelId}
+    <p class="vc-mic" role="status">
+      <strong>No sound from your mic.</strong>
+      Check it isn't muted on the headset{isWindows() ? ", and that Windows lets apps use the microphone (Settings → Privacy → Microphone)" : ''}.
+    </p>
+  {/if}
   <div class="vc" bind:this={box}>
     {#if failed}
       <span class="vc-bars warn"><span></span><span></span><span></span></span>
@@ -64,12 +71,6 @@
     {/if}
     {#if open && clickable}<LinkStatsPanel {channelName} onClose={close} triggerSelector={TRIGGER} />{/if}
   </div>
-  {#if voice.micSilent && voice.channelId}
-    <p class="vc-mic" role="status">
-      <strong>No sound from your mic.</strong>
-      Check it isn't muted on the headset{isWindows() ? ", and that Windows lets apps use the microphone (Settings → Privacy → Microphone)" : ''}.
-    </p>
-  {/if}
 {/if}
 
 <style>
@@ -87,6 +88,5 @@
   .vc-text small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 8px; background: var(--surface-menu); color: var(--danger); display: grid; place-items: center; }
   .vc-leave:hover { background: var(--bg-4); }
-  .vc-mic { margin: -4px 8px 8px; padding: 8px 12px; border-radius: 10px; background: var(--bg-2); border-left: 3px solid var(--warn); font-size: 12px; line-height: 1.4; color: var(--text-2); }
-  .vc-mic strong { color: var(--warn-text); }
+  .vc-mic { margin: 0 8px 6px; padding: 8px 12px; border-radius: 10px; background: var(--warn-soft); font-size: 12px; line-height: 1.4; color: var(--warn-text); }
 </style>

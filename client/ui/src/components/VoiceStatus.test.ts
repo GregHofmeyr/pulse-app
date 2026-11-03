@@ -288,6 +288,16 @@ describe('VoiceStatus panel behaviour', () => {
     expect(document.querySelector('.vc-mic')).toBeNull()
   })
 
+  it('the_mic_warning_sits_above_the_call_row', () => {
+    // #139: it grows upward, so the connected row and the hang-up button stay put
+    connect()
+    emit({ kind: 'mic_silent', silent: true })
+    flushSync()
+    const hint = document.querySelector('.vc-mic')!
+    const row = document.querySelector('.vc')!
+    expect(hint.compareDocumentPosition(row) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('leaving_the_call_drops_the_mic_warning', () => {
     connect()
     emit({ kind: 'mic_silent', silent: true })

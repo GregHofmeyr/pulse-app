@@ -495,7 +495,7 @@ pub static CATALOGUE: &[Def] = &[
     hidden(counter(
         "logo_egg",
         "Egg Hunter",
-        "Found the egg in the logo.",
+        "Found the egg in the logo. Easter? Egg?",
         "🥚",
         stat::LOGO_EGG,
         &[(1, Epic)],
