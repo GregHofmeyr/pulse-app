@@ -84,6 +84,11 @@ pub struct LimitsConfig {
     /// Custom emoji creates, renames and deletes, together per user (each one reaches every
     /// member of the server).
     pub emoji_user: Rate,
+    /// Soundboard sound creates, edits and deletes, together per user (each one reaches every
+    /// member of the server).
+    pub sound_user: Rate,
+    /// Sound plays, per user: a quick run of taps, then one a second.
+    pub sound_play_user: Rate,
     /// Invite codes minted per user.
     pub invite_user: Rate,
     /// Message edits and deletes, reaction adds and removes, Go Live and watch, together per
@@ -135,6 +140,8 @@ impl Default for LimitsConfig {
             gateway_per_user: 8,
             create_user: Rate::per_hour(20),
             emoji_user: Rate::per_hour(30),
+            sound_user: Rate::per_hour(120),
+            sound_play_user: Rate::new(10, 10.0),
             invite_user: Rate::per_hour(10),
             mutate_user: Rate::new(30, 2.0),
             voice_state_user: Rate::new(10, 2.0),
@@ -170,6 +177,8 @@ impl LimitsConfig {
             gateway_per_user: usize::MAX,
             create_user: r,
             emoji_user: r,
+            sound_user: r,
+            sound_play_user: r,
             invite_user: r,
             mutate_user: r,
             voice_state_user: r,
@@ -316,6 +325,8 @@ pub struct Limits {
     pub gateway_per_user: usize,
     pub create_user: Limiter,
     pub emoji_user: Limiter,
+    pub sound_user: Limiter,
+    pub sound_play_user: Limiter,
     pub invite_user: Limiter,
     pub mutate_user: Limiter,
     pub voice_state_user: Limiter,
@@ -345,6 +356,8 @@ impl Limits {
             gateway_per_user: c.gateway_per_user,
             create_user: Limiter::new(c.create_user),
             emoji_user: Limiter::new(c.emoji_user),
+            sound_user: Limiter::new(c.sound_user),
+            sound_play_user: Limiter::new(c.sound_play_user),
             invite_user: Limiter::new(c.invite_user),
             mutate_user: Limiter::new(c.mutate_user),
             voice_state_user: Limiter::new(c.voice_state_user),

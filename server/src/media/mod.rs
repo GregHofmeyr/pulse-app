@@ -17,6 +17,7 @@ use crate::error::AppResult;
 pub use process::Processed;
 
 pub const CONTENT_TYPE: &str = "image/webp";
+pub const SOUND_CONTENT_TYPE: &str = "audio/ogg";
 /// Below this much free space, uploads still work but the logs say so.
 #[cfg(unix)]
 const WARN_FREE_BYTES: u64 = 5 * 1024 * 1024 * 1024;
@@ -35,6 +36,8 @@ pub enum MediaKind {
     Banner,
     /// A link preview's thumbnail, fetched by the server: on disk, always a still.
     LinkThumb,
+    /// A soundboard sound: an Ogg Opus file on disk.
+    Sound,
 }
 
 /// Where a media row's bytes live.
@@ -63,6 +66,7 @@ impl MediaKind {
             Self::Avatar => "avatar",
             Self::Banner => "banner",
             Self::LinkThumb => "link_thumb",
+            Self::Sound => "sound",
         }
     }
     pub fn parse(s: &str) -> Option<Self> {
@@ -74,6 +78,7 @@ impl MediaKind {
             "avatar" => Some(Self::Avatar),
             "banner" => Some(Self::Banner),
             "link_thumb" => Some(Self::LinkThumb),
+            "sound" => Some(Self::Sound),
             _ => None,
         }
     }
@@ -85,7 +90,8 @@ impl MediaKind {
             | Self::ClipThumb
             | Self::Avatar
             | Self::Banner
-            | Self::LinkThumb => Location::Disk,
+            | Self::LinkThumb
+            | Self::Sound => Location::Disk,
         }
     }
 }
@@ -170,6 +176,45 @@ pub async fn put(
         frames: meta.frames,
         animated: meta.frames > 1,
         still_hash,
+    })
+}
+
+/// Store a validated Ogg Opus file and describe it. Same bytes again reuse the file and row.
+/// The `.webp` in the path is only a storage name (see [`path_for`]); `fetch` serves the row's
+/// content type.
+pub async fn put_sound(
+    db: &SqlitePool,
+    dir: &Path,
+    bytes: &[u8],
+    by: UserId,
+) -> AppResult<MediaInfo> {
+    let hash = hex::encode(Sha256::digest(bytes));
+    let path = path_for(dir, &hash).expect("a SHA-256 hex digest is a valid hash");
+    ensure_file(&path, &hash, bytes).await?;
+    // As in `put_one`: a re-upload restarts the grace period.
+    sqlx::query(
+        "INSERT INTO media (hash, kind, content_type, size, width, height, frames, still_hash,
+                            uploaded_by, created_at)
+         VALUES (?, ?, ?, ?, 0, 0, 0, NULL, ?, ?)
+         ON CONFLICT (hash) DO UPDATE SET created_at = excluded.created_at",
+    )
+    .bind(&hash)
+    .bind(MediaKind::Sound.as_str())
+    .bind(SOUND_CONTENT_TYPE)
+    .bind(bytes.len() as i64)
+    .bind(by.to_string())
+    .bind(crate::db::now())
+    .execute(db)
+    .await?;
+    ensure_file(&path, &hash, bytes).await?;
+    Ok(MediaInfo {
+        hash,
+        content_type: SOUND_CONTENT_TYPE.into(),
+        width: 0,
+        height: 0,
+        frames: 0,
+        animated: false,
+        still_hash: None,
     })
 }
 
@@ -302,6 +347,7 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
                          WHERE media_hash IS NOT NULL)
            AND hash NOT IN (SELECT media_hash FROM quote_lines
                          WHERE media_hash IS NOT NULL)
+           AND hash NOT IN (SELECT media_hash FROM sounds)
            AND hash NOT IN (SELECT avatar_hash FROM users WHERE avatar_hash IS NOT NULL)
            AND hash NOT IN (SELECT banner_hash FROM users WHERE banner_hash IS NOT NULL)
            AND hash NOT IN (SELECT thumb_hash FROM link_embeds WHERE thumb_hash IS NOT NULL)

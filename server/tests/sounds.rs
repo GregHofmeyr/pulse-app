@@ -1,0 +1,448 @@
+//! Soundboard sounds: upload validation, create/list/edit/delete, Ready, events, media cleanup.
+mod common;
+
+use std::time::Duration;
+
+use common::*;
+use futures::{SinkExt, StreamExt};
+use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
+use pulse_protocol::ids::ServerId;
+use pulse_protocol::rest::{ApiError, MediaInfo, Sound};
+use pulse_server::media;
+use serde_json::json;
+use tokio_tungstenite::tungstenite::Message as Ws;
+
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+async fn hello(app: &TestApp, token: &str) -> (Socket, Ready) {
+    let (mut ws, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
+        .await
+        .unwrap();
+    let f = serde_json::to_string(&ClientFrame::Hello {
+        token: token.into(),
+        client_version: pulse_protocol::PROTOCOL_VERSION,
+    })
+    .unwrap();
+    ws.send(Ws::text(f)).await.unwrap();
+    match next_frame(&mut ws).await {
+        Some(ServerFrame::Ready(r)) => (ws, r),
+        other => panic!("expected Ready, got {other:?}"),
+    }
+}
+
+async fn next_frame(ws: &mut Socket) -> Option<ServerFrame> {
+    loop {
+        let m = tokio::time::timeout(Duration::from_secs(3), ws.next())
+            .await
+            .ok()??
+            .ok()?;
+        if let Ws::Text(t) = m {
+            let f: ServerFrame = serde_json::from_str(&t).unwrap();
+            if matches!(
+                f,
+                ServerFrame::Event(Event::PresenceChanged { .. } | Event::UserCreated { .. })
+            ) {
+                continue;
+            }
+            return Some(f);
+        }
+    }
+}
+
+async fn next_event(ws: &mut Socket) -> Event {
+    match next_frame(ws).await {
+        Some(ServerFrame::Event(e)) => e,
+        other => panic!("expected an event, got {other:?}"),
+    }
+}
+
+/// Ogg's CRC-32 (poly 0x04c11db7, no reflection, no xor), for building valid pages.
+fn crc(data: &[u8]) -> u32 {
+    let mut crc = 0u32;
+    for &b in data {
+        crc ^= u32::from(b) << 24;
+        for _ in 0..8 {
+            crc = if crc & 0x8000_0000 != 0 {
+                (crc << 1) ^ 0x04c1_1db7
+            } else {
+                crc << 1
+            };
+        }
+    }
+    crc
+}
+
+fn page(header_type: u8, granule: i64, seq: u32, packets: &[&[u8]]) -> Vec<u8> {
+    let mut lacing = Vec::new();
+    for p in packets {
+        let mut n = p.len();
+        while n >= 255 {
+            lacing.push(255);
+            n -= 255;
+        }
+        lacing.push(n as u8);
+    }
+    let mut out = b"OggS".to_vec();
+    out.push(0);
+    out.push(header_type);
+    out.extend_from_slice(&granule.to_le_bytes());
+    out.extend_from_slice(&7u32.to_le_bytes());
+    out.extend_from_slice(&seq.to_le_bytes());
+    out.extend_from_slice(&[0; 4]);
+    out.push(lacing.len() as u8);
+    out.extend_from_slice(&lacing);
+    for p in packets {
+        out.extend_from_slice(p);
+    }
+    let c = crc(&out);
+    out[22..26].copy_from_slice(&c.to_le_bytes());
+    out
+}
+
+/// A valid Ogg Opus file of `ms` milliseconds (the server never decodes, so the audio packets
+/// are filler).
+fn ogg_opus(ms: u32) -> Vec<u8> {
+    let pre_skip = 312u16;
+    let mut head = b"OpusHead".to_vec();
+    head.extend_from_slice(&[1, 1]);
+    head.extend_from_slice(&pre_skip.to_le_bytes());
+    head.extend_from_slice(&48_000u32.to_le_bytes());
+    head.extend_from_slice(&[0, 0, 0]);
+    let mut tags = b"OpusTags".to_vec();
+    tags.extend_from_slice(&0u32.to_le_bytes());
+    tags.extend_from_slice(&0u32.to_le_bytes());
+    let mut out = page(2, 0, 0, &[&head]);
+    out.extend(page(0, 0, 1, &[&tags]));
+    let audio = [[1u8, 2, 3, 4], [5, 6, 7, 8], [9, 10, 11, 12]];
+    let packets: Vec<&[u8]> = audio.iter().map(|p| &p[..]).collect();
+    out.extend(page(
+        4,
+        i64::from(ms) * 48 + i64::from(pre_skip),
+        2,
+        &packets,
+    ));
+    out
+}
+
+async fn upload_bytes(app: &TestApp, token: &str, bytes: Vec<u8>) -> reqwest::Response {
+    app.http
+        .post(app.url("/media/sound"))
+        .bearer_auth(token)
+        .body(bytes)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn upload(app: &TestApp, token: &str, ms: u32) -> MediaInfo {
+    let r = upload_bytes(app, token, ogg_opus(ms)).await;
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
+
+async fn join(app: &TestApp, token: &str, server: ServerId) {
+    let r = post_json(app, token, &format!("/servers/{server}/join"), json!({})).await;
+    assert!(r.status().is_success());
+}
+
+async fn create(
+    app: &TestApp,
+    token: &str,
+    server: ServerId,
+    body: serde_json::Value,
+) -> reqwest::Response {
+    post_json(app, token, &format!("/servers/{server}/sounds"), body).await
+}
+
+async fn create_ok(app: &TestApp, token: &str, server: ServerId, hash: &str) -> Sound {
+    let r = create(
+        app,
+        token,
+        server,
+        json!({ "name": "airhorn", "emoji": "📯", "media_hash": hash, "volume": 120 }),
+    )
+    .await;
+    assert_eq!(r.status(), 201);
+    r.json().await.unwrap()
+}
+
+async fn patch(app: &TestApp, token: &str, id: &str, body: serde_json::Value) -> reqwest::Response {
+    app.http
+        .patch(app.url(&format!("/sounds/{id}")))
+        .bearer_auth(token)
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn delete(app: &TestApp, token: &str, id: &str) -> reqwest::Response {
+    app.http
+        .delete(app.url(&format!("/sounds/{id}")))
+        .bearer_auth(token)
+        .send()
+        .await
+        .unwrap()
+}
+
+async fn error_message(r: reqwest::Response) -> String {
+    r.json::<ApiError>().await.unwrap().message
+}
+
+#[tokio::test]
+async fn upload_accepts_a_short_ogg_opus() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let bytes = ogg_opus(1500);
+    let r = upload_bytes(&app, &alex, bytes.clone()).await;
+    assert_eq!(r.status(), 200);
+    let info: MediaInfo = r.json().await.unwrap();
+    assert_eq!(info.content_type, "audio/ogg");
+    let r = app
+        .http
+        .get(app.url(&format!("/media/{}", info.hash)))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.headers()["content-type"], "audio/ogg");
+    assert_eq!(r.bytes().await.unwrap().as_ref(), bytes.as_slice());
+}
+
+#[tokio::test]
+async fn upload_refuses_not_ogg_too_long_and_too_big() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let r = upload_bytes(&app, &alex, b"definitely not audio".to_vec()).await;
+    assert_eq!(r.status(), 400);
+    let r = upload_bytes(&app, &alex, ogg_opus(7000)).await;
+    assert_eq!(r.status(), 400);
+    assert!(error_message(r).await.contains("6 seconds"));
+    let r = upload_bytes(&app, &alex, vec![0; 300 * 1024]).await;
+    assert_eq!(r.status(), 413);
+}
+
+#[tokio::test]
+async fn member_creates_and_everyone_sees_it() {
+    let app = spawn().await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    join(&app, &sam, srv.id).await;
+    let media = upload(&app, &alex, 2000).await;
+
+    let (mut ws, _) = hello(&app, &sam).await;
+    let s = create_ok(&app, &alex, srv.id, &media.hash).await;
+    assert_eq!(s.name, "airhorn");
+    assert_eq!(s.emoji.as_deref(), Some("📯"));
+    assert_eq!(s.volume, 120);
+    assert_eq!(s.duration_ms, 2000);
+    assert_eq!(s.plays, 0);
+    assert_eq!(s.added_by, Some(alex_id));
+    assert_eq!(s.server_id, srv.id);
+
+    match next_event(&mut ws).await {
+        Event::SoundCreated { sound } => assert_eq!(sound, s),
+        other => panic!("{other:?}"),
+    }
+    let r = app
+        .http
+        .get(app.url(&format!("/servers/{}/sounds", srv.id)))
+        .bearer_auth(&sam)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 200);
+    let list: Vec<Sound> = r.json().await.unwrap();
+    assert_eq!(list, vec![s.clone()]);
+    let (_, ready) = hello(&app, &sam).await;
+    assert_eq!(ready.sounds, vec![s]);
+}
+
+#[tokio::test]
+async fn create_rejects_bad_name_emoji_volume_and_non_sound_media() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    let media = upload(&app, &alex, 1000).await;
+    let ok = |extra: serde_json::Value| {
+        let mut b = json!({ "name": "ok", "media_hash": media.hash });
+        b.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        b
+    };
+
+    for name in ["", "   ", &"x".repeat(33), "bad\nname"] {
+        let r = create(&app, &alex, srv.id, ok(json!({ "name": name }))).await;
+        assert_eq!(r.status(), 400, "{name:?}");
+        assert!(error_message(r).await.contains("1-32 characters"));
+    }
+    for emoji in ["abc", "a", "two words", ""] {
+        let r = create(&app, &alex, srv.id, ok(json!({ "emoji": emoji }))).await;
+        assert_eq!(r.status(), 400, "{emoji:?}");
+    }
+    for volume in [0, 9, 201, 1000] {
+        let r = create(&app, &alex, srv.id, ok(json!({ "volume": volume }))).await;
+        assert_eq!(r.status(), 400, "{volume}");
+    }
+    // Defaults: no emoji, volume 100.
+    let r = create(&app, &alex, srv.id, ok(json!({}))).await;
+    assert_eq!(r.status(), 201);
+    let s: Sound = r.json().await.unwrap();
+    assert_eq!((s.emoji, s.volume), (None, 100));
+
+    // An emoji upload's hash, and one nobody uploaded, are not sounds.
+    let png = image::RgbaImage::from_pixel(64, 32, image::Rgba([10, 120, 240, 255]));
+    let mut buf = std::io::Cursor::new(Vec::new());
+    png.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+    let r = app
+        .http
+        .post(app.url("/media/emoji"))
+        .bearer_auth(&alex)
+        .body(buf.into_inner())
+        .send()
+        .await
+        .unwrap();
+    let emoji: MediaInfo = r.json().await.unwrap();
+    for hash in [emoji.hash, "ab".repeat(32), "nope".into()] {
+        let r = create(&app, &alex, srv.id, ok(json!({ "media_hash": hash }))).await;
+        assert_eq!(r.status(), 400, "{hash}");
+        assert!(error_message(r).await.contains("upload the sound again"));
+    }
+}
+
+#[tokio::test]
+async fn non_member_cannot_create_edit_or_delete() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let (_, kim) = register(&app, "kim").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    let media = upload(&app, &alex, 1000).await;
+    let mine = upload(&app, &kim, 1100).await;
+
+    let r = create(
+        &app,
+        &kim,
+        srv.id,
+        json!({ "name": "nope", "media_hash": mine.hash }),
+    )
+    .await;
+    assert_eq!(r.status(), 403);
+    let r = app
+        .http
+        .get(app.url(&format!("/servers/{}/sounds", srv.id)))
+        .bearer_auth(&kim)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 403);
+
+    let s = create_ok(&app, &alex, srv.id, &media.hash).await;
+    assert_eq!(
+        patch(&app, &kim, &s.id, json!({ "name": "mine" }))
+            .await
+            .status(),
+        403
+    );
+    assert_eq!(delete(&app, &kim, &s.id).await.status(), 403);
+    assert_eq!(
+        patch(&app, &alex, "missing", json!({ "name": "x" }))
+            .await
+            .status(),
+        404
+    );
+    assert_eq!(delete(&app, &alex, "missing").await.status(), 404);
+}
+
+#[tokio::test]
+async fn anyone_in_the_server_edits_and_deletes() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    join(&app, &sam, srv.id).await;
+    let media = upload(&app, &alex, 1000).await;
+    let s = create_ok(&app, &alex, srv.id, &media.hash).await;
+
+    let (mut ws, _) = hello(&app, &alex).await;
+    let r = patch(
+        &app,
+        &sam,
+        &s.id,
+        json!({ "name": "  horn  ", "volume": 50 }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let edited: Sound = r.json().await.unwrap();
+    assert_eq!(edited.name, "horn");
+    assert_eq!(edited.volume, 50);
+    // Absent fields stay.
+    assert_eq!(edited.emoji.as_deref(), Some("📯"));
+    match next_event(&mut ws).await {
+        Event::SoundUpdated { sound } => assert_eq!(sound, edited),
+        other => panic!("{other:?}"),
+    }
+
+    // `emoji: null` clears it; a new one sets it; bad values are refused.
+    let cleared: Sound = patch(&app, &sam, &s.id, json!({ "emoji": null }))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(cleared.emoji, None);
+    assert_eq!(cleared.name, "horn");
+    next_event(&mut ws).await;
+    let set: Sound = patch(&app, &sam, &s.id, json!({ "emoji": "🔥" }))
+        .await
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(set.emoji.as_deref(), Some("🔥"));
+    next_event(&mut ws).await;
+    for bad in [
+        json!({ "name": "" }),
+        json!({ "volume": 9 }),
+        json!({ "volume": 201 }),
+        json!({ "emoji": "abc" }),
+    ] {
+        assert_eq!(patch(&app, &sam, &s.id, bad).await.status(), 400);
+    }
+
+    assert_eq!(delete(&app, &sam, &s.id).await.status(), 204);
+    match next_event(&mut ws).await {
+        Event::SoundDeleted {
+            server_id,
+            sound_id,
+        } => assert_eq!((server_id, sound_id), (srv.id, s.id.clone())),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(delete(&app, &sam, &s.id).await.status(), 404);
+    let (_, ready) = hello(&app, &alex).await;
+    assert!(ready.sounds.is_empty());
+}
+
+#[tokio::test]
+async fn deleted_sound_media_is_cleaned_up() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    let media = upload(&app, &alex, 1000).await;
+    let s = create_ok(&app, &alex, srv.id, &media.hash).await;
+    let file = media::path_for(&app.cfg.media_dir, &media.hash).unwrap();
+
+    let n = media::cleanup(&app.db, &app.cfg.media_dir, Duration::ZERO)
+        .await
+        .unwrap();
+    assert_eq!(n, 0);
+    assert!(file.is_file());
+
+    assert_eq!(delete(&app, &alex, &s.id).await.status(), 204);
+    let n = media::cleanup(&app.db, &app.cfg.media_dir, Duration::ZERO)
+        .await
+        .unwrap();
+    assert_eq!(n, 1);
+    assert!(!file.exists());
+}

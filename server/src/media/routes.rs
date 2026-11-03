@@ -22,6 +22,9 @@ const BODY_LIMIT: usize = process::MAX_INPUT + 64 * 1024;
 /// The same for avatars and banners, which may be bigger.
 const PROFILE_BODY_LIMIT: usize = process::PROFILE_MAX_INPUT + 64 * 1024;
 
+/// Sound files a little over the limit still reach the parser, which names the problem.
+const SOUND_BODY_LIMIT: usize = pulse_protocol::sound::MAX_BYTES + 4096;
+
 /// At most this many uploads processed at once: decoding and resizing is the costly part, so this
 /// bounds the CPU/RAM a burst of uploads can take.
 const PROCESS_PARALLELISM: usize = 2;
@@ -75,6 +78,10 @@ pub fn router() -> Router<AppState> {
         .route(
             "/media/banner",
             post(upload_banner).layer(DefaultBodyLimit::max(PROFILE_BODY_LIMIT)),
+        )
+        .route(
+            "/media/sound",
+            post(upload_sound).layer(DefaultBodyLimit::max(SOUND_BODY_LIMIT)),
         )
         .route("/media/{hash}", get(fetch))
 }
@@ -209,6 +216,39 @@ async fn upload(
     Ok(Json(info))
 }
 
+/// A soundboard sound: checked as an Ogg Opus file (length, size, checksums) and stored as sent.
+async fn upload_sound(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    body: Result<Bytes, BytesRejection>,
+) -> AppResult<Json<MediaInfo>> {
+    let body = body.map_err(|e| {
+        if e.status() == StatusCode::PAYLOAD_TOO_LARGE {
+            AppError::PayloadTooLarge(pulse_protocol::sound::SoundFileError::TooLarge.to_string())
+        } else {
+            AppError::BadRequest("the upload couldn't be read".into())
+        }
+    })?;
+    if !s.limits.upload_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    let dir = &s.cfg.media_dir;
+    tokio::fs::create_dir_all(dir)
+        .await
+        .map_err(|e| anyhow::anyhow!("create {}: {e}", dir.display()))?;
+    super::writes_ok(&s.cfg)?;
+    if body.len() > pulse_protocol::sound::MAX_BYTES {
+        return Err(AppError::PayloadTooLarge(
+            pulse_protocol::sound::SoundFileError::TooLarge.to_string(),
+        ));
+    }
+    pulse_protocol::sound::parse_ogg_opus(&body)
+        .map_err(|e| AppError::BadRequest(e.to_string()))?;
+    let info = super::put_sound(&s.db, dir, &body, me).await?;
+    tracing::info!(%me, hash = %info.hash, "sound stored");
+    Ok(Json(info))
+}
+
 async fn fetch(
     State(s): State<AppState>,
     AuthUser(_): AuthUser,
@@ -220,13 +260,20 @@ async fn fetch(
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Err(AppError::NotFound),
         Err(e) => return Err(anyhow::Error::from(e).context("read media").into()),
     };
+    // Images are all webp; a sound row says otherwise.
+    let content_type: Option<String> =
+        sqlx::query_scalar("SELECT content_type FROM media WHERE hash = ?")
+            .bind(&hash)
+            .fetch_optional(&s.db)
+            .await?;
+    let content_type = content_type.unwrap_or_else(|| CONTENT_TYPE.to_string());
     Ok((
         [
-            (header::CONTENT_TYPE, CONTENT_TYPE),
+            (header::CONTENT_TYPE, content_type),
             // Content-addressed: the bytes behind a hash never change.
             (
                 header::CACHE_CONTROL,
-                "private, max-age=31536000, immutable",
+                "private, max-age=31536000, immutable".to_string(),
             ),
         ],
         bytes,
