@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { User } from './protocol/User'
-import { contrast, lightenForName, nameCss, NAME_GRADIENTS, NAME_SOLIDS, parseHex, resolveNameStyle } from './nameStyle'
+import { contrast, lightenForName, luminance, MIN_NAME_LUMINANCE, nameCss, NAME_GRADIENTS, NAME_SOLIDS, parseHex, resolveNameStyle } from './nameStyle'
 import { NAME_LEVELS, surfacesFor, THEMES, TINTS } from './themes'
 
 const user = (font: string | null, colors: string[]): User => ({ id: 'u1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font, colors } }) as User
@@ -108,10 +108,16 @@ describe('readable names (#42): moved to the chosen contrast on the surface they
     expect((r.paint as { to: string }).to).not.toBe('#ffe58f')
   })
 
-  it('on a dark surface the contrast rule replaces "never darker than luminance 0.39": a dark role colour still lightens, just enough', () => {
-    const [c] = paintColors(resolveNameStyle(null, { roleColor: '#000080', showStyles: true, bg: '#212228', ratio: 4.5 }).paint)
-    expect(contrast(c, '#212228')).toBeGreaterThanOrEqual(4.5)
-    expect(contrast(c, '#212228')).toBeLessThan(4.8)
+  it('on a dark surface a name is never darker than today (luminance 0.39, owner 2026-11-03), and still reaches the level', () => {
+    for (const role of ['#000080', '#7a3b8f', '#3d6b3d', '#8a5a00']) {
+      const [c] = paintColors(resolveNameStyle(null, { roleColor: role, showStyles: true, bg: '#212228', ratio: 4.5 }).paint)
+      expect(luminance(parseHex(c)!), `${role} → ${c}`).toBeGreaterThanOrEqual(MIN_NAME_LUMINANCE)
+      expect(c).toBe(lightenForName(role)) // today's colour where it already reads
+      expect(contrast(c, '#212228')).toBeGreaterThanOrEqual(4.5)
+    }
+    // High asks for more than today's floor gives: the contrast rule wins
+    const [hi] = paintColors(resolveNameStyle(null, { roleColor: '#7a3b8f', showStyles: true, bg: '#212228', ratio: 7 }).paint)
+    expect(contrast(hi, '#212228')).toBeGreaterThanOrEqual(7)
   })
 
   it('keeps the hue when it moves a name', () => {
