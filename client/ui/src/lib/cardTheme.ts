@@ -1,6 +1,6 @@
 // Card themes (plan reconciliation 8): two raw colours, mixed into near-black so card text always reads. On a light
 // app theme (#139) the card follows it: the colours mixed into white, dark text, and an edge that stands off the app.
-import { readable } from './color'
+import { luminance, readable } from './color'
 import { parseHex, toHex } from './nameStyle'
 
 export type ThemeKey = 'sunset' | 'night' | 'forest' | 'berry' | 'plain'
@@ -30,6 +30,10 @@ export const CARD_TEXT_LIGHT = '#17181c'
 export const CARD_TEXT_2_LIGHT = '#464953'
 /** The least contrast a light card's edge has on the app's surfaces: a white or pale colour turns grey enough to see. */
 export const EDGE_RATIO_LIGHT = 1.5
+// The voice-room line and errors on a light card start from these and darken to 4.5:1 on its surfaces (the theme's own
+// -text tokens are tuned for near-white, and a card is tinted).
+export const CARD_OK_LIGHT = '#1a7f4b'
+export const CARD_DANGER_LIGHT = '#c0262f'
 
 /** The app theme a card sits in: light or dark, and (light) the app surfaces its edge must stand off. */
 export type CardLook = { light: boolean; ground: string[] }
@@ -96,10 +100,16 @@ export function cardVars(top: string, bottom: string, look: CardLook = DARK_LOOK
     '--card-hover': 'rgb(23 24 28 / .06)',
     '--card-skeleton': 'rgb(23 24 28 / .1)',
     '--card-edge': 'rgb(23 24 28 / .16)',
-    // the light theme's own text colours read on a light card
-    '--card-danger': 'var(--danger-text)',
-    '--card-ok': 'var(--ok-text)',
+    '--card-danger': readable(CARD_DANGER_LIGHT, on, 4.5),
+    '--card-ok': readable(CARD_OK_LIGHT, on, 4.5),
     // raised things on a light theme are lifted by a soft shadow
     '--card-lift': 'var(--shadow-2)',
   }
+}
+
+/** Of a gradient's two stops, the one a coloured name reads worst on: the lighter on a dark card, the darker on a
+ *  light one (names are moved toward white on dark surfaces and toward black on light ones). */
+export function nameStop(top: string, bottom: string, light: boolean): string {
+  const l = (c: string) => luminance(parseHex(c) ?? [0, 0, 0])
+  return (l(top) > l(bottom)) !== light ? top : bottom
 }

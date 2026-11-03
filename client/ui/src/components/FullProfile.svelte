@@ -9,7 +9,7 @@
   import { modal } from '../lib/actions'
   import { app, loadProfile, revalidateProfile } from '../lib/store.svelte'
   import { displayName, serverNick, userOf } from '../lib/selectors'
-  import { DEFAULT_THEME, cardVars } from '../lib/cardTheme'
+  import { DEFAULT_THEME, cardVars, nameStop } from '../lib/cardTheme'
   import { cardLook } from '../lib/theme.svelte'
   import { twemojiUrl } from '../lib/emoji'
   import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
@@ -28,6 +28,7 @@
   // light or dark as the app theme is (#139); the boards' names are made readable on the boards themselves
   const look = $derived(cardVars(card.theme_top, card.theme_bottom, cardLook()))
   const vars = $derived(Object.entries(look).map(([k, v]) => `${k}: ${v}`).join('; '))
+  const boardBg = $derived(nameStop(look['--panel-top'], look['--panel-bottom'], cardLook().light))
   let failed = $state<string | null>(null)
 
   function load(id: string) {
@@ -129,7 +130,7 @@
               {#each serverArchive.entries as e, i (`${i}\t${e.changed_at}\t${e.changed_by}`)}
                 <li>
                   {#if e.name}<strong>{e.name}</strong>{:else}<strong class="reset">Reset</strong>{/if}
-                  <span>by <Name userId={e.changed_by} {serverId} interactive={false} bg={look['--panel-top']} /></span>
+                  <span>by <Name userId={e.changed_by} {serverId} interactive={false} bg={boardBg} /></span>
                   <time datetime={e.changed_at}>{formatMemberSince(e.changed_at)}</time>
                 </li>
               {/each}
@@ -146,7 +147,7 @@
               <li>
                 <strong>{e.name}</strong>
                 <span>{serverName(e.server_id)}</span>
-                <span>by <Name userId={e.changed_by} serverId={e.server_id} interactive={false} bg={look['--panel-top']} /></span>
+                <span>by <Name userId={e.changed_by} serverId={e.server_id} interactive={false} bg={boardBg} /></span>
                 <time datetime={e.changed_at}>{formatMemberSince(e.changed_at)}</time>
               </li>
             {/each}

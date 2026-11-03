@@ -11,7 +11,7 @@
   import { app, openDm, queueMessage, ui } from '../lib/store.svelte'
   import { errorText } from '../lib/tauri'
   import { baseName, displayName } from '../lib/selectors'
-  import { cardVars } from '../lib/cardTheme'
+  import { cardVars, nameStop } from '../lib/cardTheme'
   import { cardLook } from '../lib/theme.svelte'
   import { mediaUrl } from '../lib/emoji'
   import { renderMarkdown } from '../lib/markdown'
@@ -52,6 +52,7 @@
   // The card's own two colours, drawn light or dark as the app theme is (#139, lib/cardTheme.ts).
   const vars = $derived(cardVars(card.theme_top, card.theme_bottom, cardLook()))
   const style = $derived(Object.entries(vars).map(([k, v]) => `${k}: ${v}`).join('; '))
+  const nameBg = $derived(nameStop(vars['--card-top'], vars['--card-bottom'], cardLook().light))
   const mine = $derived(user.id === app.state.me?.id)
   // The name that applies here (#47): their nickname in this server, else your private nickname for
   // them, else their display name; the preview draws the display name being edited. The username
@@ -118,7 +119,7 @@
     {/if}
     <div class="who">
       <!-- No server for the style: a card shows the person's own colour, never a role colour (spec §2) -->
-      <Name userId={user.id} serverId={null} text={name} interactive={false} size="card" bg={vars['--card-top']} user={preview ? user : undefined} />
+      <Name userId={user.id} serverId={null} text={name} interactive={false} size="card" bg={nameBg} user={preview ? user : undefined} />
       <div class="handle">@{user.username}{card.pronouns ? ` · ${card.pronouns}` : ''}</div>
     </div>
     {#if shown.length}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CARD_MIX, CARD_MIX_LIGHT, CARD_TEXT, CARD_TEXT_2, cardVars, DEFAULT_THEME, mixHex, NEAR_BLACK, NEAR_WHITE, PANEL_MIX, PANEL_MIX_LIGHT, presetFor, THEME_PRESETS } from './cardTheme'
+import { CARD_MIX, CARD_MIX_LIGHT, CARD_TEXT, CARD_TEXT_2, cardVars, DEFAULT_THEME, mixHex, NEAR_BLACK, NEAR_WHITE, nameStop, PANEL_MIX, PANEL_MIX_LIGHT, presetFor, THEME_PRESETS } from './cardTheme'
 import { contrast, lightenForName } from './nameStyle'
 
 describe('cardTheme', () => {
@@ -78,6 +78,9 @@ describe('cardTheme on a light theme (#139)', () => {
       for (const s of [v['--card-top'], v['--card-bottom'], v['--panel-top'], v['--panel-bottom']]) {
         expect(contrast(v['--card-text'], s), `${top} ${bottom} ${s}`).toBeGreaterThanOrEqual(7)
         expect(contrast(v['--card-text-2'], s), `${top} ${bottom} ${s}`).toBeGreaterThanOrEqual(4.5)
+        // the voice-room line and errors too (review: the theme's own -text tokens fell under 3:1 on a tinted card)
+        expect(contrast(v['--card-ok'], s), `ok ${top} ${bottom} ${s}`).toBeGreaterThanOrEqual(4.5)
+        expect(contrast(v['--card-danger'], s), `danger ${top} ${bottom} ${s}`).toBeGreaterThanOrEqual(4.5)
       }
       expect(contrast(v['--card-text'], '#ffffff')).toBeGreaterThan(contrast(v['--card-text'], '#000000'))
     }
@@ -99,7 +102,14 @@ describe('cardTheme on a light theme (#139)', () => {
     const v = cardVars('#3a3d46', '#16171b', light)
     expect(v['--card-line']).toBe('rgb(23 24 28 / .1)')
     expect(v['--card-lift']).toBe('var(--shadow-2)')
-    expect(v['--card-ok']).toBe('var(--ok-text)')
-    expect(v['--card-danger']).toBe('var(--danger-text)')
+  })
+})
+
+describe('nameStop (#139 review: a name reads on both ends of the card gradient)', () => {
+  it('the lighter stop on a dark card, the darker on a light one', () => {
+    expect(nameStop('#202020', '#505050', false)).toBe('#505050')
+    expect(nameStop('#505050', '#202020', false)).toBe('#505050')
+    expect(nameStop('#f0f0f0', '#c0c0c0', true)).toBe('#c0c0c0')
+    expect(nameStop('#c0c0c0', '#f0f0f0', true)).toBe('#c0c0c0')
   })
 })
