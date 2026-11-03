@@ -625,7 +625,7 @@
   .chip { width: 22px; height: 22px; border-radius: 6px; color: #fff; font-size: 11px; font-weight: 700; display: grid; place-items: center; }
   .sep { width: 1px; height: 20px; background: var(--line); margin: 0 4px; }
   .grow { flex: 1; align-self: stretch; }
-  .conn { font-size: 12px; font-weight: 600; color: var(--warn); padding: 4px 10px; border-radius: 12px; background: var(--warn-soft); margin-right: 6px; }
+  .conn { font-size: 12px; font-weight: 600; color: var(--warn-text); padding: 4px 10px; border-radius: 12px; background: var(--warn-soft); margin-right: 6px; }
   .win { width: 32px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .win:hover { background: var(--bg-2); color: var(--text); }
   .body { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 0 8px 8px; }
@@ -655,7 +655,7 @@
   .menu { position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 10; min-width: 200px; }
   /* not the bold of the header it can sit under */
   .menu button { font-weight: 400; }
-  .menu .warn { color: var(--warn); }
+  .menu .warn { color: var(--warn-text); }
   .auto-report button { border: 0; background: none; color: inherit; font-size: 15px; line-height: 1; padding: 0 0 0 6px; }
   .auto-report button.link { font-size: inherit; font-weight: 600; text-decoration: underline; padding: 0 2px; }
   .overlay { position: fixed; inset: 0; z-index: 20; }
@@ -669,9 +669,9 @@
   .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .error { color: var(--danger-text); }
   .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-grid; place-items: center; }
-  .tab .invc { color: var(--accent); display: grid; margin-left: -2px; }
+  .tab .invc { color: var(--accent-text); display: grid; margin-left: -2px; }
   .tab .dot { margin-left: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); display: inline-block; }
-  .notice { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 40; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: 0 6px 20px rgba(0, 0, 0, .35); }
+  .notice { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 40; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: var(--shadow-notice); }
   .ctx-backdrop { position: fixed; inset: 0; z-index: 44; }
   .ctx { position: fixed; z-index: 45; width: 210px; }
 </style>

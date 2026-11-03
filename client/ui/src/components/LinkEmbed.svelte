@@ -123,7 +123,7 @@
   .label { font-size: 12px; color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .by { color: var(--text-3); }
   .title {
-    color: var(--accent); font-weight: 600; font-size: 14px; line-height: 1.35; text-decoration: none; overflow-wrap: anywhere;
+    color: var(--accent-text); font-weight: 600; font-size: 14px; line-height: 1.35; text-decoration: none; overflow-wrap: anywhere;
     display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; line-clamp: 2; overflow: hidden;
   }
   .title:hover { text-decoration: underline; }

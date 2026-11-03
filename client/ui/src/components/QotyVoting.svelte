@@ -211,7 +211,7 @@
   .spill { position: absolute; left: 0; right: 0; top: 0; height: 35px; overflow: hidden; border-radius: 16px 16px 0 0; }
   .spill :global(.pixel-spill) { width: 100%; height: 100%; }
   .top { position: relative; display: flex; align-items: center; gap: 10px; }
-  .mark { font-size: 34px; padding-top: 12px; color: var(--quote-green); }
+  .mark { font-size: 34px; padding-top: 12px; color: var(--quote-green-text); }
   .live { background: var(--quote-green); }
   .grow { flex: 1; }
   .status { margin: -4px 0 0; color: var(--text-3); font-size: 12px; }
@@ -227,7 +227,7 @@
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .vote:disabled { opacity: .6; }
   .count { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .vote { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--quote-green); background: transparent; color: var(--quote-green); font-size: 13px; font-weight: 700; white-space: nowrap; }
+  .vote { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--quote-green); background: transparent; color: var(--quote-green-text); font-size: 13px; font-weight: 700; white-space: nowrap; }
   .vote.on { border-color: transparent; background: var(--quote-green); color: var(--on-quote-green); box-shadow: 0 2px 0 var(--quote-green-deep); }
   .none { margin: 0; color: var(--text-3); font-size: 13px; }
   .add { display: flex; flex-direction: column; gap: 6px; }
@@ -254,7 +254,7 @@
   }
   @keyframes qoty-count {
     0% { transform: translateY(0); }
-    40% { transform: translateY(-6px); color: var(--quote-green); }
+    40% { transform: translateY(-6px); color: var(--quote-green-text); }
     100% { transform: translateY(0); }
   }
 </style>

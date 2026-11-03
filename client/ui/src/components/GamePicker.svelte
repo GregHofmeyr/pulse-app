@@ -154,6 +154,6 @@
   input { width: 100%; }
   ul { position: absolute; z-index: 5; left: 0; right: 0; top: calc(100% + 4px); margin: 0; list-style: none; max-height: 180px; overflow-y: auto; }
   li { cursor: pointer; }
-  li.add { color: var(--accent); }
+  li.add { color: var(--accent-text); }
   .err { margin: 4px 0 0; font-size: 12px; color: var(--danger-text); }
 </style>

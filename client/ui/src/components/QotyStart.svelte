@@ -109,7 +109,7 @@
   .overlay { position: fixed; inset: 0; z-index: 30; }
   .modal { width: min(440px, 100%); gap: 14px; }
   .top { display: flex; align-items: center; gap: 10px; }
-  .mark { font-size: 34px; padding-top: 12px; color: var(--quote-green); }
+  .mark { font-size: 34px; padding-top: 12px; color: var(--quote-green-text); }
   h1 { flex: 1; }
   .field { display: flex; flex-direction: column; gap: 6px; }
   .lbl { font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
@@ -117,7 +117,7 @@
   .custom { display: flex; align-items: center; gap: 10px; }
   .custom input { width: 96px; }
   .hint { margin: 0; font-size: 12px; color: var(--text-3); }
-  .hint.bad { color: var(--warn); }
+  .hint.bad { color: var(--warn-text); }
   .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
   /* the Quote of the Year green, at the dialog-footer size */

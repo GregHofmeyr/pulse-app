@@ -29,13 +29,13 @@
 {/if}
 
 <style>
-  .qoty-banner { position: relative; overflow: hidden; flex-shrink: 0; display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 14px; background: var(--quote-surface); border-bottom: 1px solid color-mix(in srgb, var(--quote-green) 35%, transparent); }
+  .qoty-banner { position: relative; overflow: hidden; flex-shrink: 0; display: flex; align-items: center; gap: 12px; min-height: 56px; padding: 8px 14px; color: var(--island-text); background: var(--quote-surface); border-bottom: 1px solid color-mix(in srgb, var(--quote-green) 35%, transparent); }
   .mark, .live, .txt, .vote { position: relative; } /* over the spill */
   .qoty-banner :global(.pixel-spill) { position: absolute; left: 0; top: 0; height: 100%; width: 315px; }
   .mark { font-size: 30px; padding-top: 10px; color: var(--on-quote-green); }
-  .live { background: color-mix(in srgb, var(--text) 35%, transparent); }
+  .live { background: color-mix(in srgb, var(--island-text) 35%, transparent); }
   .txt { margin-left: 110px; min-width: 0; display: flex; flex-direction: column; text-shadow: 0 0 6px var(--quote-surface), 0 1px 0 var(--quote-surface); }
   .txt b { font-size: 14.5px; }
-  .txt small { color: var(--text-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .txt small { color: var(--island-text-2); font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .vote { margin-left: auto; padding: 0 16px; }
 </style>

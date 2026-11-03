@@ -37,6 +37,6 @@
 
 <style>
   .diag { position: absolute; top: 8px; left: 8px; z-index: 2; padding: 6px 8px; border-radius: 6px; background: rgba(0, 0, 0, .65); color: #e6e6e6; font: 11px/1.4 ui-monospace, monospace; pointer-events: none; white-space: nowrap; }
-  .calm { color: var(--text-3, #aaa); }
-  .bad { color: var(--warn, #f0b429); }
+  .calm { color: var(--island-text-3); }
+  .bad { color: var(--warn); }
 </style>

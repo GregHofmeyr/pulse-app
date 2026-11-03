@@ -119,7 +119,7 @@
   .leaderboard { position: absolute; top: calc(100% + 6px); right: 12px; z-index: 30; width: min(400px, calc(100vw - 32px)); max-height: 70vh; overflow-y: auto; padding: 14px; color: var(--text); }
   h2 { margin: 0 0 8px; font-size: 15px; }
   section + section { margin-top: 12px; }
-  h3 { margin: 0 0 4px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--quote-green); }
+  h3 { margin: 0 0 4px; font-size: 11px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--quote-green-text); }
   .entry { width: 100%; display: flex; align-items: baseline; gap: 8px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; min-width: 0; }
   .entry:hover, .entry:focus-visible { background: var(--bg-4); }
   .gone:hover { background: transparent; }

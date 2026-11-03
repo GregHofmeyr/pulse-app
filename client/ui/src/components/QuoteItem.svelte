@@ -209,7 +209,7 @@
 
 <style>
   .quote { padding: 8px 18px 2px; position: relative; }
-  .quote:hover { background: rgba(255, 255, 255, .02); }
+  .quote:hover { background: var(--hover-tint); }
   .quote.compact { padding: 0; }
   .quote.compact:hover { background: none; }
   .row { display: flex; gap: 14px; }
@@ -220,19 +220,19 @@
   .deleted { margin: 0; font-style: italic; color: var(--text-3); }
   .lines { display: flex; flex-direction: column; gap: 2px; border-left: 3px solid var(--quote-green-deep); padding-left: 10px; }
   .line { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 2px 6px; margin-left: -6px; border-radius: 8px; outline: none; }
-  .line:hover, .line:focus-visible, .line:focus-within { background: rgba(255, 255, 255, .03); }
+  .line:hover, .line:focus-visible, .line:focus-within { background: var(--hover-tint-strong); }
   .line:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
   .said { min-width: 0; color: var(--text-body); line-height: 1.5; overflow-wrap: anywhere; }
   .by { display: flex; align-items: center; gap: 8px; flex-shrink: 0; color: var(--text-2); }
   .speaker::before { content: '— '; color: var(--text-3); }
-  .trophy { color: var(--quote-green); font-size: 12px; font-weight: 600; }
+  .trophy { color: var(--quote-green-text); font-size: 12px; font-weight: 600; }
   .lbtn { opacity: 0; }
   .line:hover .lbtn, .line:focus-within .lbtn { opacity: 1; }
   .picbtn { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 8px; }
   .caption { margin: 4px 0 0; font-size: 13px; color: var(--text-2); }
   .win { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: 10px; background: var(--quote-green); color: var(--on-quote-green); font-size: 11px; font-weight: 700; }
   .edited { font-size: 11px; color: var(--text-3); }
-  .replies { margin-top: 4px; padding: 0; border: 0; background: none; color: var(--accent); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
+  .replies { margin-top: 4px; padding: 0; border: 0; background: none; color: var(--accent-text); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
   .replies:hover { text-decoration: underline; }
   .new { padding: 0 6px; border-radius: 8px; background: var(--quote-green); color: var(--on-quote-green); font-size: 10px; font-weight: 700; text-transform: uppercase; }
   .unsent-reply { margin: 4px 0 0 10px; padding: 0; border: 0; background: none; color: var(--danger-text); font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
@@ -242,7 +242,7 @@
   .quote:hover .actions, .actions.open { opacity: 1; pointer-events: auto; }
   .actions button { width: 30px; height: 28px; border: 0; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .actions button:hover { color: var(--text); }
-  .lightbox { position: fixed; inset: 0; z-index: 70; background: rgba(10, 11, 13, .85); display: grid; place-items: center; cursor: zoom-out; outline: none; }
+  .lightbox { position: fixed; inset: 0; z-index: 70; background: var(--scrim-strong); display: grid; place-items: center; cursor: zoom-out; outline: none; }
   .close { position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border: 0; border-radius: 10px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
   .close:hover { background: var(--bg-4); color: var(--text); }
 </style>

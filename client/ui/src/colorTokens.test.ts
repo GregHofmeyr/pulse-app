@@ -1,0 +1,202 @@
+// @vitest-environment jsdom
+// Theming step 1 (#42, docs/superpowers/specs/2026-11-03-theming-design.md "S — tokens only"): every
+// UI colour comes from an app.css :root token, so a theme only has to swap token values. Colours
+// that are fixed on purpose (video chrome, the QR code, skin tones, embed brand colours, the profile
+// card's own theme, avatar initials) are listed below, each with its reason. The token values are
+// pinned to what the app looked like before the tokens existed: this step changes no pixel.
+import { readdirSync, readFileSync } from 'node:fs'
+import { join, resolve } from 'node:path'
+import { beforeAll, describe, expect, it } from 'vitest'
+
+const src = (p: string) => readFileSync(resolve(__dirname, p), 'utf8')
+
+let root: CSSStyleDeclaration
+beforeAll(() => {
+  const style = document.createElement('style')
+  style.textContent = src('app.css')
+  document.head.append(style)
+  const found = [...style.sheet!.cssRules].find((r): r is CSSStyleRule => r instanceof CSSStyleRule && r.selectorText === ':root')
+  root = found!.style
+})
+// jsdom drops the spaces after commas in a custom property's value
+const norm = (v: string) => v.trim().replace(/,\s+/g, ',')
+const token = (name: string) => norm(root.getPropertyValue(name))
+
+const svelteFiles = (() => {
+  const files: string[] = []
+  const walk = (dir: string) => {
+    for (const e of readdirSync(dir, { withFileTypes: true })) {
+      if (e.isDirectory()) walk(join(dir, e.name))
+      else if (e.name.endsWith('.svelte')) files.push(join(dir, e.name))
+    }
+  }
+  walk(__dirname)
+  return files
+})()
+const rel = (f: string) => f.slice(__dirname.length + 1)
+
+/** Colour literals: hex, the colour functions, and white/black as a CSS value (not white-space). */
+const LITERAL = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\([^)]*\)/g
+const NAMED = /(?<![-\w$.])(?:white|black)(?![-\w])/g
+const styleBlocks = (text: string) => [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1])
+const literalsIn = (text: string) => {
+  const found = new Set(text.match(LITERAL) ?? [])
+  // named colours only inside declarations (comments and markup text say "white" too)
+  for (const css of styleBlocks(text)) {
+    for (const decl of css.replace(/\/\*[\s\S]*?\*\//g, '').match(/:[^;{}]*/g) ?? []) for (const n of decl.match(NAMED) ?? []) found.add(n)
+  }
+  return found
+}
+
+const VIDEO = 'video chrome: drawn over black video, frames or a thumbnail, so white-on-black in every theme'
+const AVATAR = 'initials on the fixed fallback avatar palette (lib/avatar.ts): white reads on every swatch'
+const PROFILE_CARD = 'the profile card is its own colour theme (lib/cardTheme.ts), a self-contained dark island'
+
+/** Colour literals allowed to stay in a component, each with why it is fixed. */
+const ALLOWED: Record<string, { literals: string[]; reason: string }[]> = {
+  'components/Avatar.svelte': [{ literals: ['#fff'], reason: AVATAR }],
+  'routes/Shell.svelte': [{ literals: ['#fff'], reason: AVATAR + ' (the server chip)' }],
+  'components/ClipCard.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .55)', 'rgba(0, 0, 0, .75)', 'rgba(0, 0, 0, .6)'], reason: VIDEO }],
+  'components/ClipPlayer.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, 0.6)', 'rgba(0, 0, 0, 0.8)', 'rgba(0, 0, 0, 0.85)'], reason: VIDEO }],
+  'components/ClipEditor.svelte': [{ literals: ['#000'], reason: VIDEO }],
+  'components/ClipTimeline.svelte': [{ literals: ['rgba(0, 0, 0, 0.5)', 'rgba(0, 0, 0, 0.6)'], reason: VIDEO + ' (the filmstrip)' }],
+  'components/PendingClip.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .75)'], reason: VIDEO }],
+  'components/FullView.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .5)'], reason: VIDEO }],
+  'components/StreamTile.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .5)', 'rgba(0, 0, 0, .55)', 'rgba(0, 0, 0, .75)', 'rgba(255, 255, 255, .16)'], reason: VIDEO }],
+  'components/MiniPreview.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .55)', 'rgba(0, 0, 0, .6)'], reason: VIDEO }],
+  'components/LiveCard.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .55)', 'rgba(0, 0, 0, .7)', 'rgba(255, 255, 255, .4)', 'rgba(255, 255, 255, .8)'], reason: VIDEO }],
+  'components/GoLiveDialog.svelte': [{ literals: ['#000'], reason: VIDEO + ' (the preview)' }],
+  'components/CropDialog.svelte': [{ literals: ['#000', '#fff', 'rgba(0, 0, 0, .6)'], reason: VIDEO + ' (the image being cropped, its mask and crop box)' }],
+  'components/StreamDiagOverlay.svelte': [{ literals: ['rgba(0, 0, 0, .65)', '#e6e6e6'], reason: 'developer stream diagnostics, a fixed dark box over the video' }],
+  'components/LinkEmbed.svelte': [
+    { literals: ['#ff3344', '#fe2c55', '#1ed760', '#ff5500', '#9146ff', '#e1306c'], reason: "the providers' brand colours (the embed's left edge)" },
+    { literals: ['#000', '#fff', 'rgba(10, 11, 13, .62)', 'rgba(10, 11, 13, .82)', 'rgba(0, 0, 0, .35)'], reason: VIDEO + ' (the player frame and the play button on the thumbnail)' },
+  ],
+  'components/TwoFactorSettings.svelte': [{ literals: ['#fff', '#000'], reason: 'the QR code: white quiet zone, black modules, or scanners fail' }],
+  'components/EmojiPicker.svelte': [{ literals: ['#f7c948', '#f7dbc0', '#e8c29a', '#c89369', '#9a6a45', '#5f402c'], reason: 'skin-tone swatches: content colours' }],
+  'components/ProfileSettings.svelte': [{ literals: ['#ffffff'], reason: "the first custom name colour's starting value (user data, not UI)" }],
+  'components/ProfileCard.svelte': [{ literals: ['rgb(242 243 246 / .12)', 'rgb(242 243 246 / .08)', 'rgb(242 243 246 / .14)', '#ff9d96'], reason: PROFILE_CARD }],
+}
+
+describe('colour literals', () => {
+  it('no component hard-codes a colour outside the allow-list', () => {
+    expect(svelteFiles.length).toBeGreaterThan(50)
+    const offenders: string[] = []
+    for (const f of svelteFiles) {
+      const allowed = new Set((ALLOWED[rel(f)] ?? []).flatMap((e) => e.literals))
+      for (const lit of literalsIn(readFileSync(f, 'utf8'))) if (!allowed.has(lit)) offenders.push(`${rel(f)}: ${lit}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
+  it('every allow-list entry still exists and says why (no stale entries)', () => {
+    const stale: string[] = []
+    for (const [file, entries] of Object.entries(ALLOWED)) {
+      const found = literalsIn(src(file))
+      for (const e of entries) {
+        expect(e.reason.length, file).toBeGreaterThan(10)
+        for (const lit of e.literals) if (!found.has(lit)) stale.push(`${file}: ${lit}`)
+      }
+    }
+    expect(stale).toEqual([])
+  })
+
+  it('app.css keeps its colour values in :root only', () => {
+    const outside = src('app.css').replace(/:root\s*\{[\s\S]*?\n\}/, '').replace(/\/\*[\s\S]*?\*\//g, '')
+    expect(outside.match(LITERAL) ?? []).toEqual([])
+  })
+})
+
+describe('the tokens (values pinned to the look before they existed: no visual change)', () => {
+  it.each([
+    // white hover tints on rows (messages, quotes, clips) and a quote's line
+    ['--hover-tint', 'rgba(255, 255, 255, .02)'],
+    ['--hover-tint-strong', 'rgba(255, 255, 255, .03)'],
+    // the accent family: today's accent as plain rgba() (see the comment in app.css)
+    ['--accent-soft', 'rgba(139, 156, 255, .15)'],
+    ['--focus-soft', 'rgba(139, 156, 255, .45)'],
+    ['--accent-faint', 'rgba(139, 156, 255, .08)'],
+    ['--ok-soft', 'rgba(79, 209, 139, .12)'],
+    ['--ok-deep', '#3a7d5a'],
+    ['--danger-hatch', 'rgba(217, 58, 66, .55)'],
+    ['--line-strong', '#44474f'],
+    ['--presence-off', '#5b5f6b'],
+    ['--tooltip-bg', '#0f1013'],
+    ['--tooltip-text', '#e8e9ed'],
+    ['--scrim-strong', 'rgba(10, 11, 13, .85)'],
+    ['--shadow-pop', '0 8px 24px rgba(0, 0, 0, .4)'],
+    ['--shadow-float', '0 12px 32px rgba(8, 9, 12, .5)'],
+    ['--shadow-notice', '0 6px 20px rgba(0, 0, 0, .35)'],
+    ['--shadow-notice-soft', '0 6px 20px rgba(0, 0, 0, .3)'],
+    ['--shadow-jump', '0 4px 14px rgba(0, 0, 0, .35)'],
+    ['--shadow-picker', '0 8px 28px rgba(0, 0, 0, .45)'],
+    // the Quote of the Year island: today's text colours, fixed so they read on --quote-surface in every theme
+    ['--island-text', '#e8e9ed'],
+    ['--island-text-2', '#b9bcc6'],
+    ['--island-text-3', '#8e92a0'],
+    // text vs fill: the same colour today; a theme may make the text one darker or lighter
+    ['--accent-text', 'var(--accent)'],
+    ['--warn-text', 'var(--warn)'],
+    ['--ok-text', 'var(--ok)'],
+    ['--quote-green-text', 'var(--quote-green)'],
+    // the cut-out ring around avatars, presence dots and speaking rings
+    ['--ring', 'var(--bg-1)'],
+  ])('%s is %s', (name, value) => {
+    expect(token(name)).toBe(norm(value))
+  })
+
+  it('the island and tooltip text match today\'s --text ladder', () => {
+    expect(token('--island-text')).toBe(token('--text'))
+    expect(token('--island-text-2')).toBe(token('--text-2'))
+    expect(token('--island-text-3')).toBe(token('--text-3'))
+    expect(token('--tooltip-text')).toBe(token('--text'))
+  })
+
+  it('the unused --on-ok is gone', () => {
+    expect(token('--on-ok')).toBe('')
+    for (const f of svelteFiles) expect(readFileSync(f, 'utf8'), rel(f)).not.toContain('--on-ok')
+  })
+})
+
+describe('text vs fill', () => {
+  // Over video or on a dark island the bright fill colour is right in every theme.
+  const FILL_AS_TEXT: Record<string, RegExp> = {
+    'components/ClipEditor.svelte': /^\s*\.problem /, // over the black video screen
+    'components/ProfileCard.svelte': /^\s*\.info \.room /, // the profile card island
+    'components/QotyCard.svelte': /^\s*\.(big|who) /, // on the Quote of the Year island
+    'components/StreamDiagOverlay.svelte': /^\s*\.bad /, // the diagnostics box over video
+  }
+  it('accent, warn, ok and quote green as text use their -text token', () => {
+    const offenders: string[] = []
+    for (const f of [...svelteFiles, resolve(__dirname, 'app.css')]) {
+      const allowed = FILL_AS_TEXT[rel(f)]
+      for (const line of readFileSync(f, 'utf8').split('\n')) {
+        if (/(^|[\s;{])color: var\(--(accent|warn|ok|quote-green)\)/.test(line) && !(allowed && allowed.test(line))) offenders.push(`${rel(f)}: ${line.trim()}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('the Quote of the Year island', () => {
+  it('its text uses the island tokens, never the theme text ladder', () => {
+    const banner = styleBlocks(src('components/QotyBanner.svelte'))[0]
+    expect(banner).toMatch(/\.qoty-banner \{[^}]*[\s;]color: var\(--island-text\)/)
+    expect(banner).not.toMatch(/var\(--text/)
+    const card = styleBlocks(src('components/QotyCard.svelte'))[0]
+    expect(card).toMatch(/\.qoty-card \{[^}]*[\s;]color: var\(--island-text\)/)
+    // the no-vote line (.none, .time) sits in the chat, not on the island
+    const islandLines = card.split('\n').filter((l) => /var\(--text/.test(l))
+    expect(islandLines.map((l) => l.trim().split(' ')[0])).toEqual(['.none', '.time'])
+  })
+})
+
+describe('the tooltip', () => {
+  it('is a fixed dark chip with its own text colour and shadow', () => {
+    const css = src('app.css')
+    const tip = /\.pulse-tooltip \{([^}]*)\}/.exec(css)![1]
+    expect(tip).toContain('background: var(--tooltip-bg)')
+    expect(tip).toContain('color: var(--tooltip-text)')
+    expect(tip).toContain('box-shadow: var(--shadow-pop)')
+  })
+})

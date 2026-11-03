@@ -113,21 +113,21 @@
 <style>
   .none { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }
   .time { font-size: 11px; color: var(--text-3); }
-  .link { margin-left: 6px; padding: 0; border: 0; background: none; color: var(--quote-green); font-size: 13px; font-weight: 600; }
+  .link { margin-left: 6px; padding: 0; border: 0; background: none; color: var(--quote-green-text); font-size: 13px; font-weight: 600; }
   .link:hover { text-decoration: underline; }
-  .qoty-card { position: relative; overflow: hidden; margin: 8px 18px; padding: 96px 16px 18px; border-radius: 14px; background: var(--quote-surface); border: 1px solid color-mix(in srgb, var(--quote-green) 35%, transparent); display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
+  .qoty-card { position: relative; overflow: hidden; margin: 8px 18px; padding: 96px 16px 18px; border-radius: 14px; color: var(--island-text); background: var(--quote-surface); border: 1px solid color-mix(in srgb, var(--quote-green) 35%, transparent); display: flex; flex-direction: column; align-items: center; gap: 6px; text-align: center; }
   .qoty-card :global(.pixel-spill) { position: absolute; left: 0; top: 0; width: 100%; height: 90px; }
   .big, .q, .who, .tally, .reopen { position: relative; } /* over the spill */
   .big { font-size: 56px; line-height: .5; color: var(--quote-green); text-shadow: 0 3px 0 var(--quote-green-deep); }
   .q { font-size: 18px; line-height: 1.4; overflow-wrap: anywhere; text-shadow: 0 1px 0 var(--quote-surface); }
   .q p { margin: 0; }
-  .q .caption { font-size: 13px; color: var(--text-2); }
-  .q .gone { font-size: 15px; font-style: italic; color: var(--text-3); }
+  .q .caption { font-size: 13px; color: var(--island-text-2); }
+  .q .gone { font-size: 15px; font-style: italic; color: var(--island-text-3); }
   .q :global(.pic) { margin: 0 auto; }
   .who { font-size: 14px; font-weight: 600; color: var(--quote-green); }
-  .who span { color: var(--text); }
+  .who span { color: var(--island-text); }
   .tally { display: flex; align-items: center; gap: 8px; }
-  .tally small { color: var(--text-3); font-size: 12px; }
+  .tally small { color: var(--island-text-3); font-size: 12px; }
   .tally :global(.stack .av) { box-shadow: 0 0 0 2px var(--quote-surface); }
   .reopen { margin-top: 4px; }
 

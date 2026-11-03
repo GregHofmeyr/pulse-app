@@ -84,8 +84,8 @@
   .avatar-btn { position: relative; border: 0; padding: 0; background: none; border-radius: 50%; }
   .avatar-btn[aria-disabled='true'] { cursor: default; }
   .avatar-btn :global(.av) { transition: box-shadow .12s; }
-  .tile.speaking :global(.av) { box-shadow: 0 0 0 4px var(--bg-1), 0 0 0 7px var(--ok); }
-  .badge { position: absolute; right: -4px; bottom: -4px; width: 28px; height: 28px; border-radius: 50%; background: var(--danger); color: var(--on-danger); border: 4px solid var(--bg-1); display: grid; place-items: center; }
+  .tile.speaking :global(.av) { box-shadow: 0 0 0 4px var(--ring), 0 0 0 7px var(--ok); }
+  .badge { position: absolute; right: -4px; bottom: -4px; width: 28px; height: 28px; border-radius: 50%; background: var(--danger); color: var(--on-danger); border: 4px solid var(--ring); display: grid; place-items: center; }
   .name { display: flex; align-items: center; gap: 8px; font-weight: 600; max-width: 90%; }
   .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .joining { font-size: 12px; font-weight: 400; color: var(--text-2); }
@@ -97,10 +97,10 @@
   .bar.on { background: var(--ok); }
   .vol { position: absolute; top: 10px; right: 12px; font-size: 11px; color: var(--text-3); }
   /* amber, a speaker crossed out: not their red mute badge */
-  .for-me { position: absolute; top: 8px; right: 10px; display: flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn); font-size: 11px; font-weight: 600; }
+  .for-me { position: absolute; top: 8px; right: 10px; display: flex; align-items: center; gap: 5px; padding: 3px 8px; border-radius: 999px; background: color-mix(in srgb, var(--warn) 14%, transparent); color: var(--warn-text); font-size: 11px; font-weight: 600; }
   .compact .for-me { top: 4px; right: 6px; padding: 2px 4px; }
   .compact { gap: 4px; border-radius: 10px; }
-  .compact.speaking :global(.av) { box-shadow: 0 0 0 2px var(--bg-1), 0 0 0 4px var(--ok); }
+  .compact.speaking :global(.av) { box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--ok); }
   .compact .badge { width: 16px; height: 16px; border-width: 2px; right: -3px; bottom: -3px; }
   .compact .name { font-size: 12px; gap: 5px; }
   .compact .vol { top: 4px; right: 6px; font-size: 10px; }

@@ -367,7 +367,7 @@
   .swatches, .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .swatch { width: 40px; height: 28px; border-radius: 8px; border: 2px solid transparent; padding: 0; cursor: pointer; }
   .swatch.round { width: 28px; border-radius: 50%; }
-  .swatch[aria-checked='true'] { border-color: var(--text); box-shadow: 0 0 0 2px var(--bg-1) inset; }
+  .swatch[aria-checked='true'] { border-color: var(--text); box-shadow: 0 0 0 2px var(--ring) inset; }
   .chip { height: 30px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 15px; background: transparent; color: var(--text-2); cursor: pointer; }
   .chip[aria-checked='true'] { background: var(--bg-3); border-color: var(--accent); color: var(--text); }
   input[type='color'] { width: 44px; height: 30px; padding: 0 2px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; cursor: pointer; }
@@ -380,8 +380,8 @@
   /* flush with the bottom of Settings' scrolling content, whatever its padding */
   .footer { position: sticky; bottom: calc(-1 * var(--settings-pad-y, 28px)); display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; padding: 12px 0; background: var(--bg-1); border-top: 1px solid var(--line); }
   .footer .error { flex-basis: 100%; }
-  .state { margin-right: auto; color: var(--warn); font-weight: 600; font-size: 13px; }
-  .state .ok { color: var(--ok); }
+  .state { margin-right: auto; color: var(--warn-text); font-weight: 600; font-size: 13px; }
+  .state .ok { color: var(--ok-text); }
   .muted { color: var(--text-3); font-size: 13px; }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .retry { height: 28px; margin-left: 8px; }

@@ -160,7 +160,7 @@
   /* the side panel toggles, one in each top corner; pressed while its panel shows */
   .panel-toggle { width: 32px; height: 32px; margin-top: 5px; flex-shrink: 0; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .panel-toggle:hover { background: var(--bg-3); color: var(--text); }
-  .panel-toggle[aria-pressed='true'] { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent); }
+  .panel-toggle[aria-pressed='true'] { background: color-mix(in srgb, var(--accent) 18%, transparent); color: var(--accent-text); }
   .panel-toggle[aria-pressed='true']:hover { background: color-mix(in srgb, var(--accent) 28%, transparent); }
   .back { flex-shrink: 0; white-space: nowrap; padding-left: 8px; gap: 4px; }
   /* rows of 42px (the quality select's height): 52px in all on one row, as before, with the corner toggles centred on the first */

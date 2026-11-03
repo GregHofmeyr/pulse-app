@@ -549,7 +549,7 @@
   .editable:hover { background: var(--bg-3); }
   .rename { min-width: 220px; font-weight: 600; }
   .pile { display: flex; }
-  .pile :global(.av) { box-shadow: 0 0 0 2px var(--bg-1); }
+  .pile :global(.av) { box-shadow: 0 0 0 2px var(--ring); }
   .pile :global(.av + .av) { margin-left: -7px; }
   .grow { flex: 1; }
   .hbtn.on { background: var(--bg-3); color: var(--text); }
@@ -557,7 +557,7 @@
   .qoty { height: 30px; padding: 0 12px; }
   .newline { display: flex; align-items: center; gap: 8px; margin: 6px 18px; color: var(--danger); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
   .newline::before, .newline::after { content: ''; flex: 1; height: 1px; background: var(--danger); opacity: .6; }
-  .jump { align-self: center; margin-top: -40px; position: relative; z-index: 2; padding: 6px 12px; border: 0; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; box-shadow: 0 4px 14px rgba(0, 0, 0, .35); }
+  .jump { align-self: center; margin-top: -40px; position: relative; z-index: 2; padding: 6px 12px; border: 0; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; box-shadow: var(--shadow-jump); }
   .list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 0 8px; display: flex; flex-direction: column; }
   .list:focus { outline: none; } /* focused only from code, as a fallback: no ring */
   .start { padding: 16px 18px; color: var(--text-3); font-size: 13px; }

@@ -141,10 +141,10 @@
 
 <style>
   .panel { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-  .head { height: 52px; flex-shrink: 0; padding: 0 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--ok); }
+  .head { height: 52px; flex-shrink: 0; padding: 0 18px; display: flex; align-items: center; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--ok-text); }
   .title { color: var(--text); font-size: 15px; font-weight: 600; flex: 1; }
-  .status { font-size: 12px; font-weight: 600; color: var(--ok); padding: 4px 10px; border-radius: 12px; background: rgba(79, 209, 139, .12); }
-  .status.warn { color: var(--warn); background: var(--warn-soft); }
+  .status { font-size: 12px; font-weight: 600; color: var(--ok-text); padding: 4px 10px; border-radius: 12px; background: var(--ok-soft); }
+  .status.warn { color: var(--warn-text); background: var(--warn-soft); }
   .error { margin: 12px 18px 0; color: var(--danger-text); font-size: 13px; }
   .eye[aria-pressed='true'] { color: var(--text); }
   .grid-wrap { flex: 1; min-height: 0; overflow-y: auto; container-type: inline-size; }

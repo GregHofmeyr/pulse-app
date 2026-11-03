@@ -70,7 +70,7 @@
   .preview { position: relative; }
   video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; object-fit: contain; }
   .viewers { margin: 0; font-size: 13px; color: var(--text-2); }
-  .warn { margin: 0; font-size: 13px; color: var(--warn); }
+  .warn { margin: 0; font-size: 13px; color: var(--warn-text); }
   /* the tile variant: the preview fills the tile; the rows float over it as top and bottom bars */
   .card.tile { position: absolute; inset: 0; margin: 0; padding: 0; max-width: none; width: auto; gap: 0; border: 0; border-radius: 0; background: #000; align-self: stretch; }
   .tile .preview { position: absolute; inset: 0; }

@@ -75,7 +75,7 @@
   .set { display: flex; align-items: center; gap: 8px; padding-right: 12px; background: var(--bg-2); border: 1px solid transparent; border-radius: 12px; }
   .set.selected { border-color: var(--accent); }
   .pick { flex: 1; display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; border-radius: 12px; cursor: pointer; }
-  .set.selected .pick strong { color: var(--accent); }
+  .set.selected .pick strong { color: var(--accent-text); }
   .play { width: 32px; height: 32px; flex-shrink: 0; border: 0; border-radius: 50%; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; }
   .vol strong { color: var(--text); letter-spacing: 0; }
   input[type='range'] { accent-color: var(--accent); }

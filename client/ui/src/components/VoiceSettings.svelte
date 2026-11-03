@@ -154,12 +154,12 @@
   .hint { margin: -8px 0 0; font-size: 12px; color: var(--text-3); }
   .sens { position: relative; height: 22px; display: flex; align-items: center; }
   .meter { position: absolute; left: 0; right: 0; height: 12px; border-radius: 6px; background: var(--line); overflow: hidden; }
-  .fill { height: 100%; background: #3a7d5a; transition: width .1s linear; }
+  .fill { height: 100%; background: var(--ok-deep); transition: width .1s linear; }
   .fill.over { background: var(--ok); }
   .sens input[type='range'] { position: relative; width: 100%; margin: 0; background: transparent; -webkit-appearance: none; appearance: none; height: 22px; }
   .sens input[type='range']::-webkit-slider-runnable-track { background: transparent; height: 22px; }
-  .sens input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 6px; height: 22px; border-radius: 3px; background: var(--text); box-shadow: 0 0 0 2px var(--bg-1); }
-  .warn { margin: -8px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn); font-size: 13px; }
+  .sens input[type='range']::-webkit-slider-thumb { -webkit-appearance: none; width: 6px; height: 22px; border-radius: 3px; background: var(--text); box-shadow: 0 0 0 2px var(--ring); }
+  .warn { margin: -8px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--warn-soft); color: var(--warn-text); font-size: 13px; }
   .check { display: flex; align-items: center; gap: 12px; padding: 16px; background: var(--bg-2); border-radius: 14px; }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .toggles { display: flex; flex-direction: column; }

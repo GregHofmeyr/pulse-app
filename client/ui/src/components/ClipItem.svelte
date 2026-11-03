@@ -74,7 +74,7 @@
 <style>
   /* drawn only near the screen; the size is a typical 16:9 item until it is */
   .clip-item { display: flex; gap: 14px; padding: 8px 18px; content-visibility: auto; contain-intrinsic-size: auto 480px; }
-  .clip-item:hover { background: rgba(255, 255, 255, .02); }
+  .clip-item:hover { background: var(--hover-tint); }
   .clip-item.compact { padding: 4px 18px; contain-intrinsic-size: auto 260px; }
   .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
   .meta { align-self: stretch; display: flex; align-items: center; gap: 8px; min-height: 28px; }

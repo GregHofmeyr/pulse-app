@@ -53,7 +53,7 @@
   .top { display: flex; align-items: center; justify-content: space-between; }
   textarea { resize: vertical; min-height: 120px; padding: 10px 12px; }
   .note { margin: 0; font-size: 12px; color: var(--text-3); }
-  .ok { margin: 0; font-size: 13px; color: var(--ok); word-break: break-all; }
+  .ok { margin: 0; font-size: 13px; color: var(--ok-text); word-break: break-all; }
   .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .actions { display: flex; justify-content: flex-end; }
 </style>

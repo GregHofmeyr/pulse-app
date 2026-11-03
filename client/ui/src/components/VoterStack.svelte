@@ -27,7 +27,7 @@
 
 <style>
   .stack { display: inline-flex; align-items: center; }
-  .stack :global(.av) { box-shadow: 0 0 0 2px var(--bg-1); }
+  .stack :global(.av) { box-shadow: 0 0 0 2px var(--ring); }
   .stack :global(.av + .av) { margin-left: -6px; }
   .more { margin-left: 5px; font-size: 11px; color: var(--text-3); }
 </style>

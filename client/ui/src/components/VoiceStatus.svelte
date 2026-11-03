@@ -81,12 +81,12 @@
   .vc-bars span:nth-child(1) { height: 5px; } .vc-bars span:nth-child(2) { height: 9px; } .vc-bars span:nth-child(3) { height: 14px; }
   .vc-bars.warn span { background: var(--warn); }
   .vc-text { flex: 1; display: flex; flex-direction: column; min-width: 0; }
-  .vc-text strong { font-size: 13px; color: var(--ok); }
-  .vc-text strong.warn { color: var(--warn); }
+  .vc-text strong { font-size: 13px; color: var(--ok-text); }
+  .vc-text strong.warn { color: var(--warn-text); }
   .vc-text strong.bad { color: var(--danger-text); }
   .vc-text small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 8px; background: var(--surface-menu); color: var(--danger); display: grid; place-items: center; }
   .vc-leave:hover { background: var(--bg-4); }
   .vc-mic { margin: -4px 8px 8px; padding: 8px 12px; border-radius: 10px; background: var(--bg-2); border-left: 3px solid var(--warn); font-size: 12px; line-height: 1.4; color: var(--text-2); }
-  .vc-mic strong { color: var(--warn); }
+  .vc-mic strong { color: var(--warn-text); }
 </style>

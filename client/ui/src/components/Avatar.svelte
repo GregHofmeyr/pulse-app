@@ -76,6 +76,6 @@
   .av { position: relative; flex-shrink: 0; border-radius: 50%; display: grid; place-items: center; font-weight: 700; color: #fff; }
   .av img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
   .avbtn { background: none; border: 0; padding: 0; margin: 0; cursor: pointer; display: inline-flex; flex-shrink: 0; }
-  .pres { position: absolute; right: -2px; bottom: -2px; width: 34%; height: 34%; min-width: 9px; min-height: 9px; border-radius: 50%; background: var(--ok); border: 2px solid var(--bg-1); box-sizing: border-box; }
-  .pres.off { background: #5b5f6b; }
+  .pres { position: absolute; right: -2px; bottom: -2px; width: 34%; height: 34%; min-width: 9px; min-height: 9px; border-radius: 50%; background: var(--ok); border: 2px solid var(--ring); box-sizing: border-box; }
+  .pres.off { background: var(--presence-off); }
 </style>
