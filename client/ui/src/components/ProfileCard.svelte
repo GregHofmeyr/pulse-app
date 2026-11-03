@@ -220,6 +220,8 @@
   .who { font-size: calc(20px / 1.15); }
   .handle { font-size: 13px; color: var(--card-text-2); }
   .badges { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 0; }
+  /* a touch smaller than the shared showcase size; zoom keeps the ring, glyph, spark and tier in proportion */
+  .badges :global(.badge-icon.show) { zoom: .84; }
   .panel { border-radius: 10px; padding: 10px 12px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); font-size: 13px; }
   .bio { font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
   .bio :global(p) { margin: 0; }

@@ -21,7 +21,7 @@ const el = (html: string) => {
 }
 /** The declarations of the first rule whose selector matches `sel` exactly. */
 const rule = (sel: RegExp) => {
-  const m = css.match(new RegExp(`(?:^|\\})\\s*${sel.source}\\s*\\{([^}]*)\\}`))
+  const m = css.match(new RegExp(`(?:^|\\}|\\*/)\\s*${sel.source}\\s*\\{([^}]*)\\}`))
   return m?.[1] ?? null
 }
 
@@ -41,5 +41,15 @@ describe('the actions box on your own card', () => {
     expect(before).toMatch(/background:\s*rgb\(242 243 246 \/ \.08\)/)
     const second = el('<div class="actions $s"><button class="$s"></button><button data-probe class="$s"></button></div>')
     expect(getComputedStyle(second).position).toBe('relative')
+  })
+})
+
+describe('the showcase badges on the card', () => {
+  it('are a little smaller than the shared showcase size (about 15%), every part scaled alike', () => {
+    const decl = rule(/\.badges\.svelte-test \.badge-icon\.show/)
+    expect(decl).not.toBeNull()
+    const zoom = Number(decl!.match(/zoom:\s*([\d.]+)/)?.[1])
+    expect(zoom).toBeGreaterThanOrEqual(0.8)
+    expect(zoom).toBeLessThanOrEqual(0.85)
   })
 })
