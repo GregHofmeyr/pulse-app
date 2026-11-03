@@ -12,6 +12,7 @@
   import Name from './Name.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
   import SearchBox from './SearchBox.svelte'
+  import { narrowerThan } from '../lib/actions'
   import { app, clock, queueMessage, ui } from '../lib/store.svelte'
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
@@ -431,10 +432,13 @@
   function quotePosted() {
     if (detached) void toPresent()
   }
+  // A narrow header (small window, side panels open): the search box folds to a magnifier (#97).
+  const NARROW_HEAD = 640
+  let narrowHead = $state(false)
 </script>
 
 <div class="chan" class:with-replies={!!repliesRoot} bind:this={chan}>
-  <div class="head">
+  <div class="head" use:narrowerThan={{ px: NARROW_HEAD, set: (v) => (narrowHead = v) }}>
     {#if isPrivate && channel?.kind === 'dm' && others[0]}
       <Avatar id={others[0]} name={title} size={26} online={app.state.people[others[0]]?.online ?? false} interactive serverId={null} />
       <span class="title"><Name userId={others[0]} serverId={null} text={title} /></span>
@@ -469,7 +473,7 @@
       <button class="icon-btn" aria-label="More" aria-haspopup="menu" aria-expanded={menu === 'manage'} data-tip="More" data-menu-toggle
         onclick={() => (menu = menu === 'manage' ? null : 'manage')}><Icon name="dots" size={17} /></button>
     {/if}
-    <SearchBox {serverId} {channelId} />
+    <SearchBox {serverId} {channelId} compact={narrowHead} />
     {#if leaderboardOpen && serverId}
       <Leaderboard {serverId} onOpen={openLeaderboardEntry} onClose={() => (leaderboardOpen = false)} />
     {/if}

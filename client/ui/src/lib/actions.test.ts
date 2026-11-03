@@ -146,3 +146,36 @@ describe('modal', () => {
     document.body.innerHTML = ''
   })
 })
+
+describe('narrowerThan (#97)', () => {
+  it('reports whether the element is narrower than the limit, now and on every resize, and stops when removed', async () => {
+    const { narrowerThan } = await import('./actions')
+    let fire: (w: number) => void = () => {}
+    let disconnected = false
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(cb: (e: { contentRect: { width: number } }[]) => void) { fire = (w) => cb([{ contentRect: { width: w } }]) }
+      observe() {}
+      disconnect() { disconnected = true }
+    })
+    const el = document.createElement('div')
+    Object.defineProperty(el, 'clientWidth', { value: 500 })
+    const seen: boolean[] = []
+    const a = narrowerThan(el, { px: 600, set: (v) => seen.push(v) })
+    expect(seen).toEqual([true]) // measured at once
+    fire(800)
+    fire(590)
+    expect(seen).toEqual([true, false, true])
+    a.destroy()
+    expect(disconnected).toBe(true)
+    vi.unstubAllGlobals()
+  })
+
+  it('without ResizeObserver (old engines, tests) it never claims narrow', async () => {
+    const { narrowerThan } = await import('./actions')
+    vi.stubGlobal('ResizeObserver', undefined)
+    const seen: boolean[] = []
+    narrowerThan(document.createElement('div'), { px: 600, set: (v) => seen.push(v) }).destroy()
+    expect(seen).toEqual([false])
+    vi.unstubAllGlobals()
+  })
+})

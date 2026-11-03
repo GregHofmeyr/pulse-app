@@ -37,8 +37,8 @@ beforeEach(() => {
   ))
 })
 
-function show(serverId: string | null = 'S1', channelId = 'C1') {
-  cmp = mount(SearchBox, { target: document.body, props: { serverId, channelId } })
+function show(serverId: string | null = 'S1', channelId = 'C1', compact = false) {
+  cmp = mount(SearchBox, { target: document.body, props: { serverId, channelId, compact } })
   flushSync()
   return document.querySelector<HTMLInputElement>('input[role="combobox"]')!
 }
@@ -61,6 +61,54 @@ function key(input: HTMLInputElement, k: string, more: KeyboardEventInit = {}) {
   flushSync()
 }
 const chips = () => [...document.querySelectorAll<HTMLElement>('.chip')].map((c) => c.textContent!.replace(/\s+/g, ' ').trim())
+
+describe('SearchBox in a narrow header (#97)', () => {
+  const box = () => document.querySelector<HTMLElement>('.search')!
+  const mag = () => document.querySelector<HTMLButtonElement>('button.mag')
+
+  it('folds to a magnifier button; clicking it opens the box with the focus in it', async () => {
+    const input = show('S1', 'C1', true)
+    expect(box().classList.contains('collapsed')).toBe(true)
+    expect(mag()?.getAttribute('aria-label')).toBe('Search')
+    mag()!.click()
+    flushSync()
+    await tick()
+    expect(document.activeElement).toBe(input)
+    expect(box().classList.contains('collapsed')).toBe(false)
+    expect(mag()).toBeNull()
+  })
+
+  it('folds back when you leave it empty, and stays open while it holds words or a filter', async () => {
+    const input = show('S1', 'C1', true)
+    input.focus()
+    flushSync()
+    input.blur()
+    flushSync()
+    expect(box().classList.contains('collapsed')).toBe(true)
+    input.focus()
+    type(input, 'from:sam')
+    key(input, 'Enter')
+    await tick()
+    input.blur()
+    flushSync()
+    expect(chips()).toEqual(['from: sam'])
+    expect(box().classList.contains('collapsed')).toBe(false)
+  })
+
+  it('Ctrl+F opens it too', () => {
+    const input = show('S1', 'C1', true)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'f', ctrlKey: true, bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.activeElement).toBe(input)
+    expect(box().classList.contains('collapsed')).toBe(false)
+  })
+
+  it('in a wide header there is no magnifier button and the box is always open', () => {
+    show('S1', 'C1', false)
+    expect(mag()).toBeNull()
+    expect(box().classList.contains('collapsed')).toBe(false)
+  })
+})
 
 describe('SearchBox', () => {
   it('says where it searches', () => {

@@ -16,10 +16,12 @@
   import { rankNames } from '../lib/mentions'
   import { activeTerm, chipText, filterRows, HAS_VALUES, hasSearchableWords, parseText, replaceTerm, type Chip, type FilterKey } from '../lib/searchQuery'
 
-  let { serverId, channelId }: {
+  let { serverId, channelId, compact = false }: {
     /** The server searched; null in a DM or group, which is searched on its own. */
     serverId: string | null
     channelId: string
+    /** A narrow header (#97): the box folds to a magnifier button until it's used. */
+    compact?: boolean
   } = $props()
 
   const uid = `search-${++boxes}`
@@ -58,6 +60,8 @@
   /** Words that can't find anything were entered: say what to type instead. */
   let hint = $state(false)
   let focused = $state(false)
+  // Folded to the magnifier: compact, not in use, and holding nothing (words or filters keep it open).
+  const collapsed = $derived(compact && !focused && !text && !chips.length)
   /** The row Enter picks: set by typing and the arrow keys only. The mouse hovers (CSS) and clicks,
    *  but never makes a row the one Enter picks: a pointer resting on the list would take the Enter
    *  that was meant to search. */
@@ -211,8 +215,13 @@
 
 <svelte:window onkeydown={globalKey} />
 
-<div class="search" class:focused>
-  <Icon name="search" size={15} />
+<div class="slot" class:compact>
+<div class="search" class:focused class:collapsed class:floating={compact && !collapsed}>
+  {#if collapsed}
+    <button type="button" class="mag" aria-label="Search" onclick={() => input.focus()}><Icon name="search" size={16} /></button>
+  {:else}
+    <Icon name="search" size={15} />
+  {/if}
   {#each chips as c, i (chipText(c))}
     <span class="chip">{chipText(c)}<button type="button" tabindex="-1" aria-label="Remove {chipText(c)}" onclick={() => removeChip(i)}><Icon name="x" size={11} /></button></span>
   {/each}
@@ -246,8 +255,17 @@
   {/if}
   <p class="hint" aria-live="polite">{hint ? 'Type a word or pick a filter' : ''}</p>
 </div>
+</div>
 
 <style>
+  /* in a narrow header: a magnifier-sized slot; the open box floats over the header, right-aligned (#97) */
+  .slot.compact { position: relative; width: 32px; height: 32px; flex-shrink: 0; }
+  .search.collapsed { width: 32px; padding: 0; justify-content: center; border-color: transparent; background: transparent; }
+  .search.collapsed .field { position: absolute; width: 1px; min-width: 0; opacity: 0; pointer-events: none; }
+  .search.floating { position: absolute; top: 0; right: 0; z-index: 21; width: min(320px, 70vw); box-shadow: var(--shadow-2); }
+  .search.floating.focused { width: min(320px, 70vw); }
+  .mag { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); }
+  .mag:hover { background: var(--bg-3); color: var(--text); }
   /* the shared .input look, holding chips beside the text */
   .search { position: relative; width: 240px; min-width: 0; height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--bg-4); border-radius: 8px; background: var(--bg-1); color: var(--text-3); transition: width var(--dur) var(--ease); }
   .search:hover { border-color: var(--line-menu); }

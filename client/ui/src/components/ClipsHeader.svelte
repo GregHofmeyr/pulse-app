@@ -3,7 +3,7 @@
   // list/wall toggle and "Share a clip".
   import Icon from './Icon.svelte'
   import SearchBox from './SearchBox.svelte'
-  import { clickOutside } from '../lib/actions'
+  import { clickOutside, narrowerThan } from '../lib/actions'
   import { clipFilter, type ClipFilter } from '../lib/clips'
   import { clipFilters, setClipFiltersShown } from '../lib/clipFiltersShown.svelte'
   import { displayName } from '../lib/selectors'
@@ -40,6 +40,20 @@
   // that is on still shows, so a filtered list never looks like everything.
   const shown = $derived(clipFilters.shown)
 
+  // A narrow header (small window, side panels open; #97): the search box folds to a magnifier, and only the
+  // first few games show as chips (plus the picked one), the rest behind "+N more".
+  const NARROW_HEAD = 720
+  const NARROW_GAMES = 3
+  let narrow = $state(false)
+  const rowGames = $derived.by(() => {
+    if (!narrow || gameChips.length <= NARROW_GAMES + 1) return gameChips
+    const first = gameChips.slice(0, NARROW_GAMES)
+    const picked = gameChips.find((g) => g.id === filter.game)
+    return picked && !first.includes(picked) ? [...first.slice(0, NARROW_GAMES - 1), picked] : first
+  })
+  const moreGames = $derived(gameChips.filter((g) => !rowGames.includes(g)))
+  let more = $state(false)
+
   let people = $state(false)
   let error = $state('')
 
@@ -65,16 +79,26 @@
   }
 </script>
 
-<div class="head">
+<div class="head" use:narrowerThan={{ px: NARROW_HEAD, set: (v) => (narrow = v) }}>
   <span class="ico"><Icon name="film" size={18} /></span>
   <button type="button" class="title" aria-expanded={shown} data-tip={shown ? 'Hide filters' : 'Show filters'} onclick={() => setClipFiltersShown(!shown)}>
     <span class="title-text">{channel?.name ?? ''}</span><span class="caret" class:up={shown}><Icon name="chevron" size={14} /></span>
   </button>
   <div class="chips" role="group" aria-label="Filter clips">
     {#if shown}<button type="button" class="chip" aria-pressed={!filter.game && !filter.author} onclick={() => onFilter({})}>All</button>{/if}
-    {#each gameChips as g (g.id)}
+    {#each shown ? rowGames : gameChips as g (g.id)}
       {#if shown || filter.game === g.id}<button type="button" class="chip" aria-pressed={filter.game === g.id} onclick={() => pickGame(g.id)}>{g.name}</button>{/if}
     {/each}
+    {#if shown && moreGames.length}<div class="more">
+      <button type="button" class="chip" aria-haspopup="menu" aria-expanded={more} data-menu-toggle onclick={() => (more = !more)}>+{moreGames.length} more</button>
+      {#if more}
+        <div class="menu menu-surface pop-in" role="menu" aria-label="More games" use:clickOutside={() => (more = false)}>
+          {#each moreGames as g (g.id)}
+            <button type="button" class="menu-item" role="menuitemradio" aria-checked={filter.game === g.id} onclick={() => { more = false; pickGame(g.id) }}>{g.name}</button>
+          {/each}
+        </div>
+      {/if}
+    </div>{/if}
     {#if shown || filter.author}<div class="person">
       <button type="button" class="chip" aria-pressed={!!filter.author} aria-haspopup="menu" aria-expanded={people} data-menu-toggle
         onclick={() => (people = !people)}>{personLabel}</button>
@@ -97,7 +121,7 @@
     <button type="button" class="tbtn" aria-label="Wall view" data-tip="Wall" aria-pressed={view === 'wall'} onclick={() => setView('wall')}><Icon name="grid" size={16} /></button>
   </div>
   <button type="button" class="share" onclick={onShare}>Share a clip</button>
-  <SearchBox {serverId} {channelId} />
+  <SearchBox {serverId} {channelId} compact={narrow} />
 </div>
 
 <style>
@@ -112,7 +136,7 @@
   .chip { height: 28px; padding: 0 11px; border-radius: 14px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; font-weight: 600; white-space: nowrap; }
   .chip:hover { background: var(--bg-3); color: var(--text); }
   .chip[aria-pressed='true'] { background: var(--accent); border-color: var(--focus-ring); color: var(--on-accent); }
-  .person { position: relative; }
+  .person, .more { position: relative; }
   .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; }
   .menu-item[aria-checked='true'] { color: var(--accent-text); }
   .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

@@ -69,6 +69,51 @@ function header(over: Record<string, unknown> = {}) {
   return p
 }
 
+describe('ClipsHeader in a narrow window (#97)', () => {
+  const many = { games: ['G1', 'G2', 'G3', 'G4', 'G5'].map((id, i) => ({ game_id: id, count: 9 - i })), authors: [] }
+  const fiveGames = ['G1', 'G2', 'G3', 'G4', 'G5'].map((id, i) => ({ id, server_id: 'S1', name: ['Apex', 'CS2', 'Dota', 'Rust', 'Valorant'][i], created_by: 'U1', created_at: '2026-10-01T00:00:00Z' }))
+  let fire: (w: number) => void = () => {}
+  beforeEach(() => {
+    vi.stubGlobal('ResizeObserver', class {
+      constructor(cb: (e: { contentRect: { width: number } }[]) => void) { fire = (w) => cb([{ contentRect: { width: w } }]) }
+      observe() {}
+      disconnect() {}
+    })
+  })
+  afterEach(() => vi.unstubAllGlobals())
+  const chipNames = () => [...document.querySelectorAll<HTMLButtonElement>('.chips > .chip, .chips > .more > .chip')].map((b) => b.textContent?.trim())
+
+  it('narrow: the first games, then "+N more" with the rest in a menu; picking one filters', () => {
+    app.state = { ...app.state, games: { S1: fiveGames }, clipFacets: { C1: many } }
+    const p = header()
+    fire(500)
+    flushSync()
+    expect(chipNames()).toEqual(['All', 'Apex', 'CS2', 'Dota', '+2 more'])
+    button('+2 more').click()
+    flushSync()
+    const items = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].map((m) => m.textContent?.trim())
+    expect(items).toEqual(['Rust', 'Valorant'])
+    ;[...document.querySelectorAll<HTMLButtonElement>('[role="menuitemradio"]')][1].click()
+    expect(p.onFilter).toHaveBeenLastCalledWith({ game: 'G5' })
+  })
+
+  it('narrow with a later game picked: it stays visible in the row', () => {
+    app.state = { ...app.state, games: { S1: fiveGames }, clipFacets: { C1: many } }
+    header({ filter: { game: 'G5' } })
+    fire(500)
+    flushSync()
+    expect(chipNames()).toEqual(['All', 'Apex', 'CS2', 'Valorant', '+2 more'])
+  })
+
+  it('wide: every game chip, no "+N more"', () => {
+    app.state = { ...app.state, games: { S1: fiveGames }, clipFacets: { C1: many } }
+    header()
+    fire(1200)
+    flushSync()
+    expect(chipNames()).toEqual(['All', 'Apex', 'CS2', 'Dota', 'Rust', 'Valorant'])
+  })
+})
+
 describe('ClipsHeader', () => {
   it('the title hides and shows the filter chips, remembered on this device', () => {
     localStorage.clear()
