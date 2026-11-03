@@ -56,3 +56,19 @@ Pop-out (`#v2`, #61) isn't built, so there is no ghost `#v2` ticket.
   voice removes the ghost; logout removes it; join webhook admission and refusal; member removal; rate limit.
 - UI (vitest): ghost watch path (ghost ticket/watch/audio flags), the 👻 count on the card/popover/tile, the
   voice-only notice (event first and LiveKit first), the voice-join upgrade, the dialog toggle.
+
+## As built
+
+- Counts follow LiveKit: a ghost counts once its `#v` join webhook has been admitted (a ticket and a watch with no
+  connection are nobody), and stops when that `#v` leaves.
+- A ghost watching elsewhere keeps watching when its voice channel changes; joining the ghost's own channel upgrades.
+  The upgrade waits (up to 15 s) for the call to connect, and also runs when LiveKit's removal arrives first.
+- A ghost's stream audio plays through `stream::ghost_out` (the chosen output device) when there's no call, with the
+  volume mixer's Calls × Streams level.
+
+## Deferred (issues)
+
+- #148: allow ghosts per stream (publisher track permissions) instead of per stream room.
+- #149: wire `streams::ghosts::member_removed` into a leave-server / remove-member route (none exists yet).
+- #150: ghost watches survive a server restart (and the CLI password reset can't reach ghost state).
+- #61 (comment): the ghost `#v2` ticket comes with pop-out.
