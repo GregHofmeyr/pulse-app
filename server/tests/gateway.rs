@@ -169,6 +169,15 @@ async fn audience_table() {
             Audience::Everyone,
         ),
         (
+            // published once the channel is gone: it can't be looked up, and needn't be
+            "channel deleted",
+            Event::ChannelDeleted {
+                channel_id: ChannelId::new(),
+                server_id: s.id,
+            },
+            Audience::Everyone,
+        ),
+        (
             "unknown channel",
             Event::Typing {
                 channel_id: ChannelId::new(),

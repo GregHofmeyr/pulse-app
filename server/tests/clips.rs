@@ -2589,3 +2589,47 @@ async fn clip_storage_command_refuses_a_missing_database() {
             .starts_with("total 0 clips  0.00 GB  ~$0.00/month")
     );
 }
+
+#[tokio::test]
+async fn deleting_a_clips_channel_removes_its_objects() {
+    let w = world().await;
+    let s3 = w.app.s3.as_ref().unwrap();
+    let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![4u8; 10]).await;
+    let key = text(
+        &w.app,
+        "SELECT video_key FROM clips WHERE message_id = ?",
+        &clip.id.to_string(),
+    )
+    .await;
+    let object = format!("clips/{key}.mp4");
+    assert!(s3.object(&object).is_some());
+    let r = w
+        .app
+        .http
+        .delete(w.app.url(&format!("/channels/{}", w.channel.id)))
+        .bearer_auth(&w.sam.1)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM clips WHERE video_key = ?",
+            &key
+        )
+        .await,
+        0
+    );
+    // the object and its media row go in the background (the sweeper retries a failure)
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+    while s3.object(&object).is_some()
+        || count(&w.app, "SELECT COUNT(*) FROM media WHERE hash = ?", &key).await > 0
+    {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "clip object left behind"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}

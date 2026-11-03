@@ -209,6 +209,12 @@ pub enum Event {
     ChannelUpdated {
         channel: Channel,
     },
+    /// A server channel was deleted, with everything in it (everyone: server channels are
+    /// public, and the channel is gone by the time this is published, so it isn't scoped to it).
+    ChannelDeleted {
+        channel_id: ChannelId,
+        server_id: ServerId,
+    },
     /// Only to the removed/leaving user.
     ChannelRemoved {
         channel_id: ChannelId,
@@ -363,6 +369,7 @@ impl Event {
                 Some(*channel_id)
             }
             Self::ServerCreated { .. }
+            | Self::ChannelDeleted { .. }
             | Self::MemberJoined { .. }
             | Self::UserCreated { .. }
             | Self::PresenceChanged { .. }

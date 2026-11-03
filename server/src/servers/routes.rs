@@ -35,7 +35,7 @@ pub fn router() -> Router<AppState> {
         .route("/dms", get(list_dms).post(create_dm))
 }
 
-fn clean_name(name: &str) -> AppResult<String> {
+pub(crate) fn clean_name(name: &str) -> AppResult<String> {
     let n = name.trim();
     if n.is_empty() || n.chars().count() > 64 {
         return Err(AppError::BadRequest("name must be 1-64 characters".into()));

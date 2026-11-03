@@ -462,6 +462,17 @@ impl Api {
         .await
     }
 
+    pub async fn delete_channel(&self, token: &str, ch: ChannelId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/channels/{ch}", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
     pub async fn mark_read(
         &self,
         token: &str,
@@ -1948,6 +1959,25 @@ mod tests {
             log: String::new(),
         };
         assert_eq!(api.create_report(&token, &req).await.unwrap().id.len(), 26);
+    }
+
+    #[tokio::test]
+    async fn a_server_channel_is_renamed_then_deleted() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let s = testing::create_server(&app, &alex, "Main").await;
+        let g = testing::general(&app, &alex, s.id).await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let ch = api
+            .rename_channel(&alex, g.id, Some("chat".into()))
+            .await
+            .unwrap();
+        assert_eq!(ch.name.as_deref(), Some("chat"));
+        api.delete_channel(&alex, g.id).await.unwrap();
+        assert!(
+            api.delete_channel(&alex, g.id).await.is_err(),
+            "already gone"
+        );
     }
 
     #[tokio::test]

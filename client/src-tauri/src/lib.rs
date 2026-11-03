@@ -277,6 +277,7 @@ pub fn run() {
             commands::add_members,
             commands::remove_member,
             commands::rename_channel,
+            commands::delete_channel,
             commands::mark_read,
             commands::set_mute,
             commands::clear_mute,

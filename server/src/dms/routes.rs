@@ -27,7 +27,10 @@ pub fn router() -> Router<AppState> {
         .route("/channels/{id}/read", post(mark_read))
         .route("/channels/{id}/members", post(add_members))
         .route("/channels/{id}/members/{user_id}", delete(remove_member))
-        .route("/channels/{id}", patch(rename))
+        .route(
+            "/channels/{id}",
+            patch(rename).delete(crate::servers::channels::delete),
+        )
         .route("/mutes", put(set_mute))
         .route("/mutes/{kind}/{id}", delete(clear_mute))
         .route("/channels/{id}/close", post(close))
@@ -367,6 +370,15 @@ async fn rename(
         return Err(AppError::TooManyRequests(None));
     }
     crate::media::writes_ok(&s.cfg)?;
+    // A server channel has its own rules.
+    if load_channel(&s.db, id)
+        .await?
+        .is_some_and(|c| c.server_id.is_some())
+    {
+        return Ok(Json(
+            crate::servers::channels::rename(&s, me, id, req.name).await?,
+        ));
+    }
     group_for(&s, me, id).await?;
     let name = req
         .name

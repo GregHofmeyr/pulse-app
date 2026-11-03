@@ -1444,6 +1444,16 @@ pub async fn rename_channel(
 }
 
 #[tauri::command]
+pub async fn delete_channel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_channel(&token, channel_id).await)
+}
+
+#[tauri::command]
 pub async fn mark_read(
     app: AppHandle,
     core: State<'_, Core>,

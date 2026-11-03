@@ -1871,3 +1871,49 @@ async fn an_overdue_vote_does_not_block_a_reopen() {
         "{got:?}"
     );
 }
+
+// ---------- deleting a quotes channel ----------
+
+/// A live vote's options and votes are quotes: their channel can't go until the vote has ended.
+#[tokio::test]
+async fn a_quotes_channel_stays_while_a_vote_is_live() {
+    let f = fixture().await;
+    let other = create_quotes(&f.app, &f.alex_t, f.server, "more").await;
+    let q = f.quote("hello").await;
+    let e = f.started().await;
+    let path = format!("/channels/{}", f.ch.id);
+    let r = f.call(Method::DELETE, &f.sam_t, &path, None).await;
+    assert_eq!(r.status(), 409);
+    assert!(message_of(r).await.contains("Quote of the Year"));
+    assert_eq!(
+        f.count(&format!(
+            "SELECT COUNT(*) FROM messages WHERE id = '{}'",
+            q.id
+        ))
+        .await,
+        1
+    );
+    // other kinds of channel aren't held up
+    let g = general(&f.app, &f.alex_t, f.server).await;
+    let r = f
+        .call(
+            Method::DELETE,
+            &f.sam_t,
+            &format!("/channels/{}", g.id),
+            None,
+        )
+        .await;
+    assert_eq!(r.status(), 204);
+    f.ended(&f.alex_t, e.id).await;
+    let r = f.call(Method::DELETE, &f.sam_t, &path, None).await;
+    assert_eq!(r.status(), 204);
+    let r = f
+        .call(
+            Method::DELETE,
+            &f.sam_t,
+            &format!("/channels/{}", other.id),
+            None,
+        )
+        .await;
+    assert_eq!(r.status(), 204);
+}

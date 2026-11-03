@@ -652,7 +652,7 @@ async fn remove(
 
 /// Delete a deleted clip's video from storage, then its media row. A failure is logged, not
 /// returned (the delete has landed): the row stays and the sweeper retries.
-async fn remove_clip_object(s: &AppState, key: &str) {
+pub(crate) async fn remove_clip_object(s: &AppState, key: &str) {
     let Some(r2) = &s.r2 else { return };
     if let Err(e) = r2.delete(&crate::clips::object_key(key)).await {
         tracing::warn!(error = ?e, "couldn't delete a deleted clip's object; the sweeper will retry");

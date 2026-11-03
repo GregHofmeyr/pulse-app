@@ -148,6 +148,26 @@ pub fn end_stream_access(s: &AppState, channel: ChannelId, user: UserId) {
     });
 }
 
+/// `channel` was deleted with `people` in its call: remove them from its voice room and their
+/// connections (`#v`, `#a`) from its stream room. Never fails; problems are logged. A join
+/// racing this is refused anyway, as the channel is gone ([`may_be_in`]).
+pub async fn close_call(s: &AppState, channel: ChannelId, people: &[UserId]) {
+    if people.is_empty() {
+        return;
+    }
+    let voice: Vec<String> = people.iter().map(UserId::to_string).collect();
+    let stream: Vec<String> = people
+        .iter()
+        .flat_map(|u| [format!("{u}#v"), format!("{u}#a")])
+        .collect();
+    let stream_room = format!("{channel}~s");
+    futures::future::join(
+        remove_identities(s, &channel.to_string(), &voice),
+        remove_identities(s, &stream_room, &stream),
+    )
+    .await;
+}
+
 /// Remove the refused participant `p` only if LiveKit still has that very connection (same sid
 /// and grant) under its identity: a valid device that rejoined with the identity since must not
 /// be hit. This narrows the race to the time between the check and the removal (one API round
