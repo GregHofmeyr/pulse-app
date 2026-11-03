@@ -4,6 +4,7 @@
   import { conversationName } from '../lib/conversations'
   import { clickOutside } from '../lib/actions'
   import type { Channel } from '../lib/protocol/Channel'
+  import { MUTE_FOR, muteUntil } from '../lib/muteDurations'
 
   let { channel, muted, show, at = null, onClose, onRename, onLeft }: {
     channel: Channel
@@ -35,8 +36,7 @@
       error = errorText(e)
     }
   }
-  const muteFor = (hours: number | null) =>
-    run(() => api.setMute('channel', channel.id, hours === null ? null : new Date(Date.now() + hours * 3_600_000).toISOString()))
+  const muteFor = (minutes: number | null) => run(() => api.setMute('channel', channel.id, muteUntil(minutes)))
 </script>
 
 <div class="menu menu-surface pop-in" class:ctx={!!at} role="menu" use:clickOutside={onClose}
@@ -53,9 +53,9 @@
         <button class="menu-item" role="menuitem" onclick={() => run(() => api.clearMute('channel', channel.id))}>Unmute</button>
       {:else}
         <span class="menu-label">Mute</span>
-        <button class="menu-item" role="menuitem" onclick={() => muteFor(1)}>For 1 hour</button>
-        <button class="menu-item" role="menuitem" onclick={() => muteFor(8)}>For 8 hours</button>
-        <button class="menu-item" role="menuitem" onclick={() => muteFor(null)}>Until I turn it back on</button>
+        {#each MUTE_FOR as d (d.label)}
+          <button class="menu-item" role="menuitem" onclick={() => muteFor(d.minutes)}>{d.label}</button>
+        {/each}
       {/if}
     {/if}
     {#if withManage}

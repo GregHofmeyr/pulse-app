@@ -10,6 +10,8 @@
   import { isCollapsed, toggleSection } from '../lib/sidebarSections.svelte'
   import LiveBadge from './LiveBadge.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
+  import ChannelMenu from './ChannelMenu.svelte'
+  import DeleteChannelDialog from './DeleteChannelDialog.svelte'
   import { menuPoint } from '../lib/participantMenu'
   import { selfVoice, voice, voiceApi } from '../lib/voice.svelte'
   import { hoverPrefetch } from '../lib/hoverPrefetch'
@@ -66,8 +68,7 @@
     if (e.key === 'Escape') adding = null
     if (e.key !== 'Enter' || !adding) return
     const kind = adding
-    // text channels read nicer as lower-case-with-dashes, like Discord
-    const name = kind !== 'voice' ? draft.trim().toLowerCase().replace(/\s+/g, '-') : draft.trim()
+    const name = tidyName(kind, draft)
     if (!name) return
     try {
       const c = await api.createChannel(serverId, kind, name)
@@ -78,6 +79,59 @@
     }
   }
   const focus = (el: HTMLInputElement) => el.focus()
+  /** Text, quotes and clips names read nicer as lower-case-with-dashes, like Discord; voice keeps its case. */
+  const tidyName = (kind: string, name: string) => (kind !== 'voice' ? name.trim().toLowerCase().replace(/\s+/g, '-') : name.trim())
+
+  // a channel row's own menu: right-click, or Shift+F10 / the menu key on the focused row
+  let chanMenu = $state<{ channel: Channel; x: number; y: number; opener: HTMLElement } | null>(null)
+  let chanError = $state('')
+  function openChanMenu(c: Channel, e: MouseEvent | KeyboardEvent, anchor: HTMLElement) {
+    chanError = ''
+    // outside the server a voice channel has nothing to offer
+    chanMenu = c.kind === 'voice' && !member ? null : { channel: c, ...menuPoint(e, anchor), opener: anchor }
+  }
+  function rowKey(e: KeyboardEvent, c: Channel) {
+    if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) {
+      e.preventDefault()
+      openChanMenu(c, e, e.currentTarget as HTMLElement)
+    }
+  }
+
+  // renaming a channel happens in its row
+  let renaming = $state<string | null>(null)
+  let renameValue = $state('')
+  let renameError = $state('')
+  let renameSaving = false
+  function startRename(c: Channel) {
+    renaming = c.id
+    renameValue = c.name ?? ''
+    renameError = ''
+  }
+  async function saveRename(c: Channel) {
+    if (renaming !== c.id || renameSaving) return
+    const name = tidyName(c.kind, renameValue)
+    if (!name || name === c.name) {
+      renaming = null
+      return
+    }
+    renameSaving = true
+    try {
+      await api.renameChannel(c.id, name)
+      if (renaming === c.id) renaming = null
+    } catch (err) {
+      renameError = errorText(err)
+    } finally {
+      renameSaving = false
+    }
+  }
+  function renameKey(e: KeyboardEvent, c: Channel) {
+    if (e.key === 'Enter') void saveRename(c)
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      renaming = null
+    }
+  }
+  let deleting = $state<Channel | null>(null)
 
   // the participant menu for someone in a voice channel (right-click, click, or the menu key on the focused row)
   let menu = $state<{ channelId: string; userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
@@ -105,15 +159,29 @@
   </button>
 {/snippet}
 
+{#snippet renameField(c: Channel, icon: IconName)}
+  <div class="row renaming">
+    <span class="ico"><Icon name={icon} size={17} /></span>
+    <input class="input input-sm grow" use:focus bind:value={renameValue} maxlength="64" aria-label="Rename {c.kind === 'voice' ? c.name : `#${c.name}`}"
+      onkeydown={(e) => renameKey(e, c)} onblur={() => void saveRename(c)} />
+  </div>
+  {#if renameError}<small class="err" role="alert">{renameError}</small>{/if}
+{/snippet}
+
 {#snippet channelRow(c: Channel, icon: IconName)}
   {@const read = app.state.reads[c.id]}
   {@const muted = isMuted(app.state, c, clock.nowIso)}
-  <button class="row" class:active={c.id === activeChannelId} class:unread={(read?.unread ?? 0) > 0 && !muted} class:muted
-    onclick={() => onSelect(c.id)}>
+  {#if renaming === c.id}
+    {@render renameField(c, icon)}
+  {:else}
+  <button class="row" class:active={c.id === activeChannelId} class:unread={(read?.unread ?? 0) > 0 && !muted} class:muted aria-haspopup="menu"
+    onclick={() => onSelect(c.id)}
+    oncontextmenu={(e) => { e.preventDefault(); openChanMenu(c, e, e.currentTarget) }} onkeydown={(e) => rowKey(e, c)}>
     <span class="ico"><Icon name={icon} size={17} /></span><span class="grow">{c.name}</span>
     {#if muted}<span class="mic"><Icon name="bellOff" size={13} /></span>{/if}
     {#if read?.mentions}<span class="pill">{read.mentions}</span>{/if}
   </button>
+  {/if}
 {/snippet}
 <div class="list">
   <div class="label">{@render heading('text', 'TEXT CHANNELS')}
@@ -153,14 +221,19 @@
   {#each lists.voice as c (c.id)}
     {#if !isCollapsed(serverId, 'voice') || c.id === voiceChannelId}
     {@const people = member ? callRoster(app.state, serverId, c.id, self) : []}
-    <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId}
+    {#if renaming === c.id}
+      {@render renameField(c, 'speaker')}
+    {:else}
+    <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId} aria-haspopup={member ? 'menu' : undefined}
       data-tip={c.id === voiceChannelId ? 'You’re here' : `Join ${c.name}`}
       onmouseenter={() => restOn(c.id)} onfocus={() => restOn(c.id)}
       onmouseleave={() => prefetch.leave(c.id)} onblur={() => prefetch.leave(c.id)}
-      onclick={() => { prefetch.cancel(); onJoinVoice(c.id) }} ondblclick={() => onSelect(c.id)}>
+      onclick={() => { prefetch.cancel(); onJoinVoice(c.id) }} ondblclick={() => onSelect(c.id)}
+      oncontextmenu={(e) => { e.preventDefault(); openChanMenu(c, e, e.currentTarget) }} onkeydown={(e) => rowKey(e, c)}>
       <span class="ico"><Icon name="speaker" size={17} /></span><span class="grow">{c.name}</span>
       {#if people.length}<span class="count">{people.length}</span>{/if}
     </button>
+    {/if}
     {#each people as p (p.userId)}
       <!-- svelte-ignore a11y_click_events_have_key_events -->
       <div class="occupant" class:pending={p.pending} role="button" tabindex="0" data-menu-toggle aria-haspopup="menu" aria-label={occupantLabel(p)} data-user={p.userId}
@@ -183,7 +256,16 @@
     {/each}
     {/if}
   {/each}
+  {#if chanError}<small class="err" role="alert">{chanError}</small>{/if}
 </div>
+{#if chanMenu}
+  {@const c = chanMenu.channel}
+  {#key chanMenu}<ChannelMenu channel={c} {member} x={chanMenu.x} y={chanMenu.y} opener={chanMenu.opener} onClose={() => (chanMenu = null)}
+    onRename={() => startRename(c)} onDelete={() => (deleting = c)} onJoin={() => onJoinVoice(c.id)} onError={(m) => (chanError = m)} />{/key}
+{/if}
+{#if deleting}
+  <DeleteChannelDialog channel={deleting} onClose={() => (deleting = null)} />
+{/if}
 {#if menu}
   {#key menu}<ParticipantMenu channelId={menu.channelId} {serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} {onVoiceSettings} onClose={() => (menu = null)} />{/key}
 {/if}
@@ -201,6 +283,8 @@
   .add { width: 20px; height: 20px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; padding: 0; }
   .add:hover { color: var(--text); background: var(--bg-2); }
   .new { margin: 2px 4px; }
+  .row.renaming { padding-right: 4px; }
+  .row.renaming:hover { background: transparent; }
   .err { padding: 0 10px; color: var(--danger-text); font-size: 12px; }
   .row { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-row); display: flex; align-items: center; gap: 8px; text-align: left; font-size: 14px; }
   .row:hover { background: var(--bg-2); color: var(--text); }

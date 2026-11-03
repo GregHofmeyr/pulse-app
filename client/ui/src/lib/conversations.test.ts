@@ -99,6 +99,23 @@ describe('conversations', () => {
     expect(conversations(s, NOW).map((c) => c.channel.id)).toEqual(['DM1'])
   })
 
+  it('a_deleted_server_channel_goes_with_its_read_point_mutes_call_and_streams', () => {
+    const V = { id: 'V1', server_id: 'S1', kind: 'voice' as const, name: 'Lounge', position: 0 }
+    let s = applyReady(emptyState(), ready({
+      channels: [...ready().channels, V],
+      voice: [{ channel_id: 'V1', members: [{ user_id: 'U1', flags: { muted: false, deafened: false } }] }],
+      mutes: [{ target_kind: 'channel', target_id: 'T1', until: null }, { target_kind: 'server', target_id: 'S1', until: null }],
+    }))
+    s = applyEvent(s, { t: 'ChannelDeleted', d: { channel_id: 'T1', server_id: 'S1' } }, 0)
+    expect(s.channels['T1']).toBeUndefined()
+    expect(s.reads['T1']).toBeUndefined()
+    expect(s.mutes).toEqual([{ target_kind: 'server', target_id: 'S1', until: null }])
+    expect(serverBadge(s, 'S1', NOW)).toEqual(serverBadge(applyEvent(s, { t: 'ChannelDeleted', d: { channel_id: 'nope', server_id: 'S1' } }, 0), 'S1', NOW))
+    s = applyEvent(s, { t: 'ChannelDeleted', d: { channel_id: 'V1', server_id: 'S1' } }, 0)
+    expect(s.channels['V1']).toBeUndefined()
+    expect(s.voice['V1']).toBeUndefined()
+  })
+
   it('read rule needs open + focused + at bottom', () => {
     expect(shouldMarkRead({ open: true, focused: true, atBottom: true })).toBe(true)
     expect(shouldMarkRead({ open: true, focused: false, atBottom: true })).toBe(false)

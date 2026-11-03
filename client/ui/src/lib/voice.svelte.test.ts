@@ -52,6 +52,15 @@ describe('removed from a conversation', () => {
     expect(h.calls).toEqual([])
   })
 
+  it('leaves the call of a voice channel that was deleted, and only that one', () => {
+    const deleted = (channel_id: string) => h.handlers['pulse://event']({ payload: { t: 'ChannelDeleted', d: { channel_id, server_id: 'S1' } } })
+    voice.channelId = 'V1'
+    deleted('V2')
+    expect(h.calls).toEqual([])
+    deleted('V1')
+    expect(h.calls).toEqual(['leave_voice'])
+  })
+
   it('leaves alone a call it is already leaving for another join', () => {
     voice.channelId = 'G1'
     voice.leaving = 'G1'

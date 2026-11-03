@@ -1,0 +1,122 @@
+<script lang="ts">
+  // The right-click menu on a sidebar channel row (or Shift+F10 / the menu key on it). Text, quotes
+  // and clips: mark as read and mute; voice: join or leave. Anyone in the server may rename and
+  // delete (v1 trust model); those two are handed back to the list, which edits in the row and asks
+  // in a dialog.
+  import { onMount, untrack } from 'svelte'
+  import { app, clock } from '../lib/store.svelte'
+  import { api, errorText } from '../lib/tauri'
+  import { clickOutside } from '../lib/actions'
+  import { MUTE_FOR, muteUntil } from '../lib/muteDurations'
+  import { voice, voiceApi } from '../lib/voice.svelte'
+  import type { Channel } from '../lib/protocol/Channel'
+
+  let { channel, member, x, y, opener, onClose, onRename, onDelete, onJoin, onError }: {
+    channel: Channel
+    /** You're in the channel's server: you may rename, delete and join. */
+    member: boolean
+    x: number
+    y: number
+    /** The row it opened from: focus goes back to it when the menu closes from the keyboard. */
+    opener: HTMLElement
+    onClose: () => void
+    onRename: () => void
+    onDelete: () => void
+    onJoin: () => void
+    /** An action failed after the menu had gone: the list says why. */
+    onError: (message: string) => void
+  } = $props()
+
+  const isVoice = $derived(channel.kind === 'voice')
+  const label = $derived(isVoice ? channel.name : `#${channel.name}`)
+  const unread = $derived((app.state.reads[channel.id]?.unread ?? 0) > 0)
+  // This channel's own mute (a muted server is unmuted from its tab).
+  const muted = $derived(
+    app.state.mutes.some((m) => m.target_kind === 'channel' && m.target_id === channel.id && (m.until === null || m.until > clock.nowIso)),
+  )
+  const inCall = $derived(voice.channelId === channel.id || voice.joining === channel.id)
+
+  let el = $state<HTMLElement>()
+  let left = $state(untrack(() => x))
+  let top = $state(untrack(() => y))
+  let closed = false
+
+  onMount(() => {
+    if (!el) return
+    // the layout size: the .pop-in entrance scales the box while it runs
+    left = Math.max(8, Math.min(x, window.innerWidth - el.offsetWidth - 8))
+    top = Math.max(8, Math.min(y, window.innerHeight - el.offsetHeight - 8))
+    focusItem(0)
+  })
+
+  const items = () => (el ? [...el.querySelectorAll<HTMLButtonElement>('[data-item]:not(:disabled)')] : [])
+  function focusItem(i: number) {
+    const list = items()
+    if (list.length) list[(i + list.length) % list.length].focus()
+  }
+  function close(restoreFocus: boolean) {
+    if (closed) return
+    closed = true
+    if (restoreFocus && opener.isConnected) opener.focus()
+    onClose()
+  }
+  /** Focus goes back to the row first (a rename or dialog then takes it from there), then it acts,
+   *  then the menu goes. A failure lands with `report`, after the menu has gone. */
+  function pick(action: () => unknown) {
+    if (closed) return
+    if (opener.isConnected) opener.focus()
+    void action()
+    close(false)
+  }
+  const report = (f: () => Promise<unknown>) => () => f().catch((e) => onError(errorText(e)))
+
+  async function markRead() {
+    const page = await api.listMessages(channel.id)
+    const newest = page.at(-1)
+    if (newest) await api.markRead(channel.id, newest.id)
+  }
+
+  function keydown(e: KeyboardEvent) {
+    const list = items()
+    const at = list.indexOf(document.activeElement as HTMLButtonElement)
+    switch (e.key) {
+      case 'ArrowDown': e.preventDefault(); focusItem(at + 1); break
+      case 'ArrowUp': e.preventDefault(); focusItem(at < 0 ? -1 : at - 1); break
+      case 'Home': e.preventDefault(); focusItem(0); break
+      case 'End': e.preventDefault(); focusItem(-1); break
+      case 'Escape': e.preventDefault(); close(true); break
+      case 'Tab': e.preventDefault(); close(true); break
+    }
+  }
+</script>
+
+<div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Actions for {label}" tabindex="-1" style:left="{left}px" style:top="{top}px"
+  onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
+  {#if isVoice}
+    {#if inCall}
+      <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(report(() => voiceApi.leave()))}>Leave</button>
+    {:else}
+      <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onJoin)}>Join</button>
+    {/if}
+  {:else}
+    <button type="button" class="menu-item" role="menuitem" data-item disabled={!unread} onclick={() => pick(report(markRead))}>Mark as read</button>
+    {#if muted}
+      <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(report(() => api.clearMute('channel', channel.id)))}>Unmute channel</button>
+    {:else}
+      <span class="menu-label">Mute channel</span>
+      {#each MUTE_FOR as d (d.label)}
+        <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(report(() => api.setMute('channel', channel.id, muteUntil(d.minutes))))}>{d.label}</button>
+      {/each}
+    {/if}
+  {/if}
+  {#if member}
+    <span class="menu-sep"></span>
+    <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(onRename)}>Rename channel…</button>
+    <button type="button" class="menu-item danger" role="menuitem" data-item onclick={() => pick(onDelete)}>Delete channel…</button>
+  {/if}
+</div>
+
+<style>
+  .menu { position: fixed; z-index: 60; min-width: 220px; max-width: 280px; gap: 2px; outline: none; }
+  .menu-item:disabled { color: var(--text-3); cursor: default; }
+</style>

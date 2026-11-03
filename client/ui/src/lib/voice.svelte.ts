@@ -56,11 +56,13 @@ $effect.root(() => {
 /** The newest join; an older one's result is stale. */
 let joinSeq = 0
 
-/** Removed from a DM or group (or left it from another device): leave its call, or call off the
- *  join to it, through the normal leave so the core disconnects too (the server has already taken
- *  us out of the call). A call already being left for another join is left alone. */
+/** Removed from a DM or group (or left it from another device), or the voice channel was deleted:
+ *  leave its call, or call off the join to it, through the normal leave so the core disconnects too
+ *  (the server has already taken us out of the call). A call already being left for another join is
+ *  left alone. */
 function leaveIfRemoved(e: AppEvent) {
-  if (e.t !== 'ChannelRemoved' || e.d.user_id !== app.state.me?.id) return
+  const gone = e.t === 'ChannelDeleted' || (e.t === 'ChannelRemoved' && e.d.user_id === app.state.me?.id)
+  if (!gone) return
   const c = e.d.channel_id
   if (voice.joining === c || (voice.channelId === c && voice.leaving !== c)) {
     voiceApi.leave().catch((err: unknown) => (voice.error = errText(err)))

@@ -48,6 +48,7 @@
   import { keybindsApi } from '../lib/keybinds'
   import { watchWindowFocus } from '../lib/windowFocus.svelte'
   import type { User } from '../lib/protocol/User'
+  import { MUTE_FOR, muteUntil } from '../lib/muteDurations'
 
   let { user, onLogout }: { user: User; onLogout: () => void } = $props()
   // Signed in as `user`; app.state.me follows your profile edits (ProfileUpdated) once Ready has landed.
@@ -234,34 +235,37 @@
   let serverMenu = $state<null | { id: string; x: number; y: number }>(null)
   const serverMuted = (id: string) =>
     app.state.mutes.some((m) => m.target_kind === 'server' && m.target_id === id && (m.until === null || m.until > nowIso))
-  async function muteServer(id: string, hours: number | null | 'off') {
+  async function muteServer(id: string, minutes: number | null | 'off') {
     serverMenu = null
     try {
-      if (hours === 'off') await api.clearMute('server', id)
-      else await api.setMute('server', id, hours === null ? null : new Date(Date.now() + hours * 3_600_000).toISOString())
+      if (minutes === 'off') await api.clearMute('server', id)
+      else await api.setMute('server', id, muteUntil(minutes))
     } catch (e) {
       error = errorText(e)
     }
   }
 
-  // Removed from (or left) the open conversation: step back to Home and say why. Only fires when a
-  // channel we had actually seen disappears (a just-created one may not have arrived yet).
+  // Removed from (or left) the open conversation: step back to Home and say why. The open server
+  // channel was deleted: go to another of the server's channels. Only fires when a channel we had
+  // actually seen disappears (a just-created one may not have arrived yet).
   let notice = $state('')
   let watch: OpenWatch | null = null
   let lastTitle = ''
   $effect(() => {
     const id = activeChannelId
-    if (!id || activeServerId !== null) {
+    if (!id) {
       watch = null
       return
     }
-    const exists = !!app.state.channels[id]
-    if (exists) lastTitle = conversationName(app.state, id)
-    const w = watchOpen(watch, id, exists)
+    const ch = app.state.channels[id]
+    if (ch) lastTitle = ch.server_id && ch.kind !== 'voice' ? `#${ch.name}` : conversationName(app.state, id)
+    const w = watchOpen(watch, id, !!ch)
     watch = w.state
     if (!w.removed) return
-    activeChannelId = null
-    notice = `You're no longer in ${lastTitle}.`
+    const server = activeServerId
+    if (server) untrack(() => selectServer(server))
+    else activeChannelId = null
+    notice = server ? `${lastTitle} was deleted.` : `You're no longer in ${lastTitle}.`
     setTimeout(() => (notice = ''), 4000)
   })
   const pickerTarget = $derived(picker?.mode === 'add' ? app.state.channels[picker.channelId] : null)
@@ -599,9 +603,9 @@
       <button class="menu-item" role="menuitem" onclick={() => muteServer(id, 'off')}>Unmute server</button>
     {:else}
       <span class="menu-label">Mute server</span>
-      <button class="menu-item" role="menuitem" onclick={() => muteServer(id, 1)}>For 1 hour</button>
-      <button class="menu-item" role="menuitem" onclick={() => muteServer(id, 8)}>For 8 hours</button>
-      <button class="menu-item" role="menuitem" onclick={() => muteServer(id, null)}>Until I turn it back on</button>
+      {#each MUTE_FOR as d (d.label)}
+        <button class="menu-item" role="menuitem" onclick={() => muteServer(id, d.minutes)}>{d.label}</button>
+      {/each}
     {/if}
   </div>
 {/if}

@@ -677,6 +677,27 @@ describe('jump to a message', () => {
   })
 })
 
+describe('a deleted channel', () => {
+  it('moves you from it to another channel of the server and says why', async () => {
+    const { ui } = await import('../lib/store.svelte')
+    const { applyEvent } = await import('../lib/state')
+    const { testMe: me, testReady } = await import('../lib/testReady')
+    app.state = applyReady(emptyState(), testReady([
+      { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },
+      { id: 'T2', server_id: 'S1', kind: 'text', name: 'old', position: 1 },
+    ]))
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+    flushSync()
+    ui.goTo = 'T2'
+    flushSync()
+    expect(document.querySelector('.chan .head .title')?.textContent).toBe('old')
+    app.state = applyEvent(app.state, { t: 'ChannelDeleted', d: { channel_id: 'T2', server_id: 'S1' } }, Date.now())
+    flushSync()
+    expect(document.querySelector('.chan .head .title')?.textContent).toBe('general')
+    expect(document.querySelector('.notice')?.textContent).toBe('#old was deleted.')
+  })
+})
+
 describe('Quote of the Year', () => {
   it('a live vote shows its banner over every channel of its server', async () => {
     const { ui } = await import('../lib/store.svelte')

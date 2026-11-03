@@ -573,6 +573,39 @@ function profileUpdated(s: AppState, d: Extract<Event, { t: 'ProfileUpdated' }>[
   }
 }
 
+/** A channel you no longer have: removed from a conversation, or a server channel deleted. Everything
+ *  kept for it goes, its threads included. */
+function dropChannel(s: AppState, c: string): AppState {
+  const drop = <T,>(r: Record<string, T>): Record<string, T> => {
+    const { [c]: _x, ...rest } = r
+    return rest
+  }
+  // A thread goes with its channel, whether or not its quote is loaded.
+  const roots = new Set((s.messages[c] ?? []).map((m) => m.id))
+  for (const [root, list] of Object.entries(s.threads)) if (list.some((m) => m.channel_id === c)) roots.add(root)
+  const without = <T,>(r: Record<string, T>) => Object.fromEntries(Object.entries(r).filter(([root]) => !roots.has(root)))
+  return {
+    ...s,
+    threads: without(s.threads),
+    threadStart: without(s.threadStart),
+    threadSeen: without(s.threadSeen),
+    goneReplies: Object.fromEntries(Object.entries(s.goneReplies).filter(([, g]) => g.channel !== c)),
+    openRoot: s.openRoot?.channel_id === c ? null : s.openRoot,
+    channels: drop(s.channels),
+    messages: drop(s.messages),
+    dmMembers: drop(s.dmMembers),
+    reads: drop(s.reads),
+    latest: drop(s.latest),
+    hidden: drop(s.hidden),
+    pending: drop(s.pending),
+    typing: drop(s.typing),
+    history: drop(s.history),
+    clipViews: drop(s.clipViews),
+    clipFacets: drop(s.clipFacets),
+    clipFeeds: Object.fromEntries(Object.entries(s.clipFeeds).filter(([, f]) => f.channelId !== c)),
+  }
+}
+
 export function applyEvent(s: AppState, e: Event, now: number): AppState {
   switch (e.t) {
     case 'MessageCreated': {
@@ -706,36 +739,16 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, dmMembers: { ...s.dmMembers, [e.d.channel_id]: e.d.user_ids } }
     case 'ChannelUpdated':
       return { ...s, channels: { ...s.channels, [e.d.channel.id]: e.d.channel } }
-    case 'ChannelRemoved': {
+    case 'ChannelRemoved':
+      return dropChannel(s, e.d.channel_id)
+    case 'ChannelDeleted': {
+      // Its call and streams too: their own events about it can't reach us any more (the channel is
+      // gone when they'd be sent). A mute of it would never match again.
       const c = e.d.channel_id
-      const drop = <T,>(r: Record<string, T>): Record<string, T> => {
-        const { [c]: _x, ...rest } = r
-        return rest
-      }
-      // A thread goes with its channel, whether or not its quote is loaded.
-      const roots = new Set((s.messages[c] ?? []).map((m) => m.id))
-      for (const [root, list] of Object.entries(s.threads)) if (list.some((m) => m.channel_id === c)) roots.add(root)
-      const without = <T,>(r: Record<string, T>) => Object.fromEntries(Object.entries(r).filter(([root]) => !roots.has(root)))
-      return {
-        ...s,
-        threads: without(s.threads),
-        threadStart: without(s.threadStart),
-        threadSeen: without(s.threadSeen),
-        goneReplies: Object.fromEntries(Object.entries(s.goneReplies).filter(([, g]) => g.channel !== c)),
-        openRoot: s.openRoot?.channel_id === c ? null : s.openRoot,
-        channels: drop(s.channels),
-        messages: drop(s.messages),
-        dmMembers: drop(s.dmMembers),
-        reads: drop(s.reads),
-        latest: drop(s.latest),
-        hidden: drop(s.hidden),
-        pending: drop(s.pending),
-        typing: drop(s.typing),
-        history: drop(s.history),
-        clipViews: drop(s.clipViews),
-        clipFacets: drop(s.clipFacets),
-        clipFeeds: Object.fromEntries(Object.entries(s.clipFeeds).filter(([, f]) => f.channelId !== c)),
-      }
+      const { [c]: _v, ...voice } = s.voice
+      const { [c]: _st, ...streams } = s.streams
+      const mutes = s.mutes.filter((m) => !(m.target_kind === 'channel' && m.target_id === c))
+      return { ...dropChannel(s, c), voice, streams, mutes: mutes.length === s.mutes.length ? s.mutes : mutes }
     }
     case 'ReadStateUpdated': {
       const c = e.d.channel_id
