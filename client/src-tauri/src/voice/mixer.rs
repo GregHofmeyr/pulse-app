@@ -1136,7 +1136,11 @@ mod tests {
     fn combined_gain_multiplies_and_caps() {
         assert_eq!(combined_gain(&[100, 50]), percent_to_gain(50));
         assert_eq!(combined_gain(&[0, 200]), 0.0);
-        assert_eq!(combined_gain(&[200, 200]), max_gain(), "200 % x 200 % is capped");
+        assert_eq!(
+            combined_gain(&[200, 200]),
+            max_gain(),
+            "200 % x 200 % is capped"
+        );
         assert_eq!(combined_gain(&[]), 1.0);
     }
 
@@ -1146,7 +1150,11 @@ mod tests {
         input.set_gain("alex", Voice, 0.5);
         input.set_kind_gain(Voice, 0.5);
         assert_eq!(input.effective_gain("TR_mic"), Some(0.25));
-        assert_eq!(input.effective_gain("TR_game"), Some(1.0), "streams untouched");
+        assert_eq!(
+            input.effective_gain("TR_game"),
+            Some(1.0),
+            "streams untouched"
+        );
         input.push("TR_mic", &[16384; 2]); // 0.5
         let mut out = [0.0f32; 2];
         m.mix_into(&mut out, 1, 1.0);
