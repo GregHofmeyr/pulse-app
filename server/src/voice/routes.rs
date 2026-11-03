@@ -156,12 +156,6 @@ async fn webhook(
     };
     // Only server voice channels feed stats; DM/group calls are never recorded (spec §8).
     let record = ch.server_id.is_some();
-    // Every admitted join, a reconnect too: its token may predate a server mute or its undo.
-    if ev.event == "participant_joined"
-        && let Some(server) = ch.server_id
-    {
-        crate::voice::moderation::reconcile_join(&s, server, channel_id, user_id, p).await?;
-    }
 
     match ev.event.as_str() {
         "participant_joined" if s.voice.join(channel_id, user_id, &p.sid) => {
@@ -258,6 +252,13 @@ async fn webhook(
             }
         }
         _ => {}
+    }
+    // Every admitted join (a reconnect too: its token may predate a server mute or its undo),
+    // once it is in the voice state, so a mute racing it sees the call or this sees the mute.
+    if ev.event == "participant_joined"
+        && let Some(server) = ch.server_id
+    {
+        crate::voice::moderation::reconcile_join(&s, server, channel_id, user_id, p).await;
     }
     Ok(StatusCode::OK)
 }

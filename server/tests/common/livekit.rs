@@ -38,6 +38,7 @@ pub async fn fake_livekit_hanging() -> String {
         "ListParticipants",
         "GetParticipant",
         "RemoveParticipant",
+        "UpdateParticipant",
     ] {
         app = app.route(&format!("/twirp/livekit.RoomService/{method}"), post(hang));
     }

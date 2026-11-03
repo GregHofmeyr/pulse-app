@@ -98,8 +98,17 @@ pub fn permission(allowed: bool) -> ParticipantPermission {
 }
 
 /// Give `user` publishing in `channel`'s room at LiveKit, or take it away (LiveKit then drops
-/// their mic track). Never fails; problems are logged, within [`crate::voice::revoke::BUDGET`].
-pub async fn enforce(s: &AppState, channel: ChannelId, user: UserId, allowed: bool) {
+/// their mic track), as `server`'s mute / deafen of them stands NOW: read here, not handed in, so
+/// racing calls (a mute and its undo, a route and a join) all end on the latest row. Never
+/// fails; problems are logged, within [`crate::voice::revoke::BUDGET`].
+pub async fn enforce(s: &AppState, server: ServerId, channel: ChannelId, user: UserId) {
+    let allowed = match get(&s.db, server, user).await {
+        Ok(m) => publish_allowed(m.as_ref()),
+        Err(e) => {
+            tracing::warn!(error = ?e, "couldn't read the server mute to enforce it");
+            return;
+        }
+    };
     let client = crate::voice::revoke::client(s);
     let (room, identity) = (channel.to_string(), user.to_string());
     let update = client.update_participant(
@@ -126,24 +135,32 @@ pub async fn enforce(s: &AppState, channel: ChannelId, user: UserId, allowed: bo
     }
 }
 
-/// A LiveKit join in a server voice channel: if the token's publishing doesn't match the server
-/// mute / deafen now in force (a token fetched before it changed, say a prefetched one), set it
-/// in the background.
+/// A LiveKit join in a server voice channel, called once the join is recorded in the voice
+/// state: if the token's publishing doesn't match the server mute / deafen now in force (a token
+/// fetched before it changed, say a prefetched one), set it in the background. Recorded first,
+/// then read: a mute or undo racing the join either sees the call (and enforces) or wrote the row
+/// this reads. A prefetched pre-mute token is heard for this one round trip; the target's client
+/// closes its mic as soon as the gateway event lands. Never fails the webhook; problems are logged.
 pub async fn reconcile_join(
     s: &AppState,
     server: ServerId,
     channel: ChannelId,
     user: UserId,
     p: &ParticipantInfo,
-) -> AppResult<()> {
-    let want = publish_allowed(get(&s.db, server, user).await?.as_ref());
+) {
+    let want = match get(&s.db, server, user).await {
+        Ok(m) => publish_allowed(m.as_ref()),
+        Err(e) => {
+            tracing::warn!(error = ?e, "couldn't read the server mute for a join");
+            return;
+        }
+    };
     // no permission reported: LiveKit's default for our tokens, publishing allowed
     let has = p.permission.as_ref().is_none_or(|p| p.can_publish);
     if want != has {
         let s = s.clone();
-        tokio::spawn(async move { enforce(&s, channel, user, want).await });
+        tokio::spawn(async move { enforce(&s, server, channel, user).await });
     }
-    Ok(())
 }
 
 /// The server voice channel `user` is in, if it belongs to `server`.
@@ -180,13 +197,15 @@ async fn set(
     Json(req): Json<SetServerVoiceRequest>,
 ) -> AppResult<Json<ServerVoiceMod>> {
     check_actor(&s, server, me, target).await?;
-    let call = call_in(&s, server, target).await?;
-    if (req.mute == Some(true) || req.deafen == Some(true)) && call.is_none() {
+    if (req.mute == Some(true) || req.deafen == Some(true))
+        && call_in(&s, server, target).await?.is_none()
+    {
         return Err(AppError::Conflict(
             "they aren't in this server's voice".into(),
         ));
     }
-    let _order = s.hub.in_order().await;
+    // Write and publish in commit order; LiveKit is told after, outside that app-wide lock.
+    let order = s.hub.in_order().await;
     let before = get(&s.db, server, target).await?;
     let pick = |want: Option<bool>, had: Option<UserId>| match want {
         Some(true) => had.or(Some(me)),
@@ -228,11 +247,6 @@ async fn set(
         .execute(&s.db)
         .await?;
     }
-    if let Some(channel) = call
-        && publish_allowed(before.as_ref()) != publish_allowed(Some(&after))
-    {
-        enforce(&s, channel, target, publish_allowed(Some(&after))).await;
-    }
     tracing::info!(server = %server, target = %target, by = %me, muted = after.muted_by.is_some(), deafened = after.deafened_by.is_some(), "server voice changed");
     s.hub
         .publish(
@@ -242,6 +256,14 @@ async fn set(
             },
         )
         .await;
+    drop(order);
+    // Written, then read: a join racing this is either seen here or reads the new row itself
+    // (`reconcile_join`, after it is recorded).
+    if publish_allowed(before.as_ref()) != publish_allowed(Some(&after))
+        && let Some(channel) = call_in(&s, server, target).await?
+    {
+        enforce(&s, server, channel, target).await;
+    }
     Ok(Json(after))
 }
 

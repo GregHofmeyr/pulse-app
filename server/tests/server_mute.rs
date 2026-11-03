@@ -231,7 +231,7 @@ async fn ready_carries_server_voice() {
 
 // --- LiveKit enforcement and disconnect -------------------------------------------------------
 
-use common::livekit::{Removed, SharedRooms, Updated, fake_livekit_full};
+use common::livekit::{Removed, SharedRooms, Updated, fake_livekit_full, fake_livekit_hanging};
 use livekit_api::access_token::{AccessToken, TokenVerifier};
 use livekit_protocol as lkp;
 use pulse_protocol::rest::VoiceTokenResponse;
@@ -520,4 +520,64 @@ async fn disconnect_needs_target_in_voice_and_not_yourself() {
     in_voice(&app, w.lounge.id, w.sam.0);
     let r = post_json(&app, &jo.1, &path(w.sam.0), json!({})).await;
     assert_eq!(r.status(), 403);
+}
+
+/// A LiveKit that doesn't answer delays the mute's own reply, never anyone's chat (the route
+/// mustn't hold the app-wide event order while it waits on LiveKit).
+#[tokio::test]
+async fn a_slow_livekit_never_holds_up_chat() {
+    let mut cfg = test_config();
+    cfg.livekit_api_url = fake_livekit_hanging().await;
+    let app = spawn_with(cfg).await;
+    let w = world(&app).await;
+    let general = general(&app, &w.sam.1, w.server).await;
+    in_voice(&app, w.lounge.id, w.sam.0);
+    let mute = {
+        let (http, url, token) = (
+            app.http.clone(),
+            app.url(&format!("/servers/{}/voice/{}", w.server, w.sam.0)),
+            w.alex.1.clone(),
+        );
+        tokio::spawn(async move {
+            http.post(url)
+                .bearer_auth(token)
+                .json(&json!({"mute": true}))
+                .send()
+                .await
+                .unwrap()
+                .status()
+        })
+    };
+    tokio::time::sleep(Duration::from_millis(300)).await;
+    let t = std::time::Instant::now();
+    send(&app, &w.sam.1, general.id, "still here").await;
+    assert!(
+        t.elapsed() < Duration::from_millis(1000),
+        "a message waited {:?} on LiveKit",
+        t.elapsed()
+    );
+    assert_eq!(mute.await.unwrap(), 200, "the mute still lands");
+    assert_eq!(rows(&app).await, 1);
+}
+
+/// Undo racing the target's join: the route saw no call (so told LiveKit nothing) and the
+/// join's token still couldn't publish. The join, recorded after, reads the undone row and gives
+/// publishing back.
+#[tokio::test]
+async fn an_undo_racing_a_join_still_gives_publishing_back() {
+    let (app, lk) = spawn_lk().await;
+    let w = world(&app).await;
+    let (room, sam) = (w.lounge.id.to_string(), w.sam.0.to_string());
+    in_voice(&app, w.lounge.id, w.sam.0);
+    set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": true})).await;
+    app.voice.leave(w.lounge.id, w.sam.0, "");
+    set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": false})).await;
+    let n = lk.updates().len();
+    lk.connect(&room, &sam, false);
+    joined(&app, w.lounge.id, w.sam.0, false).await;
+    assert!(
+        eventually(|| lk.updates()[n..] == [(room.clone(), sam.clone(), true)]).await,
+        "{:?}",
+        lk.updates()
+    );
 }
