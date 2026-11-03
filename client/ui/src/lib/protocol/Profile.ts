@@ -8,4 +8,8 @@ import type { User } from "./User";
 /**
  * `GET /users/{id}/profile`.
  */
-export type Profile = { user: User, card: CardProfile, stats: ProfileStats, badges: Array<Badge>, name_archive: Array<NameArchiveEntry>, };
+export type Profile = { user: User, card: CardProfile, stats: ProfileStats, badges: Array<Badge>, name_archive: Array<NameArchiveEntry>, 
+/**
+ * Up to 5 badge keys shown on the card, in order, as they appear in `badges`.
+ */
+showcase: Array<string>, };

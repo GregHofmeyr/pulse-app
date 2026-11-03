@@ -32,9 +32,13 @@ struct ProfileRow {
 /// The most rename rows a profile carries.
 const PROFILE_ARCHIVE_MAX: i64 = 50;
 
-/// A user's full profile, or `None` if there is no such user. Stats are totals across all
-/// servers (plan reconciliation 16).
-pub async fn load_profile(db: &SqlitePool, user: UserId) -> AppResult<Option<Profile>> {
+/// A user's full profile as `viewer` sees it (see [`crate::badges::view::profile_badges`]), or
+/// `None` if there is no such user. Stats are totals across all servers (plan reconciliation 16).
+pub async fn load_profile(
+    db: &SqlitePool,
+    user: UserId,
+    viewer: UserId,
+) -> AppResult<Option<Profile>> {
     let id = user.to_string();
     // One read transaction, so the card, stats, badges and archive are a single snapshot.
     let mut tx = db.begin().await?;
@@ -98,7 +102,7 @@ pub async fn load_profile(db: &SqlitePool, user: UserId) -> AppResult<Option<Pro
         })
         .collect::<AppResult<Vec<_>>>()?;
 
-    let badges = crate::badges::engine::held(&mut tx, user).await?;
+    let (badges, showcase) = crate::badges::view::profile_badges(&mut tx, user, viewer).await?;
     tx.commit().await?;
 
     Ok(Some(Profile {
@@ -118,6 +122,7 @@ pub async fn load_profile(db: &SqlitePool, user: UserId) -> AppResult<Option<Pro
             times_renamed,
         },
         badges,
+        showcase,
         name_archive,
     }))
 }

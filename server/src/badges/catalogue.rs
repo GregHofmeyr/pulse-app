@@ -182,6 +182,41 @@ impl Def {
     pub fn earnable(&self) -> bool {
         !matches!(self.rule, Rule::HandGiven { .. } | Rule::Never { .. })
     }
+
+    /// A raw stat value in the badge's unit (whole hours for `Unit::Hours`).
+    pub fn shown(&self, raw: i64) -> u64 {
+        let raw = raw.max(0) as u64;
+        match self.unit {
+            Unit::Count => raw,
+            Unit::Hours => raw / HOUR as u64,
+        }
+    }
+
+    /// Each tier's threshold as people read it: hours for `Unit::Hours`, and for `Combo` its
+    /// message count (the first of its three; the description has all of them).
+    pub fn thresholds_shown(&self) -> Vec<u64> {
+        match &self.rule {
+            Rule::Combo { tiers } => tiers.iter().map(|([m, ..], _)| *m as u64).collect(),
+            _ => self
+                .tiers()
+                .into_iter()
+                .map(|(t, _)| self.shown(t))
+                .collect(),
+        }
+    }
+
+    /// Someone's value towards this badge in its unit, from their `stats` and the badges they
+    /// `held`. `None` where there's no one number: Combo, hand-given and never-earned badges.
+    pub fn progress(
+        &self,
+        stats: &HashMap<String, i64>,
+        held: &HashMap<&'static str, u8>,
+    ) -> Option<u64> {
+        match self.rule {
+            Rule::Counter { stat, .. } => Some(self.shown(stats.get(stat).copied().unwrap_or(0))),
+            _ => meta_value(self, held).map(|v| v.max(0) as u64),
+        }
+    }
 }
 
 use Rarity::*;
@@ -418,13 +453,14 @@ pub static CATALOGUE: &[Def] = &[
     Def {
         key: "how_did_we_get_here",
         name: "How Did We Get Here?",
-        description: "Unlocked 5 hidden badges.",
+        description: "Unlocked 3 hidden badges.",
         icon: "🌀",
         hidden: false,
         stacking: false,
         unit: Unit::Count,
+        // Three: only Friendly Fire, Highlight Reel and Egg Hunter can be earned so far.
         rule: Rule::HiddenCount {
-            tiers: &[(5, Epic)],
+            tiers: &[(3, Epic)],
         },
     },
     Def {
@@ -549,23 +585,8 @@ pub fn evaluate(
     loop {
         let mut changed = false;
         for def in CATALOGUE.iter().filter(|d| d.is_meta()) {
-            let others = || {
-                held.iter()
-                    .filter(|(k, t)| **k != def.key && **t > 0)
-                    .filter_map(|(k, t)| Some((find(k)?, *t)))
-            };
-            let (value, tiers) = match &def.rule {
-                Rule::Collector { tiers } => (others().count(), tiers),
-                Rule::HiddenCount { tiers } => (others().filter(|(d, _)| d.hidden).count(), tiers),
-                Rule::Perfectionist { tiers } => (
-                    others()
-                        .filter(|(d, t)| d.max_tier() >= 2 && *t >= d.max_tier())
-                        .count(),
-                    tiers,
-                ),
-                _ => unreachable!("is_meta"),
-            };
-            let tier = tier_for(value as i64, tiers.iter().map(|t| t.0));
+            let value = meta_value(def, &held).expect("is_meta");
+            let tier = tier_for(value, def.tiers().into_iter().map(|t| t.0));
             changed |= raise(&mut held, def.key, tier);
         }
         if !changed {
@@ -575,6 +596,24 @@ pub fn evaluate(
 
     held.retain(|k, t| *t > 0 && find(k).is_some_and(Def::earnable));
     held
+}
+
+/// What a meta badge counts over the badges `held` (itself excluded); `None` for the others.
+pub fn meta_value(def: &Def, held: &HashMap<&'static str, u8>) -> Option<i64> {
+    let others = || {
+        held.iter()
+            .filter(|(k, t)| **k != def.key && **t > 0)
+            .filter_map(|(k, t)| Some((find(k)?, *t)))
+    };
+    let n = match def.rule {
+        Rule::Collector { .. } => others().count(),
+        Rule::HiddenCount { .. } => others().filter(|(d, _)| d.hidden).count(),
+        Rule::Perfectionist { .. } => others()
+            .filter(|(d, t)| d.max_tier() >= 2 && *t >= d.max_tier())
+            .count(),
+        _ => return None,
+    };
+    Some(n as i64)
 }
 
 #[cfg(test)]
@@ -681,6 +720,22 @@ mod tests {
         for key in ["skill_issue", "founder", "partner"] {
             assert!(!got.contains_key(key), "{key} was evaluated");
         }
+    }
+
+    #[test]
+    fn how_did_we_get_here_needs_the_three_earnable_hidden_badges() {
+        use Rarity::*;
+        let def = find("how_did_we_get_here").unwrap();
+        assert_eq!(def.tiers(), [(3, Epic)]);
+        let earnable_hidden = CATALOGUE
+            .iter()
+            .filter(|d| d.hidden && d.earnable())
+            .count();
+        assert_eq!(earnable_hidden, 3);
+        let mut s = stats(&[(stat::FRIENDLY_FIRE, 1), (stat::HIGHLIGHT_REEL, 1)]);
+        assert_eq!(evaluate(&s, &HashMap::new()).get(def.key), None);
+        s.insert(stat::LOGO_EGG.into(), 1);
+        assert_eq!(evaluate(&s, &HashMap::new()).get(def.key), Some(&1));
     }
 
     #[test]

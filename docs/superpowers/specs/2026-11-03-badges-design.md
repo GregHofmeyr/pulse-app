@@ -100,7 +100,7 @@ Rarity in brackets (tiered badges: per tier, tuned on the badge page). ⓗ = hid
 - **Early Adopter** [Epic] — joined within the first week after launch. The launch date isn't set yet: it's a
   server config value (unset = the badge can't be earned yet), set by the owner when the group moves over.
 - **Badge Collector** [tiers] — earned 10 / 20 / 30 badges.
-- **How Did We Get Here?** [Epic] — unlocked 5 hidden badges.
+- **How Did We Get Here?** [Epic] — unlocked 3 hidden badges (lowered from 5 on 2026-11-03: only three are earnable).
 - **Perfectionist** [Mythical] — reached the top tier of 5 tiered badges.
 - **Combo** [tiers] — 100 messages + 100 h voice + 10 clips, then 500/500/25, then 1 000/1 000/100 (name TBD).
 - **Logo egg** ⓗ [Epic] — the hidden logo-click egg from the v1 plan (new icon).

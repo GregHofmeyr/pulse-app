@@ -1,15 +1,16 @@
-//! Badge routes. The client reports the two things only it can see: talking into a muted mic
-//! (The Doos) and finding the logo egg.
+//! Badge routes: the catalogue, the caller's showcase and [NEW] state, and the two things only
+//! the client can see: talking into a muted mic (The Doos) and finding the logo egg.
 
 use axum::extract::State;
 use axum::http::StatusCode;
-use axum::routing::post;
+use axum::routing::{get, post, put};
 use axum::{Json, Router};
 use chrono::Utc;
-use pulse_protocol::rest::EggRequest;
+use pulse_protocol::rest::{BadgeCatalogue, EggRequest, SetShowcaseRequest};
 
 use super::catalogue::stat;
 use super::time::{doos_counts, sast_day};
+use super::view::{self, SHOWCASE_MAX};
 use super::{engine, stats};
 use crate::AppState;
 use crate::access::load_channel;
@@ -19,8 +20,83 @@ use crate::error::{AppError, AppResult};
 
 pub fn router() -> Router<AppState> {
     Router::new()
+        .route("/badges", get(catalogue))
+        .route("/me/badges/showcase", put(set_showcase))
+        .route("/me/badges/seen", post(seen))
         .route("/me/badges/muted-talk", post(muted_talk))
         .route("/me/badges/egg", post(egg))
+}
+
+/// `GET /badges`: every badge as the caller may see it (see [`view::catalogue`]).
+async fn catalogue(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+) -> AppResult<Json<BadgeCatalogue>> {
+    let mut tx = s.db.begin().await?;
+    let c = view::catalogue(&mut tx, me).await?;
+    tx.commit().await?;
+    Ok(Json(c))
+}
+
+/// `PUT /me/badges/showcase`: up to five distinct badges the caller holds, in order. Empty clears
+/// the choice, so the profile falls back to the rarest five.
+async fn set_showcase(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Json(req): Json<SetShowcaseRequest>,
+) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    if req.keys.len() > SHOWCASE_MAX {
+        return Err(AppError::BadRequest(
+            "A showcase holds up to 5 badges.".into(),
+        ));
+    }
+    if req
+        .keys
+        .iter()
+        .enumerate()
+        .any(|(i, k)| req.keys[..i].contains(k))
+    {
+        return Err(AppError::BadRequest(
+            "A badge can be in the showcase once.".into(),
+        ));
+    }
+    let mut tx = begin_write(&s.db).await?;
+    let held = engine::tiers_held(&mut tx, me).await?;
+    if !req.keys.iter().all(|k| held.get(k).is_some_and(|t| *t > 0)) {
+        return Err(AppError::BadRequest(
+            "You can only show badges you have.".into(),
+        ));
+    }
+    let id = me.to_string();
+    sqlx::query("UPDATE user_badges SET showcase = NULL WHERE user_id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?;
+    for (i, key) in req.keys.iter().enumerate() {
+        sqlx::query("UPDATE user_badges SET showcase = ? WHERE user_id = ? AND badge_key = ?")
+            .bind(i as i64)
+            .bind(&id)
+            .bind(key)
+            .execute(&mut *tx)
+            .await?;
+    }
+    tx.commit().await?;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// `POST /me/badges/seen`: the caller opened their trophy case; nothing of theirs is [NEW] now.
+async fn seen(State(s): State<AppState>, AuthUser(me): AuthUser) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    sqlx::query("UPDATE user_badges SET seen = 1 WHERE user_id = ? AND seen = 0")
+        .bind(me.to_string())
+        .execute(&s.db)
+        .await?;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 /// `POST /me/badges/muted-talk`: the "you're muted" detector fired. Counts only in a server voice

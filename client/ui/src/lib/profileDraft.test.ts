@@ -10,6 +10,7 @@ const profile: Profile = {
   stats: { voice_seconds: 0, member_since: '2026-10-03T00:00:00Z', top_reaction: null, times_renamed: 0 },
   badges: [],
   name_archive: [],
+  showcase: [],
 }
 
 describe('profileDraft', () => {

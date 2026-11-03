@@ -147,7 +147,7 @@ describe('loadProfile', () => {
     user: { id, username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } },
     card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null },
     stats: { voice_seconds: 0, member_since: '2026-01-01T00:00:00Z', top_reaction: null, times_renamed: 0 },
-    badges: [], name_archive: [],
+    badges: [], name_archive: [], showcase: [],
   })
   const calls = () => vi.mocked(invoke).mock.calls.filter((c) => c[0] === 'get_profile')
 

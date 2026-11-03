@@ -18,13 +18,15 @@ pub fn router() -> Router<AppState> {
 
 async fn profile(
     State(s): State<AppState>,
-    AuthUser(_): AuthUser,
+    AuthUser(me): AuthUser,
     Path(id): Path<String>,
 ) -> AppResult<Json<Profile>> {
     // A malformed id names no user, so it is a 404 like an unknown one.
     let id: UserId = id.parse().map_err(|_| AppError::NotFound)?;
     Ok(Json(
-        load_profile(&s.db, id).await?.ok_or(AppError::NotFound)?,
+        load_profile(&s.db, id, me)
+            .await?
+            .ok_or(AppError::NotFound)?,
     ))
 }
 
@@ -107,7 +109,9 @@ async fn save(
     .await?;
     tx.commit().await?;
 
-    let profile = load_profile(&s.db, me).await?.ok_or(AppError::NotFound)?;
+    let profile = load_profile(&s.db, me, me)
+        .await?
+        .ok_or(AppError::NotFound)?;
     s.hub
         .publish(
             &s.db,

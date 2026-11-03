@@ -136,6 +136,66 @@ pub struct Badge {
     pub seen: bool,
 }
 
+/// How a badge's thresholds and progress read.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum BadgeUnit {
+    #[default]
+    Count,
+    Hours,
+}
+
+/// One tier of a badge in the catalogue.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct BadgeTier {
+    /// What reaches it, in the badge's unit (0 when masked). Combo's is its message count.
+    #[ts(type = "number")]
+    pub threshold: u64,
+    pub rarity: BadgeRarity,
+    /// How many people have reached it.
+    pub holders: u32,
+}
+
+/// A badge as the viewer may see it. A hidden badge the viewer doesn't hold is masked: `key` is
+/// `hidden:<n>`, `name` is "???", no description, a placeholder icon and thresholds of 0.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct BadgeDef {
+    pub key: String,
+    pub name: String,
+    pub description: String,
+    pub icon: String,
+    #[serde(default)]
+    pub hidden: bool,
+    /// Only ever given by hand with the admin command.
+    #[serde(default)]
+    pub hand_given: bool,
+    #[serde(default)]
+    pub stacking: bool,
+    #[serde(default)]
+    pub unit: BadgeUnit,
+    #[serde(default)]
+    pub tiers: Vec<BadgeTier>,
+    /// The viewer's own value in the badge's unit; `None` when masked, hand-given or not one
+    /// number (Combo).
+    #[serde(default)]
+    #[ts(type = "number | null")]
+    pub progress: Option<u64>,
+}
+
+/// `GET /badges`: every badge in trophy-case order, and how many people there are to have them.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct BadgeCatalogue {
+    pub people: u32,
+    pub badges: Vec<BadgeDef>,
+}
+
+/// `PUT /me/badges/showcase`: up to 5 distinct held badge keys, in order; empty clears the
+/// choice (back to the rarest five).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SetShowcaseRequest {
+    pub keys: Vec<String>,
+}
+
 /// `POST /me/badges/egg`: the client found a hidden egg (`"logo"`: the logo-click one).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct EggRequest {
@@ -158,6 +218,9 @@ pub struct Profile {
     pub stats: ProfileStats,
     pub badges: Vec<Badge>,
     pub name_archive: Vec<NameArchiveEntry>,
+    /// Up to 5 badge keys shown on the card, in order, as they appear in `badges`.
+    #[serde(default)]
+    pub showcase: Vec<String>,
 }
 
 /// `PUT /me/profile`: the whole editable profile at once.

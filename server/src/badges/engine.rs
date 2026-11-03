@@ -175,7 +175,10 @@ pub async fn held(conn: &mut SqliteConnection, user: UserId) -> AppResult<Vec<Ba
 }
 
 /// The tier of each badge `user` holds.
-async fn tiers_held(conn: &mut SqliteConnection, user: UserId) -> AppResult<HashMap<String, u8>> {
+pub async fn tiers_held(
+    conn: &mut SqliteConnection,
+    user: UserId,
+) -> AppResult<HashMap<String, u8>> {
     let rows: Vec<(String, i64)> =
         sqlx::query_as("SELECT badge_key, tier FROM user_badges WHERE user_id = ?")
             .bind(user.to_string())
