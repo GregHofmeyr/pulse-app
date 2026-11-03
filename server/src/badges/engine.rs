@@ -62,10 +62,13 @@ pub async fn check(s: &AppState, user: UserId) -> AppResult<Vec<Badge>> {
     Ok(raised)
 }
 
-/// [`check`] each user, after a hook's commit. Badge bookkeeping never fails the request that
-/// caused it: errors are logged.
+/// [`check`] each user (once, however often they're listed), after a hook's commit. Badge
+/// bookkeeping never fails the request that caused it: errors are logged.
 pub async fn after(s: &AppState, users: &[UserId]) {
-    for &user in users {
+    for (i, &user) in users.iter().enumerate() {
+        if users[..i].contains(&user) {
+            continue;
+        }
         if let Err(e) = check(s, user).await {
             tracing::warn!(error = ?e, %user, "badge check failed");
         }

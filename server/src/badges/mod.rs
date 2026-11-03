@@ -6,4 +6,5 @@
 pub mod admin;
 pub mod catalogue;
 pub mod engine;
+pub mod hooks;
 pub mod stats;

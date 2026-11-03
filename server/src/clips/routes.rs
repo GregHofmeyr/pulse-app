@@ -385,6 +385,8 @@ async fn confirm(
     .execute(&mut *tx)
     .await?;
     let moved = crate::reads::advance(&mut tx, me, channel, msg.id).await?;
+    // Clips channels are always a server's.
+    crate::badges::stats::add(&mut tx, me, crate::badges::catalogue::stat::CLIPS, 1).await?;
     tx.commit().await?;
 
     s.hub
@@ -413,6 +415,7 @@ async fn confirm(
             )
             .await;
     }
+    crate::badges::engine::after(&s, &[me]).await;
     Ok(Json(msg))
 }
 

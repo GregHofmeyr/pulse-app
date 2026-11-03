@@ -237,6 +237,9 @@ pub async fn toggle(
 
     let mut events = Vec::new();
     let mut used = false;
+    // Badges count reactions in server channels only, never DMs or groups.
+    let counts = ch.server_id.is_some();
+    let mut badges = Vec::new();
     let event = |emoji: &str, count, added| {
         let (emoji, user_id) = (emoji.to_string(), me);
         if added {
@@ -288,6 +291,11 @@ pub async fn toggle(
             for other in others {
                 let n = count(&mut tx, msg, &other).await?;
                 events.push(event(&other, n, false));
+                if counts {
+                    badges.extend(
+                        crate::badges::hooks::reacted(&mut tx, me, msg, &other, false).await?,
+                    );
+                }
             }
         }
         let distinct: Vec<String> =
@@ -315,6 +323,9 @@ pub async fn toggle(
             events.push(event(emoji, n, true));
             crate::emoji::record_use(&mut tx, me, std::slice::from_ref(emoji)).await?;
             used = true;
+            if counts {
+                badges.extend(crate::badges::hooks::reacted(&mut tx, me, msg, emoji, true).await?);
+            }
         }
     } else {
         let deleted =
@@ -328,6 +339,9 @@ pub async fn toggle(
         if deleted > 0 {
             let n = count(&mut tx, msg, emoji).await?;
             events.push(event(emoji, n, false));
+            if counts {
+                badges.extend(crate::badges::hooks::reacted(&mut tx, me, msg, emoji, false).await?);
+            }
         }
     }
     tx.commit().await?;
@@ -337,6 +351,7 @@ pub async fn toggle(
     if used {
         crate::emoji::publish_frequent(s, me).await;
     }
+    crate::badges::engine::after(s, &badges).await;
     Ok(())
 }
 

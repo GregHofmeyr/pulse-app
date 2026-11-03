@@ -393,6 +393,13 @@ async fn send(
     mentions::store(&mut tx, msg.id, &mentioned).await?;
     let used = reactions::live_keys(&mut tx, me, reactions::used_in(&msg.content)).await?;
     crate::emoji::record_use(&mut tx, me, &used).await?;
+    // Badges count server chat only, never DMs or groups.
+    let mut badges = Vec::new();
+    if ch.server_id.is_some() {
+        crate::badges::stats::add(&mut tx, me, crate::badges::catalogue::stat::MESSAGES, 1).await?;
+        badges.push(me);
+        badges.extend(crate::badges::hooks::emoji_used(&mut tx, me, &used).await?);
+    }
     if ch.kind.is_private() {
         // A new message reopens closed conversations (clients un-hide on MessageCreated).
         // Server channels can't be closed, so they skip this write entirely.
@@ -460,6 +467,7 @@ async fn send(
         // Still under this send's `in_order` guard (tokio's mutex isn't reentrant).
         crate::emoji::publish_frequent(&s, me).await;
     }
+    crate::badges::engine::after(&s, &badges).await;
     // Previews follow as a MessageUpdated (after this send's events: the task takes `in_order`).
     crate::embeds::spawn_unfurl(&s, msg.id, me, msg.content.clone());
     Ok(Json(msg))
