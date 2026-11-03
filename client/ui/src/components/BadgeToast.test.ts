@@ -18,6 +18,7 @@ import { app, startListening } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { profileUi } from '../lib/profileCard.svelte'
 import { motion } from '../lib/animate.svelte'
+import { windowFocus } from '../lib/windowFocus.svelte'
 import type { Badge } from '../lib/protocol/Badge'
 
 const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -124,22 +125,27 @@ describe('BadgeToast', () => {
       motion.reducedMotion = false
       motion.streaming = false
       motion.mode = 'always'
+      windowFocus.focused = true
     })
 
-    it('a fresh unlock bursts confetti, hidden from assistive tech', () => {
+    it('a fresh unlock bursts confetti behind the toast, hidden from assistive tech', () => {
       earned()
       flushSync()
-      const c = document.querySelector('.toast .confetti')!
+      const c = document.querySelector('.item > .confetti')!
       expect(c).not.toBeNull()
+      // a sibling of the toast, not inside it (so it is not part of the status text either)
+      expect(c.parentElement!.querySelector(':scope > .toast')).not.toBeNull()
       expect(c.getAttribute('aria-hidden')).toBe('true')
       expect(c.querySelectorAll('i').length).toBeGreaterThan(6)
     })
 
     it('none under reduced motion, while live, or with animation set to never', () => {
-      for (const set of [() => (motion.reducedMotion = true), () => (motion.streaming = true), () => (motion.mode = 'never')]) {
+      // (an unfocused window too, like the toast fades in app.css: nobody would see it)
+      for (const set of [() => (motion.reducedMotion = true), () => (motion.streaming = true), () => (motion.mode = 'never'), () => (windowFocus.focused = false)]) {
         motion.reducedMotion = false
         motion.streaming = false
         motion.mode = 'always'
+        windowFocus.focused = true
         badgeStore.reset()
         flushSync()
         set()

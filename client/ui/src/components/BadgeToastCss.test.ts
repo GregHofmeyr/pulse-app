@@ -18,7 +18,13 @@ describe('badge toast placement and confetti', () => {
     expect(stack).not.toMatch(/bottom:/)
   })
   it('the confetti sits behind the toast and does not take the pointer', () => {
-    expect(rule('.toast')).toMatch(/isolation:\s*isolate/)
+    // the stacking context is a wrapper with no background, so a z-index -1 sibling paints under the toast's
+    // surface (were the toast itself the root, its own background would paint first and the pieces over it)
+    const item = rule('.item')
+    expect(item).toMatch(/position:\s*relative/)
+    expect(item).toMatch(/isolation:\s*isolate/)
+    expect(item).not.toMatch(/background/)
+    expect(rule('.toast')).not.toMatch(/isolation/)
     const c = rule('.confetti')
     expect(c).toMatch(/z-index:\s*-1/)
     expect(c).toMatch(/pointer-events:\s*none/)

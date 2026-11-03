@@ -8,25 +8,34 @@
   import BadgeIcon from './BadgeIcon.svelte'
   import { badgeStore, openOwnCase, rarityLabel, rarityVar } from '../lib/badges.svelte'
   import { motion, shouldCelebrate, watchMotion } from '../lib/animate.svelte'
+  import { windowFocus } from '../lib/windowFocus.svelte'
 
   watchMotion()
 
-  // Decided once, when a toast first shows: turning motion back on later never replays a burst.
+  // Decided once, when a toast first shows: turning motion back on later never replays a burst. An
+  // unfocused window gets none either (like the toast fades in app.css: nobody would see it).
   const celebrated = new Map<number, boolean>()
   function celebrate(id: number): boolean {
     return untrack(() => {
-      if (!celebrated.has(id)) celebrated.set(id, shouldCelebrate(motion))
+      if (!celebrated.has(id)) celebrated.set(id, windowFocus.focused && shouldCelebrate(motion))
       return celebrated.get(id)!
     })
   }
+  // forget toasts that have gone
+  $effect(() => {
+    const live = new Set(badgeStore.toasts.map((t) => t.id))
+    for (const id of celebrated.keys()) if (!live.has(id)) celebrated.delete(id)
+  })
 
   // The pieces: spread round an ellipse (the toast is wide and short), each with its own colour, spin and delay.
+  // The stack hugs the window's left edge, so leftward pieces travel less and the burst isn't cut off there.
   const COLORS = ['var(--ring-color)', 'var(--accent)', 'var(--warn)', 'var(--ok)', 'var(--danger)']
   const PIECES = Array.from({ length: 16 }, (_, i) => {
     const a = (i / 16) * Math.PI * 2 + (i % 2 ? 0.2 : -0.1)
     const reach = 1 + (i % 3) * 0.25
+    const cos = Math.cos(a)
     return {
-      dx: `${Math.round(Math.cos(a) * 150 * reach)}px`,
+      dx: `${Math.round(cos * (cos < 0 ? 90 : 150) * reach)}px`,
       dy: `${Math.round(Math.sin(a) * 48 * reach)}px`,
       spin: `${(i % 2 ? 1 : -1) * (240 + (i % 4) * 90)}deg`,
       delay: `${(i % 4) * 30}ms`,
@@ -37,21 +46,22 @@
 
 <div class="stack" aria-live="polite">
   {#each badgeStore.toasts as t (t.id)}
+    <!-- the item is the stacking context (no background of its own), so the confetti paints under the toast -->
+    <div class="item" style:--ring-color={rarityVar(t.rarity)}>
+    {#if celebrate(t.id)}
+      <span class="confetti" aria-hidden="true">
+        {#each PIECES as p, i (i)}<i style:--dx={p.dx} style:--dy={p.dy} style:--spin={p.spin} style:--c={p.color} style:animation-delay={p.delay}></i>{/each}
+      </span>
+    {/if}
     <!-- hovering or focusing a toast holds it (its fade waits until both have left) -->
     <div
       class="toast fade-in"
       role="status"
-      style:--ring-color={rarityVar(t.rarity)}
       onmouseenter={() => badgeStore.hold(t.id, 'hover')}
       onmouseleave={() => badgeStore.release(t.id, 'hover')}
       onfocusin={() => badgeStore.hold(t.id, 'focus')}
       onfocusout={() => badgeStore.release(t.id, 'focus')}
     >
-      {#if celebrate(t.id)}
-        <span class="confetti" aria-hidden="true">
-          {#each PIECES as p, i (i)}<i style:--dx={p.dx} style:--dy={p.dy} style:--spin={p.spin} style:--c={p.color} style:animation-delay={p.delay}></i>{/each}
-        </span>
-      {/if}
       <button type="button" class="open" onclick={() => { badgeStore.dismiss(t.id); openOwnCase() }}>
         <!-- no label: the text beside it says it -->
         <BadgeIcon icon={t.icon} rarity={t.rarity} size="show" />
@@ -62,18 +72,21 @@
       </button>
       <button type="button" class="x" aria-label="Dismiss" onclick={() => badgeStore.dismiss(t.id)}><Icon name="x" size={14} /></button>
     </div>
+    </div>
   {/each}
 </div>
 
 <style>
   .stack { position: fixed; left: 18px; top: 62px; z-index: 40; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
-  .toast { position: relative; isolation: isolate; display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-left: 3px solid var(--ring-color); border-radius: 12px; box-shadow: var(--shadow-float); font-size: 13px; }
+  .item { position: relative; isolation: isolate; }
+  .toast { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-left: 3px solid var(--ring-color); border-radius: 12px; box-shadow: var(--shadow-float); font-size: 13px; }
   .open { display: flex; align-items: center; gap: 10px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
   .text { display: flex; flex-direction: column; gap: 1px; }
   small { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ring-color); }
   .x { width: 24px; height: 24px; flex-shrink: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .x:hover { background: var(--bg-4); color: var(--text); }
-  /* behind the toast (its own stacking context): the pieces start hidden under it and fly out past its edges */
+  /* behind the toast (z -1 in the item's stacking context; the toast is positioned at z auto above it): the
+     pieces start hidden under it and fly out past its edges */
   .confetti { position: absolute; inset: 0; z-index: -1; pointer-events: none; }
   .confetti i { position: absolute; left: 50%; top: 50%; width: 6px; height: 9px; margin: -4px 0 0 -3px; border-radius: 1px; background: var(--c); opacity: 0; animation: confetti-burst .9s cubic-bezier(.2, .7, .3, 1) forwards; }
   @keyframes confetti-burst {
