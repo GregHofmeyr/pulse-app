@@ -134,7 +134,7 @@ describe('VolumeMixer', () => {
     move('Calls volume', 80)
     move('Soundboard', 140)
     button('Test Soundboard').click()
-    expect(calls('soundboard_play')).toEqual([{ hash: 'ha', callsPercent: 80, soundboardPercent: 140, soundPercent: 120, output: null }])
+    expect(calls('soundboard_play')).toEqual([{ hash: 'ha', callsPercent: 80, soundboardPercent: 140, soundPercent: 120, output: null, soundId: null }])
   })
 
   it('Reset to defaults puts back only that section', () => {

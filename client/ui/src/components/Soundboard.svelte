@@ -12,6 +12,7 @@
   import { errorText, soundboardCmd } from '../lib/tauri'
   import { loadAudioConfig } from '../lib/voiceui'
   import Icon from './Icon.svelte'
+  import SoundEmoji from './SoundEmoji.svelte'
 
   let { onClose, onAdd, onEdit, onTidy, servers, memberOf }: {
     onClose: () => void
@@ -111,7 +112,7 @@
     onclick={() => play(s)} onkeydown={(ev) => tileKey(ev, s)} oncontextmenu={(ev) => openMenu(ev, s)}
   >
     <button class="preview" type="button" aria-label="Preview {s.name}" onclick={(ev) => { ev.stopPropagation(); preview(s) }}><Icon name="volume" size={13} /></button>
-    <span class="emoji">{#if s.emoji}{s.emoji}{:else}<Icon name="soundboard" size={22} />{/if}</span>
+    <span class="emoji"><SoundEmoji emoji={s.emoji} emojiId={s.emoji_id} size={24} /></span>
     <span class="name">{s.name}</span>
   </div>
 {/snippet}

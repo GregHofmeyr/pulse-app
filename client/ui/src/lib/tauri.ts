@@ -318,7 +318,7 @@ export const streamCmd = {
 
 /** Soundboard commands. `output` is the chosen output device name (null = default). */
 export type SoundPreview = { duration_ms: number; peaks: number[] }
-export type SoundUpdate = { name?: string; emoji?: string | null; volume?: number }
+export type SoundUpdate = { name?: string; emoji?: string | null; emoji_id?: string | null; volume?: number }
 export const soundboardCmd = {
   support: () => invoke<{ can_send: boolean; reason: string | null }>('soundboard_support'),
   pickFile: () => invoke<string | null>('soundboard_pick_file'),
@@ -327,10 +327,16 @@ export const soundboardCmd = {
     invoke<void>('soundboard_preview', { path, startMs, endMs, soundPercent, callsPercent, soundboardPercent, output }),
   upload: (path: string, startMs: number, endMs: number) => invoke<MediaInfo>('soundboard_upload', { path, startMs, endMs }),
   /** Local playback at Calls × Soundboard × the sound's own volume (percents; the core multiplies and caps). */
-  play: (hash: string, callsPercent: number, soundboardPercent: number, soundPercent: number, output: string | null) =>
-    invoke<void>('soundboard_play', { hash, callsPercent, soundboardPercent, soundPercent, output }),
-  create: (serverId: string, name: string, emoji: string | null, mediaHash: string, volume: number) =>
-    invoke<Sound>('create_sound', { serverId, name, emoji, mediaHash, volume }),
+  play: (hash: string, callsPercent: number, soundboardPercent: number, soundPercent: number, output: string | null, soundId: string | null = null) =>
+    invoke<void>('soundboard_play', { hash, callsPercent, soundboardPercent, soundPercent, output, soundId }),
+  /** Fetch and decode these sounds ahead of their first play (joining a call). Returns at once. */
+  warm: (hashes: string[]) => invoke<void>('soundboard_warm', { hashes }),
+  /** The trimmer's play: the picked file from `fromMs` to `toMs`, here only. Resolves with the ms it will play. */
+  trimPlay: (path: string, fromMs: number, toMs: number, callsPercent: number, soundboardPercent: number, output: string | null) =>
+    invoke<number>('soundboard_trim_play', { path, fromMs, toMs, callsPercent, soundboardPercent, output }),
+  trimStop: () => invoke<void>('soundboard_trim_stop'),
+  create: (serverId: string, name: string, emoji: string | null, emojiId: string | null, mediaHash: string, volume: number) =>
+    invoke<Sound>('create_sound', { serverId, name, emoji, emojiId, mediaHash, volume }),
   update: (id: string, request: SoundUpdate) => invoke<Sound>('update_sound', { id, request }),
   remove: (id: string) => invoke<void>('delete_sound', { id }),
   list: (serverId: string) => invoke<Sound[]>('list_sounds', { serverId }),
