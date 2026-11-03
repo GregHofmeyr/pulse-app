@@ -69,14 +69,14 @@ per-kind gain into each source's per-person gain. Clips stay in the webview (`<v
 `MixerInput::set_kind_gain(kind, gain)`, `MixerInput::effective_gain(source) -> Option<f32>` (test helper),
 `soundboard::gain(calls_pct, soundboard_pct, sound_pct)`, `sounds::gain` capped at `MAX_GAIN`.
 
-- [ ] Tests: `combined_gain(&[200, 200]) == MAX_GAIN`, `combined_gain(&[100, 50]) == percent_to_gain(50)`,
+- [x] Tests: `combined_gain(&[200, 200]) == MAX_GAIN`, `combined_gain(&[100, 50]) == percent_to_gain(50)`,
   `combined_gain(&[0, 200]) == 0`; `kind_gain_multiplies_person_gain` (person 0.5 × Voice kind 0.5 → 0.25 sent to the
   speakers, Stream sources untouched); `kind_gain_set_before_sources_and_kept_across_clear`;
   `kind_gain_is_capped`; mixed output of a source at 0.5×0.5 is 0.25 × input; `soundboard::gain(100, 200, 100)` is
   `percent_to_gain(200)`, `gain(50, 100, 100) == percent_to_gain(50)`, `gain(200,200,200) == MAX_GAIN`;
   `sounds::gain(Some(9.0)) == MAX_GAIN`; UI sounds are soft-limited (`shape(0.9, 2.0) == soft_limit(1.8)`, quiet audio
   untouched).
-- [ ] Run, see them fail; implement; pass; commit `feat(core): per-kind mixer gain and capped combined gains (#44)`.
+- [x] Run, see them fail; implement; pass; commit `feat(core): per-kind mixer gain and capped combined gains (#44)`.
 
 ### Task 2: Core plumbing — `set_call_mix` and soundboard commands
 
@@ -86,9 +86,9 @@ per-kind gain into each source's per-person gain. Clips stay in the webview (`<v
 `soundboard_preview` take `calls_percent: u16`. `VoiceManager::set_call_mix(calls, voices, streams)` stores kind gains
 (kept across sessions) and applies to the live session; a new session applies them right after `mix_in.clear()`.
 
-- [ ] Test (voice/mod.rs, existing session-free test style): `call_mix_is_kept_without_a_session` — set before any
+- [x] Test (voice/mod.rs, existing session-free test style): `call_mix_is_kept_without_a_session` — set before any
   session, read back via a `kind_gains()` accessor = `combined_gain(&[calls, voices])` per kind.
-- [ ] Implement, pass, commit `feat(core): set_call_mix command (#44)`.
+- [x] Implement, pass, commit `feat(core): set_call_mix command (#44)`.
 
 ### Task 3: `lib/mixer.ts` — prefs, maths, migration
 
@@ -99,14 +99,14 @@ labels + `max` + `test` kind), `defaultMixer()`, `percentToGain`, `gainToPercent
 `normalizeMixer(raw): MixerPrefs | null` (null when not a v1 record), `migrateMixer(legacy)`, `loadMixer()`,
 `saveMixer(p)`, `soundSectionOf(name)`, `soundGain(p, name)`, `soundMasterGain(p, name)`, `resetSection(p, id)`.
 
-- [ ] Tests: anchors (`percentToGain(0)=0`, `(100)=1`, `(200)≈3.981`, `(1)≈0.0105`); `gainToPercent` round-trips and
+- [x] Tests: anchors (`percentToGain(0)=0`, `(100)=1`, `(200)≈3.981`, `(1)≈0.0105`); `gainToPercent` round-trips and
   `gainToPercent(0.5) === 85`, `(0) === 0`; defaults all 100 / clipsMuted false; migration: sounds `{volume_pct: 50,
   off: ['join','badge']}` → masters 85, join 0, badge 0; `volume_pct: 0` → masters 0; soundboard 40 → 40; clipVolume
   `{volume: 0.5, muted: true}` → clips 85, clipsMuted true; nothing stored → defaults; persistence round-trip;
   corrupt record (strings, NaN, 999, missing sections) → per-field defaults/clamps; `v: 2` → migrated from legacy;
   `mixGain(200, 200) === MAX_GAIN`; `soundGain` = master × item, 0 when either is 0; `resetSection` resets only that
   section.
-- [ ] Implement, pass, commit `feat(ui): volume mixer prefs and migration (#44)`.
+- [x] Implement, pass, commit `feat(ui): volume mixer prefs and migration (#44)`.
 
 ### Task 4: Wire the paths (UI sounds, soundboard, clips, Calls)
 
@@ -118,12 +118,12 @@ labels + `max` + `test` kind), `defaultMixer()`, `percentToGain`, `gainToPercent
 `lib/clipPlayback.svelte.ts` (volume = Clips percent, `elementVolume(pct)`), `components/ClipPlayer.svelte` (0–100
 slider), `components/Soundboard.svelte` + `SoundDialog.svelte`, `lib/voice.svelte.ts` (push call mix before join).
 
-- [ ] Tests first: `playSound('join')` with Call sounds 50 × Join 200 invokes `play_sound` with
+- [x] Tests first: `playSound('join')` with Call sounds 50 × Join 200 invokes `play_sound` with
   `volume = mixGain(50, 200)`; with Join 0 nothing is invoked; message uses Notifications; `setNotch('calls', …)`
   invokes `set_call_mix`; the soundboard listener passes calls + soundboard percents; popover slider writes
   `mixer.calls.soundboard` (max 200); clip slider writes `mixer.media.clips` and sets `el.volume =
   min(1, percentToGain(pct))`; join pushes `set_call_mix` before `join_voice`.
-- [ ] Update existing tests that pinned the old keys; implement; pass; commit
+- [x] Update existing tests that pinned the old keys; implement; pass; commit
   `feat(ui): apply the mixer in every audio path (#44)`.
 
 ### Task 5: Settings → Volume mixer UI
@@ -131,15 +131,15 @@ slider), `components/Soundboard.svelte` + `SoundDialog.svelte`, `lib/voice.svelt
 **Files:** create `components/VolumeMixer.svelte`, `VolumeMixer.test.ts`; modify `SoundSettings.svelte` (+test: the
 volume slider and switches move to the mixer), `VoiceSettings.svelte` (mount it after Sounds).
 
-- [ ] Tests: five section headings in order; every notch has a labelled range (0–200, Clips 0–100) showing `NN%`;
+- [x] Tests: five section headings in order; every notch has a labelled range (0–200, Clips 0–100) showing `NN%`;
   moving a slider saves `pulse.mixer`; ▶ on Join plays `join` at master × item; ▶ Soundboard plays the first sound via
   `soundboard_play`, disabled with no sounds; per-section "Reset to defaults" resets only that section; the popover
   slider and the mixer stay in sync (shared state).
-- [ ] Implement with existing tokens; pass; commit `feat(ui): Volume mixer settings section (#44)`.
+- [x] Implement with existing tokens; pass; commit `feat(ui): Volume mixer settings section (#44)`.
 
 ### Task 6: Review, merge main, final checks
 
-- [ ] Fresh reviewer pass; fix Critical/Important test-first.
-- [ ] Open the parked issue(s) for deferrals (clip boost > 100 %).
-- [ ] `git merge main`; fmt, clippy `-D warnings`, `cargo test -p pulse-client --lib`, `pnpm check`, `pnpm test`;
+- [x] Fresh reviewer pass; fix Critical/Important test-first.
+- [x] Open the parked issue(s) for deferrals (clip boost > 100 %): #136.
+- [x] `git merge main`; fmt, clippy `-D warnings`, `cargo test -p pulse-client --lib`, `pnpm check`, `pnpm test`;
   final commit `Closes #44`.
