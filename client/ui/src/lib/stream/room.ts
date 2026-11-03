@@ -92,7 +92,8 @@ export class StreamRoom {
     pub.setVideoQuality(videoQuality(w.layer))
   }
 
-  static async connect(channelId: string): Promise<StreamRoom> {
+  /** `ghost`: from outside the voice channel, as an anonymous subscribe-only `g_…#v`. */
+  static async connect(channelId: string, ghost = false): Promise<StreamRoom> {
     const t0 = performance.now()
     installRtxTime()
     const room = new Room({ adaptiveStream: false, dynacast: true })
@@ -103,7 +104,7 @@ export class StreamRoom {
     }
     document.addEventListener('securitypolicyviolation', onViolation)
     try {
-      const t = await streamCmd.ticket(channelId, 'v')
+      const t = await streamCmd.ticket(channelId, 'v', ghost)
       await room.connect(t.url, t.token, { autoSubscribe: false })
     } catch (e) {
       void room.disconnect()

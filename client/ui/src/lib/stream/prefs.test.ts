@@ -10,16 +10,20 @@ beforeEach(() => {
 })
 
 describe('prefs', () => {
-  it('go_live_defaults_are_720p60_with_audio', () => {
-    expect(loadGoLive()).toEqual({ res: 720, fps: 60, audio: true })
+  it('go_live_defaults_are_720p60_with_audio_and_ghosts_allowed', () => {
+    expect(loadGoLive()).toEqual({ res: 720, fps: 60, audio: true, allowGhosts: true })
   })
   it('remembers the last Go Live choice', () => {
-    saveGoLive({ res: 1080, fps: 30, audio: false })
-    expect(loadGoLive()).toEqual({ res: 1080, fps: 30, audio: false })
+    saveGoLive({ res: 1080, fps: 30, audio: false, allowGhosts: false })
+    expect(loadGoLive()).toEqual({ res: 1080, fps: 30, audio: false, allowGhosts: false })
+  })
+  it('a_choice_saved_before_ghosts_existed_allows_them', () => {
+    localStorage.setItem('pulse.golive', JSON.stringify({ res: 1080, fps: 30, audio: false }))
+    expect(loadGoLive().allowGhosts).toBe(true)
   })
   it('falls back to defaults on corrupt storage', () => {
     localStorage.setItem('pulse.golive', '{not json')
-    expect(loadGoLive()).toEqual({ res: 720, fps: 60, audio: true })
+    expect(loadGoLive()).toEqual({ res: 720, fps: 60, audio: true, allowGhosts: true })
   })
   it('diag overlay defaults off and persists', () => {
     expect(loadDiagOverlay()).toBe(false)
@@ -40,17 +44,20 @@ describe('prefs', () => {
 
 describe('clampGoLive', () => {
   it('keeps a valid stored choice', () => {
-    expect(clampGoLive({ res: 1080, fps: 30, audio: false }, 1440)).toEqual({ res: 1080, fps: 30, audio: false })
+    expect(clampGoLive({ res: 1080, fps: 30, audio: false, allowGhosts: false }, 1440)).toEqual({ res: 1080, fps: 30, audio: false, allowGhosts: false })
   })
   it('drops a resolution above the source to the largest offered', () => {
-    expect(clampGoLive({ res: 1440, fps: 60, audio: true }, 1080)).toEqual({ res: 1080, fps: 60, audio: true })
+    expect(clampGoLive({ res: 1440, fps: 60, audio: true, allowGhosts: true }, 1080)).toEqual({ res: 1080, fps: 60, audio: true, allowGhosts: true })
   })
   it('a small source offers 720 only', () => {
-    expect(clampGoLive({ res: 1080, fps: 60, audio: true }, 480).res).toBe(720)
+    expect(clampGoLive({ res: 1080, fps: 60, audio: true, allowGhosts: true }, 480).res).toBe(720)
+  })
+  it('allow_ghosts_from_storage_must_be_a_boolean', () => {
+    expect(clampGoLive({ res: 720, fps: 60, audio: true, allowGhosts: 'no' as never }, 1080).allowGhosts).toBe(true)
   })
   it('replaces junk stored values with the defaults', () => {
     const junk = { res: 999, fps: 24, audio: 'yes' } as unknown as Parameters<typeof clampGoLive>[0]
-    expect(clampGoLive(junk, 1440)).toEqual({ res: 720, fps: 60, audio: true })
+    expect(clampGoLive(junk, 1440)).toEqual({ res: 720, fps: 60, audio: true, allowGhosts: true })
   })
 })
 

@@ -4,11 +4,16 @@
 import { flushSync, mount, unmount } from 'svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-const live = vi.hoisted(() => ({ goLive: null as null | (() => Promise<void>) }))
+const live = vi.hoisted(() => ({ goLive: null as null | (() => Promise<void>), settings: [] as unknown[] }))
 vi.mock('@tauri-apps/api/core', () => ({ invoke: async () => undefined }))
 vi.mock('../lib/stream/stream.svelte', () => ({
   stream: { error: '' },
-  streamApi: { goLive: () => live.goLive!() },
+  streamApi: {
+    goLive: (_c: string, _t: unknown, _l: string, settings: unknown) => {
+      live.settings.push(settings)
+      return live.goLive!()
+    },
+  },
 }))
 
 import GoLiveDialog from './GoLiveDialog.svelte'
@@ -60,6 +65,26 @@ describe('GoLiveDialog capture ownership', () => {
     expect(track.stop).not.toHaveBeenCalled()
     unmount(c) // Cancel after the failure: now the dialog stops it
     expect(track.stop).toHaveBeenCalledTimes(1)
+  })
+
+  it('allow_ghost_viewers_is_on_by_default_goes_with_go_live_and_is_remembered', async () => {
+    localStorage.clear()
+    live.settings = []
+    live.goLive = async () => {}
+    let c = mount(GoLiveDialog, { target: document.body, props: { channelId: 'c1', picked: picked() as never, onClose: () => {} } })
+    flushSync()
+    const box = () => [...document.querySelectorAll('label')].find((l) => l.textContent?.includes('Allow ghost viewers'))!.querySelector('input')!
+    expect(box().checked).toBe(true)
+    box().click() // off: voice-only
+    flushSync()
+    ;[...document.querySelectorAll('button')].find((b) => b.textContent === 'Go Live')!.click()
+    await Promise.resolve()
+    expect(live.settings).toEqual([expect.objectContaining({ allowGhosts: false })])
+    unmount(c)
+    c = mount(GoLiveDialog, { target: document.body, props: { channelId: 'c1', picked: picked() as never, onClose: () => {} } })
+    flushSync()
+    expect(box().checked).toBe(false) // the last choice, per device
+    unmount(c)
   })
 
   it('esc_cancels_and_is_marked_handled', () => {

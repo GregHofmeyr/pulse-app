@@ -210,7 +210,7 @@ describe('ParticipantMenu', () => {
   })
 
   it('a_stream_tile_menu_offers_watch_for_a_live_person', async () => {
-    app.state = applyReady(emptyState(), { ...ready, streams: [{ channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false }, status: 'live', viewers: [], started_at: '2026-10-26T10:00:00Z' }] })
+    app.state = applyReady(emptyState(), { ...ready, streams: [{ channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false, allow_ghosts: true }, status: 'live', viewers: [], ghosts: 0, started_at: '2026-10-26T10:00:00Z' }] })
     mountPanel()
     rightClick(q('[data-stream="U2"]')!)
     expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'watch', 'server-mute', 'server-deafen', 'disconnect', 'nick'])
@@ -247,7 +247,7 @@ describe('ParticipantMenu', () => {
   })
 
   it('esc_closes_the_menu_without_leaving_full_view', async () => {
-    app.state = applyReady(emptyState(), { ...ready, streams: [{ channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false }, status: 'live', viewers: [], started_at: '2026-10-26T10:00:00Z' }] })
+    app.state = applyReady(emptyState(), { ...ready, streams: [{ channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false, allow_ghosts: true }, status: 'live', viewers: [], ghosts: 0, started_at: '2026-10-26T10:00:00Z' }] })
     await streamApi.watch('V1', 'U2')
     callView.full = { channelId: 'V1', streamer: 'U2' }
     mountPanel()
@@ -262,7 +262,7 @@ describe('ParticipantMenu', () => {
     expect(q('.full-view')).not.toBeNull()
   })
 
-  const live = { channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false }, status: 'live' as const, viewers: [], started_at: '2026-10-26T10:00:00Z' }
+  const live = { channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false, allow_ghosts: true }, status: 'live' as const, viewers: [], ghosts: 0, started_at: '2026-10-26T10:00:00Z' }
   const watchSam = async () => {
     app.state = applyReady(emptyState(), { ...ready, streams: [live] })
     await streamApi.watch('V1', 'U2')
@@ -366,7 +366,7 @@ describe('ParticipantMenu', () => {
   })
 
   it('stop_streaming_stops_your_stream', () => {
-    stream.live = { channelId: 'V1', res: 720, fps: 30, audio: false, audioMuted: false, label: 'x', encoderWarning: false } as typeof stream.live
+    stream.live = { channelId: 'V1', res: 720, fps: 30, audio: false, audioMuted: false, label: 'x', encoderWarning: false, allowGhosts: true } as typeof stream.live
     const stop = vi.spyOn(streamApi, 'stop').mockResolvedValue()
     mountPanel()
     rightClick(q('[data-user="U1"]')!)
@@ -390,7 +390,7 @@ describe('ParticipantMenu', () => {
   })
 
   it('clicking_a_full_view_strip_opener_again_closes_its_menu', async () => {
-    app.state = applyReady(emptyState(), { ...ready, streams: [{ channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false }, status: 'live', viewers: [], started_at: '2026-10-26T10:00:00Z' }] })
+    app.state = applyReady(emptyState(), { ...ready, streams: [{ channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false, allow_ghosts: true }, status: 'live', viewers: [], ghosts: 0, started_at: '2026-10-26T10:00:00Z' }] })
     await streamApi.watch('V1', 'U2')
     callView.full = { channelId: 'V1', streamer: 'U2' }
     mountPanel()

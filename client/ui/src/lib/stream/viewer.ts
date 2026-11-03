@@ -2,6 +2,7 @@
 // which simulcast layer a watch asks for, and the watch cap.
 
 import type { StreamEndReason } from '../protocol/StreamEndReason'
+import type { StreamInfo } from '../protocol/StreamInfo'
 
 export type Toast = { channelId: string; streamer: string; name: string }
 
@@ -13,11 +14,32 @@ export function toastFor(s: { channelId: string; streamer: string }, voiceChanne
   return voiceChannelId === s.channelId && s.streamer !== meId
 }
 
-/** Why Watch can't be used right now, or null when it can. Linux first: joining voice would not help there. */
-export function watchDisabledReason(a: { windows: boolean; voiceChannelId: string | null; channelId: string }): string | null {
+/** Why Watch can't be used right now, or null when it can. Linux first: joining voice would not help there.
+ *  Out of the call, a stream that allows ghosts can still be watched (as a ghost). */
+export function watchDisabledReason(a: { windows: boolean; voiceChannelId: string | null; channelId: string; allowGhosts?: boolean }): string | null {
   if (!a.windows) return "Watching from Linux isn't supported yet"
-  if (a.voiceChannelId !== a.channelId) return 'Join voice to watch'
+  if (a.voiceChannelId !== a.channelId && !a.allowGhosts) return 'Join voice to watch'
   return null
+}
+
+/** How a Watch click watches: as yourself in that call, as a ghost from outside it when the stream
+ *  allows ghosts (counted, never named), or by joining the call first. */
+export type WatchMode = 'self' | 'ghost' | 'join'
+export function watchMode(a: { voiceChannelId: string | null; channelId: string; allowGhosts: boolean }): WatchMode {
+  if (a.voiceChannelId === a.channelId) return 'self'
+  return a.allowGhosts ? 'ghost' : 'join'
+}
+
+/** A stream in this channel that is voice-only: while there is one, no ghost may stay in the
+ *  channel's stream room (the server removes them). Its streamer, or null. */
+export function voiceOnlyStreamer(streams: Record<string, StreamInfo> | undefined): string | null {
+  for (const s of Object.values(streams ?? {})) if (!s.settings.allow_ghosts) return s.user_id
+  return null
+}
+
+/** The ghost count as shown next to the viewers ("👻 2"); empty with none. */
+export function ghostCount(n: number | undefined): string {
+  return n ? `👻 ${n}` : ''
 }
 
 const same = (a: Toast, b: { channelId: string; streamer: string }) => a.channelId === b.channelId && a.streamer === b.streamer

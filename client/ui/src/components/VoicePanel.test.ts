@@ -32,7 +32,8 @@ import type { Ready } from '../lib/protocol/Ready'
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const flags = { muted: false, deafened: false }
-const samStream = { channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false }, status: 'live' as const, viewers: [], started_at: '2026-10-26T10:00:00Z' }
+// voice-only: out of the call, Watch joins first (the ghost path has its own tests)
+const samStream = { channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false, allow_ghosts: false }, status: 'live' as const, viewers: [], ghosts: 0, started_at: '2026-10-26T10:00:00Z' }
 const ready: Ready = {
   me,
   servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
@@ -110,7 +111,7 @@ describe('stream tiles', () => {
     expect(button(WATCH)).toBeDefined()
     expect(tile.querySelector('.viewers')).toBeNull()
     unmount(cmp!)
-    app.state = applyEvent(app.state, { t: 'ViewersChanged', d: { channel_id: 'V1', user_id: 'U2', viewers: ['U1', 'U3'] } }, 0)
+    app.state = applyEvent(app.state, { t: 'ViewersChanged', d: { channel_id: 'V1', user_id: 'U2', viewers: ['U1', 'U3'], ghosts: 0 } }, 0)
     cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: 'S1', onMessage: () => {}, onVoiceSettings: () => {} } })
     flushSync()
     expect(q('[data-stream="U2"] .viewers')?.textContent?.trim()).toBe('2')
@@ -189,9 +190,57 @@ describe('stream tiles', () => {
     expect(callView.joinThenWatch).toEqual({ channelId: 'V1', streamer: 'U2' })
   })
 
+  it('out_of_the_call_a_stream_that_allows_ghosts_is_watched_as_a_ghost', async () => {
+    app.state = applyEvent(app.state, { t: 'StreamUpdated', d: { stream: { ...samStream, settings: { ...samStream.settings, allow_ghosts: true } } } }, 0)
+    voice.channelId = null
+    voice.connection = 'disconnected'
+    mountPanel()
+    const tile = q('[data-stream="U2"]')!
+    expect(tile.textContent).not.toContain('Join & watch')
+    expect(button("Watch sam's stream as a ghost")).toBeDefined()
+    tile.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('stream_watch', { channelId: 'V1', streamer: 'U2', ghost: true })
+    expect(invoke.mock.calls.filter(([c]) => c === 'join_voice')).toHaveLength(0)
+    expect(stream.watching[0]).toMatchObject({ streamer: 'U2', ghost: true })
+  })
+
+  it('the_tile_shows_the_ghost_count_next_to_the_viewers', () => {
+    app.state = applyEvent(app.state, { t: 'ViewersChanged', d: { channel_id: 'V1', user_id: 'U2', viewers: ['U1'], ghosts: 2 } }, 0)
+    mountPanel()
+    expect(q('[data-stream="U2"] .viewers')!.textContent).toContain('👻 2')
+  })
+
+  it('your_live_card_counts_ghosts_and_never_names_them', () => {
+    app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1', settings: { ...samStream.settings, allow_ghosts: true } } } }, 0)
+    app.state = applyEvent(app.state, { t: 'ViewersChanged', d: { channel_id: 'V1', user_id: 'U1', viewers: ['U2'], ghosts: 3 } }, 0)
+    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true }
+    mountPanel()
+    const card = q('[data-stream="U1"] .viewers')!
+    expect(card.textContent).toContain('Watching: sam')
+    expect(card.textContent).toContain('👻 3')
+    // only ghosts watching: still a count, not "nobody"
+    app.state = applyEvent(app.state, { t: 'ViewersChanged', d: { channel_id: 'V1', user_id: 'U1', viewers: [], ghosts: 1 } }, 0)
+    flushSync()
+    expect(q('[data-stream="U1"] .viewers')!.textContent).toContain('👻 1')
+    expect(q('[data-stream="U1"] .viewers')!.textContent).not.toContain('Nobody')
+  })
+
+  it('the_live_card_switches_ghosts_off_mid_stream', async () => {
+    app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1', settings: { ...samStream.settings, allow_ghosts: true } } } }, 0)
+    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true }
+    mountPanel()
+    const box = [...document.querySelectorAll('[data-stream="U1"] label')].find((l) => l.textContent?.includes('Allow ghost viewers'))!.querySelector('input')!
+    expect(box.checked).toBe(true)
+    box.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('stream_go_live', { channelId: 'V1', settings: { height: 720, fps: 60, audio: false, allow_ghosts: false } })
+    expect(stream.live?.allowGhosts).toBe(false)
+  })
+
   it('own_stream_tile_shows_the_local_preview_and_hide_toggle', () => {
     app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1' } } }, 0)
-    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false }
+    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true }
     mountPanel()
     const tile = q('[data-stream="U1"]')!
     expect(tile.querySelector('video')).not.toBeNull()
@@ -209,7 +258,7 @@ describe('stream tiles', () => {
 
   it('stopping_here_does_not_flash_the_another_device_note', async () => {
     app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1' } } }, 0)
-    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false }
+    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true }
     mountPanel()
     void streamApi.stop()
     await settle()
@@ -227,8 +276,8 @@ describe('stream tiles', () => {
 
   it('stopping_a_share_with_audio_does_not_flash_the_note_while_audio_stops', async () => {
     invoke.mockImplementation((c: string) => (c === 'stream_audio_stop' ? new Promise(() => {}) : Promise.resolve(undefined)))
-    app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1', settings: { height: 720, fps: 60, audio: true } } } }, 0)
-    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: true, audioMuted: false, label: 'Game', encoderWarning: false }
+    app.state = applyEvent(app.state, { t: 'StreamStarted', d: { stream: { ...samStream, user_id: 'U1', settings: { height: 720, fps: 60, audio: true, allow_ghosts: true } } } }, 0)
+    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: true, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true }
     mountPanel()
     void streamApi.stop()
     await settle()
@@ -250,7 +299,7 @@ describe('stream tiles', () => {
   })
 
   it('own_tile_shows_from_the_local_live_state_before_the_server_lists_it', () => {
-    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false }
+    stream.live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true }
     mountPanel()
     expect(q('[data-stream="U1"] .card.tile')).not.toBeNull()
   })

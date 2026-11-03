@@ -33,7 +33,7 @@ vi.mock('../lib/stream/room', () => ({ StreamRoom: { connect: async () => room, 
 import Shell from './Shell.svelte'
 import LivePopover from '../components/LivePopover.svelte'
 import { app, startListening } from '../lib/store.svelte'
-import { applyReady, emptyState } from '../lib/state'
+import { applyEvent, applyReady, emptyState } from '../lib/state'
 import { CONN_PILL_DELAY_MS } from '../lib/conn'
 import { startVoiceListening, voice } from '../lib/voice.svelte'
 import { stream, streamApi } from '../lib/stream/stream.svelte'
@@ -71,7 +71,7 @@ describe('Shell', () => {
     app.state = emptyState()
     cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
     flushSync()
-    const live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false } as typeof stream.live
+    const live = { channelId: 'V1', res: 720, fps: 60, audio: false, audioMuted: false, label: 'Game', encoderWarning: false, allowGhosts: true } as typeof stream.live
     stream.live = live
     flushSync()
     expect(motion.streaming).toBe(true)
@@ -281,7 +281,8 @@ describe('watching from anywhere', () => {
   const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
   const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
   const flags = { muted: false, deafened: false }
-  const samStream = { channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false }, status: 'live' as const, viewers: [], started_at: '2026-10-26T10:00:00Z' }
+  // voice-only: out of the call, Watch joins first (the ghost path has its own tests)
+  const samStream = { channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false, allow_ghosts: false }, status: 'live' as const, viewers: [], ghosts: 0, started_at: '2026-10-26T10:00:00Z' }
   const ready: Ready = {
     me,
     servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
@@ -607,6 +608,27 @@ describe('watching from anywhere', () => {
     unmount(pop2)
   })
 
+  it('the_live_popover_watches_as_a_ghost_from_outside_when_the_stream_allows_it', async () => {
+    app.state = applyEvent(app.state, { t: 'StreamUpdated', d: { stream: { ...samStream, ghosts: 2, settings: { ...samStream.settings, allow_ghosts: true } } } }, 0)
+    voice.channelId = null
+    voice.connection = 'disconnected'
+    const anchor = document.createElement('span')
+    document.body.append(anchor)
+    const pop = mount(LivePopover, { target: document.body, props: { channelId: 'V1', userId: 'U2', anchor, onClose: () => {} } })
+    flushSync()
+    const box = q('[aria-label="Live stream"]')!
+    expect(box.textContent).toContain('👻 2')
+    expect(box.textContent).toContain("You'll watch as a ghost")
+    const watch = box.querySelector<HTMLElement>('.watch')!
+    expect(watch.textContent).toBe('Watch')
+    watch.click()
+    await settle()
+    expect(invoke.mock.calls.filter(([c]) => c === 'join_voice')).toHaveLength(0)
+    expect(invoke).toHaveBeenCalledWith('stream_watch', { channelId: 'V1', streamer: 'U2', ghost: true })
+    expect(callView.full).toEqual(SAM)
+    unmount(pop)
+  })
+
   it('join_and_watch_twice_joins_once', async () => {
     voice.channelId = null
     voice.connection = 'disconnected'
@@ -680,7 +702,6 @@ describe('jump to a message', () => {
 describe('a deleted channel', () => {
   it('moves you from it to another channel of the server and says why', async () => {
     const { ui } = await import('../lib/store.svelte')
-    const { applyEvent } = await import('../lib/state')
     const { testMe: me, testReady } = await import('../lib/testReady')
     app.state = applyReady(emptyState(), testReady([
       { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },

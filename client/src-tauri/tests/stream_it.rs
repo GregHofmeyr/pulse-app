@@ -150,7 +150,7 @@ async fn member(f: &Fixture, name: &str) -> (UserId, String) {
 async fn connect(f: &Fixture, role: StreamRole, opts: RoomOptions) -> (Room, RoomEvents) {
     let t = f
         .api
-        .stream_ticket(&f.token, f.channel, role)
+        .stream_ticket(&f.token, f.channel, role, false)
         .await
         .unwrap();
     tokio::time::timeout(
@@ -259,6 +259,90 @@ async fn v_ticket_cannot_publish_audio() {
     let _ = room.close().await;
 }
 
+/// A ghost (a server member outside the call) gets subscribe-only stream-room tickets: it hears
+/// a stream's audio, can't publish anything, and never sees the voice room.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn a_ghost_hears_stream_audio_and_cannot_publish() {
+    let _turn = livekit_turn().await;
+    let f = fixture().await;
+    let (_, sam_token) = testing::register(&f.app, "sam").await;
+    let joined = testing::post_json(
+        &f.app,
+        &sam_token,
+        &format!("/servers/{}/join", f.server),
+        serde_json::json!({}),
+    )
+    .await;
+    assert_eq!(joined.status(), 204);
+    f.api
+        .go_live(
+            &f.token,
+            f.channel,
+            pulse_protocol::rest::StreamSettings {
+                height: 720,
+                fps: 30,
+                audio: true,
+                allow_ghosts: true,
+            },
+        )
+        .await
+        .unwrap();
+    let alex = StreamAudio::default();
+    alex.ensure_connected(&f.api, &f.token, f.channel, false, no_mixer())
+        .await
+        .unwrap();
+    let feeder = Feeder::start(alex.start_publishing_raw().await.unwrap());
+
+    // as themselves, out of the call: refused
+    assert!(
+        f.api
+            .stream_ticket(&sam_token, f.channel, StreamRole::A, false)
+            .await
+            .is_err()
+    );
+    let ghost = StreamAudio::default();
+    ghost
+        .ensure_connected(&f.api, &sam_token, f.channel, true, no_mixer())
+        .await
+        .unwrap();
+    wait_for("the ghost to hear alex's stream audio", 20, || async {
+        ghost.watch(f.uid, true).await.unwrap();
+        ghost.heard_frames().await > 50
+    })
+    .await;
+    assert!(
+        ghost.start_publishing_raw().await.is_err(),
+        "subscribe only"
+    );
+
+    // its video ticket: no source at all, and a room with no voice in it
+    let t = f
+        .api
+        .stream_ticket(&sam_token, f.channel, StreamRole::V, true)
+        .await
+        .unwrap();
+    let (room, _events) = tokio::time::timeout(
+        Duration::from_secs(15),
+        Room::connect(&t.url, &t.token, RoomOptions::default()),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(
+        room.local_participant()
+            .identity()
+            .as_str()
+            .starts_with("g_")
+    );
+    assert!(!audio_publish_accepted(&room, TrackSource::Microphone).await);
+    assert!(!audio_publish_accepted(&room, TrackSource::ScreenshareAudio).await);
+    let _ = room.close().await;
+    drop(feeder);
+    ghost.leave().await;
+    alex.leave().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 #[ignore]
 async fn a_ticket_publishes_screenshare_audio() {
@@ -361,13 +445,13 @@ async fn published_stream_audio_reaches_a_watcher() {
     // sam: in the call, watching alex before alex publishes (subscribes on TrackPublished)
     let sam_vm = voice_call(&f, &sam_token).await;
     let sam = StreamAudio::default();
-    sam.ensure_connected(&f.api, &sam_token, f.channel, mixer_of(&sam_vm))
+    sam.ensure_connected(&f.api, &sam_token, f.channel, false, mixer_of(&sam_vm))
         .await
         .unwrap();
     sam.watch(f.uid, true).await.unwrap();
 
     let alex = StreamAudio::default();
-    alex.ensure_connected(&f.api, &f.token, f.channel, no_mixer())
+    alex.ensure_connected(&f.api, &f.token, f.channel, false, no_mixer())
         .await
         .unwrap();
     let feeder = Feeder::start(alex.start_publishing_raw().await.unwrap());
@@ -403,7 +487,7 @@ async fn published_stream_audio_reaches_a_watcher() {
     // kim: watches once it is already published (subscribes straight away)
     let kim_vm = voice_call(&f, &kim_token).await;
     let kim = StreamAudio::default();
-    kim.ensure_connected(&f.api, &kim_token, f.channel, mixer_of(&kim_vm))
+    kim.ensure_connected(&f.api, &kim_token, f.channel, false, mixer_of(&kim_vm))
         .await
         .unwrap();
     // the room state (alex's track) arrives just after connecting
@@ -428,7 +512,7 @@ async fn leave_voice_closes_the_stream_connection() {
     let f = fixture().await;
     let (closed, on_closed) = closed_log();
     let alex = StreamAudio::new(on_closed);
-    alex.ensure_connected(&f.api, &f.token, f.channel, no_mixer())
+    alex.ensure_connected(&f.api, &f.token, f.channel, false, no_mixer())
         .await
         .unwrap();
     let _outlet = alex.start_publishing_raw().await.unwrap();
@@ -491,7 +575,7 @@ async fn a_room_closed_by_livekit_stops_publishing() {
     let f = fixture().await;
     let (closed, on_closed) = closed_log();
     let alex = StreamAudio::new(on_closed);
-    alex.ensure_connected(&f.api, &f.token, f.channel, no_mixer())
+    alex.ensure_connected(&f.api, &f.token, f.channel, false, no_mixer())
         .await
         .unwrap();
     let feeder = Feeder::start(alex.start_publishing_raw().await.unwrap());

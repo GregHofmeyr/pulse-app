@@ -17,8 +17,9 @@ function save(key: string, value: unknown) {
   }
 }
 
-export type GoLive = { res: Res; fps: Fps; audio: boolean }
-const GO_LIVE_DEFAULT: GoLive = { res: 720, fps: 60, audio: true }
+/** `allowGhosts`: server members outside the call may watch, counted but never named. */
+export type GoLive = { res: Res; fps: Fps; audio: boolean; allowGhosts: boolean }
+const GO_LIVE_DEFAULT: GoLive = { res: 720, fps: 60, audio: true, allowGhosts: true }
 
 export const loadGoLive = (): GoLive => load('pulse.golive', GO_LIVE_DEFAULT)
 export const saveGoLive = (v: GoLive) => save('pulse.golive', v)
@@ -32,7 +33,8 @@ export function clampGoLive(stored: GoLive, sourceHeight: number): GoLive {
   const res = offered.includes(stored.res) ? stored.res : stored.res > largest ? largest : GO_LIVE_DEFAULT.res
   const fps = FPS.includes(stored.fps) ? stored.fps : GO_LIVE_DEFAULT.fps
   const audio = typeof stored.audio === 'boolean' ? stored.audio : GO_LIVE_DEFAULT.audio
-  return { res, fps, audio }
+  const allowGhosts = typeof stored.allowGhosts === 'boolean' ? stored.allowGhosts : GO_LIVE_DEFAULT.allowGhosts
+  return { res, fps, audio, allowGhosts }
 }
 
 export const loadHidePreview = (): boolean => load<{ on: boolean }>('pulse.stream.hidepreview', { on: false }).on

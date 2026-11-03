@@ -4,8 +4,8 @@
   import { liveIn } from '../lib/selectors'
   import { voice } from '../lib/voice.svelte'
   import { isWindows } from '../lib/stream/platform'
-  import { watchDisabledReason } from '../lib/stream/viewer'
-  import { watchStream } from '../lib/stream/viewer.svelte'
+  import { ghostCount, watchDisabledReason } from '../lib/stream/viewer'
+  import { watchModeFor, watchStream } from '../lib/stream/viewer.svelte'
   import { streamCmd } from '../lib/tauri'
 
   let { channelId, userId, anchor, onClose }: { channelId: string; userId: string; anchor: HTMLElement; onClose: () => void } = $props()
@@ -14,9 +14,11 @@
   const info = $derived(liveIn(app.state, channelId)[userId])
   const mine = $derived(userId === app.state.me?.id)
   const windows = isWindows()
-  const inChannel = $derived(voice.channelId === channelId)
-  // only Linux blocks watching here: out of the call, the button joins first
+  // only Linux blocks watching here: out of the call, the button watches as a ghost (when the
+  // stream allows it) or joins first
   const reason = $derived(windows ? null : watchDisabledReason({ windows, voiceChannelId: voice.channelId, channelId }))
+  const mode = $derived(watchModeFor(channelId, userId))
+  const ghosts = $derived(ghostCount(info?.ghosts))
   let preview = $state<string | null>(null)
   let pop = $state<HTMLElement>()
 
@@ -57,12 +59,12 @@
     {#if preview}<img src={preview} alt="Stream preview" />{:else}<div class="none">No preview yet</div>{/if}
     <div class="meta">
       <span>{info.settings.height}p{info.settings.fps}</span>
-      <span>{info.viewers.length} watching</span>
+      <span>{info.viewers.length} watching{#if ghosts} · <span title="Ghost viewers: people in the server outside this call">{ghosts}</span>{/if}</span>
     </div>
     {#if !mine}
       <!-- aria-disabled, not disabled: a disabled button swallows the hover that shows the reason -->
-      <button type="button" class="btn btn-primary watch" class:off={!!reason} aria-disabled={!!reason} data-tip={reason ?? undefined} onclick={watch}>{inChannel || reason ? 'Watch' : 'Join & watch'}</button>
-      {#if reason}<small>{reason}</small>{/if}
+      <button type="button" class="btn btn-primary watch" class:off={!!reason} aria-disabled={!!reason} data-tip={reason ?? (mode === 'ghost' ? "Watch without joining: you're counted, not named" : undefined)} onclick={watch}>{mode !== 'join' || reason ? 'Watch' : 'Join & watch'}</button>
+      {#if reason}<small>{reason}</small>{:else if mode === 'ghost'}<small>👻 You'll watch as a ghost</small>{/if}
     {/if}
   </div>
 {/if}

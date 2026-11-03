@@ -183,6 +183,7 @@ pub fn run() {
             app.manage(soundboard::Clicks::default());
             app.manage(soundboard::Trimming::default());
             app.manage(stream::PickerMemory::default());
+            app.manage(stream::ghost_out::GhostOutput::default());
             let h = app.handle().clone();
             app.manage(stream::audio::StreamAudio::new(std::sync::Arc::new(
                 move |channel_id| {

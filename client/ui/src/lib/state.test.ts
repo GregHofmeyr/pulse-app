@@ -312,8 +312,8 @@ describe('trimming keeps unread messages', () => {
 describe('streams', () => {
   const info = (user_id: string, over: Partial<StreamInfo> = {}, channel_id = 'V1'): StreamInfo => ({
     channel_id, user_id,
-    settings: { height: 720, fps: 60, audio: true },
-    status: 'live', viewers: [], started_at: '2026-10-23T10:00:00.000Z',
+    settings: { height: 720, fps: 60, audio: true, allow_ghosts: true },
+    status: 'live', viewers: [], ghosts: 0, started_at: '2026-10-23T10:00:00.000Z',
     ...over,
   })
   const base = () => applyReady(emptyState(), ready())
@@ -346,12 +346,12 @@ describe('streams', () => {
     expect(applyEvent(s, { t: 'StreamEnded', d: { channel_id: 'V1', user_id: 'U9', reason: 'stopped' } }, 0)).toEqual(s)
   })
 
-  it('viewers_changed_updates_viewers_only', () => {
+  it('viewers_changed_updates_viewers_and_the_ghost_count_only', () => {
     let s = applyEvent(base(), { t: 'StreamStarted', d: { stream: info('U2', { status: 'reconnecting' }) } }, 0)
-    s = applyEvent(s, { t: 'ViewersChanged', d: { channel_id: 'V1', user_id: 'U2', viewers: ['U1', 'U3'] } }, 0)
-    expect(s.streams['V1']['U2']).toEqual(info('U2', { status: 'reconnecting', viewers: ['U1', 'U3'] }))
+    s = applyEvent(s, { t: 'ViewersChanged', d: { channel_id: 'V1', user_id: 'U2', viewers: ['U1', 'U3'], ghosts: 2 } }, 0)
+    expect(s.streams['V1']['U2']).toEqual(info('U2', { status: 'reconnecting', viewers: ['U1', 'U3'], ghosts: 2 }))
     // Viewers of an unknown stream are ignored rather than inventing one.
-    const same = applyEvent(s, { t: 'ViewersChanged', d: { channel_id: 'V1', user_id: 'U9', viewers: ['U1'] } }, 0)
+    const same = applyEvent(s, { t: 'ViewersChanged', d: { channel_id: 'V1', user_id: 'U9', viewers: ['U1'], ghosts: 0 } }, 0)
     expect(same.streams).toEqual(s.streams)
   })
 

@@ -838,7 +838,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     case 'ViewersChanged': {
       const cur = s.streams[e.d.channel_id]?.[e.d.user_id]
       if (!cur) return s
-      return { ...s, streams: withStream(s.streams, { ...cur, viewers: e.d.viewers }) }
+      return { ...s, streams: withStream(s.streams, { ...cur, viewers: e.d.viewers, ghosts: e.d.ghosts ?? 0 }) }
     }
     case 'SoundCreated':
     case 'SoundUpdated':

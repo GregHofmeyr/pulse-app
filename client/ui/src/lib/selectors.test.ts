@@ -182,7 +182,7 @@ describe('nextTypingExpiry', () => {
 })
 
 describe('stream selectors', () => {
-  const stream: StreamInfo = { channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: true }, status: 'live', viewers: [], started_at: '2026-10-23T10:00:00.000Z' }
+  const stream: StreamInfo = { channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: true, allow_ghosts: true }, status: 'live', viewers: [], ghosts: 0, started_at: '2026-10-23T10:00:00.000Z' }
   it('liveIn lists a channel streams and isLive checks one user', () => {
     const s = { ...emptyState(), streams: { V1: { U2: stream } } }
     expect(liveIn(s, 'V1')).toEqual({ U2: stream })

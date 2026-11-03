@@ -9,9 +9,10 @@ import type { StreamInfo } from '../protocol/StreamInfo'
 const info = (channel_id: string, user_id: string): StreamInfo => ({
   channel_id,
   user_id,
-  settings: { height: 720, fps: 60, audio: true },
+  settings: { height: 720, fps: 60, audio: true, allow_ghosts: true },
   status: 'live',
   viewers: [],
+  ghosts: 0,
   started_at: '2026-10-23T10:00:00Z',
 })
 

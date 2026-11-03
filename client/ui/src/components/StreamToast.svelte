@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { toasts, watchStream, removeToast } from '../lib/stream/viewer.svelte'
+  import { toasts, watchModeFor, watchStream, removeToast } from '../lib/stream/viewer.svelte'
   import { isWindows } from '../lib/stream/platform'
   import { watchDisabledReason } from '../lib/stream/viewer'
   import { voice } from '../lib/voice.svelte'
@@ -29,7 +29,7 @@
         <button type="button" class="btn btn-primary watch off" aria-disabled="true" data-tip={watchDisabledReason({ windows, voiceChannelId: voice.channelId, channelId: t.channelId })}>Watch</button>
       {:else}
         <!-- out of that call (you've left since), this joins it again first -->
-        <button type="button" class="btn btn-primary watch" onclick={() => watchStream(t.channelId, t.streamer)}>{voice.channelId === t.channelId ? 'Watch' : 'Join & watch'}</button>
+        <button type="button" class="btn btn-primary watch" onclick={() => watchStream(t.channelId, t.streamer)}>{watchModeFor(t.channelId, t.streamer) === 'join' ? 'Join & watch' : 'Watch'}</button>
       {/if}
       <button type="button" class="x" aria-label="Dismiss" onclick={() => removeToast(t.channelId, t.streamer)}><Icon name="x" size={14} /></button>
     </div>

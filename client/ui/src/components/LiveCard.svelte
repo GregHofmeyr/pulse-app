@@ -4,12 +4,15 @@
   import { liveIn, displayName } from '../lib/selectors'
   import { loadHidePreview, saveHidePreview } from '../lib/stream/prefs'
   import { liveMediaTrack, stream, streamApi } from '../lib/stream/stream.svelte'
+  import { ghostCount } from '../lib/stream/viewer'
 
   /** `tile`: fills a 16:9 grid tile, the preview behind a compact overlay of the controls. */
   let { channelId, serverId, tile = false }: { channelId: string; serverId: string | null; tile?: boolean } = $props()
 
   const live = $derived(stream.live)
-  const viewers = $derived(liveIn(app.state, channelId)[app.state.me?.id ?? '']?.viewers ?? [])
+  const mine = $derived(liveIn(app.state, channelId)[app.state.me?.id ?? ''])
+  const viewers = $derived(mine?.viewers ?? [])
+  const ghosts = $derived(ghostCount(mine?.ghosts))
   let hidden = $state(loadHidePreview())
   let video = $state<HTMLVideoElement>()
 
@@ -46,7 +49,9 @@
       </div>
     {/if}
     <p class="viewers">
-      {#if viewers.length}Watching: {viewers.map((u) => displayName(app.state, serverId, u)).join(', ')}{:else}Nobody is watching yet{/if}
+      {#if viewers.length}Watching: {viewers.map((u) => displayName(app.state, serverId, u)).join(', ')}{#if ghosts}<span class="ghosts" title="Ghost viewers: people in the server outside this call"> · {ghosts}</span>{/if}
+      {:else if ghosts}Watching: <span class="ghosts" title="Ghost viewers: people in the server outside this call">{ghosts}</span>
+      {:else}Nobody is watching yet{/if}
     </p>
     {#if live.encoderWarning}<p class="warn" role="status">Your GPU encoder isn't being used, so this will cost game FPS</p>{/if}
     <div class="row">
@@ -55,6 +60,10 @@
           {live.audioMuted ? 'Unmute stream audio' : 'Mute stream audio'}
         </button>
       {/if}
+      <!-- off mid-stream: the ghosts watching now are removed ("<you> switched to voice-only") -->
+      <label class="allow" data-tip="People in the server who aren't in this call can watch without showing up">
+        <input type="checkbox" checked={live.allowGhosts} onchange={(e) => streamApi.setAllowGhosts(e.currentTarget.checked)} /> Allow ghost viewers
+      </label>
       <span class="spacer"></span>
       <button type="button" class="btn btn-danger" onclick={() => streamApi.stop()}>Stop</button>
     </div>
@@ -70,6 +79,9 @@
   .preview { position: relative; }
   video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; object-fit: contain; }
   .viewers { margin: 0; font-size: 13px; color: var(--text-2); }
+  .allow { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); }
+  .allow input { accent-color: var(--accent); }
+  .tile .allow { color: #fff; font-size: 12px; }
   .warn { margin: 0; font-size: 13px; color: var(--warn-text); }
   /* the tile variant: the preview fills the tile; the rows float over it as top and bottom bars */
   .card.tile { position: absolute; inset: 0; margin: 0; padding: 0; max-width: none; width: auto; gap: 0; border: 0; border-radius: 0; background: #000; align-self: stretch; }

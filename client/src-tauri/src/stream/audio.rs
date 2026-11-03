@@ -106,6 +106,8 @@ struct State {
 struct Conn {
     id: u64,
     channel: ChannelId,
+    /// Connected as a ghost (`g_<id>#a`, subscribe only), from outside the voice channel.
+    ghost: bool,
     room: Room,
     watch: Arc<Watch>,
     events: JoinHandle<()>,
@@ -497,23 +499,27 @@ impl StreamAudio {
         }
     }
 
-    /// Connects `#a` to `channel`'s stream room, once: a call for the channel it is already in
-    /// does nothing; one for another channel leaves that one first.
+    /// Connects `#a` to `channel`'s stream room, once: a call for the channel it is already in,
+    /// as the same kind of viewer, does nothing; one for another channel, or a ghost becoming
+    /// themselves (they joined that call), leaves that one first.
     pub async fn ensure_connected(
         &self,
         api: &Api,
         token: &str,
         channel: ChannelId,
+        ghost: bool,
         mixer: MixerSource,
     ) -> Result<(), StreamAudioError> {
         let mut st = self.state.lock().await;
         if let Some(c) = &st.conn {
-            if c.channel == channel && c.room.connection_state() != ConnectionState::Disconnected {
+            if reuses(c.channel, c.ghost, channel, ghost)
+                && c.room.connection_state() != ConnectionState::Disconnected
+            {
                 return Ok(());
             }
             Self::leave_locked(&mut st).await;
         }
-        let t = super::ticket_with_retry(api, token, channel, StreamRole::A).await?;
+        let t = super::ticket_with_retry(api, token, channel, StreamRole::A, ghost).await?;
         let mut opts = crate::voice::room_options();
         opts.auto_subscribe = false; // only the streams we watch
         // bounded: the state lock is held meanwhile, and leave (on exit, too) waits for it
@@ -540,11 +546,21 @@ impl StreamAudio {
         st.conn = Some(Conn {
             id,
             channel,
+            ghost,
             room,
             watch,
             events,
         });
         Ok(())
+    }
+
+    /// Whether `#a` is in a stream room as a ghost, and watching anyone.
+    pub async fn ghost_watching(&self) -> (bool, bool) {
+        let st = self.state.lock().await;
+        match &st.conn {
+            Some(c) => (c.ghost, !c.watch.streamers.lock().unwrap().is_empty()),
+            None => (false, false),
+        }
     }
 
     /// The channel whose stream room `#a` is in, if any.
@@ -770,10 +786,32 @@ impl StreamAudio {
     }
 }
 
+/// An `#a` connection to `have` (as a ghost or not) serves a call for `want`: the same channel
+/// as the same kind of viewer. A ghost who joined that call reconnects as themselves.
+fn reuses(have: ChannelId, have_ghost: bool, want: ChannelId, want_ghost: bool) -> bool {
+    have == want && have_ghost == want_ghost
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::voice::mixer::{SourceKind, mixer, percent_to_gain};
+
+    #[test]
+    fn a_ghost_connection_is_reused_only_by_a_ghost_in_that_channel() {
+        let (a, b): (ChannelId, ChannelId) = (
+            "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap(),
+            "01ARZ3NDEKTSV4RRFFQ69G5FAW".parse().unwrap(),
+        );
+        assert!(reuses(a, true, a, true));
+        assert!(reuses(a, false, a, false));
+        assert!(
+            !reuses(a, true, a, false),
+            "joined the call: reconnect as yourself"
+        );
+        assert!(!reuses(a, false, a, true));
+        assert!(!reuses(a, true, b, true));
+    }
 
     /// A refused login comes back as the server's 401, not a string, so the command can log
     /// the user out like every other command does.
@@ -784,7 +822,7 @@ mod tests {
         let channel: ChannelId = "01ARZ3NDEKTSV4RRFFQ69G5FAV".parse().unwrap();
         let none: MixerSource = Arc::new(|| Box::pin(async { None }));
         let r = StreamAudio::default()
-            .ensure_connected(&api, "garbage", channel, none)
+            .ensure_connected(&api, "garbage", channel, false, none)
             .await;
         assert!(
             matches!(r, Err(StreamAudioError::Api(ApiError::Unauthorized))),

@@ -1,6 +1,7 @@
 //! Screen share, client side: REST calls wrapped as Tauri commands, and small window helpers.
 
 pub mod audio;
+pub mod ghost_out;
 pub mod loopback;
 pub mod plan;
 pub mod procs;
@@ -57,18 +58,21 @@ where
     }
 }
 
-/// A stream ticket, retrying a 403 a few times (see `TICKET_RETRIES`) before giving up.
+/// A stream ticket (`ghost`: an anonymous one, from outside the voice channel), retrying a 403
+/// a few times (see `TICKET_RETRIES`) before giving up. A ghost's 403 can be a leave from that
+/// call still landing.
 pub async fn ticket_with_retry(
     api: &Api,
     token: &str,
     channel: ChannelId,
     role: StreamRole,
+    ghost: bool,
 ) -> Result<VoiceTokenResponse, ApiError> {
     retrying(
         TICKET_RETRIES,
         TICKET_RETRY_EVERY,
         |e| matches!(e, ApiError::Forbidden(_)),
-        || api.stream_ticket(token, channel, role),
+        || api.stream_ticket(token, channel, role, ghost),
     )
     .await
 }
@@ -110,11 +114,12 @@ pub async fn stream_ticket(
     core: State<'_, Core>,
     channel_id: ChannelId,
     role: StreamRole,
+    ghost: Option<bool>,
 ) -> Result<VoiceTokenResponse, ApiError> {
     let (api, token) = core.current()?;
     core.check(
         &app,
-        ticket_with_retry(&api, &token, channel_id, role).await,
+        ticket_with_retry(&api, &token, channel_id, role, ghost.unwrap_or(false)).await,
     )
 }
 
@@ -160,9 +165,14 @@ pub async fn stream_watch(
     core: State<'_, Core>,
     channel_id: ChannelId,
     streamer: UserId,
+    ghost: Option<bool>,
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
-    core.check(&app, api.watch_stream(&token, channel_id, streamer).await)
+    core.check(
+        &app,
+        api.watch_stream(&token, channel_id, streamer, ghost.unwrap_or(false))
+            .await,
+    )
 }
 
 #[tauri::command]
@@ -252,13 +262,32 @@ pub fn stream_picker_window(
     Ok(())
 }
 
-/// The voice call's mixer, looked up through the app whenever stream audio needs it.
+/// Where watched stream audio plays, looked up whenever it needs it: the voice call's mixer, or
+/// with no call (a ghost) speakers of its own, which close once a call's mixer takes over.
 fn app_mixer(app: &AppHandle) -> audio::MixerSource {
     let app = app.clone();
     std::sync::Arc::new(move || {
         let app = app.clone();
-        Box::pin(async move { app.state::<VoiceManager>().mixer_input().await })
+        Box::pin(async move {
+            if let Some(m) = app.state::<VoiceManager>().mixer_input().await {
+                app.state::<ghost_out::GhostOutput>().close();
+                return Some(m);
+            }
+            // opening a device blocks: off the async workers
+            tokio::task::spawn_blocking(move || app.state::<ghost_out::GhostOutput>().mixer())
+                .await
+                .ok()
+                .flatten()
+        })
     })
+}
+
+/// Nothing is watched outside a call any more: its speakers close.
+async fn close_own_speakers_if_idle(app: &AppHandle, audio: &StreamAudio) {
+    let (ghost, watching) = audio.ghost_watching().await;
+    if !(ghost && watching) {
+        app.state::<ghost_out::GhostOutput>().close();
+    }
 }
 
 /// Connects `#a` to the stream room (if it isn't) and publishes stream audio: `window_title`'s
@@ -275,7 +304,7 @@ pub async fn stream_audio_start(
 ) -> Result<(), StreamAudioError> {
     let (api, token) = core.current()?;
     let r = audio
-        .ensure_connected(&api, &token, channel_id, app_mixer(&app))
+        .ensure_connected(&api, &token, channel_id, false, app_mixer(&app))
         .await;
     audio_check(&app, &core, r)?;
     Ok(audio.start_publishing(window_title, muted).await?)
@@ -303,10 +332,12 @@ pub async fn stream_audio_stop(audio: State<'_, StreamAudio>) -> Result<(), Stri
 /// voice ending without `leave_voice` (rejoin given up, a failed join).
 #[tauri::command]
 pub async fn stream_audio_leave(
+    app: AppHandle,
     audio: State<'_, StreamAudio>,
     keep: Option<ChannelId>,
 ) -> Result<(), String> {
     audio.leave_unless_in(keep).await;
+    close_own_speakers_if_idle(&app, &audio).await;
     Ok(())
 }
 
@@ -316,8 +347,10 @@ pub async fn stream_audio_mute(audio: State<'_, StreamAudio>, muted: bool) -> Re
     Ok(())
 }
 
-/// Starts (`on`) or stops playing `streamer`'s stream audio.
+/// Starts (`on`) or stops playing `streamer`'s stream audio; `ghost` when watching from outside
+/// the voice channel (then `output`, the chosen speakers, is where it plays).
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn stream_audio_watch(
     app: AppHandle,
     core: State<'_, Core>,
@@ -325,17 +358,27 @@ pub async fn stream_audio_watch(
     channel_id: ChannelId,
     streamer: UserId,
     on: bool,
+    ghost: Option<bool>,
+    output: Option<String>,
 ) -> Result<(), StreamAudioError> {
+    let ghost = ghost.unwrap_or(false);
     if on {
+        if ghost {
+            app.state::<ghost_out::GhostOutput>().set_device(output);
+        }
         let (api, token) = core.current()?;
         let r = audio
-            .ensure_connected(&api, &token, channel_id, app_mixer(&app))
+            .ensure_connected(&api, &token, channel_id, ghost, app_mixer(&app))
             .await;
         audio_check(&app, &core, r)?;
     } else if audio.connected_channel().await != Some(channel_id) {
         return Ok(()); // nothing playing there
     }
-    Ok(audio.watch(streamer, on).await?)
+    let r = audio.watch(streamer, on).await;
+    if !on {
+        close_own_speakers_if_idle(&app, &audio).await;
+    }
+    Ok(r?)
 }
 
 #[tauri::command]

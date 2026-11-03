@@ -15,8 +15,16 @@ vi.mock('@tauri-apps/api/core', () => ({
   },
 }))
 
-const fake = vi.hoisted(() => ({ connect: null as null | (() => Promise<unknown>) }))
-vi.mock('./room', () => ({ StreamRoom: { connect: () => fake.connect!() }, STREAM_UNAVAILABLE: 'unavailable' }))
+const fake = vi.hoisted(() => ({ connect: null as null | (() => Promise<unknown>), args: [] as unknown[][] }))
+vi.mock('./room', () => ({
+  StreamRoom: {
+    connect: (...a: unknown[]) => {
+      fake.args.push(a)
+      return fake.connect!()
+    },
+  },
+  STREAM_UNAVAILABLE: 'unavailable',
+}))
 const dg = vi.hoisted(() => ({ diag: { firstFrameMs: null as number | null, connectMs: null as number | null } }))
 vi.mock('./diag.svelte', () => ({ startDiagnostics: () => () => {}, diag: dg.diag }))
 
@@ -73,14 +81,18 @@ async function until(done: () => boolean, what: string, max = 500) {
   }
   throw new Error(`still waiting for ${what} after ${max} settles`)
 }
-const settings = (audio: boolean) => ({ res: 720 as const, fps: 60 as const, audio })
+const settings = (audio: boolean, allowGhosts = true) => ({ res: 720 as const, fps: 60 as const, audio, allowGhosts })
 
 async function load() {
   vi.resetModules()
   const mod = await import('./stream.svelte')
   const { app } = await import('../store.svelte')
   app.state = { ...app.state, me: { id: 'me', username: 'me' } as never }
-  return mod
+  // in c1's call: watches there are as ourselves (out of it they'd be a ghost's)
+  const { voice } = await import('../voice.svelte')
+  voice.channelId = 'c1'
+  voice.connection = 'connected'
+  return { ...mod, voice, app }
 }
 
 /** Live in c1 with a fresh fake connection. */
@@ -103,6 +115,7 @@ beforeAll(async () => {
 beforeEach(() => {
   core.handlers = {}
   core.calls = []
+  fake.args = []
   localStorage.clear()
   // jsdom has no media playback or canvas: the preview loop must not log "not implemented"
   vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue()
@@ -192,7 +205,7 @@ describe('re-announce after a server restart', () => {
   it('reannounce_success_keeps_the_share', async () => {
     const { streamApi, stream } = await goneLive()
     await streamApi.onReady(ready)
-    expect(calls('stream_reannounce')).toEqual([{ channelId: 'c1', settings: { height: 720, fps: 60, audio: false } }])
+    expect(calls('stream_reannounce')).toEqual([{ channelId: 'c1', settings: { height: 720, fps: 60, audio: false, allow_ghosts: true } }])
     expect(stream.live).not.toBeNull()
   })
 
@@ -208,7 +221,7 @@ describe('re-announce after a server restart', () => {
 })
 
 describe('streams back after a server restart', () => {
-  const info = (user: string) => ({ channel_id: 'c1', user_id: user, settings: { height: 720, fps: 60, audio: true }, status: 'live', viewers: [], started_at: 't' })
+  const info = (user: string) => ({ channel_id: 'c1', user_id: user, settings: { height: 720, fps: 60, audio: true, allow_ghosts: true }, status: 'live', viewers: [], ghosts: 0, started_at: 't' })
   const ready = { me: { id: 'me' }, streams: [] } as never
   const before = { c1: { other: info('other') } } as never
   const started = (user: string) => ({ t: 'StreamStarted', d: { stream: info(user) } }) as never
@@ -596,7 +609,7 @@ describe('several watches (the list past a cap of one)', () => {
     stream.watching = [entry('other'), entry('kim')]
     const listed = deferred()
     core.handlers.stream_watch = () => listed.p
-    const info = (user: string) => ({ channel_id: 'c1', user_id: user, settings: { height: 720, fps: 60, audio: true }, status: 'live', viewers: [], started_at: 't' })
+    const info = (user: string) => ({ channel_id: 'c1', user_id: user, settings: { height: 720, fps: 60, audio: true, allow_ghosts: true }, status: 'live', viewers: [], ghosts: 0, started_at: 't' })
     const ready = streamApi.onReady({ me: { id: 'me' }, streams: [info('other'), info('kim')] } as never)
     await until(() => calls('stream_watch').length > 0, 'stream_watch')
     await streamApi.unwatch('c1', 'kim') // stopped while the first re-list is in flight
@@ -641,7 +654,7 @@ describe('preview encoding', () => {
 })
 
 describe('live sounds', () => {
-  const info = (user: string, channel = 'c1') => ({ channel_id: channel, user_id: user, settings: { height: 720, fps: 60, audio: true }, status: 'live', viewers: [], started_at: 't' })
+  const info = (user: string, channel = 'c1') => ({ channel_id: channel, user_id: user, settings: { height: 720, fps: 60, audio: true, allow_ghosts: true }, status: 'live', viewers: [], ghosts: 0, started_at: 't' })
   const started = (user: string, channel = 'c1') => ({ t: 'StreamStarted', d: { stream: info(user, channel) } }) as never
   const ended = (user: string, reason: string, channel = 'c1') => ({ t: 'StreamEnded', d: { channel_id: channel, user_id: user, reason } }) as never
   const played = (name: string) => calls('play_sound').filter((a) => a?.name === name)
@@ -778,6 +791,160 @@ describe('the emoji/animation freeze while live', () => {
   })
 })
 
+describe('ghost viewers (#46)', () => {
+  const info = (user: string, allow = true) => ({
+    channel_id: 'c1',
+    user_id: user,
+    settings: { height: 720, fps: 60, audio: true, allow_ghosts: allow },
+    status: 'live' as const,
+    viewers: [],
+    ghosts: 0,
+    started_at: 't',
+  })
+
+  /** Out of c1's call (in none), watching alex there as a ghost. */
+  async function ghosting() {
+    const mod = await load()
+    mod.voice.channelId = null
+    mod.voice.connection = 'disconnected'
+    mod.app.state = { ...mod.app.state, streams: { c1: { alex: info('alex') } } }
+    localStorage.setItem('pulse.audio', JSON.stringify({ output: 'Headphones' }))
+    const room = fakeRoom()
+    fake.connect = async () => room
+    await mod.streamApi.watch('c1', 'alex')
+    return { ...mod, room }
+  }
+
+  it('out_of_the_call_a_watch_goes_as_a_ghost_on_every_connection', async () => {
+    const { stream, findWatch } = await ghosting()
+    expect(fake.args).toEqual([['c1', true]]) // the #v ticket asks for a ghost one
+    expect(calls('stream_watch')).toEqual([{ channelId: 'c1', streamer: 'alex', ghost: true }])
+    // stream audio has no call to play through: the chosen speakers
+    expect(calls('stream_audio_watch')).toEqual([{ channelId: 'c1', streamer: 'alex', on: true, ghost: true, output: 'Headphones' }])
+    expect(findWatch('c1', 'alex')?.ghost).toBe(true)
+    expect(stream.watchError).toBe('')
+  })
+
+  it('in_the_call_a_watch_is_as_yourself', async () => {
+    const mod = await load()
+    fake.connect = async () => fakeRoom()
+    await mod.streamApi.watch('c1', 'alex')
+    expect(fake.args).toEqual([['c1', false]])
+    expect(calls('stream_watch')).toEqual([{ channelId: 'c1', streamer: 'alex' }])
+    expect(mod.findWatch('c1', 'alex')?.ghost).toBeUndefined()
+  })
+
+  it('ghosts_switched_off_ends_the_ghost_watch_and_says_voice_only', async () => {
+    const { streamApi, stream, room, app } = await ghosting()
+    app.state = { ...app.state, streams: { c1: { alex: info('alex', false) } } }
+    streamApi.onEvent({ t: 'StreamUpdated', d: { stream: info('alex', false) } } as never)
+    await until(() => stream.watching.length === 0, 'the ghost watch to end')
+    expect(stream.notice).toMatch(/switched to voice-only$/)
+    await until(() => room.disconnect.mock.calls.length > 0, 'the ghost connection to go')
+  })
+
+  it('the_voice_only_notice_shows_even_when_livekit_removes_us_first', async () => {
+    const { streamApi, stream, room, app } = await ghosting()
+    room.lose() // the server's RemoveParticipant landed before its StreamUpdated
+    await until(() => stream.watching.length === 0, 'the ghost watch to end')
+    expect(stream.notice).toBe('Stopped watching: the connection was lost')
+    app.state = { ...app.state, streams: { c1: { alex: info('alex', false) } } }
+    streamApi.onEvent({ t: 'StreamUpdated', d: { stream: info('alex', false) } } as never)
+    await until(() => /voice-only/.test(stream.notice), 'the voice-only notice')
+  })
+
+  it('a_voice_only_stream_elsewhere_or_while_watching_as_yourself_says_nothing', async () => {
+    const mod = await load()
+    fake.connect = async () => fakeRoom()
+    await mod.streamApi.watch('c1', 'alex') // in the call
+    mod.streamApi.onEvent({ t: 'StreamUpdated', d: { stream: info('alex', false) } } as never)
+    await settle()
+    expect(mod.stream.notice).toBe('')
+    expect(mod.stream.watching).toHaveLength(1)
+  })
+
+  it('a_ghost_who_joins_that_call_watches_again_as_themselves', async () => {
+    const { streamApi, stream, room, voice, findWatch } = await ghosting()
+    streamApi.setView('c1', 'alex', 'full')
+    const named = fakeRoom()
+    fake.connect = async () => named
+    core.calls = []
+    voice.channelId = 'c1'
+    voice.connection = 'connected'
+    await streamApi.onVoiceChanged('c1')
+    expect(room.disconnect).toHaveBeenCalled() // the ghost connection goes
+    expect(calls('stream_unwatch')).toEqual([{ channelId: 'c1', streamer: 'alex' }])
+    expect(fake.args.at(-1)).toEqual(['c1', false])
+    expect(calls('stream_watch')).toEqual([{ channelId: 'c1', streamer: 'alex' }])
+    expect(calls('stream_audio_watch').at(-1)).toEqual({ channelId: 'c1', streamer: 'alex', on: true })
+    expect(findWatch('c1', 'alex')).toMatchObject({ view: 'full' })
+    expect(findWatch('c1', 'alex')?.ghost).toBeUndefined()
+    expect(stream.notice).toBe('')
+  })
+
+  it('the_upgrade_waits_for_the_call_to_connect', async () => {
+    const { streamApi, voice } = await ghosting()
+    fake.connect = async () => fakeRoom()
+    core.calls = []
+    voice.channelId = 'c1'
+    voice.connection = 'connecting' as never
+    const going = streamApi.onVoiceChanged('c1')
+    await settle()
+    await settle()
+    expect(calls('stream_watch')).toEqual([])
+    voice.connection = 'connected'
+    await going
+    expect(calls('stream_watch')).toEqual([{ channelId: 'c1', streamer: 'alex' }])
+  })
+
+  it('livekit_removing_the_ghost_after_the_join_is_the_upgrade_not_a_loss', async () => {
+    const { stream, room, voice } = await ghosting()
+    fake.connect = async () => fakeRoom()
+    voice.channelId = 'c1'
+    voice.connection = 'connected'
+    room.lose() // the server removed the ghost on our voice join, before our own voice event
+    await until(() => calls('stream_watch').some((a) => !a?.ghost), 'the watch as ourselves')
+    expect(stream.notice).toBe('')
+    expect(stream.watching.map((w) => [w.streamer, !!w.ghost])).toEqual([['alex', false]])
+  })
+
+  it('joining_another_call_keeps_the_ghost_watch', async () => {
+    const { streamApi, stream, room } = await ghosting()
+    core.calls = []
+    await streamApi.onVoiceChanged('c2')
+    expect(stream.watching).toHaveLength(1)
+    expect(room.disconnect).not.toHaveBeenCalled()
+    expect(calls('stream_audio_leave')).toEqual([{ keep: 'c1' }]) // its #a stays
+  })
+
+  it('switching_ghosts_off_mid_stream_updates_the_stream_and_is_remembered', async () => {
+    const { streamApi, stream } = await goneLive()
+    expect(stream.live?.allowGhosts).toBe(true)
+    core.calls = []
+    await streamApi.setAllowGhosts(false)
+    expect(calls('stream_go_live')).toEqual([{ channelId: 'c1', settings: { height: 720, fps: 60, audio: false, allow_ghosts: false } }])
+    expect(stream.live?.allowGhosts).toBe(false)
+    const { loadGoLive } = await import('./prefs')
+    expect(loadGoLive().allowGhosts).toBe(false)
+  })
+
+  it('a_failed_switch_puts_the_toggle_back', async () => {
+    const { streamApi, stream } = await goneLive()
+    core.handlers.stream_go_live = () => Promise.reject('nope')
+    await streamApi.setAllowGhosts(false)
+    expect(stream.live?.allowGhosts).toBe(true)
+    expect(stream.notice).toBe("Couldn't switch to voice-only")
+  })
+
+  it('go_live_sends_the_dialogs_choice', async () => {
+    const mod = await load()
+    fake.connect = async () => fakeRoom()
+    await mod.streamApi.goLive('c1', fakeTrack() as never, 'Game', settings(false, false))
+    expect(calls('stream_go_live')).toEqual([{ channelId: 'c1', settings: { height: 720, fps: 60, audio: false, allow_ghosts: false } }])
+    expect(mod.stream.live?.allowGhosts).toBe(false)
+  })
+})
+
 describe('the stream connection lost for good', () => {
   it('ends our share, says so, and tells the server', async () => {
     const { stream, room } = await goneLive()
@@ -812,7 +979,7 @@ describe('the stream connection lost for good', () => {
 })
 
 describe('a stream the server lists for us that we are not sending', () => {
-  const info = (user: string, channel = 'c1') => ({ channel_id: channel, user_id: user, settings: { height: 720, fps: 60, audio: true }, status: 'live', viewers: [], started_at: 't' })
+  const info = (user: string, channel = 'c1') => ({ channel_id: channel, user_id: user, settings: { height: 720, fps: 60, audio: true, allow_ghosts: true }, status: 'live', viewers: [], ghosts: 0, started_at: 't' })
   const ev = (t: 'StreamStarted' | 'StreamUpdated', user: string, channel = 'c1') => ({ t, d: { stream: info(user, channel) } }) as never
   const ended = (user: string, reason: string) => ({ t: 'StreamEnded', d: { channel_id: 'c1', user_id: user, reason } }) as never
 

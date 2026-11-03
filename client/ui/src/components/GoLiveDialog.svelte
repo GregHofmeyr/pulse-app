@@ -14,6 +14,7 @@
   let res = $state(initial.res)
   let fps = $state(initial.fps)
   let audio = $state(initial.audio)
+  let allowGhosts = $state(initial.allowGhosts)
   let busy = $state(false)
   let pickError = $state('')
   let video = $state<HTMLVideoElement>()
@@ -44,7 +45,7 @@
       track.stop()
       picked = next
       track = next.track
-      const c = clampGoLive({ res, fps, audio }, next.height)
+      const c = clampGoLive({ res, fps, audio, allowGhosts }, next.height)
       res = c.res
       fps = c.fps
       pickError = ''
@@ -56,7 +57,7 @@
 
   async function goLive() {
     busy = true
-    const settings = { res, fps, audio }
+    const settings = { res, fps, audio, allowGhosts }
     saveGoLive(settings)
     handedOff = true
     try {
@@ -105,6 +106,7 @@
       {/each}
     </fieldset>
     <label class="check"><input type="checkbox" bind:checked={audio} disabled={busy} /> Stream audio</label>
+    <label class="check" data-tip="People in the server who aren't in this call can watch without showing up; you see how many (👻)"><input type="checkbox" bind:checked={allowGhosts} disabled={busy} /> Allow ghost viewers</label>
 
     {#if pickError || stream.error}<p class="err" role="alert">{pickError || stream.error}</p>{/if}
     <div class="actions">

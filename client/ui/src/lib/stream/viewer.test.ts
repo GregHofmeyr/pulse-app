@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { admit, dropToast, layerFor, liveEndSound, MAX_TOASTS, pendingWatchReady, pushToast, toastFor, watchDisabledReason, type Toast } from './viewer'
+import type { StreamInfo } from '../protocol/StreamInfo'
+import { admit, dropToast, ghostCount, layerFor, liveEndSound, MAX_TOASTS, pendingWatchReady, pushToast, toastFor, voiceOnlyStreamer, watchDisabledReason, watchMode, type Toast } from './viewer'
 
 describe('toastFor', () => {
   it('only_people_in_that_voice_channel_get_the_toast', () => {
@@ -21,6 +22,38 @@ describe('watchDisabledReason', () => {
   })
   it('linux_wins_over_join_voice_because_joining_would_not_help', () => {
     expect(watchDisabledReason({ windows: false, voiceChannelId: null, channelId: 'c1' })).toBe("Watching from Linux isn't supported yet")
+  })
+  it('out_of_the_call_a_stream_that_allows_ghosts_can_be_watched', () => {
+    expect(watchDisabledReason({ windows: true, voiceChannelId: null, channelId: 'c1', allowGhosts: true })).toBeNull()
+    expect(watchDisabledReason({ windows: true, voiceChannelId: 'c2', channelId: 'c1', allowGhosts: false })).toBe('Join voice to watch')
+    expect(watchDisabledReason({ windows: false, voiceChannelId: null, channelId: 'c1', allowGhosts: true })).toBe("Watching from Linux isn't supported yet")
+  })
+})
+
+describe('watchMode', () => {
+  it('in_the_call_you_watch_as_yourself_whatever_the_stream_allows', () => {
+    expect(watchMode({ voiceChannelId: 'c1', channelId: 'c1', allowGhosts: true })).toBe('self')
+    expect(watchMode({ voiceChannelId: 'c1', channelId: 'c1', allowGhosts: false })).toBe('self')
+  })
+  it('out_of_the_call_you_watch_as_a_ghost_or_join_first', () => {
+    expect(watchMode({ voiceChannelId: null, channelId: 'c1', allowGhosts: true })).toBe('ghost')
+    expect(watchMode({ voiceChannelId: 'c2', channelId: 'c1', allowGhosts: true })).toBe('ghost')
+    expect(watchMode({ voiceChannelId: null, channelId: 'c1', allowGhosts: false })).toBe('join')
+  })
+})
+
+describe('ghost helpers', () => {
+  const info = (user: string, allow: boolean): StreamInfo =>
+    ({ channel_id: 'c1', user_id: user, settings: { height: 720, fps: 60, audio: true, allow_ghosts: allow }, status: 'live', viewers: [], ghosts: 0, started_at: 't' })
+  it('a_voice_only_stream_in_the_channel_is_found', () => {
+    expect(voiceOnlyStreamer(undefined)).toBeNull()
+    expect(voiceOnlyStreamer({ alex: info('alex', true) })).toBeNull()
+    expect(voiceOnlyStreamer({ alex: info('alex', true), kim: info('kim', false) })).toBe('kim')
+  })
+  it('the_ghost_count_shows_only_when_there_are_ghosts', () => {
+    expect(ghostCount(0)).toBe('')
+    expect(ghostCount(undefined)).toBe('')
+    expect(ghostCount(3)).toBe('👻 3')
   })
 })
 

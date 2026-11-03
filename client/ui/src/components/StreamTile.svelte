@@ -12,8 +12,8 @@
   import { isWindows } from '../lib/stream/platform'
   import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
   import { hostVideo } from '../lib/stream/videoHost'
-  import { watchDisabledReason } from '../lib/stream/viewer'
-  import { joinAndWatch } from '../lib/stream/viewer.svelte'
+  import { ghostCount, watchDisabledReason } from '../lib/stream/viewer'
+  import { joinAndWatch, watchModeFor } from '../lib/stream/viewer.svelte'
 
   let {
     channelId,
@@ -35,9 +35,12 @@
   const name = $derived(displayName(app.state, serverId, streamer))
   const info = $derived(liveIn(app.state, channelId)[streamer])
   const viewers = $derived(info?.viewers.length ?? 0)
+  const ghosts = $derived(ghostCount(info?.ghosts))
   const watch = $derived(findWatch(channelId, streamer))
-  const reason = $derived(watchDisabledReason({ windows, voiceChannelId: voice.channelId, channelId }))
-  const inChannel = $derived(voice.channelId === channelId)
+  const allowGhosts = $derived(!!info?.settings.allow_ghosts)
+  const reason = $derived(watchDisabledReason({ windows, voiceChannelId: voice.channelId, channelId, allowGhosts }))
+  // out of the call: a stream that allows ghosts is watched as one, the others by joining
+  const mode = $derived(watchModeFor(channelId, streamer))
   let tile = $state<HTMLElement>()
   // seeded once: the grid keys tiles by streamer, so these props never change for a tile
   const volume = $derived(stream.volumes[streamer] ?? 100)
@@ -100,11 +103,14 @@
   <div class="tile idle" class:blocked={!!reason} data-stream={streamer} bind:this={tile} tabindex={windows ? -1 : 0} onclick={clicked} oncontextmenu={contextMenu} onkeydown={menuKey}>
     <div class="backdrop" style:background={avatarColor(streamer)}></div>
     <span class="live-tag">LIVE</span>
-    {#if viewers > 0}<span class="viewers"><Icon name="eye" size={14} label="Viewers" /> {viewers}</span>{/if}
+    {#if viewers > 0 || ghosts}<span class="viewers">{#if viewers > 0}<Icon name="eye" size={14} label="Viewers" /> {viewers}{/if}{#if ghosts}<span title="Ghost viewers">{ghosts}</span>{/if}</span>{/if}
     <Avatar id={streamer} {name} size={64} />
     <div class="who">{name}</div>
-    {#if windows && inChannel}
+    {#if windows && mode === 'self'}
       <button type="button" class="btn btn-lg btn-primary watch" aria-label="Watch {name}'s stream">Watch</button>
+    {:else if windows && mode === 'ghost'}
+      <!-- the tile's click watches: from outside the call, as a ghost -->
+      <button type="button" class="btn btn-lg btn-primary watch" aria-label="Watch {name}'s stream as a ghost" data-tip="Watch without joining: you're counted, not named">Watch</button>
     {:else if windows}
       <!-- joins that voice channel (leaving yours), then opens the stream in full view -->
       <button type="button" class="btn btn-lg btn-primary watch" aria-label="Join and watch {name}'s stream" onclick={() => joinAndWatch(channelId, streamer)}>Join &amp; watch</button>

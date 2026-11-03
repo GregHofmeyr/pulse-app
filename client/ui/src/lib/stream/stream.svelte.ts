@@ -10,17 +10,18 @@ import type { AppState } from '../state'
 import { app } from '../store.svelte'
 import { errorText, streamCmd } from '../tauri'
 import { voice } from '../voice.svelte'
-import { clampVolume, playSound } from '../voiceui'
+import { clampVolume, loadAudioConfig, playSound } from '../voiceui'
 import { diag, startDiagnostics } from './diag.svelte'
 import type { Fps, Res } from './encodings'
-import { loadAudioMuted, loadStreamVolumes, saveAudioMuted, saveStreamVolumes, type GoLive } from './prefs'
+import { loadAudioMuted, loadGoLive, loadStreamVolumes, saveAudioMuted, saveGoLive, saveStreamVolumes, type GoLive } from './prefs'
 import { StreamRoom } from './room'
 import { motion } from '../animate.svelte'
-import { admit, layerFor, liveEndSound, toastFor, type Quality, type View } from './viewer'
+import { admit, layerFor, liveEndSound, toastFor, voiceOnlyStreamer, type Quality, type View } from './viewer'
 import { removeToast, showToast } from './viewer.svelte'
 
-type Live = { channelId: string; res: Res; fps: Fps; audio: boolean; audioMuted: boolean; label: string; encoderWarning: boolean }
-export type Watching = { channelId: string; streamer: string; quality: Quality; view: View }
+type Live = { channelId: string; res: Res; fps: Fps; audio: boolean; allowGhosts: boolean; audioMuted: boolean; label: string; encoderWarning: boolean }
+/** `ghost`: watched from outside that voice channel, under an anonymous identity (counted, never named). */
+export type Watching = { channelId: string; streamer: string; quality: Quality; view: View; ghost?: boolean }
 
 /** How many streams you can watch at once; at the cap, a new watch stops the oldest first. */
 export const MAX_WATCHED = 1
@@ -75,7 +76,15 @@ const BACK_WITHIN_MS = 60_000
 
 // Not reactive: handles the UI never reads.
 let roomChannel: string | null = null
-let connecting: { channelId: string; p: Promise<StreamRoom> } | null = null
+/** The `#v` connection is a ghost's (anonymous, subscribe only). */
+let roomGhost = false
+let connecting: { channelId: string; ghost: boolean; p: Promise<StreamRoom> } | null = null
+/** A ghost connection LiveKit dropped: where, and when (the voice-only notice may come after). */
+let ghostLost: { channelId: string; at: number } | null = null
+const GHOST_LOST_WINDOW_MS = 10_000
+const VOICE_ONLY = (name: string) => `${name} switched to voice-only`
+/** A ghost who joined the call waits this long for it to connect before watching as themselves. */
+const UPGRADE_WAIT_MS = 15_000
 let liveTrack: LocalVideoTrack | null = null
 /** The shared window's title while live with stream audio (`null`: a screen), for an audio restart. */
 let liveWindowTitle: string | null = null
@@ -116,17 +125,26 @@ function nameOf(channelId: string, userId: string): string {
 /** Which `#v` connection is current (by identity: the store's copy may be a reactive proxy). */
 let roomGen = 0
 
-/** The `#v` connection for `channelId`, connecting (once) if needed. */
-async function ensureRoom(channelId: string): Promise<StreamRoom> {
-  if (stream.room && roomChannel === channelId && stream.room.connected) return stream.room
-  if (connecting?.channelId === channelId) return connecting.p
-  if (stream.room) await disconnect()
-  const p = StreamRoom.connect(channelId)
-  connecting = { channelId, p }
+/** The `#v` connection for `channelId` (as a ghost or as yourself), connecting (once) if needed.
+ *  Another channel's, or the other kind, goes first, and the watches on it with it. */
+async function ensureRoom(channelId: string, ghost = false): Promise<StreamRoom> {
+  if (stream.room && roomChannel === channelId && roomGhost === ghost && stream.room.connected) return stream.room
+  if (connecting?.channelId === channelId && connecting.ghost === ghost) return connecting.p
+  if (stream.room) {
+    const was = { channelId: roomChannel, ghost: roomGhost }
+    // what we watch on a connection of another kind or channel goes with it (not a dropped one's)
+    if (was.channelId !== channelId || was.ghost !== ghost) {
+      await endWatches((w) => w.channelId === was.channelId && !!w.ghost === was.ghost, true)
+    }
+    await disconnect()
+  }
+  const p = StreamRoom.connect(channelId, ghost)
+  connecting = { channelId, ghost, p }
   try {
     const room = await p
     stream.room = room
     roomChannel = channelId
+    roomGhost = ghost
     const mine = ++roomGen
     room.onLost(() => void roomLost(mine))
     return room
@@ -140,6 +158,7 @@ async function disconnect() {
   const room = stream.room
   stream.room = null
   roomChannel = null
+  roomGhost = false
   await room?.disconnect().catch(logError('disconnect_error'))
 }
 
@@ -150,10 +169,23 @@ async function disconnect() {
  */
 async function roomLost(mine: number) {
   if (mine !== roomGen || !stream.room) return
+  const was = { channelId: roomChannel, ghost: roomGhost }
   stream.room = null
   roomChannel = null
-  streamCmd.log({ ev: 'room_lost', live: !!stream.live, watching: stream.watching.length })
+  roomGhost = false
+  streamCmd.log({ ev: 'room_lost', live: !!stream.live, watching: stream.watching.length, ghost: was.ghost })
   if (!stream.live && !stream.watching.length) return
+  if (was.ghost && was.channelId) {
+    // the server removed us: we joined that call (watch again as ourselves), or ghosts were
+    // switched off (say so, now or when the event that says why arrives)
+    const channelId = was.channelId
+    if (voice.channelId === channelId) return upgrade(channelId)
+    const blocker = voiceOnlyStreamer(app.state.streams[channelId])
+    ghostLost = blocker ? null : { channelId, at: Date.now() }
+    stream.notice = blocker ? VOICE_ONLY(nameOf(channelId, blocker)) : 'Stopped watching: the connection was lost'
+    await endWatches((w) => w.channelId === channelId && !!w.ghost, false)
+    return
+  }
   stream.notice = stream.live ? 'Streaming stopped: the connection was lost' : 'Stopped watching: the connection was lost'
   // only what was on the lost connection: a watch started on a new one meanwhile stays
   const lost = new Set(stream.watching.map((w) => streamKey(w.channelId, w.streamer)))
@@ -331,13 +363,63 @@ async function endWatch(channelId: string, streamer: string, announce: boolean) 
   ])
 }
 
+/**
+ * A ghost who joined the call they were watching from outside: the ghost connections go (the
+ * server removes them too) and the same streams are watched again as themselves, once the call
+ * is connected (the stream ticket needs the server to know they're in it). One 👻 becomes a name.
+ */
+let upgrading: string | null = null
+async function upgrade(channelId: string) {
+  if (upgrading === channelId) return
+  upgrading = channelId
+  try {
+    const again = stream.watching.filter((w) => w.channelId === channelId && w.ghost).map((w) => ({ ...w }))
+    streamCmd.log({ ev: 'ghost_upgrade', watches: again.length })
+    await endWatches((w) => w.channelId === channelId && !!w.ghost, true)
+    if (roomGhost && roomChannel === channelId) await disconnect()
+    const t0 = Date.now()
+    while (voice.channelId === channelId && voice.connection !== 'connected' && Date.now() - t0 < UPGRADE_WAIT_MS) {
+      await new Promise((r) => setTimeout(r, 100))
+    }
+    if (voice.channelId !== channelId) return
+    for (const w of again) {
+      if (!app.state.streams[channelId]?.[w.streamer]) continue // ended meanwhile
+      await watch(channelId, w.streamer)
+      const now = findWatch(channelId, w.streamer)
+      if (now) {
+        now.quality = w.quality
+        now.view = w.view
+        applyLayer(now)
+        syncInDiag()
+      }
+    }
+  } finally {
+    upgrading = null
+  }
+}
+
+/** A stream in `channelId` went voice-only (or a voice-only one started there): our ghost watches
+ *  there end with "<name> switched to voice-only" (the server is removing the connections). */
+async function voiceOnly(channelId: string, streamer: string) {
+  const lostHere = ghostLost?.channelId === channelId && Date.now() - ghostLost.at < GHOST_LOST_WINDOW_MS
+  const watchingHere = stream.watching.some((w) => w.channelId === channelId && w.ghost)
+  if (!watchingHere && !lostHere) return
+  ghostLost = null
+  stream.notice = VOICE_ONLY(nameOf(channelId, streamer))
+  await endWatches((w) => w.channelId === channelId && !!w.ghost, false)
+  await releaseIfIdle()
+}
+
 /** A snapshot of the watches matching `pred`, ended one by one. */
 async function endWatches(pred: (w: Watching) => boolean, announce: boolean) {
   for (const { channelId, streamer } of stream.watching.filter(pred)) await endWatch(channelId, streamer, announce)
 }
 
+/** Watches `streamer` in `channelId`: as yourself in that call, else as a ghost (the caller has
+ *  checked the stream allows ghosts). */
 async function watch(channelId: string, streamer: string): Promise<void> {
   if (findWatch(channelId, streamer)) return // a second click
+  const ghost = voice.channelId !== channelId
   const k = streamKey(channelId, streamer)
   const gen = generation()
   watchGens.set(k, gen)
@@ -350,18 +432,21 @@ async function watch(channelId: string, streamer: string): Promise<void> {
   el.playsInline = true
   el.muted = true // stream audio plays from the Rust `#a` side
   videos.set(k, el)
-  const { list, dropped } = admit<Watching>(stream.watching, { channelId, streamer, quality: 'auto', view: 'preview' }, MAX_WATCHED)
+  const entry: Watching = { channelId, streamer, quality: 'auto', view: 'preview', ...(ghost ? { ghost } : {}) }
+  const { list, dropped } = admit<Watching>(stream.watching, entry, MAX_WATCHED)
   // the cap: the oldest watches stop first (their calls in flight back out)
   const ending = dropped.map((d) => endWatch(d.channelId, d.streamer, true))
   stream.watching = list
   await Promise.all(ending)
   if (!current()) return
   try {
-    const room = await ensureRoom(channelId)
+    const room = await ensureRoom(channelId, ghost)
     if (!current()) return
-    await streamCmd.watch(channelId, streamer)
+    await streamCmd.watch(channelId, streamer, ghost)
     if (!current()) return
-    await streamCmd.audioWatch(channelId, streamer, true).catch(logError('audio_watch_error'))
+    if (ghost) streamCmd.log({ ev: 'ghost_watch' })
+    const output = ghost ? (loadAudioConfig().output ?? null) : null
+    await streamCmd.audioWatch(channelId, streamer, true, ghost, output).catch(logError('audio_watch_error'))
     if (!current()) {
       // stopped meanwhile, and that endWatch's "off" ran before this "on" landed
       if (!findWatch(channelId, streamer)) await streamCmd.audioWatch(channelId, streamer, false).catch(logError('audio_watch_error'))
@@ -399,7 +484,7 @@ function stopGhost(info: StreamInfo) {
 
 async function goLive(token: number, channelId: string, track: LocalVideoTrack, label: string, settings: GoLive) {
   stream.error = ''
-  const { res, fps, audio } = settings
+  const { res, fps, audio, allowGhosts } = settings
   const ended = () => track.mediaStreamTrack.readyState === 'ended'
   let room: StreamRoom | null = null
   let announced = false
@@ -409,7 +494,7 @@ async function goLive(token: number, channelId: string, track: LocalVideoTrack, 
     if (!liveGen.current(token)) throw new Error('cancelled')
     await room.publish(track, res, fps)
     if (!liveGen.current(token)) throw new Error('cancelled')
-    await streamCmd.goLive(channelId, { height: res, fps, audio })
+    await streamCmd.goLive(channelId, { height: res, fps, audio, allow_ghosts: allowGhosts })
     announced = true
     if (!liveGen.current(token)) throw new Error('cancelled')
   } catch (e) {
@@ -432,8 +517,8 @@ async function goLive(token: number, channelId: string, track: LocalVideoTrack, 
   audioClosedAt = [] // a new share gets its own reconnects
   // muted stays muted from the last Go Live
   const audioMuted = audio && loadAudioMuted()
-  stream.live = { channelId, res, fps, audio, audioMuted, label, encoderWarning: false }
-  streamCmd.log({ ev: 'live', res, fps, audio })
+  stream.live = { channelId, res, fps, audio, allowGhosts, audioMuted, label, encoderWarning: false }
+  streamCmd.log({ ev: 'live', res, fps, audio, allowGhosts })
   // the shared window closed (or the capture otherwise ended); it may already have, before we listened
   track.mediaStreamTrack.addEventListener('ended', onTrackEnded)
   if (ended()) return onTrackEnded()
@@ -524,6 +609,25 @@ export const streamApi = {
     void streamCmd.setVolume(streamer, v).catch(logError('stream_volume_error'))
   },
 
+  /** Allow ghost viewers, mid-stream: the stream goes on. Off, the server removes the ghosts
+   *  (their clients say "<name> switched to voice-only"). Remembered for the next Go Live. */
+  async setAllowGhosts(on: boolean) {
+    const live = stream.live
+    if (!live || live.allowGhosts === on) return
+    live.allowGhosts = on
+    saveGoLive({ ...loadGoLive(), allowGhosts: on })
+    try {
+      await streamCmd.goLive(live.channelId, { height: live.res, fps: live.fps, audio: live.audio, allow_ghosts: on })
+      streamCmd.log({ ev: 'allow_ghosts', on })
+    } catch (e) {
+      logError('allow_ghosts_error')(e)
+      if (stream.live === live) {
+        live.allowGhosts = !on
+        stream.notice = on ? "Couldn't allow ghost viewers" : "Couldn't switch to voice-only"
+      }
+    }
+  },
+
   async setAudioMuted(muted: boolean) {
     if (!stream.live?.audio) return
     stream.live.audioMuted = muted
@@ -531,17 +635,21 @@ export const streamApi = {
     await streamCmd.audioMute(muted).catch(logError('audio_mute_error'))
   },
 
-  /** Voice channel changed (`null` = left voice): a stream never outlives your voice channel. */
+  /** Voice channel changed (`null` = left voice): a stream never outlives your voice channel, nor
+   *  does what you watch as yourself. Ghost watches elsewhere carry on; ghost watches in the call
+   *  you joined become watches as yourself. */
   async onVoiceChanged(channelId: string | null) {
     if (pendingLive && pendingLive.channelId !== channelId) liveGen.cancel()
     if (stream.live && stream.live.channelId !== channelId) {
       liveGen.cancel()
       await endLive(true)
     }
-    await endWatches((w) => w.channelId !== channelId, true)
-    if (stream.room && roomChannel !== channelId) await disconnect()
+    await endWatches((w) => w.channelId !== channelId && !w.ghost, true)
+    const ghostElsewhere = roomGhost && roomChannel !== channelId
+    if (stream.room && roomChannel !== channelId && !roomGhost) await disconnect()
     // voice can end without leave_voice (rejoin given up, a failed join): `#a` goes with it
-    await streamCmd.audioLeave(channelId).catch(logError('audio_leave_error'))
+    await streamCmd.audioLeave(ghostElsewhere ? roomChannel : channelId).catch(logError('audio_leave_error'))
+    if (channelId && stream.watching.some((w) => w.channelId === channelId && w.ghost)) await upgrade(channelId)
   },
 
   /** LiveKit closed the `#a` connection under us: connect again once, for what we share and watch (up to `AUDIO_RECONNECTS_MAX` a minute). */
@@ -577,7 +685,9 @@ export const streamApi = {
       }
     }
     for (const { streamer } of stream.watching.filter((w) => w.channelId === channelId)) {
-      await streamCmd.audioWatch(channelId, streamer, true).catch(logError('audio_watch_error'))
+      const ghost = !!findWatch(channelId, streamer)?.ghost
+      const output = ghost ? (loadAudioConfig().output ?? null) : null
+      await streamCmd.audioWatch(channelId, streamer, true, ghost, output).catch(logError('audio_watch_error'))
       // stopped meanwhile: that endWatch's "off" ran before this "on" landed
       if (!findWatch(channelId, streamer)) await streamCmd.audioWatch(channelId, streamer, false).catch(logError('audio_watch_error'))
     }
@@ -600,7 +710,10 @@ export const streamApi = {
 
   /** Every gateway event: stream starts toast the people in that voice channel, ends close the viewer. */
   onEvent(e: Event) {
-    if (e.t === 'StreamStarted' || e.t === 'StreamUpdated') stopGhost(e.d.stream)
+    if (e.t === 'StreamStarted' || e.t === 'StreamUpdated') {
+      stopGhost(e.d.stream)
+      if (!e.d.stream.settings.allow_ghosts) void voiceOnly(e.d.stream.channel_id, e.d.stream.user_id)
+    }
     if (e.t === 'StreamStarted') {
       const { channel_id: channelId, user_id: streamer } = e.d.stream
       const k = streamKey(channelId, streamer)
@@ -613,7 +726,8 @@ export const streamApi = {
       }
       // only a restart re-starts a stream we watch (a real stop ends the watch first): the
       // restarted server lost its viewers, so list us again
-      if (findWatch(channelId, streamer)) void streamCmd.watch(channelId, streamer).catch(logError('rewatch_error'))
+      const w = findWatch(channelId, streamer)
+      if (w) void streamCmd.watch(channelId, streamer, !!w.ghost).catch(logError('rewatch_error'))
     } else if (e.t === 'StreamEnded') {
       removeToast(e.d.channel_id, e.d.user_id)
       // before onStreamEnded ends the watch
@@ -638,13 +752,14 @@ export const streamApi = {
     for (const w of [...stream.watching]) {
       if (!findWatch(w.channelId, w.streamer)) continue // ended while an earlier one was re-listed
       const watched = ready.streams.find((s) => s.channel_id === w.channelId && s.user_id === w.streamer)
-      if (watched && !watched.viewers.includes(ready.me.id)) await streamCmd.watch(w.channelId, w.streamer).catch(logError('rewatch_error'))
+      // a ghost can't tell from the count whether it's among it: listing it again is harmless (idempotent)
+      if (watched && (w.ghost || !watched.viewers.includes(ready.me.id))) await streamCmd.watch(w.channelId, w.streamer, !!w.ghost).catch(logError('rewatch_error'))
     }
     const live = stream.live
     if (!live || !needsReannounce(ready.me.id, live, ready.streams)) return
     streamCmd.log({ ev: 'reannounce' })
     try {
-      await streamCmd.reannounce(live.channelId, { height: live.res, fps: live.fps, audio: live.audio })
+      await streamCmd.reannounce(live.channelId, { height: live.res, fps: live.fps, audio: live.audio, allow_ghosts: live.allowGhosts })
     } catch (e) {
       logError('reannounce_error')(e)
       if (stream.live !== live) return // stopped meanwhile

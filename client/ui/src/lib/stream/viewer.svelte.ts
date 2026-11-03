@@ -1,8 +1,10 @@
 // Viewer UI state: the call view (which watch is in full view, where the shell should go next, a
 // Join & watch waiting for its join), and the "<name> is live" toasts.
+import { liveIn } from '../selectors'
+import { app } from '../store.svelte'
 import { voice, voiceApi } from '../voice.svelte'
 import { streamApi } from './stream.svelte'
-import { dropToast, pushToast, TOAST_MS, type Toast, type WatchKey } from './viewer'
+import { dropToast, pushToast, TOAST_MS, watchMode, type Toast, type WatchKey } from './viewer'
 
 export type { WatchKey } from './viewer'
 
@@ -53,9 +55,16 @@ export function closeFull() {
   if (f) streamApi.setView(f.channelId, f.streamer, 'preview')
 }
 
-/** Watch from a toast or the LIVE popover: the call view opens in full view on that stream. */
+/** How Watch would watch this stream for you now (see `watchMode`). */
+export function watchModeFor(channelId: string, streamer: string) {
+  const allowGhosts = !!liveIn(app.state, channelId)[streamer]?.settings.allow_ghosts
+  return watchMode({ voiceChannelId: voice.channelId, channelId, allowGhosts })
+}
+
+/** Watch from a toast or the LIVE popover: the call view opens in full view on that stream. Out of
+ *  the call, as a ghost when the stream allows it; else by joining the call first. */
 export function watchStream(channelId: string, streamer: string) {
-  if (voice.channelId !== channelId) return joinAndWatch(channelId, streamer)
+  if (watchModeFor(channelId, streamer) === 'join') return joinAndWatch(channelId, streamer)
   removeToast(channelId, streamer)
   void streamApi.watch(channelId, streamer)
   openFull({ channelId, streamer })

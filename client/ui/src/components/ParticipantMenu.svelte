@@ -8,7 +8,7 @@
   import { menuItems, type MenuCtx } from '../lib/participantMenu'
   import { isWindows } from '../lib/stream/platform'
   import { findWatch, stream, streamApi } from '../lib/stream/stream.svelte'
-  import { callView, joinAndWatch, openFull } from '../lib/stream/viewer.svelte'
+  import { callView, joinAndWatch, openFull, watchModeFor } from '../lib/stream/viewer.svelte'
   import { pickSource } from '../lib/stream/golive.svelte'
   import { watchDisabledReason } from '../lib/stream/viewer'
   import { openCard } from '../lib/profileCard.svelte'
@@ -177,6 +177,9 @@
         <button type="button" class="menu-item off" role="menuitem" data-item="watch" aria-disabled="true">Watch <small>{watchReason}</small></button>
       {:else if inChannel}
         <button type="button" class="menu-item" role="menuitem" data-item="watch" onclick={() => pick(() => streamApi.watch(channelId, userId))}>Watch</button>
+      {:else if watchModeFor(channelId, userId) === 'ghost'}
+        <!-- from outside the call: as a ghost, counted but not named -->
+        <button type="button" class="menu-item" role="menuitem" data-item="watch" onclick={() => pick(() => streamApi.watch(channelId, userId))}>Watch <small>as a ghost</small></button>
       {:else}
         <button type="button" class="menu-item" role="menuitem" data-item="watch" onclick={() => pick(() => joinAndWatch(channelId, userId))}>Join &amp; watch</button>
       {/if}

@@ -703,17 +703,20 @@ impl Api {
         .await
     }
 
+    /// A stream-room ticket; `ghost` for watching from outside the voice channel (an anonymous,
+    /// subscribe-only identity).
     pub async fn stream_ticket(
         &self,
         token: &str,
         channel: ChannelId,
         role: StreamRole,
+        ghost: bool,
     ) -> Result<VoiceTokenResponse, ApiError> {
         Self::parse(
             self.http
                 .post(format!("{}/streams/{channel}/ticket", self.base))
                 .bearer_auth(token)
-                .json(&StreamTicketRequest { role })
+                .json(&StreamTicketRequest { role, ghost })
                 .send()
                 .await,
         )
@@ -748,13 +751,16 @@ impl Api {
         .await
     }
 
+    /// `ghost`: counted, never named (from outside the voice channel).
     pub async fn watch_stream(
         &self,
         token: &str,
         channel: ChannelId,
         streamer: UserId,
+        ghost: bool,
     ) -> Result<(), ApiError> {
-        self.watch_call(token, channel, "watch", streamer).await
+        self.watch_call(token, channel, "watch", streamer, ghost)
+            .await
     }
 
     pub async fn unwatch_stream(
@@ -763,7 +769,8 @@ impl Api {
         channel: ChannelId,
         streamer: UserId,
     ) -> Result<(), ApiError> {
-        self.watch_call(token, channel, "unwatch", streamer).await
+        self.watch_call(token, channel, "unwatch", streamer, false)
+            .await
     }
 
     async fn watch_call(
@@ -772,12 +779,13 @@ impl Api {
         channel: ChannelId,
         action: &str,
         streamer: UserId,
+        ghost: bool,
     ) -> Result<(), ApiError> {
         Self::ok_empty(
             self.http
                 .post(format!("{}/streams/{channel}/{action}", self.base))
                 .bearer_auth(token)
-                .json(&WatchRequest { streamer })
+                .json(&WatchRequest { streamer, ghost })
                 .send()
                 .await,
         )
@@ -3038,6 +3046,7 @@ mod tests {
             height: 720,
             fps: 60,
             audio: true,
+            allow_ghosts: true,
         }
     }
 
@@ -3047,12 +3056,12 @@ mod tests {
         let (api, token, uid, ch) = voice_fixture(&app, "alex").await;
         // not in the call yet: refused, and as Forbidden (the retry keys on it)
         assert!(matches!(
-            api.stream_ticket(&token, ch, StreamRole::V).await,
+            api.stream_ticket(&token, ch, StreamRole::V, false).await,
             Err(ApiError::Forbidden(_))
         ));
         app.voice.join(ch, uid, "PA_test");
         for role in [StreamRole::V, StreamRole::A] {
-            let t = api.stream_ticket(&token, ch, role).await.unwrap();
+            let t = api.stream_ticket(&token, ch, role, false).await.unwrap();
             assert!(!t.token.is_empty());
         }
     }
@@ -3090,13 +3099,48 @@ mod tests {
         app.voice.join(ch, uid, "PA_test");
         app.voice.join(ch, sam, "PA_test");
         api.go_live(&token, ch, settings()).await.unwrap();
-        api.watch_stream(&sam_token, ch, uid).await.unwrap();
+        api.watch_stream(&sam_token, ch, uid, false).await.unwrap();
         api.unwatch_stream(&sam_token, ch, uid).await.unwrap();
         // you can't watch yourself
         assert!(matches!(
-            api.watch_stream(&token, ch, uid).await,
+            api.watch_stream(&token, ch, uid, false).await,
             Err(ApiError::Rejected(_))
         ));
+    }
+
+    /// Out of the call, a server member watches as a ghost: an anonymous ticket and a count.
+    #[tokio::test]
+    async fn ghost_ticket_and_watch_from_outside_the_call() {
+        let app = testing::spawn().await;
+        let (api, token, uid, ch) = voice_fixture(&app, "alex").await;
+        let (sam, sam_token) = testing::register(&app, "sam").await;
+        let server = api.servers(&token).await.unwrap()[0].id;
+        testing::post_json(
+            &app,
+            &sam_token,
+            &format!("/servers/{server}/join"),
+            serde_json::json!({}),
+        )
+        .await;
+        app.voice.join(ch, uid, "PA_test");
+        api.go_live(&token, ch, settings()).await.unwrap();
+        // as themselves, out of the call: refused (and the retry keys on Forbidden)
+        assert!(matches!(
+            api.stream_ticket(&sam_token, ch, StreamRole::V, false)
+                .await,
+            Err(ApiError::Forbidden(_))
+        ));
+        let t = api
+            .stream_ticket(&sam_token, ch, StreamRole::V, true)
+            .await
+            .unwrap();
+        assert!(!t.token.is_empty());
+        api.watch_stream(&sam_token, ch, uid, true).await.unwrap();
+        assert_eq!(app.streams.get(ch, uid).unwrap().ghosts, 1);
+        assert!(app.streams.get(ch, uid).unwrap().viewers.is_empty());
+        api.unwatch_stream(&sam_token, ch, uid).await.unwrap();
+        assert_eq!(app.streams.get(ch, uid).unwrap().ghosts, 0);
+        assert!(!app.voice.members(ch).contains(&sam));
     }
 
     #[tokio::test]
@@ -3156,7 +3200,7 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(700)).await;
             voice.join(ch, uid, "PA_test"); // what the LiveKit join webhook does
         });
-        let t = crate::stream::ticket_with_retry(&api, &token, ch, StreamRole::V)
+        let t = crate::stream::ticket_with_retry(&api, &token, ch, StreamRole::V, false)
             .await
             .unwrap();
         assert!(!t.token.is_empty());
@@ -3167,7 +3211,7 @@ mod tests {
         let app = testing::spawn().await;
         let (api, token, _, ch) = voice_fixture(&app, "alex").await;
         let started = std::time::Instant::now();
-        let r = crate::stream::ticket_with_retry(&api, &token, ch, StreamRole::V).await;
+        let r = crate::stream::ticket_with_retry(&api, &token, ch, StreamRole::V, false).await;
         assert!(matches!(r, Err(ApiError::Forbidden(_))));
         assert!(started.elapsed() >= std::time::Duration::from_millis(1500));
     }

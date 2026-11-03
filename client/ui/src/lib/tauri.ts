@@ -296,13 +296,17 @@ export const twoFactor = {
 export type ReportSettings = { auto_send_crashes: boolean }
 
 /** Screen-share commands (the `#v` ticket, live/watch bookkeeping, previews, and the Rust `#a` audio side). */
+/** Ghost calls (watching from outside the voice channel) say so; the others look as they always have. */
+const asGhost = (ghost: boolean) => (ghost ? { ghost: true } : {})
+
 export const streamCmd = {
-  ticket: (channelId: string, role: 'v' | 'a') => invoke<VoiceTokenResponse>('stream_ticket', { channelId, role }),
+  ticket: (channelId: string, role: 'v' | 'a', ghost = false) => invoke<VoiceTokenResponse>('stream_ticket', { channelId, role, ...asGhost(ghost) }),
   goLive: (channelId: string, settings: StreamSettings) => invoke<StreamInfo>('stream_go_live', { channelId, settings }),
   /** Announces a stream we are still sending, after a server restart; retries while the server catches up. */
   reannounce: (channelId: string, settings: StreamSettings) => invoke<StreamInfo>('stream_reannounce', { channelId, settings }),
   stop: (channelId: string) => invoke<void>('stream_stop', { channelId }),
-  watch: (channelId: string, streamer: string) => invoke<void>('stream_watch', { channelId, streamer }),
+  /** `ghost`: counted, never named (you're not in that voice channel). */
+  watch: (channelId: string, streamer: string, ghost = false) => invoke<void>('stream_watch', { channelId, streamer, ...asGhost(ghost) }),
   unwatch: (channelId: string, streamer: string) => invoke<void>('stream_unwatch', { channelId, streamer }),
   /** `imageBase64` (WebP, or JPEG/PNG where the webview can't encode WebP) without the `data:` prefix. */
   previewPut: (channelId: string, imageBase64: string) => invoke<void>('stream_preview_put', { channelId, imageBase64 }),
@@ -317,7 +321,9 @@ export const streamCmd = {
   /** `#a` leaves unless it is in `keep` (the voice channel now; `null` = no voice). */
   audioLeave: (keep: string | null) => invoke<void>('stream_audio_leave', { keep }),
   audioMute: (muted: boolean) => invoke<void>('stream_audio_mute', { muted }),
-  audioWatch: (channelId: string, streamer: string, on: boolean) => invoke<void>('stream_audio_watch', { channelId, streamer, on }),
+  /** A ghost's stream audio plays on `output` (no call to play through). */
+  audioWatch: (channelId: string, streamer: string, on: boolean, ghost = false, output: string | null = null) =>
+    invoke<void>('stream_audio_watch', { channelId, streamer, on, ...(ghost ? { ghost: true, output } : {}) }),
   setVolume: (userId: string, pct: number) => invoke<void>('set_stream_volume', { userId, pct }),
 }
 
