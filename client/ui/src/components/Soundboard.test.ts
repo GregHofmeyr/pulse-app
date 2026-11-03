@@ -126,6 +126,34 @@ describe('Soundboard', () => {
     expect(document.querySelector('[role=alert]')?.textContent).toBe("You're not in a call")
   })
 
+  it('a_play_of_a_sound_deleted_meanwhile_is_quiet', async () => {
+    open()
+    invoke.mockRejectedValueOnce('not found')
+    tile('Bruh').click()
+    await settle()
+    expect(document.querySelector('[role=alert]')).toBeNull()
+  })
+
+  it('deleting_a_sound_someone_else_just_deleted_is_quiet', async () => {
+    open()
+    rightClick(tile('Bruh'))
+    menuItem('Delete')!.click()
+    flushSync()
+    invoke.mockRejectedValueOnce('not found')
+    ;[...document.querySelectorAll<HTMLElement>('[role=alertdialog] button')].find((b) => b.textContent === 'Delete')!.click()
+    await settle()
+    expect(calls('delete_sound')).toHaveLength(1)
+    expect(document.querySelector('[role=alert]')).toBeNull()
+  })
+
+  it('preview_at_soundboard_volume_0_plays_at_100', async () => {
+    soundboard.volume_pct = 0
+    open()
+    tile('Bruh').querySelector<HTMLElement>('.preview')!.click()
+    await settle()
+    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', soundboardPercent: 100, soundPercent: 120, output: null }]])
+  })
+
   it('preview_plays_locally_only', async () => {
     open()
     expect(btn('Preview Bruh')).not.toBeNull()

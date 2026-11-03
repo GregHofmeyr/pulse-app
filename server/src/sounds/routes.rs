@@ -38,6 +38,14 @@ fn bad_emoji() -> AppError {
     AppError::BadRequest("a sound's emoji must be a single emoji".into())
 }
 
+/// The sound was deleted between the check and the write.
+fn gone(e: sqlx::Error) -> AppError {
+    match &e {
+        sqlx::Error::Database(d) if d.is_foreign_key_violation() => AppError::NotFound,
+        _ => e.into(),
+    }
+}
+
 /// The sound, if `me` may change it: members of its server only.
 async fn editable(s: &AppState, me: UserId, id: &str) -> AppResult<Sound> {
     let sound = load(&s.db, id).await?.ok_or(AppError::NotFound)?;
@@ -264,6 +272,9 @@ async fn favourite(
     AuthUser(me): AuthUser,
     Path(id): Path<String>,
 ) -> AppResult<StatusCode> {
+    if !s.limits.sound_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
     editable(&s, me, &id).await?;
     let _order = s.hub.in_order().await;
     sqlx::query(
@@ -274,7 +285,8 @@ async fn favourite(
     .bind(&id)
     .bind(now())
     .execute(&s.db)
-    .await?;
+    .await
+    .map_err(gone)?;
     publish_favourites(&s, me).await;
     Ok(StatusCode::NO_CONTENT)
 }
@@ -284,6 +296,9 @@ async fn unfavourite(
     AuthUser(me): AuthUser,
     Path(id): Path<String>,
 ) -> AppResult<StatusCode> {
+    if !s.limits.sound_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
     let _order = s.hub.in_order().await;
     sqlx::query("DELETE FROM sound_favourites WHERE user_id = ? AND sound_id = ?")
         .bind(me.to_string())

@@ -8,6 +8,9 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 
 import SoundDialog from './SoundDialog.svelte'
 import SoundTidy from './SoundTidy.svelte'
+import { app } from '../lib/store.svelte'
+import { emptyState } from '../lib/state'
+import { soundboard } from '../lib/soundboard.svelte'
 
 const peaks = Array.from({ length: 200 }, (_, i) => (i % 10) / 10)
 const snd = (id: string, name: string, plays: number): Sound => ({
@@ -131,6 +134,18 @@ describe('SoundDialog add', () => {
     expect(calls('soundboard_preview')[0][1]).toMatchObject({ path: '/tmp/a.mp3', startMs: 0, endMs: 6000, soundPercent: 100 })
   })
 
+  it('previews at 100 when the soundboard volume is 0', async () => {
+    soundboard.volume_pct = 0
+    try {
+      await openAdd()
+      button('Preview').click()
+      await settle()
+      expect(calls('soundboard_preview')[0][1]).toMatchObject({ soundPercent: 100, soundboardPercent: 100 })
+    } finally {
+      soundboard.volume_pct = 100
+    }
+  })
+
   it('shows a refusal from the server inline and stays open', async () => {
     await openAdd()
     fill('Name', 'Boom')
@@ -163,6 +178,40 @@ describe('SoundDialog edit', () => {
 })
 
 describe('SoundTidy', () => {
+  const seven = () => [0, 1, 2, 3, 4, 5, 6].map((n) => snd('s' + n, 'Sound' + n, n))
+  const rows = () => [...document.querySelectorAll('li')]
+  beforeEach(() => {
+    app.state = emptyState()
+    app.state.sounds = Object.fromEntries(seven().map((x) => [x.id, x]))
+  })
+
+  it('a row deleted by someone else meanwhile goes quietly', async () => {
+    answers['list_sounds'] = seven()
+    cmp = mount(SoundTidy, { target: document.body, props: { serverId: 'S1', onClose } })
+    await settle()
+    invoke.mockImplementation((async (c: string) => {
+      if (c === 'delete_sound') throw 'not found'
+      return answers[c]
+    }) as never)
+    rows()[0].querySelector<HTMLButtonElement>('button')!.click()
+    await settle()
+    expect(document.querySelector('[role=alert]')).toBeNull()
+    expect(rows().some((r) => r.textContent?.includes('Sound0'))).toBe(false)
+  })
+
+  it('drops a row when its sound is deleted elsewhere', async () => {
+    answers['list_sounds'] = seven()
+    cmp = mount(SoundTidy, { target: document.body, props: { serverId: 'S1', onClose } })
+    await settle()
+    expect(rows()[1].textContent).toContain('Sound1')
+    // a SoundDeleted arrived (the store is replaced, never mutated)
+    const { s1: _gone, ...sounds } = app.state.sounds
+    app.state = { ...app.state, sounds }
+    await settle()
+    expect(rows().some((r) => r.textContent?.includes('Sound1'))).toBe(false)
+    expect(rows()).toHaveLength(4)
+  })
+
   it('lists the 5 least played, and Delete removes the row', async () => {
     answers['list_sounds'] = [0, 1, 2, 3, 4, 5, 6].map((n) => snd('s' + n, 'Sound' + n, n))
     cmp = mount(SoundTidy, { target: document.body, props: { serverId: 'S1', onClose } })

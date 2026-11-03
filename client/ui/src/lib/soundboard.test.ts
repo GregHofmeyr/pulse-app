@@ -4,7 +4,7 @@ import type { Sound } from './protocol/Sound'
 import { emptyState } from './state'
 import {
   loadSoundboardPrefs, saveSoundboardPrefs, loadSoundMutes, saveSoundMutes,
-  shouldPlay, soundSections, searchSounds, tidyCandidates,
+  shouldPlay, soundSections, searchSounds, tidyCandidates, isNotFound, previewPercent,
 } from './soundboard'
 
 const snd = (id: string, name: string, over: Partial<Sound> = {}): Sound => ({
@@ -46,6 +46,21 @@ describe('soundSections', () => {
     expect(out.map((x) => x.id)).toEqual(['server:S1'])
     expect(out[0].sounds).toEqual([])
   })
+  it('leaves out favourites and frequent sounds from servers you are no longer in', () => {
+    const s = { ...emptyState(), sounds, soundFavourites: ['D', 'A'], frequentSounds: ['D', 'C'] }
+    const out = soundSections(s, new Set(['S1', 'S2']), servers)
+    expect(out[0].sounds.map((x) => x.id)).toEqual(['A'])
+    expect(out[1].sounds.map((x) => x.id)).toEqual(['C'])
+    // only left-server sounds: the sections go entirely
+    const gone = soundSections({ ...emptyState(), sounds, soundFavourites: ['D'], frequentSounds: ['D'] }, new Set(['S1']), servers)
+    expect(gone.map((x) => x.id)).toEqual(['server:S1'])
+  })
+  it('caps frequent at 9 after leaving out other servers', () => {
+    const many = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`X${i}`, snd(`X${i}`, `n${i}`, { server_id: i < 3 ? 'S3' : 'S1' })]))
+    const s = { ...emptyState(), sounds: many, frequentSounds: Object.keys(many) }
+    const out = soundSections(s, new Set(['S1']), servers)
+    expect(out[0].sounds.map((x) => x.id)).toEqual(['X3', 'X4', 'X5', 'X6', 'X7', 'X8', 'X9', 'X10', 'X11'])
+  })
   it('caps frequent at 9 and drops unknown ids', () => {
     const many = Object.fromEntries(Array.from({ length: 12 }, (_, i) => [`X${i}`, snd(`X${i}`, `n${i}`)]))
     const s = { ...emptyState(), sounds: many, frequentSounds: ['gone', ...Object.keys(many)] }
@@ -71,6 +86,23 @@ describe('tidyCandidates', () => {
       snd('E', 'e', { plays: 2 }), snd('F', 'f', { plays: 3 }), snd('G', 'g', { plays: 4 }),
     ]
     expect(tidyCandidates(l).map((x) => x.id)).toEqual(['C', 'B', 'D', 'E', 'F'])
+  })
+})
+
+describe('isNotFound', () => {
+  it("matches the core's words for a 404 and nothing else", () => {
+    expect(isNotFound('not found')).toBe(true)
+    expect(isNotFound(new Error('not found'))).toBe(true)
+    expect(isNotFound("You're not in a call")).toBe(false)
+    expect(isNotFound('slow down a little, then try again')).toBe(false)
+  })
+})
+
+describe('previewPercent', () => {
+  it('previews at full volume when the soundboard is turned off, else at its volume', () => {
+    expect(previewPercent(0)).toBe(100)
+    expect(previewPercent(35)).toBe(35)
+    expect(previewPercent(100)).toBe(100)
   })
 })
 

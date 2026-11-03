@@ -35,11 +35,11 @@ impl Cache {
         Some(samples)
     }
 
-    /// Decode `bytes` and remember the result under `hash`, dropping the least recently used
-    /// beyond the limit. The cache's clone is what keeps a sound's data alive while the audio
-    /// callback finishes with (and drops) its own.
-    pub fn insert_decoded(&self, hash: &str, bytes: &[u8]) -> Result<Arc<[f32]>, String> {
-        let samples = decode::decode(bytes)?;
+    /// Decode `bytes` (on a blocking thread) and remember the result under `hash`, dropping the
+    /// least recently used beyond the limit. The cache's clone is what keeps a sound's data alive
+    /// while the audio callback finishes with (and drops) its own.
+    pub async fn insert_decoded(&self, hash: &str, bytes: Vec<u8>) -> Result<Arc<[f32]>, String> {
+        let samples = decode::decode_blocking(bytes).await?;
         self.put(hash, samples.clone());
         Ok(samples)
     }
@@ -110,10 +110,10 @@ mod tests {
         );
     }
 
-    #[test]
-    fn cache_refuses_garbage() {
+    #[tokio::test]
+    async fn cache_refuses_garbage() {
         let c = Cache::default();
-        assert!(c.insert_decoded("x", b"nope").is_err());
+        assert!(c.insert_decoded("x", b"nope".to_vec()).await.is_err());
         assert!(c.get("x").is_none());
     }
 

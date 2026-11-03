@@ -5,6 +5,7 @@
   import { onMount, untrack } from 'svelte'
   import { modal } from '../lib/actions'
   import type { Sound } from '../lib/protocol/Sound'
+  import { previewPercent } from '../lib/soundboard'
   import { soundboard } from '../lib/soundboard.svelte'
   import { MAX_SPAN_MS, STEP_MS, initialSpan, moveEnd, moveStart, msAt, spanLabel, type Span } from '../lib/soundTrim'
   import { errorText, soundboardCmd, type SoundPreview } from '../lib/tauri'
@@ -54,7 +55,7 @@
     if (!path || busy) return
     error = ''
     try {
-      await soundboardCmd.preview(path, span.start, span.end, boost, soundboard.volume_pct, loadAudioConfig().output ?? null)
+      await soundboardCmd.preview(path, span.start, span.end, boost, previewPercent(soundboard.volume_pct), loadAudioConfig().output ?? null)
     } catch (e) {
       error = errorText(e)
     }

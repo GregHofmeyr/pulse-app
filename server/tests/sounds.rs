@@ -717,3 +717,33 @@ async fn eleventh_play_in_a_second_is_429() {
     }
     assert_eq!(play(&app, &alex, &s.id).await.status(), 429);
 }
+
+#[tokio::test]
+async fn favourite_toggles_are_rate_limited() {
+    let mut cfg = test_config();
+    cfg.limits.sound_user = pulse_server::limits::Rate::new(3, 0.0001);
+    let app = spawn_with(cfg).await;
+    let (_, alex) = register(&app, "alex").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    let media = upload(&app, &alex, 1000).await;
+    // creating the sound spends one of the three
+    let s = create_ok(&app, &alex, srv.id, &media.hash).await;
+    assert_eq!(favourite(&app, &alex, &s.id, true).await.status(), 204);
+    assert_eq!(favourite(&app, &alex, &s.id, false).await.status(), 204);
+    assert_eq!(favourite(&app, &alex, &s.id, true).await.status(), 429);
+    assert_eq!(favourite(&app, &alex, &s.id, false).await.status(), 429);
+}
+
+#[tokio::test]
+async fn favouriting_a_sound_deleted_mid_request_is_404() {
+    let (app, [alex, ..], _, s) = soundboard().await;
+    // The sound goes between the membership check and the insert (a delete racing the favourite).
+    sqlx::query(
+        "CREATE TRIGGER race BEFORE INSERT ON sound_favourites
+         BEGIN DELETE FROM sounds WHERE id = NEW.sound_id; END",
+    )
+    .execute(&app.db)
+    .await
+    .unwrap();
+    assert_eq!(favourite(&app, &alex.1, &s.id, true).await.status(), 404);
+}

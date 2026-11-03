@@ -311,6 +311,9 @@ impl MixerInput {
 
     /// Mix a one-shot sound into the call output (soundboard), once, at `gain`.
     pub fn play_clip(&self, samples: Arc<[f32]>, gain: f32) {
+        if samples.is_empty() {
+            return; // nothing to hear
+        }
         self.cmds.lock().unwrap().push(Cmd::Clip { samples, gain });
     }
 
@@ -536,9 +539,13 @@ impl Mixer {
                     }
                 }
             }
+            // A clip can end mid-pull: past its end it adds nothing (indexing would panic in
+            // the audio callback, and then every callback after it).
             for c in &mut self.clips {
-                acc += c.samples[c.pos] * c.gain;
-                c.pos += 1;
+                if let Some(&v) = c.samples.get(c.pos) {
+                    acc += v * c.gain;
+                    c.pos += 1;
+                }
             }
             frame.fill(soft_limit(acc * master));
         }
@@ -735,6 +742,53 @@ mod tests {
         let mut out = vec![0.0; 480];
         m.mix_into(&mut out, 1, 1.0);
         assert!(out.iter().all(|v| (v - 0.25).abs() < 1e-6));
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| *v == 0.0));
+    }
+
+    #[test]
+    fn a_clip_shorter_than_the_pull_plays_then_silence() {
+        let (input, mut m) = mixer(48_000, 200);
+        input.play_clip(vec![0.5; 10].into(), 1.0);
+        let mut out = vec![1.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out[..10].iter().all(|v| (v - 0.5).abs() < 1e-6));
+        assert!(out[10..].iter().all(|v| *v == 0.0));
+    }
+
+    #[test]
+    fn a_clip_ending_mid_pull_finishes_on_the_next_pull() {
+        let (input, mut m) = mixer(48_000, 200);
+        input.play_clip(vec![0.5; 700].into(), 1.0);
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| (v - 0.5).abs() < 1e-6));
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out[..220].iter().all(|v| (v - 0.5).abs() < 1e-6));
+        assert!(out[220..].iter().all(|v| *v == 0.0));
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| *v == 0.0));
+    }
+
+    #[test]
+    fn an_empty_clip_is_refused_and_does_not_panic() {
+        let (input, mut m) = mixer(48_000, 200);
+        input.play_clip(Vec::<f32>::new().into(), 1.0);
+        assert!(input.cmds.lock().unwrap().is_empty(), "never sent");
+        let mut out = vec![1.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| *v == 0.0));
+    }
+
+    #[test]
+    fn an_empty_clip_that_reaches_the_callback_does_not_panic() {
+        // belt and braces: the callback itself never reads past a clip's end
+        let (input, mut m) = mixer(48_000, 200);
+        input.cmds.lock().unwrap().push(Cmd::Clip {
+            samples: Vec::<f32>::new().into(),
+            gain: 1.0,
+        });
+        let mut out = vec![1.0; 480];
         m.mix_into(&mut out, 1, 1.0);
         assert!(out.iter().all(|v| *v == 0.0));
     }

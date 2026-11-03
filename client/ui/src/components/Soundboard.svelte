@@ -6,7 +6,7 @@
   import type { Sound } from '../lib/protocol/Sound'
   import { app } from '../lib/store.svelte'
   import { mediaUrl } from '../lib/emoji'
-  import { isRateLimited, searchSounds, soundSections, TIDY_THRESHOLD, type Section } from '../lib/soundboard'
+  import { isNotFound, isRateLimited, previewPercent, searchSounds, soundSections, TIDY_THRESHOLD, type Section } from '../lib/soundboard'
   import { setSoundboardVolume, soundboard } from '../lib/soundboard.svelte'
   import { errorText, soundboardCmd } from '../lib/tauri'
   import { loadAudioConfig } from '../lib/voiceui'
@@ -47,13 +47,14 @@
     try {
       await soundboardCmd.playToCall(s.id)
     } catch (e) {
-      if (!isRateLimited(e)) error = errorText(e)
+      // a stale click (the sound was just deleted) or the abuse limit: nothing worth saying
+      if (!isRateLimited(e) && !isNotFound(e)) error = errorText(e)
     }
   }
   // Local only: never touches the server, so nobody else hears it.
   function preview(s: Sound) {
     error = null
-    soundboardCmd.play(s.media_hash, soundboard.volume_pct, s.volume, loadAudioConfig().output ?? null).catch((e) => (error = errorText(e)))
+    soundboardCmd.play(s.media_hash, previewPercent(soundboard.volume_pct), s.volume, loadAudioConfig().output ?? null).catch((e) => (error = errorText(e)))
   }
   function favourite(s: Sound) {
     soundboardCmd.setFavourite(s.id, !favourites.has(s.id)).catch((e) => (error = errorText(e)))
@@ -63,7 +64,7 @@
     try {
       await soundboardCmd.remove(s.id)
     } catch (e) {
-      error = errorText(e)
+      if (!isNotFound(e)) error = errorText(e) // someone else deleted it first: same result
     }
   }
 

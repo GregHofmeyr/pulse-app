@@ -59,9 +59,10 @@ export function shouldPlay(
 
 const byName = (a: Sound, b: Sound) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' })
 
-/** Popover sections: favourites (your order), frequent (top 9), then each server you're in. */
+/** Popover sections: favourites (your order), frequent (top 9), then each server you're in.
+ * Favourites and frequent leave out servers you've left (their sounds can't be played). */
 export function soundSections(s: AppState, memberOf: Set<string>, servers: Server[]): Section[] {
-  const pick = (ids: string[]) => ids.map((id) => s.sounds[id]).filter((x): x is Sound => !!x)
+  const pick = (ids: string[]) => ids.map((id) => s.sounds[id]).filter((x): x is Sound => !!x && memberOf.has(x.server_id))
   const out: Section[] = []
   const fav = pick(s.soundFavourites)
   if (fav.length) out.push({ id: 'favourites', label: 'Favourites', sounds: fav })
@@ -87,6 +88,12 @@ export function searchSounds(sounds: Sound[], q: string): Sound[] {
 /** The core's words for a 429 (`ApiError::RateLimited`): a play that hit the abuse limit is dropped quietly. */
 export const isRateLimited = (e: unknown): boolean =>
   (typeof e === 'string' ? e : e instanceof Error ? e.message : '').startsWith('slow down a little')
+
+/** The core's words for a 404: the sound was deleted meanwhile (its SoundDeleted removes the tile). */
+export const isNotFound = (e: unknown): boolean => (typeof e === 'string' ? e : e instanceof Error ? e.message : '') === 'not found'
+
+/** Previews are for yourself: with the soundboard turned off they still play, at full volume. */
+export const previewPercent = (volume_pct: number): number => (volume_pct > 0 ? volume_pct : 100)
 
 /** A server's section offers "Tidy up?" once it holds more than this many sounds. */
 export const TIDY_THRESHOLD = 24

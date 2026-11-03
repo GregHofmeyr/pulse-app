@@ -32,13 +32,17 @@ pub enum SoundFileError {
     Empty,
     TooLong,
     TooLarge,
+    /// Far more packets than its length could hold: a decode bomb, not a sound.
+    TooManyPackets,
 }
 
 impl fmt::Display for SoundFileError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(match self {
             Self::NotOgg | Self::NotOpus => "that isn't an Ogg Opus file",
-            Self::BadChecksum | Self::Truncated => "that sound file is damaged",
+            Self::BadChecksum | Self::Truncated | Self::TooManyPackets => {
+                "that sound file is damaged"
+            }
             Self::Channels => "sounds must be mono or stereo",
             Self::Empty => "that sound is empty",
             Self::TooLong => "sounds can be at most 6 seconds",
@@ -156,8 +160,12 @@ pub fn parse_ogg_opus(bytes: &[u8]) -> Result<OggOpus<'_>, SoundFileError> {
         return Err(SoundFileError::Empty);
     }
 
+    // checked first: a hostile negative granule minus the pre-skip would overflow
+    if last_granule < 0 {
+        return Err(SoundFileError::Empty);
+    }
     let samples = last_granule - i64::from(pre_skip);
-    if last_granule < 0 || samples <= 0 {
+    if samples <= 0 {
         return Err(SoundFileError::Empty);
     }
     let ms = samples / 48;
@@ -166,6 +174,12 @@ pub fn parse_ogg_opus(bytes: &[u8]) -> Result<OggOpus<'_>, SoundFileError> {
     }
     if ms > i64::from(MAX_DURATION_MS) {
         return Err(SoundFileError::TooLong);
+    }
+    // Only the last granule is checked above, so 256 KiB of tiny packets could still hold far
+    // more audio than it claims (every listener would decode it all). An Opus packet is at least
+    // 2.5 ms, so a real file never has more than this.
+    if audio.len() as i64 > ms * 2 / 5 + 64 {
+        return Err(SoundFileError::TooManyPackets);
     }
     Ok(OggOpus {
         channels,
@@ -311,6 +325,27 @@ mod tests {
         let mut f = page(2, 0, 0, &[h.len() as u8], &h);
         f.extend(page(4, 0, 1, &[t.len() as u8], &t));
         assert_eq!(parse_ogg_opus(&f), Err(SoundFileError::Empty));
+    }
+
+    #[test]
+    fn a_hostile_negative_granule_does_not_overflow() {
+        // i64::MIN minus the pre-skip would overflow (a panic in a debug build).
+        assert_eq!(
+            parse_ogg_opus(&stream(1, 4, i64::MIN)),
+            Err(SoundFileError::Empty)
+        );
+    }
+
+    #[test]
+    fn refuses_far_more_packets_than_its_length_holds() {
+        // Every Opus packet is at least 2.5 ms, so 100 ms holds at most 40 (plus slack of 64).
+        let ok = stream(1, 104, 312 + 48 * 100);
+        assert_eq!(parse_ogg_opus(&ok).unwrap().packets.len(), 104);
+        let hostile = stream(1, 105, 312 + 48 * 100);
+        assert_eq!(
+            parse_ogg_opus(&hostile).unwrap_err().to_string(),
+            "that sound file is damaged"
+        );
     }
 
     #[test]

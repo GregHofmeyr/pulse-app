@@ -3276,7 +3276,7 @@ pub async fn soundboard_play(
                     tracing::warn!(%status, "soundboard: couldn't fetch a sound");
                     "That sound couldn't be loaded.".to_owned()
                 })?;
-            cache.insert_decoded(&hash, &bytes).inspect_err(|e| {
+            cache.insert_decoded(&hash, bytes).await.inspect_err(|e| {
                 tracing::warn!(error = %e, "soundboard: couldn't decode a sound");
             })?
         }
@@ -3299,7 +3299,7 @@ pub async fn soundboard_preview(
     output: Option<String>,
 ) -> Result<(), String> {
     let bytes = prepared_bytes(&app, &prepared, &path, start_ms, end_ms).await?;
-    let samples = crate::soundboard::decode::decode(&bytes)?;
+    let samples = crate::soundboard::decode::decode_blocking(bytes).await?;
     let gain = crate::soundboard::gain(soundboard_percent, sound_percent);
     if gain > 0.0 {
         play_decoded(&app, samples, gain, output).await;

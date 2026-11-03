@@ -4,7 +4,8 @@
   import { onMount } from 'svelte'
   import { modal } from '../lib/actions'
   import type { Sound } from '../lib/protocol/Sound'
-  import { tidyCandidates } from '../lib/soundboard'
+  import { isNotFound, tidyCandidates } from '../lib/soundboard'
+  import { app } from '../lib/store.svelte'
   import { errorText, soundboardCmd } from '../lib/tauri'
 
   let { serverId, onClose }: { serverId: string; onClose: () => void } = $props()
@@ -12,6 +13,8 @@
   let rows = $state<Sound[] | null>(null)
   let busy = $state<string | null>(null)
   let error = $state('')
+  // a sound deleted elsewhere (SoundDeleted) leaves the list too
+  const shown = $derived(rows?.filter((r) => r.id in app.state.sounds) ?? null)
 
   onMount(() => {
     soundboardCmd.list(serverId).then((all) => (rows = tidyCandidates(all)), (e) => { rows = []; error = errorText(e) })
@@ -25,7 +28,9 @@
       await soundboardCmd.remove(s.id)
       rows = (rows ?? []).filter((r) => r.id !== s.id)
     } catch (e) {
-      error = errorText(e)
+      // someone else deleted it first: same result
+      if (isNotFound(e)) rows = (rows ?? []).filter((r) => r.id !== s.id)
+      else error = errorText(e)
     } finally {
       busy = null
     }
@@ -37,11 +42,11 @@
   <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Tidy up sounds" tabindex="-1" use:modal={onClose}>
     <h1 class="modal-title">Tidy up</h1>
     <p>The least-played sounds here. Delete any you don't need to make room.</p>
-    {#if rows === null}
+    {#if shown === null}
       <p class="hint">Loading…</p>
     {:else}
       <ul>
-        {#each rows as s (s.id)}
+        {#each shown as s (s.id)}
           <li>
             <span class="emoji" aria-hidden="true">{s.emoji ?? ''}</span>
             <span class="name">{s.name}</span>
