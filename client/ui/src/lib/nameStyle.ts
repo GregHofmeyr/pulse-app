@@ -1,31 +1,12 @@
 // The one name-style resolver (plan reconciliations 7, 11, 12). The lightening rule has a twin in
 // server/src/profiles/colors.rs; both must give identical results.
+import { contrast, luminance, parseHex, toHex, type Rgb } from './color'
 import { fontByKey, type NameFont } from './nameFonts'
 import type { User } from './protocol/User'
 
 export const MIN_NAME_LUMINANCE = 0.39
 
-type Rgb = [number, number, number]
-
-/** `#rrggbb`, case-insensitive, and nothing else. */
-export function parseHex(s: string): Rgb | null {
-  if (!/^#[0-9a-fA-F]{6}$/.test(s)) return null
-  return [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16)) as Rgb
-}
-
-/** `#rrggbb`, lowercase. */
-export function toHex(rgb: Rgb): string {
-  return '#' + rgb.map((v) => v.toString(16).padStart(2, '0')).join('')
-}
-
-/** WCAG relative luminance. */
-export function luminance(rgb: Rgb): number {
-  const lin = (c: number) => {
-    const v = c / 255
-    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
-  }
-  return 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2])
-}
+export { contrast, luminance, parseHex, toHex }
 
 /** `hex` unchanged if bright enough for a name, else mixed towards white in 1% steps to the smallest mix that is. */
 export function lightenForName(hex: string): string {
@@ -37,13 +18,6 @@ export function lightenForName(hex: string): string {
     if (luminance(m) >= MIN_NAME_LUMINANCE) return toHex(m)
   }
   return '#ffffff'
-}
-
-/** WCAG contrast ratio of two `#rrggbb` colours. */
-export function contrast(a: string, b: string): number {
-  const la = luminance(parseHex(a)!)
-  const lb = luminance(parseHex(b)!)
-  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
 }
 
 export type NamePreset = { key: string; label: string; colors: string[] }
