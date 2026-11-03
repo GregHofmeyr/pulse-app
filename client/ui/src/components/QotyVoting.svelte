@@ -240,7 +240,7 @@
   .foot, .confirm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .confirm p { flex: 1; margin: 0; font-size: 13px; }
   .foot .qoty-btn, .confirm .qoty-btn { height: 34px; }
-  .qoty-btn.danger { background: var(--danger); color: var(--text); box-shadow: 0 2px 0 color-mix(in srgb, var(--danger) 55%, var(--bg-0)); }
+  .qoty-btn.danger { background: var(--danger); color: var(--on-danger); box-shadow: 0 2px 0 color-mix(in srgb, var(--danger) 55%, var(--bg-0)); }
   .confirm .btn { height: 34px; }
 
   /* motion (off under reduced motion: no .animated, no .popped) */

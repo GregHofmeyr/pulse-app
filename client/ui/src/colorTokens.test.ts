@@ -79,6 +79,7 @@ const ALLOWED: Record<string, { literals: string[]; reason: string }[]> = {
   ],
   'components/TwoFactorSettings.svelte': [{ literals: ['#fff', '#000'], reason: 'the QR code: white quiet zone, black modules, or scanners fail' }],
   'components/EmojiPicker.svelte': [{ literals: ['#f7c948', '#f7dbc0', '#e8c29a', '#c89369', '#9a6a45', '#5f402c'], reason: 'skin-tone swatches: content colours' }],
+  'components/AppearanceSettings.svelte': [{ literals: ['#3b4bd8'], reason: 'a sample role colour in the Name readability preview (user data, not UI)' }],
   'components/ProfileSettings.svelte': [{ literals: ['#ffffff'], reason: "the first custom name colour's starting value (user data, not UI)" }],
   'components/ProfileCard.svelte': [{ literals: ['rgb(242 243 246 / .12)', 'rgb(242 243 246 / .08)', 'rgb(242 243 246 / .14)', '#ff9d96'], reason: PROFILE_CARD }],
 }
@@ -177,6 +178,21 @@ describe('text vs fill', () => {
       const allowed = FILL_AS_TEXT[rel(f)]
       for (const line of readFileSync(f, 'utf8').split('\n')) {
         if (/(^|[\s;{])(color|caret-color|-webkit-text-fill-color):\s*var\(--(accent|warn|ok|quote-green)\)/.test(line) && !(allowed && allowed.test(line))) offenders.push(`${rel(f)}: ${line.trim()}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('text on a fill (#42)', () => {
+  // A theme's --text turns dark on Light: on an accent, danger or quote-green fill the text is the fill's own --on-*.
+  it('a rule that fills with accent, danger or quote green colours its text with the matching --on- token', () => {
+    const offenders: string[] = []
+    for (const f of [...svelteFiles, resolve(__dirname, 'app.css')]) {
+      for (const line of readFileSync(f, 'utf8').split('\n')) {
+        const fill = /background(?:-color)?: var\(--(accent|danger|quote-green)\)/.exec(line)?.[1]
+        const text = /(?:^|[\s;{])color: var\(--([\w-]+)\)/.exec(line)?.[1]
+        if (fill && text && text !== `on-${fill}`) offenders.push(`${rel(f)}: ${line.trim()}`)
       }
     }
     expect(offenders).toEqual([])
