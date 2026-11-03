@@ -23,6 +23,7 @@ MAPPING = {
     "message": ("digital-audio/Audio/pepSound3.ogg", 0.0, 0.40),
     "live": ("interface-sounds/Audio/confirmation_004.ogg", 0.0, 0.50),
     "live_end": ("digital-audio/Audio/phaserDown2.ogg", 0.0, 0.31),
+    "badge": ("interface-sounds/Audio/confirmation_004.ogg", 0.0, 0.50),
 }
 
 FADE_IN, FADE_OUT = 0.005, 0.020

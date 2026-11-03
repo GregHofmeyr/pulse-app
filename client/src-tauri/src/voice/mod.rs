@@ -10,6 +10,7 @@ pub mod meter;
 pub mod micsilence;
 pub mod mictest;
 pub mod mixer;
+pub mod mutedtalk;
 pub mod netstats;
 pub mod playout;
 pub mod processor;
@@ -812,6 +813,8 @@ pub enum VoiceEvent {
     MicSilent {
         silent: bool,
     },
+    /// We've been talking into a muted mic (reported to the server for The Doos badge).
+    MutedTalk,
     /// Whether our mic is in the room. "Connected" comes first; the publish follows ~1 RTT later.
     /// A failed publish ends the call (`error` says why).
     Mic {
@@ -1677,6 +1680,9 @@ impl VoiceManager {
                     }
                     if let Some(silent) = shared.mic_silence.lock().unwrap().take_change() {
                         events(VoiceEvent::MicSilent { silent });
+                    }
+                    if shared.muted_talk.lock().unwrap().take_fired() {
+                        events(VoiceEvent::MutedTalk);
                     }
                     // Ring = actually audible: received levels per peer + what we really send.
                     let mut levels = shared.mix_in.take_peer_levels();
@@ -3266,6 +3272,14 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&e).unwrap(),
             r#"{"kind":"stage","stage":"reconnecting","attempt":2}"#
+        );
+    }
+
+    #[test]
+    fn muted_talk_event_serialises_for_the_ui() {
+        assert_eq!(
+            serde_json::to_string(&VoiceEvent::MutedTalk).unwrap(),
+            r#"{"kind":"muted_talk"}"#
         );
     }
 

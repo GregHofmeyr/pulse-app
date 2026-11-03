@@ -51,6 +51,7 @@ sound_table!(
     ];
     names: [
         "join", "leave", "mute", "unmute", "deafen", "undeafen", "message", "live", "live_end",
+        "badge",
     ]
 );
 

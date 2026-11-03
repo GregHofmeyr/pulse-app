@@ -4,6 +4,7 @@ import type { User } from './protocol/User'
 import type { Profile } from './protocol/Profile'
 import type { UpdateProfileRequest } from './protocol/UpdateProfileRequest'
 import type { NameArchivePage } from './protocol/NameArchivePage'
+import type { BadgeCatalogue } from './protocol/BadgeCatalogue'
 import type { CropRect } from './crop'
 import type { Server } from './protocol/Server'
 import type { Channel } from './protocol/Channel'
@@ -154,6 +155,16 @@ export const api = {
   uploadEmojiMedia: (bytes: Uint8Array) => invoke<MediaInfo>('upload_emoji_media', bytes),
   getProfile: (userId: string) => invoke<Profile>('get_profile', { userId }),
   updateProfile: (request: UpdateProfileRequest) => invoke<Profile>('update_profile', { request }),
+  /** Every badge as you may see it, and how many people there are to have them. */
+  getBadgeCatalogue: () => invoke<BadgeCatalogue>('get_badge_catalogue'),
+  /** Up to 5 of your badges for your card, in order; empty goes back to the rarest five. */
+  setBadgeShowcase: (keys: string[]) => invoke<void>('set_badge_showcase', { keys }),
+  /** You opened your trophy case: nothing of yours is [NEW] now. */
+  markBadgesSeen: () => invoke<void>('mark_badges_seen'),
+  /** The "you're muted" detector fired (the server decides whether it counts). */
+  reportMutedTalk: () => invoke<void>('report_muted_talk'),
+  /** You found a hidden egg (`'logo'`). */
+  reportEgg: (egg: string) => invoke<void>('report_egg', { egg }),
   /** Someone's nickname in a server (`null` resets it); anyone in the server may. */
   setNickname: (serverId: string, userId: string, nickname: string | null) => invoke<Member>('set_nickname', { serverId, userId, nickname }),
   /** The name only you see for someone (`null` clears it). */

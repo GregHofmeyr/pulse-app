@@ -249,10 +249,10 @@ describe('sound catalogue', () => {
   it('event names match the classic files, with labels', () => {
     const files = readdirSync(new URL('classic/', soundsDir)).map((f) => f.replace(/\.wav$/, ''))
     expect([...SOUND_NAMES].sort()).toEqual(files.sort())
-    expect(SOUND_NAMES).toEqual(['join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'message', 'live', 'live_end'])
+    expect(SOUND_NAMES).toEqual(['join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'message', 'live', 'live_end', 'badge'])
     expect(SOUND_NAMES.map((n) => SOUND_LABELS[n])).toEqual([
       'Join a call', 'Leave a call', 'Mute', 'Unmute', 'Deafen', 'Undeafen',
-      'New message', 'Someone goes live', 'A stream ends',
+      'New message', 'Someone goes live', 'A stream ends', 'Badge unlocked',
     ])
   })
 })

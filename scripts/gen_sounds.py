@@ -68,6 +68,8 @@ CLASSIC = {
     # someone goes live / a stream ends: a rising / falling three-note run
     "live": tone([(587, 587), (784, 784), (1175, 1175)], 0.07, vol=0.30),
     "live_end": tone([(1175, 1175), (784, 784), (587, 587)], 0.07, vol=0.30),
+    # a badge unlocked: a rising major chime, brighter than "live"
+    "badge": tone([(784, 784), (988, 988), (1568, 1568)], 0.08, gap=0.015, vol=0.30),
 }
 
 
@@ -102,16 +104,21 @@ TWOSTEP_PAIRS = {
     "undeafen": ((0.5, 0.6667), 1.0), "deafen": ((0.6667, 0.5), 1.0),
     "live": ((1, 1.6667), 1.0), "live_end": ((1.6667, 1), 1.0),
     "message": ((1.5, 2.0), None),
+    # the one three-note event: a rising major chime
+    "badge": ((1, 1.25, 2.0), 0.8),
 }
 # the message notes are this long whatever the variant
 MESSAGE_NOTE = 0.06
 
 def twostep(variant, event):
     base, partials, note, attack = TWOSTEP[variant]
-    (m1, m2), scale = TWOSTEP_PAIRS[event]
+    mults, scale = TWOSTEP_PAIRS[event]
     dur = MESSAGE_NOTE if scale is None else note * scale
     gap = [0.0] * int(RATE * 0.025)
-    return _note(base * m1, dur, partials, attack) + gap + _note(base * m2, dur, partials, attack)
+    out = _note(base * mults[0], dur, partials, attack)
+    for m in mults[1:]:
+        out += gap + _note(base * m, dur, partials, attack)
+    return out
 
 # Minimal: one note at base * multiple
 MINIMAL_MULT = {
@@ -119,15 +126,30 @@ MINIMAL_MULT = {
     "deafen": 0.75, "live": 2.0, "live_end": 1.6818, "message": 1.8877,
 }
 
+# badge: the set's one note, three times, rising, each cut short (the set's sounds stay <= 0.2 s)
+MINIMAL_BADGE = (1.5, 1.8877, 2.2449)
+MINIMAL_BADGE_NOTE = 0.055
+
 def minimal(variant, event):
-    m = MINIMAL_MULT[event]
+    if event == "badge":
+        gap = [0.0] * int(RATE * 0.01)
+        out = _minimal_note(variant, MINIMAL_BADGE[0], MINIMAL_BADGE_NOTE)
+        for m in MINIMAL_BADGE[1:]:
+            out += gap + _minimal_note(variant, m, MINIMAL_BADGE_NOTE)
+        return out
+    return _minimal_note(variant, MINIMAL_MULT[event])
+
+def _minimal_note(variant, m, short=None):
+    """One note of the variant; `short`: this long instead, with a quick release so it doesn't click."""
     if variant == "soft":
-        n = int(RATE * 0.12)
+        n = int(RATE * (short or 0.12))
         return [math.sin(2 * math.pi * 880 * m * i / RATE) * 0.5 * (1 - math.cos(2 * math.pi * i / n))
                 for i in range(n)]
+    release = 0.012 if short else None
     if variant == "wood":
-        return _note(587 * m, 0.12, [(1, 1.0), (2.76, 0.3)], 0.002, release=None, decay=[0.025, 0.025])
-    return _note(1319 * m, 0.18, [(1, 1.0), (2.76, 0.4), (5.4, 0.15)], 0.002, release=None,
+        return _note(587 * m, short or 0.12, [(1, 1.0), (2.76, 0.3)], 0.002, release=release,
+                     decay=[0.025, 0.025])
+    return _note(1319 * m, short or 0.18, [(1, 1.0), (2.76, 0.4), (5.4, 0.15)], 0.002, release=release,
                  decay=[0.060, 0.030, 0.015])
 
 def _scaled(make, minus_db=0.0):

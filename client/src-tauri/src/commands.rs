@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 use pulse_protocol::gateway::ClientFrame;
 use pulse_protocol::ids::{ChannelId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId};
 use pulse_protocol::rest::{
-    Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji, DeletedChannel,
-    EditClipRequest, EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest, MediaInfo, Member,
-    Message, MuteTarget, NameArchivePage, PostQuoteRequest, Profile, QotyEvent,
+    BadgeCatalogue, Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji,
+    DeletedChannel, EditClipRequest, EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest,
+    MediaInfo, Member, Message, MuteTarget, NameArchivePage, PostQuoteRequest, Profile, QotyEvent,
     RecoveryCodesResponse, SearchRequest, SearchResults, Server, SetMuteRequest, StartQotyRequest,
     TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, User,
 };
@@ -1568,6 +1568,51 @@ pub async fn update_profile(
 ) -> Result<Profile, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.update_profile(&token, &request).await)
+}
+
+// ---------- Badges ----------
+
+#[tauri::command]
+pub async fn get_badge_catalogue(
+    app: AppHandle,
+    core: State<'_, Core>,
+) -> Result<BadgeCatalogue, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.badge_catalogue(&token).await)
+}
+
+#[tauri::command]
+pub async fn set_badge_showcase(
+    app: AppHandle,
+    core: State<'_, Core>,
+    keys: Vec<String>,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    let req = pulse_protocol::rest::SetShowcaseRequest { keys };
+    core.check(&app, api.set_showcase(&token, &req).await)
+}
+
+#[tauri::command]
+pub async fn mark_badges_seen(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.badges_seen(&token).await)
+}
+
+#[tauri::command]
+pub async fn report_muted_talk(app: AppHandle, core: State<'_, Core>) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.muted_talk(&token).await)
+}
+
+#[tauri::command]
+pub async fn report_egg(
+    app: AppHandle,
+    core: State<'_, Core>,
+    egg: String,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    let req = pulse_protocol::rest::EggRequest { egg };
+    core.check(&app, api.badge_egg(&token, &req).await)
 }
 
 #[tauri::command]

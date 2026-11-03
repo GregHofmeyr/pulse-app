@@ -3,11 +3,11 @@ import { invoke } from '@tauri-apps/api/core'
 
 export type Flags = { muted: boolean; deafened: boolean }
 export type SoundName =
-  | 'join' | 'leave' | 'mute' | 'unmute' | 'deafen' | 'undeafen' | 'message' | 'live' | 'live_end'
+  | 'join' | 'leave' | 'mute' | 'unmute' | 'deafen' | 'undeafen' | 'message' | 'live' | 'live_end' | 'badge'
 
 /** The events, in display order. */
 export const SOUND_NAMES: readonly SoundName[] = [
-  'join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'message', 'live', 'live_end',
+  'join', 'leave', 'mute', 'unmute', 'deafen', 'undeafen', 'message', 'live', 'live_end', 'badge',
 ]
 export const SOUND_LABELS: Record<SoundName, string> = {
   join: 'Join a call',
@@ -19,6 +19,7 @@ export const SOUND_LABELS: Record<SoundName, string> = {
   message: 'New message',
   live: 'Someone goes live',
   live_end: 'A stream ends',
+  badge: 'Badge unlocked',
 }
 
 export type SoundSetId =
@@ -91,6 +92,8 @@ export type VoiceEvent =
   | { kind: 'device_recovered' }
   | { kind: 'mic_silent'; silent: boolean }
   | { kind: 'mic'; live: boolean; error: string | null }
+  /** You've been talking into a muted mic (reported for The Doos badge). */
+  | { kind: 'muted_talk' }
 
 export const clampVolume = (pct: number) => Math.round(Math.min(200, Math.max(0, pct)))
 

@@ -6,19 +6,19 @@ use pulse_protocol::ids::{
     ChannelId, ClipUploadId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId,
 };
 use pulse_protocol::rest::{
-    AddGameRequest, AddMembersRequest, AddQotyOptionRequest, ChangePasswordRequest, Channel,
-    ChannelKind, ClipFacets, ClipStorage, ClipUpload, ClipUploadRequest, ClipUrl, ClipView,
-    ConfirmClipRequest, CreateDmRequest, CreateEmojiRequest, CustomEmoji, DeletedChannel,
-    EditClipRequest, EditMessageRequest, EditQuoteRequest, Game, GoLiveRequest, HideEmbedRequest,
-    Leaderboard, LinkSpeakerRequest, LoginMfaRequest, LoginRequest, MarkReadRequest, MediaInfo,
-    Member, Message, MfaRequired, MuteTarget, NameArchivePage, PostQuoteRequest, Profile,
-    QotyEvent, QotyVoteRequest, RecoveryCodesResponse, RegisterRequest, RenameChannelRequest,
-    RenameEmojiRequest, ReopenQotyRequest, SearchRequest, SearchResults, SendMessageRequest,
-    Server, SessionResponse, SetClipViewRequest, SetMuteRequest, SetNicknameRequest,
-    StartQotyRequest, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
-    ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
-    TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, User, VoiceTokenResponse,
-    WatchRequest,
+    AddGameRequest, AddMembersRequest, AddQotyOptionRequest, BadgeCatalogue, ChangePasswordRequest,
+    Channel, ChannelKind, ClipFacets, ClipStorage, ClipUpload, ClipUploadRequest, ClipUrl,
+    ClipView, ConfirmClipRequest, CreateDmRequest, CreateEmojiRequest, CustomEmoji, DeletedChannel,
+    EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest, Game, GoLiveRequest,
+    HideEmbedRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest, LoginRequest,
+    MarkReadRequest, MediaInfo, Member, Message, MfaRequired, MuteTarget, NameArchivePage,
+    PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse, RegisterRequest,
+    RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest, SearchRequest, SearchResults,
+    SendMessageRequest, Server, SessionResponse, SetClipViewRequest, SetMuteRequest,
+    SetNicknameRequest, SetShowcaseRequest, StartQotyRequest, StreamInfo, StreamRole,
+    StreamSettings, StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest,
+    TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus,
+    UpdateProfileRequest, User, VoiceTokenResponse, WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -1159,6 +1159,72 @@ impl Api {
         Self::parse(
             self.http
                 .put(self.url(&["me", "profile"])?)
+                .bearer_auth(token)
+                .json(req)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// `GET /badges`: every badge as you may see it.
+    pub async fn badge_catalogue(&self, token: &str) -> Result<BadgeCatalogue, ApiError> {
+        Self::parse(
+            self.http
+                .get(self.url(&["badges"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Choose your card's showcase (empty: back to the rarest five).
+    pub async fn set_showcase(
+        &self,
+        token: &str,
+        req: &SetShowcaseRequest,
+    ) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .put(self.url(&["me", "badges", "showcase"])?)
+                .bearer_auth(token)
+                .json(req)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// You opened your trophy case: nothing of yours is [NEW] now.
+    pub async fn badges_seen(&self, token: &str) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(self.url(&["me", "badges", "seen"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// The "you're muted" detector fired; the server decides whether it counts.
+    pub async fn muted_talk(&self, token: &str) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(self.url(&["me", "badges", "muted-talk"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// You found a hidden egg.
+    pub async fn badge_egg(&self, token: &str, req: &EggRequest) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(self.url(&["me", "badges", "egg"])?)
                 .bearer_auth(token)
                 .json(req)
                 .send()
@@ -3544,6 +3610,45 @@ mod tests {
         assert_eq!(read.user.avatar_hash.as_deref(), Some(avatar.hash.as_str()));
         assert_eq!(read.card.pronouns.as_deref(), Some("they/them"));
         assert_eq!(read.card.bio.as_deref(), Some("hi"));
+    }
+
+    #[tokio::test]
+    async fn badge_catalogue_and_showcase_round_trip() {
+        let app = testing::spawn().await;
+        let (me, token) = testing::register(&app, "alex").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let before = api.badge_catalogue(&token).await.unwrap();
+        assert!(before.people >= 1);
+        assert!(
+            before.badges.iter().all(|b| b.key != "logo_egg"),
+            "masked until found"
+        );
+
+        api.badge_egg(&token, &EggRequest { egg: "logo".into() })
+            .await
+            .unwrap();
+        let after = api.badge_catalogue(&token).await.unwrap();
+        assert!(after.badges.iter().any(|b| b.key == "logo_egg"));
+
+        api.set_showcase(
+            &token,
+            &SetShowcaseRequest {
+                keys: vec!["logo_egg".into()],
+            },
+        )
+        .await
+        .unwrap();
+        api.badges_seen(&token).await.unwrap();
+        // not in a voice channel: accepted, quietly not counted
+        api.muted_talk(&token).await.unwrap();
+        let read = api.profile(&token, me).await.unwrap();
+        assert_eq!(read.showcase, vec!["logo_egg".to_string()]);
+        assert!(read.badges.iter().all(|b| b.seen));
+        assert!(
+            api.badge_egg(&token, &EggRequest { egg: "nope".into() })
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]

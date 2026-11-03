@@ -14,6 +14,7 @@ use super::devices::{INTERNAL_RATE, NsStatus, Shared};
 use super::gate::{PREROLL_BLOCKS, VoiceGate};
 use super::micsilence;
 use super::mixer::soft_limit;
+use super::mutedtalk;
 use super::resampler::StreamResampler;
 
 const OVERLOAD_WINDOW: usize = 300; // 3 s of 10 ms blocks
@@ -548,6 +549,7 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
             let mut block: Vec<f32> = pending.drain(..FRAME).collect();
             // raw, before any processing: AGC would lift a near-silent mic
             let raw_peak = micsilence::peak(&block);
+            let raw_rms = mutedtalk::rms(&block);
             // render before capture: what the speakers played up to now is the echo reference
             shared.feed_echo_reference();
             // WebRTC APM (HPF, AEC, AGC) works on i16
@@ -575,6 +577,11 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
                 .lock()
                 .unwrap()
                 .block(raw_peak, mic_open, Instant::now());
+            shared
+                .muted_talk
+                .lock()
+                .unwrap()
+                .block(raw_rms, !mic_open, Instant::now());
             if !denoise {
                 // Muted, no meter on screen: skip the denoiser (Strong is most of a call's CPU).
                 // APM above keeps running, so echo cancellation is still converged on unmute.
