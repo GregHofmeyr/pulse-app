@@ -528,6 +528,31 @@ async fn play_reaches_only_the_call() {
     assert!(quiet(&mut k_ws).await, "kim is not in the call");
 }
 
+/// A stale or forged voice-state entry must not widen who hears a private call: the relay
+/// intersects the call's members with the channel's audience.
+#[tokio::test]
+async fn play_in_a_private_call_reaches_only_its_members() {
+    let (app, [alex, sam, _], srv, s) = soundboard().await;
+    let jo = register(&app, "jo").await;
+    join(&app, &jo.1, srv).await;
+    let dm = create_dm(&app, &alex.1, &[sam.0]).await;
+    app.state().voice.join(dm.id, alex.0, "PA_a");
+    app.state().voice.join(dm.id, sam.0, "PA_s");
+    app.state().voice.join(dm.id, jo.0, "PA_j");
+    let (mut a_ws, _) = hello(&app, &alex.1).await;
+    let (mut s_ws, _) = hello(&app, &sam.1).await;
+    let (mut j_ws, _) = hello(&app, &jo.1).await;
+
+    assert_eq!(play(&app, &alex.1, &s.id).await.status(), 204);
+    for ws in [&mut a_ws, &mut s_ws] {
+        match next_event(ws).await {
+            Event::SoundPlayed { channel_id, .. } => assert_eq!(channel_id, dm.id),
+            other => panic!("{other:?}"),
+        }
+    }
+    assert!(quiet(&mut j_ws).await, "jo is not in the private channel");
+}
+
 #[tokio::test]
 async fn play_works_while_muted() {
     let (app, [alex, ..], srv, s) = soundboard().await;
