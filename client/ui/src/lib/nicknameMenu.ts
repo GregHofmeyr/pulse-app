@@ -24,8 +24,8 @@ export function nickItems(s: AppState, serverId: string | null, userId: string):
   return out
 }
 
-/** `hasPrivate`: you've already given them a private nickname. */
-export function nickLabel(id: NickItemId, hasPrivate: boolean): string {
+/** `hasPrivate`: you've already given them a private nickname (only `private-nick` reads it). */
+export function nickLabel(id: NickItemId, hasPrivate = false): string {
   switch (id) {
     case 'nick': return 'Change nickname'
     case 'nick-reset': return 'Reset nickname'

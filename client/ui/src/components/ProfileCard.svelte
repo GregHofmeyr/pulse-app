@@ -140,12 +140,12 @@
     {#if canNick || (!preview && !mine)}
       <div class="names">
         {#if canNick && serverId}
-          <button type="button" onclick={() => openRename({ kind: 'server', userId: user.id, serverId })}>{nickLabel('nick', !!privateNick)}</button>
-          {#if nick}<button type="button" onclick={() => clear(() => api.setNickname(serverId, user.id, null))}>{nickLabel('nick-reset', !!privateNick)}</button>{/if}
+          <button type="button" onclick={() => openRename({ kind: 'server', userId: user.id, serverId })}>{nickLabel('nick')}</button>
+          {#if nick}<button type="button" onclick={() => clear(() => api.setNickname(serverId, user.id, null))}>{nickLabel('nick-reset')}</button>{/if}
         {/if}
         {#if !preview && !mine}
           <button type="button" onclick={() => openRename({ kind: 'private', userId: user.id })}>{nickLabel('private-nick', !!privateNick)}</button>
-          {#if privateNick}<button type="button" onclick={() => clear(() => api.setPrivateNickname(user.id, null))}>{nickLabel('private-nick-clear', !!privateNick)}</button>{/if}
+          {#if privateNick}<button type="button" onclick={() => clear(() => api.setPrivateNickname(user.id, null))}>{nickLabel('private-nick-clear')}</button>{/if}
         {/if}
       </div>
       {#if nameError}<p class="err" role="alert">{nameError}</p>{/if}
