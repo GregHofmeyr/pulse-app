@@ -31,7 +31,9 @@ pub const START_SAMPLES: usize = 4800;
 /// sound, when it is shorter): the rest keeps decoding into the returned [`Pcm`] while it plays.
 /// The whole of a 6 s sound takes ~0.8 s in `opus-decoder`, which is what a first play waited for.
 pub async fn decode_streaming(bytes: Vec<u8>) -> Result<Arc<Pcm>, String> {
-    let duration_ms = parse_ogg_opus(&bytes).map_err(|e| e.to_string())?.duration_ms;
+    let duration_ms = parse_ogg_opus(&bytes)
+        .map_err(|e| e.to_string())?
+        .duration_ms;
     let pcm = Arc::new(Pcm::with_capacity(duration_ms as usize * 48));
     let (tx, rx) = tokio::sync::oneshot::channel::<Result<(), String>>();
     let out = pcm.clone();

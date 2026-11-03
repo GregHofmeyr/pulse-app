@@ -149,7 +149,10 @@ impl Cache {
 /// The trimmer's one playback: its stop flag, and its samples (kept here so a stopped clip's
 /// buffer is never freed on the audio thread).
 #[derive(Default)]
-pub struct Trimming(Mutex<Option<(Arc<std::sync::atomic::AtomicBool>, Arc<[f32]>)>>);
+pub struct Trimming(Mutex<Option<TrimPlay>>);
+
+/// A trimmer playback's stop flag and its samples.
+type TrimPlay = (Arc<std::sync::atomic::AtomicBool>, Arc<[f32]>);
 
 impl Trimming {
     /// A new playback of `samples`: stops the last one and returns the new one's stop flag.
@@ -295,13 +298,14 @@ mod tests {
 
     use std::sync::atomic::{AtomicUsize, Ordering::SeqCst};
 
+    type Fetched = std::pin::Pin<Box<dyn Future<Output = Result<Vec<u8>, String>> + Send>>;
+
     /// A fetch that counts its calls and takes `ms` to answer with `bytes`.
     fn counting(
         calls: &Arc<AtomicUsize>,
         bytes: Option<Vec<u8>>,
         ms: u64,
-    ) -> impl Fn(String) -> std::pin::Pin<Box<dyn Future<Output = Result<Vec<u8>, String>> + Send>> + Clone
-    {
+    ) -> impl Fn(String) -> Fetched + Clone {
         let calls = calls.clone();
         move |_hash: String| {
             calls.fetch_add(1, SeqCst);
