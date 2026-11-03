@@ -12,6 +12,7 @@
   import { pickSource } from '../lib/stream/golive.svelte'
   import { watchDisabledReason } from '../lib/stream/viewer'
   import { openCard } from '../lib/profileCard.svelte'
+  import { setSoundMute, soundboard } from '../lib/soundboard.svelte'
 
   let {
     channelId,
@@ -57,6 +58,7 @@
   const volume = $derived(voice.volumes[userId] ?? 100)
   const streamVolume = $derived(stream.volumes[userId] ?? 100)
   const muted = $derived(!!voice.localMutes[userId])
+  const soundMuted = $derived(!!soundboard.mutes[userId])
   const watchReason = $derived(windows ? null : watchDisabledReason({ windows, voiceChannelId: voice.channelId, channelId }))
 
   let el = $state<HTMLElement>()
@@ -148,6 +150,8 @@
       </div>
     {:else if id === 'local-mute'}
       <button type="button" class="menu-item" role="menuitem" data-item="local-mute" onclick={() => pick(() => voiceApi.setLocalMute(userId, !muted))}>{muted ? 'Unmute for me' : 'Mute for me'}</button>
+    {:else if id === 'sound-mute'}
+      <button type="button" class="menu-item" role="menuitem" data-item="sound-mute" onclick={() => pick(() => setSoundMute(userId, !soundMuted))}>{soundMuted ? 'Unmute soundboard' : 'Mute soundboard'}</button>
     {:else if id === 'message'}
       <button type="button" class="menu-item" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>
     {:else if id === 'stream-volume'}

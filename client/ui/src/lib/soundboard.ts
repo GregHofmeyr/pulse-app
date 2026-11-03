@@ -84,6 +84,13 @@ export function searchSounds(sounds: Sound[], q: string): Sound[] {
   return [...hits.filter(starts), ...hits.filter((x) => !starts(x))]
 }
 
+/** The core's words for a 429 (`ApiError::RateLimited`): a play that hit the abuse limit is dropped quietly. */
+export const isRateLimited = (e: unknown): boolean =>
+  (typeof e === 'string' ? e : e instanceof Error ? e.message : '').startsWith('slow down a little')
+
+/** A server's section offers "Tidy up?" once it holds more than this many sounds. */
+export const TIDY_THRESHOLD = 24
+
 /** The 5 least-played sounds (oldest first on ties): what to offer when a server is full. */
 export function tidyCandidates(sounds: Sound[]): Sound[] {
   return [...sounds]

@@ -1,7 +1,7 @@
 // Which entries the right-click menu for a person or stream shows (tested in participantMenu.test.ts).
 
 export type MenuItemId =
-  | 'volume' | 'local-mute' | 'message' | 'stream-volume' | 'watch' | 'stop-watching' | 'full-view'
+  | 'volume' | 'local-mute' | 'sound-mute' | 'message' | 'stream-volume' | 'watch' | 'stop-watching' | 'full-view'
   | 'mute' | 'deafen' | 'go-live' | 'stop-streaming' | 'voice-settings'
 
 export type MenuCtx = {
@@ -27,7 +27,7 @@ export function menuItems(c: MenuCtx): MenuItemId[] {
     out.push('voice-settings')
     return out
   }
-  const out: MenuItemId[] = ['volume', 'local-mute', 'message']
+  const out: MenuItemId[] = ['volume', 'local-mute', 'sound-mute', 'message']
   if (c.live) {
     if (c.watching) out.push('stream-volume')
     out.push(c.watching ? 'stop-watching' : 'watch')
