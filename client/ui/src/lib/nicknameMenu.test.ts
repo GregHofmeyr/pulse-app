@@ -13,35 +13,33 @@ const state = (over: Partial<AppState> = {}): AppState => ({
   ...over,
 }) as AppState
 
-describe('nickItems (#113: the profile card rules, in a menu)', () => {
-  it('someone else in a server you share: change nickname and set a private one', () => {
-    expect(nickItems(state(), 'S1', 'U2')).toEqual(['nick', 'private-nick'])
-  })
-  it('reset only when they have a server nickname; clear only when you gave a private one', () => {
+describe('nickItems (#137: one nickname item per menu, by where it opens)', () => {
+  it('in a server: change their server nickname, never a private one', () => {
+    expect(nickItems(state(), 'S1', 'U2')).toEqual(['nick'])
     const s = state({ members: { S1: [{ user: alex, nickname: null }, { user: sam, nickname: 'Sammy' }] }, privateNicks: { U2: 'Bestie' } })
-    expect(nickItems(s, 'S1', 'U2')).toEqual(['nick', 'nick-reset', 'private-nick', 'private-nick-clear'])
+    expect(nickItems(s, 'S1', 'U2')).toEqual(['nick'])
   })
-  it('yourself: your server nickname only, never a private one', () => {
+  it('in a server, yourself: your server nickname', () => {
     expect(nickItems(state(), 'S1', 'U1')).toEqual(['nick'])
-    const s = state({ members: { S1: [{ user: alex, nickname: 'Al' }, { user: sam, nickname: null }] } })
-    expect(nickItems(s, 'S1', 'U1')).toEqual(['nick', 'nick-reset'])
   })
-  it('no server (a DM or group call): private nickname only', () => {
+  it('outside servers (the DM list): your private nickname for them, never a server one; none for yourself', () => {
     expect(nickItems(state(), null, 'U2')).toEqual(['private-nick'])
+    expect(nickItems(state({ privateNicks: { U2: 'Bestie' } }), null, 'U2')).toEqual(['private-nick'])
     expect(nickItems(state(), null, 'U1')).toEqual([])
+  })
+  it('no reset or clear items: those live in the nickname dialog', () => {
+    const s = state({ members: { S1: [{ user: alex, nickname: 'Al' }, { user: sam, nickname: 'Sammy' }] }, privateNicks: { U2: 'Bestie' } })
+    expect([...nickItems(s, 'S1', 'U2'), ...nickItems(s, null, 'U2')]).toEqual(['nick', 'private-nick'])
   })
   it('no server nickname when you are not in the server, or they are not', () => {
     expect(canServerNick(state(), 'S2', 'U3')).toBe(false) // you aren't in S2
     expect(canServerNick(state(), 'S1', 'U3')).toBe(false) // they aren't in S1
     expect(canServerNick(state(), 'S1', 'U2')).toBe(true)
     expect(canServerNick(state(), null, 'U2')).toBe(false)
-    expect(nickItems(state(), 'S1', 'U3')).toEqual(['private-nick'])
+    expect(nickItems(state(), 'S1', 'U3')).toEqual([])
   })
-  it('labels follow the card', () => {
-    expect(nickLabel('nick', false)).toBe('Change nickname')
-    expect(nickLabel('nick-reset', false)).toBe('Reset nickname')
-    expect(nickLabel('private-nick', false)).toBe('Set private nickname…')
-    expect(nickLabel('private-nick', true)).toBe('Change private nickname…')
-    expect(nickLabel('private-nick-clear', true)).toBe('Clear private nickname')
+  it('labels', () => {
+    expect(nickLabel('nick')).toBe('Change server nickname')
+    expect(nickLabel('private-nick')).toBe('Change nickname')
   })
 })

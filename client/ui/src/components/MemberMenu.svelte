@@ -1,12 +1,11 @@
 <script lang="ts">
-  // A member-list row's menu (#113): the profile, a message, and the nickname actions the profile
-  // card offers. Keyboard and focus work as in the voice participant menu.
+  // A person's menu in a server (#113, #137): from a member-list row or a message author. The profile, a
+  // message, and Change server nickname. Keyboard and focus work as in the voice participant menu.
   import { onMount, untrack } from 'svelte'
   import { app } from '../lib/store.svelte'
   import { displayName } from '../lib/selectors'
   import { clickOutside } from '../lib/actions'
   import { openCard } from '../lib/profileCard.svelte'
-  import { errorText } from '../lib/tauri'
   import NicknameItems from './NicknameItems.svelte'
 
   let { serverId, userId, x, y, opener, onClose, onMessage }: {
@@ -27,8 +26,6 @@
   let left = $state(untrack(() => x))
   let top = $state(untrack(() => y))
   let closed = false
-  let error = $state<string | null>(null)
-  let running = false
 
   onMount(() => {
     if (!el) return
@@ -57,21 +54,6 @@
     void action()
     close(false)
   }
-  /** A call that can be refused (a nickname reset): the menu stays open to say why. */
-  async function run(call: () => Promise<unknown>) {
-    if (closed || running) return
-    running = true
-    error = null
-    try {
-      await call()
-      close(true)
-    } catch (e) {
-      error = errorText(e)
-    } finally {
-      running = false
-    }
-  }
-
   function keydown(e: KeyboardEvent) {
     const list = items()
     const at = list.indexOf(document.activeElement as HTMLElement)
@@ -102,11 +84,9 @@
   {#if onMessage && !self}
     <button type="button" class="menu-item" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>
   {/if}
-  <NicknameItems {serverId} {userId} {pick} {run} />
-  {#if error}<p class="err" role="alert">{error}</p>{/if}
+  <NicknameItems {serverId} {userId} {pick} />
 </div>
 
 <style>
   .menu { position: fixed; z-index: 60; min-width: 200px; max-width: 280px; gap: 2px; font-size: 13px; outline: none; }
-  .err { margin: 6px 8px 2px; font-size: 12px; color: var(--danger-text); }
 </style>

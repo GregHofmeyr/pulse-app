@@ -55,7 +55,6 @@ const literalsIn = (text: string) => {
 
 const VIDEO = 'video chrome: drawn over black video, frames or a thumbnail, so white-on-black in every theme'
 const AVATAR = 'initials on the fixed fallback avatar palette (lib/avatar.ts): white reads on every swatch'
-const PROFILE_CARD = 'the profile card is its own colour theme (lib/cardTheme.ts), a self-contained dark island'
 
 /** Colour literals allowed to stay in a component, each with why it is fixed. */
 const ALLOWED: Record<string, { literals: string[]; reason: string }[]> = {
@@ -82,7 +81,6 @@ const ALLOWED: Record<string, { literals: string[]; reason: string }[]> = {
   'components/AppearanceSettings.svelte': [{ literals: ['#3b4bd8'], reason: 'a sample role colour in the Name readability preview (user data, not UI)' }],
   'components/ProfileSettings.svelte': [{ literals: ['#ffffff'], reason: "the first custom name colour's starting value (user data, not UI)" }],
   'components/FullProfile.svelte': [{ literals: ['#000'], reason: "the right column's round-cornered scroll mask: only its alpha counts, never shown as a colour" }],
-  'components/ProfileCard.svelte': [{ literals: ['rgb(242 243 246 / .12)', 'rgb(242 243 246 / .08)', 'rgb(242 243 246 / .14)', '#ff9d96'], reason: PROFILE_CARD }],
 }
 
 describe('colour literals', () => {
@@ -169,7 +167,6 @@ describe('text vs fill', () => {
   // Over video or on a dark island the bright fill colour is right in every theme.
   const FILL_AS_TEXT: Record<string, RegExp> = {
     'components/ClipEditor.svelte': /^\s*\.problem /, // over the black video screen
-    'components/ProfileCard.svelte': /^\s*\.info \.room /, // the profile card island
     'components/QotyCard.svelte': /^\s*\.(big|who) /, // on the Quote of the Year island
     'components/StreamDiagOverlay.svelte': /^\s*\.bad /, // the diagnostics box over video
   }

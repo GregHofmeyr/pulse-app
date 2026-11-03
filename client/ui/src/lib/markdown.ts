@@ -5,6 +5,7 @@ import { Marked, type TokenizerAndRendererExtension } from 'marked'
 import { isMediaHash, isMediaUrl, mediaUrl, standard, TOKEN_RE, twemojiUrl } from './emoji'
 import type { CustomEmoji } from './protocol/CustomEmoji'
 import type { Message } from './protocol/Message'
+import { setMentionLabel } from './mentionLabel'
 
 const escapeHtml = (s: string) =>
   s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;')
@@ -62,7 +63,7 @@ const SAFE_HREF = /^(https?:|mailto:)/i
 const TWEMOJI_SRC = /^\/emoji\/[0-9a-f]{1,6}(-[0-9a-f]{1,6})*\.svg$/
 const safeImgSrc = (src: string) => TWEMOJI_SRC.test(src) || isMediaUrl(src)
 // The only classes we emit; content can't set any other.
-const CLASSES: Record<string, string[]> = { IMG: ['emoji', 'emoji big'], SPAN: ['mention', 'emoji-gone', 'emoji-gone big'] }
+const CLASSES: Record<string, string[]> = { IMG: ['emoji', 'emoji big'], SPAN: ['mention', 'at', 'emoji-gone', 'emoji-gone big'] }
 
 let hooked = false
 function purifier() {
@@ -253,7 +254,7 @@ function mentionPills(value: string, names: Set<string>): (string | Node)[] {
     out.push(value.slice(last, at))
     const pill = document.createElement('span')
     pill.className = 'mention'
-    pill.textContent = '@' + name
+    setMentionLabel(pill, name)
     out.push(pill)
     last = at + 1 + name.length
   }

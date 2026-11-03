@@ -45,8 +45,10 @@ People want Pulse to look like theirs: lighter, darker, warmer, their colour. To
   the user picks with **Name readability** (Low 3:1 · Normal 4.5:1 · High 7:1; Normal default). On dark themes today's
   rule (never darker than luminance 0.39) becomes the same contrast rule, so it adapts to Midnight and OLED too. Role
   colours and mention pills follow the same function.
-- **Fixed on purpose:** video chrome, the QR code, skin-tone swatches, link-embed brand colours, the profile card (its
-  own colour theme), and the Quote of the Year card (gets its own island tokens so it reads on every theme).
+- **Fixed on purpose:** video chrome, the QR code, skin-tone swatches, link-embed brand colours, and the Quote of the Year card (gets its own island tokens so it reads on every theme).
+- **Profile cards follow the theme** (#139, owner testing 2026-11-03): they keep their own two colours, but on a
+  light theme they're drawn light (the colours mixed into white, dark text) and their edge is moved just far enough
+  to stand off the app's surfaces, so pale card colours still show. Dark themes keep the dark island.
 - The Tauri window background follows the theme (no dark flash when starting on Light).
 
 ## How it gets made (builder's call where not stated)

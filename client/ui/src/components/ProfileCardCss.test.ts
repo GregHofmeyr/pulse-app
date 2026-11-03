@@ -38,9 +38,19 @@ describe('the actions box on your own card', () => {
     expect(before).toMatch(/top:\s*0/)
     expect(before).toMatch(/left:\s*10px/)
     expect(before).toMatch(/right:\s*10px/)
-    expect(before).toMatch(/background:\s*rgb\(242 243 246 \/ \.08\)/)
+    // the card's own line colour (lib/cardTheme.ts: the island grey on dark themes, a dark one on light, #139)
+    expect(before).toMatch(/background:\s*var\(--card-line\)/)
     const second = el('<div class="actions $s"><button class="$s"></button><button data-probe class="$s"></button></div>')
     expect(getComputedStyle(second).position).toBe('relative')
+  })
+})
+
+describe('the card follows the app theme (#139)', () => {
+  it('has no colour of its own in its CSS: every one comes from cardVars or a theme token', () => {
+    expect(css.replace(/\/\*[\s\S]*?\*\//g, '').match(/#[0-9a-fA-F]{3,8}\b|\brgba?\(/g) ?? []).toEqual([])
+  })
+  it('a light card is lifted off the page by the theme shadow', () => {
+    expect(rule(/\.card\.svelte-test/)).toMatch(/box-shadow:[^;]*var\(--card-lift\)/)
   })
 })
 

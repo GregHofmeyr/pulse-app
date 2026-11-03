@@ -4,6 +4,7 @@
 // exactly their token; everything else is plain text (newlines included,
 // shown with `white-space: pre-wrap`).
 import { isMediaHash, mediaUrl, TOKEN_RE } from './emoji'
+import { setMentionLabel } from './mentionLabel'
 
 import type { CustomEmoji } from './protocol/CustomEmoji'
 
@@ -57,7 +58,7 @@ export function renderInto(el: HTMLElement, text: string, lookup: (id: string) =
       if (t.start > at) nodes.push(document.createTextNode(text.slice(at, t.start)))
       const chip = document.createElement('span')
       chip.className = 'mention mention-chip'
-      chip.textContent = `@${name}`
+      setMentionLabel(chip, name)
       chip.dataset.token = text.slice(t.start, t.end)
       chip.setAttribute('contenteditable', 'false')
       nodes.push(chip)

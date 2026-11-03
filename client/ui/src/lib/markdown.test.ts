@@ -63,8 +63,9 @@ describe('typingThrottle', () => {
 describe('mentions', () => {
   it('wraps known @mentions in a pill, not in code, not unknown names', () => {
     const html = renderMarkdown('hi @Sam and @nobody `@sam`', ['sam'])
-    expect(html).toContain('<span class="mention">@Sam</span>')
-    expect(html).not.toContain('<span class="mention">@nobody')
+    // the @ in its own span, so a thin gap can sit between it and the name (#137)
+    expect(html).toContain('<span class="mention"><span class="at">@</span>Sam</span>')
+    expect(html).not.toContain('nobody</span>')
     expect(html).toContain('<code>@sam</code>')
   })
   it('mention markup cannot be injected by content', () => {
@@ -92,7 +93,7 @@ describe('renderMessage (cached)', () => {
     expect(renderMessage(msg('01B', 'old'))).toContain('old')
     expect(renderMessage(msg('01B', 'new', '2026-10-16T08:00:00Z'))).toContain('new')
     expect(renderMessage(msg('01C', '@sam'), [])).not.toContain('mention')
-    expect(renderMessage(msg('01C', '@sam'), ['sam'])).toContain('<span class="mention">@sam</span>')
+    expect(renderMessage(msg('01C', '@sam'), ['sam'])).toContain('<span class="mention"><span class="at">@</span>sam</span>')
   })
 
   it('new text under the same id and edited_at renders again (the key does not trust edited_at alone)', () => {

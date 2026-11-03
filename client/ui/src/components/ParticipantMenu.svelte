@@ -13,7 +13,6 @@
   import { watchDisabledReason } from '../lib/stream/viewer'
   import { openCard } from '../lib/profileCard.svelte'
   import { setSoundMute, soundboard } from '../lib/soundboard.svelte'
-  import { errorText } from '../lib/tauri'
   import NicknameItems from './NicknameItems.svelte'
 
   let {
@@ -98,23 +97,6 @@
     void action()
     close(false)
   }
-  /** A call that can be refused (a nickname reset, #113): the menu stays open to say why. */
-  let error = $state<string | null>(null)
-  let running = false
-  async function run(call: () => Promise<unknown>) {
-    if (closed || running) return
-    running = true
-    error = null
-    try {
-      await call()
-      close(true)
-    } catch (e) {
-      error = errorText(e)
-    } finally {
-      running = false
-    }
-  }
-
   function step(input: HTMLInputElement, dir: 1 | -1) {
     const next = clampVolume(Math.round((+input.value + dir * 5) / 5) * 5)
     input.value = String(next)
@@ -206,8 +188,7 @@
       <button type="button" class="menu-item" role="menuitem" data-item="voice-settings" onclick={() => pick(onVoiceSettings)}>Voice settings</button>
     {/if}
   {/each}
-  <NicknameItems {serverId} {userId} {pick} {run} />
-  {#if error}<p class="err" role="alert">{error}</p>{/if}
+  <NicknameItems {serverId} {userId} {pick} />
 </div>
 
 <style>
@@ -220,5 +201,4 @@
   .slider input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
   .slider strong { color: var(--text); font-weight: 600; }
   .hint { grid-column: 1 / -1; font-size: 11px; color: var(--text-3); }
-  .err { margin: 6px 8px 2px; font-size: 12px; color: var(--danger-text); }
 </style>

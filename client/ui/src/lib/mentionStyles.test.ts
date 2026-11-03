@@ -19,9 +19,12 @@ describe('mention pills show the shown name', () => {
     expect(sam.textContent).toBe('@Big Dog')
     expect(mentionName(sam)).toBe('Sam')
     expect(jo.textContent).toBe('@jo') // nobody known: left as written
+    // the @ stays in its own span (the gap after it, #137)
+    expect(sam.querySelector('.at')?.textContent).toBe('@')
     names.U2 = 'Captain'
     styleMentions(root, look, () => 'color: #ffc4a3', (id) => names[id])
     expect(sam.textContent).toBe('@Captain')
+    expect(sam.querySelectorAll('.at')).toHaveLength(1)
     expect(mentionName(sam)).toBe('Sam')
   })
 

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, tick, unmount } from 'svelte'
+import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeMatchMedia, FakeIntersectionObserver } from '../lib/testMotion'
 
@@ -113,53 +113,34 @@ describe('MemberList row menu (#113)', () => {
     el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
     flushSync()
   }
-  const settle = async () => {
-    for (let i = 0; i < 5; i++) await tick()
-    await new Promise((r) => setTimeout(r, 0))
-    flushSync()
-  }
 
-  it('right-click on a row opens its menu: profile, message and the nickname items', () => {
+  it('right-click on a row opens its menu: profile, message and Change server nickname (#137)', () => {
     rightClick(row(1))
     expect(menu()).not.toBeNull()
     expect(menu()!.getAttribute('aria-label')).toBe('Actions for Sammy')
-    expect(ids()).toEqual(['profile', 'message', 'nick', 'nick-reset', 'private-nick'])
+    expect(ids()).toEqual(['profile', 'message', 'nick'])
     expect(label('profile')).toBe('View profile')
     expect(label('message')).toBe('Message')
-    expect(label('nick')).toBe('Change nickname')
-    expect(label('nick-reset')).toBe('Reset nickname')
-    expect(label('private-nick')).toBe('Set private nickname…')
+    expect(label('nick')).toBe('Change server nickname')
     expect(document.activeElement).toBe(items()[0])
   })
 
-  it('reset shows only when a server nickname is set; clear only with a private one', () => {
-    app.state = { ...app.state, members: { S1: [app.state.members.S1[0], { user: sam, nickname: null }] }, privateNicks: { U2: 'Bestie' } }
+  it('no reset, no private nickname items in a server, whatever is set (#137)', () => {
+    app.state = { ...app.state, privateNicks: { U2: 'Bestie' } }
     flushSync()
     rightClick(row(1))
-    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'private-nick-clear'])
-    expect(label('private-nick')).toBe('Change private nickname…')
-    expect(label('private-nick-clear')).toBe('Clear private nickname')
+    expect(ids()).toEqual(['profile', 'message', 'nick'])
   })
 
-  it('your own row: profile and your server nickname, no message, no private nickname', () => {
+  it('your own row: profile and your server nickname, no message', () => {
     rightClick(row(0))
     expect(ids()).toEqual(['profile', 'nick'])
   })
 
-  it('each item does what the card does', async () => {
+  it('each item does what it says', () => {
     rightClick(row(1))
     pickItem('nick')
     expect(profileUi.rename).toEqual({ kind: 'server', userId: 'U2', serverId: 'S1' })
-    expect(menu()).toBeNull()
-
-    rightClick(row(1))
-    pickItem('private-nick')
-    expect(profileUi.rename).toEqual({ kind: 'private', userId: 'U2' })
-
-    rightClick(row(1))
-    pickItem('nick-reset')
-    await settle()
-    expect(invoke).toHaveBeenCalledWith('set_nickname', { serverId: 'S1', userId: 'U2', nickname: null })
     expect(menu()).toBeNull()
 
     rightClick(row(1))
@@ -171,25 +152,6 @@ describe('MemberList row menu (#113)', () => {
     pickItem('profile')
     expect(profileUi.card).toMatchObject({ userId: 'U2', serverId: 'S1' })
     expect(menu()).toBeNull()
-  })
-
-  it('clear private nickname calls the API with none', async () => {
-    app.state = { ...app.state, privateNicks: { U2: 'Bestie' } }
-    flushSync()
-    rightClick(row(1))
-    pickItem('private-nick-clear')
-    await settle()
-    expect(invoke).toHaveBeenCalledWith('set_private_nickname', { userId: 'U2', nickname: null })
-    expect(menu()).toBeNull()
-  })
-
-  it('a refused reset keeps the menu open and says why', async () => {
-    invoke.mockRejectedValue('Too many renames, try again in a minute')
-    rightClick(row(1))
-    pickItem('nick-reset')
-    await settle()
-    expect(menu()).not.toBeNull()
-    expect(menu()!.querySelector('[role=alert]')!.textContent).toContain('Too many renames')
   })
 
   it('the keyboard: ContextMenu or Shift+F10 on the name opens it, arrows wrap, Esc and Tab close and return focus', () => {

@@ -13,7 +13,9 @@ import ProfileCardPopover from './ProfileCardPopover.svelte'
 import { app, noteProfileUpdate, PROFILE_STALE_MS, resetState, ui } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
 import { closeCard, closeFull, openCard, profileUi } from '../lib/profileCard.svelte'
-import { mixHex, NEAR_BLACK, THEME_PRESETS } from '../lib/cardTheme'
+import { CARD_MIX_LIGHT, mixHex, NEAR_BLACK, NEAR_WHITE, THEME_PRESETS } from '../lib/cardTheme'
+import { setTheme, setTint } from '../lib/theme.svelte'
+import { contrast } from '../lib/color'
 import { appearance } from '../lib/appearance.svelte'
 import { badgeStore } from '../lib/badges.svelte'
 import type { User } from '../lib/protocol/User'
@@ -62,6 +64,48 @@ describe('ProfileCard', () => {
       cmp = undefined
       document.body.innerHTML = ''
     }
+  })
+
+  describe('on a light theme (#139)', () => {
+    afterEach(() => {
+      setTint('plain')
+      setTheme('dark')
+    })
+    const rgbOf = (css: string) => {
+      const m = /color: (#[0-9a-f]{6}|rgb\((\d+), (\d+), (\d+)\))/.exec(css)
+      if (!m) return null
+      if (m[1].startsWith('#')) return m[1]
+      return '#' + [m[2], m[3], m[4]].map((v) => Number(v).toString(16).padStart(2, '0')).join('')
+    }
+
+    it('the card turns light (its colours mixed into white) and back, live', () => {
+      setTheme('light')
+      const el = show({ card: card({ theme_top: '#ffb6d9', theme_bottom: '#ffffff' }) })
+      expect(el.style.getPropertyValue('--card-top')).toBe(mixHex('#ffb6d9', NEAR_WHITE, CARD_MIX_LIGHT))
+      expect(el.style.getPropertyValue('--card-lift')).toBe('var(--shadow-2)')
+      // white on a white chat would vanish: the edge stands off it
+      expect(el.style.getPropertyValue('--glow-bottom')).not.toBe('#ffffff')
+      setTheme('dark')
+      flushSync()
+      expect(el.style.getPropertyValue('--card-top')).toBe(mixHex('#ffb6d9', NEAR_BLACK, 0.3))
+    })
+
+    it('a light name colour is made readable on the light card itself', () => {
+      setTheme('light')
+      const peach = { ...sam, style: { font: null, colors: ['#ffc4a3'] } }
+      app.state = { ...app.state, people: { ...app.state.people, U2: { user: peach, online: true, last_seen_at: null } } } as never
+      const el = show({ user: peach, card: card({ theme_top: '#ffb6d9', theme_bottom: '#ffffff' }) })
+      const color = rgbOf(el.querySelector('.who .name')!.getAttribute('style')!)
+      expect(color).not.toBeNull()
+      expect(contrast(color!, el.style.getPropertyValue('--card-top'))).toBeGreaterThanOrEqual(4.5)
+    })
+
+    it('no glow comes from anything but the card colours (#139: the leftover purple)', () => {
+      setTheme('light')
+      const el = show({ card: card({ theme_top: '#ffb6d9', theme_bottom: '#ffffff' }) })
+      const style = el.getAttribute('style')!
+      for (const purple of ['#8a3cff', '#8b9cff', '#4c5bd4']) expect(style).not.toContain(purple)
+    })
   })
 
   it('banner, avatar, name, username · pronouns, bio', () => {
@@ -167,7 +211,6 @@ describe('ProfileCard', () => {
         privateNicks: privateNick ? { U2: privateNick } : {},
       } as never
     }
-    const button = (el: HTMLElement, text: string) => [...el.querySelectorAll('button')].find((b) => b.textContent?.trim() === text)
 
     it('shows the name that applies, and the username only as @handle', () => {
       inServer('Big Dog', 'Sammy')
@@ -184,41 +227,29 @@ describe('ProfileCard', () => {
       expect(el.querySelector('.msg')!.getAttribute('placeholder')).toBe('Message @Sam 🎸')
     })
 
-    it('Change nickname (in a server) and Set private nickname… open the dialog; the card gives way', () => {
-      inServer(null)
-      openCard('U2', 'S1', document.body)
-      let el = show({ user: named, serverId: 'S1' })
-      button(el, 'Change nickname')!.click()
-      expect(profileUi.rename).toEqual({ kind: 'server', userId: 'U2', serverId: 'S1' })
-      expect(profileUi.card).toBeNull()
-      unmount(cmp!)
-      el = show({ user: named, serverId: null })
-      expect(button(el, 'Change nickname')).toBeUndefined() // no server here
-      button(el, 'Set private nickname…')!.click()
-      expect(profileUi.rename).toEqual({ kind: 'private', userId: 'U2' })
-      profileUi.rename = null
-    })
-
-    it('Reset nickname and Clear private nickname act at once', async () => {
+    it('offers only your private nickname for someone else (server nicknames live in server menus, #137)', async () => {
+      const { profileUi } = await import('../lib/profileCard.svelte')
+      inServer('Big Dog')
+      for (const serverId of ['S1', null]) {
+        const el = show({ user: named, serverId })
+        const texts = [...el.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '')
+        expect(texts.filter((t) => /nickname/i.test(t))).toEqual(['Set private nickname'])
+        unmount(cmp!)
+        cmp = undefined
+      }
+      // with one set, the label says so; it opens the private-nickname dialog
       inServer('Big Dog', 'Sammy')
       const el = show({ user: named, serverId: 'S1' })
-      button(el, 'Reset nickname')!.click()
-      await tick()
-      expect(calls('set_nickname')).toEqual([['set_nickname', { serverId: 'S1', userId: 'U2', nickname: null }]])
-      button(el, 'Clear private nickname')!.click()
-      await tick()
-      expect(calls('set_private_nickname')).toEqual([['set_private_nickname', { userId: 'U2', nickname: null }]])
-    })
-
-    it('your own card offers your server nickname but no private one; the preview offers nothing', () => {
-      inServer(null)
-      let el = show({ user: alex, serverId: 'S1' })
-      expect(button(el, 'Change nickname')).toBeDefined()
-      expect(button(el, 'Set private nickname…')).toBeUndefined()
+      const btn = [...el.querySelectorAll<HTMLButtonElement>('button')].find((b) => /nickname/i.test(b.textContent ?? ''))!
+      expect(btn.textContent?.trim()).toBe('Change private nickname')
+      btn.click()
+      flushSync()
+      expect(profileUi.rename).toEqual({ kind: 'private', userId: 'U2' })
       unmount(cmp!)
-      el = show({ user: named, serverId: 'S1', preview: true })
-      expect(button(el, 'Change nickname')).toBeUndefined()
-      expect(button(el, 'Set private nickname…')).toBeUndefined()
+      cmp = undefined
+      // never on your own card
+      const own = show({ user: alex, serverId: 'S1' })
+      expect([...own.querySelectorAll('button')].some((b) => /nickname/i.test(b.textContent ?? ''))).toBe(false)
     })
   })
 

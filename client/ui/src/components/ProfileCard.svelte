@@ -9,10 +9,10 @@
   import Name from './Name.svelte'
   import Icon from './Icon.svelte'
   import { app, openDm, queueMessage, ui } from '../lib/store.svelte'
-  import { api, errorText } from '../lib/tauri'
-  import { baseName, displayName, serverNick } from '../lib/selectors'
-  import { canServerNick, nickLabel } from '../lib/nicknameMenu'
-  import { cardVars } from '../lib/cardTheme'
+  import { errorText } from '../lib/tauri'
+  import { baseName, displayName } from '../lib/selectors'
+  import { cardVars, nameStop } from '../lib/cardTheme'
+  import { cardLook } from '../lib/theme.svelte'
   import { mediaUrl } from '../lib/emoji'
   import { renderMarkdown } from '../lib/markdown'
   import { animateEmojiIn, shouldAnimateProfile, wireAnimated } from '../lib/animate.svelte'
@@ -49,31 +49,18 @@
     if (wantsCatalogue) untrack(() => void badgeStore.load())
   })
 
-  // The glow is each raw theme colour at 45% alpha (plan reconciliation 8).
-  const GLOW_ALPHA = '73'
-  const style = $derived(
-    Object.entries(cardVars(card.theme_top, card.theme_bottom)).map(([k, v]) => `${k}: ${v}`).join('; ')
-      + `; --glow-top-a: ${card.theme_top}${GLOW_ALPHA}; --glow-bottom-a: ${card.theme_bottom}${GLOW_ALPHA}`,
-  )
+  // The card's own two colours, drawn light or dark as the app theme is (#139, lib/cardTheme.ts).
+  const vars = $derived(cardVars(card.theme_top, card.theme_bottom, cardLook()))
+  const style = $derived(Object.entries(vars).map(([k, v]) => `${k}: ${v}`).join('; '))
+  const nameBg = $derived(nameStop(vars['--card-top'], vars['--card-bottom'], cardLook().light))
   const mine = $derived(user.id === app.state.me?.id)
   // The name that applies here (#47): their nickname in this server, else your private nickname for
   // them, else their display name; the preview draws the display name being edited. The username
   // shows only as the @handle below it.
   const name = $derived(preview ? baseName(user) : displayName(app.state, serverId, user.id))
-  // Renaming (#48): a server nickname needs you and them in this server; a private one is for others.
-  // The same rules as a person's menu (#113, lib/nicknameMenu).
-  const canNick = $derived(!preview && canServerNick(app.state, serverId, user.id))
-  const nick = $derived(serverId ? serverNick(app.state, serverId, user.id) : null)
-  const privateNick = $derived(app.state.privateNicks[user.id] ?? null)
-  let nameError = $state<string | null>(null)
-  async function clear(f: () => Promise<unknown>) {
-    nameError = null
-    try {
-      await f()
-    } catch (e) {
-      nameError = errorText(e)
-    }
-  }
+  // Server nicknames live in server right-click menus (#137); your private nickname for someone is here, on their
+  // card (owner, 2026-11-03: it works for people you've never DMed, and stays out of the server menus).
+  const privateNick = $derived(mine ? undefined : app.state.privateNicks[user.id])
   const online = $derived(app.state.people[user.id]?.online ?? null)
   const bioHtml = $derived(card.bio ? renderMarkdown(card.bio, [], app.state.customEmoji) : '')
   // The server voice room they're in, only if it is one of your channels (one you can see); a
@@ -134,22 +121,9 @@
     {/if}
     <div class="who">
       <!-- No server for the style: a card shows the person's own colour, never a role colour (spec §2) -->
-      <Name userId={user.id} serverId={null} text={name} interactive={false} size="card" surface="island" user={preview ? user : undefined} />
+      <Name userId={user.id} serverId={null} text={name} interactive={false} size="card" bg={nameBg} user={preview ? user : undefined} />
       <div class="handle">@{user.username}{card.pronouns ? ` · ${card.pronouns}` : ''}</div>
     </div>
-    {#if canNick || (!preview && !mine)}
-      <div class="names">
-        {#if canNick && serverId}
-          <button type="button" onclick={() => openRename({ kind: 'server', userId: user.id, serverId })}>{nickLabel('nick')}</button>
-          {#if nick}<button type="button" onclick={() => clear(() => api.setNickname(serverId, user.id, null))}>{nickLabel('nick-reset')}</button>{/if}
-        {/if}
-        {#if !preview && !mine}
-          <button type="button" onclick={() => openRename({ kind: 'private', userId: user.id })}>{nickLabel('private-nick', !!privateNick)}</button>
-          {#if privateNick}<button type="button" onclick={() => clear(() => api.setPrivateNickname(user.id, null))}>{nickLabel('private-nick-clear')}</button>{/if}
-        {/if}
-      </div>
-      {#if nameError}<p class="err" role="alert">{nameError}</p>{/if}
-    {/if}
     {#if shown.length}
       <div class="badges">
         {#each shown as b (b.key)}
@@ -186,6 +160,9 @@
       <button type="button" class="full-link" onclick={viewFull}>View full profile</button>
     {/if}
     {#if !preview && !mine}
+      <button type="button" class="private-nick" onclick={() => openRename({ kind: 'private', userId: user.id })}>
+        <Icon name="pencil" size={14} /><span>{privateNick ? 'Change private nickname' : 'Set private nickname'}</span>
+      </button>
       <input class="msg" type="text" placeholder="Message @{name}" aria-label="Message @{name}" bind:value={draft} disabled={sending}
         onkeydown={(e) => { if (e.key === 'Enter' && !e.isComposing) { e.preventDefault(); void send() } }} />
       {#if error}<p class="err" role="alert">{error}</p>{/if}
@@ -194,12 +171,13 @@
 </div>
 
 <style>
-  /* Surface: the theme mixed into near-black; border: the raw colours; glow: each at 45% alpha (reconciliation 8). */
+  /* Surface: the theme mixed into near-black (white on a light app theme, #139); border: the edge colours; glow: each at
+     45% alpha (reconciliation 8); on a light theme a soft lift too. */
   .card {
     width: 300px; border-radius: 16px; overflow: hidden; color: var(--card-text);
     border: 1.5px solid transparent;
     background: linear-gradient(var(--card-top), var(--card-bottom)) padding-box, linear-gradient(var(--glow-top), var(--glow-bottom)) border-box;
-    box-shadow: 0 -4px 22px var(--glow-top-a), 0 4px 22px var(--glow-bottom-a);
+    box-shadow: 0 -4px 22px var(--glow-top-a), 0 4px 22px var(--glow-bottom-a), var(--card-lift);
   }
   .card.full { width: 340px; }
   .banner { position: relative; height: 104px; }
@@ -213,10 +191,6 @@
   .ring { align-self: flex-start; margin-top: -44px; position: relative; border-radius: 50%; padding: 4px; background: var(--card-top); }
   .ring :global(.pres) { width: 24%; height: 24%; right: 2px; bottom: 2px; border-color: var(--card-top); border-width: 3px; }
   .who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  /* renaming: small text buttons under the name */
-  .names { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: -4px; }
-  .names button { padding: 0; border: 0; background: none; color: var(--card-text-2); font: inherit; font-size: 12px; cursor: pointer; }
-  .names button:hover, .names button:focus-visible { color: var(--card-text); text-decoration: underline; }
   /* Name's card size is 1.15em: this makes it 20 px, bold */
   .who :global(.name) { font-weight: 700; }
   .who { font-size: calc(20px / 1.15); }
@@ -229,26 +203,29 @@
   .bio :global(p) { margin: 0; }
   .bio :global(p + p) { margin-top: 4px; }
   .skeleton { display: flex; flex-direction: column; gap: 8px; }
-  .skeleton span { height: 10px; border-radius: 5px; background: rgb(242 243 246 / .12); }
+  .skeleton span { height: 10px; border-radius: 5px; background: var(--card-skeleton); }
   .skeleton span:last-child { width: 60%; }
   .info { margin: 0; display: flex; flex-direction: column; gap: 6px; }
   .info div { display: flex; justify-content: space-between; gap: 8px; }
   dt { color: var(--card-text-2); }
   dd { margin: 0; }
-  .info .room { justify-content: flex-start; align-items: center; gap: 6px; color: var(--ok); }
+  .info .room { justify-content: flex-start; align-items: center; gap: 6px; color: var(--card-ok); }
   .avatar-link { border: 0; cursor: pointer; }
   .actions { display: flex; flex-direction: column; padding: 4px; border-radius: 10px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); }
   .actions button { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--card-text); font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
-  /* between rows: a faint straight line, inset from both sides (the island's own grey, as in every theme) */
+  /* between rows: a faint straight line, inset from both sides (the card's own line colour) */
   .actions button + button { position: relative; }
-  .actions button + button::before { content: ''; position: absolute; top: 0; left: 10px; right: 10px; height: 1px; background: rgb(242 243 246 / .08); pointer-events: none; }
-  .actions button:hover:not([aria-disabled='true']) { background: rgb(242 243 246 / .08); }
+  .actions button + button::before { content: ''; position: absolute; top: 0; left: 10px; right: 10px; height: 1px; background: var(--card-line); pointer-events: none; }
+  .actions button:hover:not([aria-disabled='true']) { background: var(--card-hover); }
   .actions button[aria-disabled='true'] { cursor: default; }
   .actions span:not(.status) { flex: 1; }
   .status { width: 10px; height: 10px; margin: 0 3px; border-radius: 50%; background: var(--ok); }
   .full-link { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--card-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
+  /* a quiet text button above the message box: your private nickname for them */
+  .private-nick { align-self: flex-start; display: inline-flex; align-items: center; gap: 6px; background: none; border: 0; padding: 2px 0; color: var(--card-text-2); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; opacity: .85; }
+  .private-nick:hover { opacity: 1; text-decoration: underline; }
   .full-link:hover { text-decoration: underline; }
-  .msg { height: 36px; border-radius: 10px; border: 1px solid rgb(242 243 246 / .14); background: var(--panel-bottom); color: var(--card-text); padding: 0 12px; font: inherit; font-size: 13px; }
+  .msg { height: 36px; border-radius: 10px; border: 1px solid var(--card-edge); background: var(--panel-bottom); color: var(--card-text); padding: 0 12px; font: inherit; font-size: 13px; }
   .msg::placeholder { color: var(--card-text-2); opacity: .75; }
-  .err { margin: 0; font-size: 12px; color: #ff9d96; }
+  .err { margin: 0; font-size: 12px; color: var(--card-danger); }
 </style>

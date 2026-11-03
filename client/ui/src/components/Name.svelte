@@ -8,7 +8,7 @@
 
   import type { User } from '../lib/protocol/User'
 
-  let { userId, serverId, text, interactive = true, size = 'normal', user, surface = 'chat' }: {
+  let { userId, serverId, text, interactive = true, size = 'normal', user, surface = 'chat', bg }: {
     userId: string
     serverId: string | null
     text?: string
@@ -16,11 +16,13 @@
     size?: 'normal' | 'card'
     /** What it sits on, so it's made readable there (#42): the chat and dialogs, the sidebar and member lists, or the profile card's dark island. */
     surface?: NameSurface
+    /** The exact colour it sits on, instead of `surface` (a profile card's own surface, #139). */
+    bg?: string
     /** Style the name as this user instead of the stored one (the profile editor's preview). */
     user?: User
   } = $props()
 
-  const css = $derived(nameCss(resolveNameStyle(user ?? userOf(app.state, userId), { roleColor: roleColorFor(app.state, serverId, userId), showStyles: appearance.showNameStyles, ...nameOpts(surface) })))
+  const css = $derived(nameCss(resolveNameStyle(user ?? userOf(app.state, userId), { roleColor: roleColorFor(app.state, serverId, userId), showStyles: appearance.showNameStyles, ...nameOpts(surface), ...(bg ? { bg } : {}) })))
   const label = $derived(text ?? displayName(app.state, serverId, userId))
 </script>
 
