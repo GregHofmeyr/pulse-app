@@ -119,4 +119,17 @@ describe('applyTheme', () => {
     const { luminance, parseHex } = await import('./color')
     for (const p of THEME_PRESETS) for (const c of [p.top, p.bottom]) expect(luminance(parseHex(mixHex(c, NEAR_BLACK, CARD_MIX))!)).toBeLessThanOrEqual(luminance(parseHex(m.ISLAND_BG)!))
   })
+
+  it('profile cards follow the theme (#139): dark on dark themes, light on light ones, standing off their surfaces', async () => {
+    const m = await fresh()
+    expect(m.cardLook()).toEqual({ light: false, ground: [] })
+    m.setTheme('light')
+    m.setTint('pink')
+    const s = surfacesFor('light', 'pink')
+    expect(m.cardLook()).toEqual({ light: true, ground: [s.bg0, s.bg1, s.bg2] })
+    m.setTheme('pastel')
+    expect(m.cardLook().light).toBe(true)
+    m.setTheme('oled')
+    expect(m.cardLook().light).toBe(false)
+  })
 })

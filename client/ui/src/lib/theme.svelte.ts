@@ -3,7 +3,7 @@
 // the app window its background colour, so a restart on Light doesn't flash dark.
 import { invoke } from '@tauri-apps/api/core'
 import { luminance, parseHex } from './color'
-import { CARD_MIX, mixHex, NEAR_BLACK, THEME_PRESETS } from './cardTheme'
+import { CARD_MIX, mixHex, NEAR_BLACK, THEME_PRESETS, type CardLook } from './cardTheme'
 import { DEFAULT_NAME_LEVEL, DEFAULT_THEME, DEFAULT_TINT, deriveAccent, NAME_LEVELS, surfacesFor, themeByKey, THEMES, TINTS, type NameLevel, type Surfaces, type ThemeKey, type TintKey } from './themes'
 
 const KEYS = { key: 'pulse.theme', tint: 'pulse.lightTint', accent: 'pulse.accent', names: 'pulse.nameReadability' } as const
@@ -67,6 +67,14 @@ export function nameRatio(): number {
 /** The profile card: a dark island in every theme (lib/cardTheme.ts). Names there are measured against the lightest
  *  colour a preset card can have, so they read on all of them. */
 export const ISLAND_BG = THEME_PRESETS.flatMap((p) => [p.top, p.bottom].map((c) => mixHex(c, NEAR_BLACK, CARD_MIX))).reduce((a, b) => (luminance(parseHex(b)!) > luminance(parseHex(a)!) ? b : a))
+
+/** How profile cards look in the current theme (#139, lib/cardTheme.ts): light on a light theme, standing off the
+ *  ground, sidebar and chat it opens over. Reads the theme: call it inside a $derived. */
+export function cardLook(): CardLook {
+  if (!themeByKey(theme.key).light) return { light: false, ground: [] }
+  const s = currentSurfaces()
+  return { light: true, ground: [s.bg0, s.bg1, s.bg2] }
+}
 
 export type NameSurface = 'chat' | 'side' | 'menu' | 'island'
 
