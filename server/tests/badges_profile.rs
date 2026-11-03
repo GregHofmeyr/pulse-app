@@ -109,6 +109,11 @@ async fn hidden_badges_never_leak_through_someone_elses_profile() {
     assert_eq!(hidden[0].key, "hidden:0");
     assert_eq!(hidden[0].rarity, BadgeRarity::Uncommon);
     assert_eq!(hidden[0].count, 0);
+    // alex was first to it, and when: neither shows through the mask.
+    assert_eq!(hidden[0].earned_at, "");
+    assert_eq!(hidden[0].tier, 1);
+    assert!(!hidden[0].first_earner);
+    assert!(hidden[0].first_tiers.is_empty());
     assert!(p.badges.iter().any(|b| b.key == "night_owl"));
     assert_eq!(p.showcase, ["hidden:0"]);
 
@@ -203,6 +208,7 @@ async fn showcase_order_persists_and_defaults_to_rarest() {
             "early_bird"
         ]
     );
+    assert!(!p.showcase_chosen, "the default isn't a choice");
 
     assert_eq!(
         put_showcase(&app, &alex, &["the_yapper", "founder"]).await,
@@ -211,6 +217,7 @@ async fn showcase_order_persists_and_defaults_to_rarest() {
     for token in [&alex, &sam] {
         let (_, p) = profile(&app, token, alex_id).await;
         assert_eq!(p.showcase, ["the_yapper", "founder"]);
+        assert!(p.showcase_chosen);
     }
 
     assert_eq!(put_showcase(&app, &alex, &["ghost"]).await, 400);
@@ -237,6 +244,7 @@ async fn showcase_order_persists_and_defaults_to_rarest() {
     let (_, p) = profile(&app, &alex, alex_id).await;
     assert_eq!(p.showcase[0], "founder");
     assert_eq!(p.showcase.len(), 5);
+    assert!(!p.showcase_chosen);
 }
 
 #[tokio::test]

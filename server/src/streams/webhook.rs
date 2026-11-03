@@ -98,9 +98,9 @@ async fn streamer_dropped(s: &AppState, channel: ChannelId, user: UserId) {
                 .is_some_and(|i| i.status == StreamStatus::Reconnecting);
         if still_down && let Some(info) = s.streams.end(channel, user) {
             tracing::info!(user = %user, channel = %channel, reason = "timed_out", "stream ended");
-            crate::badges::streams::ended(&s, &info).await;
             crate::streams::routes::publish_ended(&s, channel, user, StreamEndReason::TimedOut)
                 .await;
+            crate::badges::streams::ended(&s, &info).await;
         }
     });
 }

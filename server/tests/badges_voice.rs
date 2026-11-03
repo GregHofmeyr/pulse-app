@@ -223,6 +223,35 @@ async fn early_bird_first_in_the_server_today() {
     assert_eq!(stat_of(&app, alex, stat::EARLY_BIRD_DAYS).await, 10);
 }
 
+#[tokio::test]
+async fn badge_bookkeeping_never_fails_a_voice_webhook() {
+    let app = spawn().await;
+    let (alex, a) = register(&app, "alex").await;
+    let l = lounge(&app, &a).await;
+    // Every badge counter write now fails.
+    sqlx::query("DROP TABLE badge_stats")
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let sessions = || async {
+        sqlx::query_as::<_, (String, Option<String>)>(
+            "SELECT user_id, left_at FROM voice_sessions WHERE channel_id = ?",
+        )
+        .bind(l.id.to_string())
+        .fetch_all(&app.db)
+        .await
+        .unwrap()
+    };
+    // The join and leave still answer 200 (asserted in `webhook`) and still record the session.
+    vjoin(&app, l.id, alex).await;
+    assert_eq!(sessions().await, vec![(alex.to_string(), None)]);
+    vleave(&app, l.id, alex).await;
+    let rows = sessions().await;
+    assert_eq!(rows.len(), 1);
+    assert!(rows[0].1.is_some(), "the session closed");
+    assert!(!app.voice_members(l.id).contains(&alex));
+}
+
 async fn open_streams(app: &TestApp) -> Vec<(String, Option<String>)> {
     sqlx::query_as("SELECT started_at, ended_at FROM stream_sessions ORDER BY started_at")
         .fetch_all(&app.db)

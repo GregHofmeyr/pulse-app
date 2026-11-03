@@ -161,8 +161,8 @@ pub async fn check(
                 Seen::FirstMiss => share_log("stream_video_missing", channel, c.user),
                 Seen::Ended { info, viewers } => {
                     out.ended += 1;
-                    crate::badges::streams::ended(s, &info).await;
                     ended(s, channel, c.user, viewers).await;
+                    crate::badges::streams::ended(s, &info).await;
                 }
                 Seen::Ignored | Seen::Present | Seen::StillMissing => {}
             }

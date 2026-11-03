@@ -151,8 +151,8 @@ async fn stop(
     require_voice_member(&s, me, ch).await?;
     let info = s.streams.end(ch, me).ok_or(AppError::NotFound)?;
     tracing::info!(user = %me, channel = %ch, reason = "stopped", "stream ended");
-    crate::badges::streams::ended(&s, &info).await;
     publish_ended(&s, ch, me, StreamEndReason::Stopped).await;
+    crate::badges::streams::ended(&s, &info).await;
     Ok(StatusCode::NO_CONTENT)
 }
 

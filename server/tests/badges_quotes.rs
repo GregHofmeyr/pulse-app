@@ -108,6 +108,21 @@ impl World {
         };
         r.bearer_auth(token).send().await.unwrap().status().as_u16()
     }
+    async fn link(&self, token: &str, name: &str, user: UserId) {
+        let r = self
+            .app
+            .http
+            .put(
+                self.app
+                    .url(&format!("/servers/{}/speaker-links", self.server)),
+            )
+            .bearer_auth(token)
+            .json(&json!({ "name": name, "user_id": user }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status(), 204, "link");
+    }
     async fn rename(&self, token: &str, user: UserId, nickname: Option<&str>) {
         let r = self
             .app
@@ -199,6 +214,56 @@ async fn quote_awards_follow_give_and_take_back() {
     set_stat(&w.app, w.sam.0, stat::QUOTE_AWARDS, 9).await;
     assert_eq!(w.award(&kim.1, line, true).await, 204);
     assert!(badge(&w.app, &w.sam.1, w.sam.0, "quotable").await.is_some());
+}
+
+#[tokio::test]
+async fn re_pointing_a_link_cant_farm_quote_awards() {
+    let w = world().await;
+    let kim = w.member("kim").await;
+    let jo = w.member("jo").await;
+    let q = w
+        .quote(
+            &w.alex.1,
+            json!([{ "speaker_name": "A Friend", "text": "hi" }]),
+        )
+        .await;
+    let line = q.quote.unwrap().lines[0].id;
+    // kim has awards of her own, so a wrong debit would show.
+    set_stat(&w.app, kim.0, stat::QUOTE_AWARDS, 5).await;
+    // Give while it's sam's, take back while it's kim's, over and over: the take-back debits who
+    // was credited (sam), never whoever the line points at now.
+    w.link(&w.alex.1, "A Friend", w.sam.0).await;
+    for _ in 0..3 {
+        assert_eq!(w.award(&jo.1, line, true).await, 204);
+        w.link(&w.alex.1, "A Friend", kim.0).await;
+        assert_eq!(w.award(&jo.1, line, false).await, 204);
+        w.link(&w.alex.1, "A Friend", w.sam.0).await;
+    }
+    assert_eq!(stat_of(&w.app, w.sam.0, stat::QUOTE_AWARDS).await, 0);
+    assert_eq!(stat_of(&w.app, kim.0, stat::QUOTE_AWARDS).await, 5);
+    // One honest award is one.
+    assert_eq!(w.award(&jo.1, line, true).await, 204);
+    assert_eq!(stat_of(&w.app, w.sam.0, stat::QUOTE_AWARDS).await, 1);
+    assert_eq!(stat_of(&w.app, kim.0, stat::QUOTE_AWARDS).await, 5);
+
+    // Given while it was sam's, taken back after it became the giver's own: still sam's to lose.
+    w.link(&w.alex.1, "A Friend", jo.0).await;
+    assert_eq!(w.award(&jo.1, line, false).await, 204);
+    assert_eq!(stat_of(&w.app, w.sam.0, stat::QUOTE_AWARDS).await, 0);
+    assert_eq!(stat_of(&w.app, jo.0, stat::QUOTE_AWARDS).await, 0);
+
+    // Given while nobody's (no link), taken back once linked: nobody was credited.
+    let q = w
+        .quote(
+            &w.alex.1,
+            json!([{ "speaker_name": "Nobody Yet", "text": "hi" }]),
+        )
+        .await;
+    let line = q.quote.unwrap().lines[0].id;
+    assert_eq!(w.award(&jo.1, line, true).await, 204);
+    w.link(&w.alex.1, "Nobody Yet", kim.0).await;
+    assert_eq!(w.award(&jo.1, line, false).await, 204);
+    assert_eq!(stat_of(&w.app, kim.0, stat::QUOTE_AWARDS).await, 5);
 }
 
 #[tokio::test]

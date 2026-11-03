@@ -113,26 +113,42 @@ async fn set(s: &AppState, me: UserId, line: LineId, give: bool) -> AppResult<St
             "You can't award your own line.".into(),
         ));
     }
-    let changed = if give {
-        sqlx::query(
-            "INSERT OR IGNORE INTO quote_awards (line_id, giver_id, created_at) VALUES (?, ?, ?)",
+    // A counted give records whom it credited, and taking it back debits exactly that person, not
+    // whoever the line points at now (re-pointing a link in between would otherwise farm counts).
+    let (changed, credited) = if give {
+        let changed = sqlx::query(
+            "INSERT OR IGNORE INTO quote_awards (line_id, giver_id, created_at, credited_to)
+             VALUES (?, ?, ?, ?)",
         )
         .bind(line.to_string())
         .bind(me.to_string())
         .bind(now())
+        .bind(speaker.map(|u| u.to_string()))
         .execute(&mut *tx)
         .await?
-        .rows_affected()
+        .rows_affected();
+        (changed, speaker)
     } else {
-        sqlx::query("DELETE FROM quote_awards WHERE line_id = ? AND giver_id = ?")
-            .bind(line.to_string())
-            .bind(me.to_string())
-            .execute(&mut *tx)
-            .await?
-            .rows_affected()
+        let removed: Option<Option<String>> = sqlx::query_scalar(
+            "DELETE FROM quote_awards WHERE line_id = ? AND giver_id = ? RETURNING credited_to",
+        )
+        .bind(line.to_string())
+        .bind(me.to_string())
+        .fetch_optional(&mut *tx)
+        .await?;
+        match removed {
+            Some(credited) => (1, parse_opt(credited.as_deref())?),
+            None => (0, None),
+        }
     };
     if changed == 0 {
         return Ok(StatusCode::NO_CONTENT);
+    }
+    // One more or one fewer toward Quotable for whoever the award credited.
+    if let Some(credited) = credited {
+        let delta = if give { 1 } else { -1 };
+        let stat = crate::badges::catalogue::stat::QUOTE_AWARDS;
+        crate::badges::stats::add(&mut tx, credited, stat, delta).await?;
     }
     // Taking back an uncounted award (the speaker's own, left before a link made it theirs) is
     // stored but changes nothing anyone sees.
@@ -141,12 +157,6 @@ async fn set(s: &AppState, me: UserId, line: LineId, give: bool) -> AppResult<St
         return Ok(StatusCode::NO_CONTENT);
     }
     let awarders = counted_awarders(&mut tx, line, speaker).await?;
-    // A counted award given or taken back is one more or one fewer toward Quotable.
-    if let Some(speaker) = speaker {
-        let delta = if give { 1 } else { -1 };
-        let stat = crate::badges::catalogue::stat::QUOTE_AWARDS;
-        crate::badges::stats::add(&mut tx, speaker, stat, delta).await?;
-    }
     tx.commit().await?;
     s.hub
         .publish(

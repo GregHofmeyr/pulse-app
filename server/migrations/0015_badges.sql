@@ -35,3 +35,8 @@ CREATE TABLE stream_sessions (
     ended_at   TEXT
 ) STRICT;
 CREATE INDEX stream_sessions_open ON stream_sessions(user_id, channel_id, ended_at);
+
+-- Who a quote award counted toward Quotable for when it was given (NULL = nobody: the line had no
+-- member speaker then). Taking it back debits that person, not whoever the line points at now, so
+-- re-pointing a speaker link between give and take-back can't move counts around.
+ALTER TABLE quote_awards ADD COLUMN credited_to TEXT REFERENCES users(id);

@@ -91,13 +91,14 @@ pub async fn catalogue(conn: &mut SqliteConnection, viewer: UserId) -> AppResult
     })
 }
 
-/// `user`'s badges and showcase as `viewer` sees them: hidden badges `viewer` doesn't hold are
-/// masked (rarity kept, no count) and `seen` is only ever reported to the owner.
+/// `user`'s badges and showcase (and whether the showcase is their own choice) as `viewer` sees
+/// them: hidden badges `viewer` doesn't hold are
+/// masked (rarity kept; no count, date, tier or firsts) and `seen` is only ever reported to the owner.
 pub async fn profile_badges(
     conn: &mut SqliteConnection,
     user: UserId,
     viewer: UserId,
-) -> AppResult<(Vec<Badge>, Vec<String>)> {
+) -> AppResult<(Vec<Badge>, Vec<String>, bool)> {
     let mut badges = engine::held(conn, user).await?;
     let chosen: Vec<String> = sqlx::query_scalar(
         "SELECT badge_key FROM user_badges WHERE user_id = ? AND showcase IS NOT NULL \
@@ -106,7 +107,8 @@ pub async fn profile_badges(
     .bind(user.to_string())
     .fetch_all(&mut *conn)
     .await?;
-    let showcase = if chosen.is_empty() {
+    let showcase_chosen = !chosen.is_empty();
+    let showcase = if !showcase_chosen {
         // The rarest five, older first among equals (`held` is oldest first; the sort is stable).
         let mut by_rarity: Vec<&Badge> = badges.iter().collect();
         by_rarity.sort_by_key(|b| std::cmp::Reverse(b.rarity));
@@ -130,6 +132,11 @@ pub async fn profile_badges(
             shown_as.insert(std::mem::replace(&mut b.key, key.clone()), key);
             b.hidden = true;
             b.count = 0;
+            // When and who first would give it away too (the showcase is already sorted).
+            b.earned_at = String::new();
+            b.tier = 1;
+            b.first_earner = false;
+            b.first_tiers.clear();
         }
         if viewer != user {
             b.seen = true;
@@ -139,7 +146,7 @@ pub async fn profile_badges(
         .into_iter()
         .map(|k| shown_as.get(&k).cloned().unwrap_or(k))
         .collect();
-    Ok((badges, showcase))
+    Ok((badges, showcase, showcase_chosen))
 }
 
 fn unit(def: &Def) -> BadgeUnit {

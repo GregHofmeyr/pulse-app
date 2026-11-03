@@ -115,14 +115,10 @@ pub async fn delete(
     .bind(id.to_string())
     .fetch_all(&mut *tx)
     .await?;
-    let mut callers = Vec::new();
-    for (user, joined, left) in &closed {
-        let Ok(user) = user.parse::<UserId>() else {
-            continue;
-        };
-        crate::badges::voice::left(&mut tx, user, id, joined, left).await?;
-        callers.push(user);
-    }
+    let closed: Vec<(UserId, String, String)> = closed
+        .into_iter()
+        .filter_map(|(user, joined, left)| Some((user.parse().ok()?, joined, left)))
+        .collect();
     tx.commit().await?;
     s.hub
         .publish(
@@ -134,7 +130,8 @@ pub async fn delete(
         )
         .await;
     drop(_order);
-    crate::badges::engine::after(&s, &callers).await;
+    // Badge bookkeeping in its own transaction, after the delete: it never fails it.
+    crate::badges::voice::closed(&s, id, &closed).await;
     // The channel can't be found now, so a join webhook finds nothing to join. Its events can't
     // reach anyone (they'd be scoped to a channel that can't be found): clients drop its voice
     // presence and streams on `ChannelDeleted`.
@@ -142,10 +139,11 @@ pub async fn delete(
         let people: Vec<UserId> = s.voice.members(id).into_iter().collect();
         for u in &people {
             s.voice.leave(id, *u, "");
-            if let Some(info) = s.streams.end(id, *u) {
+            let ended = s.streams.end(id, *u);
+            s.streams.remove_viewer_everywhere(id, *u);
+            if let Some(info) = ended {
                 crate::badges::streams::ended(&s, &info).await;
             }
-            s.streams.remove_viewer_everywhere(id, *u);
         }
         let s = s.clone();
         tokio::spawn(async move { crate::voice::revoke::close_call(&s, id, &people).await });

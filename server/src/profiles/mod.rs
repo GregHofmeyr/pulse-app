@@ -102,7 +102,8 @@ pub async fn load_profile(
         })
         .collect::<AppResult<Vec<_>>>()?;
 
-    let (badges, showcase) = crate::badges::view::profile_badges(&mut tx, user, viewer).await?;
+    let (badges, showcase, showcase_chosen) =
+        crate::badges::view::profile_badges(&mut tx, user, viewer).await?;
     tx.commit().await?;
 
     Ok(Some(Profile {
@@ -123,6 +124,7 @@ pub async fn load_profile(
         },
         badges,
         showcase,
+        showcase_chosen,
         name_archive,
     }))
 }

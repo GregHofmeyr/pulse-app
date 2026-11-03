@@ -221,6 +221,9 @@ pub struct Profile {
     /// Up to 5 badge keys shown on the card, in order, as they appear in `badges`.
     #[serde(default)]
     pub showcase: Vec<String>,
+    /// The owner saved a showcase of their own; false while it's the default (the rarest five).
+    #[serde(default)]
+    pub showcase_chosen: bool,
 }
 
 /// `PUT /me/profile`: the whole editable profile at once.

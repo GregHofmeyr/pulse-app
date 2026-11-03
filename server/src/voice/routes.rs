@@ -16,7 +16,7 @@ use crate::AppState;
 use crate::access::{channel_for, is_channel_member, load_channel};
 use crate::auth::AuthUser;
 use crate::auth::extractor::BearerToken;
-use crate::db::{begin_write, now, stamp};
+use crate::db::{now, stamp};
 use crate::error::{AppError, AppResult};
 use crate::voice::state::Left;
 
@@ -149,19 +149,19 @@ async fn webhook(
 
     match ev.event.as_str() {
         "participant_joined" if s.voice.join(channel_id, user_id, &p.sid) => {
+            // The session is recorded and the join published before any badge bookkeeping,
+            // which runs after and never fails the webhook.
+            let mut opened = None;
             if let Some(server) = ch.server_id {
                 let (id, at) = (pulse_protocol::ids::next_ulid().to_string(), Utc::now());
-                let mut tx = begin_write(&s.db).await?;
                 sqlx::query("INSERT INTO voice_sessions (id, user_id, channel_id, joined_at) VALUES (?, ?, ?, ?)")
                         .bind(&id)
                         .bind(user_id.to_string())
                         .bind(channel_id.to_string())
                         .bind(stamp(at))
-                        .execute(&mut *tx)
+                        .execute(&s.db)
                         .await?;
-                crate::badges::voice::joined(&mut tx, server, user_id, &id, at).await?;
-                tx.commit().await?;
-                crate::badges::engine::after(&s, &[user_id]).await;
+                opened = Some((server, id, at));
             }
             s.hub
                 .publish(
@@ -173,6 +173,9 @@ async fn webhook(
                     },
                 )
                 .await;
+            if let Some((server, id, at)) = opened {
+                crate::badges::voice::opened(&s, server, user_id, &id, at).await;
+            }
         }
         _ if left => {
             let in_memory = match s.voice.leave(channel_id, user_id, &p.sid) {
@@ -182,8 +185,7 @@ async fn webhook(
                 // Still close the open row (e.g. we restarted mid-call).
                 Left::NotPresent => false,
             };
-            let closed = if record {
-                let mut tx = begin_write(&s.db).await?;
+            let sessions: Vec<(UserId, String, String)> = if record {
                 let rows: Vec<(String, String)> = sqlx::query_as(
                     "UPDATE voice_sessions SET left_at = ? WHERE user_id = ? AND channel_id = ? AND left_at IS NULL
                      RETURNING joined_at, left_at",
@@ -191,23 +193,19 @@ async fn webhook(
                 .bind(now())
                 .bind(user_id.to_string())
                 .bind(channel_id.to_string())
-                .fetch_all(&mut *tx)
+                .fetch_all(&s.db)
                 .await?;
-                for (joined, left) in &rows {
-                    crate::badges::voice::left(&mut tx, user_id, channel_id, joined, left).await?;
-                }
-                tx.commit().await?;
-                crate::badges::engine::after(&s, &[user_id]).await;
-                !rows.is_empty()
+                rows.into_iter().map(|(j, l)| (user_id, j, l)).collect()
             } else {
-                false
+                Vec::new()
             };
+            let closed = !sessions.is_empty();
+            let mut ended = None;
             if in_memory {
                 // Only the stream in THIS channel: a late leave for an old channel must not
                 // end a stream the user has since started elsewhere.
                 if let Some(info) = s.streams.end(channel_id, user_id) {
                     tracing::info!(user = %user_id, channel = %channel_id, reason = "left_voice", "stream ended");
-                    crate::badges::streams::ended(&s, &info).await;
                     crate::streams::routes::publish_ended(
                         &s,
                         channel_id,
@@ -215,6 +213,7 @@ async fn webhook(
                         StreamEndReason::LeftVoice,
                     )
                     .await;
+                    ended = Some(info);
                 }
                 for (streamer, viewers) in s.streams.remove_viewer_everywhere(channel_id, user_id) {
                     crate::streams::routes::publish_viewers(&s, channel_id, streamer, viewers)
@@ -235,6 +234,11 @@ async fn webhook(
                         },
                     )
                     .await;
+            }
+            // Badge bookkeeping last, once everything above is committed and published.
+            crate::badges::voice::closed(&s, channel_id, &sessions).await;
+            if let Some(info) = ended {
+                crate::badges::streams::ended(&s, &info).await;
             }
         }
         _ => {}

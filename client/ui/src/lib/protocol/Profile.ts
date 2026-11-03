@@ -12,4 +12,8 @@ export type Profile = { user: User, card: CardProfile, stats: ProfileStats, badg
 /**
  * Up to 5 badge keys shown on the card, in order, as they appear in `badges`.
  */
-showcase: Array<string>, };
+showcase: Array<string>, 
+/**
+ * The owner saved a showcase of their own; false while it's the default (the rarest five).
+ */
+showcase_chosen: boolean, };
