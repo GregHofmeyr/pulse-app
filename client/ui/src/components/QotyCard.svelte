@@ -129,6 +129,7 @@
   .tally { display: flex; align-items: center; gap: 8px; }
   .tally small { color: var(--island-text-3); font-size: 12px; }
   .tally :global(.stack .av) { box-shadow: 0 0 0 2px var(--quote-surface); }
+  .tally :global(.stack .more) { color: var(--island-text-3); } /* the voter stack's "+3", on the island */
   .reopen { margin-top: 4px; }
 
   /* a card that just arrived: the spill pours down, the mark drops in (never under reduced motion) */

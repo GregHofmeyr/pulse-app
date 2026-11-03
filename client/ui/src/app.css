@@ -85,7 +85,8 @@
   --quote-green-text: var(--quote-green);
   /* the near-black the spill pours into (banner, winner card) */
   --quote-surface: #0e1013;
-  /* Text on that island (--text, --text-2, --text-3 today): fixed, so it reads on --quote-surface in every theme. */
+  /* Text on that island (--text, --text-2, --text-3 today): fixed, so it reads on --quote-surface in every
+     theme. Also for other fixed dark boxes (the stream diagnostics over video). */
   --island-text: #e8e9ed;
   --island-text-2: #b9bcc6;
   --island-text-3: #8e92a0;

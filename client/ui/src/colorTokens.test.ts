@@ -36,8 +36,8 @@ const svelteFiles = (() => {
 const rel = (f: string) => f.slice(__dirname.length + 1)
 
 /** Colour literals: hex, the colour functions, and white/black as a CSS value (not white-space). */
-const LITERAL = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch)\([^)]*\)/g
-const NAMED = /(?<![-\w$.])(?:white|black)(?![-\w])/g
+const LITERAL = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^)]*\)/g
+const NAMED = /(?<![-\w$.])(?:white|black|red|green|blue|yellow|orange|purple|pink|gr[ae]y|silver|navy|teal|maroon|olive|lime|aqua|fuchsia)(?![-\w])/g
 const styleBlocks = (text: string) => [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1])
 const literalsIn = (text: string) => {
   const found = new Set(text.match(LITERAL) ?? [])
@@ -171,7 +171,7 @@ describe('text vs fill', () => {
     for (const f of [...svelteFiles, resolve(__dirname, 'app.css')]) {
       const allowed = FILL_AS_TEXT[rel(f)]
       for (const line of readFileSync(f, 'utf8').split('\n')) {
-        if (/(^|[\s;{])color: var\(--(accent|warn|ok|quote-green)\)/.test(line) && !(allowed && allowed.test(line))) offenders.push(`${rel(f)}: ${line.trim()}`)
+        if (/(^|[\s;{])(color|caret-color|-webkit-text-fill-color):\s*var\(--(accent|warn|ok|quote-green)\)/.test(line) && !(allowed && allowed.test(line))) offenders.push(`${rel(f)}: ${line.trim()}`)
       }
     }
     expect(offenders).toEqual([])
@@ -188,6 +188,9 @@ describe('the Quote of the Year island', () => {
     // the no-vote line (.none, .time) sits in the chat, not on the island
     const islandLines = card.split('\n').filter((l) => /var\(--text/.test(l))
     expect(islandLines.map((l) => l.trim().split(' ')[0])).toEqual(['.none', '.time'])
+    // the voter stack's "+3" is a child component's text, on the island
+    expect(card).toContain('.tally :global(.stack .more) { color: var(--island-text-3); }')
+    expect(src('components/VoterStack.svelte')).toMatch(/\.more \{[^}]*color: var\(--text-3\)/)
   })
 })
 
