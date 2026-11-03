@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { flushSync, mount, unmount } from 'svelte'
+import { flushSync, mount, tick, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeMatchMedia, FakeIntersectionObserver } from '../lib/testMotion'
 
@@ -171,6 +171,39 @@ describe('FullProfile', () => {
       rows = [...panel('Name Archive')!.querySelectorAll('li')]
       expect(rows[2].textContent).toContain('Pup')
       expect([...panel('Name Archive')!.querySelectorAll('button')].some((b) => b.textContent === 'Load more')).toBe(false)
+    })
+
+    it('a rename while a page is loading: the reload wins, the stale page is dropped', async () => {
+      let stale!: (v: unknown) => void
+      let reloaded = false
+      vi.mocked(invoke).mockImplementation((async (cmd: string, args: { cursor: string | null }) => {
+        if (cmd !== 'name_archive') return undefined
+        if (args.cursor === 'c1') return new Promise((r) => (stale = r))
+        return reloaded
+          ? { entries: [row('Captain', 'U1', '2026-10-22T00:00:00Z'), row('Big Dog', 'U2', '2026-10-20T00:00:00Z')], total: 4, next_cursor: 'c2' }
+          : { entries: [row('Big Dog', 'U2', '2026-10-20T00:00:00Z')], total: 3, next_cursor: 'c1' }
+      }) as never)
+      app.state = {
+        ...emptyState(), me: alex,
+        people: { U1: { user: alex, online: true, last_seen_at: null }, U2: { user: sam, online: true, last_seen_at: null } },
+        members: { S1: [{ user: alex, nickname: null }, { user: sam, nickname: 'Big Dog' }] },
+        servers: [{ id: 'S1', name: 'Den' }], profiles: { U2: profile() },
+      } as never
+      cmp = mount(FullProfile, { target: document.body, props: { userId: 'U2', serverId: 'S1', onClose: vi.fn() } })
+      flushSync()
+      await vi.waitFor(() => expect(panel('Name Archive')).toBeDefined())
+      ;[...panel('Name Archive')!.querySelectorAll('button')].find((b) => b.textContent === 'Load more')!.click()
+      await vi.waitFor(() => expect(stale).toBeTypeOf('function'))
+      reloaded = true
+      app.state = { ...app.state, members: { S1: [{ user: alex, nickname: null }, { user: sam, nickname: 'Captain' }] } }
+      flushSync()
+      await vi.waitFor(() => expect(panel('Name Archive')!.textContent).toContain('Renamed 4 times'))
+      stale({ entries: [row('Pup', 'U1', '2026-10-10T00:00:00Z')], total: 3, next_cursor: null })
+      await tick()
+      flushSync()
+      const rows = [...panel('Name Archive')!.querySelectorAll('li')].map((li) => li.querySelector('strong')!.textContent)
+      expect(rows).toEqual(['Captain', 'Big Dog'])
+      expect([...panel('Name Archive')!.querySelectorAll('button')].some((b) => b.textContent === 'Load more')).toBe(true)
     })
 
     it('no renames: no archive panel', async () => {

@@ -11,7 +11,7 @@
   // changes the text only through `setText`, never by writing `text` itself.
   import { untrack } from 'svelte'
   import { wireEmoji } from '../lib/animate.svelte'
-  import { offsetOf, positionAt, renderable, renderInto, serialize, tokenSpans } from '../lib/composerDom'
+  import { chipBroken, offsetOf, positionAt, renderable, renderInto, serialize, tokenSpans } from '../lib/composerDom'
   import { mediaUrl } from '../lib/emoji'
   import { app } from '../lib/store.svelte'
 
@@ -304,9 +304,10 @@
     text = next
     if (!composing) {
       const at = readSel()?.start ?? next.length
-      // the browser leaves a lone <br> in a box it emptied (clear it, so the placeholder shows), and
-      // can drop the line break a text ending in a newline needs (or its last line disappears)
-      if ((!next && box.childNodes.length) || (next.endsWith('\n') && !(box.lastChild instanceof HTMLBRElement))) {
+      // the browser leaves a lone <br> in a box it emptied (clear it, so the placeholder shows), and it
+      // can drop the line break a text ending in a newline needs (or its last line disappears); a
+      // mention chip typed onto (`@sam` + `antha`) would show one person and send another
+      if ((!next && box.childNodes.length) || (next.endsWith('\n') && !(box.lastChild instanceof HTMLBRElement)) || chipBroken(box)) {
         render(next)
         placeCaret(at)
       }

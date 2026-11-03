@@ -49,19 +49,23 @@
   let serverArchive = $state<{ key: string; entries: NameChange[]; total: number; next: string | null } | null>(null)
   let archiveError = $state<string | null>(null)
   let archiveBusy = $state(false)
+  // Only the newest load lands: a reload (a rename) supersedes a page still on its way, whose
+  // cursor belongs to the list the reload replaced.
+  let archiveSeq = 0
   async function loadArchive(sid: string, uid: string, cursor: string | null) {
     const key = `${sid}\t${uid}`
+    const seq = ++archiveSeq
     archiveBusy = true
     archiveError = null
     try {
       const page = await api.nameArchive(sid, uid, cursor)
-      if (key !== `${serverId}\t${userId}`) return
+      if (seq !== archiveSeq) return
       const before = cursor && serverArchive?.key === key ? serverArchive.entries : []
       serverArchive = { key, entries: [...before, ...page.entries], total: page.total, next: page.next_cursor }
     } catch (e) {
-      archiveError = errorText(e)
+      if (seq === archiveSeq) archiveError = errorText(e)
     } finally {
-      archiveBusy = false
+      if (seq === archiveSeq) archiveBusy = false
     }
   }
   // their nickname here: a rename while this is open (the gateway's MemberUpdated) reloads the archive

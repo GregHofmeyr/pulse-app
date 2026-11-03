@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { offsetOf, positionAt, renderInto, serialize, tokenSpans } from './composerDom'
+import { chipBroken, offsetOf, positionAt, renderInto, serialize, tokenSpans } from './composerDom'
 
 const pog = { id: '1', name: 'pog', hash: 'a'.repeat(64), still_hash: null, animated: false }
 const party = { id: '2', name: 'party', hash: 'b'.repeat(64), still_hash: 'c'.repeat(64), animated: true }
@@ -131,6 +131,19 @@ describe('mention chips', () => {
     renderInto(el, 'thanks @sam.', lookup, shown)
     expect(el.querySelector<HTMLElement>('.mention-chip')!.dataset.token).toBe('@sam')
     expect(serialize(el)).toBe('thanks @sam.')
+  })
+
+  it('a chip with a name character typed right after it no longer says what is sent', () => {
+    const el = box()
+    renderInto(el, 'hi @sam ok', lookup, shown)
+    expect(chipBroken(el)).toBe(false)
+    ;(el.lastChild as Text).data = 'antha'
+    expect(serialize(el)).toBe('hi @samantha')
+    expect(chipBroken(el)).toBe(true)
+    ;(el.lastChild as Text).data = '. and'
+    expect(chipBroken(el)).toBe(false)
+    ;(el.lastChild as Text).data = '.x'
+    expect(chipBroken(el)).toBe(true)
   })
 
   it('caret offsets count the username a chip stands for', () => {

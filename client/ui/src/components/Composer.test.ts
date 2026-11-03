@@ -710,4 +710,22 @@ describe('Composer mentions', () => {
     await tick()
     expect(onSend).toHaveBeenLastCalledWith('hi @sam')
   })
+
+  it('a mention of yourself shows as a chip with your name too', async () => {
+    const me = { id: 'U1', username: 'alex', display_name: 'Alex A', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    const sam = { id: 'U2', username: 'sam', display_name: 'Sam S', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    app.state = { ...emptyState(), me, members: { S1: [{ user: me, nickname: null }, { user: sam, nickname: null }] } }
+    cmp = mount(Composer, {
+      target: document.body,
+      props: { placeholder: 'Message', draftKey: `K${Math.random()}`, replyingTo: null, onCancelReply: () => {}, onSend, onTyping: () => {}, mentionables: [{ id: 'U2', name: 'Sam S', username: 'sam', alts: ['Sam S'] }], serverId: 'S1' },
+    })
+    flushSync()
+    const box = document.querySelector<HTMLElement>('[role="textbox"]')!
+    box.focus()
+    type(box, '@alex and @sa')
+    document.querySelector<HTMLElement>('[role=listbox][aria-label="Mention someone"] [role=option]')!
+      .dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+    await tick()
+    expect([...box.querySelectorAll('.mention-chip')].map((c) => c.textContent)).toEqual(['@Alex A', '@Sam S'])
+  })
 })

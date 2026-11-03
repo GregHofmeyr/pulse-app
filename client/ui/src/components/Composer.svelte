@@ -16,6 +16,7 @@
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import { memberServers } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
+  import { displayName } from '../lib/selectors'
   import Name from './Name.svelte'
 
   let {
@@ -88,7 +89,12 @@
   // a mention is written as the username (what the server reads); the box shows it as a chip with
   // the name that applies here (#47)
   const choose = (username: string) => setText(applyMention(text, caret, username))
-  const mentionName = (username: string) => mentionables.find((m) => m.username.toLowerCase() === username.toLowerCase())?.name ?? null
+  const mentionName = (username: string) => {
+    const u = username.toLowerCase()
+    const me = app.state.me
+    if (me && me.username.toLowerCase() === u) return displayName(app.state, serverId, me.id)
+    return mentionables.find((m) => m.username.toLowerCase() === u)?.name ?? null
+  }
   const chooseEmoji = (e: Std | CustomEmoji) => setText(applyEmoji(text, caret, emojiText(e)))
 
   // `sel` keeps the box's selection while the picker has focus: insert there.

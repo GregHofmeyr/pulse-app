@@ -82,7 +82,10 @@ export const NAME_MAX = 32
 export function nameProblem(name: string): string | null {
   const n = name.trim()
   if (!n || charCount(n) > NAME_MAX) return 'Names can be 1 to 32 characters.'
-  if (/\p{Cc}/u.test(n)) return "Names can't contain line breaks or control characters."
+  // control characters, Unicode line/paragraph separators, direction embeddings/overrides/isolates
+  if (/[\p{Cc}\u2028\u2029\u202a-\u202e\u2066-\u2069]/u.test(n)) return "Names can't contain line breaks or control characters."
+  // something must draw: not only zero-width characters, joiners, marks, the BOM or Hangul fillers
+  if (/^[\s\u034f\u115f\u1160\u180e\u200b-\u200f\u2060-\u2064\u3164\ufeff\uffa0]*$/u.test(n)) return 'Names need at least one character you can see.'
   return null
 }
 

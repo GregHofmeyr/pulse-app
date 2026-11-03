@@ -1,12 +1,13 @@
 <script lang="ts">
   // Asks for a nickname (#48): someone's server nickname (anyone in the server may set or reset it;
   // everyone there sees it), or the private one only you see. Blank and Save, or Reset, is no
-  // nickname. The server enforces the rules; the box only stops at 32.
+  // nickname. The rules are the server's, checked here as you type (in characters, as it counts).
   import { untrack } from 'svelte'
   import { modal } from '../lib/actions'
   import { app } from '../lib/store.svelte'
   import { baseName, serverNick, userOf } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
+  import { nameProblem } from '../lib/profileDraft'
   import type { RenameTarget } from '../lib/profileCard.svelte'
 
   let { target, onClose }: { target: RenameTarget; onClose: () => void } = $props()
@@ -31,9 +32,11 @@
   let value = $state(untrack(() => current ?? ''))
   let busy = $state(false)
   let error = $state('')
+  // blank is a reset, so only a name typed can be wrong
+  const problem = $derived(value.trim() ? nameProblem(value) : null)
 
   async function save(nickname: string | null) {
-    if (busy) return
+    if (busy || (nickname !== null && problem)) return
     busy = true
     error = ''
     const n = nickname?.trim() || null
@@ -59,12 +62,12 @@
     <p>{hint}</p>
     <form onsubmit={(e) => { e.preventDefault(); void save(value) }}>
       <!-- svelte-ignore a11y_autofocus -->
-      <input class="input" aria-label="Nickname" maxlength="32" bind:value placeholder={without} autofocus disabled={busy} />
-      {#if error}<p class="err" role="alert">{error}</p>{/if}
+      <input class="input" aria-label="Nickname" aria-invalid={!!problem} bind:value placeholder={without} autofocus disabled={busy} />
+      {#if problem}<p class="err" role="alert">{problem}</p>{:else if error}<p class="err" role="alert">{error}</p>{/if}
       <div class="actions">
         {#if current}<button type="button" class="btn btn-lg btn-secondary reset" disabled={busy} onclick={() => save(null)}>{target.kind === 'private' ? 'Clear' : 'Reset'}</button>{/if}
         <button type="button" class="btn btn-lg btn-secondary" disabled={busy} onclick={cancel}>Cancel</button>
-        <button type="submit" class="btn btn-lg btn-primary" disabled={busy}>Save</button>
+        <button type="submit" class="btn btn-lg btn-primary" disabled={busy || !!problem}>Save</button>
       </div>
     </form>
   </div>

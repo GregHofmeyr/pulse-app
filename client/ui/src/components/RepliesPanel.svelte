@@ -11,7 +11,7 @@
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { addPending, addReplies, closeThread, holdThread, maxIdOf, PAGE, pendingMessage, removePending, threadOf, tracksUnread, type Pending } from '../lib/state'
   import { overlayShown } from '../lib/escape'
-  import { groupedWith, keepStable, mentionablesFor, nameOfIn } from '../lib/selectors'
+  import { groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -141,7 +141,7 @@
   const mentionables = $derived(mentionablesFor(app.state, channelId))
   const sameNames = keepStable<string>()
   // mentions are written as usernames; pills then show the name that applies (MessageItem)
-  const mentionNames = $derived(sameNames(mentionables.map((p) => p.username)))
+  const mentionNames = $derived(sameNames(pillNamesFor(app.state, channelId)))
 
   // `replyToId` stays inside the thread: it's never the quote unless the person picked it.
   function post(text: string, replyToId: string | null) {

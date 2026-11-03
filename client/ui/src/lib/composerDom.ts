@@ -91,6 +91,17 @@ export function renderInto(el: HTMLElement, text: string, lookup: (id: string) =
   return imgs
 }
 
+/** Whether a mention chip in `el` is now followed by more of a name (typed right after it): the text
+ *  would then mention someone else than the chip shows, so the box must be drawn again from it. */
+export function chipBroken(el: HTMLElement): boolean {
+  for (const chip of el.querySelectorAll('.mention-chip')) {
+    let after = ''
+    for (let n = chip.nextSibling; n && n.nodeType === Node.TEXT_NODE; n = n.nextSibling) after += (n as Text).data
+    if (/^\.*[A-Za-z0-9_-]/.test(after)) return true
+  }
+  return false
+}
+
 const BLOCK = new Set(['DIV', 'P'])
 
 /** The message text `el` holds, however the browser arranged it while editing (it wraps lines in

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { charCount, draftFrom, editsSince, isDirty, normalBio, previewCard, previewUser, toRequest, type Draft } from './profileDraft'
+import { charCount, draftFrom, editsSince, isDirty, nameProblem, normalBio, previewCard, previewUser, toRequest, type Draft } from './profileDraft'
 import type { Profile } from './protocol/Profile'
 import type { User } from './protocol/User'
 
@@ -50,6 +50,15 @@ describe('profileDraft', () => {
     // the draft holds its own colours: editing it never touches the profile
     d.colors.push('#000000')
     expect(profile.user.style.colors).toHaveLength(2)
+  })
+
+  it('name rules match the server (profiles/names.rs)', () => {
+    expect(nameProblem('Alex 🎸')).toBeNull()
+    expect(nameProblem('a\u200db')).toBeNull()
+    for (const bad of ['', '   ', 'x'.repeat(33)]) expect(nameProblem(bad), bad).toContain('1 to 32')
+    expect(nameProblem('é'.repeat(32))).toBeNull()
+    for (const bad of ['a\nb', 'a\tb', 'a\u2028b', 'a\u202eb', 'a\u2066b']) expect(nameProblem(bad), bad).toContain('line breaks')
+    for (const bad of ['\u200b', '\u200b\ufeff', '\u3164']) expect(nameProblem(bad), bad).toContain('see')
   })
 
   it('the display name: trimmed when sent, the username when an older server sent none (#47)', () => {

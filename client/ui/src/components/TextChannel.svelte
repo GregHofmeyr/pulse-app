@@ -19,7 +19,7 @@
   import { addHistory, addOlder, appendNewer, markHistory, reachLatest, PAGE, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
   import { liveQoty } from '../lib/quotes'
-  import { displayName, groupedWith, keepStable, mentionablesFor, nameOfIn, nextTypingExpiry, typingNames } from '../lib/selectors'
+  import { displayName, groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor, nextTypingExpiry, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -127,7 +127,7 @@
   // Same names → same array, so an unrelated event (typing, presence) doesn't re-render every message.
   const sameNames = keepStable<string>()
   // mentions are written as usernames; pills then show the name that applies (MessageItem)
-  const mentionNames = $derived(sameNames(mentionables.map((p) => p.username)))
+  const mentionNames = $derived(sameNames(pillNamesFor(app.state, channelId)))
 
   // --- DM/group header ---
   const isPrivate = $derived(channel?.server_id === null)

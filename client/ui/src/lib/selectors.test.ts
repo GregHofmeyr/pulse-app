@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState } from './state'
-import { roleColorFor, userOf, callRoster, channelsFor, displayName, groupedWith, isLive, isMember, liveIn, mentionablesFor, nameOfIn, serverPeople, typingNames, voiceOccupants } from './selectors'
+import { roleColorFor, userOf, callRoster, channelsFor, displayName, groupedWith, isLive, isMember, liveIn, mentionablesFor, nameOfIn, pillNamesFor, serverPeople, typingNames, voiceOccupants } from './selectors'
 import type { Message } from './protocol/Message'
 import type { Ready } from './protocol/Ready'
 import type { StreamInfo } from './protocol/StreamInfo'
@@ -244,6 +244,14 @@ describe('serverPeople', () => {
       { id: 'U2', name: 'Big Dog', username: 'sam', alts: ['sam', 'Big Dog', 'Sammy'] },
     ])
     expect(serverPeople(st, 'S2')).toEqual([{ id: 'U2', name: 'Sammy', username: 'sam', alts: ['sam', 'Sammy'] }])
+  })
+})
+
+describe('pillNamesFor', () => {
+  it('is the mentionable usernames plus mine: a mention of you shows your name too (#47)', () => {
+    const st = { ...s, people: { U1: { user: me, online: true }, U2: { user: sam, online: false } }, dmMembers: { D1: ['U1', 'U2'] } } as unknown as typeof s
+    expect(pillNamesFor(st, 'C1')).toEqual(['sam', 'alex'])
+    expect(pillNamesFor(st, 'D1')).toEqual(['sam', 'alex'])
   })
 })
 

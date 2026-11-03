@@ -143,6 +143,13 @@ export function mentionablesFor(s: AppState, channelId: string): Mentionable[] {
     .map((id) => ({ id, name: displayName(s, serverId, id), username: s.people[id].user.username, alts: namesOf(s, serverId, id) }))
 }
 
+/** The usernames a message's `@name` pills are made for in a channel: everyone mentionable there, and
+ *  you (a mention of you shows your name too, #47; you're only left out of the autocomplete). */
+export function pillNamesFor(s: AppState, channelId: string): string[] {
+  const names = mentionablesFor(s, channelId).map((p) => p.username)
+  return s.me ? [...names, s.me.username] : names
+}
+
 /** A name lookup for one server's views (`state` reads the current state); no author is "Pulse". */
 export function nameOfIn(state: () => AppState, serverId: string | null): (userId: string | null) => string {
   return (userId) => (userId ? displayName(state(), serverId, userId) : 'Pulse')
