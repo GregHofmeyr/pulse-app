@@ -1289,6 +1289,21 @@ pub async fn toggle_deafen(
     Ok(c)
 }
 
+/// The volume mixer's Calls section (percent): the master, Voices and Streams. The Soundboard
+/// notch isn't here: it rides along with each `soundboard_play`.
+#[tauri::command]
+pub async fn set_call_mix(
+    voice: State<'_, VoiceManager>,
+    calls_percent: u16,
+    voices_percent: u16,
+    streams_percent: u16,
+) -> Result<(), VoiceError> {
+    voice
+        .set_call_mix(calls_percent, voices_percent, streams_percent)
+        .await;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn set_peer_volume(
     voice: State<'_, VoiceManager>,
@@ -3299,16 +3314,18 @@ async fn play_decoded(
 /// Play a server sound (by media hash) for yourself: the call's mixer when in one, else the
 /// speakers. Fetches nothing at zero gain; a decoded sound is cached for instant replays.
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn soundboard_play(
     app: AppHandle,
     core: State<'_, Core>,
     cache: State<'_, crate::soundboard::Cache>,
     hash: String,
+    calls_percent: u16,
     soundboard_percent: u16,
     sound_percent: u16,
     output: Option<String>,
 ) -> Result<(), String> {
-    let gain = crate::soundboard::gain(soundboard_percent, sound_percent);
+    let gain = crate::soundboard::gain(calls_percent, soundboard_percent, sound_percent);
     if gain <= 0.0 {
         return Ok(());
     }
@@ -3340,12 +3357,13 @@ pub async fn soundboard_preview(
     start_ms: u32,
     end_ms: u32,
     sound_percent: u16,
+    calls_percent: u16,
     soundboard_percent: u16,
     output: Option<String>,
 ) -> Result<(), String> {
     let bytes = prepared_bytes(&app, &prepared, &path, start_ms, end_ms).await?;
     let samples = crate::soundboard::decode::decode_blocking(bytes).await?;
-    let gain = crate::soundboard::gain(soundboard_percent, sound_percent);
+    let gain = crate::soundboard::gain(calls_percent, soundboard_percent, sound_percent);
     if gain > 0.0 {
         play_decoded(&app, samples, gain, output).await;
     }

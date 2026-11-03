@@ -277,6 +277,7 @@ pub fn run() {
             commands::toggle_mute,
             commands::toggle_deafen,
             commands::set_peer_volume,
+            commands::set_call_mix,
             commands::set_audio_config,
             commands::list_audio_devices,
             commands::start_mic_test,

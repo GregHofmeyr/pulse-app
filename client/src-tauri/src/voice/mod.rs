@@ -955,6 +955,9 @@ pub struct VoiceManager {
     controls: Arc<Mutex<Controls>>,
     /// Per-user volume (0..=200 %), keyed by user id.
     volumes: Arc<Mutex<HashMap<String, u16>>>,
+    /// The volume mixer's level per kind of call audio (Calls × Voices, Calls × Streams); kept
+    /// for the app's life and handed to every call's mixer. Missing = 100 %.
+    kind_gains: Mutex<HashMap<SourceKind, f32>>,
     events: EventSink,
     /// The current session's `alive` (cleared on leave or when LiveKit drops us): the truth for
     /// "in voice", readable without the session lock.
@@ -1000,6 +1003,7 @@ impl VoiceManager {
             session: tokio::sync::Mutex::new(None),
             controls: Arc::new(Mutex::new(Controls::default())),
             volumes: Arc::new(Mutex::new(HashMap::new())),
+            kind_gains: Mutex::new(HashMap::new()),
             events,
             live: Mutex::new(None),
             tokens: Default::default(),
@@ -1374,6 +1378,7 @@ impl VoiceManager {
         let room = open_room.room().clone();
         let shared = pipeline.shared.clone();
         shared.mix_in.clear(); // the last room's people
+        self.apply_call_mix(&shared.mix_in);
         // this room's receive tasks push under it: one of the last room's still mid-push is dropped
         let mix_gen = shared.mix_in.generation();
         tracing::info!(
@@ -1852,6 +1857,38 @@ impl VoiceManager {
         }
     }
 
+    /// The volume mixer's Calls levels (percent): Voices and Streams, each × the Calls master.
+    /// Kept with no call, and applied to the live one at once.
+    pub async fn set_call_mix(&self, calls: u16, voices: u16, streams: u16) {
+        self.store_call_mix(calls, voices, streams);
+        if let Some(s) = self.session.lock().await.as_ref() {
+            self.apply_call_mix(&s.pipeline.shared.mix_in);
+        }
+    }
+
+    fn store_call_mix(&self, calls: u16, voices: u16, streams: u16) {
+        let mut g = self.kind_gains.lock().unwrap();
+        g.insert(SourceKind::Voice, mixer::combined_gain(&[calls, voices]));
+        g.insert(SourceKind::Stream, mixer::combined_gain(&[calls, streams]));
+    }
+
+    /// The stored level for `kind` (1.0 until set).
+    fn kind_gain(&self, kind: SourceKind) -> f32 {
+        self.kind_gains
+            .lock()
+            .unwrap()
+            .get(&kind)
+            .copied()
+            .unwrap_or(1.0)
+    }
+
+    /// Hand the stored levels to a call's mixer (a new call, or a change during one).
+    fn apply_call_mix(&self, mix: &mixer::MixerInput) {
+        for kind in [SourceKind::Voice, SourceKind::Stream] {
+            mix.set_kind_gain(kind, self.kind_gain(kind));
+        }
+    }
+
     /// Apply new device/processing settings: processing changes live; device changes reopen the streams.
     pub async fn set_audio_config(&self, cfg: AudioConfig) -> Result<(), VoiceError> {
         // a rejoin uses the newest settings
@@ -2191,6 +2228,27 @@ mod tests {
             .await
             .expect("never finished");
         assert!(closed.load(Ordering::SeqCst), "finished before the close");
+    }
+
+    /// The volume mixer's Calls levels are kept with no call, and a call's mixer gets them.
+    #[test]
+    fn the_call_mix_is_kept_without_a_call_and_applied_to_a_mixer() {
+        use mixer::{SourceKind::*, combined_gain};
+        let vm = VoiceManager::new(Arc::new(|_| {}));
+        assert_eq!(vm.kind_gain(Voice), 1.0, "100 % until set");
+        assert_eq!(vm.kind_gain(Stream), 1.0);
+        vm.store_call_mix(50, 150, 0);
+        assert_eq!(vm.kind_gain(Voice), combined_gain(&[50, 150]));
+        assert_eq!(vm.kind_gain(Stream), 0.0);
+        let (input, _speakers) = mixer::mixer(48_000, 200);
+        input.add_source(input.generation(), "TR_mic", "alex", Voice);
+        input.add_source(input.generation(), "TR_game", "alex", Stream);
+        vm.apply_call_mix(&input);
+        assert_eq!(
+            input.effective_gain("TR_mic"),
+            Some(combined_gain(&[50, 150]))
+        );
+        assert_eq!(input.effective_gain("TR_game"), Some(0.0));
     }
 
     /// The user's own join starts the rejoin publish streak afresh (even one that then fails):
