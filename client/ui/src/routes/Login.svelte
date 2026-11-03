@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PasswordInput from '../components/PasswordInput.svelte'
   import { api, errorText } from '../lib/tauri'
   import { defaultServer } from '../lib/config'
   import type { User } from '../lib/protocol/User'
@@ -92,7 +93,7 @@
       {/if}
       <label>Username <input class="input" bind:value={username} required autocomplete="username" autocapitalize="off" spellcheck="false" /></label>
       <label>Password
-        <input class="input" type="password" bind:value={password} required minlength={mode === 'register' ? 8 : undefined}
+        <PasswordInput class="input" bind:value={password} required minlength={mode === 'register' ? 8 : undefined}
           autocomplete={mode === 'login' ? 'current-password' : 'new-password'} />
       </label>
 

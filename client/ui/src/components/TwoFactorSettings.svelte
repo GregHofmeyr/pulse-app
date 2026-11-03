@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PasswordInput from './PasswordInput.svelte'
   import { onMount } from 'svelte'
   import { twoFactor, errorText, type TwoFactorSetup } from '../lib/tauri'
   import type { TwoFactorStatus } from '../lib/protocol/TwoFactorStatus'
@@ -146,7 +147,7 @@
 {:else if view === 'password'}
   <form onsubmit={start}>
     <p class="q">Enter your password to start.</p>
-    <label>Password <input class="input input-sm" type="password" bind:value={password} required autocomplete="current-password" /></label>
+    <label>Password <PasswordInput class="input input-sm" bind:value={password} required autocomplete="current-password" /></label>
     <div class="actions">
       <button class="btn btn-primary" disabled={busy}>Continue</button>
       <button type="button" class="btn btn-secondary" disabled={busy} onclick={reset}>Cancel</button>

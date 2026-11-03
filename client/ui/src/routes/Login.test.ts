@@ -36,6 +36,21 @@ beforeEach(() => { invoke.mockReset(); onAuthed.mockReset() })
 afterEach(() => { if (cmp) unmount(cmp); cmp = undefined; document.body.innerHTML = '' })
 
 describe('Login', () => {
+  it('the password field has an eye that shows what is typed, signing in and creating an account', () => {
+    cmp = mount(Login, { target: document.body, props: { onAuthed } })
+    flushSync()
+    for (const mode of ['login', 'register']) {
+      const eye = document.querySelector<HTMLButtonElement>('button[aria-label="Show password"]')
+      expect(eye, mode).not.toBeNull()
+      eye!.click(); flushSync()
+      expect(document.querySelector('input[autocomplete$=-password]')!.getAttribute('type'), mode).toBe('text')
+      document.querySelector<HTMLButtonElement>('button[aria-label="Hide password"]')!.click(); flushSync()
+      ;[...document.querySelectorAll<HTMLButtonElement>('button.link')].find((b) => b.textContent?.includes('Create an account'))?.click()
+      flushSync()
+    }
+    expect(document.querySelector('input[autocomplete=new-password]')).not.toBeNull()
+  })
+
   it('ready signs straight in', async () => {
     invoke.mockResolvedValue({ status: 'ready', user: USER })
     cmp = mount(Login, { target: document.body, props: { onAuthed } })

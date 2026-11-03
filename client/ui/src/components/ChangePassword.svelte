@@ -1,4 +1,5 @@
 <script lang="ts">
+  import PasswordInput from './PasswordInput.svelte'
   import { onMount } from 'svelte'
   import { api, twoFactor, errorText } from '../lib/tauri'
 
@@ -63,9 +64,9 @@
 <h3>Password</h3>
 {#if open}
   <form onsubmit={submit}>
-    <label>Current password <input class="input input-sm" type="password" bind:value={current} required autocomplete="current-password" /></label>
-    <label>New password <input class="input input-sm" type="password" bind:value={next} required minlength="8" autocomplete="new-password" /></label>
-    <label>Confirm new password <input class="input input-sm" type="password" bind:value={confirm} required autocomplete="new-password" /></label>
+    <label>Current password <PasswordInput class="input input-sm" bind:value={current} required autocomplete="current-password" /></label>
+    <label>New password <PasswordInput class="input input-sm" bind:value={next} required minlength={8} autocomplete="new-password" /></label>
+    <label>Confirm new password <PasswordInput class="input input-sm" bind:value={confirm} required autocomplete="new-password" /></label>
     {#if twoFactorOn !== false}
       <label>Code
         <input class="input input-sm" bind:value={code} required={twoFactorOn === true} autocomplete="one-time-code" autocapitalize="off" spellcheck="false"

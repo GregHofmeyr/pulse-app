@@ -125,7 +125,7 @@ describe('TwoFactorSettings', () => {
     await show()
     click('Set up'); type('input', 'nope'); await submit()
     expect(document.querySelector('[role=alert]')?.textContent).toBe('Wrong password.')
-    expect(document.querySelector('svg')).toBeNull()
+    expect(document.querySelector('svg.qr')).toBeNull()
   })
 
   it('cancel forgets typed values and the pending secret', async () => {
