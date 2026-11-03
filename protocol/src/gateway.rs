@@ -394,6 +394,10 @@ pub enum Event {
         sound_id: String,
         media_hash: String,
         volume: u16,
+        /// The sound's length, so listeners can show who is playing for as long as it plays
+        /// (0 from an older server).
+        #[serde(default)]
+        duration_ms: u32,
     },
     /// Only to the user's own sessions: the new [`Ready::sound_favourites`].
     SoundFavourites {
@@ -949,6 +953,7 @@ mod tests {
             sound_id: "s".into(),
             media_hash: "h".into(),
             volume: 100,
+            duration_ms: 1000,
         };
         assert_eq!(played.channel_id(), Some(c));
         assert_eq!(played.only_for(), None);

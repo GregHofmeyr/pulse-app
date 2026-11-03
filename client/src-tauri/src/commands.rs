@@ -3388,28 +3388,26 @@ pub async fn soundboard_upload(
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub async fn create_sound(
     app: AppHandle,
     core: State<'_, Core>,
     server_id: ServerId,
     name: String,
     emoji: Option<String>,
+    emoji_id: Option<String>,
     media_hash: String,
     volume: u16,
 ) -> Result<Sound, ApiError> {
     let (api, token) = core.current()?;
-    core.check(
-        &app,
-        api.create_sound(
-            &token,
-            server_id,
-            &name,
-            emoji.as_deref(),
-            &media_hash,
-            volume,
-        )
-        .await,
-    )
+    let body = pulse_protocol::rest::CreateSoundRequest {
+        name,
+        emoji,
+        emoji_id,
+        media_hash,
+        volume,
+    };
+    core.check(&app, api.create_sound(&token, server_id, &body).await)
 }
 
 /// `request` is the wire struct itself: an absent `emoji` keeps it, `null` clears it.

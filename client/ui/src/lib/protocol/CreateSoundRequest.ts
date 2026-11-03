@@ -2,6 +2,10 @@
 
 export type CreateSoundRequest = { name: string, emoji: string | null, 
 /**
+ * A custom emoji instead of `emoji` (not both).
+ */
+emoji_id: string | null, 
+/**
  * From `POST /media/sound`.
  */
 media_hash: string, volume: number, };

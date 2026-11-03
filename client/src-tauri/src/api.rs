@@ -1382,22 +1382,13 @@ impl Api {
         &self,
         token: &str,
         server: ServerId,
-        name: &str,
-        emoji: Option<&str>,
-        media_hash: &str,
-        volume: u16,
+        body: &CreateSoundRequest,
     ) -> Result<Sound, ApiError> {
-        let body = CreateSoundRequest {
-            name: name.into(),
-            emoji: emoji.map(Into::into),
-            media_hash: media_hash.into(),
-            volume,
-        };
         Self::parse(
             self.http
                 .post(format!("{}/servers/{server}/sounds", self.base))
                 .bearer_auth(token)
-                .json(&body)
+                .json(body)
                 .send()
                 .await,
         )

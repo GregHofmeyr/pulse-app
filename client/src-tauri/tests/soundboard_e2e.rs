@@ -3,7 +3,7 @@
 //! Tauri commands' job) and delete. The Ogg is hand-built so the test never needs ffmpeg.
 
 use pulse_client::api::{Api, ApiError};
-use pulse_protocol::rest::{ChannelKind, UpdateSoundRequest};
+use pulse_protocol::rest::{ChannelKind, CreateSoundRequest, UpdateSoundRequest};
 use pulse_server::testing;
 
 /// Ogg's CRC-32 (poly 0x04c11db7, no reflection, no xor), for building valid pages.
@@ -84,7 +84,17 @@ async fn sounds_end_to_end() {
     let media = api.upload_sound_media(&alex, ogg_opus(1000)).await.unwrap();
     assert!(!media.hash.is_empty());
     let sound = api
-        .create_sound(&alex, srv.id, "airhorn", Some("📯"), &media.hash, 120)
+        .create_sound(
+            &alex,
+            srv.id,
+            &CreateSoundRequest {
+                name: "airhorn".into(),
+                emoji: Some("📯".into()),
+                emoji_id: None,
+                media_hash: media.hash.clone(),
+                volume: 120,
+            },
+        )
         .await
         .unwrap();
     assert_eq!((sound.name.as_str(), sound.volume), ("airhorn", 120));

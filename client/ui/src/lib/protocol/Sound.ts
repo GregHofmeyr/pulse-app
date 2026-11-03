@@ -11,6 +11,11 @@ export type Sound = { id: string, server_id: ServerId, name: string,
  */
 emoji: string | null, 
 /**
+ * Or a custom emoji's id (from any server the uploader is in) instead. At most one of the
+ * two is set; a custom emoji deleted later leaves the tile without one.
+ */
+emoji_id: string | null, 
+/**
  * The Ogg Opus file in the media store.
  */
 media_hash: string, 
