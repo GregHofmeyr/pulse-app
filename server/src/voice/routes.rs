@@ -53,7 +53,9 @@ async fn token(
     // Server muted or deafened (#140): the token can't publish until someone undoes it.
     let can_publish = match ch.server_id {
         Some(server) => crate::voice::moderation::publish_allowed(
-            crate::voice::moderation::get(&s.db, server, me).await?.as_ref(),
+            crate::voice::moderation::get(&s.db, server, me)
+                .await?
+                .as_ref(),
         ),
         None => true,
     };

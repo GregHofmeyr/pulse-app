@@ -14,12 +14,12 @@ use pulse_protocol::rest::{
     LoginRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired, MuteTarget,
     NameArchivePage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse,
     RegisterRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest, SearchRequest,
-    SearchResults, SendMessageRequest, Server, SessionResponse, SetClipViewRequest, SetMuteRequest,
-    ServerVoiceMod, SetNicknameRequest, SetServerVoiceRequest, SetShowcaseRequest, Sound,
-    StartQotyRequest, StreamInfo, StreamRole,
-    StreamSettings, StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest,
-    TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus,
-    UpdateProfileRequest, UpdateSoundRequest, User, VoiceTokenResponse, WatchRequest,
+    SearchResults, SendMessageRequest, Server, ServerVoiceMod, SessionResponse, SetClipViewRequest,
+    SetMuteRequest, SetNicknameRequest, SetServerVoiceRequest, SetShowcaseRequest, Sound,
+    StartQotyRequest, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
+    ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
+    TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
+    VoiceTokenResponse, WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -3816,7 +3816,9 @@ mod tests {
             .unwrap();
         assert_eq!((m.muted_by, m.deafened_by), (Some(alex_id), None));
         // (LiveKit is down in tests: the removal is logged, the request still succeeds)
-        api.disconnect_voice(&alex, server.id, sam_id).await.unwrap();
+        api.disconnect_voice(&alex, server.id, sam_id)
+            .await
+            .unwrap();
         assert!(
             api.disconnect_voice(&sam, server.id, sam_id).await.is_err(),
             "not on yourself"

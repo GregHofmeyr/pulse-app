@@ -27,8 +27,7 @@ async fn world(app: &TestApp) -> World {
     let s = create_server(app, &alex.1, "Main").await;
     let r = post_json(app, &sam.1, &format!("/servers/{}/join", s.id), json!({})).await;
     assert!(r.status().is_success());
-    let chans: Vec<Channel> =
-        get_json(app, &alex.1, &format!("/servers/{}/channels", s.id)).await;
+    let chans: Vec<Channel> = get_json(app, &alex.1, &format!("/servers/{}/channels", s.id)).await;
     let lounge = chans
         .into_iter()
         .find(|c| c.name.as_deref() == Some("Lounge"))
@@ -55,8 +54,7 @@ async fn set(
 async fn next_change(rx: &mut Receiver<ServerFrame>) -> ServerVoiceMod {
     tokio::time::timeout(Duration::from_secs(1), async {
         loop {
-            if let Some(ServerFrame::Event(Event::ServerVoiceChanged { state })) = rx.recv().await
-            {
+            if let Some(ServerFrame::Event(Event::ServerVoiceChanged { state })) = rx.recv().await {
                 return state;
             }
         }
@@ -107,7 +105,13 @@ async fn setting_it_again_keeps_who_did_it_and_publishes_nothing() {
     let app = spawn().await;
     let w = world(&app).await;
     let kim = register(&app, "kim").await;
-    post_json(&app, &kim.1, &format!("/servers/{}/join", w.server), json!({})).await;
+    post_json(
+        &app,
+        &kim.1,
+        &format!("/servers/{}/join", w.server),
+        json!({}),
+    )
+    .await;
     in_voice(&app, w.lounge.id, w.sam.0);
     set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": true})).await;
     let mut rx = app.hub.register(w.sam.0, String::new()).rx;
@@ -127,7 +131,11 @@ async fn cannot_target_yourself() {
     let app = spawn().await;
     let w = world(&app).await;
     in_voice(&app, w.lounge.id, w.alex.0);
-    for body in [json!({"mute": true}), json!({"mute": false}), json!({"deafen": false})] {
+    for body in [
+        json!({"mute": true}),
+        json!({"mute": false}),
+        json!({"deafen": false}),
+    ] {
         let r = set(&app, &w.alex.1, w.server, w.alex.0, body).await;
         assert_eq!(r.status(), 400);
     }
@@ -172,7 +180,14 @@ async fn undo_without_call_clears_row() {
     let app = spawn().await;
     let w = world(&app).await;
     in_voice(&app, w.lounge.id, w.sam.0);
-    set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": true, "deafen": true})).await;
+    set(
+        &app,
+        &w.alex.1,
+        w.server,
+        w.sam.0,
+        json!({"mute": true, "deafen": true}),
+    )
+    .await;
     assert_eq!(rows(&app).await, 1);
     app.voice.leave(w.lounge.id, w.sam.0, "");
     let mut rx = app.hub.register(w.alex.0, String::new()).rx;
@@ -285,7 +300,10 @@ async fn mute_revokes_publish_at_livekit() {
     in_voice(&app, w.lounge.id, w.sam.0);
     lk.connect(&room, &w.sam.0.to_string(), true);
     set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": true})).await;
-    assert_eq!(lk.updates(), vec![(room.clone(), w.sam.0.to_string(), false)]);
+    assert_eq!(
+        lk.updates(),
+        vec![(room.clone(), w.sam.0.to_string(), false)]
+    );
     set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": false})).await;
     assert_eq!(
         lk.updates().last(),
@@ -301,13 +319,19 @@ async fn deafen_implies_no_publish() {
     in_voice(&app, w.lounge.id, w.sam.0);
     lk.connect(&room, &w.sam.0.to_string(), true);
     set(&app, &w.alex.1, w.server, w.sam.0, json!({"deafen": true})).await;
-    assert_eq!(lk.updates(), vec![(room.clone(), w.sam.0.to_string(), false)]);
+    assert_eq!(
+        lk.updates(),
+        vec![(room.clone(), w.sam.0.to_string(), false)]
+    );
     // still muted by the deafen: un-muting alone changes nothing at LiveKit
     set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": true})).await;
     set(&app, &w.alex.1, w.server, w.sam.0, json!({"mute": false})).await;
     assert_eq!(lk.updates().len(), 1, "{:?}", lk.updates());
     set(&app, &w.alex.1, w.server, w.sam.0, json!({"deafen": false})).await;
-    assert_eq!(lk.updates().last(), Some(&(room, w.sam.0.to_string(), true)));
+    assert_eq!(
+        lk.updates().last(),
+        Some(&(room, w.sam.0.to_string(), true))
+    );
 }
 
 #[tokio::test]
@@ -376,11 +400,12 @@ fn signed(app: &TestApp, body: &str) -> String {
 /// LiveKit's `participant_joined` for `user` in `room`, whose token let them publish or not.
 async fn joined(app: &TestApp, room: ChannelId, user: UserId, can_publish: bool) {
     let grant = grant_livekit(app, &room.to_string(), &user.to_string()).await;
-    let body = json!({"event": "participant_joined", "id": "EV_test", "room": {"name": room.to_string()},
+    let body =
+        json!({"event": "participant_joined", "id": "EV_test", "room": {"name": room.to_string()},
         "participant": {"identity": user.to_string(), "sid": format!("PA_{user}"),
             "attributes": {"pulse_grant": grant},
             "permission": {"canPublish": can_publish, "canSubscribe": true}}})
-    .to_string();
+        .to_string();
     let r = app
         .http
         .post(app.url("/livekit/webhook"))

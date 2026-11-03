@@ -86,7 +86,10 @@ pub fn serve_fake_shared(listener: tokio::net::TcpListener, rooms: SharedRooms) 
 
 /// [`serve_fake_shared`], also answering UpdateParticipant (permission changes are applied to
 /// the participant and logged).
-pub fn serve_fake_logs(listener: tokio::net::TcpListener, rooms: SharedRooms) -> (Removed, Updated) {
+pub fn serve_fake_logs(
+    listener: tokio::net::TcpListener,
+    rooms: SharedRooms,
+) -> (Removed, Updated) {
     let removed = Removed::default();
     let updated = Updated::default();
     let (r5, ulog) = (rooms.clone(), updated.clone());

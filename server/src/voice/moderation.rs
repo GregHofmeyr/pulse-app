@@ -12,11 +12,11 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
+use livekit_api::services::room::UpdateParticipantOptions;
+use livekit_protocol::{ParticipantInfo, ParticipantPermission, TrackSource};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, ServerId, UserId};
 use pulse_protocol::rest::{ServerVoiceMod, SetServerVoiceRequest};
-use livekit_api::services::room::UpdateParticipantOptions;
-use livekit_protocol::{ParticipantInfo, ParticipantPermission, TrackSource};
 use sqlx::SqlitePool;
 
 use crate::AppState;
@@ -29,7 +29,10 @@ use crate::servers::routes::{is_server_member, require_member};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/servers/{server}/voice/{user}", post(set))
-        .route("/servers/{server}/voice/{user}/disconnect", post(disconnect))
+        .route(
+            "/servers/{server}/voice/{user}/disconnect",
+            post(disconnect),
+        )
 }
 
 type Row = (String, String, Option<String>, Option<String>);
@@ -110,7 +113,11 @@ pub async fn enforce(s: &AppState, channel: ChannelId, user: UserId, allowed: bo
     match tokio::time::timeout(crate::voice::revoke::BUDGET, update).await {
         Ok(Ok(_)) => tracing::info!(room, identity, allowed, "LiveKit publish permission set"),
         Ok(Err(e)) if crate::voice::revoke::not_found(&e) => {
-            tracing::debug!(room, identity, "not at LiveKit; their next join is reconciled")
+            tracing::debug!(
+                room,
+                identity,
+                "not at LiveKit; their next join is reconciled"
+            )
         }
         Ok(Err(e)) => {
             tracing::warn!(error = %e, room, identity, allowed, "couldn't set LiveKit publish permission")
