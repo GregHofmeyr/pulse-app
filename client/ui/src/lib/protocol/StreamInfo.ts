@@ -4,4 +4,12 @@ import type { StreamSettings } from "./StreamSettings";
 import type { StreamStatus } from "./StreamStatus";
 import type { UserId } from "./UserId";
 
-export type StreamInfo = { channel_id: ChannelId, user_id: UserId, settings: StreamSettings, status: StreamStatus, viewers: Array<UserId>, started_at: string, };
+export type StreamInfo = { channel_id: ChannelId, user_id: UserId, settings: StreamSettings, status: StreamStatus, 
+/**
+ * Named viewers: people in that voice channel.
+ */
+viewers: Array<UserId>, 
+/**
+ * How many ghosts watch. Who they are never leaves the server.
+ */
+ghosts: number, started_at: string, };

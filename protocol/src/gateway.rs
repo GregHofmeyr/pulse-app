@@ -292,6 +292,9 @@ pub enum Event {
         channel_id: ChannelId,
         user_id: UserId,
         viewers: Vec<UserId>,
+        /// The ghost count; who they are never leaves the server.
+        #[serde(default)]
+        ghosts: u32,
     },
     EmojiCreated {
         emoji: CustomEmoji,
@@ -569,9 +572,11 @@ mod tests {
                 height: 720,
                 fps: 60,
                 audio: true,
+                allow_ghosts: true,
             },
             status: StreamStatus::Live,
             viewers: vec![],
+            ghosts: 0,
             started_at: "2026-01-01T00:00:00Z".into(),
         }
     }
@@ -636,6 +641,7 @@ mod tests {
                 channel_id: c,
                 user_id: u,
                 viewers: vec![u],
+                ghosts: 0,
             },
         ];
         for e in events {

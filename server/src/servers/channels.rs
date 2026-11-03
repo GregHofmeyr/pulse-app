@@ -145,6 +145,7 @@ pub async fn delete(
                 crate::badges::streams::ended(&s, &info).await;
             }
         }
+        crate::streams::ghosts::channel_gone(&s, id).await;
         let s = s.clone();
         tokio::spawn(async move { crate::voice::revoke::close_call(&s, id, &people).await });
     }

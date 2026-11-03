@@ -19,6 +19,17 @@ pub fn hash_token(token: &str) -> String {
     hex::encode(Sha256::digest(token.as_bytes()))
 }
 
+/// Whether the session with this token hash exists and hasn't expired.
+pub async fn is_live(db: &SqlitePool, token_hash: &str) -> anyhow::Result<bool> {
+    let hit: Option<i64> =
+        sqlx::query_scalar("SELECT 1 FROM sessions WHERE token_hash = ? AND expires_at > ?")
+            .bind(token_hash)
+            .bind(ts(Utc::now()))
+            .fetch_optional(db)
+            .await?;
+    Ok(hit.is_some())
+}
+
 pub async fn create(db: &SqlitePool, user: UserId) -> anyhow::Result<String> {
     let mut conn = db.acquire().await?;
     create_in(&mut conn, user).await

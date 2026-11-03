@@ -624,6 +624,13 @@ pub struct StreamSettings {
     pub height: u16,
     pub fps: u8,
     pub audio: bool,
+    /// Server members outside the voice channel may watch anonymously (spec §5). On unless said.
+    #[serde(default = "yes")]
+    pub allow_ghosts: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
@@ -639,7 +646,11 @@ pub struct StreamInfo {
     pub user_id: UserId,
     pub settings: StreamSettings,
     pub status: StreamStatus,
+    /// Named viewers: people in that voice channel.
     pub viewers: Vec<UserId>,
+    /// How many ghosts watch. Who they are never leaves the server.
+    #[serde(default)]
+    pub ghosts: u32,
     pub started_at: String,
 }
 
@@ -663,6 +674,10 @@ pub enum StreamRole {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct StreamTicketRequest {
     pub role: StreamRole,
+    /// A subscribe-only ticket under a fresh anonymous identity, for watching from outside the
+    /// voice channel (spec §5.2).
+    #[serde(default)]
+    pub ghost: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
@@ -673,6 +688,9 @@ pub struct GoLiveRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct WatchRequest {
     pub streamer: UserId,
+    /// Watching as a ghost (from outside the voice channel), counted but never named.
+    #[serde(default)]
+    pub ghost: bool,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]

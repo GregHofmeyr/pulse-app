@@ -57,6 +57,9 @@ pub(crate) fn not_found(e: &ServiceError) -> bool {
 /// minted before they lost access (removed from a group, left voice for a stream room) is
 /// refused too.
 pub async fn admit(s: &AppState, room: &str, p: &ParticipantInfo) -> anyhow::Result<bool> {
+    if ghost_admitted(s, room, p).await? {
+        return Ok(true);
+    }
     // Access first: a refused join must not be recorded as the grant's connection.
     if may_be_in(s, room, &p.identity).await?
         && session::admit_join(&s.db, grant_of(p), room, &p.identity, &p.sid).await?
@@ -78,6 +81,22 @@ pub async fn admit(s: &AppState, room: &str, p: &ParticipantInfo) -> anyhow::Res
         }
     });
     Ok(false)
+}
+
+/// A ghost connection (`g_<id>#v` / `#a`) in a stream room that passes the ghost check
+/// (`streams::ghosts::admit`: its grant lives in memory, not in the grants table). False for
+/// everyone else, who go through the usual check (and a ghost identity fails it).
+async fn ghost_admitted(s: &AppState, room: &str, p: &ParticipantInfo) -> anyhow::Result<bool> {
+    let Some(channel) = room
+        .strip_suffix("~s")
+        .and_then(|c| c.parse::<ChannelId>().ok())
+    else {
+        return Ok(false);
+    };
+    let Some((id, role)) = crate::streams::ghost_ids::parse_ghost(&p.identity) else {
+        return Ok(false);
+    };
+    crate::streams::ghosts::admit(s, channel, id, role, p).await
 }
 
 /// Whether `identity` may be in `room` right now. A voice room (`<channel>`, identity = user
@@ -203,6 +222,8 @@ async fn remove(client: &RoomClient, room: &str, identity: &str) {
 /// Remove every participant LiveKit reports carrying one of the revoked `grants` (per room,
 /// in parallel, within [`BUDGET`]). Never fails; problems are logged.
 pub async fn remove_revoked(s: &AppState, grants: &[RevokedGrant]) {
+    // ghost grants aren't in the table: their sessions are checked instead
+    crate::streams::ghosts::sessions_revoked(s).await;
     let mut rooms: BTreeMap<&str, BTreeSet<&str>> = BTreeMap::new();
     for g in grants {
         rooms.entry(&g.room).or_default().insert(&g.id);

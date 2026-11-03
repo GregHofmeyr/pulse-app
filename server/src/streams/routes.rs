@@ -1,7 +1,7 @@
 //! Screen-share routes: stream-room tickets, go live / stop, watch / unwatch. All bearer-authed,
 //! and every one but unwatch requires the caller to be in that server voice channel right now.
 
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use axum::body::Bytes;
 use axum::extract::{DefaultBodyLimit, Path, State};
@@ -17,7 +17,7 @@ use pulse_protocol::rest::{
     StreamTicketRequest, VoiceTokenResponse, WatchRequest,
 };
 
-use super::state::Started;
+use super::state::{GhostWatch, Started};
 use crate::AppState;
 use crate::access::channel_for;
 use crate::auth::AuthUser;
@@ -80,6 +80,9 @@ async fn ticket(
     Path(ch): Path<ChannelId>,
     Json(req): Json<StreamTicketRequest>,
 ) -> AppResult<Json<VoiceTokenResponse>> {
+    if req.ghost {
+        return ghost_ticket(&s, me, &session, ch, req.role).await.map(Json);
+    }
     require_voice_member(&s, me, ch).await?;
     let (suffix, source) = match req.role {
         StreamRole::V => ("v", "screen_share"),
@@ -115,6 +118,56 @@ async fn ticket(
     }))
 }
 
+/// A server member outside the voice channel (spec §5.1). A voice member asking as a ghost is
+/// refused: they watch as themselves.
+async fn require_ghost(s: &AppState, me: UserId, ch: ChannelId) -> AppResult<()> {
+    require_visible_member(s, me, ch).await?;
+    if s.voice.members(ch).contains(&me) {
+        return Err(AppError::Forbidden);
+    }
+    Ok(())
+}
+
+/// A subscribe-only ticket for the caller's ghost in `ch` (spec §5.2): identity `g_<id>#v` or
+/// `#a`, the same for every ticket in this watch session, never derived from the user id. Its
+/// grant lives in memory only (the grants table would store the identity next to the session).
+async fn ghost_ticket(
+    s: &AppState,
+    me: UserId,
+    session: &str,
+    ch: ChannelId,
+    role: StreamRole,
+) -> AppResult<VoiceTokenResponse> {
+    require_ghost(s, me, ch).await?;
+    if !s.limits.livekit_token_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    let login = crate::auth::session::hash_token(session);
+    let (identity, grant) = s
+        .streams
+        .ghost_ticket(ch, me, &login, role, Instant::now())
+        .ok_or(AppError::Forbidden)?;
+    let jwt = AccessToken::with_api_key(&s.cfg.livekit_key, &s.cfg.livekit_secret)
+        .with_identity(&identity)
+        .with_attributes([(crate::auth::session::GRANT_ATTRIBUTE, grant)])
+        .with_ttl(TICKET_TTL)
+        .with_grants(VideoGrants {
+            room_join: true,
+            room: format!("{ch}~s"),
+            can_publish: Some(false),
+            can_publish_sources: Vec::new(),
+            can_subscribe: Some(true),
+            can_publish_data: Some(false),
+            ..Default::default()
+        })
+        .to_jwt()
+        .map_err(|e| AppError::Internal(e.into()))?;
+    Ok(VoiceTokenResponse {
+        url: s.cfg.livekit_url.clone(),
+        token: jwt,
+    })
+}
+
 async fn go_live(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -138,8 +191,10 @@ async fn go_live(
         }
         Started::Updated(stream) => (stream.clone(), Event::StreamUpdated { stream }),
     };
-    tracing::info!(user = %me, channel = %ch, height = info.settings.height, fps = info.settings.fps, "stream live");
+    tracing::info!(user = %me, channel = %ch, height = info.settings.height, fps = info.settings.fps, allow_ghosts = info.settings.allow_ghosts, "stream live");
     s.hub.publish(&s.db, event).await;
+    // voice-only now (this stream, new or switched): no ghost may stay in the room
+    super::ghosts::voice_only(&s, ch).await;
     Ok(Json(info))
 }
 
@@ -159,11 +214,15 @@ async fn stop(
 async fn watch(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
+    BearerToken(session): BearerToken,
     Path(ch): Path<ChannelId>,
     Json(req): Json<WatchRequest>,
 ) -> AppResult<StatusCode> {
     if !s.limits.mutate_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
+    }
+    if req.ghost {
+        return ghost_watch(&s, me, &session, ch, req.streamer).await;
     }
     require_voice_member(&s, me, ch).await?;
     ensure_watchable(&s, me, ch, req.streamer)?;
@@ -173,17 +232,50 @@ async fn watch(
     Ok(StatusCode::NO_CONTENT)
 }
 
+async fn ghost_watch(
+    s: &AppState,
+    me: UserId,
+    session: &str,
+    ch: ChannelId,
+    streamer: UserId,
+) -> AppResult<StatusCode> {
+    require_ghost(s, me, ch).await?;
+    if streamer == me {
+        return Err(AppError::BadRequest("you can't watch yourself".into()));
+    }
+    let login = crate::auth::session::hash_token(session);
+    match s
+        .streams
+        .ghost_watch(ch, me, &login, streamer, Instant::now())
+    {
+        GhostWatch::Added { id, .. } => {
+            // the admin's record (spec §5.3): the log only, never the database or a client
+            tracing::info!(user = %me, channel = %ch, ghost = %id, streamer = %streamer, "ghost watch");
+            publish_audience(s, ch, streamer).await;
+        }
+        GhostWatch::Already => {}
+        GhostWatch::NoStream => return Err(AppError::NotFound),
+        GhostWatch::NotAllowed => return Err(AppError::Forbidden),
+    }
+    Ok(StatusCode::NO_CONTENT)
+}
+
 /// Idempotent: unwatching a stream that already ended, or after our voice already dropped, is
 /// a 204 (the client sends it while tearing down, often after the fact).
 async fn unwatch(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
+    BearerToken(session): BearerToken,
     Path(ch): Path<ChannelId>,
     Json(req): Json<WatchRequest>,
 ) -> AppResult<StatusCode> {
     require_visible_member(&s, me, ch).await?;
     if let Some(viewers) = s.streams.remove_viewer(ch, req.streamer, me) {
         publish_viewers(&s, ch, req.streamer, viewers).await;
+    }
+    let login = crate::auth::session::hash_token(&session);
+    if s.streams.ghost_unwatch(ch, &login, req.streamer).is_some() {
+        publish_audience(&s, ch, req.streamer).await;
     }
     Ok(StatusCode::NO_CONTENT)
 }
@@ -218,7 +310,9 @@ pub async fn publish_ended(s: &AppState, ch: ChannelId, user: UserId, reason: St
     }
 }
 
+/// `ViewersChanged` with these named viewers and the stream's ghost count now.
 pub async fn publish_viewers(s: &AppState, ch: ChannelId, streamer: UserId, viewers: Vec<UserId>) {
+    let ghosts = s.streams.get(ch, streamer).map_or(0, |i| i.ghosts);
     s.hub
         .publish(
             &s.db,
@@ -226,9 +320,18 @@ pub async fn publish_viewers(s: &AppState, ch: ChannelId, streamer: UserId, view
                 channel_id: ch,
                 user_id: streamer,
                 viewers,
+                ghosts,
             },
         )
         .await;
+}
+
+/// `ViewersChanged` for the stream as it is now (named viewers and the ghost count); nothing if
+/// it has ended.
+pub async fn publish_audience(s: &AppState, ch: ChannelId, streamer: UserId) {
+    if let Some(info) = s.streams.get(ch, streamer) {
+        publish_viewers(s, ch, streamer, info.viewers).await;
+    }
 }
 
 /// The streamer uploads their latest preview frame (480x270, sent every 15 s; WebP, or JPEG/PNG
@@ -267,7 +370,8 @@ async fn put_preview(
     Ok(StatusCode::NO_CONTENT)
 }
 
-/// Anyone who can see the channel (and is in its server) may fetch a live stream's preview.
+/// Anyone in the call may fetch a live stream's preview; anyone else who can see the channel and
+/// is in its server only when the stream allows ghosts (spec §4.2).
 async fn get_preview(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -275,6 +379,13 @@ async fn get_preview(
     headers: HeaderMap,
 ) -> AppResult<Response> {
     require_visible_member(&s, me, ch).await?;
+    let ghosts_ok = s
+        .streams
+        .get(ch, streamer)
+        .is_some_and(|i| i.settings.allow_ghosts);
+    if !ghosts_ok && !s.voice.members(ch).contains(&me) {
+        return Err(AppError::NotFound);
+    }
     let (bytes, etag) = s.streams.preview(ch, streamer).ok_or(AppError::NotFound)?;
     let etag = format!("\"{etag}\"");
     let cache = [(header::ETAG, etag.clone())];

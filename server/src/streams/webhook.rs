@@ -6,6 +6,7 @@ use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::{StreamEndReason, StreamRole, StreamStatus};
 
+use super::ghost_ids::parse_ghost;
 use crate::AppState;
 use crate::error::AppResult;
 
@@ -27,6 +28,9 @@ pub async fn handle(s: &AppState, channel: &str, ev: &WebhookEvent) -> AppResult
     let Some(p) = ev.participant.as_ref() else {
         return Ok(());
     };
+    if let Some((id, role)) = parse_ghost(&p.identity) {
+        return ghost_event(s, channel, channel_id, id, role, ev, p).await;
+    }
     let Some((user, role)) = parse_identity(&p.identity) else {
         return Ok(());
     };
@@ -70,6 +74,29 @@ pub async fn handle(s: &AppState, channel: &str, ev: &WebhookEvent) -> AppResult
                 s.streams.bump_epoch(channel_id, user);
                 s.hub.publish(&s.db, Event::StreamUpdated { stream }).await;
             }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// A ghost's connection joined or left. Joins go through the same check as everyone's
+/// (`voice::revoke::admit`, which sends ghosts to `ghosts::admit`); its `#v` leaving ends it.
+async fn ghost_event(
+    s: &AppState,
+    room_channel: &str,
+    channel: ChannelId,
+    id: &str,
+    role: StreamRole,
+    ev: &WebhookEvent,
+    p: &livekit_protocol::ParticipantInfo,
+) -> AppResult<()> {
+    match ev.event.as_str() {
+        "participant_joined" => {
+            crate::voice::revoke::admit(s, &format!("{room_channel}~s"), p).await?;
+        }
+        "participant_left" | "participant_connection_aborted" => {
+            crate::streams::ghosts::left(s, channel, id, role, &p.sid).await;
         }
         _ => {}
     }

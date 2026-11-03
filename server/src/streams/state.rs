@@ -1,15 +1,75 @@
 //! Who is streaming in which voice channel, who is watching, and each stream's latest preview.
 //! In memory only: after a restart live clients re-announce themselves. One stream per
 //! (channel, user); a re-start while live is an update.
+//!
+//! Ghost watch sessions (spec §5) live here too, and only here: an opaque id per (login
+//! session, channel) mapped to the user, never stored and never sent to another client. Clients
+//! see a count.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use pulse_protocol::ids::{ChannelId, UserId};
-use pulse_protocol::rest::{StreamInfo, StreamSettings, StreamStatus};
+use pulse_protocol::rest::{StreamInfo, StreamRole, StreamSettings, StreamStatus};
 use sha2::{Digest, Sha256};
+
+use super::ghost_ids::{new_ghost_id, new_grant, suffix};
+
+/// A ghost session nobody connected with is dropped after this (a stream ticket's lifetime).
+pub const GHOST_UNJOINED_FOR: Duration = Duration::from_secs(10 * 60);
+
+/// One ghost watch session.
+struct Ghost {
+    user: UserId,
+    channel: ChannelId,
+    /// The login session (token hash) it belongs to.
+    session: String,
+    /// `pulse_grant` for `#v` and `#a`: random, checked on the join webhook.
+    grants: [String; 2],
+    /// The streamers watched.
+    watching: BTreeSet<UserId>,
+    /// The current `#v` connection (LiveKit sid), once joined.
+    video_sid: Option<String>,
+    issued: Instant,
+}
+
+fn role_index(role: StreamRole) -> usize {
+    match role {
+        StreamRole::V => 0,
+        StreamRole::A => 1,
+    }
+}
+
+/// What [`StreamState::purge_ghosts`] matches a ghost on.
+pub struct GhostView<'a> {
+    pub channel: ChannelId,
+    pub user: UserId,
+    pub session: &'a str,
+}
+
+/// Ghosts taken out of the state: their ids per channel (to remove from LiveKit), and each
+/// stream whose ghost count changed, with its new count.
+#[derive(Debug, Default, PartialEq)]
+pub struct Purged {
+    pub removed: Vec<(ChannelId, String)>,
+    pub counts: Vec<(ChannelId, UserId, u32)>,
+}
+
+/// What [`StreamState::ghost_watch`] did.
+#[derive(Debug, PartialEq)]
+pub enum GhostWatch {
+    /// Now watching: the stream's new ghost count, and the ghost's id (for the server log).
+    Added {
+        count: u32,
+        id: String,
+    },
+    Already,
+    NoStream,
+    /// That stream, or another one live in the channel, is voice-only.
+    NotAllowed,
+}
 
 struct Stream {
     info: StreamInfo,
@@ -28,9 +88,117 @@ struct Inner {
     video_sids: HashMap<(ChannelId, UserId), String>,
     /// Source of epochs: never reused, so a new stream never matches an old timer's epoch.
     last_epoch: u64,
+    /// Ghost watch sessions by id.
+    ghosts: HashMap<String, Ghost>,
 }
 
 impl Inner {
+    /// Ghosts may be in `channel`'s stream room: something is live there and all of it allows
+    /// them (a ticket can subscribe to every track in the room, so this is per room).
+    fn ghosts_allowed(&self, channel: ChannelId) -> bool {
+        let mut any = false;
+        for ((c, _), s) in &self.streams {
+            if *c == channel {
+                if !s.info.settings.allow_ghosts {
+                    return false;
+                }
+                any = true;
+            }
+        }
+        any
+    }
+
+    /// Set `streamer`'s ghost count from the sessions; the new count, if the stream exists.
+    fn recount(&mut self, channel: ChannelId, streamer: UserId) -> Option<u32> {
+        let n = self
+            .ghosts
+            .values()
+            .filter(|g| g.channel == channel && g.watching.contains(&streamer))
+            .count();
+        let n = u32::try_from(n).unwrap_or(u32::MAX);
+        let s = self.streams.get_mut(&(channel, streamer))?;
+        s.info.ghosts = n;
+        Some(n)
+    }
+
+    /// Login `session`'s ghost in `channel`, if any.
+    fn ghost_of(&self, channel: ChannelId, session: &str) -> Option<String> {
+        self.ghosts
+            .iter()
+            .find(|(_, g)| g.channel == channel && g.session == session)
+            .map(|(id, _)| id.clone())
+    }
+
+    /// Login `session`'s ghost in `channel`, made now if it has none. Never-joined ghosts past
+    /// their ticket's lifetime are dropped first.
+    fn ghost_for(
+        &mut self,
+        channel: ChannelId,
+        user: UserId,
+        session: &str,
+        now: Instant,
+    ) -> String {
+        self.ghosts.retain(|_, g| {
+            g.video_sid.is_some() || now.saturating_duration_since(g.issued) < GHOST_UNJOINED_FOR
+        });
+        if let Some(id) = self.ghost_of(channel, session) {
+            return id;
+        }
+        let id = new_ghost_id();
+        self.ghosts.insert(
+            id.clone(),
+            Ghost {
+                user,
+                channel,
+                session: session.to_owned(),
+                grants: [new_grant(), new_grant()],
+                watching: BTreeSet::new(),
+                video_sid: None,
+                issued: now,
+            },
+        );
+        id
+    }
+
+    /// Take out the ghosts `pred` matches.
+    fn purge(&mut self, pred: impl Fn(&GhostView) -> bool) -> Purged {
+        let ids: Vec<String> = self
+            .ghosts
+            .iter()
+            .filter(|(_, g)| {
+                pred(&GhostView {
+                    channel: g.channel,
+                    user: g.user,
+                    session: &g.session,
+                })
+            })
+            .map(|(id, _)| id.clone())
+            .collect();
+        let mut out = Purged::default();
+        let mut touched = BTreeSet::new();
+        for id in ids {
+            let g = self.ghosts.remove(&id).unwrap();
+            touched.extend(g.watching.iter().map(|w| (g.channel, *w)));
+            out.removed.push((g.channel, id));
+        }
+        out.removed.sort();
+        for (c, w) in touched {
+            if let Some(n) = self.recount(c, w) {
+                out.counts.push((c, w, n));
+            }
+        }
+        out
+    }
+
+    /// A stream ended: its ghost watches go with it.
+    fn forget_streamer(&mut self, channel: ChannelId, streamer: UserId) {
+        for g in self.ghosts.values_mut() {
+            if g.channel == channel {
+                g.watching.remove(&streamer);
+            }
+        }
+    }
+
     fn next_epoch(&mut self) -> u64 {
         self.last_epoch += 1;
         self.last_epoch
@@ -123,6 +291,7 @@ impl StreamState {
             settings,
             status: StreamStatus::Live,
             viewers: Vec::new(),
+            ghosts: 0,
             started_at: now,
         };
         let epoch = inner.next_epoch();
@@ -141,6 +310,7 @@ impl StreamState {
     /// End `user`'s stream in `channel`, dropping its preview.
     pub fn end(&self, channel: ChannelId, user: UserId) -> Option<StreamInfo> {
         let mut inner = self.inner.lock().unwrap();
+        inner.forget_streamer(channel, user);
         inner.streams.remove(&(channel, user)).map(|s| s.info)
     }
 
@@ -153,6 +323,9 @@ impl StreamState {
             .filter(|(_, u)| *u == user)
             .copied()
             .collect();
+        for &(c, u) in &keys {
+            inner.forget_streamer(c, u);
+        }
         keys.into_iter()
             .filter_map(|k| inner.streams.remove(&k).map(|s| s.info))
             .collect()
@@ -298,6 +471,7 @@ impl StreamState {
             Some(since) if now.saturating_duration_since(since) >= grace => {
                 // LiveKit says that connection is gone: its sid can't make a later one's leave stale
                 inner.video_sids.remove(&(channel, user));
+                inner.forget_streamer(channel, user);
                 let info = inner.streams.remove(&(channel, user)).unwrap().info;
                 let viewers = inner.remove_viewer_everywhere(channel, user);
                 Seen::Ended { info, viewers }
@@ -357,6 +531,142 @@ impl StreamState {
         let inner = self.inner.lock().unwrap();
         inner.streams.get(&(channel, user)).map(|s| s.epoch)
     }
+
+    /// Whether ghosts may be in `channel`'s stream room now (see `Inner::ghosts_allowed`).
+    pub fn ghosts_allowed(&self, channel: ChannelId) -> bool {
+        self.inner.lock().unwrap().ghosts_allowed(channel)
+    }
+
+    /// A ghost ticket's identity (`g_<id>#v` / `#a`) and grant for `user`'s login `session` in
+    /// `channel`: that session's ghost, made now if it has none. `None` while ghosts aren't
+    /// allowed there.
+    pub fn ghost_ticket(
+        &self,
+        channel: ChannelId,
+        user: UserId,
+        session: &str,
+        role: StreamRole,
+        now: Instant,
+    ) -> Option<(String, String)> {
+        let mut inner = self.inner.lock().unwrap();
+        if !inner.ghosts_allowed(channel) {
+            return None;
+        }
+        let id = inner.ghost_for(channel, user, session, now);
+        let grant = inner.ghosts[&id].grants[role_index(role)].clone();
+        Some((format!("{id}#{}", suffix(role)), grant))
+    }
+
+    /// `user` (login `session`) watches `streamer` as a ghost.
+    pub fn ghost_watch(
+        &self,
+        channel: ChannelId,
+        user: UserId,
+        session: &str,
+        streamer: UserId,
+        now: Instant,
+    ) -> GhostWatch {
+        let mut inner = self.inner.lock().unwrap();
+        let live = inner
+            .streams
+            .get(&(channel, streamer))
+            .is_some_and(|s| s.info.status == StreamStatus::Live);
+        if !live {
+            return GhostWatch::NoStream;
+        }
+        if !inner.ghosts_allowed(channel) {
+            return GhostWatch::NotAllowed;
+        }
+        let id = inner.ghost_for(channel, user, session, now);
+        if !inner.ghosts.get_mut(&id).unwrap().watching.insert(streamer) {
+            return GhostWatch::Already;
+        }
+        let count = inner.recount(channel, streamer).unwrap_or(0);
+        GhostWatch::Added { count, id }
+    }
+
+    /// Login `session`'s ghost stops watching `streamer`: the new count, if it was watching.
+    pub fn ghost_unwatch(
+        &self,
+        channel: ChannelId,
+        session: &str,
+        streamer: UserId,
+    ) -> Option<u32> {
+        let mut inner = self.inner.lock().unwrap();
+        let id = inner.ghost_of(channel, session)?;
+        if !inner
+            .ghosts
+            .get_mut(&id)
+            .unwrap()
+            .watching
+            .remove(&streamer)
+        {
+            return None;
+        }
+        inner.recount(channel, streamer)
+    }
+
+    /// The join webhook for ghost `id`'s `role` connection `sid` in `channel`'s stream room:
+    /// admitted if `grant` is that ghost's grant for the role and ghosts are allowed there now.
+    /// Returns the user and login session behind it, for the caller's own checks.
+    pub fn ghost_admit(
+        &self,
+        channel: ChannelId,
+        id: &str,
+        role: StreamRole,
+        grant: Option<&str>,
+        sid: &str,
+    ) -> Option<(UserId, String)> {
+        let mut inner = self.inner.lock().unwrap();
+        if !inner.ghosts_allowed(channel) {
+            return None;
+        }
+        let g = inner.ghosts.get_mut(id)?;
+        if g.channel != channel || grant != Some(g.grants[role_index(role)].as_str()) {
+            return None;
+        }
+        if role == StreamRole::V {
+            g.video_sid = Some(sid.to_owned());
+        }
+        Some((g.user, g.session.clone()))
+    }
+
+    /// Ghost `id`'s `role` connection `sid` left. Its current `#v` leaving ends the ghost
+    /// session: each stream it watched, with the new count.
+    pub fn ghost_left(
+        &self,
+        channel: ChannelId,
+        id: &str,
+        role: StreamRole,
+        sid: &str,
+    ) -> Vec<(UserId, u32)> {
+        let mut inner = self.inner.lock().unwrap();
+        let current = role == StreamRole::V
+            && inner.ghosts.get(id).is_some_and(|g| {
+                g.channel == channel && g.video_sid.as_deref().is_none_or(|cur| cur == sid)
+            });
+        if !current {
+            return Vec::new();
+        }
+        let g = inner.ghosts.remove(id).unwrap();
+        g.watching
+            .iter()
+            .filter_map(|w| inner.recount(channel, *w).map(|n| (*w, n)))
+            .collect()
+    }
+
+    /// Take out every ghost `pred` matches (allow-ghosts off, a ghost joining voice, a revoked
+    /// login, someone leaving the server).
+    pub fn purge_ghosts(&self, pred: impl Fn(&GhostView) -> bool) -> Purged {
+        self.inner.lock().unwrap().purge(pred)
+    }
+
+    /// Every ghost's login session, once each (to check which are still live).
+    pub fn ghost_sessions(&self) -> Vec<String> {
+        let inner = self.inner.lock().unwrap();
+        let all: BTreeSet<&String> = inner.ghosts.values().map(|g| &g.session).collect();
+        all.into_iter().cloned().collect()
+    }
 }
 
 #[cfg(test)]
@@ -374,6 +684,7 @@ mod tests {
             height: 720,
             fps,
             audio: true,
+            allow_ghosts: true,
         }
     }
 
@@ -682,5 +993,240 @@ mod tests {
             "a new episode: the leave's timer stands down"
         );
         assert!(s.video_back(ch(1), u(1), now).is_none());
+    }
+
+    // --- ghosts ---
+
+    const TTL: Duration = Duration::from_secs(600);
+
+    fn ghost_settings(allow: bool) -> StreamSettings {
+        StreamSettings {
+            allow_ghosts: allow,
+            ..settings(30)
+        }
+    }
+
+    #[test]
+    fn ghosts_need_every_stream_in_the_channel_to_allow_them() {
+        let s = StreamState::default();
+        let t = Instant::now();
+        assert!(!s.ghosts_allowed(ch(1)), "nothing live");
+        assert!(
+            s.ghost_ticket(ch(1), u(9), "sess", StreamRole::V, t)
+                .is_none()
+        );
+        s.start(ch(1), u(1), ghost_settings(true), "t".into());
+        assert!(s.ghosts_allowed(ch(1)));
+        s.start(ch(1), u(2), ghost_settings(false), "t".into());
+        assert!(
+            !s.ghosts_allowed(ch(1)),
+            "one voice-only stream closes the room"
+        );
+        assert!(
+            s.ghost_ticket(ch(1), u(9), "sess", StreamRole::V, t)
+                .is_none()
+        );
+        s.start(ch(2), u(3), ghost_settings(true), "t".into());
+        assert!(s.ghosts_allowed(ch(2)), "per channel");
+    }
+
+    #[test]
+    fn one_ghost_identity_per_login_session_and_channel_until_it_ends() {
+        let s = StreamState::default();
+        let t = Instant::now();
+        s.start(ch(1), u(1), ghost_settings(true), "t".into());
+        let (v, gv) = s
+            .ghost_ticket(ch(1), u(9), "sess", StreamRole::V, t)
+            .unwrap();
+        let (a, ga) = s
+            .ghost_ticket(ch(1), u(9), "sess", StreamRole::A, t)
+            .unwrap();
+        let id = v.strip_suffix("#v").unwrap();
+        assert_eq!(a, format!("{id}#a"), "both connections share the session");
+        assert_ne!(gv, ga, "a grant per connection");
+        // a refresh: same identity and grant
+        assert_eq!(
+            s.ghost_ticket(ch(1), u(9), "sess", StreamRole::V, t),
+            Some((v.clone(), gv.clone()))
+        );
+        // another device of the same person is another ghost
+        let (other, _) = s
+            .ghost_ticket(ch(1), u(9), "sess2", StreamRole::V, t)
+            .unwrap();
+        assert_ne!(other, v);
+        // the #v connection ends the session: the next watch is a new ghost
+        assert!(
+            s.ghost_admit(ch(1), id, StreamRole::V, Some(&gv), "PA_1")
+                .is_some()
+        );
+        s.ghost_left(ch(1), id, StreamRole::V, "PA_1");
+        let (again, _) = s
+            .ghost_ticket(ch(1), u(9), "sess", StreamRole::V, t)
+            .unwrap();
+        assert_ne!(again, v, "fresh per watch session");
+    }
+
+    #[test]
+    fn a_ghost_session_never_joined_expires_after_the_ticket_ttl() {
+        let s = StreamState::default();
+        let t = Instant::now();
+        s.start(ch(1), u(1), ghost_settings(true), "t".into());
+        let (v, _) = s
+            .ghost_ticket(ch(1), u(9), "sess", StreamRole::V, t)
+            .unwrap();
+        let (still, _) = s
+            .ghost_ticket(ch(1), u(9), "sess", StreamRole::V, t + TTL / 2)
+            .unwrap();
+        assert_eq!(still, v);
+        let (later, _) = s
+            .ghost_ticket(ch(1), u(9), "sess", StreamRole::V, t + TTL * 2)
+            .unwrap();
+        assert_ne!(later, v);
+    }
+
+    #[test]
+    fn admission_needs_the_session_grant_for_that_role_and_an_open_room() {
+        let s = StreamState::default();
+        let t = Instant::now();
+        s.start(ch(1), u(1), ghost_settings(true), "t".into());
+        let (v, gv) = s
+            .ghost_ticket(ch(1), u(9), "sess", StreamRole::V, t)
+            .unwrap();
+        let (_, ga) = s
+            .ghost_ticket(ch(1), u(9), "sess", StreamRole::A, t)
+            .unwrap();
+        let id = v.strip_suffix("#v").unwrap().to_owned();
+        assert!(
+            s.ghost_admit(ch(1), &id, StreamRole::V, None, "PA")
+                .is_none()
+        );
+        assert!(
+            s.ghost_admit(ch(1), &id, StreamRole::V, Some(&ga), "PA")
+                .is_none(),
+            "the #a grant"
+        );
+        assert!(
+            s.ghost_admit(ch(2), &id, StreamRole::V, Some(&gv), "PA")
+                .is_none(),
+            "another room"
+        );
+        assert!(
+            s.ghost_admit(ch(1), &new_ghost_id(), StreamRole::V, Some(&gv), "PA")
+                .is_none()
+        );
+        assert_eq!(
+            s.ghost_admit(ch(1), &id, StreamRole::V, Some(&gv), "PA"),
+            Some((u(9), "sess".to_owned()))
+        );
+        s.start(ch(1), u(2), ghost_settings(false), "t".into());
+        assert!(
+            s.ghost_admit(ch(1), &id, StreamRole::A, Some(&ga), "PA")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn ghost_watches_are_counted_never_named() {
+        let s = StreamState::default();
+        let t = Instant::now();
+        s.start(ch(1), u(1), ghost_settings(true), "t".into());
+        assert_eq!(
+            s.ghost_watch(ch(1), u(9), "sess", u(1), t),
+            GhostWatch::Added {
+                count: 1,
+                id: s
+                    .ghost_ticket(ch(1), u(9), "sess", StreamRole::V, t)
+                    .unwrap()
+                    .0
+                    .trim_end_matches("#v")
+                    .to_owned()
+            }
+        );
+        assert!(matches!(
+            s.ghost_watch(ch(1), u(9), "sess", u(1), t),
+            GhostWatch::Already
+        ));
+        assert!(matches!(
+            s.ghost_watch(ch(1), u(8), "other", u(1), t),
+            GhostWatch::Added { count: 2, .. }
+        ));
+        let info = s.get(ch(1), u(1)).unwrap();
+        assert_eq!((info.viewers.len(), info.ghosts), (0, 2));
+        assert_eq!(
+            s.ghost_watch(ch(1), u(9), "sess", u(5), t),
+            GhostWatch::NoStream
+        );
+        assert_eq!(s.ghost_unwatch(ch(1), "sess", u(1)), Some(1));
+        assert_eq!(s.ghost_unwatch(ch(1), "sess", u(1)), None);
+        s.start(ch(1), u(2), ghost_settings(false), "t".into());
+        assert_eq!(
+            s.ghost_watch(ch(1), u(9), "sess", u(1), t),
+            GhostWatch::NotAllowed
+        );
+    }
+
+    #[test]
+    fn a_ghost_leaving_lowers_the_count_and_a_stale_leave_does_not() {
+        let s = StreamState::default();
+        let t = Instant::now();
+        s.start(ch(1), u(1), ghost_settings(true), "t".into());
+        let (v, gv) = s
+            .ghost_ticket(ch(1), u(9), "sess", StreamRole::V, t)
+            .unwrap();
+        let id = v.trim_end_matches("#v").to_owned();
+        s.ghost_watch(ch(1), u(9), "sess", u(1), t);
+        s.ghost_admit(ch(1), &id, StreamRole::V, Some(&gv), "PA_1");
+        s.ghost_admit(ch(1), &id, StreamRole::V, Some(&gv), "PA_2"); // a reconnect
+        assert!(
+            s.ghost_left(ch(1), &id, StreamRole::V, "PA_1").is_empty(),
+            "stale"
+        );
+        assert!(
+            s.ghost_left(ch(1), &id, StreamRole::A, "PA_x").is_empty(),
+            "#a alone"
+        );
+        assert_eq!(
+            s.ghost_left(ch(1), &id, StreamRole::V, "PA_2"),
+            vec![(u(1), 0)]
+        );
+        assert_eq!(s.get(ch(1), u(1)).unwrap().ghosts, 0);
+    }
+
+    #[test]
+    fn purging_ghosts_reports_what_to_remove_and_the_new_counts() {
+        let s = StreamState::default();
+        let t = Instant::now();
+        s.start(ch(1), u(1), ghost_settings(true), "t".into());
+        s.start(ch(2), u(2), ghost_settings(true), "t".into());
+        s.ghost_watch(ch(1), u(9), "sess", u(1), t);
+        s.ghost_watch(ch(1), u(8), "other", u(1), t);
+        s.ghost_watch(ch(2), u(9), "sess", u(2), t);
+        let p = s.purge_ghosts(|g| g.channel == ch(1) && g.user == u(9));
+        assert_eq!(p.removed.len(), 1);
+        assert_eq!(p.removed[0].0, ch(1));
+        assert_eq!(p.counts, vec![(ch(1), u(1), 1)]);
+        assert_eq!(
+            s.get(ch(2), u(2)).unwrap().ghosts,
+            1,
+            "other channels untouched"
+        );
+        let p = s.purge_ghosts(|g| g.session == "sess");
+        assert_eq!(p.counts, vec![(ch(2), u(2), 0)]);
+        assert!(s.purge_ghosts(|g| g.session == "sess").removed.is_empty());
+    }
+
+    #[test]
+    fn a_stream_ending_forgets_its_ghost_watches() {
+        let s = StreamState::default();
+        let t = Instant::now();
+        s.start(ch(1), u(1), ghost_settings(true), "t".into());
+        s.ghost_watch(ch(1), u(9), "sess", u(1), t);
+        s.end(ch(1), u(1));
+        s.start(ch(1), u(1), ghost_settings(true), "t".into());
+        assert_eq!(s.get(ch(1), u(1)).unwrap().ghosts, 0);
+        assert!(matches!(
+            s.ghost_watch(ch(1), u(9), "sess", u(1), t),
+            GhostWatch::Added { count: 1, .. }
+        ));
     }
 }

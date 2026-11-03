@@ -183,6 +183,10 @@ async fn webhook(
                     },
                 )
                 .await;
+            // a ghost here joining the call: that ghost goes (the client reconnects as them)
+            if record {
+                crate::streams::ghosts::joined_voice(&s, channel_id, user_id).await;
+            }
             if let Some((server, id, at)) = opened {
                 crate::badges::voice::opened(&s, server, user_id, &id, at).await;
             }

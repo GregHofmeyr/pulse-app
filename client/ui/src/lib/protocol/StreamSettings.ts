@@ -3,4 +3,8 @@
 /**
  * Screen-share quality. `height` is 720, 1080 or 1440; `fps` is 15, 30 or 60.
  */
-export type StreamSettings = { height: number, fps: number, audio: boolean, };
+export type StreamSettings = { height: number, fps: number, audio: boolean, 
+/**
+ * Server members outside the voice channel may watch anonymously (spec §5). On unless said.
+ */
+allow_ghosts: boolean, };

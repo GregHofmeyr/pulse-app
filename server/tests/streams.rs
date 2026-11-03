@@ -232,7 +232,8 @@ async fn go_live_broadcasts_stream_started() {
                 StreamSettings {
                     height: 1080,
                     fps: 60,
-                    audio: true
+                    audio: true,
+                    allow_ghosts: true,
                 }
             );
             assert_eq!(stream.status, StreamStatus::Live);
@@ -346,8 +347,10 @@ async fn watch_adds_a_viewer_and_unwatch_removes_it() {
             channel_id,
             user_id,
             viewers,
+            ghosts,
         } => {
             assert_eq!((channel_id, user_id, viewers), (l.id, a_id, vec![b_id]));
+            assert_eq!(ghosts, 0);
         }
         other => panic!("unexpected {other:?}"),
     }
