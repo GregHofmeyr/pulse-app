@@ -56,6 +56,11 @@ debug-assertions = false
 [profile.dev.package.nnnoiseless]
 opt-level = 3
 
+# The soundboard's Opus decoder: unoptimised it takes ~1.6 s to decode a 6 s sound, so a first play
+# in a debug build (`just linux-client`) was that late (#138). Optimised it is a few milliseconds.
+[profile.dev.package.opus-decoder]
+opt-level = 3
+
 # argon2 (and the blake2 it hashes with) unoptimised takes ~0.5 s per password check, and the
 # server allows only 2 at once per process: a test binary full of logins then queues past the
 # client's 15 s timeout. Optimising them changes build speed only, not the hash parameters.
