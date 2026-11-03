@@ -81,6 +81,7 @@ const ALLOWED: Record<string, { literals: string[]; reason: string }[]> = {
   'components/EmojiPicker.svelte': [{ literals: ['#f7c948', '#f7dbc0', '#e8c29a', '#c89369', '#9a6a45', '#5f402c'], reason: 'skin-tone swatches: content colours' }],
   'components/AppearanceSettings.svelte': [{ literals: ['#3b4bd8'], reason: 'a sample role colour in the Name readability preview (user data, not UI)' }],
   'components/ProfileSettings.svelte': [{ literals: ['#ffffff'], reason: "the first custom name colour's starting value (user data, not UI)" }],
+  'components/FullProfile.svelte': [{ literals: ['#000'], reason: "the right column's round-cornered scroll mask: only its alpha counts, never shown as a colour" }],
   'components/ProfileCard.svelte': [{ literals: ['rgb(242 243 246 / .12)', 'rgb(242 243 246 / .08)', 'rgb(242 243 246 / .14)', '#ff9d96'], reason: PROFILE_CARD }],
 }
 
