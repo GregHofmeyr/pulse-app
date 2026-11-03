@@ -24,6 +24,19 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('shouldCelebrate', () => {
+  // #139: a one-off flourish (the badge toast's confetti) follows the same switches as emoji, minus focus/on-screen/hover
+  it('off under reduced motion, while live, or with animation set to never', async () => {
+    const { shouldCelebrate } = await fresh()
+    for (const mode of ['always', 'hover', 'never'] as const)
+      for (const reducedMotion of [true, false])
+        for (const streaming of [true, false]) {
+          const want = !reducedMotion && !streaming && mode !== 'never'
+          expect(shouldCelebrate({ mode, reducedMotion, streaming }), JSON.stringify({ mode, reducedMotion, streaming })).toBe(want)
+        }
+  })
+})
+
 describe('shouldAnimate', () => {
   it('streaming_shows_the_still_frame', async () => {
     const { shouldAnimate } = await fresh()
