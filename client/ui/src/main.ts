@@ -5,6 +5,10 @@ import './nameFonts.css'
 import './app.css'
 import App from './App.svelte'
 import { applyTheme } from './lib/theme.svelte'
+import { logUncaughtErrors } from './lib/uiErrors'
+
+// Uncaught page errors go to the log file too, from the start.
+logUncaughtErrors()
 
 // The saved theme before the first paint (no flash of Pulse Dark on Light).
 applyTheme()
