@@ -138,20 +138,16 @@ describe('ParticipantMenu', () => {
     opener.focus()
     key(opener, 'ContextMenu')
     const list = items()
-    expect(list.map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message'])
+    expect(list.map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'nick', 'private-nick'])
     expect(document.activeElement).toBe(list[0])
-    key(document.activeElement!, 'ArrowDown')
-    expect(document.activeElement).toBe(list[1])
-    key(document.activeElement!, 'ArrowDown')
-    expect(document.activeElement).toBe(list[2])
-    key(document.activeElement!, 'ArrowDown')
-    expect(document.activeElement).toBe(list[3])
-    key(document.activeElement!, 'ArrowDown')
-    expect(document.activeElement).toBe(list[4])
+    for (let i = 1; i < list.length; i++) {
+      key(document.activeElement!, 'ArrowDown')
+      expect(document.activeElement).toBe(list[i])
+    }
     key(document.activeElement!, 'ArrowDown')
     expect(document.activeElement).toBe(list[0]) // wraps
     key(document.activeElement!, 'ArrowUp')
-    expect(document.activeElement).toBe(list[4])
+    expect(document.activeElement).toBe(list[list.length - 1])
     key(document.activeElement!, 'Escape')
     expect(menu()).toBeNull()
     expect(document.activeElement).toBe(opener)
@@ -196,7 +192,7 @@ describe('ParticipantMenu', () => {
   it('your_own_menu_has_mute_deafen_and_voice_settings', () => {
     mountPanel()
     rightClick(q('[data-user="U1"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'mute', 'deafen', 'go-live', 'voice-settings'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'mute', 'deafen', 'go-live', 'voice-settings', 'nick'])
     document.querySelector<HTMLElement>('[data-item="mute"]')!.click()
     expect(invoke).toHaveBeenCalledWith('toggle_mute')
     rightClick(q('[data-user="U1"]')!)
@@ -217,7 +213,7 @@ describe('ParticipantMenu', () => {
     app.state = applyReady(emptyState(), { ...ready, streams: [{ channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false }, status: 'live', viewers: [], started_at: '2026-10-26T10:00:00Z' }] })
     mountPanel()
     rightClick(q('[data-stream="U2"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'watch'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'watch', 'nick', 'private-nick'])
     document.querySelector<HTMLElement>('[data-item="watch"]')!.click()
     await settle()
     expect(invoke).toHaveBeenCalledWith('stream_watch', { channelId: 'V1', streamer: 'U2' })
@@ -232,7 +228,7 @@ describe('ParticipantMenu', () => {
     const occ = [...document.querySelectorAll<HTMLElement>('.occupant')].find((o) => o.textContent?.includes('sam'))!
     expect(occ.tabIndex).toBe(0)
     rightClick(occ)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'nick', 'private-nick'])
     key(menu()!, 'Escape')
     expect(document.activeElement).toBe(occ)
     key(occ, 'F10', { shiftKey: true })
@@ -346,7 +342,7 @@ describe('ParticipantMenu', () => {
   it('the_stream_volume_slider_uses_the_shared_stream_volumes', async () => {
     await watchSam()
     rightClick(q('[data-stream="U2"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'stream-volume', 'stop-watching', 'full-view'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'stream-volume', 'stop-watching', 'full-view', 'nick', 'private-nick'])
     const slider = q('[role=menu] input[aria-label="Stream volume"]') as HTMLInputElement
     slider.focus()
     key(slider, 'ArrowRight')
@@ -374,7 +370,7 @@ describe('ParticipantMenu', () => {
     const stop = vi.spyOn(streamApi, 'stop').mockResolvedValue()
     mountPanel()
     rightClick(q('[data-user="U1"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'mute', 'deafen', 'stop-streaming', 'voice-settings'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'mute', 'deafen', 'stop-streaming', 'voice-settings', 'nick'])
     item('stop-streaming').click()
     expect(stop).toHaveBeenCalledTimes(1)
     stream.live = null
@@ -434,5 +430,113 @@ describe('ParticipantMenu', () => {
     flushSync()
     expect(parseFloat(menu()!.style.left)).toBeLessThanOrEqual(window.innerWidth - 8)
     expect(parseFloat(menu()!.style.top)).toBeLessThanOrEqual(window.innerHeight - 8)
+  })
+})
+
+describe('ParticipantMenu nicknames (#113)', () => {
+  const labels = () => Object.fromEntries(items().map((i) => [i.dataset.item, i.textContent]))
+  const openFor = (userId: string) => {
+    mountPanel()
+    rightClick(q(`[data-user="${userId}"]`)!)
+  }
+  const withNicks = (server: string | null, priv: string | null) => {
+    app.state = {
+      ...app.state,
+      members: { S1: [{ user: me, nickname: null }, { user: sam, nickname: server }] },
+      privateNicks: priv ? { U2: priv } : {},
+    }
+  }
+  afterEach(() => {
+    profileUi.rename = null
+  })
+
+  it('someone else: change nickname and set a private one, after the voice items', () => {
+    openFor('U2')
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'nick', 'private-nick'])
+    expect(labels()).toMatchObject({ nick: 'Change nickname', 'private-nick': 'Set private nickname…' })
+  })
+
+  it('reset and clear show only when a nickname is set', () => {
+    withNicks('Sammy', 'Bestie')
+    openFor('U2')
+    expect(items().map((i) => i.dataset.item).slice(-4)).toEqual(['nick', 'nick-reset', 'private-nick', 'private-nick-clear'])
+    expect(labels()).toMatchObject({ 'nick-reset': 'Reset nickname', 'private-nick': 'Change private nickname…', 'private-nick-clear': 'Clear private nickname' })
+  })
+
+  it('change nickname opens the dialog for the server nickname, and the menu closes', () => {
+    openFor('U2')
+    q('[data-item="nick"]')!.click()
+    flushSync()
+    expect(profileUi.rename).toEqual({ kind: 'server', userId: 'U2', serverId: 'S1' })
+    expect(menu()).toBeNull()
+  })
+
+  it('set private nickname opens the dialog for the private one', () => {
+    openFor('U2')
+    q('[data-item="private-nick"]')!.click()
+    flushSync()
+    expect(profileUi.rename).toEqual({ kind: 'private', userId: 'U2' })
+    expect(menu()).toBeNull()
+  })
+
+  it('reset and clear call the API with no nickname, then close', async () => {
+    withNicks('Sammy', 'Bestie')
+    openFor('U2')
+    q('[data-item="nick-reset"]')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_nickname', { serverId: 'S1', userId: 'U2', nickname: null })
+    expect(menu()).toBeNull()
+    rightClick(q('[data-user="U2"]')!)
+    q('[data-item="private-nick-clear"]')!.click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_private_nickname', { userId: 'U2', nickname: null })
+    expect(menu()).toBeNull()
+  })
+
+  it('a refused reset keeps the menu open and says why', async () => {
+    withNicks('Sammy', null)
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'set_nickname') throw 'Too many renames, try again in a minute'
+    })
+    openFor('U2')
+    q('[data-item="nick-reset"]')!.click()
+    await settle()
+    expect(menu()).not.toBeNull()
+    expect(menu()!.querySelector('[role=alert]')!.textContent).toContain('Too many renames')
+  })
+
+  it('your own menu: your server nickname, never a private one', () => {
+    openFor('U1')
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'mute', 'deafen', 'go-live', 'voice-settings', 'nick'])
+    q('[data-item="nick"]')!.click()
+    flushSync()
+    expect(profileUi.rename).toEqual({ kind: 'server', userId: 'U1', serverId: 'S1' })
+  })
+
+  it('a group call (no server): private nickname only', () => {
+    cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: null, onMessage, onVoiceSettings } })
+    flushSync()
+    rightClick(q('[data-user="U2"]')!)
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'private-nick'])
+  })
+
+  it('the arrows reach the nickname items and wrap; Enter picks one', () => {
+    mountPanel()
+    const opener = q('[data-user="U2"] .avatar-btn')!
+    opener.focus()
+    key(opener, 'ContextMenu')
+    const list = items()
+    key(document.activeElement!, 'End')
+    expect(document.activeElement).toBe(list[list.length - 1])
+    expect((document.activeElement as HTMLElement).dataset.item).toBe('private-nick')
+    key(document.activeElement!, 'ArrowUp')
+    expect((document.activeElement as HTMLElement).dataset.item).toBe('nick')
+    key(document.activeElement!, 'ArrowDown')
+    key(document.activeElement!, 'ArrowDown')
+    expect(document.activeElement).toBe(list[0])
+    key(document.activeElement!, 'ArrowUp')
+    key(document.activeElement!, 'Enter')
+    expect(profileUi.rename).toEqual({ kind: 'private', userId: 'U2' })
+    expect(menu()).toBeNull()
   })
 })

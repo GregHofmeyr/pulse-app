@@ -1,9 +1,10 @@
 // @vitest-environment jsdom
-import { flushSync, mount, unmount } from 'svelte'
+import { flushSync, mount, tick, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeMatchMedia, FakeIntersectionObserver } from '../lib/testMotion'
 
-vi.mock('@tauri-apps/api/core', () => ({ invoke: async () => undefined }))
+const invoke = vi.fn(async (..._a: unknown[]): Promise<unknown> => undefined)
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a) }))
 vi.stubGlobal('IntersectionObserver', FakeIntersectionObserver)
 vi.stubGlobal('matchMedia', fakeMatchMedia(false).matchMedia)
 
@@ -21,13 +22,18 @@ const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: nu
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: A, avatar_still: S, style: { font: 'fredoka', colors: ['#ffc4a3'] } }
 
 let cmp: ReturnType<typeof mount> | undefined
+const onMessage = vi.fn()
 beforeEach(() => {
+  invoke.mockReset()
+  invoke.mockResolvedValue(undefined)
+  onMessage.mockReset()
+  profileUi.rename = null
   appearance.showNameStyles = true
   motion.streaming = false
   window.dispatchEvent(new Event('focus'))
   closeCard()
   app.state = { ...emptyState(), me: alex, members: { S1: [{ user: alex, nickname: null }, { user: sam, nickname: 'Sammy' }] } } as never
-  cmp = mount(MemberList, { target: document.body, props: { serverId: 'S1', onMessage: () => {} } })
+  cmp = mount(MemberList, { target: document.body, props: { serverId: 'S1', onMessage } })
   flushSync()
 })
 afterEach(() => {
@@ -87,5 +93,146 @@ describe('MemberList', () => {
     flushSync()
     expect(row(1).querySelector('.name')!.textContent).toBe('Bestie')
     expect(row(1).querySelector('small')!.textContent).toBe('Sam 🎸')
+  })
+})
+
+describe('MemberList row menu (#113)', () => {
+  const menu = () => document.querySelector<HTMLElement>('[role=menu]')
+  const items = () => [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')]
+  const ids = () => items().map((i) => i.dataset.item)
+  const label = (id: string) => document.querySelector(`[role=menu] [data-item="${id}"]`)!.textContent
+  const pickItem = (id: string) => {
+    document.querySelector<HTMLElement>(`[role=menu] [data-item="${id}"]`)!.click()
+    flushSync()
+  }
+  const rightClick = (el: Element) => {
+    el.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 40 }))
+    flushSync()
+  }
+  const key = (el: Element, k: string, init: KeyboardEventInit = {}) => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true, ...init }))
+    flushSync()
+  }
+  const settle = async () => {
+    for (let i = 0; i < 5; i++) await tick()
+    await new Promise((r) => setTimeout(r, 0))
+    flushSync()
+  }
+
+  it('right-click on a row opens its menu: profile, message and the nickname items', () => {
+    rightClick(row(1))
+    expect(menu()).not.toBeNull()
+    expect(menu()!.getAttribute('aria-label')).toBe('Actions for Sammy')
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'nick-reset', 'private-nick'])
+    expect(label('profile')).toBe('View profile')
+    expect(label('message')).toBe('Message')
+    expect(label('nick')).toBe('Change nickname')
+    expect(label('nick-reset')).toBe('Reset nickname')
+    expect(label('private-nick')).toBe('Set private nickname…')
+    expect(document.activeElement).toBe(items()[0])
+  })
+
+  it('reset shows only when a server nickname is set; clear only with a private one', () => {
+    app.state = { ...app.state, members: { S1: [app.state.members.S1[0], { user: sam, nickname: null }] }, privateNicks: { U2: 'Bestie' } }
+    flushSync()
+    rightClick(row(1))
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'private-nick-clear'])
+    expect(label('private-nick')).toBe('Change private nickname…')
+    expect(label('private-nick-clear')).toBe('Clear private nickname')
+  })
+
+  it('your own row: profile and your server nickname, no message, no private nickname', () => {
+    rightClick(row(0))
+    expect(ids()).toEqual(['profile', 'nick'])
+  })
+
+  it('each item does what the card does', async () => {
+    rightClick(row(1))
+    pickItem('nick')
+    expect(profileUi.rename).toEqual({ kind: 'server', userId: 'U2', serverId: 'S1' })
+    expect(menu()).toBeNull()
+
+    rightClick(row(1))
+    pickItem('private-nick')
+    expect(profileUi.rename).toEqual({ kind: 'private', userId: 'U2' })
+
+    rightClick(row(1))
+    pickItem('nick-reset')
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_nickname', { serverId: 'S1', userId: 'U2', nickname: null })
+    expect(menu()).toBeNull()
+
+    rightClick(row(1))
+    pickItem('message')
+    expect(onMessage).toHaveBeenCalledWith('U2')
+    expect(menu()).toBeNull()
+
+    rightClick(row(1))
+    pickItem('profile')
+    expect(profileUi.card).toMatchObject({ userId: 'U2', serverId: 'S1' })
+    expect(menu()).toBeNull()
+  })
+
+  it('clear private nickname calls the API with none', async () => {
+    app.state = { ...app.state, privateNicks: { U2: 'Bestie' } }
+    flushSync()
+    rightClick(row(1))
+    pickItem('private-nick-clear')
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_private_nickname', { userId: 'U2', nickname: null })
+    expect(menu()).toBeNull()
+  })
+
+  it('a refused reset keeps the menu open and says why', async () => {
+    invoke.mockRejectedValue('Too many renames, try again in a minute')
+    rightClick(row(1))
+    pickItem('nick-reset')
+    await settle()
+    expect(menu()).not.toBeNull()
+    expect(menu()!.querySelector('[role=alert]')!.textContent).toContain('Too many renames')
+  })
+
+  it('the keyboard: ContextMenu or Shift+F10 on the name opens it, arrows wrap, Esc and Tab close and return focus', () => {
+    const name = row(1).querySelector<HTMLElement>('.name')!
+    name.focus()
+    key(name, 'F10', { shiftKey: true })
+    expect(menu()).not.toBeNull()
+    key(document.activeElement!, 'Escape')
+    expect(menu()).toBeNull()
+    expect(document.activeElement).toBe(name)
+    key(name, 'ContextMenu')
+    const list = items()
+    expect(document.activeElement).toBe(list[0])
+    key(document.activeElement!, 'ArrowUp')
+    expect(document.activeElement).toBe(list[list.length - 1])
+    key(document.activeElement!, 'ArrowDown')
+    expect(document.activeElement).toBe(list[0])
+    key(document.activeElement!, 'ArrowDown')
+    expect(document.activeElement).toBe(list[1])
+    key(document.activeElement!, 'End')
+    expect(document.activeElement).toBe(list[list.length - 1])
+    key(document.activeElement!, 'Home')
+    expect(document.activeElement).toBe(list[0])
+    key(document.activeElement!, 'Tab')
+    expect(menu()).toBeNull()
+    expect(document.activeElement).toBe(name)
+  })
+
+  it('Enter picks the focused item once', () => {
+    const name = row(1).querySelector<HTMLElement>('.name')!
+    name.focus()
+    key(name, 'ContextMenu')
+    key(document.activeElement!, 'ArrowDown')
+    key(document.activeElement!, 'Enter')
+    expect(onMessage).toHaveBeenCalledTimes(1)
+    expect(menu()).toBeNull()
+  })
+
+  it('a click outside closes it', async () => {
+    rightClick(row(1))
+    await new Promise((r) => setTimeout(r, 0))
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    flushSync()
+    expect(menu()).toBeNull()
   })
 })

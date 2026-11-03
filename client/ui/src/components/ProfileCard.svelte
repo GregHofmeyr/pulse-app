@@ -10,7 +10,8 @@
   import Icon from './Icon.svelte'
   import { app, openDm, queueMessage, ui } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
-  import { baseName, displayName, isMember, serverNick } from '../lib/selectors'
+  import { baseName, displayName, serverNick } from '../lib/selectors'
+  import { canServerNick, nickLabel } from '../lib/nicknameMenu'
   import { cardVars } from '../lib/cardTheme'
   import { mediaUrl } from '../lib/emoji'
   import { renderMarkdown } from '../lib/markdown'
@@ -60,7 +61,8 @@
   // shows only as the @handle below it.
   const name = $derived(preview ? baseName(user) : displayName(app.state, serverId, user.id))
   // Renaming (#48): a server nickname needs you and them in this server; a private one is for others.
-  const canNick = $derived(!preview && !!serverId && isMember(app.state, serverId) && !!app.state.members[serverId]?.some((m) => m.user.id === user.id))
+  // The same rules as a person's menu (#113, lib/nicknameMenu).
+  const canNick = $derived(!preview && canServerNick(app.state, serverId, user.id))
   const nick = $derived(serverId ? serverNick(app.state, serverId, user.id) : null)
   const privateNick = $derived(app.state.privateNicks[user.id] ?? null)
   let nameError = $state<string | null>(null)
@@ -138,12 +140,12 @@
     {#if canNick || (!preview && !mine)}
       <div class="names">
         {#if canNick && serverId}
-          <button type="button" onclick={() => openRename({ kind: 'server', userId: user.id, serverId })}>Change nickname</button>
-          {#if nick}<button type="button" onclick={() => clear(() => api.setNickname(serverId, user.id, null))}>Reset nickname</button>{/if}
+          <button type="button" onclick={() => openRename({ kind: 'server', userId: user.id, serverId })}>{nickLabel('nick', !!privateNick)}</button>
+          {#if nick}<button type="button" onclick={() => clear(() => api.setNickname(serverId, user.id, null))}>{nickLabel('nick-reset', !!privateNick)}</button>{/if}
         {/if}
         {#if !preview && !mine}
-          <button type="button" onclick={() => openRename({ kind: 'private', userId: user.id })}>{privateNick ? 'Change private nickname…' : 'Set private nickname…'}</button>
-          {#if privateNick}<button type="button" onclick={() => clear(() => api.setPrivateNickname(user.id, null))}>Clear private nickname</button>{/if}
+          <button type="button" onclick={() => openRename({ kind: 'private', userId: user.id })}>{nickLabel('private-nick', !!privateNick)}</button>
+          {#if privateNick}<button type="button" onclick={() => clear(() => api.setPrivateNickname(user.id, null))}>{nickLabel('private-nick-clear', !!privateNick)}</button>{/if}
         {/if}
       </div>
       {#if nameError}<p class="err" role="alert">{nameError}</p>{/if}
