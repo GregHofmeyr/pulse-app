@@ -141,6 +141,12 @@ async fn set(s: &AppState, me: UserId, line: LineId, give: bool) -> AppResult<St
         return Ok(StatusCode::NO_CONTENT);
     }
     let awarders = counted_awarders(&mut tx, line, speaker).await?;
+    // A counted award given or taken back is one more or one fewer toward Quotable.
+    if let Some(speaker) = speaker {
+        let delta = if give { 1 } else { -1 };
+        let stat = crate::badges::catalogue::stat::QUOTE_AWARDS;
+        crate::badges::stats::add(&mut tx, speaker, stat, delta).await?;
+    }
     tx.commit().await?;
     s.hub
         .publish(
@@ -156,6 +162,9 @@ async fn set(s: &AppState, me: UserId, line: LineId, give: bool) -> AppResult<St
             },
         )
         .await;
+    if give && let Some(speaker) = speaker {
+        crate::badges::engine::after(s, &[speaker]).await;
+    }
     Ok(StatusCode::NO_CONTENT)
 }
 

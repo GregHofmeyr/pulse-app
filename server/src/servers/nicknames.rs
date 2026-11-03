@@ -82,6 +82,12 @@ async fn rename(
     .bind(now())
     .execute(&mut *tx)
     .await?;
+    // Someone else giving you a name counts toward Identity Crisis; resets and your own don't.
+    let renamed = target != me && nickname.is_some();
+    if renamed {
+        let stat = crate::badges::catalogue::stat::RENAMED_BY_OTHERS;
+        crate::badges::stats::add(&mut tx, target, stat, 1).await?;
+    }
     tx.commit().await?;
 
     let member = member_of(&s.db, server, target).await?;
@@ -94,6 +100,9 @@ async fn rename(
             },
         )
         .await;
+    if renamed {
+        crate::badges::engine::after(&s, &[target]).await;
+    }
     Ok(Json(member))
 }
 

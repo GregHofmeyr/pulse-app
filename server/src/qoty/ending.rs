@@ -23,6 +23,9 @@ pub const SWEEP_EVERY: Duration = Duration::from_secs(10);
 pub(crate) struct Ended {
     pub event: QotyEventId,
     pub cards: Vec<Message>,
+    /// The members who said a winning quote, each once: their wins are counted, to check after
+    /// commit.
+    pub winners: Vec<UserId>,
 }
 
 /// End the event on `tx` if it is still live: record the winners (most votes, if any) with their
@@ -80,7 +83,11 @@ pub(crate) async fn finish(
                 format!("Nobody voted in Quote of the Year {year}, so there's no winner.");
             cards.push(post_card(tx, parse_id(&ch)?, content, card(None, vec![], vec![])).await?);
         }
-        return Ok(Some(Ended { event: id, cards }));
+        return Ok(Some(Ended {
+            event: id,
+            cards,
+            winners: vec![],
+        }));
     }
 
     // Co-winners: every option with the most votes, a card each in its own channel.
@@ -90,6 +97,7 @@ pub(crate) async fn finish(
     let links = links_for(&mut *tx, &[server.to_string()]).await?;
     let no_links = HashMap::new();
     let links = links.get(&server.to_string()).unwrap_or(&no_links);
+    let mut won = Vec::new();
     for (message, voters) in winners {
         sqlx::query("INSERT INTO qoty_winners (event_id, message_id, votes) VALUES (?, ?, ?)")
             .bind(id.to_string())
@@ -104,10 +112,23 @@ pub(crate) async fn finish(
                 .fetch_one(&mut *tx)
                 .await?;
         let content = format!("Quote of the Year {year}: {content}");
+        for who in speakers.iter().filter_map(|s| s.user_id) {
+            if !won.contains(&who) {
+                won.push(who);
+            }
+        }
         let c = card(Some(parse_id(&message)?), voters, speakers);
         cards.push(post_card(tx, parse_id(&channel)?, content, c).await?);
     }
-    Ok(Some(Ended { event: id, cards }))
+    // A win each, however many lines or co-winning quotes they said.
+    for &who in &won {
+        crate::badges::stats::add(tx, who, crate::badges::catalogue::stat::QOTY_WINS, 1).await?;
+    }
+    Ok(Some(Ended {
+        event: id,
+        cards,
+        winners: won,
+    }))
 }
 
 /// Who said each line of a winning quote at the end: the effective speaker (a member, also by a
@@ -178,7 +199,8 @@ pub(crate) async fn end_if_overdue(
     }
 }
 
-/// Publish a committed ending: its cards, then `QotyEnded`. Under the caller's `in_order` guard.
+/// Publish a committed ending: its cards, then `QotyEnded`, then the winners' badges. Under the
+/// caller's `in_order` guard.
 pub(crate) async fn announce(s: &AppState, ended: Ended) -> Option<QotyEvent> {
     for message in ended.cards {
         s.hub
@@ -191,17 +213,32 @@ pub(crate) async fn announce(s: &AppState, ended: Ended) -> Option<QotyEvent> {
             )
             .await;
     }
-    publish(s, ended.event, |event| Event::QotyEnded { event }).await
+    let published = publish(s, ended.event, |event| Event::QotyEnded { event }).await;
+    crate::badges::engine::after(s, &ended.winners).await;
+    published
 }
 
 /// Take back an ending that is being reopened, on `tx`: its wins go, its cards are deleted
 /// outright (returned for `MessageDeleted`), and options whose quote was deleted or won another
-/// vote since the end go with their votes, so such a quote can't win (again) after all.
+/// vote since the end go with their votes, so such a quote can't win (again) after all. The
+/// winners' win counters go down too (their badge stays).
 pub(crate) async fn undo(
     tx: &mut SqliteConnection,
     id: QotyEventId,
     server: ServerId,
 ) -> AppResult<Vec<(ChannelId, MessageId)>> {
+    // Read before the wins (and their speakers, by cascade) are deleted.
+    let won: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT user_id FROM qoty_winner_speakers
+         WHERE event_id = ? AND user_id IS NOT NULL",
+    )
+    .bind(id.to_string())
+    .fetch_all(&mut *tx)
+    .await?;
+    for who in won {
+        let stat = crate::badges::catalogue::stat::QOTY_WINS;
+        crate::badges::stats::add(tx, parse_id(&who)?, stat, -1).await?;
+    }
     let cards: Vec<(String, String)> = sqlx::query_as(
         "DELETE FROM messages
          WHERE kind = 'system'

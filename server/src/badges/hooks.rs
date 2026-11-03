@@ -124,3 +124,32 @@ pub async fn reacted(
     }
     Ok(check)
 }
+
+/// `poster` posted a quote with lines by `speakers` (members picked directly; plain names are
+/// nobody's). Quoting yourself is Friendly Fire; each other person quoted is one more toward a
+/// vendetta on them; and a quote of anyone else is one more toward John Quoter, however many
+/// lines it has.
+pub async fn quoted(
+    conn: &mut SqliteConnection,
+    poster: UserId,
+    speakers: &[UserId],
+) -> AppResult<()> {
+    let mut seen = Vec::new();
+    for &who in speakers {
+        if seen.contains(&who) {
+            continue;
+        }
+        seen.push(who);
+        if who == poster {
+            stats::set_max(conn, poster, stat::FRIENDLY_FIRE, 1).await?;
+        } else {
+            let key = format!("{}{who}", stat::VENDETTA_PREFIX);
+            let n = stats::add(conn, poster, &key, 1).await?;
+            stats::set_max(conn, poster, stat::VENDETTA_MAX, n).await?;
+        }
+    }
+    if seen.iter().any(|&who| who != poster) {
+        stats::add(conn, poster, stat::QUOTED_OTHERS, 1).await?;
+    }
+    Ok(())
+}
