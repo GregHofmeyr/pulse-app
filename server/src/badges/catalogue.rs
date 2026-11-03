@@ -78,6 +78,20 @@ pub enum Rarity {
     Mythical,
 }
 
+impl Rarity {
+    pub fn to_protocol(self) -> pulse_protocol::rest::BadgeRarity {
+        use pulse_protocol::rest::BadgeRarity as P;
+        match self {
+            Self::Common => P::Common,
+            Self::Uncommon => P::Uncommon,
+            Self::Rare => P::Rare,
+            Self::Epic => P::Epic,
+            Self::Legendary => P::Legendary,
+            Self::Mythical => P::Mythical,
+        }
+    }
+}
+
 /// How a badge's progress reads. `Hours` stats are stored in seconds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Unit {
@@ -146,6 +160,14 @@ impl Def {
         let tiers = self.tiers();
         let i = (tier.max(1) as usize).min(tiers.len()) - 1;
         tiers[i].1
+    }
+
+    /// The stat a counter badge reads.
+    pub fn stat(&self) -> Option<&'static str> {
+        match self.rule {
+            Rule::Counter { stat, .. } => Some(stat),
+            _ => None,
+        }
     }
 
     /// Earned from other badges rather than from a stat.

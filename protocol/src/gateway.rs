@@ -5,8 +5,9 @@ use ts_rs::TS;
 
 use crate::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
-    CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game, Member, Message, Mute, Person,
-    PrivateNickname, QotyEvent, ReadState, Server, SpeakerLink, StreamEndReason, StreamInfo, User,
+    Badge, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game, Member, Message, Mute,
+    Person, PrivateNickname, QotyEvent, ReadState, Server, SpeakerLink, StreamEndReason,
+    StreamInfo, User,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -357,6 +358,14 @@ pub enum Event {
         channel_id: ChannelId,
         view: ClipView,
     },
+    /// Only to the earner's own sessions: they reached a badge, or a new tier of one. `name` and
+    /// `icon` are for the unlock toast.
+    BadgeEarned {
+        user_id: UserId,
+        badge: Badge,
+        name: String,
+        icon: String,
+    },
 }
 
 impl Event {
@@ -407,7 +416,8 @@ impl Event {
             | Self::QotyUpdated { .. }
             | Self::QotyEnded { .. }
             | Self::GameAdded { .. }
-            | Self::PrivateNicknameChanged { .. } => None,
+            | Self::PrivateNicknameChanged { .. }
+            | Self::BadgeEarned { .. } => None,
         }
     }
 
@@ -421,7 +431,8 @@ impl Event {
             | Self::ThreadSeen { user_id, .. }
             | Self::ClipViewChanged { user_id, .. }
             | Self::PrivateNicknameChanged { user_id, .. }
-            | Self::ConversationVisibility { user_id, .. } => Some(*user_id),
+            | Self::ConversationVisibility { user_id, .. }
+            | Self::BadgeEarned { user_id, .. } => Some(*user_id),
             _ => None,
         }
     }

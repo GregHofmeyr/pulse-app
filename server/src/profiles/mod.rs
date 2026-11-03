@@ -8,7 +8,7 @@ pub mod users;
 
 use pulse_protocol::ids::{ServerId, UserId};
 use pulse_protocol::rest::{
-    Badge, CardProfile, NameArchiveEntry, Profile, ProfileStats, UpdateProfileRequest,
+    CardProfile, NameArchiveEntry, Profile, ProfileStats, UpdateProfileRequest,
 };
 use sqlx::SqlitePool;
 
@@ -98,20 +98,7 @@ pub async fn load_profile(db: &SqlitePool, user: UserId) -> AppResult<Option<Pro
         })
         .collect::<AppResult<Vec<_>>>()?;
 
-    let badges = sqlx::query_as::<_, (String, String, bool)>(
-        "SELECT badge_key, earned_at, first_earner FROM user_badges WHERE user_id = ? \
-         ORDER BY earned_at, badge_key",
-    )
-    .bind(&id)
-    .fetch_all(&mut *tx)
-    .await?
-    .into_iter()
-    .map(|(key, earned_at, first_earner)| Badge {
-        key,
-        earned_at,
-        first_earner,
-    })
-    .collect();
+    let badges = crate::badges::engine::held(&mut tx, user).await?;
     tx.commit().await?;
 
     Ok(Some(Profile {

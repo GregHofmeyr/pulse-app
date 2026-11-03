@@ -9,7 +9,7 @@ use futures::SinkExt;
 use image::{ImageFormat, Rgba, RgbaImage};
 use pulse_protocol::gateway::{ClientFrame, Event, Ready, ServerFrame};
 use pulse_protocol::rest::{
-    ApiError, Badge, MediaInfo, NameStyle, Profile, UpdateProfileRequest, User,
+    ApiError, Badge, BadgeRarity, MediaInfo, NameStyle, Profile, UpdateProfileRequest, User,
 };
 use pulse_server::limits::{LimitsConfig, Rate};
 use pulse_server::media;
@@ -351,8 +351,15 @@ async fn badges_come_from_user_badges() {
     let (key, t) = ("founder", ago(30));
     exec(
         &app,
-        "INSERT INTO user_badges (user_id, badge_key, earned_at, first_earner) VALUES (?, ?, ?, 1)",
+        "INSERT INTO user_badges (user_id, badge_key, earned_at) VALUES (?, ?, ?)",
         &[&alex_id.to_string(), key, &t],
+    )
+    .await;
+    // First earner comes from `badge_firsts` (#49).
+    exec(
+        &app,
+        "INSERT INTO badge_firsts (badge_key, tier, user_id, earned_at) VALUES (?, 1, ?, ?)",
+        &[key, &alex_id.to_string(), &t],
     )
     .await;
     assert_eq!(
@@ -360,7 +367,13 @@ async fn badges_come_from_user_badges() {
         vec![Badge {
             key: key.into(),
             earned_at: t,
-            first_earner: true
+            first_earner: true,
+            tier: 1,
+            rarity: BadgeRarity::Mythical,
+            first_tiers: vec![1],
+            count: 0,
+            hidden: false,
+            seen: false,
         }]
     );
 }

@@ -94,11 +94,46 @@ pub struct ProfileStats {
     pub times_renamed: u32,
 }
 
+/// How rare a badge (or one tier of it) is, from common up to mythical.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, TS,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum BadgeRarity {
+    #[default]
+    Common,
+    Uncommon,
+    Rare,
+    Epic,
+    Legendary,
+    Mythical,
+}
+
+/// A badge someone holds. `earned_at` is when the tier held was reached.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct Badge {
     pub key: String,
     pub earned_at: String,
+    /// First to reach the tier held.
     pub first_earner: bool,
+    /// The tier held (1 for a badge without tiers).
+    #[serde(default)]
+    pub tier: u8,
+    /// The rarity of the tier held.
+    #[serde(default)]
+    pub rarity: BadgeRarity,
+    /// Every tier of this badge its holder reached first, ascending.
+    #[serde(default)]
+    pub first_tiers: Vec<u8>,
+    /// A stacking badge's count (×2, ×3); 0 for the others.
+    #[serde(default)]
+    pub count: u32,
+    /// A hidden badge shown masked ("???", rarity only).
+    #[serde(default)]
+    pub hidden: bool,
+    /// Its holder has opened their trophy case since earning it (always true on others' profiles).
+    #[serde(default)]
+    pub seen: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]

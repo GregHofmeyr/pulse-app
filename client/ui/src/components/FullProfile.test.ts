@@ -107,7 +107,7 @@ describe('FullProfile', () => {
     expect(panel('Trophy case')!.textContent).toContain('No trophies yet')
     unmount(cmp!)
     cmp = undefined
-    show(profile({ badges: [{ key: 'night_owl', earned_at: '2026-10-03T00:00:00Z', first_earner: false }] }))
+    show(profile({ badges: [{ key: 'night_owl', earned_at: '2026-10-03T00:00:00Z', first_earner: false, tier: 1, rarity: 'common', first_tiers: [], count: 0, hidden: false, seen: true }] }))
     const t = panel('Trophy case')!
     expect(t.textContent).not.toContain('No trophies yet')
     expect(t.textContent).toContain('Night Owl')
@@ -116,7 +116,7 @@ describe('FullProfile', () => {
   })
 
   it('an unknown badge key gets a readable name', () => {
-    show(profile({ badges: [{ key: 'early-bird_2026', earned_at: '2026-10-03T00:00:00Z', first_earner: true }] }))
+    show(profile({ badges: [{ key: 'early-bird_2026', earned_at: '2026-10-03T00:00:00Z', first_earner: true, tier: 1, rarity: 'common', first_tiers: [1], count: 0, hidden: false, seen: true }] }))
     expect(panel('Trophy case')!.textContent).toContain('Early Bird 2026')
   })
 

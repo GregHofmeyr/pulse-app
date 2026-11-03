@@ -700,6 +700,9 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, games: withGame(s.games, e.d.game) }
     case 'ClipViewChanged':
       return { ...s, clipViews: { ...s.clipViews, [e.d.channel_id]: e.d.view } }
+    // Toasts and the [NEW] count live outside the reducer.
+    case 'BadgeEarned':
+      return s
     case 'ChannelCreated':
     // Back from Recently deleted: its history loads when it's opened; our counts and mutes in it
     // follow as ReadStateUpdated and MutesChanged.

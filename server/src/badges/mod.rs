@@ -4,3 +4,5 @@
 //! keeps that forever.
 
 pub mod catalogue;
+pub mod engine;
+pub mod stats;
