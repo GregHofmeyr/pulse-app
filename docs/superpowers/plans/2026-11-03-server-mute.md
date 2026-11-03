@@ -101,4 +101,10 @@ Rules: caller must be a member (`require_member`: 404/403); target == caller →
 - [ ] One fresh reviewer pass (superpowers:requesting-code-review); fix Critical/Important test-first.
 - [ ] `git merge main`; renumber migration if needed.
 - [ ] fmt, clippy `--workspace --all-targets -D warnings`, `cargo test -p pulse-server`, `cargo test -p pulse-client --lib`, bindings no diff, `pnpm check`, `pnpm test`. Final commit `Closes #140`.
-- [ ] Deferred items → GitHub issues.
+- [x] Deferred items → GitHub issues: #144 (undo for someone not in voice), #145 (server deafen at LiveKit), #146 (server mute and Go Live audio), #147 (polish: refusal toast, sound cue, late disconnect notice, mic `live` while muted).
+
+## As built
+
+- Review fixes: LiveKit is told after the event-order lock is released, from the row as it stands then; the join webhook reconciles after the join is recorded; the client's join publish and permission-driven republish take turns on one lock and decide from current state.
+- `client/src-tauri/tests/server_mute_it.rs` (in `just voice-it`) checks the LiveKit behaviour against the dev LiveKit (production image): revoke drops the mic track, undo republishes it, a join while muted connects without publishing.
+- Migration is `0018_voice_moderation.sql` (main took 0017).
