@@ -43,7 +43,7 @@ describe('theme settings', () => {
   })
 
   it('a saved value it does not know falls back to the default', async () => {
-    localStorage.setItem('pulse.theme', 'ember')
+    localStorage.setItem('pulse.theme', 'nebula')
     localStorage.setItem('pulse.lightTint', 'teal')
     localStorage.setItem('pulse.accent', 'red')
     localStorage.setItem('pulse.nameReadability', '9')

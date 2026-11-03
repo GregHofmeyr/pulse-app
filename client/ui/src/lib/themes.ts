@@ -3,7 +3,7 @@
 // table repeats the surfaces names and the accent are measured against, and themeCss.test.ts keeps the two equal.
 import { contrast, readable, rgba } from './color'
 
-export type ThemeKey = 'dark' | 'midnight' | 'oled' | 'sunset' | 'pastel' | 'light'
+export type ThemeKey = 'dark' | 'midnight' | 'oled' | 'sunset' | 'ember' | 'plum' | 'pastel' | 'light'
 export type TintKey = 'plain' | 'pink' | 'orange' | 'blue' | 'green'
 
 /** The surfaces text sits on: the window (--bg-0), sidebar (--bg-1), chat (--bg-2), raised rows (--bg-3), menus. */
@@ -16,6 +16,8 @@ export const THEMES: Theme[] = [
   { key: 'midnight', label: 'Midnight', blurb: 'Deeper and bluer, for late sessions.', light: false, accent: '#8b9cff', surfaces: { bg0: '#0b0d14', bg1: '#11141e', bg2: '#151926', bg3: '#1d2233', menu: '#1d2233' } },
   { key: 'oled', label: 'OLED Black', blurb: 'True black window and sidebar.', light: false, accent: '#8b9cff', surfaces: { bg0: '#000000', bg1: '#000000', bg2: '#0c0c0e', bg3: '#1a1b1f', menu: '#161619' } },
   { key: 'sunset', label: 'Sunset', blurb: 'Warm rosy dark with a coral accent.', light: false, accent: '#ff8a6b', surfaces: { bg0: '#1c1213', bg1: '#23171a', bg2: '#2a1c1f', bg3: '#352427', menu: '#3a282b' } },
+  { key: 'ember', label: 'Ember', blurb: 'Warm charcoal with an amber accent.', light: false, accent: '#ffa45c', surfaces: { bg0: '#171412', bg1: '#1e1a17', bg2: '#24201c', bg3: '#2e2924', menu: '#332d28' } },
+  { key: 'plum', label: 'Plum', blurb: 'Warm purple-red with a pink accent.', light: false, accent: '#ff7fb0', surfaces: { bg0: '#1a1219', bg1: '#21171f', bg2: '#281c26', bg3: '#332431', menu: '#382835' } },
   { key: 'pastel', label: 'Pastel', blurb: 'Soft lavender, pink and peach.', light: true, accent: '#b48cf2', surfaces: { bg0: '#e8def3', bg1: '#f4ebf6', bg2: '#fffafb', bg3: '#f5e6ef', menu: '#fffafb' } },
   { key: 'light', label: 'Light', blurb: 'White panels on a softly tinted ground.', light: true, accent: '#4c5bd4', surfaces: { bg0: '#e9eaed', bg1: '#f4f4f6', bg2: '#ffffff', bg3: '#ececef', menu: '#ffffff' } },
 ]

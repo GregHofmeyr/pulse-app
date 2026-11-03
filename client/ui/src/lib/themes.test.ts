@@ -53,8 +53,8 @@ describe('readable', () => {
 })
 
 describe('the theme table', () => {
-  it('has the six themes, Pulse Dark first (the default)', () => {
-    expect(THEMES.map((t) => t.key)).toEqual(['dark', 'midnight', 'oled', 'sunset', 'pastel', 'light'])
+  it('has the eight themes, Pulse Dark first (the default); the owner kept all three warm ones', () => {
+    expect(THEMES.map((t) => t.key)).toEqual(['dark', 'midnight', 'oled', 'sunset', 'ember', 'plum', 'pastel', 'light'])
     expect(THEMES[0].label).toBe('Pulse Dark')
     expect(TINTS.map((t) => t.key)).toEqual(['plain', 'pink', 'orange', 'blue', 'green'])
   })
@@ -67,7 +67,7 @@ describe('the theme table', () => {
   })
 
   it('an unknown theme or tint falls back to Pulse Dark / plain', () => {
-    expect(surfacesFor('ember' as ThemeKey, 'plain')).toEqual(surfacesFor('dark', 'plain'))
+    expect(surfacesFor('nebula' as ThemeKey, 'plain')).toEqual(surfacesFor('dark', 'plain'))
     expect(surfacesFor('light', 'teal' as TintKey)).toEqual(surfacesFor('light', 'plain'))
   })
 
