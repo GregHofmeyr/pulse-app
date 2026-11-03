@@ -1,6 +1,7 @@
 //! Soundboard playback: decoding a sound's Ogg Opus file and keeping recently played ones decoded.
 
 pub mod decode;
+pub mod encode;
 
 use std::sync::{Arc, Mutex};
 
