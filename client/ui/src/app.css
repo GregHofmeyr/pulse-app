@@ -89,8 +89,8 @@
   --island-text: #e8e9ed;
   --island-text-2: #b9bcc6;
   --island-text-3: #8e92a0;
-  /* Badges (#49): the ring and label colour of each rarity (bright enough to read as text on every
-     surface), the first earner's gold and its glow, and the [NEW] tag. */
+  /* Badges (#49): the ring and label colour of each rarity (bright enough to read as text on the
+     theme's surfaces; the light themes darken them), the first earner's gold and its glow, and the [NEW] tag. */
   --rarity-common: #9aa0ab;
   --rarity-uncommon: #4fd18b;
   --rarity-rare: #5aa9ff;
@@ -165,6 +165,16 @@
   --island-text-3: #8e92a0;
   --scrollbar-thumb: rgb(129 137 166 / .32);
   --scrollbar-thumb-hover: rgb(129 137 166 / .55);
+  /* Badges (#49): as Pulse Dark. */
+  --rarity-common: #9aa0ab;
+  --rarity-uncommon: #4fd18b;
+  --rarity-rare: #5aa9ff;
+  --rarity-epic: #b07cff;
+  --rarity-legendary: #f0a33a;
+  --rarity-mythical: #ff5c8a;
+  --first-gold: #f5cd52;
+  --first-gold-soft: rgba(245, 205, 82, .35);
+  --badge-new: #f2616b;
 }
 
 /* OLED Black: true black window and sidebar, panels a step up. */
@@ -226,6 +236,16 @@
   --island-text-3: #8e92a0;
   --scrollbar-thumb: rgb(135 138 151 / .32);
   --scrollbar-thumb-hover: rgb(135 138 151 / .55);
+  /* Badges (#49): as Pulse Dark. */
+  --rarity-common: #9aa0ab;
+  --rarity-uncommon: #4fd18b;
+  --rarity-rare: #5aa9ff;
+  --rarity-epic: #b07cff;
+  --rarity-legendary: #f0a33a;
+  --rarity-mythical: #ff5c8a;
+  --first-gold: #f5cd52;
+  --first-gold-soft: rgba(245, 205, 82, .35);
+  --badge-new: #f2616b;
 }
 
 /* Sunset: the warm theme (replaces the lab's brown "Ember"): a rosy dark with a coral accent. */
@@ -287,6 +307,16 @@
   --island-text-3: #8e92a0;
   --scrollbar-thumb: rgb(176 149 140 / .32);
   --scrollbar-thumb-hover: rgb(176 149 140 / .55);
+  /* Badges (#49): as Pulse Dark. */
+  --rarity-common: #9aa0ab;
+  --rarity-uncommon: #4fd18b;
+  --rarity-rare: #5aa9ff;
+  --rarity-epic: #b07cff;
+  --rarity-legendary: #f0a33a;
+  --rarity-mythical: #ff5c8a;
+  --first-gold: #f5cd52;
+  --first-gold-soft: rgba(245, 205, 82, .35);
+  --badge-new: #f2616b;
 }
 [data-theme='ember'] {
   color-scheme: dark;
@@ -346,6 +376,16 @@
   --island-text-3: #8e92a0;
   --scrollbar-thumb: rgb(168 154 142 / .32);
   --scrollbar-thumb-hover: rgb(168 154 142 / .55);
+  /* Badges (#49): as Pulse Dark. */
+  --rarity-common: #9aa0ab;
+  --rarity-uncommon: #4fd18b;
+  --rarity-rare: #5aa9ff;
+  --rarity-epic: #b07cff;
+  --rarity-legendary: #f0a33a;
+  --rarity-mythical: #ff5c8a;
+  --first-gold: #f5cd52;
+  --first-gold-soft: rgba(245, 205, 82, .35);
+  --badge-new: #f2616b;
 }
 [data-theme='plum'] {
   color-scheme: dark;
@@ -405,6 +445,16 @@
   --island-text-3: #8e92a0;
   --scrollbar-thumb: rgb(179 152 172 / .32);
   --scrollbar-thumb-hover: rgb(179 152 172 / .55);
+  /* Badges (#49): as Pulse Dark. */
+  --rarity-common: #9aa0ab;
+  --rarity-uncommon: #4fd18b;
+  --rarity-rare: #5aa9ff;
+  --rarity-epic: #b07cff;
+  --rarity-legendary: #f0a33a;
+  --rarity-mythical: #ff5c8a;
+  --first-gold: #f5cd52;
+  --first-gold-soft: rgba(245, 205, 82, .35);
+  --badge-new: #f2616b;
 }
 
 /* Pastel: light-ish and calm: a lavender ground, a pink-lilac sidebar, cream panels, rose hovers, peach warnings. */
@@ -466,6 +516,16 @@
   --island-text-3: #8e92a0;
   --scrollbar-thumb: rgb(106 92 128 / .3);
   --scrollbar-thumb-hover: rgb(106 92 128 / .5);
+  /* Badges (#49): the rarities darkened to read on light surfaces. */
+  --rarity-common: #6b7280;
+  --rarity-uncommon: #1f8f55;
+  --rarity-rare: #2a66c9;
+  --rarity-epic: #7d45cc;
+  --rarity-legendary: #a8620a;
+  --rarity-mythical: #c42a5c;
+  --first-gold: #a87a08;
+  --first-gold-soft: rgba(168, 122, 8, .35);
+  --badge-new: #c8323a;
 }
 
 /* Light: white panels and menus with soft shadows on a softly tinted ground (not "higher = lighter"); hover is a
@@ -528,6 +588,16 @@
   --island-text-3: #8e92a0;
   --scrollbar-thumb: rgb(92 97 110 / .3);
   --scrollbar-thumb-hover: rgb(92 97 110 / .5);
+  /* Badges (#49): the rarities darkened to read on light surfaces. */
+  --rarity-common: #6b7280;
+  --rarity-uncommon: #1f8f55;
+  --rarity-rare: #2a66c9;
+  --rarity-epic: #7d45cc;
+  --rarity-legendary: #a8620a;
+  --rarity-mythical: #c42a5c;
+  --first-gold: #a87a08;
+  --first-gold-soft: rgba(168, 122, 8, .35);
+  --badge-new: #c8323a;
 }
 [data-theme='light'][data-tint='pink'] {
   --bg-0: #f0e6ea;

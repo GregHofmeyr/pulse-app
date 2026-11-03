@@ -174,7 +174,7 @@
   progress::-webkit-progress-value { background: var(--ring-color); }
   progress::-moz-progress-bar { background: var(--ring-color); }
   .pick { margin-top: 6px; padding: 3px 8px; border-radius: 6px; border: 1px solid var(--bg-4); background: var(--bg-2); color: var(--text); font: inherit; font-size: 11px; font-weight: 600; cursor: pointer; }
-  .pick[aria-pressed='true'] { border-color: var(--accent); color: var(--accent-text); }
+  .pick[aria-pressed='true'] { border-color: var(--focus-ring); color: var(--accent-text); }
   .showcase-edit { margin: 0 0 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 8px; }
   .hint { margin: 0; font-size: 12px; color: var(--card-text-2); }
   .chosen { list-style: none; margin: 0; padding: 0; display: flex; flex-wrap: wrap; gap: 10px; min-height: 30px; }
