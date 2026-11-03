@@ -1043,6 +1043,7 @@ mod tests {
                         sounds: vec![],
                         sound_favourites: vec![],
                         frequent_sounds: vec![],
+                        server_voice: vec![],
                     });
                     ws.send(tokio_tungstenite::tungstenite::Message::text(
                         serde_json::to_string(&ready).unwrap(),

@@ -26,6 +26,7 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/voice/{id}/token", post(token))
         .route("/livekit/webhook", post(webhook))
+        .merge(super::moderation::router())
 }
 
 async fn token(

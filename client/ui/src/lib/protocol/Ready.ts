@@ -13,6 +13,7 @@ import type { QotyEvent } from "./QotyEvent";
 import type { ReadState } from "./ReadState";
 import type { Server } from "./Server";
 import type { ServerMembers } from "./ServerMembers";
+import type { ServerVoiceMod } from "./ServerVoiceMod";
 import type { Sound } from "./Sound";
 import type { SpeakerLink } from "./SpeakerLink";
 import type { StreamInfo } from "./StreamInfo";
@@ -89,4 +90,8 @@ sound_favourites: Array<string>,
 /**
  * Your most played sounds, best first.
  */
-frequent_sounds: Array<string>, };
+frequent_sounds: Array<string>, 
+/**
+ * Every server's server mutes / deafens in force.
+ */
+server_voice: Array<ServerVoiceMod>, };

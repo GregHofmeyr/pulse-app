@@ -225,6 +225,7 @@ pub async fn build_ready(
         sounds: crate::sounds::for_ready(db).await?,
         sound_favourites: crate::sounds::favourites(db, me).await?,
         frequent_sounds: crate::sounds::frequent(db, me, crate::sounds::FREQUENT).await?,
+        server_voice: crate::voice::moderation::for_ready(db).await?,
     })
 }
 

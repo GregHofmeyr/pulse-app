@@ -27,7 +27,7 @@ const r: Ready = {
   latest: [],
   streams: [],
   custom_emoji: [],
-  frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [],
+  frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [],
 }
 const s = applyReady(emptyState(), r)
 

@@ -1,3 +1,4 @@
+pub mod moderation;
 pub mod restore;
 pub mod revoke;
 pub mod routes;

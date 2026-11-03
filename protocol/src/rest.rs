@@ -597,6 +597,27 @@ pub struct VoiceTokenResponse {
 }
 redacting_debug!(VoiceTokenResponse { url ; token });
 
+/// A server's server mute / server deafen of one of its members (#140): who did each, `None`
+/// when not in force. Lasts across leaving and rejoining until someone undoes it. Deafen
+/// implies mute (no publishing either way).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct ServerVoiceMod {
+    pub server_id: ServerId,
+    pub user_id: UserId,
+    pub muted_by: Option<UserId>,
+    pub deafened_by: Option<UserId>,
+}
+
+/// `POST /servers/{server}/voice/{user}`: set (`true`) or undo (`false`) a server mute or
+/// deafen; a field left out stays as it is.
+#[derive(Clone, Debug, Default, Serialize, Deserialize, TS)]
+pub struct SetServerVoiceRequest {
+    #[serde(default)]
+    pub mute: Option<bool>,
+    #[serde(default)]
+    pub deafen: Option<bool>,
+}
+
 /// Screen-share quality. `height` is 720, 1080 or 1440; `fps` is 15, 30 or 60.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct StreamSettings {

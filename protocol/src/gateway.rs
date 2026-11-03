@@ -6,8 +6,8 @@ use ts_rs::TS;
 use crate::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
     Badge, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game, Member, Message, Mute,
-    Person, PrivateNickname, QotyEvent, ReadState, Server, Sound, SpeakerLink, StreamEndReason,
-    StreamInfo, User,
+    Person, PrivateNickname, QotyEvent, ReadState, Server, ServerVoiceMod, Sound, SpeakerLink,
+    StreamEndReason, StreamInfo, User,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -123,6 +123,9 @@ pub struct Ready {
     /// Your most played sounds, best first.
     #[serde(default)]
     pub frequent_sounds: Vec<String>,
+    /// Every server's server mutes / deafens in force.
+    #[serde(default)]
+    pub server_voice: Vec<ServerVoiceMod>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -405,6 +408,18 @@ pub enum Event {
         user_id: UserId,
         frequent: Vec<String>,
     },
+    /// Someone server muted / deafened a member, or undid it (everyone, like other server-level
+    /// state). Both `None` means it is gone.
+    ServerVoiceChanged {
+        state: ServerVoiceMod,
+    },
+    /// Only to the disconnected user's own sessions: `by` disconnected them from `channel_id`'s
+    /// call (the usual `VoiceLeft` follows for everyone).
+    VoiceDisconnected {
+        channel_id: ChannelId,
+        user_id: UserId,
+        by: UserId,
+    },
 }
 
 impl Event {
@@ -424,7 +439,8 @@ impl Event {
             | Self::QuoteAwardChanged { channel_id, .. }
             | Self::ThreadSeen { channel_id, .. }
             | Self::ClipViewChanged { channel_id, .. }
-            | Self::SoundPlayed { channel_id, .. } => Some(*channel_id),
+            | Self::SoundPlayed { channel_id, .. }
+            | Self::VoiceDisconnected { channel_id, .. } => Some(*channel_id),
             Self::ChannelCreated { channel } => Some(channel.id),
             Self::GroupMembersChanged { channel_id, .. }
             | Self::ChannelRemoved { channel_id, .. }
@@ -462,6 +478,7 @@ impl Event {
             | Self::SoundFavourites { .. }
             | Self::FrequentSounds { .. }
             | Self::PrivateNicknameChanged { .. }
+            | Self::ServerVoiceChanged { .. }
             | Self::BadgeEarned { .. } => None,
         }
     }
@@ -479,6 +496,7 @@ impl Event {
             | Self::FrequentSounds { user_id, .. }
             | Self::PrivateNicknameChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
+            | Self::VoiceDisconnected { user_id, .. }
             | Self::BadgeEarned { user_id, .. } => Some(*user_id),
             _ => None,
         }
@@ -587,6 +605,7 @@ mod tests {
             sounds: vec![],
             sound_favourites: vec![],
             frequent_sounds: vec![],
+            server_voice: vec![],
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");
@@ -661,6 +680,7 @@ mod tests {
             sounds: vec![],
             sound_favourites: vec![],
             frequent_sounds: vec![],
+            server_voice: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -776,6 +796,7 @@ mod tests {
             sounds: vec![],
             sound_favourites: vec![],
             frequent_sounds: vec![],
+            server_voice: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
