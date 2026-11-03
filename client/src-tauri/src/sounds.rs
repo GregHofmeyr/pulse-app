@@ -168,7 +168,25 @@ pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
         tracing::warn!(name = %crate::logging::one_line(name, 32), "sound: no such sound");
         return;
     };
-    let name = crate::logging::one_line(name, 32);
+    spawn_play(
+        sound,
+        VOLUME * volume,
+        output,
+        crate::logging::one_line(name, 32),
+    );
+}
+
+/// Play a soundboard sample on the output device when no call is running (in a call it goes
+/// through the mixer instead). `volume` is the final linear gain, without the UI-sound factor.
+pub fn play_samples(sound: Sound, volume: f32, output: Option<String>) {
+    if volume.is_nan() || volume <= 0.0 {
+        return;
+    }
+    spawn_play(sound, volume, output, "soundboard".to_string());
+}
+
+/// The device lookup and fallback shared by UI sounds and soundboard samples; `volume` is final.
+fn spawn_play(sound: Sound, volume: f32, output: Option<String>, name: String) {
     let _ = std::thread::Builder::new()
         .name("pulse-sound".into())
         .spawn(move || {
@@ -199,7 +217,7 @@ pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
         });
 }
 
-/// Play `sound` on `dev` to the end (blocking). False if the device wouldn't open.
+/// Play `sound` on `dev` to the end (blocking) at the final linear gain `volume`. False if the device wouldn't open.
 fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32) -> bool {
     let Ok(cfg) = dev.default_output_config() else {
         return false;
@@ -218,7 +236,7 @@ fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32) -> bool {
         let a = samples[j.min(samples.len() - 1)];
         let b = samples[(j + 1).min(samples.len() - 1)];
         pos += 1;
-        Some((a + (b - a) * frac) * VOLUME * volume)
+        Some((a + (b - a) * frac) * volume)
     };
     let stream = crate::voice::devices::build_output(dev, &cfg, move |d: &mut [f32], _| {
         for f in d.chunks_mut(ch) {

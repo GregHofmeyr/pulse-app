@@ -97,7 +97,23 @@ enum Cmd {
     Remove {
         id: String,
     },
+    /// A one-shot sound (soundboard) to mix in at `gain`.
+    Clip {
+        samples: Arc<[f32]>,
+        gain: f32,
+    },
     Clear,
+}
+
+/// Most clips playing at once. Enforced in `intake` (extra ones are dropped there), so the
+/// pre-sized `clips` list never grows inside the audio callback.
+pub const MAX_CLIPS: usize = 32;
+
+/// A playing one-shot: mono 48 kHz samples (the mixer's rate, so no resampling) and a read position.
+struct Clip {
+    samples: Arc<[f32]>,
+    pos: usize,
+    gain: f32,
 }
 
 /// A mixer in two halves that share no lock the speakers wait on: `MixerInput` for the
@@ -121,6 +137,7 @@ pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
         cmds,
         cap,
         peers: HashMap::with_capacity(32), // no growth in the callback for a normal call
+        clips: Vec::with_capacity(MAX_CLIPS), // intake refuses more, so never grows in the callback
         target: rate * TARGET_MS / 1000,
         min_pull: rate / 100,
         pulls: [0; 2],
@@ -292,8 +309,13 @@ impl MixerInput {
         });
     }
 
+    /// Mix a one-shot sound into the call output (soundboard), once, at `gain`.
+    pub fn play_clip(&self, samples: Arc<[f32]>, gain: f32) {
+        self.cmds.lock().unwrap().push(Cmd::Clip { samples, gain });
+    }
+
     /// Forget every source (a channel switch keeps the mixer, not the last room's people).
-    /// Volumes stay: they belong to the person, not the track.
+    /// Volumes stay: they belong to the person, not the track. Playing clips stop too.
     pub fn clear(&self) {
         let mut sources = self.sources.lock().unwrap();
         self.generation.fetch_add(1, Relaxed);
@@ -362,6 +384,7 @@ pub struct Mixer {
     cmds: Arc<Mutex<Vec<Cmd>>>,
     cap: usize,
     peers: HashMap<String, Peer>,
+    clips: Vec<Clip>,
     /// Lowest fill wanted (samples). A dry peer refills to this plus one pull before playing on
     /// (`refill`): a big device pull must not run it dry again half-way (two gaps for one).
     target: usize,
@@ -434,7 +457,20 @@ impl Mixer {
                     Cmd::Remove { id } => {
                         self.peers.remove(&id);
                     }
-                    Cmd::Clear => self.peers.clear(),
+                    Cmd::Clip { samples, gain } => {
+                        // over the limit: dropped (the Arc's other owner, the decode cache, keeps the data)
+                        if self.clips.len() < MAX_CLIPS {
+                            self.clips.push(Clip {
+                                samples,
+                                pos: 0,
+                                gain,
+                            });
+                        }
+                    }
+                    Cmd::Clear => {
+                        self.peers.clear();
+                        self.clips.clear();
+                    }
                 }
             }
         }
@@ -500,8 +536,15 @@ impl Mixer {
                     }
                 }
             }
+            for c in &mut self.clips {
+                acc += c.samples[c.pos] * c.gain;
+                c.pos += 1;
+            }
             frame.fill(soft_limit(acc * master));
         }
+        // Dropping a finished clip's Arc here is fine: the decode cache holds another clone, or
+        // at worst this frees one small buffer.
+        self.clips.retain(|c| c.pos < c.samples.len());
         for p in self.peers.values_mut().filter(|p| !p.waiting) {
             p.low = p.low.min(p.queue.len()); // a source still waiting isn't drifting
         }
@@ -683,6 +726,62 @@ mod tests {
             assert!(g > prev, "not increasing at {p}");
             prev = g;
         }
+    }
+
+    #[test]
+    fn a_clip_plays_once_at_its_gain() {
+        let (input, mut m) = mixer(48_000, 200);
+        input.play_clip(vec![0.5; 480].into(), 0.5);
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| (v - 0.25).abs() < 1e-6));
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| *v == 0.0));
+    }
+
+    #[test]
+    fn overlapping_clips_add() {
+        let (input, mut m) = mixer(48_000, 200);
+        input.play_clip(vec![0.3; 10].into(), 1.0);
+        input.play_clip(vec![0.4; 10].into(), 1.0);
+        let mut out = vec![0.0; 10];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| (v - 0.7).abs() < 1e-6));
+        input.play_clip(vec![0.9; 10].into(), 1.0);
+        input.play_clip(vec![0.9; 10].into(), 1.0);
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| *v > 0.9 && *v <= 1.0), "soft-limited");
+    }
+
+    #[test]
+    fn deafened_master_silences_clips() {
+        let (input, mut m) = mixer(48_000, 200);
+        input.play_clip(vec![0.5; 480].into(), 1.0);
+        let mut out = vec![1.0; 480];
+        m.mix_into(&mut out, 1, 0.0);
+        assert!(out.iter().all(|v| *v == 0.0));
+    }
+
+    #[test]
+    fn clear_drops_playing_clips() {
+        let (input, mut m) = mixer(48_000, 200);
+        input.play_clip(vec![0.5; 480].into(), 1.0);
+        let mut out = vec![0.0; 100];
+        m.mix_into(&mut out, 1, 1.0);
+        input.clear();
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| *v == 0.0));
+    }
+
+    #[test]
+    fn clips_beyond_the_limit_are_refused() {
+        let (input, mut m) = mixer(48_000, 200);
+        for _ in 0..MAX_CLIPS + 5 {
+            input.play_clip(vec![0.01; 10].into(), 1.0);
+        }
+        let mut out = vec![0.0; 1];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!((out[0] - 0.01 * MAX_CLIPS as f32).abs() < 1e-5);
     }
 
     #[test]

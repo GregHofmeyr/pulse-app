@@ -17,6 +17,7 @@ pub mod outbox;
 pub mod qr;
 pub mod reports;
 pub mod session;
+pub mod soundboard;
 pub mod sounds;
 pub mod startup;
 pub mod stream;
