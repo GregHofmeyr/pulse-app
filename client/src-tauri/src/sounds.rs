@@ -175,6 +175,7 @@ pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
         VOLUME * volume,
         output,
         crate::logging::one_line(name, 32),
+        None,
     );
 }
 
@@ -184,11 +185,31 @@ pub fn play_samples(sound: Sound, volume: f32, output: Option<String>) {
     if volume.is_nan() || volume <= 0.0 {
         return;
     }
-    spawn_play(sound, volume, output, "soundboard".to_string());
+    spawn_play(sound, volume, output, "soundboard".to_string(), None);
+}
+
+/// [`play_samples`] that ends early once `stop` is set (the soundboard trimmer's pause).
+pub fn play_samples_stoppable(
+    sound: Sound,
+    volume: f32,
+    output: Option<String>,
+    stop: std::sync::Arc<std::sync::atomic::AtomicBool>,
+) {
+    if volume.is_nan() || volume <= 0.0 {
+        return;
+    }
+    spawn_play(sound, volume, output, "soundboard".to_string(), Some(stop));
+}
+
+type StopFlag = Option<std::sync::Arc<std::sync::atomic::AtomicBool>>;
+
+fn stopped(stop: &StopFlag) -> bool {
+    stop.as_ref()
+        .is_some_and(|s| s.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// The device lookup and fallback shared by UI sounds and soundboard samples; `volume` is final.
-fn spawn_play(sound: Sound, volume: f32, output: Option<String>, name: String) {
+fn spawn_play(sound: Sound, volume: f32, output: Option<String>, name: String, stop: StopFlag) {
     let _ = std::thread::Builder::new()
         .name("pulse-sound".into())
         .spawn(move || {
@@ -204,14 +225,14 @@ fn spawn_play(sound: Sound, volume: f32, output: Option<String>, name: String) {
                 .get(output.as_deref(), exact)
                 .or_else(|| find_device(false, None).ok());
             if let Some(dev) = chosen
-                && play_on(&dev, &sound, volume)
+                && play_on(&dev, &sound, volume, &stop)
             {
                 return;
             }
             // the cached device failed (unplugged): forget it, and play on the default instead
             DEVICES.forget();
             let played = output.is_some()
-                && find_device(false, None).is_ok_and(|dev| play_on(&dev, &sound, volume));
+                && find_device(false, None).is_ok_and(|dev| play_on(&dev, &sound, volume, &stop));
             if !played {
                 // asked for (the `sound` line) but not heard: tells the two apart in a report
                 tracing::warn!(name, "sound: no output device would play it");
@@ -227,7 +248,7 @@ fn shape(x: f32, volume: f32) -> f32 {
 }
 
 /// Play `sound` on `dev` to the end (blocking) at the final linear gain `volume`. False if the device wouldn't open.
-fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32) -> bool {
+fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32, stop: &StopFlag) -> bool {
     let Ok(cfg) = dev.default_output_config() else {
         return false;
     };
@@ -236,8 +257,9 @@ fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32) -> bool {
     let total = (sound.samples.len() as f64 / step) as usize;
     let samples = sound.samples.clone();
     let mut pos = 0usize;
+    let halt = stop.clone();
     let mut next = move || -> Option<f32> {
-        if pos >= total {
+        if pos >= total || stopped(&halt) {
             return None;
         }
         let src = pos as f64 * step;
@@ -256,10 +278,12 @@ fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32) -> bool {
     if stream.play().is_err() {
         return false;
     }
-    // sound length + a little tail for the device buffer
-    std::thread::sleep(std::time::Duration::from_millis(
-        (total as u64 * 1000 / rate as u64) + 150,
-    ));
+    // sound length + a little tail for the device buffer, or until stopped
+    let end = std::time::Instant::now()
+        + std::time::Duration::from_millis((total as u64 * 1000 / rate as u64) + 150);
+    while std::time::Instant::now() < end && !stopped(stop) {
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
     true
 }
 

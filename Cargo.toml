@@ -60,6 +60,8 @@ opt-level = 3
 # in a debug build (`just linux-client`) was that late (#138). Optimised it is a few milliseconds.
 [profile.dev.package.opus-decoder]
 opt-level = 3
+debug-assertions = false
+overflow-checks = false
 
 # argon2 (and the blake2 it hashes with) unoptimised takes ~0.5 s per password check, and the
 # server allows only 2 at once per process: a test binary full of logins then queues past the

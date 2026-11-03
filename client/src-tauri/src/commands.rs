@@ -3293,22 +3293,38 @@ async fn prepared_bytes(
     Ok(bytes)
 }
 
-/// Play decoded samples: through the call's mixer when in one, else on the output device.
+/// Play a (possibly still decoding) sound: through the call's mixer when in one, which plays it
+/// as it decodes, else on the output device once it's all decoded (previews outside a call).
+/// Returns how long the previous clip waited for the speakers (µs), when in a call.
 async fn play_decoded(
     app: &AppHandle,
-    samples: std::sync::Arc<[f32]>,
+    samples: std::sync::Arc<crate::soundboard::pcm::Pcm>,
     gain: f32,
     output: Option<String>,
-) {
+) -> Option<u64> {
     if let Some((mix, _)) = app.state::<VoiceManager>().mixer_input().await {
-        mix.play_clip(samples, gain);
+        let last = mix.last_clip_start_us();
+        mix.play_stream(samples, gain);
+        last
     } else {
+        samples.wait_done().await;
         let sound = crate::sounds::Sound {
             rate: 48_000,
             samples: samples.to_vec(),
         };
         crate::sounds::play_samples(sound, gain, output);
+        None
     }
+}
+
+/// A sound's file through the media cache (disk, else the server).
+async fn fetch_sound(core: &Core, hash: String) -> Result<Vec<u8>, String> {
+    crate::media::serve(core.media_session(), &format!("/{hash}"))
+        .await
+        .map_err(|status| {
+            tracing::warn!(%status, "soundboard: couldn't fetch a sound");
+            "That sound couldn't be loaded.".to_owned()
+        })
 }
 
 /// Play a server sound (by media hash) for yourself: the call's mixer when in one, else the
@@ -3319,32 +3335,53 @@ pub async fn soundboard_play(
     app: AppHandle,
     core: State<'_, Core>,
     cache: State<'_, crate::soundboard::Cache>,
+    clicks: State<'_, crate::soundboard::Clicks>,
     hash: String,
     calls_percent: u16,
     soundboard_percent: u16,
     sound_percent: u16,
     output: Option<String>,
+    sound_id: Option<String>,
 ) -> Result<(), String> {
     let gain = crate::soundboard::gain(calls_percent, soundboard_percent, sound_percent);
     if gain <= 0.0 {
         return Ok(());
     }
-    let samples = match cache.get(&hash) {
-        Some(s) => s,
-        None => {
-            let bytes = crate::media::serve(core.media_session(), &format!("/{hash}"))
-                .await
-                .map_err(|status| {
-                    tracing::warn!(%status, "soundboard: couldn't fetch a sound");
-                    "That sound couldn't be loaded.".to_owned()
-                })?;
-            cache.insert_decoded(&hash, bytes).await.inspect_err(|e| {
-                tracing::warn!(error = %e, "soundboard: couldn't decode a sound");
-            })?
-        }
-    };
-    play_decoded(&app, samples, gain, output).await;
+    let (samples, timing) = cache
+        .load(&hash, || fetch_sound(&core, hash.clone()))
+        .await
+        .inspect_err(|e| tracing::warn!(error = %e, "soundboard: couldn't load a sound"))?;
+    let speakers_us = play_decoded(&app, samples, gain, output).await;
+    // your own click, when this is its echo: the whole click -> queued delay
+    let click_ms = sound_id
+        .as_deref()
+        .and_then(|id| clicks.take(id))
+        .map(|at| at.elapsed().as_secs_f64() * 1000.0);
+    tracing::info!(
+        cached = timing.cached,
+        fetch_ms = format!("{:.1}", timing.fetch_ms),
+        decode_start_ms = format!("{:.1}", timing.start_ms),
+        click_to_queued_ms = click_ms.map(|m| format!("{m:.1}")),
+        last_speaker_wait_us = speakers_us,
+        "soundboard: play"
+    );
     Ok(())
+}
+
+/// Fetch and decode sounds ahead of their first play (on joining a call), in the background.
+#[tauri::command]
+pub async fn soundboard_warm(app: AppHandle, hashes: Vec<String>) {
+    tauri::async_runtime::spawn(async move {
+        let t = std::time::Instant::now();
+        let core = app.state::<Core>();
+        let cache = app.state::<crate::soundboard::Cache>();
+        cache.warm(&hashes, |h| fetch_sound(&core, h)).await;
+        tracing::info!(
+            sounds = hashes.len().min(crate::soundboard::WARM_MAX),
+            ms = t.elapsed().as_millis() as u64,
+            "soundboard: warmed"
+        );
+    });
 }
 
 /// Trim and encode the span, keep the result for the upload, and play it here.
@@ -3362,12 +3399,58 @@ pub async fn soundboard_preview(
     output: Option<String>,
 ) -> Result<(), String> {
     let bytes = prepared_bytes(&app, &prepared, &path, start_ms, end_ms).await?;
-    let samples = crate::soundboard::decode::decode_blocking(bytes).await?;
+    let samples = crate::soundboard::decode::decode_streaming(bytes).await?;
     let gain = crate::soundboard::gain(calls_percent, soundboard_percent, sound_percent);
     if gain > 0.0 {
         play_decoded(&app, samples, gain, output).await;
     }
     Ok(())
+}
+
+/// The trimmer's play: the picked file from `from_ms` to `to_ms` (at most 6 s) as it is, only
+/// here, replacing any trimmer playback still going. Returns how many ms will play.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn soundboard_trim_play(
+    app: AppHandle,
+    trimming: State<'_, crate::soundboard::Trimming>,
+    path: String,
+    from_ms: u32,
+    to_ms: u32,
+    calls_percent: u16,
+    soundboard_percent: u16,
+    output: Option<String>,
+) -> Result<u32, String> {
+    let tools = ffmpeg_paths(&app)?;
+    let pcm = crate::soundboard::encode::decode_span(
+        &tools.ffmpeg,
+        std::path::Path::new(&path),
+        from_ms,
+        to_ms,
+    )
+    .await?;
+    let ms = (pcm.len() / 48) as u32;
+    let samples: std::sync::Arc<[f32]> = pcm.into();
+    let stop = trimming.start(samples.clone());
+    let gain = crate::soundboard::gain(calls_percent, soundboard_percent, 100);
+    if gain > 0.0 {
+        if let Some((mix, _)) = app.state::<VoiceManager>().mixer_input().await {
+            mix.play_clip_stoppable(samples, gain, stop);
+        } else {
+            let sound = crate::sounds::Sound {
+                rate: 48_000,
+                samples: samples.to_vec(),
+            };
+            crate::sounds::play_samples_stoppable(sound, gain, output, stop);
+        }
+    }
+    Ok(ms)
+}
+
+/// The trimmer's pause.
+#[tauri::command]
+pub fn soundboard_trim_stop(trimming: State<'_, crate::soundboard::Trimming>) {
+    trimming.stop();
 }
 
 /// Upload the trimmed span (the one just previewed when it is the same span).
@@ -3447,10 +3530,19 @@ pub async fn list_sounds(
 pub async fn play_sound_to_call(
     app: AppHandle,
     core: State<'_, Core>,
+    clicks: State<'_, crate::soundboard::Clicks>,
     id: String,
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
-    core.check(&app, api.play_sound_to_call(&token, &id).await)
+    clicks.clicked(&id);
+    let t = std::time::Instant::now();
+    let r = core.check(&app, api.play_sound_to_call(&token, &id).await);
+    tracing::info!(
+        rest_ms = format!("{:.1}", t.elapsed().as_secs_f64() * 1000.0),
+        ok = r.is_ok(),
+        "soundboard: play request"
+    );
+    r
 }
 
 #[tauri::command]
