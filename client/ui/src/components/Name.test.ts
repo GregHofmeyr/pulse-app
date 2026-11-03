@@ -9,6 +9,9 @@ import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { profileUi, closeCard } from '../lib/profileCard.svelte'
 import { appearance } from '../lib/appearance.svelte'
+import { setNameReadability, setTheme } from '../lib/theme.svelte'
+import { surfacesFor } from '../lib/themes'
+import { contrast, toHex } from '../lib/color'
 
 let cmp: ReturnType<typeof mount> | undefined
 const user = (style: { font: string | null; colors: string[] }) => ({ id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style })
@@ -27,6 +30,8 @@ function show(props: Record<string, unknown> = {}) {
 
 beforeEach(() => {
   appearance.showNameStyles = true
+  setTheme('dark')
+  setNameReadability('normal')
   closeCard()
 })
 afterEach(() => {
@@ -54,6 +59,30 @@ describe('Name', () => {
     expect(s).toContain('Fredoka')
     expect(s).toContain('color: rgb(163, 216, 255)')
     expect(s).not.toContain('gradient')
+  })
+  it('readable where it sits (#42): darkened on Light, by the chosen level, against the chat or the sidebar', () => {
+    const rgb = (s: string) => toHex(/color: rgb\((\d+), (\d+), (\d+)\)/.exec(s)!.slice(1).map(Number) as [number, number, number])
+    setup({ font: null, colors: ['#ffc4a3'] })
+    setTheme('light')
+    const chat = show({ interactive: false })
+    const onChat = rgb(chat.getAttribute('style')!)
+    expect(contrast(onChat, '#ffffff')).toBeGreaterThanOrEqual(4.5)
+    expect(contrast(onChat, '#ffffff')).toBeLessThan(5)
+    setNameReadability('high')
+    flushSync()
+    expect(contrast(rgb(chat.getAttribute('style')!), '#ffffff')).toBeGreaterThanOrEqual(7)
+    unmount(cmp!)
+    document.body.innerHTML = ''
+    const side = show({ interactive: false, surface: 'side' })
+    expect(contrast(rgb(side.getAttribute('style')!), surfacesFor('light', 'plain').bg1)).toBeGreaterThanOrEqual(7)
+    unmount(cmp!)
+    document.body.innerHTML = ''
+    // the profile card stays a dark island: the name stays light
+    const island = show({ interactive: false, surface: 'island' })
+    expect(rgb(island.getAttribute('style')!)).toBe('#ffc4a3')
+    setTheme('dark')
+    flushSync()
+    expect(rgb(island.getAttribute('style')!)).toBe('#ffc4a3')
   })
   it('show name styles off renders plain', () => {
     setup({ font: 'fredoka', colors: ['#ffbe7a'] })

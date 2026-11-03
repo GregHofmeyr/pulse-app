@@ -27,6 +27,7 @@
   import { displayName, roleColorFor, userOf } from '../lib/selectors'
   import { appearance } from '../lib/appearance.svelte'
   import { openCard } from '../lib/profileCard.svelte'
+  import { nameOpts } from '../lib/theme.svelte'
   import type { Attachment } from 'svelte/attachments'
   import type { Message } from '../lib/protocol/Message'
   import type { Pending } from '../lib/state'
@@ -83,7 +84,7 @@
     const ids = mentionNames.filter((n) => c.includes('@' + n.toLowerCase())).map(lookup)
     return [...new Set(ids.filter((id): id is string => !!id))]
   })
-  const cssFor = (id: string) => nameCss(resolveNameStyle(userOf(app.state, id), { roleColor: roleColorFor(app.state, serverId, id), showStyles: appearance.showNameStyles }))
+  const cssFor = (id: string) => nameCss(resolveNameStyle(userOf(app.state, id), { roleColor: roleColorFor(app.state, serverId, id), showStyles: appearance.showNameStyles, ...nameOpts('chat') }))
   // with the name each pill shows (#47): a rename relabels it, as a style change restyles it
   const mentionCss = $derived(mentioned.map((id) => `${id}\t${cssFor(id)}\t${displayName(app.state, serverId, id)}`).join('\n'))
   // Only the emoji slice, so the {@html} below re-renders on an emoji change, not on every state update.

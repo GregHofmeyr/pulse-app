@@ -258,7 +258,7 @@
         onkeydown={(e) => occupantKey(e, c.id, p)}
         onpointerenter={() => (hoveredOccupant = p.userId)} onpointerleave={() => { if (hoveredOccupant === p.userId) hoveredOccupant = null }}>
         <span class="ring" class:speaking={speaking.has(p.userId)}><Avatar id={p.userId} name={p.name} size={22} hovered={() => hoveredOccupant === p.userId} /></span>
-        <span class="grow"><Name userId={p.userId} {serverId} interactive={false} /></span>
+        <span class="grow"><Name userId={p.userId} {serverId} interactive={false} surface="side" /></span>
         {#if p.pending}
           <span class="joining">Joining…</span><span class="spinner" role="progressbar" aria-label="Joining"></span>
         {:else}

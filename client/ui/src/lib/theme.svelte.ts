@@ -75,6 +75,11 @@ export function nameBg(surface: NameSurface): string {
   return surface === 'side' ? s.bg1 : s.bg2
 }
 
+/** What resolveNameStyle needs to make a name readable where it sits (reads the theme: call it inside a $derived). */
+export function nameOpts(surface: NameSurface): { bg: string; ratio: number } {
+  return { bg: nameBg(surface), ratio: nameRatio() }
+}
+
 const ACCENT_TOKENS = Object.keys(deriveAccent('#000000', THEMES[0].surfaces, false))
 
 export function applyTheme(root: HTMLElement = document.documentElement): void {

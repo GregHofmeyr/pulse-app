@@ -18,7 +18,7 @@
     {@const base = baseName(m.user)}
     <div class="row" role="presentation" onpointerenter={() => (hovered = m.user.id)} onpointerleave={() => { if (hovered === m.user.id) hovered = null }}>
       <Avatar id={m.user.id} {name} size={32} interactive {serverId} hovered={() => hovered === m.user.id} />
-      <span class="who"><Name userId={m.user.id} {serverId} text={name} />{#if name !== base}<small>{base}</small>{/if}</span>
+      <span class="who"><Name userId={m.user.id} {serverId} text={name} surface="side" />{#if name !== base}<small>{base}</small>{/if}</span>
       {#if onMessage && m.user.id !== app.state.me?.id}
         <button class="msg" aria-label="Message {name}" data-tip="Message" onclick={() => onMessage(m.user.id)}><Icon name="message" size={15} /></button>
       {/if}

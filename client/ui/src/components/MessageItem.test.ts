@@ -16,6 +16,8 @@ import { appearance } from '../lib/appearance.svelte'
 import { motion } from '../lib/animate.svelte'
 import { closeCard, profileUi } from '../lib/profileCard.svelte'
 import { setShowPreviews } from '../lib/linkPreviews.svelte'
+import { setNameReadability, setTheme } from '../lib/theme.svelte'
+import { contrast, toHex } from '../lib/color'
 
 const ce = (id: string, name: string): CustomEmoji => ({
   id, server_id: 'S1', name, hash: id.repeat(64).slice(0, 64), still_hash: null, animated: false, added_by: null, created_at: '2026-10-01T00:00:00Z',
@@ -535,6 +537,22 @@ describe('MessageItem names and avatars', () => {
     appearance.showNameStyles = false
     flushSync()
     expect(document.querySelector<HTMLElement>('.content .mention')!.style.color).toBe('')
+  })
+
+  it('mention pills follow the theme: readable on Light, at the chosen level (#42)', () => {
+    try {
+      setTheme('light')
+      showStyled('hi @sam', {}, ['sam'])
+      const pill = document.querySelector<HTMLElement>('.content .mention')!
+      const hex = () => toHex(/rgb\((\d+), (\d+), (\d+)\)/.exec(pill.style.color)!.slice(1).map(Number) as [number, number, number])
+      expect(contrast(hex(), '#ffffff')).toBeGreaterThanOrEqual(4.5)
+      setNameReadability('high')
+      flushSync()
+      expect(contrast(hex(), '#ffffff')).toBeGreaterThanOrEqual(7)
+    } finally {
+      setTheme('dark')
+      setNameReadability('normal')
+    }
   })
 
   it('mention pills show the name that applies, never the username, and follow a rename live (#47, #48)', () => {

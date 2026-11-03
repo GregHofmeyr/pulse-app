@@ -524,7 +524,7 @@
         <!-- your avatar opens your quick card (like anyone's); the rest opens the account menu -->
         <button type="button" class="me-avatar" aria-label="Your profile" data-tip="Your profile" onclick={(e) => openCard(me.id, null, e.currentTarget)}><Avatar id={me.id} name={baseName(me)} size={34} /></button>
         <button bind:this={menuToggle} class="who-btn" data-tip="Account" data-menu-toggle aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
-          <span class="who"><Name userId={me.id} serverId={null} text={baseName(me)} interactive={false} /><small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
+          <span class="who"><Name userId={me.id} serverId={null} text={baseName(me)} interactive={false} surface="side" /><small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
         </button>
         {#if voice.channelId}
           <button class="icon-btn me-btn" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label={voice.controls.muted ? "Unmute" : "Mute"} onclick={() => voiceApi.toggleMute()}>
