@@ -17,6 +17,7 @@ import { badgeStore, startBadgeListening } from '../lib/badges.svelte'
 import { app, startListening } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { profileUi } from '../lib/profileCard.svelte'
+import { motion } from '../lib/animate.svelte'
 import type { Badge } from '../lib/protocol/Badge'
 
 const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -116,6 +117,47 @@ describe('BadgeToast', () => {
     } finally {
       vi.useRealTimers()
     }
+  })
+
+  describe('confetti (#139)', () => {
+    afterEach(() => {
+      motion.reducedMotion = false
+      motion.streaming = false
+      motion.mode = 'always'
+    })
+
+    it('a fresh unlock bursts confetti, hidden from assistive tech', () => {
+      earned()
+      flushSync()
+      const c = document.querySelector('.toast .confetti')!
+      expect(c).not.toBeNull()
+      expect(c.getAttribute('aria-hidden')).toBe('true')
+      expect(c.querySelectorAll('i').length).toBeGreaterThan(6)
+    })
+
+    it('none under reduced motion, while live, or with animation set to never', () => {
+      for (const set of [() => (motion.reducedMotion = true), () => (motion.streaming = true), () => (motion.mode = 'never')]) {
+        motion.reducedMotion = false
+        motion.streaming = false
+        motion.mode = 'always'
+        badgeStore.reset()
+        flushSync()
+        set()
+        earned()
+        flushSync()
+        expect(document.querySelector('.toast')).not.toBeNull()
+        expect(document.querySelector('.toast .confetti')).toBeNull()
+      }
+    })
+
+    it('decided once per toast: turning motion back on later does not replay it', () => {
+      motion.streaming = true
+      earned()
+      flushSync()
+      motion.streaming = false
+      flushSync()
+      expect(document.querySelector('.toast .confetti')).toBeNull()
+    })
   })
 
   it("the icon isn't announced on top of the text", () => {

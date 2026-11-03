@@ -14,6 +14,11 @@ export function shouldAnimate(s: { mode: AnimateMode; focused: boolean; visible:
   return s.mode === 'always' || (s.mode === 'hover' && s.hovered)
 }
 
+/** A one-off flourish (the badge toast's confetti, #139): off under reduced motion, while you are live, or with "Animate emoji" on never. */
+export function shouldCelebrate(s: { mode: AnimateMode; reducedMotion: boolean; streaming: boolean }): boolean {
+  return !s.reducedMotion && !s.streaming && s.mode !== 'never'
+}
+
 const MODE_KEY = 'pulse.animateEmoji'
 
 function savedMode(): AnimateMode {
