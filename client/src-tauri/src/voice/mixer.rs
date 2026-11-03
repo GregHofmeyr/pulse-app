@@ -310,7 +310,7 @@ impl MixerInput {
         for (id, s) in sources.iter().filter(|(_, s)| s.kind == kind) {
             cmds.push(Cmd::Gain {
                 id: id.clone(),
-                gain: self.effective(s.gain, kind),
+                gain: (s.gain * gain).clamp(0.0, max_gain()),
             });
         }
     }

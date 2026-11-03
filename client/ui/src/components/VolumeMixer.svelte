@@ -16,9 +16,15 @@
   /** What the Soundboard ▶ plays: the first sound the popover would show. */
   const firstSound = $derived(soundSections(app.state, memberServers(app.state), app.state.servers).find((x) => x.sounds.length)?.sounds[0] ?? null)
 
+  /** The level a test button would play at (0: off, so the button is disabled). */
+  const testGain = (s: MixerSection, n: Notch): number =>
+    n.test === 'soundboard' ? mixGain(mixer.calls.master, mixer.calls.soundboard) : mixGain(value(s, 'master'), value(s, n.key))
+  const testBlocked = (s: MixerSection, n: Notch): string | null =>
+    n.test === 'soundboard' && !firstSound ? 'No sounds yet' : testGain(s, n) > 0 ? null : 'Off'
+
   function test(s: MixerSection, n: Notch) {
     if (n.test === 'sound') {
-      playSoundAt(n.key as SoundName, mixGain(value(s, 'master'), value(s, n.key)))
+      playSoundAt(n.key as SoundName, testGain(s, n))
     } else if (n.test === 'soundboard' && firstSound) {
       const { master, soundboard } = mixer.calls
       soundboardCmd.play(firstSound.media_hash, master, soundboard, firstSound.volume, loadAudioConfig().output ?? null).catch(() => {})
@@ -48,8 +54,8 @@
             value={value(s, n.key)} oninput={(e) => setNotch(s.id, n.key, +e.currentTarget.value)} />
           <span class="pct">{label(value(s, n.key))}</span>
           {#if n.test}
-            <button class="play" aria-label="Test {n.label}" title={n.test === 'soundboard' && !firstSound ? 'No sounds yet' : 'Test'}
-              disabled={n.test === 'soundboard' && !firstSound} onclick={() => test(s, n)}><Icon name="play" size={12} /></button>
+            <button class="play" aria-label="Test {n.label}" title={testBlocked(s, n) ?? 'Test'}
+              disabled={testBlocked(s, n) !== null} onclick={() => test(s, n)}><Icon name="play" size={12} /></button>
           {:else}
             <span class="play-gap" aria-hidden="true"></span>
           {/if}

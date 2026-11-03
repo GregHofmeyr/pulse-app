@@ -1167,6 +1167,9 @@ impl VoiceManager {
                 let pipeline = session.pipeline.clone();
                 *self.live.lock().unwrap() = Some(session.alive.clone());
                 *self.session.lock().await = Some(session);
+                // again now the session is findable: a Calls change made while connecting stored
+                // its levels but found no session to apply them to
+                self.apply_call_mix(&pipeline.shared.mix_in);
                 open_room.disarm();
                 self.emit_stage(JoinStage::StartingAudio, None);
                 self.emit_state(Some(channel), Connection::Connected);

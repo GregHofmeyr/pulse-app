@@ -16,8 +16,26 @@ export function pushCallMix(): Promise<void> {
     return Promise.reject(e)
   }
 }
-/** Fire and forget: the core applies the levels to a live call whenever they land, and keeps them for the next. */
-export const pushCallMixQuietly = () => void pushCallMix().catch(() => {})
+let inFlight = false
+let again = false
+
+/** Fire and forget: the core applies the levels to a live call whenever they land, and keeps them for the next. One
+ * push at a time (the core runs commands concurrently, so a drag's pushes could land out of order); whatever changed
+ * meanwhile goes in one more push with the latest levels. */
+export function pushCallMixQuietly() {
+  if (inFlight) {
+    again = true
+    return
+  }
+  inFlight = true
+  again = false
+  void pushCallMix()
+    .catch(() => {})
+    .finally(() => {
+      inFlight = false
+      if (again) pushCallMixQuietly()
+    })
+}
 
 /** One notch (`master` or an item of `section`), clamped to its range. Unknown notches are ignored. */
 export function setNotch(section: SectionId, key: string, pct: number) {

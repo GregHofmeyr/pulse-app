@@ -106,13 +106,22 @@ describe('prefs', () => {
       .toEqual(defaultMixer())
   })
 
-  it('a record from another version is rebuilt from the old keys', () => {
+  it('a newer record (after a downgrade) is read as the old keys say, and left in place', () => {
     localStorage.setItem('pulse.sounds', JSON.stringify({ volume_pct: 100, off: ['live'] }))
     localStorage.setItem(MIXER_KEY, JSON.stringify({ v: 2, calls: { master: 5 } }))
     const p = loadMixer()
     expect(p.v).toBe(1)
     expect(p.calls.master).toBe(100)
     expect(p.streamSounds.live).toBe(0)
+    expect(JSON.parse(localStorage.getItem(MIXER_KEY)!).v).toBe(2) // not overwritten on load
+  })
+
+  it('a corrupt record falls back to the defaults, not to the pre-mixer settings', () => {
+    localStorage.setItem('pulse.sounds', JSON.stringify({ volume_pct: 100, off: ['live'] }))
+    localStorage.setItem(MIXER_KEY, '{not json')
+    expect(loadMixer()).toEqual(defaultMixer())
+    localStorage.setItem(MIXER_KEY, JSON.stringify({ v: 'one' }))
+    expect(loadMixer()).toEqual(defaultMixer())
   })
 
   it('cleans a corrupt record field by field', () => {

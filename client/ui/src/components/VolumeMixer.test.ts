@@ -101,9 +101,20 @@ describe('VolumeMixer', () => {
     move('Join', 150)
     button('Test Join').click()
     expect(calls('play_sound')).toEqual([{ name: 'join', set: 'classic', volume: mixGain(50, 150), output: null }])
+  })
+
+  it('a test button is disabled while its level is off', () => {
+    withSounds([snd('a', 'Airhorn')])
+    show()
     move('Badge unlocked', 0)
-    button('Test Badge unlocked').click()
-    expect(calls('play_sound')).toHaveLength(1) // 0 % is off
+    expect(button('Test Badge unlocked').disabled).toBe(true)
+    expect(button('Test Badge unlocked').title).toBe('Off')
+    expect(button('Test Message ding').disabled).toBe(false)
+    move('Notifications volume', 0)
+    expect(button('Test Message ding').disabled).toBe(true)
+    expect(button('Test Soundboard').disabled).toBe(false)
+    move('Calls volume', 0)
+    expect(button('Test Soundboard').disabled).toBe(true)
   })
 
   it('only sound notches and Soundboard have a test button', () => {

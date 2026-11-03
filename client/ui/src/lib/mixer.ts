@@ -147,11 +147,23 @@ export function saveMixer(p: MixerPrefs) {
   }
 }
 
-/** The stored mixer; the first time (or after a version change) built from today's keys and saved. */
+/** The stored mixer. The first time, built from the pre-mixer keys and saved. A newer version's record (after a
+ * downgrade) is left alone and read as the pre-mixer keys say; an unreadable one gives the defaults. */
 export function loadMixer(): MixerPrefs {
-  const stored = normalizeMixer(read(MIXER_KEY))
+  let present = false
+  try {
+    present = localStorage.getItem(MIXER_KEY) !== null
+  } catch {
+    // storage unavailable: as if nothing were saved
+  }
+  const raw = read(MIXER_KEY)
+  const stored = normalizeMixer(raw)
   if (stored) return stored
-  const p = migrateMixer({ sounds: read('pulse.sounds'), soundboard: read('pulse.soundboard'), clipVolume: read('pulse.clipVolume') })
+  const migrated = () => migrateMixer({ sounds: read('pulse.sounds'), soundboard: read('pulse.soundboard'), clipVolume: read('pulse.clipVolume') })
+  const v = (obj(raw) as { v?: unknown }).v
+  if (typeof v === 'number' && v > 1) return migrated()
+  if (present) return defaultMixer()
+  const p = migrated()
   saveMixer(p)
   return p
 }
