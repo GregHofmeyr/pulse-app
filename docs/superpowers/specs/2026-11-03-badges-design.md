@@ -1,7 +1,7 @@
 # Badges
 
 Issue #49. Owner's picks from the design-check page (2026-11-03), summarised on the issue. The v1 design (§9) set the
-basics; this replaces it where they differ. **Status: draft for the owner's review** (thresholds especially).
+basics; this replaces it where they differ. **Status: approved by the owner 2026-11-03** (Skill Issue's trigger and the partner badge's name to come).
 
 ## Why
 
