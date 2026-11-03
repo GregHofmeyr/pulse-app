@@ -66,8 +66,8 @@ awards a badge (`user_badges` is never written).
 Rarity in brackets (tiered badges: per tier, tuned on the badge page). ⓗ = hidden until earned. Tiers listed as thresholds.
 
 **Voice**
-- **Night Owl** [Uncommon] — in a voice channel with at least one other person at 03:00 (server's local time zone; owner
-  picks it).
+- **Night Owl** [Uncommon] — in a voice channel with at least one other person at 03:00 South African time
+  (Africa/Johannesburg, UTC+2, no DST).
 - **Early Bird** [Rare] — first person into voice on 10 different days.
 - **Ghost** [Uncommon] — joined and left voice within 5 s, 10 times.
 - **The Regular** [tiers: Common → Mythical] — hours in voice with at least one other person: 10 / 50 / 100 / 250 / 500
@@ -96,7 +96,8 @@ Rarity in brackets (tiered badges: per tier, tuned on the badge page). ⓗ = hid
   table: who, channel, started, ended).
 
 **Meta and rare**
-- **Early Adopter** [Epic] — joined within the first week after launch (launch date set by the owner).
+- **Early Adopter** [Epic] — joined within the first week after launch. The launch date isn't set yet: it's a
+  server config value (unset = the badge can't be earned yet), set by the owner when the group moves over.
 - **Badge Collector** [tiers] — earned 10 / 20 / 30 badges.
 - **How Did We Get Here?** [Epic] — unlocked 5 hidden badges.
 - **Perfectionist** [Mythical] — reached the top tier of 5 tiered badges.
