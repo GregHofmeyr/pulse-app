@@ -11,6 +11,7 @@ const profile: Profile = {
   badges: [],
   name_archive: [],
   showcase: [],
+  showcase_chosen: false,
 }
 
 describe('profileDraft', () => {

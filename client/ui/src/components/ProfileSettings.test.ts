@@ -25,6 +25,7 @@ const saved = (over: Partial<Profile> = {}): Profile => ({
   badges: [],
   name_archive: [],
   showcase: [],
+  showcase_chosen: false,
   ...over,
 })
 const media = (hash: string, still: string | null = null): MediaInfo => ({ hash, content_type: 'image/webp', width: 256, height: 256, frames: still ? 10 : 1, animated: !!still, still_hash: still })

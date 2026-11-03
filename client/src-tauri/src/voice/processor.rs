@@ -549,7 +549,6 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
             let mut block: Vec<f32> = pending.drain(..FRAME).collect();
             // raw, before any processing: AGC would lift a near-silent mic
             let raw_peak = micsilence::peak(&block);
-            let raw_rms = mutedtalk::rms(&block);
             // render before capture: what the speakers played up to now is the echo reference
             shared.feed_echo_reference();
             // WebRTC APM (HPF, AEC, AGC) works on i16
@@ -567,6 +566,9 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
             for (d, v) in block.iter_mut().zip(&i16buf) {
                 *d = *v as f32 / 32767.0;
             }
+            // Muted talk is judged after APM (echo cancelled), before the denoiser: on the raw
+            // input, the call playing through speakers would read as you talking.
+            let echo_free_rms = mutedtalk::rms(&block);
 
             let (mic_open, denoise) = {
                 let c = shared.controls.lock().unwrap();
@@ -581,7 +583,7 @@ fn run(shared: Arc<Shared>, rx: std_mpsc::Receiver<RawBlock>) {
                 .muted_talk
                 .lock()
                 .unwrap()
-                .block(raw_rms, !mic_open, Instant::now());
+                .block(echo_free_rms, !mic_open, Instant::now());
             if !denoise {
                 // Muted, no meter on screen: skip the denoiser (Strong is most of a call's CPU).
                 // APM above keeps running, so echo cancellation is still converged on unmute.

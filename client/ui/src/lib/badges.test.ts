@@ -4,8 +4,11 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const invoke = vi.fn()
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a) }))
 
-import { badgeStore, defaultShowcase, fallbackName, logoClick, progressText, rarityLabel, rarityVar, resetEgg, shareText } from './badges.svelte'
+import { badgeStore, defaultShowcase, fallbackName, handleBadgeEvent, logoClick, progressText, rarityLabel, rarityVar, resetEgg, shareText } from './badges.svelte'
+import { app } from './store.svelte'
+import { emptyState, setProfile } from './state'
 import type { Badge } from './protocol/Badge'
+import type { Profile } from './protocol/Profile'
 import type { BadgeDef } from './protocol/BadgeDef'
 
 const def = (over: Partial<BadgeDef> = {}): BadgeDef => ({
@@ -14,6 +17,17 @@ const def = (over: Partial<BadgeDef> = {}): BadgeDef => ({
 })
 const badge = (key: string, rarity: Badge['rarity'], earned_at: string): Badge => ({ key, earned_at, first_earner: false, tier: 1, rarity, first_tiers: [], count: 0, hidden: false, seen: true })
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
+const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const ownProfile = (badges: Badge[]) => ({ user: alex, badges, showcase: [], showcase_chosen: false }) as unknown as Profile
+const earned = () => handleBadgeEvent({ t: 'BadgeEarned', d: { user_id: 'U1', badge: badge('the_yapper', 'common', '2026-11-03T00:00:00Z'), name: 'The Yapper', icon: '💬' } })
+/** A promise and the functions that settle it. */
+function deferred<T>() {
+  let resolve!: (v: T) => void
+  let reject!: (e: unknown) => void
+  const promise = new Promise<T>((a, b) => ((resolve = a), (reject = b)))
+  return { promise, resolve, reject }
+}
+const flush = () => new Promise((r) => setTimeout(r, 0))
 
 beforeEach(() => {
   invoke.mockReset()
@@ -88,6 +102,42 @@ describe('badgeStore', () => {
     expect(badgeStore.unseen).toBe(0)
     expect(calls('mark_badges_seen')).toHaveLength(1)
   })
+
+  it('a catalogue that answers after sign-out is dropped', async () => {
+    badgeStore.reset()
+    const slow = deferred<unknown>()
+    invoke.mockReturnValueOnce(slow.promise)
+    const p = badgeStore.load()
+    badgeStore.reset()
+    slow.resolve({ people: 4, badges: [def()] })
+    await p
+    expect(badgeStore.catalogue).toBeNull()
+  })
+
+  it('your profile reloading drops the bump (another device may have marked them seen)', () => {
+    badgeStore.reset()
+    app.state = { ...emptyState(), me: alex } as never
+    app.state = setProfile(app.state, ownProfile([]))
+    earned()
+    expect(badgeStore.unseen).toBe(1)
+    // The reload finds it already seen.
+    app.state = setProfile(app.state, ownProfile([{ ...badge('the_yapper', 'common', '2026-11-03T00:00:00Z'), seen: true }]))
+    expect(badgeStore.unseen).toBe(0)
+    app.state = emptyState() as never
+  })
+
+  it('a burst of unlocks refetches at most twice, the last after the burst', async () => {
+    badgeStore.reset()
+    app.state = { ...emptyState(), me: alex } as never
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'get_badge_catalogue' ? { people: 4, badges: [def()] } : cmd === 'get_profile' ? ownProfile([]) : undefined))
+    await badgeStore.load()
+    invoke.mockClear()
+    for (let i = 0; i < 5; i++) earned()
+    for (let i = 0; i < 5; i++) await flush()
+    expect(calls('get_badge_catalogue')).toHaveLength(2)
+    expect(calls('get_profile')).toHaveLength(2)
+    app.state = emptyState() as never
+  })
 })
 
 describe('the logo egg', () => {
@@ -98,6 +148,21 @@ describe('the logo egg', () => {
     expect(calls('report_egg')).toEqual([['report_egg', { egg: 'logo' }]])
     for (let i = 0; i < 7; i++) logoClick(10_000 + i * 100)
     expect(calls('report_egg')).toHaveLength(1)
+  })
+
+  it('a failed report can be tried again; a reported one waits for the next session', async () => {
+    invoke.mockRejectedValueOnce(new Error('offline'))
+    for (let i = 0; i < 7; i++) logoClick(1000 + i * 100)
+    await flush()
+    for (let i = 0; i < 7; i++) logoClick(5000 + i * 100)
+    await flush()
+    expect(calls('report_egg')).toHaveLength(2)
+    for (let i = 0; i < 7; i++) logoClick(9000 + i * 100)
+    expect(calls('report_egg')).toHaveLength(2)
+    // Signing out (badgeStore.reset) is a new session.
+    badgeStore.reset()
+    for (let i = 0; i < 7; i++) logoClick(13_000 + i * 100)
+    expect(calls('report_egg')).toHaveLength(3)
   })
 
   it('slower clicks never do', () => {

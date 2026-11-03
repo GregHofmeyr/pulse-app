@@ -11,6 +11,7 @@ import type { Badge } from './protocol/Badge'
 import type { BadgeCatalogue } from './protocol/BadgeCatalogue'
 import type { BadgeDef } from './protocol/BadgeDef'
 import type { BadgeRarity } from './protocol/BadgeRarity'
+import type { Profile } from './protocol/Profile'
 
 /** Least to most rare: the showcase default and the trophy case sort by it. */
 export const RARITIES: readonly BadgeRarity[] = ['common', 'uncommon', 'rare', 'epic', 'legendary', 'mythical']
@@ -30,12 +31,31 @@ class BadgeStore {
   #loading: Promise<void> | null = null
   #stale = false
   #nextToast = 1
+  /** Bumped by reset: a request from an older generation (another account) is dropped. */
+  #gen = 0
+  /** Your cached profile when `bumped` last counted up: once it's replaced (reloaded), the reload
+   * knows those unlocks, and whether another device has seen them, so `bumped` is spent. */
+  #bumpedOn: Profile | undefined
+  #refreshing: Promise<void> | null = null
+  #again = false
+  /** Per toast: its fade timer (none while held) and the time it has left, and what holds it. */
+  #timers = new Map<number, { timer: ReturnType<typeof setTimeout> | null; due: number; left: number; held: Set<'hover' | 'focus'> }>()
 
   /** Your badges not yet seen in your trophy case: the [NEW] dot. */
   get unseen(): number {
     const me = app.state.me
-    const own = me ? (app.state.profiles[me.id]?.badges.filter((b) => !b.seen).length ?? 0) : 0
-    return Math.max(this.bumped, own)
+    const profile = me ? app.state.profiles[me.id] : undefined
+    const own = profile?.badges.filter((b) => !b.seen).length ?? 0
+    return Math.max(profile === this.#bumpedOn ? this.bumped : 0, own)
+  }
+
+  /** One more unlock your cached profile doesn't know of yet. */
+  bump() {
+    const me = app.state.me
+    const profile = me ? app.state.profiles[me.id] : undefined
+    if (profile !== this.#bumpedOn) this.bumped = 0
+    this.#bumpedOn = profile
+    this.bumped++
   }
 
   /** Fetch the catalogue unless it's already here (and fresh, and yours); calls share one request. */
@@ -44,10 +64,11 @@ class BadgeStore {
     if (this.catalogue && !this.#stale && this.owner === me) return Promise.resolve()
     if (this.#loading) return this.#loading
     this.#stale = false
+    const gen = this.#gen
     const p = api
       .getBadgeCatalogue()
       .then((c) => {
-        if (c && Array.isArray(c.badges)) {
+        if (gen === this.#gen && c && Array.isArray(c.badges)) {
           this.catalogue = c
           this.owner = me
         }
@@ -68,6 +89,29 @@ class BadgeStore {
     return this.load()
   }
 
+  /** After an unlock: refetch the catalogue (if in use) and your profile. Unlocks in a burst share
+   * the fetch in flight plus one more after it, so the last one's data is never missed. */
+  refresh(): Promise<void> {
+    if (this.#refreshing) {
+      this.#again = true
+      return this.#refreshing
+    }
+    const gen = this.#gen
+    const round = () => {
+      this.#again = false
+      const me = app.state.me
+      return Promise.all([this.invalidate(), me ? loadProfile(me.id).catch(() => {}) : undefined])
+    }
+    const p = (async () => {
+      await round()
+      while (this.#again && gen === this.#gen) await round()
+    })().finally(() => {
+      if (this.#refreshing === p) this.#refreshing = null
+    })
+    this.#refreshing = p
+    return p
+  }
+
   def(key: string): BadgeDef | undefined {
     return this.catalogue?.badges.find((d) => d.key === key)
   }
@@ -75,6 +119,7 @@ class BadgeStore {
   /** You opened your trophy case: everything is seen, here and on the server. */
   markSeen() {
     this.bumped = 0
+    this.#bumpedOn = undefined
     const me = app.state.me
     const own = me ? app.state.profiles[me.id] : undefined
     if (own?.badges.some((b) => !b.seen)) app.state = setProfile(app.state, { ...own, badges: own.badges.map((b) => ({ ...b, seen: true })) })
@@ -84,11 +129,41 @@ class BadgeStore {
   pushToast(t: Omit<BadgeToastItem, 'id'>) {
     const id = this.#nextToast++
     this.toasts = [...this.toasts, { ...t, id }]
-    setTimeout(() => this.dismiss(id), TOAST_MS)
+    this.#timers.set(id, { timer: null, due: 0, left: TOAST_MS, held: new Set() })
+    this.#run(id)
   }
 
   dismiss(id: number) {
+    const t = this.#timers.get(id)
+    if (t?.timer) clearTimeout(t.timer)
+    this.#timers.delete(id)
     this.toasts = this.toasts.filter((t) => t.id !== id)
+  }
+
+  /** The pointer is on a toast, or focus is in it: it stays until both have left. */
+  hold(id: number, why: 'hover' | 'focus') {
+    const t = this.#timers.get(id)
+    if (!t) return
+    t.held.add(why)
+    if (t.timer) {
+      clearTimeout(t.timer)
+      t.timer = null
+      t.left = Math.max(0, t.due - Date.now())
+    }
+  }
+
+  release(id: number, why: 'hover' | 'focus') {
+    const t = this.#timers.get(id)
+    if (!t) return
+    t.held.delete(why)
+    if (t.held.size === 0 && !t.timer) this.#run(id)
+  }
+
+  #run(id: number) {
+    const t = this.#timers.get(id)
+    if (!t) return
+    t.due = Date.now() + t.left
+    t.timer = setTimeout(() => this.dismiss(id), t.left)
   }
 
   /** Signed out, or a test: nothing carries over. */
@@ -96,9 +171,16 @@ class BadgeStore {
     this.catalogue = null
     this.owner = null
     this.bumped = 0
+    this.#bumpedOn = undefined
+    for (const t of this.#timers.values()) if (t.timer) clearTimeout(t.timer)
+    this.#timers.clear()
     this.toasts = []
     this.#loading = null
     this.#stale = false
+    this.#refreshing = null
+    this.#again = false
+    this.#gen++
+    resetEgg()
   }
 }
 
@@ -111,9 +193,8 @@ export function handleBadgeEvent(e: Event) {
   if (!me || e.d.user_id !== me.id) return
   badgeStore.pushToast({ name: e.d.name, icon: e.d.icon, rarity: e.d.badge.rarity, tier: e.d.badge.tier })
   playSound('badge')
-  badgeStore.bumped++
-  void badgeStore.invalidate()
-  loadProfile(me.id).catch(() => {})
+  badgeStore.bump()
+  void badgeStore.refresh()
 }
 
 /** Listen for unlocks; returns the unsubscribe function. */
@@ -187,23 +268,37 @@ export function romanTier(n: number): string {
   return out
 }
 
-// The logo egg: 7 clicks on the top-bar logo within 3 s, reported once a session.
+// The logo egg: 7 clicks on the top-bar logo within 3 s, reported once a session (a report that
+// fails can be tried again).
 const EGG_CLICKS = 7
 const EGG_WINDOW_MS = 3_000
 let eggClicks: number[] = []
 let eggSent = false
+let eggSending = false
+let eggGen = 0
 
 export function logoClick(now = Date.now()) {
-  if (eggSent) return
+  if (eggSent || eggSending) return
   eggClicks = [...eggClicks.filter((t) => now - t < EGG_WINDOW_MS), now]
   if (eggClicks.length < EGG_CLICKS) return
-  eggSent = true
   eggClicks = []
-  void api.reportEgg('logo').catch(() => {})
+  eggSending = true
+  const gen = eggGen
+  api
+    .reportEgg('logo')
+    .then(() => {
+      if (gen === eggGen) eggSent = true
+    })
+    .catch(() => {})
+    .finally(() => {
+      if (gen === eggGen) eggSending = false
+    })
 }
 
-/** For tests: a new session. */
+/** A new session (badgeStore.reset, and tests). */
 export function resetEgg() {
   eggClicks = []
   eggSent = false
+  eggSending = false
+  eggGen++
 }

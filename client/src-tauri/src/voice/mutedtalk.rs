@@ -1,5 +1,6 @@
-//! "You're muted": talking into a muted mic for a while (The Doos badge). Judged on the raw
-//! input's RMS, before any processing. Loud blocks build up talk time and quiet ones drain it
+//! "You're muted": talking into a muted mic for a while (The Doos badge). Judged on the
+//! input's RMS after WebRTC APM (echo cancelled, so the call coming out of the speakers isn't
+//! you) and before the denoiser. Loud blocks build up talk time and quiet ones drain it
 //! slowly, so the pauses between words don't reset it; unmuting does. It fires once, then rests.
 
 use std::time::{Duration, Instant};
@@ -22,7 +23,7 @@ pub struct MutedTalk {
 }
 
 impl MutedTalk {
-    /// One raw 10 ms mic block: its RMS, and whether you're muted (deafened implies it).
+    /// One echo-cancelled 10 ms block: its RMS, and whether you're muted (deafened implies it).
     pub fn block(&mut self, rms: f32, muted: bool, now: Instant) {
         if !muted {
             self.talked = Duration::ZERO;

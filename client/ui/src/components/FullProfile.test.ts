@@ -25,6 +25,7 @@ const profile = (over: Partial<Profile> = {}): Profile => ({
   badges: [],
   name_archive: [],
   showcase: [],
+  showcase_chosen: false,
   ...over,
 })
 

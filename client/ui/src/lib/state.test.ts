@@ -1303,7 +1303,7 @@ describe('clips', () => {
 describe('profiles', () => {
   const card = { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null }
   const stats = { voice_seconds: 90, member_since: '2026-01-01T00:00:00Z', top_reaction: null, times_renamed: 2 }
-  const profileOf = (user: typeof me) => ({ user, card, stats, badges: [], name_archive: [], showcase: [] })
+  const profileOf = (user: typeof me) => ({ user, card, stats, badges: [], name_archive: [], showcase: [], showcase_chosen: false })
   const sam = { ...me, id: 'U2', username: 'sam', display_name: 'sam' }
 
   it('ProfileUpdated updates people, members, me and a cached profile (its stats unchanged)', () => {
