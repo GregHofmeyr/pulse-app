@@ -220,7 +220,8 @@
                 {@const inSpan = x(span.start) <= i + 0.5 && i + 0.5 <= x(span.end)}
                 <rect class="bar" class:on={inSpan} x={i} y={(H - h) / 2} width="0.7" height={h} />
               {/each}
-              <!-- the selection itself: drag it to move the whole span -->
+              <!-- the selection itself: drag it to move the whole span (keyboard users move the handles) -->
+              <!-- svelte-ignore a11y_no_static_element_interactions -->
               <rect class="sel" x={x(span.start)} y="0" width={Math.max(0, x(span.end) - x(span.start))} height={H}
                 onpointerdown={(e) => down('span', e)} onpointermove={(e) => move('span', e)} onpointerup={up} onpointercancel={up} />
               {#if playhead !== null}
