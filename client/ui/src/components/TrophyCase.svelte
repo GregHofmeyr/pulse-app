@@ -12,7 +12,8 @@
   import type { Badge } from '../lib/protocol/Badge'
   import type { BadgeDef } from '../lib/protocol/BadgeDef'
 
-  let { badges, showcase = [], mine = false }: { badges: Badge[]; showcase?: string[]; mine?: boolean } = $props()
+  // showcaseChosen: the owner saved a showcase of their own (false: it's the rarest-five default).
+  let { badges, showcase = [], showcaseChosen = false, mine = false }: { badges: Badge[]; showcase?: string[]; showcaseChosen?: boolean; mine?: boolean } = $props()
 
   $effect(() => void untrack(() => badgeStore.load()))
 
@@ -28,7 +29,7 @@
   const progressOf = (d: BadgeDef | undefined, tier: number) => {
     if (!mine || !d || d.progress === null || d.hand_given || tier >= d.tiers.length) return null
     const target = d.tiers[tier]?.threshold ?? 0
-    return target > 0 ? { value: Math.min(d.progress, target), max: target, text: progressText(d, d.progress) } : null
+    return target > 0 ? { value: Math.min(d.progress, target), max: target, text: progressText(d, d.progress), label: `${d.name} progress` } : null
   }
 
   // [NEW]: what was unseen when it reached this case stays tagged while it's open.
@@ -43,7 +44,8 @@
     })
   })
 
-  // The showcase editor: up to 5 held badges, in order. "Rarest five" goes back to the server's default.
+  // The showcase editor: up to 5 held badges, in order. "Rarest five" goes back to the server's default,
+  // and a default showcase stays the default (it follows later unlocks) until you change something.
   let editing = $state(false)
   let chosen = $state<string[]>([])
   let auto = $state(false)
@@ -51,7 +53,7 @@
   let saveError = $state<string | null>(null)
   function edit() {
     chosen = showcase.filter((k) => held.has(k))
-    auto = false
+    auto = !showcaseChosen
     saveError = null
     editing = true
   }
@@ -98,8 +100,8 @@
           {@const d = badgeStore.def(key)}
           <li data-key={key}>
             <BadgeIcon icon={iconOf(b, d)} rarity={b.rarity} tier={b.tier} tiers={d?.tiers.length ?? 1} first={b.first_earner} hidden={b.hidden} size="show" label={nameOf(b, d)} />
-            <button type="button" class="mini" aria-label="Move left" disabled={i === 0} onclick={() => move(i, -1)}>‹</button>
-            <button type="button" class="mini" aria-label="Move right" disabled={i === chosen.length - 1} onclick={() => move(i, 1)}>›</button>
+            <button type="button" class="mini" aria-label={`Move ${nameOf(b, d)} left`} disabled={i === 0} onclick={() => move(i, -1)}>‹</button>
+            <button type="button" class="mini" aria-label={`Move ${nameOf(b, d)} right`} disabled={i === chosen.length - 1} onclick={() => move(i, 1)}>›</button>
           </li>
         {:else}
           <li class="none">Nothing chosen</li>
@@ -132,8 +134,9 @@
         <span class="rar">{rarityLabel(b.rarity)}{#if b.count > 1}<span class="stack"> ×{b.count}</span>{/if}</span>
         {#if b.first_earner}<span class="first">First!</span>{/if}
         {#if d?.description}<span class="desc">{d.description}</span>{/if}
-        {#if p}<progress max={p.max} value={p.value}></progress><span class="prog">{p.text}</span>{/if}
-        <span class="when">{formatMemberSince(b.earned_at)}</span>
+        {#if p}<progress max={p.max} value={p.value} aria-label={p.label}></progress><span class="prog">{p.text}</span>{/if}
+        <!-- a masked badge on someone else's profile carries no date -->
+        {#if b.earned_at}<span class="when">{formatMemberSince(b.earned_at)}</span>{/if}
         {#if share(d, b.tier)}<span class="share">{share(d, b.tier)}</span>{/if}
         {#if editing}
           <button type="button" class="pick" aria-pressed={at >= 0} disabled={at < 0 && chosen.length >= SHOWCASE_MAX} onclick={() => toggle(b.key)}>{at >= 0 ? `#${at + 1} · Remove` : 'Add to showcase'}</button>
@@ -147,7 +150,7 @@
         <span class="nm">{d.name}</span>
         <span class="rar">{rarityLabel(d.tiers[0]?.rarity ?? 'common')}</span>
         <span class="desc">{d.description || 'Hidden until earned'}</span>
-        {#if p}<progress max={p.max} value={p.value}></progress><span class="prog">{p.text}</span>{/if}
+        {#if p}<progress max={p.max} value={p.value} aria-label={p.label}></progress><span class="prog">{p.text}</span>{/if}
         {#if share(d, 1)}<span class="share">{share(d, 1)}</span>{/if}
       </li>
     {/each}

@@ -33,7 +33,7 @@ const badge = (key: string, over: Partial<Badge> = {}): Badge => ({ key, earned_
 const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
 
 let cmp: ReturnType<typeof mount> | undefined
-async function show(props: { badges: Badge[]; mine?: boolean; showcase?: string[] }) {
+async function show(props: { badges: Badge[]; mine?: boolean; showcase?: string[]; showcaseChosen?: boolean }) {
   cmp = mount(TrophyCase, { target: document.body, props: { mine: false, showcase: [], ...props } })
   flushSync()
   await vi.waitFor(() => expect(document.querySelector('.tile')).not.toBeNull())
@@ -85,6 +85,40 @@ describe('TrophyCase', () => {
     expect(tile('The Regular')!.textContent).toContain('3 of 8 have this')
   })
 
+  it('progress bars say which badge they belong to', async () => {
+    await show({ badges: [], mine: true })
+    expect(tile('The Yapper')!.querySelector('progress')!.getAttribute('aria-label')).toBe('The Yapper progress')
+  })
+
+  it("a masked badge on someone else's profile shows no date and no First!", async () => {
+    await show({ badges: [badge('hidden:0', { hidden: true, rarity: 'epic', earned_at: '' })] })
+    const t = [...document.querySelectorAll<HTMLElement>('.tile')].find((x) => !x.classList.contains('locked') && x.querySelector('.nm')?.textContent === '???')!
+    expect(t.querySelector('.when')).toBeNull()
+    expect(t.textContent).not.toContain('First!')
+    expect(t.textContent).not.toContain('Invalid')
+  })
+
+  it("the showcase editor keeps the default unless you change it", async () => {
+    const held = [badge('the_yapper'), badge('night_owl', { rarity: 'rare' })]
+    await show({ badges: held, mine: true, showcase: ['night_owl', 'the_yapper'], showcaseChosen: false })
+    button('Edit showcase').click()
+    flushSync()
+    button('Save').click()
+    await tick()
+    // Still "rarest five": it follows later unlocks instead of pinning today's pick.
+    expect(calls('set_badge_showcase')).toEqual([['set_badge_showcase', { keys: [] }]])
+  })
+
+  it('a showcase you chose stays chosen on a save without changes', async () => {
+    const held = [badge('the_yapper'), badge('night_owl', { rarity: 'rare' })]
+    await show({ badges: held, mine: true, showcase: ['the_yapper'], showcaseChosen: true })
+    button('Edit showcase').click()
+    flushSync()
+    button('Save').click()
+    await tick()
+    expect(calls('set_badge_showcase')).toEqual([['set_badge_showcase', { keys: ['the_yapper'] }]])
+  })
+
   it("someone else's case shows no progress (the numbers are yours)", async () => {
     await show({ badges: [] })
     expect(tile('The Yapper')!.textContent).not.toContain('412')
@@ -122,7 +156,7 @@ describe('TrophyCase', () => {
     flushSync()
     const chosen = () => [...document.querySelectorAll('.chosen li')].map((li) => li.getAttribute('data-key'))
     expect(chosen()).toEqual(['night_owl', 'the_yapper'])
-    document.querySelector<HTMLButtonElement>('.chosen li[data-key="the_yapper"] button[aria-label="Move left"]')!.click()
+    document.querySelector<HTMLButtonElement>('.chosen li[data-key="the_yapper"] button[aria-label="Move The Yapper left"]')!.click()
     flushSync()
     expect(chosen()).toEqual(['the_yapper', 'night_owl'])
     button('Save').click()

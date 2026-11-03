@@ -91,4 +91,38 @@ describe('BadgeToast', () => {
       vi.useRealTimers()
     }
   })
+
+  it('stays while hovered or focused, then fades', () => {
+    vi.useFakeTimers()
+    try {
+      earned()
+      flushSync()
+      const t = document.querySelector<HTMLElement>('.toast')!
+      vi.advanceTimersByTime(4_000)
+      t.dispatchEvent(new MouseEvent('mouseenter'))
+      vi.advanceTimersByTime(20_000)
+      flushSync()
+      expect(document.querySelector('.toast')).not.toBeNull()
+      t.dispatchEvent(new MouseEvent('mouseleave'))
+      // focus inside holds it too, even with the pointer gone
+      t.querySelector<HTMLButtonElement>('.open')!.focus()
+      vi.advanceTimersByTime(20_000)
+      flushSync()
+      expect(document.querySelector('.toast')).not.toBeNull()
+      t.querySelector<HTMLButtonElement>('.open')!.blur()
+      vi.advanceTimersByTime(7_000)
+      flushSync()
+      expect(document.querySelector('.toast')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("the icon isn't announced on top of the text", () => {
+    earned()
+    flushSync()
+    const icon = document.querySelector('.toast .badge-icon')!
+    expect(icon.getAttribute('aria-hidden')).toBe('true')
+    expect(icon.getAttribute('role')).toBeNull()
+  })
 })

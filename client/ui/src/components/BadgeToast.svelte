@@ -1,6 +1,7 @@
 <script lang="ts">
   // Unlock toasts (#49): "Badge unlocked: <name>" for the earner only, bottom-left so they never cover
-  // the stream toasts; each fades by itself (lib/badges.svelte.ts), a click opens your trophy case.
+  // the stream toasts; each fades by itself unless hovered or focused (lib/badges.svelte.ts), a click
+  // opens your trophy case.
   import Icon from './Icon.svelte'
   import BadgeIcon from './BadgeIcon.svelte'
   import { badgeStore, openOwnCase, rarityLabel, rarityVar } from '../lib/badges.svelte'
@@ -8,8 +9,18 @@
 
 <div class="stack" aria-live="polite">
   {#each badgeStore.toasts as t (t.id)}
-    <div class="toast fade-in" role="status" style:--ring-color={rarityVar(t.rarity)}>
+    <!-- hovering or focusing a toast holds it (its fade waits until both have left) -->
+    <div
+      class="toast fade-in"
+      role="status"
+      style:--ring-color={rarityVar(t.rarity)}
+      onmouseenter={() => badgeStore.hold(t.id, 'hover')}
+      onmouseleave={() => badgeStore.release(t.id, 'hover')}
+      onfocusin={() => badgeStore.hold(t.id, 'focus')}
+      onfocusout={() => badgeStore.release(t.id, 'focus')}
+    >
       <button type="button" class="open" onclick={() => { badgeStore.dismiss(t.id); openOwnCase() }}>
+        <!-- no label: the text beside it says it -->
         <BadgeIcon icon={t.icon} rarity={t.rarity} size="show" />
         <span class="text">
           <span><strong>Badge unlocked:</strong> {t.name}</span>

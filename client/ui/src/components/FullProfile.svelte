@@ -152,7 +152,7 @@
       {/if}
       <section class="board">
         <h2>Trophy case</h2>
-        <TrophyCase badges={cached?.badges ?? []} showcase={cached?.showcase ?? []} mine={userId === app.state.me?.id} />
+        <TrophyCase badges={cached?.badges ?? []} showcase={cached?.showcase ?? []} showcaseChosen={cached?.showcase_chosen ?? false} mine={userId === app.state.me?.id} />
       </section>
     </div>
   </div>
