@@ -64,9 +64,9 @@
 <h3>Password</h3>
 {#if open}
   <form onsubmit={submit}>
-    <label>Current password <PasswordInput class="input input-sm" bind:value={current} required autocomplete="current-password" /></label>
-    <label>New password <PasswordInput class="input input-sm" bind:value={next} required minlength={8} autocomplete="new-password" /></label>
-    <label>Confirm new password <PasswordInput class="input input-sm" bind:value={confirm} required autocomplete="new-password" /></label>
+    <label>Current password <PasswordInput aria-label="Current password" class="input input-sm" bind:value={current} required autocomplete="current-password" /></label>
+    <label>New password <PasswordInput aria-label="New password" class="input input-sm" bind:value={next} required minlength={8} autocomplete="new-password" /></label>
+    <label>Confirm new password <PasswordInput aria-label="Confirm new password" class="input input-sm" bind:value={confirm} required autocomplete="new-password" /></label>
     {#if twoFactorOn !== false}
       <label>Code
         <input class="input input-sm" bind:value={code} required={twoFactorOn === true} autocomplete="one-time-code" autocapitalize="off" spellcheck="false"
@@ -89,7 +89,8 @@
   h3 { margin: 8px 0 10px; font-size: 15px; }
   form { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
   label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text-2); }
-  input { width: 240px; }
+  /* :global: the password fields' inputs live inside PasswordInput */
+  input, label :global(input) { width: 240px; }
   .q { margin: 0; font-size: 13px; color: var(--text-2); }
   .actions { display: flex; gap: 8px; }
   .ok { margin: 10px 0 0; font-size: 13px; color: var(--text-2); }

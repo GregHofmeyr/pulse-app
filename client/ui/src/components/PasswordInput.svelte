@@ -1,5 +1,6 @@
 <script lang="ts">
-  // A password field with an eye inside it that shows what's typed (#131). Every password field uses it.
+  // A password field with an eye inside it that shows what's typed (#131). Every password field uses it,
+  // with its own aria-label: the eye sits inside the caller's <label>, whose text would take in "Show password".
   import type { HTMLInputAttributes } from 'svelte/elements'
   import Icon from './Icon.svelte'
 
@@ -7,6 +8,15 @@
 
   let shown = $state(false)
   let input = $state<HTMLInputElement>()
+
+  // a sent form never leaves the password showing
+  $effect(() => {
+    const form = input?.form
+    if (!form) return
+    const hide = () => { shown = false }
+    form.addEventListener('submit', hide)
+    return () => form.removeEventListener('submit', hide)
+  })
 
   function toggle() {
     const el = input!

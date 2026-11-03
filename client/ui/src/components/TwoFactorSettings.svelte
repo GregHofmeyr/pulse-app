@@ -147,7 +147,7 @@
 {:else if view === 'password'}
   <form onsubmit={start}>
     <p class="q">Enter your password to start.</p>
-    <label>Password <PasswordInput class="input input-sm" bind:value={password} required autocomplete="current-password" /></label>
+    <label>Password <PasswordInput aria-label="Password" class="input input-sm" bind:value={password} required autocomplete="current-password" /></label>
     <div class="actions">
       <button class="btn btn-primary" disabled={busy}>Continue</button>
       <button type="button" class="btn btn-secondary" disabled={busy} onclick={reset}>Cancel</button>
@@ -204,7 +204,8 @@
   h3 { margin: 8px 0 10px; font-size: 15px; }
   form { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
   label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text-2); }
-  input { width: 240px; }
+  /* :global: the password field's input lives inside PasswordInput */
+  input, label :global(input) { width: 240px; }
   .q { margin: 0 0 10px; font-size: 13px; color: var(--text-2); }
   form .q { margin: 0; }
   .hint { margin: 6px 0 0; font-size: 13px; color: var(--text-3); }

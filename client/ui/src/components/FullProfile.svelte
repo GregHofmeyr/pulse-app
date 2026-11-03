@@ -169,19 +169,21 @@
   /* A board scrolled half out of view (the trophy case, mostly) keeps its round corners (#131): the column's
      edge is cut with the boards' 12px radius, over the boards' area only (left of the 4px gap and the 10px
      scrollbar, whose room is kept even when nothing scrolls); the strip at the right stays whole for the bar.
-     #000 here is only a mask's alpha. */
-  .right {
-    flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px;
-    --gutter: 14px;
-    scrollbar-gutter: stable;
-    mask:
-      linear-gradient(#000 0 0) right top / var(--gutter) 100% no-repeat,
-      linear-gradient(#000 0 0) left 12px top 0 / calc(100% - var(--gutter) - 24px) 100% no-repeat,
-      linear-gradient(#000 0 0) left 0 top 12px / calc(100% - var(--gutter)) calc(100% - 24px) no-repeat,
-      radial-gradient(circle 12px at 12px 12px, #000 98%, transparent) left top / 24px 24px no-repeat,
-      radial-gradient(circle 12px at 12px 12px, #000 98%, transparent) right var(--gutter) top / 24px 24px no-repeat,
-      radial-gradient(circle 12px at 12px 12px, #000 98%, transparent) left bottom / 24px 24px no-repeat,
-      radial-gradient(circle 12px at 12px 12px, #000 98%, transparent) right var(--gutter) bottom / 24px 24px no-repeat;
+     #000 here is only a mask's alpha. Only where the gutter can be kept: without it the boards reach past the cut. */
+  .right { flex: 1; min-width: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding-right: 4px; }
+  @supports (scrollbar-gutter: stable) and (mask: none) {
+    .right {
+      --gutter: 14px;
+      scrollbar-gutter: stable;
+      mask:
+        linear-gradient(#000 0 0) right top / var(--gutter) 100% no-repeat,
+        linear-gradient(#000 0 0) left 12px top 0 / calc(100% - var(--gutter) - 24px) 100% no-repeat,
+        linear-gradient(#000 0 0) left 0 top 12px / calc(100% - var(--gutter)) calc(100% - 24px) no-repeat,
+        radial-gradient(circle 12px at 12px 12px, #000 98%, transparent) left top / 24px 24px no-repeat,
+        radial-gradient(circle 12px at 12px 12px, #000 98%, transparent) right var(--gutter) top / 24px 24px no-repeat,
+        radial-gradient(circle 12px at 12px 12px, #000 98%, transparent) left bottom / 24px 24px no-repeat,
+        radial-gradient(circle 12px at 12px 12px, #000 98%, transparent) right var(--gutter) bottom / 24px 24px no-repeat;
+    }
   }
   .close { position: absolute; top: 12px; right: 12px; z-index: 1; }
   .board { border-radius: 12px; padding: 14px 16px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); color: var(--card-text); }

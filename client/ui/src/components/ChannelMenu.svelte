@@ -62,8 +62,8 @@
   // ArrowLeft or Escape closes just it, back on Mute channel.
   const FLYOUT_W = 200
   const GAP = 4
-  /** Five 32px durations, 2px apart, 6px padding and a 1px border. */
-  const SUB_H = 5 * 32 + 4 * 2 + 2 * 6 + 2
+  /** The durations at 32px, 2px apart, 6px padding and a 1px border. */
+  const SUB_H = MUTE_FOR.length * 32 + (MUTE_FOR.length - 1) * 2 + 2 * 6 + 2
   const uid = $props.id()
   const flyoutId = `${uid}-mute`
   let muteEl = $state<HTMLButtonElement>()
@@ -142,6 +142,8 @@
       return
     }
     if (e.key === 'ArrowLeft') { e.preventDefault(); closeSub(false); return }
+    // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
+    if (e.key === 'Escape' && subOpen) { e.preventDefault(); e.stopPropagation(); closeSub(false); return }
     if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) closeSub(false)
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); focusItem(at + 1); break
@@ -159,7 +161,8 @@
   onpointerover={(e) => {
     // another of the menu's own items under the pointer closes the flyout
     const t = (e.target as Element).closest?.('[data-item]')
-    if (t && t.parentElement === el && t !== muteEl) closeSub(false)
+    // (focus in the flyout goes back to Mute channel rather than falling out of the menu)
+    if (t && t.parentElement === el && t !== muteEl) closeSub(!!sub?.contains(document.activeElement))
   }}>
   {#if isVoice}
     {#if inCall}

@@ -76,6 +76,21 @@ describe('PasswordInput', () => {
   })
 })
 
+describe('PasswordInput on submit', () => {
+  it('hides the password again when its form is sent', () => {
+    const form = document.createElement('form')
+    document.body.append(form)
+    cmp = mount(PasswordInput, { target: form, props: { value: '' } })
+    flushSync()
+    form.querySelector('button')!.click(); flushSync()
+    expect(form.querySelector('input')!.type).toBe('text')
+    form.dispatchEvent(new Event('submit', { cancelable: true }))
+    flushSync()
+    expect(form.querySelector('input')!.type).toBe('password')
+    expect(form.querySelector('button')!.getAttribute('aria-label')).toBe('Show password')
+  })
+})
+
 describe('PasswordInput CSS', () => {
   const scope = 'svelte-test'
   const css = compile(readFileSync(resolve(__dirname, 'PasswordInput.svelte'), 'utf8'),
@@ -98,5 +113,14 @@ describe('every password field', () => {
     expect(files.length).toBeGreaterThan(50)
     const bare = files.filter((f) => /type=["']password["']/.test(readFileSync(resolve(root, f), 'utf8')))
     expect(bare).toEqual([])
+  })
+
+  it('names its field itself: the eye sits inside the label, whose text would otherwise take in "Show password"', () => {
+    const root = resolve(__dirname, '..')
+    const uses = readdirSync(root, { recursive: true, encoding: 'utf8' })
+      .filter((f) => f.endsWith('.svelte'))
+      .flatMap((f) => readFileSync(resolve(root, f), 'utf8').match(/<PasswordInput\b[^>]*>/g) ?? [])
+    expect(uses.length).toBeGreaterThanOrEqual(5)
+    expect(uses.filter((u) => !/aria-label=/.test(u))).toEqual([])
   })
 })

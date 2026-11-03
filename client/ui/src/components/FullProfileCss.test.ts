@@ -21,10 +21,13 @@ const rule = (sel: string) => {
 
 describe('the full profile right column', () => {
   it('rounds the scroll edge with the board radius, at the boards, not past the scrollbar', () => {
-    const right = rule(`.right.${scope}`)!
     const board = rule(`.board.${scope}`)!
     const radius = board.match(/border-radius:\s*(\d+px)/)![1]
-    expect(right).toMatch(/overflow-y:\s*auto/)
+    expect(rule(`.right.${scope}`)).toMatch(/overflow-y:\s*auto/)
+    // only where the gutter can be kept (older WebKit: no mask, rather than a cut past the boards)
+    const supports = css.slice(css.indexOf('@supports (scrollbar-gutter: stable)'))
+    expect(supports.length).toBeLessThan(css.length)
+    const right = supports.match(new RegExp(`\\.right\\.${scope}\\s*\\{([^}]*)\\}`))![1]
     // the scrollbar's room is always there, so the boards' right edge sits at a fixed place
     expect(right).toMatch(/scrollbar-gutter:\s*stable/)
     // a mask: a round corner of the board radius in each corner of the boards' area, plus the scrollbar strip

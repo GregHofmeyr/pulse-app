@@ -331,6 +331,26 @@ describe('the mute flyout', () => {
     expect(document.activeElement).toBe(row('general'))
   })
 
+  it('hovering_another_item_while_focus_is_in_the_flyout_keeps_focus_in_the_menu', () => {
+    rightClick('general')
+    muteItem().focus()
+    key(muteItem(), 'ArrowRight')
+    hover(item('Rename channel…')!)
+    expect(flyout()).toBeNull()
+    expect(document.activeElement).toBe(muteItem())
+  })
+
+  it('escape_with_a_hover_opened_flyout_closes_only_the_flyout', () => {
+    rightClick('general')
+    hover(muteItem())
+    const e = key(item('Mark as read') ?? muteItem(), 'Escape')
+    expect(e.defaultPrevented).toBe(true)
+    expect(flyout()).toBeNull()
+    expect(menu()).not.toBeNull()
+    key(muteItem(), 'Escape')
+    expect(menu()).toBeNull()
+  })
+
   it('arrow_down_from_mute_channel_moves_on_in_the_main_menu_and_closes_the_flyout', () => {
     rightClick('general')
     hover(muteItem())

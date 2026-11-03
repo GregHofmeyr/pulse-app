@@ -93,7 +93,7 @@
       {/if}
       <label>Username <input class="input" bind:value={username} required autocomplete="username" autocapitalize="off" spellcheck="false" /></label>
       <label>Password
-        <PasswordInput class="input" bind:value={password} required minlength={mode === 'register' ? 8 : undefined}
+        <PasswordInput aria-label="Password" class="input" bind:value={password} required minlength={mode === 'register' ? 8 : undefined}
           autocomplete={mode === 'login' ? 'current-password' : 'new-password'} />
       </label>
 
@@ -119,7 +119,8 @@
   h1 { margin: 0; font-size: 20px; font-weight: 600; }
   label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; letter-spacing: .04em; color: var(--text-2); }
   /* the sign-in card's bigger size, beside its 42px button */
-  input { height: 40px; }
+  /* :global: the password field's input lives inside PasswordInput */
+  input, label :global(input) { height: 40px; }
   .primary { height: 42px; border: 0; border-radius: 10px; background: var(--accent); color: var(--on-accent); font-weight: 600; margin-top: 4px; }
   .primary:disabled { opacity: .6; }
   .link { background: none; border: 0; color: var(--text-3); font-size: 13px; }
