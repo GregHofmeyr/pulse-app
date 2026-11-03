@@ -6,6 +6,8 @@ pub mod encode;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
+use crate::voice::mixer::combined_gain;
+#[cfg(test)]
 use crate::voice::mixer::percent_to_gain;
 
 /// Why adding sounds is unavailable (no ffmpeg to trim and normalise with).
@@ -15,9 +17,10 @@ pub const UNSUPPORTED: &str =
 /// Decoded sounds kept for instant replays (a 6 s mono sound is about 1.1 MB, so ~27 MB at most).
 const CACHE_ENTRIES: usize = 24;
 
-/// Linear gain for a sound: the soundboard volume (capped at 100 %) times the sound's own (10-200 %).
-pub fn gain(soundboard_pct: u16, sound_pct: u16) -> f32 {
-    percent_to_gain(soundboard_pct.min(100)) * percent_to_gain(sound_pct.clamp(10, 200))
+/// Linear gain for a sound: the volume mixer's Calls master × its Soundboard notch × the sound's
+/// own volume (10-200 %), capped at the mixer's safe maximum.
+pub fn gain(calls_pct: u16, soundboard_pct: u16, sound_pct: u16) -> f32 {
+    combined_gain(&[calls_pct, soundboard_pct, sound_pct.clamp(10, 200)])
 }
 
 /// The most recently used decoded sounds, by content hash. Most recent last.
@@ -79,16 +82,27 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gain_combines_the_two_volumes() {
-        assert_eq!(gain(0, 100), 0.0);
-        assert_eq!(gain(100, 100), 1.0);
-        assert_eq!(gain(150, 100), 1.0, "soundboard volume caps at 100 %");
+    fn gain_combines_calls_soundboard_and_the_sound() {
+        assert_eq!(gain(100, 0, 100), 0.0);
+        assert_eq!(gain(0, 100, 100), 0.0, "Calls master at 0 silences it");
+        assert_eq!(gain(100, 100, 100), 1.0);
         assert_eq!(
-            gain(100, 0),
+            gain(100, 200, 100),
+            percent_to_gain(200),
+            "the notch goes to 200 %"
+        );
+        assert_eq!(gain(50, 100, 100), percent_to_gain(50));
+        assert_eq!(
+            gain(100, 100, 0),
             percent_to_gain(10),
             "a sound is never below 10 %"
         );
-        assert_eq!(gain(100, 500), percent_to_gain(200));
+        assert_eq!(gain(100, 100, 500), percent_to_gain(200));
+        assert_eq!(
+            gain(200, 200, 200),
+            crate::voice::mixer::max_gain(),
+            "capped"
+        );
     }
 
     #[test]

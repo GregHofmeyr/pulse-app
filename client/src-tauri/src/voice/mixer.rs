@@ -21,6 +21,20 @@ pub fn percent_to_gain(pct: u16) -> f32 {
     10f32.powf(db / 20.0)
 }
 
+/// The safe maximum for any final gain: one slider at 200 % (+12 dB). A volume-mixer section ×
+/// item × person can't go past it (200 % × 200 % is no louder than 200 %).
+pub fn max_gain() -> f32 {
+    percent_to_gain(200)
+}
+
+/// Several slider percents together (mixer section × item × …): their gains multiplied, capped at `max_gain()`.
+pub fn combined_gain(pcts: &[u16]) -> f32 {
+    pcts.iter()
+        .map(|p| percent_to_gain(*p))
+        .product::<f32>()
+        .min(max_gain())
+}
+
 const KNEE: f32 = 0.8;
 
 /// Identity up to the knee, then a smooth tanh curve towards ±1.0. Boosted voices get louder without
@@ -127,6 +141,7 @@ pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
         cmds: cmds.clone(),
         sources: Mutex::new(HashMap::new()),
         gains: Mutex::new(HashMap::new()),
+        kind_gains: Mutex::new(HashMap::new()),
         generation: AtomicU64::new(0),
         cap,
         pushed: AtomicU64::new(0),
@@ -160,6 +175,9 @@ pub struct MixerInput {
     pub(crate) sources: Mutex<HashMap<String, SourceIn>>,
     /// Volume per (person, kind), kept with no track and across `clear`, so a slider set early applies.
     gains: Mutex<HashMap<(String, SourceKind), f32>>,
+    /// The volume mixer's level per kind (Calls × Voices, Calls × Streams), multiplied into every
+    /// source of that kind. Kept like `gains`; 1.0 until set.
+    kind_gains: Mutex<HashMap<SourceKind, f32>>,
     /// Bumped by `clear` (under the sources lock): pushes for an older room are dropped.
     generation: AtomicU64,
     cap: usize,
@@ -176,6 +194,7 @@ pub(crate) struct SourceIn {
     owner: String,
     kind: SourceKind,
     ring: rtrb::Producer<i16>,
+    /// The person's own volume for this kind (without the kind's mixer level: the meter uses it).
     gain: f32,
     /// Level of what we received (drives the speaking ring: lit = audible).
     meter: Meter,
@@ -203,6 +222,7 @@ impl MixerInput {
             .get(&(owner.to_string(), kind))
             .copied()
             .unwrap_or(1.0);
+        let effective = self.effective(gain, kind);
         // twice the cap: a burst while the speakers reopen is trimmed on their side
         let (tx, rx) = rtrb::RingBuffer::new(2 * self.cap);
         let filled = Arc::new(AtomicUsize::new(0));
@@ -210,7 +230,7 @@ impl MixerInput {
             id: source.to_string(),
             ring: rx,
             filled: filled.clone(),
-            gain,
+            gain: effective,
         });
         sources.insert(
             source.to_string(),
@@ -267,6 +287,7 @@ impl MixerInput {
             .lock()
             .unwrap()
             .insert((owner.to_string(), kind), gain);
+        let effective = self.effective(gain, kind);
         // still under the sources lock: commands reach the speakers in the order sources changed
         let mut cmds = self.cmds.lock().unwrap();
         for (id, s) in sources.iter_mut() {
@@ -274,10 +295,43 @@ impl MixerInput {
                 s.gain = gain;
                 cmds.push(Cmd::Gain {
                     id: id.clone(),
-                    gain,
+                    gain: effective,
                 });
             }
         }
+    }
+
+    /// The volume mixer's level for every source of `kind` (Voices or Streams, each × Calls),
+    /// multiplied into each person's own volume. Kept with no call and across `clear`.
+    pub fn set_kind_gain(&self, kind: SourceKind, gain: f32) {
+        let sources = self.sources.lock().unwrap();
+        self.kind_gains.lock().unwrap().insert(kind, gain);
+        let mut cmds = self.cmds.lock().unwrap();
+        for (id, s) in sources.iter().filter(|(_, s)| s.kind == kind) {
+            cmds.push(Cmd::Gain {
+                id: id.clone(),
+                gain: self.effective(s.gain, kind),
+            });
+        }
+    }
+
+    /// A person's gain with their kind's mixer level, capped at `max_gain()`.
+    fn effective(&self, person: f32, kind: SourceKind) -> f32 {
+        let k = self
+            .kind_gains
+            .lock()
+            .unwrap()
+            .get(&kind)
+            .copied()
+            .unwrap_or(1.0);
+        (person * k).clamp(0.0, max_gain())
+    }
+
+    /// The gain the speakers play `source` at (tests).
+    #[cfg(test)]
+    pub(crate) fn effective_gain(&self, source: &str) -> Option<f32> {
+        let sources = self.sources.lock().unwrap();
+        sources.get(source).map(|s| self.effective(s.gain, s.kind))
     }
 
     /// Stop playing one track. One for an older room is ignored: the same SID may be back.
@@ -1076,6 +1130,69 @@ mod tests {
         let mut out = [0.0f32; 2];
         m.mix_into(&mut out, 1, 1.0);
         assert!((out[0] - 0.25).abs() < 1e-3, "{}", out[0]);
+    }
+
+    #[test]
+    fn combined_gain_multiplies_and_caps() {
+        assert_eq!(combined_gain(&[100, 50]), percent_to_gain(50));
+        assert_eq!(combined_gain(&[0, 200]), 0.0);
+        assert_eq!(combined_gain(&[200, 200]), max_gain(), "200 % x 200 % is capped");
+        assert_eq!(combined_gain(&[]), 1.0);
+    }
+
+    #[test]
+    fn kind_gain_multiplies_each_persons_gain() {
+        let (input, mut m) = alex_mic_and_game();
+        input.set_gain("alex", Voice, 0.5);
+        input.set_kind_gain(Voice, 0.5);
+        assert_eq!(input.effective_gain("TR_mic"), Some(0.25));
+        assert_eq!(input.effective_gain("TR_game"), Some(1.0), "streams untouched");
+        input.push("TR_mic", &[16384; 2]); // 0.5
+        let mut out = [0.0f32; 2];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!((out[0] - 0.125).abs() < 1e-3, "{}", out[0]);
+    }
+
+    #[test]
+    fn stream_kind_gain_leaves_voices_alone() {
+        let (input, _m) = alex_mic_and_game();
+        input.set_kind_gain(Stream, 0.0);
+        assert_eq!(input.effective_gain("TR_game"), Some(0.0));
+        assert_eq!(input.effective_gain("TR_mic"), Some(1.0));
+    }
+
+    #[test]
+    fn kind_gain_set_early_applies_and_survives_a_clear() {
+        let (input, mut m) = mixer(48_000, 200);
+        input.set_kind_gain(Voice, 0.5);
+        input.clear();
+        input.add_source(input.generation(), "TR_mic", "alex", Voice);
+        assert_eq!(input.effective_gain("TR_mic"), Some(0.5));
+        input.push("TR_mic", &[16384; 2]);
+        let mut out = [0.0f32; 2];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!((out[0] - 0.25).abs() < 1e-3, "{}", out[0]);
+    }
+
+    #[test]
+    fn effective_gain_is_capped() {
+        let (input, _m) = alex_mic_and_game();
+        input.set_gain("alex", Voice, percent_to_gain(200));
+        input.set_kind_gain(Voice, percent_to_gain(200));
+        assert_eq!(input.effective_gain("TR_mic"), Some(max_gain()));
+    }
+
+    #[test]
+    fn speaking_meter_ignores_the_kind_gain() {
+        // "Voices 0 %" mutes everyone for you, but the rings still show who's talking
+        let (input, _m) = mixer_with(48_000, 200, &["alex"]);
+        input.set_kind_gain(Voice, 0.0);
+        input.push("alex", &[16384; 480]);
+        let levels = input.take_peer_levels();
+        assert!(
+            levels.iter().any(|(p, l)| p == "alex" && *l > 0.1),
+            "{levels:?}"
+        );
     }
 
     #[test]

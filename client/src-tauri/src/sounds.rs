@@ -116,10 +116,11 @@ pub fn load(set: &str, name: &str) -> Option<Sound> {
 
 const VOLUME: f32 = 0.6;
 
-/// The user's sound volume (0.0-1.0) from a command argument: missing or NaN is full, the rest is clamped.
+/// The volume mixer's linear gain for a sound (section × item) from a command argument: missing or
+/// NaN is full, the rest is clamped to 0..=`max_gain()` (+12 dB).
 pub fn gain(volume: Option<f32>) -> f32 {
     match volume {
-        Some(v) if !v.is_nan() => v.clamp(0.0, 1.0),
+        Some(v) if !v.is_nan() => v.clamp(0.0, crate::voice::mixer::max_gain()),
         _ => 1.0,
     }
 }
@@ -159,7 +160,7 @@ static DEVICES: std::sync::LazyLock<NameCache<cpal::Device>> =
 
 /// Fire-and-forget on a short-lived thread (cpal streams are !Send). A failure only logs a line: sounds are a nicety.
 /// On `output` (a device name from settings; missing or unplugged = the system default).
-/// `volume` (0.0-1.0, clamped) scales the fixed gain; 0 plays nothing.
+/// `volume` (0..=`max_gain()`, clamped) scales the fixed gain; 0 plays nothing.
 pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
     let volume = gain(Some(volume));
     if volume <= 0.0 {
@@ -172,7 +173,6 @@ pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
     spawn_play(
         sound,
         VOLUME * volume,
-        false,
         output,
         crate::logging::one_line(name, 32),
     );
@@ -184,11 +184,11 @@ pub fn play_samples(sound: Sound, volume: f32, output: Option<String>) {
     if volume.is_nan() || volume <= 0.0 {
         return;
     }
-    spawn_play(sound, volume, true, output, "soundboard".to_string());
+    spawn_play(sound, volume, output, "soundboard".to_string());
 }
 
 /// The device lookup and fallback shared by UI sounds and soundboard samples; `volume` is final.
-fn spawn_play(sound: Sound, volume: f32, limit: bool, output: Option<String>, name: String) {
+fn spawn_play(sound: Sound, volume: f32, output: Option<String>, name: String) {
     let _ = std::thread::Builder::new()
         .name("pulse-sound".into())
         .spawn(move || {
@@ -204,14 +204,14 @@ fn spawn_play(sound: Sound, volume: f32, limit: bool, output: Option<String>, na
                 .get(output.as_deref(), exact)
                 .or_else(|| find_device(false, None).ok());
             if let Some(dev) = chosen
-                && play_on(&dev, &sound, volume, limit)
+                && play_on(&dev, &sound, volume)
             {
                 return;
             }
             // the cached device failed (unplugged): forget it, and play on the default instead
             DEVICES.forget();
             let played = output.is_some()
-                && find_device(false, None).is_ok_and(|dev| play_on(&dev, &sound, volume, limit));
+                && find_device(false, None).is_ok_and(|dev| play_on(&dev, &sound, volume));
             if !played {
                 // asked for (the `sound` line) but not heard: tells the two apart in a report
                 tracing::warn!(name, "sound: no output device would play it");
@@ -219,18 +219,15 @@ fn spawn_play(sound: Sound, volume: f32, limit: bool, output: Option<String>, na
         });
 }
 
-/// One output sample at the final gain `volume`. `limit`: soft-limited like the call mixer
-/// (soundboard sounds, boosted up to 200 %); UI sounds are left exactly as they were.
-fn shape(x: f32, volume: f32, limit: bool) -> f32 {
-    if limit {
-        crate::voice::mixer::soft_limit(x * volume)
-    } else {
-        x * volume
-    }
+/// One output sample at the final gain `volume`, soft-limited like the call mixer (the volume mixer
+/// can boost up to +12 dB). Below the knee it is exactly `x * volume`: UI sounds at <= 100 % peak
+/// under it and play as they always did.
+fn shape(x: f32, volume: f32) -> f32 {
+    crate::voice::mixer::soft_limit(x * volume)
 }
 
 /// Play `sound` on `dev` to the end (blocking) at the final linear gain `volume`. False if the device wouldn't open.
-fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32, limit: bool) -> bool {
+fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32) -> bool {
     let Ok(cfg) = dev.default_output_config() else {
         return false;
     };
@@ -248,7 +245,7 @@ fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32, limit: bool) -> bool 
         let a = samples[j.min(samples.len() - 1)];
         let b = samples[(j + 1).min(samples.len() - 1)];
         pos += 1;
-        Some(shape(a + (b - a) * frac, volume, limit))
+        Some(shape(a + (b - a) * frac, volume))
     };
     let stream = crate::voice::devices::build_output(dev, &cfg, move |d: &mut [f32], _| {
         for f in d.chunks_mut(ch) {
@@ -296,16 +293,15 @@ mod tests {
     }
 
     #[test]
-    fn soundboard_samples_are_soft_limited_and_ui_sounds_are_not() {
+    fn every_sound_is_soft_limited_and_quiet_audio_is_untouched() {
         use crate::voice::mixer::soft_limit;
-        // a boosted sound out of a call: bounded like the call mixer, not hard-clipped by the device
-        assert_eq!(shape(0.9, 2.0, true), soft_limit(1.8));
-        assert!(shape(0.9, 2.0, true) <= 1.0);
-        assert!(shape(-0.9, 2.0, true) >= -1.0);
-        assert_eq!(shape(0.3, 1.0, true), 0.3, "quiet audio untouched");
-        // UI sounds stay exactly as they were
-        assert_eq!(shape(0.9, 2.0, false), 1.8);
-        assert_eq!(shape(0.5, 0.4, false), 0.2);
+        // boosted by the mixer (up to +12 dB): bounded like the call mixer, not hard-clipped
+        assert_eq!(shape(0.9, 2.0), soft_limit(1.8));
+        assert!(shape(0.9, 4.0) <= 1.0);
+        assert!(shape(-0.9, 4.0) >= -1.0);
+        // below the knee (every UI sound at <= 100 %: they peak under 0.6) nothing changes
+        assert_eq!(shape(0.3, 1.0), 0.3);
+        assert_eq!(shape(0.5, 0.4), 0.2);
     }
 
     #[test]
@@ -456,8 +452,10 @@ mod tests {
 
     #[test]
     fn gain_clamps() {
+        use crate::voice::mixer::max_gain;
         assert_eq!(gain(None), 1.0);
-        assert_eq!(gain(Some(2.0)), 1.0);
+        assert_eq!(gain(Some(2.0)), 2.0, "the mixer can boost");
+        assert_eq!(gain(Some(9.0)), max_gain(), "capped at the safe maximum");
         assert_eq!(gain(Some(-1.0)), 0.0);
         assert_eq!(gain(Some(f32::NAN)), 1.0);
         assert_eq!(gain(Some(0.5)), 0.5);
