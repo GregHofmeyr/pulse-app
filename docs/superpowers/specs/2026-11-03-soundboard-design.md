@@ -1,7 +1,7 @@
 # Soundboard
 
 Issue #43. Owner's picks (design-check page and a Discord screenshot, 2026-11-03), summarised on the issue.
-**Status: draft for the owner's review.** Custom join sounds wait until the soundboard has proven itself.
+**Status: approved by the owner 2026-11-03.** Custom join sounds wait until the soundboard has proven itself.
 
 ## Why
 

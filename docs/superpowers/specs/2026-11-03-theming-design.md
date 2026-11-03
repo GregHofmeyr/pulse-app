@@ -1,7 +1,7 @@
 # Theming
 
 Issue #42. Built on the colour audit (gitignored ledger `.superpowers/sdd/2026-11-03-theming-audit/audit.md`, plan on
-#42) and the owner's verdicts in the theme lab (2026-11-03). **Status: draft for the owner's review.**
+#42) and the owner's verdicts in the theme lab (2026-11-03). **Status: approved by the owner 2026-11-03.**
 
 ## Why
 
