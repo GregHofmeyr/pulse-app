@@ -17,6 +17,8 @@ export type Draft = {
   colors: string[]
   pronouns: string
   bio: string
+  /** How your name looks everywhere (#47), as typed: trimmed on Save. */
+  displayName: string
 }
 
 export function draftFrom(p: Profile): Draft {
@@ -31,6 +33,8 @@ export function draftFrom(p: Profile): Draft {
     colors: [...p.user.style.colors],
     pronouns: p.card.pronouns ?? '',
     bio: p.card.bio ?? '',
+    // an older server sends none: start from the username, as the migration does
+    displayName: p.user.display_name || p.user.username,
   }
 }
 
@@ -50,12 +54,13 @@ export function toRequest(d: Draft): UpdateProfileRequest {
     style: { font: d.font, colors: [...d.colors] },
     pronouns: orNull(d.pronouns),
     bio: orNull(d.bio),
+    display_name: d.displayName.trim(),
   }
 }
 
 /** You as the draft would make you, name colours lightened as Save will store them. */
 export function previewUser(me: User, d: Draft): User {
-  return { ...me, avatar_hash: d.avatarHash, avatar_still: d.avatarStill, style: { font: d.font, colors: d.colors.map(lightenForName) } }
+  return { ...me, display_name: d.displayName.trim() || me.username, avatar_hash: d.avatarHash, avatar_still: d.avatarStill, style: { font: d.font, colors: d.colors.map(lightenForName) } }
 }
 
 /** The card as the draft would make it. A custom theme pair is kept as picked (spec §4.3). */
@@ -68,6 +73,17 @@ export function previewCard(d: Draft): CardProfile {
     pronouns: orNull(d.pronouns)?.trim() ?? null,
     bio: orNull(d.bio),
   }
+}
+
+/** Most characters in a name (display name or nickname; the server's limit). */
+export const NAME_MAX = 32
+
+/** Why a display name can't be saved, or null if it can (the server's rules, #47). */
+export function nameProblem(name: string): string | null {
+  const n = name.trim()
+  if (!n || charCount(n) > NAME_MAX) return 'Names can be 1 to 32 characters.'
+  if (/\p{Cc}/u.test(n)) return "Names can't contain line breaks or control characters."
+  return null
 }
 
 /** Most characters in pronouns and a bio, and most line breaks in a bio (the server's limits). */

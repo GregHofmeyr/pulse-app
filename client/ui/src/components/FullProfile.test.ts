@@ -15,8 +15,8 @@ import { closeCard, closeFull } from '../lib/profileCard.svelte'
 import type { User } from '../lib/protocol/User'
 import type { Profile } from '../lib/protocol/Profile'
 
-const sam: User = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
-const alex: User = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam: User = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const alex: User = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const profile = (over: Partial<Profile> = {}): Profile => ({
   user: sam,
   card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null },
@@ -132,6 +132,53 @@ describe('FullProfile', () => {
       { server_id: 'S1', name: 'Same', changed_by: 'U2', changed_at: '2026-10-20T00:00:00Z' },
     ] }))
     expect(panel('Name Archive')!.querySelectorAll('li')).toHaveLength(2)
+  })
+
+  describe("in a server: that server's Name Archive, paged (#48)", () => {
+    const row = (name: string | null, by: string, at: string) => ({ name, changed_by: by, changed_at: at })
+    function inServer(pages: Record<string, unknown>) {
+      vi.mocked(invoke).mockImplementation((async (cmd: string, args: { cursor: string | null }) =>
+        cmd === 'name_archive' ? pages[args.cursor ?? 'first'] : undefined) as never)
+      app.state = {
+        ...emptyState(),
+        me: alex,
+        people: { U1: { user: alex, online: true, last_seen_at: null }, U2: { user: sam, online: true, last_seen_at: null } },
+        members: { S1: [{ user: alex, nickname: null }, { user: sam, nickname: 'Big Dog' }] },
+        servers: [{ id: 'S1', name: 'Den' }],
+        profiles: { U2: profile() },
+      } as never
+      cmp = mount(FullProfile, { target: document.body, props: { userId: 'U2', serverId: 'S1', onClose: vi.fn() } })
+      flushSync()
+    }
+
+    it('lists it newest first with the count, resets included, and loads more', async () => {
+      inServer({
+        first: { entries: [row(null, 'U1', '2026-10-21T00:00:00Z'), row('Big Dog', 'U2', '2026-10-20T00:00:00Z')], total: 3, next_cursor: 'c1' },
+        c1: { entries: [row('Pup', 'U1', '2026-10-10T00:00:00Z')], total: 3, next_cursor: null },
+      })
+      await vi.waitFor(() => expect(panel('Name Archive')).toBeDefined())
+      expect(calls('name_archive')[0][1]).toEqual({ serverId: 'S1', userId: 'U2', cursor: null })
+      const p = panel('Name Archive')!
+      expect(p.textContent).toContain('Renamed 3 times')
+      let rows = [...p.querySelectorAll('li')]
+      expect(rows).toHaveLength(2)
+      expect(rows[0].textContent).toContain('Reset')
+      expect(rows[0].textContent).toContain('by alex')
+      expect(rows[1].textContent).toContain('Big Dog')
+      expect(rows[1].textContent).not.toContain('Den') // one server: not named on every row
+      ;[...p.querySelectorAll('button')].find((b) => b.textContent === 'Load more')!.click()
+      await vi.waitFor(() => expect(panel('Name Archive')!.querySelectorAll('li')).toHaveLength(3))
+      rows = [...panel('Name Archive')!.querySelectorAll('li')]
+      expect(rows[2].textContent).toContain('Pup')
+      expect([...panel('Name Archive')!.querySelectorAll('button')].some((b) => b.textContent === 'Load more')).toBe(false)
+    })
+
+    it('no renames: no archive panel', async () => {
+      inServer({ first: { entries: [], total: 0, next_cursor: null } })
+      await vi.waitFor(() => expect(calls('name_archive')).toHaveLength(1))
+      flushSync()
+      expect(panel('Name Archive')).toBeUndefined()
+    })
   })
 
   it('a server you are not in reads "a server"', () => {

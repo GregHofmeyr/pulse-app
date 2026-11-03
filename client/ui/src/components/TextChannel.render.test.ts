@@ -23,7 +23,7 @@ import TextChannel from './TextChannel.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { addHistory, applyEvent, applyReady, emptyState, markHistory, TYPING_TTL_MS } from '../lib/state'
 
-const user = (id: string, username: string): User => ({ id, username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
+const user = (id: string, username: string): User => ({ id, username, display_name: username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const me = user('U1', 'alex')
 const sam = user('U2', 'sam')
 const msg = (id: string, content: string): Message => ({
@@ -42,7 +42,7 @@ describe('TextChannel: rendered messages', () => {
       me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
       channels: [{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }],
       members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: null }] }],
-      dm_members: [], voice: [], people: [{ user: sam, online: true, last_seen_at: null }], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
+      dm_members: [], voice: [], people: [{ user: sam, online: true, last_seen_at: null }], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [],
     })
     app.state = markHistory(addHistory(app.state, 'C1', [msg('M1', 'hi @sam'), msg('M2', 'and @kim'), msg('M3', 'and @jo')]), 'C1', true)
     c = mount(TextChannel, { target: document.body, props: { channelId: 'C1', serverId: 'S1' } })

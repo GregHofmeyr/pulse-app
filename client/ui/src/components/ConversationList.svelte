@@ -3,6 +3,7 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import { app, clock } from '../lib/store.svelte'
+  import { displayName } from '../lib/selectors'
   import ConversationMenu from './ConversationMenu.svelte'
   import { conversations, previewText } from '../lib/conversations'
 
@@ -20,7 +21,7 @@
   const list = $derived(conversations(app.state, clock.nowIso))
   const me = $derived(app.state.me?.id)
   const others = (members: string[]) => members.filter((u) => u !== me)
-  const nameOf = (id: string) => app.state.people[id]?.user.username ?? '?'
+  const nameOf = (id: string) => (app.state.people[id] ? displayName(app.state, null, id) : '?')
   // the row under the pointer: its avatars animate
   let hovered = $state<string | null>(null)
   const over = (id: string) => () => hovered === id

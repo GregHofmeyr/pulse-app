@@ -25,9 +25,9 @@ import QuoteComposer from './QuoteComposer.svelte'
 import { app } from '../lib/store.svelte'
 import { applyEvent, emptyState, holdThread } from '../lib/state'
 
-const alex = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
-const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
-const kim = { id: 'U3', username: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const kim = { id: 'U3', username: 'kim', display_name: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const H = 'a'.repeat(64)
 const S = 'b'.repeat(64)
 

@@ -3,6 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import type { User } from './protocol/User'
 import type { Profile } from './protocol/Profile'
 import type { UpdateProfileRequest } from './protocol/UpdateProfileRequest'
+import type { NameArchivePage } from './protocol/NameArchivePage'
 import type { CropRect } from './crop'
 import type { Server } from './protocol/Server'
 import type { Channel } from './protocol/Channel'
@@ -147,6 +148,12 @@ export const api = {
   uploadEmojiMedia: (bytes: Uint8Array) => invoke<MediaInfo>('upload_emoji_media', bytes),
   getProfile: (userId: string) => invoke<Profile>('get_profile', { userId }),
   updateProfile: (request: UpdateProfileRequest) => invoke<Profile>('update_profile', { request }),
+  /** Someone's nickname in a server (`null` resets it); anyone in the server may. */
+  setNickname: (serverId: string, userId: string, nickname: string | null) => invoke<Member>('set_nickname', { serverId, userId, nickname }),
+  /** The name only you see for someone (`null` clears it). */
+  setPrivateNickname: (userId: string, nickname: string | null) => invoke<void>('set_private_nickname', { userId, nickname }),
+  /** A page of someone's Name Archive in a server, newest first. */
+  nameArchive: (serverId: string, userId: string, cursor: string | null) => invoke<NameArchivePage>('name_archive', { serverId, userId, cursor }),
   /** The raw file is the body; a crop rides in the `x-pulse-crop` header as `x,y,w,h`. */
   uploadAvatar: (bytes: Uint8Array, crop: CropRect | null) => uploadProfileMedia('upload_avatar_media', bytes, crop),
   uploadBanner: (bytes: Uint8Array, crop: CropRect | null) => uploadProfileMedia('upload_banner_media', bytes, crop),

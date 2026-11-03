@@ -140,7 +140,8 @@
   // Everyone in the server can be @mentioned (as in its text channels).
   const mentionables = $derived(mentionablesFor(app.state, channelId))
   const sameNames = keepStable<string>()
-  const mentionNames = $derived(sameNames(mentionables.map((p) => p.name)))
+  // mentions are written as usernames; pills then show the name that applies (MessageItem)
+  const mentionNames = $derived(sameNames(mentionables.map((p) => p.username)))
 
   // `replyToId` stays inside the thread: it's never the quote unless the person picked it.
   function post(text: string, replyToId: string | null) {

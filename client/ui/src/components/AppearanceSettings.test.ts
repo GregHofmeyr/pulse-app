@@ -11,7 +11,7 @@ const cmps: ReturnType<typeof mount>[] = []
 beforeEach(() => {
   localStorage.clear()
   setShowNameStyles(true)
-  app.state = { ...emptyState(), members: { S1: [{ user: { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: 'fredoka', colors: ['#ffc4a3'] } }, nickname: null }] } } as never
+  app.state = { ...emptyState(), members: { S1: [{ user: { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: 'fredoka', colors: ['#ffc4a3'] } }, nickname: null }] } } as never
 })
 afterEach(() => {
   cmps.splice(0).forEach((c) => unmount(c))

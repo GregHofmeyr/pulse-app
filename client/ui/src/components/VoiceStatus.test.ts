@@ -19,7 +19,7 @@ import { startVoiceListening, voice } from '../lib/voice.svelte'
 import { windowFocus } from '../lib/windowFocus.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 
-const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready: Ready = {
   me,
   servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
@@ -28,7 +28,7 @@ const ready: Ready = {
     { id: 'V2', server_id: 'S1', kind: 'voice', name: 'Games', position: 1 },
   ],
   members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-  dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
+  dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [],
 }
 const link = { kind: 'link', rtt_ms: 150, jitter_ms: 4, loss_pct: 0, transport: 'udp', server: 'voice.example.test', version: '1.0.0', history: [[1000, 150]] }
 

@@ -20,8 +20,8 @@ import type { CardProfile } from '../lib/protocol/CardProfile'
 import type { ProfileStats } from '../lib/protocol/ProfileStats'
 
 const BANNER = 'c'.repeat(64)
-const sam: User = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
-const alex: User = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam: User = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const alex: User = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const card = (over: Partial<CardProfile> = {}): CardProfile => ({ banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null, ...over })
 const stats: ProfileStats = { voice_seconds: 9000, member_since: '2026-10-03T00:00:00Z', top_reaction: null, times_renamed: 0 }
 
@@ -68,7 +68,7 @@ describe('ProfileCard', () => {
     expect(el.querySelector('.av')).not.toBeNull()
     expect(el.querySelector('.av')!.getAttribute('style')).toContain('80px')
     expect(el.querySelector('.name')!.textContent).toBe('sam')
-    expect(el.querySelector('.handle')!.textContent).toBe('sam · they/them')
+    expect(el.querySelector('.handle')!.textContent).toBe('@sam · they/them')
     expect(el.querySelector('.bio')!.innerHTML).toContain('<strong>there</strong>')
   })
 
@@ -76,7 +76,7 @@ describe('ProfileCard', () => {
     const el = show()
     expect(el.querySelector('.banner img')).toBeNull()
     expect(el.querySelector('.name')!.textContent).toBe('sam')
-    expect(el.querySelector('.handle')!.textContent).toBe('sam')
+    expect(el.querySelector('.handle')!.textContent).toBe('@sam')
     expect(el.querySelector('.bio')).toBeNull()
   })
 
@@ -130,6 +130,72 @@ describe('ProfileCard', () => {
     expect(name.textContent).toBe('Sammy')
     expect(name.getAttribute('style')).toContain('rgb(255, 196, 163)')
     expect(name.getAttribute('style')).not.toContain('rgb(163, 216, 255)')
+  })
+
+  describe('name layers (#47, #48)', () => {
+    const named = { ...sam, display_name: 'Sam 🎸' }
+    const inServer = (nickname: string | null, privateNick?: string) => {
+      app.state = {
+        ...app.state,
+        people: { ...app.state.people, U2: { user: named, online: true, last_seen_at: null } },
+        members: { S1: [{ user: alex, nickname: null }, { user: named, nickname }] },
+        servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
+        privateNicks: privateNick ? { U2: privateNick } : {},
+      } as never
+    }
+    const button = (el: HTMLElement, text: string) => [...el.querySelectorAll('button')].find((b) => b.textContent?.trim() === text)
+
+    it('shows the name that applies, and the username only as @handle', () => {
+      inServer('Big Dog', 'Sammy')
+      let el = show({ user: named, serverId: 'S1' })
+      expect(el.querySelector('.name')!.textContent).toBe('Big Dog')
+      expect(el.querySelector('.handle')!.textContent).toBe('@sam')
+      unmount(cmp!)
+      el = show({ user: named, serverId: null })
+      expect(el.querySelector('.name')!.textContent).toBe('Sammy')
+      unmount(cmp!)
+      inServer(null)
+      el = show({ user: named, serverId: null })
+      expect(el.querySelector('.name')!.textContent).toBe('Sam 🎸')
+      expect(el.querySelector('.msg')!.getAttribute('placeholder')).toBe('Message @Sam 🎸')
+    })
+
+    it('Change nickname (in a server) and Set private nickname… open the dialog; the card gives way', () => {
+      inServer(null)
+      openCard('U2', 'S1', document.body)
+      let el = show({ user: named, serverId: 'S1' })
+      button(el, 'Change nickname')!.click()
+      expect(profileUi.rename).toEqual({ kind: 'server', userId: 'U2', serverId: 'S1' })
+      expect(profileUi.card).toBeNull()
+      unmount(cmp!)
+      el = show({ user: named, serverId: null })
+      expect(button(el, 'Change nickname')).toBeUndefined() // no server here
+      button(el, 'Set private nickname…')!.click()
+      expect(profileUi.rename).toEqual({ kind: 'private', userId: 'U2' })
+      profileUi.rename = null
+    })
+
+    it('Reset nickname and Clear private nickname act at once', async () => {
+      inServer('Big Dog', 'Sammy')
+      const el = show({ user: named, serverId: 'S1' })
+      button(el, 'Reset nickname')!.click()
+      await tick()
+      expect(calls('set_nickname')).toEqual([['set_nickname', { serverId: 'S1', userId: 'U2', nickname: null }]])
+      button(el, 'Clear private nickname')!.click()
+      await tick()
+      expect(calls('set_private_nickname')).toEqual([['set_private_nickname', { userId: 'U2', nickname: null }]])
+    })
+
+    it('your own card offers your server nickname but no private one; the preview offers nothing', () => {
+      inServer(null)
+      let el = show({ user: alex, serverId: 'S1' })
+      expect(button(el, 'Change nickname')).toBeDefined()
+      expect(button(el, 'Set private nickname…')).toBeUndefined()
+      unmount(cmp!)
+      el = show({ user: named, serverId: 'S1', preview: true })
+      expect(button(el, 'Change nickname')).toBeUndefined()
+      expect(button(el, 'Set private nickname…')).toBeUndefined()
+    })
   })
 
   it('the message box sends to the DM and switches to it', async () => {

@@ -85,7 +85,10 @@
    *  Without `focus` (a Shift-pick in the picker) focus stays where it is and the caret waits in the box. */
   const setText = (r: Snap, focus = true) => void box.setText(r, focus)
 
-  const choose = (name: string) => setText(applyMention(text, caret, name))
+  // a mention is written as the username (what the server reads); the box shows it as a chip with
+  // the name that applies here (#47)
+  const choose = (username: string) => setText(applyMention(text, caret, username))
+  const mentionName = (username: string) => mentionables.find((m) => m.username.toLowerCase() === username.toLowerCase())?.name ?? null
   const chooseEmoji = (e: Std | CustomEmoji) => setText(applyEmoji(text, caret, emojiText(e)))
 
   // `sel` keeps the box's selection while the picker has focus: insert there.
@@ -107,7 +110,7 @@
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault()
         // a pick that doesn't fit isn't made (setText refuses it)
-        void (open ? choose(options[pick].name) : chooseEmoji(emojiOptions[pick]))
+        void (open ? choose(options[pick].username) : chooseEmoji(emojiOptions[pick]))
         return
       }
       if (e.key === 'Escape') {
@@ -151,7 +154,7 @@
     <div class="mentions menu-surface pop-in" role="listbox" aria-label="Mention someone">
       {#each options as o, i (o.id)}
         <button class="menu-item" role="option" aria-selected={i === pick} class:hi={i === pick}
-          onmousedown={(e) => { e.preventDefault(); void choose(o.name) }}><span>@<Name userId={o.id} {serverId} text={o.name} interactive={false} /></span></button>
+          onmousedown={(e) => { e.preventDefault(); void choose(o.username) }}><span>@<Name userId={o.id} {serverId} text={o.name} interactive={false} /></span></button>
       {/each}
     </div>
   {:else if emojiOpen}
@@ -173,7 +176,7 @@
     <div class="replying">Replying to <strong>{replyingTo}</strong>
       <button class="icon-btn icon-btn-xs" aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={13} /></button></div>
   {/if}
-  <EmojiBox bind:this={box} bind:text class="composer-input" label={placeholder} {placeholder}
+  <EmojiBox bind:this={box} bind:text class="composer-input" label={placeholder} {placeholder} mention={mentionName}
     onkeydown={key} oninput={input} onclick={syncCaret} oncaret={(at) => (caret = at)}
     onkeyup={(e) => { if (e.key.startsWith('Arrow') && !shown) syncCaret() }} />
   <button bind:this={emojiBtn} class="emoji-btn" type="button" aria-label="Emoji" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={20} /></button>

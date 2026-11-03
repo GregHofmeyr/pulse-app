@@ -59,6 +59,8 @@ export type AppState = {
   people: Record<string, Person> // userId -> person (presence)
   profiles: Record<string, Profile> // userId -> opened profile (cache)
   roleColors: Record<string, Record<string, string>> // serverId -> userId -> role colour (empty until the roles push)
+  /** userId -> the name you gave them that only you see (from Ready and your own events; never anyone else's). */
+  privateNicks: Record<string, string>
   reads: Record<string, ReadState> // channelId -> your private read point + counts
   mutes: Mute[]
   hidden: Record<string, true> // closed conversations
@@ -106,7 +108,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, profiles: {}, roleColors: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -133,6 +135,8 @@ export function applyReady(s: AppState, r: Ready): AppState {
     history,
     conn: 'connected',
     people: Object.fromEntries(r.people.map((p) => [p.user.id, p])),
+    // absent from older servers
+    privateNicks: Object.fromEntries((r.private_nicknames ?? []).map((p) => [p.user_id, p.nickname])),
     reads: Object.fromEntries(r.read_states.map((x) => [x.channel_id, x])),
     mutes: r.mutes,
     hidden: Object.fromEntries(r.hidden.map((id) => [id, true as const])),
@@ -704,6 +708,15 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const list = s.members[e.d.server_id] ?? []
       if (list.some((m) => m.user.id === e.d.member.user.id)) return s
       return { ...s, members: { ...s.members, [e.d.server_id]: [...list, e.d.member] } }
+    }
+    case 'MemberUpdated': {
+      const list = s.members[e.d.server_id]
+      if (!list?.some((m) => m.user.id === e.d.member.user.id)) return s
+      return { ...s, members: { ...s.members, [e.d.server_id]: list.map((m) => (m.user.id === e.d.member.user.id ? e.d.member : m)) } }
+    }
+    case 'PrivateNicknameChanged': {
+      const { [e.d.target_id]: _old, ...rest } = s.privateNicks
+      return { ...s, privateNicks: e.d.nickname ? { ...rest, [e.d.target_id]: e.d.nickname } : rest }
     }
     case 'Typing': {
       const { channel_id: c, user_id: u } = e.d

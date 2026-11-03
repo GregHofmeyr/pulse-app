@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState } from './state'
-import { roleColorFor, userOf, callRoster, channelsFor, displayName, groupedWith, isLive, isMember, liveIn, mentionablesFor, nameOfIn, typingNames, voiceOccupants } from './selectors'
+import { roleColorFor, userOf, callRoster, channelsFor, displayName, groupedWith, isLive, isMember, liveIn, mentionablesFor, nameOfIn, serverPeople, typingNames, voiceOccupants } from './selectors'
 import type { Message } from './protocol/Message'
 import type { Ready } from './protocol/Ready'
 import type { StreamInfo } from './protocol/StreamInfo'
 
-const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
-const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const r: Ready = {
   me,
   servers: [{ id: 'S1', name: 'Main', icon_hash: null }, { id: 'S2', name: 'Other', icon_hash: null }],
@@ -27,7 +27,7 @@ const r: Ready = {
   latest: [],
   streams: [],
   custom_emoji: [],
-  frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
+  frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [],
 }
 const s = applyReady(emptyState(), r)
 
@@ -55,6 +55,66 @@ describe('selectors', () => {
     expect(displayName(s, 'S1', 'U2')).toBe('Big Dog')
     expect(displayName(s, 'S2', 'U2')).toBe('sam')
     expect(displayName(s, 'S1', 'U404')).toBe('unknown')
+  })
+
+  describe('displayName precedence (#47, #48)', () => {
+    const named = { ...sam, display_name: 'Sam 🎸' }
+    const base = applyReady(emptyState(), {
+      ...r,
+      members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: named, nickname: 'Big Dog' }] }, { server_id: 'S2', members: [{ user: named, nickname: null }] }],
+      people: [{ user: named, online: true, last_seen_at: null }],
+      dm_members: [{ channel_id: 'D1', user_ids: ['U1', 'U2'] }],
+    })
+    const priv = { ...base, privateNicks: { U2: 'Sammy' } }
+
+    it('in a server: server nickname, else private nickname, else display name', () => {
+      expect(displayName(priv, 'S1', 'U2')).toBe('Big Dog')
+      expect(displayName(priv, 'S2', 'U2')).toBe('Sammy')
+      expect(displayName(base, 'S2', 'U2')).toBe('Sam 🎸')
+    })
+
+    it('outside a server (DMs, groups, friends): private nickname, else display name', () => {
+      expect(displayName(priv, null, 'U2')).toBe('Sammy')
+      expect(displayName(base, null, 'U2')).toBe('Sam 🎸')
+    })
+
+    it('a server they are not in: private nickname, else display name, never another server’s nickname', () => {
+      const lonely = { ...base, members: { S1: base.members.S1.filter((m) => m.user.id !== 'U2') } }
+      expect(displayName(lonely, 'S1', 'U2')).toBe('Sam 🎸')
+      expect(displayName({ ...lonely, privateNicks: { U2: 'Sammy' } }, 'S1', 'U2')).toBe('Sammy')
+    })
+
+    it('never shows the username once there is a display name; an older server sends none', () => {
+      expect(displayName(base, null, 'U2')).not.toBe('sam')
+      const old = applyReady(emptyState(), { ...r, people: [{ user: { ...sam, display_name: '' }, online: true, last_seen_at: null }] })
+      expect(displayName(old, null, 'U2')).toBe('sam')
+    })
+
+    it('me: my display name (no private nickname for myself)', () => {
+      const mine = applyReady(emptyState(), { ...r, me: { ...me, display_name: 'Alex A' } })
+      expect(displayName(mine, null, 'U1')).toBe('Alex A')
+    })
+
+    it('MemberUpdated and PrivateNicknameChanged change the shown name live', () => {
+      let t = applyEvent(base, { t: 'MemberUpdated', d: { server_id: 'S1', member: { user: named, nickname: 'Captain' } } }, 0)
+      expect(displayName(t, 'S1', 'U2')).toBe('Captain')
+      t = applyEvent(t, { t: 'PrivateNicknameChanged', d: { user_id: 'U1', target_id: 'U2', nickname: 'Sammy' } }, 0)
+      expect(displayName(t, null, 'U2')).toBe('Sammy')
+      t = applyEvent(t, { t: 'PrivateNicknameChanged', d: { user_id: 'U1', target_id: 'U2', nickname: null } }, 0)
+      expect(displayName(t, null, 'U2')).toBe('Sam 🎸')
+      expect(t.privateNicks).toEqual({})
+    })
+
+    it('Ready loads my private nicknames', () => {
+      const t = applyReady(emptyState(), { ...r, private_nicknames: [{ user_id: 'U2', nickname: 'Sammy' }] })
+      expect(t.privateNicks).toEqual({ U2: 'Sammy' })
+    })
+
+    it('mentionables carry the shown name and every name they can be found by', () => {
+      const st = { ...priv, people: { ...priv.people, U1: { user: me, online: true, last_seen_at: null } } }
+      expect(mentionablesFor(st, 'C1')).toEqual([{ id: 'U2', name: 'Big Dog', username: 'sam', alts: ['Sam 🎸', 'Big Dog', 'Sammy'] }])
+      expect(mentionablesFor(st, 'D1')).toEqual([{ id: 'U2', name: 'Sammy', username: 'sam', alts: ['Sam 🎸', 'Sammy'] }])
+    })
   })
 
   it('voiceOccupants resolves names and flags', () => {
@@ -176,11 +236,22 @@ describe('groupedWith', () => {
   })
 })
 
+describe('serverPeople', () => {
+  it("lists a server's members by the name shown there, findable by every name", () => {
+    const st = { ...s, privateNicks: { U2: 'Sammy' } }
+    expect(serverPeople(st, 'S1')).toEqual([
+      { id: 'U1', name: 'alex', username: 'alex', alts: ['alex'] },
+      { id: 'U2', name: 'Big Dog', username: 'sam', alts: ['sam', 'Big Dog', 'Sammy'] },
+    ])
+    expect(serverPeople(st, 'S2')).toEqual([{ id: 'U2', name: 'Sammy', username: 'sam', alts: ['sam', 'Sammy'] }])
+  })
+})
+
 describe('mentionablesFor', () => {
   it('is everyone but me for a server channel, and the members for a DM', () => {
     const st = { ...s, people: { U1: { user: me, online: true }, U2: { user: sam, online: false } }, dmMembers: { D1: ['U1', 'U2'] } } as unknown as typeof s
-    expect(mentionablesFor(st, 'C1')).toEqual([{ id: 'U2', name: 'sam' }])
-    expect(mentionablesFor(st, 'D1')).toEqual([{ id: 'U2', name: 'sam' }])
+    expect(mentionablesFor(st, 'C1')).toEqual([{ id: 'U2', name: 'Big Dog', username: 'sam', alts: ['sam', 'Big Dog'] }])
+    expect(mentionablesFor(st, 'D1')).toEqual([{ id: 'U2', name: 'sam', username: 'sam', alts: ['sam'] }])
   })
 })
 

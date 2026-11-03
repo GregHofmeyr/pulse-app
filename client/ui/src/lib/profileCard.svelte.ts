@@ -3,8 +3,22 @@
 export type CardTarget = { userId: string; serverId: string | null; anchor: DOMRect; opener: Element }
 export type FullTarget = { userId: string; serverId: string | null }
 
-/** `edit`: your own card asked for Settings → Profile (the shell opens it and clears this). */
-export const profileUi: { card: CardTarget | null; full: FullTarget | null; edit: boolean } = $state({ card: null, full: null, edit: false })
+/** A nickname being changed (#48): someone's in a server, or the private one only you see. */
+export type RenameTarget = { kind: 'server'; userId: string; serverId: string } | { kind: 'private'; userId: string }
+
+/** `edit`: your own card asked for Settings → Profile (the shell opens it and clears this).
+ *  `rename`: the nickname dialog (the shell shows it, above the full profile). */
+export const profileUi: { card: CardTarget | null; full: FullTarget | null; edit: boolean; rename: RenameTarget | null } = $state({ card: null, full: null, edit: false, rename: null })
+
+/** Asks for a nickname. The quick card gives way first (a click in the dialog would close it). */
+export function openRename(target: RenameTarget): void {
+  profileUi.card = null
+  profileUi.rename = target
+}
+
+export function closeRename(): void {
+  profileUi.rename = null
+}
 
 /** Opens the quick card for `userId` next to `el`; the same name or avatar again closes it. */
 export function openCard(userId: string, serverId: string | null, el: Element): void {

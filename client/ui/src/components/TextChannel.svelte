@@ -19,7 +19,7 @@
   import { addHistory, addOlder, appendNewer, markHistory, reachLatest, PAGE, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
   import { liveQoty } from '../lib/quotes'
-  import { groupedWith, keepStable, mentionablesFor, nameOfIn, nextTypingExpiry, typingNames } from '../lib/selectors'
+  import { displayName, groupedWith, keepStable, mentionablesFor, nameOfIn, nextTypingExpiry, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -126,7 +126,8 @@
   const mentionables = $derived(mentionablesFor(app.state, channelId))
   // Same names → same array, so an unrelated event (typing, presence) doesn't re-render every message.
   const sameNames = keepStable<string>()
-  const mentionNames = $derived(sameNames(mentionables.map((p) => p.name)))
+  // mentions are written as usernames; pills then show the name that applies (MessageItem)
+  const mentionNames = $derived(sameNames(mentionables.map((p) => p.username)))
 
   // --- DM/group header ---
   const isPrivate = $derived(channel?.server_id === null)
@@ -439,7 +440,7 @@
       <span class="title"><Name userId={others[0]} serverId={null} text={title} /></span>
     {:else if isPrivate}
       <span class="pile">
-        {#each others.slice(0, 3) as u (u)}<Avatar id={u} name={app.state.people[u]?.user.username ?? '?'} size={22} />{/each}
+        {#each others.slice(0, 3) as u (u)}<Avatar id={u} name={app.state.people[u] ? displayName(app.state, null, u) : '?'} size={22} />{/each}
       </span>
       {#if renaming}
         <!-- svelte-ignore a11y_autofocus -->

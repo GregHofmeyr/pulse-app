@@ -11,10 +11,10 @@ use pulse_protocol::rest::{
     ConfirmClipRequest, CreateDmRequest, CreateEmojiRequest, CustomEmoji, EditClipRequest,
     EditMessageRequest, EditQuoteRequest, Game, GoLiveRequest, HideEmbedRequest, Leaderboard,
     LinkSpeakerRequest, LoginMfaRequest, LoginRequest, MarkReadRequest, MediaInfo, Member, Message,
-    MfaRequired, MuteTarget, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest,
+    MfaRequired, MuteTarget, NameArchivePage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest,
     RecoveryCodesResponse, RegisterRequest, RenameChannelRequest, RenameEmojiRequest,
     ReopenQotyRequest, SearchRequest, SearchResults, SendMessageRequest, Server, SessionResponse,
-    SetClipViewRequest, SetMuteRequest, StartQotyRequest, StreamInfo, StreamRole, StreamSettings,
+    SetClipViewRequest, SetMuteRequest, SetNicknameRequest, StartQotyRequest, StreamInfo, StreamRole, StreamSettings,
     StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
     TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, User,
     VoiceTokenResponse, WatchRequest,
@@ -1125,6 +1125,73 @@ impl Api {
                 .await,
         )
         .await
+    }
+
+    /// Set (or, `None`, reset) someone's nickname in a server.
+    pub async fn set_nickname(
+        &self,
+        token: &str,
+        server: ServerId,
+        user: UserId,
+        nickname: Option<String>,
+    ) -> Result<Member, ApiError> {
+        let url = self.url(&[
+            "servers",
+            &server.to_string(),
+            "members",
+            &user.to_string(),
+            "nickname",
+        ])?;
+        Self::parse(
+            self.http
+                .put(url)
+                .bearer_auth(token)
+                .json(&SetNicknameRequest { nickname })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Set (or, `None`, clear) the name only you see for someone.
+    pub async fn set_private_nickname(
+        &self,
+        token: &str,
+        user: UserId,
+        nickname: Option<String>,
+    ) -> Result<(), ApiError> {
+        let url = self.url(&["me", "private-nicknames", &user.to_string()])?;
+        Self::ok_empty(
+            self.http
+                .put(url)
+                .bearer_auth(token)
+                .json(&SetNicknameRequest { nickname })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A page of someone's Name Archive in a server (`cursor`: the last page's `next_cursor`).
+    pub async fn name_archive(
+        &self,
+        token: &str,
+        server: ServerId,
+        user: UserId,
+        cursor: Option<String>,
+    ) -> Result<NameArchivePage, ApiError> {
+        let url = self.url(&[
+            "servers",
+            &server.to_string(),
+            "members",
+            &user.to_string(),
+            "names",
+        ])?;
+        let mut req = self.http.get(url).bearer_auth(token);
+        if let Some(c) = cursor {
+            req = req.query(&[("cursor", c)]);
+        }
+        Self::parse(req.send().await).await
     }
 
     pub async fn media(&self, token: &str, hash: &str) -> Result<Vec<u8>, ApiError> {
@@ -3423,6 +3490,42 @@ mod tests {
         assert_eq!(read.user.avatar_hash.as_deref(), Some(avatar.hash.as_str()));
         assert_eq!(read.card.pronouns.as_deref(), Some("they/them"));
         assert_eq!(read.card.bio.as_deref(), Some("hi"));
+    }
+
+    #[tokio::test]
+    async fn nicknames_and_the_name_archive_round_trip_through_the_core() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (sam_id, sam) = testing::register(&app, "sam").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let server = api.create_server(&alex, "Main").await.unwrap();
+        api.join_server(&sam, server.id).await.unwrap();
+
+        let m = api
+            .set_nickname(&alex, server.id, sam_id, Some("Sammy".into()))
+            .await
+            .unwrap();
+        assert_eq!(m.nickname.as_deref(), Some("Sammy"));
+        api.set_nickname(&alex, server.id, sam_id, None)
+            .await
+            .unwrap();
+        let page = api
+            .name_archive(&sam, server.id, sam_id, None)
+            .await
+            .unwrap();
+        assert_eq!(page.total, 2);
+        assert_eq!(page.entries[0].name, None);
+        assert_eq!(page.entries[1].name.as_deref(), Some("Sammy"));
+
+        api.set_private_nickname(&alex, sam_id, Some("S".into()))
+            .await
+            .unwrap();
+        api.set_private_nickname(&alex, sam_id, None).await.unwrap();
+        let err = api
+            .set_nickname(&alex, server.id, sam_id, Some("x".repeat(33)))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("1 to 32"), "{err}");
     }
 
     #[tokio::test]

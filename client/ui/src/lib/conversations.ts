@@ -2,6 +2,8 @@
 import type { AppState } from './state'
 import type { Channel } from './protocol/Channel'
 import type { Message } from './protocol/Message'
+import { displayName } from './selectors'
+import { mentionLookup, showMentions } from './mentionStyles'
 
 export function isMuted(s: AppState, ch: Channel, nowIso: string): boolean {
   const active = (kind: 'server' | 'channel', id: string | null) =>
@@ -13,7 +15,7 @@ export function conversationName(s: AppState, channelId: string): string {
   const ch = s.channels[channelId]
   if (ch?.name) return ch.name
   const others = (s.dmMembers[channelId] ?? []).filter((u) => u !== s.me?.id)
-  const names = others.map((u) => s.people[u]?.user.username ?? 'unknown')
+  const names = others.map((u) => displayName(s, null, u))
   return names.join(', ') || 'Just you'
 }
 
@@ -101,10 +103,11 @@ export function relativeTime(iso: string, nowMs: number): string {
 export function previewText(s: AppState, m: Message): { text: string; system: boolean } {
   if (m.deleted) return { text: 'message deleted', system: true }
   if (m.kind === 'system') return { text: m.content, system: true }
-  const line = m.content.replace(/\s+/g, ' ').trim()
+  // mentions as the names you see (never usernames, #47)
+  const line = showMentions(m.content, mentionLookup(s), (id) => displayName(s, null, id)).replace(/\s+/g, ' ').trim()
   if (m.author_id === s.me?.id) return { text: `You: ${line}`, system: false }
   if (s.channels[m.channel_id]?.kind === 'group') {
-    const who = (m.author_id && s.people[m.author_id]?.user.username) || 'someone'
+    const who = m.author_id ? displayName(s, null, m.author_id) : 'someone'
     return { text: `${who}: ${line}`, system: false }
   }
   return { text: line, system: false }

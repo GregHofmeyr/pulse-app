@@ -13,7 +13,7 @@ import { applyEvent, emptyState } from '../lib/state'
 const PIC = 'a'.repeat(64)
 const NEW = 'c'.repeat(64)
 const url = (h: string) => `pulse-media://localhost/${h}`
-const user = (id: string, username: string, avatar_hash: string | null = null) => ({ id, username, avatar_hash, avatar_still: null, style: { font: null, colors: [] } })
+const user = (id: string, username: string, avatar_hash: string | null = null) => ({ id, username, display_name: username, avatar_hash, avatar_still: null, style: { font: null, colors: [] } })
 const card = { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null }
 
 let cmp: ReturnType<typeof mount> | undefined

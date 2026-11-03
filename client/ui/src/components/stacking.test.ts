@@ -13,8 +13,9 @@ function rules(css: string) {
   return [...css.matchAll(/([^{}\n]+)\{([^{}]*)\}/g)].map(([, sel, body]) => ({ sel: sel.trim(), body, z: Number(/z-index:\s*(\d+)/.exec(body)?.[1] ?? NaN) }))
 }
 const zOf = (file: string, sel: string) => rules(files.find((f) => f.name === file)!.css).find((r) => r.sel === sel)!.z
-// Full-window layers that can't hold a name: the quote image viewer shows one picture.
-const NO_NAMES = new Set(['./QuoteItem.svelte .lightbox'])
+// Full-window layers that can't hold a name: the quote image viewer shows one picture; the nickname
+// dialog asks for one, opened from the card (so above it: checked below).
+const NO_NAMES = new Set(['./QuoteItem.svelte .lightbox', './NicknameDialog.svelte .overlay'])
 
 describe('stacking', () => {
   it('the full profile sits above every full-window layer, and the quick card above it', () => {
@@ -28,5 +29,6 @@ describe('stacking', () => {
     expect(layers.length).toBeGreaterThan(10)
     for (const l of layers) expect(full, l.id).toBeGreaterThan(l.z)
     expect(card).toBeGreaterThan(full)
+    expect(zOf('./NicknameDialog.svelte', '.overlay')).toBeGreaterThan(card)
   })
 })

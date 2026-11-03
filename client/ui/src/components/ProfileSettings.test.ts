@@ -17,7 +17,7 @@ import type { Profile } from '../lib/protocol/Profile'
 import type { UpdateProfileRequest } from '../lib/protocol/UpdateProfileRequest'
 import type { MediaInfo } from '../lib/protocol/MediaInfo'
 
-const alex: User = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const alex: User = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const saved = (over: Partial<Profile> = {}): Profile => ({
   user: alex,
   card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: 'they/them', bio: 'hello' },
@@ -237,7 +237,7 @@ describe('ProfileSettings', () => {
     const req = (calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request
     expect(req).toEqual({
       avatar_hash: null, banner_hash: null, theme_top: '#1f7a5a', theme_bottom: '#0f2b3a',
-      style: { font: 'fredoka', colors: ['#000000'] }, pronouns: null, bio: 'hello',
+      style: { font: 'fredoka', colors: ['#000000'] }, pronouns: null, bio: 'hello', display_name: 'alex',
     })
     const stored = saved({
       user: { ...alex, style: { font: 'fredoka', colors: ['#a8a8a8'] } },
@@ -267,6 +267,51 @@ describe('ProfileSettings', () => {
     })
     expect(option('Card theme', 'Berry').getAttribute('aria-checked')).toBe('true')
     expect(state.dirty).toBe(true)
+  })
+
+  describe('display name (#47)', () => {
+    const nameBox = () => document.querySelector<HTMLInputElement>('input[aria-label="Display name"]')!
+    beforeEach(() => { try { localStorage.clear() } catch { /* none */ } })
+
+    it('previews in your name style and saves with the profile', async () => {
+      handlers.update_profile = (a) => saved({ user: { ...alex, display_name: (a as { request: UpdateProfileRequest }).request.display_name! } })
+      await open()
+      expect(nameBox().value).toBe('alex')
+      type(nameBox(), 'Alex 🎸 A')
+      expect(previewName().textContent).toBe('Alex 🎸 A')
+      expect(previewCard().querySelector('.name')!.textContent).toBe('Alex 🎸 A')
+      expect(previewCard().querySelector('.handle')!.textContent).toContain('@alex')
+      click(button('Save'))
+      expect((calls('update_profile')[0][1] as { request: UpdateProfileRequest }).request.display_name).toBe('Alex 🎸 A')
+    })
+
+    it('blank, too long or with a line break: says so and Save is off', async () => {
+      await open()
+      for (const bad of ['   ', 'x'.repeat(33)]) {
+        type(nameBox(), bad)
+        expect(document.querySelector('.name-field [role=alert]')!.textContent).toContain('1 to 32')
+        expect(button('Save').disabled).toBe(true)
+      }
+      type(nameBox(), 'x'.repeat(32))
+      expect(document.querySelector('.name-field [role=alert]')).toBeNull()
+      expect(button('Save').disabled).toBe(false)
+    })
+
+    it('nudges once while your name is still your username, until dismissed', async () => {
+      await open()
+      expect(document.querySelector('.nudge')!.textContent).toContain('Pick how your name looks')
+      click(button('Dismiss'))
+      expect(document.querySelector('.nudge')).toBeNull()
+      unmount(cmp!)
+      cmp = undefined
+      await open()
+      expect(document.querySelector('.nudge')).toBeNull()
+    })
+
+    it('no nudge once you have a display name of your own', async () => {
+      await open(saved({ user: { ...alex, display_name: 'Alex A' } }))
+      expect(document.querySelector('.nudge')).toBeNull()
+    })
   })
 
   it('Reset restores the saved profile', async () => {

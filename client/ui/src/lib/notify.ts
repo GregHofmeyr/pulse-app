@@ -5,6 +5,7 @@ import type { Channel } from './protocol/Channel'
 import type { Message } from './protocol/Message'
 import { conversationName, shouldAlert, type AlertInput } from './conversations'
 import { displayName } from './selectors'
+import { mentionLookup, showMentions } from './mentionStyles'
 import { TOKEN_RE } from './emoji'
 
 /** What the core shows; a click comes back with `channelId` and `threadId`. */
@@ -26,7 +27,9 @@ function graphemes(s: string): string[] {
 export function notifyMessage(s: AppState, v: AlertInput, prefs: NotifyPrefs, more = 0): Notice | null {
   if (!prefs.enabled || v.focused || !shouldAlert(v)) return null
   const m = v.message
-  const n: Notice = { title: notificationTitle(s, m, v.channel, more), body: notificationBody(m, v.me, prefs.showText), channelId: m.channel_id }
+  // mentions as the names you see there (never usernames, #47)
+  const shown = { ...m, content: showMentions(m.content, mentionLookup(s), (id) => displayName(s, v.channel.server_id, id)) }
+  const n: Notice = { title: notificationTitle(s, m, v.channel, more), body: notificationBody(shown, v.me, prefs.showText), channelId: m.channel_id }
   if (m.thread_root_id) n.threadId = m.thread_root_id
   return n
 }

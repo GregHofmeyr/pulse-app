@@ -18,7 +18,7 @@ let cmp: ReturnType<typeof mount> | undefined
 const onSend = vi.fn()
 type Box = HTMLElement
 function show(draftKey = `K${Math.random()}`) {
-  const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+  const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
   app.state = {
     ...emptyState(), me,
     servers: [{ id: 'S1', name: 'Main', icon_hash: null }, { id: 'S2', name: 'Other', icon_hash: null }],
@@ -669,11 +669,11 @@ describe('Composer emoji', () => {
 
 describe('Composer mentions', () => {
   it('autocomplete rows show styled names', () => {
-    const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: 'fredoka', colors: ['#ffc4a3'] } }
+    const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: 'fredoka', colors: ['#ffc4a3'] } }
     app.state = { ...emptyState(), members: { S1: [{ user: sam, nickname: null }] } }
     cmp = mount(Composer, {
       target: document.body,
-      props: { placeholder: 'Message', draftKey: `K${Math.random()}`, replyingTo: null, onCancelReply: () => {}, onSend, onTyping: () => {}, mentionables: [{ id: 'U2', name: 'sam' }], serverId: 'S1' },
+      props: { placeholder: 'Message', draftKey: `K${Math.random()}`, replyingTo: null, onCancelReply: () => {}, onSend, onTyping: () => {}, mentionables: [{ id: 'U2', name: 'sam', username: 'sam', alts: ['sam'] }], serverId: 'S1' },
     })
     flushSync()
     const box = document.querySelector<HTMLElement>('[role="textbox"]')!
@@ -685,5 +685,29 @@ describe('Composer mentions', () => {
     expect(name.tagName).toBe('SPAN')
     expect(name.getAttribute('style')).toContain('Fredoka')
     expect(name.getAttribute('style')).toContain('rgb(255, 196, 163)')
+  })
+
+  // #47/#48: found by any name, offered and shown as the name that applies, written as the username.
+  it('finds people by any name, inserts a chip with the shown name, and sends the username', async () => {
+    const sam = { id: 'U2', username: 'sam', display_name: 'Sam 🎸', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    app.state = { ...emptyState(), members: { S1: [{ user: sam, nickname: 'Big Dog' }] } }
+    cmp = mount(Composer, {
+      target: document.body,
+      props: { placeholder: 'Message', draftKey: `K${Math.random()}`, replyingTo: null, onCancelReply: () => {}, onSend, onTyping: () => {}, mentionables: [{ id: 'U2', name: 'Big Dog', username: 'sam', alts: ['Sam 🎸', 'Big Dog'] }], serverId: 'S1' },
+    })
+    flushSync()
+    const box = document.querySelector<HTMLElement>('[role="textbox"]')!
+    box.focus()
+    type(box, 'hi @dog')
+    const opt = document.querySelector<HTMLElement>('[role=listbox][aria-label="Mention someone"] [role=option]')!
+    expect(opt.textContent).toBe('@Big Dog')
+    opt.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true }))
+    await tick()
+    const chip = box.querySelector<HTMLElement>('.mention-chip')!
+    expect(chip.textContent).toBe('@Big Dog')
+    expect(box.textContent).not.toContain('sam')
+    box.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true, cancelable: true }))
+    await tick()
+    expect(onSend).toHaveBeenLastCalledWith('hi @sam')
   })
 })

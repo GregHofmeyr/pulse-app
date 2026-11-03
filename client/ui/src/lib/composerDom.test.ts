@@ -100,3 +100,49 @@ describe('composer DOM', () => {
     expect(imgs[0].dataset.anim).toBeUndefined()
   })
 })
+
+// #47/#48: a mention is written as `@username` (what the server reads) but the box shows the name
+// that applies here, as one chip, never the username.
+describe('mention chips', () => {
+  const shown = (u: string) => ({ sam: 'Big Dog', kim: 'Kim 🌸' } as Record<string, string>)[u.toLowerCase()] ?? null
+  it('shows a known @username as a chip with the shown name, and serializes back to the username', () => {
+    const el = box()
+    const text = 'hey @sam and @Kim, not @nobody or a@sam.com <:pog:1>'
+    renderInto(el, text, lookup, shown)
+    const chips = el.querySelectorAll<HTMLElement>('.mention-chip')
+    expect([...chips].map((c) => c.textContent)).toEqual(['@Big Dog', '@Kim 🌸'])
+    expect(chips[0].dataset.token).toBe('@sam')
+    expect(chips[1].dataset.token).toBe('@Kim')
+    expect(chips[0].getAttribute('contenteditable')).toBe('false')
+    expect(el.textContent).not.toContain('@sam ')
+    expect(el.textContent).toContain('@nobody')
+    expect(serialize(el)).toBe(text)
+  })
+
+  it('leaves mentions inside inline code as text', () => {
+    const el = box()
+    renderInto(el, 'run `@sam` now @sam', lookup, shown)
+    expect(el.querySelectorAll('.mention-chip')).toHaveLength(1)
+    expect(serialize(el)).toBe('run `@sam` now @sam')
+  })
+
+  it('a trailing dot is not part of the name', () => {
+    const el = box()
+    renderInto(el, 'thanks @sam.', lookup, shown)
+    expect(el.querySelector<HTMLElement>('.mention-chip')!.dataset.token).toBe('@sam')
+    expect(serialize(el)).toBe('thanks @sam.')
+  })
+
+  it('caret offsets count the username a chip stands for', () => {
+    const el = box()
+    renderInto(el, 'a @sam b', lookup, shown)
+    const chip = el.querySelector('.mention-chip')!
+    // inside the username snaps to just after the chip ('a @sam' is 6)
+    const inside = positionAt(el, 4)
+    expect(inside.node).toBe(el)
+    expect(el.childNodes[inside.offset - 1]).toBe(chip)
+    expect(offsetOf(el, inside.node, inside.offset)).toBe(6)
+    const after = positionAt(el, 7)
+    expect(offsetOf(el, after.node, after.offset)).toBe(7)
+  })
+})

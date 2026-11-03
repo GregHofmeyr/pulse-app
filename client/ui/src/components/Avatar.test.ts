@@ -115,7 +115,7 @@ describe('Avatar', () => {
       mountAv({}, { avatar_hash: A, avatar_still: S })
       expect(watching()).toEqual(['pointercancel', 'pointerenter', 'pointerleave', 'pointerup'])
       // it stops once the picture no longer animates
-      app.state = applyEvent(app.state, { t: 'ProfileUpdated', d: { user: { id: 'U2', username: 'sam', avatar_hash: A, avatar_still: null, style: { font: null, colors: [] } }, card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null } } }, 0)
+      app.state = applyEvent(app.state, { t: 'ProfileUpdated', d: { user: { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: A, avatar_still: null, style: { font: null, colors: [] } }, card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null } } }, 0)
       flushSync()
       expect(watching()).toEqual([])
     } finally {
@@ -125,7 +125,7 @@ describe('Avatar', () => {
   })
   it('a hover is forgotten when the picture stops animating', () => {
     const update = (avatar_still: string | null) => {
-      app.state = applyEvent(app.state, { t: 'ProfileUpdated', d: { user: { id: 'U2', username: 'sam', avatar_hash: A, avatar_still, style: { font: null, colors: [] } }, card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null } } }, 0)
+      app.state = applyEvent(app.state, { t: 'ProfileUpdated', d: { user: { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: A, avatar_still, style: { font: null, colors: [] } }, card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null } } }, 0)
       flushSync()
     }
     mountAv({}, { avatar_hash: A, avatar_still: S })
@@ -146,7 +146,7 @@ describe('Avatar', () => {
     const N = 'c'.repeat(64)
     mountAv({ place: 'card' }, { avatar_hash: A, avatar_still: null })
     expect(document.querySelector('img')!.getAttribute('src')).toBe(url(A))
-    app.state = applyEvent(app.state, { t: 'ProfileUpdated', d: { user: { id: 'U2', username: 'sam', avatar_hash: N, avatar_still: null, style: { font: null, colors: [] } }, card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null } } }, 0)
+    app.state = applyEvent(app.state, { t: 'ProfileUpdated', d: { user: { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: N, avatar_still: null, style: { font: null, colors: [] } }, card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null } } }, 0)
     flushSync()
     expect(document.querySelector('img')!.getAttribute('src')).toBe(url(N))
   })

@@ -12,7 +12,7 @@
   import { app, loadProfile } from '../lib/store.svelte'
   import { setProfile } from '../lib/state'
   import { api, errorText } from '../lib/tauri'
-  import { BIO_LINE_BREAKS_MAX, BIO_MAX, charCount, draftFrom, editsSince, isDirty, normalBio, previewCard, previewUser, PRONOUNS_MAX, toRequest, type Draft } from '../lib/profileDraft'
+  import { BIO_LINE_BREAKS_MAX, BIO_MAX, charCount, draftFrom, editsSince, isDirty, nameProblem, normalBio, previewCard, previewUser, PRONOUNS_MAX, toRequest, type Draft } from '../lib/profileDraft'
   import { radioKeys } from '../lib/actions'
   import { presetFor, THEME_PRESETS } from '../lib/cardTheme'
   import { NAME_FONTS } from '../lib/nameFonts'
@@ -77,7 +77,28 @@
   const bioOver = $derived(bioLength > BIO_MAX)
   const bioBreaksOver = $derived((bio.match(/\n/g)?.length ?? 0) > BIO_LINE_BREAKS_MAX)
   const pronounsOver = $derived(!!draft && charCount(draft.pronouns.trim()) > PRONOUNS_MAX)
-  const invalid = $derived(bioOver || bioBreaksOver || pronounsOver)
+  const nameError = $derived(draft ? nameProblem(draft.displayName) : null)
+  const invalid = $derived(bioOver || bioBreaksOver || pronounsOver || !!nameError)
+  // Accounts from before display names have their username as one: nudge once (#47), until dismissed.
+  const NUDGE_KEY = (id: string) => `pulse.nameNudgeDismissed.${id}`
+  let nudgeGone = $state(false)
+  const nudge = $derived.by(() => {
+    const u = profile?.user
+    if (!me || !u || nudgeGone || (u.display_name && u.display_name !== u.username)) return false
+    try {
+      return localStorage.getItem(NUDGE_KEY(me.id)) === null
+    } catch {
+      return true
+    }
+  })
+  function dismissNudge() {
+    nudgeGone = true
+    try {
+      if (me) localStorage.setItem(NUDGE_KEY(me.id), '1')
+    } catch {
+      // no storage: it stays dismissed until Settings closes
+    }
+  }
 
   function take(p: Profile) {
     profile = p
@@ -248,6 +269,19 @@
   {:else}
     <div class="layout">
       <div class="settings">
+        {#if nudge}
+          <div class="nudge" role="note">
+            <span><strong>Pick how your name looks.</strong> Capitals, spaces and emoji are all fine; your username stays for signing in.</span>
+            <button type="button" class="btn btn-secondary" onclick={dismissNudge}>Dismiss</button>
+          </div>
+        {/if}
+        <div class="settings-field name-field">
+          <span class="settings-label">Display name</span>
+          <!-- counted in characters, as the server counts -->
+          <input class="input text" type="text" aria-label="Display name" aria-invalid={!!nameError} bind:value={draft.displayName} />
+          {#if nameError}<p class="error" role="alert">{nameError}</p>{:else}<small>How your name shows everywhere. Not unique: your @{me.username} tells you apart.</small>{/if}
+        </div>
+
         {@render picture('avatar', 'Avatar', draft.avatarHash)}
         {@render picture('banner', 'Banner', draft.bannerHash)}
 
@@ -324,9 +358,9 @@
       <div class="preview" aria-label="Preview">
         <ProfileCard user={pu} card={pc} badges={profile.badges} stats={profile.stats} serverId={null} preview />
         <div class="line">
-          <Avatar id={me.id} name={me.username} user={pu} size={36} />
+          <Avatar id={me.id} name={pu.display_name} user={pu} size={36} />
           <div class="said">
-            <Name userId={me.id} serverId={null} user={pu} text={me.username} interactive={false} />
+            <Name userId={me.id} serverId={null} user={pu} text={pu.display_name} interactive={false} />
             <p>Looking good!</p>
           </div>
         </div>
@@ -373,6 +407,8 @@
   input[type='color'] { width: 44px; height: 30px; padding: 0 2px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; cursor: pointer; }
   .settings-field :global(.bio) { min-height: 72px; max-height: 160px; overflow-y: auto; padding: 8px 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--bg-1); white-space: pre-wrap; }
   .counter { align-self: flex-end; }
+  .nudge { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); color: var(--text); font-size: 13px; }
+  .nudge span { flex: 1; }
   .counter.over { color: var(--danger-text); font-weight: 600; }
   .line { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 12px; background: var(--bg-2); }
   .said { min-width: 0; display: flex; flex-direction: column; font-weight: 600; }

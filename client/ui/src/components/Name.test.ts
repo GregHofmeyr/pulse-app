@@ -11,7 +11,7 @@ import { profileUi, closeCard } from '../lib/profileCard.svelte'
 import { appearance } from '../lib/appearance.svelte'
 
 let cmp: ReturnType<typeof mount> | undefined
-const user = (style: { font: string | null; colors: string[] }) => ({ id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style })
+const user = (style: { font: string | null; colors: string[] }) => ({ id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style })
 function setup(style: { font: string | null; colors: string[] }, roleColor?: string) {
   app.state = {
     ...emptyState(),

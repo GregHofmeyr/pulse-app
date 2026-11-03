@@ -15,6 +15,7 @@
   import { hasNewReplies, nameKey, speakerOf } from '../lib/quotes'
   import { blockedReason, pickAdds, react } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
+  import { serverPeople } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
   import type { LineMedia } from '../lib/protocol/LineMedia'
@@ -57,9 +58,7 @@
   const when = $derived(new Date(message.created_at).toLocaleString([], { dateStyle: 'medium', timeStyle: 'short' }))
   // A quote carries one reaction per person: suggest the first three of your usual picks it doesn't have yet.
   const suggest = $derived(app.state.frequentEmoji.filter((k) => !message.reactions.some((r) => r.emoji === k) && !blockedReason(app.state, k)).slice(0, 3))
-  const members = $derived(
-    (app.state.members[serverId] ?? []).map((m) => ({ id: m.user.id, name: m.nickname ?? m.user.username })),
-  )
+  const members = $derived(serverPeople(app.state, serverId))
 
   const inlineError = new InlineError()
   const showError = inlineError.show

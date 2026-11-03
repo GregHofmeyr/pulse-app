@@ -8,7 +8,7 @@ use pulse_protocol::ids::{ChannelId, GameId, LineId, MessageId, QotyEventId, Ser
 use pulse_protocol::rest::{
     Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji, EditClipRequest,
     EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest, MediaInfo, Member, Message,
-    MuteTarget, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse, SearchRequest,
+    MuteTarget, NameArchivePage, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse, SearchRequest,
     SearchResults, Server, SetMuteRequest, StartQotyRequest, TwoFactorEnabledResponse,
     TwoFactorStatus, UpdateProfileRequest, User,
 };
@@ -1538,6 +1538,50 @@ pub async fn update_profile(
 ) -> Result<Profile, ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.update_profile(&token, &request).await)
+}
+
+#[tauri::command]
+pub async fn set_nickname(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    user_id: UserId,
+    nickname: Option<String>,
+) -> Result<Member, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_nickname(&token, server_id, user_id, nickname).await,
+    )
+}
+
+#[tauri::command]
+pub async fn set_private_nickname(
+    app: AppHandle,
+    core: State<'_, Core>,
+    user_id: UserId,
+    nickname: Option<String>,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.set_private_nickname(&token, user_id, nickname).await,
+    )
+}
+
+#[tauri::command]
+pub async fn name_archive(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    user_id: UserId,
+    cursor: Option<String>,
+) -> Result<NameArchivePage, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.name_archive(&token, server_id, user_id, cursor).await,
+    )
 }
 
 /// The `x-pulse-crop` header is `x,y,w,h` (ASCII digits only); absent means no crop.

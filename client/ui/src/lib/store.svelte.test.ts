@@ -50,12 +50,12 @@ describe('app store', () => {
 })
 
 describe('unsent messages in the store', () => {
-  const user = (id: string, username: string) => ({ id, username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
+  const user = (id: string, username: string) => ({ id, username, display_name: username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
   const ready = (me = user('U1', 'alex')): Ready => ({
     me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
     channels: [{ id: 'C1', server_id: 'S1', kind: 'text', name: 'general', position: 0 }],
     members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
+    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [],
   })
   const unsent = (nonce: string, status: Pending['status'] = 'pending'): Pending => ({ nonce, content: `text ${nonce}`, reply_to_id: null, thread_root_id: null, status, created_at: '2026-10-01T00:00:00.000Z' })
   const stored = (id: string) => JSON.parse(localStorage.getItem(`pulse.unsent.${id}`) ?? 'null')
@@ -144,7 +144,7 @@ describe('queueMessage', () => {
 
 describe('loadProfile', () => {
   const profile = (id: string) => ({
-    user: { id, username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } },
+    user: { id, username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } },
     card: { banner_hash: null, banner_still: null, theme_top: '#3a3d46', theme_bottom: '#16171b', pronouns: null, bio: null },
     stats: { voice_seconds: 0, member_since: '2026-01-01T00:00:00Z', top_reaction: null, times_renamed: 0 },
     badges: [], name_archive: [],
@@ -206,9 +206,9 @@ describe('loadProfile', () => {
     let resolve!: (p: unknown) => void
     vi.mocked(invoke).mockImplementation((() => new Promise((r) => (resolve = r))) as never)
     const load = loadProfile('U2')
-    const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
     handleReady({
-      me, servers: [], channels: [], members: [], dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
+      me, servers: [], channels: [], members: [], dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [],
     } as Ready)
     resolve(profile('U2'))
     await load

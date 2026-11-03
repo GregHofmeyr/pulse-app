@@ -29,7 +29,7 @@ author_id: UserId | null, mentions: Array<UserId>,
 /**
  * Set when the deleted message was a reply: the quote whose thread it was in.
  */
-thread_root_id: MessageId | null, } } | { "t": "ChannelCreated", "d": { channel: Channel, } } | { "t": "ServerCreated", "d": { server: Server, } } | { "t": "MemberJoined", "d": { server_id: ServerId, member: Member, } } | { "t": "Typing", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceJoined", "d": { channel_id: ChannelId, user_id: UserId, 
+thread_root_id: MessageId | null, } } | { "t": "ChannelCreated", "d": { channel: Channel, } } | { "t": "ServerCreated", "d": { server: Server, } } | { "t": "MemberJoined", "d": { server_id: ServerId, member: Member, } } | { "t": "MemberUpdated", "d": { server_id: ServerId, member: Member, } } | { "t": "PrivateNicknameChanged", "d": { user_id: UserId, target_id: UserId, nickname: string | null, } } | { "t": "Typing", "d": { channel_id: ChannelId, user_id: UserId, } } | { "t": "VoiceJoined", "d": { channel_id: ChannelId, user_id: UserId, 
 /**
  * The joiner's current mute/deafen (they may have declared it before the join landed).
  */

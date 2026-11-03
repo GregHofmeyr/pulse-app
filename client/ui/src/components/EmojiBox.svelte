@@ -27,6 +27,7 @@
     oninput,
     oncaret,
     describedby,
+    mention,
   }: {
     text?: string
     /** The box's accessible name. */
@@ -46,6 +47,9 @@
     /** After the box changed `text` itself (`setText`: a paste, cut, drop, undo, a new line), with
      *  where the caret went (typing reports through `oninput`). */
     oncaret?: (caret: number) => void
+    /** A username -> the name shown for them here, or null for nobody known: known `@username`
+     *  mentions show as chips with that name (#47). Without it, mentions stay text. */
+    mention?: (username: string) => string | null
     /** Id of what describes the box (e.g. its keys). */
     describedby?: string
   } = $props()
@@ -91,7 +95,7 @@
   const lookup = (id: string) => app.state.customEmoji[id]
   function render(next: string) {
     unwire.forEach((u) => u())
-    unwire = renderInto(box, next, lookup).flatMap((img) =>
+    unwire = renderInto(box, next, lookup, mention).flatMap((img) =>
       img.dataset.anim ? [wireEmoji(img, mediaUrl(img.dataset.anim), img.getAttribute('src') ?? '')] : [],
     )
   }
@@ -327,4 +331,6 @@
      line before it is for engines without that syntax (they drop the second line) */
   .box.empty::before { content: attr(data-placeholder); content: attr(data-placeholder) / ''; color: var(--text-3); pointer-events: none; }
   .box :global(img.emoji) { width: 22px; height: 22px; vertical-align: -5px; margin: 0 1px; object-fit: contain; }
+  /* a mention: one piece, showing the name that applies (its text is the username) */
+  .box :global(.mention-chip) { color: var(--accent); background: var(--accent-soft); border-radius: 4px; padding: 0 3px; font-weight: 600; white-space: nowrap; user-select: all; }
 </style>

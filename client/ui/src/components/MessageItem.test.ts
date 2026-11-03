@@ -459,7 +459,7 @@ describe('MessageItem names and avatars', () => {
   const A = 'a'.repeat(64)
   const S = 'b'.repeat(64)
   const url = (h: string) => `pulse-media://localhost/${h}`
-  const u = (id: string, username: string, over: object = {}) => ({ id, username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] }, ...over })
+  const u = (id: string, username: string, over: object = {}) => ({ id, username, display_name: username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] }, ...over })
   function showStyled(content: string, alexOver: object = {}, mentionNames: string[] = []) {
     const m = msg({ content })
     const alex = u('U1', 'alex', alexOver)
@@ -535,6 +535,24 @@ describe('MessageItem names and avatars', () => {
     appearance.showNameStyles = false
     flushSync()
     expect(document.querySelector<HTMLElement>('.content .mention')!.style.color).toBe('')
+  })
+
+  it('mention pills show the name that applies, never the username, and follow a rename live (#47, #48)', () => {
+    showStyled('hi @sam and @KIM', {}, ['sam', 'kim'])
+    app.state = { ...app.state, members: { S1: [{ user: u('U2', 'sam', { display_name: 'Sam 🎸' }), nickname: 'Big Dog' }] }, privateNicks: { U3: 'Kimmy' } }
+    flushSync()
+    let [sam, kim] = document.querySelectorAll<HTMLElement>('.content .mention')
+    expect(sam.textContent).toBe('@Big Dog')
+    expect(kim.textContent).toBe('@Kimmy')
+    expect(document.querySelector('.content')!.textContent).not.toMatch(/@sam|@KIM/)
+    const named = u('U2', 'sam', { display_name: 'Sam 🎸' })
+    app.state = { ...app.state, people: { ...app.state.people, U2: { user: named, online: true, last_seen_at: null } }, members: { S1: [{ user: named, nickname: null }] } }
+    flushSync()
+    ;[sam] = document.querySelectorAll<HTMLElement>('.content .mention')
+    expect(sam.textContent).toBe('@Sam 🎸')
+    sam.click()
+    flushSync()
+    expect(profileUi.card).toMatchObject({ userId: 'U2' })
   })
 
   it('clicking a mention pill opens that person\'s card; an unknown name does nothing', () => {

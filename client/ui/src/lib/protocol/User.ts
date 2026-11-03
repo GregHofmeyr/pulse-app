@@ -2,7 +2,17 @@
 import type { NameStyle } from "./NameStyle";
 import type { UserId } from "./UserId";
 
-export type User = { id: UserId, username: string, avatar_hash: string | null, 
+export type User = { id: UserId, 
+/**
+ * The login name. Shown only on the profile card; everywhere else shows a display name or
+ * nickname.
+ */
+username: string, 
+/**
+ * How the person's name looks by default (spec name layers: not unique, 1–32 characters).
+ * Absent (empty) from older servers: show the username then.
+ */
+display_name: string, avatar_hash: string | null, 
 /**
  * The first-frame still of an animated avatar (`None` for a still one).
  */

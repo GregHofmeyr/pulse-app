@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { User } from './protocol/User'
 import { contrast, lightenForName, nameCss, NAME_GRADIENTS, NAME_SOLIDS, resolveNameStyle } from './nameStyle'
 
-const user = (font: string | null, colors: string[]): User => ({ id: 'u1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font, colors } }) as User
+const user = (font: string | null, colors: string[]): User => ({ id: 'u1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font, colors } }) as User
 
 describe('nameStyle', () => {
   it('lighten matches the shared vectors', () => {
