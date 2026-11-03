@@ -36,8 +36,11 @@ awards a badge (`user_badges` is never written).
   ring and a numeral.
 - **First earner:** the first person to reach a badge (each tier separately) keeps `first_earner` forever: a faint gold
   border plus a sparkle on the badge.
-- **Rarity:** every badge has a class (Common, Uncommon, Rare, Epic, Legendary, Mythical) chosen by hand, shown on the
-  badge, plus the live share "2 of 8 have this". Hidden badges show as "???" with their rarity until earned.
+- **Rarity:** a class (Common, Uncommon, Rare, Epic, Legendary, Mythical) chosen by hand, shown on the badge, plus the
+  live share "2 of 8 have this". **Static badges have one rarity; tiered badges have a rarity per tier** (owner,
+  2026-11-03: renamed 10× is common, 50× epic, 100× legendary), so a higher tier is also a rarer badge. The ring, the
+  sort order ("rarest first") and the showcase default all use the rarity of the tier reached. Hidden badges show as
+  "???" with their rarity until earned.
 - **Client-reported events.** One badge ("The Doos") needs a signal only the app sees: speaking into a muted mic. The
   client reports it as an event; the server counts it with a rate limit and caps. It's spoofable, which is acceptable
   among friends; no other badge relies on the client.
@@ -60,7 +63,7 @@ awards a badge (`user_badges` is never written).
 
 ## Catalogue (draft: thresholds are proposals to tune)
 
-Rarity in brackets. ⓗ = hidden until earned. Tiers listed as thresholds.
+Rarity in brackets (tiered badges: per tier, tuned on the badge page). ⓗ = hidden until earned. Tiers listed as thresholds.
 
 **Voice**
 - **Night Owl** [Uncommon] — in a voice channel with at least one other person at 03:00 (server's local time zone; owner
@@ -72,7 +75,7 @@ Rarity in brackets. ⓗ = hidden until earned. Tiers listed as thresholds.
 - **The Doos** [Rare] — talked into a muted mic (the "you're muted" detector fired) 10 times. Client-reported.
 
 **Names**
-- **Identity Crisis** [tiers] — renamed by others: 10 / 25 / 50 / 100 times. Reads the Name Archive (#48).
+- **Identity Crisis** [tiers: Common → Uncommon → Epic → Legendary] — renamed by others: 10 / 25 / 50 / 100 times. Reads the Name Archive (#48).
 
 **Chat**
 - **The Yapper** [tiers] — messages sent in servers: 100 / 500 / 1 000 / 5 000 / 10 000.
