@@ -15,7 +15,7 @@ const sam = { id: 'U2', username: 'sam', display_name: 'Sam 🎸', avatar_hash: 
 const calls = (cmd: string) => vi.mocked(invoke).mock.calls.filter((c) => c[0] === cmd)
 
 let cmp: ReturnType<typeof mount> | undefined
-let onClose: ReturnType<typeof vi.fn>
+let onClose: ReturnType<typeof vi.fn<() => void>>
 function show(target: RenameTarget, nickname: string | null = null, privateNick?: string) {
   app.state = {
     ...emptyState(), me: alex,
@@ -24,7 +24,7 @@ function show(target: RenameTarget, nickname: string | null = null, privateNick?
     members: { S1: [{ user: alex, nickname: null }, { user: sam, nickname }] },
     privateNicks: privateNick ? { U2: privateNick } : {},
   } as never
-  onClose = vi.fn()
+  onClose = vi.fn<() => void>()
   cmp = mount(NicknameDialog, { target: document.body, props: { target, onClose } })
   flushSync()
 }

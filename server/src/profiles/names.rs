@@ -89,14 +89,26 @@ mod tests {
 
     #[test]
     fn unicode_line_breaks_and_direction_overrides_are_refused() {
-        for bad in ["a\u{2028}b", "a\u{2029}b", "a\u{202e}b", "a\u{2066}b", "\u{202d}x"] {
+        for bad in [
+            "a\u{2028}b",
+            "a\u{2029}b",
+            "a\u{202e}b",
+            "a\u{2066}b",
+            "\u{202d}x",
+        ] {
             assert!(clean(bad).is_err(), "{bad:?}");
         }
     }
 
     #[test]
     fn a_name_needs_something_you_can_see() {
-        for bad in ["\u{200b}", "\u{200b}\u{feff}", " \u{2060} ", "\u{3164}", "\u{200d}"] {
+        for bad in [
+            "\u{200b}",
+            "\u{200b}\u{feff}",
+            " \u{2060} ",
+            "\u{3164}",
+            "\u{200d}",
+        ] {
             assert!(clean(bad).is_err(), "{bad:?}");
         }
         // joiners inside a visible name are fine
