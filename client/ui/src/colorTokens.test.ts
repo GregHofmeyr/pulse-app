@@ -39,8 +39,12 @@ const rel = (f: string) => f.slice(__dirname.length + 1)
 const LITERAL = /#[0-9a-fA-F]{3,8}\b|\b(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\([^)]*\)/g
 const NAMED = /(?<![-\w$.])(?:white|black|red|green|blue|yellow|orange|purple|pink|gr[ae]y|silver|navy|teal|maroon|olive|lime|aqua|fuchsia)(?![-\w])/g
 const styleBlocks = (text: string) => [...text.matchAll(/<style[^>]*>([\s\S]*?)<\/style>/g)].map((m) => m[1])
+/** The file without comments: `#112` in "Recently deleted (#112)" is an issue, not a colour. Line comments keep a
+ *  preceding `:` (so a URL's `://` stays). */
+const withoutComments = (text: string) =>
+  text.replace(/<!--[\s\S]*?-->/g, '').replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/.*$/gm, '$1')
 const literalsIn = (text: string) => {
-  const found = new Set(text.match(LITERAL) ?? [])
+  const found = new Set(withoutComments(text).match(LITERAL) ?? [])
   // named colours only inside declarations (comments and markup text say "white" too)
   for (const css of styleBlocks(text)) {
     for (const decl of css.replace(/\/\*[\s\S]*?\*\//g, '').match(/:[^;{}]*/g) ?? []) for (const n of decl.match(NAMED) ?? []) found.add(n)
