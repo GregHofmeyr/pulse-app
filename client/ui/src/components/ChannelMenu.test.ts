@@ -40,9 +40,22 @@ const menu = () => document.querySelector<HTMLElement>('[role=menu]')
 const items = () => [...(menu()?.querySelectorAll<HTMLButtonElement>('[role=menuitem]') ?? [])]
 const item = (label: string) => items().find((b) => b.textContent?.trim() === label)
 const labels = () => items().map((b) => b.textContent?.trim())
-function rightClick(name: string) {
-  row(name).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 40, clientY: 50 }))
+function rightClick(name: string, clientX = 40) {
+  row(name).dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX, clientY: 50 }))
   flushSync()
+}
+/** The mute flyout (#131): its own menu, not inside the main one's items. */
+const flyout = () => document.querySelector<HTMLElement>('[role=menu][aria-label^="Mute "]')
+const flyoutLabels = () => [...(flyout()?.querySelectorAll('[role=menuitem]') ?? [])].map((b) => b.textContent?.trim())
+const flyoutItem = (label: string) => [...(flyout()?.querySelectorAll<HTMLButtonElement>('[role=menuitem]') ?? [])].find((b) => b.textContent?.trim() === label)
+const muteItem = () => item('Mute channel')!
+// a pointer arriving: pointerover bubbles, pointerenter doesn't
+const hover = (el: Element) => { el.dispatchEvent(new Event('pointerover', { bubbles: true })); el.dispatchEvent(new Event('pointerenter')); flushSync() }
+const key = (el: Element, k: string) => {
+  const e = new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true })
+  el.dispatchEvent(e)
+  flushSync()
+  return e
 }
 const settle = async () => {
   for (let i = 0; i < 4; i++) await tick()
@@ -65,10 +78,7 @@ describe('a text channel', () => {
   it('right_click_opens_its_menu_at_the_pointer_with_read_mute_rename_and_delete', () => {
     rightClick('old-stuff')
     expect(menu()?.getAttribute('aria-label')).toBe('Actions for #old-stuff')
-    expect(labels()).toEqual([
-      'Mark as read', 'For 15 minutes', 'For 1 hour', 'For 8 hours', 'For 24 hours', 'Until I turn it back on', 'Rename channel…', 'Delete channel…',
-    ])
-    expect(menu()?.textContent).toContain('Mute channel')
+    expect(labels()).toEqual(['Mark as read', 'Mute channel', 'Rename channel…', 'Delete channel…'])
     expect(menu()!.style.left).toBe('40px')
   })
 
@@ -91,7 +101,8 @@ describe('a text channel', () => {
   it('mutes_for_a_length_or_unmutes', async () => {
     const before = Date.now()
     rightClick('general')
-    item('For 15 minutes')!.click()
+    hover(muteItem())
+    flyoutItem('For 15 minutes')!.click()
     await settle()
     const [, args] = invoke.mock.calls.find(([c]) => c === 'set_mute')!
     expect(args.targetKind).toBe('channel')
@@ -101,7 +112,8 @@ describe('a text channel', () => {
 
     render({ mutes: [{ target_kind: 'channel', target_id: 'T1', until: null }] })
     rightClick('general')
-    expect(labels()).not.toContain('For 1 hour')
+    expect(labels()).not.toContain('Mute channel')
+    expect(item('Unmute channel')!.hasAttribute('aria-haspopup')).toBe(false)
     item('Unmute channel')!.click()
     await settle()
     expect(invoke).toHaveBeenCalledWith('clear_mute', { targetKind: 'channel', targetId: 'T1' })
@@ -237,10 +249,95 @@ describe('from the keyboard', () => {
     r.focus()
     r.dispatchEvent(new KeyboardEvent('keydown', { key: 'ContextMenu', bubbles: true, cancelable: true }))
     flushSync()
-    // Mark as read is disabled here: the first item is the first length
-    expect(document.activeElement).toBe(item('For 15 minutes'))
+    // Mark as read is disabled here: the first item is Mute channel
+    expect(document.activeElement).toBe(item('Mute channel'))
     menu()!.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowUp', bubbles: true, cancelable: true }))
     expect(document.activeElement).toBe(item('Delete channel…'))
+  })
+})
+
+describe('the mute flyout', () => {
+  it('mute_channel_is_one_item_that_owns_a_closed_submenu', () => {
+    rightClick('general')
+    const m = muteItem()
+    expect(m.getAttribute('aria-haspopup')).toBe('menu')
+    expect(m.getAttribute('aria-expanded')).toBe('false')
+    expect(flyout()).toBeNull()
+  })
+
+  it('hovering_it_opens_the_durations_to_the_left_and_another_item_closes_them', () => {
+    rightClick('general', 600)
+    hover(muteItem())
+    expect(muteItem().getAttribute('aria-expanded')).toBe('true')
+    expect(flyoutLabels()).toEqual(['For 15 minutes', 'For 1 hour', 'For 8 hours', 'For 24 hours', 'Until I turn it back on'])
+    expect(flyout()!.dataset.side).toBe('left')
+    expect(muteItem().getAttribute('aria-controls')).toBe(flyout()!.id)
+    // hover only: focus stays where it was
+    expect(flyout()!.contains(document.activeElement)).toBe(false)
+    hover(item('Rename channel…')!)
+    expect(flyout()).toBeNull()
+    expect(muteItem().getAttribute('aria-expanded')).toBe('false')
+  })
+
+  it('near_the_left_edge_it_opens_to_the_right', () => {
+    rightClick('general', 40)
+    hover(muteItem())
+    expect(flyout()!.dataset.side).toBe('right')
+  })
+
+  it('arrow_right_or_enter_opens_it_with_focus_on_the_first_duration_and_arrows_move_inside_it', () => {
+    rightClick('general')
+    muteItem().focus()
+    key(muteItem(), 'ArrowRight')
+    expect(document.activeElement).toBe(flyoutItem('For 15 minutes'))
+    key(document.activeElement!, 'ArrowDown')
+    expect(document.activeElement).toBe(flyoutItem('For 1 hour'))
+    key(document.activeElement!, 'ArrowUp')
+    key(document.activeElement!, 'ArrowUp')
+    expect(document.activeElement).toBe(flyoutItem('Until I turn it back on'))
+    key(document.activeElement!, 'Home')
+    expect(document.activeElement).toBe(flyoutItem('For 15 minutes'))
+    key(document.activeElement!, 'End')
+    expect(document.activeElement).toBe(flyoutItem('Until I turn it back on'))
+    key(document.activeElement!, 'ArrowLeft')
+    expect(flyout()).toBeNull()
+    expect(document.activeElement).toBe(muteItem())
+    expect(menu()).not.toBeNull()
+    // Enter is the button's click
+    muteItem().click(); flushSync()
+    expect(document.activeElement).toBe(flyoutItem('For 15 minutes'))
+  })
+
+  it('escape_in_the_flyout_closes_only_the_flyout', () => {
+    rightClick('general')
+    muteItem().focus()
+    key(muteItem(), 'ArrowRight')
+    const e = key(document.activeElement!, 'Escape')
+    expect(e.defaultPrevented).toBe(true)
+    expect(flyout()).toBeNull()
+    expect(menu()).not.toBeNull()
+    expect(document.activeElement).toBe(muteItem())
+  })
+
+  it('picking_a_duration_from_the_keyboard_mutes_and_puts_focus_back_on_the_row', async () => {
+    rightClick('general')
+    muteItem().focus()
+    key(muteItem(), 'ArrowRight')
+    key(document.activeElement!, 'End')
+    ;(document.activeElement as HTMLButtonElement).click()
+    await settle()
+    expect(invoke).toHaveBeenCalledWith('set_mute', { targetKind: 'channel', targetId: 'T1', until: null })
+    expect(menu()).toBeNull()
+    expect(document.activeElement).toBe(row('general'))
+  })
+
+  it('arrow_down_from_mute_channel_moves_on_in_the_main_menu_and_closes_the_flyout', () => {
+    rightClick('general')
+    hover(muteItem())
+    muteItem().focus()
+    key(muteItem(), 'ArrowDown')
+    expect(document.activeElement).toBe(item('Rename channel…'))
+    expect(flyout()).toBeNull()
   })
 })
 

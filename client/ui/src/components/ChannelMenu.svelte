@@ -1,14 +1,15 @@
 <script lang="ts">
   // The right-click menu on a sidebar channel row (or Shift+F10 / the menu key on it). Text, quotes
-  // and clips: mark as read and mute; voice: join or leave. Anyone in the server may rename and
+  // and clips: mark as read and mute (a flyout of durations, #131); voice: join or leave. Anyone in the server may rename and
   // delete (v1 trust model); those two are handed back to the list, which edits in the row and asks
   // in a dialog.
-  import { onMount, untrack } from 'svelte'
+  import { flushSync, onMount, untrack } from 'svelte'
   import { app, clock } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import { clickOutside } from '../lib/actions'
   import { MUTE_FOR, muteUntil } from '../lib/muteDurations'
   import { voice, voiceApi } from '../lib/voice.svelte'
+  import Icon from './Icon.svelte'
   import type { Channel } from '../lib/protocol/Channel'
 
   let { channel, member, x, y, opener, onClose, onRename, onDelete, onJoin, onError }: {
@@ -49,10 +50,65 @@
     focusItem(0)
   })
 
-  const items = () => (el ? [...el.querySelectorAll<HTMLButtonElement>('[data-item]:not(:disabled)')] : [])
+  // the main menu's own items (the flyout's sit inside it, under their own menu)
+  const items = () => (el ? [...el.querySelectorAll<HTMLButtonElement>(':scope > [data-item]:not(:disabled)')] : [])
   function focusItem(i: number) {
     const list = items()
     if (list.length) list[(i + list.length) % list.length].focus()
+  }
+
+  // The mute flyout (Discord's): beside the menu, to the left unless the menu is too near the left edge.
+  // Hover opens it without moving focus; ArrowRight or Enter opens it with focus on its first duration;
+  // ArrowLeft or Escape closes just it, back on Mute channel.
+  const FLYOUT_W = 200
+  const GAP = 4
+  /** Five 32px durations, 2px apart, 6px padding and a 1px border. */
+  const SUB_H = 5 * 32 + 4 * 2 + 2 * 6 + 2
+  const uid = $props.id()
+  const flyoutId = `${uid}-mute`
+  let muteEl = $state<HTMLButtonElement>()
+  let sub = $state<HTMLElement>()
+  let subOpen = $state(false)
+  // `left`: where the menu sits (fixed), not its rectangle, which the entrance scales
+  const subSide = $derived<'left' | 'right'>(left - GAP - FLYOUT_W < 8 ? 'right' : 'left')
+  let subTop = $state(0)
+  const subItems = () => (sub ? [...sub.querySelectorAll<HTMLButtonElement>('[role=menuitem]')] : [])
+  function focusSub(i: number) {
+    const list = subItems()
+    if (list.length) list[(i + list.length) % list.length].focus()
+  }
+  function openSub(focusFirst: boolean) {
+    if (!el || !muteEl) return
+    // level with Mute channel (its first item beside it: the flyout's 6px padding and 1px border), kept
+    // inside the window
+    const want = top + muteEl.offsetTop - 7
+    subTop = Math.max(8, Math.min(want, window.innerHeight - SUB_H - 8)) - top
+    subOpen = true
+    if (focusFirst) {
+      flushSync()
+      focusSub(0)
+    }
+  }
+  function closeSub(refocus: boolean) {
+    if (!subOpen) return
+    subOpen = false
+    if (refocus) muteEl?.focus()
+  }
+  function subKeydown(e: KeyboardEvent) {
+    const list = subItems()
+    const at = list.indexOf(document.activeElement as HTMLButtonElement)
+    switch (e.key) {
+      case 'ArrowDown': focusSub(at + 1); break
+      case 'ArrowUp': focusSub(at < 0 ? -1 : at - 1); break
+      case 'Home': focusSub(0); break
+      case 'End': focusSub(-1); break
+      case 'ArrowLeft': case 'Escape': closeSub(true); break
+      // Tab leaves the whole menu, as in the main one
+      default: return
+    }
+    e.preventDefault()
+    // the main menu (and its Escape-anywhere close) leaves it alone
+    e.stopPropagation()
   }
   function close(restoreFocus: boolean) {
     if (closed) return
@@ -80,6 +136,13 @@
   function keydown(e: KeyboardEvent) {
     const list = items()
     const at = list.indexOf(document.activeElement as HTMLButtonElement)
+    if (e.key === 'ArrowRight' && muteEl && document.activeElement === muteEl) {
+      e.preventDefault()
+      openSub(true)
+      return
+    }
+    if (e.key === 'ArrowLeft') { e.preventDefault(); closeSub(false); return }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) closeSub(false)
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); focusItem(at + 1); break
       case 'ArrowUp': e.preventDefault(); focusItem(at < 0 ? -1 : at - 1); break
@@ -92,7 +155,12 @@
 </script>
 
 <div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Actions for {label}" tabindex="-1" style:left="{left}px" style:top="{top}px"
-  onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
+  onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}
+  onpointerover={(e) => {
+    // another of the menu's own items under the pointer closes the flyout
+    const t = (e.target as Element).closest?.('[data-item]')
+    if (t && t.parentElement === el && t !== muteEl) closeSub(false)
+  }}>
   {#if isVoice}
     {#if inCall}
       <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(report(() => voiceApi.leave()))}>Leave</button>
@@ -104,10 +172,18 @@
     {#if muted}
       <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(report(() => api.clearMute('channel', channel.id)))}>Unmute channel</button>
     {:else}
-      <span class="menu-label">Mute channel</span>
-      {#each MUTE_FOR as d (d.label)}
-        <button type="button" class="menu-item" role="menuitem" data-item onclick={() => pick(report(() => api.setMute('channel', channel.id, muteUntil(d.minutes))))}>{d.label}</button>
-      {/each}
+      <button bind:this={muteEl} type="button" class="menu-item has-sub" class:hi={subOpen} role="menuitem" data-item aria-haspopup="menu" aria-expanded={subOpen}
+        aria-controls={subOpen ? flyoutId : undefined} onpointerenter={() => openSub(false)} onclick={() => openSub(true)}>
+        <span class="grow">Mute channel</span><Icon name={subSide === 'right' ? 'chevronRight' : 'chevronLeft'} size={14} />
+      </button>
+      {#if subOpen}
+        <div bind:this={sub} id={flyoutId} class="flyout menu-surface" data-side={subSide} role="menu" aria-label="Mute {label} for" tabindex="-1"
+          style:top="{subTop}px" onkeydown={subKeydown}>
+          {#each MUTE_FOR as d (d.label)}
+            <button type="button" class="menu-item" role="menuitem" onclick={() => pick(report(() => api.setMute('channel', channel.id, muteUntil(d.minutes))))}>{d.label}</button>
+          {/each}
+        </div>
+      {/if}
     {/if}
   {/if}
   {#if member}
@@ -120,4 +196,10 @@
 <style>
   .menu { position: fixed; z-index: 60; min-width: 220px; max-width: 280px; gap: 2px; outline: none; }
   .menu-item:disabled { color: var(--text-3); cursor: default; }
+  .grow { flex: 1; }
+  .has-sub :global(svg) { color: var(--text-3); }
+  /* beside the menu, past its 1px border, with a small gap the pointer crosses without closing it */
+  .flyout { position: absolute; z-index: 1; width: 200px; gap: 2px; outline: none; }
+  .flyout[data-side='left'] { right: calc(100% + 4px + 1px); }
+  .flyout[data-side='right'] { left: calc(100% + 4px + 1px); }
 </style>
