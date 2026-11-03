@@ -4,6 +4,7 @@
   import { api, errorText } from './lib/tauri'
   import { app, resetState, startListening } from './lib/store.svelte'
   import { startVoiceListening } from './lib/voice.svelte'
+  import { startSoundboardListening } from './lib/soundboard.svelte'
   import { installTooltips } from './lib/tooltip'
   import { watchWindowFocus, windowFocus } from './lib/windowFocus.svelte'
   import type { User } from './lib/protocol/User'
@@ -43,9 +44,11 @@
     let off: (() => void) | undefined
     // Listen before restoring so the first Ready can't slip past us.
     Promise.all([startListening(), startVoiceListening()]).then(async ([unlisten, unlistenVoice]) => {
+      const unlistenSounds = startSoundboardListening()
       off = () => {
         unlisten()
         unlistenVoice()
+        unlistenSounds()
       }
       try {
         const r = await api.restoreSession()

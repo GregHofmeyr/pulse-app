@@ -32,6 +32,7 @@ import type { ClipView } from './protocol/ClipView'
 import type { ClipStorage } from './protocol/ClipStorage'
 import type { SearchRequest } from './protocol/SearchRequest'
 import type { SearchResults } from './protocol/SearchResults'
+import type { Sound } from './protocol/Sound'
 import type { Notice } from './notify'
 import type { EmbedProvider } from './protocol/EmbedProvider'
 
@@ -302,6 +303,27 @@ export const streamCmd = {
   audioMute: (muted: boolean) => invoke<void>('stream_audio_mute', { muted }),
   audioWatch: (channelId: string, streamer: string, on: boolean) => invoke<void>('stream_audio_watch', { channelId, streamer, on }),
   setVolume: (userId: string, pct: number) => invoke<void>('set_stream_volume', { userId, pct }),
+}
+
+/** Soundboard commands. `output` is the chosen output device name (null = default). */
+export type SoundPreview = { duration_ms: number; peaks: number[] }
+export type SoundUpdate = { name?: string; emoji?: string | null; volume?: number }
+export const soundboardCmd = {
+  support: () => invoke<{ can_send: boolean; reason: string | null }>('soundboard_support'),
+  pickFile: () => invoke<string | null>('soundboard_pick_file'),
+  open: (path: string) => invoke<SoundPreview>('soundboard_open', { path }),
+  preview: (path: string, startMs: number, endMs: number, soundPercent: number, soundboardPercent: number, output: string | null) =>
+    invoke<void>('soundboard_preview', { path, startMs, endMs, soundPercent, soundboardPercent, output }),
+  upload: (path: string, startMs: number, endMs: number) => invoke<MediaInfo>('soundboard_upload', { path, startMs, endMs }),
+  play: (hash: string, soundboardPercent: number, soundPercent: number, output: string | null) =>
+    invoke<void>('soundboard_play', { hash, soundboardPercent, soundPercent, output }),
+  create: (serverId: string, name: string, emoji: string | null, mediaHash: string, volume: number) =>
+    invoke<Sound>('create_sound', { serverId, name, emoji, mediaHash, volume }),
+  update: (id: string, request: SoundUpdate) => invoke<Sound>('update_sound', { id, request }),
+  remove: (id: string) => invoke<void>('delete_sound', { id }),
+  list: (serverId: string) => invoke<Sound[]>('list_sounds', { serverId }),
+  playToCall: (id: string) => invoke<void>('play_sound_to_call', { id }),
+  setFavourite: (id: string, on: boolean) => invoke<void>('set_sound_favourite', { id, on }),
 }
 
 /** Tauri rejects with the command's error string. */
