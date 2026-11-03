@@ -3,7 +3,7 @@
   import Icon, { type IconName } from './Icon.svelte'
   import type { Channel } from '../lib/protocol/Channel'
   import { app, clock } from '../lib/store.svelte'
-  import { callRoster, channelsFor, isMember } from '../lib/selectors'
+  import { callRoster, channelsFor, isMember, serverVoiceTip, type Occupant } from '../lib/selectors'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import { api, errorText } from '../lib/tauri'
@@ -48,8 +48,9 @@
   const restOn = (id: string) => { if (member && id !== voiceChannelId) prefetch.enter(id) }
   const mutedForMe = (userId: string) => !!voice.localMutes[userId] && userId !== app.state.me?.id
   /** A voice row is a button: its label is all a screen reader reads, so it carries the state too. */
-  const occupantLabel = (p: { userId: string; name: string; muted: boolean; deafened: boolean }) =>
-    [p.name, mutedForMe(p.userId) && 'muted for you', p.deafened ? 'deafened' : p.muted && 'muted'].filter(Boolean).join(', ')
+  const occupantLabel = (p: Occupant) =>
+    [p.name, mutedForMe(p.userId) && 'muted for you', lowerFirst(serverVoiceTip(app.state, serverId, p)) ?? (p.deafened ? 'deafened' : p.muted && 'muted')].filter(Boolean).join(', ')
+  const lowerFirst = (t: string | null) => (t ? t[0].toLowerCase() + t.slice(1) : null)
   $effect(() => () => prefetch.cancel())
 
   // the voice occupant under the pointer: its avatar animates
@@ -265,7 +266,8 @@
           <LiveBadge channelId={c.id} userId={p.userId} />
           <!-- the row's label says these (a button's content isn't read): the icons are decoration -->
           {#if mutedForMe(p.userId)}<span class="flag for-me" data-tip="Muted for you (they don't know)"><Icon name="speakerOff" size={14} /></span>{/if}
-          {#if p.deafened}<span class="flag" data-tip="Deafened"><Icon name="headphonesOff" size={14} /></span>
+          {#if serverVoiceTip(app.state, serverId, p)}<span class="flag server" data-tip={serverVoiceTip(app.state, serverId, p)}><Icon name={p.serverDeafenedBy ? 'headphonesOff' : 'micOff'} size={12} /></span>
+          {:else if p.deafened}<span class="flag" data-tip="Deafened"><Icon name="headphonesOff" size={14} /></span>
           {:else if p.muted}<span class="flag" data-tip="Muted"><Icon name="micOff" size={14} /></span>{/if}
         {/if}
       </div>
@@ -321,6 +323,8 @@
   @media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 2.4s; } }
   .flag { color: var(--danger-text); display: flex; }
   .flag.for-me { color: var(--warn-text); }
+  /* the server's mute (#140), not theirs: a filled badge */
+  .flag.server { background: var(--danger); color: var(--on-danger); border-radius: 5px; padding: 2px; }
   .row.unread { color: var(--text); font-weight: 600; }
   .row.muted { opacity: .5; }
   .mic { color: var(--text-3); display: grid; }

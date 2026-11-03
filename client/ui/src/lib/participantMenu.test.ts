@@ -24,6 +24,17 @@ describe('menuItems', () => {
   it('self_streaming', () => {
     expect(menuItems(ctx({ self: true, streamingSelf: true }))).toEqual(['mute', 'deafen', 'stop-streaming', 'voice-settings'])
   })
+  it('other_in_a_server_call_can_be_server_muted_deafened_and_disconnected', () => {
+    expect(menuItems(ctx({ serverCall: true }))).toEqual(['volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect'])
+    // whether or not you're in the call yourself
+    expect(menuItems(ctx({ serverCall: true, inCall: false })).slice(-3)).toEqual(['server-mute', 'server-deafen', 'disconnect'])
+    // after the stream items
+    expect(menuItems(ctx({ serverCall: true, live: true })).slice(-4)).toEqual(['watch', 'server-mute', 'server-deafen', 'disconnect'])
+  })
+  it('never_on_yourself_or_in_dm_calls', () => {
+    expect(menuItems(ctx({ serverCall: true, self: true }))).not.toContain('server-mute')
+    expect(menuItems(ctx({ serverCall: false }))).not.toContain('disconnect')
+  })
   it('self_not_in_call_has_no_stream_item', () => {
     expect(menuItems(ctx({ self: true, inCall: false }))).toEqual(['mute', 'deafen', 'voice-settings'])
   })

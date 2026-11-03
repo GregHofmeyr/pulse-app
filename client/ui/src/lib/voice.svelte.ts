@@ -3,7 +3,7 @@ import { invoke } from '@tauri-apps/api/core'
 import { listen } from '@tauri-apps/api/event'
 import type { Event as AppEvent } from './protocol/Event'
 import { streamApi } from './stream/stream.svelte'
-import type { SelfVoice } from './selectors'
+import { displayName, type SelfVoice } from './selectors'
 import { app, onAppEvent } from './store.svelte'
 import { api } from './tauri'
 import { pushCallMixQuietly } from './mixer.svelte'
@@ -37,7 +37,30 @@ export const voice = $state({
   volumes: loadVolumes() as Record<string, number>,
   /** People muted just for you: heard at 0 while the remembered volume is kept. */
   localMutes: loadLocalMutes() as Record<string, true>,
+  /** Who disconnected you from which call (#140), until you join again or dismiss the notice. */
+  disconnectedBy: null as { by: string; channelId: string } | null,
 })
+
+function myHold() {
+  const ch = voice.joining ?? voice.channelId
+  const server = (ch && app.state.channels[ch]?.server_id) || null
+  const me = app.state.me?.id
+  return { server, m: server && me ? app.state.serverVoice?.[server]?.[me] : undefined }
+}
+
+/** The server's mute / deafen of you in the call you're in or joining (none in DM and group calls). */
+export function myServerVoice(): { muted: boolean; deafened: boolean } {
+  const { m } = myHold()
+  return { muted: !!m?.muted_by, deafened: !!m?.deafened_by }
+}
+
+/** Why your own mute / deafen buttons can't open the mic (#140): "Server muted by sam", or null. */
+export function myServerTips(): { mute: string | null; deafen: string | null } {
+  const { server, m } = myHold()
+  const deafen = m?.deafened_by ? `Server deafened by ${displayName(app.state, server, m.deafened_by)}` : null
+  const mute = m?.muted_by ? `Server muted by ${displayName(app.state, server, m.muted_by)}` : deafen
+  return { mute, deafen }
+}
 
 /** You, for a roster: the channel being joined counts as yours from the click, the one being left stops at once. */
 export const selfVoice = (): SelfVoice => ({
@@ -53,7 +76,22 @@ $effect.root(() => {
     const ch = voice.leaving
     if (ch && !(app.state.voice[ch] ?? []).some((m) => m.user_id === app.state.me?.id)) voice.leaving = null
   })
+  // The server's mute / deafen of you (#140) closes the mic and stops playout in the core: hand it over
+  // whenever it differs from what the core last said it holds.
+  $effect(() => {
+    // no call and nothing held: nothing to say (and the store may not be loaded yet at startup)
+    if (!voice.joining && !voice.channelId && !voice.controls.server_muted && !voice.controls.server_deafened) return
+    const want = myServerVoice()
+    if (want.muted !== !!voice.controls.server_muted || want.deafened !== !!voice.controls.server_deafened) {
+      void invoke('set_server_voice', want).catch(() => {})
+    }
+  })
 })
+
+/** Disconnected by someone in the server (#140): keep who, for the notice. */
+function noteDisconnect(e: AppEvent) {
+  if (e.t === 'VoiceDisconnected' && e.d.user_id === app.state.me?.id) voice.disconnectedBy = { by: e.d.by, channelId: e.d.channel_id }
+}
 
 /** The newest join; an older one's result is stale. */
 let joinSeq = 0
@@ -73,6 +111,7 @@ function leaveIfRemoved(e: AppEvent) {
 
 export async function startVoiceListening() {
   const offApp = onAppEvent(leaveIfRemoved)
+  const offDisconnect = onAppEvent(noteDisconnect)
   const offVoice = await listen<VoiceEvent>('voice://event', ({ payload: e }) => {
     voice.stage = reduceStage(voice.stage, e)
     switch (e.kind) {
@@ -131,6 +170,7 @@ export async function startVoiceListening() {
   })
   return () => {
     offApp()
+    offDisconnect()
     offVoice()
   }
 }
@@ -143,6 +183,7 @@ export const voiceApi = {
     if (voice.joining === channelId) return
     voice.error = ''
     voice.stalled = false
+    voice.disconnectedBy = null
     // show the join at once, before the core has answered
     voice.joinFailed = null
     voice.leaving = voice.channelId ?? voice.leaving
@@ -231,6 +272,9 @@ export const voiceApi = {
   },
   dismissFailure() {
     voice.joinFailed = null
+  },
+  dismissDisconnected() {
+    voice.disconnectedBy = null
   },
   /** Levels are only sent while something shows them: call with true when a meter appears, false when it goes. */
   watchMeters(on: boolean) {

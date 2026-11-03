@@ -102,6 +102,23 @@ describe('applyEvent', () => {
     expect(s.voice['V1']).toBeUndefined()
   })
 
+  it('server mutes and deafens come with Ready and follow ServerVoiceChanged (#140)', () => {
+    const sam = { server_id: 'S1', user_id: 'U2', muted_by: 'U1', deafened_by: null }
+    let s = applyReady(emptyState(), ready({ server_voice: [sam] }))
+    expect(s.serverVoice).toEqual({ S1: { U2: sam } })
+    const kim = { server_id: 'S1', user_id: 'U3', muted_by: null, deafened_by: 'U2' }
+    s = applyEvent(s, { t: 'ServerVoiceChanged', d: { state: kim } }, 0)
+    expect(s.serverVoice.S1.U3).toEqual(kim)
+    s = applyEvent(s, { t: 'ServerVoiceChanged', d: { state: { ...sam, muted_by: null } } }, 0)
+    expect(s.serverVoice.S1.U2).toBeUndefined()
+    s = applyEvent(s, { t: 'ServerVoiceChanged', d: { state: { ...kim, deafened_by: null } } }, 0)
+    expect(s.serverVoice.S1).toBeUndefined()
+    // an older server's Ready has none
+    const old = ready()
+    delete (old as Partial<Ready>).server_voice
+    expect(applyReady(emptyState(), old).serverVoice).toEqual({})
+  })
+
   it('joining voice muted shows as muted (flags travel with the join)', () => {
     const s = applyEvent(base(), { t: 'VoiceJoined', d: { channel_id: 'V9', user_id: 'U1', flags: { muted: true, deafened: false } } }, 0)
     expect(s.voice['V9'][0].flags.muted).toBe(true)

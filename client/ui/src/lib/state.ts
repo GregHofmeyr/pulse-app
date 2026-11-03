@@ -20,6 +20,7 @@ import type { SpeakerLink } from './protocol/SpeakerLink'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { User } from './protocol/User'
 import type { VoiceMember } from './protocol/VoiceMember'
+import type { ServerVoiceMod } from './protocol/ServerVoiceMod'
 import { feedKey, matchesFilter, type ClipFilter } from './clips'
 import type { ClipJob } from './tauri'
 
@@ -72,6 +73,8 @@ export type AppState = {
   sounds: Record<string, Sound> // id -> soundboard sound, every server you can see
   soundFavourites: string[] // sound ids you starred, in the order you starred them
   frequentSounds: string[] // your most-played sound ids, best first
+  /** serverId -> userId -> their server mute / deafen in force (#140); absent = neither. */
+  serverVoice: Record<string, Record<string, ServerVoiceMod>>
   /** Quote id -> its replies, oldest..newest (replies never join `messages`). A thread is held while its panel is
    * open (fetched, and live replies join it); otherwise only live mentions of you that are counted are kept, so
    * their delete can take them back out of the count. */
@@ -112,7 +115,15 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
+}
+
+/** `all` with `m` in force, or without that person's entry once neither is (#140). */
+function withServerVoice(all: AppState['serverVoice'], m: ServerVoiceMod): AppState['serverVoice'] {
+  const { [m.user_id]: _old, ...rest } = all[m.server_id] ?? {}
+  const people = m.muted_by || m.deafened_by ? { ...rest, [m.user_id]: m } : rest
+  const { [m.server_id]: _srv, ...others } = all
+  return Object.keys(people).length ? { ...others, [m.server_id]: people } : others
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -151,6 +162,7 @@ export function applyReady(s: AppState, r: Ready): AppState {
     sounds: Object.fromEntries((r.sounds ?? []).map((x) => [x.id, x])),
     soundFavourites: r.sound_favourites ?? [],
     frequentSounds: r.frequent_sounds ?? [],
+    serverVoice: (r.server_voice ?? []).reduce<AppState['serverVoice']>((acc, m) => withServerVoice(acc, m), {}),
     // Replies may have changed while we were away: a panel refetches its thread.
     threads: {},
     threadStart: {},
@@ -846,6 +858,10 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, soundFavourites: e.d.favourites }
     case 'FrequentSounds':
       return { ...s, frequentSounds: e.d.frequent }
+    case 'ServerVoiceChanged':
+      return { ...s, serverVoice: withServerVoice(s.serverVoice, e.d.state) }
+    case 'VoiceDisconnected':
+      return s // the notice is the voice store's (voice.svelte.ts); the VoiceLeft that follows updates the list
     case 'EmojiCreated':
     case 'EmojiUpdated':
       return { ...s, customEmoji: { ...s.customEmoji, [e.d.emoji.id]: e.d.emoji } }

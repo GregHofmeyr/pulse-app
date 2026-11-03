@@ -122,6 +122,16 @@ describe('selectors', () => {
     expect(voiceOccupants(s, 'S1', 'nope')).toEqual([])
   })
 
+  it('voiceOccupants carry who server muted or deafened them (#140)', () => {
+    const t = { ...s, serverVoice: { S1: { U2: { server_id: 'S1', user_id: 'U2', muted_by: 'U1', deafened_by: 'U3' } } } }
+    const [o] = voiceOccupants(t, 'S1', 'V1')
+    expect(o.serverMutedBy).toBe('U1')
+    expect(o.serverDeafenedBy).toBe('U3')
+    // another server's mute doesn't show here, nor in a DM call
+    expect(voiceOccupants(t, 'S2', 'V1')[0].serverMutedBy).toBeUndefined()
+    expect(voiceOccupants(t, null, 'V1')[0].serverMutedBy).toBeUndefined()
+  })
+
   it('typingNames excludes me and expired entries', () => {
     let t = applyEvent(s, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U2' } }, 1000)
     t = applyEvent(t, { t: 'Typing', d: { channel_id: 'C1', user_id: 'U1' } }, 1000)

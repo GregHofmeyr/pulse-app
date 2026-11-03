@@ -45,7 +45,21 @@ export function displayName(s: AppState, serverId: string | null, userId: string
   return u ? baseName(u) : 'unknown'
 }
 
-export type Occupant = { userId: string; name: string; muted: boolean; deafened: boolean }
+/** `serverMutedBy` / `serverDeafenedBy`: who in the server did it (#140), absent when not in force. */
+export type Occupant = { userId: string; name: string; muted: boolean; deafened: boolean; serverMutedBy?: string; serverDeafenedBy?: string }
+
+/** Who server muted / deafened `userId` in `serverId` (never in a DM or group call). */
+export function serverVoiceOf(s: AppState, serverId: string | null, userId: string): { serverMutedBy?: string; serverDeafenedBy?: string } {
+  const m = serverId ? s.serverVoice[serverId]?.[userId] : undefined
+  return { serverMutedBy: m?.muted_by ?? undefined, serverDeafenedBy: m?.deafened_by ?? undefined }
+}
+
+/** "Server deafened by sam" / "Server muted by sam" for someone in a call (#140), or null. */
+export function serverVoiceTip(s: AppState, serverId: string | null, o: { serverMutedBy?: string; serverDeafenedBy?: string }): string | null {
+  if (o.serverDeafenedBy) return `Server deafened by ${displayName(s, serverId, o.serverDeafenedBy)}`
+  if (o.serverMutedBy) return `Server muted by ${displayName(s, serverId, o.serverMutedBy)}`
+  return null
+}
 
 export function voiceOccupants(s: AppState, serverId: string | null, channelId: string): Occupant[] {
   return (s.voice[channelId] ?? []).map((m) => ({
@@ -53,6 +67,7 @@ export function voiceOccupants(s: AppState, serverId: string | null, channelId: 
     name: displayName(s, serverId, m.user_id),
     muted: m.flags.muted,
     deafened: m.flags.deafened,
+    ...serverVoiceOf(s, serverId, m.user_id),
   }))
 }
 
@@ -66,7 +81,7 @@ export function callRoster(s: AppState, serverId: string | null, channelId: stri
   let list: RosterEntry[] = voiceOccupants(s, serverId, channelId).map((o) => ({ ...o, pending: o.userId === myId && channelId === me.channelId && me.joining }))
   if (channelId === me.leaving && channelId !== me.channelId) list = list.filter((o) => o.userId !== myId)
   if (myId && s.me && channelId === me.channelId && !list.some((o) => o.userId === myId)) {
-    list.push({ userId: myId, name: displayName(s, serverId, myId), muted: false, deafened: false, pending: me.joining })
+    list.push({ userId: myId, name: displayName(s, serverId, myId), muted: false, deafened: false, ...serverVoiceOf(s, serverId, myId), pending: me.joining })
   }
   return list
 }

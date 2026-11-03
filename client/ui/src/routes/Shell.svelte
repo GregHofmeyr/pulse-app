@@ -32,7 +32,7 @@
   import ProfileCardPopover from '../components/ProfileCardPopover.svelte'
   import { closeFull, closeRename, openCard, profileUi } from '../lib/profileCard.svelte'
   import { onMount, tick, untrack } from 'svelte'
-  import { voice, voiceApi } from '../lib/voice.svelte'
+  import { myServerTips, voice, voiceApi } from '../lib/voice.svelte'
   import { findWatch, followLiveFreeze, stream, streamApi } from '../lib/stream/stream.svelte'
   import { pendingWatchReady } from '../lib/stream/viewer'
   import { callView, openFull } from '../lib/stream/viewer.svelte'
@@ -545,11 +545,12 @@
           <span class="who"><Name userId={me.id} serverId={null} text={baseName(me)} interactive={false} surface="side" /><small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
         </button>
         {#if voice.channelId}
-          <button class="icon-btn me-btn" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label={voice.controls.muted ? "Unmute" : "Mute"} onclick={() => voiceApi.toggleMute()}>
-            <Icon name={voice.controls.muted ? 'micOff' : 'mic'} />
+          {@const tips = myServerTips()}
+          <button class="icon-btn me-btn" class:on={voice.controls.muted} class:server={!!tips.mute} data-tip={tips.mute ?? undefined} aria-pressed={voice.controls.muted} aria-label={(voice.controls.muted ? "Unmute" : "Mute") + (tips.mute ? ` (${tips.mute})` : "")} onclick={() => voiceApi.toggleMute()}>
+            <Icon name={voice.controls.muted || tips.mute ? 'micOff' : 'mic'} />
           </button>
-          <button class="icon-btn me-btn" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label={voice.controls.deafened ? "Undeafen" : "Deafen"} onclick={() => voiceApi.toggleDeafen()}>
-            <Icon name={voice.controls.deafened ? 'headphonesOff' : 'headphones'} />
+          <button class="icon-btn me-btn" class:on={voice.controls.deafened} class:server={!!tips.deafen} data-tip={tips.deafen ?? undefined} aria-pressed={voice.controls.deafened} aria-label={(voice.controls.deafened ? "Undeafen" : "Deafen") + (tips.deafen ? ` (${tips.deafen})` : "")} onclick={() => voiceApi.toggleDeafen()}>
+            <Icon name={voice.controls.deafened || tips.deafen ? 'headphonesOff' : 'headphones'} />
           </button>
         {/if}
         <button class="icon-btn me-btn" aria-label="Settings" onclick={() => openSettings()}><Icon name="gear" /></button>
@@ -697,6 +698,8 @@
   .dialog-actions { display: flex; justify-content: flex-end; gap: 8px; }
   .me-btn { color: var(--text-2); }
   .me-btn.on, .me-btn.on:hover { color: var(--danger-text); }
+  /* server muted / deafened (#140): filled, not just red */
+  .me-btn.server, .me-btn.server:hover { background: var(--danger); color: var(--on-danger); }
   .content { position: relative; flex: 1; min-width: 0; background: var(--bg-2); display: flex; flex-direction: column; }
   .empty { margin: auto; color: var(--text-3); }
   .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }

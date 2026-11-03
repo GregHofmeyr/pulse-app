@@ -2,7 +2,7 @@
   import { tick } from 'svelte'
   import Icon from './Icon.svelte'
   import { app } from '../lib/store.svelte'
-  import { selfVoice, voice, voiceApi } from '../lib/voice.svelte'
+  import { myServerTips, selfVoice, voice, voiceApi } from '../lib/voice.svelte'
   import { callRoster, liveIn } from '../lib/selectors'
   import { gridTiles, nobodyStreaming } from '../lib/callgrid'
   import { stageLabel } from '../lib/voicestage'
@@ -31,6 +31,7 @@
 
   const channel = $derived(app.state.channels[channelId])
   const inHere = $derived(voice.channelId === channelId)
+  const tips = $derived(myServerTips())
   const meId = $derived(app.state.me?.id ?? '')
   const roster = $derived(callRoster(app.state, serverId, channelId, selfVoice()))
   let showEveryone = $state(true)
@@ -138,11 +139,12 @@
   <div class="bar-wrap">
     {#if inHere}
       <div class="controls">
-        <button class="ctl" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label={voice.controls.muted ? "Unmute" : "Mute"} onclick={() => voiceApi.toggleMute()}>
-          <Icon name={voice.controls.muted ? 'micOff' : 'mic'} size={20} />
+        <!-- your own mute still toggles while server muted (#140); the tip says why the mic stays shut -->
+        <button class="ctl" class:on={voice.controls.muted} class:server={!!tips.mute} data-tip={tips.mute ?? undefined} aria-pressed={voice.controls.muted} aria-label={(voice.controls.muted ? "Unmute" : "Mute") + (tips.mute ? ` (${tips.mute})` : "")} onclick={() => voiceApi.toggleMute()}>
+          <Icon name={voice.controls.muted || tips.mute ? 'micOff' : 'mic'} size={20} />
         </button>
-        <button class="ctl" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label={voice.controls.deafened ? "Undeafen" : "Deafen"} onclick={() => voiceApi.toggleDeafen()}>
-          <Icon name={voice.controls.deafened ? 'headphonesOff' : 'headphones'} size={20} />
+        <button class="ctl" class:on={voice.controls.deafened} class:server={!!tips.deafen} data-tip={tips.deafen ?? undefined} aria-pressed={voice.controls.deafened} aria-label={(voice.controls.deafened ? "Undeafen" : "Deafen") + (tips.deafen ? ` (${tips.deafen})` : "")} onclick={() => voiceApi.toggleDeafen()}>
+          <Icon name={voice.controls.deafened || tips.deafen ? 'headphonesOff' : 'headphones'} size={20} />
         </button>
         <button bind:this={sbBtn} class="ctl" class:open={sbOpen} aria-label="Soundboard" aria-haspopup="dialog" aria-expanded={sbOpen} data-tip="Soundboard" data-menu-toggle onclick={() => (sbOpen = !sbOpen)}>
           <Icon name="soundboard" size={20} />
@@ -198,6 +200,8 @@
   .ctl:hover { background: var(--bg-4); }
   .ctl.open { background: var(--bg-4); }
   .ctl.on { background: var(--danger); color: var(--on-danger); }
+  /* server muted / deafened (#140): filled, with a ring, whatever your own toggle says */
+  .ctl.server { background: var(--danger); color: var(--on-danger); box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--danger); }
   .leave { width: 64px; height: 48px; border: 0; border-radius: 14px; background: var(--danger); color: var(--on-danger); display: grid; place-items: center; }
   .golive { height: 48px; padding: 0 16px; border: 0; border-radius: 14px; background: var(--accent); color: var(--on-accent); font-weight: 600; }
   .golive.off { opacity: .5; cursor: not-allowed; }

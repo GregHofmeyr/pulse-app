@@ -307,6 +307,45 @@ describe('VoiceStatus panel behaviour', () => {
     expect(document.querySelector('.vc-mic')).toBeNull()
   })
 
+  describe('server mute, deafen and disconnect (#140)', () => {
+    const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    const by = (muted_by: string | null, deafened_by: string | null) => {
+      app.state = {
+        ...app.state,
+        members: { S1: [{ user: me, nickname: null }, { user: sam, nickname: null }] },
+        serverVoice: muted_by || deafened_by ? { S1: { U1: { server_id: 'S1', user_id: 'U1', muted_by, deafened_by } } } : {},
+      }
+      flushSync()
+    }
+    const notice = () => document.querySelector('.vc-server')?.textContent ?? ''
+
+    it('tells_you_who_server_muted_you', () => {
+      connect()
+      by('U2', null)
+      expect(notice()).toContain('You were server muted by sam')
+      by(null, null)
+      expect(document.querySelector('.vc-server')).toBeNull()
+    })
+
+    it('a_deafen_says_deafened', () => {
+      connect()
+      by('U2', 'U2')
+      expect(notice()).toContain('You were server deafened by sam')
+      expect(notice()).not.toContain('muted')
+    })
+
+    it('says_who_disconnected_you_until_dismissed', () => {
+      app.state = { ...app.state, members: { S1: [{ user: me, nickname: null }, { user: sam, nickname: null }] } }
+      voice.disconnectedBy = { by: 'U2', channelId: 'V1' }
+      flushSync()
+      expect(document.querySelector('.vc-kicked')?.textContent).toContain('sam disconnected you from Lounge')
+      document.querySelector<HTMLButtonElement>('.vc-kicked button')!.click()
+      flushSync()
+      expect(voice.disconnectedBy).toBeNull()
+      expect(document.querySelector('.vc-kicked')).toBeNull()
+    })
+  })
+
   it('the_failed_state_can_be_dismissed', () => {
     voice.joinFailed = { channelId: 'V1', error: 'nope' }
     flushSync()

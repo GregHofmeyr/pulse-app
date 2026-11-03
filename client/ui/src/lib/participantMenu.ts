@@ -3,6 +3,7 @@
 export type MenuItemId =
   | 'volume' | 'local-mute' | 'sound-mute' | 'message' | 'stream-volume' | 'watch' | 'stop-watching' | 'full-view'
   | 'mute' | 'deafen' | 'go-live' | 'stop-streaming' | 'voice-settings'
+  | 'server-mute' | 'server-deafen' | 'disconnect'
 
 export type MenuCtx = {
   /** The menu is for you. */
@@ -17,6 +18,8 @@ export type MenuCtx = {
   inCall: boolean
   canGoLive: boolean
   streamingSelf: boolean
+  /** The call is a server voice channel's (#140): anyone there may server mute, deafen or disconnect anyone else. */
+  serverCall?: boolean
 }
 
 export function menuItems(c: MenuCtx): MenuItemId[] {
@@ -33,6 +36,7 @@ export function menuItems(c: MenuCtx): MenuItemId[] {
     out.push(c.watching ? 'stop-watching' : 'watch')
     if (c.watching && !c.full) out.push('full-view')
   }
+  if (c.serverCall) out.push('server-mute', 'server-deafen', 'disconnect')
   return out
 }
 

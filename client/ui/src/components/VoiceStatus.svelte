@@ -2,6 +2,7 @@
   import Icon from './Icon.svelte'
   import LinkStatsPanel from './LinkStatsPanel.svelte'
   import { app } from '../lib/store.svelte'
+  import { displayName } from '../lib/selectors'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { stageLabel } from '../lib/voicestage'
   import { isWindows } from '../lib/stream/platform'
@@ -13,6 +14,21 @@
   const failed = $derived(voice.joinFailed && !voice.joining && !voice.channelId ? voice.joinFailed : null)
   const clickable = $derived(!failed && (voice.stage.stage === 'connected' || voice.stage.stage === 'starting_audio'))
   const warn = $derived(!clickable)
+  // Server muted or deafened in this call's server (#140): who did it stays in view while it holds.
+  const callServer = $derived((voice.channelId && app.state.channels[voice.channelId]?.server_id) || null)
+  const held = $derived(callServer && app.state.me ? app.state.serverVoice[callServer]?.[app.state.me.id] : undefined)
+  const serverNotice = $derived(
+    held?.deafened_by ? `You were server deafened by ${displayName(app.state, callServer, held.deafened_by)}.`
+    : held?.muted_by ? `You were server muted by ${displayName(app.state, callServer, held.muted_by)}.`
+    : null,
+  )
+  const kicked = $derived(voice.disconnectedBy && !voice.channelId && !voice.joining ? voice.disconnectedBy : null)
+  const kickedText = $derived.by(() => {
+    if (!kicked) return ''
+    const server = app.state.channels[kicked.channelId]?.server_id ?? null
+    const where = app.state.channels[kicked.channelId]?.name
+    return `${displayName(app.state, server, kicked.by)} disconnected you${where ? ` from ${where}` : ''}.`
+  })
   let open = $state(false)
   let trigger = $state<HTMLButtonElement>()
   const TRIGGER = '[data-voice-status-trigger]'
@@ -41,8 +57,20 @@
   })
 </script>
 
+{#if kicked}
+  <p class="vc-note vc-kicked" role="status">
+    <span>{kickedText} You can join again.</span>
+    <button class="icon-btn icon-btn-sm" aria-label="Dismiss" onclick={() => voiceApi.dismissDisconnected()}><Icon name="x" size={14} /></button>
+  </p>
+{/if}
 {#if visible}
   <!-- above the call row (#139): the notice grows upward, so the row and hang-up button don't move -->
+  {#if serverNotice && voice.channelId}
+    <p class="vc-note vc-server" role="status">
+      <Icon name={held?.deafened_by ? 'headphonesOff' : 'micOff'} size={14} />
+      <span><strong>{serverNotice}</strong> Someone else in the server can undo it.</span>
+    </p>
+  {/if}
   {#if voice.micSilent && voice.channelId}
     <p class="vc-mic" role="status">
       <strong>No sound from your mic.</strong>
@@ -88,5 +116,9 @@
   .vc-text small { font-size: 12px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .vc-leave { width: 34px; height: 34px; border: 0; border-radius: 8px; background: var(--surface-menu); color: var(--danger); display: grid; place-items: center; }
   .vc-leave:hover { background: var(--bg-4); }
+  .vc-note { margin: 0 8px 6px; padding: 8px 12px; border-radius: 10px; background: color-mix(in srgb, var(--danger) 14%, transparent); font-size: 12px; line-height: 1.4; color: var(--danger-text); display: flex; align-items: flex-start; gap: 8px; }
+  .vc-note span { flex: 1; min-width: 0; }
+  .vc-note :global(svg) { flex-shrink: 0; margin-top: 2px; }
+  .vc-kicked { align-items: center; }
   .vc-mic { margin: 0 8px 6px; padding: 8px 12px; border-radius: 10px; background: var(--warn-soft); font-size: 12px; line-height: 1.4; color: var(--warn-text); }
 </style>

@@ -138,7 +138,7 @@ describe('ParticipantMenu', () => {
     opener.focus()
     key(opener, 'ContextMenu')
     const list = items()
-    expect(list.map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'nick'])
+    expect(list.map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick'])
     expect(document.activeElement).toBe(list[0])
     for (let i = 1; i < list.length; i++) {
       key(document.activeElement!, 'ArrowDown')
@@ -213,7 +213,7 @@ describe('ParticipantMenu', () => {
     app.state = applyReady(emptyState(), { ...ready, streams: [{ channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false }, status: 'live', viewers: [], started_at: '2026-10-26T10:00:00Z' }] })
     mountPanel()
     rightClick(q('[data-stream="U2"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'watch', 'nick'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'watch', 'server-mute', 'server-deafen', 'disconnect', 'nick'])
     document.querySelector<HTMLElement>('[data-item="watch"]')!.click()
     await settle()
     expect(invoke).toHaveBeenCalledWith('stream_watch', { channelId: 'V1', streamer: 'U2' })
@@ -228,7 +228,7 @@ describe('ParticipantMenu', () => {
     const occ = [...document.querySelectorAll<HTMLElement>('.occupant')].find((o) => o.textContent?.includes('sam'))!
     expect(occ.tabIndex).toBe(0)
     rightClick(occ)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'nick'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick'])
     key(menu()!, 'Escape')
     expect(document.activeElement).toBe(occ)
     key(occ, 'F10', { shiftKey: true })
@@ -342,7 +342,7 @@ describe('ParticipantMenu', () => {
   it('the_stream_volume_slider_uses_the_shared_stream_volumes', async () => {
     await watchSam()
     rightClick(q('[data-stream="U2"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'stream-volume', 'stop-watching', 'full-view', 'nick'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'stream-volume', 'stop-watching', 'full-view', 'server-mute', 'server-deafen', 'disconnect', 'nick'])
     const slider = q('[role=menu] input[aria-label="Stream volume"]') as HTMLInputElement
     slider.focus()
     key(slider, 'ArrowRight')
@@ -433,6 +433,82 @@ describe('ParticipantMenu', () => {
   })
 })
 
+describe('server mute, deafen and disconnect (#140)', () => {
+  const held = (muted_by: string | null, deafened_by: string | null) => {
+    app.state = { ...app.state, serverVoice: { S1: { U2: { server_id: 'S1', user_id: 'U2', muted_by, deafened_by } } } }
+    flushSync()
+  }
+  const item = (id: string) => q(`[role=menu] [data-item="${id}"]`)!
+  const openSam = () => {
+    mountPanel()
+    rightClick(q('[data-user="U2"]')!)
+  }
+
+  it('server_mute_and_deafen_ask_the_server', () => {
+    openSam()
+    expect(item('server-mute').textContent).toBe('Server mute')
+    expect(item('server-deafen').textContent).toBe('Server deafen')
+    item('server-mute').click()
+    flushSync()
+    expect(invoke).toHaveBeenCalledWith('server_voice', { serverId: 'S1', userId: 'U2', mute: true, deafen: null })
+    expect(menu()).toBeNull()
+    rightClick(q('[data-user="U2"]')!)
+    item('server-deafen').click()
+    expect(invoke).toHaveBeenCalledWith('server_voice', { serverId: 'S1', userId: 'U2', mute: null, deafen: true })
+  })
+
+  it('anyone_can_undo_them', () => {
+    held('U3', 'U3')
+    openSam()
+    expect(item('server-mute').textContent).toBe('Server unmute')
+    expect(item('server-deafen').textContent).toBe('Server undeafen')
+    item('server-mute').click()
+    expect(invoke).toHaveBeenCalledWith('server_voice', { serverId: 'S1', userId: 'U2', mute: false, deafen: null })
+  })
+
+  it('disconnect_takes_them_out', () => {
+    openSam()
+    item('disconnect').click()
+    expect(invoke).toHaveBeenCalledWith('disconnect_voice', { serverId: 'S1', userId: 'U2' })
+  })
+
+  it('a_refusal_is_shown', async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === 'server_voice') throw "they aren't in this server's voice"
+    })
+    openSam()
+    item('server-mute').click()
+    await settle()
+    expect(voice.error).toContain("they aren't in this server's voice")
+  })
+
+  it('tiles_and_rows_show_who_did_it', () => {
+    held('U1', null)
+    mountPanel()
+    expect(q('[data-user="U2"] .badge.server')?.getAttribute('data-tip')).toBe('Server muted by alex')
+    unmount(cmp!)
+    cmp = mount(ChannelList, {
+      target: document.body,
+      props: { serverId: 'S1', activeChannelId: null, voiceChannelId: 'V1', speaking: new Set<string>(), onSelect: () => {}, onJoinVoice: () => {}, onMessage, onVoiceSettings },
+    })
+    flushSync()
+    const occ = q('.occupant[data-user="U2"]')!
+    expect(occ.querySelector('.flag.server')?.getAttribute('data-tip')).toBe('Server muted by alex')
+    expect(occ.getAttribute('aria-label')).toContain('server muted by alex')
+    held(null, 'U1')
+    expect(occ.querySelector('.flag.server')?.getAttribute('data-tip')).toBe('Server deafened by alex')
+  })
+
+  it('your_own_buttons_say_you_are_server_muted', () => {
+    app.state = { ...app.state, serverVoice: { S1: { U1: { server_id: 'S1', user_id: 'U1', muted_by: 'U2', deafened_by: null } } } }
+    voice.controls = { muted: false, deafened: false, server_muted: true, server_deafened: false }
+    mountPanel()
+    const mute = q('.controls .ctl')!
+    expect(mute.getAttribute('data-tip')).toBe('Server muted by sam')
+    expect(mute.classList.contains('server')).toBe(true)
+  })
+})
+
 describe('ParticipantMenu nicknames (#113, #137)', () => {
   const labels = () => Object.fromEntries(items().map((i) => [i.dataset.item, i.textContent]))
   const openFor = (userId: string) => {
@@ -450,7 +526,7 @@ describe('ParticipantMenu nicknames (#113, #137)', () => {
       privateNicks: { U2: 'Bestie' },
     }
     openFor('U2')
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'nick'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick'])
     expect(labels()).toMatchObject({ nick: 'Change server nickname' })
   })
 

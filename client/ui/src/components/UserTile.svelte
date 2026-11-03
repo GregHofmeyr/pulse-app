@@ -2,7 +2,7 @@
   import Icon from './Icon.svelte'
   import { voice } from '../lib/voice.svelte'
   import { app } from '../lib/store.svelte'
-  import type { RosterEntry } from '../lib/selectors'
+  import { serverVoiceTip, type RosterEntry } from '../lib/selectors'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import { volumeLabel } from '../lib/voiceui'
@@ -25,6 +25,8 @@
   /** "Mute for me": only you don't hear them (they aren't muted for anyone else). */
   const mutedForMe = $derived(!isMe && !!voice.localMutes[entry.userId])
   const volume = $derived(voice.volumes[entry.userId] ?? 100)
+  /** Server deafened / muted (#140), and by whom: shown over their own mute, in a squared badge. */
+  const serverTip = $derived(serverVoiceTip(app.state, serverId, entry))
   const bars = $derived.by(() => {
     const q = voice.quality[entry.userId]
     return q === 'excellent' ? 3 : q === 'good' ? 2 : q === 'poor' ? 1 : q === 'lost' ? 0 : 3
@@ -58,7 +60,8 @@
   <button bind:this={avatar} type="button" class="avatar-btn" data-menu-toggle aria-disabled={locked} aria-haspopup="menu" aria-label={entry.name} data-tip={isMe ? undefined : `Options for ${entry.name}`}
     onkeydown={key} onclick={ask}>
     <Avatar id={entry.userId} name={entry.name} size={compact ? 36 : 84} hovered={() => over} />
-    {#if entry.deafened}<span class="badge"><Icon name="headphonesOff" size={compact ? 11 : 14} label="Deafened" /></span>
+    {#if serverTip}<span class="badge server" data-tip={serverTip}><Icon name={entry.serverDeafenedBy ? 'headphonesOff' : 'micOff'} size={compact ? 11 : 14} label={serverTip} /></span>
+    {:else if entry.deafened}<span class="badge"><Icon name="headphonesOff" size={compact ? 11 : 14} label="Deafened" /></span>
     {:else if entry.muted}<span class="badge"><Icon name="micOff" size={compact ? 11 : 14} label="Muted" /></span>{/if}
   </button>
   <div class="name">
@@ -86,6 +89,8 @@
   .avatar-btn :global(.av) { transition: box-shadow .12s; }
   .tile.speaking :global(.av) { box-shadow: 0 0 0 4px var(--ring), 0 0 0 7px var(--ok); }
   .badge { position: absolute; right: -4px; bottom: -4px; width: 28px; height: 28px; border-radius: 50%; background: var(--danger); color: var(--on-danger); border: 4px solid var(--ring); display: grid; place-items: center; }
+  /* the server's mute (#140), not theirs: squared, with a second ring */
+  .badge.server { border-radius: 8px; box-shadow: 0 0 0 2px var(--danger); }
   .name { display: flex; align-items: center; gap: 8px; font-weight: 600; max-width: 90%; }
   .text { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .joining { font-size: 12px; font-weight: 400; color: var(--text-2); }

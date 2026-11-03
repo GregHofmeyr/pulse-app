@@ -114,3 +114,42 @@ describe('joining', () => {
     expect(h.calls.indexOf('set_call_mix')).toBeLessThan(h.calls.indexOf('join_voice'))
   })
 })
+
+describe('server mute and disconnect (#140)', () => {
+  const lounge = { id: 'V1', server_id: 'S1', kind: 'voice' as const, name: 'Lounge', position: 0 }
+  const event = (payload: unknown) => h.handlers['pulse://event']({ payload })
+  beforeEach(async () => {
+    h.calls.length = 0
+    app.state = { ...emptyState(), me, channels: { V1: lounge } }
+    Object.assign(voice, { channelId: null, joining: null, leaving: null, disconnectedBy: null, controls: { muted: false, deafened: false } })
+    await startListening()
+    await startVoiceListening()
+  })
+
+  it('tells the core when you are server muted in your call’s server, and when it is undone', async () => {
+    const { flushSync } = await import('svelte')
+    voice.channelId = 'V1'
+    flushSync()
+    expect(h.calls).not.toContain('set_server_voice')
+    event({ t: 'ServerVoiceChanged', d: { state: { server_id: 'S1', user_id: 'ME', muted_by: 'U2', deafened_by: null } } })
+    flushSync()
+    expect(h.calls).toContain('set_server_voice')
+    // the core answers with its state
+    voice.controls = { muted: false, deafened: false, server_muted: true, server_deafened: false }
+    h.calls.length = 0
+    flushSync()
+    expect(h.calls).toEqual([])
+    event({ t: 'ServerVoiceChanged', d: { state: { server_id: 'S1', user_id: 'ME', muted_by: null, deafened_by: null } } })
+    flushSync()
+    expect(h.calls).toEqual(['set_server_voice'])
+  })
+
+  it('remembers who disconnected you until you join again', async () => {
+    const { voiceApi } = await import('./voice.svelte')
+    voice.channelId = 'V1'
+    event({ t: 'VoiceDisconnected', d: { channel_id: 'V1', user_id: 'ME', by: 'U2' } })
+    expect(voice.disconnectedBy).toEqual({ by: 'U2', channelId: 'V1' })
+    await voiceApi.join('V1')
+    expect(voice.disconnectedBy).toBeNull()
+  })
+})

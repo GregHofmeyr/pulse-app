@@ -2,7 +2,8 @@ import { invoke } from '@tauri-apps/api/core'
 import { loadMixer, soundGain, soundMasterGain } from './mixer'
 // Pure helpers for the voice UI (tested in voiceui.test.ts).
 
-export type Flags = { muted: boolean; deafened: boolean }
+/** Your own mute / deafen, and (from the core) the server's of you (#140), which the core adds. */
+export type Flags = { muted: boolean; deafened: boolean; server_muted?: boolean; server_deafened?: boolean }
 export type SoundName =
   | 'join' | 'leave' | 'mute' | 'unmute' | 'deafen' | 'undeafen' | 'message' | 'live' | 'live_end' | 'badge'
 

@@ -10,6 +10,7 @@ import type { Server } from './protocol/Server'
 import type { Channel } from './protocol/Channel'
 import type { DeletedChannel } from './protocol/DeletedChannel'
 import type { Member } from './protocol/Member'
+import type { ServerVoiceMod } from './protocol/ServerVoiceMod'
 import type { Message } from './protocol/Message'
 import type { StreamInfo } from './protocol/StreamInfo'
 import type { StreamSettings } from './protocol/StreamSettings'
@@ -168,6 +169,10 @@ export const api = {
   reportEgg: (egg: string) => invoke<void>('report_egg', { egg }),
   /** Someone's nickname in a server (`null` resets it); anyone in the server may. */
   setNickname: (serverId: string, userId: string, nickname: string | null) => invoke<Member>('set_nickname', { serverId, userId, nickname }),
+  /** Server mute / deafen someone in a server's voice (`false` undoes it; left out, unchanged). Anyone else in the server may (#140). */
+  setServerVoice: (serverId: string, userId: string, change: { mute?: boolean; deafen?: boolean }) => invoke<ServerVoiceMod>('server_voice', { serverId, userId, mute: change.mute ?? null, deafen: change.deafen ?? null }),
+  /** Take someone out of a server's voice call now (#140). */
+  disconnectVoice: (serverId: string, userId: string) => invoke<void>('disconnect_voice', { serverId, userId }),
   /** The name only you see for someone (`null` clears it). */
   setPrivateNickname: (userId: string, nickname: string | null) => invoke<void>('set_private_nickname', { userId, nickname }),
   /** A page of someone's Name Archive in a server, newest first. */

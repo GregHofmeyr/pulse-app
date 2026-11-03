@@ -14,6 +14,7 @@
   import { openCard } from '../lib/profileCard.svelte'
   import { setSoundMute, soundboard } from '../lib/soundboard.svelte'
   import NicknameItems from './NicknameItems.svelte'
+  import { api, errorText } from '../lib/tauri'
 
   let {
     channelId,
@@ -54,7 +55,18 @@
     inCall,
     canGoLive: inCall && !stream.live,
     streamingSelf: stream.live?.channelId === channelId,
+    serverCall: !!serverId,
   })
+  // their server mute / deafen in this server (#140)
+  const held = $derived(serverId ? app.state.serverVoice[serverId]?.[userId] : undefined)
+  function serverVoice(change: { mute?: boolean; deafen?: boolean }) {
+    if (!serverId) return
+    return api.setServerVoice(serverId, userId, change).catch((e: unknown) => (voice.error = errorText(e)))
+  }
+  function disconnect() {
+    if (!serverId) return
+    return api.disconnectVoice(serverId, userId).catch((e: unknown) => (voice.error = errorText(e)))
+  }
   const ids = $derived(menuItems(ctx))
   const volume = $derived(voice.volumes[userId] ?? 100)
   const streamVolume = $derived(stream.volumes[userId] ?? 100)
@@ -184,6 +196,12 @@
       {/if}
     {:else if id === 'stop-streaming'}
       <button type="button" class="menu-item" role="menuitem" data-item="stop-streaming" onclick={() => pick(() => streamApi.stop())}>Stop streaming</button>
+    {:else if id === 'server-mute'}
+      <button type="button" class="menu-item" class:danger={!held?.muted_by} role="menuitem" data-item="server-mute" onclick={() => pick(() => serverVoice({ mute: !held?.muted_by }))}>{held?.muted_by ? 'Server unmute' : 'Server mute'}</button>
+    {:else if id === 'server-deafen'}
+      <button type="button" class="menu-item" class:danger={!held?.deafened_by} role="menuitem" data-item="server-deafen" onclick={() => pick(() => serverVoice({ deafen: !held?.deafened_by }))}>{held?.deafened_by ? 'Server undeafen' : 'Server deafen'}</button>
+    {:else if id === 'disconnect'}
+      <button type="button" class="menu-item danger" role="menuitem" data-item="disconnect" onclick={() => pick(disconnect)}>Disconnect</button>
     {:else if id === 'voice-settings'}
       <button type="button" class="menu-item" role="menuitem" data-item="voice-settings" onclick={() => pick(onVoiceSettings)}>Voice settings</button>
     {/if}
