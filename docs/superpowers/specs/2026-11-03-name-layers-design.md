@@ -44,8 +44,8 @@ design-check page; each decision below is his pick, with his notes folded in.
 - **Name Archive** (n9): every nickname a person has had in a server, who gave it and when, newest first, with the
   count ("Renamed 14 times"). Everyone in the server can see it, in the **full profile view only** (not the small
   profile card). This is also where a future renaming badge reads its count.
-- **Private nicknames** (n10): built in this push. Set from the profile card or a person's menu ("Set private
-  nickname…"), cleared the same way. Stored per owner, never sent to anyone else, never in another user's payload.
+- **Private nicknames** (n10): built in this push. Set from a DM's right-click menu in the DM list ("Change
+  nickname", #137), cleared in that dialog. Stored per owner, never sent to anyone else, never in another user's payload.
 - **Mentions and search** (n11): `@` suggestions and search's `from:` / `mentions:` match the username, display name,
   server nickname and your private nickname; what's inserted and shown is the name that applies.
 
@@ -70,7 +70,10 @@ design-check page; each decision below is his pick, with his notes folded in.
   typing indicator, reactions tooltips, stream tiles. Name styles (font/colour) apply to whichever name shows.
 - **UI**
   - Settings → Profile: a "Display name" field with a preview in your name style.
-  - Profile card / member menu: "Change nickname" (server), "Reset nickname", "Set private nickname…".
+  - ~~Profile card / member menu: "Change nickname" (server), "Reset nickname", "Set private nickname…".~~
+    Superseded by #137: right-click menus only. In a server (member list, voice participant, message author):
+    "Change server nickname". In the DM list: "Change nickname" (your private one). Reset / Clear only inside the
+    nickname dialog; the profile card has no nickname buttons.
   - Full profile view: the Name Archive list.
 
 ## Migration
