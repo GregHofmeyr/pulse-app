@@ -142,7 +142,7 @@ pub async fn record_use_at(
     Ok(())
 }
 
-fn decayed(score: f64, last_used_at: &str, now: DateTime<Utc>) -> f64 {
+pub(crate) fn decayed(score: f64, last_used_at: &str, now: DateTime<Utc>) -> f64 {
     let Ok(last) = DateTime::parse_from_rfc3339(last_used_at) else {
         return score;
     };

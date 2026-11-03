@@ -2,13 +2,13 @@ use axum::Json;
 use axum::Router;
 use axum::extract::{Path, State};
 use axum::http::StatusCode;
-use axum::routing::{patch, post};
+use axum::routing::{patch, post, put};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ServerId, UserId, next_ulid};
 use pulse_protocol::rest::{CreateSoundRequest, Sound, UpdateSoundRequest};
 use pulse_protocol::sound::{MAX_BYTES, clean_name, parse_ogg_opus, valid_emoji};
 
-use super::{bad_volume, for_server, load};
+use super::{bad_volume, for_server, load, publish_favourites, publish_frequent, record_play};
 use crate::AppState;
 use crate::auth::AuthUser;
 use crate::db::{begin_write, now};
@@ -20,6 +20,8 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/servers/{id}/sounds", post(create).get(list))
         .route("/sounds/{id}", patch(update).delete(delete))
+        .route("/sounds/{id}/play", post(play))
+        .route("/sounds/{id}/favourite", put(favourite).delete(unfavourite))
 }
 
 const VOLUME: std::ops::RangeInclusive<u16> = 10..=200;
@@ -210,5 +212,84 @@ async fn delete(
             },
         )
         .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Play a sound into the caller's current call. Muting doesn't matter: the soundboard is its own
+/// audio, and listeners decide whether to hear it.
+async fn play(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<String>,
+) -> AppResult<StatusCode> {
+    if !s.limits.sound_play_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    let sound = editable(&s, me, &id).await?;
+    let Some((channel_id, _)) = s.voice.room_flags(me) else {
+        return Err(AppError::Conflict("you're not in a call".into()));
+    };
+    let _order = s.hub.in_order().await;
+    let mut tx = begin_write(&s.db).await?;
+    // The sound may have been deleted since the check above.
+    let changed = sqlx::query("UPDATE sounds SET plays = plays + 1 WHERE id = ?")
+        .bind(&id)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected();
+    if changed == 0 {
+        return Err(AppError::NotFound);
+    }
+    record_play(&mut tx, me, &id).await?;
+    tx.commit().await?;
+    s.hub
+        .publish_to(
+            &s.db,
+            Event::SoundPlayed {
+                channel_id,
+                user_id: me,
+                sound_id: id,
+                media_hash: sound.media_hash,
+                volume: sound.volume,
+            },
+            &s.voice.members(channel_id),
+        )
+        .await;
+    publish_frequent(&s, me).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn favourite(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<String>,
+) -> AppResult<StatusCode> {
+    editable(&s, me, &id).await?;
+    let _order = s.hub.in_order().await;
+    sqlx::query(
+        "INSERT INTO sound_favourites (user_id, sound_id, created_at) VALUES (?, ?, ?)
+         ON CONFLICT DO NOTHING",
+    )
+    .bind(me.to_string())
+    .bind(&id)
+    .bind(now())
+    .execute(&s.db)
+    .await?;
+    publish_favourites(&s, me).await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+async fn unfavourite(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<String>,
+) -> AppResult<StatusCode> {
+    let _order = s.hub.in_order().await;
+    sqlx::query("DELETE FROM sound_favourites WHERE user_id = ? AND sound_id = ?")
+        .bind(me.to_string())
+        .bind(&id)
+        .execute(&s.db)
+        .await?;
+    publish_favourites(&s, me).await;
     Ok(StatusCode::NO_CONTENT)
 }

@@ -446,3 +446,249 @@ async fn deleted_sound_media_is_cleaned_up() {
     assert_eq!(n, 1);
     assert!(!file.exists());
 }
+
+async fn lounge(app: &TestApp, token: &str, server: ServerId) -> pulse_protocol::ids::ChannelId {
+    let chans: Vec<pulse_protocol::rest::Channel> =
+        get_json(app, token, &format!("/servers/{server}/channels")).await;
+    chans
+        .iter()
+        .find(|c| c.name.as_deref() == Some("Lounge"))
+        .unwrap()
+        .id
+}
+
+async fn play(app: &TestApp, token: &str, id: &str) -> reqwest::Response {
+    post_json(app, token, &format!("/sounds/{id}/play"), json!({})).await
+}
+
+async fn favourite(app: &TestApp, token: &str, id: &str, on: bool) -> reqwest::Response {
+    let url = app.url(&format!("/sounds/{id}/favourite"));
+    let req = if on {
+        app.http.put(url)
+    } else {
+        app.http.delete(url)
+    };
+    req.bearer_auth(token).send().await.unwrap()
+}
+
+type Person = (pulse_protocol::ids::UserId, String);
+
+/// A server with alex's sound, plus alex, sam and kim as members, in that order.
+async fn soundboard() -> (TestApp, [Person; 3], ServerId, Sound) {
+    let app = spawn().await;
+    let alex = register(&app, "alex").await;
+    let sam = register(&app, "sam").await;
+    let kim = register(&app, "kim").await;
+    let srv = create_server(&app, &alex.1, "Main").await;
+    join(&app, &sam.1, srv.id).await;
+    join(&app, &kim.1, srv.id).await;
+    let media = upload(&app, &alex.1, 1000).await;
+    let s = create_ok(&app, &alex.1, srv.id, &media.hash).await;
+    (app, [alex, sam, kim], srv.id, s)
+}
+
+async fn quiet(ws: &mut Socket) -> bool {
+    tokio::time::timeout(Duration::from_millis(300), next_frame(ws))
+        .await
+        .is_err()
+}
+
+#[tokio::test]
+async fn play_reaches_only_the_call() {
+    let (app, [alex, sam, kim], srv, s) = soundboard().await;
+    let room = lounge(&app, &alex.1, srv).await;
+    app.state().voice.join(room, alex.0, "PA_a");
+    app.state().voice.join(room, sam.0, "PA_s");
+    let (mut a_ws, _) = hello(&app, &alex.1).await;
+    let (mut s_ws, _) = hello(&app, &sam.1).await;
+    let (mut k_ws, _) = hello(&app, &kim.1).await;
+
+    assert_eq!(play(&app, &alex.1, &s.id).await.status(), 204);
+    for ws in [&mut a_ws, &mut s_ws] {
+        match next_event(ws).await {
+            Event::SoundPlayed {
+                channel_id,
+                user_id,
+                sound_id,
+                media_hash,
+                volume,
+            } => assert_eq!(
+                (channel_id, user_id, sound_id, media_hash, volume),
+                (room, alex.0, s.id.clone(), s.media_hash.clone(), s.volume)
+            ),
+            other => panic!("{other:?}"),
+        }
+    }
+    // The player's own list follows; sam's does not.
+    assert!(matches!(
+        next_event(&mut a_ws).await,
+        Event::FrequentSounds { .. }
+    ));
+    assert!(quiet(&mut s_ws).await);
+    assert!(quiet(&mut k_ws).await, "kim is not in the call");
+}
+
+#[tokio::test]
+async fn play_works_while_muted() {
+    let (app, [alex, ..], srv, s) = soundboard().await;
+    let room = lounge(&app, &alex.1, srv).await;
+    app.state().voice.join(room, alex.0, "PA_a");
+    app.state().voice.set_flags(
+        alex.0,
+        pulse_protocol::gateway::VoiceFlags {
+            muted: true,
+            deafened: false,
+        },
+    );
+    let (mut ws, _) = hello(&app, &alex.1).await;
+    assert_eq!(play(&app, &alex.1, &s.id).await.status(), 204);
+    assert!(matches!(
+        next_event(&mut ws).await,
+        Event::SoundPlayed { .. }
+    ));
+}
+
+#[tokio::test]
+async fn play_outside_a_call_is_409() {
+    let (app, [alex, ..], _, s) = soundboard().await;
+    let r = play(&app, &alex.1, &s.id).await;
+    assert_eq!(r.status(), 409);
+    assert!(error_message(r).await.contains("not in a call"));
+    // Nothing was counted.
+    let (_, ready) = hello(&app, &alex.1).await;
+    assert_eq!(ready.sounds[0].plays, 0);
+    assert!(ready.frequent_sounds.is_empty());
+}
+
+#[tokio::test]
+async fn play_from_another_server_you_are_in_works() {
+    let (app, [alex, sam, _], _, s) = soundboard().await;
+    let other = create_server(&app, &sam.1, "Other").await;
+    join(&app, &alex.1, other.id).await;
+    // The call is in the other server; the sound belongs to the first.
+    let room = lounge(&app, &sam.1, other.id).await;
+    app.state().voice.join(room, alex.0, "PA_a");
+    app.state().voice.join(room, sam.0, "PA_s");
+    let (mut s_ws, _) = hello(&app, &sam.1).await;
+    assert_eq!(play(&app, &alex.1, &s.id).await.status(), 204);
+    match next_event(&mut s_ws).await {
+        Event::SoundPlayed { channel_id, .. } => assert_eq!(channel_id, room),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn non_member_play_is_403() {
+    let (app, [alex, ..], srv, s) = soundboard().await;
+    let (jo_id, jo) = register(&app, "jo").await;
+    let room = lounge(&app, &alex.1, srv).await;
+    app.state().voice.join(room, jo_id, "PA_j");
+    assert_eq!(play(&app, &jo, &s.id).await.status(), 403);
+    assert_eq!(play(&app, &alex.1, "missing").await.status(), 404);
+    assert_eq!(favourite(&app, &jo, &s.id, true).await.status(), 403);
+}
+
+#[tokio::test]
+async fn plays_are_counted() {
+    let (app, [alex, ..], srv, s) = soundboard().await;
+    let room = lounge(&app, &alex.1, srv).await;
+    app.state().voice.join(room, alex.0, "PA_a");
+    for _ in 0..3 {
+        assert_eq!(play(&app, &alex.1, &s.id).await.status(), 204);
+    }
+    let list: Vec<Sound> = get_json(&app, &alex.1, &format!("/servers/{srv}/sounds")).await;
+    assert_eq!(list[0].plays, 3);
+}
+
+#[tokio::test]
+async fn frequent_and_favourites_are_per_user() {
+    let (app, [alex, sam, _], srv, s) = soundboard().await;
+    let room = lounge(&app, &alex.1, srv).await;
+    app.state().voice.join(room, alex.0, "PA_a");
+    let (mut a_ws, _) = hello(&app, &alex.1).await;
+    let (mut s_ws, _) = hello(&app, &sam.1).await;
+
+    assert_eq!(play(&app, &alex.1, &s.id).await.status(), 204);
+    assert!(matches!(
+        next_event(&mut a_ws).await,
+        Event::SoundPlayed { .. }
+    ));
+    match next_event(&mut a_ws).await {
+        Event::FrequentSounds { user_id, frequent } => {
+            assert_eq!((user_id, frequent), (alex.0, vec![s.id.clone()]));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(quiet(&mut s_ws).await);
+    assert_eq!(
+        hello(&app, &alex.1).await.1.frequent_sounds,
+        vec![s.id.clone()]
+    );
+    assert!(hello(&app, &sam.1).await.1.frequent_sounds.is_empty());
+
+    assert_eq!(favourite(&app, &alex.1, &s.id, true).await.status(), 204);
+    match next_event(&mut a_ws).await {
+        Event::SoundFavourites {
+            user_id,
+            favourites,
+        } => {
+            assert_eq!((user_id, favourites), (alex.0, vec![s.id.clone()]));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert!(quiet(&mut s_ws).await);
+    assert_eq!(
+        hello(&app, &alex.1).await.1.sound_favourites,
+        vec![s.id.clone()]
+    );
+    assert!(hello(&app, &sam.1).await.1.sound_favourites.is_empty());
+
+    assert_eq!(favourite(&app, &alex.1, &s.id, false).await.status(), 204);
+    match next_event(&mut a_ws).await {
+        Event::SoundFavourites { favourites, .. } => assert!(favourites.is_empty()),
+        other => panic!("{other:?}"),
+    }
+    assert!(hello(&app, &alex.1).await.1.sound_favourites.is_empty());
+}
+
+#[tokio::test]
+async fn frequent_ranks_by_plays_and_skips_servers_you_left() {
+    let (app, [alex, sam, _], srv, s) = soundboard().await;
+    let other = create_server(&app, &sam.1, "Other").await;
+    join(&app, &alex.1, other.id).await;
+    let media = upload(&app, &sam.1, 900).await;
+    let t = create_ok(&app, &sam.1, other.id, &media.hash).await;
+    let room = lounge(&app, &alex.1, srv).await;
+    app.state().voice.join(room, alex.0, "PA_a");
+    for id in [&s.id, &t.id, &t.id] {
+        assert_eq!(play(&app, &alex.1, id).await.status(), 204);
+    }
+    let ready = hello(&app, &alex.1).await.1;
+    assert_eq!(ready.frequent_sounds, vec![t.id.clone(), s.id.clone()]);
+
+    sqlx::query("DELETE FROM server_members WHERE server_id = ? AND user_id = ?")
+        .bind(other.id.to_string())
+        .bind(alex.0.to_string())
+        .execute(&app.db)
+        .await
+        .unwrap();
+    let ready = hello(&app, &alex.1).await.1;
+    assert_eq!(ready.frequent_sounds, vec![s.id.clone()]);
+}
+
+#[tokio::test]
+async fn eleventh_play_in_a_second_is_429() {
+    let mut cfg = test_config();
+    cfg.limits.sound_play_user = pulse_server::limits::Rate::new(10, 10.0);
+    let app = spawn_with(cfg).await;
+    let (alex_id, alex) = register(&app, "alex").await;
+    let srv = create_server(&app, &alex, "Main").await;
+    let media = upload(&app, &alex, 1000).await;
+    let s = create_ok(&app, &alex, srv.id, &media.hash).await;
+    let room = lounge(&app, &alex, srv.id).await;
+    app.state().voice.join(room, alex_id, "PA_a");
+    for i in 0..10 {
+        assert_eq!(play(&app, &alex, &s.id).await.status(), 204, "play {i}");
+    }
+    assert_eq!(play(&app, &alex, &s.id).await.status(), 429);
+}
