@@ -15,7 +15,8 @@
   import FullProfile from '../components/FullProfile.svelte'
   import NicknameDialog from '../components/NicknameDialog.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
-  import { clickOutside } from '../lib/actions'
+  import { clickOutside, narrowerThan } from '../lib/actions'
+  import { NARROW_BODY, searchMakesRoom } from '../lib/layout'
   import ReportBug from '../components/ReportBug.svelte'
   import CrashReportPrompt from '../components/CrashReportPrompt.svelte'
   import ConversationList from '../components/ConversationList.svelte'
@@ -133,7 +134,10 @@
     })
   })
   const hideLeft = $derived(fullShown && !panels.left)
-  const hideRight = $derived(fullShown && !panels.right)
+  // A narrow window shows one side panel: a replies panel opened from search hides the results meanwhile (#97).
+  let narrowBody = $state(false)
+  const searchAside = $derived(searchMakesRoom({ narrow: narrowBody, searchOpen: search.open, threadOpen: !!ui.openThreadId }))
+  const hideRight = $derived((fullShown && !panels.right) || searchAside)
   let sidePanel = $state<HTMLElement>()
   let rightPanel = $state<HTMLElement>()
   // Before a panel hides: a menu open in it closes (an unseen menu would take Esc first), and focus in
@@ -497,7 +501,7 @@
     <button class="win" aria-label="Close" onclick={() => win.close()}><Icon name="x" size={14} /></button>
   </header>
 
-  <div class="body">
+  <div class="body" use:narrowerThan={{ px: NARROW_BODY, set: (v) => (narrowBody = v) }}>
     <aside id={PANEL_ID.left} class="panel side" hidden={hideLeft} bind:this={sidePanel}>
       <div class="panel-head">
         {#if activeServer}
