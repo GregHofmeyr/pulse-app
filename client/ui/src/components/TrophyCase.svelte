@@ -1,6 +1,6 @@
 <script lang="ts">
   // The trophy case panel's body (#49, spec "Showing badges"): earned badges first (rarest first), then
-  // the locked ones greyed with how to earn them; hidden ones you don't hold are "???" with their rarity,
+  // the locked ones greyed with how to earn them; hidden ones you don't hold are "???" with their rarity, last,
   // hand-given ones show only when held. Progress is the viewer's own, so only your own case has bars.
   // Your own case also edits the showcase, and opening it marks your badges seen ([NEW] stays while open).
   import { untrack } from 'svelte'
@@ -20,7 +20,13 @@
   const cat = $derived(badgeStore.catalogue)
   const held = $derived(new Map(badges.map((b) => [b.key, b])))
   const earned = $derived([...badges].sort(byRarity))
-  const locked = $derived((cat?.badges ?? []).filter((d) => !held.has(d.key) && !d.hand_given))
+  /** A hidden badge the viewer doesn't hold: the catalogue masks it as `hidden:<n>`, shown as "???". */
+  const masked = (d: BadgeDef) => d.hidden && d.key.startsWith('hidden:')
+  // the "???" ones go last (#131), each group in the catalogue's order
+  const locked = $derived.by(() => {
+    const all = (cat?.badges ?? []).filter((d) => !held.has(d.key) && !d.hand_given)
+    return [...all.filter((d) => !masked(d)), ...all.filter(masked)]
+  })
 
   const nameOf = (b: Badge, d: BadgeDef | undefined) => d?.name ?? (b.hidden ? '???' : fallbackName(b.key))
   const iconOf = (b: Badge, d: BadgeDef | undefined) => d?.icon ?? '🏆'
@@ -146,7 +152,7 @@
     {#each locked as d (d.key)}
       {@const p = progressOf(d, 0)}
       <li class="tile locked" style:--ring-color={rarityVar(d.tiers[0]?.rarity ?? 'common')}>
-        <BadgeIcon icon={d.icon} rarity={d.tiers[0]?.rarity ?? 'common'} hidden={d.hidden && d.key.startsWith('hidden:')} label={d.name} />
+        <BadgeIcon icon={d.icon} rarity={d.tiers[0]?.rarity ?? 'common'} hidden={masked(d)} label={d.name} />
         <span class="nm">{d.name}</span>
         <span class="rar">{rarityLabel(d.tiers[0]?.rarity ?? 'common')}</span>
         <span class="desc">{d.description || 'Hidden until earned'}</span>

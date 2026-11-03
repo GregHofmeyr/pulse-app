@@ -69,6 +69,20 @@ describe('TrophyCase', () => {
     expect(t.textContent).toContain('1 of 8 has this')
   })
 
+  it('hidden badges not yet earned ("???") come last, after earned and locked; the rest keep their order (#131)', async () => {
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'get_badge_catalogue'
+      ? { ...CATALOGUE, badges: [
+          def('hidden:0', { name: '???', description: '', icon: '❔', hidden: true, tiers: [{ threshold: 0, rarity: 'epic', holders: 1 }] }),
+          CATALOGUE.badges[0], CATALOGUE.badges[1],
+          def('hidden:1', { name: '???', description: '', icon: '❔', hidden: true, tiers: [{ threshold: 0, rarity: 'rare', holders: 0 }] }),
+          CATALOGUE.badges[2], CATALOGUE.badges[3],
+        ] }
+      : undefined))
+    await show({ badges: [badge('night_owl', { rarity: 'rare' })] })
+    const order = [...document.querySelectorAll('.tile')].map((t) => t.querySelector('.badge-icon')!.getAttribute('aria-label') + (t.querySelector('.rar')!.textContent === 'Rare' ? ':rare' : ''))
+    expect(order).toEqual(['Night Owl:rare', 'The Yapper', 'The Regular', 'Quote of the Year', '???', '???:rare'])
+  })
+
   it('a stacking badge shows ×N', async () => {
     await show({ badges: [badge('quote_of_the_year', { rarity: 'legendary', count: 2 })] })
     expect(tile('Quote of the Year')!.textContent).toContain('×2')
