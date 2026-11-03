@@ -395,7 +395,7 @@
   .row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   /* the file input sits under its label, which is the button people see */
   .upload { position: relative; cursor: pointer; }
-  .upload:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .upload:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .upload.disabled { opacity: .5; cursor: default; }
   .file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   .swatches, .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }

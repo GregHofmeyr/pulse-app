@@ -15,7 +15,8 @@ beforeAll(() => {
   const style = document.createElement('style')
   style.textContent = src('app.css')
   document.head.append(style)
-  const found = [...style.sheet!.cssRules].find((r): r is CSSStyleRule => r instanceof CSSStyleRule && r.selectorText === ':root')
+  // Pulse Dark: the default block (`:root, [data-theme='dark']`); the other themes are checked in themeCss.test.ts
+  const found = [...style.sheet!.cssRules].find((r): r is CSSStyleRule => r instanceof CSSStyleRule && /^:root,\s*\[data-theme=["']dark["']\]$/.test(r.selectorText))
   root = found!.style
 })
 // jsdom drops the spaces after commas in a custom property's value
@@ -105,8 +106,10 @@ describe('colour literals', () => {
     expect(stale).toEqual([])
   })
 
-  it('app.css keeps its colour values in :root only', () => {
-    const outside = src('app.css').replace(/:root\s*\{[\s\S]*?\n\}/, '').replace(/\/\*[\s\S]*?\*\//g, '')
+  it('app.css keeps its colour values in the theme blocks only', () => {
+    const outside = src('app.css')
+      .replace(/\/\*[\s\S]*?\*\//g, '')
+      .replace(/(^|\n)(:root, )?\[data-theme='[a-z]+'\](\[data-tint='[a-z]+'\])? \{[\s\S]*?\n\}/g, '')
     expect(outside.match(LITERAL) ?? []).toEqual([])
   })
 })
@@ -128,12 +131,10 @@ describe('the tokens (values pinned to the look before they existed: no visual c
     ['--tooltip-bg', '#0f1013'],
     ['--tooltip-text', '#e8e9ed'],
     ['--scrim-strong', 'rgba(10, 11, 13, .85)'],
-    ['--shadow-pop', '0 8px 24px rgba(0, 0, 0, .4)'],
-    ['--shadow-float', '0 12px 32px rgba(8, 9, 12, .5)'],
-    ['--shadow-notice', '0 6px 20px rgba(0, 0, 0, .35)'],
-    ['--shadow-notice-soft', '0 6px 20px rgba(0, 0, 0, .3)'],
-    ['--shadow-jump', '0 4px 14px rgba(0, 0, 0, .35)'],
-    ['--shadow-picker', '0 8px 28px rgba(0, 0, 0, .45)'],
+    // three elevation levels (step 2 merged the six shadows): the jump pill; popups and notices; menus and dialogs
+    ['--shadow-1', '0 4px 14px rgba(0, 0, 0, .35)'],
+    ['--shadow-2', '0 8px 24px rgba(0, 0, 0, .4)'],
+    ['--shadow-3', '0 18px 48px rgba(8, 9, 12, .5)'],
     // the Quote of the Year island: today's text colours, fixed so they read on --quote-surface in every theme
     ['--island-text', '#e8e9ed'],
     ['--island-text-2', '#b9bcc6'],
@@ -204,6 +205,6 @@ describe('the tooltip', () => {
     const tip = /\.pulse-tooltip \{([^}]*)\}/.exec(css)![1]
     expect(tip).toContain('background: var(--tooltip-bg)')
     expect(tip).toContain('color: var(--tooltip-text)')
-    expect(tip).toContain('box-shadow: var(--shadow-pop)')
+    expect(tip).toContain('box-shadow: var(--shadow-2)')
   })
 })

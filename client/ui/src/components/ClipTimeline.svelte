@@ -169,7 +169,7 @@
   .track { position: relative; height: 72px; border-radius: 6px; background-color: var(--bg-0); background-size: 100% 100%; background-repeat: no-repeat; overflow: hidden; touch-action: none; }
   .piece { position: absolute; top: 0; bottom: 0; padding: 0; border: 0; border-right: 1px solid rgba(0, 0, 0, 0.5); background: transparent; cursor: pointer; }
   .piece.dropped { background: repeating-linear-gradient(45deg, var(--danger-hatch) 0 6px, rgba(0, 0, 0, 0.6) 6px 12px); }
-  .piece.selected { outline: 2px solid var(--accent); outline-offset: -2px; z-index: 1; }
+  .piece.selected { outline: 2px solid var(--focus-ring); outline-offset: -2px; z-index: 1; }
   .edge { position: absolute; top: 0; bottom: 0; width: 12px; margin-left: -6px; z-index: 2; cursor: ew-resize; }
   .edge::after { content: ''; position: absolute; left: 4px; top: 0; bottom: 0; width: 4px; border-radius: 2px; background: var(--text); opacity: 0.8; }
   .head { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--danger); pointer-events: none; z-index: 3; }

@@ -193,7 +193,7 @@
   .menu-item.off small { font-size: 11px; }
   .slider { padding: 6px 10px 8px; display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; color: var(--text-2); }
   .slider input { grid-column: 1 / -1; accent-color: var(--accent); }
-  .slider input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .slider input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
   .slider strong { color: var(--text); font-weight: 600; }
   .hint { grid-column: 1 / -1; font-size: 11px; color: var(--text-3); }
 </style>

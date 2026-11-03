@@ -17,7 +17,7 @@ export const THEMES: Theme[] = [
   { key: 'oled', label: 'OLED Black', blurb: 'True black window and sidebar.', light: false, accent: '#8b9cff', surfaces: { bg0: '#000000', bg1: '#000000', bg2: '#0c0c0e', bg3: '#1a1b1f', menu: '#161619' } },
   { key: 'sunset', label: 'Sunset', blurb: 'Warm rosy dark with a coral accent.', light: false, accent: '#ff8a6b', surfaces: { bg0: '#1c1213', bg1: '#23171a', bg2: '#2a1c1f', bg3: '#352427', menu: '#3a282b' } },
   { key: 'pastel', label: 'Pastel', blurb: 'Soft lavender, pink and peach.', light: true, accent: '#b48cf2', surfaces: { bg0: '#e8def3', bg1: '#f4ebf6', bg2: '#fffafb', bg3: '#f5e6ef', menu: '#fffafb' } },
-  { key: 'light', label: 'Light', blurb: 'White panels on a softly tinted ground.', light: true, accent: '#5b6cf0', surfaces: { bg0: '#e9eaed', bg1: '#f4f4f6', bg2: '#ffffff', bg3: '#ececef', menu: '#ffffff' } },
+  { key: 'light', label: 'Light', blurb: 'White panels on a softly tinted ground.', light: true, accent: '#4c5bd4', surfaces: { bg0: '#e9eaed', bg1: '#f4f4f6', bg2: '#ffffff', bg3: '#ececef', menu: '#ffffff' } },
 ]
 
 export const DEFAULT_THEME: ThemeKey = 'dark'
@@ -44,7 +44,7 @@ export function surfacesFor(theme: ThemeKey, tint: TintKey): Surfaces {
 }
 
 /** The surfaces accent text has to read on. */
-export const textSurfaces = (s: Surfaces): string[] => [s.bg1, s.bg2, s.bg3, s.menu]
+export const textSurfaces = (s: Surfaces): string[] => [s.bg0, s.bg1, s.bg2, s.bg3, s.menu]
 
 export const ACCENT_PRESETS: { label: string; color: string }[] = [
   { label: 'Periwinkle', color: '#8b9cff' },

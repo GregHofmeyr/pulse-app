@@ -251,7 +251,7 @@
   /* the shared .input look, holding chips beside the text */
   .search { position: relative; width: 240px; min-width: 0; height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--bg-4); border-radius: 8px; background: var(--bg-1); color: var(--text-3); transition: width var(--dur) var(--ease); }
   .search:hover { border-color: var(--line-menu); }
-  .search.focused { width: 320px; outline: 2px solid var(--accent); outline-offset: 2px; }
+  .search.focused { width: 320px; outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .field { flex: 1; min-width: 60px; height: 100%; padding: 0; border: 0; background: none; color: var(--text); font-size: 13px; outline: none; text-overflow: ellipsis; }
   .field::placeholder { color: var(--text-3); }
   .chip { flex-shrink: 0; display: inline-flex; align-items: center; gap: 2px; height: 22px; padding: 0 2px 0 7px; border-radius: 6px; background: var(--accent-soft); color: var(--text); font-size: 12px; white-space: nowrap; }
