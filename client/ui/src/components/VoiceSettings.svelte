@@ -3,6 +3,7 @@
   import Select from './Select.svelte'
   import Segmented from './Segmented.svelte'
   import SoundSettings from './SoundSettings.svelte'
+  import VolumeMixer from './VolumeMixer.svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { loadAudioConfig, saveAudioConfig, type AudioConfig, type NsLevel } from '../lib/voiceui'
 
@@ -144,6 +145,7 @@
 </div>
 
 <SoundSettings />
+<VolumeMixer />
 </section>
 
 <style>

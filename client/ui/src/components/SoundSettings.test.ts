@@ -68,30 +68,11 @@ describe('SoundSettings', () => {
     expect(stored()).toBeNull()
   })
 
-  it('the volume slider saves and shows the percentage', () => {
+  it('leaves volumes to the Volume mixer: no sound volume slider or per-sound switches here', () => {
     show()
-    const input = document.querySelector<HTMLInputElement>('input[type=range][aria-label="Sound volume"]')!
-    expect(input.min).toBe('0')
-    expect(input.max).toBe('100')
-    input.value = '40'
-    input.dispatchEvent(new Event('input', { bubbles: true }))
-    input.dispatchEvent(new Event('change', { bubbles: true }))
-    flushSync()
-    expect(stored().volume_pct).toBe(40)
-    expect(document.body.textContent).toContain('40%')
-  })
-
-  it('event switches add to and remove from off', () => {
-    show()
-    const sw = () => document.querySelector<HTMLButtonElement>('button[aria-label="A stream ends"]')!
-    expect(sw().getAttribute('aria-pressed')).toBe('true')
-    sw().click()
-    flushSync()
-    expect(stored().off).toEqual(['live_end'])
-    expect(sw().getAttribute('aria-pressed')).toBe('false')
-    sw().click()
-    flushSync()
-    expect(stored().off).toEqual([])
+    expect(document.querySelector('input[type=range]')).toBeNull()
+    expect(document.querySelector('button.switch')).toBeNull()
+    expect(document.body.textContent).toContain('Volume mixer')
   })
 
   it('unmounting stops a running preview', () => {
@@ -166,11 +147,5 @@ describe('SoundSettings', () => {
     const desc = document.getElementById(r.getAttribute('aria-describedby')!)
     expect(desc?.textContent).toBe(SOUND_SETS.find((s) => s.id === 'goofy')!.blurb)
     expect(new Set(radios().map((x) => x.getAttribute('aria-describedby'))).size).toBe(8)
-  })
-
-  it('keeps the volume hint outside the labelled control', () => {
-    show()
-    const input = document.querySelector('input[aria-label="Sound volume"]')!
-    expect(input.closest('label')).toBeNull()
   })
 })
