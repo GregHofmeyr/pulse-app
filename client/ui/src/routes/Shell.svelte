@@ -426,7 +426,10 @@
 
   function selectServer(id: string) {
     activeServerId = id
-    const general = Object.values(app.state.channels).find((c) => c.server_id === id && c.kind === 'text')
+    // the top text channel, as the sidebar lists them
+    const general = Object.values(app.state.channels)
+      .filter((c) => c.server_id === id && c.kind === 'text')
+      .sort((a, b) => a.position - b.position || (a.id < b.id ? -1 : 1))[0]
     activeChannelId = general?.id ?? null
   }
 

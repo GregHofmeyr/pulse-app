@@ -71,9 +71,10 @@
   const report = (f: () => Promise<unknown>) => () => f().catch((e) => onError(errorText(e)))
 
   async function markRead() {
+    // the latest page; its order isn't relied on (ids sort by time)
     const page = await api.listMessages(channel.id)
-    const newest = page.at(-1)
-    if (newest) await api.markRead(channel.id, newest.id)
+    const newest = page.reduce<string | null>((max, m) => (max === null || m.id > max ? m.id : max), null)
+    if (newest) await api.markRead(channel.id, newest)
   }
 
   function keydown(e: KeyboardEvent) {

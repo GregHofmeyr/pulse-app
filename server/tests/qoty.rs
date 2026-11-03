@@ -1917,3 +1917,29 @@ async fn a_quotes_channel_stays_while_a_vote_is_live() {
         .await;
     assert_eq!(r.status(), 204);
 }
+
+/// A past winner is kept when its quote is deleted, so its channel can't take it with it either.
+#[tokio::test]
+async fn a_quotes_channel_holding_a_past_winner_stays() {
+    let f = fixture().await;
+    let q = f.quote("the winner").await;
+    seed_win(&f, 2025, q.id).await;
+    let r = f
+        .call(
+            Method::DELETE,
+            &f.sam_t,
+            &format!("/channels/{}", f.ch.id),
+            None,
+        )
+        .await;
+    assert_eq!(r.status(), 409);
+    assert!(message_of(r).await.contains("Quote of the Year"));
+    assert_eq!(
+        f.count(&format!(
+            "SELECT COUNT(*) FROM qoty_winners WHERE message_id = '{}'",
+            q.id
+        ))
+        .await,
+        1
+    );
+}

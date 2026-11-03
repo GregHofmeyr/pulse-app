@@ -78,7 +78,8 @@ describe('a text channel', () => {
   })
 
   it('mark_as_read_moves_the_read_point_to_the_newest_message', async () => {
-    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages' ? [{ id: 'M5' }, { id: 'M9' }] : undefined))
+    // the latest page comes newest first
+    invoke.mockImplementation(async (cmd: string) => (cmd === 'list_messages' ? [{ id: 'M9' }, { id: 'M5' }] : undefined))
     rightClick('old-stuff')
     item('Mark as read')!.click()
     await settle()
@@ -120,6 +121,35 @@ describe('a text channel', () => {
     await settle()
     expect(invoke).toHaveBeenCalledWith('rename_channel', { channelId: 'T1', name: 'chat-room' })
     expect(document.querySelector('input[aria-label="Rename #general"]')).toBeNull()
+  })
+
+  it('focus_is_back_on_the_row_after_a_rename', async () => {
+    invoke.mockResolvedValue({ id: 'T1', server_id: 'S1', kind: 'text', name: 'chat', position: 0 })
+    rightClick('general')
+    item('Rename channel…')!.click()
+    flushSync()
+    const input = document.querySelector<HTMLInputElement>('input[aria-label="Rename #general"]')!
+    input.value = 'chat'
+    input.dispatchEvent(new Event('input', { bubbles: true }))
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }))
+    await settle()
+    expect(document.activeElement).toBe(row('general'))
+  })
+
+  it('a_channel_deleted_while_its_menu_or_dialog_is_open_closes_them', async () => {
+    const { applyEvent } = await import('../lib/state')
+    const gone = (id: string) => {
+      app.state = applyEvent(app.state, { t: 'ChannelDeleted', d: { channel_id: id, server_id: 'S1' } }, Date.now())
+      flushSync()
+    }
+    rightClick('old-stuff')
+    gone('T2')
+    expect(menu()).toBeNull()
+    rightClick('quotes')
+    item('Delete channel…')!.click()
+    flushSync()
+    gone('Q1')
+    expect(document.querySelector('[role=dialog]')).toBeNull()
   })
 
   it('escape_leaves_a_rename_without_saving', async () => {

@@ -66,12 +66,12 @@ pub async fn rename(
 /// `DELETE /channels/{id}`: a server channel and everything in it, for good (a hard delete, like
 /// a group whose last member leaves). Its messages go, their search entries with them (by
 /// trigger), and the cascades take their reactions, mentions, quotes, clips rows, previews, seen
-/// points of quote replies, Quote of the Year options and wins, and the channel's read states,
-/// voice sessions and clip views; its mutes are deleted here, and its open clip tickets keep no
-/// channel (their confirm then refuses). Disk media nothing uses any more is left to the media
-/// cleanup, and clip objects are deleted after the commit (the clip sweeper retries a failure).
-/// Anyone in its call is taken out. A quotes channel stays while its server has a live Quote of
-/// the Year vote, whose options are quotes.
+/// points of quote replies, options of ended Quote of the Year votes, and the channel's read
+/// states, voice sessions and clip views; its mutes are deleted here, and its open clip tickets
+/// keep no channel (their confirm then refuses). Disk media nothing uses any more is left to the
+/// media cleanup, and clip objects are deleted after the commit (the clip sweeper retries a
+/// failure). Anyone in its call is taken out. A quotes channel stays while its server has a live
+/// Quote of the Year vote (whose options are quotes), and for good once it holds a winner.
 pub async fn delete(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -87,6 +87,19 @@ pub async fn delete(
     if ch.kind == ChannelKind::Quotes && crate::qoty::live_in(&mut tx, server).await?.is_some() {
         return Err(AppError::Conflict(
             "A Quote of the Year vote is on: end it before deleting a quotes channel.".into(),
+        ));
+    }
+    // What won is kept when its quote is deleted (`qoty_winners`): the channel can't take it.
+    let holds_winner: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM qoty_winners w JOIN messages m ON m.id = w.message_id
+         WHERE m.channel_id = ? LIMIT 1",
+    )
+    .bind(id.to_string())
+    .fetch_optional(&mut *tx)
+    .await?;
+    if holds_winner.is_some() {
+        return Err(AppError::Conflict(
+            "This channel holds a Quote of the Year winner, so it can't be deleted.".into(),
         ));
     }
     let clips: Vec<String> = sqlx::query_scalar(

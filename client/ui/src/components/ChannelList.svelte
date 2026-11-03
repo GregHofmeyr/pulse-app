@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from 'svelte'
   import Icon, { type IconName } from './Icon.svelte'
   import type { Channel } from '../lib/protocol/Channel'
   import { app, clock } from '../lib/store.svelte'
@@ -107,17 +108,24 @@
     renameValue = c.name ?? ''
     renameError = ''
   }
-  async function saveRename(c: Channel) {
+  /** Back to the row; from the keyboard, focus goes back to it too (the field it had is gone). */
+  async function endRename(id: string, refocus: boolean) {
+    if (renaming !== id) return
+    renaming = null
+    if (!refocus) return
+    await tick()
+    listEl?.querySelector<HTMLElement>(`.row[data-channel="${id}"]`)?.focus()
+  }
+  /** Enter saves (and keeps the field if refused); leaving the field saves too, unless it was refused. */
+  async function saveRename(c: Channel, fromKey: boolean) {
     if (renaming !== c.id || renameSaving) return
+    if (!fromKey && renameError) return void endRename(c.id, false)
     const name = tidyName(c.kind, renameValue)
-    if (!name || name === c.name) {
-      renaming = null
-      return
-    }
+    if (!name || name === c.name) return void endRename(c.id, fromKey)
     renameSaving = true
     try {
       await api.renameChannel(c.id, name)
-      if (renaming === c.id) renaming = null
+      await endRename(c.id, fromKey)
     } catch (err) {
       renameError = errorText(err)
     } finally {
@@ -125,13 +133,21 @@
     }
   }
   function renameKey(e: KeyboardEvent, c: Channel) {
-    if (e.key === 'Enter') void saveRename(c)
+    if (e.key === 'Enter') void saveRename(c, true)
     if (e.key === 'Escape') {
       e.preventDefault()
-      renaming = null
+      void endRename(c.id, true)
     }
   }
   let deleting = $state<Channel | null>(null)
+  let listEl = $state<HTMLElement>()
+  // Deleted meanwhile (by anyone): its menu, rename or dialog has nothing left to act on.
+  $effect(() => {
+    const has = (id: string) => !!app.state.channels[id]
+    if (chanMenu && !has(chanMenu.channel.id)) chanMenu = null
+    if (deleting && !has(deleting.id)) deleting = null
+    if (renaming && !has(renaming)) renaming = null
+  })
 
   // the participant menu for someone in a voice channel (right-click, click, or the menu key on the focused row)
   let menu = $state<{ channelId: string; userId: string; x: number; y: number; opener: HTMLElement } | null>(null)
@@ -163,7 +179,7 @@
   <div class="row renaming">
     <span class="ico"><Icon name={icon} size={17} /></span>
     <input class="input input-sm grow" use:focus bind:value={renameValue} maxlength="64" aria-label="Rename {c.kind === 'voice' ? c.name : `#${c.name}`}"
-      onkeydown={(e) => renameKey(e, c)} onblur={() => void saveRename(c)} />
+      onkeydown={(e) => renameKey(e, c)} onblur={() => void saveRename(c, false)} />
   </div>
   {#if renameError}<small class="err" role="alert">{renameError}</small>{/if}
 {/snippet}
@@ -174,7 +190,7 @@
   {#if renaming === c.id}
     {@render renameField(c, icon)}
   {:else}
-  <button class="row" class:active={c.id === activeChannelId} class:unread={(read?.unread ?? 0) > 0 && !muted} class:muted aria-haspopup="menu"
+  <button class="row" class:active={c.id === activeChannelId} class:unread={(read?.unread ?? 0) > 0 && !muted} class:muted aria-haspopup="menu" data-channel={c.id}
     onclick={() => onSelect(c.id)}
     oncontextmenu={(e) => { e.preventDefault(); openChanMenu(c, e, e.currentTarget) }} onkeydown={(e) => rowKey(e, c)}>
     <span class="ico"><Icon name={icon} size={17} /></span><span class="grow">{c.name}</span>
@@ -183,7 +199,7 @@
   </button>
   {/if}
 {/snippet}
-<div class="list">
+<div class="list" bind:this={listEl}>
   <div class="label">{@render heading('text', 'TEXT CHANNELS')}
     {#if member}<button class="add" aria-label="Create text channel" onclick={() => startAdd('text')}><Icon name="plus" size={14} /></button>{/if}
   </div>
@@ -224,7 +240,7 @@
     {#if renaming === c.id}
       {@render renameField(c, 'speaker')}
     {:else}
-    <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId} aria-haspopup={member ? 'menu' : undefined}
+    <button class="row" class:active={c.id === activeChannelId} class:live={c.id === voiceChannelId} aria-haspopup={member ? 'menu' : undefined} data-channel={c.id}
       data-tip={c.id === voiceChannelId ? 'You’re here' : `Join ${c.name}`}
       onmouseenter={() => restOn(c.id)} onfocus={() => restOn(c.id)}
       onmouseleave={() => prefetch.leave(c.id)} onblur={() => prefetch.leave(c.id)}
