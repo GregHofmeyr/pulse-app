@@ -843,3 +843,49 @@ describe('trimming history on leave', () => {
     expect(app.state.messages).toEqual({})
   })
 })
+
+// Signing out resets the app's data in the same update that removes the shell (App: user = null; resetState()).
+// For that moment the open channel's view is still mounted while its channel is gone from the data: nothing may
+// read the channel then, or the error leaves the page blank for the next sign-in (owner, 2026-11-03).
+describe('signing out with a channel open', () => {
+  const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+  const ready: Ready = {
+    me,
+    servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
+    channels: [
+      { id: 'T1', server_id: 'S1', kind: 'text', name: 'general', position: 0 },
+      { id: 'V1', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 1 },
+      { id: 'K1', server_id: 'S1', kind: 'clips', name: 'clips', position: 2 },
+    ],
+    members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
+    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [],
+  }
+  const open = (name: string) => {
+    ;[...document.querySelectorAll<HTMLElement>('.row')].find((r) => r.textContent?.includes(name))!.dispatchEvent(new MouseEvent(name === 'Lounge' ? 'dblclick' : 'click', { bubbles: true }))
+    flushSync()
+  }
+
+  it.each(['general', 'Lounge', 'clips'])('the %s view lets go without reading the vanished channel', async (name) => {
+    app.state = applyReady(emptyState(), ready)
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Main'))!.click()
+    flushSync()
+    if (name !== 'general') open(name)
+    await tick()
+    const errors: unknown[] = []
+    const onError = (e: ErrorEvent) => errors.push(e.error)
+    window.addEventListener('error', onError)
+    try {
+      // the sign-out's reset, before the shell goes
+      expect(() => {
+        app.state = emptyState()
+        flushSync()
+      }).not.toThrow()
+      await tick()
+      expect(errors).toEqual([])
+    } finally {
+      window.removeEventListener('error', onError)
+    }
+  })
+})

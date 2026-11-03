@@ -341,6 +341,9 @@
   const activeServer = $derived(servers.find((s) => s.id === activeServerId) ?? null)
   const member = $derived(activeServerId ? isMember(app.state, activeServerId) : false)
   const activeChannel = $derived(activeChannelId ? app.state.channels[activeChannelId] : null)
+  // The channel views below take their id from activeChannelId (a plain string), never activeChannel.id: for the
+  // moment a channel leaves the data before its view goes (a sign-out's reset, a delete), activeChannel is undefined,
+  // and reading .id there threw and left the window blank after a sign-in (2026-11-03).
 
   /** Show channel `id` (with its server), if it exists. */
   function showChannel(id: string) {
@@ -568,13 +571,13 @@
           <button class="btn btn-lg btn-primary" onclick={join}>Join server</button>
           {#if error}<p class="error">{error}</p>{/if}
         </div>
-      {:else if activeChannel?.kind === 'voice'}
-        <VoicePanel channelId={activeChannel.id} serverId={activeServerId} onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />
-      {:else if activeChannel?.kind === 'clips' && activeServerId}
-        {#key activeChannel.id}<ClipsChannel channelId={activeChannel.id} serverId={activeServerId} />{/key}
-      {:else if activeChannel}
-        {#key activeChannel.id}<TextChannel channelId={activeChannel.id} serverId={activeServerId}
-          onAddPeople={() => (picker = { mode: 'add', channelId: activeChannel.id })}
+      {:else if activeChannel?.kind === 'voice' && activeChannelId}
+        <VoicePanel channelId={activeChannelId} serverId={activeServerId} onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />
+      {:else if activeChannel?.kind === 'clips' && activeServerId && activeChannelId}
+        {#key activeChannelId}<ClipsChannel channelId={activeChannelId} serverId={activeServerId} />{/key}
+      {:else if activeChannel && activeChannelId}
+        {#key activeChannelId}<TextChannel channelId={activeChannelId} serverId={activeServerId}
+          onAddPeople={() => activeChannelId && (picker = { mode: 'add', channelId: activeChannelId })}
           onLeft={() => (activeChannelId = null)} onStartQoty={() => (qotyStart = activeServerId)} />{/key}
       {:else if activeServerId === null}
         <PeopleBoard onOpen={openConversation} onJoinVoice={(ch, srv) => { selectServer(srv); activeChannelId = ch; if (voice.channelId !== ch) void voiceApi.join(ch) }} />
@@ -585,7 +588,7 @@
     </main>
 
     <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap -->
-    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel}>{#if search.open}<SearchResults />{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group'}<GroupMembers channelId={activeChannel.id} />{/if}</div>
+    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel}>{#if search.open}<SearchResults />{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} />{/if}</div>
   </div>
 </div>
 <StreamToast />
