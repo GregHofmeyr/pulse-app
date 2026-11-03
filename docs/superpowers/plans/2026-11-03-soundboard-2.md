@@ -16,6 +16,8 @@ that rings unite with the real speaking set at render time only.
 
 **Spec:** `docs/superpowers/specs/2026-11-03-soundboard-design.md`, issue #138, issue #122.
 
+**Status: built, reviewed and merged with main on the branch (2026-11-03). Ring chosen over the emoji-beside-name fallback.**
+
 ## Global Constraints
 
 - New protocol fields are `#[serde(default)]`; no protocol version bump. Bindings regenerated (`cargo test -p pulse-protocol export_bindings`) with no diff afterwards.
