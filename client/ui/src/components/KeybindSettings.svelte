@@ -171,7 +171,7 @@
   .row { display: flex; align-items: center; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line-soft); }
   .row strong { flex: 1; font-weight: 600; }
   .key { min-width: 160px; height: 36px; padding: 0 14px; border-radius: 10px; border: 1px solid var(--bg-4); background: var(--bg-2); color: var(--text); font-weight: 600; letter-spacing: .02em; }
-  .key.recording { border-color: var(--accent); color: var(--accent-text); }
+  .key.recording { border-color: var(--focus-ring); color: var(--accent-text); }
   .key:disabled { opacity: .4; }
   .master > div { flex: 1; display: flex; flex-direction: column; gap: 2px; }
   .master small { line-height: 1.4; }

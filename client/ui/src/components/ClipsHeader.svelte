@@ -111,7 +111,7 @@
   .chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-left: 6px; }
   .chip { height: 28px; padding: 0 11px; border-radius: 14px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; font-weight: 600; white-space: nowrap; }
   .chip:hover { background: var(--bg-3); color: var(--text); }
-  .chip[aria-pressed='true'] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
+  .chip[aria-pressed='true'] { background: var(--accent); border-color: var(--focus-ring); color: var(--on-accent); }
   .person { position: relative; }
   .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; }
   .menu-item[aria-checked='true'] { color: var(--accent-text); }

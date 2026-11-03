@@ -109,7 +109,7 @@
   .themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
   .theme { display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 2px solid transparent; border-radius: 12px; background: transparent; color: var(--text-2); text-align: left; }
   .theme:hover { background: var(--bg-3); color: var(--text); }
-  .theme[aria-pressed='true'] { border-color: var(--accent); color: var(--text); }
+  .theme[aria-pressed='true'] { border-color: var(--focus-ring); color: var(--text); }
   .t-label { font-size: 13px; font-weight: 600; padding: 0 2px 2px; }
   .preview { display: grid; grid-template-columns: 34% 1fr; gap: 4px; height: 72px; padding: 4px; border-radius: 8px; background: var(--bg-0); border: 1px solid var(--line); overflow: hidden; }
   .preview i { display: block; height: 5px; border-radius: 3px; }
@@ -125,7 +125,7 @@
   .swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
   .tint, .default { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 8px; border: 2px solid var(--line); border-radius: 16px; background: transparent; color: var(--text-2); font-size: 13px; font-weight: 600; }
   .tint:hover, .default:hover { color: var(--text); }
-  .tint[aria-pressed='true'], .default[aria-pressed='true'] { border-color: var(--accent); color: var(--text); }
+  .tint[aria-pressed='true'], .default[aria-pressed='true'] { border-color: var(--focus-ring); color: var(--text); }
   /* the tint's own ground (a preview of Light with that tint) */
   .tint .dot { width: 16px; height: 16px; border-radius: 50%; background: var(--bg-0); border: 1px solid var(--line-strong); }
   .chip { display: block; width: 18px; height: 18px; border-radius: 50%; }
