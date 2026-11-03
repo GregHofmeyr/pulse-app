@@ -43,6 +43,35 @@ enum Cmd {
         #[arg(long)]
         log: bool,
     },
+    /// Award, reset or inspect badges (testing; never exposed in the app)
+    #[command(subcommand)]
+    Badge(BadgeCmd),
+}
+
+#[derive(Subcommand)]
+enum BadgeCmd {
+    /// Give a user a badge at a tier (unseen; the running server shows no toast)
+    Award {
+        username: String,
+        key: String,
+        #[arg(long, default_value_t = 1)]
+        tier: u8,
+    },
+    /// Take a badge away, or with --tier only that tier and above
+    Reset {
+        username: String,
+        key: String,
+        #[arg(long)]
+        tier: Option<u8>,
+    },
+    /// Print a user's badge counters and the badges they hold
+    Stats { username: String },
+    /// Set one badge counter, so the next real event triggers the unlock
+    SetStat {
+        username: String,
+        stat: String,
+        value: i64,
+    },
 }
 
 #[tokio::main]
@@ -98,6 +127,33 @@ async fn main() -> anyhow::Result<()> {
             let db = pulse_server::db::connect(&cfg.db_url).await?;
             let (name, n) = pulse_server::auth::routes::revoke_sessions(&db, &username).await?;
             println!("signed out {n} {} of {name}", sessions(n));
+            Ok(())
+        }
+        Cmd::Badge(cmd) => {
+            use pulse_server::badges::admin;
+            let cfg = cfg()?;
+            let db = pulse_server::db::connect(&cfg.db_url).await?;
+            let lines = match cmd {
+                BadgeCmd::Award {
+                    username,
+                    key,
+                    tier,
+                } => vec![admin::award(&db, &username, &key, tier).await?],
+                BadgeCmd::Reset {
+                    username,
+                    key,
+                    tier,
+                } => vec![admin::reset(&db, &username, &key, tier).await?],
+                BadgeCmd::Stats { username } => admin::show(&db, &username).await?,
+                BadgeCmd::SetStat {
+                    username,
+                    stat,
+                    value,
+                } => vec![admin::set_stat(&db, &username, &stat, value).await?],
+            };
+            for l in lines {
+                println!("{l}");
+            }
             Ok(())
         }
         Cmd::Reports { limit } => {

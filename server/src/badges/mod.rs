@@ -3,6 +3,7 @@
 //! groups. A tiered badge's tiers are separate unlocks, and the first person to reach each tier
 //! keeps that forever.
 
+pub mod admin;
 pub mod catalogue;
 pub mod engine;
 pub mod stats;
