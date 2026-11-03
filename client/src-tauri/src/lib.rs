@@ -180,6 +180,8 @@ pub fn run() {
             app.manage(voice::mictest::MicTest::default());
             app.manage(soundboard::Cache::default());
             app.manage(soundboard::Prepared::default());
+            app.manage(soundboard::Clicks::default());
+            app.manage(soundboard::Trimming::default());
             app.manage(stream::PickerMemory::default());
             let h = app.handle().clone();
             app.manage(stream::audio::StreamAudio::new(std::sync::Arc::new(
@@ -322,6 +324,9 @@ pub fn run() {
             commands::soundboard_preview,
             commands::soundboard_upload,
             commands::soundboard_play,
+            commands::soundboard_warm,
+            commands::soundboard_trim_play,
+            commands::soundboard_trim_stop,
             commands::create_sound,
             commands::update_sound,
             commands::delete_sound,

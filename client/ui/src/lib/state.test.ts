@@ -1377,7 +1377,7 @@ describe('profiles', () => {
   })
 
   it('loads sounds from Ready and follows the sound events', () => {
-    const snd = (id: string, name: string) => ({ id, server_id: 'S1', name, emoji: null, media_hash: 'h' + id, volume: 100, duration_ms: 1000, added_by: 'U1', created_at: '2026-10-01T00:00:00.000Z', plays: 0 })
+    const snd = (id: string, name: string) => ({ id, server_id: 'S1', name, emoji: null, emoji_id: null, media_hash: 'h' + id, volume: 100, duration_ms: 1000, added_by: 'U1', created_at: '2026-10-01T00:00:00.000Z', plays: 0 })
     let s = applyReady(emptyState(), ready({ sounds: [snd('A', 'airhorn'), snd('B', 'bruh')], sound_favourites: ['A', 'B'], frequent_sounds: ['B', 'A'] }))
     expect(Object.keys(s.sounds)).toEqual(['A', 'B'])
     expect(s.soundFavourites).toEqual(['A', 'B'])

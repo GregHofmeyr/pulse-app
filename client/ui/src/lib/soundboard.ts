@@ -65,6 +65,22 @@ export function soundSections(s: AppState, memberOf: Set<string>, servers: Serve
   return out
 }
 
+/** Media hashes to fetch on joining a call, most likely played first: favourites, frequently used, then
+ * the rest of your servers' sounds. One entry per file; sounds of servers you've left are skipped. */
+export function warmOrder(s: AppState, memberOf: Set<string>): string[] {
+  const out: string[] = []
+  const seen = new Set<string>()
+  const add = (x: Sound | undefined) => {
+    if (!x || !memberOf.has(x.server_id) || seen.has(x.media_hash)) return
+    seen.add(x.media_hash)
+    out.push(x.media_hash)
+  }
+  for (const id of s.soundFavourites) add(s.sounds[id])
+  for (const id of s.frequentSounds) add(s.sounds[id])
+  for (const x of Object.values(s.sounds).sort(byName)) add(x)
+  return out
+}
+
 /** Case-insensitive name contains; names that start with the query come first. */
 export function searchSounds(sounds: Sound[], q: string): Sound[] {
   const needle = q.trim().toLowerCase()

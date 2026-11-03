@@ -512,6 +512,7 @@ async fn play_reaches_only_the_call() {
                 sound_id,
                 media_hash,
                 volume,
+                ..
             } => assert_eq!(
                 (channel_id, user_id, sound_id, media_hash, volume),
                 (room, alex.0, s.id.clone(), s.media_hash.clone(), s.volume)
@@ -746,4 +747,192 @@ async fn favouriting_a_sound_deleted_mid_request_is_404() {
     .await
     .unwrap();
     assert_eq!(favourite(&app, &alex.1, &s.id, true).await.status(), 404);
+}
+
+/// A custom emoji named `name` in `server`, added by `token`.
+async fn custom_emoji(
+    app: &TestApp,
+    token: &str,
+    server: ServerId,
+    name: &str,
+) -> pulse_protocol::rest::CustomEmoji {
+    let png = image::RgbaImage::from_pixel(64, 32, image::Rgba([10, 120, 240, 255]));
+    let mut buf = std::io::Cursor::new(Vec::new());
+    png.write_to(&mut buf, image::ImageFormat::Png).unwrap();
+    let r = app
+        .http
+        .post(app.url("/media/emoji"))
+        .bearer_auth(token)
+        .body(buf.into_inner())
+        .send()
+        .await
+        .unwrap();
+    let media: MediaInfo = r.json().await.unwrap();
+    let r = post_json(
+        app,
+        token,
+        &format!("/servers/{server}/emoji"),
+        json!({ "name": name, "media_hash": media.hash }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    r.json().await.unwrap()
+}
+
+#[tokio::test]
+async fn custom_emoji_on_a_sound() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    let main = create_server(&app, &alex, "Main").await;
+    let other = create_server(&app, &alex, "Other").await;
+    let sams = create_server(&app, &sam, "Sams").await;
+    let here = custom_emoji(&app, &alex, main.id, "here").await;
+    let there = custom_emoji(&app, &alex, other.id, "there").await;
+    let foreign = custom_emoji(&app, &sam, sams.id, "foreign").await;
+    let gone = custom_emoji(&app, &alex, main.id, "gone").await;
+    let r = app
+        .http
+        .delete(app.url(&format!("/emoji/{}", gone.id)))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success());
+    let media = upload(&app, &alex, 1000).await;
+    let body = |extra: serde_json::Value| {
+        let mut b = json!({ "name": "horn", "media_hash": media.hash });
+        b.as_object_mut()
+            .unwrap()
+            .extend(extra.as_object().unwrap().clone());
+        b
+    };
+
+    // this server's emoji, and another server alex is in
+    for e in [&here, &there] {
+        let r = create(&app, &alex, main.id, body(json!({ "emoji_id": e.id }))).await;
+        assert_eq!(r.status(), 201, "{}", e.name);
+        let s: Sound = r.json().await.unwrap();
+        assert_eq!(
+            (s.emoji, s.emoji_id.as_deref()),
+            (None, Some(e.id.as_str()))
+        );
+    }
+    // a server alex isn't in, a deleted one, one that doesn't exist, both kinds at once
+    for extra in [
+        json!({ "emoji_id": foreign.id }),
+        json!({ "emoji_id": gone.id }),
+        json!({ "emoji_id": "nope" }),
+        json!({ "emoji_id": here.id, "emoji": "📯" }),
+    ] {
+        let r = create(&app, &alex, main.id, body(extra.clone())).await;
+        assert_eq!(r.status(), 400, "{extra}");
+    }
+
+    // editing: a Unicode emoji replaces the custom one, and back
+    let s: Sound = create(&app, &alex, main.id, body(json!({ "emoji_id": here.id })))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let r = patch(&app, &alex, &s.id, json!({ "emoji": "📯" })).await;
+    assert_eq!(r.status(), 200);
+    let s2: Sound = r.json().await.unwrap();
+    assert_eq!((s2.emoji.as_deref(), s2.emoji_id), (Some("📯"), None));
+    let r = patch(&app, &alex, &s.id, json!({ "emoji_id": there.id })).await;
+    let s3: Sound = r.json().await.unwrap();
+    assert_eq!(
+        (s3.emoji, s3.emoji_id.as_deref()),
+        (None, Some(there.id.as_str()))
+    );
+    let r = patch(&app, &alex, &s.id, json!({ "emoji_id": null })).await;
+    let s4: Sound = r.json().await.unwrap();
+    assert_eq!((s4.emoji, s4.emoji_id), (None, None));
+    for extra in [
+        json!({ "emoji_id": foreign.id }),
+        json!({ "emoji_id": here.id, "emoji": "📯" }),
+    ] {
+        let r = patch(&app, &alex, &s.id, extra.clone()).await;
+        assert_eq!(r.status(), 400, "{extra}");
+    }
+    // the list carries it
+    let listed: Vec<Sound> = get_json(&app, &alex, &format!("/servers/{}/sounds", main.id)).await;
+    assert!(
+        listed
+            .iter()
+            .any(|x| x.emoji_id.as_deref() == Some(here.id.as_str()))
+    );
+}
+
+/// Editing a sound's name or boost keeps its custom emoji even when the editor couldn't pick that
+/// emoji themselves (it's from a server they aren't in), or it has since been deleted.
+#[tokio::test]
+async fn an_unchanged_custom_emoji_is_not_checked_again() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    let main = create_server(&app, &alex, "Main").await;
+    join(&app, &sam, main.id).await;
+    let other = create_server(&app, &alex, "Other").await;
+    let there = custom_emoji(&app, &alex, other.id, "there").await;
+    let here = custom_emoji(&app, &alex, main.id, "here").await;
+    let media = upload(&app, &alex, 1000).await;
+    let mk = |id: &str| json!({ "name": "horn", "media_hash": media.hash, "emoji_id": id });
+    let s: Sound = create(&app, &alex, main.id, mk(&there.id))
+        .await
+        .json()
+        .await
+        .unwrap();
+    // sam isn't in Other, but sends the emoji back unchanged with the rename (as the dialog does)
+    let r = patch(
+        &app,
+        &sam,
+        &s.id,
+        json!({ "name": "toot", "emoji": null, "emoji_id": there.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let s2: Sound = r.json().await.unwrap();
+    assert_eq!(
+        (s2.name.as_str(), s2.emoji_id.as_deref()),
+        ("toot", Some(there.id.as_str()))
+    );
+    // but sam can't choose it anew
+    let fresh: Sound = create(&app, &alex, main.id, mk(&here.id))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let r = patch(&app, &sam, &fresh.id, json!({ "emoji_id": there.id })).await;
+    assert_eq!(r.status(), 400);
+    // a deleted emoji: the rename still works
+    let r = app
+        .http
+        .delete(app.url(&format!("/emoji/{}", here.id)))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success());
+    let r = patch(
+        &app,
+        &alex,
+        &fresh.id,
+        json!({ "volume": 150, "emoji": null, "emoji_id": here.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+}
+
+#[tokio::test]
+async fn played_carries_the_length() {
+    let (app, [alex, _, _], srv, s) = soundboard().await;
+    let room = lounge(&app, &alex.1, srv).await;
+    app.state().voice.join(room, alex.0, "PA_a");
+    let (mut ws, _) = hello(&app, &alex.1).await;
+    assert_eq!(play(&app, &alex.1, &s.id).await.status(), 204);
+    match next_event(&mut ws).await {
+        Event::SoundPlayed { duration_ms, .. } => assert_eq!(duration_ms, s.duration_ms),
+        other => panic!("{other:?}"),
+    }
 }

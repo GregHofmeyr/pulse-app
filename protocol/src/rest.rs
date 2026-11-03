@@ -757,6 +757,10 @@ pub struct Sound {
     pub name: String,
     /// A Unicode emoji shown on the tile.
     pub emoji: Option<String>,
+    /// Or a custom emoji's id (from any server the uploader is in) instead. At most one of the
+    /// two is set; a custom emoji deleted later leaves the tile without one.
+    #[serde(default)]
+    pub emoji_id: Option<String>,
     /// The Ogg Opus file in the media store.
     pub media_hash: String,
     /// Playback gain in percent (10 to 200).
@@ -777,13 +781,17 @@ pub struct CreateSoundRequest {
     pub name: String,
     #[serde(default)]
     pub emoji: Option<String>,
+    /// A custom emoji instead of `emoji` (not both).
+    #[serde(default)]
+    pub emoji_id: Option<String>,
     /// From `POST /media/sound`.
     pub media_hash: String,
     #[serde(default = "default_sound_volume")]
     pub volume: u16,
 }
 
-/// Edit a sound. Absent fields stay as they are; `emoji: null` clears the emoji.
+/// Edit a sound. Absent fields stay as they are; `emoji: null` clears the emoji. Setting `emoji`
+/// clears `emoji_id` and the other way round; setting both at once is refused.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
 pub struct UpdateSoundRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -796,6 +804,13 @@ pub struct UpdateSoundRequest {
     )]
     #[ts(optional = nullable, type = "string | null")]
     pub emoji: Option<Option<String>>,
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional = nullable, type = "string | null")]
+    pub emoji_id: Option<Option<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[ts(optional)]
     pub volume: Option<u16>,

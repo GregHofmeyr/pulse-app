@@ -4,11 +4,11 @@ import type { Sound } from './protocol/Sound'
 import { emptyState } from './state'
 import {
   loadSoundMutes, saveSoundMutes,
-  shouldPlay, soundSections, searchSounds, tidyCandidates, isNotFound, previewPercents,
+  shouldPlay, soundSections, searchSounds, tidyCandidates, isNotFound, previewPercents, warmOrder,
 } from './soundboard'
 
 const snd = (id: string, name: string, over: Partial<Sound> = {}): Sound => ({
-  id, server_id: 'S1', name, emoji: null, media_hash: 'h' + id, volume: 100, duration_ms: 1000,
+  id, server_id: 'S1', name, emoji: null, emoji_id: null, media_hash: 'h' + id, volume: 100, duration_ms: 1000,
   added_by: 'U1', created_at: '2026-10-01T00:00:00.000Z', plays: 0, ...over,
 })
 const servers = [{ id: 'S1', name: 'Main', icon_hash: null }, { id: 'S2', name: 'Side', icon_hash: null }, { id: 'S3', name: 'Other', icon_hash: null }]
@@ -116,5 +116,16 @@ describe('prefs', () => {
   it('falls back on corrupt values', () => {
     localStorage.setItem('pulse.soundboard.mutes', '[1,"x"]')
     expect(loadSoundMutes()).toEqual({})
+  })
+})
+
+describe('warmOrder', () => {
+  it('favourites, then frequent, then the rest; one per file; member servers only', () => {
+    const sounds = Object.fromEntries([
+      snd('A', 'zap'), snd('B', 'bruh'), snd('C', 'side', { server_id: 'S2' }), snd('D', 'hidden', { server_id: 'S3' }),
+      snd('E', 'copy of zap', { media_hash: 'hA' }),
+    ].map((x) => [x.id, x]))
+    const s = { ...emptyState(), sounds, soundFavourites: ['C', 'D'], frequentSounds: ['B', 'C'] }
+    expect(warmOrder(s, new Set(['S1', 'S2']))).toEqual(['hC', 'hB', 'hA'])
   })
 })

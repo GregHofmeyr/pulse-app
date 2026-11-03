@@ -38,6 +38,28 @@ fn bad_emoji() -> AppError {
     AppError::BadRequest("a sound's emoji must be a single emoji".into())
 }
 
+fn two_emoji() -> AppError {
+    AppError::BadRequest("a sound has one emoji: a standard one or a custom one".into())
+}
+
+fn emoji_unavailable() -> AppError {
+    AppError::BadRequest("that emoji isn't available".into())
+}
+
+/// A custom emoji a sound may use: live, and in a server `me` is in (like using it in chat).
+async fn check_custom_emoji(s: &AppState, me: UserId, id: &str) -> AppResult<()> {
+    let hit: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM custom_emoji e
+         JOIN server_members m ON m.server_id = e.server_id AND m.user_id = ?
+         WHERE e.id = ? AND e.deleted_at IS NULL",
+    )
+    .bind(me.to_string())
+    .bind(id)
+    .fetch_optional(&s.db)
+    .await?;
+    hit.map(|_| ()).ok_or_else(emoji_unavailable)
+}
+
 /// The sound was deleted between the check and the write.
 fn gone(e: sqlx::Error) -> AppError {
     match &e {
@@ -98,6 +120,12 @@ async fn create(
     {
         return Err(bad_emoji());
     }
+    if req.emoji.is_some() && req.emoji_id.is_some() {
+        return Err(two_emoji());
+    }
+    if let Some(id) = &req.emoji_id {
+        check_custom_emoji(&s, me, id).await?;
+    }
     if !VOLUME.contains(&req.volume) {
         return Err(bad_volume());
     }
@@ -118,14 +146,15 @@ async fn create(
     }
     let duration_ms = stored_duration(&s, &req.media_hash).await?;
     sqlx::query(
-        "INSERT INTO sounds (id, server_id, name, emoji, media_hash, volume, duration_ms,
-                             added_by, created_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "INSERT INTO sounds (id, server_id, name, emoji, emoji_id, media_hash, volume,
+                             duration_ms, added_by, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(&id)
     .bind(server.to_string())
     .bind(&name)
     .bind(&req.emoji)
+    .bind(&req.emoji_id)
     .bind(&req.media_hash)
     .bind(i64::from(req.volume))
     .bind(i64::from(duration_ms))
@@ -160,24 +189,42 @@ async fn update(
         Some(n) => clean_name(n).ok_or_else(bad_name)?,
         None => old.name,
     };
-    let emoji = match req.emoji {
-        Some(Some(e)) if !valid_emoji(&e) => return Err(bad_emoji()),
-        Some(e) => e,
-        None => old.emoji,
+    if matches!((&req.emoji, &req.emoji_id), (Some(Some(_)), Some(Some(_)))) {
+        return Err(two_emoji());
+    }
+    if let Some(Some(e)) = &req.emoji
+        && !valid_emoji(e)
+    {
+        return Err(bad_emoji());
+    }
+    // Only a newly chosen one is checked: an edit that sends the sound's emoji back unchanged
+    // (a rename by someone not in that emoji's server, or after it was deleted) keeps it.
+    if let Some(Some(id)) = &req.emoji_id
+        && old.emoji_id.as_deref() != Some(id.as_str())
+    {
+        check_custom_emoji(&s, me, id).await?;
+    }
+    // Setting one kind clears the other.
+    let (emoji, emoji_id) = match (req.emoji, req.emoji_id) {
+        (Some(Some(e)), _) => (Some(e), None),
+        (_, Some(Some(id))) => (None, Some(id)),
+        (e, id) => (e.unwrap_or(old.emoji), id.unwrap_or(old.emoji_id)),
     };
     let volume = match req.volume {
         Some(v) if !VOLUME.contains(&v) => return Err(bad_volume()),
         Some(v) => v,
         None => old.volume,
     };
-    let changed = sqlx::query("UPDATE sounds SET name = ?, emoji = ?, volume = ? WHERE id = ?")
-        .bind(&name)
-        .bind(&emoji)
-        .bind(i64::from(volume))
-        .bind(&id)
-        .execute(&s.db)
-        .await?
-        .rows_affected();
+    let changed =
+        sqlx::query("UPDATE sounds SET name = ?, emoji = ?, emoji_id = ?, volume = ? WHERE id = ?")
+            .bind(&name)
+            .bind(&emoji)
+            .bind(&emoji_id)
+            .bind(i64::from(volume))
+            .bind(&id)
+            .execute(&s.db)
+            .await?
+            .rows_affected();
     if changed == 0 {
         return Err(AppError::NotFound);
     }
@@ -259,6 +306,7 @@ async fn play(
                 sound_id: id,
                 media_hash: sound.media_hash,
                 volume: sound.volume,
+                duration_ms: sound.duration_ms,
             },
             &s.voice.members(channel_id),
         )

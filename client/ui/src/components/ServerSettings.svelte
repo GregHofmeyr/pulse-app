@@ -2,13 +2,14 @@
   import Icon from './Icon.svelte'
   import { modal } from '../lib/actions'
   import EmojiSettings from './EmojiSettings.svelte'
+  import SoundboardSettings from './SoundboardSettings.svelte'
   import StorageSettings from './StorageSettings.svelte'
   import SpeakerLinkSettings from './SpeakerLinkSettings.svelte'
   import RecentlyDeleted from './RecentlyDeleted.svelte'
   import type { Server } from '../lib/protocol/Server'
 
   let { server, onClose }: { server: Server; onClose: () => void } = $props()
-  const sections = ['Emoji', 'Quote speakers', 'Storage', 'Recently deleted'] as const
+  const sections = ['Emoji', 'Soundboard', 'Quote speakers', 'Storage', 'Recently deleted'] as const
   let section = $state<(typeof sections)[number]>('Emoji')
 </script>
 
@@ -23,7 +24,7 @@
   </nav>
   <div class="content">
     <button class="close icon-btn round modal-close" aria-label="Close server settings" onclick={onClose}><Icon name="x" size={16} /></button>
-    {#if section === 'Emoji'}<EmojiSettings {server} />{:else if section === 'Storage'}<StorageSettings {server} />{:else if section === 'Recently deleted'}<RecentlyDeleted {server} />{:else}<SpeakerLinkSettings {server} />{/if}
+    {#if section === 'Emoji'}<EmojiSettings {server} />{:else if section === 'Soundboard'}<SoundboardSettings {server} />{:else if section === 'Storage'}<StorageSettings {server} />{:else if section === 'Recently deleted'}<RecentlyDeleted {server} />{:else}<SpeakerLinkSettings {server} />{/if}
   </div>
 </div>
 </div>

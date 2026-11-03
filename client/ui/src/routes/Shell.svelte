@@ -33,6 +33,7 @@
   import { closeFull, closeRename, openCard, profileUi } from '../lib/profileCard.svelte'
   import { onMount, tick, untrack } from 'svelte'
   import { myServerTips, voice, voiceApi } from '../lib/voice.svelte'
+  import { soundboard } from '../lib/soundboard.svelte'
   import { findWatch, followLiveFreeze, stream, streamApi } from '../lib/stream/stream.svelte'
   import { pendingWatchReady } from '../lib/stream/viewer'
   import { callView, openFull } from '../lib/stream/viewer.svelte'
@@ -55,6 +56,8 @@
   import { MUTE_FOR, muteUntil } from '../lib/muteDurations'
 
   let { user, onLogout }: { user: User; onLogout: () => void } = $props()
+  // rings in the voice list: who's talking, plus whose soundboard sound is playing (render only: never voice.speaking)
+  const ringing = $derived(soundboard.playing.size ? new Set([...voice.speaking, ...soundboard.playing]) : voice.speaking)
   // Signed in as `user`; app.state.me follows your profile edits (ProfileUpdated) once Ready has landed.
   const me = $derived(app.state.me ?? user)
 
@@ -529,7 +532,7 @@
         {:else}Direct messages{/if}
       </div>
       {#if activeServerId}
-        <ChannelList serverId={activeServerId} {activeChannelId} voiceChannelId={voice.channelId} speaking={voice.speaking}
+        <ChannelList serverId={activeServerId} {activeChannelId} voiceChannelId={voice.channelId} speaking={ringing}
           onSelect={(id) => (activeChannelId = id)}
           onJoinVoice={(id) => { activeChannelId = id; if (voice.channelId !== id && member) void voiceApi.join(id) }}
           onMessage={messageUser} onVoiceSettings={() => openSettings('voice')} />

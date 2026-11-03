@@ -15,7 +15,7 @@ import { emptyState, type AppState } from '../lib/state'
 
 const me = { id: 'ME', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const snd = (id: string, name: string): Sound => ({
-  id, server_id: 'S1', name, emoji: null, media_hash: 'h' + id, volume: 120, duration_ms: 1000, added_by: null,
+  id, server_id: 'S1', name, emoji: null, emoji_id: null, media_hash: 'h' + id, volume: 120, duration_ms: 1000, added_by: null,
   created_at: '2026-10-01T00:00:00.000Z', plays: 0,
 })
 function withSounds(sounds: Sound[]) {
@@ -134,7 +134,7 @@ describe('VolumeMixer', () => {
     move('Calls volume', 80)
     move('Soundboard', 140)
     button('Test Soundboard').click()
-    expect(calls('soundboard_play')).toEqual([{ hash: 'ha', callsPercent: 80, soundboardPercent: 140, soundPercent: 120, output: null }])
+    expect(calls('soundboard_play')).toEqual([{ hash: 'ha', callsPercent: 80, soundboardPercent: 140, soundPercent: 120, output: null, soundId: null }])
   })
 
   it('Reset to defaults puts back only that section', () => {

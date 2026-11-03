@@ -19,6 +19,7 @@ type Row = (
     String,
     String,
     Option<String>,
+    Option<String>,
     String,
     i64,
     i64,
@@ -27,18 +28,31 @@ type Row = (
     i64,
 );
 
-const SELECT: &str = "SELECT id, server_id, name, emoji, media_hash, volume, duration_ms,
+const SELECT: &str = "SELECT id, server_id, name, emoji, emoji_id, media_hash, volume, duration_ms,
                              added_by, created_at, plays
                       FROM sounds";
 
 fn from_row(
-    (id, server_id, name, emoji, media_hash, volume, duration_ms, added_by, created_at, plays): Row,
+    (
+        id,
+        server_id,
+        name,
+        emoji,
+        emoji_id,
+        media_hash,
+        volume,
+        duration_ms,
+        added_by,
+        created_at,
+        plays,
+    ): Row,
 ) -> AppResult<Sound> {
     Ok(Sound {
         id,
         server_id: server_id.parse::<ServerId>().map_err(anyhow::Error::from)?,
         name,
         emoji,
+        emoji_id,
         media_hash,
         volume: u16::try_from(volume).map_err(anyhow::Error::from)?,
         duration_ms: u32::try_from(duration_ms).map_err(anyhow::Error::from)?,

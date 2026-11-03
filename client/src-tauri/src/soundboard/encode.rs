@@ -97,6 +97,35 @@ pub async fn waveform(ffmpeg: &Path, file: &Path) -> Result<Waveform, String> {
     })
 }
 
+/// `from_ms..to_ms` of `file` (at most 6 s) as 48 kHz mono f32, as it is (no loudness change):
+/// what the trimmer's play button plays, to find the bit you want in a long source.
+pub async fn decode_span(
+    ffmpeg: &Path,
+    file: &Path,
+    from_ms: u32,
+    to_ms: u32,
+) -> Result<Vec<f32>, String> {
+    check_source(file)?;
+    let dur = to_ms.saturating_sub(from_ms).min(MAX_SPAN_MS);
+    if dur == 0 {
+        return Err(BAD_FILE.into());
+    }
+    let mut args = input_args(file, from_ms, Some(dur));
+    args.extend(os(&["-ac", "1", "-ar", "48000", "-f", "f32le", "pipe:1"]));
+    let out = run(ffmpeg, args).await.ok_or(BAD_FILE)?;
+    let pcm: Vec<f32> = out
+        .stdout
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|b| f32::from_le_bytes(*b))
+        .collect();
+    if pcm.is_empty() {
+        return Err(BAD_FILE.into());
+    }
+    Ok(pcm)
+}
+
 /// What loudnorm's first pass measured.
 struct Measured {
     i: f64,
@@ -237,6 +266,27 @@ mod tests {
         let ogg = encode(&ff, &f, 2000, 5000).await.unwrap();
         let ms = parse_ogg_opus(&ogg).unwrap().duration_ms;
         assert!((ms as i64 - 3000).abs() <= 40, "{ms}");
+    }
+
+    #[tokio::test]
+    async fn decode_span_is_the_span() {
+        let Some(ff) = ffmpeg() else { return };
+        let d = tempfile::tempdir().unwrap();
+        let f = fixture(
+            &ff,
+            d.path(),
+            "a.wav",
+            "sine=frequency=440:duration=10",
+            &["-ar", "44100", "-ac", "2"],
+        );
+        let pcm = decode_span(&ff, &f, 2000, 3500).await.unwrap();
+        let ms = pcm.len() as i64 / 48;
+        assert!((ms - 1500).abs() <= 20, "{ms} ms");
+        assert!(rms(&pcm) > 0.05, "it is the sine, as 48 kHz mono");
+        // at most 6 s, and an empty span is refused
+        let long = decode_span(&ff, &f, 0, 9000).await.unwrap();
+        assert!((long.len() as i64 / 48 - 6000).abs() <= 20);
+        assert!(decode_span(&ff, &f, 3000, 3000).await.is_err());
     }
 
     #[tokio::test]

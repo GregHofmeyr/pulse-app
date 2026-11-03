@@ -18,7 +18,7 @@ const servers: Server[] = [
   { id: 'S2', name: 'Other', icon_hash: null },
 ]
 const snd = (id: string, server_id: string, name: string, over: Partial<Sound> = {}): Sound => ({
-  id, server_id, name, emoji: '🎺', media_hash: 'h' + id, volume: 120, duration_ms: 2000, added_by: null,
+  id, server_id, name, emoji: '🎺', emoji_id: null, media_hash: 'h' + id, volume: 120, duration_ms: 2000, added_by: null,
   created_at: '2026-10-01T00:00:00.000Z', plays: 0, ...over,
 })
 
@@ -152,7 +152,7 @@ describe('Soundboard', () => {
     open()
     tile('Bruh').querySelector<HTMLElement>('.preview')!.click()
     await settle()
-    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 100, soundboardPercent: 100, soundPercent: 120, output: null }]])
+    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 100, soundboardPercent: 100, soundPercent: 120, output: null, soundId: null }]])
   })
 
   it('preview_follows_the_calls_master_and_soundboard_notch', async () => {
@@ -161,7 +161,7 @@ describe('Soundboard', () => {
     open()
     tile('Bruh').querySelector<HTMLElement>('.preview')!.click()
     await settle()
-    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 60, soundboardPercent: 150, soundPercent: 120, output: null }]])
+    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 60, soundboardPercent: 150, soundPercent: 120, output: null, soundId: null }]])
   })
 
   it('preview_plays_locally_only', async () => {
@@ -169,7 +169,7 @@ describe('Soundboard', () => {
     expect(btn('Preview Bruh')).not.toBeNull()
     tile('Bruh').querySelector<HTMLElement>('.preview')!.click()
     await settle()
-    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 100, soundboardPercent: 100, soundPercent: 120, output: null }]])
+    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 100, soundboardPercent: 100, soundPercent: 120, output: null, soundId: null }]])
     expect(calls('play_sound_to_call')).toHaveLength(0)
   })
 
@@ -272,5 +272,20 @@ describe('Soundboard', () => {
     open()
     document.querySelector('[role=dialog]')!.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
     expect(onClose).toHaveBeenCalled()
+  })
+})
+
+describe('sound emoji on tiles', () => {
+  const pog = { id: 'E1', server_id: 'S2', name: 'pog', hash: 'a'.repeat(64), still_hash: null, animated: false, added_by: null, created_at: '2026-10-01T00:00:00.000Z' }
+  it('shows a custom emoji, and the soundboard icon once that emoji is deleted', () => {
+    app.state.customEmoji = { E1: pog }
+    app.state.sounds = { ...app.state.sounds, a: snd('a', 'S1', 'Airhorn', { emoji: null, emoji_id: 'E1' }) }
+    open()
+    expect(tile('Airhorn').querySelector<HTMLImageElement>('img')?.alt).toBe(':pog:')
+    expect(tile('Bruh').textContent).toContain('🎺')
+    app.state = { ...app.state, customEmoji: { E1: { ...pog, hash: null } } }
+    flushSync()
+    expect(tile('Airhorn').querySelector('img')).toBeNull()
+    expect(tile('Airhorn').querySelector('svg')).not.toBeNull()
   })
 })

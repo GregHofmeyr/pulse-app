@@ -227,16 +227,29 @@ describe('ProfileCard', () => {
       expect(el.querySelector('.msg')!.getAttribute('placeholder')).toBe('Message @Sam 🎸')
     })
 
-    it('has no nickname buttons: renaming lives in right-click menus (#137)', () => {
-      inServer('Big Dog', 'Sammy')
-      for (const props of [{ user: named, serverId: 'S1' }, { user: named, serverId: null }, { user: alex, serverId: 'S1' }]) {
-        const el = show(props)
+    it('offers only your private nickname for someone else (server nicknames live in server menus, #137)', async () => {
+      const { profileUi } = await import('../lib/profileCard.svelte')
+      inServer('Big Dog')
+      for (const serverId of ['S1', null]) {
+        const el = show({ user: named, serverId })
         const texts = [...el.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '')
-        expect(texts.filter((t) => /nickname/i.test(t))).toEqual([])
-        expect(el.querySelector('.names')).toBeNull()
+        expect(texts.filter((t) => /nickname/i.test(t))).toEqual(['Set private nickname'])
         unmount(cmp!)
         cmp = undefined
       }
+      // with one set, the label says so; it opens the private-nickname dialog
+      inServer('Big Dog', 'Sammy')
+      const el = show({ user: named, serverId: 'S1' })
+      const btn = [...el.querySelectorAll<HTMLButtonElement>('button')].find((b) => /nickname/i.test(b.textContent ?? ''))!
+      expect(btn.textContent?.trim()).toBe('Change private nickname')
+      btn.click()
+      flushSync()
+      expect(profileUi.rename).toEqual({ kind: 'private', userId: 'U2' })
+      unmount(cmp!)
+      cmp = undefined
+      // never on your own card
+      const own = show({ user: alex, serverId: 'S1' })
+      expect([...own.querySelectorAll('button')].some((b) => /nickname/i.test(b.textContent ?? ''))).toBe(false)
     })
   })
 

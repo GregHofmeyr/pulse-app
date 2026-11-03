@@ -1,7 +1,7 @@
 //! Per-track receive queues, per-person gain on a dB curve, soft limiter (FINDINGS: dB slider + soft limit).
 
 use std::collections::{HashMap, VecDeque};
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering::Relaxed};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering::Relaxed};
 use std::sync::{Arc, Mutex};
 
 use super::meter::Meter;
@@ -113,8 +113,10 @@ enum Cmd {
     },
     /// A one-shot sound (soundboard) to mix in at `gain`.
     Clip {
-        samples: Arc<[f32]>,
+        samples: ClipSamples,
         gain: f32,
+        queued: std::time::Instant,
+        stop: Option<Arc<AtomicBool>>,
     },
     Clear,
 }
@@ -124,11 +126,46 @@ enum Cmd {
 pub const MAX_CLIPS: usize = 32;
 
 /// A playing one-shot: mono 48 kHz samples (the mixer's rate, so no resampling) and a read position.
+/// A soundboard clip's audio: all decoded, or still being decoded (played as far as it's got).
+pub(crate) enum ClipSamples {
+    Fixed(Arc<[f32]>),
+    Stream(Arc<crate::soundboard::pcm::Pcm>),
+}
+
+impl ClipSamples {
+    /// Sample `i`; None past the end, or (streaming) not decoded yet.
+    fn get(&self, i: usize) -> Option<f32> {
+        match self {
+            Self::Fixed(s) => s.get(i).copied(),
+            Self::Stream(p) => p.get(i),
+        }
+    }
+
+    /// Played to the end: nothing more will come after `pos`.
+    fn finished(&self, pos: usize) -> bool {
+        match self {
+            Self::Fixed(s) => pos >= s.len(),
+            Self::Stream(p) => p.is_done() && pos >= p.ready(),
+        }
+    }
+}
+
+impl From<Vec<f32>> for ClipSamples {
+    fn from(v: Vec<f32>) -> Self {
+        Self::Fixed(v.into())
+    }
+}
+
 struct Clip {
-    samples: Arc<[f32]>,
+    samples: ClipSamples,
     pos: usize,
     gain: f32,
+    /// Set by the owner (the trimmer's pause): the clip ends on the next pull.
+    stop: Option<Arc<AtomicBool>>,
 }
+
+/// `MixerInput::clip_start_us` before any clip has played.
+const NO_CLIP_YET: u64 = u64::MAX;
 
 /// A mixer in two halves that share no lock the speakers wait on: `MixerInput` for the
 /// receive tasks and UI, `Mixer` for the speaker callback only.
@@ -137,7 +174,9 @@ pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
     let cap = (rate * cap_ms as usize / 1000).max(1);
     let cmds = Arc::new(Mutex::new(Vec::new()));
     let (underrun, adjusted) = (Arc::new(AtomicU64::new(0)), Arc::new(AtomicU64::new(0)));
+    let clip_start_us = Arc::new(AtomicU64::new(NO_CLIP_YET));
     let input = MixerInput {
+        clip_start_us: clip_start_us.clone(),
         cmds: cmds.clone(),
         sources: Mutex::new(HashMap::new()),
         gains: Mutex::new(HashMap::new()),
@@ -163,6 +202,7 @@ pub fn mixer(sample_rate: u32, cap_ms: u32) -> (MixerInput, Mixer) {
         pulled: 0,
         underrun,
         adjusted,
+        clip_start_us,
     };
     (input, speakers)
 }
@@ -187,6 +227,9 @@ pub struct MixerInput {
     underrun: Arc<AtomicU64>,
     /// Samples dropped or repeated so far (diagnostics: how hard drift is being corrected).
     adjusted: Arc<AtomicU64>,
+    /// How long the last clip waited between `play_clip` and its first pull (µs; soundboard
+    /// latency diagnostics). The device's own buffer comes on top.
+    clip_start_us: Arc<AtomicU64>,
 }
 
 pub(crate) struct SourceIn {
@@ -365,10 +408,36 @@ impl MixerInput {
 
     /// Mix a one-shot sound into the call output (soundboard), once, at `gain`.
     pub fn play_clip(&self, samples: Arc<[f32]>, gain: f32) {
-        if samples.is_empty() {
+        self.push_clip(ClipSamples::Fixed(samples), gain, None);
+    }
+
+    /// [`Self::play_clip`] for a sound still being decoded: it plays as far as the decoder has
+    /// got, and waits (silent, without skipping) if it ever catches up.
+    pub fn play_stream(&self, pcm: Arc<crate::soundboard::pcm::Pcm>, gain: f32) {
+        self.push_clip(ClipSamples::Stream(pcm), gain, None);
+    }
+
+    /// [`Self::play_clip`] that ends early once `stop` is set (the trimmer's pause).
+    pub fn play_clip_stoppable(&self, samples: Arc<[f32]>, gain: f32, stop: Arc<AtomicBool>) {
+        self.push_clip(ClipSamples::Fixed(samples), gain, Some(stop));
+    }
+
+    fn push_clip(&self, samples: ClipSamples, gain: f32, stop: Option<Arc<AtomicBool>>) {
+        if samples.finished(0) {
             return; // nothing to hear
         }
-        self.cmds.lock().unwrap().push(Cmd::Clip { samples, gain });
+        self.cmds.lock().unwrap().push(Cmd::Clip {
+            samples,
+            gain,
+            queued: std::time::Instant::now(),
+            stop,
+        });
+    }
+
+    /// How long the last clip waited for the speakers (µs), once one has played.
+    pub fn last_clip_start_us(&self) -> Option<u64> {
+        let us = self.clip_start_us.load(Relaxed);
+        (us != NO_CLIP_YET).then_some(us)
     }
 
     /// Forget every source (a channel switch keeps the mixer, not the last room's people).
@@ -459,6 +528,7 @@ pub struct Mixer {
     pulled: usize,
     underrun: Arc<AtomicU64>,
     adjusted: Arc<AtomicU64>,
+    clip_start_us: Arc<AtomicU64>,
 }
 
 struct Peer {
@@ -514,13 +584,22 @@ impl Mixer {
                     Cmd::Remove { id } => {
                         self.peers.remove(&id);
                     }
-                    Cmd::Clip { samples, gain } => {
+                    Cmd::Clip {
+                        samples,
+                        gain,
+                        queued,
+                        stop,
+                    } => {
                         // over the limit: dropped (the Arc's other owner, the decode cache, keeps the data)
                         if self.clips.len() < MAX_CLIPS {
+                            let waited = queued.elapsed().as_micros();
+                            self.clip_start_us
+                                .store(u64::try_from(waited).unwrap_or(u64::MAX - 1), Relaxed);
                             self.clips.push(Clip {
                                 samples,
                                 pos: 0,
                                 gain,
+                                stop,
                             });
                         }
                     }
@@ -559,6 +638,9 @@ impl Mixer {
     /// Fill interleaved `out` (`channels` per frame), one sample per peer per frame.
     pub fn mix_into(&mut self, out: &mut [f32], channels: usize, master: f32) {
         self.intake();
+        // a paused trimmer clip ends here (dropping its Arc: the trimmer state holds the flag's other clone)
+        self.clips
+            .retain(|c| !c.stop.as_ref().is_some_and(|s| s.load(Relaxed)));
         let frames = out.len() / channels.max(1);
         self.pulls[0] = self.pulls[0].max(frames);
         let refill = self.refill();
@@ -596,7 +678,7 @@ impl Mixer {
             // A clip can end mid-pull: past its end it adds nothing (indexing would panic in
             // the audio callback, and then every callback after it).
             for c in &mut self.clips {
-                if let Some(&v) = c.samples.get(c.pos) {
+                if let Some(v) = c.samples.get(c.pos) {
                     acc += v * c.gain;
                     c.pos += 1;
                 }
@@ -605,7 +687,7 @@ impl Mixer {
         }
         // Dropping a finished clip's Arc here is fine: the decode cache holds another clone, or
         // at worst this frees one small buffer.
-        self.clips.retain(|c| c.pos < c.samples.len());
+        self.clips.retain(|c| !c.samples.finished(c.pos));
         for p in self.peers.values_mut().filter(|p| !p.waiting) {
             p.low = p.low.min(p.queue.len()); // a source still waiting isn't drifting
         }
@@ -801,6 +883,60 @@ mod tests {
     }
 
     #[test]
+    fn a_clip_records_its_start_delay() {
+        let (input, mut m) = mixer(48_000, 200);
+        assert_eq!(input.last_clip_start_us(), None, "nothing played yet");
+        input.play_clip(vec![0.5; 480].into(), 1.0);
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        let us = input.last_clip_start_us().expect("measured");
+        assert!((5_000..1_000_000).contains(&us), "{us} µs");
+    }
+
+    #[test]
+    fn a_still_decoding_clip_waits_for_its_samples() {
+        let (input, mut m) = mixer(48_000, 200);
+        let pcm = Arc::new(crate::soundboard::pcm::Pcm::with_capacity(960));
+        pcm.push(&[0.5; 480]);
+        input.play_stream(pcm.clone(), 1.0);
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(
+            out.iter().all(|v| (v - 0.5).abs() < 1e-6),
+            "what's decoded plays"
+        );
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(
+            out.iter().all(|v| *v == 0.0),
+            "waiting: silence, nothing skipped"
+        );
+        pcm.push(&[0.25; 480]);
+        pcm.finish();
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(
+            out.iter().all(|v| (v - 0.25).abs() < 1e-6),
+            "picks up where it was"
+        );
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| *v == 0.0));
+        assert!(m.clips.is_empty(), "finished and done: dropped");
+    }
+
+    #[test]
+    fn a_stopped_clip_goes_quiet() {
+        let (input, mut m) = mixer(48_000, 200);
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        input.play_clip_stoppable(vec![0.5; 4800].into(), 1.0, stop.clone());
+        let mut out = vec![0.0; 480];
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| (v - 0.5).abs() < 1e-6));
+        stop.store(true, std::sync::atomic::Ordering::SeqCst);
+        m.mix_into(&mut out, 1, 1.0);
+        assert!(out.iter().all(|v| *v == 0.0), "stopped on the next pull");
+    }
+
+    #[test]
     fn a_clip_shorter_than_the_pull_plays_then_silence() {
         let (input, mut m) = mixer(48_000, 200);
         input.play_clip(vec![0.5; 10].into(), 1.0);
@@ -841,6 +977,8 @@ mod tests {
         input.cmds.lock().unwrap().push(Cmd::Clip {
             samples: Vec::<f32>::new().into(),
             gain: 1.0,
+            queued: std::time::Instant::now(),
+            stop: None,
         });
         let mut out = vec![1.0; 480];
         m.mix_into(&mut out, 1, 1.0);
