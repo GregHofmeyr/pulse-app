@@ -507,9 +507,11 @@ async fn search(
     let needle = needle.to_lowercase();
     let limit = q.limit.unwrap_or(SEARCH_MAX).clamp(1, SEARCH_MAX) as usize;
 
-    // Every line of the server's live quotes, newest quote first, with the usernames it can be
-    // found by. Matching is in Rust so case folds for all of Unicode (SQLite's LIKE does ASCII
-    // only); we stop reading at the `limit`th quote that matches.
+    // Every line of the server's live quotes, newest quote first, with the names it can be found
+    // by: each speaker's username, display name and nickname here, joined by a unit separator (no
+    // name can hold one: names have no control characters). Matching is in Rust so case folds for
+    // all of Unicode (SQLite's LIKE does ASCII only); we stop reading at the `limit`th quote that
+    // matches.
     let mut lines = sqlx::query_as::<
         _,
         (
@@ -521,13 +523,17 @@ async fn search(
             Option<String>,
         ),
     >(
-        "SELECT l.message_id, l.text, l.caption, l.speaker_name, u.username, lu.username
+        "SELECT l.message_id, l.text, l.caption, l.speaker_name,
+                u.username || char(31) || u.display_name || char(31) || COALESCE(um.nickname, ''),
+                lu.username || char(31) || lu.display_name || char(31) || COALESCE(lm.nickname, '')
          FROM quote_lines l
          JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
          JOIN channels c ON c.id = msg.channel_id
          LEFT JOIN users u ON u.id = l.speaker_id
+         LEFT JOIN server_members um ON um.server_id = c.server_id AND um.user_id = u.id
          LEFT JOIN speaker_links k ON k.server_id = c.server_id AND k.name_key = l.speaker_key
          LEFT JOIN users lu ON lu.id = k.user_id
+         LEFT JOIN server_members lm ON lm.server_id = c.server_id AND lm.user_id = lu.id
          WHERE c.server_id = ?
          ORDER BY l.message_id DESC",
     )

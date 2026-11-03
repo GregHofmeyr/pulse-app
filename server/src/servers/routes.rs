@@ -604,10 +604,16 @@ async fn create_dm(
         )
         .await;
     if kind == ChannelKind::Group {
-        let me_name = crate::auth::routes::load_user(&s.db, me).await?.username;
+        let me_name = crate::auth::routes::load_user(&s.db, me)
+            .await?
+            .display_name;
         let mut names = Vec::new();
         for u in &others {
-            names.push(crate::auth::routes::load_user(&s.db, *u).await?.username);
+            names.push(
+                crate::auth::routes::load_user(&s.db, *u)
+                    .await?
+                    .display_name,
+            );
         }
         crate::messages::system::post(
             &s,

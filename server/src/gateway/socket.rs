@@ -221,6 +221,7 @@ pub async fn build_ready(
         thread_seen: crate::reads::thread_seen_for(db, me).await?,
         games: crate::clips::games::for_ready(db).await?,
         clip_views: crate::clips::views_for_ready(db, me).await?,
+        private_nicknames: crate::profiles::private::of_owner(db, me).await?,
     })
 }
 

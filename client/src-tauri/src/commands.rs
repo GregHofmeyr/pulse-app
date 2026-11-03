@@ -2426,6 +2426,7 @@ mod tests {
         let u = User {
             id: UserId::new(),
             username: "alex".into(),
+            display_name: "alex".into(),
             avatar_hash: None,
             avatar_still: None,
             style: Default::default(),

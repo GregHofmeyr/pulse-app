@@ -3413,6 +3413,7 @@ mod tests {
                     style: before.user.style.clone(),
                     pronouns: Some("they/them".into()),
                     bio: Some("hi".into()),
+                    display_name: None,
                 },
             )
             .await

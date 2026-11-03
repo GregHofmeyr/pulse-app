@@ -112,9 +112,11 @@ async fn register_with(s: &AppState, mut req: RegisterRequest) -> AppResult<Json
 
     let mut tx = crate::db::begin_write(&s.db).await?;
     let inserted = sqlx::query(
-        "INSERT INTO users (id, username, password_hash, created_at) VALUES (?, ?, ?, ?)",
+        "INSERT INTO users (id, username, display_name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)",
     )
     .bind(id.to_string())
+    .bind(&req.username)
+    // A display name starts as the username (the migration did the same for older accounts).
     .bind(&req.username)
     .bind(&hash)
     .bind(&at)
@@ -154,6 +156,7 @@ async fn register_with(s: &AppState, mut req: RegisterRequest) -> AppResult<Json
     let token = session::create(&s.db, id).await?;
     let user = User {
         id,
+        display_name: req.username.clone(),
         username: req.username,
         avatar_hash: None,
         avatar_still: None,

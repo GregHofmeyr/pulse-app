@@ -103,6 +103,9 @@ pub struct LimitsConfig {
     /// Link preview thumbnails fetched and stored per user (each is a file on disk). Over it,
     /// previews come without one.
     pub link_thumb_user: Rate,
+    /// Server nickname and private nickname changes per renamer. Renames have no cooldown (typos
+    /// happen); this only stops real abuse.
+    pub rename_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -141,6 +144,7 @@ impl Default for LimitsConfig {
             search_user: Rate::new(20, 2.0),
             unfurl_user: Rate::per_minute(20),
             link_thumb_user: Rate::per_hour(60),
+            rename_user: Rate::per_minute(30),
         }
     }
 }
@@ -173,6 +177,7 @@ impl LimitsConfig {
             search_user: r,
             unfurl_user: r,
             link_thumb_user: r,
+            rename_user: r,
         }
     }
 }
@@ -318,6 +323,7 @@ pub struct Limits {
     pub search_user: Limiter,
     pub unfurl_user: Limiter,
     pub link_thumb_user: Limiter,
+    pub rename_user: Limiter,
 }
 
 impl Limits {
@@ -346,6 +352,7 @@ impl Limits {
             search_user: Limiter::new(c.search_user),
             unfurl_user: Limiter::new(c.unfurl_user),
             link_thumb_user: Limiter::new(c.link_thumb_user),
+            rename_user: Limiter::new(c.rename_user),
         }
     }
 }

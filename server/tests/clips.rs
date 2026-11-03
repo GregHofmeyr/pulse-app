@@ -409,7 +409,20 @@ async fn migrate_subcommand_migrates_and_exits() {
     let out = run_migrate(&url);
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.lines().any(|l| l == "migrated: 12"), "{stdout}");
+    // Every migration ran: as many as there are files.
+    let all =
+        std::fs::read_dir(std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("migrations"))
+            .unwrap()
+            .filter(|e| {
+                e.as_ref()
+                    .unwrap()
+                    .path()
+                    .extension()
+                    .is_some_and(|x| x == "sql")
+            })
+            .count();
+    let line = format!("migrated: {all}");
+    assert!(stdout.lines().any(|l| l == line), "{stdout}");
     assert!(stdout.contains(&url), "names the database: {stdout}");
 }
 

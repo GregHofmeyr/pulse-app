@@ -472,6 +472,7 @@ fn request() -> UpdateProfileRequest {
         style: NameStyle::default(),
         pronouns: None,
         bio: None,
+        display_name: None,
     }
 }
 
@@ -524,6 +525,7 @@ async fn saves_a_whole_profile_and_tells_everyone() {
         },
         pronouns: Some("they/them".into()),
         bio: Some("one\ntwo\nthree".into()),
+        display_name: None,
     };
     let r = put_profile(&app, &alex, &req).await;
     assert_eq!(r.status(), 200);
