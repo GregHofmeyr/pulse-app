@@ -13,6 +13,7 @@ import type { Mute } from "./Mute";
 import type { QotyEvent } from "./QotyEvent";
 import type { Server } from "./Server";
 import type { ServerId } from "./ServerId";
+import type { Sound } from "./Sound";
 import type { SpeakerLink } from "./SpeakerLink";
 import type { StreamEndReason } from "./StreamEndReason";
 import type { StreamInfo } from "./StreamInfo";
@@ -56,4 +57,4 @@ mentions_cleared: number,
 /**
  * The user's absolute mention count in the channel after this change. Absent from older servers.
  */
-mentions: number | null, } } | { "t": "SpeakerLinksChanged", "d": { server_id: ServerId, links: Array<SpeakerLink>, } } | { "t": "QotyStarted", "d": { event: QotyEvent, } } | { "t": "QotyUpdated", "d": { event: QotyEvent, } } | { "t": "QotyEnded", "d": { event: QotyEvent, } } | { "t": "GameAdded", "d": { game: Game, } } | { "t": "ClipViewChanged", "d": { user_id: UserId, channel_id: ChannelId, view: ClipView, } };
+mentions: number | null, } } | { "t": "SpeakerLinksChanged", "d": { server_id: ServerId, links: Array<SpeakerLink>, } } | { "t": "QotyStarted", "d": { event: QotyEvent, } } | { "t": "QotyUpdated", "d": { event: QotyEvent, } } | { "t": "QotyEnded", "d": { event: QotyEvent, } } | { "t": "GameAdded", "d": { game: Game, } } | { "t": "ClipViewChanged", "d": { user_id: UserId, channel_id: ChannelId, view: ClipView, } } | { "t": "SoundCreated", "d": { sound: Sound, } } | { "t": "SoundUpdated", "d": { sound: Sound, } } | { "t": "SoundDeleted", "d": { server_id: ServerId, sound_id: string, } } | { "t": "SoundPlayed", "d": { channel_id: ChannelId, user_id: UserId, sound_id: string, media_hash: string, volume: number, } } | { "t": "SoundFavourites", "d": { user_id: UserId, favourites: Array<string>, } } | { "t": "FrequentSounds", "d": { user_id: UserId, frequent: Array<string>, } };
