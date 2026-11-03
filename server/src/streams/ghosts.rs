@@ -113,7 +113,7 @@ pub async fn admit(
     p: &ParticipantInfo,
 ) -> anyhow::Result<bool> {
     let grant = p.attributes.get(GRANT_ATTRIBUTE).map(String::as_str);
-    let Some((user, login)) = s.streams.ghost_admit(channel, id, role, grant, &p.sid) else {
+    let Some((user, login)) = s.streams.ghost_admit(channel, id, role, grant) else {
         return Ok(false);
     };
     if !session::is_live(&s.db, &login).await? {
@@ -122,7 +122,16 @@ pub async fn admit(
     let Some(ch) = load_channel(&s.db, channel).await? else {
         return Ok(false);
     };
-    Ok(crate::voice::routes::may_join(&s.db, user, &ch).await?)
+    if !crate::voice::routes::may_join(&s.db, user, &ch).await? {
+        return Ok(false);
+    }
+    // its `#v` is the watch session: from now on it counts
+    if role == StreamRole::V {
+        for (streamer, _) in s.streams.ghost_connected(channel, id, &p.sid) {
+            super::routes::publish_audience(s, channel, streamer).await;
+        }
+    }
+    Ok(true)
 }
 
 /// A ghost connection left `channel`'s stream room: its `#v` ends the ghost (new counts out).

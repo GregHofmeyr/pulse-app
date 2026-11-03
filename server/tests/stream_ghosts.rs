@@ -205,6 +205,21 @@ async fn ghost_watching(app: &TestApp, lk: &Lk, w: &World) -> String {
     v.trim_end_matches("#v").to_owned()
 }
 
+/// A ghost's `#v` comes up (its join webhook; nothing removes a refused one here); its id.
+async fn connected(app: &TestApp, tok: &str, ch: ChannelId) -> String {
+    let (v, gv) = ghost_ticket(app, tok, ch, "v").await;
+    webhook(
+        app,
+        "participant_joined",
+        &format!("{ch}~s"),
+        &v,
+        "PA_gv",
+        &gv,
+    )
+    .await;
+    v.trim_end_matches("#v").to_owned()
+}
+
 /// Every stream event queued on `rx` within a short wait.
 async fn stream_events(rx: &mut Receiver<ServerFrame>) -> Vec<Event> {
     let mut out = Vec::new();
@@ -368,9 +383,7 @@ async fn everyone_sees_a_count_and_nobody_sees_who() {
     let mut w = world(&app).await;
     let ch = w.lounge.id;
     go_live(&app, &w.alex.1, ch, true).await;
-    ticket(&app, &w.sam.1, ch, "v", true).await;
-    let (sam_ghost, _) = ghost_ticket(&app, &w.sam.1, ch, "a").await;
-    let sam_ghost = sam_ghost.trim_end_matches("#a").to_owned();
+    let sam_ghost = connected(&app, &w.sam.1, ch).await;
     assert_eq!(
         watch(&app, &w.sam.1, ch, w.alex.0, true).await.status(),
         204
@@ -414,7 +427,7 @@ async fn ready_carries_the_count_only() {
     let w = world(&app).await;
     let ch = w.lounge.id;
     go_live(&app, &w.alex.1, ch, true).await;
-    let (sam_ghost, _) = ghost_ticket(&app, &w.sam.1, ch, "v").await;
+    let sam_ghost = connected(&app, &w.sam.1, ch).await;
     watch(&app, &w.sam.1, ch, w.alex.0, true).await;
 
     let (mut ws, _) = tokio_tungstenite::connect_async(app.ws_url("/gateway"))
@@ -490,6 +503,32 @@ async fn ghost_connections_are_admitted_only_with_their_grant() {
     )
     .await;
     assert!(!app.voice.members(ch).iter().any(|u| *u == w.sam.0));
+}
+
+#[tokio::test]
+async fn a_ghost_counts_only_once_its_connection_is_up() {
+    let app = spawn().await;
+    let mut w = world(&app).await;
+    let ch = w.lounge.id;
+    go_live(&app, &w.alex.1, ch, true).await;
+    let (v, gv) = ghost_ticket(&app, &w.sam.1, ch, "v").await;
+    // watching before the connection is up (or with none at all): nobody yet
+    watch(&app, &w.sam.1, ch, w.alex.0, true).await;
+    assert_eq!(app.streams.get(ch, w.alex.0).unwrap().ghosts, 0);
+    webhook(
+        &app,
+        "participant_joined",
+        &format!("{ch}~s"),
+        &v,
+        "PA_gv",
+        &gv,
+    )
+    .await;
+    assert_eq!(app.streams.get(ch, w.alex.0).unwrap().ghosts, 1);
+    assert_eq!(
+        ghost_counts(&stream_events(&mut w.kim_rx).await),
+        vec![0, 1]
+    );
 }
 
 #[tokio::test]

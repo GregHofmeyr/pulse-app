@@ -3136,10 +3136,14 @@ mod tests {
             .unwrap();
         assert!(!t.token.is_empty());
         api.watch_stream(&sam_token, ch, uid, true).await.unwrap();
-        assert_eq!(app.streams.get(ch, uid).unwrap().ghosts, 1);
+        // never named (the count follows its LiveKit connection, which this test has none of)
         assert!(app.streams.get(ch, uid).unwrap().viewers.is_empty());
+        // as a ghost from inside the call: refused
+        assert!(matches!(
+            api.watch_stream(&token, ch, uid, true).await,
+            Err(ApiError::Forbidden(_))
+        ));
         api.unwatch_stream(&sam_token, ch, uid).await.unwrap();
-        assert_eq!(app.streams.get(ch, uid).unwrap().ghosts, 0);
         assert!(!app.voice.members(ch).contains(&sam));
     }
 
