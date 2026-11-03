@@ -9,8 +9,9 @@ use pulse_protocol::rest::{
     Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji, DeletedChannel,
     EditClipRequest, EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest, MediaInfo, Member,
     Message, MuteTarget, NameArchivePage, PostQuoteRequest, Profile, QotyEvent,
-    RecoveryCodesResponse, SearchRequest, SearchResults, Server, SetMuteRequest, StartQotyRequest,
-    TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, User,
+    RecoveryCodesResponse, SearchRequest, SearchResults, Server, SetMuteRequest, Sound,
+    StartQotyRequest, TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest,
+    UpdateSoundRequest, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -3164,4 +3165,240 @@ mod tests {
             "{why:?}"
         );
     }
+}
+
+// ---------- soundboard ----------
+
+/// Whether this install can trim and add sounds (the same ffmpeg rule as clips), and why not.
+#[tauri::command]
+pub async fn soundboard_support(app: AppHandle) -> crate::clips::ffmpeg::ClipSupport {
+    use crate::clips::ffmpeg;
+    let resource_dir = app.path().resource_dir().ok();
+    let found = ffmpeg::locate(
+        resource_dir.as_deref(),
+        ffmpeg::dev_override().as_deref(),
+        ffmpeg::Os::current(),
+    );
+    let can_send = found.is_some();
+    ffmpeg::ClipSupport {
+        can_send,
+        reason: (!can_send).then(|| crate::soundboard::UNSUPPORTED.to_owned()),
+    }
+}
+
+/// The system file dialog, filtered to audio. `None` when cancelled.
+#[tauri::command]
+pub async fn soundboard_pick_file(app: AppHandle) -> Option<String> {
+    use tauri_plugin_dialog::DialogExt;
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app
+        .dialog()
+        .file()
+        .add_filter("Audio", &["mp3", "ogg", "wav", "m4a"]);
+    if let Some(win) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&win);
+    }
+    dialog.pick_file(move |f| {
+        let _ = tx.send(f);
+    });
+    let picked = rx.await.ok().flatten()?.into_path().ok()?;
+    Some(picked.to_string_lossy().into_owned())
+}
+
+/// Look at a picked file: its length and a peak outline for the trimmer.
+#[tauri::command]
+pub async fn soundboard_open(
+    app: AppHandle,
+    path: String,
+) -> Result<crate::soundboard::encode::Waveform, String> {
+    let tools = ffmpeg_paths(&app)?;
+    crate::soundboard::encode::waveform(&tools.ffmpeg, std::path::Path::new(&path)).await
+}
+
+/// The span as Ogg Opus: the last encode when it is the same span, else a fresh one.
+async fn prepared_bytes(
+    app: &AppHandle,
+    prepared: &crate::soundboard::Prepared,
+    path: &str,
+    start_ms: u32,
+    end_ms: u32,
+) -> Result<Vec<u8>, String> {
+    let file = std::path::Path::new(path);
+    if let Some(bytes) = prepared.get(file, start_ms, end_ms) {
+        return Ok(bytes);
+    }
+    let tools = ffmpeg_paths(app)?;
+    let bytes = crate::soundboard::encode::encode(&tools.ffmpeg, file, start_ms, end_ms).await?;
+    prepared.put(file, start_ms, end_ms, bytes.clone());
+    Ok(bytes)
+}
+
+/// Play decoded samples: through the call's mixer when in one, else on the output device.
+async fn play_decoded(
+    app: &AppHandle,
+    samples: std::sync::Arc<[f32]>,
+    gain: f32,
+    output: Option<String>,
+) {
+    if let Some((mix, _)) = app.state::<VoiceManager>().mixer_input().await {
+        mix.play_clip(samples, gain);
+    } else {
+        let sound = crate::sounds::Sound {
+            rate: 48_000,
+            samples: samples.to_vec(),
+        };
+        crate::sounds::play_samples(sound, gain, output);
+    }
+}
+
+/// Play a server sound (by media hash) for yourself: the call's mixer when in one, else the
+/// speakers. Fetches nothing at zero gain; a decoded sound is cached for instant replays.
+#[tauri::command]
+pub async fn soundboard_play(
+    app: AppHandle,
+    core: State<'_, Core>,
+    cache: State<'_, crate::soundboard::Cache>,
+    hash: String,
+    soundboard_percent: u16,
+    sound_percent: u16,
+    output: Option<String>,
+) -> Result<(), String> {
+    let gain = crate::soundboard::gain(soundboard_percent, sound_percent);
+    if gain <= 0.0 {
+        return Ok(());
+    }
+    let samples = match cache.get(&hash) {
+        Some(s) => s,
+        None => {
+            let bytes = crate::media::serve(core.media_session(), &format!("/{hash}"))
+                .await
+                .map_err(|status| {
+                    tracing::warn!(%status, "soundboard: couldn't fetch a sound");
+                    "That sound couldn't be loaded.".to_owned()
+                })?;
+            cache.insert_decoded(&hash, &bytes).inspect_err(|e| {
+                tracing::warn!(error = %e, "soundboard: couldn't decode a sound");
+            })?
+        }
+    };
+    play_decoded(&app, samples, gain, output).await;
+    Ok(())
+}
+
+/// Trim and encode the span, keep the result for the upload, and play it here.
+#[tauri::command]
+#[allow(clippy::too_many_arguments)]
+pub async fn soundboard_preview(
+    app: AppHandle,
+    prepared: State<'_, crate::soundboard::Prepared>,
+    path: String,
+    start_ms: u32,
+    end_ms: u32,
+    sound_percent: u16,
+    soundboard_percent: u16,
+    output: Option<String>,
+) -> Result<(), String> {
+    let bytes = prepared_bytes(&app, &prepared, &path, start_ms, end_ms).await?;
+    let samples = crate::soundboard::decode::decode(&bytes)?;
+    let gain = crate::soundboard::gain(soundboard_percent, sound_percent);
+    if gain > 0.0 {
+        play_decoded(&app, samples, gain, output).await;
+    }
+    Ok(())
+}
+
+/// Upload the trimmed span (the one just previewed when it is the same span).
+#[tauri::command]
+pub async fn soundboard_upload(
+    app: AppHandle,
+    core: State<'_, Core>,
+    prepared: State<'_, crate::soundboard::Prepared>,
+    path: String,
+    start_ms: u32,
+    end_ms: u32,
+) -> Result<MediaInfo, ApiError> {
+    let bytes = prepared_bytes(&app, &prepared, &path, start_ms, end_ms)
+        .await
+        .map_err(ApiError::Rejected)?;
+    let (api, token) = core.current()?;
+    core.check(&app, api.upload_sound_media(&token, bytes).await)
+}
+
+#[tauri::command]
+pub async fn create_sound(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    name: String,
+    emoji: Option<String>,
+    media_hash: String,
+    volume: u16,
+) -> Result<Sound, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(
+        &app,
+        api.create_sound(
+            &token,
+            server_id,
+            &name,
+            emoji.as_deref(),
+            &media_hash,
+            volume,
+        )
+        .await,
+    )
+}
+
+/// `request` is the wire struct itself: an absent `emoji` keeps it, `null` clears it.
+#[tauri::command]
+pub async fn update_sound(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: String,
+    request: UpdateSoundRequest,
+) -> Result<Sound, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.update_sound(&token, &id, &request).await)
+}
+
+#[tauri::command]
+pub async fn delete_sound(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: String,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.delete_sound(&token, &id).await)
+}
+
+#[tauri::command]
+pub async fn list_sounds(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<Vec<Sound>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.list_sounds(&token, server_id).await)
+}
+
+/// Ask the server to play this sound to everyone in your call.
+#[tauri::command]
+pub async fn play_sound_to_call(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: String,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.play_sound_to_call(&token, &id).await)
+}
+
+#[tauri::command]
+pub async fn set_sound_favourite(
+    app: AppHandle,
+    core: State<'_, Core>,
+    id: String,
+    on: bool,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_sound_favourite(&token, &id, on).await)
 }

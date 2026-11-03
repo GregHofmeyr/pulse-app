@@ -171,6 +171,8 @@ pub fn run() {
                 }),
             ));
             app.manage(voice::mictest::MicTest::default());
+            app.manage(soundboard::Cache::default());
+            app.manage(soundboard::Prepared::default());
             app.manage(stream::PickerMemory::default());
             let h = app.handle().clone();
             app.manage(stream::audio::StreamAudio::new(std::sync::Arc::new(
@@ -297,6 +299,18 @@ pub fn run() {
             commands::create_emoji,
             commands::rename_emoji,
             commands::delete_emoji,
+            commands::soundboard_support,
+            commands::soundboard_pick_file,
+            commands::soundboard_open,
+            commands::soundboard_preview,
+            commands::soundboard_upload,
+            commands::soundboard_play,
+            commands::create_sound,
+            commands::update_sound,
+            commands::delete_sound,
+            commands::list_sounds,
+            commands::play_sound_to_call,
+            commands::set_sound_favourite,
             commands::add_reaction,
             commands::remove_reaction,
             commands::list_reactors,

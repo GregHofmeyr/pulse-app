@@ -3,9 +3,14 @@
 pub mod decode;
 pub mod encode;
 
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use crate::voice::mixer::percent_to_gain;
+
+/// Why adding sounds is unavailable (no ffmpeg to trim and normalise with).
+pub const UNSUPPORTED: &str =
+    "Adding sounds needs Pulse's audio tools (Windows), or ffmpeg on Linux.";
 
 /// Decoded sounds kept for instant replays (a 6 s mono sound is about 1.1 MB, so ~27 MB at most).
 const CACHE_ENTRIES: usize = 24;
@@ -49,6 +54,26 @@ impl Cache {
     }
 }
 
+/// The last encoded span, so Preview then Save doesn't encode twice (a two-pass ffmpeg run).
+#[derive(Default)]
+pub struct Prepared(Mutex<Option<Span>>);
+
+/// Source file, start and end (ms), and the encoded bytes.
+type Span = (PathBuf, u32, u32, Vec<u8>);
+
+impl Prepared {
+    pub fn get(&self, path: &Path, start_ms: u32, end_ms: u32) -> Option<Vec<u8>> {
+        let g = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let (p, s, e, bytes) = g.as_ref()?;
+        (p == path && *s == start_ms && *e == end_ms).then(|| bytes.clone())
+    }
+
+    pub fn put(&self, path: &Path, start_ms: u32, end_ms: u32, bytes: Vec<u8>) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) =
+            Some((path.to_path_buf(), start_ms, end_ms, bytes));
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,6 +89,25 @@ mod tests {
             "a sound is never below 10 %"
         );
         assert_eq!(gain(100, 500), percent_to_gain(200));
+    }
+
+    #[test]
+    fn prepared_is_reused_for_the_same_span() {
+        let p = Prepared::default();
+        let path = std::path::Path::new("/tmp/a.mp3");
+        assert!(p.get(path, 0, 1000).is_none());
+        p.put(path, 0, 1000, vec![1, 2, 3]);
+        assert_eq!(p.get(path, 0, 1000), Some(vec![1, 2, 3]));
+        assert!(
+            p.get(path, 0, 2000).is_none(),
+            "another span is another encode"
+        );
+        assert!(p.get(std::path::Path::new("/tmp/b.mp3"), 0, 1000).is_none());
+        p.put(path, 0, 2000, vec![9]);
+        assert!(
+            p.get(path, 0, 1000).is_none(),
+            "only the last encode is kept"
+        );
     }
 
     #[test]
