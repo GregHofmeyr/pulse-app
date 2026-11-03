@@ -1,5 +1,6 @@
 pub mod access;
 pub mod auth;
+pub mod badges;
 pub mod clips;
 pub mod config;
 pub mod db;
