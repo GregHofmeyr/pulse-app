@@ -159,8 +159,9 @@ pub async fn check(
             }
             match s.streams.video_seen(channel, c.user, present, now, grace) {
                 Seen::FirstMiss => share_log("stream_video_missing", channel, c.user),
-                Seen::Ended { viewers, .. } => {
+                Seen::Ended { info, viewers } => {
                     out.ended += 1;
+                    crate::badges::streams::ended(s, &info).await;
                     ended(s, channel, c.user, viewers).await;
                 }
                 Seen::Ignored | Seen::Present | Seen::StillMissing => {}

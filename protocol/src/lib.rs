@@ -98,6 +98,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::CardProfile::export_all(&cfg)?;
     rest::ProfileStats::export_all(&cfg)?;
     rest::Badge::export_all(&cfg)?;
+    rest::EggRequest::export_all(&cfg)?;
     rest::NameArchiveEntry::export_all(&cfg)?;
     rest::Profile::export_all(&cfg)?;
     rest::UpdateProfileRequest::export_all(&cfg)?;

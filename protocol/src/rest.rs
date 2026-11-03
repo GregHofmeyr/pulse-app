@@ -136,6 +136,12 @@ pub struct Badge {
     pub seen: bool,
 }
 
+/// `POST /me/badges/egg`: the client found a hidden egg (`"logo"`: the logo-click one).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct EggRequest {
+    pub egg: String,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
 pub struct NameArchiveEntry {
     pub server_id: ServerId,

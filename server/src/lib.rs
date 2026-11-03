@@ -56,6 +56,7 @@ pub fn router(state: AppState) -> Router {
         .merge(clips::routes::router())
         .merge(profiles::routes::router())
         .merge(profiles::private::router())
+        .merge(badges::routes::router())
         .merge(search::routes::router())
         .merge(embeds::routes::router())
         .merge(embeds::page::router())
@@ -97,6 +98,10 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     };
     // Before serving (connections queue in the listen backlog), so the first Ready is right.
     voice::restore::on_startup(&state, &started_at).await?;
+    // Nothing is live yet (streams live in memory): close what a previous run left open.
+    if let Err(e) = badges::streams::reconcile_on_startup(&state.db).await {
+        tracing::warn!(error = %e, "couldn't close stream sessions left open");
+    }
     // Votes whose time ran out while the server was down end now, before anyone connects.
     // A failure here must not keep the server down: the sweeper tries again shortly.
     if let Err(e) = qoty::end_overdue(&state, &db::now()).await {
@@ -104,6 +109,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     }
     qoty::spawn_sweeper(state.clone(), qoty::SWEEP_EVERY);
     clips::sweep::spawn(state.clone());
+    badges::sweep::spawn(state.clone());
     servers::channels::spawn_sweeper(state.clone());
     streams::liveness::spawn(
         state.clone(),

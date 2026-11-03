@@ -105,12 +105,24 @@ pub async fn delete(
     if moved == 0 {
         return Err(AppError::NotFound); // deleted in the meantime; dropping `tx` rolls back
     }
-    // Its call ends here: the leave webhooks that follow find no channel to update.
-    sqlx::query("UPDATE voice_sessions SET left_at = ? WHERE channel_id = ? AND left_at IS NULL")
-        .bind(&at)
-        .bind(id.to_string())
-        .execute(&mut *tx)
-        .await?;
+    // Its call ends here: the leave webhooks that follow find no channel to update, so its voice
+    // time counts toward badges now.
+    let closed: Vec<(String, String, String)> = sqlx::query_as(
+        "UPDATE voice_sessions SET left_at = ? WHERE channel_id = ? AND left_at IS NULL
+         RETURNING user_id, joined_at, left_at",
+    )
+    .bind(&at)
+    .bind(id.to_string())
+    .fetch_all(&mut *tx)
+    .await?;
+    let mut callers = Vec::new();
+    for (user, joined, left) in &closed {
+        let Ok(user) = user.parse::<UserId>() else {
+            continue;
+        };
+        crate::badges::voice::left(&mut tx, user, id, joined, left).await?;
+        callers.push(user);
+    }
     tx.commit().await?;
     s.hub
         .publish(
@@ -122,6 +134,7 @@ pub async fn delete(
         )
         .await;
     drop(_order);
+    crate::badges::engine::after(&s, &callers).await;
     // The channel can't be found now, so a join webhook finds nothing to join. Its events can't
     // reach anyone (they'd be scoped to a channel that can't be found): clients drop its voice
     // presence and streams on `ChannelDeleted`.
@@ -129,7 +142,9 @@ pub async fn delete(
         let people: Vec<UserId> = s.voice.members(id).into_iter().collect();
         for u in &people {
             s.voice.leave(id, *u, "");
-            s.streams.end(id, *u);
+            if let Some(info) = s.streams.end(id, *u) {
+                crate::badges::streams::ended(&s, &info).await;
+            }
             s.streams.remove_viewer_everywhere(id, *u);
         }
         let s = s.clone();

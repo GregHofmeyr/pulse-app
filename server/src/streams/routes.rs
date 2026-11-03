@@ -132,7 +132,10 @@ async fn go_live(
         ));
     }
     let (info, event) = match s.streams.start(ch, me, req.settings, now()) {
-        Started::New(stream) => (stream.clone(), Event::StreamStarted { stream }),
+        Started::New(stream) => {
+            crate::badges::streams::started(&s, &stream).await;
+            (stream.clone(), Event::StreamStarted { stream })
+        }
         Started::Updated(stream) => (stream.clone(), Event::StreamUpdated { stream }),
     };
     tracing::info!(user = %me, channel = %ch, height = info.settings.height, fps = info.settings.fps, "stream live");
@@ -146,8 +149,9 @@ async fn stop(
     Path(ch): Path<ChannelId>,
 ) -> AppResult<StatusCode> {
     require_voice_member(&s, me, ch).await?;
-    s.streams.end(ch, me).ok_or(AppError::NotFound)?;
+    let info = s.streams.end(ch, me).ok_or(AppError::NotFound)?;
     tracing::info!(user = %me, channel = %ch, reason = "stopped", "stream ended");
+    crate::badges::streams::ended(&s, &info).await;
     publish_ended(&s, ch, me, StreamEndReason::Stopped).await;
     Ok(StatusCode::NO_CONTENT)
 }

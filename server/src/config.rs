@@ -35,11 +35,15 @@ pub struct Config {
     pub clips: Option<ClipStoreConfig>,
     /// Link previews: the embed page's origin and the fetcher's settings.
     pub embeds: EmbedConfig,
+    /// Launch day (South African), for Early Adopter: everyone who joined in the week from it.
+    /// `None` (`PULSE_LAUNCH_DATE` unset) = nobody gets it yet.
+    pub launch_date: Option<chrono::NaiveDate>,
 }
 
 pulse_protocol::redacting_debug!(Config {
     db_url, bind, livekit_url, livekit_api_url, livekit_key, hello_timeout, heartbeat_timeout,
-    limits, stream_media_timeout, media_dir, media_min_free_bytes, totp_key, clips, embeds ;
+    limits, stream_media_timeout, media_dir, media_min_free_bytes, totp_key, clips, embeds,
+    launch_date ;
     livekit_secret
 });
 
@@ -81,6 +85,7 @@ impl Config {
                 public_url: public_url(std::env::var("PULSE_PUBLIC_URL").ok().as_deref())?,
                 ..EmbedConfig::default()
             },
+            launch_date: launch_date(std::env::var("PULSE_LAUNCH_DATE").ok().as_deref())?,
         })
     }
 }
@@ -233,6 +238,16 @@ fn totp_key(raw: Option<&str>) -> anyhow::Result<Option<TotpKey>> {
     }
 }
 
+/// `PULSE_LAUNCH_DATE`: unset or empty = none; else a `YYYY-MM-DD` date.
+fn launch_date(raw: Option<&str>) -> anyhow::Result<Option<chrono::NaiveDate>> {
+    match raw {
+        None | Some("") => Ok(None),
+        Some(v) => chrono::NaiveDate::parse_from_str(v, "%Y-%m-%d")
+            .map(Some)
+            .context("PULSE_LAUNCH_DATE must be a date, YYYY-MM-DD"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,6 +261,20 @@ mod tests {
         let msg = format!("{:#}", totp_key(Some(bad)).unwrap_err());
         assert!(msg.contains("PULSE_TOTP_KEY"));
         assert!(!msg.contains(bad));
+    }
+
+    #[test]
+    fn launch_date_env() {
+        assert!(launch_date(None).unwrap().is_none());
+        assert!(launch_date(Some("")).unwrap().is_none());
+        assert_eq!(
+            launch_date(Some("2026-12-01")).unwrap(),
+            chrono::NaiveDate::from_ymd_opt(2026, 12, 1)
+        );
+        for bad in ["01/12/2026", "2026-13-01", "soon"] {
+            let msg = format!("{:#}", launch_date(Some(bad)).unwrap_err());
+            assert!(msg.contains("PULSE_LAUNCH_DATE"), "{msg}");
+        }
     }
 
     #[test]
@@ -301,6 +330,7 @@ mod tests {
             totp_key: Some(TotpKey::parse(&"ab".repeat(32)).unwrap()),
             clips: None,
             embeds: EmbedConfig::default(),
+            launch_date: None,
         };
         let d = format!("{cfg:?}");
         assert!(!d.contains("SECRET"), "{d}");

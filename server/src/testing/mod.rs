@@ -77,6 +77,7 @@ pub fn test_config() -> Config {
         totp_key: Some(crate::auth::totp::TotpKey::parse(&"42".repeat(32)).unwrap()),
         clips: None, // `spawn_in` points it at a fake S3 unless the test set it
         embeds: crate::config::EmbedConfig::default(),
+        launch_date: None,
     }
 }
 
