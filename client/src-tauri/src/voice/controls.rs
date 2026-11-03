@@ -6,6 +6,11 @@ use serde::Serialize;
 pub struct Controls {
     pub muted: bool,
     pub deafened: bool,
+    /// Someone in the server muted you (#140): your mic stays closed whatever your own mute
+    /// says, until someone else undoes it. Set from the gateway's state, never by toggles.
+    pub server_muted: bool,
+    /// Someone in the server deafened you: you hear nothing and your mic stays closed.
+    pub server_deafened: bool,
     #[serde(skip)]
     muted_before_deafen: bool,
     /// How many UI views show the voice meter (the voice settings page). Lives here because, like
@@ -38,11 +43,23 @@ impl Controls {
     }
 
     pub fn mic_open(&self) -> bool {
-        !self.muted && !self.deafened
+        !self.muted && !self.deafened && !self.server_muted && !self.server_deafened
     }
 
     pub fn playout_on(&self) -> bool {
-        !self.deafened
+        !self.deafened && !self.server_deafened
+    }
+
+    /// The server's mute / deafen of you, as the gateway last said. Your own toggles are kept.
+    pub fn set_server(&mut self, muted: bool, deafened: bool) {
+        self.server_muted = muted;
+        self.server_deafened = deafened;
+    }
+
+    /// Talking now counts as talking into your own muted mic (The Doos): muted by you, and not
+    /// by the server (a server mute isn't yours to forget).
+    pub fn counts_muted_talk(&self) -> bool {
+        (self.muted || self.deafened) && !self.server_muted && !self.server_deafened
     }
 
     /// A view showing the voice meter appeared (`true`) or went away (`false`).
@@ -145,6 +162,58 @@ mod tests {
         c.toggle_deafen();
         c.toggle_mute();
         assert!(!c.muted && !c.deafened);
+    }
+
+    #[test]
+    fn server_mute_closes_the_mic_but_keeps_self_state() {
+        let mut c = Controls::default();
+        c.set_server(true, false);
+        assert!(!c.mic_open() && c.playout_on());
+        assert!(!c.muted, "your own mute is yours");
+        c.toggle_mute(); // still toggles your own mute
+        assert!(c.muted && !c.mic_open());
+        c.toggle_mute();
+        c.set_server(false, false);
+        assert!(c.mic_open(), "undone: the mic is back as you left it");
+    }
+
+    #[test]
+    fn server_deafen_stops_playout_and_mic() {
+        let mut c = Controls::default();
+        c.set_server(false, true);
+        assert!(!c.mic_open() && !c.playout_on());
+        assert!(!c.denoise_needed());
+        assert!(!c.deafened && !c.muted);
+        c.set_server(false, false);
+        assert!(c.mic_open() && c.playout_on());
+    }
+
+    #[test]
+    fn muted_talk_counts_self_mute_only() {
+        let mut c = Controls::default();
+        assert!(!c.counts_muted_talk(), "open mic");
+        c.set_server(true, false);
+        assert!(!c.counts_muted_talk(), "server muted, not muted by you");
+        c.toggle_mute();
+        assert!(!c.counts_muted_talk(), "server muted time never counts");
+        c.set_server(false, false);
+        assert!(c.counts_muted_talk(), "your own mute");
+        c.toggle_mute();
+        c.toggle_deafen();
+        assert!(c.counts_muted_talk(), "your own deafen implies mute");
+        c.set_server(false, true);
+        assert!(!c.counts_muted_talk());
+    }
+
+    #[test]
+    fn server_state_goes_to_the_ui() {
+        let mut c = Controls::default();
+        c.set_server(true, true);
+        let v = serde_json::to_value(c).unwrap();
+        assert_eq!(
+            v,
+            serde_json::json!({"muted": false, "deafened": false, "server_muted": true, "server_deafened": true})
+        );
     }
 
     #[test]

@@ -15,7 +15,8 @@ use pulse_protocol::rest::{
     NameArchivePage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse,
     RegisterRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest, SearchRequest,
     SearchResults, SendMessageRequest, Server, SessionResponse, SetClipViewRequest, SetMuteRequest,
-    SetNicknameRequest, SetShowcaseRequest, Sound, StartQotyRequest, StreamInfo, StreamRole,
+    ServerVoiceMod, SetNicknameRequest, SetServerVoiceRequest, SetShowcaseRequest, Sound,
+    StartQotyRequest, StreamInfo, StreamRole,
     StreamSettings, StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest,
     TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus,
     UpdateProfileRequest, UpdateSoundRequest, User, VoiceTokenResponse, WatchRequest,
@@ -1257,6 +1258,43 @@ impl Api {
                 .await,
         )
         .await
+    }
+
+    /// Server mute / deafen someone in a server's voice, or undo it (#140); `None` leaves one as is.
+    pub async fn set_server_voice(
+        &self,
+        token: &str,
+        server: ServerId,
+        user: UserId,
+        req: &SetServerVoiceRequest,
+    ) -> Result<ServerVoiceMod, ApiError> {
+        let url = self.url(&["servers", &server.to_string(), "voice", &user.to_string()])?;
+        Self::parse(
+            self.http
+                .post(url)
+                .bearer_auth(token)
+                .json(req)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Disconnect someone from a server's voice now (#140).
+    pub async fn disconnect_voice(
+        &self,
+        token: &str,
+        server: ServerId,
+        user: UserId,
+    ) -> Result<(), ApiError> {
+        let url = self.url(&[
+            "servers",
+            &server.to_string(),
+            "voice",
+            &user.to_string(),
+            "disconnect",
+        ])?;
+        Self::ok_empty(self.http.post(url).bearer_auth(token).send().await).await
     }
 
     /// Set (or, `None`, clear) the name only you see for someone.
@@ -3749,6 +3787,39 @@ mod tests {
             api.badge_egg(&token, &EggRequest { egg: "nope".into() })
                 .await
                 .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn server_mute_and_disconnect_round_trip_through_the_core() {
+        let app = testing::spawn().await;
+        let (alex_id, alex) = testing::register(&app, "alex").await;
+        let (sam_id, sam) = testing::register(&app, "sam").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let server = api.create_server(&alex, "Main").await.unwrap();
+        api.join_server(&sam, server.id).await.unwrap();
+        let lounge = api
+            .channels(&alex, server.id)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|c| c.name.as_deref() == Some("Lounge"))
+            .unwrap();
+        app.voice.join(lounge.id, sam_id, "PA_sam");
+        let req = SetServerVoiceRequest {
+            mute: Some(true),
+            deafen: None,
+        };
+        let m = api
+            .set_server_voice(&alex, server.id, sam_id, &req)
+            .await
+            .unwrap();
+        assert_eq!((m.muted_by, m.deafened_by), (Some(alex_id), None));
+        // (LiveKit is down in tests: the removal is logged, the request still succeeds)
+        api.disconnect_voice(&alex, server.id, sam_id).await.unwrap();
+        assert!(
+            api.disconnect_voice(&sam, server.id, sam_id).await.is_err(),
+            "not on yourself"
         );
     }
 

@@ -5213,6 +5213,7 @@ dependencies = [
  "libc",
  "livekit",
  "livekit-api",
+ "livekit-protocol",
  "livekit-signaling",
  "log",
  "ndarray 0.15.6",

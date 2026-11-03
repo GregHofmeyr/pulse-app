@@ -1289,6 +1289,47 @@ pub async fn toggle_deafen(
     Ok(c)
 }
 
+/// Server mute / deafen someone in a server's voice channels, or undo it (#140).
+#[tauri::command]
+pub async fn server_voice(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    user_id: UserId,
+    mute: Option<bool>,
+    deafen: Option<bool>,
+) -> Result<pulse_protocol::rest::ServerVoiceMod, ApiError> {
+    let (api, token) = core.current()?;
+    let req = pulse_protocol::rest::SetServerVoiceRequest { mute, deafen };
+    core.check(
+        &app,
+        api.set_server_voice(&token, server_id, user_id, &req).await,
+    )
+}
+
+/// Disconnect someone from a server's voice channel now (#140).
+#[tauri::command]
+pub async fn disconnect_voice(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+    user_id: UserId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.disconnect_voice(&token, server_id, user_id).await)
+}
+
+/// The server's mute / deafen of you in your call's server (#140), as the UI's gateway state says.
+/// Not sent back to the server: it is the server's state (your declared flags stay your own).
+#[tauri::command]
+pub async fn set_server_voice(
+    voice: State<'_, VoiceManager>,
+    muted: bool,
+    deafened: bool,
+) -> Result<Controls, VoiceError> {
+    Ok(voice.set_server(muted, deafened).await)
+}
+
 /// The volume mixer's Calls section (percent): the master, Voices and Streams. The Soundboard
 /// notch isn't here: it rides along with each `soundboard_play`.
 #[tauri::command]
