@@ -27,6 +27,7 @@
   import { displayName, roleColorFor, userOf } from '../lib/selectors'
   import { appearance } from '../lib/appearance.svelte'
   import { openCard } from '../lib/profileCard.svelte'
+  import { nameOpts } from '../lib/theme.svelte'
   import type { Attachment } from 'svelte/attachments'
   import type { Message } from '../lib/protocol/Message'
   import type { Pending } from '../lib/state'
@@ -83,7 +84,7 @@
     const ids = mentionNames.filter((n) => c.includes('@' + n.toLowerCase())).map(lookup)
     return [...new Set(ids.filter((id): id is string => !!id))]
   })
-  const cssFor = (id: string) => nameCss(resolveNameStyle(userOf(app.state, id), { roleColor: roleColorFor(app.state, serverId, id), showStyles: appearance.showNameStyles }))
+  const cssFor = (id: string) => nameCss(resolveNameStyle(userOf(app.state, id), { roleColor: roleColorFor(app.state, serverId, id), showStyles: appearance.showNameStyles, ...nameOpts('chat') }))
   // with the name each pill shows (#47): a rename relabels it, as a style change restyles it
   const mentionCss = $derived(mentioned.map((id) => `${id}\t${cssFor(id)}\t${displayName(app.state, serverId, id)}`).join('\n'))
   // Only the emoji slice, so the {@html} below re-renders on an emoji change, not on every state update.
@@ -296,7 +297,7 @@
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger-text); }
   .hint { font-size: 11px; color: var(--text-3); }
   .system { padding: 6px 18px 6px 30px; font-size: 13px; color: var(--text-3); }
-  .msg.mentioned { background: var(--accent-faint); box-shadow: inset 2px 0 0 var(--accent); }
+  .msg.mentioned { background: var(--accent-faint); box-shadow: inset 2px 0 0 var(--focus-ring); }
   .content :global(img.emoji) { width: 1.375em; height: 1.375em; vertical-align: -0.3em; object-fit: contain; }
   .content :global(img.emoji.big) { width: 48px; height: 48px; }
   .content :global(.emoji-gone) { color: var(--text-3); background: var(--bg-3); border-radius: 4px; padding: 0 4px; font-size: .9em; }

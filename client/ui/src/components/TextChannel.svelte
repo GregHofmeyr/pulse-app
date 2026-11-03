@@ -12,6 +12,7 @@
   import Name from './Name.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
   import SearchBox from './SearchBox.svelte'
+  import { narrowerThan } from '../lib/actions'
   import { app, clock, queueMessage, ui } from '../lib/store.svelte'
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
@@ -431,10 +432,13 @@
   function quotePosted() {
     if (detached) void toPresent()
   }
+  // A narrow header (small window, side panels open): the search box folds to a magnifier (#97).
+  const NARROW_HEAD = 640
+  let narrowHead = $state(false)
 </script>
 
 <div class="chan" class:with-replies={!!repliesRoot} bind:this={chan}>
-  <div class="head">
+  <div class="head" use:narrowerThan={{ px: NARROW_HEAD, set: (v) => (narrowHead = v) }}>
     {#if isPrivate && channel?.kind === 'dm' && others[0]}
       <Avatar id={others[0]} name={title} size={26} online={app.state.people[others[0]]?.online ?? false} interactive serverId={null} />
       <span class="title"><Name userId={others[0]} serverId={null} text={title} /></span>
@@ -469,7 +473,7 @@
       <button class="icon-btn" aria-label="More" aria-haspopup="menu" aria-expanded={menu === 'manage'} data-tip="More" data-menu-toggle
         onclick={() => (menu = menu === 'manage' ? null : 'manage')}><Icon name="dots" size={17} /></button>
     {/if}
-    <SearchBox {serverId} {channelId} />
+    <SearchBox {serverId} {channelId} compact={narrowHead} />
     {#if leaderboardOpen && serverId}
       <Leaderboard {serverId} onOpen={openLeaderboardEntry} onClose={() => (leaderboardOpen = false)} />
     {/if}
@@ -558,7 +562,7 @@
   .qoty { height: 30px; padding: 0 12px; }
   .newline { display: flex; align-items: center; gap: 8px; margin: 6px 18px; color: var(--danger); font-size: 11px; font-weight: 700; letter-spacing: .04em; }
   .newline::before, .newline::after { content: ''; flex: 1; height: 1px; background: var(--danger); opacity: .6; }
-  .jump { align-self: center; margin-top: -40px; position: relative; z-index: 2; padding: 6px 12px; border: 0; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; box-shadow: var(--shadow-jump); }
+  .jump { align-self: center; margin-top: -40px; position: relative; z-index: 2; padding: 6px 12px; border: 0; border-radius: 16px; background: var(--accent); color: var(--on-accent); font-size: 12px; font-weight: 700; box-shadow: var(--shadow-1); }
   .list { flex: 1; min-height: 0; overflow-y: auto; padding: 12px 0 8px; display: flex; flex-direction: column; }
   .list:focus { outline: none; } /* focused only from code, as a fallback: no ring */
   .start { padding: 16px 18px; color: var(--text-3); font-size: 13px; }
@@ -567,7 +571,7 @@
   .error { margin: 0 18px 4px; color: var(--danger-text); font-size: 13px; }
   /* a jumped-to message: a fading highlight, or a static outline under reduced motion */
   .list :global(.jump-flash) { animation: jump-flash 2s ease-out; }
-  .list :global(.jump-flash.still) { animation: none; outline: 2px solid var(--accent); outline-offset: -2px; }
+  .list :global(.jump-flash.still) { animation: none; outline: 2px solid var(--focus-ring); outline-offset: -2px; }
   @keyframes jump-flash {
     0%, 30% { background: color-mix(in srgb, var(--accent) 22%, transparent); }
     100% { background: transparent; }

@@ -160,7 +160,7 @@
     <div class="mentions menu-surface pop-in" role="listbox" aria-label="Mention someone">
       {#each options as o, i (o.id)}
         <button class="menu-item" role="option" aria-selected={i === pick} class:hi={i === pick}
-          onmousedown={(e) => { e.preventDefault(); void choose(o.username) }}><span>@<Name userId={o.id} {serverId} text={o.name} interactive={false} /></span></button>
+          onmousedown={(e) => { e.preventDefault(); void choose(o.username) }}><span>@<Name userId={o.id} {serverId} text={o.name} interactive={false} surface="menu" /></span></button>
       {/each}
     </div>
   {:else if emojiOpen}

@@ -15,7 +15,8 @@
   import FullProfile from '../components/FullProfile.svelte'
   import NicknameDialog from '../components/NicknameDialog.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
-  import { clickOutside } from '../lib/actions'
+  import { clickOutside, narrowerThan } from '../lib/actions'
+  import { NARROW_BODY, searchMakesRoom } from '../lib/layout'
   import ReportBug from '../components/ReportBug.svelte'
   import CrashReportPrompt from '../components/CrashReportPrompt.svelte'
   import ConversationList from '../components/ConversationList.svelte'
@@ -133,7 +134,10 @@
     })
   })
   const hideLeft = $derived(fullShown && !panels.left)
-  const hideRight = $derived(fullShown && !panels.right)
+  // A narrow window shows one side panel: a replies panel opened from search hides the results meanwhile (#97).
+  let narrowBody = $state(false)
+  const searchAside = $derived(searchMakesRoom({ narrow: narrowBody, searchOpen: search.open, threadOpen: !!ui.openThreadId }))
+  const hideRight = $derived((fullShown && !panels.right) || searchAside)
   let sidePanel = $state<HTMLElement>()
   let rightPanel = $state<HTMLElement>()
   // Before a panel hides: a menu open in it closes (an unseen menu would take Esc first), and focus in
@@ -497,7 +501,7 @@
     <button class="win" aria-label="Close" onclick={() => win.close()}><Icon name="x" size={14} /></button>
   </header>
 
-  <div class="body">
+  <div class="body" use:narrowerThan={{ px: NARROW_BODY, set: (v) => (narrowBody = v) }}>
     <aside id={PANEL_ID.left} class="panel side" hidden={hideLeft} bind:this={sidePanel}>
       <div class="panel-head">
         {#if activeServer}
@@ -524,7 +528,7 @@
         <!-- your avatar opens your quick card (like anyone's); the rest opens the account menu -->
         <button type="button" class="me-avatar" aria-label="Your profile" data-tip="Your profile" onclick={(e) => openCard(me.id, null, e.currentTarget)}><Avatar id={me.id} name={baseName(me)} size={34} /></button>
         <button bind:this={menuToggle} class="who-btn" data-tip="Account" data-menu-toggle aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
-          <span class="who"><Name userId={me.id} serverId={null} text={baseName(me)} interactive={false} /><small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
+          <span class="who"><Name userId={me.id} serverId={null} text={baseName(me)} interactive={false} surface="side" /><small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
         </button>
         {#if voice.channelId}
           <button class="icon-btn me-btn" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label={voice.controls.muted ? "Unmute" : "Mute"} onclick={() => voiceApi.toggleMute()}>
@@ -683,7 +687,7 @@
   .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-grid; place-items: center; }
   .tab .invc { color: var(--accent-text); display: grid; margin-left: -2px; }
   .tab .dot { margin-left: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); display: inline-block; }
-  .notice { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 40; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: var(--shadow-notice); }
+  .notice { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 40; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: var(--shadow-2); }
   .ctx-backdrop { position: fixed; inset: 0; z-index: 44; }
   .ctx { position: fixed; z-index: 45; width: 210px; }
 </style>

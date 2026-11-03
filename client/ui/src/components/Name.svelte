@@ -4,20 +4,23 @@
   import { displayName, roleColorFor, userOf } from '../lib/selectors'
   import { nameCss, resolveNameStyle } from '../lib/nameStyle'
   import { openCard } from '../lib/profileCard.svelte'
+  import { nameOpts, type NameSurface } from '../lib/theme.svelte'
 
   import type { User } from '../lib/protocol/User'
 
-  let { userId, serverId, text, interactive = true, size = 'normal', user }: {
+  let { userId, serverId, text, interactive = true, size = 'normal', user, surface = 'chat' }: {
     userId: string
     serverId: string | null
     text?: string
     interactive?: boolean
     size?: 'normal' | 'card'
+    /** What it sits on, so it's made readable there (#42): the chat and dialogs, the sidebar and member lists, or the profile card's dark island. */
+    surface?: NameSurface
     /** Style the name as this user instead of the stored one (the profile editor's preview). */
     user?: User
   } = $props()
 
-  const css = $derived(nameCss(resolveNameStyle(user ?? userOf(app.state, userId), { roleColor: roleColorFor(app.state, serverId, userId), showStyles: appearance.showNameStyles })))
+  const css = $derived(nameCss(resolveNameStyle(user ?? userOf(app.state, userId), { roleColor: roleColorFor(app.state, serverId, userId), showStyles: appearance.showNameStyles, ...nameOpts(surface) })))
   const label = $derived(text ?? displayName(app.state, serverId, userId))
 </script>
 

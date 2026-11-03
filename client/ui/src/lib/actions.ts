@@ -127,3 +127,27 @@ export function radioKeys(e: KeyboardEvent & { currentTarget: EventTarget & HTML
   next.focus()
   next.click()
 }
+
+/** `use:narrowerThan={{ px, set }}`: tells `set` whether the element is narrower than `px`, at once and on every
+ *  resize (#97: headers fold their search box and chips). Without ResizeObserver it never says narrow. */
+export function narrowerThan(node: HTMLElement, opts: { px: number; set: (narrow: boolean) => void }) {
+  let o = opts
+  if (typeof ResizeObserver === 'undefined') {
+    o.set(false)
+    return { update: (n: typeof opts) => (o = n), destroy() {} }
+  }
+  o.set(node.clientWidth > 0 && node.clientWidth < o.px)
+  const ro = new ResizeObserver((entries) => {
+    const w = entries[entries.length - 1]?.contentRect.width ?? 0
+    o.set(w > 0 && w < o.px)
+  })
+  ro.observe(node)
+  return {
+    update(n: typeof opts) {
+      o = n
+    },
+    destroy() {
+      ro.disconnect()
+    },
+  }
+}

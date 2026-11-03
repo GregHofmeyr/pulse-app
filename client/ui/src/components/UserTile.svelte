@@ -62,7 +62,7 @@
     {:else if entry.muted}<span class="badge"><Icon name="micOff" size={compact ? 11 : 14} label="Muted" /></span>{/if}
   </button>
   <div class="name">
-    <span class="text"><Name userId={entry.userId} {serverId} text={entry.name} /></span>
+    <span class="text"><Name userId={entry.userId} {serverId} text={entry.name} surface="side" /></span>
     {#if entry.pending}
       <span class="joining">Joining…</span><span class="spinner" role="progressbar" aria-label="Joining"></span>
     {:else}

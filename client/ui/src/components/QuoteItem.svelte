@@ -220,7 +220,7 @@
   .lines { display: flex; flex-direction: column; gap: 2px; border-left: 3px solid var(--quote-green-deep); padding-left: 10px; }
   .line { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 2px 6px; margin-left: -6px; border-radius: 8px; outline: none; }
   .line:hover, .line:focus-visible, .line:focus-within { background: var(--hover-tint-strong); }
-  .line:focus-visible { box-shadow: 0 0 0 2px var(--accent); }
+  .line:focus-visible { box-shadow: 0 0 0 2px var(--focus-ring); }
   .said { min-width: 0; color: var(--text-body); line-height: 1.5; overflow-wrap: anywhere; }
   .by { display: flex; align-items: center; gap: 8px; flex-shrink: 0; color: var(--text-2); }
   .speaker::before { content: '— '; color: var(--text-3); }

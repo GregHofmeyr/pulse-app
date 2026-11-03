@@ -105,7 +105,7 @@
   .lbl { padding: 14px 2px 8px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
   .card { background: var(--bg-2); border-radius: 12px; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
-  .card.unread { box-shadow: inset 0 0 0 1px var(--accent); }
+  .card.unread { box-shadow: inset 0 0 0 1px var(--focus-ring); }
   .card.away { opacity: .6; }
   .who { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .text { display: flex; flex-direction: column; min-width: 0; }

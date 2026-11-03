@@ -346,7 +346,7 @@
   textarea { resize: none; }
   small { align-self: flex-end; color: var(--text-3); font-size: 11px; }
   .preset { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bg-4); font-size: 14px; cursor: pointer; font-variant-numeric: tabular-nums; }
-  .preset.on { border-color: var(--accent); }
+  .preset.on { border-color: var(--focus-ring); }
   input[type='radio'] { accent-color: var(--accent); }
   .send { margin-top: auto; display: flex; flex-direction: column; gap: 8px; }
   .why { margin: 0; font-size: 13px; color: var(--text-2); }

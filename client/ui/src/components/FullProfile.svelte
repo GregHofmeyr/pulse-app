@@ -126,7 +126,7 @@
               {#each serverArchive.entries as e, i (`${i}\t${e.changed_at}\t${e.changed_by}`)}
                 <li>
                   {#if e.name}<strong>{e.name}</strong>{:else}<strong class="reset">Reset</strong>{/if}
-                  <span>by <Name userId={e.changed_by} {serverId} interactive={false} /></span>
+                  <span>by <Name userId={e.changed_by} {serverId} interactive={false} surface="island" /></span>
                   <time datetime={e.changed_at}>{formatMemberSince(e.changed_at)}</time>
                 </li>
               {/each}
@@ -143,7 +143,7 @@
               <li>
                 <strong>{e.name}</strong>
                 <span>{serverName(e.server_id)}</span>
-                <span>by <Name userId={e.changed_by} serverId={e.server_id} interactive={false} /></span>
+                <span>by <Name userId={e.changed_by} serverId={e.server_id} interactive={false} surface="island" /></span>
                 <time datetime={e.changed_at}>{formatMemberSince(e.changed_at)}</time>
               </li>
             {/each}

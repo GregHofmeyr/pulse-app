@@ -123,7 +123,7 @@
 
 <style>
   /* above panel content (z 0-2), below every popup, menu and dialog (z 5+) */
-  .mini-preview { position: fixed; z-index: 4; width: 320px; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #000; box-shadow: var(--shadow-float); cursor: pointer; touch-action: none; user-select: none; }
+  .mini-preview { position: fixed; z-index: 4; width: 320px; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #000; box-shadow: var(--shadow-2); cursor: pointer; touch-action: none; user-select: none; }
   /* bottom corners sit above a text channel's composer; toasts (z 40) stay on top */
   .tl { top: calc(var(--area-top) + 68px); left: calc(var(--area-left) + 16px); }
   .tr { top: calc(var(--area-top) + 68px); right: calc(var(--area-right) + 16px); }

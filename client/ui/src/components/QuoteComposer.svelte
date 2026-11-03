@@ -437,7 +437,7 @@
   .qc { flex-shrink: 0; margin: 0 18px 16px; padding: 8px; background: var(--bg-3); border-radius: 12px; display: flex; flex-direction: column; gap: 6px; }
   .row { display: flex; align-items: center; gap: 8px; }
   .qline { border-radius: 10px; }
-  .qline.drop { outline: 2px dashed var(--accent); outline-offset: 2px; }
+  .qline.drop { outline: 2px dashed var(--focus-ring); outline-offset: 2px; }
   .qtext, .caption, .who { min-width: 0; flex: 1; padding: 7px 10px; border: 1px solid transparent; border-radius: 8px; background: var(--bg-2); color: var(--text); font: inherit; resize: none; field-sizing: content; max-height: 140px; }
   .picker { position: relative; width: 170px; flex-shrink: 0; }
   .who { width: 100%; flex: none; }
