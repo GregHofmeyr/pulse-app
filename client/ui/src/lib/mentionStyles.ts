@@ -2,6 +2,7 @@
 // Styles are set on DOM the sanitiser already produced; the sanitiser itself is unchanged.
 import { mentionSpans } from './composerDom'
 import type { AppState } from './state'
+import { setMentionLabel } from './mentionLabel'
 
 const WRAP = 'mention-wrap'
 
@@ -64,7 +65,9 @@ export function styleMentions(root: HTMLElement, lookup: (name: string) => strin
     }
     if (label) {
       pill.dataset.name = name
-      pill.textContent = `@${label(id)}`
+      const shown = label(id)
+      // relabel only on a change: the pill's DOM is left alone otherwise
+      if (pill.textContent !== `@${shown}` || !pill.querySelector('.at')) setMentionLabel(pill, shown)
     }
     // A known pill opens its person's card: reachable by keyboard too (Enter or Space, in MessageItem).
     pill.setAttribute('tabindex', '0')

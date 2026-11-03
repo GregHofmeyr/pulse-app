@@ -114,6 +114,7 @@ describe('mention chips', () => {
     expect(chips[0].dataset.token).toBe('@sam')
     expect(chips[1].dataset.token).toBe('@Kim')
     expect(chips[0].getAttribute('contenteditable')).toBe('false')
+    expect(chips[0].querySelector('.at')?.textContent).toBe('@') // its own span: the gap after it (#137)
     expect(el.textContent).not.toContain('@sam ')
     expect(el.textContent).toContain('@nobody')
     expect(serialize(el)).toBe(text)
