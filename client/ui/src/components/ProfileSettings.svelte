@@ -356,7 +356,7 @@
       </div>
 
       <div class="preview" aria-label="Preview">
-        <ProfileCard user={pu} card={pc} badges={profile.badges} stats={profile.stats} serverId={null} preview />
+        <ProfileCard user={pu} card={pc} badges={profile.badges} showcase={profile.showcase ?? []} stats={profile.stats} serverId={null} preview />
         <div class="line">
           <Avatar id={me.id} name={pu.display_name} user={pu} size={36} />
           <div class="said">

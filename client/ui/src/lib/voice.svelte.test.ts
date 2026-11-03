@@ -89,3 +89,15 @@ describe('the mic event', () => {
     expect(voice.error).toBe('earlier trouble')
   })
 })
+
+describe('talking into a muted mic', () => {
+  beforeEach(async () => {
+    h.calls.length = 0
+    await startVoiceListening()
+  })
+
+  it('is reported for The Doos', () => {
+    h.handlers['voice://event']({ payload: { kind: 'muted_talk' } })
+    expect(h.calls).toEqual(['report_muted_talk'])
+  })
+})

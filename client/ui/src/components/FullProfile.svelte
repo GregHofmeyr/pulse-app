@@ -86,7 +86,7 @@
     <button class="close icon-btn round modal-close" aria-label="Close profile" onclick={onClose}><Icon name="x" size={16} /></button>
     <div class="left">
       {#if user}
-        <ProfileCard {user} {card} badges={cached?.badges ?? []} {stats} {serverId} size="full" loading={!cached && !failed} {onClose} />
+        <ProfileCard {user} {card} badges={cached?.badges ?? []} showcase={cached?.showcase ?? []} {stats} {serverId} size="full" loading={!cached && !failed} {onClose} />
       {/if}
       {#if failed && !cached}<p class="err" role="alert">{failed} <button type="button" class="retry" onclick={() => load(userId)}>Retry</button></p>{/if}
     </div>
@@ -152,7 +152,7 @@
       {/if}
       <section class="board">
         <h2>Trophy case</h2>
-        <TrophyCase badges={cached?.badges ?? []} />
+        <TrophyCase badges={cached?.badges ?? []} showcase={cached?.showcase ?? []} mine={userId === app.state.me?.id} />
       </section>
     </div>
   </div>

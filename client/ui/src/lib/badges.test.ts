@@ -1,0 +1,107 @@
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const invoke = vi.fn()
+vi.mock('@tauri-apps/api/core', () => ({ invoke: (...a: unknown[]) => invoke(...a) }))
+
+import { badgeStore, defaultShowcase, fallbackName, logoClick, progressText, rarityLabel, rarityVar, resetEgg, shareText } from './badges.svelte'
+import type { Badge } from './protocol/Badge'
+import type { BadgeDef } from './protocol/BadgeDef'
+
+const def = (over: Partial<BadgeDef> = {}): BadgeDef => ({
+  key: 'the_yapper', name: 'The Yapper', description: 'Send messages.', icon: '💬', hidden: false, hand_given: false, stacking: false, unit: 'count',
+  tiers: [{ threshold: 100, rarity: 'common', holders: 3 }, { threshold: 500, rarity: 'uncommon', holders: 1 }], progress: 412, ...over,
+})
+const badge = (key: string, rarity: Badge['rarity'], earned_at: string): Badge => ({ key, earned_at, first_earner: false, tier: 1, rarity, first_tiers: [], count: 0, hidden: false, seen: true })
+const calls = (cmd: string) => invoke.mock.calls.filter((c) => c[0] === cmd)
+
+beforeEach(() => {
+  invoke.mockReset()
+  invoke.mockResolvedValue(undefined)
+})
+
+describe('badge text', () => {
+  it('shares read "2 of 8 have this"', () => {
+    expect(shareText(2, 8)).toBe('2 of 8 have this')
+    expect(shareText(1, 8)).toBe('1 of 8 has this')
+  })
+
+  it('progress counts toward the next tier, with the thing counted', () => {
+    expect(progressText(def(), 412)).toBe('412 / 500 messages')
+    expect(progressText(def(), 40)).toBe('40 / 100 messages')
+    // every tier reached: the top one
+    expect(progressText(def(), 700)).toBe('700 / 500 messages')
+  })
+
+  it('hours read as h', () => {
+    const regular = def({ key: 'the_regular', unit: 'hours', tiers: [{ threshold: 10, rarity: 'common', holders: 0 }, { threshold: 50, rarity: 'uncommon', holders: 0 }] })
+    expect(progressText(regular, 12)).toBe('12 / 50 h')
+  })
+
+  it('a badge without a known noun is just the numbers', () => {
+    expect(progressText(def({ key: 'something_new' }), 3)).toBe('3 / 100')
+  })
+
+  it('rarity label and colour token', () => {
+    expect(rarityLabel('legendary')).toBe('Legendary')
+    expect(rarityVar('epic')).toBe('var(--rarity-epic)')
+  })
+
+  it('an unknown key reads in title case', () => {
+    expect(fallbackName('early-bird_2026')).toBe('Early Bird 2026')
+    expect(fallbackName('__')).toBe('Badge')
+  })
+})
+
+describe('defaultShowcase', () => {
+  it('rarest first, then the older, top 5 (the server rule)', () => {
+    const held = [
+      badge('a', 'common', '2026-10-01T00:00:00Z'),
+      badge('b', 'mythical', '2026-10-05T00:00:00Z'),
+      badge('c', 'rare', '2026-10-03T00:00:00Z'),
+      badge('d', 'rare', '2026-10-02T00:00:00Z'),
+      badge('e', 'epic', '2026-10-04T00:00:00Z'),
+      badge('f', 'uncommon', '2026-10-06T00:00:00Z'),
+    ]
+    expect(defaultShowcase(held)).toEqual(['b', 'e', 'd', 'c', 'f'])
+  })
+})
+
+describe('badgeStore', () => {
+  it('loads the catalogue once, and again after invalidate', async () => {
+    badgeStore.reset()
+    invoke.mockResolvedValue({ people: 4, badges: [def()] })
+    await Promise.all([badgeStore.load(), badgeStore.load()])
+    expect(calls('get_badge_catalogue')).toHaveLength(1)
+    expect(badgeStore.def('the_yapper')?.name).toBe('The Yapper')
+    await badgeStore.load()
+    expect(calls('get_badge_catalogue')).toHaveLength(1)
+    await badgeStore.invalidate()
+    expect(calls('get_badge_catalogue')).toHaveLength(2)
+  })
+
+  it('markSeen clears the unseen count and tells the server', async () => {
+    badgeStore.reset()
+    badgeStore.bumped = 2
+    expect(badgeStore.unseen).toBe(2)
+    badgeStore.markSeen()
+    expect(badgeStore.unseen).toBe(0)
+    expect(calls('mark_badges_seen')).toHaveLength(1)
+  })
+})
+
+describe('the logo egg', () => {
+  beforeEach(() => resetEgg())
+
+  it('7 clicks within 3 s report it, once a session', () => {
+    for (let i = 0; i < 7; i++) logoClick(1000 + i * 400)
+    expect(calls('report_egg')).toEqual([['report_egg', { egg: 'logo' }]])
+    for (let i = 0; i < 7; i++) logoClick(10_000 + i * 100)
+    expect(calls('report_egg')).toHaveLength(1)
+  })
+
+  it('slower clicks never do', () => {
+    for (let i = 0; i < 20; i++) logoClick(i * 600)
+    expect(calls('report_egg')).toHaveLength(0)
+  })
+})

@@ -4,6 +4,7 @@
   import { api, errorText } from './lib/tauri'
   import { app, resetState, startListening } from './lib/store.svelte'
   import { startVoiceListening } from './lib/voice.svelte'
+  import { badgeStore, startBadgeListening } from './lib/badges.svelte'
   import { installTooltips } from './lib/tooltip'
   import { watchWindowFocus, windowFocus } from './lib/windowFocus.svelte'
   import type { User } from './lib/protocol/User'
@@ -43,9 +44,11 @@
     let off: (() => void) | undefined
     // Listen before restoring so the first Ready can't slip past us.
     Promise.all([startListening(), startVoiceListening()]).then(async ([unlisten, unlistenVoice]) => {
+      const unlistenBadges = startBadgeListening()
       off = () => {
         unlisten()
         unlistenVoice()
+        unlistenBadges()
       }
       try {
         const r = await api.restoreSession()
@@ -77,6 +80,7 @@
       user = null
       restoreRefused = false
       resetState()
+      badgeStore.reset()
       bootError = ''
     }
   }
@@ -87,6 +91,7 @@
       user = null
       restoreRefused = false
       resetState()
+      badgeStore.reset()
       bootError = 'You were signed out. Please log in again.'
     }
   })
@@ -99,7 +104,7 @@
 {:else if screen === 'waiting'}
   <Waiting onSignOut={signOutWhileWaiting} />
 {:else if screen === 'shell' && user}
-  <Shell {user} onLogout={() => { user = null; restoreRefused = false; resetState() }} />
+  <Shell {user} onLogout={() => { user = null; restoreRefused = false; resetState(); badgeStore.reset() }} />
 {:else}
   <Login notice={bootError} onAuthed={(u) => { bootError = ''; restoreRefused = false; user = u }} />
 {/if}

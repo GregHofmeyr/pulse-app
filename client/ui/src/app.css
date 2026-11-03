@@ -90,6 +90,17 @@
   --island-text: #e8e9ed;
   --island-text-2: #b9bcc6;
   --island-text-3: #8e92a0;
+  /* Badges (#49): the ring and label colour of each rarity (bright enough to read as text on every
+     surface), the first earner's gold and its glow, and the [NEW] tag. */
+  --rarity-common: #9aa0ab;
+  --rarity-uncommon: #4fd18b;
+  --rarity-rare: #5aa9ff;
+  --rarity-epic: #b07cff;
+  --rarity-legendary: #f0a33a;
+  --rarity-mythical: #ff5c8a;
+  --first-gold: #f5cd52;
+  --first-gold-soft: rgba(245, 205, 82, .35);
+  --badge-new: #f2616b;
   /* --text-3, translucent, so the thumb reads on every surface it sits on (--bg-0 to --bg-4). Plain
      rgb(), not color-mix(): an engine without color-mix() would make the thumb invisible. */
   --scrollbar-thumb: rgb(142 146 160 / .32);

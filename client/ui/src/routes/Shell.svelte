@@ -38,7 +38,9 @@
   import { PANEL_ID, PANEL_TOGGLE_ID, setFullPanels } from '../lib/stream/fullPanels'
   import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
   import { api, errorText, type ClipJob } from '../lib/tauri'
-  import { app, clock, openDm, ui } from '../lib/store.svelte'
+  import { app, clock, loadProfile, openDm, ui } from '../lib/store.svelte'
+  import BadgeToast from '../components/BadgeToast.svelte'
+  import { badgeStore, logoClick } from '../lib/badges.svelte'
   import { applyEvent, dropClipJob, setClipJob, trimHistory } from '../lib/state'
   import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
   import { baseName, displayName, isMember, liveIn } from '../lib/selectors'
@@ -352,6 +354,13 @@
       callView.goTo = null
     })
   })
+  // Your own profile, once per connection (Ready empties the cache): its unseen badges light the
+  // [NEW] dot on your avatar even when they were given while you were away (#49).
+  const ownCached = $derived(!!app.state.profiles[me.id])
+  $effect(() => {
+    if (app.state.conn !== 'connected' || ownCached) return
+    untrack(() => loadProfile(me.id).catch(() => {}))
+  })
   // Edit profile on your own card asked for Settings → Profile.
   $effect(() => {
     if (!profileUi.edit) return
@@ -461,7 +470,9 @@
 
 <div class="app">
   <header data-tauri-drag-region>
-    <span class="logo" aria-hidden="true">
+    <!-- the logo egg (#49): 7 quick clicks; hidden on purpose, so no button or keyboard path -->
+    <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
+    <span class="logo" aria-hidden="true" onclick={() => logoClick()}>
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"><path d="M4 10v4M8 7v10M12 4v16M16 7v10M20 10v4" /></svg>
     </span>
     <nav aria-label="Servers">
@@ -522,7 +533,7 @@
       <VoiceStatus />
       <div class="me">
         <!-- your avatar opens your quick card (like anyone's); the rest opens the account menu -->
-        <button type="button" class="me-avatar" aria-label="Your profile" data-tip="Your profile" onclick={(e) => openCard(me.id, null, e.currentTarget)}><Avatar id={me.id} name={baseName(me)} size={34} /></button>
+        <button type="button" class="me-avatar" aria-label={badgeStore.unseen > 0 ? 'Your profile (new badges)' : 'Your profile'} data-tip="Your profile" onclick={(e) => openCard(me.id, null, e.currentTarget)}><Avatar id={me.id} name={baseName(me)} size={34} />{#if badgeStore.unseen > 0}<span class="new-dot" aria-hidden="true"></span>{/if}</button>
         <button bind:this={menuToggle} class="who-btn" data-tip="Account" data-menu-toggle aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
           <span class="who"><Name userId={me.id} serverId={null} text={baseName(me)} interactive={false} /><small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
         </button>
@@ -574,6 +585,7 @@
   </div>
 </div>
 <StreamToast />
+<BadgeToast />
 {#if serverSettingsOpen && activeServer}<ServerSettings server={activeServer} onClose={() => (serverSettingsOpen = false)} />{/if}
 {#if settingsOpen}<Settings section={settingsSection} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
@@ -660,7 +672,9 @@
   .add { width: 36px; height: 36px; flex-shrink: 0; border: 1px dashed var(--bg-4); border-radius: 10px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .add:hover { color: var(--text); border-color: var(--text-3); }
   .me { position: relative; }
-  .me-avatar { flex-shrink: 0; display: flex; padding: 0; border: 0; border-radius: 50%; background: none; }
+  .me-avatar { position: relative; flex-shrink: 0; display: flex; padding: 0; border: 0; border-radius: 50%; background: none; }
+  /* unseen badges (#49): a small dot until you open your trophy case */
+  .new-dot { position: absolute; top: -1px; right: -1px; width: 10px; height: 10px; border-radius: 50%; background: var(--badge-new); box-shadow: 0 0 0 2px var(--ring); }
   .who-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 4px 6px; border: 0; border-radius: 10px; background: transparent; text-align: left; }
   .who-btn:hover { background: var(--bg-2); }
   .who-btn .who { overflow: hidden; }

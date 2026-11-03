@@ -5,6 +5,7 @@ import type { Event as AppEvent } from './protocol/Event'
 import { streamApi } from './stream/stream.svelte'
 import type { SelfVoice } from './selectors'
 import { app, onAppEvent } from './store.svelte'
+import { api } from './tauri'
 import { loadAudioConfig, loadLocalMutes, loadVolumes, playSound, saveLocalMutes, saveVolumes, transitionSounds, type AudioConfig, type Connection, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
 import { isJoining, reduceStage, type StageState } from './voicestage'
 
@@ -117,6 +118,10 @@ export async function startVoiceListening() {
       case 'mic':
         // only a failure matters to the UI: a live mic needs no indicator of its own
         if (e.error) voice.error = e.error
+        break
+      case 'muted_talk':
+        // The Doos (#49): the server counts it, rate-limited; nothing to show here
+        void api.reportMutedTalk().catch(() => {})
         break
     }
     // the optimistic join ends once audio is starting in the channel being joined: not on the audio stage

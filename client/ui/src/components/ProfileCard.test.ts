@@ -15,6 +15,7 @@ import { applyEvent, emptyState } from '../lib/state'
 import { closeCard, closeFull, openCard, profileUi } from '../lib/profileCard.svelte'
 import { mixHex, NEAR_BLACK, THEME_PRESETS } from '../lib/cardTheme'
 import { appearance } from '../lib/appearance.svelte'
+import { badgeStore } from '../lib/badges.svelte'
 import type { User } from '../lib/protocol/User'
 import type { CardProfile } from '../lib/protocol/CardProfile'
 import type { ProfileStats } from '../lib/protocol/ProfileStats'
@@ -30,6 +31,7 @@ const calls = (cmd: string) => vi.mocked(invoke).mock.calls.filter((c) => c[0] =
 
 beforeEach(() => {
   resetState()
+  badgeStore.reset()
   app.state = { ...emptyState(), me: alex, people: { U1: { user: alex, online: true, last_seen_at: null }, U2: { user: sam, online: true, last_seen_at: null } } } as never
   appearance.showNameStyles = true
   closeCard()
@@ -84,8 +86,30 @@ describe('ProfileCard', () => {
     expect(show().querySelector('.badges')).toBeNull()
     unmount(cmp!)
     cmp = undefined
-    const el = show({ badges: [{ key: 'night_owl', earned_at: '2026-10-03T00:00:00Z', first_earner: false }] })
+    // held but not in the showcase: no row
+    const held = (key: string, rarity: 'rare' | 'epic' = 'rare') => ({ key, earned_at: '2026-10-03T00:00:00Z', first_earner: false, tier: 1, rarity, first_tiers: [], count: 0, hidden: false, seen: true })
+    expect(show({ badges: [held('night_owl')], showcase: [] }).querySelector('.badges')).toBeNull()
+    unmount(cmp!)
+    cmp = undefined
+    const el = show({ badges: [held('night_owl')], showcase: ['night_owl'] })
     expect(el.querySelector('.badges [aria-label="Night Owl"]')).not.toBeNull()
+  })
+
+  it('shows the showcase badges, in order, the small size', async () => {
+    vi.mocked(invoke).mockImplementation((async (cmd: string) =>
+      cmd === 'get_badge_catalogue'
+        ? { people: 4, badges: [
+            { key: 'ghost', name: 'Ghost', description: '', icon: '👻', hidden: false, hand_given: false, stacking: false, unit: 'count', tiers: [{ threshold: 10, rarity: 'rare', holders: 1 }], progress: null },
+            { key: 'night_owl', name: 'Night Owl', description: '', icon: '🦉', hidden: false, hand_given: false, stacking: false, unit: 'count', tiers: [{ threshold: 1, rarity: 'epic', holders: 1 }], progress: null },
+          ] }
+        : undefined) as never)
+    const held = (key: string) => ({ key, earned_at: '2026-10-03T00:00:00Z', first_earner: false, tier: 1, rarity: 'rare' as const, first_tiers: [], count: 0, hidden: false, seen: true })
+    const el = show({ badges: [held('ghost'), held('night_owl'), held('the_yapper')], showcase: ['night_owl', 'ghost'] })
+    await vi.waitFor(() => expect(el.querySelector('.badges')!.textContent).toContain('👻'))
+    const shown = [...el.querySelectorAll('.badges .badge-icon')]
+    expect(shown).toHaveLength(2)
+    expect(shown.map((b) => b.getAttribute('aria-label'))).toEqual(['Night Owl', 'Ghost'])
+    expect(shown.every((b) => b.classList.contains('show'))).toBe(true)
   })
 
   it('shows Member since and Voice from the stats', () => {

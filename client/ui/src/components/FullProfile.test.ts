@@ -12,6 +12,7 @@ import FullProfile from './FullProfile.svelte'
 import { app, resetState } from '../lib/store.svelte'
 import { applyEvent, emptyState } from '../lib/state'
 import { closeCard, closeFull } from '../lib/profileCard.svelte'
+import { badgeStore } from '../lib/badges.svelte'
 import type { User } from '../lib/protocol/User'
 import type { Profile } from '../lib/protocol/Profile'
 
@@ -46,6 +47,7 @@ const panel = (title: string) => [...document.querySelectorAll('section.board')]
 
 beforeEach(() => {
   resetState()
+  badgeStore.reset()
   closeCard()
   closeFull()
   vi.mocked(invoke).mockReset()
@@ -113,7 +115,6 @@ describe('FullProfile', () => {
     expect(t.textContent).not.toContain('No trophies yet')
     expect(t.textContent).toContain('Night Owl')
     expect(t.textContent).toContain('Oct 3, 2026')
-    expect(t.querySelector('svg')).not.toBeNull()
   })
 
   it('an unknown badge key gets a readable name', () => {

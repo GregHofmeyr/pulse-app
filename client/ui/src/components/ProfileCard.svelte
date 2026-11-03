@@ -3,6 +3,7 @@
   // read the store, so they follow a ProfileUpdated, except in the preview, which draws `user`) and
   // where they are in voice. Used by the quick
   // card popover, the full profile and the editor's preview.
+  import { untrack } from 'svelte'
   import type { Attachment } from 'svelte/attachments'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
@@ -15,17 +16,20 @@
   import { renderMarkdown } from '../lib/markdown'
   import { animateEmojiIn, shouldAnimateProfile, wireAnimated } from '../lib/animate.svelte'
   import { formatMemberSince, formatVoice } from '../lib/profileFormat'
-  import { badgeInfo } from '../lib/badges'
+  import BadgeIcon from './BadgeIcon.svelte'
+  import { badgeStore, fallbackName } from '../lib/badges.svelte'
   import { editProfile, openFull, openRename } from '../lib/profileCard.svelte'
   import type { User } from '../lib/protocol/User'
   import type { CardProfile } from '../lib/protocol/CardProfile'
   import type { Badge } from '../lib/protocol/Badge'
   import type { ProfileStats } from '../lib/protocol/ProfileStats'
 
-  let { user, card, badges, stats, serverId, size = 'quick', preview = false, loading = false, onViewFull, onClose }: {
+  let { user, card, badges, showcase = [], stats, serverId, size = 'quick', preview = false, loading = false, onViewFull, onClose }: {
     user: User
     card: CardProfile
     badges: Badge[]
+    /** The badges shown off on the card (#49), keys in `badges`, in order. */
+    showcase?: string[]
     stats: ProfileStats | null
     serverId: string | null
     size?: 'quick' | 'full'
@@ -36,6 +40,13 @@
     onViewFull?: () => void
     onClose?: () => void
   } = $props()
+
+  // The showcase, in its order; names and icons come from the catalogue (fetched once, on first need).
+  const shown = $derived(showcase.map((k) => badges.find((b) => b.key === k)).filter((b): b is Badge => !!b))
+  const wantsCatalogue = $derived(shown.length > 0)
+  $effect(() => {
+    if (wantsCatalogue) untrack(() => void badgeStore.load())
+  })
 
   // The glow is each raw theme colour at 45% alpha (plan reconciliation 8).
   const GLOW_ALPHA = '73'
@@ -137,11 +148,12 @@
       </div>
       {#if nameError}<p class="err" role="alert">{nameError}</p>{/if}
     {/if}
-    {#if badges.length}
+    {#if shown.length}
       <div class="badges">
-        {#each badges as b (b.key)}
-          {@const info = badgeInfo(b.key)}
-          <span class="badge" role="img" aria-label={info.name} title={info.name}><Icon name={info.icon} size={16} /></span>
+        {#each shown as b (b.key)}
+          {@const d = badgeStore.def(b.key)}
+          <BadgeIcon icon={d?.icon ?? '🏆'} rarity={b.rarity} tier={b.tier} tiers={d?.tiers.length ?? 1} first={b.first_earner} hidden={b.hidden} size="show"
+            label={d?.name ?? (b.hidden ? '???' : fallbackName(b.key))} />
         {/each}
       </div>
     {/if}
@@ -207,8 +219,7 @@
   .who :global(.name) { font-weight: 700; }
   .who { font-size: calc(20px / 1.15); }
   .handle { font-size: 13px; color: var(--card-text-2); }
-  .badges { display: flex; flex-wrap: wrap; gap: 6px; }
-  .badge { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--panel-top); color: var(--card-text); }
+  .badges { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 0; }
   .panel { border-radius: 10px; padding: 10px 12px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); font-size: 13px; }
   .bio { font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
   .bio :global(p) { margin: 0; }
