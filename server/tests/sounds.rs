@@ -864,6 +864,66 @@ async fn custom_emoji_on_a_sound() {
     );
 }
 
+/// Editing a sound's name or boost keeps its custom emoji even when the editor couldn't pick that
+/// emoji themselves (it's from a server they aren't in), or it has since been deleted.
+#[tokio::test]
+async fn an_unchanged_custom_emoji_is_not_checked_again() {
+    let app = spawn().await;
+    let (_, alex) = register(&app, "alex").await;
+    let (_, sam) = register(&app, "sam").await;
+    let main = create_server(&app, &alex, "Main").await;
+    join(&app, &sam, main.id).await;
+    let other = create_server(&app, &alex, "Other").await;
+    let there = custom_emoji(&app, &alex, other.id, "there").await;
+    let here = custom_emoji(&app, &alex, main.id, "here").await;
+    let media = upload(&app, &alex, 1000).await;
+    let mk = |id: &str| json!({ "name": "horn", "media_hash": media.hash, "emoji_id": id });
+    let s: Sound = create(&app, &alex, main.id, mk(&there.id))
+        .await
+        .json()
+        .await
+        .unwrap();
+    // sam isn't in Other, but sends the emoji back unchanged with the rename (as the dialog does)
+    let r = patch(
+        &app,
+        &sam,
+        &s.id,
+        json!({ "name": "toot", "emoji": null, "emoji_id": there.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let s2: Sound = r.json().await.unwrap();
+    assert_eq!(
+        (s2.name.as_str(), s2.emoji_id.as_deref()),
+        ("toot", Some(there.id.as_str()))
+    );
+    // but sam can't choose it anew
+    let fresh: Sound = create(&app, &alex, main.id, mk(&here.id))
+        .await
+        .json()
+        .await
+        .unwrap();
+    let r = patch(&app, &sam, &fresh.id, json!({ "emoji_id": there.id })).await;
+    assert_eq!(r.status(), 400);
+    // a deleted emoji: the rename still works
+    let r = app
+        .http
+        .delete(app.url(&format!("/emoji/{}", here.id)))
+        .bearer_auth(&alex)
+        .send()
+        .await
+        .unwrap();
+    assert!(r.status().is_success());
+    let r = patch(
+        &app,
+        &alex,
+        &fresh.id,
+        json!({ "volume": 150, "emoji": null, "emoji_id": here.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+}
+
 #[tokio::test]
 async fn played_carries_the_length() {
     let (app, [alex, _, _], srv, s) = soundboard().await;

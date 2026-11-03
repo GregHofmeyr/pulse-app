@@ -110,6 +110,10 @@
   let now = $state(0)
   let endTimer: ReturnType<typeof setTimeout> | undefined
   let frame = 0
+  /** Bumped by every stop: a play whose ffmpeg decode finishes after one is stopped, not started. */
+  let generation = 0
+  /** A play is waiting on its decode: a second click would start another. */
+  let starting = $state(false)
   const position = () => (playing ? Math.min(playing.from + (performance.now() - playing.startedAt), playing.from + playing.len) : pausedAt)
   const playhead = $derived.by(() => {
     void now
@@ -125,12 +129,19 @@
     cancelAnimationFrame(frame)
   }
   async function play() {
-    if (!path || !clip || busy) return
+    if (!path || !clip || busy || starting) return
     const from = playFrom(span, pausedAt)
+    const mine = ++generation
     error = ''
+    starting = true
     try {
       const [calls, level] = previewPercents(mixer.calls.master, soundboard.volume_pct)
       const len = await soundboardCmd.trimPlay(path, from, span.end, calls, level, loadAudioConfig().output ?? null)
+      if (mine !== generation) {
+        // stopped (a drag, Preview, a new file, closing) while ffmpeg was still decoding
+        soundboardCmd.trimStop().catch(() => {})
+        return
+      }
       halt()
       const startedAt = performance.now()
       playing = { from, startedAt, len }
@@ -143,6 +154,8 @@
       frame = requestAnimationFrame(animate)
     } catch (e) {
       error = errorText(e)
+    } finally {
+      starting = false
     }
   }
   function pause() {
@@ -153,6 +166,7 @@
   }
   /** Moving the span (or leaving) ends playback and forgets the playhead. */
   function stopPlaying() {
+    generation++
     if (playing) soundboardCmd.trimStop().catch(() => {})
     halt()
     pausedAt = null
@@ -269,7 +283,7 @@
               {#if playing}
                 <button type="button" class="btn btn-lg btn-secondary icon" aria-label="Pause" title="Pause" onclick={pause}><Icon name="pause" size={16} /></button>
               {:else}
-                <button type="button" class="btn btn-lg btn-secondary icon" aria-label="Play selection" title="Play selection" disabled={busy} onclick={play}><Icon name="play" size={16} /></button>
+                <button type="button" class="btn btn-lg btn-secondary icon" aria-label="Play selection" title="Play selection" disabled={busy || starting} onclick={play}><Icon name="play" size={16} /></button>
               {/if}
               <button type="button" class="btn btn-lg btn-secondary" disabled={busy} onclick={preview}>Preview</button>
             </div>

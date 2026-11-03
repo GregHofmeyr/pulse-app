@@ -3368,7 +3368,8 @@ pub async fn soundboard_play(
     Ok(())
 }
 
-/// Fetch and decode sounds ahead of their first play (on joining a call), in the background.
+/// Fetch sounds into the media disk cache ahead of their first play (on joining a call), in the
+/// background. Nothing is decoded ahead: a streamed decode starts playing in milliseconds.
 #[tauri::command]
 pub async fn soundboard_warm(app: AppHandle, hashes: Vec<String>) {
     tauri::async_runtime::spawn(async move {

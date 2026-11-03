@@ -65,7 +65,7 @@ export function soundSections(s: AppState, memberOf: Set<string>, servers: Serve
   return out
 }
 
-/** Media hashes to fetch and decode on joining a call, most likely played first: favourites, frequently used, then
+/** Media hashes to fetch on joining a call, most likely played first: favourites, frequently used, then
  * the rest of your servers' sounds. One entry per file; sounds of servers you've left are skipped. */
 export function warmOrder(s: AppState, memberOf: Set<string>): string[] {
   const out: string[] = []

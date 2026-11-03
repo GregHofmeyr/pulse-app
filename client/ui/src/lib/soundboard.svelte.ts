@@ -63,8 +63,8 @@ function clearRings() {
 }
 
 let lastCall: string | null = null
-/** The call you're in changed: rings belong to one call; joining one (from none) fetches and decodes your servers'
- * sounds, so a first play doesn't wait on them. */
+/** The call you're in changed: rings belong to one call; joining one (from none) fetches your servers' sounds into the
+ * disk cache, so a first play doesn't wait on the network. */
 export function callChanged(channelId: string | null) {
   const joined = lastCall === null && channelId !== null
   if (channelId !== lastCall) clearRings()
@@ -116,5 +116,6 @@ export function startSoundboardListening(): () => void {
   return () => {
     stopEvents()
     stopWatching()
+    clearRings()
   }
 }

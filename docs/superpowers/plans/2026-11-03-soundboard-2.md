@@ -32,8 +32,19 @@ that rings unite with the real speaking set at render time only.
 1. A custom emoji from a server the uploader is not in, or a deleted one → 400 (server test).
 2. Setting the Unicode emoji clears a custom one and vice versa; both at once → 400 (server test).
 3. A custom emoji deleted after the sound was made → tile falls back to the soundboard icon (UI test).
-4. Two plays (or a warm-up and a play) of the same uncached sound fetch once (core test).
+4. Two plays of the same uncached sound fetch and decode once (core test); a play during a warm-up waits for its fetch
+   and then reads the disk cache.
 5. Warm-up never evicts a decoded sound (core test); its memory stays within `CACHE_ENTRIES`.
+
+## As built (deviations, decided while building)
+
+- Measuring showed `opus-decoder` needs ~0.8 s to decode a 6 s sound even optimised (ffmpeg/libopus: ~30 ms), and a
+  first play waited for all of it. So decoding streams: `soundboard/pcm.rs` (`Pcm`, lock-free, one writer),
+  `decode::decode_streaming` (resolves after a 100 ms head start), and the mixer plays `ClipSamples::Stream` as far as
+  decoded. `LoadTiming.decode_ms` became `start_ms`.
+- Warm-up therefore only fetches (fills the media disk cache) and decodes nothing: decoding a call's worth of sounds
+  ahead would burn ~0.8 s of CPU per sound on every join, for a gain of ~30 ms.
+- `[profile.dev.package.opus-decoder]` is optimised in dev builds (`just linux-client` is a debug build).
 
 ---
 
@@ -66,8 +77,8 @@ that rings unite with the real speaking set at render time only.
 **Interfaces — Produces:**
 - `Cache::load<F, Fut>(&self, hash, fetch: F) -> Result<(Arc<[f32]>, LoadTiming), String>` where `fetch` is called at
   most once per hash at a time (a per-hash async lock); `LoadTiming { cached: bool, fetch_ms: f64, decode_ms: f64 }`.
-- `Cache::warm<F, Fut>(&self, hashes: &[String], fetch)`: in order, fetch each (fills the disk cache) and decode only
-  while the decoded cache has free slots (never evicts).
+- `Cache::warm<F, Fut>(&self, hashes: &[String], fetch)`: in order, fetch each not already decoded (fills the disk
+  cache); decodes nothing (see "As built").
 - Command `soundboard_warm(hashes: Vec<String>)` (spawns, returns at once; at most 200 hashes).
 - `soundboard_play(..., sound_id: Option<String>)`: logs `soundboard: play` with `cached`, `fetch_ms`, `decode_ms`,
   `click_to_queued_ms` (when this session clicked `sound_id` within 10 s, recorded by `play_sound_to_call`, which also

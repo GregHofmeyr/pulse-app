@@ -197,7 +197,11 @@ async fn update(
     {
         return Err(bad_emoji());
     }
-    if let Some(Some(id)) = &req.emoji_id {
+    // Only a newly chosen one is checked: an edit that sends the sound's emoji back unchanged
+    // (a rename by someone not in that emoji's server, or after it was deleted) keeps it.
+    if let Some(Some(id)) = &req.emoji_id
+        && old.emoji_id.as_deref() != Some(id.as_str())
+    {
         check_custom_emoji(&s, me, id).await?;
     }
     // Setting one kind clears the other.

@@ -329,7 +329,7 @@ export const soundboardCmd = {
   /** Local playback at Calls × Soundboard × the sound's own volume (percents; the core multiplies and caps). */
   play: (hash: string, callsPercent: number, soundboardPercent: number, soundPercent: number, output: string | null, soundId: string | null = null) =>
     invoke<void>('soundboard_play', { hash, callsPercent, soundboardPercent, soundPercent, output, soundId }),
-  /** Fetch and decode these sounds ahead of their first play (joining a call). Returns at once. */
+  /** Fetch these sounds into the disk cache ahead of their first play (joining a call). Returns at once. */
   warm: (hashes: string[]) => invoke<void>('soundboard_warm', { hashes }),
   /** The trimmer's play: the picked file from `fromMs` to `toMs`, here only. Resolves with the ms it will play. */
   trimPlay: (path: string, fromMs: number, toMs: number, callsPercent: number, soundboardPercent: number, output: string | null) =>

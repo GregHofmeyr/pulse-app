@@ -45,6 +45,8 @@ pub async fn decode_streaming(bytes: Vec<u8>) -> Result<Arc<Pcm>, String> {
             return;
         };
         let mut tx = Some(tx);
+        // ends the sound even if the decoder panics, so it can't stay "still decoding" for ever
+        let _ended = Ended(out.clone());
         let mut skip = ogg.pre_skip as usize;
         let res = decode_packets(&ogg, |mono| {
             // the start-up samples the encoder asked to skip; the capacity cuts the padded end
@@ -69,6 +71,15 @@ pub async fn decode_streaming(bytes: Vec<u8>) -> Result<Arc<Pcm>, String> {
     });
     rx.await.map_err(|_| BAD_FILE.to_string())??;
     Ok(pcm)
+}
+
+/// Marks a streamed sound finished when dropped (unwinding included).
+struct Ended(Arc<Pcm>);
+
+impl Drop for Ended {
+    fn drop(&mut self) {
+        self.0.finish();
+    }
 }
 
 /// The packets decoded and downmixed, pre-skip and padding still in. Stops once the file's

@@ -81,10 +81,7 @@ impl Cache {
         if let Some(s) = self.get(hash) {
             return Ok((s, CACHED));
         }
-        let gate = {
-            let mut l = self.loading.lock().unwrap_or_else(|e| e.into_inner());
-            l.entry(hash.to_string()).or_default().clone()
-        };
+        let gate = self.gate(hash);
         let _turn = gate.lock().await;
         // the load we waited for may have done it
         if let Some(s) = self.get(hash) {
@@ -108,12 +105,23 @@ impl Cache {
             ))
         }
         .await;
-        // still holding our turn: anyone queued behind finds it in memory (or tries again)
+        // Still holding our turn: anyone queued behind finds it in memory (or, after a failure,
+        // tries again; a newcomer meanwhile takes a fresh gate, so two retries can overlap).
+        self.ungate(hash);
+        result
+    }
+
+    /// The turn-taking lock for `hash` (made on first use).
+    fn gate(&self, hash: &str) -> Arc<tokio::sync::Mutex<()>> {
+        let mut l = self.loading.lock().unwrap_or_else(|e| e.into_inner());
+        l.entry(hash.to_string()).or_default().clone()
+    }
+
+    fn ungate(&self, hash: &str) {
         self.loading
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .remove(hash);
-        result
     }
 
     /// Get sounds ready before anyone plays them (joining a call): in order, fetch each one not
@@ -130,7 +138,13 @@ impl Cache {
             if self.contains(hash) {
                 continue;
             }
-            if let Err(e) = fetch(hash.clone()).await {
+            // in turn with plays of it, so one arriving now waits and then reads the disk cache
+            let gate = self.gate(hash);
+            let turn = gate.lock().await;
+            let fetched = fetch(hash.clone()).await;
+            self.ungate(hash);
+            drop(turn);
+            if let Err(e) = fetched {
                 tracing::debug!(error = %e, "soundboard: warm-up skipped a sound");
             }
         }
@@ -149,26 +163,31 @@ impl Cache {
 /// The trimmer's one playback: its stop flag, and its samples (kept here so a stopped clip's
 /// buffer is never freed on the audio thread).
 #[derive(Default)]
-pub struct Trimming(Mutex<Option<TrimPlay>>);
+pub struct Trimming(Mutex<Vec<TrimPlay>>);
 
 /// A trimmer playback's stop flag and its samples.
 type TrimPlay = (Arc<std::sync::atomic::AtomicBool>, Arc<[f32]>);
 
 impl Trimming {
-    /// A new playback of `samples`: stops the last one and returns the new one's stop flag.
+    /// A new playback of `samples`: stops the last one and returns the new one's stop flag. The
+    /// stopped one's samples stay until the next start, by which time the mixer has let go of
+    /// them, so its buffer is freed here and not on the audio thread.
     pub fn start(&self, samples: Arc<[f32]>) -> Arc<std::sync::atomic::AtomicBool> {
         let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let mut g = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((old, _)) = g.replace((stop.clone(), samples)) {
+        for (old, _) in g.iter() {
             old.store(true, std::sync::atomic::Ordering::SeqCst);
         }
+        let keep_from = g.len().saturating_sub(1);
+        g.drain(..keep_from);
+        g.push((stop.clone(), samples));
         stop
     }
 
     /// Pause: the current playback (if any) ends on its next pull.
     pub fn stop(&self) {
         let g = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some((stop, _)) = g.as_ref() {
+        if let Some((stop, _)) = g.last() {
             stop.store(true, std::sync::atomic::Ordering::SeqCst);
         }
     }

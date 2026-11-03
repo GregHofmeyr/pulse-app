@@ -186,6 +186,33 @@ describe('SoundDialog add', () => {
     }
   })
 
+  it('a play still starting is stopped by a drag, and by closing', async () => {
+    await openAdd()
+    wave()
+    let release: (ms: number) => void = () => {}
+    invoke.mockImplementation((async (c: string) => {
+      if (c === 'soundboard_trim_play') return new Promise((r) => (release = r))
+      return answers[c]
+    }) as never)
+    q<HTMLButtonElement>('[aria-label="Play selection"]').click()
+    await settle()
+    drag(q('.sel'), 20, 60) // moved while ffmpeg is still decoding
+    release(6000)
+    await settle()
+    expect(calls('soundboard_trim_stop').length).toBeGreaterThan(0)
+    expect(document.querySelector('[aria-label="Pause"]')).toBeNull()
+    expect(document.querySelector('[data-testid="playhead"]')).toBeNull()
+
+    invoke.mockClear()
+    q<HTMLButtonElement>('[aria-label="Play selection"]').click()
+    await settle()
+    unmount(cmp!)
+    cmp = undefined
+    release(6000)
+    await settle()
+    expect(calls('soundboard_trim_stop').length).toBeGreaterThan(0)
+  })
+
   it('stops by itself at the end handle', async () => {
     vi.useFakeTimers()
     try {
