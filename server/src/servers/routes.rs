@@ -32,6 +32,15 @@ pub fn router() -> Router<AppState> {
             get(list_channels).post(create_channel),
         )
         .route("/servers/{id}/members", get(list_members))
+        .route(
+            "/servers/{id}/deleted-channels",
+            get(super::channels::list_deleted),
+        )
+        .route("/channels/{id}/restore", post(super::channels::restore))
+        .route(
+            "/channels/{id}/permanent",
+            axum::routing::delete(super::channels::purge_now),
+        )
         .route("/dms", get(list_dms).post(create_dm))
 }
 
@@ -301,7 +310,8 @@ async fn join(
 
 pub async fn server_channels(db: &SqlitePool, id: ServerId) -> AppResult<Vec<Channel>> {
     let rows = sqlx::query_as(&format!(
-        "SELECT {CHANNEL_COLS} FROM channels WHERE server_id = ? ORDER BY kind, position, id"
+        "SELECT {CHANNEL_COLS} FROM channels WHERE server_id = ? AND deleted_at IS NULL
+         ORDER BY kind, position, id"
     ))
     .bind(id.to_string())
     .fetch_all(db)
@@ -312,7 +322,7 @@ pub async fn server_channels(db: &SqlitePool, id: ServerId) -> AppResult<Vec<Cha
 /// Every server's channels in one query, each list ordered as [`server_channels`] orders it.
 pub async fn all_server_channels(db: &SqlitePool) -> AppResult<HashMap<ServerId, Vec<Channel>>> {
     let rows = sqlx::query_as(&format!(
-        "SELECT {CHANNEL_COLS} FROM channels WHERE server_id IS NOT NULL
+        "SELECT {CHANNEL_COLS} FROM channels WHERE server_id IS NOT NULL AND deleted_at IS NULL
          ORDER BY server_id, kind, position, id"
     ))
     .fetch_all(db)

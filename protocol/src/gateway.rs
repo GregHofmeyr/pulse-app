@@ -209,11 +209,17 @@ pub enum Event {
     ChannelUpdated {
         channel: Channel,
     },
-    /// A server channel was deleted, with everything in it (everyone: server channels are
-    /// public, and the channel is gone by the time this is published, so it isn't scoped to it).
+    /// A server channel was deleted: moved to its server's Recently deleted, where nobody sees it
+    /// (everyone: server channels are public, and the channel can't be looked up by the time this
+    /// is published, so it isn't scoped to it).
     ChannelDeleted {
         channel_id: ChannelId,
         server_id: ServerId,
+    },
+    /// A deleted server channel was restored, with all its history. Each member's counts in it
+    /// follow as `ReadStateUpdated`. A client without this event sees it on its next Ready.
+    ChannelRestored {
+        channel: Channel,
     },
     /// Only to the removed/leaving user.
     ChannelRemoved {
@@ -361,7 +367,9 @@ impl Event {
             | Self::ChannelRemoved { channel_id, .. }
             | Self::ReadStateUpdated { channel_id, .. }
             | Self::ConversationVisibility { channel_id, .. } => Some(*channel_id),
-            Self::ChannelUpdated { channel } => Some(channel.id),
+            Self::ChannelUpdated { channel } | Self::ChannelRestored { channel } => {
+                Some(channel.id)
+            }
             Self::StreamStarted { stream } | Self::StreamUpdated { stream } => {
                 Some(stream.channel_id)
             }

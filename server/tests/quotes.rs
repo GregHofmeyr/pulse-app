@@ -441,6 +441,7 @@ async fn a_legacy_orphan_outside_the_guard_does_not_stop_a_migrating_boot() {
     )
     .await
     .unwrap();
+    let newest = migrator.migrations.iter().map(|m| m.version).max().unwrap();
     migrator.migrations = Cow::Owned(
         migrator
             .migrations
@@ -455,12 +456,12 @@ async fn a_legacy_orphan_outside_the_guard_does_not_stop_a_migrating_boot() {
 
     let pool = pulse_server::db::connect(&format!("sqlite://{}", path.display()))
         .await
-        .expect("0008 to 0012 apply and the server starts");
+        .expect("0008 onwards apply and the server starts");
     let v: i64 = sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
         .fetch_one(&pool)
         .await
         .unwrap();
-    assert_eq!(v, 12, "0008 to 0012 apply");
+    assert_eq!(v, newest, "0008 onwards apply");
 }
 
 /// M1: with the whole-database check only logging, 0008's own guard is what stops a migration
@@ -4043,4 +4044,31 @@ async fn posting_a_quote_or_a_reply_is_refused_when_disk_is_low() {
         .await
         .unwrap();
     assert_eq!(n, 1, "only the first quote");
+}
+
+/// A quotes channel in Recently deleted (#112) leaves the server's board and quote search.
+#[tokio::test]
+async fn a_deleted_quotes_channel_leaves_the_board_and_search() {
+    let f = fixture().await;
+    let q = f.say_one("hidden words").await;
+    assert_eq!(f.react(&f.alex_t, q.id, "%F0%9F%98%82").await, 204);
+    let board = f.board("").await;
+    assert_eq!(board.top_all_time.len(), 1);
+    assert_eq!(board.most_quoted.len(), 1);
+    assert_eq!(f.found("hidden").await, vec![q.id]);
+    let r = f
+        .app
+        .http
+        .delete(f.app.url(&format!("/channels/{}", f.ch.id)))
+        .bearer_auth(&f.sam_t)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 204);
+    let board = f.board("").await;
+    assert!(board.top_all_time.is_empty(), "{board:?}");
+    assert!(board.top_year.is_empty(), "{board:?}");
+    assert!(board.most_quoted.is_empty(), "{board:?}");
+    assert!(board.most_awarded.is_empty(), "{board:?}");
+    assert!(f.found("hidden").await.is_empty());
 }

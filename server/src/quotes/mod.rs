@@ -369,7 +369,7 @@ where
         "SELECT q.message_id, COUNT(DISTINCT r.user_id) AS score
          FROM quotes q
          JOIN messages msg ON msg.id = q.message_id AND msg.deleted_at IS NULL
-         JOIN channels c ON c.id = msg.channel_id
+         JOIN channels c ON c.id = msg.channel_id AND c.deleted_at IS NULL
          JOIN reactions r ON r.message_id = q.message_id
          WHERE c.server_id = ? AND (? IS NULL OR q.year = ?)
            AND (? = 0 OR NOT EXISTS (SELECT 1 FROM qoty_winners w WHERE w.message_id = q.message_id))

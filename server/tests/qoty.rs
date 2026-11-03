@@ -1874,17 +1874,47 @@ async fn an_overdue_vote_does_not_block_a_reopen() {
 
 // ---------- deleting a quotes channel ----------
 
-/// A live vote's options and votes are quotes: their channel can't go until the vote has ended.
+impl Fixture {
+    /// The quotes channel's entry in Recently deleted, as the owner sees it.
+    async fn in_recently_deleted(&self) -> pulse_protocol::rest::DeletedChannel {
+        let list: Vec<pulse_protocol::rest::DeletedChannel> = get_json(
+            &self.app,
+            &self.alex_t,
+            &format!("/servers/{}/deleted-channels", self.server),
+        )
+        .await;
+        list.into_iter()
+            .find(|d| d.channel.id == self.ch.id)
+            .expect("in Recently deleted")
+    }
+    /// Run the Recently deleted sweeper as if eight days had passed.
+    async fn sweep_a_week_on(&self) -> u32 {
+        pulse_server::servers::channels::purge_expired(
+            &self.app.state(),
+            chrono::Utc::now() + chrono::Duration::days(8),
+        )
+        .await
+        .unwrap()
+    }
+}
+
+/// A live vote's options and votes are quotes: deleting their channel is harmless (it can be
+/// restored), but it can't be purged until the vote has ended, by the owner or the sweeper.
 #[tokio::test]
-async fn a_quotes_channel_stays_while_a_vote_is_live() {
+async fn a_quotes_channel_is_kept_for_good_while_a_vote_is_live() {
     let f = fixture().await;
-    let other = create_quotes(&f.app, &f.alex_t, f.server, "more").await;
     let q = f.quote("hello").await;
     let e = f.started().await;
     let path = format!("/channels/{}", f.ch.id);
     let r = f.call(Method::DELETE, &f.sam_t, &path, None).await;
+    assert_eq!(r.status(), 204);
+    let purge = format!("/channels/{}/permanent", f.ch.id);
+    let r = f.call(Method::DELETE, &f.alex_t, &purge, None).await;
     assert_eq!(r.status(), 409);
     assert!(message_of(r).await.contains("Quote of the Year"));
+    assert_eq!(f.sweep_a_week_on().await, 0);
+    let held = f.in_recently_deleted().await.held.expect("held");
+    assert!(held.contains("Quote of the Year"), "{held}");
     assert_eq!(
         f.count(&format!(
             "SELECT COUNT(*) FROM messages WHERE id = '{}'",
@@ -1893,32 +1923,14 @@ async fn a_quotes_channel_stays_while_a_vote_is_live() {
         .await,
         1
     );
-    // other kinds of channel aren't held up
-    let g = general(&f.app, &f.alex_t, f.server).await;
-    let r = f
-        .call(
-            Method::DELETE,
-            &f.sam_t,
-            &format!("/channels/{}", g.id),
-            None,
-        )
-        .await;
-    assert_eq!(r.status(), 204);
     f.ended(&f.alex_t, e.id).await;
-    let r = f.call(Method::DELETE, &f.sam_t, &path, None).await;
-    assert_eq!(r.status(), 204);
-    let r = f
-        .call(
-            Method::DELETE,
-            &f.sam_t,
-            &format!("/channels/{}", other.id),
-            None,
-        )
-        .await;
+    assert_eq!(f.in_recently_deleted().await.held, None);
+    let r = f.call(Method::DELETE, &f.alex_t, &purge, None).await;
     assert_eq!(r.status(), 204);
 }
 
-/// A past winner is kept when its quote is deleted, so its channel can't take it with it either.
+/// A past winner is kept when its quote is deleted, so its channel is never purged: it stays in
+/// Recently deleted (flagged), from where it can still be restored.
 #[tokio::test]
 async fn a_quotes_channel_holding_a_past_winner_stays() {
     let f = fixture().await;
@@ -1932,8 +1944,20 @@ async fn a_quotes_channel_holding_a_past_winner_stays() {
             None,
         )
         .await;
+    assert_eq!(r.status(), 204);
+    let r = f
+        .call(
+            Method::DELETE,
+            &f.alex_t,
+            &format!("/channels/{}/permanent", f.ch.id),
+            None,
+        )
+        .await;
     assert_eq!(r.status(), 409);
     assert!(message_of(r).await.contains("Quote of the Year"));
+    assert_eq!(f.sweep_a_week_on().await, 0);
+    let held = f.in_recently_deleted().await.held.expect("held");
+    assert!(held.contains("winner"), "{held}");
     assert_eq!(
         f.count(&format!(
             "SELECT COUNT(*) FROM qoty_winners WHERE message_id = '{}'",
@@ -1942,4 +1966,13 @@ async fn a_quotes_channel_holding_a_past_winner_stays() {
         .await,
         1
     );
+    let r = f
+        .call(
+            Method::POST,
+            &f.sam_t,
+            &format!("/channels/{}/restore", f.ch.id),
+            Some(json!({})),
+        )
+        .await;
+    assert_eq!(r.status(), 200);
 }

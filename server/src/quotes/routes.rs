@@ -348,7 +348,7 @@ async fn most_quoted(db: &SqlitePool, server: ServerId) -> AppResult<Vec<Speaker
         "SELECT l.speaker_id, l.speaker_name, l.speaker_key, NULL
          FROM quote_lines l
          JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
-         JOIN channels c ON c.id = msg.channel_id
+         JOIN channels c ON c.id = msg.channel_id AND c.deleted_at IS NULL
          WHERE c.server_id = ?
          ORDER BY msg.id, l.position",
     )
@@ -524,7 +524,7 @@ async fn search(
         "SELECT l.message_id, l.text, l.caption, l.speaker_name, u.username, lu.username
          FROM quote_lines l
          JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
-         JOIN channels c ON c.id = msg.channel_id
+         JOIN channels c ON c.id = msg.channel_id AND c.deleted_at IS NULL
          LEFT JOIN users u ON u.id = l.speaker_id
          LEFT JOIN speaker_links k ON k.server_id = c.server_id AND k.name_key = l.speaker_key
          LEFT JOIN users lu ON lu.id = k.user_id
