@@ -59,27 +59,28 @@ awards a badge (`user_badges` is never written).
   locked badges shown greyed with how to earn them (hidden ones as "???"); per-badge progress bars for tiers
   ("412 / 500 messages").
 - **Showcase:** up to **5** badges shown on the profile card and full profile header, chosen and ordered by the
-  profile's owner in the trophy case (owner's idea). Default: the 5 rarest earned.
+  profile's owner in the trophy case (owner's idea). Default: the 5 rarest earned. Shown smaller than the trophy case
+  tiles (owner); exact size tuned on the real profile cards.
 
 ## Catalogue (draft: thresholds are proposals to tune)
 
 Rarity in brackets (tiered badges: per tier, tuned on the badge page). ⓗ = hidden until earned. Tiers listed as thresholds.
 
 **Voice**
-- **Night Owl** [Uncommon] — in a voice channel with at least one other person at 03:00 South African time
+- **Night Owl** [Rare] — in a voice channel with at least one other person at 03:00 South African time
   (Africa/Johannesburg, UTC+2, no DST).
-- **Early Bird** [Rare] — first person into voice on 10 different days.
-- **Ghost** [Uncommon] — joined and left voice within 5 s, 10 times.
+- **Early Bird** [Uncommon] — first person into voice on 10 different days.
+- **Ghost** [Rare] — joined and left voice within 5 s, 10 times.
 - **The Regular** [tiers: Common → Mythical] — hours in voice with at least one other person: 10 / 50 / 100 / 250 / 500
   / 1000 h.
-- **The Doos** [Rare] — talked into a muted mic (the "you're muted" detector fired) 10 times. Client-reported.
+- **The Doos** [Epic] — talked into a muted mic (the "you're muted" detector fired) 10 times. Client-reported.
 
 **Names**
 - **Identity Crisis** [tiers: Common → Uncommon → Epic → Legendary] — renamed by others: 10 / 25 / 50 / 100 times. Reads the Name Archive (#48).
 
 **Chat**
 - **The Yapper** [tiers] — messages sent in servers: 100 / 500 / 1 000 / 5 000 / 10 000.
-- **Reaction Farmer** [tiers] — reactions received from others: 50 / 100 / 500 / 1 000.
+- **Reaction Farmer** [tiers: Rare → Epic → Legendary → Mythical] — reactions received from others: 50 / 100 / 500 / 1 000.
 - **Emoji Smith** [Rare] — added 5 custom emoji that others used 10+ times each.
 
 **Quotes**
@@ -92,7 +93,7 @@ Rarity in brackets (tiered badges: per tier, tuned on the badge page). ⓗ = hid
 **Clips and streams**
 - **Clipper** [tiers] — clips shared: 5 / 25 / 100.
 - **Highlight Reel** ⓗ [Uncommon] — a clip with 5 reactions. "Bro is good at games."
-- **"Chat, did you see that?"** [tiers] — hours streamed: 5 / 25 / 100 / 250. Needs stream sessions recorded (new
+- **"Chat, did you see that?"** [tiers] — hours streamed: 50 / 200 / 500 / 1000. Needs stream sessions recorded (new
   table: who, channel, started, ended).
 
 **Meta and rare**
@@ -102,9 +103,13 @@ Rarity in brackets (tiered badges: per tier, tuned on the badge page). ⓗ = hid
 - **How Did We Get Here?** [Epic] — unlocked 5 hidden badges.
 - **Perfectionist** [Mythical] — reached the top tier of 5 tiered badges.
 - **Combo** [tiers] — 100 messages + 100 h voice + 10 clips, then 500/500/25, then 1 000/1 000/100 (name TBD).
-- **Logo egg** ⓗ [Rare] — the hidden logo-click egg from the v1 plan (new icon).
+- **Logo egg** ⓗ [Epic] — the hidden logo-click egg from the v1 plan (new icon).
 - **Skill Issue** ⓗ [Epic] — awarded for something spectacularly embarrassing. **Trigger TBD by the owner** (the group's
   own running jokes).
+
+**Hand-given** (unique, awarded by the owner with the admin command; never earnable, never "???"):
+- **Founder** [Mythical, one of a kind] — the owner.
+- **The owner's partner's badge** [Mythical, one of a kind] — name and icon TBD by the owner.
 
 **Parked:** 3 am quote ("get quoted for something said after 02:00").
 
