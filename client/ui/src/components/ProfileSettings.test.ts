@@ -316,6 +316,30 @@ describe('ProfileSettings', () => {
     })
   })
 
+  it('a saved custom card theme is what the editor shows after signing out and in (#139)', async () => {
+    handlers.update_profile = (args) => {
+      const r = (args as { request: UpdateProfileRequest }).request
+      return saved({ card: { ...saved().card, theme_top: r.theme_top, theme_bottom: r.theme_bottom } })
+    }
+    await open()
+    click(option('Card theme', 'Custom'))
+    const [top, bottom] = document.querySelectorAll<HTMLInputElement>('.theme input[type=color]')
+    setColor(top, '#ffb6d9')
+    setColor(bottom, '#ffffff')
+    click(button('Save'))
+    await vi.waitFor(() => expect(app.state.profiles.U1?.card.theme_top).toBe('#ffb6d9'))
+    // sign out, sign in, open Settings → Profile again
+    unmount(cmp!)
+    cmp = undefined
+    document.body.innerHTML = ''
+    resetState()
+    await open(saved({ card: { ...saved().card, theme_top: '#ffb6d9', theme_bottom: '#ffffff' } }))
+    expect(option('Card theme', 'Custom').getAttribute('aria-checked')).toBe('true')
+    const [t2, b2] = document.querySelectorAll<HTMLInputElement>('.theme input[type=color]')
+    expect([t2?.value, b2?.value]).toEqual(['#ffb6d9', '#ffffff'])
+    expect(previewCard().getAttribute('style')).toContain('--glow-top: #ffb6d9')
+  })
+
   it('Reset restores the saved profile', async () => {
     const state = await open()
     click(option('Card theme', 'Sunset'))
