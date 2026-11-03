@@ -1413,6 +1413,8 @@ impl VoiceManager {
             self.epoch.load(Ordering::SeqCst),
             self.dropped_tx.lock().unwrap().clone(),
         );
+        // the join's publish and a server mute's republish take turns on this (#140)
+        let mic_out = MicOut::default();
         // publish in the background: "connected" doesn't wait the round trip for it. The task is
         // the session's (aborted with it); the room is closed by its guard or the session's leave.
         {
@@ -1431,23 +1433,31 @@ impl VoiceManager {
                 shared.clone(),
                 pipeline_alive.clone(),
             );
-            let track = track.clone();
+            let (track, mic_out) = (track.clone(), mic_out.clone());
             tasks.push(tokio::spawn(async move {
                 let t = Instant::now();
                 let local = watch.room.local_participant();
+                // held through the publish: a permission change waits for it, then sees the truth
+                let mut out = mic_out.lock().await;
                 // Server muted (#140): LiveKit refuses the publish. Not a failed call: the mic
-                // goes out once LiveKit gives publishing back (the room loop republishes).
-                let published = if !publish_allowed(local.permission().as_ref()) {
+                // goes out once LiveKit gives publishing back (`follow_permission`).
+                let published = if *out {
+                    // a permission change got the lock first and published it
+                    Ok(Ok(()))
+                } else if !publish_allowed(local.permission().as_ref()) {
                     tracing::info!("voice: server muted; the mic is published once allowed");
                     Ok(Ok(()))
                 } else {
-                    tokio::time::timeout(
+                    let r = tokio::time::timeout(
                         PUBLISH_TIMEOUT,
                         local.publish_track(LocalTrack::Audio(track), mic_publish_options()),
                     )
                     .await
-                    .map(|r| r.map(|_| ()))
+                    .map(|r| r.map(|_| ()));
+                    *out = matches!(r, Ok(Ok(())));
+                    r
                 };
+                drop(out);
                 let published = match published {
                     Ok(Ok(())) => {
                         let (publish_ms, since_join_ms) = (ms(t), ms(started));
@@ -1538,8 +1548,7 @@ impl VoiceManager {
             let (shared, pipeline_alive) = (shared.clone(), pipeline_alive.clone());
             let mut give_up = rejoin::GiveUpTimer::new(self.reconnect_give_up);
             // for publishing the mic again once a server mute is undone (#140)
-            let (mic_room, mic_track) = (room.clone(), track.clone());
-            let mut may_publish = publish_allowed(room.local_participant().permission().as_ref());
+            let (mic_room, mic_track, mic_out) = (room.clone(), track.clone(), mic_out.clone());
             tasks.push(tokio::spawn(async move {
                 let state = |connection, channel_id| VoiceEvent::State {
                     channel_id,
@@ -1641,15 +1650,19 @@ impl VoiceManager {
                             participant: Participant::Local(_),
                             permission,
                         } => {
-                            let now = publish_allowed(permission.as_ref());
-                            tracing::info!(may_publish = now, "voice: publish permission changed");
-                            // Taken away: LiveKit dropped our mic track (the SDK keeps a stale
-                            // publication). Given back: publish the same track again.
-                            if now && !may_publish && alive.load(Ordering::SeqCst) {
-                                let (room, track) = (mic_room.clone(), mic_track.clone());
-                                tokio::spawn(async move { republish_mic(&room, track).await });
+                            tracing::info!(
+                                may_publish = publish_allowed(permission.as_ref()),
+                                "voice: publish permission changed"
+                            );
+                            // decided from the permission and the mic as they are once it's our
+                            // turn, not from this event, so no flip is missed or acted on twice
+                            if alive.load(Ordering::SeqCst) {
+                                let (room, track, mic) =
+                                    (mic_room.clone(), mic_track.clone(), mic_out.clone());
+                                tokio::spawn(
+                                    async move { follow_permission(&room, track, &mic).await },
+                                );
                             }
-                            may_publish = now;
                         }
                         RoomEvent::ConnectionQualityChanged {
                             quality,
@@ -2006,37 +2019,69 @@ impl VoiceManager {
     }
 }
 
-/// How the mic is sent. The SDK's default (`None`) is 48 kbps; Discord defaults to 64 kbps.
-/// DTX makes silence ~free and RED (redundant audio) hides packet loss.
-/// Also used by tests/neteq_probe.rs, so the probe sends exactly like the app.
 /// Whether LiveKit lets us publish now: not while server muted or deafened (#140). Unknown
 /// (LiveKit sent no permission) is allowed, as our tokens are.
 pub(crate) fn publish_allowed(p: Option<&livekit_protocol::ParticipantPermission>) -> bool {
     p.is_none_or(|p| p.can_publish)
 }
 
-/// Publish the mic again after LiveKit gave publishing back. A server-side revoke drops the track
-/// at LiveKit without telling the SDK, so its stale publication is let go first (as the SDK's
-/// own republish does). Failure is logged: the call goes on, unheard, until the next rejoin.
-async fn republish_mic(room: &Room, track: LocalAudioTrack) {
-    let local = room.local_participant();
-    for (sid, p) in local.track_publications() {
-        if p.source() == TrackSource::Microphone {
-            let _ = local.unpublish_track(&sid).await;
-        }
-    }
-    match tokio::time::timeout(
-        PUBLISH_TIMEOUT,
-        local.publish_track(LocalTrack::Audio(track), mic_publish_options()),
-    )
-    .await
-    {
-        Ok(Ok(_)) => tracing::info!("voice: mic published again"),
-        Ok(Err(e)) => tracing::warn!(error = %e, "voice: publishing the mic again failed"),
-        Err(_) => tracing::warn!("voice: publishing the mic again timed out"),
+/// Whether our mic is out at LiveKit (published, or being published). Locked for the whole of a
+/// publish, so the join's publish and a permission change's republish take turns (#140).
+type MicOut = Arc<tokio::sync::Mutex<bool>>;
+
+#[derive(Debug, PartialEq, Eq)]
+enum MicStep {
+    Publish,
+    /// LiveKit dropped our track (publishing taken away); the SDK's publication is stale.
+    Forget,
+    Keep,
+}
+
+/// What a permission change asks of the mic, from what holds now.
+fn mic_step(allowed: bool, out: bool) -> MicStep {
+    match (allowed, out) {
+        (true, false) => MicStep::Publish,
+        (false, true) => MicStep::Forget,
+        _ => MicStep::Keep,
     }
 }
 
+/// Our publish permission changed: bring the mic in line with it, under `mic`'s lock. Given
+/// back, the mic is published again: a server-side revoke drops the track at LiveKit without
+/// telling the SDK, so its stale publication is let go first (as the SDK's own republish does).
+/// A failure is logged: the call goes on, unheard, until the next change or rejoin.
+async fn follow_permission(room: &Room, track: LocalAudioTrack, mic: &MicOut) {
+    let mut out = mic.lock().await;
+    let local = room.local_participant();
+    match mic_step(publish_allowed(local.permission().as_ref()), *out) {
+        MicStep::Keep => {}
+        MicStep::Forget => *out = false,
+        MicStep::Publish => {
+            for (sid, p) in local.track_publications() {
+                if p.source() == TrackSource::Microphone {
+                    let _ = local.unpublish_track(&sid).await;
+                }
+            }
+            let published = tokio::time::timeout(
+                PUBLISH_TIMEOUT,
+                local.publish_track(LocalTrack::Audio(track), mic_publish_options()),
+            )
+            .await;
+            match published {
+                Ok(Ok(_)) => {
+                    tracing::info!("voice: mic published again");
+                    *out = true;
+                }
+                Ok(Err(e)) => tracing::warn!(error = %e, "voice: publishing the mic again failed"),
+                Err(_) => tracing::warn!("voice: publishing the mic again timed out"),
+            }
+        }
+    }
+}
+
+/// How the mic is sent. The SDK's default (`None`) is 48 kbps; Discord defaults to 64 kbps.
+/// DTX makes silence ~free and RED (redundant audio) hides packet loss.
+/// Also used by tests/neteq_probe.rs, so the probe sends exactly like the app.
 pub fn mic_publish_options() -> TrackPublishOptions {
     TrackPublishOptions {
         source: TrackSource::Microphone,
@@ -2092,6 +2137,17 @@ mod tests {
         };
         assert!(publish_allowed(Some(&p(true))));
         assert!(!publish_allowed(Some(&p(false))), "server muted");
+    }
+
+    /// Decided from what is true now (may we publish, is our mic out), never from the last event
+    /// seen: a permission flip between the join's publish and the room loop can't strand the mic
+    /// unpublished or publish it twice.
+    #[test]
+    fn the_mic_step_follows_permission_and_what_is_out() {
+        assert_eq!(mic_step(true, false), MicStep::Publish, "given back");
+        assert_eq!(mic_step(false, true), MicStep::Forget, "taken away");
+        assert_eq!(mic_step(true, true), MicStep::Keep, "already out");
+        assert_eq!(mic_step(false, false), MicStep::Keep, "still muted");
     }
 
     #[tokio::test]

@@ -41,22 +41,21 @@ export const voice = $state({
   disconnectedBy: null as { by: string; channelId: string } | null,
 })
 
-function myHold() {
-  const ch = voice.joining ?? voice.channelId
+function myHold(ch: string | null) {
   const server = (ch && app.state.channels[ch]?.server_id) || null
   const me = app.state.me?.id
   return { server, m: server && me ? app.state.serverVoice?.[server]?.[me] : undefined }
 }
 
-/** The server's mute / deafen of you in the call you're in or joining (none in DM and group calls). */
+/** The server's mute / deafen of you in the call you're in (none in DM and group calls). */
 export function myServerVoice(): { muted: boolean; deafened: boolean } {
-  const { m } = myHold()
+  const { m } = myHold(voice.channelId)
   return { muted: !!m?.muted_by, deafened: !!m?.deafened_by }
 }
 
 /** Why your own mute / deafen buttons can't open the mic (#140): "Server muted by sam", or null. */
 export function myServerTips(): { mute: string | null; deafen: string | null } {
-  const { server, m } = myHold()
+  const { server, m } = myHold(voice.joining ?? voice.channelId)
   const deafen = m?.deafened_by ? `Server deafened by ${displayName(app.state, server, m.deafened_by)}` : null
   const mute = m?.muted_by ? `Server muted by ${displayName(app.state, server, m.muted_by)}` : deafen
   return { mute, deafen }
@@ -79,8 +78,11 @@ $effect.root(() => {
   // The server's mute / deafen of you (#140) closes the mic and stops playout in the core: hand it over
   // whenever it differs from what the core last said it holds.
   $effect(() => {
-    // no call and nothing held: nothing to say (and the store may not be loaded yet at startup)
-    if (!voice.joining && !voice.channelId && !voice.controls.server_muted && !voice.controls.server_deafened) return
+    // Mid-join, wait: its token already can't publish, and the core's answer would read as a
+    // disconnect to the join's progress. No call and nothing held: nothing to say (and the store
+    // may not be loaded yet at startup).
+    if (voice.joining) return
+    if (!voice.channelId && !voice.controls.server_muted && !voice.controls.server_deafened) return
     const want = myServerVoice()
     if (want.muted !== !!voice.controls.server_muted || want.deafened !== !!voice.controls.server_deafened) {
       void invoke('set_server_voice', want).catch(() => {})

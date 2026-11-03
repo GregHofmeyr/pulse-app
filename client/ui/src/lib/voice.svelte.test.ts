@@ -144,6 +144,18 @@ describe('server mute and disconnect (#140)', () => {
     expect(h.calls).toEqual(['set_server_voice'])
   })
 
+  it('leaves the core alone while a join is still connecting (its token already can’t publish)', async () => {
+    const { flushSync } = await import('svelte')
+    event({ t: 'ServerVoiceChanged', d: { state: { server_id: 'S1', user_id: 'ME', muted_by: 'U2', deafened_by: null } } })
+    voice.joining = 'V1'
+    flushSync()
+    expect(h.calls).not.toContain('set_server_voice')
+    voice.joining = null
+    voice.channelId = 'V1'
+    flushSync()
+    expect(h.calls).toContain('set_server_voice')
+  })
+
   it('remembers who disconnected you until you join again', async () => {
     const { voiceApi } = await import('./voice.svelte')
     voice.channelId = 'V1'
