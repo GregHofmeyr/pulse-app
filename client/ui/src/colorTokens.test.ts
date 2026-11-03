@@ -200,12 +200,12 @@ describe('text on a fill (#42)', () => {
 
   // Any accent can be picked, even one that vanishes on the theme's surfaces; a border or outline that marks a selection
   // or focus uses --focus-ring (the accent moved to 3:1 there). Over video the bright accent itself is right.
-  it('accent borders and outlines use --focus-ring', () => {
+  it('accent borders, outlines and edge shadows use --focus-ring', () => {
     const OVER_VIDEO = /^\s*\.open:focus-visible /
     const offenders: string[] = []
     for (const f of [...svelteFiles, resolve(__dirname, 'app.css')]) {
       for (const line of readFileSync(f, 'utf8').split('\n')) {
-        if (/(border(-color|-left|-right|-bottom|-top)?|outline(-color)?): [^;]*var\(--accent\)/.test(line) && !(rel(f) === 'components/MiniPreview.svelte' && OVER_VIDEO.test(line))) offenders.push(`${rel(f)}: ${line.trim()}`)
+        if (/(border(-color|-left|-right|-bottom|-top)?|outline(-color)?|box-shadow): [^;]*var\(--accent\)/.test(line) && !(rel(f) === 'components/MiniPreview.svelte' && OVER_VIDEO.test(line))) offenders.push(`${rel(f)}: ${line.trim()}`)
       }
     }
     expect(offenders).toEqual([])

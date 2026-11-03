@@ -84,6 +84,23 @@ describe('Name', () => {
     flushSync()
     expect(rgb(island.getAttribute('style')!)).toBe('#ffc4a3')
   })
+  it('restyles live when the theme changes, and measures a menu name against the menu', () => {
+    setup({ font: null, colors: [] }, '#3b4bd8')
+    const rgb = (s: string) => toHex(/color: rgb\((\d+), (\d+), (\d+)\)/.exec(s)!.slice(1).map(Number) as [number, number, number])
+    const name = show({ interactive: false })
+    const dark = rgb(name.getAttribute('style')!)
+    setTheme('light')
+    flushSync()
+    expect(rgb(name.getAttribute('style')!)).not.toBe(dark)
+    expect(contrast(rgb(name.getAttribute('style')!), '#ffffff')).toBeGreaterThanOrEqual(4.5)
+    setTheme('dark')
+    flushSync()
+    expect(rgb(name.getAttribute('style')!)).toBe(dark)
+    unmount(cmp!)
+    document.body.innerHTML = ''
+    const menu = show({ interactive: false, surface: 'menu' })
+    expect(contrast(rgb(menu.getAttribute('style')!), surfacesFor('dark', 'plain').menu)).toBeGreaterThanOrEqual(4.5)
+  })
   it('show name styles off renders plain', () => {
     setup({ font: 'fredoka', colors: ['#ffbe7a'] })
     appearance.showNameStyles = false

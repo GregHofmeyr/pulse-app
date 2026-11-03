@@ -2,7 +2,8 @@
 // them on <html> (data-theme / data-tint pick the app.css block; a custom accent's derived tokens go inline) and tells
 // the app window its background colour, so a restart on Light doesn't flash dark.
 import { invoke } from '@tauri-apps/api/core'
-import { parseHex } from './color'
+import { luminance, parseHex } from './color'
+import { CARD_MIX, mixHex, NEAR_BLACK, THEME_PRESETS } from './cardTheme'
 import { DEFAULT_NAME_LEVEL, DEFAULT_THEME, DEFAULT_TINT, deriveAccent, NAME_LEVELS, surfacesFor, themeByKey, THEMES, TINTS, type NameLevel, type Surfaces, type ThemeKey, type TintKey } from './themes'
 
 const KEYS = { key: 'pulse.theme', tint: 'pulse.lightTint', accent: 'pulse.accent', names: 'pulse.nameReadability' } as const
@@ -63,16 +64,18 @@ export function nameRatio(): number {
   return (NAME_LEVELS.find((l) => l.key === theme.names) ?? NAME_LEVELS[1]).ratio
 }
 
-/** The profile card's panel: a dark island in every theme (lib/cardTheme.ts), at its lightest. */
-export const ISLAND_BG = '#262830'
+/** The profile card: a dark island in every theme (lib/cardTheme.ts). Names there are measured against the lightest
+ *  colour a preset card can have, so they read on all of them. */
+export const ISLAND_BG = THEME_PRESETS.flatMap((p) => [p.top, p.bottom].map((c) => mixHex(c, NEAR_BLACK, CARD_MIX))).reduce((a, b) => (luminance(parseHex(b)!) > luminance(parseHex(a)!) ? b : a))
 
-export type NameSurface = 'chat' | 'side' | 'island'
+export type NameSurface = 'chat' | 'side' | 'menu' | 'island'
 
-/** The surface a name is measured against: the chat (--bg-2), the sidebar and member lists (--bg-1), or the card. */
+/** The surface a name is measured against: the chat (--bg-2), the sidebar and member lists (--bg-1), a menu
+ *  (--surface-menu: the @-mention list, search suggestions), or the card. */
 export function nameBg(surface: NameSurface): string {
   if (surface === 'island') return ISLAND_BG
   const s = currentSurfaces()
-  return surface === 'side' ? s.bg1 : s.bg2
+  return surface === 'side' ? s.bg1 : surface === 'menu' ? s.menu : s.bg2
 }
 
 /** What resolveNameStyle needs to make a name readable where it sits (reads the theme: call it inside a $derived). */
@@ -92,7 +95,14 @@ export function applyTheme(root: HTMLElement = document.documentElement): void {
   } else {
     for (const k of ACCENT_TOKENS) root.style.removeProperty(k)
   }
-  if (typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
-    invoke('set_window_background', { color: currentSurfaces().bg0 }).catch(() => {})
+  const bg = currentSurfaces().bg0
+  if (bg !== sentBg && typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window) {
+    sentBg = bg
+    invoke('set_window_background', { color: bg }).catch(() => {
+      sentBg = null
+    })
   }
 }
+
+// The window colour last sent: an accent change (or dragging the colour picker) doesn't resend it.
+let sentBg: string | null = null

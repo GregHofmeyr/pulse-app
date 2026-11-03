@@ -67,7 +67,10 @@ export type AccentTokens = Record<'--accent' | '--accent-soft' | '--accent-faint
  * whichever reads better) and accent-coloured text (4.5:1 on the theme's surfaces).
  */
 export function deriveAccent(hex: string, s: Surfaces, light: boolean): AccentTokens {
-  const on = contrast(DARK_INK, hex) >= contrast('#ffffff', hex) ? DARK_INK : '#ffffff'
+  // Dark ink or white, whichever reads better; a mid-tone where the ink falls under 4.5:1 gets pure black (black or
+  // white always reaches 4.58:1).
+  const better = contrast(DARK_INK, hex) >= contrast('#ffffff', hex) ? DARK_INK : '#ffffff'
+  const on = contrast(better, hex) >= 4.5 ? better : '#000000'
   const bgs = textSurfaces(s)
   return {
     '--accent': hex,

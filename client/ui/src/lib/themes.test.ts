@@ -97,9 +97,8 @@ describe('deriveAccent', () => {
     for (const c of ALL) {
       const a = deriveAccent(c, s, light)
       expect(a['--accent']).toBe(c)
-      // the better of dark ink and white on the fill
-      const best = Math.max(contrast(DARK_INK, c), contrast('#ffffff', c))
-      expect(contrast(a['--on-accent'], c), `${theme} ${c}`).toBe(best)
+      // dark ink or white, whichever reads better, never under 4.5:1
+      expect(contrast(a['--on-accent'], c), `${theme} ${c}`).toBeGreaterThanOrEqual(Math.max(4.5, Math.min(contrast(DARK_INK, c), contrast('#ffffff', c))))
       for (const bg of textSurfaces(s)) {
         expect(contrast(a['--accent-text'], bg), `${theme}/${tint} accent text ${c} on ${bg}`).toBeGreaterThanOrEqual(4.5)
         expect(contrast(a['--focus-ring'], bg), `${theme}/${tint} focus ring ${c} on ${bg}`).toBeGreaterThanOrEqual(3)
@@ -108,8 +107,13 @@ describe('deriveAccent', () => {
     }
   })
 
-  it('every preset reads as a button on its own (text on accent ≥ 4.5:1)', () => {
-    for (const p of ACCENT_PRESETS) expect(contrast(deriveAccent(p.color, surfacesFor('dark', 'plain'), false)['--on-accent'], p.color), p.label).toBeGreaterThanOrEqual(4.5)
+  it('text on the accent reads at 4.5:1 for every preset and any colour (pure black when neither ink nor white does)', () => {
+    const greys = Array.from({ length: 52 }, (_, i) => '#' + (i * 5).toString(16).padStart(2, '0').repeat(3))
+    for (const c of [...ACCENT_PRESETS.map((p) => p.color), ...SWEEP, ...greys, '#777777', '#3d7a8a', '#b04080']) {
+      const on = deriveAccent(c, surfacesFor('dark', 'plain'), false)['--on-accent']
+      expect(['#141519', '#ffffff', '#000000']).toContain(on)
+      expect(contrast(on, c), c).toBeGreaterThanOrEqual(4.5)
+    }
   })
 
   it('light themes use slightly different translucencies (a stronger focus edge, a fainter tint)', () => {

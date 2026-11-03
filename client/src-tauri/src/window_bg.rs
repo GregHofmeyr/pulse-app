@@ -51,11 +51,13 @@ pub fn set_window_background(
 ) -> Result<(), String> {
     use tauri::Manager;
     let c = parse(&color).ok_or_else(|| format!("not a #rrggbb colour: {color}"))?;
+    // Saved first: the next start uses it even if colouring this window fails.
+    let saved = save(&dir.0, c).map_err(|e| e.to_string());
     if let Some(win) = app.get_webview_window("main") {
         win.set_background_color(Some(c))
             .map_err(|e| e.to_string())?;
     }
-    save(&dir.0, c).map_err(|e| e.to_string())
+    saved
 }
 
 #[cfg(test)]

@@ -99,6 +99,8 @@ describe('applyTheme', () => {
     m.setTheme('light')
     m.setTint('green')
     const calls = invoke.mock.calls as unknown as [string, Record<string, unknown>][]
+    // an accent change can't change the window colour: no call for it
+    m.setAccent('#3ddc97')
     expect(calls.filter((c) => c[0] === 'set_window_background').map((c) => c[1])).toEqual([{ color: '#e9eaed' }, { color: '#e5eee8' }])
   })
 
@@ -107,7 +109,14 @@ describe('applyTheme', () => {
     m.setTheme('light')
     expect(m.nameBg('chat')).toBe('#ffffff')
     expect(m.nameBg('side')).toBe('#f4f4f6')
+    m.setTheme('dark')
+    // a menu (the @-mention list, search suggestions) is lighter than the chat on dark themes
+    expect(m.nameBg('menu')).toBe('#2e3037')
     // the profile card is a dark island in every theme
     expect(m.nameBg('island')).toBe(m.ISLAND_BG)
+    // …measured against the lightest a preset card gets (Sunset's orange end, mixed into near-black)
+    const { THEME_PRESETS, mixHex, NEAR_BLACK, CARD_MIX } = await import('./cardTheme')
+    const { luminance, parseHex } = await import('./color')
+    for (const p of THEME_PRESETS) for (const c of [p.top, p.bottom]) expect(luminance(parseHex(mixHex(c, NEAR_BLACK, CARD_MIX))!)).toBeLessThanOrEqual(luminance(parseHex(m.ISLAND_BG)!))
   })
 })

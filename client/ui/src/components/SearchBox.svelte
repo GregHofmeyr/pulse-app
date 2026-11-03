@@ -234,7 +234,7 @@
           {#if o.kind === 'filter'}
             <span class="syntax">{o.syntax}</span> <small>{o.hint}</small>
           {:else if o.kind === 'person'}
-            <Avatar id={o.id} name={o.name} size={20} /> <Name userId={o.id} {serverId} text={o.name} interactive={false} />
+            <Avatar id={o.id} name={o.name} size={20} /> <Name userId={o.id} {serverId} text={o.name} interactive={false} surface="menu" />
           {:else if o.kind === 'channel'}
             <Icon name="hash" size={14} /> <span>{o.name}</span>
           {:else}
