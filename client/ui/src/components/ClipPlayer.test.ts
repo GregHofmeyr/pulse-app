@@ -7,6 +7,7 @@ const invoke = vi.fn(async (_cmd: string, _args?: unknown): Promise<unknown> => 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: (cmd: string, args?: never) => invoke(cmd, args) }))
 
 import ClipPlayer from './ClipPlayer.svelte'
+import { setNotch } from '../lib/mixer.svelte'
 import { claim, playback, release } from '../lib/clipPlayback.svelte'
 
 type Fake = HTMLVideoElement & { _t: number; _d: number; _ns: number; _paused: boolean }
@@ -36,7 +37,7 @@ beforeEach(() => {
   let n = 0
   invoke.mockImplementation(async (cmd) => (cmd === 'clip_url' ? { url: `http://127.0.0.1:7895/clips/k.mp4?sig=${++n}`, expires_at: '2026-10-28T11:00:00Z' } : undefined))
   localStorage.clear()
-  release(claim('reset', () => {})); playback.volume = 1; playback.muted = false
+  release(claim('reset', () => {})); playback.volume = 100; playback.muted = false
 })
 
 const clipMsg = (id: string): Message => ({
@@ -115,15 +116,25 @@ describe('ClipPlayer', () => {
     const a = show('M1')
     await start(a)
     const slider = a.querySelector<HTMLInputElement>('input[aria-label="Volume"]')!
-    slider.value = '0.3'
+    expect([slider.min, slider.max, slider.step]).toEqual(['0', '100', '1'])
+    slider.value = '85'
     slider.dispatchEvent(new Event('input', { bubbles: true }))
     flushSync()
-    expect(video(a)!.volume).toBeCloseTo(0.3)
-    expect(JSON.parse(localStorage.getItem('pulse.clipVolume')!).volume).toBeCloseTo(0.3)
+    expect(video(a)!.volume).toBeCloseTo(0.5, 2) // 85 % on the mixer curve is -6 dB
+    expect(JSON.parse(localStorage.getItem('pulse.mixer')!).media.clips).toBe(85)
     const b = show('M2')
     await start(b)
-    expect(video(b)!.volume).toBeCloseTo(0.3)
-    expect(b.querySelector<HTMLInputElement>('input[aria-label="Volume"]')!.value).toBe('0.3')
+    expect(video(b)!.volume).toBeCloseTo(0.5, 2)
+    expect(b.querySelector<HTMLInputElement>('input[aria-label="Volume"]')!.value).toBe('85')
+  })
+
+  it('the mixer’s Clips notch moves the player’s slider and volume', async () => {
+    const a = show('M1')
+    await start(a)
+    setNotch('media', 'clips', 50)
+    flushSync()
+    expect(a.querySelector<HTMLInputElement>('input[aria-label="Volume"]')!.value).toBe('50')
+    expect(video(a)!.volume).toBeCloseTo(0.1, 4)
   })
 
   it('shows the time and seeks from the bar', async () => {

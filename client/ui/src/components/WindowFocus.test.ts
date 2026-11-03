@@ -30,6 +30,7 @@ import TextChannel from './TextChannel.svelte'
 import { app, startListening, ui } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { watchWindowFocus, windowFocus } from '../lib/windowFocus.svelte'
+import { defaultMixer } from '../lib/mixer'
 
 const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
@@ -108,11 +109,13 @@ describe('one window-focus source', () => {
     // unfocused: it dings, and says the sound settings (switched off reads differently from lost)
     os.focused = true
     tauriFocus!({ payload: false })
-    localStorage.setItem('pulse.sounds', JSON.stringify({ set: 'classic', volume_pct: 100, off: ['message'] }))
+    const mix = defaultMixer()
+    mix.notifications.message = 0
+    localStorage.setItem('pulse.mixer', JSON.stringify(mix))
     invoke.mockClear()
     listeners.get('pulse://event')!({ payload: event('M12') })
     expect(logs().map((l) => l.line)).toEqual(['sound: message private=true mentioned=false open=true thread=- open_thread=- focused=false muted=false gap_ok=true sound=off play=true'])
-    localStorage.removeItem('pulse.sounds')
+    localStorage.removeItem('pulse.mixer')
     tauriFocus!({ payload: true })
   }, 10_000)
 

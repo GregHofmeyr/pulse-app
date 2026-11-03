@@ -323,11 +323,12 @@ export const soundboardCmd = {
   support: () => invoke<{ can_send: boolean; reason: string | null }>('soundboard_support'),
   pickFile: () => invoke<string | null>('soundboard_pick_file'),
   open: (path: string) => invoke<SoundPreview>('soundboard_open', { path }),
-  preview: (path: string, startMs: number, endMs: number, soundPercent: number, soundboardPercent: number, output: string | null) =>
-    invoke<void>('soundboard_preview', { path, startMs, endMs, soundPercent, soundboardPercent, output }),
+  preview: (path: string, startMs: number, endMs: number, soundPercent: number, callsPercent: number, soundboardPercent: number, output: string | null) =>
+    invoke<void>('soundboard_preview', { path, startMs, endMs, soundPercent, callsPercent, soundboardPercent, output }),
   upload: (path: string, startMs: number, endMs: number) => invoke<MediaInfo>('soundboard_upload', { path, startMs, endMs }),
-  play: (hash: string, soundboardPercent: number, soundPercent: number, output: string | null) =>
-    invoke<void>('soundboard_play', { hash, soundboardPercent, soundPercent, output }),
+  /** Local playback at Calls × Soundboard × the sound's own volume (percents; the core multiplies and caps). */
+  play: (hash: string, callsPercent: number, soundboardPercent: number, soundPercent: number, output: string | null) =>
+    invoke<void>('soundboard_play', { hash, callsPercent, soundboardPercent, soundPercent, output }),
   create: (serverId: string, name: string, emoji: string | null, mediaHash: string, volume: number) =>
     invoke<Sound>('create_sound', { serverId, name, emoji, mediaHash, volume }),
   update: (id: string, request: SoundUpdate) => invoke<Sound>('update_sound', { id, request }),

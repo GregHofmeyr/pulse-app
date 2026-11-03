@@ -6,7 +6,7 @@
   import { api } from '../lib/tauri'
   import { mediaUrl } from '../lib/emoji'
   import { formatDuration } from '../lib/clips'
-  import { claim, playback, release, setMuted, setVolume } from '../lib/clipPlayback.svelte'
+  import { claim, elementVolume, playback, release, setMuted, setVolume } from '../lib/clipPlayback.svelte'
   import Icon from './Icon.svelte'
 
   let { message, autoplay = false, compact = false }: { message: Message; autoplay?: boolean; compact?: boolean } = $props()
@@ -129,7 +129,7 @@
 
   $effect(() => {
     if (!el) return
-    el.volume = playback.volume
+    el.volume = elementVolume(playback.volume)
     el.muted = playback.muted
   })
 
@@ -182,7 +182,7 @@
     <span class="time">{formatDuration(cur * 1000)} / {formatDuration(total * 1000)}</span>
     {#if !compact}
       <button class="ico" aria-label={playback.muted ? 'Unmute' : 'Mute'} onclick={() => setMuted(!playback.muted)}><Icon name={playback.muted || playback.volume === 0 ? 'speakerOff' : 'speaker'} /></button>
-      <input class="vol" type="range" aria-label="Volume" min="0" max="1" step="0.05" value={playback.volume} oninput={(e) => { setVolume(Number(e.currentTarget.value)); if (playback.muted) setMuted(false) }} />
+      <input class="vol" type="range" aria-label="Volume" aria-valuetext="{playback.volume}%" min="0" max="100" step="1" value={playback.volume} oninput={(e) => { setVolume(Number(e.currentTarget.value)); if (playback.muted) setMuted(false) }} />
     {/if}
     <button class="ico" aria-label={fullscreen ? 'Exit full screen' : 'Full screen'} onclick={toggleFullscreen}><Icon name="fullscreen" /></button>
   </div>

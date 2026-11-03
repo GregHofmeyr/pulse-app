@@ -10,12 +10,9 @@ export type Section = {
   server?: Server
 }
 
-const PREFS_KEY = 'pulse.soundboard'
 const MUTES_KEY = 'pulse.soundboard.mutes'
 const FREQUENT_SHOWN = 9
 const TIDY_COUNT = 5
-
-export type SoundboardPrefs = { volume_pct: number }
 
 function read(key: string): unknown {
   try {
@@ -33,14 +30,6 @@ function write(key: string, value: unknown) {
   }
 }
 
-/** How loud other people's sounds are for you (0 = off), 0..100. */
-export function loadSoundboardPrefs(): SoundboardPrefs {
-  const r = read(PREFS_KEY)
-  const v = typeof r === 'object' && r !== null ? (r as Record<string, unknown>).volume_pct : undefined
-  return { volume_pct: typeof v === 'number' && Number.isFinite(v) ? Math.round(Math.min(100, Math.max(0, v))) : 100 }
-}
-export const saveSoundboardPrefs = (p: SoundboardPrefs) => write(PREFS_KEY, p)
-
 /** People whose sounds you never hear (user id -> true). */
 export function loadSoundMutes(): Record<string, true> {
   const r = read(MUTES_KEY)
@@ -49,7 +38,7 @@ export function loadSoundMutes(): Record<string, true> {
 }
 export const saveSoundMutes = (m: Record<string, true>) => write(MUTES_KEY, m)
 
-/** Whether a relayed SoundPlayed should be heard here. Your own plays in your call do play. */
+/** Whether a relayed SoundPlayed should be heard here (`volume_pct` 0: the soundboard is off). Your own plays in your call do play. */
 export function shouldPlay(
   e: { channel_id: string; user_id: string },
   ctx: { myChannel: string | null; volume_pct: number; mutes: Record<string, true> },
@@ -92,8 +81,10 @@ export const isRateLimited = (e: unknown): boolean =>
 /** The core's words for a 404: the sound was deleted meanwhile (its SoundDeleted removes the tile). */
 export const isNotFound = (e: unknown): boolean => (typeof e === 'string' ? e : e instanceof Error ? e.message : '') === 'not found'
 
-/** Previews are for yourself: with the soundboard turned off they still play, at full volume. */
-export const previewPercent = (volume_pct: number): number => (volume_pct > 0 ? volume_pct : 100)
+/** [Calls, Soundboard] percents a preview plays at. Previews are for yourself: with the soundboard turned off (either
+ * at 0) they still play, at full volume. */
+export const previewPercents = (calls: number, soundboard: number): [number, number] =>
+  calls > 0 && soundboard > 0 ? [calls, soundboard] : [100, 100]
 
 /** A server's section offers "Tidy up?" once it holds more than this many sounds. */
 export const TIDY_THRESHOLD = 24

@@ -1,4 +1,5 @@
 import { invoke } from '@tauri-apps/api/core'
+import { loadMixer, soundGain, soundMasterGain } from './mixer'
 // Pure helpers for the voice UI (tested in voiceui.test.ts).
 
 export type Flags = { muted: boolean; deafened: boolean }
@@ -36,6 +37,7 @@ export const SOUND_SETS: readonly { id: SoundSetId; label: string; blurb: string
   { id: 'goofy', label: 'Goofy', blurb: "Playful bleeps and zaps from Kenney's free packs." },
 ]
 
+/** `volume_pct` and `off` are from before the volume mixer: read only to migrate them (lib/mixer.ts). */
 export type SoundPrefs = { set: SoundSetId; volume_pct: number; off: SoundName[] }
 export const defaultSoundPrefs: SoundPrefs = { set: 'classic', volume_pct: 100, off: [] }
 
@@ -123,16 +125,21 @@ export function transitionSounds(prev: VoiceSnap, next: VoiceSnap): SoundName[] 
   return out
 }
 
-function invokeSound(name: SoundName, set: SoundSetId, volume_pct: number) {
-  // on the output chosen in settings, like voice (null = system default)
-  void invoke('play_sound', { name, set, volume: volume_pct / 100, output: loadAudioConfig().output }).catch(() => {})
+function invokeSound(name: SoundName, set: SoundSetId, gain: number) {
+  if (!(gain > 0)) return
+  // on the output chosen in settings, like voice (null = system default); the core caps and soft-limits the gain
+  void invoke('play_sound', { name, set, volume: gain, output: loadAudioConfig().output }).catch(() => {})
 }
 
-/** Played by the Rust core (never an <audio> element: WebKitGTK + missing GStreamer sink aborts the renderer). */
+/** Played by the Rust core (never an <audio> element: WebKitGTK + missing GStreamer sink aborts the renderer), at its
+ * volume mixer level (section × sound; 0 % plays nothing). */
 export function playSound(name: SoundName) {
-  const { set, volume_pct, off } = loadSoundPrefs()
-  if (volume_pct === 0 || off.includes(name)) return
-  invokeSound(name, set, volume_pct)
+  invokeSound(name, loadSoundPrefs().set, soundGain(loadMixer(), name))
+}
+
+/** One sound at a given linear gain (the mixer's ▶ test buttons). */
+export function playSoundAt(name: SoundName, gain: number) {
+  invokeSound(name, loadSoundPrefs().set, gain)
 }
 
 /** What "Preview" plays: a few events, in a row. */
@@ -145,14 +152,14 @@ export function stopPreview() {
   previewTimers = []
 }
 
-/** Plays PREVIEW in `set` at the current volume, ignoring the per-event switches. Replaces a running preview. */
+/** Plays PREVIEW in `set`, each at its section's master (the per-sound notches don't apply). Replaces a running preview. */
 export function previewSet(set: SoundSetId) {
   stopPreview()
-  const { volume_pct } = loadSoundPrefs()
-  if (volume_pct === 0) return
+  const mix = loadMixer()
   PREVIEW.forEach((name, i) => {
-    if (i === 0) invokeSound(name, set, volume_pct)
-    else previewTimers.push(setTimeout(() => invokeSound(name, set, volume_pct), i * PREVIEW_GAP_MS))
+    const play = () => invokeSound(name, set, soundMasterGain(mix, name))
+    if (i === 0) play()
+    else previewTimers.push(setTimeout(play, i * PREVIEW_GAP_MS))
   })
 }
 

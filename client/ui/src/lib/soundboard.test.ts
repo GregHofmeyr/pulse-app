@@ -3,8 +3,8 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import type { Sound } from './protocol/Sound'
 import { emptyState } from './state'
 import {
-  loadSoundboardPrefs, saveSoundboardPrefs, loadSoundMutes, saveSoundMutes,
-  shouldPlay, soundSections, searchSounds, tidyCandidates, isNotFound, previewPercent,
+  loadSoundMutes, saveSoundMutes,
+  shouldPlay, soundSections, searchSounds, tidyCandidates, isNotFound, previewPercents,
 } from './soundboard'
 
 const snd = (id: string, name: string, over: Partial<Sound> = {}): Sound => ({
@@ -98,29 +98,23 @@ describe('isNotFound', () => {
   })
 })
 
-describe('previewPercent', () => {
-  it('previews at full volume when the soundboard is turned off, else at its volume', () => {
-    expect(previewPercent(0)).toBe(100)
-    expect(previewPercent(35)).toBe(35)
-    expect(previewPercent(100)).toBe(100)
+describe('previewPercents', () => {
+  it('previews at full volume when the soundboard is turned off, else at its Calls and Soundboard levels', () => {
+    expect(previewPercents(100, 0)).toEqual([100, 100])
+    expect(previewPercents(0, 150)).toEqual([100, 100])
+    expect(previewPercents(40, 35)).toEqual([40, 35])
+    expect(previewPercents(100, 200)).toEqual([100, 200])
   })
 })
 
 describe('prefs', () => {
   beforeEach(() => localStorage.clear())
-  it('round-trips volume and mutes', () => {
-    expect(loadSoundboardPrefs()).toEqual({ volume_pct: 100 })
-    saveSoundboardPrefs({ volume_pct: 40 })
-    expect(loadSoundboardPrefs()).toEqual({ volume_pct: 40 })
+  it('round-trips mutes (the volume lives in the mixer)', () => {
     saveSoundMutes({ U2: true })
     expect(loadSoundMutes()).toEqual({ U2: true })
   })
   it('falls back on corrupt values', () => {
-    localStorage.setItem('pulse.soundboard', '{nope')
     localStorage.setItem('pulse.soundboard.mutes', '[1,"x"]')
-    expect(loadSoundboardPrefs()).toEqual({ volume_pct: 100 })
     expect(loadSoundMutes()).toEqual({})
-    localStorage.setItem('pulse.soundboard', JSON.stringify({ volume_pct: 'loud' }))
-    expect(loadSoundboardPrefs()).toEqual({ volume_pct: 100 })
   })
 })

@@ -65,7 +65,7 @@ beforeEach(() => {
   })
   app.state = applyReady(emptyState(), ready('M002'))
   release(claim('reset', () => {}))
-  playback.volume = 1
+  playback.volume = 100
   playback.muted = false
 })
 afterEach(() => {

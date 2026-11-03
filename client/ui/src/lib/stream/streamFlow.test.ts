@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 // The stream store's lifecycle against a fake `#v` connection and a fake Tauri core.
 import { afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { defaultMixer } from '../mixer'
 
 type Handler = (args: Record<string, unknown> | undefined) => Promise<unknown>
 const core = vi.hoisted(() => ({
@@ -711,8 +712,10 @@ describe('live sounds', () => {
     expect(played('live_end')).toHaveLength(1)
   })
 
-  it('live_end_off_in_the_prefs_is_silent', async () => {
-    localStorage.setItem('pulse.sounds', JSON.stringify({ set: 'classic', volume_pct: 100, off: ['live_end'] }))
+  it('live_end_at_0_in_the_mixer_is_silent', async () => {
+    const mix = defaultMixer()
+    mix.streamSounds.live_end = 0
+    localStorage.setItem('pulse.mixer', JSON.stringify(mix))
     const { streamApi } = await inVoice()
     streamApi.onEvent(ended('sam', 'stopped'))
     expect(played('live_end')).toEqual([])

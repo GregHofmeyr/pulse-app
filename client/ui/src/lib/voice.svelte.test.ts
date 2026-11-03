@@ -101,3 +101,16 @@ describe('talking into a muted mic', () => {
     expect(h.calls).toEqual(['report_muted_talk'])
   })
 })
+
+describe('joining', () => {
+  beforeEach(() => {
+    h.calls.length = 0
+    Object.assign(voice, { channelId: null, joining: null, leaving: null })
+  })
+  it('hands the core the volume mixer’s Calls levels before it joins', async () => {
+    const { voiceApi } = await import('./voice.svelte')
+    await voiceApi.join('V1')
+    expect(h.calls).toContain('set_call_mix')
+    expect(h.calls.indexOf('set_call_mix')).toBeLessThan(h.calls.indexOf('join_voice'))
+  })
+})

@@ -6,6 +6,7 @@ import { streamApi } from './stream/stream.svelte'
 import type { SelfVoice } from './selectors'
 import { app, onAppEvent } from './store.svelte'
 import { api } from './tauri'
+import { pushCallMixQuietly } from './mixer.svelte'
 import { loadAudioConfig, loadLocalMutes, loadVolumes, playSound, saveLocalMutes, saveVolumes, transitionSounds, type AudioConfig, type Connection, type Flags, type LinkReport, type NsLevel, type VoiceEvent } from './voiceui'
 import { isJoining, reduceStage, type StageState } from './voicestage'
 
@@ -149,6 +150,8 @@ export const voiceApi = {
     voice.link = null
     const seq = ++joinSeq
     voice.stage = { stage: 'requesting_access', attempt: null }
+    // the volume mixer's Voices and Streams levels: the core keeps them and applies them whenever they land
+    pushCallMixQuietly()
     try {
       // remembered per-user volumes and local mutes go first: the core keeps them with or without a session,
       // so nobody muted for you is heard on arrival (and they go straight to 0: no blip at their remembered volume)

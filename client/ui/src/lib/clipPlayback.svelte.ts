@@ -1,24 +1,31 @@
-// Which clip is playing (one at a time) and the volume every player shares, kept on this device.
-const KEY = 'pulse.clipVolume'
+// Which clip is playing (one at a time), and the volume every player shares: the volume mixer's Clips notch, so a
+// player's own slider and Settings → Volume mixer move the same value (kept on this device in `pulse.mixer`).
+import { percentToGain } from './mixer'
+import { mixer, reloadMixer, setClipsMuted, setNotch } from './mixer.svelte'
 
-type Saved = { volume: number; muted: boolean }
+const now = $state<{ id: string | null }>({ id: null })
 
-function read(): Saved {
-  const fallback = { volume: 1, muted: false }
-  try {
-    const raw = localStorage.getItem(KEY)
-    const v = raw ? (JSON.parse(raw) as Partial<Saved> | null) : null
-    return {
-      volume: typeof v?.volume === 'number' && Number.isFinite(v.volume) ? Math.min(1, Math.max(0, v.volume)) : fallback.volume,
-      muted: v?.muted === true,
-    }
-  } catch {
-    return fallback
-  }
+/** The playing message's id (or null), and the volume (percent, 0..100) and mute shared by every player. */
+export const playback = {
+  get nowPlaying(): string | null {
+    return now.id
+  },
+  get volume(): number {
+    return mixer.media.clips
+  },
+  set volume(pct: number) {
+    setVolume(pct)
+  },
+  get muted(): boolean {
+    return mixer.media.clipsMuted
+  },
+  set muted(m: boolean) {
+    setMuted(m)
+  },
 }
 
-/** The playing message's id (or null), and the volume (0..1) and mute shared by every player. */
-export const playback = $state<{ nowPlaying: string | null; volume: number; muted: boolean }>({ nowPlaying: null, ...read() })
+/** A `<video>`'s volume for a Clips percent: the mixer curve, at most the element's own full volume. */
+export const elementVolume = (pct: number): number => Math.min(1, percentToGain(pct))
 
 let owner: symbol | null = null
 let pauseCurrent: (() => void) | null = null
@@ -28,7 +35,7 @@ let pauseCurrent: (() => void) | null = null
 export function claim(id: string, pause: () => void, token: symbol = Symbol(id)): symbol {
   if (owner !== null && owner !== token) pauseCurrent?.()
   owner = token
-  playback.nowPlaying = id
+  now.id = id
   pauseCurrent = pause
   return token
 }
@@ -37,29 +44,20 @@ export function claim(id: string, pause: () => void, token: symbol = Symbol(id))
 export function release(token: symbol): void {
   if (owner !== token) return
   owner = null
-  playback.nowPlaying = null
+  now.id = null
   pauseCurrent = null
 }
 
 /** Re-reads the saved volume (startup and tests). */
 export function loadVolume(): void {
-  Object.assign(playback, read())
+  reloadMixer()
 }
 
-function save(): void {
-  try {
-    localStorage.setItem(KEY, JSON.stringify({ volume: playback.volume, muted: playback.muted }))
-  } catch {
-    /* ignore */
-  }
-}
-
-export function setVolume(v: number): void {
-  playback.volume = Math.min(1, Math.max(0, v))
-  save()
+/** Percent, 0..100. */
+export function setVolume(pct: number): void {
+  setNotch('media', 'clips', pct)
 }
 
 export function setMuted(m: boolean): void {
-  playback.muted = m
-  save()
+  setClipsMuted(m)
 }

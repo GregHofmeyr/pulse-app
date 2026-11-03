@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { claim, loadVolume, playback, release, setMuted, setVolume } from './clipPlayback.svelte'
+import { claim, elementVolume, loadVolume, playback, release, setMuted, setVolume } from './clipPlayback.svelte'
+import { mixer, setNotch } from './mixer.svelte'
 
 beforeEach(() => {
   localStorage.clear()
@@ -46,27 +47,39 @@ describe('claim', () => {
 })
 
 describe('volume', () => {
-  it('is saved and loaded under pulse.clipVolume', () => {
-    setVolume(0.4)
+  it('is the mixer’s Clips notch (percent), saved in pulse.mixer', () => {
+    setVolume(40)
     setMuted(true)
-    expect(JSON.parse(localStorage.getItem('pulse.clipVolume')!)).toEqual({ volume: 0.4, muted: true })
-    playback.volume = 1
+    expect(JSON.parse(localStorage.getItem('pulse.mixer')!).media).toEqual({ clips: 40, clipsMuted: true })
+    expect(mixer.media.clips).toBe(40)
+    playback.volume = 100
     playback.muted = false
+    expect(mixer.media).toEqual({ clips: 100, clipsMuted: false })
+    setVolume(40)
+    setMuted(true)
     loadVolume()
-    expect(playback.volume).toBe(0.4)
+    expect(playback.volume).toBe(40)
     expect(playback.muted).toBe(true)
   })
-  it('clamps to 0..1 and ignores malformed storage', () => {
-    setVolume(3)
-    expect(playback.volume).toBe(1)
+  it('clamps to 0..100 and follows the mixer', () => {
+    setVolume(300)
+    expect(playback.volume).toBe(100)
     setVolume(-1)
     expect(playback.volume).toBe(0)
-    localStorage.setItem('pulse.clipVolume', '{"volume":"loud","muted":5}')
+    setNotch('media', 'clips', 65)
+    expect(playback.volume).toBe(65)
+  })
+  it('migrates the old linear clip volume by loudness', () => {
+    localStorage.setItem('pulse.clipVolume', '{"volume":0.5,"muted":true}')
     loadVolume()
-    expect(playback.volume).toBe(1)
-    expect(playback.muted).toBe(false)
-    localStorage.setItem('pulse.clipVolume', 'not json')
-    loadVolume()
-    expect(playback.volume).toBe(1)
+    expect(playback.volume).toBe(85)
+    expect(playback.muted).toBe(true)
+  })
+  it('elementVolume maps the percent onto <video>.volume on the mixer curve, never above 1', () => {
+    expect(elementVolume(100)).toBe(1)
+    expect(elementVolume(0)).toBe(0)
+    expect(elementVolume(50)).toBeCloseTo(0.1, 4)
+    expect(elementVolume(85)).toBeCloseTo(0.5, 2)
+    expect(elementVolume(200)).toBe(1)
   })
 })

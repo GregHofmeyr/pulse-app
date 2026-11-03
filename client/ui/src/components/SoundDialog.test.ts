@@ -11,6 +11,7 @@ import SoundTidy from './SoundTidy.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { soundboard } from '../lib/soundboard.svelte'
+import { setNotch } from '../lib/mixer.svelte'
 
 const peaks = Array.from({ length: 200 }, (_, i) => (i % 10) / 10)
 const snd = (id: string, name: string, plays: number): Sound => ({
@@ -134,13 +135,27 @@ describe('SoundDialog add', () => {
     expect(calls('soundboard_preview')[0][1]).toMatchObject({ path: '/tmp/a.mp3', startMs: 0, endMs: 6000, soundPercent: 100 })
   })
 
+  it('previews at the Calls and Soundboard levels', async () => {
+    setNotch('calls', 'master', 70)
+    setNotch('calls', 'soundboard', 130)
+    try {
+      await openAdd()
+      button('Preview').click()
+      await settle()
+      expect(calls('soundboard_preview')[0][1]).toMatchObject({ callsPercent: 70, soundboardPercent: 130 })
+    } finally {
+      setNotch('calls', 'master', 100)
+      setNotch('calls', 'soundboard', 100)
+    }
+  })
+
   it('previews at 100 when the soundboard volume is 0', async () => {
     soundboard.volume_pct = 0
     try {
       await openAdd()
       button('Preview').click()
       await settle()
-      expect(calls('soundboard_preview')[0][1]).toMatchObject({ soundPercent: 100, soundboardPercent: 100 })
+      expect(calls('soundboard_preview')[0][1]).toMatchObject({ soundPercent: 100, callsPercent: 100, soundboardPercent: 100 })
     } finally {
       soundboard.volume_pct = 100
     }

@@ -120,8 +120,9 @@ describe('ChannelList joining', () => {
 
   it('a_superseded_join_is_not_a_failure', async () => {
     let rejectFirst!: (e: unknown) => void
-    invoke.mockReturnValueOnce(new Promise((_, rej) => (rejectFirst = rej)))
-    invoke.mockReturnValue(new Promise(() => {}))
+    let joins = 0
+    // the first join_voice is the one that gets cancelled; everything else (the second join, set_call_mix) hangs
+    invoke.mockImplementation((c: string) => (c === 'join_voice' && joins++ === 0 ? new Promise((_, rej) => (rejectFirst = rej)) : new Promise(() => {})))
     const first = voiceApi.join('V1')
     void voiceApi.join('V2')
     rejectFirst('cancelled')

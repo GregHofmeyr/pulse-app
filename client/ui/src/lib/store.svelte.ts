@@ -15,7 +15,8 @@ import { notifyMessage, NotifyThrottle } from './notify'
 import { notifyPrefs } from './notifyPrefs.svelte'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import { noteReactionEvent } from './reactions'
-import { loadSoundPrefs, playSound } from './voiceui'
+import { playSound } from './voiceui'
+import { loadMixer, soundGain } from './mixer'
 import { streamApi } from './stream/stream.svelte'
 import { windowFocus } from './windowFocus.svelte'
 import { forgetEmbedOrigin } from './linkPreviews.svelte'
@@ -71,9 +72,8 @@ function logSoundDecision(v: Parameters<typeof messageSound>[0], play: boolean) 
   const mentioned = m.mentions.includes(v.me)
   if (m.kind !== 'normal' || m.author_id === v.me || !(isPrivate || mentioned)) return
   const gapOk = v.now - v.lastPlayedAt >= SOUND_GAP_MS
-  const p = loadSoundPrefs()
-  // switched off in settings looks nothing like a sound that got lost
-  const prefs = p.volume_pct === 0 ? 'vol0' : p.off.includes('message') ? 'off' : 'on'
+  // turned to 0 % in the volume mixer looks nothing like a sound that got lost
+  const prefs = soundGain(loadMixer(), 'message') > 0 ? 'on' : 'off'
   const line = `sound: message private=${isPrivate} mentioned=${mentioned} open=${v.open} thread=${m.thread_root_id ?? '-'} open_thread=${v.openThread ?? '-'} focused=${v.focused} muted=${v.muted} gap_ok=${gapOk} sound=${prefs} play=${play}`
   if (play || !onScreen(v) || !v.focused) return void api.uiLog(line, 'info')
   getCurrentWindow().isFocused().then(

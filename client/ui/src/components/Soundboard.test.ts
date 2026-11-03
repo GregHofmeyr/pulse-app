@@ -8,6 +8,7 @@ const invoke = vi.hoisted(() => vi.fn(async (_c: string, _a?: unknown): Promise<
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 
 import Soundboard from './Soundboard.svelte'
+import { mixer, reloadMixer, setNotch } from '../lib/mixer.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState } from '../lib/state'
 import { soundboard } from '../lib/soundboard.svelte'
@@ -62,7 +63,7 @@ beforeEach(() => {
   }
   Element.prototype.scrollIntoView = scrollIntoView
   localStorage.clear()
-  soundboard.volume_pct = 100
+  reloadMixer()
   invoke.mockClear()
   invoke.mockImplementation(async () => undefined)
   onClose.mockClear(); onAdd.mockClear(); onEdit.mockClear(); onTidy.mockClear(); scrollIntoView.mockClear()
@@ -151,7 +152,16 @@ describe('Soundboard', () => {
     open()
     tile('Bruh').querySelector<HTMLElement>('.preview')!.click()
     await settle()
-    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', soundboardPercent: 100, soundPercent: 120, output: null }]])
+    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 100, soundboardPercent: 100, soundPercent: 120, output: null }]])
+  })
+
+  it('preview_follows_the_calls_master_and_soundboard_notch', async () => {
+    setNotch('calls', 'master', 60)
+    soundboard.volume_pct = 150
+    open()
+    tile('Bruh').querySelector<HTMLElement>('.preview')!.click()
+    await settle()
+    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 60, soundboardPercent: 150, soundPercent: 120, output: null }]])
   })
 
   it('preview_plays_locally_only', async () => {
@@ -159,7 +169,7 @@ describe('Soundboard', () => {
     expect(btn('Preview Bruh')).not.toBeNull()
     tile('Bruh').querySelector<HTMLElement>('.preview')!.click()
     await settle()
-    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', soundboardPercent: 100, soundPercent: 120, output: null }]])
+    expect(calls('soundboard_play')).toEqual([['soundboard_play', { hash: 'hb', callsPercent: 100, soundboardPercent: 100, soundPercent: 120, output: null }]])
     expect(calls('play_sound_to_call')).toHaveLength(0)
   })
 
@@ -218,10 +228,22 @@ describe('Soundboard', () => {
     btn('Soundboard volume').click()
     flushSync()
     const r = document.querySelector<HTMLInputElement>('input[type=range]')!
-    r.value = '35'
+    expect(r.max).toBe('200')
+    r.value = '135'
     r.dispatchEvent(new Event('input', { bubbles: true }))
     flushSync()
-    expect(JSON.parse(localStorage.getItem('pulse.soundboard')!)).toEqual({ volume_pct: 35 })
+    expect(JSON.parse(localStorage.getItem('pulse.mixer')!).calls.soundboard).toBe(135)
+    expect(mixer.calls.soundboard).toBe(135)
+    expect(document.body.textContent).toContain('135%')
+  })
+
+  it('volume_slider_follows_the_mixer', () => {
+    open()
+    btn('Soundboard volume').click()
+    flushSync()
+    setNotch('calls', 'soundboard', 42)
+    flushSync()
+    expect(document.querySelector<HTMLInputElement>('input[type=range]')!.value).toBe('42')
   })
 
   it('add_sound_tile_per_member_server_calls_onAdd', () => {

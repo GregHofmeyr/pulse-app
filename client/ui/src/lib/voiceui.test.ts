@@ -4,7 +4,9 @@ import {
   soundFor, volumeLabel, clampVolume, migrateAudioConfig, defaultAudioConfig, playSound,
   SOUND_NAMES, SOUND_SETS, SOUND_LABELS, PREVIEW, PREVIEW_GAP_MS, defaultSoundPrefs,
   normalizeSoundPrefs, loadSoundPrefs, saveSoundPrefs, previewSet, stopPreview,
+  playSoundAt,
 } from './voiceui'
+import { defaultMixer, mixGain, type MixerPrefs } from './mixer'
 
 vi.mock('@tauri-apps/api/core', () => ({ invoke: vi.fn(async () => {}) }))
 
@@ -92,17 +94,35 @@ async function captureInvokes() {
   return calls
 }
 
+const mixerWith = (edit: (p: MixerPrefs) => void) => {
+  const p = defaultMixer()
+  edit(p)
+  return JSON.stringify(p)
+}
+
 describe('playSound', () => {
   afterEach(() => vi.unstubAllGlobals())
 
-  it('sends the set, volume and the output chosen in settings', async () => {
+  it('sends the set, the mixer gain (section × sound) and the output chosen in settings', async () => {
     const calls = await captureInvokes()
     stubStorage({
       'pulse.audio': JSON.stringify({ output: 'Headphones' }),
-      'pulse.sounds': JSON.stringify({ set: 'goofy', volume_pct: 40, off: [] }),
+      'pulse.sounds': JSON.stringify({ set: 'goofy' }),
+      'pulse.mixer': mixerWith((p) => { p.callSounds.master = 50; p.callSounds.join = 200 }),
     })
     playSound('join')
-    expect(calls).toEqual([['play_sound', { name: 'join', set: 'goofy', volume: 0.4, output: 'Headphones' }]])
+    expect(calls).toEqual([['play_sound', { name: 'join', set: 'goofy', volume: mixGain(50, 200), output: 'Headphones' }]])
+  })
+
+  it('each sound uses its own section', async () => {
+    const calls = await captureInvokes()
+    stubStorage({ 'pulse.mixer': mixerWith((p) => { p.callSounds.master = 10; p.notifications.message = 150 }) })
+    playSound('message')
+    playSound('live')
+    expect(calls).toEqual([
+      ['play_sound', { name: 'message', set: 'classic', volume: mixGain(100, 150), output: null }],
+      ['play_sound', { name: 'live', set: 'classic', volume: 1, output: null }],
+    ])
   })
 
   it('uses the defaults when nothing is saved', async () => {
@@ -112,18 +132,34 @@ describe('playSound', () => {
     expect(calls).toEqual([['play_sound', { name: 'live', set: 'classic', volume: 1, output: null }]])
   })
 
-  it('plays nothing for a switched-off event', async () => {
+  it('plays nothing for a sound at 0 %, or its section at 0 %', async () => {
+    const calls = await captureInvokes()
+    stubStorage({ 'pulse.mixer': mixerWith((p) => { p.notifications.message = 0; p.callSounds.master = 0 }) })
+    playSound('message')
+    playSound('join')
+    expect(calls).toEqual([])
+  })
+
+  it('a switched-off sound from before the mixer stays silent (migrated to 0 %)', async () => {
     const calls = await captureInvokes()
     stubStorage({ 'pulse.sounds': JSON.stringify({ set: 'classic', volume_pct: 100, off: ['message'] }) })
     playSound('message')
     expect(calls).toEqual([])
   })
 
-  it('plays nothing at volume 0', async () => {
+  it('the old overall volume keeps its loudness', async () => {
     const calls = await captureInvokes()
-    stubStorage({ 'pulse.sounds': JSON.stringify({ set: 'classic', volume_pct: 0, off: [] }) })
+    stubStorage({ 'pulse.sounds': JSON.stringify({ set: 'classic', volume_pct: 50, off: [] }) })
     playSound('join')
-    expect(calls).toEqual([])
+    expect((calls[0] as [string, { volume: number }])[1].volume).toBeCloseTo(0.5, 2)
+  })
+
+  it('playSoundAt plays at the given gain, even for a sound at 0 % elsewhere', async () => {
+    const calls = await captureInvokes()
+    stubStorage({ 'pulse.mixer': mixerWith((p) => { p.callSounds.join = 0 }) })
+    playSoundAt('join', 2)
+    playSoundAt('leave', 0)
+    expect(calls).toEqual([['play_sound', { name: 'join', set: 'classic', volume: 2, output: null }]])
   })
 })
 
@@ -190,7 +226,7 @@ describe('set preview', () => {
 
   it('plays PREVIEW in order, 450 ms apart, with the given set', async () => {
     const calls = await captureInvokes()
-    stubStorage({ 'pulse.sounds': JSON.stringify({ set: 'classic', volume_pct: 50, off: ['mute', 'join'] }) })
+    stubStorage({ 'pulse.mixer': mixerWith((p) => { p.callSounds.master = 50; p.callSounds.join = 0; p.callSounds.mute = 0; p.streamSounds.master = 150 }) })
     expect(PREVIEW_GAP_MS).toBe(450)
     previewSet('minimal-glass')
     expect(names(calls)).toEqual(['join'])
@@ -198,7 +234,9 @@ describe('set preview', () => {
       vi.advanceTimersByTime(PREVIEW_GAP_MS)
       expect(names(calls)).toEqual(PREVIEW.slice(0, i + 1))
     }
-    expect(calls[0]).toEqual(['play_sound', { name: 'join', set: 'minimal-glass', volume: 0.5, output: null }])
+    // each at its section's master: the per-sound notches don't apply to a preview
+    expect(calls[0]).toEqual(['play_sound', { name: 'join', set: 'minimal-glass', volume: mixGain(50), output: null }])
+    expect(calls[3]).toEqual(['play_sound', { name: 'live', set: 'minimal-glass', volume: mixGain(150), output: null }])
     vi.advanceTimersByTime(5000)
     expect(calls).toHaveLength(PREVIEW.length)
   })
@@ -220,7 +258,7 @@ describe('set preview', () => {
     expect(names(calls)).toEqual(['join'])
   })
 
-  it('volume 0 plays nothing', async () => {
+  it('sections at 0 % play nothing', async () => {
     const calls = await captureInvokes()
     stubStorage({ 'pulse.sounds': JSON.stringify({ volume_pct: 0 }) })
     previewSet('classic')

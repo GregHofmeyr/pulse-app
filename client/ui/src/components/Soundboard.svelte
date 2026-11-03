@@ -6,8 +6,9 @@
   import type { Sound } from '../lib/protocol/Sound'
   import { app } from '../lib/store.svelte'
   import { mediaUrl } from '../lib/emoji'
-  import { isNotFound, isRateLimited, previewPercent, searchSounds, soundSections, TIDY_THRESHOLD, type Section } from '../lib/soundboard'
+  import { isNotFound, isRateLimited, previewPercents, searchSounds, soundSections, TIDY_THRESHOLD, type Section } from '../lib/soundboard'
   import { setSoundboardVolume, soundboard } from '../lib/soundboard.svelte'
+  import { mixer } from '../lib/mixer.svelte'
   import { errorText, soundboardCmd } from '../lib/tauri'
   import { loadAudioConfig } from '../lib/voiceui'
   import Icon from './Icon.svelte'
@@ -54,7 +55,8 @@
   // Local only: never touches the server, so nobody else hears it.
   function preview(s: Sound) {
     error = null
-    soundboardCmd.play(s.media_hash, previewPercent(soundboard.volume_pct), s.volume, loadAudioConfig().output ?? null).catch((e) => (error = errorText(e)))
+    const [calls, level] = previewPercents(mixer.calls.master, soundboard.volume_pct)
+    soundboardCmd.play(s.media_hash, calls, level, s.volume, loadAudioConfig().output ?? null).catch((e) => (error = errorText(e)))
   }
   function favourite(s: Sound) {
     soundboardCmd.setFavourite(s.id, !favourites.has(s.id)).catch((e) => (error = errorText(e)))
@@ -125,7 +127,7 @@
   {#if showVolume}
     <div class="vol-row">
       <span>Soundboard volume</span>
-      <input type="range" min="0" max="100" step="1" value={soundboard.volume_pct} aria-label="Soundboard volume level" aria-valuetext="{soundboard.volume_pct}%"
+      <input type="range" min="0" max="200" step="1" value={soundboard.volume_pct} aria-label="Soundboard volume level" aria-valuetext="{soundboard.volume_pct}%"
         oninput={(e) => setSoundboardVolume(+e.currentTarget.value)} />
       <strong>{soundboard.volume_pct}%</strong>
     </div>
