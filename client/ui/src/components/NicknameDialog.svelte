@@ -1,7 +1,7 @@
 <script lang="ts">
   // Asks for a nickname (#48): someone's server nickname (anyone in the server may set or reset it;
-  // everyone there sees it), or the private one only you see. Blank and Save, or Reset, is no
-  // nickname. The rules are the server's, checked here as you type (in characters, as it counts).
+  // everyone there sees it), or the private one only you see. Blank and Save, or Reset / Clear, is no
+  // nickname: this dialog is the only place to remove one (#137). The rules are the server's, checked here as you type (in characters, as it counts).
   import { untrack } from 'svelte'
   import { modal } from '../lib/actions'
   import { app } from '../lib/store.svelte'
@@ -22,7 +22,8 @@
   })
   const without = $derived(target.kind === 'server' ? (app.state.privateNicks[target.userId] ?? base) : base)
   const self = $derived(target.userId === app.state.me?.id)
-  const title = $derived(target.kind === 'private' ? 'Set private nickname' : self ? 'Change your nickname' : 'Change nickname')
+  // named like the menu item that opens it (#137)
+  const title = $derived(target.kind === 'private' ? 'Change nickname' : self ? 'Change your server nickname' : 'Change server nickname')
   const hint = $derived(
     target.kind === 'private'
       ? `Only you see this name for ${without}, everywhere.`

@@ -167,7 +167,6 @@ describe('ProfileCard', () => {
         privateNicks: privateNick ? { U2: privateNick } : {},
       } as never
     }
-    const button = (el: HTMLElement, text: string) => [...el.querySelectorAll('button')].find((b) => b.textContent?.trim() === text)
 
     it('shows the name that applies, and the username only as @handle', () => {
       inServer('Big Dog', 'Sammy')
@@ -184,41 +183,16 @@ describe('ProfileCard', () => {
       expect(el.querySelector('.msg')!.getAttribute('placeholder')).toBe('Message @Sam 🎸')
     })
 
-    it('Change nickname (in a server) and Set private nickname… open the dialog; the card gives way', () => {
-      inServer(null)
-      openCard('U2', 'S1', document.body)
-      let el = show({ user: named, serverId: 'S1' })
-      button(el, 'Change nickname')!.click()
-      expect(profileUi.rename).toEqual({ kind: 'server', userId: 'U2', serverId: 'S1' })
-      expect(profileUi.card).toBeNull()
-      unmount(cmp!)
-      el = show({ user: named, serverId: null })
-      expect(button(el, 'Change nickname')).toBeUndefined() // no server here
-      button(el, 'Set private nickname…')!.click()
-      expect(profileUi.rename).toEqual({ kind: 'private', userId: 'U2' })
-      profileUi.rename = null
-    })
-
-    it('Reset nickname and Clear private nickname act at once', async () => {
+    it('has no nickname buttons: renaming lives in right-click menus (#137)', () => {
       inServer('Big Dog', 'Sammy')
-      const el = show({ user: named, serverId: 'S1' })
-      button(el, 'Reset nickname')!.click()
-      await tick()
-      expect(calls('set_nickname')).toEqual([['set_nickname', { serverId: 'S1', userId: 'U2', nickname: null }]])
-      button(el, 'Clear private nickname')!.click()
-      await tick()
-      expect(calls('set_private_nickname')).toEqual([['set_private_nickname', { userId: 'U2', nickname: null }]])
-    })
-
-    it('your own card offers your server nickname but no private one; the preview offers nothing', () => {
-      inServer(null)
-      let el = show({ user: alex, serverId: 'S1' })
-      expect(button(el, 'Change nickname')).toBeDefined()
-      expect(button(el, 'Set private nickname…')).toBeUndefined()
-      unmount(cmp!)
-      el = show({ user: named, serverId: 'S1', preview: true })
-      expect(button(el, 'Change nickname')).toBeUndefined()
-      expect(button(el, 'Set private nickname…')).toBeUndefined()
+      for (const props of [{ user: named, serverId: 'S1' }, { user: named, serverId: null }, { user: alex, serverId: 'S1' }]) {
+        const el = show(props)
+        const texts = [...el.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '')
+        expect(texts.filter((t) => /nickname/i.test(t))).toEqual([])
+        expect(el.querySelector('.names')).toBeNull()
+        unmount(cmp!)
+        cmp = undefined
+      }
     })
   })
 

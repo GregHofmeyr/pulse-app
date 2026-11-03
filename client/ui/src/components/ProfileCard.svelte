@@ -9,9 +9,8 @@
   import Name from './Name.svelte'
   import Icon from './Icon.svelte'
   import { app, openDm, queueMessage, ui } from '../lib/store.svelte'
-  import { api, errorText } from '../lib/tauri'
-  import { baseName, displayName, serverNick } from '../lib/selectors'
-  import { canServerNick, nickLabel } from '../lib/nicknameMenu'
+  import { errorText } from '../lib/tauri'
+  import { baseName, displayName } from '../lib/selectors'
   import { cardVars } from '../lib/cardTheme'
   import { mediaUrl } from '../lib/emoji'
   import { renderMarkdown } from '../lib/markdown'
@@ -19,7 +18,7 @@
   import { formatMemberSince, formatVoice } from '../lib/profileFormat'
   import BadgeIcon from './BadgeIcon.svelte'
   import { badgeStore, fallbackName } from '../lib/badges.svelte'
-  import { editProfile, openFull, openRename } from '../lib/profileCard.svelte'
+  import { editProfile, openFull } from '../lib/profileCard.svelte'
   import type { User } from '../lib/protocol/User'
   import type { CardProfile } from '../lib/protocol/CardProfile'
   import type { Badge } from '../lib/protocol/Badge'
@@ -60,20 +59,7 @@
   // them, else their display name; the preview draws the display name being edited. The username
   // shows only as the @handle below it.
   const name = $derived(preview ? baseName(user) : displayName(app.state, serverId, user.id))
-  // Renaming (#48): a server nickname needs you and them in this server; a private one is for others.
-  // The same rules as a person's menu (#113, lib/nicknameMenu).
-  const canNick = $derived(!preview && canServerNick(app.state, serverId, user.id))
-  const nick = $derived(serverId ? serverNick(app.state, serverId, user.id) : null)
-  const privateNick = $derived(app.state.privateNicks[user.id] ?? null)
-  let nameError = $state<string | null>(null)
-  async function clear(f: () => Promise<unknown>) {
-    nameError = null
-    try {
-      await f()
-    } catch (e) {
-      nameError = errorText(e)
-    }
-  }
+  // Renaming lives in right-click menus (#137): the card has no nickname buttons.
   const online = $derived(app.state.people[user.id]?.online ?? null)
   const bioHtml = $derived(card.bio ? renderMarkdown(card.bio, [], app.state.customEmoji) : '')
   // The server voice room they're in, only if it is one of your channels (one you can see); a
@@ -137,19 +123,6 @@
       <Name userId={user.id} serverId={null} text={name} interactive={false} size="card" surface="island" user={preview ? user : undefined} />
       <div class="handle">@{user.username}{card.pronouns ? ` · ${card.pronouns}` : ''}</div>
     </div>
-    {#if canNick || (!preview && !mine)}
-      <div class="names">
-        {#if canNick && serverId}
-          <button type="button" onclick={() => openRename({ kind: 'server', userId: user.id, serverId })}>{nickLabel('nick')}</button>
-          {#if nick}<button type="button" onclick={() => clear(() => api.setNickname(serverId, user.id, null))}>{nickLabel('nick-reset')}</button>{/if}
-        {/if}
-        {#if !preview && !mine}
-          <button type="button" onclick={() => openRename({ kind: 'private', userId: user.id })}>{nickLabel('private-nick', !!privateNick)}</button>
-          {#if privateNick}<button type="button" onclick={() => clear(() => api.setPrivateNickname(user.id, null))}>{nickLabel('private-nick-clear')}</button>{/if}
-        {/if}
-      </div>
-      {#if nameError}<p class="err" role="alert">{nameError}</p>{/if}
-    {/if}
     {#if shown.length}
       <div class="badges">
         {#each shown as b (b.key)}
@@ -213,10 +186,6 @@
   .ring { align-self: flex-start; margin-top: -44px; position: relative; border-radius: 50%; padding: 4px; background: var(--card-top); }
   .ring :global(.pres) { width: 24%; height: 24%; right: 2px; bottom: 2px; border-color: var(--card-top); border-width: 3px; }
   .who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
-  /* renaming: small text buttons under the name */
-  .names { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: -4px; }
-  .names button { padding: 0; border: 0; background: none; color: var(--card-text-2); font: inherit; font-size: 12px; cursor: pointer; }
-  .names button:hover, .names button:focus-visible { color: var(--card-text); text-decoration: underline; }
   /* Name's card size is 1.15em: this makes it 20 px, bold */
   .who :global(.name) { font-weight: 700; }
   .who { font-size: calc(20px / 1.15); }

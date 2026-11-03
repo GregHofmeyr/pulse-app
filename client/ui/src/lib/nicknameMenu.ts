@@ -1,35 +1,23 @@
-// The nickname actions (#48) a person's menu offers (#113): the profile card's rules, in one place.
+// The nickname item a person's menu offers (#113, reshaped by #137): the one nickname that applies where the menu
+// opens. In a server that's their server nickname; outside servers (the DM list) your private one for them. Reset
+// and Clear live in the nickname dialog, not in menus; the profile card has no nickname buttons.
 import type { AppState } from './state'
-import { isMember, serverNick } from './selectors'
+import { isMember } from './selectors'
 
-export type NickItemId = 'nick' | 'nick-reset' | 'private-nick' | 'private-nick-clear'
+export type NickItemId = 'nick' | 'private-nick'
 
 /** A server nickname needs you and them in that server; anyone there may set anyone's, their own included. */
 export function canServerNick(s: AppState, serverId: string | null, userId: string): serverId is string {
   return !!serverId && isMember(s, serverId) && (s.members[serverId] ?? []).some((m) => m.user.id === userId)
 }
 
-/** Change / reset their server nickname (reset only when one is set), then set / clear your private one
- *  for them (never for yourself; clear only when you gave one). */
+/** `serverId`: the server the menu opens in, or null outside servers. In a server: change their server nickname
+ *  (yours too). Outside: change your private nickname for them (never for yourself). */
 export function nickItems(s: AppState, serverId: string | null, userId: string): NickItemId[] {
-  const out: NickItemId[] = []
-  if (canServerNick(s, serverId, userId)) {
-    out.push('nick')
-    if (serverNick(s, serverId, userId)) out.push('nick-reset')
-  }
-  if (userId !== s.me?.id) {
-    out.push('private-nick')
-    if (s.privateNicks[userId]) out.push('private-nick-clear')
-  }
-  return out
+  if (serverId) return canServerNick(s, serverId, userId) ? ['nick'] : []
+  return userId !== s.me?.id ? ['private-nick'] : []
 }
 
-/** `hasPrivate`: you've already given them a private nickname (only `private-nick` reads it). */
-export function nickLabel(id: NickItemId, hasPrivate = false): string {
-  switch (id) {
-    case 'nick': return 'Change nickname'
-    case 'nick-reset': return 'Reset nickname'
-    case 'private-nick': return hasPrivate ? 'Change private nickname…' : 'Set private nickname…'
-    case 'private-nick-clear': return 'Clear private nickname'
-  }
+export function nickLabel(id: NickItemId): string {
+  return id === 'nick' ? 'Change server nickname' : 'Change nickname'
 }

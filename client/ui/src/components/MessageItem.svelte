@@ -14,7 +14,7 @@
   import { reactionKey, type Std } from '../lib/emoji'
   import { pickAdds, react } from '../lib/reactions'
   import { untrack } from 'svelte'
-  import { app } from '../lib/store.svelte'
+  import { app, openDm, ui } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import { InlineError } from '../lib/inlineError.svelte'
   import type { CustomEmoji } from '../lib/protocol/CustomEmoji'
@@ -27,6 +27,8 @@
   import { displayName, roleColorFor, userOf } from '../lib/selectors'
   import { appearance } from '../lib/appearance.svelte'
   import { openCard } from '../lib/profileCard.svelte'
+  import MemberMenu from './MemberMenu.svelte'
+  import { menuPoint } from '../lib/participantMenu'
   import { nameOpts } from '../lib/theme.svelte'
   import type { Attachment } from 'svelte/attachments'
   import type { Message } from '../lib/protocol/Message'
@@ -114,6 +116,24 @@
   const inlineError = new InlineError()
   const showError = inlineError.show
   $effect(() => inlineError.stop)
+
+  // --- the author's menu (#137): in a server channel, right-click (or ContextMenu / Shift+F10 on) the author's name
+  // or avatar: View profile, Message, Change server nickname. DMs and groups keep the browser's own menu. ---
+  let authorMenu = $state<{ x: number; y: number; opener: HTMLElement } | null>(null)
+  const authorMenuOn = $derived(!!serverId && !!message.author_id && !pending)
+  /** `zone`: the avatar or the name line; the menu returns focus to its button. */
+  function openAuthorMenu(e: MouseEvent | KeyboardEvent, zone: HTMLElement) {
+    if (!authorMenuOn) return
+    const opener = zone.querySelector<HTMLElement>('button') ?? zone
+    e.preventDefault()
+    authorMenu = { ...menuPoint(e, opener), opener }
+  }
+  function authorKey(e: KeyboardEvent) {
+    if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) openAuthorMenu(e, e.currentTarget as HTMLElement)
+  }
+  function messageAuthor(userId: string) {
+    openDm(userId).then((channelId) => (ui.goTo = channelId), (e) => showError(errorText(e)))
+  }
   async function del() {
     try {
       await onDelete()
@@ -203,10 +223,11 @@
       {#if grouped && !replyTo}
         <span class="gutter"></span>
       {:else}
-        <Avatar id={message.author_id ?? ''} {name} size={40} interactive={!!message.author_id} {serverId} hovered={() => rowHover} />
+        <!-- the author menu is a pointer shortcut; the keyboard route is ContextMenu / Shift+F10 on the avatar or name -->
+        <span class="author" role="presentation" oncontextmenu={(e) => openAuthorMenu(e, e.currentTarget)} onkeydown={authorKey}><Avatar id={message.author_id ?? ''} {name} size={40} interactive={!!message.author_id} {serverId} hovered={() => rowHover} /></span>
       {/if}
       <div class="body">
-        {#if !grouped || replyTo}<div class="meta"><strong>{#if message.author_id}<Name userId={message.author_id} {serverId} text={name} />{:else}{name}{/if}</strong><span class="time">{time}</span></div>{/if}
+        {#if !grouped || replyTo}<div class="meta"><strong role="presentation" oncontextmenu={(e) => openAuthorMenu(e, e.currentTarget)} onkeydown={authorKey}>{#if message.author_id}<Name userId={message.author_id} {serverId} text={name} />{:else}{name}{/if}</strong><span class="time">{time}</span></div>{/if}
         {#if message.deleted}
           <p class="deleted">message deleted</p>
         {:else if editing}
@@ -260,8 +281,13 @@
 {:else}
   {@render item()}
 {/if}
+<!-- outside the row, so focus in the menu doesn't count as focus in the message (its action bar) -->
+{#if authorMenu && serverId && message.author_id}
+  {#key authorMenu}<MemberMenu {serverId} userId={message.author_id} x={authorMenu.x} y={authorMenu.y} opener={authorMenu.opener} onMessage={messageAuthor} onClose={() => (authorMenu = null)} />{/key}
+{/if}
 
 <style>
+  .author { display: contents; }
   .status { display: flex; gap: 10px; align-items: baseline; padding: 0 18px 4px 72px; font-size: 12px; color: var(--text-3); }
   .status .fail { color: var(--danger-text); }
   .status button { border: 0; background: none; padding: 0; font-size: 12px; color: var(--text-2); text-decoration: underline; }
@@ -304,5 +330,7 @@
   .content :global(.emoji-gone.big) { font-size: 1.25em; }
   .content :global(.mention) { color: var(--accent-text); background: var(--accent-soft); border-radius: 4px; padding: 0 3px; font-weight: 600; font-size: calc(1em * var(--name-scale, 1)); line-height: calc(1.5em / var(--name-scale, 1)); vertical-align: baseline; cursor: pointer; }
   /* a gradient name clips its background to the text: the pill background is on this wrapper instead */
+  /* a thin gap between the @ and the name (#137) */
+  .content :global(.mention .at) { margin-right: .15em; }
   .content :global(.mention-wrap) { background: var(--accent-soft); border-radius: 4px; padding: 0 3px; }
 </style>

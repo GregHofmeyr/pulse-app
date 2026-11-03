@@ -64,6 +64,27 @@ describe('NicknameDialog (#48)', () => {
     expect(calls('set_nickname')[0][1]).toEqual({ serverId: 'S1', userId: 'U2', nickname: null })
   })
 
+  it('is titled like the menu item that opens it (#137)', () => {
+    const title = () => document.querySelector('[role=dialog]')!.getAttribute('aria-label')
+    show({ kind: 'server', userId: 'U2', serverId: 'S1' })
+    expect(title()).toBe('Change server nickname')
+    unmount(cmp!)
+    show({ kind: 'server', userId: 'U1', serverId: 'S1' })
+    expect(title()).toBe('Change your server nickname')
+    unmount(cmp!)
+    show({ kind: 'private', userId: 'U2' })
+    expect(title()).toBe('Change nickname')
+  })
+
+  it('Clear shows only when you gave them a private nickname (#137: the only place to clear it)', () => {
+    show({ kind: 'private', userId: 'U2' })
+    expect(button('Clear')).toBeUndefined()
+    unmount(cmp!)
+    show({ kind: 'private', userId: 'U2' }, null, 'Sammy')
+    expect(button('Clear')).toBeDefined()
+    expect(button('Reset')).toBeUndefined()
+  })
+
   it('a private nickname: only you see it', async () => {
     show({ kind: 'private', userId: 'U2' }, null, 'Sammy')
     expect(document.body.textContent).toContain('Only you see this name for Sam 🎸')
