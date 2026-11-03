@@ -1898,34 +1898,69 @@ impl Fixture {
     }
 }
 
-/// A live vote's options and votes are quotes: deleting their channel is harmless (it can be
-/// restored), but it can't be purged until the vote has ended, by the owner or the sweeper.
+/// A live vote's options are quotes: a quotes channel with one on the ballot can't be deleted until
+/// the vote ends (in Recently deleted they'd be options nobody can see, vote for or win with).
 #[tokio::test]
-async fn a_quotes_channel_is_kept_for_good_while_a_vote_is_live() {
+async fn a_quotes_channel_with_an_option_in_a_live_vote_stays_until_the_vote_ends() {
     let f = fixture().await;
+    let other = create_quotes(&f.app, &f.alex_t, f.server, "more").await;
     let q = f.quote("hello").await;
+    f.quote_in(other.id, "not an option").await;
     let e = f.started().await;
+    let r = f.add(&f.alex_t, e.id, q.id).await;
+    assert_eq!(r.status(), 200, "add option");
+    // Its quote is on the ballot: deleting the channel would leave the vote with an option nobody
+    // can see, so it waits for the vote to end.
     let path = format!("/channels/{}", f.ch.id);
     let r = f.call(Method::DELETE, &f.sam_t, &path, None).await;
-    assert_eq!(r.status(), 204);
-    let purge = format!("/channels/{}/permanent", f.ch.id);
-    let r = f.call(Method::DELETE, &f.alex_t, &purge, None).await;
     assert_eq!(r.status(), 409);
     assert!(message_of(r).await.contains("Quote of the Year"));
-    assert_eq!(f.sweep_a_week_on().await, 0);
-    let held = f.in_recently_deleted().await.held.expect("held");
-    assert!(held.contains("Quote of the Year"), "{held}");
     assert_eq!(
         f.count(&format!(
-            "SELECT COUNT(*) FROM messages WHERE id = '{}'",
-            q.id
+            "SELECT COUNT(*) FROM channels WHERE id = '{}' AND deleted_at IS NULL",
+            f.ch.id
         ))
         .await,
         1
     );
+    // A quotes channel with nothing on the ballot isn't held up, deleted or for good.
+    let r = f
+        .call(
+            Method::DELETE,
+            &f.sam_t,
+            &format!("/channels/{}", other.id),
+            None,
+        )
+        .await;
+    assert_eq!(r.status(), 204);
+    let list: Vec<pulse_protocol::rest::DeletedChannel> = get_json(
+        &f.app,
+        &f.alex_t,
+        &format!("/servers/{}/deleted-channels", f.server),
+    )
+    .await;
+    assert_eq!(list[0].held, None, "{list:?}");
+    let r = f
+        .call(
+            Method::DELETE,
+            &f.alex_t,
+            &format!("/channels/{}/permanent", other.id),
+            None,
+        )
+        .await;
+    assert_eq!(r.status(), 204);
     f.ended(&f.alex_t, e.id).await;
-    assert_eq!(f.in_recently_deleted().await.held, None);
-    let r = f.call(Method::DELETE, &f.alex_t, &purge, None).await;
+    let r = f.call(Method::DELETE, &f.sam_t, &path, None).await;
+    assert_eq!(r.status(), 204);
+    // Nobody voted, so nothing won: it purges like any other.
+    let r = f
+        .call(
+            Method::DELETE,
+            &f.alex_t,
+            &format!("/channels/{}/permanent", f.ch.id),
+            None,
+        )
+        .await;
     assert_eq!(r.status(), 204);
 }
 

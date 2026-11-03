@@ -12,7 +12,7 @@ use axum::extract::{Path, State};
 use axum::http::StatusCode;
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, ServerId, UserId};
-use pulse_protocol::rest::{Channel, ChannelKind, DeletedChannel};
+use pulse_protocol::rest::{Channel, ChannelKind, ClipView, DeletedChannel};
 use sqlx::SqliteConnection;
 
 use crate::AppState;
@@ -49,7 +49,7 @@ pub async fn rename(
 ) -> AppResult<Channel> {
     server_channel_for(s, me, id).await?;
     let name = crate::servers::routes::clean_name(name.as_deref().unwrap_or(""))?;
-    let changed = sqlx::query("UPDATE channels SET name = ? WHERE id = ?")
+    let changed = sqlx::query("UPDATE channels SET name = ? WHERE id = ? AND deleted_at IS NULL")
         .bind(&name)
         .bind(id.to_string())
         .execute(&s.db)
@@ -86,6 +86,12 @@ pub async fn delete(
     let (ch, server) = server_channel_for(&s, me, id).await?;
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
+    if ch.kind == ChannelKind::Quotes && on_ballot(&mut tx, id).await? {
+        return Err(AppError::Conflict(
+            "One of its quotes is up in the Quote of the Year vote: end the vote before deleting it."
+                .into(),
+        ));
+    }
     let at = crate::db::now();
     let moved = sqlx::query(
         "UPDATE channels SET deleted_at = ?, deleted_by = ? WHERE id = ? AND deleted_at IS NULL",
@@ -135,23 +141,37 @@ pub async fn delete(
 /// How long a deleted channel waits in Recently deleted before the sweeper purges it.
 pub const RECENTLY_DELETED_DAYS: i64 = 7;
 
-/// Why a deleted channel can't be purged yet, if it can't: the Quote of the Year guards #104 put on
-/// the delete itself, now on the purge (a soft delete is harmless). A quotes channel stays while
-/// its server has a live vote (whose options are quotes), and for good once it holds a winner
-/// (what won is kept when its quote is deleted: `qoty_winners`). The sweeper leaves such a channel
-/// in Recently deleted, where the list shows this as `held`.
+/// Whether one of the channel's quotes is an option of a live Quote of the Year vote. Such a
+/// channel isn't deleted (the vote would offer, count and crown a quote nobody can see), and isn't
+/// purged either (a vote reopened after the delete can bring its options back).
+async fn on_ballot(db: &mut SqliteConnection, id: ChannelId) -> AppResult<bool> {
+    let hit: Option<i64> = sqlx::query_scalar(
+        "SELECT 1 FROM qoty_options o
+         JOIN qoty_events e ON e.id = o.event_id AND e.ended_at IS NULL
+         JOIN messages m ON m.id = o.message_id
+         WHERE m.channel_id = ? LIMIT 1",
+    )
+    .bind(id.to_string())
+    .fetch_optional(&mut *db)
+    .await?;
+    Ok(hit.is_some())
+}
+
+/// Why a deleted channel can't be purged yet, if it can't (the Quote of the Year guards #104 put on
+/// the delete itself): a quotes channel stays while one of its quotes is [`on_ballot`], and for
+/// good once it holds a winner (what won is kept when its quote is deleted: `qoty_winners`). The
+/// sweeper leaves such a channel in Recently deleted, where the list shows this as `held`.
 async fn held(
     db: &mut SqliteConnection,
-    server: ServerId,
     id: ChannelId,
     kind: ChannelKind,
 ) -> AppResult<Option<&'static str>> {
     if kind != ChannelKind::Quotes {
         return Ok(None);
     }
-    if crate::qoty::live_in(db, server).await?.is_some() {
+    if on_ballot(db, id).await? {
         return Ok(Some(
-            "A Quote of the Year vote is on: it can't be deleted for good until the vote ends.",
+            "One of its quotes is up in the Quote of the Year vote: it can't be deleted for good until the vote ends.",
         ));
     }
     let holds_winner: Option<i64> = sqlx::query_scalar(
@@ -252,7 +272,7 @@ pub async fn list_deleted(
         let channel = channel_from_row((id, sid, kind, name, position))?;
         let deleted_by = parse_user(by)?;
         out.push(DeletedChannel {
-            held: held(&mut db, server, channel.id, channel.kind)
+            held: held(&mut db, channel.id, channel.kind)
                 .await?
                 .map(str::to_string),
             can_restore: owner || deleted_by == Some(me),
@@ -307,7 +327,9 @@ pub async fn restore(
     Ok(Json(channel))
 }
 
-/// Each member's read state in `channel`, and the mutes of each who has muted it.
+/// Each member's read state in `channel`, the mutes of each who has muted it, and the clip view of
+/// each who set one (clients drop all three with the channel). Quote reply seen points come back
+/// on the next Ready.
 async fn republish_own_state(s: &AppState, channel: ChannelId) -> AppResult<()> {
     let readers: Vec<String> =
         sqlx::query_scalar("SELECT user_id FROM read_states WHERE channel_id = ?")
@@ -330,6 +352,27 @@ async fn republish_own_state(s: &AppState, channel: ChannelId) -> AppResult<()> 
                 )
                 .await;
         }
+    }
+    let views: Vec<(String, String)> =
+        sqlx::query_as("SELECT user_id, view FROM clip_view_prefs WHERE channel_id = ?")
+            .bind(channel.to_string())
+            .fetch_all(&s.db)
+            .await?;
+    for (u, view) in views {
+        s.hub
+            .publish(
+                &s.db,
+                Event::ClipViewChanged {
+                    user_id: u.parse().map_err(anyhow::Error::from)?,
+                    channel_id: channel,
+                    view: if view == "list" {
+                        ClipView::List
+                    } else {
+                        ClipView::Wall
+                    },
+                },
+            )
+            .await;
     }
     let muters: Vec<String> = sqlx::query_scalar(
         "SELECT DISTINCT user_id FROM notification_prefs
@@ -387,8 +430,8 @@ async fn purge(s: &AppState, id: ChannelId) -> AppResult<()> {
     // Unread and mention counts others publish as absolutes span channels: in commit order.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
-    let (ch, server, _) = deleted_channel(&mut tx, id).await?;
-    if let Some(why) = held(&mut tx, server, id, ch.kind).await? {
+    let (ch, _, _) = deleted_channel(&mut tx, id).await?;
+    if let Some(why) = held(&mut tx, id, ch.kind).await? {
         return Err(AppError::Conflict(why.into()));
     }
     let clips: Vec<String> = sqlx::query_scalar(
@@ -449,7 +492,8 @@ pub async fn purge_expired(s: &AppState, now: chrono::DateTime<chrono::Utc>) -> 
             Ok(()) => purged += 1,
             // Held, or restored or purged in the meantime.
             Err(AppError::Conflict(_) | AppError::NotFound) => {}
-            Err(e) => return Err(e),
+            // One channel that fails doesn't keep the rest (it's tried again next sweep).
+            Err(e) => tracing::warn!(error = ?e, channel = %id, "couldn't purge a deleted channel"),
         }
     }
     Ok(purged)

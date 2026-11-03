@@ -784,3 +784,41 @@ async fn the_sweeper_purges_after_seven_days() {
         1
     );
 }
+
+/// Clients drop a channel's clip view with it, so a restore sends it back to whoever set one.
+#[tokio::test]
+async fn a_restore_brings_back_your_clip_view() {
+    let w = world().await;
+    let clips = create_channel(&w.app, &w.alex.1, w.server, "clips", "clips").await;
+    let r = put(
+        &w.app,
+        &w.sam.1,
+        &format!("/channels/{}/clip-view", clips.id),
+        Some(json!({ "view": "list" })),
+    )
+    .await;
+    assert!(r.is_success(), "clip view {r}");
+    assert_eq!(
+        delete(&w.app, &w.sam.1, &format!("/channels/{}", clips.id)).await,
+        204
+    );
+    let mut rx = w.app.hub.register(w.sam.0, String::new()).rx;
+    assert_eq!(restore(&w, &w.alex.1, clips.id).await.status(), 200);
+    loop {
+        match next_event(&mut rx).await {
+            Event::ClipViewChanged {
+                user_id,
+                channel_id,
+                view,
+            } => {
+                assert_eq!(
+                    (user_id, channel_id, view),
+                    (w.sam.0, clips.id, pulse_protocol::rest::ClipView::List)
+                );
+                break;
+            }
+            Event::ChannelRestored { .. } | Event::ReadStateUpdated { .. } => {}
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+}

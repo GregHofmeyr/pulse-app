@@ -276,8 +276,8 @@ pub struct DeletedChannel {
     /// Only the server owner may purge it now.
     #[serde(default)]
     pub can_purge: bool,
-    /// Set when the sweeper keeps it past `purge_at`, saying why (a quotes channel with a Quote of
-    /// the Year winner, or during a live vote).
+    /// Set while it can't be deleted for good, saying why: a quotes channel holding a Quote of the
+    /// Year winner, or with a quote up in a live vote. The sweeper keeps it past `purge_at`.
     #[serde(default)]
     pub held: Option<String>,
 }
