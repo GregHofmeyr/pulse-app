@@ -1,6 +1,8 @@
 // @-mention autocomplete: what's being typed, who matches, and how inserting a name rewrites the text.
 
-export type Mentionable = { id: string; name: string }
+/** Someone who can be @mentioned: `name` is the name shown here, `username` what a mention is written
+ *  as (the composer shows it as a chip with `name`), `alts` every other name they can be found by. */
+export type Mentionable = { id: string; name: string; username: string; alts: string[] }
 
 /** The partial name after an `@` right before the caret (`''` for a bare `@`), or null. */
 export function mentionQuery(beforeCaret: string): string | null {
@@ -8,19 +10,26 @@ export function mentionQuery(beforeCaret: string): string | null {
   return m ? m[2] : null
 }
 
-/** People whose name starts with `q` (case-insensitive), at most 6. */
-export function suggest(people: Mentionable[], q: string): Mentionable[] {
-  const lq = q.toLowerCase()
-  return people.filter((p) => p.name.toLowerCase().startsWith(lq)).slice(0, 6)
+/** Whether `name`, or one of its words, starts with `lq` (lowercase). */
+const startsWith = (name: string, lq: string) => {
+  const n = name.toLowerCase()
+  return n.startsWith(lq) || n.split(/\s+/).some((w) => w.startsWith(lq))
 }
 
-/** Who matches `q` anywhere in their name or second name (`alt`: a username behind a nickname),
- *  case-insensitive: names that start with it first, then by how early it appears, then A to Z. At
- *  most `max`. For the search box, where you may only remember part of a name. */
-export function rankNames<T extends { name: string; alt?: string }>(items: T[], q: string, max = 8): T[] {
+/** People one of whose names (shown, username, the others) starts with `q` (case-insensitive), at
+ *  most 6. */
+export function suggest<T extends { name: string; username?: string; alts?: string[] }>(people: T[], q: string): T[] {
+  const lq = q.toLowerCase()
+  return people.filter((p) => [p.name, p.username ?? '', ...(p.alts ?? [])].some((n) => n && startsWith(n, lq))).slice(0, 6)
+}
+
+/** Who matches `q` anywhere in their name or other names (`alt`, `alts`: a username or nicknames
+ *  behind the name shown), case-insensitive: names that start with it first, then by how early it
+ *  appears, then A to Z. At most `max`. For the search box, where you may only remember part of a name. */
+export function rankNames<T extends { name: string; alt?: string; alts?: string[] }>(items: T[], q: string, max = 8): T[] {
   const lq = q.toLowerCase()
   const at = (x: T) => {
-    const found = [x.name, x.alt ?? ''].filter((n) => n).map((n) => n.toLowerCase().indexOf(lq)).filter((p) => p >= 0)
+    const found = [x.name, x.alt ?? '', ...(x.alts ?? [])].filter((n) => n).map((n) => n.toLowerCase().indexOf(lq)).filter((p) => p >= 0)
     return found.length ? Math.min(...found) : -1
   }
   return items

@@ -1,6 +1,8 @@
 //! Profiles: avatars, banners, name styles and profile cards.
 
 pub mod colors;
+pub mod names;
+pub mod private;
 pub mod routes;
 pub mod users;
 
@@ -26,6 +28,9 @@ struct ProfileRow {
     bio: Option<String>,
     created_at: String,
 }
+
+/// The most rename rows a profile carries.
+const PROFILE_ARCHIVE_MAX: i64 = 50;
 
 /// A user's full profile, or `None` if there is no such user. Stats are totals across all
 /// servers (plan reconciliation 16).
@@ -63,14 +68,22 @@ pub async fn load_profile(db: &SqlitePool, user: UserId) -> AppResult<Option<Pro
     .fetch_optional(&mut *tx)
     .await?;
 
+    // Every rename counts, resets included; the list here is only the newest (a server's full
+    // archive is paged by `GET /servers/{id}/members/{user}/names`).
+    let times_renamed: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM nickname_history WHERE target_user_id = ?")
+            .bind(&id)
+            .fetch_one(&mut *tx)
+            .await?;
+    let times_renamed = times_renamed as u32;
     let archive: Vec<(String, Option<String>, String, String)> = sqlx::query_as(
         "SELECT server_id, new_nick, changed_by, changed_at FROM nickname_history \
-         WHERE target_user_id = ? ORDER BY changed_at DESC, id DESC",
+         WHERE target_user_id = ? ORDER BY changed_at DESC, id DESC LIMIT ?",
     )
     .bind(&id)
+    .bind(PROFILE_ARCHIVE_MAX)
     .fetch_all(&mut *tx)
     .await?;
-    let times_renamed = archive.len() as u32;
     let name_archive = archive
         .into_iter()
         // A cleared nickname has no name to archive.
@@ -151,6 +164,8 @@ pub struct Validated {
     pub colors: Vec<String>,
     pub pronouns: Option<String>,
     pub bio: Option<String>,
+    /// `None`: keep the current display name.
+    pub display_name: Option<String>,
 }
 
 fn bad(msg: &str) -> AppError {
@@ -207,6 +222,7 @@ pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
             .ok_or_else(bad_colour)
     };
 
+    let display_name = req.display_name.as_deref().map(names::clean).transpose()?;
     let pronouns = text(req.pronouns);
     if let Some(p) = &pronouns {
         if p.chars().count() > PRONOUNS_MAX {
@@ -237,6 +253,7 @@ pub fn validate(req: UpdateProfileRequest) -> AppResult<Validated> {
         colors,
         pronouns,
         bio,
+        display_name,
     })
 }
 

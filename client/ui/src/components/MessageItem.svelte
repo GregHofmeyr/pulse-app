@@ -22,9 +22,9 @@
   import { animateEmojiIn } from '../lib/animate.svelte'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
-  import { mentionLookup, mentionName, styleMentions } from '../lib/mentionStyles'
+  import { mentionLookup, mentionName, showMentions, styleMentions } from '../lib/mentionStyles'
   import { nameCss, resolveNameStyle } from '../lib/nameStyle'
-  import { roleColorFor, userOf } from '../lib/selectors'
+  import { displayName, roleColorFor, userOf } from '../lib/selectors'
   import { appearance } from '../lib/appearance.svelte'
   import { openCard } from '../lib/profileCard.svelte'
   import type { Attachment } from 'svelte/attachments'
@@ -84,14 +84,17 @@
     return [...new Set(ids.filter((id): id is string => !!id))]
   })
   const cssFor = (id: string) => nameCss(resolveNameStyle(userOf(app.state, id), { roleColor: roleColorFor(app.state, serverId, id), showStyles: appearance.showNameStyles }))
-  const mentionCss = $derived(mentioned.map((id) => `${id}\t${cssFor(id)}`).join('\n'))
+  // with the name each pill shows (#47): a rename relabels it, as a style change restyles it
+  const mentionCss = $derived(mentioned.map((id) => `${id}\t${cssFor(id)}\t${displayName(app.state, serverId, id)}`).join('\n'))
   // Only the emoji slice, so the {@html} below re-renders on an emoji change, not on every state update.
   const customEmoji = $derived(app.state.customEmoji)
   const mentionsIn = (_html: string, look: (name: string) => string | null, cssKey: string): Attachment<HTMLElement> => (node) => {
     if (!cssKey || !node.querySelector('.mention')) return
-    const css = new Map(cssKey.split('\n').map((l) => l.split('\t') as [string, string]))
-    styleMentions(node, (n) => { const id = look(n); return id && css.has(id) ? id : null }, (id) => css.get(id)!)
+    const rows = new Map(cssKey.split('\n').map((l) => { const [id, css, name] = l.split('\t'); return [id, { css, name }] as const }))
+    styleMentions(node, (n) => { const id = look(n); return id && rows.has(id) ? id : null }, (id) => rows.get(id)!.css, (id) => rows.get(id)!.name)
   }
+  // the edit box shows mentions as chips with the name that applies, as the composer does
+  const editMention = (username: string) => { const id = lookup(username); return id ? displayName(app.state, serverId, id) : null }
   function openMention(e: MouseEvent | KeyboardEvent) {
     if (e instanceof KeyboardEvent && e.key !== 'Enter' && e.key !== ' ') return
     const pill = (e.target as Element).closest('.mention')
@@ -191,7 +194,7 @@
     onpointerenter={() => (rowHover = true)} onpointerleave={() => (rowHover = false)}>
     {#if replyTo}
       <div class="reply"><span class="hook"></span><strong>{#if replyTo.author_id}<Name userId={replyTo.author_id} {serverId} text={nameOf(replyTo.author_id)} />{:else}{nameOf(null)}{/if}</strong>
-        <span class="snippet">{replyTo.deleted ? 'original message deleted' : replyTo.content.slice(0, 120)}</span></div>
+        <span class="snippet">{replyTo.deleted ? 'original message deleted' : showMentions(replyTo.content, lookup, (id) => displayName(app.state, serverId, id)).slice(0, 120)}</span></div>
     {:else if message.reply_to_id}
       <div class="reply"><span class="hook"></span><span class="snippet">original message not loaded</span></div>
     {/if}
@@ -206,7 +209,7 @@
         {#if message.deleted}
           <p class="deleted">message deleted</p>
         {:else if editing}
-          <EmojiBox bind:this={editBox} bind:text={draft} class="edit" label="Edit message" describedby="{uid}-hint" onkeydown={key} />
+          <EmojiBox bind:this={editBox} bind:text={draft} class="edit" label="Edit message" describedby="{uid}-hint" onkeydown={key} mention={editMention} />
           <small class="hint" id="{uid}-hint">Enter to save · Esc to cancel · Shift+Enter for a new line</small>
           {#if editError}<p class="err" role="alert">{editError}</p>{/if}
         {:else}

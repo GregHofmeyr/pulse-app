@@ -3,6 +3,7 @@
   import Avatar from './Avatar.svelte'
   import Icon from './Icon.svelte'
   import Name from './Name.svelte'
+  import { baseName, displayName } from '../lib/selectors'
 
   let { serverId, onMessage }: { serverId: string; onMessage?: (userId: string) => void } = $props()
   const members = $derived(app.state.members[serverId] ?? [])
@@ -13,10 +14,11 @@
 <aside class="members" aria-label="Members">
   <div class="label">MEMBERS — {members.length}</div>
   {#each members as m (m.user.id)}
-    {@const name = m.nickname ?? m.user.username}
+    {@const name = displayName(app.state, serverId, m.user.id)}
+    {@const base = baseName(m.user)}
     <div class="row" role="presentation" onpointerenter={() => (hovered = m.user.id)} onpointerleave={() => { if (hovered === m.user.id) hovered = null }}>
       <Avatar id={m.user.id} {name} size={32} interactive {serverId} hovered={() => hovered === m.user.id} />
-      <span class="who"><Name userId={m.user.id} {serverId} text={name} />{#if m.nickname}<small>{m.user.username}</small>{/if}</span>
+      <span class="who"><Name userId={m.user.id} {serverId} text={name} />{#if name !== base}<small>{base}</small>{/if}</span>
       {#if onMessage && m.user.id !== app.state.me?.id}
         <button class="msg" aria-label="Message {name}" data-tip="Message" onclick={() => onMessage(m.user.id)}><Icon name="message" size={15} /></button>
       {/if}

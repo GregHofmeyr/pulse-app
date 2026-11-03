@@ -11,6 +11,7 @@
   import Icon from './Icon.svelte'
   import Name from './Name.svelte'
   import { app } from '../lib/store.svelte'
+  import { displayName, namesOf, serverPeople, userOf } from '../lib/selectors'
   import { closeSearch, runSearch, search, type SearchScope } from '../lib/search.svelte'
   import { rankNames } from '../lib/mentions'
   import { activeTerm, chipText, filterRows, HAS_VALUES, hasSearchableWords, parseText, replaceTerm, type Chip, type FilterKey } from '../lib/searchQuery'
@@ -27,13 +28,14 @@
   const placeholder = $derived(serverName ? `Search ${serverName}` : 'Search this conversation')
 
   // Who `from:` and `mentions:` can name: the server's members, or the conversation's people. Matched
-  // on the name shown here and on the username behind a nickname.
+  // on every name they have (username, display name, nickname, your private nickname; #47), shown by
+  // the name that applies here.
   const people = $derived.by(() => {
-    if (serverId) return (app.state.members[serverId] ?? []).map((m) => ({ id: m.user.id, name: m.nickname ?? m.user.username, alt: m.user.username }))
+    if (serverId) return serverPeople(app.state, serverId).map((p) => ({ ...p, alt: p.username }))
     const ids = app.state.dmMembers[channelId] ?? []
     return ids
-      .map((id) => ({ id, name: id === app.state.me?.id ? app.state.me.username : (app.state.people[id]?.user.username ?? ''), alt: undefined as string | undefined }))
-      .filter((p) => p.name)
+      .filter((id) => id === app.state.me?.id || app.state.people[id])
+      .map((id) => ({ id, name: displayName(app.state, null, id), alt: userOf(app.state, id)?.username, alts: namesOf(app.state, null, id) }))
   })
   const channels = $derived(
     serverId
@@ -132,7 +134,7 @@
         if (c) addChip({ key: 'in', id: c.id, label: c.name })
         else left.push(`in:${f.value}`)
       } else {
-        const p = people.find((x) => x.name.toLowerCase() === v || x.alt?.toLowerCase() === v)
+        const p = people.find((x) => x.name.toLowerCase() === v || x.alt?.toLowerCase() === v || x.alts.some((a) => a.toLowerCase() === v))
         if (p) addChip({ key: f.key, id: p.id, label: p.name })
         else left.push(`${f.key}:${f.value}`)
       }

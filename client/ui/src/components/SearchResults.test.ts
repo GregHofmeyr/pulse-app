@@ -13,7 +13,7 @@ import { testMe, testReady } from '../lib/testReady'
 import type { Message } from '../lib/protocol/Message'
 import type { SearchHit } from '../lib/protocol/SearchHit'
 
-const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const msg = (id: string, channel = 'C1', more: Partial<Message> = {}): Message => ({
   id, channel_id: channel, author_id: 'U2', kind: 'normal', content: `text ${id}`,
   reply_to_id: null, created_at: new Date(Date.parse(clock.nowIso) - 3 * 3600_000).toISOString(), edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [],

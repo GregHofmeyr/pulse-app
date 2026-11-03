@@ -28,8 +28,8 @@ import { setClipFiltersShown } from '../lib/clipFiltersShown.svelte'
 import { reactiveProps } from '../lib/testProps.svelte'
 import { testMe, testReady } from '../lib/testReady'
 
-const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
-const kim = { id: 'U3', username: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const kim = { id: 'U3', username: 'kim', display_name: 'kim', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const ready = (over = {}) =>
   testReady([{ id: 'C1', server_id: 'S1', kind: 'clips', name: 'highlights', position: 0 }], {
     members: [{ server_id: 'S1', members: [{ user: testMe, nickname: null }, { user: sam, nickname: null }, { user: kim, nickname: 'Kimmy' }] }],

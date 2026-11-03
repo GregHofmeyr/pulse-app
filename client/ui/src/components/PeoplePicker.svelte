@@ -3,6 +3,7 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import { app } from '../lib/store.svelte'
+  import { displayName, namesOf } from '../lib/selectors'
 
   let {
     title,
@@ -32,14 +33,16 @@
   // the row under the pointer: its avatar animates
   let hovered = $state<string | null>(null)
   const me = $derived(app.state.me?.id)
-  const nameOf = (id: string) => app.state.people[id]?.user.username ?? '?'
+  const nameOf = (id: string) => (app.state.people[id] ? displayName(app.state, null, id) : '?')
   const total = $derived(1 + fixed.length + picked.length)
   const full = $derived(total >= max)
   const people = $derived(
     Object.values(app.state.people)
       .filter((p) => p.user.id !== me && !fixed.includes(p.user.id))
-      .filter((p) => p.user.username.toLowerCase().includes(q.trim().toLowerCase()))
-      .sort((a, b) => a.user.username.localeCompare(b.user.username)),
+      // found by any name they have for you (#47); listed by the one you see
+      .filter((p) => [p.user.username, ...namesOf(app.state, null, p.user.id)].some((n) => n.toLowerCase().includes(q.trim().toLowerCase())))
+      .map((p) => ({ ...p, name: displayName(app.state, null, p.user.id) }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
   )
 
   function toggle(id: string) {
@@ -70,8 +73,8 @@
         <!-- the row is the pick button: the name is styled but not a button of its own -->
         <button class="pick" class:sel disabled={isIn || (full && !sel)} onclick={() => toggle(p.user.id)}
           onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}>
-          <Avatar id={p.user.id} name={p.user.username} size={30} online={p.online} hovered={() => hovered === p.user.id} />
-          <span class="nm"><Name userId={p.user.id} serverId={null} text={p.user.username} interactive={false} />{#if isIn}<small> · already here</small>{/if}</span>
+          <Avatar id={p.user.id} name={p.name} size={30} online={p.online} hovered={() => hovered === p.user.id} />
+          <span class="nm"><Name userId={p.user.id} serverId={null} text={p.name} interactive={false} />{#if isIn}<small> · already here</small>{/if}</span>
           <span class="box" aria-hidden="true"></span>
         </button>
       {:else}

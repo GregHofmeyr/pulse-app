@@ -4,7 +4,7 @@ import { conversationName, conversations, homeBadge, inVoice, isMuted, messageSo
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 
-const user = (id: string, username: string) => ({ id, username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
+const user = (id: string, username: string) => ({ id, username, display_name: username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const msg = (id: string, channel: string, author: string | null, extra: Partial<Message> = {}): Message => ({
   id, channel_id: channel, author_id: author, kind: 'normal', content: 'x', reply_to_id: null,
   created_at: '2026-10-08T10:00:00Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [], ...extra,
@@ -36,7 +36,7 @@ function ready(over: Partial<Ready> = {}): Ready {
     latest: [msg('M3', 'DM1', 'U1'), msg('M9', 'G1', 'U2')],
     streams: [],
     custom_emoji: [],
-    frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
+    frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [],
     ...over,
   }
 }
@@ -49,6 +49,17 @@ describe('conversations', () => {
     expect(conversationName(s, 'G1')).toBe('sam, jo')
     const named = applyEvent(s, { t: 'ChannelUpdated', d: { channel: { id: 'G1', server_id: null, kind: 'group', name: 'raid squad', position: 0 } } }, 0)
     expect(conversationName(named, 'G1')).toBe('raid squad')
+  })
+
+  it('names people by display name, or your private nickname for them, never username (#47, #48)', () => {
+    const s = applyReady(emptyState(), ready({ people: [
+      { user: { ...user('U1', 'sam'), display_name: 'Sam 🎸' }, online: true, last_seen_at: null },
+      { user: { ...user('U2', 'jo'), display_name: 'Jo J' }, online: true, last_seen_at: null },
+    ], private_nicknames: [{ user_id: 'U2', nickname: 'Jojo' }] }))
+    expect(conversationName(s, 'DM1')).toBe('Sam 🎸')
+    expect(conversationName(s, 'G1')).toBe('Sam 🎸, Jojo')
+    const m = msg('A', 'G1', 'U2', { content: 'hi @sam' })
+    expect(previewText(s, m)).toEqual({ text: 'Jojo: hi @Sam 🎸', system: false })
   })
 
   it('lists newest activity first and hides closed ones', () => {

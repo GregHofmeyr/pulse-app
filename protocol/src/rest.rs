@@ -51,7 +51,13 @@ redacting_debug!(SessionResponse { user ; token });
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct User {
     pub id: UserId,
+    /// The login name. Shown only on the profile card; everywhere else shows a display name or
+    /// nickname.
     pub username: String,
+    /// How the person's name looks by default (spec name layers: not unique, 1–32 characters).
+    /// Absent (empty) from older servers: show the username then.
+    #[serde(default)]
+    pub display_name: String,
     pub avatar_hash: Option<String>,
     /// The first-frame still of an animated avatar (`None` for a still one).
     #[serde(default)]
@@ -123,6 +129,43 @@ pub struct UpdateProfileRequest {
     pub style: NameStyle,
     pub pronouns: Option<String>,
     pub bio: Option<String>,
+    /// The new display name; absent keeps the current one (older clients don't send it).
+    #[serde(default)]
+    pub display_name: Option<String>,
+}
+
+/// `PUT /servers/{id}/members/{user}/nickname` and `PUT /me/private-nicknames/{user}`: `None`
+/// (or blank) resets it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct SetNicknameRequest {
+    #[serde(default)]
+    pub nickname: Option<String>,
+}
+
+/// A name you gave someone that only you see. Only ever sent to its owner.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct PrivateNickname {
+    pub user_id: UserId,
+    pub nickname: String,
+}
+
+/// One server-nickname change in the Name Archive; `name: None` is a reset.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct NameChange {
+    pub name: Option<String>,
+    pub changed_by: UserId,
+    pub changed_at: String,
+}
+
+/// `GET /servers/{id}/members/{user}/names`: a page of someone's Name Archive in one server,
+/// newest first.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct NameArchivePage {
+    pub entries: Vec<NameChange>,
+    /// Every change in this server (resets included): "Renamed N times".
+    pub total: u32,
+    /// Pass as `cursor` for the next page (opaque); `None` once there is nothing older.
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Clone, Serialize, Deserialize, TS)]
@@ -1164,6 +1207,7 @@ mod tests {
                     user: User {
                         id: UserId::new(),
                         username: s("alex"),
+                        display_name: String::new(),
                         avatar_hash: None,
                         avatar_still: None,
                         style: Default::default(),

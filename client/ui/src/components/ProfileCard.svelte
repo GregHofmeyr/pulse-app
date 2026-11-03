@@ -8,14 +8,15 @@
   import Name from './Name.svelte'
   import Icon from './Icon.svelte'
   import { app, openDm, queueMessage, ui } from '../lib/store.svelte'
-  import { errorText } from '../lib/tauri'
+  import { api, errorText } from '../lib/tauri'
+  import { baseName, displayName, isMember, serverNick } from '../lib/selectors'
   import { cardVars } from '../lib/cardTheme'
   import { mediaUrl } from '../lib/emoji'
   import { renderMarkdown } from '../lib/markdown'
   import { animateEmojiIn, shouldAnimateProfile, wireAnimated } from '../lib/animate.svelte'
   import { formatMemberSince, formatVoice } from '../lib/profileFormat'
   import { badgeInfo } from '../lib/badges'
-  import { editProfile, openFull } from '../lib/profileCard.svelte'
+  import { editProfile, openFull, openRename } from '../lib/profileCard.svelte'
   import type { User } from '../lib/protocol/User'
   import type { CardProfile } from '../lib/protocol/CardProfile'
   import type { Badge } from '../lib/protocol/Badge'
@@ -43,8 +44,23 @@
       + `; --glow-top-a: ${card.theme_top}${GLOW_ALPHA}; --glow-bottom-a: ${card.theme_bottom}${GLOW_ALPHA}`,
   )
   const mine = $derived(user.id === app.state.me?.id)
-  // Their nickname in this server, else their username (never "unknown": the user is in hand).
-  const name = $derived((serverId && app.state.members[serverId]?.find((m) => m.user.id === user.id)?.nickname) || user.username)
+  // The name that applies here (#47): their nickname in this server, else your private nickname for
+  // them, else their display name; the preview draws the display name being edited. The username
+  // shows only as the @handle below it.
+  const name = $derived(preview ? baseName(user) : displayName(app.state, serverId, user.id))
+  // Renaming (#48): a server nickname needs you and them in this server; a private one is for others.
+  const canNick = $derived(!preview && !!serverId && isMember(app.state, serverId) && !!app.state.members[serverId]?.some((m) => m.user.id === user.id))
+  const nick = $derived(serverId ? serverNick(app.state, serverId, user.id) : null)
+  const privateNick = $derived(app.state.privateNicks[user.id] ?? null)
+  let nameError = $state<string | null>(null)
+  async function clear(f: () => Promise<unknown>) {
+    nameError = null
+    try {
+      await f()
+    } catch (e) {
+      nameError = errorText(e)
+    }
+  }
   const online = $derived(app.state.people[user.id]?.online ?? null)
   const bioHtml = $derived(card.bio ? renderMarkdown(card.bio, [], app.state.customEmoji) : '')
   // The server voice room they're in, only if it is one of your channels (one you can see); a
@@ -99,15 +115,28 @@
   <div class="body">
     {#if !preview && size === 'quick'}
       <!-- the avatar is a way in to the full profile too -->
-      <button type="button" class="ring avatar-link" aria-label="View full profile" onclick={viewFull}><Avatar id={user.id} name={user.username} size={80} place="card" {online} /></button>
+      <button type="button" class="ring avatar-link" aria-label="View full profile" onclick={viewFull}><Avatar id={user.id} {name} size={80} place="card" {online} /></button>
     {:else}
-      <span class="ring"><Avatar id={user.id} name={user.username} size={80} place="card" {online} user={preview ? user : undefined} /></span>
+      <span class="ring"><Avatar id={user.id} {name} size={80} place="card" {online} user={preview ? user : undefined} /></span>
     {/if}
     <div class="who">
       <!-- No server for the style: a card shows the person's own colour, never a role colour (spec §2) -->
       <Name userId={user.id} serverId={null} text={name} interactive={false} size="card" user={preview ? user : undefined} />
-      <div class="handle">{user.username}{card.pronouns ? ` · ${card.pronouns}` : ''}</div>
+      <div class="handle">@{user.username}{card.pronouns ? ` · ${card.pronouns}` : ''}</div>
     </div>
+    {#if canNick || (!preview && !mine)}
+      <div class="names">
+        {#if canNick && serverId}
+          <button type="button" onclick={() => openRename({ kind: 'server', userId: user.id, serverId })}>Change nickname</button>
+          {#if nick}<button type="button" onclick={() => clear(() => api.setNickname(serverId, user.id, null))}>Reset nickname</button>{/if}
+        {/if}
+        {#if !preview && !mine}
+          <button type="button" onclick={() => openRename({ kind: 'private', userId: user.id })}>{privateNick ? 'Change private nickname…' : 'Set private nickname…'}</button>
+          {#if privateNick}<button type="button" onclick={() => clear(() => api.setPrivateNickname(user.id, null))}>Clear private nickname</button>{/if}
+        {/if}
+      </div>
+      {#if nameError}<p class="err" role="alert">{nameError}</p>{/if}
+    {/if}
     {#if badges.length}
       <div class="badges">
         {#each badges as b (b.key)}
@@ -170,6 +199,10 @@
   .ring { align-self: flex-start; margin-top: -44px; position: relative; border-radius: 50%; padding: 4px; background: var(--card-top); }
   .ring :global(.pres) { width: 24%; height: 24%; right: 2px; bottom: 2px; border-color: var(--card-top); border-width: 3px; }
   .who { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+  /* renaming: small text buttons under the name */
+  .names { display: flex; flex-wrap: wrap; gap: 4px 12px; margin-top: -4px; }
+  .names button { padding: 0; border: 0; background: none; color: var(--card-text-2); font: inherit; font-size: 12px; cursor: pointer; }
+  .names button:hover, .names button:focus-visible { color: var(--card-text); text-decoration: underline; }
   /* Name's card size is 1.15em: this makes it 20 px, bold */
   .who :global(.name) { font-weight: 700; }
   .who { font-size: calc(20px / 1.15); }

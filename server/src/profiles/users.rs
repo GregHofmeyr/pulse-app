@@ -8,7 +8,7 @@ use crate::profiles::colors;
 
 /// What [`UserRow`] reads, for a query that selects from `users u` with [`USER_JOIN`].
 pub const USER_COLS: &str =
-    "u.id, u.username, u.avatar_hash, av.still_hash, u.name_font, u.name_color";
+    "u.id, u.username, u.display_name, u.avatar_hash, av.still_hash, u.name_font, u.name_color";
 /// Brings in the avatar's still (`av.still_hash`).
 pub const USER_JOIN: &str = "LEFT JOIN media av ON av.hash = u.avatar_hash";
 
@@ -16,6 +16,7 @@ pub const USER_JOIN: &str = "LEFT JOIN media av ON av.hash = u.avatar_hash";
 pub struct UserRow {
     pub id: String,
     pub username: String,
+    pub display_name: String,
     pub avatar_hash: Option<String>,
     pub still_hash: Option<String>,
     pub name_font: Option<String>,
@@ -27,6 +28,7 @@ impl UserRow {
         Ok(User {
             id: self.id.parse::<UserId>().map_err(anyhow::Error::from)?,
             username: self.username,
+            display_name: self.display_name,
             avatar_hash: self.avatar_hash,
             avatar_still: self.still_hash,
             style: NameStyle {
@@ -54,6 +56,7 @@ mod tests {
         UserRow {
             id: "00000000000000000000000001".into(),
             username: "alex".into(),
+            display_name: "alex".into(),
             avatar_hash: None,
             still_hash: None,
             name_font: None,

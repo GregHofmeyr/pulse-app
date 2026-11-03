@@ -1,10 +1,36 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest'
-import { mentionLookup, styleMentions } from './mentionStyles'
+import { mentionLookup, mentionName, showMentions, styleMentions } from './mentionStyles'
 import { emptyState } from './state'
 
 const pill = (name: string) => `<span class="mention">@${name}</span>`
 const ids: Record<string, string> = { sam: 'U2', kim: 'U3' }
+
+// #47/#48: a pill is written `@username` but shows the name that applies, never the username, and
+// keeps finding its person when that name changes.
+describe('mention pills show the shown name', () => {
+  it('labels known pills, keeps the username for the lookup, and relabels on a rename', () => {
+    const root = document.createElement('div')
+    root.innerHTML = `<p>hi ${pill('Sam')} and ${pill('jo')}</p>`
+    const names: Record<string, string> = { U2: 'Big Dog' }
+    const look = (n: string) => ids[n.toLowerCase()] ?? null
+    styleMentions(root, look, () => 'color: #ffc4a3', (id) => names[id])
+    const [sam, jo] = root.querySelectorAll<HTMLElement>('.mention')
+    expect(sam.textContent).toBe('@Big Dog')
+    expect(mentionName(sam)).toBe('Sam')
+    expect(jo.textContent).toBe('@jo') // nobody known: left as written
+    names.U2 = 'Captain'
+    styleMentions(root, look, () => 'color: #ffc4a3', (id) => names[id])
+    expect(sam.textContent).toBe('@Captain')
+    expect(mentionName(sam)).toBe('Sam')
+  })
+
+  it('plain text (notifications, previews) shows the name too', () => {
+    const look = (n: string) => ids[n.toLowerCase()] ?? null
+    const label = (id: string) => ({ U2: 'Big Dog', U3: 'Kim 🌸' })[id]!
+    expect(showMentions('hey @sam and @KIM, `@sam` @jo a@sam.com', look, label)).toBe('hey @Big Dog and @Kim 🌸, `@sam` @jo a@sam.com')
+  })
+})
 
 describe('styleMentions', () => {
   it('styles known names and leaves unknown pills alone', () => {
@@ -32,7 +58,7 @@ describe('styleMentions', () => {
     expect(kim.style.backgroundImage).toBe('')
   })
   it('looks names up case-insensitively among people and members', () => {
-    const u = (id: string, username: string) => ({ id, username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
+    const u = (id: string, username: string) => ({ id, username, display_name: username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
     const s = { ...emptyState(), people: { U2: { user: u('U2', 'sam'), online: true, last_seen_at: null } }, members: { S1: [{ user: u('U3', 'kim'), nickname: null }] } } as never
     const look = mentionLookup(s)
     expect(look('Sam')).toBe('U2')

@@ -12,7 +12,7 @@
   import { mediaUrl } from '../lib/emoji'
   import { suggest } from '../lib/mentions'
   import { nameKey, stripMarks } from '../lib/quotes'
-  import { displayName } from '../lib/selectors'
+  import { displayName, serverPeople } from '../lib/selectors'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
@@ -90,7 +90,7 @@
   const awardsOf = (r: Row) => (r.id ? (live?.quote?.lines.find((l) => l.id === r.id)?.awards ?? 0) : 0)
   let root = $state<HTMLElement>()
 
-  const members = $derived((app.state.members[serverId] ?? []).map((m) => ({ id: m.user.id, name: m.nickname ?? m.user.username })))
+  const members = $derived(serverPeople(app.state, serverId))
 
   onMount(() => {
     if (editing) focusText(rows[0].key)
@@ -146,8 +146,9 @@
     const q = typed(r)
     if (r.speaker || !q) return
     const key = nameKey(q)
-    const m = (app.state.members[serverId] ?? []).find((x) => nameKey(x.user.username) === key || nameKey(x.nickname ?? x.user.username) === key)
-    r.speaker = m ? { id: m.user.id, name: m.nickname ?? m.user.username } : { id: null, name: q }
+    // any of their names: username, display name, nickname here, your private nickname (#47)
+    const m = members.find((x) => [x.username, ...x.alts].some((n) => nameKey(n) === key))
+    r.speaker = m ? { id: m.id, name: m.name } : { id: null, name: q }
     r.query = ''
     r.open = false
     confirming = []

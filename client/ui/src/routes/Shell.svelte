@@ -13,6 +13,7 @@
   import ClipsChannel from '../components/ClipsChannel.svelte'
   import Settings, { type Section } from '../components/Settings.svelte'
   import FullProfile from '../components/FullProfile.svelte'
+  import NicknameDialog from '../components/NicknameDialog.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
   import { clickOutside } from '../lib/actions'
   import ReportBug from '../components/ReportBug.svelte'
@@ -28,7 +29,7 @@
   import { closeSearch, search } from '../lib/search.svelte'
   // Profiles: the quick card and the full profile
   import ProfileCardPopover from '../components/ProfileCardPopover.svelte'
-  import { closeFull, openCard, profileUi } from '../lib/profileCard.svelte'
+  import { closeFull, closeRename, openCard, profileUi } from '../lib/profileCard.svelte'
   import { onMount, tick, untrack } from 'svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { findWatch, followLiveFreeze, stream, streamApi } from '../lib/stream/stream.svelte'
@@ -40,7 +41,7 @@
   import { app, clock, openDm, ui } from '../lib/store.svelte'
   import { applyEvent, dropClipJob, setClipJob, trimHistory } from '../lib/state'
   import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
-  import { isMember, liveIn } from '../lib/selectors'
+  import { baseName, displayName, isMember, liveIn } from '../lib/selectors'
   import { CONN_PILL_DELAY_MS, isRefusal } from '../lib/conn'
   import { avatarColor, initial } from '../lib/avatar'
   import Avatar from '../components/Avatar.svelte'
@@ -521,9 +522,9 @@
       <VoiceStatus />
       <div class="me">
         <!-- your avatar opens your quick card (like anyone's); the rest opens the account menu -->
-        <button type="button" class="me-avatar" aria-label="Your profile" data-tip="Your profile" onclick={(e) => openCard(me.id, null, e.currentTarget)}><Avatar id={me.id} name={me.username} size={34} /></button>
+        <button type="button" class="me-avatar" aria-label="Your profile" data-tip="Your profile" onclick={(e) => openCard(me.id, null, e.currentTarget)}><Avatar id={me.id} name={baseName(me)} size={34} /></button>
         <button bind:this={menuToggle} class="who-btn" data-tip="Account" data-menu-toggle aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
-          <span class="who"><Name userId={me.id} serverId={null} text={me.username} interactive={false} /><small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
+          <span class="who"><Name userId={me.id} serverId={null} text={baseName(me)} interactive={false} /><small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
         </button>
         {#if voice.channelId}
           <button class="icon-btn me-btn" class:on={voice.controls.muted} aria-pressed={voice.controls.muted} aria-label={voice.controls.muted ? "Unmute" : "Mute"} onclick={() => voiceApi.toggleMute()}>
@@ -581,6 +582,7 @@
 <!-- Profiles: the quick card (one at a time), and the full profile's place (Task 12 renders it here) -->
 <ProfileCardPopover />
 {#if profileUi.full}<FullProfile userId={profileUi.full.userId} serverId={profileUi.full.serverId} onClose={closeFull} />{/if}
+{#if profileUi.rename}<NicknameDialog target={profileUi.rename} onClose={closeRename} />{/if}
 {#if creating}
   <div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" onclick={() => (creating = false)}></div>
@@ -599,7 +601,7 @@
 {#if picker?.mode === 'new'}
   <PeoplePicker title="New message" hint="Pick one person for a DM, or several for a group." action="Start" onDone={pickerDone} onClose={() => (picker = null)} />
 {:else if picker?.mode === 'add' && pickerTarget?.kind === 'dm'}
-  {@const other = app.state.people[pickerOthers[0]]?.user.username ?? 'them'}
+  {@const other = app.state.people[pickerOthers[0]] ? displayName(app.state, null, pickerOthers[0]) : 'them'}
   <PeoplePicker title="Add people" fixed={pickerOthers} action="Create group"
     hint="This starts a new group with you, {other} and the people you pick. Your DM with {other} stays as it is."
     onDone={pickerDone} onClose={() => (picker = null)} />

@@ -4,4 +4,8 @@ import type { NameStyle } from "./NameStyle";
 /**
  * `PUT /me/profile`: the whole editable profile at once.
  */
-export type UpdateProfileRequest = { avatar_hash: string | null, banner_hash: string | null, theme_top: string, theme_bottom: string, style: NameStyle, pronouns: string | null, bio: string | null, };
+export type UpdateProfileRequest = { avatar_hash: string | null, banner_hash: string | null, theme_top: string, theme_bottom: string, style: NameStyle, pronouns: string | null, bio: string | null, 
+/**
+ * The new display name; absent keeps the current one (older clients don't send it).
+ */
+display_name: string | null, };

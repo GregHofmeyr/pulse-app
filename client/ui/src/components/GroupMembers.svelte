@@ -4,13 +4,16 @@
   import Name from './Name.svelte'
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
+  import { displayName } from '../lib/selectors'
 
   let { channelId }: { channelId: string } = $props()
+  // by the name you see them by (#47)
   const members = $derived(
     (app.state.dmMembers[channelId] ?? [])
       .map((id) => app.state.people[id])
       .filter((p) => !!p)
-      .sort((a, b) => a.user.username.localeCompare(b.user.username)),
+      .map((p) => ({ ...p, name: displayName(app.state, null, p.user.id) }))
+      .sort((a, b) => a.name.localeCompare(b.name)),
   )
   let error = $state('')
   // the row under the pointer: its avatar animates
@@ -30,10 +33,10 @@
   <div class="label">MEMBERS — {members.length}</div>
   {#each members as p (p.user.id)}
     <div class="row" role="presentation" onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}>
-      <Avatar id={p.user.id} name={p.user.username} size={32} online={p.online} interactive serverId={null} hovered={() => hovered === p.user.id} />
-      <span class="who"><Name userId={p.user.id} serverId={null} text={p.user.username} />{#if p.user.id === app.state.me?.id}<small> (you)</small>{/if}</span>
+      <Avatar id={p.user.id} name={p.name} size={32} online={p.online} interactive serverId={null} hovered={() => hovered === p.user.id} />
+      <span class="who"><Name userId={p.user.id} serverId={null} text={p.name} />{#if p.user.id === app.state.me?.id}<small> (you)</small>{/if}</span>
       {#if p.user.id !== app.state.me?.id}
-        <button class="x" aria-label="Remove {p.user.username}" data-tip="Remove from group" onclick={() => remove(p.user.id)}><Icon name="x" size={14} /></button>
+        <button class="x" aria-label="Remove {p.name}" data-tip="Remove from group" onclick={() => remove(p.user.id)}><Icon name="x" size={14} /></button>
       {/if}
     </div>
   {/each}

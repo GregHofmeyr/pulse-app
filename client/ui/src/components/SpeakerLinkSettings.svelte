@@ -4,14 +4,14 @@
   import { app } from '../lib/store.svelte'
   import { api, errorText } from '../lib/tauri'
   import { suggest } from '../lib/mentions'
-  import { displayName } from '../lib/selectors'
+  import { displayName, serverPeople } from '../lib/selectors'
   import type { Server } from '../lib/protocol/Server'
   import type { SpeakerLink } from '../lib/protocol/SpeakerLink'
 
   let { server }: { server: Server } = $props()
 
   const links = $derived([...(app.state.speakerLinks[server.id] ?? [])].sort((a, b) => a.name.localeCompare(b.name)))
-  const members = $derived((app.state.members[server.id] ?? []).map((m) => ({ id: m.user.id, name: m.nickname ?? m.user.username })))
+  const members = $derived(serverPeople(app.state, server.id))
   const nameOf = (id: string) => displayName(app.state, server.id, id)
 
   let error = $state('')

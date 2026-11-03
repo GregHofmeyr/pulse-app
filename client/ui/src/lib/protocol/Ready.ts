@@ -8,6 +8,7 @@ import type { Game } from "./Game";
 import type { Message } from "./Message";
 import type { Mute } from "./Mute";
 import type { Person } from "./Person";
+import type { PrivateNickname } from "./PrivateNickname";
 import type { QotyEvent } from "./QotyEvent";
 import type { ReadState } from "./ReadState";
 import type { Server } from "./Server";
@@ -71,4 +72,8 @@ games: Array<Game>,
 /**
  * Your chosen view of each clips channel you changed from the default.
  */
-clip_views: Array<ClipViewPref>, };
+clip_views: Array<ClipViewPref>, 
+/**
+ * The names you gave people that only you see.
+ */
+private_nicknames: Array<PrivateNickname>, };

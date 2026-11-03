@@ -72,7 +72,7 @@ describe('profile pictures', () => {
     expect(invoke).toHaveBeenCalledWith('get_profile', { userId: 'U1' })
     const request = {
       avatar_hash: null, banner_hash: null, theme_top: '#3a3d46', theme_bottom: '#16171b',
-      style: { font: null, colors: [] }, pronouns: null, bio: null,
+      style: { font: null, colors: [] }, pronouns: null, bio: null, display_name: 'alex',
     }
     await api.updateProfile(request)
     expect(invoke).toHaveBeenCalledWith('update_profile', { request })

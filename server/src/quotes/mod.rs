@@ -87,7 +87,8 @@ pub struct CleanLine {
     pub speaker_id: Option<UserId>,
     pub speaker_name: Option<String>,
     pub speaker_key: Option<String>,
-    /// Who to show in the plain rendering: the member's username or the plain name.
+    /// Who to show in the plain rendering: the member's nickname there, else their display name,
+    /// or the plain name.
     pub speaker_label: String,
     pub text: Option<String>,
     pub media_hash: Option<String>,
@@ -182,7 +183,7 @@ pub async fn check_lines(
     Ok(())
 }
 
-/// Usernames of the lines' member speakers who are in `server`.
+/// The names the lines' member speakers who are in `server` show there: nickname, else display name.
 async fn member_names(
     db: &mut SqliteConnection,
     server: ServerId,
@@ -196,7 +197,7 @@ async fn member_names(
         return Ok(HashMap::new());
     }
     let mut q = sqlx::QueryBuilder::new(
-        "SELECT u.id, u.username FROM server_members sm JOIN users u ON u.id = sm.user_id
+        "SELECT u.id, COALESCE(sm.nickname, u.display_name) FROM server_members sm JOIN users u ON u.id = sm.user_id
          WHERE sm.server_id = ",
     );
     q.push_bind(server.to_string());

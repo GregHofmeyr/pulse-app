@@ -119,8 +119,10 @@ pub async fn members_of_my_conversations(
     Ok(out)
 }
 
-async fn username(db: &SqlitePool, u: UserId) -> AppResult<String> {
-    Ok(load_user(db, u).await?.username)
+/// How a system line names someone: their display name (system lines have no server, and the
+/// server never knows private nicknames).
+async fn shown_name(db: &SqlitePool, u: UserId) -> AppResult<String> {
+    Ok(load_user(db, u).await?.display_name)
 }
 
 async fn group_for(s: &AppState, me: UserId, id: ChannelId) -> AppResult<Channel> {
@@ -206,11 +208,11 @@ async fn add_members(
         .await;
     let mut names = Vec::new();
     for u in &new {
-        names.push(username(&s.db, *u).await?);
+        names.push(shown_name(&s.db, *u).await?);
     }
     let content = format!(
         "{} added {}",
-        username(&s.db, me).await?,
+        shown_name(&s.db, me).await?,
         crate::messages::system::join_names(&names)
     );
     crate::messages::system::post(
@@ -342,15 +344,15 @@ async fn announce_removal(
         .await;
     let (content, payload) = if user == me {
         (
-            format!("{} left", username(&s.db, me).await?),
+            format!("{} left", shown_name(&s.db, me).await?),
             serde_json::json!({"type": "member_left", "user": me}),
         )
     } else {
         (
             format!(
                 "{} removed {}",
-                username(&s.db, me).await?,
-                username(&s.db, user).await?
+                shown_name(&s.db, me).await?,
+                shown_name(&s.db, user).await?
             ),
             serde_json::json!({"type": "member_removed", "by": me, "user": user}),
         )
@@ -403,7 +405,7 @@ async fn rename(
             },
         )
         .await;
-    let who = username(&s.db, me).await?;
+    let who = shown_name(&s.db, me).await?;
     let content = match &name {
         Some(n) => format!("{who} renamed the group to {n}"),
         None => format!("{who} removed the group name"),

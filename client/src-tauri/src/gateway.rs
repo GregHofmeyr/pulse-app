@@ -1016,6 +1016,7 @@ mod tests {
                         me: User {
                             id: pulse_protocol::ids::UserId::new(),
                             username: "alex".into(),
+                            display_name: "alex".into(),
                             avatar_hash: None,
                             avatar_still: None,
                             style: Default::default(),
@@ -1038,6 +1039,7 @@ mod tests {
                         thread_seen: vec![],
                         games: vec![],
                         clip_views: vec![],
+                        private_nicknames: vec![],
                     });
                     ws.send(tokio_tungstenite::tungstenite::Message::text(
                         serde_json::to_string(&ready).unwrap(),

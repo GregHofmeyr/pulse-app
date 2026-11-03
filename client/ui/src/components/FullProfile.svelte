@@ -8,11 +8,12 @@
   import Icon from './Icon.svelte'
   import { modal } from '../lib/actions'
   import { app, loadProfile, revalidateProfile } from '../lib/store.svelte'
-  import { userOf } from '../lib/selectors'
+  import { displayName, serverNick, userOf } from '../lib/selectors'
   import { DEFAULT_THEME, cardVars } from '../lib/cardTheme'
   import { twemojiUrl } from '../lib/emoji'
   import { animatedEmoji, stillSrc } from '../lib/animate.svelte'
-  import { errorText } from '../lib/tauri'
+  import { api, errorText } from '../lib/tauri'
+  import type { NameChange } from '../lib/protocol/NameChange'
   import { formatMemberSince, formatVoice } from '../lib/profileFormat'
   import type { CardProfile } from '../lib/protocol/CardProfile'
 
@@ -41,15 +42,47 @@
     untrack(() => load(id))
   })
 
-  // Newest first, whatever order the server sent.
+  // Opened outside a server: the newest renames everywhere, from the profile, newest first whatever
+  // order the server sent.
   const archive = $derived([...(cached?.name_archive ?? [])].sort((a, b) => b.changed_at.localeCompare(a.changed_at)))
+  // Opened in a server: that server's whole Name Archive (#48), paged, resets included.
+  let serverArchive = $state<{ key: string; entries: NameChange[]; total: number; next: string | null } | null>(null)
+  let archiveError = $state<string | null>(null)
+  let archiveBusy = $state(false)
+  // Only the newest load lands: a reload (a rename) supersedes a page still on its way, whose
+  // cursor belongs to the list the reload replaced.
+  let archiveSeq = 0
+  async function loadArchive(sid: string, uid: string, cursor: string | null) {
+    const key = `${sid}\t${uid}`
+    const seq = ++archiveSeq
+    archiveBusy = true
+    archiveError = null
+    try {
+      const page = await api.nameArchive(sid, uid, cursor)
+      if (seq !== archiveSeq) return
+      const before = cursor && serverArchive?.key === key ? serverArchive.entries : []
+      serverArchive = { key, entries: [...before, ...page.entries], total: page.total, next: page.next_cursor }
+    } catch (e) {
+      if (seq === archiveSeq) archiveError = errorText(e)
+    } finally {
+      if (seq === archiveSeq) archiveBusy = false
+    }
+  }
+  // their nickname here: a rename while this is open (the gateway's MemberUpdated) reloads the archive
+  const nickHere = $derived(serverId ? serverNick(app.state, serverId, userId) : null)
+  $effect(() => {
+    const [sid, uid] = [serverId, userId]
+    void nickHere
+    if (sid) untrack(() => loadArchive(sid, uid, null))
+    else serverArchive = null
+  })
   const serverName = (id: string) => app.state.servers.find((s) => s.id === id)?.name ?? 'a server'
   const customOf = (key: string) => app.state.customEmoji[key.slice(7)]
 </script>
 
 <div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={onClose}></div>
-  <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Profile of {user?.username ?? 'user'}" tabindex="-1" use:modal={onClose} style={vars}>
+  <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Profile of {user ? displayName(app.state, serverId, user.id) : 'user'}" tabindex="-1" use:modal={onClose} style={vars}>
     <button class="close icon-btn round modal-close" aria-label="Close profile" onclick={onClose}><Icon name="x" size={16} /></button>
     <div class="left">
       {#if user}
@@ -84,7 +117,25 @@
           </dl>
         </section>
       {/if}
-      {#if archive.length > 0}
+      {#if serverId}
+        {#if serverArchive && serverArchive.total > 0}
+          <section class="board">
+            <h2>Name Archive</h2>
+            <p class="count">Renamed {serverArchive.total} {serverArchive.total === 1 ? 'time' : 'times'}</p>
+            <ul class="archive">
+              {#each serverArchive.entries as e, i (`${i}\t${e.changed_at}\t${e.changed_by}`)}
+                <li>
+                  {#if e.name}<strong>{e.name}</strong>{:else}<strong class="reset">Reset</strong>{/if}
+                  <span>by <Name userId={e.changed_by} {serverId} interactive={false} /></span>
+                  <time datetime={e.changed_at}>{formatMemberSince(e.changed_at)}</time>
+                </li>
+              {/each}
+            </ul>
+            {#if serverArchive.next}<button type="button" class="retry more" disabled={archiveBusy} onclick={() => serverId && loadArchive(serverId, userId, serverArchive!.next)}>Load more</button>{/if}
+          </section>
+        {/if}
+        {#if archiveError}<p class="err" role="alert">{archiveError}</p>{/if}
+      {:else if archive.length > 0}
         <section class="board">
           <h2>Name Archive</h2>
           <ul class="archive">
@@ -126,6 +177,9 @@
   .archive { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; font-size: 13px; }
   .archive li { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: baseline; }
   .archive span, .archive time { color: var(--card-text-2); }
+  .archive .reset { font-style: italic; font-weight: 500; color: var(--card-text-2); }
+  .count { margin: -4px 0 10px; font-size: 13px; color: var(--card-text-2); }
+  .more { margin: 10px 0 0; }
   .err { margin: 6px 0 0; padding: 6px 10px; border-radius: 8px; background: var(--bg-3); color: var(--text-2); font-size: 12px; }
   .retry { margin-left: 6px; padding: 2px 10px; border-radius: 6px; border: 1px solid var(--bg-4); background: var(--bg-2); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
   @media (max-width: 760px) {

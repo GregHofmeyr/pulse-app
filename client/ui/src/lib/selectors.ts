@@ -4,6 +4,7 @@ import type { StreamInfo } from './protocol/StreamInfo'
 import type { User } from './protocol/User'
 import type { AppState } from './state'
 import type { Message } from './protocol/Message'
+import type { Mentionable } from './mentions'
 
 const byPosition = (a: Channel, b: Channel) => a.position - b.position || (a.name ?? '').localeCompare(b.name ?? '')
 
@@ -21,18 +22,27 @@ export function isMember(s: AppState, serverId: string): boolean {
   return !!s.me && (s.members[serverId] ?? []).some((m) => m.user.id === s.me!.id)
 }
 
-/** Server nickname if set, else username. */
+/** How someone's name looks by default: their display name (an older server sends none: then the
+ *  username). */
+export function baseName(u: Pick<User, 'username' | 'display_name'>): string {
+  return u.display_name || u.username
+}
+
+/** The server nickname someone has in `serverId`, if they're in it and have one. */
+export function serverNick(s: AppState, serverId: string | null, userId: string): string | null {
+  if (!serverId) return null
+  return (s.members[serverId] ?? []).find((x) => x.user.id === userId)?.nickname ?? null
+}
+
+/** THE name shown for a person (#47, #48), used wherever one renders. Inside a server: their
+ *  nickname there, else the private nickname you gave them, else their display name. Everywhere
+ *  else (`serverId` null): your private nickname for them, else their display name. The username is
+ *  never a name once a display name exists; only the profile card shows it. */
 export function displayName(s: AppState, serverId: string | null, userId: string): string {
-  if (serverId) {
-    const m = (s.members[serverId] ?? []).find((x) => x.user.id === userId)
-    if (m) return m.nickname ?? m.user.username
-  }
-  for (const list of Object.values(s.members)) {
-    const m = list.find((x) => x.user.id === userId)
-    if (m) return m.user.username
-  }
-  if (s.me?.id === userId) return s.me.username
-  return 'unknown'
+  const nick = serverNick(s, serverId, userId) ?? (userId !== s.me?.id ? s.privateNicks[userId] : undefined)
+  if (nick) return nick
+  const u = userId === s.me?.id ? s.me : userOf(s, userId)
+  return u ? baseName(u) : 'unknown'
 }
 
 export type Occupant = { userId: string; name: string; muted: boolean; deafened: boolean }
@@ -108,13 +118,36 @@ export function groupedWith(list: Message[], i: number): boolean {
     && new Date(m.created_at).getTime() - new Date(prev.created_at).getTime() < 5 * 60_000
 }
 
-/** Who can be @mentioned in a channel: a DM/group's members, or everyone for a server's channels (never me). */
-export function mentionablesFor(s: AppState, channelId: string): { id: string; name: string }[] {
-  const ids = s.channels[channelId]?.server_id === null ? (s.dmMembers[channelId] ?? []) : Object.keys(s.people)
+/** Every name someone can be found by in `serverId`'s views (or outside a server): display name,
+ *  server nickname, your private nickname for them, without repeats. Not the username. */
+export function namesOf(s: AppState, serverId: string | null, userId: string): string[] {
+  const u = userOf(s, userId)
+  const all = [u ? baseName(u) : '', serverNick(s, serverId, userId) ?? '', userId !== s.me?.id ? (s.privateNicks[userId] ?? '') : '']
+  return all.filter((n, i) => n && all.indexOf(n) === i)
+}
+
+/** A server's members as pickers list them (speakers, search's `from:`): the name shown there, and
+ *  the username and other names they can be found by. */
+export function serverPeople(s: AppState, serverId: string): Mentionable[] {
+  return (s.members[serverId] ?? []).map((m) => ({ id: m.user.id, name: displayName(s, serverId, m.user.id), username: m.user.username, alts: namesOf(s, serverId, m.user.id) }))
+}
+
+/** Who can be @mentioned in a channel: a DM/group's members, or everyone for a server's channels (never me),
+ *  as the name shown there, their username (what a mention is written as) and every name they can be found by. */
+export function mentionablesFor(s: AppState, channelId: string): Mentionable[] {
+  const ch = s.channels[channelId]
+  const serverId = ch?.server_id ?? null
+  const ids = ch?.server_id === null ? (s.dmMembers[channelId] ?? []) : Object.keys(s.people)
   return ids
-    .filter((id) => id !== s.me?.id)
-    .map((id) => ({ id, name: s.people[id]?.user.username ?? '' }))
-    .filter((p) => p.name)
+    .filter((id) => id !== s.me?.id && s.people[id])
+    .map((id) => ({ id, name: displayName(s, serverId, id), username: s.people[id].user.username, alts: namesOf(s, serverId, id) }))
+}
+
+/** The usernames a message's `@name` pills are made for in a channel: everyone mentionable there, and
+ *  you (a mention of you shows your name too, #47; you're only left out of the autocomplete). */
+export function pillNamesFor(s: AppState, channelId: string): string[] {
+  const names = mentionablesFor(s, channelId).map((p) => p.username)
+  return s.me ? [...names, s.me.username] : names
 }
 
 /** A name lookup for one server's views (`state` reads the current state); no author is "Pulse". */

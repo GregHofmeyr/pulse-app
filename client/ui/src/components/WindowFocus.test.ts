@@ -31,8 +31,8 @@ import { app, startListening, ui } from '../lib/store.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { watchWindowFocus, windowFocus } from '../lib/windowFocus.svelte'
 
-const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
-const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const msg = (id: string, channel_id: string): Message => ({
   id, channel_id, author_id: 'U2', kind: 'normal', content: 'hi', reply_to_id: null,
   created_at: '2026-10-01T00:00:00.000Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [],
@@ -41,7 +41,7 @@ function ready() {
   app.state = applyReady(emptyState(), {
     me, servers: [], channels: [{ id: 'D1', server_id: null, kind: 'dm', name: '', position: 0 }],
     members: [], dm_members: [{ channel_id: 'D1', members: [me, sam] }], voice: [], people: [], read_states: [], mutes: [],
-    hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
+    hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [],
   } as never)
 }
 const sounds = () => invoke.mock.calls.filter((c) => c[0] === 'play_sound').length

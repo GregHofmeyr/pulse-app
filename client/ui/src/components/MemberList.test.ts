@@ -17,8 +17,8 @@ import { closeCard, profileUi } from '../lib/profileCard.svelte'
 const A = 'a'.repeat(64)
 const S = 'b'.repeat(64)
 const url = (h: string) => `pulse-media://localhost/${h}`
-const alex = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
-const sam = { id: 'U2', username: 'sam', avatar_hash: A, avatar_still: S, style: { font: 'fredoka', colors: ['#ffc4a3'] } }
+const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: A, avatar_still: S, style: { font: 'fredoka', colors: ['#ffc4a3'] } }
 
 let cmp: ReturnType<typeof mount> | undefined
 beforeEach(() => {
@@ -69,5 +69,23 @@ describe('MemberList', () => {
     app.state = { ...app.state, members: { S1: [app.state.members.S1[0], { user: { ...sam, style: { font: null, colors: ['#a3d8ff'] } }, nickname: 'Sammy' }] } }
     flushSync()
     expect(row(1).querySelector('.name')!.getAttribute('style')).toContain('rgb(163, 216, 255)')
+  })
+
+  it('shows the name that applies, with the display name small under a nickname, never the username (#47)', () => {
+    app.state = { ...app.state, members: { S1: [app.state.members.S1[0], { user: { ...sam, display_name: 'Sam 🎸' }, nickname: 'Sammy' }] } }
+    flushSync()
+    expect(row(1).querySelector('.name')!.textContent).toBe('Sammy')
+    expect(row(1).querySelector('small')!.textContent).toBe('Sam 🎸')
+    expect(row(1).textContent).not.toContain('sam')
+    // no nickname: the display name, nothing small
+    app.state = { ...app.state, members: { S1: [app.state.members.S1[0], { user: { ...sam, display_name: 'Sam 🎸' }, nickname: null }] } }
+    flushSync()
+    expect(row(1).querySelector('.name')!.textContent).toBe('Sam 🎸')
+    expect(row(1).querySelector('small')).toBeNull()
+    // your private nickname for them, when they have no server nickname
+    app.state = { ...app.state, privateNicks: { U2: 'Bestie' } }
+    flushSync()
+    expect(row(1).querySelector('.name')!.textContent).toBe('Bestie')
+    expect(row(1).querySelector('small')!.textContent).toBe('Sam 🎸')
   })
 })

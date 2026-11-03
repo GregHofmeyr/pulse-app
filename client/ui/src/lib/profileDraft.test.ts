@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { charCount, draftFrom, editsSince, isDirty, normalBio, previewCard, previewUser, toRequest, type Draft } from './profileDraft'
+import { charCount, draftFrom, editsSince, isDirty, nameProblem, normalBio, previewCard, previewUser, toRequest, type Draft } from './profileDraft'
 import type { Profile } from './protocol/Profile'
 import type { User } from './protocol/User'
 
-const alex: User = { id: 'U1', username: 'alex', avatar_hash: 'a1', avatar_still: 'a1s', style: { font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'] } }
+const alex: User = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: 'a1', avatar_still: 'a1s', style: { font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'] } }
 const profile: Profile = {
   user: alex,
   card: { banner_hash: 'b1', banner_still: null, theme_top: '#c2457a', theme_bottom: '#3a1f5e', pronouns: 'they/them', bio: 'hi\nthere' },
@@ -40,15 +40,32 @@ describe('profileDraft', () => {
     expect(d).toEqual({
       avatarHash: 'a1', avatarStill: 'a1s', bannerHash: 'b1', bannerStill: null,
       themeTop: '#c2457a', themeBottom: '#3a1f5e', font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'],
-      pronouns: 'they/them', bio: 'hi\nthere',
+      pronouns: 'they/them', bio: 'hi\nthere', displayName: profile.user.display_name,
     })
     expect(toRequest(d)).toEqual({
       avatar_hash: 'a1', banner_hash: 'b1', theme_top: '#c2457a', theme_bottom: '#3a1f5e',
       style: { font: 'fredoka', colors: ['#ffbe7a', '#ff7fae'] }, pronouns: 'they/them', bio: 'hi\nthere',
+      display_name: profile.user.display_name,
     })
     // the draft holds its own colours: editing it never touches the profile
     d.colors.push('#000000')
     expect(profile.user.style.colors).toHaveLength(2)
+  })
+
+  it('name rules match the server (profiles/names.rs)', () => {
+    expect(nameProblem('Alex 🎸')).toBeNull()
+    expect(nameProblem('a\u200db')).toBeNull()
+    for (const bad of ['', '   ', 'x'.repeat(33)]) expect(nameProblem(bad), bad).toContain('1 to 32')
+    expect(nameProblem('é'.repeat(32))).toBeNull()
+    for (const bad of ['a\nb', 'a\tb', 'a\u2028b', 'a\u202eb', 'a\u2066b']) expect(nameProblem(bad), bad).toContain('line breaks')
+    for (const bad of ['\u200b', '\u200b\ufeff', '\u3164']) expect(nameProblem(bad), bad).toContain('see')
+  })
+
+  it('the display name: trimmed when sent, the username when an older server sent none (#47)', () => {
+    const d = { ...draftFrom(profile), displayName: '  Alex 🎸  ' }
+    expect(toRequest(d).display_name).toBe('Alex 🎸')
+    expect(previewUser(profile.user, d).display_name).toBe('Alex 🎸')
+    expect(draftFrom({ ...profile, user: { ...profile.user, display_name: '' } }).displayName).toBe(profile.user.username)
   })
 
   it('dirty detects every field', () => {

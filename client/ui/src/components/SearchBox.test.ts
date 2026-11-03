@@ -11,7 +11,7 @@ import { closeSearch, search } from '../lib/search.svelte'
 import { applyReady, emptyState } from '../lib/state'
 import { testMe, testReady } from '../lib/testReady'
 
-const user = (id: string, username: string) => ({ id, username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
+const user = (id: string, username: string) => ({ id, username, display_name: username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 
 let cmp: ReturnType<typeof mount> | undefined
 afterEach(() => {
@@ -115,6 +115,26 @@ describe('SearchBox', () => {
     expect(optionText()).toEqual(['Amber', 'sam'])
     // The first suggestion is ready for Enter.
     expect(options()[0].getAttribute('aria-selected')).toBe('true')
+  })
+
+  it('from: and mentions: find people by username, display name, nickname or your private nickname, shown as you see them (#47, #48)', () => {
+    const sam = { ...user('U2', 'sam'), display_name: 'Samwise' }
+    app.state = {
+      ...app.state,
+      people: { U2: { user: sam, online: true, last_seen_at: null } },
+      members: { S1: [{ user: testMe, nickname: null }, { user: sam, nickname: 'Gardener' }, { user: user('U3', 'Amber'), nickname: null }] },
+      privateNicks: { U3: 'Bestie' },
+    }
+    const input = show()
+    input.focus()
+    for (const q of ['sam', 'wise', 'garden']) {
+      type(input, `from:${q}`)
+      expect(optionText(), q).toEqual(['Gardener'])
+    }
+    type(input, 'mentions:best')
+    expect(optionText()).toEqual(['Bestie'])
+    type(input, 'mentions:amb')
+    expect(optionText()).toEqual(['Bestie'])
   })
 
   it('suggests channels for in: and the fixed list for has:', () => {

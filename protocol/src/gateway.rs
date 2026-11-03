@@ -6,7 +6,7 @@ use ts_rs::TS;
 use crate::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
     CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game, Member, Message, Mute, Person,
-    QotyEvent, ReadState, Server, SpeakerLink, StreamEndReason, StreamInfo, User,
+    PrivateNickname, QotyEvent, ReadState, Server, SpeakerLink, StreamEndReason, StreamInfo, User,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -110,6 +110,9 @@ pub struct Ready {
     /// Your chosen view of each clips channel you changed from the default.
     #[serde(default)]
     pub clip_views: Vec<ClipViewPref>,
+    /// The names you gave people that only you see.
+    #[serde(default)]
+    pub private_nicknames: Vec<PrivateNickname>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -169,6 +172,17 @@ pub enum Event {
     MemberJoined {
         server_id: ServerId,
         member: Member,
+    },
+    /// Someone's server nickname changed (everyone, like `MemberJoined`).
+    MemberUpdated {
+        server_id: ServerId,
+        member: Member,
+    },
+    /// Only to the owner's own sessions: they set (`Some`) or cleared a private nickname.
+    PrivateNicknameChanged {
+        user_id: UserId,
+        target_id: UserId,
+        nickname: Option<String>,
     },
     Typing {
         channel_id: ChannelId,
@@ -379,6 +393,7 @@ impl Event {
             Self::ServerCreated { .. }
             | Self::ChannelDeleted { .. }
             | Self::MemberJoined { .. }
+            | Self::MemberUpdated { .. }
             | Self::UserCreated { .. }
             | Self::PresenceChanged { .. }
             | Self::ProfileUpdated { .. }
@@ -391,7 +406,8 @@ impl Event {
             | Self::QotyStarted { .. }
             | Self::QotyUpdated { .. }
             | Self::QotyEnded { .. }
-            | Self::GameAdded { .. } => None,
+            | Self::GameAdded { .. }
+            | Self::PrivateNicknameChanged { .. } => None,
         }
     }
 
@@ -404,6 +420,7 @@ impl Event {
             | Self::FrequentEmoji { user_id, .. }
             | Self::ThreadSeen { user_id, .. }
             | Self::ClipViewChanged { user_id, .. }
+            | Self::PrivateNicknameChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. } => Some(*user_id),
             _ => None,
         }
@@ -485,6 +502,7 @@ mod tests {
             me: User {
                 id: UserId::new(),
                 username: "a".into(),
+                display_name: "a".into(),
                 avatar_hash: None,
                 avatar_still: None,
                 style: Default::default(),
@@ -507,6 +525,7 @@ mod tests {
             thread_seen: vec![],
             games: vec![],
             clip_views: vec![],
+            private_nicknames: vec![],
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");
@@ -554,6 +573,7 @@ mod tests {
             me: User {
                 id: UserId::new(),
                 username: "a".into(),
+                display_name: "a".into(),
                 avatar_hash: None,
                 avatar_still: None,
                 style: Default::default(),
@@ -576,6 +596,7 @@ mod tests {
             thread_seen: vec![],
             games: vec![],
             clip_views: vec![],
+            private_nicknames: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -664,6 +685,7 @@ mod tests {
             me: User {
                 id: UserId::new(),
                 username: "a".into(),
+                display_name: "a".into(),
                 avatar_hash: None,
                 avatar_still: None,
                 style: Default::default(),
@@ -686,6 +708,7 @@ mod tests {
             thread_seen: vec![],
             games: vec![],
             clip_views: vec![],
+            private_nicknames: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -765,6 +788,7 @@ mod tests {
         let user = User {
             id: UserId::new(),
             username: "a".into(),
+            display_name: "a".into(),
             avatar_hash: Some("h".into()),
             avatar_still: Some("s".into()),
             style: crate::rest::NameStyle {
@@ -783,6 +807,7 @@ mod tests {
             user: User {
                 id: UserId::new(),
                 username: "a".into(),
+                display_name: "a".into(),
                 avatar_hash: None,
                 avatar_still: None,
                 style: Default::default(),
@@ -797,5 +822,54 @@ mod tests {
             },
         };
         assert_eq!((e.channel_id(), e.only_for()), (None, None));
+    }
+
+    /// A private nickname is its owner's alone: its event never fans out to anyone else.
+    #[test]
+    fn private_nickname_changes_go_only_to_their_owner() {
+        let owner = UserId::new();
+        let e = Event::PrivateNicknameChanged {
+            user_id: owner,
+            target_id: UserId::new(),
+            nickname: Some("Sammy".into()),
+        };
+        assert_eq!((e.channel_id(), e.only_for()), (None, Some(owner)));
+    }
+
+    #[test]
+    fn member_updates_go_to_everyone() {
+        let e = Event::MemberUpdated {
+            server_id: ServerId::new(),
+            member: Member {
+                user: User {
+                    id: UserId::new(),
+                    username: "a".into(),
+                    display_name: "A".into(),
+                    avatar_hash: None,
+                    avatar_still: None,
+                    style: Default::default(),
+                },
+                nickname: Some("n".into()),
+            },
+        };
+        assert_eq!((e.channel_id(), e.only_for()), (None, None));
+    }
+
+    /// From an older server or client: no display name (the client shows the username), and a
+    /// profile save without one keeps the current one.
+    #[test]
+    fn older_payloads_read_without_the_name_fields() {
+        let u: User = serde_json::from_value(serde_json::json!({
+            "id": UserId::new(), "username": "alex", "avatar_hash": null
+        }))
+        .unwrap();
+        assert_eq!(u.display_name, "");
+        let r: crate::rest::UpdateProfileRequest = serde_json::from_value(serde_json::json!({
+            "avatar_hash": null, "banner_hash": null, "theme_top": "#000000",
+            "theme_bottom": "#000000", "style": {"font": null, "colors": []},
+            "pronouns": null, "bio": null
+        }))
+        .unwrap();
+        assert_eq!(r.display_name, None);
     }
 }

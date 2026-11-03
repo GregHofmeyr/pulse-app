@@ -4,7 +4,7 @@ import { NOTIFY_WINDOW_MS, NotifyThrottle, notificationBody, notificationTitle, 
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 
-const user = (id: string, username: string) => ({ id, username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
+const user = (id: string, username: string) => ({ id, username, display_name: username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const msg = (channel: string, author: string | null, extra: Partial<Message> = {}): Message => ({
   id: 'M1', channel_id: channel, author_id: author, kind: 'normal', content: 'hello', reply_to_id: null,
   created_at: '2026-10-30T10:00:00Z', edited_at: null, deleted: false, mentions: [], reactions: [], thread_root_id: null, quote: null, qoty_card: null, clip: null, embeds: [], ...extra,
@@ -29,7 +29,7 @@ function ready(): Ready {
       { user: user('U2', 'jo'), online: true, last_seen_at: null },
     ],
     read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [],
-    frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [],
+    frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [],
   }
 }
 const s = applyReady(emptyState(), ready())
@@ -64,6 +64,12 @@ describe('notifyMessage: the decision', () => {
     const reply = msg('Q1', 'U1', { mentions: ['ME'], thread_root_id: 'R1' })
     expect(notifyMessage(s, v(reply), on)).toMatchObject({ channelId: 'Q1', threadId: 'R1' })
     expect(notifyMessage(s, v(msg('DM1', 'U1')), on)).not.toHaveProperty('threadId')
+  })
+  // #47/#48: the names a notification shows are the ones that apply to you, never usernames.
+  it('names people as you see them: private nicknames in DMs, server nicknames in servers', () => {
+    const named = { ...s, privateNicks: { U1: 'Sammy', U2: 'Jojo' }, members: { S1: [{ user: user('U1', 'sam'), nickname: 'Captain' }, { user: user('U2', 'jo'), nickname: null }] } }
+    expect(notifyMessage(named, v(msg('DM1', 'U1', { content: 'ask @jo' })), on)).toMatchObject({ title: 'Sammy', body: 'ask @Jojo' })
+    expect(notifyMessage(named, v(msg('T1', 'U1', { content: 'hey @alex and @jo', mentions: ['ME'] })), on)).toMatchObject({ title: 'Captain in #general (Main)', body: 'hey @alex and @Jojo' })
   })
 })
 

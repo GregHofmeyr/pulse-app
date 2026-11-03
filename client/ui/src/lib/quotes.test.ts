@@ -6,8 +6,8 @@ import type { QotyEvent } from './protocol/QotyEvent'
 import type { QuoteLine } from './protocol/QuoteLine'
 import type { Ready } from './protocol/Ready'
 
-const me = { id: 'U1', username: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
-const sam = { id: 'U2', username: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+const sam = { id: 'U2', username: 'sam', display_name: 'sam', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const line = (over: Partial<QuoteLine> = {}): QuoteLine => ({
   id: 'L1', speaker_id: null, speaker_name: 'Sam B', text: 'hi', media: null, caption: null, awards: 0, awarders: [], awarded: false, ...over,
 })
@@ -27,7 +27,7 @@ const ready = (over: Partial<Ready> = {}): Ready => ({
   me, servers: [{ id: 'S1', name: 'Main', icon_hash: null }], channels: [{ id: 'Q1', server_id: 'S1', kind: 'quotes', name: 'quotes', position: 0 }],
   members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: 'Big Dog' }] }],
   dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [],
-  qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], ...over,
+  qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], ...over,
 })
 
 describe('text helpers', () => {

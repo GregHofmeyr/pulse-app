@@ -15,7 +15,7 @@ import type { ChannelKind } from '../lib/protocol/ChannelKind'
 
 const server = { id: 'S1', name: 'Home', icon_hash: null }
 const DAY = 86_400_000
-const user = (id: string, username: string) => ({ user: { id, username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, nickname: null })
+const user = (id: string, username: string) => ({ user: { id, username, display_name: username, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, nickname: null })
 const gone = (id: string, name: string, kind: ChannelKind, o: Partial<DeletedChannel> = {}): DeletedChannel => ({
   channel: { id, server_id: 'S1', kind, name, position: 3 },
   deleted_by: 'U2',

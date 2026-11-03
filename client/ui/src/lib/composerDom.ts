@@ -1,6 +1,7 @@
 // The message box's editable DOM, kept to one rule: the message text (what's sent, and what drafts
 // keep) is the source of truth. Custom emoji tokens (`<:name:id>` / `<a:name:id>`) show as images
-// that serialize back to exactly their token; everything else is plain text (newlines included,
+// and known `@username` mentions show as chips with the shown name (#47), both serializing back to
+// exactly their token; everything else is plain text (newlines included,
 // shown with `white-space: pre-wrap`).
 import { isMediaHash, mediaUrl, TOKEN_RE } from './emoji'
 
@@ -19,13 +20,50 @@ export function tokenSpans(text: string): { start: number; end: number; id: stri
  * ever put in a URL (a deleted emoji has none). */
 export const renderable = (e: Emoji): boolean => !!e.hash && isMediaHash(e.hash) && (!e.still_hash || isMediaHash(e.still_hash))
 
+/** Where each `@username` mention is in `text`, read as the server reads them
+ * (`messages/mentions.rs`): an `@` at the start, after a space or `(`, outside inline code; the
+ * name is letters, digits, `_ . -` (at most 32), without trailing dots. */
+export function mentionSpans(text: string): { start: number; end: number; username: string }[] {
+  const out: { start: number; end: number; username: string }[] = []
+  let code = false
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i]
+    if (c === '`') code = !code
+    else if (c === '@' && !code && (i === 0 || /\s|\(/.test(text[i - 1]))) {
+      const name = (/^[A-Za-z0-9_.-]{1,32}/.exec(text.slice(i + 1))?.[0] ?? '').replace(/\.+$/, '')
+      if (name) out.push({ start: i, end: i + 1 + name.length, username: name })
+    }
+  }
+  return out
+}
+
 /** Replace `el`'s content with `text`: known custom emoji as images (an unknown or deleted one stays
- * as its text). Returns the images made, for the caller to animate. */
-export function renderInto(el: HTMLElement, text: string, lookup: (id: string) => Emoji | undefined): HTMLImageElement[] {
+ * as its text), and, given `mention` (a username -> the name shown here, or null for no one known),
+ * known `@username` mentions as chips showing `@name` (#47: the username never shows). Both
+ * serialize back to exactly their text. Returns the images made, for the caller to animate. */
+export function renderInto(el: HTMLElement, text: string, lookup: (id: string) => Emoji | undefined, mention?: (username: string) => string | null): HTMLImageElement[] {
   const nodes: Node[] = []
   const imgs: HTMLImageElement[] = []
   let at = 0
-  for (const t of tokenSpans(text)) {
+  const spans: ({ start: number; end: number } & ({ id: string } | { username: string }))[] = [
+    ...tokenSpans(text),
+    ...(mention ? mentionSpans(text) : []),
+  ].sort((a, b) => a.start - b.start)
+  for (const t of spans) {
+    if (t.start < at) continue // inside one already shown
+    if ('username' in t) {
+      const name = mention!(t.username)
+      if (name === null) continue
+      if (t.start > at) nodes.push(document.createTextNode(text.slice(at, t.start)))
+      const chip = document.createElement('span')
+      chip.className = 'mention mention-chip'
+      chip.textContent = `@${name}`
+      chip.dataset.token = text.slice(t.start, t.end)
+      chip.setAttribute('contenteditable', 'false')
+      nodes.push(chip)
+      at = t.end
+      continue
+    }
     const e = lookup(t.id)
     if (!e || !renderable(e)) continue
     if (t.start > at) nodes.push(document.createTextNode(text.slice(at, t.start)))
@@ -53,6 +91,17 @@ export function renderInto(el: HTMLElement, text: string, lookup: (id: string) =
   return imgs
 }
 
+/** Whether a mention chip in `el` is now followed by more of a name (typed right after it): the text
+ *  would then mention someone else than the chip shows, so the box must be drawn again from it. */
+export function chipBroken(el: HTMLElement): boolean {
+  for (const chip of el.querySelectorAll('.mention-chip')) {
+    let after = ''
+    for (let n = chip.nextSibling; n && n.nodeType === Node.TEXT_NODE; n = n.nextSibling) after += (n as Text).data
+    if (/^\.*[A-Za-z0-9_-]/.test(after)) return true
+  }
+  return false
+}
+
 const BLOCK = new Set(['DIV', 'P'])
 
 /** The message text `el` holds, however the browser arranged it while editing (it wraps lines in
@@ -71,7 +120,8 @@ export function serialize(el: Node): string {
       // a no-break space (from a paste, autocorrect or the browser) is a plain space in a message; one
       // for one, so offsets keep their length
       inline((n as Text).data.replace(/\u00a0/g, ' '))
-    } else if (n instanceof HTMLImageElement) {
+    } else if (n instanceof HTMLImageElement || (n instanceof HTMLElement && n.dataset.token !== undefined)) {
+      // an emoji image or a mention chip: exactly its token
       if (n.dataset.token) inline(n.dataset.token)
     } else if (n instanceof HTMLBRElement) {
       // the last <br> of a line is the browser's placeholder (or our pad), not a newline
@@ -116,7 +166,7 @@ export function positionAt(el: HTMLElement, at: number): { node: Node; offset: n
       const len = (n as Text).data.length
       if (at <= pos + len) return { node: n, offset: at - pos }
       pos += len
-    } else if (n instanceof HTMLImageElement && n.dataset.token) {
+    } else if (n instanceof HTMLElement && n.dataset.token) {
       const len = n.dataset.token.length
       if (at === pos) return { node: el, offset: i }
       if (at < pos + len || (at === pos + len && !(kids[i + 1]?.nodeType === Node.TEXT_NODE))) return { node: el, offset: i + 1 }

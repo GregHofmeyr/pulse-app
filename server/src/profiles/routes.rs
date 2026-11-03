@@ -90,7 +90,8 @@ async fn save(
     let name_color = (!v.colors.is_empty()).then(|| v.colors.join(","));
     sqlx::query(
         "UPDATE users SET avatar_hash = ?, banner_hash = ?, theme_top = ?, theme_bottom = ?, \
-         name_font = ?, name_color = ?, pronouns = ?, bio = ? WHERE id = ?",
+         name_font = ?, name_color = ?, pronouns = ?, bio = ?, \
+         display_name = COALESCE(?, display_name) WHERE id = ?",
     )
     .bind(&v.avatar_hash)
     .bind(&v.banner_hash)
@@ -100,6 +101,7 @@ async fn save(
     .bind(&name_color)
     .bind(&v.pronouns)
     .bind(&v.bio)
+    .bind(&v.display_name)
     .bind(me.to_string())
     .execute(&mut *tx)
     .await?;
