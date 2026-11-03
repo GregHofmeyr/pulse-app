@@ -69,7 +69,8 @@ pub(crate) async fn finish(
     if top == 0 {
         // Nobody voted: say so in every quotes channel of the server.
         let channels: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM channels WHERE server_id = ? AND kind = 'quotes' ORDER BY position, id",
+            "SELECT id FROM channels WHERE server_id = ? AND kind = 'quotes' AND deleted_at IS NULL
+             ORDER BY position, id",
         )
         .bind(server.to_string())
         .fetch_all(&mut *tx)

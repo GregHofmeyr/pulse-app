@@ -409,7 +409,17 @@ async fn migrate_subcommand_migrates_and_exits() {
     let out = run_migrate(&url);
     assert!(out.status.success(), "{out:?}");
     let stdout = String::from_utf8(out.stdout).unwrap();
-    assert!(stdout.lines().any(|l| l == "migrated: 12"), "{stdout}");
+    // Up to the newest migration there is (looked up, so a new one doesn't break this test).
+    let newest = std::fs::read_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/migrations"))
+        .unwrap()
+        .filter_map(|e| {
+            let name = e.unwrap().file_name().into_string().unwrap();
+            name.split('_').next()?.parse::<u32>().ok()
+        })
+        .max()
+        .unwrap();
+    let want = format!("migrated: {newest}");
+    assert!(stdout.lines().any(|l| l == want), "{stdout}");
     assert!(stdout.contains(&url), "names the database: {stdout}");
 }
 
@@ -2591,7 +2601,7 @@ async fn clip_storage_command_refuses_a_missing_database() {
 }
 
 #[tokio::test]
-async fn deleting_a_clips_channel_removes_its_objects() {
+async fn purging_a_clips_channel_removes_its_objects() {
     let w = world().await;
     let s3 = w.app.s3.as_ref().unwrap();
     let clip = upload_clip(&w.app, &w.alex.1, w.channel.id, vec![4u8; 10]).await;
@@ -2612,6 +2622,25 @@ async fn deleting_a_clips_channel_removes_its_objects() {
         .await
         .unwrap();
     assert_eq!(r.status(), 204);
+    // In Recently deleted the clip and its object are kept (a restore brings them back)...
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM clips WHERE video_key = ?",
+            &key
+        )
+        .await,
+        1
+    );
+    assert!(s3.object(&object).is_some());
+    // ...until it is purged.
+    let swept = pulse_server::servers::channels::purge_expired(
+        &w.app.state(),
+        chrono::Utc::now() + chrono::Duration::days(8),
+    )
+    .await
+    .unwrap();
+    assert_eq!(swept, 1);
     assert_eq!(
         count(
             &w.app,

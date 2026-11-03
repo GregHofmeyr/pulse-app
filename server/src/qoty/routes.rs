@@ -224,7 +224,7 @@ async fn add_option(
     let quote_server: Option<String> = sqlx::query_scalar(
         "SELECT c.server_id FROM quotes q
          JOIN messages msg ON msg.id = q.message_id AND msg.deleted_at IS NULL
-         JOIN channels c ON c.id = msg.channel_id
+         JOIN channels c ON c.id = msg.channel_id AND c.deleted_at IS NULL
          WHERE q.message_id = ?",
     )
     .bind(&message)

@@ -12,7 +12,8 @@ let seq = 0
 const current = (mine: number, channelId: string) => mine === seq && (ui.goTo === channelId || ui.openChannelId === channelId)
 
 export async function jumpTo(channelId: string, messageId: string): Promise<void> {
-  if (!app.state.channels[channelId]) return
+  // Not a channel we can see: a server channel in Recently deleted (or gone for good).
+  if (!app.state.channels[channelId]) return void (ui.notice = 'That channel was deleted.')
   const mine = ++seq
   ui.goTo = channelId
   if (!app.state.messages[channelId]?.some((m) => m.id === messageId)) {

@@ -55,7 +55,7 @@ async fn target(db: &mut SqliteConnection, line: LineId) -> AppResult<Option<Tar
         "SELECT l.message_id, msg.channel_id, c.server_id, l.speaker_id, l.speaker_key
          FROM quote_lines l
          JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
-         JOIN channels c ON c.id = msg.channel_id
+         JOIN channels c ON c.id = msg.channel_id AND c.deleted_at IS NULL
          WHERE l.id = ? AND c.server_id IS NOT NULL",
     )
     .bind(line.to_string())
@@ -189,7 +189,7 @@ pub async fn award_totals(db: &SqlitePool, server: ServerId) -> AppResult<Vec<Sp
          FROM quote_awards a
          JOIN quote_lines l ON l.id = a.line_id
          JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
-         JOIN channels c ON c.id = msg.channel_id
+         JOIN channels c ON c.id = msg.channel_id AND c.deleted_at IS NULL
          WHERE c.server_id = ?
          ORDER BY msg.id",
     )

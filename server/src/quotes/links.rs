@@ -49,7 +49,7 @@ async fn link(
     let on_a_line: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM quote_lines l
          JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
-         JOIN channels c ON c.id = msg.channel_id
+         JOIN channels c ON c.id = msg.channel_id AND c.deleted_at IS NULL
          WHERE c.server_id = ? AND l.speaker_key = ? LIMIT 1",
     )
     .bind(server.to_string())
@@ -197,7 +197,7 @@ async fn moved_quotes(
     let mut q = sqlx::QueryBuilder::new(
         "SELECT DISTINCT msg.id FROM quote_lines l
          JOIN messages msg ON msg.id = l.message_id AND msg.deleted_at IS NULL
-         JOIN channels c ON c.id = msg.channel_id
+         JOIN channels c ON c.id = msg.channel_id AND c.deleted_at IS NULL
          JOIN quote_awards a ON a.line_id = l.id
          WHERE c.server_id = ",
     );

@@ -6,11 +6,11 @@ use std::sync::{Arc, Mutex};
 use pulse_protocol::gateway::ClientFrame;
 use pulse_protocol::ids::{ChannelId, GameId, LineId, MessageId, QotyEventId, ServerId, UserId};
 use pulse_protocol::rest::{
-    Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji, EditClipRequest,
-    EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest, MediaInfo, Member, Message,
-    MuteTarget, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse, SearchRequest,
-    SearchResults, Server, SetMuteRequest, StartQotyRequest, TwoFactorEnabledResponse,
-    TwoFactorStatus, UpdateProfileRequest, User,
+    Channel, ClipFacets, ClipStorage, ClipUrl, ClipView, CustomEmoji, DeletedChannel,
+    EditClipRequest, EditQuoteRequest, Game, Leaderboard, LinkSpeakerRequest, MediaInfo, Member,
+    Message, MuteTarget, PostQuoteRequest, Profile, QotyEvent, RecoveryCodesResponse,
+    SearchRequest, SearchResults, Server, SetMuteRequest, StartQotyRequest,
+    TwoFactorEnabledResponse, TwoFactorStatus, UpdateProfileRequest, User,
 };
 use tauri::{AppHandle, Emitter, Manager, State};
 use tokio::sync::{mpsc, watch};
@@ -1451,6 +1451,36 @@ pub async fn delete_channel(
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.delete_channel(&token, channel_id).await)
+}
+
+#[tauri::command]
+pub async fn list_deleted_channels(
+    app: AppHandle,
+    core: State<'_, Core>,
+    server_id: ServerId,
+) -> Result<Vec<DeletedChannel>, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.list_deleted_channels(&token, server_id).await)
+}
+
+#[tauri::command]
+pub async fn restore_channel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+) -> Result<Channel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.restore_channel(&token, channel_id).await)
+}
+
+#[tauri::command]
+pub async fn purge_channel(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.purge_channel(&token, channel_id).await)
 }
 
 #[tauri::command]

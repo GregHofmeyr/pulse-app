@@ -24,12 +24,15 @@ pub fn channel_from_row((id, server_id, kind, name, position): ChannelRow) -> Ap
 
 pub const CHANNEL_COLS: &str = "id, server_id, kind, name, position";
 
+/// The channel, unless there is none or it is in Recently deleted: a deleted channel is gone for
+/// everything but its own Recently deleted routes (`servers::channels`).
 pub async fn load_channel(db: &SqlitePool, id: ChannelId) -> AppResult<Option<Channel>> {
-    let row: Option<ChannelRow> =
-        sqlx::query_as(&format!("SELECT {CHANNEL_COLS} FROM channels WHERE id = ?"))
-            .bind(id.to_string())
-            .fetch_optional(db)
-            .await?;
+    let row: Option<ChannelRow> = sqlx::query_as(&format!(
+        "SELECT {CHANNEL_COLS} FROM channels WHERE id = ? AND deleted_at IS NULL"
+    ))
+    .bind(id.to_string())
+    .fetch_optional(db)
+    .await?;
     row.map(channel_from_row).transpose()
 }
 
@@ -78,7 +81,8 @@ pub async fn readable_server_channels(
         return Err(AppError::NotFound);
     }
     let rows: Vec<ChannelRow> = sqlx::query_as(&format!(
-        "SELECT {CHANNEL_COLS} FROM channels WHERE server_id = ? ORDER BY position, id"
+        "SELECT {CHANNEL_COLS} FROM channels WHERE server_id = ? AND deleted_at IS NULL
+         ORDER BY position, id"
     ))
     .bind(server.to_string())
     .fetch_all(db)

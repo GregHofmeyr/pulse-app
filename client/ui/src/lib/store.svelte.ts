@@ -47,6 +47,8 @@ export const ui = $state({
    *  channel has no history to jump in. */
   openClip: null as { channelId: string; clip: Message } | null,
   jump: null as JumpRequest | null,
+  /** A short line for the shell to show for a moment (it shows it and clears it). */
+  notice: null as string | null,
   autoReported: false,
   /** Last session's crash report, held because automatic sending is off: ask Send / Don't send. */
   heldReport: null as ReportKind | null,

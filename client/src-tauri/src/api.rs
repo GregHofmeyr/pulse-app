@@ -8,16 +8,16 @@ use pulse_protocol::ids::{
 use pulse_protocol::rest::{
     AddGameRequest, AddMembersRequest, AddQotyOptionRequest, ChangePasswordRequest, Channel,
     ChannelKind, ClipFacets, ClipStorage, ClipUpload, ClipUploadRequest, ClipUrl, ClipView,
-    ConfirmClipRequest, CreateDmRequest, CreateEmojiRequest, CustomEmoji, EditClipRequest,
-    EditMessageRequest, EditQuoteRequest, Game, GoLiveRequest, HideEmbedRequest, Leaderboard,
-    LinkSpeakerRequest, LoginMfaRequest, LoginRequest, MarkReadRequest, MediaInfo, Member, Message,
-    MfaRequired, MuteTarget, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest,
-    RecoveryCodesResponse, RegisterRequest, RenameChannelRequest, RenameEmojiRequest,
-    ReopenQotyRequest, SearchRequest, SearchResults, SendMessageRequest, Server, SessionResponse,
-    SetClipViewRequest, SetMuteRequest, StartQotyRequest, StreamInfo, StreamRole, StreamSettings,
-    StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
-    TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, User,
-    VoiceTokenResponse, WatchRequest,
+    ConfirmClipRequest, CreateDmRequest, CreateEmojiRequest, CustomEmoji, DeletedChannel,
+    EditClipRequest, EditMessageRequest, EditQuoteRequest, Game, GoLiveRequest, HideEmbedRequest,
+    Leaderboard, LinkSpeakerRequest, LoginMfaRequest, LoginRequest, MarkReadRequest, MediaInfo,
+    Member, Message, MfaRequired, MuteTarget, PostQuoteRequest, Profile, QotyEvent,
+    QotyVoteRequest, RecoveryCodesResponse, RegisterRequest, RenameChannelRequest,
+    RenameEmojiRequest, ReopenQotyRequest, SearchRequest, SearchResults, SendMessageRequest,
+    Server, SessionResponse, SetClipViewRequest, SetMuteRequest, StartQotyRequest, StreamInfo,
+    StreamRole, StreamSettings, StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest,
+    TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus,
+    UpdateProfileRequest, User, VoiceTokenResponse, WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -462,10 +462,49 @@ impl Api {
         .await
     }
 
+    /// Moves a server channel to its server's Recently deleted.
     pub async fn delete_channel(&self, token: &str, ch: ChannelId) -> Result<(), ApiError> {
         Self::ok_empty(
             self.http
                 .delete(format!("{}/channels/{ch}", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn list_deleted_channels(
+        &self,
+        token: &str,
+        server: ServerId,
+    ) -> Result<Vec<DeletedChannel>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/servers/{server}/deleted-channels", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn restore_channel(&self, token: &str, ch: ChannelId) -> Result<Channel, ApiError> {
+        Self::parse(
+            self.http
+                .post(format!("{}/channels/{ch}/restore", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// A channel in Recently deleted, for good (the server owner's "Delete now").
+    pub async fn purge_channel(&self, token: &str, ch: ChannelId) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(format!("{}/channels/{ch}/permanent", self.base))
                 .bearer_auth(token)
                 .send()
                 .await,
@@ -1976,8 +2015,22 @@ mod tests {
         api.delete_channel(&alex, g.id).await.unwrap();
         assert!(
             api.delete_channel(&alex, g.id).await.is_err(),
-            "already gone"
+            "already deleted"
         );
+        // Recently deleted: restore, delete again, then purge.
+        let gone = api.list_deleted_channels(&alex, s.id).await.unwrap();
+        assert_eq!(gone.len(), 1);
+        assert!(gone[0].can_restore && gone[0].can_purge);
+        assert_eq!(api.restore_channel(&alex, g.id).await.unwrap().id, g.id);
+        api.delete_channel(&alex, g.id).await.unwrap();
+        api.purge_channel(&alex, g.id).await.unwrap();
+        assert!(
+            api.list_deleted_channels(&alex, s.id)
+                .await
+                .unwrap()
+                .is_empty()
+        );
+        assert!(api.restore_channel(&alex, g.id).await.is_err(), "gone");
     }
 
     #[tokio::test]

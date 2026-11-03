@@ -124,6 +124,14 @@ describe('applyEvent', () => {
     expect(Object.keys(s.channels)).toContain('C2')
   })
 
+  it('a restored channel comes back to the list after its delete', () => {
+    let s = applyEvent(base(), { t: 'ChannelCreated', d: { channel: ch('C2') } }, 0)
+    s = applyEvent(s, { t: 'ChannelDeleted', d: { channel_id: 'C2', server_id: 'S1' } }, 0)
+    expect(s.channels['C2']).toBeUndefined()
+    s = applyEvent(s, { t: 'ChannelRestored', d: { channel: ch('C2') } }, 0)
+    expect(s.channels['C2']).toEqual(ch('C2'))
+  })
+
   it('server created adds a tab once', () => {
     const e = { t: 'ServerCreated', d: { server: { id: 'S2', name: 'Other', icon_hash: null } } } as const
     const s = applyEvent(applyEvent(base(), e, 0), e, 0)

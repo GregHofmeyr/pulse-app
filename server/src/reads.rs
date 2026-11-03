@@ -68,6 +68,18 @@ pub async fn counts_for(
         .map_or((0, 0), |r| (r.unread, r.mentions)))
 }
 
+/// `user`'s read state in `channel` as [`states_for`] reports it, if they have a read point there.
+pub async fn state_in(
+    db: &SqlitePool,
+    user: UserId,
+    channel: ChannelId,
+) -> AppResult<Option<ReadState>> {
+    Ok(read_states(db, user, Some(channel))
+        .await?
+        .into_iter()
+        .next())
+}
+
 /// [`counts_for`] after a change has committed, for the event that announces it: the change has
 /// landed, so a failed read is logged and gives `None` (the event is skipped) rather than failing a
 /// request whose retry would find nothing left to do.
@@ -87,7 +99,8 @@ pub async fn counts_after_commit(
 
 /// The reply mentions still counted for a user: a mention in a live reply of a live quote, after the
 /// user's seen point for that quote. Shared by the per-channel counts and the seen-point list, so
-/// the two can never disagree: only channels the user has a read state for.
+/// the two can never disagree: only channels the user has a read state for, and none in Recently
+/// deleted.
 /// Binds: user, channel (or NULL for all), channel.
 const COUNTED_REPLY_MENTIONS: &str = "FROM mentions mn JOIN messages m ON m.id = mn.message_id
     JOIN messages root ON root.id = m.thread_root_id
@@ -95,7 +108,8 @@ const COUNTED_REPLY_MENTIONS: &str = "FROM mentions mn JOIN messages m ON m.id =
     LEFT JOIN thread_reads tr ON tr.user_id = mn.user_id AND tr.root_id = m.thread_root_id
     WHERE mn.user_id = ? AND (? IS NULL OR m.channel_id = ?) AND m.thread_root_id IS NOT NULL
       AND m.deleted_at IS NULL AND root.deleted_at IS NULL
-      AND m.id > COALESCE(tr.last_seen_id, '')";
+      AND m.id > COALESCE(tr.last_seen_id, '')
+      AND m.channel_id NOT IN (SELECT id FROM channels WHERE deleted_at IS NOT NULL)";
 
 async fn read_states(
     db: &SqlitePool,
@@ -117,7 +131,8 @@ async fn read_states(
             {COUNTED_REPLY_MENTIONS}
             GROUP BY m.channel_id
          ) tm ON tm.channel_id = rs.channel_id
-         WHERE rs.user_id = ? AND (? IS NULL OR rs.channel_id = ?)"
+         WHERE rs.user_id = ? AND (? IS NULL OR rs.channel_id = ?)
+           AND rs.channel_id NOT IN (SELECT id FROM channels WHERE deleted_at IS NOT NULL)"
     );
     let only = only.map(|c| c.to_string());
     let rows: Vec<(String, Option<String>, i64, i64)> = sqlx::query_as(&sql)

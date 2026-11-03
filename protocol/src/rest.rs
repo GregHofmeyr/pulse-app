@@ -260,6 +260,28 @@ pub struct Channel {
     pub position: i64,
 }
 
+/// A channel in its server's Recently deleted (`GET /servers/{id}/deleted-channels`), with what
+/// the asking member may do with it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct DeletedChannel {
+    pub channel: Channel,
+    /// Who deleted it.
+    pub deleted_by: Option<UserId>,
+    pub deleted_at: String,
+    /// When the sweeper purges it (unless `held`).
+    pub purge_at: String,
+    /// The server owner and whoever deleted it may restore it.
+    #[serde(default)]
+    pub can_restore: bool,
+    /// Only the server owner may purge it now.
+    #[serde(default)]
+    pub can_purge: bool,
+    /// Set while it can't be deleted for good, saying why: a quotes channel holding a Quote of the
+    /// Year winner, or with a quote up in a live vote. The sweeper keeps it past `purge_at`.
+    #[serde(default)]
+    pub held: Option<String>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct CreateServerRequest {
     pub name: String,

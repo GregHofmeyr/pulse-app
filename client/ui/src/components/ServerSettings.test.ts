@@ -170,4 +170,17 @@ describe('ServerSettings sections', () => {
     expect(invoke).toHaveBeenCalledWith('clip_storage', { serverId: 'S1' })
     expect(document.querySelector('.content h2')!.textContent).toBe('Storage')
   })
+
+  it('ServerSettings has a Recently deleted section', async () => {
+    invoke.mockReset()
+    invoke.mockResolvedValue([])
+    app.state = emptyState()
+    cmp = mount(ServerSettings, { target: document.body, props: { server: { id: 'S1', name: 'Home', icon_hash: null }, onClose: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('nav button')].find((b) => b.textContent === 'Recently deleted')!.click()
+    await new Promise((r) => setTimeout(r, 0))
+    flushSync()
+    expect(invoke).toHaveBeenCalledWith('list_deleted_channels', { serverId: 'S1' })
+    expect(document.querySelector('.content h2')!.textContent).toBe('Recently deleted')
+  })
 })

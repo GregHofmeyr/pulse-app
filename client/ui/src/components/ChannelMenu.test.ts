@@ -185,7 +185,8 @@ describe('a text channel', () => {
     flushSync()
     const dialog = document.querySelector<HTMLElement>('[role=dialog]')!
     expect(dialog.getAttribute('aria-label')).toBe('Delete #old-stuff')
-    expect(dialog.textContent).toContain('Delete #old-stuff? Its messages go too.')
+    expect(dialog.textContent).toContain('Delete #old-stuff? It moves to Recently deleted for 7 days, where the server owner or you can restore it.')
+    expect(dialog.textContent).not.toContain("can't be undone")
     ;[...dialog.querySelectorAll('button')].find((b) => b.textContent === 'Cancel')!.click()
     flushSync()
     expect(document.querySelector('[role=dialog]')).toBeNull()
@@ -203,11 +204,11 @@ describe('a text channel', () => {
   })
 
   it('a_refused_delete_stays_open_and_says_why', async () => {
-    invoke.mockRejectedValue({ kind: 'rejected', message: 'A Quote of the Year vote is on' })
+    invoke.mockRejectedValue({ kind: 'rejected', message: 'Too many requests' })
     rightClick('quotes')
     item('Delete channel…')!.click()
     flushSync()
-    expect(document.querySelector('[role=dialog]')?.textContent).toContain('Its quotes go too.')
+    expect(document.querySelector('[role=dialog]')?.textContent).toContain('Delete #quotes? It moves to Recently deleted')
     ;[...document.querySelectorAll<HTMLButtonElement>('[role=dialog] button')].find((b) => b.textContent === 'Delete channel')!.click()
     await settle()
     expect(document.querySelector('[role=dialog] [role=alert]')).not.toBeNull()
@@ -278,7 +279,7 @@ describe('a voice channel', () => {
     rightClick('Lounge')
     item('Delete channel…')!.click()
     flushSync()
-    expect(document.querySelector('[role=dialog]')?.textContent).toContain('Delete Lounge? Anyone in it is disconnected.')
+    expect(document.querySelector('[role=dialog]')?.textContent).toContain('Delete Lounge? Anyone in it is disconnected. It moves to Recently deleted for 7 days')
   })
 })
 

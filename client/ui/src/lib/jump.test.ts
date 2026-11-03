@@ -27,6 +27,14 @@ describe('jumpTo', () => {
     app.state = markHistory(addHistory(s, 'C1', newestFirst(900, 50)), 'C1', false)
   })
 
+  it('jumping into a channel we can no longer see says it was deleted', async () => {
+    ui.notice = null
+    await jumpTo('GONE', 'M0910')
+    expect(invoke).not.toHaveBeenCalled()
+    expect(ui.goTo).toBeNull()
+    expect(ui.notice).toBe('That channel was deleted.')
+  })
+
   it("jumping to a loaded message doesn't refetch", async () => {
     const before = app.state.messages['C1']
     await jumpTo('C1', 'M0910')

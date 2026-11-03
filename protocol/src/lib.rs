@@ -27,6 +27,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::MfaRequired::export_all(&cfg)?;
     rest::LoginMfaRequest::export_all(&cfg)?;
     rest::RecoveryCodesResponse::export_all(&cfg)?;
+    rest::DeletedChannel::export_all(&cfg)?;
     rest::CreateServerRequest::export_all(&cfg)?;
     rest::CreateChannelRequest::export_all(&cfg)?;
     rest::CreateDmRequest::export_all(&cfg)?;

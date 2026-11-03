@@ -101,6 +101,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     }
     qoty::spawn_sweeper(state.clone(), qoty::SWEEP_EVERY);
     clips::sweep::spawn(state.clone());
+    servers::channels::spawn_sweeper(state.clone());
     streams::liveness::spawn(
         state.clone(),
         streams::liveness::CHECK_EVERY,

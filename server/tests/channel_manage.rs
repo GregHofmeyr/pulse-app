@@ -219,21 +219,13 @@ async fn renaming_a_server_channel_is_checked() {
 
 // ---------- delete ----------
 
+/// A delete moves the channel to Recently deleted: gone for everyone at once, everything in it
+/// kept (a restore brings it all back).
 #[tokio::test]
-async fn deleting_a_text_channel_takes_everything_in_it() {
+async fn deleting_a_text_channel_moves_it_to_recently_deleted() {
     let w = world().await;
     let old = create_channel(&w.app, &w.alex.1, w.server, "text", "old").await;
-    let keep = general(&w.app, &w.alex.1, w.server).await;
     let first = send(&w.app, &w.alex.1, old.id, "findable words @sam").await;
-    let r = post_json(
-        &w.app,
-        &w.sam.1,
-        &format!("/channels/{}/messages", old.id),
-        json!({ "content": "a findable reply", "reply_to_id": first.id }),
-    )
-    .await;
-    assert_eq!(r.status(), 200);
-    let kept = send(&w.app, &w.alex.1, keep.id, "findable elsewhere").await;
     let r = put(
         &w.app,
         &w.sam.1,
@@ -251,15 +243,6 @@ async fn deleting_a_text_channel_takes_everything_in_it() {
     .await;
     assert!(r.is_success(), "mute {r}");
     let id = old.id.to_string();
-    assert_eq!(
-        count(
-            &w.app,
-            "SELECT COUNT(*) FROM search_docs WHERE channel_id = ?",
-            &id
-        )
-        .await,
-        2
-    );
     let mut rx = w.app.hub.register(w.jo.0, String::new()).rx;
 
     assert_eq!(
@@ -276,6 +259,7 @@ async fn deleting_a_text_channel_takes_everything_in_it() {
         }
         other => panic!("unexpected {other:?}"),
     }
+    // Invisible: channel lists, the ready snapshot (channels and read states), search.
     let listed: Vec<Channel> = get_json(
         &w.app,
         &w.alex.1,
@@ -283,40 +267,30 @@ async fn deleting_a_text_channel_takes_everything_in_it() {
     )
     .await;
     assert!(!listed.iter().any(|c| c.id == old.id));
-    assert_eq!(
-        count(&w.app, "SELECT COUNT(*) FROM channels WHERE id = ?", &id).await,
-        0
-    );
-    for table in ["messages", "read_states", "search_docs"] {
-        let q = format!("SELECT COUNT(*) FROM {table} WHERE channel_id = ?");
-        assert_eq!(count(&w.app, &q, &id).await, 0, "{table}");
-    }
-    let first = first.id.to_string();
-    for table in ["reactions", "mentions"] {
-        let q = format!("SELECT COUNT(*) FROM {table} WHERE message_id = ?");
-        assert_eq!(count(&w.app, &q, &first).await, 0, "{table}");
-    }
-    assert_eq!(
-        count(&w.app, "SELECT COUNT(*) FROM notification_prefs WHERE target_kind = 'channel' AND target_id = ?", &id).await,
-        0
-    );
-    // The search index lost the channel's messages and nothing else.
-    let docs: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM message_search WHERE message_search MATCH 'findable'",
+    let ready = pulse_server::gateway::socket::build_ready(
+        &w.app.db,
+        &w.app.voice,
+        &w.app.streams,
+        &w.app.hub,
+        w.sam.0,
     )
-    .fetch_one(&w.app.db)
     .await
     .unwrap();
-    assert_eq!(docs, 1);
-    assert_eq!(
-        count(
+    assert!(!ready.channels.iter().any(|c| c.id == old.id));
+    assert!(!ready.read_states.iter().any(|r| r.channel_id == old.id));
+    for q in [
+        "q=findable".to_string(),
+        format!("q=findable&in={}", old.id),
+    ] {
+        let found: pulse_protocol::rest::SearchResults = get_json(
             &w.app,
-            "SELECT COUNT(*) FROM search_docs WHERE message_id = ?",
-            &kept.id.to_string()
+            &w.alex.1,
+            &format!("/servers/{}/search?{q}", w.server),
         )
-        .await,
-        1
-    );
+        .await;
+        assert!(found.hits.is_empty(), "{q}: {found:?}");
+    }
+    // Nothing reaches it: reading, posting, reacting, renaming, deleting again.
     let r = w
         .app
         .http
@@ -326,10 +300,64 @@ async fn deleting_a_text_channel_takes_everything_in_it() {
         .await
         .unwrap();
     assert_eq!(r.status(), 404);
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/channels/{}/messages", old.id),
+        json!({ "content": "hello?" }),
+    )
+    .await;
+    assert_eq!(r.status(), 404);
+    let r = put(
+        &w.app,
+        &w.alex.1,
+        &format!("/messages/{}/reactions/%F0%9F%91%8D", first.id),
+        None,
+    )
+    .await;
+    assert_eq!(r.as_u16(), 404);
+    assert_eq!(
+        patch(
+            &w.app,
+            &w.alex.1,
+            &format!("/channels/{}", old.id),
+            json!({ "name": "x" })
+        )
+        .await
+        .status(),
+        404
+    );
     assert_eq!(
         delete(&w.app, &w.alex.1, &format!("/channels/{}", old.id)).await,
         404,
-        "already gone"
+        "already deleted"
+    );
+    // ...but nothing is purged.
+    let deleted_by: Option<String> = sqlx::query_scalar(
+        "SELECT deleted_by FROM channels WHERE id = ? AND deleted_at IS NOT NULL",
+    )
+    .bind(&id)
+    .fetch_one(&w.app.db)
+    .await
+    .unwrap();
+    assert_eq!(deleted_by, Some(w.sam.0.to_string()));
+    for table in ["messages", "read_states", "search_docs"] {
+        let q = format!("SELECT COUNT(*) FROM {table} WHERE channel_id = ?");
+        assert!(count(&w.app, &q, &id).await > 0, "{table}");
+    }
+    let first = first.id.to_string();
+    for table in ["reactions", "mentions"] {
+        let q = format!("SELECT COUNT(*) FROM {table} WHERE message_id = ?");
+        assert_eq!(count(&w.app, &q, &first).await, 1, "{table}");
+    }
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM notification_prefs WHERE target_kind = 'channel' AND target_id = ?",
+            &id
+        )
+        .await,
+        1
     );
 }
 
@@ -406,6 +434,16 @@ async fn deleting_a_voice_channel_kicks_whoever_is_in_it() {
     );
 
     assert!(w.app.voice_members(room.id).is_empty());
+    // Their sessions end (the rows stay, as the channel does, until it is purged).
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM voice_sessions WHERE channel_id = ? AND left_at IS NULL",
+            &roomid
+        )
+        .await,
+        0
+    );
     assert_eq!(
         count(
             &w.app,
@@ -413,8 +451,17 @@ async fn deleting_a_voice_channel_kicks_whoever_is_in_it() {
             &roomid
         )
         .await,
-        0
+        2
     );
+    // Nobody can join it while it is deleted.
+    let r = post_json(
+        &w.app,
+        &w.alex.1,
+        &format!("/voice/{}/token", room.id),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 404);
     // LiveKit is told to drop both (in the background)
     let mut want = vec![
         (roomid.clone(), w.alex.0.to_string()),
@@ -433,5 +480,345 @@ async fn deleting_a_voice_channel_kicks_whoever_is_in_it() {
             "LiveKit removals: {got:?}"
         );
         tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+}
+
+// ---------- Recently deleted: list, restore, purge ----------
+
+use pulse_protocol::rest::DeletedChannel;
+
+/// kim joins the server (a member who is neither the owner nor the deleter).
+async fn kim(w: &World) -> (UserId, String) {
+    let kim = register(&w.app, "kim").await;
+    let r = post_json(
+        &w.app,
+        &kim.1,
+        &format!("/servers/{}/join", w.server),
+        json!({}),
+    )
+    .await;
+    assert_eq!(r.status(), 204);
+    kim
+}
+
+async fn deleted_list(w: &World, token: &str) -> Vec<DeletedChannel> {
+    get_json(
+        &w.app,
+        token,
+        &format!("/servers/{}/deleted-channels", w.server),
+    )
+    .await
+}
+
+async fn status_of(r: reqwest::RequestBuilder, token: &str) -> u16 {
+    r.bearer_auth(token).send().await.unwrap().status().as_u16()
+}
+
+async fn restore(w: &World, token: &str, id: ChannelId) -> reqwest::Response {
+    post_json(&w.app, token, &format!("/channels/{id}/restore"), json!({})).await
+}
+
+async fn purge_now(w: &World, token: &str, id: ChannelId) -> u16 {
+    delete(&w.app, token, &format!("/channels/{id}/permanent")).await
+}
+
+#[tokio::test]
+async fn recently_deleted_lists_who_when_and_what_each_viewer_may_do() {
+    let w = world().await;
+    let kim = kim(&w).await;
+    let old = create_channel(&w.app, &w.alex.1, w.server, "voice", "Old room").await;
+    assert!(deleted_list(&w, &w.alex.1).await.is_empty());
+    assert_eq!(
+        delete(&w.app, &w.sam.1, &format!("/channels/{}", old.id)).await,
+        204
+    );
+
+    let mine = |list: Vec<DeletedChannel>| {
+        assert_eq!(list.len(), 1, "{list:?}");
+        list.into_iter().next().unwrap()
+    };
+    // alex owns the server: restore and purge
+    let d = mine(deleted_list(&w, &w.alex.1).await);
+    assert_eq!(d.channel, old);
+    assert_eq!(d.deleted_by, Some(w.sam.0));
+    assert_eq!(
+        (d.can_restore, d.can_purge, d.held.clone()),
+        (true, true, None)
+    );
+    let at = chrono::DateTime::parse_from_rfc3339(&d.deleted_at).unwrap();
+    let purge = chrono::DateTime::parse_from_rfc3339(&d.purge_at).unwrap();
+    assert_eq!(purge - at, chrono::Duration::days(7));
+    // sam deleted it: restore only
+    let d = mine(deleted_list(&w, &w.sam.1).await);
+    assert_eq!((d.can_restore, d.can_purge), (true, false));
+    // kim: neither
+    let d = mine(deleted_list(&w, &kim.1).await);
+    assert_eq!((d.can_restore, d.can_purge), (false, false));
+    // jo isn't in the server; there's no such server
+    let path = format!("/servers/{}/deleted-channels", w.server);
+    assert_eq!(
+        status_of(w.app.http.get(w.app.url(&path)), &w.jo.1).await,
+        403
+    );
+    let path = format!("/servers/{}/deleted-channels", ServerId::new());
+    assert_eq!(
+        status_of(w.app.http.get(w.app.url(&path)), &w.alex.1).await,
+        404
+    );
+}
+
+#[tokio::test]
+async fn the_deleter_or_the_owner_restores_and_everyone_hears() {
+    let w = world().await;
+    let kim = kim(&w).await;
+    let old = create_channel(&w.app, &w.alex.1, w.server, "text", "old").await;
+    send(&w.app, &w.alex.1, old.id, "still here").await;
+    let r = put(
+        &w.app,
+        &w.sam.1,
+        "/mutes",
+        Some(json!({ "target_kind": "channel", "target_id": old.id, "until": null })),
+    )
+    .await;
+    assert!(r.is_success(), "mute {r}");
+    assert_eq!(
+        delete(&w.app, &w.sam.1, &format!("/channels/{}", old.id)).await,
+        204
+    );
+    // A channel of the same name meanwhile: names needn't be unique.
+    let twin = create_channel(&w.app, &w.alex.1, w.server, "text", "old").await;
+
+    // Neither the owner nor the deleter, or not in the server: no.
+    assert_eq!(restore(&w, &kim.1, old.id).await.status(), 403);
+    assert_eq!(restore(&w, &w.jo.1, old.id).await.status(), 403);
+
+    let mut jo_rx = w.app.hub.register(w.jo.0, String::new()).rx;
+    let mut sam_rx = w.app.hub.register(w.sam.0, String::new()).rx;
+    let r = restore(&w, &w.sam.1, old.id).await;
+    assert_eq!(r.status(), 200);
+    assert_eq!(r.json::<Channel>().await.unwrap(), old, "back where it was");
+
+    match next_event(&mut jo_rx).await {
+        Event::ChannelRestored { channel } => assert_eq!(channel, old),
+        other => panic!("unexpected {other:?}"),
+    }
+    match next_event(&mut sam_rx).await {
+        Event::ChannelRestored { channel } => assert_eq!(channel, old),
+        other => panic!("unexpected {other:?}"),
+    }
+    // sam's own counts and mutes come back with it
+    let mut got_counts = false;
+    let mut got_mutes = false;
+    while !(got_counts && got_mutes) {
+        match next_event(&mut sam_rx).await {
+            Event::ReadStateUpdated {
+                user_id,
+                channel_id,
+                unread,
+                ..
+            } => {
+                assert_eq!((user_id, channel_id, unread), (w.sam.0, old.id, Some(1)));
+                got_counts = true;
+            }
+            Event::MutesChanged { user_id, mutes } => {
+                assert_eq!(user_id, w.sam.0);
+                assert!(mutes.iter().any(|m| m.target_id == old.id.to_string()));
+                got_mutes = true;
+            }
+            other => panic!("unexpected {other:?}"),
+        }
+    }
+
+    let listed: Vec<Channel> =
+        get_json(&w.app, &kim.1, &format!("/servers/{}/channels", w.server)).await;
+    assert!(listed.contains(&old) && listed.contains(&twin));
+    let page: Vec<Message> =
+        get_json(&w.app, &kim.1, &format!("/channels/{}/messages", old.id)).await;
+    assert_eq!(page.len(), 1);
+    assert!(deleted_list(&w, &w.alex.1).await.is_empty());
+    assert_eq!(
+        restore(&w, &w.sam.1, old.id).await.status(),
+        404,
+        "not deleted"
+    );
+    assert_eq!(purge_now(&w, &w.alex.1, old.id).await, 404, "not deleted");
+
+    // The owner restores what someone else deleted.
+    assert_eq!(
+        delete(&w.app, &kim.1, &format!("/channels/{}", old.id)).await,
+        204
+    );
+    assert_eq!(restore(&w, &w.alex.1, old.id).await.status(), 200);
+}
+
+#[tokio::test]
+async fn deleting_now_is_for_the_owner_and_purges_everything() {
+    let w = world().await;
+    let old = create_channel(&w.app, &w.alex.1, w.server, "text", "old").await;
+    let keep = general(&w.app, &w.alex.1, w.server).await;
+    let first = send(&w.app, &w.alex.1, old.id, "findable words @sam").await;
+    let r = post_json(
+        &w.app,
+        &w.sam.1,
+        &format!("/channels/{}/messages", old.id),
+        json!({ "content": "a findable reply", "reply_to_id": first.id }),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let kept = send(&w.app, &w.alex.1, keep.id, "findable elsewhere").await;
+    let r = put(
+        &w.app,
+        &w.sam.1,
+        &format!("/messages/{}/reactions/%F0%9F%91%8D", first.id),
+        None,
+    )
+    .await;
+    assert!(r.is_success(), "react {r}");
+    let r = put(
+        &w.app,
+        &w.sam.1,
+        "/mutes",
+        Some(json!({ "target_kind": "channel", "target_id": old.id, "until": null })),
+    )
+    .await;
+    assert!(r.is_success(), "mute {r}");
+    let id = old.id.to_string();
+    // Only from Recently deleted.
+    assert_eq!(purge_now(&w, &w.alex.1, old.id).await, 404);
+    assert_eq!(
+        delete(&w.app, &w.sam.1, &format!("/channels/{}", old.id)).await,
+        204
+    );
+    // Only the owner, even for the one who deleted it.
+    assert_eq!(purge_now(&w, &w.sam.1, old.id).await, 403);
+    assert_eq!(purge_now(&w, &w.jo.1, old.id).await, 403);
+    assert_eq!(purge_now(&w, &w.alex.1, old.id).await, 204);
+
+    assert_eq!(
+        count(&w.app, "SELECT COUNT(*) FROM channels WHERE id = ?", &id).await,
+        0
+    );
+    for table in ["messages", "read_states", "search_docs"] {
+        let q = format!("SELECT COUNT(*) FROM {table} WHERE channel_id = ?");
+        assert_eq!(count(&w.app, &q, &id).await, 0, "{table}");
+    }
+    let first = first.id.to_string();
+    for table in ["reactions", "mentions"] {
+        let q = format!("SELECT COUNT(*) FROM {table} WHERE message_id = ?");
+        assert_eq!(count(&w.app, &q, &first).await, 0, "{table}");
+    }
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM notification_prefs WHERE target_kind = 'channel' AND target_id = ?",
+            &id
+        )
+        .await,
+        0
+    );
+    // The search index lost the channel's messages and nothing else.
+    let docs: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM message_search WHERE message_search MATCH 'findable'",
+    )
+    .fetch_one(&w.app.db)
+    .await
+    .unwrap();
+    assert_eq!(docs, 1);
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM search_docs WHERE message_id = ?",
+            &kept.id.to_string()
+        )
+        .await,
+        1
+    );
+    assert!(deleted_list(&w, &w.alex.1).await.is_empty());
+    assert_eq!(restore(&w, &w.alex.1, old.id).await.status(), 404);
+    assert_eq!(purge_now(&w, &w.alex.1, old.id).await, 404, "already gone");
+}
+
+#[tokio::test]
+async fn the_sweeper_purges_after_seven_days() {
+    let w = world().await;
+    let old = create_channel(&w.app, &w.alex.1, w.server, "text", "old").await;
+    let live = create_channel(&w.app, &w.alex.1, w.server, "text", "live").await;
+    send(&w.app, &w.alex.1, old.id, "bye").await;
+    assert_eq!(
+        delete(&w.app, &w.sam.1, &format!("/channels/{}", old.id)).await,
+        204
+    );
+    let s = w.app.state();
+    let now = chrono::Utc::now();
+    let swept = pulse_server::servers::channels::purge_expired(&s, now + chrono::Duration::days(6))
+        .await
+        .unwrap();
+    assert_eq!(swept, 0);
+    assert_eq!(deleted_list(&w, &w.alex.1).await.len(), 1);
+    let swept = pulse_server::servers::channels::purge_expired(&s, now + chrono::Duration::days(8))
+        .await
+        .unwrap();
+    assert_eq!(swept, 1);
+    let id = old.id.to_string();
+    assert_eq!(
+        count(&w.app, "SELECT COUNT(*) FROM channels WHERE id = ?", &id).await,
+        0
+    );
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM messages WHERE channel_id = ?",
+            &id
+        )
+        .await,
+        0
+    );
+    // live channels are never touched
+    assert_eq!(
+        count(
+            &w.app,
+            "SELECT COUNT(*) FROM channels WHERE id = ?",
+            &live.id.to_string()
+        )
+        .await,
+        1
+    );
+}
+
+/// Clients drop a channel's clip view with it, so a restore sends it back to whoever set one.
+#[tokio::test]
+async fn a_restore_brings_back_your_clip_view() {
+    let w = world().await;
+    let clips = create_channel(&w.app, &w.alex.1, w.server, "clips", "clips").await;
+    let r = put(
+        &w.app,
+        &w.sam.1,
+        &format!("/channels/{}/clip-view", clips.id),
+        Some(json!({ "view": "list" })),
+    )
+    .await;
+    assert!(r.is_success(), "clip view {r}");
+    assert_eq!(
+        delete(&w.app, &w.sam.1, &format!("/channels/{}", clips.id)).await,
+        204
+    );
+    let mut rx = w.app.hub.register(w.sam.0, String::new()).rx;
+    assert_eq!(restore(&w, &w.alex.1, clips.id).await.status(), 200);
+    loop {
+        match next_event(&mut rx).await {
+            Event::ClipViewChanged {
+                user_id,
+                channel_id,
+                view,
+            } => {
+                assert_eq!(
+                    (user_id, channel_id, view),
+                    (w.sam.0, clips.id, pulse_protocol::rest::ClipView::List)
+                );
+                break;
+            }
+            Event::ChannelRestored { .. } | Event::ReadStateUpdated { .. } => {}
+            other => panic!("unexpected {other:?}"),
+        }
     }
 }
