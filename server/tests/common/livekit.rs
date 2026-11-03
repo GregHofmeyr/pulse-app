@@ -68,9 +68,28 @@ pub async fn fake_livekit_shared(rooms: SharedRooms) -> String {
     format!("http://{addr}")
 }
 
+/// LiveKit permission updates the fake saw, as (room, identity, can_publish).
+pub type Updated = Arc<Mutex<Vec<(String, String, bool)>>>;
+
+/// [`fake_livekit_shared`], also returning the removal and permission-update logs.
+pub async fn fake_livekit_full(rooms: SharedRooms) -> (String, Removed, Updated) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let (removed, updated) = serve_fake_logs(listener, rooms);
+    (format!("http://{addr}"), removed, updated)
+}
+
 /// [`serve_fake`] on rooms the caller keeps a handle to.
 pub fn serve_fake_shared(listener: tokio::net::TcpListener, rooms: SharedRooms) -> Removed {
+    serve_fake_logs(listener, rooms).0
+}
+
+/// [`serve_fake_shared`], also answering UpdateParticipant (permission changes are applied to
+/// the participant and logged).
+pub fn serve_fake_logs(listener: tokio::net::TcpListener, rooms: SharedRooms) -> (Removed, Updated) {
     let removed = Removed::default();
+    let updated = Updated::default();
+    let (r5, ulog) = (rooms.clone(), updated.clone());
     let (r1, r2, r3, r4, log) = (
         rooms.clone(),
         rooms.clone(),
@@ -161,9 +180,34 @@ pub fn serve_fake_shared(listener: tokio::net::TcpListener, rooms: SharedRooms) 
                         .into_response()
                 }
             }),
+        )
+        .route(
+            "/twirp/livekit.RoomService/UpdateParticipant",
+            post(move |body: Bytes| {
+                let (rooms, log) = (r5.clone(), ulog.clone());
+                async move {
+                    let req = lkp::UpdateParticipantRequest::decode(body).unwrap();
+                    let mut rooms = rooms.lock().unwrap();
+                    let found = rooms
+                        .iter_mut()
+                        .filter(|(name, _)| *name == req.room)
+                        .flat_map(|(_, ps)| ps.iter_mut())
+                        .find(|p| p.identity == req.identity);
+                    let Some(p) = found else {
+                        return twirp_not_found();
+                    };
+                    if let Some(perm) = req.permission {
+                        log.lock()
+                            .unwrap()
+                            .push((req.room, req.identity, perm.can_publish));
+                        p.permission = Some(perm);
+                    }
+                    p.encode_to_vec().into_response()
+                }
+            }),
         );
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    removed
+    (removed, updated)
 }
 
 pub fn twirp_not_found() -> Response {

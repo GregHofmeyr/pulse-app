@@ -50,6 +50,13 @@ async fn token(
     if !s.limits.livekit_token_user.hit(&me.to_string()) {
         return Err(AppError::TooManyRequests(None));
     }
+    // Server muted or deafened (#140): the token can't publish until someone undoes it.
+    let can_publish = match ch.server_id {
+        Some(server) => crate::voice::moderation::publish_allowed(
+            crate::voice::moderation::get(&s.db, server, me).await?.as_ref(),
+        ),
+        None => true,
+    };
     let grant = crate::auth::session::record_grant(&s.db, &session, &room, &me.to_string())
         .await?
         .ok_or(AppError::Unauthorized)?;
@@ -60,7 +67,7 @@ async fn token(
         .with_grants(VideoGrants {
             room_join: true,
             room,
-            can_publish: Some(true),
+            can_publish: Some(can_publish),
             // Voice rooms carry the microphone only: screen share has its own room (`<id>~s`).
             can_publish_sources: vec!["microphone".into()],
             can_subscribe: Some(true),
@@ -147,6 +154,12 @@ async fn webhook(
     };
     // Only server voice channels feed stats; DM/group calls are never recorded (spec §8).
     let record = ch.server_id.is_some();
+    // Every admitted join, a reconnect too: its token may predate a server mute or its undo.
+    if ev.event == "participant_joined"
+        && let Some(server) = ch.server_id
+    {
+        crate::voice::moderation::reconcile_join(&s, server, channel_id, user_id, p).await?;
+    }
 
     match ev.event.as_str() {
         "participant_joined" if s.voice.join(channel_id, user_id, &p.sid) => {

@@ -27,9 +27,9 @@ use crate::access::load_channel;
 use crate::auth::session::{self, GRANT_ATTRIBUTE, RevokedGrant};
 
 /// Upper bound on how long a logout waits for LiveKit (all rooms are handled in parallel).
-const BUDGET: Duration = Duration::from_secs(2);
+pub(crate) const BUDGET: Duration = Duration::from_secs(2);
 
-fn client(s: &AppState) -> RoomClient {
+pub(crate) fn client(s: &AppState) -> RoomClient {
     RoomClient::with_api_key(
         &s.cfg.livekit_api_url,
         &s.cfg.livekit_key,

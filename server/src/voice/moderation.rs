@@ -9,11 +9,14 @@
 //! voice and stream rooms now and stores nothing; they can rejoin.
 
 use axum::extract::{Path, State};
+use axum::http::StatusCode;
 use axum::routing::post;
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, ServerId, UserId};
 use pulse_protocol::rest::{ServerVoiceMod, SetServerVoiceRequest};
+use livekit_api::services::room::UpdateParticipantOptions;
+use livekit_protocol::{ParticipantInfo, ParticipantPermission, TrackSource};
 use sqlx::SqlitePool;
 
 use crate::AppState;
@@ -24,7 +27,9 @@ use crate::error::{AppError, AppResult};
 use crate::servers::routes::{is_server_member, require_member};
 
 pub fn router() -> Router<AppState> {
-    Router::new().route("/servers/{server}/voice/{user}", post(set))
+    Router::new()
+        .route("/servers/{server}/voice/{user}", post(set))
+        .route("/servers/{server}/voice/{user}/disconnect", post(disconnect))
 }
 
 type Row = (String, String, Option<String>, Option<String>);
@@ -75,6 +80,63 @@ pub async fn for_ready(db: &SqlitePool) -> AppResult<Vec<ServerVoiceMod>> {
 /// Whether someone with this server mute / deafen may publish their mic.
 pub fn publish_allowed(m: Option<&ServerVoiceMod>) -> bool {
     m.is_none_or(|m| m.muted_by.is_none() && m.deafened_by.is_none())
+}
+
+/// A voice participant's LiveKit permission: as the voice token grants (microphone only, no data
+/// messages), with publishing taken away while server muted or deafened.
+pub fn permission(allowed: bool) -> ParticipantPermission {
+    ParticipantPermission {
+        can_subscribe: true,
+        can_publish: allowed,
+        can_publish_data: false,
+        can_publish_sources: vec![TrackSource::Microphone as i32],
+        ..Default::default()
+    }
+}
+
+/// Give `user` publishing in `channel`'s room at LiveKit, or take it away (LiveKit then drops
+/// their mic track). Never fails; problems are logged, within [`crate::voice::revoke::BUDGET`].
+pub async fn enforce(s: &AppState, channel: ChannelId, user: UserId, allowed: bool) {
+    let client = crate::voice::revoke::client(s);
+    let (room, identity) = (channel.to_string(), user.to_string());
+    let update = client.update_participant(
+        &room,
+        &identity,
+        UpdateParticipantOptions {
+            permission: Some(permission(allowed)),
+            ..Default::default()
+        },
+    );
+    match tokio::time::timeout(crate::voice::revoke::BUDGET, update).await {
+        Ok(Ok(_)) => tracing::info!(room, identity, allowed, "LiveKit publish permission set"),
+        Ok(Err(e)) if crate::voice::revoke::not_found(&e) => {
+            tracing::debug!(room, identity, "not at LiveKit; their next join is reconciled")
+        }
+        Ok(Err(e)) => {
+            tracing::warn!(error = %e, room, identity, allowed, "couldn't set LiveKit publish permission")
+        }
+        Err(_) => tracing::warn!(room, identity, allowed, "LiveKit didn't answer in time"),
+    }
+}
+
+/// A LiveKit join in a server voice channel: if the token's publishing doesn't match the server
+/// mute / deafen now in force (a token fetched before it changed, say a prefetched one), set it
+/// in the background.
+pub async fn reconcile_join(
+    s: &AppState,
+    server: ServerId,
+    channel: ChannelId,
+    user: UserId,
+    p: &ParticipantInfo,
+) -> AppResult<()> {
+    let want = publish_allowed(get(&s.db, server, user).await?.as_ref());
+    // no permission reported: LiveKit's default for our tokens, publishing allowed
+    let has = p.permission.as_ref().is_none_or(|p| p.can_publish);
+    if want != has {
+        let s = s.clone();
+        tokio::spawn(async move { enforce(&s, channel, user, want).await });
+    }
+    Ok(())
 }
 
 /// The server voice channel `user` is in, if it belongs to `server`.
@@ -159,6 +221,11 @@ async fn set(
         .execute(&s.db)
         .await?;
     }
+    if let Some(channel) = call
+        && publish_allowed(before.as_ref()) != publish_allowed(Some(&after))
+    {
+        enforce(&s, channel, target, publish_allowed(Some(&after))).await;
+    }
     tracing::info!(server = %server, target = %target, by = %me, muted = after.muted_by.is_some(), deafened = after.deafened_by.is_some(), "server voice changed");
     s.hub
         .publish(
@@ -169,6 +236,33 @@ async fn set(
         )
         .await;
     Ok(Json(after))
+}
+
+/// `POST /servers/{server}/voice/{user}/disconnect`: take them out of the call now (voice room
+/// and their stream connections), like the channel-deleted path. Nothing is stored; they may
+/// rejoin. They are told who did it first, so the notice is there when their call drops.
+async fn disconnect(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path((server, target)): Path<(ServerId, UserId)>,
+) -> AppResult<StatusCode> {
+    check_actor(&s, server, me, target).await?;
+    let channel = call_in(&s, server, target)
+        .await?
+        .ok_or(AppError::NotFound)?;
+    tracing::info!(server = %server, channel = %channel, target = %target, by = %me, "voice disconnect");
+    s.hub
+        .publish(
+            &s.db,
+            Event::VoiceDisconnected {
+                channel_id: channel,
+                user_id: target,
+                by: me,
+            },
+        )
+        .await;
+    crate::voice::revoke::close_call(&s, channel, &[target]).await;
+    Ok(StatusCode::NO_CONTENT)
 }
 
 #[cfg(test)]
