@@ -1,91 +1,90 @@
-/* Tokens from the v1 mockups: layered greys, no true black, rounded frames. */
-:root {
+/* Themes (#42): one block of colour tokens per theme, picked by data-theme on <html> (lib/theme.svelte.ts). Every
+   theme block declares every colour token, so a preview carrying its own data-theme (the picker in Settings →
+   Appearance) shows that theme whatever the app is on. Values are plain hex and rgba(): no color-mix() or relative
+   colour, which an older WebKitGTK drops. lib/themes.ts repeats each theme's surfaces and accent (themeCss.test.ts
+   keeps them equal); a custom accent overrides the accent family inline on <html>. */
+
+/* Pulse Dark (the default). Tokens from the v1 mockups: layered greys, no true black, rounded frames. */
+:root, [data-theme='dark'] {
+  color-scheme: dark;
   --bg-0: #141519;
   --bg-1: #1b1c21;
   --bg-2: #212228;
   --bg-3: #2a2c33;
   --bg-4: #34363d;
+  /* Below --bg-0: code blocks, the voice control dock, the account bar. */
+  --bg-inset: #17181c;
+  /* Context menus, popovers and the Select list. */
+  --surface-menu: #2e3037;
   --line: #2f3138;
+  /* Row separators in settings, and the sidebar header rule. */
+  --line-soft: #26282e;
+  --line-menu: #3d4048;
+  /* A hovered Select trigger's border: a step above --line-menu. */
+  --line-strong: #44474f;
   --text: #e8e9ed;
+  /* Message, clip caption and quote body text. */
+  --text-body: #dcdee5;
   --text-2: #b9bcc6;
-  --text-3: #8e92a0;
   /* Unselected channel and conversation rows in the sidebar: between --text-2 and --text-3. */
   --text-row: #9a9eab;
+  --text-3: #8e92a0;
+  /* The accent family (lib/themes.ts deriveAccent): the fill, the text on it, accent-coloured text (4.5:1 on the
+     theme's surfaces), the focus ring (3:1), and --accent at 15% (mentions, search chips, your reaction), 8% (a
+     message that mentions you) and 45% (the message box and edit box's focus edge). A custom accent sets them all
+     inline on <html>. */
   --accent: #8b9cff;
   --on-accent: #141519;
-  /* Accent, warn, ok and quote green as text, vs as a fill: the same colour today; a theme (or the
-     accent picker) may move the text one toward readable on its surfaces. */
   --accent-text: var(--accent);
+  --focus-ring: var(--accent);
+  --accent-soft: rgba(139, 156, 255, .15);
+  --accent-faint: rgba(139, 156, 255, .08);
+  --focus-soft: rgba(139, 156, 255, .45);
+  /* Danger, warn and ok as fills; their -text twins as text (moved toward readable on a theme's surfaces). */
   --danger: #d93a42;
-  --warn: #e8b04a;
-  --ok: #4fd18b;
-  --warn-text: var(--warn);
-  --ok-text: var(--ok);
-  /* --ok, translucent (the voice panel's Connected pill), and darker (the mic level meter). */
-  --ok-soft: rgba(79, 209, 139, .12);
-  --ok-deep: #3a7d5a;
-  /* the dropped pieces' hatching on the clip timeline: --danger at 55% */
-  --danger-hatch: rgba(217, 58, 66, .55);
-  /* Offline presence dot. */
-  --presence-off: #5b5f6b;
-  /* The cut-out ring around avatars, presence dots and speaking rings (the panel they usually sit on). */
-  --ring: var(--bg-1);
-  --radius: 14px;
   /* Error and danger text: lighter than --danger, which is for fills. */
   --danger-text: #f2616b;
   /* Text on a --danger fill. */
   --on-danger: #fff;
+  /* the dropped pieces' hatching on the clip timeline: --danger at 55% */
+  --danger-hatch: rgba(217, 58, 66, .55);
+  --warn: #e8b04a;
+  --warn-text: var(--warn);
   --warn-soft: rgba(232, 176, 74, .12);
-  /* The accent family: --accent at 15% (mentions, search chips, your reaction), 45% (the message
-     box and edit box's focus edge: faint, they're focused nearly all the time) and 8% (a message
-     that mentions you). Plain rgba() copies of --accent, not color-mix() or rgb(from var(--accent) …):
-     an engine without them drops the value, and the WebKitGTK a Linux distribution ships can be too
-     old for relative colour. The accent picker sets all three from JS along with --accent. */
-  --accent-soft: rgba(139, 156, 255, .15);
-  --focus-soft: rgba(139, 156, 255, .45);
-  --accent-faint: rgba(139, 156, 255, .08);
+  --ok: #4fd18b;
+  --ok-text: var(--ok);
+  /* --ok, translucent (the voice panel's Connected pill), and darker (the mic level meter). */
+  --ok-soft: rgba(79, 209, 139, .12);
+  --ok-deep: #3a7d5a;
+  /* Offline presence dot. */
+  --presence-off: #5b5f6b;
+  /* The cut-out ring around avatars, presence dots and speaking rings (the panel they usually sit on). */
+  --ring: var(--bg-1);
   /* Row hover on a message, quote or clip, and a quote line's (a touch stronger). */
   --hover-tint: rgba(255, 255, 255, .02);
   --hover-tint-strong: rgba(255, 255, 255, .03);
-  /* Context menus, popovers and the Select list. */
-  --surface-menu: #2e3037;
-  --line-menu: #3d4048;
-  /* A hovered Select trigger's border: a step above --line-menu. */
-  --line-strong: #44474f;
-  --shadow-menu: 0 18px 48px rgba(8, 9, 12, .5);
-  /* Shadows of floating things: the tooltip; the stream toast and mini preview; the notices (Shell's,
-     and the clips channel's softer one); the jump-to-latest pill; the emoji picker. */
-  --shadow-pop: 0 8px 24px rgba(0, 0, 0, .4);
-  --shadow-float: 0 12px 32px rgba(8, 9, 12, .5);
-  --shadow-notice: 0 6px 20px rgba(0, 0, 0, .35);
-  --shadow-notice-soft: 0 6px 20px rgba(0, 0, 0, .3);
-  --shadow-jump: 0 4px 14px rgba(0, 0, 0, .35);
-  --shadow-picker: 0 8px 28px rgba(0, 0, 0, .45);
+  /* Elevation: 1 small things that float (the jump-to-latest pill), 2 popups and notices (tooltip, toasts, notices,
+     the emoji picker, the mini preview), 3 menus and dialogs. */
+  --shadow-1: 0 4px 14px rgba(0, 0, 0, .35);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, .4);
+  --shadow-3: 0 18px 48px rgba(8, 9, 12, .5);
+  /* Behind a modal. */
+  --scrim: rgba(10, 11, 13, .6);
+  /* Behind the full-size image (the quote image lightbox): dark in every theme. */
+  --scrim-strong: rgba(10, 11, 13, .85);
   /* The tooltip: a fixed dark chip in every theme, so its text is its own. */
   --tooltip-bg: #0f1013;
   --tooltip-text: #e8e9ed;
-  /* Row separators in settings, and the sidebar header rule. */
-  --line-soft: #26282e;
-  /* Below --bg-0: code blocks, the voice control dock, the account bar. */
-  --bg-inset: #17181c;
-  /* Message, clip caption and quote body text. */
-  --text-body: #dcdee5;
-  /* Behind a modal. */
-  --scrim: rgba(10, 11, 13, .6);
-  /* Behind the full-size image (the quote image lightbox). */
-  --scrim-strong: rgba(10, 11, 13, .85);
-  /* Hover and press feedback. */
-  --dur: 140ms;
-  --ease: cubic-bezier(.2, .8, .2, 1);
-  /* Quotes: the award and Quote of the Year green, its mid and deep shades (the pixel spill), and the text that sits on the green. */
+  /* Quotes: the award and Quote of the Year green, its mid and deep shades (the pixel spill), the text that sits on
+     the green, and the green as text. */
   --quote-green: #39d98a;
   --quote-green-mid: #22a865;
   --quote-green-deep: #14713f;
   --on-quote-green: #0b1f14;
   --quote-green-text: var(--quote-green);
-  /* the near-black the spill pours into (banner, winner card) */
+  /* the near-black the spill pours into (banner, winner card): an island, the same in every theme */
   --quote-surface: #0e1013;
-  /* Text on that island (--text, --text-2, --text-3 today): fixed, so it reads on --quote-surface in every
+  /* Text on that island (Pulse Dark's --text, --text-2, --text-3): fixed, so it reads on --quote-surface in every
      theme. Also for other fixed dark boxes (the stream diagnostics over video). */
   --island-text: #e8e9ed;
   --island-text-2: #b9bcc6;
@@ -101,11 +100,502 @@
   --first-gold: #f5cd52;
   --first-gold-soft: rgba(245, 205, 82, .35);
   --badge-new: #f2616b;
-  /* --text-3, translucent, so the thumb reads on every surface it sits on (--bg-0 to --bg-4). Plain
-     rgb(), not color-mix(): an engine without color-mix() would make the thumb invisible. */
+  /* --text-3, translucent, so the thumb reads on every surface it sits on (--bg-0 to --bg-4). Plain rgb(), not
+     color-mix(): an engine without color-mix() would make the thumb invisible. */
   --scrollbar-thumb: rgb(142 146 160 / .32);
   --scrollbar-thumb-hover: rgb(142 146 160 / .55);
+}
+
+/* Midnight: deeper and bluer. */
+[data-theme='midnight'] {
   color-scheme: dark;
+  --bg-0: #0b0d14;
+  --bg-1: #11141e;
+  --bg-2: #151926;
+  --bg-3: #1d2233;
+  --bg-4: #272d42;
+  --bg-inset: #0e1119;
+  --surface-menu: #1d2233;
+  --line: #232839;
+  --line-soft: #191d2a;
+  --line-menu: #2c3349;
+  --line-strong: #353d57;
+  --text: #e6e9f5;
+  --text-body: #d8dcec;
+  --text-2: #a9b0c8;
+  --text-row: #8d95b0;
+  --text-3: #8189a6;
+  --accent: #8b9cff;
+  --on-accent: #141519;
+  --accent-text: #8b9cff;
+  --focus-ring: #8b9cff;
+  --accent-soft: rgba(139, 156, 255, .15);
+  --accent-faint: rgba(139, 156, 255, .08);
+  --focus-soft: rgba(139, 156, 255, .45);
+  --danger: #d93a42;
+  --danger-text: #f2616b;
+  --on-danger: #fff;
+  --danger-hatch: rgba(217, 58, 66, .55);
+  --warn: #e8b04a;
+  --warn-text: #e8b04a;
+  --warn-soft: rgba(232, 176, 74, .12);
+  --ok: #4fd18b;
+  --ok-text: #4fd18b;
+  --ok-soft: rgba(79, 209, 139, .12);
+  --ok-deep: #3a7d5a;
+  --presence-off: #4e5570;
+  --ring: var(--bg-1);
+  --hover-tint: rgba(160, 180, 255, .03);
+  --hover-tint-strong: rgba(160, 180, 255, .045);
+  --shadow-1: 0 4px 14px rgba(0, 0, 0, .45);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, .5);
+  --shadow-3: 0 18px 48px rgba(0, 0, 0, .6);
+  --scrim: rgba(4, 5, 10, .65);
+  --scrim-strong: rgba(10, 11, 13, .85);
+  --tooltip-bg: #0f1013;
+  --tooltip-text: #e8e9ed;
+  --quote-green: #39d98a;
+  --quote-green-mid: #22a865;
+  --quote-green-deep: #14713f;
+  --on-quote-green: #0b1f14;
+  --quote-green-text: #39d98a;
+  --quote-surface: #0e1013;
+  --island-text: #e8e9ed;
+  --island-text-2: #b9bcc6;
+  --island-text-3: #8e92a0;
+  --scrollbar-thumb: rgb(129 137 166 / .32);
+  --scrollbar-thumb-hover: rgb(129 137 166 / .55);
+}
+
+/* OLED Black: true black window and sidebar, panels a step up. */
+[data-theme='oled'] {
+  color-scheme: dark;
+  --bg-0: #000000;
+  --bg-1: #000000;
+  --bg-2: #0c0c0e;
+  --bg-3: #1a1b1f;
+  --bg-4: #26272c;
+  --bg-inset: #08080a;
+  --surface-menu: #161619;
+  --line: #1f2024;
+  --line-soft: #141417;
+  --line-menu: #2a2b30;
+  --line-strong: #34353b;
+  --text: #ececf0;
+  --text-body: #dcdde3;
+  --text-2: #b4b6c0;
+  --text-row: #969aa6;
+  --text-3: #878a97;
+  --accent: #8b9cff;
+  --on-accent: #141519;
+  --accent-text: #8b9cff;
+  --focus-ring: #8b9cff;
+  --accent-soft: rgba(139, 156, 255, .15);
+  --accent-faint: rgba(139, 156, 255, .08);
+  --focus-soft: rgba(139, 156, 255, .45);
+  --danger: #d93a42;
+  --danger-text: #f2616b;
+  --on-danger: #fff;
+  --danger-hatch: rgba(217, 58, 66, .55);
+  --warn: #e8b04a;
+  --warn-text: #e8b04a;
+  --warn-soft: rgba(232, 176, 74, .12);
+  --ok: #4fd18b;
+  --ok-text: #4fd18b;
+  --ok-soft: rgba(79, 209, 139, .12);
+  --ok-deep: #3a7d5a;
+  --presence-off: #55575f;
+  --ring: var(--bg-1);
+  --hover-tint: rgba(255, 255, 255, .035);
+  --hover-tint-strong: rgba(255, 255, 255, .05);
+  --shadow-1: 0 4px 14px rgba(0, 0, 0, .6);
+  --shadow-2: 0 8px 24px rgba(0, 0, 0, .7);
+  --shadow-3: 0 18px 48px rgba(0, 0, 0, .8);
+  --scrim: rgba(0, 0, 0, .7);
+  --scrim-strong: rgba(10, 11, 13, .85);
+  --tooltip-bg: #0f1013;
+  --tooltip-text: #e8e9ed;
+  --quote-green: #39d98a;
+  --quote-green-mid: #22a865;
+  --quote-green-deep: #14713f;
+  --on-quote-green: #0b1f14;
+  --quote-green-text: #39d98a;
+  --quote-surface: #0e1013;
+  --island-text: #e8e9ed;
+  --island-text-2: #b9bcc6;
+  --island-text-3: #8e92a0;
+  --scrollbar-thumb: rgb(135 138 151 / .32);
+  --scrollbar-thumb-hover: rgb(135 138 151 / .55);
+}
+
+/* Sunset: the warm theme (replaces the lab's brown "Ember"): a rosy dark with a coral accent. */
+[data-theme='sunset'] {
+  color-scheme: dark;
+  --bg-0: #1c1213;
+  --bg-1: #23171a;
+  --bg-2: #2a1c1f;
+  --bg-3: #352427;
+  --bg-4: #432e31;
+  --bg-inset: #1f1416;
+  --surface-menu: #3a282b;
+  --line: #3a2a2d;
+  --line-soft: #2e2023;
+  --line-menu: #4a3538;
+  --line-strong: #553d40;
+  --text: #f7ebe6;
+  --text-body: #eddfd9;
+  --text-2: #d4bcb4;
+  --text-row: #bda198;
+  --text-3: #b0958c;
+  --accent: #ff8a6b;
+  --on-accent: #141519;
+  --accent-text: #ff8a6b;
+  --focus-ring: #ff8a6b;
+  --accent-soft: rgba(255, 138, 107, .15);
+  --accent-faint: rgba(255, 138, 107, .08);
+  --focus-soft: rgba(255, 138, 107, .45);
+  --danger: #d93a42;
+  --danger-text: #ff7474;
+  --on-danger: #fff;
+  --danger-hatch: rgba(217, 58, 66, .55);
+  --warn: #f2b94f;
+  --warn-text: #f2b94f;
+  --warn-soft: rgba(242, 185, 79, .12);
+  --ok: #6fd69a;
+  --ok-text: #6fd69a;
+  --ok-soft: rgba(111, 214, 154, .12);
+  --ok-deep: #3f8a60;
+  --presence-off: #6e5a5c;
+  --ring: var(--bg-1);
+  --hover-tint: rgba(255, 200, 190, .03);
+  --hover-tint-strong: rgba(255, 200, 190, .045);
+  --shadow-1: 0 4px 14px rgba(10, 4, 5, .4);
+  --shadow-2: 0 8px 24px rgba(10, 4, 5, .45);
+  --shadow-3: 0 18px 48px rgba(10, 4, 5, .55);
+  --scrim: rgba(12, 6, 7, .6);
+  --scrim-strong: rgba(10, 11, 13, .85);
+  --tooltip-bg: #0f1013;
+  --tooltip-text: #e8e9ed;
+  --quote-green: #39d98a;
+  --quote-green-mid: #22a865;
+  --quote-green-deep: #14713f;
+  --on-quote-green: #0b1f14;
+  --quote-green-text: #39d98a;
+  --quote-surface: #0e1013;
+  --island-text: #e8e9ed;
+  --island-text-2: #b9bcc6;
+  --island-text-3: #8e92a0;
+  --scrollbar-thumb: rgb(176 149 140 / .32);
+  --scrollbar-thumb-hover: rgb(176 149 140 / .55);
+}
+[data-theme='ember'] {
+  color-scheme: dark;
+  --bg-0: #171412;
+  --bg-1: #1e1a17;
+  --bg-2: #24201c;
+  --bg-3: #2e2924;
+  --bg-4: #3a332d;
+  --bg-inset: #1a1714;
+  --surface-menu: #332d28;
+  --line: #332d28;
+  --line-soft: #29241f;
+  --line-menu: #433b34;
+  --line-strong: #4e453d;
+  --text: #f0e9e3;
+  --text-body: #e6ddd5;
+  --text-2: #cdc2b8;
+  --text-row: #b3a69a;
+  --text-3: #a89a8e;
+  --accent: #ffa45c;
+  --on-accent: #141519;
+  --accent-text: #ffa45c;
+  --focus-ring: #ffa45c;
+  --accent-soft: rgba(255, 164, 92, .15);
+  --accent-faint: rgba(255, 164, 92, .08);
+  --focus-soft: rgba(255, 164, 92, .45);
+  --danger: #d93a42;
+  --danger-text: #ff7474;
+  --on-danger: #fff;
+  --danger-hatch: rgba(217, 58, 66, .55);
+  --warn: #f2b94f;
+  --warn-text: #f2b94f;
+  --warn-soft: rgba(242, 185, 79, .12);
+  --ok: #6fd69a;
+  --ok-text: #6fd69a;
+  --ok-soft: rgba(111, 214, 154, .12);
+  --ok-deep: #3f8a60;
+  --presence-off: #6b6158;
+  --ring: var(--bg-1);
+  --hover-tint: rgba(255, 225, 200, .03);
+  --hover-tint-strong: rgba(255, 225, 200, .045);
+  --shadow-1: 0 4px 14px rgba(8, 6, 4, .4);
+  --shadow-2: 0 8px 24px rgba(8, 6, 4, .45);
+  --shadow-3: 0 18px 48px rgba(8, 6, 4, .55);
+  --scrim: rgba(8, 6, 4, .6);
+  --scrim-strong: rgba(10, 11, 13, .85);
+  --tooltip-bg: #0f1013;
+  --tooltip-text: #e8e9ed;
+  --quote-green: #39d98a;
+  --quote-green-mid: #22a865;
+  --quote-green-deep: #14713f;
+  --on-quote-green: #0b1f14;
+  --quote-green-text: #39d98a;
+  --quote-surface: #0e1013;
+  --island-text: #e8e9ed;
+  --island-text-2: #b9bcc6;
+  --island-text-3: #8e92a0;
+  --scrollbar-thumb: rgb(168 154 142 / .32);
+  --scrollbar-thumb-hover: rgb(168 154 142 / .55);
+}
+[data-theme='plum'] {
+  color-scheme: dark;
+  --bg-0: #1a1219;
+  --bg-1: #21171f;
+  --bg-2: #281c26;
+  --bg-3: #332431;
+  --bg-4: #402e3d;
+  --bg-inset: #1d141c;
+  --surface-menu: #382835;
+  --line: #382a35;
+  --line-soft: #2c2029;
+  --line-menu: #473544;
+  --line-strong: #523d4e;
+  --text: #f6eaf2;
+  --text-body: #ecdfe8;
+  --text-2: #d3bccb;
+  --text-row: #bba1b3;
+  --text-3: #b398ac;
+  --accent: #ff7fb0;
+  --on-accent: #141519;
+  --accent-text: #ff7fb0;
+  --focus-ring: #ff7fb0;
+  --accent-soft: rgba(255, 127, 176, .15);
+  --accent-faint: rgba(255, 127, 176, .08);
+  --focus-soft: rgba(255, 127, 176, .45);
+  --danger: #d93a42;
+  --danger-text: #ff7474;
+  --on-danger: #fff;
+  --danger-hatch: rgba(217, 58, 66, .55);
+  --warn: #f2b94f;
+  --warn-text: #f2b94f;
+  --warn-soft: rgba(242, 185, 79, .12);
+  --ok: #6fd69a;
+  --ok-text: #6fd69a;
+  --ok-soft: rgba(111, 214, 154, .12);
+  --ok-deep: #3f8a60;
+  --presence-off: #6a5866;
+  --ring: var(--bg-1);
+  --hover-tint: rgba(255, 215, 245, .03);
+  --hover-tint-strong: rgba(255, 215, 245, .045);
+  --shadow-1: 0 4px 14px rgba(8, 4, 8, .4);
+  --shadow-2: 0 8px 24px rgba(8, 4, 8, .45);
+  --shadow-3: 0 18px 48px rgba(8, 4, 8, .55);
+  --scrim: rgba(8, 4, 8, .6);
+  --scrim-strong: rgba(10, 11, 13, .85);
+  --tooltip-bg: #0f1013;
+  --tooltip-text: #e8e9ed;
+  --quote-green: #39d98a;
+  --quote-green-mid: #22a865;
+  --quote-green-deep: #14713f;
+  --on-quote-green: #0b1f14;
+  --quote-green-text: #39d98a;
+  --quote-surface: #0e1013;
+  --island-text: #e8e9ed;
+  --island-text-2: #b9bcc6;
+  --island-text-3: #8e92a0;
+  --scrollbar-thumb: rgb(179 152 172 / .32);
+  --scrollbar-thumb-hover: rgb(179 152 172 / .55);
+}
+
+/* Pastel: light-ish and calm: a lavender ground, a pink-lilac sidebar, cream panels, rose hovers, peach warnings. */
+[data-theme='pastel'] {
+  color-scheme: light;
+  --bg-0: #e8def3;
+  --bg-1: #f4ebf6;
+  --bg-2: #fffafb;
+  --bg-3: #f5e6ef;
+  --bg-4: #ead6e6;
+  --bg-inset: #f1e6f3;
+  --surface-menu: #fffafb;
+  --line: #e6d6e6;
+  --line-soft: #efe3ef;
+  --line-menu: #e0cde0;
+  --line-strong: #cfb8d2;
+  --text: #2a1f3a;
+  --text-body: #352a45;
+  --text-2: #54466a;
+  --text-row: #5f5175;
+  --text-3: #6a5c80;
+  --accent: #b48cf2;
+  --on-accent: #141519;
+  --accent-text: #715898;
+  --focus-ring: #9271c4;
+  --accent-soft: rgba(180, 140, 242, .14);
+  --accent-faint: rgba(180, 140, 242, .07);
+  --focus-soft: rgba(180, 140, 242, .55);
+  --danger: #d93a42;
+  --danger-text: #b8263a;
+  --on-danger: #fff;
+  --danger-hatch: rgba(217, 58, 66, .45);
+  --warn: #f2a65a;
+  --warn-text: #8a4f00;
+  --warn-soft: rgba(242, 166, 90, .18);
+  --ok: #3cc488;
+  --ok-text: #136b44;
+  --ok-soft: rgba(60, 196, 136, .16);
+  --ok-deep: #2f9468;
+  --presence-off: #9a8fab;
+  --ring: var(--bg-1);
+  --hover-tint: rgba(110, 50, 140, .035);
+  --hover-tint-strong: rgba(110, 50, 140, .055);
+  --shadow-1: 0 2px 8px rgba(80, 40, 110, .12);
+  --shadow-2: 0 6px 20px rgba(80, 40, 110, .14);
+  --shadow-3: 0 14px 40px rgba(80, 40, 110, .18);
+  --scrim: rgba(40, 25, 60, .35);
+  --scrim-strong: rgba(10, 11, 13, .85);
+  --tooltip-bg: #0f1013;
+  --tooltip-text: #e8e9ed;
+  --quote-green: #39d98a;
+  --quote-green-mid: #22a865;
+  --quote-green-deep: #14713f;
+  --on-quote-green: #0b1f14;
+  --quote-green-text: #136b3f;
+  --quote-surface: #0e1013;
+  --island-text: #e8e9ed;
+  --island-text-2: #b9bcc6;
+  --island-text-3: #8e92a0;
+  --scrollbar-thumb: rgb(106 92 128 / .3);
+  --scrollbar-thumb-hover: rgb(106 92 128 / .5);
+}
+
+/* Light: white panels and menus with soft shadows on a softly tinted ground (not "higher = lighter"); hover is a
+   faint darkening. The tint blocks below change the ground, sidebar, raised rows and lines only. */
+[data-theme='light'] {
+  color-scheme: light;
+  --bg-0: #e9eaed;
+  --bg-1: #f4f4f6;
+  --bg-2: #ffffff;
+  --bg-3: #ececef;
+  --bg-4: #e0e1e5;
+  --bg-inset: #eeeff1;
+  --surface-menu: #ffffff;
+  --line: #dcdde2;
+  --line-soft: #e6e7ea;
+  --line-menu: #d6d8de;
+  --line-strong: #c4c7ce;
+  --text: #16181d;
+  --text-body: #22252c;
+  --text-2: #424753;
+  --text-row: #4f5461;
+  --text-3: #5c616e;
+  --accent: #4c5bd4;
+  --on-accent: #ffffff;
+  --accent-text: #4c5bd4;
+  --focus-ring: #4c5bd4;
+  --accent-soft: rgba(76, 91, 212, .14);
+  --accent-faint: rgba(76, 91, 212, .07);
+  --focus-soft: rgba(76, 91, 212, .55);
+  --danger: #d93a42;
+  --danger-text: #c0262f;
+  --on-danger: #fff;
+  --danger-hatch: rgba(217, 58, 66, .45);
+  --warn: #e3a12f;
+  --warn-text: #8a5a00;
+  --warn-soft: rgba(227, 161, 47, .16);
+  --ok: #2fb06e;
+  --ok-text: #136b3e;
+  --ok-soft: rgba(47, 176, 110, .14);
+  --ok-deep: #2f8f5c;
+  --presence-off: #8e929e;
+  --ring: var(--bg-1);
+  --hover-tint: rgba(20, 24, 40, .035);
+  --hover-tint-strong: rgba(20, 24, 40, .055);
+  --shadow-1: 0 2px 8px rgba(20, 24, 40, .12);
+  --shadow-2: 0 6px 20px rgba(20, 24, 40, .14);
+  --shadow-3: 0 14px 40px rgba(20, 24, 40, .18);
+  --scrim: rgba(20, 22, 30, .35);
+  --scrim-strong: rgba(10, 11, 13, .85);
+  --tooltip-bg: #0f1013;
+  --tooltip-text: #e8e9ed;
+  --quote-green: #39d98a;
+  --quote-green-mid: #22a865;
+  --quote-green-deep: #14713f;
+  --on-quote-green: #0b1f14;
+  --quote-green-text: #136b3f;
+  --quote-surface: #0e1013;
+  --island-text: #e8e9ed;
+  --island-text-2: #b9bcc6;
+  --island-text-3: #8e92a0;
+  --scrollbar-thumb: rgb(92 97 110 / .3);
+  --scrollbar-thumb-hover: rgb(92 97 110 / .5);
+}
+[data-theme='light'][data-tint='pink'] {
+  --bg-0: #f0e6ea;
+  --bg-1: #f8f1f4;
+  --bg-3: #f2e8ec;
+  --bg-4: #e8dae0;
+  --bg-inset: #f4ecef;
+  --line: #e5d8de;
+  --line-soft: #eee3e8;
+  --line-menu: #e0d0d7;
+  --line-strong: #d3c0c8;
+  --scrollbar-thumb: rgb(110 90 98 / .3);
+  --scrollbar-thumb-hover: rgb(110 90 98 / .5);
+}
+[data-theme='light'][data-tint='orange'] {
+  --bg-0: #f1e9e2;
+  --bg-1: #f9f4ef;
+  --bg-3: #f3ebe3;
+  --bg-4: #e9ddd2;
+  --bg-inset: #f5eee8;
+  --line: #e6dbd0;
+  --line-soft: #efe6dd;
+  --line-menu: #e1d3c6;
+  --line-strong: #d4c4b5;
+  --scrollbar-thumb: rgb(110 96 84 / .3);
+  --scrollbar-thumb-hover: rgb(110 96 84 / .5);
+}
+[data-theme='light'][data-tint='blue'] {
+  --bg-0: #e5eaf2;
+  --bg-1: #f1f4f9;
+  --bg-3: #e8edf5;
+  --bg-4: #dbe2ed;
+  --bg-inset: #edf1f6;
+  --line: #d8dfea;
+  --line-soft: #e3e8f0;
+  --line-menu: #d2dae6;
+  --line-strong: #c3ccdb;
+  --scrollbar-thumb: rgb(84 96 116 / .3);
+  --scrollbar-thumb-hover: rgb(84 96 116 / .5);
+}
+[data-theme='light'][data-tint='green'] {
+  --bg-0: #e5eee8;
+  --bg-1: #f1f6f2;
+  --bg-3: #e8f0ea;
+  --bg-4: #dbe6de;
+  --bg-inset: #edf3ef;
+  --line: #d7e2da;
+  --line-soft: #e3ebe5;
+  --line-menu: #d1ddd4;
+  --line-strong: #c2d0c6;
+  --scrollbar-thumb: rgb(84 104 90 / .3);
+  --scrollbar-thumb-hover: rgb(84 104 90 / .5);
+}
+
+/* Not colours: the same in every theme. */
+:root {
+  --radius: 14px;
+  /* Hover and press feedback. */
+  --dur: 140ms;
+  --ease: cubic-bezier(.2, .8, .2, 1);
+  /* The shadow names before the three elevation levels: kept for work in flight; new code uses --shadow-1/2/3. */
+  --shadow-menu: var(--shadow-3);
+  --shadow-pop: var(--shadow-2);
+  --shadow-float: var(--shadow-2);
+  --shadow-notice: var(--shadow-2);
+  --shadow-notice-soft: var(--shadow-2);
+  --shadow-picker: var(--shadow-2);
+  --shadow-jump: var(--shadow-1);
   font-family: 'Onest', system-ui, sans-serif;
   /* Onest's contextual alternates swap some letters (e.g. t → t2.alt) inside repeated runs, so
      "tttt" renders with an odd, bigger t. Same glyph for the same letter, always. */
@@ -127,7 +617,7 @@ button { transition: background-color var(--dur) var(--ease), color var(--dur) v
 @media (prefers-reduced-motion: reduce) {
   *:not(.spinner), *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
 }
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
 
 /* One minimal scrollbar everywhere (lists, messages, settings, menus, pickers, modals, the message
    box, code blocks). WebView2 (Chromium) and WebKitGTK take the -webkit- rules: a 10px gutter with a
@@ -146,7 +636,7 @@ button { transition: background-color var(--dur) var(--ease), color var(--dur) v
 .pulse-tooltip {
   position: fixed; z-index: 100; pointer-events: none; max-width: 260px;
   padding: 6px 10px; border-radius: 8px; background: var(--tooltip-bg); color: var(--tooltip-text);
-  font-size: 12px; font-weight: 600; line-height: 1.3; box-shadow: var(--shadow-pop);
+  font-size: 12px; font-weight: 600; line-height: 1.3; box-shadow: var(--shadow-2);
   opacity: 0; transition: opacity .12s; left: -9999px; top: -9999px;
 }
 .pulse-tooltip.show { opacity: 1; }
@@ -213,12 +703,12 @@ input.switch:checked::after { left: 23px; background: var(--on-accent); }
    z-index` on the overlay (stacking.test.ts reads them there) and sets the panel's width. */
 .modal-overlay { position: fixed; inset: 0; display: grid; place-items: center; padding: 16px; }
 .modal-backdrop { position: absolute; inset: 0; background: var(--scrim); }
-.modal { position: relative; max-height: calc(100vh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--bg-2); box-shadow: var(--shadow-menu); outline: none; }
+.modal { position: relative; max-height: calc(100vh - 32px); overflow-y: auto; display: flex; flex-direction: column; gap: 12px; padding: 22px; border: 1px solid var(--line); border-radius: 16px; background: var(--bg-2); box-shadow: var(--shadow-3); outline: none; }
 .modal-title { margin: 0; font-size: 18px; font-weight: 600; }
 
 /* Menus and popovers (owner pick 3, family A): a raised surface, a hover that lightens to bg-4.
    Each component keeps its own position, width and z-index. */
-.menu-surface { padding: 6px; display: flex; flex-direction: column; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 12px; box-shadow: var(--shadow-menu); }
+.menu-surface { padding: 6px; display: flex; flex-direction: column; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 12px; box-shadow: var(--shadow-3); }
 .menu-item { height: 32px; flex-shrink: 0; padding: 0 10px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; }
 .menu-item:hover:not(:disabled), .menu-item:focus-visible, .menu-item.hi { background: var(--bg-4); }
 .menu-item.danger { color: var(--danger-text); }

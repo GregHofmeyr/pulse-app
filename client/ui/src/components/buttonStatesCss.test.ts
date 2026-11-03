@@ -69,7 +69,7 @@ describe('dialog footer buttons', () => {
     document.body.innerHTML = `<div><input class="search ${s}"></div>`
     const input = document.querySelector<HTMLInputElement>('input')!
     input.focus()
-    expect(getComputedStyle(input).outline).toBe('2px solid var(--accent)')
+    expect(getComputedStyle(input).outline).toBe('2px solid var(--focus-ring)')
   })
 
   it('the voice settings primary looks disabled when it is', () => {
@@ -104,7 +104,7 @@ describe('text fields', () => {
       const input = document.querySelector<HTMLInputElement>('input')!
       expect(getComputedStyle(input).borderColor, file).not.toBe('var(--accent)')
       input.focus()
-      expect(getComputedStyle(input).outline, file).toBe('2px solid var(--accent)')
+      expect(getComputedStyle(input).outline, file).toBe('2px solid var(--focus-ring)')
       // the probe matches what the template renders
       expect(source(file), file).toContain(`class="${cls}"`)
       // jsdom drops a border shorthand that holds a var(), so the accent border is checked in the source

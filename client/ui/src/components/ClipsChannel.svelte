@@ -247,7 +247,7 @@
   .chan { position: relative; --replies-w: min(380px, 45%); }
   .chan.with-replies { padding-right: var(--replies-w); }
   .editor-host { display: contents; }
-  .drop-zone { position: absolute; inset: 8px; z-index: 4; display: grid; place-items: center; border: 2px dashed var(--accent); border-radius: 14px; background: color-mix(in srgb, var(--bg-1) 80%, transparent); pointer-events: none; }
+  .drop-zone { position: absolute; inset: 8px; z-index: 4; display: grid; place-items: center; border: 2px dashed var(--focus-ring); border-radius: 14px; background: color-mix(in srgb, var(--bg-1) 80%, transparent); pointer-events: none; }
   .drop-zone span { padding: 8px 16px; border-radius: 10px; background: var(--bg-2); color: var(--text); font-size: 15px; font-weight: 600; }
-  .notice { position: absolute; left: 50%; bottom: 72px; transform: translateX(-50%); z-index: 5; margin: 0; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: var(--shadow-notice-soft); max-width: 80%; }
+  .notice { position: absolute; left: 50%; bottom: 72px; transform: translateX(-50%); z-index: 5; margin: 0; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: var(--shadow-2); max-width: 80%; }
 </style>

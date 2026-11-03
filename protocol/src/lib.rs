@@ -3,6 +3,7 @@
 pub mod gateway;
 pub mod ids;
 pub mod rest;
+pub mod sound;
 
 use std::path::Path;
 
@@ -57,6 +58,9 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::MediaInfo::export_all(&cfg)?;
     rest::CustomEmoji::export_all(&cfg)?;
     rest::CreateEmojiRequest::export_all(&cfg)?;
+    rest::Sound::export_all(&cfg)?;
+    rest::CreateSoundRequest::export_all(&cfg)?;
+    rest::UpdateSoundRequest::export_all(&cfg)?;
     rest::RenameEmojiRequest::export_all(&cfg)?;
     rest::Quote::export_all(&cfg)?;
     rest::QuoteLine::export_all(&cfg)?;

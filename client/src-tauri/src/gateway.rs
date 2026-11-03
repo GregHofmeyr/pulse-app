@@ -1040,6 +1040,9 @@ mod tests {
                         games: vec![],
                         clip_views: vec![],
                         private_nicknames: vec![],
+                        sounds: vec![],
+                        sound_favourites: vec![],
+                        frequent_sounds: vec![],
                     });
                     ws.send(tokio_tungstenite::tungstenite::Message::text(
                         serde_json::to_string(&ready).unwrap(),

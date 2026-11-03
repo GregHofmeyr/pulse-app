@@ -192,7 +192,7 @@
   .file { display: inline-flex; align-items: center; height: 36px; padding: 0 16px; align-self: flex-start; border-radius: 8px; background: var(--bg-3); font-weight: 600; font-size: 13px; cursor: pointer; }
   .file.off { opacity: .5; cursor: default; }
   .file input { position: absolute; width: 1px; height: 1px; opacity: 0; }
-  .file:focus-within { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .file:focus-within { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .add { display: flex; flex-direction: column; gap: 12px; padding: 16px; border: 1px solid var(--bg-4); border-radius: 12px; }
   .previews { display: flex; align-items: flex-end; gap: 16px; }
   .add label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }

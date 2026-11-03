@@ -246,12 +246,12 @@
 </div>
 
 <style>
-  .picker { width: 360px; height: 420px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-picker); overflow: hidden; color: var(--text); outline: none; }
+  .picker { width: 360px; height: 420px; display: flex; flex-direction: column; background: var(--bg-2); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: var(--shadow-2); overflow: hidden; color: var(--text); outline: none; }
   .top { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
   .search { flex: 1; min-width: 0; background: var(--bg-0); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; font: inherit; }
   .tones { display: flex; gap: 3px; }
   .tone { width: 14px; height: 14px; padding: 0; border-radius: 50%; border: 2px solid transparent; cursor: pointer; }
-  .tone.on { border-color: var(--accent); }
+  .tone.on { border-color: var(--focus-ring); }
   .body { flex: 1; min-height: 0; display: flex; }
   .rail { display: flex; flex-direction: column; gap: 4px; padding: 6px; background: var(--bg-1); border-right: 1px solid var(--line); overflow-y: auto; }
   .rail-btn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); cursor: pointer; padding: 0; }

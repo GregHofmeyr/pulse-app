@@ -1,31 +1,12 @@
 // The one name-style resolver (plan reconciliations 7, 11, 12). The lightening rule has a twin in
 // server/src/profiles/colors.rs; both must give identical results.
+import { contrast, isDark, luminance, parseHex, readable, toHex, type Rgb } from './color'
 import { fontByKey, type NameFont } from './nameFonts'
 import type { User } from './protocol/User'
 
 export const MIN_NAME_LUMINANCE = 0.39
 
-type Rgb = [number, number, number]
-
-/** `#rrggbb`, case-insensitive, and nothing else. */
-export function parseHex(s: string): Rgb | null {
-  if (!/^#[0-9a-fA-F]{6}$/.test(s)) return null
-  return [1, 3, 5].map((i) => parseInt(s.slice(i, i + 2), 16)) as Rgb
-}
-
-/** `#rrggbb`, lowercase. */
-export function toHex(rgb: Rgb): string {
-  return '#' + rgb.map((v) => v.toString(16).padStart(2, '0')).join('')
-}
-
-/** WCAG relative luminance. */
-export function luminance(rgb: Rgb): number {
-  const lin = (c: number) => {
-    const v = c / 255
-    return v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4
-  }
-  return 0.2126 * lin(rgb[0]) + 0.7152 * lin(rgb[1]) + 0.0722 * lin(rgb[2])
-}
+export { contrast, luminance, parseHex, toHex }
 
 /** `hex` unchanged if bright enough for a name, else mixed towards white in 1% steps to the smallest mix that is. */
 export function lightenForName(hex: string): string {
@@ -37,13 +18,6 @@ export function lightenForName(hex: string): string {
     if (luminance(m) >= MIN_NAME_LUMINANCE) return toHex(m)
   }
   return '#ffffff'
-}
-
-/** WCAG contrast ratio of two `#rrggbb` colours. */
-export function contrast(a: string, b: string): number {
-  const la = luminance(parseHex(a)!)
-  const lb = luminance(parseHex(b)!)
-  return (Math.max(la, lb) + 0.05) / (Math.min(la, lb) + 0.05)
 }
 
 export type NamePreset = { key: string; label: string; colors: string[] }
@@ -63,13 +37,28 @@ export const NAME_GRADIENTS: NamePreset[] = [
   { key: 'aurora', label: 'Aurora', colors: ['#f6b6ff', '#9fb4ff'] },
 ]
 
+/** A name colour that reaches `ratio` on `bg`. On a dark surface it's also never darker than today's rule
+ *  ({@link lightenForName}; owner, 2026-11-03: nobody asked for darker names): the brighter of the two. */
+function readableName(c: string, bg: string, ratio: number): string {
+  const r = readable(c, [bg], ratio)
+  if (!isDark(bg)) return r
+  const today = lightenForName(c)
+  return luminance(parseHex(today)!) >= luminance(parseHex(r)!) ? today : r
+}
+
 export type Paint = { kind: 'plain' } | { kind: 'solid'; color: string } | { kind: 'gradient'; from: string; to: string }
 
-/** A role colour replaces the colour and keeps the font. Styles off means the default font and colour, but a role colour still shows. */
-export function resolveNameStyle(user: User | null, opts: { roleColor: string | null; showStyles: boolean }): { font: NameFont | null; paint: Paint } {
+/**
+ * A role colour replaces the colour and keeps the font. Styles off means the default font and colour, but a role colour still shows.
+ * Given the surface the name sits on (`bg`) and the Name readability contrast (`ratio`), every colour (a role colour, a
+ * solid, each gradient stop) keeps its hue and moves just far enough to reach that contrast there (#42), and on a dark
+ * surface is never darker than the old rule (luminance 0.39); without them, that old rule alone.
+ */
+export function resolveNameStyle(user: User | null, opts: { roleColor: string | null; showStyles: boolean; bg?: string; ratio?: number }): { font: NameFont | null; paint: Paint } {
   const font = opts.showStyles && user ? fontByKey(user.style.font) : null
-  if (opts.roleColor && parseHex(opts.roleColor)) return { font, paint: { kind: 'solid', color: lightenForName(opts.roleColor) } }
-  const colors = opts.showStyles && user ? user.style.colors.filter((c) => parseHex(c)).map(lightenForName) : []
+  const fix = opts.bg && parseHex(opts.bg) ? (c: string) => readableName(c, opts.bg!, opts.ratio ?? 4.5) : lightenForName
+  if (opts.roleColor && parseHex(opts.roleColor)) return { font, paint: { kind: 'solid', color: fix(opts.roleColor) } }
+  const colors = opts.showStyles && user ? user.style.colors.filter((c) => parseHex(c)).map(fix) : []
   if (colors.length >= 2) return { font, paint: { kind: 'gradient', from: colors[0], to: colors[1] } }
   if (colors.length === 1) return { font, paint: { kind: 'solid', color: colors[0] } }
   return { font, paint: { kind: 'plain' } }

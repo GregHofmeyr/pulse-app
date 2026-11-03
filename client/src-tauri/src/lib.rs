@@ -17,6 +17,7 @@ pub mod outbox;
 pub mod qr;
 pub mod reports;
 pub mod session;
+pub mod soundboard;
 pub mod sounds;
 pub mod startup;
 pub mod stream;
@@ -25,6 +26,7 @@ pub mod video;
 pub mod voice;
 pub mod webview_crash;
 pub mod webview_memory;
+pub mod window_bg;
 
 /// Keeps the log writer alive (dropping it flushes and stops logging).
 struct LogGuard(
@@ -36,13 +38,18 @@ static FOCUS_LOG_BUDGET: std::sync::Mutex<Option<logging::LineBudget>> =
 
 /// The main window is built here rather than in tauri.conf.json so each profile gets its own
 /// webview storage (settings, per-user volumes) and so we can recover if the renderer dies.
-fn create_main_window(app: &tauri::App, data_dir: &std::path::Path) -> tauri::Result<()> {
+fn create_main_window(
+    app: &tauri::App,
+    data_dir: &std::path::Path,
+    background: tauri::window::Color,
+) -> tauri::Result<()> {
     let win = tauri::WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::default())
         .title("Pulse")
         .inner_size(1280.0, 800.0)
         .min_inner_size(900.0, 560.0)
         .decorations(false)
-        .background_color(tauri::window::Color(0x14, 0x15, 0x19, 0xff))
+        // The theme's window colour from last time (window_bg), so a Light start doesn't flash dark.
+        .background_color(background)
         .data_directory(data_dir.to_path_buf())
         // Links (target=_blank) and a page navigating to a website open in the browser instead.
         .on_new_window(|u, _| links::new_window(u))
@@ -122,7 +129,8 @@ pub fn run() {
             let webview_dir = session::profile_dir(&app.path().app_local_data_dir()?, profile.as_deref());
             // The link-preview pop-out shares the main webview's data directory.
             let webview_data = webview_dir.join("webview");
-            create_main_window(app, &webview_data)?;
+            create_main_window(app, &webview_data, window_bg::load(&dir))?;
+            app.manage(window_bg::Dir(dir.clone()));
             app.manage(embed_window::WebviewData(webview_data));
             startup::mark("window_built");
             let emitter = app.handle().clone();
@@ -170,6 +178,8 @@ pub fn run() {
                 }),
             ));
             app.manage(voice::mictest::MicTest::default());
+            app.manage(soundboard::Cache::default());
+            app.manage(soundboard::Prepared::default());
             app.manage(stream::PickerMemory::default());
             let h = app.handle().clone();
             app.manage(stream::audio::StreamAudio::new(std::sync::Arc::new(
@@ -259,6 +269,7 @@ pub fn run() {
             commands::delete_message,
             commands::hide_embed,
             commands::embed_origin,
+            window_bg::set_window_background,
             embed_window::open_embed_window,
             commands::join_voice,
             commands::leave_voice,
@@ -301,6 +312,18 @@ pub fn run() {
             commands::create_emoji,
             commands::rename_emoji,
             commands::delete_emoji,
+            commands::soundboard_support,
+            commands::soundboard_pick_file,
+            commands::soundboard_open,
+            commands::soundboard_preview,
+            commands::soundboard_upload,
+            commands::soundboard_play,
+            commands::create_sound,
+            commands::update_sound,
+            commands::delete_sound,
+            commands::list_sounds,
+            commands::play_sound_to_call,
+            commands::set_sound_favourite,
             commands::add_reaction,
             commands::remove_reaction,
             commands::list_reactors,

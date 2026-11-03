@@ -12,6 +12,7 @@
   import { pickSource } from '../lib/stream/golive.svelte'
   import { watchDisabledReason } from '../lib/stream/viewer'
   import { openCard } from '../lib/profileCard.svelte'
+  import { setSoundMute, soundboard } from '../lib/soundboard.svelte'
 
   let {
     channelId,
@@ -57,6 +58,7 @@
   const volume = $derived(voice.volumes[userId] ?? 100)
   const streamVolume = $derived(stream.volumes[userId] ?? 100)
   const muted = $derived(!!voice.localMutes[userId])
+  const soundMuted = $derived(!!soundboard.mutes[userId])
   const watchReason = $derived(windows ? null : watchDisabledReason({ windows, voiceChannelId: voice.channelId, channelId }))
 
   let el = $state<HTMLElement>()
@@ -148,6 +150,8 @@
       </div>
     {:else if id === 'local-mute'}
       <button type="button" class="menu-item" role="menuitem" data-item="local-mute" onclick={() => pick(() => voiceApi.setLocalMute(userId, !muted))}>{muted ? 'Unmute for me' : 'Mute for me'}</button>
+    {:else if id === 'sound-mute'}
+      <button type="button" class="menu-item" role="menuitem" data-item="sound-mute" onclick={() => pick(() => setSoundMute(userId, !soundMuted))}>{soundMuted ? 'Unmute soundboard' : 'Mute soundboard'}</button>
     {:else if id === 'message'}
       <button type="button" class="menu-item" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>
     {:else if id === 'stream-volume'}
@@ -193,7 +197,7 @@
   .menu-item.off small { font-size: 11px; }
   .slider { padding: 6px 10px 8px; display: grid; grid-template-columns: 1fr auto; gap: 4px 8px; color: var(--text-2); }
   .slider input { grid-column: 1 / -1; accent-color: var(--accent); }
-  .slider input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
+  .slider input:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 4px; }
   .slider strong { color: var(--text); font-weight: 600; }
   .hint { grid-column: 1 / -1; font-size: 11px; color: var(--text-3); }
 </style>

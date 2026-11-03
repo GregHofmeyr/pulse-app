@@ -48,7 +48,7 @@
       {/if}
       <span class="meta">
         <!-- the row is a button: the DM's name is styled but not a button of its own -->
-        <span class="name">{#if c.channel.kind === 'dm' && people[0]}<Name userId={people[0]} serverId={null} text={c.name} interactive={false} />{:else}{c.name}{/if}</span>
+        <span class="name">{#if c.channel.kind === 'dm' && people[0]}<Name userId={people[0]} serverId={null} text={c.name} interactive={false} surface="side" />{:else}{c.name}{/if}</span>
         {#if c.latest}
           {@const p = previewText(app.state, c.latest)}
           <span class="prev" class:sys={p.system}>{p.text}</span>

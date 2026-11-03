@@ -31,7 +31,7 @@ const ready = (over: Partial<Ready> = {}): Ready => ({
   latest: [],
   streams: [],
   custom_emoji: [],
-  frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [],
+  frequent_emoji: [], sounds: [], sound_favourites: [], frequent_sounds: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [],
   ...over,
 })
 
@@ -1357,5 +1357,25 @@ describe('profiles', () => {
     let s = setProfile(applyReady(emptyState(), ready()), profileOf(sam))
     s = applyReady(s, ready())
     expect(s.profiles).toEqual({})
+  })
+
+  it('loads sounds from Ready and follows the sound events', () => {
+    const snd = (id: string, name: string) => ({ id, server_id: 'S1', name, emoji: null, media_hash: 'h' + id, volume: 100, duration_ms: 1000, added_by: 'U1', created_at: '2026-10-01T00:00:00.000Z', plays: 0 })
+    let s = applyReady(emptyState(), ready({ sounds: [snd('A', 'airhorn'), snd('B', 'bruh')], sound_favourites: ['A', 'B'], frequent_sounds: ['B', 'A'] }))
+    expect(Object.keys(s.sounds)).toEqual(['A', 'B'])
+    expect(s.soundFavourites).toEqual(['A', 'B'])
+    expect(s.frequentSounds).toEqual(['B', 'A'])
+    s = applyEvent(s, { t: 'SoundCreated', d: { sound: snd('C', 'clap') } }, 0)
+    expect(s.sounds['C'].name).toBe('clap')
+    s = applyEvent(s, { t: 'SoundUpdated', d: { sound: { ...snd('C', 'clap'), name: 'clapper' } } }, 0)
+    expect(s.sounds['C'].name).toBe('clapper')
+    s = applyEvent(s, { t: 'SoundDeleted', d: { server_id: 'S1', sound_id: 'A' } }, 0)
+    expect(s.sounds['A']).toBeUndefined()
+    expect(s.soundFavourites).toEqual(['B'])
+    expect(s.frequentSounds).toEqual(['B'])
+    s = applyEvent(s, { t: 'SoundFavourites', d: { user_id: 'U1', favourites: ['C'] } }, 0)
+    expect(s.soundFavourites).toEqual(['C'])
+    s = applyEvent(s, { t: 'FrequentSounds', d: { user_id: 'U1', frequent: ['C', 'B'] } }, 0)
+    expect(s.frequentSounds).toEqual(['C', 'B'])
   })
 })

@@ -1,7 +1,7 @@
 //! Connection registry + fan-out. Bounded per-connection queues: a client that cannot keep up
 //! is dropped rather than slowing everyone else down.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -10,7 +10,7 @@ use pulse_protocol::ids::UserId;
 use sqlx::SqlitePool;
 use tokio::sync::{mpsc, oneshot};
 
-use super::audience::audience_for;
+use super::audience::{Audience, audience_for};
 
 pub const QUEUE: usize = 256;
 /// Close code sent to a client the hub dropped for falling behind (it should resync via Ready).
@@ -169,6 +169,26 @@ impl Hub {
         };
         let frame = ServerFrame::Event(event);
         deliver(&mut self.inner.conns.lock().unwrap(), &audience, &frame);
+    }
+
+    /// Like [`Hub::publish`], but only to the members of `only` who are also in the event's
+    /// audience, so a narrower list (people in a call) can never widen who may see it.
+    pub async fn publish_to(&self, db: &SqlitePool, event: Event, only: &HashSet<UserId>) {
+        let audience = match audience_for(db, &event).await {
+            Ok(a) => a,
+            Err(e) => {
+                tracing::error!(error = ?e, "audience_for failed; event dropped");
+                return;
+            }
+        };
+        let allowed = Audience::Users(
+            only.iter()
+                .copied()
+                .filter(|u| audience.includes(*u))
+                .collect(),
+        );
+        let frame = ServerFrame::Event(event);
+        deliver(&mut self.inner.conns.lock().unwrap(), &allowed, &frame);
     }
 
     /// Tell everyone whether `user` is online, but only if that changed since the last time.

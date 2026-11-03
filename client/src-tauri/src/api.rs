@@ -8,17 +8,17 @@ use pulse_protocol::ids::{
 use pulse_protocol::rest::{
     AddGameRequest, AddMembersRequest, AddQotyOptionRequest, BadgeCatalogue, ChangePasswordRequest,
     Channel, ChannelKind, ClipFacets, ClipStorage, ClipUpload, ClipUploadRequest, ClipUrl,
-    ClipView, ConfirmClipRequest, CreateDmRequest, CreateEmojiRequest, CustomEmoji, DeletedChannel,
-    EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest, Game, GoLiveRequest,
-    HideEmbedRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest, LoginRequest,
-    MarkReadRequest, MediaInfo, Member, Message, MfaRequired, MuteTarget, NameArchivePage,
-    PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse, RegisterRequest,
-    RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest, SearchRequest, SearchResults,
-    SendMessageRequest, Server, SessionResponse, SetClipViewRequest, SetMuteRequest,
-    SetNicknameRequest, SetShowcaseRequest, StartQotyRequest, StreamInfo, StreamRole,
+    ClipView, ConfirmClipRequest, CreateDmRequest, CreateEmojiRequest, CreateSoundRequest,
+    CustomEmoji, DeletedChannel, EditClipRequest, EditMessageRequest, EditQuoteRequest, EggRequest,
+    Game, GoLiveRequest, HideEmbedRequest, Leaderboard, LinkSpeakerRequest, LoginMfaRequest,
+    LoginRequest, MarkReadRequest, MediaInfo, Member, Message, MfaRequired, MuteTarget,
+    NameArchivePage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse,
+    RegisterRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest, SearchRequest,
+    SearchResults, SendMessageRequest, Server, SessionResponse, SetClipViewRequest, SetMuteRequest,
+    SetNicknameRequest, SetShowcaseRequest, Sound, StartQotyRequest, StreamInfo, StreamRole,
     StreamSettings, StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest,
     TwoFactorEnabledResponse, TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus,
-    UpdateProfileRequest, User, VoiceTokenResponse, WatchRequest,
+    UpdateProfileRequest, UpdateSoundRequest, User, VoiceTokenResponse, WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -1367,6 +1367,107 @@ impl Api {
                 .await,
         )
         .await
+    }
+
+    /// The trimmed Ogg Opus file as the body (the server checks it is one).
+    pub async fn upload_sound_media(
+        &self,
+        token: &str,
+        bytes: Vec<u8>,
+    ) -> Result<MediaInfo, ApiError> {
+        self.upload_media(token, "sound", bytes, false).await
+    }
+
+    pub async fn create_sound(
+        &self,
+        token: &str,
+        server: ServerId,
+        name: &str,
+        emoji: Option<&str>,
+        media_hash: &str,
+        volume: u16,
+    ) -> Result<Sound, ApiError> {
+        let body = CreateSoundRequest {
+            name: name.into(),
+            emoji: emoji.map(Into::into),
+            media_hash: media_hash.into(),
+            volume,
+        };
+        Self::parse(
+            self.http
+                .post(format!("{}/servers/{server}/sounds", self.base))
+                .bearer_auth(token)
+                .json(&body)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn list_sounds(&self, token: &str, server: ServerId) -> Result<Vec<Sound>, ApiError> {
+        Self::parse(
+            self.http
+                .get(format!("{}/servers/{server}/sounds", self.base))
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn update_sound(
+        &self,
+        token: &str,
+        id: &str,
+        update: &UpdateSoundRequest,
+    ) -> Result<Sound, ApiError> {
+        Self::parse(
+            self.http
+                .patch(self.url(&["sounds", id])?)
+                .bearer_auth(token)
+                .json(update)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn delete_sound(&self, token: &str, id: &str) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .delete(self.url(&["sounds", id])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Play into the caller's current call (409 when not in one).
+    pub async fn play_sound_to_call(&self, token: &str, id: &str) -> Result<(), ApiError> {
+        Self::ok_empty(
+            self.http
+                .post(self.url(&["sounds", id, "play"])?)
+                .bearer_auth(token)
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    pub async fn set_sound_favourite(
+        &self,
+        token: &str,
+        id: &str,
+        on: bool,
+    ) -> Result<(), ApiError> {
+        let url = self.url(&["sounds", id, "favourite"])?;
+        let req = if on {
+            self.http.put(url)
+        } else {
+            self.http.delete(url)
+        };
+        Self::ok_empty(req.bearer_auth(token).send().await).await
     }
 
     /// `emoji`: a Unicode emoji or `custom:<id>`.

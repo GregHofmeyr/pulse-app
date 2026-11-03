@@ -728,6 +728,67 @@ pub struct CreateEmojiRequest {
     pub media_hash: String,
 }
 
+/// A server soundboard sound.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct Sound {
+    pub id: String,
+    pub server_id: ServerId,
+    pub name: String,
+    /// A Unicode emoji shown on the tile.
+    pub emoji: Option<String>,
+    /// The Ogg Opus file in the media store.
+    pub media_hash: String,
+    /// Playback gain in percent (10 to 200).
+    pub volume: u16,
+    pub duration_ms: u32,
+    pub added_by: Option<UserId>,
+    pub created_at: String,
+    /// Times it has been played in this server.
+    pub plays: u32,
+}
+
+fn default_sound_volume() -> u16 {
+    100
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct CreateSoundRequest {
+    pub name: String,
+    #[serde(default)]
+    pub emoji: Option<String>,
+    /// From `POST /media/sound`.
+    pub media_hash: String,
+    #[serde(default = "default_sound_volume")]
+    pub volume: u16,
+}
+
+/// Edit a sound. Absent fields stay as they are; `emoji: null` clears the emoji.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize, TS)]
+pub struct UpdateSoundRequest {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub name: Option<String>,
+    #[serde(
+        default,
+        deserialize_with = "present_or_null",
+        skip_serializing_if = "Option::is_none"
+    )]
+    #[ts(optional = nullable, type = "string | null")]
+    pub emoji: Option<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub volume: Option<u16>,
+}
+
+/// Tells an absent field (`None`, via `default`) from an explicit `null` (`Some(None)`).
+fn present_or_null<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, TS)]
 pub struct RenameEmojiRequest {
     pub name: String,
@@ -1447,5 +1508,32 @@ mod tests {
         let json = serde_json::to_value(&e).unwrap();
         assert_eq!(json["provider"], "generic");
         assert_eq!(json["kind"], "card");
+    }
+}
+
+#[cfg(test)]
+mod sound_tests {
+    use super::*;
+
+    #[test]
+    fn update_sound_tells_absent_from_null() {
+        let absent: UpdateSoundRequest = serde_json::from_str(r#"{"name":"x"}"#).unwrap();
+        assert_eq!(absent.emoji, None);
+        let cleared: UpdateSoundRequest = serde_json::from_str(r#"{"emoji":null}"#).unwrap();
+        assert_eq!(cleared.emoji, Some(None));
+        let set: UpdateSoundRequest = serde_json::from_str(r#"{"emoji":"📯"}"#).unwrap();
+        assert_eq!(set.emoji, Some(Some("📯".into())));
+        assert_eq!(
+            serde_json::to_string(&cleared).unwrap(),
+            r#"{"emoji":null}"#
+        );
+        assert!(!serde_json::to_string(&absent).unwrap().contains("emoji"));
+    }
+
+    #[test]
+    fn create_sound_volume_defaults_to_100() {
+        let r: CreateSoundRequest =
+            serde_json::from_str(r#"{"name":"a","media_hash":"h"}"#).unwrap();
+        assert_eq!((r.volume, r.emoji), (100, None));
     }
 }

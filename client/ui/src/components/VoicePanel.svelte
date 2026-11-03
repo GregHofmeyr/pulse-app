@@ -9,6 +9,10 @@
   import FullView from './FullView.svelte'
   import QotyStrip from './QotyStrip.svelte'
   import ParticipantMenu from './ParticipantMenu.svelte'
+  import SoundboardPopover from './SoundboardPopover.svelte'
+  import SoundDialog from './SoundDialog.svelte'
+  import SoundTidy from './SoundTidy.svelte'
+  import type { Sound } from '../lib/protocol/Sound'
   import StreamTile from './StreamTile.svelte'
   import UserTile from './UserTile.svelte'
   import { loadShowEveryone, saveShowEveryone } from '../lib/stream/prefs'
@@ -67,6 +71,23 @@
     })
   })
 
+  let sbOpen = $state(false)
+  let sbBtn = $state<HTMLButtonElement>()
+  // The dialogs live outside the popover (its click-outside would otherwise close it under them),
+  // so opening one closes the popover.
+  let sbDialog = $state<{ kind: 'add'; serverId: string } | { kind: 'edit'; sound: Sound } | { kind: 'tidy'; serverId: string } | null>(null)
+  const openDialog = (d: NonNullable<typeof sbDialog>) => {
+    sbOpen = false
+    sbDialog = d
+  }
+  // leaving the call takes the button away, and the popover with it
+  $effect(() => {
+    if (!inHere) {
+    sbOpen = false
+    sbDialog = null
+  }
+  })
+
   const inCall = $derived(inHere && voice.connection === 'connected')
   const canGoLive = $derived(inCall && !stream.live)
   const windows = isWindows()
@@ -123,6 +144,9 @@
         <button class="ctl" class:on={voice.controls.deafened} aria-pressed={voice.controls.deafened} aria-label={voice.controls.deafened ? "Undeafen" : "Deafen"} onclick={() => voiceApi.toggleDeafen()}>
           <Icon name={voice.controls.deafened ? 'headphonesOff' : 'headphones'} size={20} />
         </button>
+        <button bind:this={sbBtn} class="ctl" class:open={sbOpen} aria-label="Soundboard" aria-haspopup="dialog" aria-expanded={sbOpen} data-tip="Soundboard" data-menu-toggle onclick={() => (sbOpen = !sbOpen)}>
+          <Icon name="soundboard" size={20} />
+        </button>
         {#if canGoLive}
           <!-- aria-disabled, not disabled: a disabled button swallows the hover that shows the tooltip -->
           <button class="golive" class:off={!windows} aria-disabled={!windows} data-tip={windows ? undefined : "Streaming from Linux isn't supported yet"} onclick={() => pickSource(channelId)}>Go Live</button>
@@ -134,6 +158,22 @@
     {/if}
   </div>
 </div>
+
+{#if sbOpen && sbBtn}
+  <SoundboardPopover
+    anchor={sbBtn}
+    onClose={() => (sbOpen = false)}
+    onAdd={(serverId) => openDialog({ kind: 'add', serverId })}
+    onEdit={(sound) => openDialog({ kind: 'edit', sound })}
+    onTidy={(serverId) => openDialog({ kind: 'tidy', serverId })}
+  />
+{/if}
+
+{#if sbDialog?.kind === 'tidy'}
+  <SoundTidy serverId={sbDialog.serverId} onClose={() => (sbDialog = null)} />
+{:else if sbDialog}
+  <SoundDialog mode={sbDialog} onClose={() => (sbDialog = null)} />
+{/if}
 
 {#if menu}
   {#key menu}<ParticipantMenu {channelId} {serverId} userId={menu.userId} x={menu.x} y={menu.y} opener={menu.opener} {onMessage} {onVoiceSettings} onClose={() => (menu = null)} />{/key}
@@ -156,6 +196,7 @@
   .controls { padding: 8px; background: var(--bg-inset); border-radius: 16px; display: flex; gap: 8px; }
   .ctl { width: 48px; height: 48px; border: 0; border-radius: 14px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
   .ctl:hover { background: var(--bg-4); }
+  .ctl.open { background: var(--bg-4); }
   .ctl.on { background: var(--danger); color: var(--on-danger); }
   .leave { width: 64px; height: 48px; border: 0; border-radius: 14px; background: var(--danger); color: var(--on-danger); display: grid; place-items: center; }
   .golive { height: 48px; padding: 0 16px; border: 0; border-radius: 14px; background: var(--accent); color: var(--on-accent); font-weight: 600; }

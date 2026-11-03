@@ -6,7 +6,7 @@ use ts_rs::TS;
 use crate::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
     Badge, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game, Member, Message, Mute,
-    Person, PrivateNickname, QotyEvent, ReadState, Server, SpeakerLink, StreamEndReason,
+    Person, PrivateNickname, QotyEvent, ReadState, Server, Sound, SpeakerLink, StreamEndReason,
     StreamInfo, User,
 };
 
@@ -114,6 +114,15 @@ pub struct Ready {
     /// The names you gave people that only you see.
     #[serde(default)]
     pub private_nicknames: Vec<PrivateNickname>,
+    /// Every server's soundboard.
+    #[serde(default)]
+    pub sounds: Vec<Sound>,
+    /// Ids of the sounds you starred.
+    #[serde(default)]
+    pub sound_favourites: Vec<String>,
+    /// Your most played sounds, best first.
+    #[serde(default)]
+    pub frequent_sounds: Vec<String>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -366,6 +375,36 @@ pub enum Event {
         name: String,
         icon: String,
     },
+    SoundCreated {
+        sound: Sound,
+    },
+    SoundUpdated {
+        sound: Sound,
+    },
+    /// A sound was removed from a server's soundboard (everyone).
+    SoundDeleted {
+        server_id: ServerId,
+        sound_id: String,
+    },
+    /// Someone played a sound in a voice channel; sent to people who can see that channel. The
+    /// hash and volume ride along so a listener can play it even if it was just deleted.
+    SoundPlayed {
+        channel_id: ChannelId,
+        user_id: UserId,
+        sound_id: String,
+        media_hash: String,
+        volume: u16,
+    },
+    /// Only to the user's own sessions: the new [`Ready::sound_favourites`].
+    SoundFavourites {
+        user_id: UserId,
+        favourites: Vec<String>,
+    },
+    /// Only to the user's own sessions: the new [`Ready::frequent_sounds`].
+    FrequentSounds {
+        user_id: UserId,
+        frequent: Vec<String>,
+    },
 }
 
 impl Event {
@@ -384,7 +423,8 @@ impl Event {
             | Self::ReactionRemoved { channel_id, .. }
             | Self::QuoteAwardChanged { channel_id, .. }
             | Self::ThreadSeen { channel_id, .. }
-            | Self::ClipViewChanged { channel_id, .. } => Some(*channel_id),
+            | Self::ClipViewChanged { channel_id, .. }
+            | Self::SoundPlayed { channel_id, .. } => Some(*channel_id),
             Self::ChannelCreated { channel } => Some(channel.id),
             Self::GroupMembersChanged { channel_id, .. }
             | Self::ChannelRemoved { channel_id, .. }
@@ -416,6 +456,11 @@ impl Event {
             | Self::QotyUpdated { .. }
             | Self::QotyEnded { .. }
             | Self::GameAdded { .. }
+            | Self::SoundCreated { .. }
+            | Self::SoundUpdated { .. }
+            | Self::SoundDeleted { .. }
+            | Self::SoundFavourites { .. }
+            | Self::FrequentSounds { .. }
             | Self::PrivateNicknameChanged { .. }
             | Self::BadgeEarned { .. } => None,
         }
@@ -430,6 +475,8 @@ impl Event {
             | Self::FrequentEmoji { user_id, .. }
             | Self::ThreadSeen { user_id, .. }
             | Self::ClipViewChanged { user_id, .. }
+            | Self::SoundFavourites { user_id, .. }
+            | Self::FrequentSounds { user_id, .. }
             | Self::PrivateNicknameChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::BadgeEarned { user_id, .. } => Some(*user_id),
@@ -537,6 +584,9 @@ mod tests {
             games: vec![],
             clip_views: vec![],
             private_nicknames: vec![],
+            sounds: vec![],
+            sound_favourites: vec![],
+            frequent_sounds: vec![],
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");
@@ -608,6 +658,9 @@ mod tests {
             games: vec![],
             clip_views: vec![],
             private_nicknames: vec![],
+            sounds: vec![],
+            sound_favourites: vec![],
+            frequent_sounds: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -720,6 +773,9 @@ mod tests {
             games: vec![],
             clip_views: vec![],
             private_nicknames: vec![],
+            sounds: vec![],
+            sound_favourites: vec![],
+            frequent_sounds: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -882,5 +938,36 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(r.display_name, None);
+    }
+
+    #[test]
+    fn sound_events_are_scoped() {
+        let (c, u, sv) = (ChannelId::new(), UserId::new(), ServerId::new());
+        let played = Event::SoundPlayed {
+            channel_id: c,
+            user_id: u,
+            sound_id: "s".into(),
+            media_hash: "h".into(),
+            volume: 100,
+        };
+        assert_eq!(played.channel_id(), Some(c));
+        assert_eq!(played.only_for(), None);
+        let deleted = Event::SoundDeleted {
+            server_id: sv,
+            sound_id: "s".into(),
+        };
+        assert_eq!((deleted.channel_id(), deleted.only_for()), (None, None));
+        let favs = Event::SoundFavourites {
+            user_id: u,
+            favourites: vec![],
+        };
+        let freq = Event::FrequentSounds {
+            user_id: u,
+            frequent: vec![],
+        };
+        for e in [favs, freq] {
+            assert_eq!(e.channel_id(), None, "{e:?}");
+            assert_eq!(e.only_for(), Some(u), "{e:?}");
+        }
     }
 }

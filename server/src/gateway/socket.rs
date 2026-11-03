@@ -222,6 +222,9 @@ pub async fn build_ready(
         games: crate::clips::games::for_ready(db).await?,
         clip_views: crate::clips::views_for_ready(db, me).await?,
         private_nicknames: crate::profiles::private::of_owner(db, me).await?,
+        sounds: crate::sounds::for_ready(db).await?,
+        sound_favourites: crate::sounds::favourites(db, me).await?,
+        frequent_sounds: crate::sounds::frequent(db, me, crate::sounds::FREQUENT).await?,
     })
 }
 

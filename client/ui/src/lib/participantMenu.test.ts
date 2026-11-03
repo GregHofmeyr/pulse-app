@@ -7,16 +7,16 @@ const ctx = (over: Partial<MenuCtx>): MenuCtx => ({ ...base, ...over })
 
 describe('menuItems', () => {
   it('other_not_live', () => {
-    expect(menuItems(ctx({}))).toEqual(['volume', 'local-mute', 'message'])
+    expect(menuItems(ctx({}))).toEqual(['volume', 'local-mute', 'sound-mute', 'message'])
   })
   it('other_live_not_watching', () => {
-    expect(menuItems(ctx({ live: true }))).toEqual(['volume', 'local-mute', 'message', 'watch'])
+    expect(menuItems(ctx({ live: true }))).toEqual(['volume', 'local-mute', 'sound-mute', 'message', 'watch'])
   })
   it('other_live_watching_in_grid', () => {
-    expect(menuItems(ctx({ live: true, watching: true }))).toEqual(['volume', 'local-mute', 'message', 'stream-volume', 'stop-watching', 'full-view'])
+    expect(menuItems(ctx({ live: true, watching: true }))).toEqual(['volume', 'local-mute', 'sound-mute', 'message', 'stream-volume', 'stop-watching', 'full-view'])
   })
   it('other_live_watching_in_full_view_has_no_full_view_item', () => {
-    expect(menuItems(ctx({ live: true, watching: true, full: true }))).toEqual(['volume', 'local-mute', 'message', 'stream-volume', 'stop-watching'])
+    expect(menuItems(ctx({ live: true, watching: true, full: true }))).toEqual(['volume', 'local-mute', 'sound-mute', 'message', 'stream-volume', 'stop-watching'])
   })
   it('self_in_call_can_go_live', () => {
     expect(menuItems(ctx({ self: true, canGoLive: true }))).toEqual(['mute', 'deafen', 'go-live', 'voice-settings'])
@@ -26,6 +26,13 @@ describe('menuItems', () => {
   })
   it('self_not_in_call_has_no_stream_item', () => {
     expect(menuItems(ctx({ self: true, inCall: false }))).toEqual(['mute', 'deafen', 'voice-settings'])
+  })
+})
+
+describe('sound-mute', () => {
+  it('is_offered_for_others_after_local_mute_and_never_for_self', () => {
+    expect(menuItems(ctx({}))).toContain('sound-mute')
+    expect(menuItems(ctx({ self: true, canGoLive: true }))).not.toContain('sound-mute')
   })
 })
 

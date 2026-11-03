@@ -4,6 +4,7 @@ import type { Channel } from './protocol/Channel'
 import type { ClipFacets } from './protocol/ClipFacets'
 import type { ClipView } from './protocol/ClipView'
 import type { CustomEmoji } from './protocol/CustomEmoji'
+import type { Sound } from './protocol/Sound'
 import type { Event } from './protocol/Event'
 import type { Game } from './protocol/Game'
 import type { Member } from './protocol/Member'
@@ -68,6 +69,9 @@ export type AppState = {
   streams: Record<string, Record<string, StreamInfo>> // channelId -> userId -> live stream
   customEmoji: Record<string, CustomEmoji> // id -> emoji; deleted ones stay (hash null) so old messages render a chip
   frequentEmoji: string[] // your most-used reaction keys, best first
+  sounds: Record<string, Sound> // id -> soundboard sound, every server you can see
+  soundFavourites: string[] // sound ids you starred, in the order you starred them
+  frequentSounds: string[] // your most-played sound ids, best first
   /** Quote id -> its replies, oldest..newest (replies never join `messages`). A thread is held while its panel is
    * open (fetched, and live replies join it); otherwise only live mentions of you that are counted are kept, so
    * their delete can take them back out of the count. */
@@ -108,7 +112,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -144,6 +148,9 @@ export function applyReady(s: AppState, r: Ready): AppState {
     streams: r.streams.reduce<AppState['streams']>((acc, x) => withStream(acc, x), {}),
     customEmoji: Object.fromEntries(r.custom_emoji.map((c) => [c.id, c])),
     frequentEmoji: r.frequent_emoji,
+    sounds: Object.fromEntries((r.sounds ?? []).map((x) => [x.id, x])),
+    soundFavourites: r.sound_favourites ?? [],
+    frequentSounds: r.frequent_sounds ?? [],
     // Replies may have changed while we were away: a panel refetches its thread.
     threads: {},
     threadStart: {},
@@ -821,6 +828,24 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       if (!cur) return s
       return { ...s, streams: withStream(s.streams, { ...cur, viewers: e.d.viewers }) }
     }
+    case 'SoundCreated':
+    case 'SoundUpdated':
+      return { ...s, sounds: { ...s.sounds, [e.d.sound.id]: e.d.sound } }
+    case 'SoundDeleted': {
+      const { [e.d.sound_id]: _gone, ...sounds } = s.sounds
+      return {
+        ...s,
+        sounds,
+        soundFavourites: s.soundFavourites.filter((id) => id !== e.d.sound_id),
+        frequentSounds: s.frequentSounds.filter((id) => id !== e.d.sound_id),
+      }
+    }
+    case 'SoundPlayed':
+      return s // played by the listener in soundboard.svelte.ts; nothing to keep
+    case 'SoundFavourites':
+      return { ...s, soundFavourites: e.d.favourites }
+    case 'FrequentSounds':
+      return { ...s, frequentSounds: e.d.frequent }
     case 'EmojiCreated':
     case 'EmojiUpdated':
       return { ...s, customEmoji: { ...s.customEmoji, [e.d.emoji.id]: e.d.emoji } }

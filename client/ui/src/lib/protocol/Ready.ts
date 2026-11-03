@@ -13,6 +13,7 @@ import type { QotyEvent } from "./QotyEvent";
 import type { ReadState } from "./ReadState";
 import type { Server } from "./Server";
 import type { ServerMembers } from "./ServerMembers";
+import type { Sound } from "./Sound";
 import type { SpeakerLink } from "./SpeakerLink";
 import type { StreamInfo } from "./StreamInfo";
 import type { ThreadSeenPoint } from "./ThreadSeenPoint";
@@ -76,4 +77,16 @@ clip_views: Array<ClipViewPref>,
 /**
  * The names you gave people that only you see.
  */
-private_nicknames: Array<PrivateNickname>, };
+private_nicknames: Array<PrivateNickname>, 
+/**
+ * Every server's soundboard.
+ */
+sounds: Array<Sound>, 
+/**
+ * Ids of the sounds you starred.
+ */
+sound_favourites: Array<string>, 
+/**
+ * Your most played sounds, best first.
+ */
+frequent_sounds: Array<string>, };

@@ -169,7 +169,26 @@ pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
         tracing::warn!(name = %crate::logging::one_line(name, 32), "sound: no such sound");
         return;
     };
-    let name = crate::logging::one_line(name, 32);
+    spawn_play(
+        sound,
+        VOLUME * volume,
+        false,
+        output,
+        crate::logging::one_line(name, 32),
+    );
+}
+
+/// Play a soundboard sample on the output device when no call is running (in a call it goes
+/// through the mixer instead). `volume` is the final linear gain, without the UI-sound factor.
+pub fn play_samples(sound: Sound, volume: f32, output: Option<String>) {
+    if volume.is_nan() || volume <= 0.0 {
+        return;
+    }
+    spawn_play(sound, volume, true, output, "soundboard".to_string());
+}
+
+/// The device lookup and fallback shared by UI sounds and soundboard samples; `volume` is final.
+fn spawn_play(sound: Sound, volume: f32, limit: bool, output: Option<String>, name: String) {
     let _ = std::thread::Builder::new()
         .name("pulse-sound".into())
         .spawn(move || {
@@ -185,14 +204,14 @@ pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
                 .get(output.as_deref(), exact)
                 .or_else(|| find_device(false, None).ok());
             if let Some(dev) = chosen
-                && play_on(&dev, &sound, volume)
+                && play_on(&dev, &sound, volume, limit)
             {
                 return;
             }
             // the cached device failed (unplugged): forget it, and play on the default instead
             DEVICES.forget();
             let played = output.is_some()
-                && find_device(false, None).is_ok_and(|dev| play_on(&dev, &sound, volume));
+                && find_device(false, None).is_ok_and(|dev| play_on(&dev, &sound, volume, limit));
             if !played {
                 // asked for (the `sound` line) but not heard: tells the two apart in a report
                 tracing::warn!(name, "sound: no output device would play it");
@@ -200,8 +219,18 @@ pub fn play(set: &str, name: &str, volume: f32, output: Option<String>) {
         });
 }
 
-/// Play `sound` on `dev` to the end (blocking). False if the device wouldn't open.
-fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32) -> bool {
+/// One output sample at the final gain `volume`. `limit`: soft-limited like the call mixer
+/// (soundboard sounds, boosted up to 200 %); UI sounds are left exactly as they were.
+fn shape(x: f32, volume: f32, limit: bool) -> f32 {
+    if limit {
+        crate::voice::mixer::soft_limit(x * volume)
+    } else {
+        x * volume
+    }
+}
+
+/// Play `sound` on `dev` to the end (blocking) at the final linear gain `volume`. False if the device wouldn't open.
+fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32, limit: bool) -> bool {
     let Ok(cfg) = dev.default_output_config() else {
         return false;
     };
@@ -219,7 +248,7 @@ fn play_on(dev: &cpal::Device, sound: &Sound, volume: f32) -> bool {
         let a = samples[j.min(samples.len() - 1)];
         let b = samples[(j + 1).min(samples.len() - 1)];
         pos += 1;
-        Some((a + (b - a) * frac) * VOLUME * volume)
+        Some(shape(a + (b - a) * frac, volume, limit))
     };
     let stream = crate::voice::devices::build_output(dev, &cfg, move |d: &mut [f32], _| {
         for f in d.chunks_mut(ch) {
@@ -264,6 +293,19 @@ mod tests {
         c.get(None, find);
         c.get(None, find);
         assert_eq!(lookups.get(), 5, "the default can move: never cached");
+    }
+
+    #[test]
+    fn soundboard_samples_are_soft_limited_and_ui_sounds_are_not() {
+        use crate::voice::mixer::soft_limit;
+        // a boosted sound out of a call: bounded like the call mixer, not hard-clipped by the device
+        assert_eq!(shape(0.9, 2.0, true), soft_limit(1.8));
+        assert!(shape(0.9, 2.0, true) <= 1.0);
+        assert!(shape(-0.9, 2.0, true) >= -1.0);
+        assert_eq!(shape(0.3, 1.0, true), 0.3, "quiet audio untouched");
+        // UI sounds stay exactly as they were
+        assert_eq!(shape(0.9, 2.0, false), 1.8);
+        assert_eq!(shape(0.5, 0.4, false), 0.2);
     }
 
     #[test]

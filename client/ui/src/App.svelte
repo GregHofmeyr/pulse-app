@@ -5,6 +5,7 @@
   import { app, resetState, startListening } from './lib/store.svelte'
   import { startVoiceListening } from './lib/voice.svelte'
   import { badgeStore, startBadgeListening } from './lib/badges.svelte'
+  import { startSoundboardListening } from './lib/soundboard.svelte'
   import { installTooltips } from './lib/tooltip'
   import { watchWindowFocus, windowFocus } from './lib/windowFocus.svelte'
   import type { User } from './lib/protocol/User'
@@ -45,10 +46,12 @@
     // Listen before restoring so the first Ready can't slip past us.
     Promise.all([startListening(), startVoiceListening()]).then(async ([unlisten, unlistenVoice]) => {
       const unlistenBadges = startBadgeListening()
+      const unlistenSounds = startSoundboardListening()
       off = () => {
         unlisten()
         unlistenVoice()
         unlistenBadges()
+        unlistenSounds()
       }
       try {
         const r = await api.restoreSession()

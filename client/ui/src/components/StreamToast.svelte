@@ -39,7 +39,7 @@
 
 <style>
   .stack { position: fixed; right: 18px; bottom: 18px; z-index: 40; display: flex; flex-direction: column; gap: 8px; align-items: flex-end; }
-  .toast { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 12px; box-shadow: var(--shadow-float); font-size: 13px; }
+  .toast { display: flex; align-items: center; gap: 12px; padding: 10px 12px 10px 14px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: 12px; box-shadow: var(--shadow-2); font-size: 13px; }
   .toast.err { border-color: var(--danger); }
   .x { width: 24px; height: 24px; flex-shrink: 0; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .x:hover { background: var(--bg-4); color: var(--text); }

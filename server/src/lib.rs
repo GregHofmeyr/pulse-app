@@ -20,6 +20,7 @@ pub mod reads;
 pub mod reports;
 pub mod search;
 pub mod servers;
+pub mod sounds;
 pub mod state;
 pub mod streams;
 pub mod voice;
@@ -52,6 +53,7 @@ pub fn router(state: AppState) -> Router {
         .merge(reports::routes::router())
         .merge(media::routes::router())
         .merge(emoji::routes::router())
+        .merge(sounds::routes::router())
         .merge(clips::games::router())
         .merge(clips::routes::router())
         .merge(profiles::routes::router())
