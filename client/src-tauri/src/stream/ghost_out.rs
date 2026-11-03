@@ -51,8 +51,9 @@ impl GhostOutput {
         open.as_ref().map(|o| (o.mix.clone(), o.mix.generation()))
     }
 
-    pub fn is_open(&self) -> bool {
-        self.open.lock().unwrap().is_some()
+    /// The mixer if the speakers are open (nothing is opened).
+    pub fn open_mixer(&self) -> Option<Arc<MixerInput>> {
+        self.open.lock().unwrap().as_ref().map(|o| o.mix.clone())
     }
 
     /// Close the speakers (nothing watched, or a call's mixer takes over).

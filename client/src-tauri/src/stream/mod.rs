@@ -274,10 +274,17 @@ fn app_mixer(app: &AppHandle) -> audio::MixerSource {
                 return Some(m);
             }
             // opening a device blocks: off the async workers
-            tokio::task::spawn_blocking(move || app.state::<ghost_out::GhostOutput>().mixer())
-                .await
-                .ok()
-                .flatten()
+            let app2 = app.clone();
+            let own =
+                tokio::task::spawn_blocking(move || app2.state::<ghost_out::GhostOutput>().mixer())
+                    .await
+                    .ok()
+                    .flatten();
+            // the volume mixer's Calls × Streams level, as a call's mixer has it
+            if let Some((m, _)) = &own {
+                app.state::<VoiceManager>().apply_call_mix(m);
+            }
+            own
         })
     })
 }

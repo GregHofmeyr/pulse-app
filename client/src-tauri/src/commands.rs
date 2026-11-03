@@ -1335,6 +1335,7 @@ pub async fn set_server_voice(
 #[tauri::command]
 pub async fn set_call_mix(
     voice: State<'_, VoiceManager>,
+    ghost_out: State<'_, crate::stream::ghost_out::GhostOutput>,
     calls_percent: u16,
     voices_percent: u16,
     streams_percent: u16,
@@ -1342,6 +1343,10 @@ pub async fn set_call_mix(
     voice
         .set_call_mix(calls_percent, voices_percent, streams_percent)
         .await;
+    // a ghost watching outside a call hears streams through speakers of its own
+    if let Some(m) = ghost_out.open_mixer() {
+        voice.apply_call_mix(&m);
+    }
     Ok(())
 }
 

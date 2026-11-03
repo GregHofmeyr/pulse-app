@@ -1927,8 +1927,9 @@ impl VoiceManager {
             .unwrap_or(1.0)
     }
 
-    /// Hand the stored levels to a call's mixer (a new call, or a change during one).
-    fn apply_call_mix(&self, mix: &mixer::MixerInput) {
+    /// Hand the stored levels to a call's mixer (a new call, or a change during one), or to the
+    /// speakers a ghost watches through outside a call (`stream::ghost_out`).
+    pub fn apply_call_mix(&self, mix: &mixer::MixerInput) {
         for kind in [SourceKind::Voice, SourceKind::Stream] {
             mix.set_kind_gain(kind, self.kind_gain(kind));
         }
