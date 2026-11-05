@@ -163,7 +163,7 @@ describe('radii', () => {
     expect(offenders).toEqual([])
   })
 
-  // Being reworked by the DM calls work as this landed: they move over once it merges (issue linked from #173).
+  // Being reworked by the DM calls work as this landed: they move over once it merges (#179).
   const LATER = ['components/TextChannel.svelte', 'components/VoicePanel.svelte', 'components/VolumeMixer.svelte', 'components/PeopleBoard.svelte',
     'components/ConversationList.svelte', 'components/ConversationMenu.svelte', 'routes/Shell.svelte', 'components/VoiceStatus.svelte', 'components/UserTile.svelte']
   it('components write a single 6/8/10/12/16px radius as its token', () => {
