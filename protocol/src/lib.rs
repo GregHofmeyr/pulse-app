@@ -50,6 +50,9 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::SetGroupIconRequest::export_all(&cfg)?;
     rest::MarkReadRequest::export_all(&cfg)?;
     rest::SetMuteRequest::export_all(&cfg)?;
+    rest::NotifyLevel::export_all(&cfg)?;
+    rest::NotifyLevelPref::export_all(&cfg)?;
+    rest::SetNotifyLevelRequest::export_all(&cfg)?;
     rest::ReportKind::export_all(&cfg)?;
     rest::CreateReportRequest::export_all(&cfg)?;
     rest::CreateReportResponse::export_all(&cfg)?;

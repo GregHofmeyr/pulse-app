@@ -714,6 +714,51 @@ pub struct Mute {
     pub until: Option<String>,
 }
 
+/// Which server messages alert you (the message sound and the desktop notification, #195). A mute still lets only
+/// mentions through, and Do Not Disturb nothing; unread badges count whatever the level.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum NotifyLevel {
+    All,
+    Mentions,
+    Nothing,
+}
+
+impl NotifyLevel {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::All => "all",
+            Self::Mentions => "mentions",
+            Self::Nothing => "nothing",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "all" => Some(Self::All),
+            "mentions" => Some(Self::Mentions),
+            "nothing" => Some(Self::Nothing),
+            _ => None,
+        }
+    }
+}
+
+/// A level you picked for a server or a server channel. Absent = the default: All messages for a server, following
+/// its server for a channel.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct NotifyLevelPref {
+    pub target_kind: MuteTarget,
+    pub target_id: String,
+    pub level: NotifyLevel,
+}
+
+/// `level: None` = back to the default (a server: All messages; a channel: follow its server).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SetNotifyLevelRequest {
+    pub target_kind: MuteTarget,
+    pub target_id: String,
+    pub level: Option<NotifyLevel>,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct AddMembersRequest {
     pub user_ids: Vec<UserId>,

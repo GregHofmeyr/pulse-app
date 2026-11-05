@@ -14,6 +14,7 @@ import type { Member } from "./Member";
 import type { Message } from "./Message";
 import type { MessageId } from "./MessageId";
 import type { Mute } from "./Mute";
+import type { NotifyLevelPref } from "./NotifyLevelPref";
 import type { OwnStatus } from "./OwnStatus";
 import type { PresenceStatus } from "./PresenceStatus";
 import type { QotyEvent } from "./QotyEvent";
@@ -57,7 +58,7 @@ mentions: number | null,
  * snapshot counts it (a client can't count it from a list that doesn't reach the latest).
  * Absent from older servers.
  */
-unread: number | null, } } | { "t": "MutesChanged", "d": { user_id: UserId, mutes: Array<Mute>, } } | { "t": "ConversationVisibility", "d": { user_id: UserId, channel_id: ChannelId, hidden: boolean, } } | { "t": "StreamStarted", "d": { stream: StreamInfo, } } | { "t": "StreamUpdated", "d": { stream: StreamInfo, } } | { "t": "StreamEnded", "d": { channel_id: ChannelId, user_id: UserId, reason: StreamEndReason, } } | { "t": "ViewersChanged", "d": { channel_id: ChannelId, user_id: UserId, viewers: Array<UserId>, 
+unread: number | null, } } | { "t": "MutesChanged", "d": { user_id: UserId, mutes: Array<Mute>, } } | { "t": "NotifyLevelsChanged", "d": { user_id: UserId, levels: Array<NotifyLevelPref>, } } | { "t": "ConversationVisibility", "d": { user_id: UserId, channel_id: ChannelId, hidden: boolean, } } | { "t": "StreamStarted", "d": { stream: StreamInfo, } } | { "t": "StreamUpdated", "d": { stream: StreamInfo, } } | { "t": "StreamEnded", "d": { channel_id: ChannelId, user_id: UserId, reason: StreamEndReason, } } | { "t": "ViewersChanged", "d": { channel_id: ChannelId, user_id: UserId, viewers: Array<UserId>, 
 /**
  * The ghost count; who they are never leaves the server.
  */

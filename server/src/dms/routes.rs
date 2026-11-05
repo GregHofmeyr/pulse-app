@@ -1,4 +1,4 @@
-//! Conversation management: groups, read points, mutes, closing.
+//! Conversation management: groups, read points, mutes, notification levels, closing.
 
 use std::collections::{BTreeSet, HashMap};
 
@@ -9,8 +9,9 @@ use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::{
-    AddMembersRequest, Channel, ChannelKind, MarkReadRequest, Mute, MuteTarget,
-    RenameChannelRequest, SetGroupIconRequest, SetMuteRequest,
+    AddMembersRequest, Channel, ChannelKind, MarkReadRequest, Mute, MuteTarget, NotifyLevel,
+    NotifyLevelPref, RenameChannelRequest, SetGroupIconRequest, SetMuteRequest,
+    SetNotifyLevelRequest,
 };
 use sqlx::SqlitePool;
 
@@ -33,6 +34,7 @@ pub fn router() -> Router<AppState> {
         )
         .route("/mutes", put(set_mute))
         .route("/mutes/{kind}/{id}", delete(clear_mute))
+        .route("/notify-levels", put(set_level))
         .route("/channels/{id}/close", post(close))
         .route("/channels/{id}/icon", put(set_icon))
 }
@@ -562,20 +564,132 @@ async fn clear_mute(
     Path((kind, id)): Path<(String, String)>,
 ) -> AppResult<StatusCode> {
     let kind = MuteTarget::parse(&kind).ok_or(AppError::NotFound)?;
+    // The row may also hold a notification level (#195): only the mute goes.
+    let mut tx = crate::db::begin_write(&s.db).await?;
     sqlx::query(
-        "DELETE FROM notification_prefs WHERE user_id = ? AND target_kind = ? AND target_id = ?",
+        "UPDATE notification_prefs SET muted = 0, muted_until = NULL
+         WHERE user_id = ? AND target_kind = ? AND target_id = ?",
     )
     .bind(me.to_string())
     .bind(kind.as_str())
     .bind(&id)
-    .execute(&s.db)
+    .execute(&mut *tx)
     .await?;
+    drop_empty_pref(&mut tx, me, kind, &id).await?;
+    tx.commit().await?;
     s.hub
         .publish(
             &s.db,
             Event::MutesChanged {
                 user_id: me,
                 mutes: mutes_of(&s.db, me).await?,
+            },
+        )
+        .await;
+    Ok(StatusCode::NO_CONTENT)
+}
+
+/// Your notification levels (#195): only the ones you picked; anything else is at its default.
+pub async fn levels_of(db: &SqlitePool, me: UserId) -> AppResult<Vec<NotifyLevelPref>> {
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT target_kind, target_id, level FROM notification_prefs
+         WHERE user_id = ? AND level IS NOT NULL ORDER BY target_kind, target_id",
+    )
+    .bind(me.to_string())
+    .fetch_all(db)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(k, id, level)| {
+            Some(NotifyLevelPref {
+                target_kind: MuteTarget::parse(&k)?,
+                target_id: id,
+                level: NotifyLevel::parse(&level)?,
+            })
+        })
+        .collect())
+}
+
+/// Deletes `me`'s pref row for the target once it holds neither a mute nor a level.
+async fn drop_empty_pref(
+    tx: &mut sqlx::SqliteConnection,
+    me: UserId,
+    kind: MuteTarget,
+    id: &str,
+) -> AppResult<()> {
+    sqlx::query(
+        "DELETE FROM notification_prefs WHERE user_id = ? AND target_kind = ? AND target_id = ?
+         AND muted = 0 AND level IS NULL",
+    )
+    .bind(me.to_string())
+    .bind(kind.as_str())
+    .bind(id)
+    .execute(&mut *tx)
+    .await?;
+    Ok(())
+}
+
+/// `PUT /notify-levels`: your level for a server or one of its channels (#195); `level: None` puts it back to the
+/// default. A DM or group has none (it always alerts, subject to its mute): 400.
+async fn set_level(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Json(req): Json<SetNotifyLevelRequest>,
+) -> AppResult<StatusCode> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    check_target(&s, me, req.target_kind, &req.target_id).await?;
+    let level = match req.target_kind {
+        // A server's All is its default: stored as none, like a server nobody set.
+        MuteTarget::Server => req.level.filter(|l| *l != NotifyLevel::All),
+        MuteTarget::Channel => {
+            let ch: ChannelId = req.target_id.parse().map_err(|_| AppError::NotFound)?;
+            if load_channel(&s.db, ch)
+                .await?
+                .is_none_or(|c| c.server_id.is_none())
+            {
+                return Err(AppError::BadRequest(
+                    "only servers and their channels have a notification level".into(),
+                ));
+            }
+            req.level
+        }
+    };
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    match level {
+        Some(level) => {
+            sqlx::query(
+                "INSERT INTO notification_prefs (user_id, target_kind, target_id, level) VALUES (?, ?, ?, ?)
+                 ON CONFLICT (user_id, target_kind, target_id) DO UPDATE SET level = excluded.level",
+            )
+            .bind(me.to_string())
+            .bind(req.target_kind.as_str())
+            .bind(&req.target_id)
+            .bind(level.as_str())
+            .execute(&mut *tx)
+            .await?;
+        }
+        None => {
+            sqlx::query(
+                "UPDATE notification_prefs SET level = NULL
+                 WHERE user_id = ? AND target_kind = ? AND target_id = ?",
+            )
+            .bind(me.to_string())
+            .bind(req.target_kind.as_str())
+            .bind(&req.target_id)
+            .execute(&mut *tx)
+            .await?;
+            drop_empty_pref(&mut tx, me, req.target_kind, &req.target_id).await?;
+        }
+    }
+    tx.commit().await?;
+    s.hub
+        .publish(
+            &s.db,
+            Event::NotifyLevelsChanged {
+                user_id: me,
+                levels: levels_of(&s.db, me).await?,
             },
         )
         .await;

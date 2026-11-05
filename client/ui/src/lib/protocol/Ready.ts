@@ -9,6 +9,7 @@ import type { DmMembers } from "./DmMembers";
 import type { Game } from "./Game";
 import type { Message } from "./Message";
 import type { Mute } from "./Mute";
+import type { NotifyLevelPref } from "./NotifyLevelPref";
 import type { OwnStatus } from "./OwnStatus";
 import type { Person } from "./Person";
 import type { PrivateNickname } from "./PrivateNickname";
@@ -38,6 +39,10 @@ people: Array<Person>,
  * Your private read points with unread/mention counts.
  */
 read_states: Array<ReadState>, mutes: Array<Mute>, 
+/**
+ * The notification levels you picked for servers and server channels (#195); absent = the defaults.
+ */
+notify_levels?: Array<NotifyLevelPref>, 
 /**
  * Conversations you closed (hidden from your list until a new message).
  */

@@ -390,6 +390,7 @@ async fn republish_own_state(s: &AppState, channel: ChannelId) -> AppResult<()> 
             )
             .await;
     }
+    // their mutes and notification levels in it (#195)
     let muters: Vec<String> = sqlx::query_scalar(
         "SELECT DISTINCT user_id FROM notification_prefs
          WHERE target_kind = 'channel' AND target_id = ?",
@@ -406,6 +407,16 @@ async fn republish_own_state(s: &AppState, channel: ChannelId) -> AppResult<()> 
                 Event::MutesChanged {
                     user_id: user,
                     mutes,
+                },
+            )
+            .await;
+        let levels = crate::dms::routes::levels_of(&s.db, user).await?;
+        s.hub
+            .publish(
+                &s.db,
+                Event::NotifyLevelsChanged {
+                    user_id: user,
+                    levels,
                 },
             )
             .await;

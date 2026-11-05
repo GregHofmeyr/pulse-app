@@ -6,7 +6,7 @@ use ts_rs::TS;
 use crate::ids::{CallId, ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
     Badge, CallInfo, CallRing, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game,
-    Member, Message, Mute, OwnStatus, Person, PresenceStatus, PrivateNickname, QotyEvent,
+    Member, Message, Mute, NotifyLevelPref, OwnStatus, Person, PresenceStatus, PrivateNickname, QotyEvent,
     ReadState, RingEndReason, Server, ServerVoiceMod, Sound, SpeakerLink, StreamEndReason,
     StreamInfo, User,
 };
@@ -83,6 +83,10 @@ pub struct Ready {
     /// Your private read points with unread/mention counts.
     pub read_states: Vec<ReadState>,
     pub mutes: Vec<Mute>,
+    /// The notification levels you picked for servers and server channels (#195); absent = the defaults.
+    #[serde(default)]
+    #[ts(as = "Option<_>", optional)]
+    pub notify_levels: Vec<NotifyLevelPref>,
     /// Conversations you closed (hidden from your list until a new message).
     pub hidden: Vec<ChannelId>,
     /// Latest message of each of your DMs/groups (list previews + sorting).
@@ -313,6 +317,11 @@ pub enum Event {
         user_id: UserId,
         mutes: Vec<Mute>,
     },
+    /// Your notification levels changed (#195): all of them, as `Ready.notify_levels`.
+    NotifyLevelsChanged {
+        user_id: UserId,
+        levels: Vec<NotifyLevelPref>,
+    },
     ConversationVisibility {
         user_id: UserId,
         channel_id: ChannelId,
@@ -535,6 +544,7 @@ impl Event {
             | Self::PresenceChanged { .. }
             | Self::ProfileUpdated { .. }
             | Self::MutesChanged { .. }
+            | Self::NotifyLevelsChanged { .. }
             | Self::EmojiCreated { .. }
             | Self::EmojiUpdated { .. }
             | Self::EmojiDeleted { .. }
@@ -564,6 +574,7 @@ impl Event {
             Self::ChannelRemoved { user_id, .. }
             | Self::ReadStateUpdated { user_id, .. }
             | Self::MutesChanged { user_id, .. }
+            | Self::NotifyLevelsChanged { user_id, .. }
             | Self::FrequentEmoji { user_id, .. }
             | Self::ThreadSeen { user_id, .. }
             | Self::ClipViewChanged { user_id, .. }
@@ -672,6 +683,7 @@ mod tests {
             people: vec![],
             read_states: vec![],
             mutes: vec![],
+            notify_levels: vec![],
             hidden: vec![],
             latest: vec![],
             streams: vec![],
@@ -753,6 +765,7 @@ mod tests {
             people: vec![],
             read_states: vec![],
             mutes: vec![],
+            notify_levels: vec![],
             hidden: vec![],
             latest: vec![],
             streams: vec![],
@@ -874,6 +887,7 @@ mod tests {
             people: vec![],
             read_states: vec![],
             mutes: vec![],
+            notify_levels: vec![],
             hidden: vec![],
             latest: vec![],
             streams: vec![],

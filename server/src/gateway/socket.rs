@@ -227,6 +227,7 @@ async fn ready_for(
         people: people(db, hub, me, conn).await?,
         read_states: crate::reads::states_for(db, me).await?,
         mutes: crate::dms::routes::mutes_of(db, me).await?,
+        notify_levels: crate::dms::routes::levels_of(db, me).await?,
         hidden: crate::dms::routes::hidden_of(db, me).await?,
         latest: crate::reads::latest_for(db, me).await?,
         streams: live,

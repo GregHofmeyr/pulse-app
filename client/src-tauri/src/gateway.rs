@@ -1029,6 +1029,7 @@ mod tests {
                         people: vec![],
                         read_states: vec![],
                         mutes: vec![],
+                        notify_levels: vec![],
                         hidden: vec![],
                         latest: vec![],
                         streams: vec![],

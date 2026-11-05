@@ -1042,3 +1042,17 @@ async fn clip_view_changes_share_the_mutate_limit() {
     assert_eq!(status(put(), &a).await, 204);
     assert_eq!(status(put(), &a).await, 429);
 }
+
+#[tokio::test]
+async fn notification_levels_share_the_mutate_limit() {
+    let app = spawn_only(|l| l.mutate_user = tiny(2)).await;
+    let (_, a) = register(&app, "alex").await;
+    let (_, b) = register(&app, "sam").await;
+    let srv = create_server(&app, &a, "Main").await;
+    let body = serde_json::json!({ "target_kind": "server", "target_id": srv.id, "level": "mentions" });
+    let put = || app.http.put(app.url("/notify-levels")).json(&body);
+    assert_eq!(status(put(), &a).await, 204);
+    assert_eq!(status(put(), &a).await, 204);
+    assert_eq!(status(put(), &a).await, 429);
+    assert_eq!(status(put(), &b).await, 204, "sam has his own allowance");
+}
