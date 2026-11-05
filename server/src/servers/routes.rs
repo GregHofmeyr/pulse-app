@@ -5,7 +5,7 @@ use axum::http::StatusCode;
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use pulse_protocol::gateway::Event;
-use pulse_protocol::ids::{ChannelId, ServerId, UserId};
+use pulse_protocol::ids::{CategoryId, ChannelId, ServerId, UserId};
 use pulse_protocol::rest::{
     Channel, ChannelKind, CreateChannelRequest, CreateDmRequest, CreateServerRequest, Member,
     Server,
@@ -20,6 +20,7 @@ use crate::db::now;
 use crate::error::{AppError, AppResult};
 use crate::limits::caps;
 use crate::profiles::users::{USER_COLS, USER_JOIN, UserRow};
+use crate::servers::categories::insert_category;
 
 const MAX_GROUP_OTHERS: usize = 9;
 
@@ -91,6 +92,7 @@ async fn insert_channel(
     kind: ChannelKind,
     name: Option<&str>,
     position: i64,
+    category: Option<CategoryId>,
 ) -> AppResult<Channel> {
     let id = ChannelId::new();
     // Quotes channels start in one-reaction-per-person mode; everything else reacts freely.
@@ -99,12 +101,13 @@ async fn insert_channel(
     } else {
         "normal"
     };
-    sqlx::query("INSERT INTO channels (id, server_id, kind, name, position, created_at, reaction_mode) VALUES (?, ?, ?, ?, ?, ?, ?)")
+    sqlx::query("INSERT INTO channels (id, server_id, kind, name, position, category_id, created_at, reaction_mode) VALUES (?, ?, ?, ?, ?, ?, ?, ?)")
         .bind(id.to_string())
         .bind(server.map(|s| s.to_string()))
         .bind(kind.as_str())
         .bind(name)
         .bind(position)
+        .bind(category.map(|c| c.to_string()))
         .bind(now())
         .bind(reaction_mode)
         .execute(&mut *tx)
@@ -115,7 +118,7 @@ async fn insert_channel(
         kind,
         name: name.map(str::to_string),
         position,
-        category_id: None,
+        category_id: category,
         icon_hash: None,
         icon_still: None,
     })
@@ -191,8 +194,27 @@ async fn create_server(
         .bind(&at)
         .execute(&mut *tx)
         .await?;
-    let general = insert_channel(&mut tx, Some(id), ChannelKind::Text, Some("general"), 0).await?;
-    let lounge = insert_channel(&mut tx, Some(id), ChannelKind::Voice, Some("Lounge"), 0).await?;
+    // It starts as an updated server looks: its channels in the default categories (#54).
+    let text = insert_category(&mut tx, id, "Text Channels", 0, Some(ChannelKind::Text)).await?;
+    let voice = insert_category(&mut tx, id, "Voice Channels", 1, Some(ChannelKind::Voice)).await?;
+    let general = insert_channel(
+        &mut tx,
+        Some(id),
+        ChannelKind::Text,
+        Some("general"),
+        0,
+        Some(text.id),
+    )
+    .await?;
+    let lounge = insert_channel(
+        &mut tx,
+        Some(id),
+        ChannelKind::Voice,
+        Some("Lounge"),
+        0,
+        Some(voice.id),
+    )
+    .await?;
     crate::reads::init_point(&mut tx, me, general.id).await?;
     tx.commit().await?;
 
@@ -386,7 +408,7 @@ async fn create_channel(
     .bind(req.kind.as_str())
     .fetch_one(&mut *tx)
     .await?;
-    let ch = insert_channel(&mut tx, Some(id), req.kind, Some(&name), pos).await?;
+    let ch = insert_channel(&mut tx, Some(id), req.kind, Some(&name), pos, None).await?;
     if req.kind.is_server_chat() {
         // Everyone in the server starts at "all read" (the channel is empty).
         let members: Vec<String> =
@@ -585,7 +607,7 @@ async fn create_dm(
         let everyone: Vec<UserId> = std::iter::once(me).chain(others.iter().copied()).collect();
         check_group_cap(&mut tx, &everyone).await?; // dropping `tx` rolls back
     }
-    let ch = insert_channel(&mut tx, None, kind, None, 0).await?;
+    let ch = insert_channel(&mut tx, None, kind, None, 0, None).await?;
     let at = now();
     for u in std::iter::once(me).chain(others.iter().copied()) {
         sqlx::query("INSERT INTO channel_members (channel_id, user_id, added_by, added_at) VALUES (?, ?, ?, ?)")

@@ -1,6 +1,6 @@
 //! The single access rule for channel-scoped data.
 
-use pulse_protocol::ids::{ChannelId, ServerId, UserId};
+use pulse_protocol::ids::{CategoryId, ChannelId, ServerId, UserId};
 use pulse_protocol::rest::{Channel, ChannelKind};
 use sqlx::SqlitePool;
 
@@ -14,10 +14,11 @@ pub type ChannelRow = (
     i64,
     Option<String>,
     Option<String>,
+    Option<String>,
 );
 
 pub fn channel_from_row(
-    (id, server_id, kind, name, position, icon_hash, icon_still): ChannelRow,
+    (id, server_id, kind, name, position, category_id, icon_hash, icon_still): ChannelRow,
 ) -> AppResult<Channel> {
     Ok(Channel {
         id: id.parse().map_err(anyhow::Error::from)?,
@@ -29,7 +30,10 @@ pub fn channel_from_row(
             .ok_or_else(|| anyhow::anyhow!("bad channel kind {kind}"))?,
         name,
         position,
-        category_id: None,
+        category_id: category_id
+            .map(|c| c.parse::<CategoryId>())
+            .transpose()
+            .map_err(anyhow::Error::from)?,
         icon_hash,
         icon_still,
     })
@@ -37,7 +41,7 @@ pub fn channel_from_row(
 
 /// The columns [`channel_from_row`] reads, from `channels` (unaliased): a group's icon (#56) comes
 /// with its still, for an animated one.
-pub const CHANNEL_COLS: &str = "id, server_id, kind, name, position, icon_hash, \
+pub const CHANNEL_COLS: &str = "id, server_id, kind, name, position, category_id, icon_hash, \
      (SELECT m.still_hash FROM media m WHERE m.hash = icon_hash) AS icon_still";
 
 /// The channel, unless there is none or it is in Recently deleted: a deleted channel is gone for

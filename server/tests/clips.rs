@@ -277,14 +277,15 @@ async fn migration_keeps_every_channel_row() {
     assert_eq!(count("channel_members").await, 2);
     assert_eq!(count("dm_hidden").await, 1);
     assert_eq!(count("voice_sessions").await, 1);
-    // Copied values survive, and the rebuilt table keeps its index.
+    // Copied values survive, and the rebuilt table keeps its index. (0023, #54, then numbers
+    // positions inside each category: the quotes channel is the first in its "Quotes".)
     let (mode, position): (String, i64) =
         sqlx::query_as("SELECT reaction_mode, position FROM channels WHERE id = ?")
             .bind(quotes)
             .fetch_one(&pool)
             .await
             .unwrap();
-    assert_eq!((mode.as_str(), position), ("one_per_person", 1));
+    assert_eq!((mode.as_str(), position), ("one_per_person", 0));
     let index: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'channels_server'",
     )

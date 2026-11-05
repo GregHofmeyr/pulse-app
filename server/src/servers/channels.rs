@@ -208,6 +208,7 @@ type DeletedRow = (
     Option<String>,
     Option<String>,
     Option<String>,
+    Option<String>,
     String,
 );
 
@@ -224,8 +225,9 @@ async fn deleted_channel(
     .bind(id.to_string())
     .fetch_optional(&mut *db)
     .await?;
-    let (id, server, kind, name, position, icon, still, by, _) = row.ok_or(AppError::NotFound)?;
-    let ch = channel_from_row((id, server, kind, name, position, icon, still))?;
+    let (id, server, kind, name, position, category, icon, still, by, _) =
+        row.ok_or(AppError::NotFound)?;
+    let ch = channel_from_row((id, server, kind, name, position, category, icon, still))?;
     let server = ch.server_id.ok_or(AppError::NotFound)?;
     Ok((ch, server, parse_user(by)?))
 }
@@ -284,8 +286,8 @@ pub async fn list_deleted(
     .fetch_all(&mut *db)
     .await?;
     let mut out = Vec::with_capacity(rows.len());
-    for (id, sid, kind, name, position, icon, still, by, at) in rows {
-        let channel = channel_from_row((id, sid, kind, name, position, icon, still))?;
+    for (id, sid, kind, name, position, category, icon, still, by, at) in rows {
+        let channel = channel_from_row((id, sid, kind, name, position, category, icon, still))?;
         let deleted_by = parse_user(by)?;
         out.push(DeletedChannel {
             held: held(&mut db, channel.id, channel.kind)
