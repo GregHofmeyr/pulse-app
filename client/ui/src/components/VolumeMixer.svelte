@@ -81,7 +81,7 @@
   .fold { display: flex; align-items: center; gap: 6px; max-width: 100%; margin: -4px -6px; padding: 4px 6px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
   .fold:hover { background: var(--bg-3); }
   .fold:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .fold :global(svg) { flex-shrink: 0; color: var(--text-3); transition: transform .12s; }
+  .fold :global(svg) { flex-shrink: 0; color: var(--text-3); transition: transform var(--dur) var(--ease); }
   .fold.shut :global(svg) { transform: rotate(-90deg); }
   .rows[hidden] { display: none; }
   .head .reset { grid-column: 4; padding: 4px 10px; font-size: 12px; }

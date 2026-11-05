@@ -313,7 +313,8 @@
   .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { font-size: 11px; color: var(--text-3); }
   .occupant { cursor: default; border-radius: 8px; height: 30px; padding: 0 8px 0 38px; display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); }
-  .ring { display: flex; flex-shrink: 0; border-radius: 50%; transition: box-shadow .12s; }
+  /* the ring snaps with speaking, as the voice tile's border does (no box-shadow transition: a repaint per frame) */
+  .ring { display: flex; flex-shrink: 0; border-radius: 50%; }
   .ring.speaking { box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--ok); }
   .occupant:hover { background: var(--bg-2); }
   .occupant.pending { opacity: .6; }

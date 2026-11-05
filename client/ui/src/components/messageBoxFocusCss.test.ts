@@ -39,8 +39,9 @@ describe('message box and edit box focus', () => {
   it('the message box: a faint accent edge while focus is inside it, drawn inset so nothing moves', () => {
     const focused = ruleFor(composer, (s) => /^\.wrap\.s:focus-within$/.test(s))
     expect(focused.getPropertyValue('box-shadow')).toBe('inset 0 0 0 1px var(--focus-soft)')
+    // the edge appears at once, like every focus ring: box-shadow never transitions (it repaints each frame, #173)
     const rest = ruleFor(composer, (s) => s === '.wrap.s')
-    expect(rest.getPropertyValue('transition')).toContain('box-shadow')
+    expect(rest.getPropertyValue('transition')).not.toContain('box-shadow')
   })
 
   it('the edit box: the same faint edge on any focus (mouse too), not the full accent border', () => {

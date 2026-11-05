@@ -75,7 +75,7 @@
   /* In the body's gap: 8px wide, with -8px margins so the row's spacing is as it was without it. */
   .handle { position: relative; z-index: 2; flex: 0 0 8px; width: 8px; margin: 0 -8px; cursor: col-resize; touch-action: none; outline: none; }
   /* the line: drawn only while it's being used */
-  .handle::after { content: ''; position: absolute; top: 12px; bottom: 12px; left: 3px; width: 2px; border-radius: 1px; background: transparent; transition: background .12s; }
+  .handle::after { content: ''; position: absolute; top: 12px; bottom: 12px; left: 3px; width: 2px; border-radius: 1px; background: transparent; transition: background-color var(--dur-fast) var(--ease); }
   .handle:hover::after { background: var(--line); }
   .handle.dragging::after, .handle:focus-visible::after { background: var(--focus-ring); }
 </style>

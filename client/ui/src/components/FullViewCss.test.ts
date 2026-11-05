@@ -41,6 +41,6 @@ describe('the full view bar', () => {
     const off = getComputedStyle(el('<button data-probe class="panel-toggle $s" aria-pressed="false"></button>'))
     expect(on.color).not.toBe(off.color)
     // jsdom can't hover: the pressed hover rule exists and changes the pressed background
-    expect(src).toMatch(/\.panel-toggle\[aria-pressed='true'\]:hover \{ background: color-mix\(in srgb, var\(--accent\) 28%/)
+    expect(src).toMatch(/\.panel-toggle\[aria-pressed='true'\]:hover \{ background: var\(--accent-strong\)/)
   })
 })

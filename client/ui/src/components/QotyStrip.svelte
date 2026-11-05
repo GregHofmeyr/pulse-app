@@ -33,7 +33,7 @@
 {/if}
 
 <style>
-  .qoty-strip { position: relative; overflow: hidden; flex-shrink: 0; margin: 0 20px; display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 10px; background: var(--bg-1); border: 1px solid color-mix(in srgb, var(--quote-green) 30%, transparent); font-size: 13px; }
+  .qoty-strip { position: relative; overflow: hidden; flex-shrink: 0; margin: 0 20px; display: flex; align-items: center; gap: 10px; padding: 7px 10px; border-radius: 10px; background: var(--bg-1); border: 1px solid var(--quote-green-line); font-size: 13px; }
   .mark, .txt, .open { position: relative; } /* over the spill */
   .qoty-strip :global(.pixel-spill) { position: absolute; left: 0; top: 0; height: 100%; width: 72px; }
   .mark { font-size: 20px; padding-top: 6px; color: var(--on-quote-green); }

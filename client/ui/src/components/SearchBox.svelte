@@ -267,7 +267,7 @@
   .mag { display: grid; place-items: center; width: 32px; height: 32px; padding: 0; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); }
   .mag:hover { background: var(--bg-3); color: var(--text); }
   /* the shared .input look, holding chips beside the text */
-  .search { position: relative; width: 240px; min-width: 0; height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--bg-4); border-radius: 8px; background: var(--bg-1); color: var(--text-3); transition: width var(--dur) var(--ease); }
+  .search { position: relative; width: 240px; min-width: 0; height: 32px; padding: 0 8px; display: flex; align-items: center; gap: 6px; border: 1px solid var(--bg-4); border-radius: 8px; background: var(--bg-1); color: var(--text-3); }
   .search:hover { border-color: var(--line-menu); }
   .search.focused { width: 320px; outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .field { flex: 1; min-width: 60px; height: 100%; padding: 0; border: 0; background: none; color: var(--text); font-size: 13px; outline: none; text-overflow: ellipsis; }

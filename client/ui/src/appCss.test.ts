@@ -78,11 +78,11 @@ describe('the global scrollbar', () => {
 })
 
 describe('motion', () => {
-  it('buttons ease colours and opacity only, never a property that moves layout', () => {
-    const button = styleRules(sheet.cssRules).filter((r) => r.selectorText === 'button').map((r) => r.style.getPropertyValue('transition')).find(Boolean)
+  it('buttons ease colours, opacity and filter only, never a property that moves layout', () => {
+    const button = styleRules(sheet.cssRules).filter((r) => r.selectorText.split(',').map((s) => s.trim()).includes('button')).map((r) => r.style.getPropertyValue('transition')).find(Boolean)
     expect(button).toBeDefined()
     const props = button!.split(',').map((t) => t.trim().split(/\s+/)[0])
-    expect(props.sort()).toEqual(['background-color', 'border-color', 'color', 'opacity'])
+    expect(props.sort()).toEqual(['background-color', 'border-color', 'color', 'filter', 'opacity'])
   })
 
   it('reduced motion finishes animations and transitions at once, but leaves the spinners to slow down', () => {

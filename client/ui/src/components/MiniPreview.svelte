@@ -135,7 +135,7 @@
   .open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   .name { position: absolute; left: 8px; bottom: 6px; padding: 1px 7px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }
-  .x { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .6); color: #fff; display: grid; place-items: center; opacity: 0; transition: opacity .12s; }
+  .x { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .6); color: #fff; display: grid; place-items: center; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
   .mini-preview:hover .x, .mini-preview:focus-within .x { opacity: 1; }
   .dragging .open { cursor: grabbing; }
 </style>

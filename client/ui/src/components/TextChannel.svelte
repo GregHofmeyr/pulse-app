@@ -584,7 +584,7 @@
   .list :global(.jump-flash) { animation: jump-flash 2s ease-out; }
   .list :global(.jump-flash.still) { animation: none; outline: 2px solid var(--focus-ring); outline-offset: -2px; }
   @keyframes jump-flash {
-    0%, 30% { background: color-mix(in srgb, var(--accent) 22%, transparent); }
+    0%, 30% { background: var(--accent-mid); }
     100% { background: transparent; }
   }
   .jump-notice { margin: 0 18px 4px; color: var(--text-3); font-size: 13px; }

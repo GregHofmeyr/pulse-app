@@ -73,7 +73,7 @@
       {#if job.error}<p class="why">{job.error}</p>{/if}
     {:else if status}
       <p class="status" role="status">{status}</p>
-      {#if job.stage === 'preparing' || job.stage === 'uploading'}<div class="bar" aria-hidden="true"><span style:width="{percent}%"></span></div>{/if}
+      {#if job.stage === 'preparing' || job.stage === 'uploading'}<div class="bar" aria-hidden="true"><span style:transform="scaleX({percent / 100})"></span></div>{/if}
     {/if}
     {#if problem}<p class="why">{problem}</p>{/if}
     {#if job.stage !== 'done'}
@@ -93,7 +93,7 @@
   .game { padding: 1px 8px; border-radius: 10px; background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; white-space: nowrap; }
   .status { margin: 0; font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
   .bar { align-self: stretch; height: 4px; border-radius: 2px; background: var(--bg-3); overflow: hidden; }
-  .bar span { display: block; height: 100%; background: var(--accent); transition: width .2s; }
+  .bar span { display: block; height: 100%; background: var(--accent); transform-origin: left; transition: transform var(--dur-slow) var(--ease); }
   .failed { margin: 0; font-size: 12px; color: var(--danger-text); }
   .why { margin: 0; font-size: 12px; color: var(--text-3); overflow-wrap: anywhere; }
   .actions { align-self: stretch; display: flex; justify-content: flex-end; }

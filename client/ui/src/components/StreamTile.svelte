@@ -135,8 +135,8 @@
   .host { position: absolute; inset: 0; cursor: zoom-in; }
   .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   .overlay { position: absolute; inset: 0; display: grid; place-items: center; background: rgba(0, 0, 0, .5); color: #fff; font-size: 16px; font-weight: 600; pointer-events: none; }
-  .name-tag { position: absolute; left: 10px; bottom: 8px; padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; transition: opacity .12s; }
-  .toolbar { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 10px; display: flex; align-items: center; gap: 10px; background: linear-gradient(transparent, rgba(0, 0, 0, .75)); opacity: 0; transition: opacity .12s; }
+  .name-tag { position: absolute; left: 10px; bottom: 8px; padding: 2px 8px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; transition: opacity var(--dur-fast) var(--ease); }
+  .toolbar { position: absolute; left: 0; right: 0; bottom: 0; padding: 8px 10px; display: flex; align-items: center; gap: 10px; background: linear-gradient(transparent, rgba(0, 0, 0, .75)); opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
   .watching:hover .toolbar, .watching:focus-within .toolbar { opacity: 1; }
   .watching:hover .name-tag, .watching:focus-within .name-tag { opacity: 0; }
   .spacer { flex: 1; }

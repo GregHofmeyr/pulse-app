@@ -261,7 +261,7 @@
   .init { display: grid; place-items: center; background: var(--bg-4); color: var(--text); font-size: 12px; font-weight: 700; }
   .grid { flex: 1; min-width: 0; overflow-y: auto; padding: 0 8px 8px; }
   .head { position: sticky; top: 0; z-index: 1; width: 100%; display: flex; align-items: center; gap: 4px; padding: 8px 2px 4px; background: var(--bg-2); border: 0; color: var(--text-3); font: inherit; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; cursor: pointer; text-align: left; }
-  .caret { display: inline-flex; transition: transform 0.12s; }
+  .caret { display: inline-flex; transition: transform var(--dur) var(--ease); }
   .caret.shut { transform: rotate(-90deg); }
   .cells { display: grid; grid-template-columns: repeat(9, 1fr); gap: 2px; }
   .cell { aspect-ratio: 1; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; padding: 0; cursor: pointer; }

@@ -149,7 +149,7 @@
           {@const p = quotePreview(app.state, serverId, o.message)}
           <div class="opt" class:mine={isMine} class:popped={popped === id} data-option={id}
             onanimationend={(ev) => { if (ev.animationName.endsWith('qoty-pop')) popped = null }}>
-            <div class="fill" style:width="{total ? (o.votes / total) * 100 : 0}%"></div>
+            <div class="fill" style:transform="scaleX({total ? o.votes / total : 0})"></div>
             <div class="said">
               <QuoteItem message={o.message} {serverId} {meId} {nameOf} compact />
               <div class="meta">
@@ -206,7 +206,7 @@
 <style>
   .overlay { position: fixed; inset: 0; z-index: 30; }
   /* its own look: the green border and spill, and bg-1 under the bg-2 options */
-  .modal { width: min(620px, 100%); padding: 46px 20px 18px; background: var(--bg-1); border-color: color-mix(in srgb, var(--quote-green) 35%, transparent); }
+  .modal { width: min(620px, 100%); padding: 46px 20px 18px; background: var(--bg-1); border-color: var(--quote-green-line); }
   /* 88 cells across ≈ 7 px each at full width, 5 down: the solid run and its thinning both show */
   .spill { position: absolute; left: 0; right: 0; top: 0; height: 35px; overflow: hidden; border-radius: 16px 16px 0 0; }
   .spill :global(.pixel-spill) { width: 100%; height: 100%; }
@@ -218,7 +218,7 @@
   .options { display: flex; flex-direction: column; gap: 8px; }
   .opt { position: relative; overflow: hidden; display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); }
   .opt.mine { border-color: var(--quote-green); }
-  .fill { position: absolute; inset: 0 auto 0 0; background: color-mix(in srgb, var(--quote-green) 12%, transparent); pointer-events: none; }
+  .fill { position: absolute; inset: 0; background: var(--quote-green-soft); pointer-events: none; transform-origin: left; }
   .said, .tally { position: relative; }
   .said { flex: 1; min-width: 0; }
   .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-top: 4px; font-size: 12px; color: var(--text-3); }
@@ -240,11 +240,11 @@
   .foot, .confirm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
   .confirm p { flex: 1; margin: 0; font-size: 13px; }
   .foot .qoty-btn, .confirm .qoty-btn { height: 34px; }
-  .qoty-btn.danger { background: var(--danger); color: var(--on-danger); box-shadow: 0 2px 0 color-mix(in srgb, var(--danger) 55%, var(--bg-0)); }
+  .qoty-btn.danger { background: var(--danger); color: var(--on-danger); box-shadow: 0 2px 0 var(--danger-deep); }
   .confirm .btn { height: 34px; }
 
   /* motion (off under reduced motion: no .animated, no .popped) */
-  .animated .fill { transition: width .35s steps(7, end); }
+  .animated .fill { transition: transform .35s steps(7, end); }
   .animated .opt.popped { animation: qoty-pop .45s steps(5, end); }
   .animated .opt.popped .count { animation: qoty-count .45s steps(4, end); }
   @keyframes qoty-pop {
