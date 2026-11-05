@@ -1,17 +1,21 @@
 <script lang="ts">
   // A person's menu (#113, #137): from a member-list row, a message author, or a right-click on their profile card
-  // (where the server may be none and View profile is left out: you're on it). The profile, a message, and the
-  // nickname items, Appear offline to them (#45). Keyboard and focus work as in the voice participant menu.
+  // (where the server may be none and View profile is left out: you're on it), or a message author in a DM or group
+  // (#189: no server, so no server nickname). The profile, a message, and the nickname items, Appear offline to them
+  // (#45), and in a DM muting it (the DM list's flyout, #190). Keyboard and focus work as in the voice participant menu.
   import { onMount, untrack } from 'svelte'
-  import { app } from '../lib/store.svelte'
+  import { app, clock, ui } from '../lib/store.svelte'
+  import { api, errorText } from '../lib/tauri'
+  import { muteUntil } from '../lib/muteDurations'
   import { displayName } from '../lib/selectors'
   import { clickOutside } from '../lib/actions'
   import { openCard } from '../lib/profileCard.svelte'
   import NicknameItems from './NicknameItems.svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
+  import MuteFlyout from './MuteFlyout.svelte'
 
-  let { serverId, userId, x, y, opener, onClose, onMessage, fromCard = false }: {
+  let { serverId, userId, x, y, opener, onClose, onMessage, fromCard = false, muteChannelId = null }: {
     /** The server it opens in, or null (a card opened outside servers). */
     serverId: string | null
     userId: string
@@ -23,10 +27,19 @@
     onMessage?: (userId: string) => void
     /** Opened on their profile card: no View profile. */
     fromCard?: boolean
+    /** Opened on a message in your DM with them: Mute conversation mutes that DM. */
+    muteChannelId?: string | null
   } = $props()
 
   const self = $derived(userId === app.state.me?.id)
   const name = $derived(displayName(app.state, serverId, userId))
+  const muted = $derived(
+    !!muteChannelId && app.state.mutes.some((m) => m.target_kind === 'channel' && m.target_id === muteChannelId && (m.until === null || m.until > clock.nowIso)),
+  )
+  const reportMute = (f: () => Promise<unknown>) => () => f().catch((e: unknown) => (ui.notice = errorText(e)))
+  // the mute flyout (the channel menu's, #131)
+  let flyout = $state<ReturnType<typeof MuteFlyout>>()
+  const closeSub = (refocus: boolean | 'if-inside') => flyout?.close(refocus)
 
   let el = $state<HTMLElement>()
   let left = $state(untrack(() => x))
@@ -41,7 +54,8 @@
     focusItem(0)
   })
 
-  const items = () => (el ? [...el.querySelectorAll<HTMLElement>('[data-item]')] : [])
+  // the menu's own items (the flyout's sit inside it, under their own menu)
+  const items = () => (el ? [...el.querySelectorAll<HTMLElement>(':scope > [data-item]')] : [])
   function focusItem(i: number) {
     const list = items()
     if (list.length) list[(i + list.length) % list.length].focus()
@@ -63,6 +77,10 @@
   function keydown(e: KeyboardEvent) {
     const list = items()
     const at = list.indexOf(document.activeElement as HTMLElement)
+    if (e.key === 'ArrowLeft') { e.preventDefault(); closeSub(false); return }
+    // a flyout opened by hover: the first Escape closes just it (and not, from the window, the menu)
+    if (e.key === 'Escape' && flyout?.isOpen()) { e.preventDefault(); e.stopPropagation(); closeSub(false); return }
+    if (['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(e.key)) closeSub(false)
     switch (e.key) {
       case 'ArrowDown': e.preventDefault(); focusItem(at + 1); break
       case 'ArrowUp': e.preventDefault(); focusItem(at < 0 ? -1 : at - 1); break
@@ -84,7 +102,12 @@
 </script>
 
 <div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Actions for {name}" tabindex="-1" style:left="{left}px" style:top="{top}px"
-  onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
+  onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}
+  onpointerover={(e) => {
+    // another of the menu's own items under the pointer closes the flyout
+    const t = (e.target as Element).closest?.('[data-item]')
+    if (t && t.parentElement === el && t !== flyout?.trigger()) flyout?.closeSoon()
+  }}>
   <!-- the card opens beside the row the menu came from -->
   {#if !fromCard}
     <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>
@@ -95,6 +118,15 @@
   <NicknameItems {serverId} {userId} {pick} />
   <LiveNotifyItem {userId} {pick} />
   <AppearOfflineItem {userId} {pick} />
+  {#if muteChannelId && !self}
+    <span class="menu-sep" role="separator"></span>
+    {#if muted}
+      <button type="button" class="menu-item" role="menuitem" data-item="mute" onclick={() => pick(reportMute(() => api.clearMute('channel', muteChannelId)))}>Unmute conversation</button>
+    {:else}
+      <MuteFlyout bind:this={flyout} item="mute" label="Mute conversation" flyoutLabel="Mute {name} for" menuLeft={left} menuTop={top}
+        onPick={(m) => pick(reportMute(() => api.setMute('channel', muteChannelId, muteUntil(m))))} />
+    {/if}
+  {/if}
 </div>
 
 <style>

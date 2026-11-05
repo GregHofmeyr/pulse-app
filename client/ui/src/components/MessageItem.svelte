@@ -118,10 +118,12 @@
   const showError = inlineError.show
   $effect(() => inlineError.stop)
 
-  // --- the author's menu (#137): in a server channel, right-click (or ContextMenu / Shift+F10 on) the author's name
-  // or avatar: View profile, Message, Change server nickname. DMs and groups keep the browser's own menu. ---
+  // --- the author's menu (#137): right-click (or ContextMenu / Shift+F10 on) the author's name or avatar: View
+  // profile, Message, the nickname items. In a DM or group too (#189), with no server nickname; Message only in a
+  // group (a DM is already that), and in a DM Mute conversation, as the DM list's menu. ---
   let authorMenu = $state<{ x: number; y: number; opener: HTMLElement } | null>(null)
-  const authorMenuOn = $derived(!!serverId && !!message.author_id && !pending)
+  const authorMenuOn = $derived(!!message.author_id && !pending)
+  const channelKind = $derived(app.state.channels[message.channel_id]?.kind)
   /** `zone`: the avatar or the name line; the menu returns focus to its button. */
   function openAuthorMenu(e: MouseEvent | KeyboardEvent, zone: HTMLElement) {
     if (!authorMenuOn) return
@@ -289,8 +291,9 @@
   {@render item()}
 {/if}
 <!-- outside the row, so focus in the menu doesn't count as focus in the message (its action bar) -->
-{#if authorMenu && serverId && message.author_id}
-  {#key authorMenu}<MemberMenu {serverId} userId={message.author_id} x={authorMenu.x} y={authorMenu.y} opener={authorMenu.opener} onMessage={messageAuthor} onClose={() => (authorMenu = null)} />{/key}
+{#if authorMenu && message.author_id}
+  {#key authorMenu}<MemberMenu {serverId} userId={message.author_id} x={authorMenu.x} y={authorMenu.y} opener={authorMenu.opener}
+    onMessage={channelKind === 'dm' ? undefined : messageAuthor} muteChannelId={channelKind === 'dm' ? message.channel_id : null} onClose={() => (authorMenu = null)} />{/key}
 {/if}
 
 <style>

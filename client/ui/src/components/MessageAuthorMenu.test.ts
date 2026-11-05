@@ -140,10 +140,80 @@ describe('a message author menu (#137)', () => {
     expect(document.activeElement).toBe(authorName())
   })
 
-  it('no menu in a DM or group: the browser menu is left alone', () => {
+})
+
+describe('a message author menu in a DM or group (#189)', () => {
+  const inChannel = (kind: 'dm' | 'group') => {
+    app.state = {
+      ...app.state,
+      channels: { C1: { id: 'C1', server_id: null, kind, name: kind === 'group' ? 'squad' : null, position: 0 } },
+      dmMembers: { C1: ['U1', 'U2'] },
+    } as never
+    flushSync()
+  }
+  const flyout = () => document.querySelector<HTMLElement>('[role=menu][aria-label^="Mute "]')
+  const hover = (el: Element) => { el.dispatchEvent(new Event('pointerover', { bubbles: true })); el.dispatchEvent(new Event('pointerenter')); flushSync() }
+
+  it('a DM: View profile, Change nickname, go-live, Appear offline to them, Mute conversation', () => {
     show(null)
+    inChannel('dm')
     const e = rightClick(authorName())
-    expect(e.defaultPrevented).toBe(false)
+    expect(e.defaultPrevented).toBe(true)
+    expect(ids()).toEqual(['profile', 'private-nick', 'live-notify', 'appear-offline', 'mute'])
+    expect(label('private-nick')).toBe('Change nickname')
+    expect(label('appear-offline')).toBe('Appear offline to them')
+    expect(label('mute')).toBe('Mute conversation')
+  })
+
+  it('a DM: the avatar opens it too, and View profile opens their card outside servers', () => {
+    show(null)
+    inChannel('dm')
+    rightClick(avatar())
+    pick('profile')
+    expect(profileUi.card).toMatchObject({ userId: 'U2', serverId: null })
+  })
+
+  it('a DM: Appear offline to them calls the hide route; Stop appearing offline once hidden', () => {
+    show(null)
+    inChannel('dm')
+    rightClick(authorName())
+    pick('appear-offline')
+    expect(invoke.mock.calls.filter(([c]) => c === 'set_appear_offline').map(([, a]) => a)).toEqual([{ userId: 'U2', hidden: true }])
+    app.state = { ...app.state, appearOfflineTo: ['U2'] }
+    flushSync()
+    rightClick(authorName())
+    expect(label('appear-offline')).toBe('Stop appearing offline to them')
+  })
+
+  it('a DM: Mute conversation is the durations flyout and mutes this DM; muted, it says Unmute conversation', () => {
+    show(null)
+    inChannel('dm')
+    rightClick(authorName())
+    hover(document.querySelector('[role=menu] [data-item="mute"]')!)
+    ;[...flyout()!.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find((b) => b.textContent?.trim() === 'For 1 hour')!.click()
+    flushSync()
+    const [args] = invoke.mock.calls.filter(([c]) => c === 'set_mute').map(([, a]) => a as { targetKind: string; targetId: string; until: string })
+    expect(args).toMatchObject({ targetKind: 'channel', targetId: 'C1' })
     expect(menu()).toBeNull()
+    app.state = { ...app.state, mutes: [{ target_kind: 'channel', target_id: 'C1', until: null }] } as never
+    flushSync()
+    rightClick(authorName())
+    expect(label('mute')).toBe('Unmute conversation')
+    pick('mute')
+    expect(invoke.mock.calls.filter(([c]) => c === 'clear_mute').map(([, a]) => a)).toEqual([{ targetKind: 'channel', targetId: 'C1' }])
+  })
+
+  it('a group: View profile, Message, Change nickname, go-live, Appear offline to them (no Mute: it names no one person)', () => {
+    show(null)
+    inChannel('group')
+    rightClick(authorName())
+    expect(ids()).toEqual(['profile', 'message', 'private-nick', 'live-notify', 'appear-offline'])
+  })
+
+  it('your own message in a DM: only View profile', () => {
+    show(null, 'U1')
+    inChannel('dm')
+    rightClick(authorName())
+    expect(ids()).toEqual(['profile'])
   })
 })

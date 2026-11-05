@@ -9,7 +9,7 @@
   import { closeTimer } from '../lib/hoverIntent'
   import Icon from './Icon.svelte'
 
-  let { label, flyoutLabel, menuLeft, menuTop, onPick }: {
+  let { label, flyoutLabel, menuLeft, menuTop, onPick, item = '' }: {
     /** The item's text, e.g. "Mute channel". */
     label: string
     /** The flyout menu's accessible name, e.g. "Mute #general for". */
@@ -19,6 +19,8 @@
     menuTop: number
     /** A duration was picked (minutes; null: until turned back on). */
     onPick: (minutes: number | null) => void
+    /** The item's `data-item` value, for menus that name their items (the person menu's "mute"). */
+    item?: string
   } = $props()
 
   const FLYOUT_W = 200
@@ -99,7 +101,7 @@
   }
 </script>
 
-<button bind:this={muteEl} type="button" class="menu-item has-sub" class:hi={subOpen} role="menuitem" data-item aria-haspopup="menu" aria-expanded={subOpen}
+<button bind:this={muteEl} type="button" class="menu-item has-sub" class:hi={subOpen} role="menuitem" data-item={item} aria-haspopup="menu" aria-expanded={subOpen}
   aria-controls={subOpen ? flyoutId : undefined} onpointerenter={() => { later.cancel(); openSub(false) }} onclick={() => openSub(true)} onkeydown={triggerKeydown}>
   <span class="grow">{label}</span><Icon name={subSide === 'right' ? 'chevronRight' : 'chevronLeft'} size={14} />
 </button>
