@@ -75,10 +75,10 @@
     { key: 'echo_cancel', label: 'Echo cancellation', help: 'Stops your speakers leaking back into your mic.' },
     { key: 'auto_gain', label: 'Automatic gain control', help: 'Evens out your volume. Leave off if you use input gain.' },
   ]
-  const levels: { value: NsLevel; label: string; help: string }[] = [
-    { value: 'off', label: 'Off', help: 'No noise suppression: your mic as it is.' },
-    { value: 'standard', label: 'Standard', help: 'Light: removes fans and hum, softens clicks. Easy on older PCs.' },
-    { value: 'strong', label: 'Strong', help: 'Removes keyboard clicks and most background noise. Uses more CPU.' },
+  const levels: { value: NsLevel; label: string }[] = [
+    { value: 'off', label: 'Off' },
+    { value: 'standard', label: 'Standard' },
+    { value: 'strong', label: 'Strong' },
   ]
 </script>
 
@@ -99,7 +99,6 @@
 <div class="two">
   <label>INPUT GAIN <strong>{(cfg.input_gain_pct / 100).toFixed(1)}×</strong>
     <input type="range" min="50" max="400" step="10" bind:value={cfg.input_gain_pct} onchange={apply} />
-    <small>For quiet mics: boosts your voice before it's sent.</small>
   </label>
   <div class="settings-field"><span class="settings-label">INPUT SENSITIVITY</span>
     <!-- the slider sits ON the level meter, so its thumb is the threshold marker -->
@@ -115,13 +114,11 @@
         <input type="range" min="0" max={SENS_MAX} step="0.002" bind:value={cfg.sensitivity} onchange={apply} aria-label="Sensitivity threshold" />
       {/if}
     </div>
-    <small>{cfg.auto_sensitivity ? 'Pulse sends your voice when it hears you speaking.' : 'Sound to the right of the handle is sent.'} {testing || voice.channelId ? 'Talk to see the bar move.' : "Start “Let's check” to see your level."}</small>
   </div>
 </div>
 
 <div class="settings-field"><span class="settings-label">NOISE SUPPRESSION</span>
   <Segmented label="Noise suppression" options={levels} value={cfg.noise_suppression} onchange={(v) => { cfg.noise_suppression = v; apply() }} />
-  <small>{levels.find((l) => l.value === cfg.noise_suppression)?.help}</small>
   {#if voice.ns.note}<p class="warn" role="status">{voice.ns.note}</p>{/if}
 </div>
 
