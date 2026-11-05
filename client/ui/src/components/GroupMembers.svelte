@@ -48,7 +48,9 @@
   .members { width: var(--right-w, 220px); flex-shrink: 0; background: var(--bg-1); border-radius: var(--radius); padding: 8px; overflow-y: auto; }
   .label { padding: 14px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); }
   .row { height: 44px; padding: 0 10px; border-radius: 10px; display: flex; align-items: center; gap: 10px; }
-  .row:hover { background: var(--bg-2); }
+  .row:hover { background: var(--bg-2); --ring: var(--bg-2); }
+  /* the status dot (#169): small, cut out of the avatar in the row's own colour (--ring), as on Discord */
+  .row :global(.pres) { width: 12px; height: 12px; min-width: 0; min-height: 0; right: -1px; bottom: -1px; }
   .who { flex: 1; min-width: 0; font-size: 14px; font-weight: 500; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .who small { color: var(--text-3); font-weight: 400; }
   .x { width: 26px; height: 26px; border: 0; border-radius: 8px; background: var(--bg-4); color: var(--text-2); display: grid; place-items: center; opacity: 0; }

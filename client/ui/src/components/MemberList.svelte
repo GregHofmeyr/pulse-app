@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { app } from '../lib/store.svelte'
+  import { app, clock } from '../lib/store.svelte'
+  import { presenceOf } from '../lib/presence'
   import Avatar from './Avatar.svelte'
   import Icon from './Icon.svelte'
   import Name from './Name.svelte'
@@ -36,7 +37,7 @@
     <!-- the context menu is a pointer shortcut; the keyboard route is ContextMenu / Shift+F10 on the row's buttons -->
     <div class="row" role="presentation" onpointerenter={() => (hovered = m.user.id)} onpointerleave={() => { if (hovered === m.user.id) hovered = null }}
       oncontextmenu={(e) => { e.preventDefault(); openMenu(m.user.id, e, e.currentTarget) }} onkeydown={(e) => rowKey(m.user.id, e)}>
-      <Avatar id={m.user.id} {name} size={32} interactive {serverId} hovered={() => hovered === m.user.id} />
+      <Avatar id={m.user.id} {name} size={32} presence={presenceOf(app.state, m.user.id, clock.nowIso)} interactive {serverId} hovered={() => hovered === m.user.id} />
       <span class="who"><Name userId={m.user.id} {serverId} text={name} surface="side" />{#if name !== base}<small>{base}</small>{/if}</span>
       {#if onMessage && m.user.id !== app.state.me?.id}
         <button class="msg" aria-label="Message {name}" data-tip="Message" onclick={() => onMessage(m.user.id)}><Icon name="message" size={15} /></button>
@@ -58,5 +59,7 @@
   .msg { margin-left: auto; width: 28px; height: 28px; border: 0; border-radius: 8px; background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; opacity: 0; }
   .msg:hover { background: var(--bg-4); color: var(--text); }
   .row:hover .msg, .msg:focus-visible { opacity: 1; }
-  .row:hover { background: var(--bg-2); }
+  .row:hover { background: var(--bg-2); --ring: var(--bg-2); }
+  /* the status dot (#169): small, cut out of the avatar in the row's own colour (--ring), as on Discord */
+  .row :global(.pres) { width: 12px; height: 12px; min-width: 0; min-height: 0; right: -1px; bottom: -1px; }
 </style>

@@ -96,6 +96,37 @@ describe('MemberList', () => {
   })
 })
 
+describe('MemberList status dots (#169)', () => {
+  const people = (samStatus: string, samOnline: boolean) =>
+    ({ U1: { user: alex, online: true, last_seen_at: null, status: 'online' }, U2: { user: sam, online: samOnline, last_seen_at: null, status: samStatus } }) as never
+  const dot = (n: number) => row(n).querySelector('.av .pres')
+
+  it('each avatar has its person\'s dot, from presenceOf', () => {
+    app.state = { ...app.state, people: people('dnd', true) }
+    flushSync()
+    expect(dot(0)!.classList.contains('online')).toBe(true)
+    expect(dot(1)!.classList.contains('dnd')).toBe(true)
+    expect(dot(1)!.getAttribute('aria-label')).toBe('Do Not Disturb')
+    app.state = { ...app.state, people: people('offline', false) }
+    flushSync()
+    expect(dot(1)!.classList.contains('offline')).toBe(true)
+  })
+
+  it('your own dot follows your status (Invisible is yours alone)', () => {
+    app.state = { ...app.state, people: people('online', true), myStatus: { status: 'invisible', dnd_until: null } }
+    flushSync()
+    expect(dot(0)!.getAttribute('aria-label')).toBe('Invisible')
+  })
+
+  it('never draws someone else as Invisible, whatever the server says (#171)', () => {
+    app.state = { ...app.state, people: people('invisible', false) }
+    flushSync()
+    const samRow = [...document.querySelectorAll<HTMLElement>('.members .row')].find((r) => r.textContent?.includes('Sammy'))!
+    expect(samRow.querySelector('.pres')!.classList.contains('offline')).toBe(true)
+    expect(document.querySelector('.members .pres.invisible')).toBeNull()
+  })
+})
+
 describe('MemberList row menu (#113)', () => {
   const menu = () => document.querySelector<HTMLElement>('[role=menu]')
   const items = () => [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')]

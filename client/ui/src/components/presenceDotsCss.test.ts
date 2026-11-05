@@ -29,3 +29,17 @@ describe('the Invisible dot looks like the offline dot (#171)', () => {
     if (offline) expect(decls(css, offline)).toMatch(/background:\s*var\(--presence-off\)/)
   })
 })
+
+describe('member list dots are small and cut out of the avatar (#169)', () => {
+  it.each(['MemberList.svelte', 'GroupMembers.svelte'])('%s', (file) => {
+    const css = cssOf(file)
+    // smaller than the shared dot (34% of the avatar, at least 9 px)
+    const dot = decls(css, '.row .pres')
+    expect(dot).toMatch(/width:\s*12px/)
+    expect(dot).toMatch(/height:\s*12px/)
+    // the cut-out ring is the row's own colour, also while hovered
+    const hover = decls(css, '.row:hover')
+    expect(hover).toMatch(/background:\s*var\(--bg-2\)/)
+    expect(hover).toMatch(/--ring:\s*var\(--bg-2\)/)
+  })
+})
