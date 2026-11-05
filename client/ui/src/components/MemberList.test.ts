@@ -132,7 +132,7 @@ describe('MemberList status dots (#169)', () => {
 describe('MemberList Online and Offline sections (#170)', () => {
   const kim = { ...alex, id: 'U3', username: 'kim', display_name: 'kim' }
   const jo = { ...alex, id: 'U4', username: 'jo', display_name: 'jo' }
-  const p = (user: typeof alex, status: string) => ({ user, online: status !== 'offline', last_seen_at: null, status })
+  const p = (user: object, status: string) => ({ user, online: status !== 'offline', last_seen_at: null, status })
   const labels = () => [...document.querySelectorAll('.members .label')].map((l) => l.textContent?.trim())
   const section = (name: string) => [...document.querySelectorAll<HTMLElement>('.members .row')].filter((r) => r.dataset.section === name).map((r) => r.querySelector('.name')!.textContent)
 
