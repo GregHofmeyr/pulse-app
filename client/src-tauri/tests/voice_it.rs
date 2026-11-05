@@ -343,6 +343,61 @@ async fn one_client_hears_another_at_real_time() {
     b.leave().await;
 }
 
+/// A two-person DM call (#50): alex starts it (sam is rung), both connect to the DM's room, and
+/// sam hears alex at real time, as in a server voice channel.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore]
+async fn a_dm_call_rings_and_carries_audio() {
+    let _turn = livekit_turn().await;
+    let mut cfg = testing::test_config();
+    cfg.livekit_url = dev_livekit("ws");
+    cfg.livekit_secret = DEV_SECRET.into();
+    let app = testing::spawn_with(cfg).await;
+    let (_, alex) = testing::register(&app, "alex").await;
+    let (sam_id, sam) = testing::register(&app, "sam").await;
+    let dm = testing::create_dm(&app, &alex, &[sam_id]).await;
+    let api = Api::new(&format!("http://{}", app.addr));
+
+    let started = api.start_call(&alex, dm.id).await.unwrap();
+    assert!(started.rang, "starting a call rings sam");
+    let joined = api.start_call(&sam, dm.id).await.unwrap();
+    assert!(!joined.rang, "answering rings nobody");
+    assert_eq!(joined.call.id, started.call.id);
+
+    let a = VoiceManager::new(std::sync::Arc::new(|_| {}));
+    let b = VoiceManager::new(std::sync::Arc::new(|_| {}));
+    for (vm, token) in [(&a, &alex), (&b, &sam)] {
+        vm.join(
+            &api,
+            token,
+            dm.id,
+            AudioConfig::default(),
+            AudioMode::Null(48_000),
+        )
+        .await
+        .unwrap();
+    }
+    assert!(
+        eventually(Duration::from_secs(15), || async {
+            b.rx_len().await == 1 && b.mixer_pushed().await > 0
+        })
+        .await,
+        "sam never received alex in the DM call (rx tasks {})",
+        b.rx_len().await
+    );
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    let (before, t) = (b.mixer_pushed().await, std::time::Instant::now());
+    tokio::time::sleep(Duration::from_secs(4)).await;
+    let ratio = (b.mixer_pushed().await - before) as f64 / (t.elapsed().as_secs_f64() * 48_000.0);
+    println!("in the DM call sam receives alex at {ratio:.2}x real time");
+    assert!((0.9..1.1).contains(&ratio), "{ratio:.2}x real time");
+    // nobody outside the DM can get into its room
+    let (_, kim) = testing::register(&app, "kim").await;
+    assert!(api.voice_token(&kim, dm.id).await.is_err());
+    a.leave().await;
+    b.leave().await;
+}
+
 /// On this machine's real devices: a call that nobody touches never reopens them (device
 /// following must not churn, e.g. on ALSA's "default" or a name that differs between lists).
 #[tokio::test(flavor = "multi_thread")]
