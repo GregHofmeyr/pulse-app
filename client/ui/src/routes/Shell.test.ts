@@ -269,11 +269,27 @@ describe('account menu', () => {
     const tab = [...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Alpha'))!
     tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
     flushSync()
-    expect(document.querySelector('.ctx[role=menu]')).not.toBeNull()
+    expect(document.querySelector('[role=menu][aria-label="Actions for Alpha"]')).not.toBeNull()
     await new Promise((r) => setTimeout(r, 0))
     window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', cancelable: true }))
     flushSync()
-    expect(document.querySelector('.ctx[role=menu]')).toBeNull()
+    expect(document.querySelector('[role=menu][aria-label="Actions for Alpha"]')).toBeNull()
+  })
+
+  it('the_server_tab_menu_opens_that_servers_settings (#161)', async () => {
+    app.state = { ...emptyState(), servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }, { id: 'S2', name: 'Beta', icon_hash: null }] }
+    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
+    flushSync()
+    const tab = [...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Beta'))!
+    tab.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
+    flushSync()
+    const menu = document.querySelector<HTMLElement>('[role=menu][aria-label="Actions for Beta"]')!
+    expect([...menu.querySelectorAll(':scope > [role=menuitem]')].map((b) => b.textContent?.trim())).toEqual(['Server settings', 'Mute server'])
+    ;[...menu.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find((b) => b.textContent?.trim() === 'Server settings')!.click()
+    flushSync()
+    expect(document.querySelector('[role=menu][aria-label="Actions for Beta"]')).toBeNull()
+    expect(document.querySelector('[role=dialog][aria-label="Server settings"]')).not.toBeNull()
+    expect(document.querySelector('[role=dialog][aria-label="Server settings"]')!.textContent).toContain('Beta')
   })
 })
 

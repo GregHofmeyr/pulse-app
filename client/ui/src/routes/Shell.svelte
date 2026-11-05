@@ -14,6 +14,7 @@
   import Settings, { type Section } from '../components/Settings.svelte'
   import FullProfile from '../components/FullProfile.svelte'
   import NicknameDialog from '../components/NicknameDialog.svelte'
+  import ServerMenu from '../components/ServerMenu.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
   import { clickOutside, narrowerThan } from '../lib/actions'
   import { NARROW_BODY, searchMakesRoom } from '../lib/layout'
@@ -53,7 +54,6 @@
   import { keybindsApi } from '../lib/keybinds'
   import { watchWindowFocus } from '../lib/windowFocus.svelte'
   import type { User } from '../lib/protocol/User'
-  import { MUTE_FOR, muteUntil } from '../lib/muteDurations'
 
   let { user, onLogout }: { user: User; onLogout: () => void } = $props()
   // rings in the voice list: who's talking, plus whose soundboard sound is playing (render only: never voice.speaking)
@@ -174,12 +174,14 @@
     serverMenuOpen = false
     if (e instanceof KeyboardEvent) serverToggle?.focus()
   }
-  let serverSettingsOpen = $state(false)
+  // The server whose settings are open: the active one (sidebar header menu), or any tab's (its right-click menu, #161).
+  let serverSettingsId = $state<string | null>(null)
+  const settingsServer = $derived(serverSettingsId ? (app.state.servers.find((s) => s.id === serverSettingsId) ?? null) : null)
   // Both belong to the server they were opened on.
   $effect(() => {
     void activeServerId
     serverMenuOpen = false
-    serverSettingsOpen = false
+    serverSettingsId = null
   })
   let creating = $state(false)
   let newName = $state('')
@@ -241,19 +243,8 @@
   })
   const home = $derived(homeBadge(app.state, nowIso))
 
-  // Right-click a server tab: mute/unmute the whole server.
-  let serverMenu = $state<null | { id: string; x: number; y: number }>(null)
-  const serverMuted = (id: string) =>
-    app.state.mutes.some((m) => m.target_kind === 'server' && m.target_id === id && (m.until === null || m.until > nowIso))
-  async function muteServer(id: string, minutes: number | null | 'off') {
-    serverMenu = null
-    try {
-      if (minutes === 'off') await api.clearMute('server', id)
-      else await api.setMute('server', id, muteUntil(minutes))
-    } catch (e) {
-      error = errorText(e)
-    }
-  }
+  // Right-click a server tab (#161): its settings, and mute/unmute the whole server (ServerMenu).
+  let serverMenu = $state<null | { id: string; x: number; y: number; opener: HTMLElement }>(null)
 
   // Removed from (or left) the open conversation: step back to Home and say why. The open server
   // channel was deleted: go to another of the server's channels. Only fires when a channel we had
@@ -494,7 +485,7 @@
         {@const badge = serverBadge(app.state, s.id, nowIso)}
         {@const talking = inVoice(app.state, s.id)}
         <button class="tab" class:active={activeServerId === s.id} onclick={() => selectServer(s.id)}
-          oncontextmenu={(e) => { e.preventDefault(); serverMenu = { id: s.id, x: e.clientX, y: e.clientY } }}>
+          oncontextmenu={(e) => { e.preventDefault(); serverMenu = { id: s.id, x: e.clientX, y: e.clientY, opener: e.currentTarget } }}>
           <span class="chip" style:background={avatarColor(s.id)}>{initial(s.name)}</span>{s.name}
           {#if talking > 0}<span class="invc" aria-label="{talking} in voice" data-tip="{talking} in voice"><Icon name="speaker" size={13} /></span>{/if}
           {#if badge.mentions > 0}<span class="pill">{badge.mentions}</span>{:else if badge.dot}<span class="dot" aria-label="new messages"></span>{/if}
@@ -526,7 +517,7 @@
             onclick={() => (serverMenuOpen = !serverMenuOpen)}>{activeServer.name}<Icon name="chevron" size={14} /></button>
           {#if serverMenuOpen}
             <div class="menu head-menu menu-surface pop-in" role="menu" use:clickOutside={closeServerMenu}>
-              <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsOpen = true }}>Server settings</button>
+              <button class="menu-item" role="menuitem" onclick={() => { serverMenuOpen = false; serverSettingsId = activeServerId }}>Server settings</button>
             </div>
           {/if}
         {:else}Direct messages{/if}
@@ -597,7 +588,7 @@
 </div>
 <StreamToast />
 <BadgeToast />
-{#if serverSettingsOpen && activeServer}<ServerSettings server={activeServer} onClose={() => (serverSettingsOpen = false)} />{/if}
+{#if settingsServer}<ServerSettings server={settingsServer} onClose={() => (serverSettingsId = null)} />{/if}
 {#if settingsOpen}<Settings section={settingsSection} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if qotyStart}<QotyStart serverId={qotyStart} onClose={() => (qotyStart = null)} />{/if}
@@ -634,18 +625,14 @@
 {/if}
 {#if notice}<div class="notice fade-in" role="status">{notice}</div>{/if}
 {#if serverMenu}
-  {@const id = serverMenu.id}
-  <div class="ctx-backdrop" role="presentation" onclick={() => (serverMenu = null)}></div>
-  <div class="ctx menu-surface pop-in" role="menu" use:clickOutside={() => (serverMenu = null)} style:left="{serverMenu.x}px" style:top="{serverMenu.y}px">
-    {#if serverMuted(id)}
-      <button class="menu-item" role="menuitem" onclick={() => muteServer(id, 'off')}>Unmute server</button>
-    {:else}
-      <span class="menu-label">Mute server</span>
-      {#each MUTE_FOR as d (d.label)}
-        <button class="menu-item" role="menuitem" onclick={() => muteServer(id, d.minutes)}>{d.label}</button>
-      {/each}
-    {/if}
-  </div>
+  {@const m = serverMenu}
+  {@const srv = app.state.servers.find((x) => x.id === m.id)}
+  {#if srv}
+    {#key m}
+      <ServerMenu serverId={m.id} name={srv.name} x={m.x} y={m.y} opener={m.opener} onClose={() => (serverMenu = null)}
+        onSettings={() => (serverSettingsId = m.id)} onError={(msg) => (error = msg)} />
+    {/key}
+  {/if}
 {/if}
 
 <style>
@@ -711,6 +698,4 @@
   .tab .invc { color: var(--accent-text); display: grid; margin-left: -2px; }
   .tab .dot { margin-left: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); display: inline-block; }
   .notice { position: fixed; top: 56px; left: 50%; transform: translateX(-50%); z-index: 40; padding: 8px 14px; border-radius: 10px; background: var(--bg-3); color: var(--text); font-size: 13px; box-shadow: var(--shadow-2); }
-  .ctx-backdrop { position: fixed; inset: 0; z-index: 44; }
-  .ctx { position: fixed; z-index: 45; width: 210px; }
 </style>
