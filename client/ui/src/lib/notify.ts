@@ -67,13 +67,19 @@ export function notificationBody(m: Message, me: string, showText: boolean): str
   return 'New message'
 }
 
+/** Where a stream is, as live notices name it (#60): "#gaming", or a conversation's name. */
+export function liveWhere(s: AppState, channelId: string): string {
+  const channel = s.channels[channelId]
+  if (!channel) return ''
+  return channel.server_id ? `#${channel.name ?? ''}` : conversationName(s, channelId)
+}
+
 /** "sam went live in #gaming" (#60), the server's name underneath; a click opens that channel. */
 export function liveNotice(s: AppState, channelId: string, streamer: string): Notice {
-  const channel = s.channels[channelId]
-  const serverId = channel?.server_id ?? null
+  const serverId = s.channels[channelId]?.server_id ?? null
   const server = serverId ? s.servers.find((x) => x.id === serverId) : undefined
-  const where = serverId ? ` in #${channel?.name ?? ''}` : channel ? ` in ${conversationName(s, channelId)}` : ''
-  const n: Notice = { title: `${displayName(s, serverId, streamer)} went live${where}`, body: server?.name ?? 'Pulse', channelId }
+  const where = liveWhere(s, channelId)
+  const n: Notice = { title: `${displayName(s, serverId, streamer)} went live${where ? ` in ${where}` : ''}`, body: server?.name ?? 'Pulse', channelId }
   const u = userOf(s, streamer)
   const avatar = u?.avatar_still ?? u?.avatar_hash
   if (avatar) n.avatar = avatar

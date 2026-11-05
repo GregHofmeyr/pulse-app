@@ -19,7 +19,7 @@ import { motion } from '../animate.svelte'
 import { admit, followAlert, layerFor, liveEndSound, toastFor, voiceOnlyStreamer, type Quality, type View } from './viewer'
 import { removeToast, showToast } from './viewer.svelte'
 import { dndActive } from '../status'
-import { liveNotice } from '../notify'
+import { liveNotice, liveWhere } from '../notify'
 import { notifyPrefs } from '../notifyPrefs.svelte'
 import { windowFocus } from '../windowFocus.svelte'
 
@@ -734,7 +734,7 @@ export const streamApi = {
       // someone you follow (#60), anywhere you can see: the live toast (naming the channel when it isn't your call) and,
       // while Pulse isn't in focus, a desktop notification, like messages
       if (!quiet && followAlert(streamer, meId(), app.state.liveNotify)) {
-        if (!inCall) showToast({ channelId, streamer, name: nameOf(channelId, streamer), where: `#${app.state.channels[channelId]?.name ?? ''}` })
+        if (!inCall) showToast({ channelId, streamer, name: nameOf(channelId, streamer), where: liveWhere(app.state, channelId) || undefined })
         if (notifyPrefs.enabled && !windowFocus.focused) void api.notifyMessage(liveNotice(app.state, channelId, streamer))
       }
       // only a restart re-starts a stream we watch (a real stop ends the watch first): the
