@@ -16,7 +16,7 @@ import type { BadgeDef } from '../lib/protocol/BadgeDef'
 const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
 const def = (key: string, over: Partial<BadgeDef> = {}): BadgeDef => ({
   key, name: key, description: `How to earn ${key}.`, icon: '⭐', hidden: false, hand_given: false, stacking: false, unit: 'count',
-  tiers: [{ threshold: 1, rarity: 'common', holders: 0 }], progress: null, ...over,
+  tiers: [{ threshold: 1, rarity: 'common', holders: 0 }], progress: null, parts: [], ...over,
 })
 const CATALOGUE: BadgeCatalogue = {
   people: 8,
@@ -131,6 +131,47 @@ describe('TrophyCase', () => {
     button('Save').click()
     await tick()
     expect(calls('set_badge_showcase')).toEqual([['set_badge_showcase', { keys: ['the_yapper'] }]])
+  })
+
+  describe('Combo: one tier at a time, each stat with its own bar (#191)', () => {
+    const combo = (parts: BadgeDef['parts']) => def('combo', {
+      name: 'Combo', icon: '🔗', description: 'Messages, hours in voice and clips, all at once.',
+      tiers: [{ threshold: 100, rarity: 'uncommon', holders: 1 }, { threshold: 500, rarity: 'epic', holders: 0 }, { threshold: 1000, rarity: 'mythical', holders: 0 }],
+      parts,
+    })
+    const next = [{ label: 'Messages', value: 1200, target: 500 }, { label: 'Hours in voice', value: 42, target: 500 }, { label: 'Clips', value: 3, target: 25 }]
+    const withCombo = (parts: BadgeDef['parts']) =>
+      invoke.mockImplementation(async (cmd: string) => (cmd === 'get_badge_catalogue' ? { ...CATALOGUE, badges: [...CATALOGUE.badges, combo(parts)] } : undefined))
+    const lines = (t: HTMLElement) => [...t.querySelectorAll('.part .prog')].map((p) => p.textContent?.trim())
+
+    it('your own: the next tier only, as a short list, each with a bar like the others', async () => {
+      withCombo(next)
+      await show({ badges: [badge('combo', { tier: 1, rarity: 'uncommon' })], mine: true })
+      const t = tile('Combo')!
+      expect(t.textContent).toContain('Messages, hours in voice and clips, all at once.')
+      expect(lines(t)).toEqual(['Messages — 1,200 / 500', 'Hours in voice — 42 / 500', 'Clips — 3 / 25'])
+      const bars = [...t.querySelectorAll<HTMLProgressElement>('.part progress')]
+      expect(bars.map((b) => [b.value, b.max])).toEqual([[500, 500], [42, 500], [3, 25]])
+      expect(bars.map((b) => b.getAttribute('aria-label'))).toEqual(['Combo progress: Messages', 'Combo progress: Hours in voice', 'Combo progress: Clips'])
+    })
+
+    it('locked, on your own: the first tier', async () => {
+      withCombo(next.map((p) => ({ ...p, target: p.label === 'Clips' ? 10 : 100 })))
+      await show({ badges: [], mine: true })
+      expect(lines(tile('Combo')!)).toEqual(['Messages — 1,200 / 100', 'Hours in voice — 42 / 100', 'Clips — 3 / 10'])
+    })
+
+    it('every tier earned: complete, no list, like other maxed badges', async () => {
+      withCombo([])
+      await show({ badges: [badge('combo', { tier: 3, rarity: 'mythical' })], mine: true })
+      expect(tile('Combo')!.querySelector('.part, progress')).toBeNull()
+    })
+
+    it("someone else's case: no list (the numbers are yours)", async () => {
+      withCombo(next)
+      await show({ badges: [] })
+      expect(tile('Combo')!.querySelector('.part, progress')).toBeNull()
+    })
   })
 
   it("someone else's case shows no progress (the numbers are yours)", async () => {

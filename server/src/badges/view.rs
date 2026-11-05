@@ -4,7 +4,9 @@
 use std::collections::HashMap;
 
 use pulse_protocol::ids::UserId;
-use pulse_protocol::rest::{Badge, BadgeCatalogue, BadgeDef, BadgeTier, BadgeUnit};
+use pulse_protocol::rest::{
+    Badge, BadgeCatalogue, BadgeDef, BadgeProgressPart, BadgeTier, BadgeUnit,
+};
 use sqlx::SqliteConnection;
 
 use super::catalogue::{CATALOGUE, Def, HAND_GIVEN, Rule, Unit, find};
@@ -69,6 +71,7 @@ pub async fn catalogue(conn: &mut SqliteConnection, viewer: UserId) -> AppResult
                     unit: BadgeUnit::Count,
                     tiers,
                     progress: None,
+                    parts: Vec::new(),
                 },
                 None => BadgeDef {
                     key: def.key.into(),
@@ -81,6 +84,15 @@ pub async fn catalogue(conn: &mut SqliteConnection, viewer: UserId) -> AppResult
                     unit: unit(def),
                     tiers,
                     progress: def.progress(&viewer_stats, &held_defs),
+                    parts: def
+                        .parts(&viewer_stats, &held_defs)
+                        .into_iter()
+                        .map(|(label, value, target)| BadgeProgressPart {
+                            label: label.into(),
+                            value,
+                            target,
+                        })
+                        .collect(),
                 },
             }
         })

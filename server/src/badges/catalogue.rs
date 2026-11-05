@@ -193,7 +193,7 @@ impl Def {
     }
 
     /// Each tier's threshold as people read it: hours for `Unit::Hours`, and for `Combo` its
-    /// message count (the first of its three; the description has all of them).
+    /// message count (the first of its three; [`Def::parts`] gives all three for the next tier).
     pub fn thresholds_shown(&self) -> Vec<u64> {
         match &self.rule {
             Rule::Combo { tiers } => tiers.iter().map(|([m, ..], _)| *m as u64).collect(),
@@ -216,6 +216,33 @@ impl Def {
             Rule::Counter { stat, .. } => Some(self.shown(stats.get(stat).copied().unwrap_or(0))),
             _ => meta_value(self, held).map(|v| v.max(0) as u64),
         }
+    }
+
+    /// Combo's progress (#191): each of its three stats against the next tier not yet `held`,
+    /// as `(label, value, target)`, hours whole. Empty for every other badge and once all are held.
+    pub fn parts(
+        &self,
+        stats: &HashMap<String, i64>,
+        held: &HashMap<&'static str, u8>,
+    ) -> Vec<(&'static str, u64, u64)> {
+        let Rule::Combo { tiers } = self.rule else {
+            return Vec::new();
+        };
+        let have = held.get(self.key).copied().unwrap_or(0) as usize;
+        let Some(([messages, voice, clips], _)) = tiers.get(have) else {
+            return Vec::new();
+        };
+        let raw = |s: &str| stats.get(s).copied().unwrap_or(0).max(0) as u64;
+        let hours = HOUR as u64;
+        vec![
+            ("Messages", raw(stat::MESSAGES), *messages as u64),
+            (
+                "Hours in voice",
+                raw(stat::VOICE_SECS) / hours,
+                *voice as u64 / hours,
+            ),
+            ("Clips", raw(stat::CLIPS), *clips as u64),
+        ]
     }
 }
 
@@ -478,8 +505,8 @@ pub static CATALOGUE: &[Def] = &[
     Def {
         key: "combo",
         name: "Combo",
-        description: "Messages, hours in voice and clips: 100, 100 and 10, then 500, 500 and 25, \
-                      then 1 000, 1 000 and 100.",
+        // the tiers' numbers show one tier at a time as progress (#191)
+        description: "Messages, hours in voice and clips, all at once.",
         icon: "🔗",
         hidden: false,
         stacking: false,
@@ -673,6 +700,45 @@ mod tests {
         let def = find("reaction_farmer").unwrap();
         assert_eq!(thresholds(def), [50, 100, 500, 1000]);
         assert_eq!(rarities(def), [Rare, Epic, Legendary, Mythical]);
+    }
+
+    #[test]
+    fn combo_parts_show_only_the_next_tier() {
+        let def = find("combo").unwrap();
+        let s = stats(&[
+            (stat::MESSAGES, 120),
+            (stat::VOICE_SECS, 42 * HOUR + 1800),
+            (stat::CLIPS, 3),
+        ]);
+        let none = HashMap::new();
+        assert_eq!(
+            def.parts(&s, &none),
+            [
+                ("Messages", 120, 100),
+                ("Hours in voice", 42, 100),
+                ("Clips", 3, 10)
+            ]
+        );
+        let one = HashMap::from([("combo", 1u8)]);
+        assert_eq!(
+            def.parts(&s, &one),
+            [
+                ("Messages", 120, 500),
+                ("Hours in voice", 42, 500),
+                ("Clips", 3, 25)
+            ]
+        );
+        let all = HashMap::from([("combo", 3u8)]);
+        assert!(def.parts(&s, &all).is_empty());
+        assert!(find("the_yapper").unwrap().parts(&s, &none).is_empty());
+    }
+
+    #[test]
+    fn combo_description_is_short() {
+        assert_eq!(
+            find("combo").unwrap().description,
+            "Messages, hours in voice and clips, all at once."
+        );
     }
 
     #[test]

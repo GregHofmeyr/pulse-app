@@ -37,6 +37,9 @@
     const target = d.tiers[tier]?.threshold ?? 0
     return target > 0 ? { value: Math.min(d.progress, target), max: target, text: progressText(d, d.progress), label: `${d.name} progress` } : null
   }
+  /** Combo (#191): each stat toward the next tier you haven't got, as a bar like the one above; none once all are. */
+  const partsOf = (d: BadgeDef | undefined) =>
+    mine && d ? (d.parts ?? []).map((p) => ({ value: Math.min(p.value, p.target), max: p.target, text: `${p.label} — ${p.value.toLocaleString('en-US')} / ${p.target.toLocaleString('en-US')}`, label: `${d.name} progress: ${p.label}` })) : []
 
   // [NEW]: what was unseen when it reached this case stays tagged while it's open.
   let fresh = $state<string[]>([])
@@ -141,6 +144,7 @@
         {#if b.first_earner}<span class="first">First!</span>{/if}
         {#if d?.description}<span class="desc">{d.description}</span>{/if}
         {#if p}<progress max={p.max} value={p.value} aria-label={p.label}></progress><span class="prog">{p.text}</span>{/if}
+        {@render parts(d)}
         <!-- a masked badge on someone else's profile carries no date -->
         {#if b.earned_at}<span class="when">{formatMemberSince(b.earned_at)}</span>{/if}
         {#if share(d, b.tier)}<span class="share">{share(d, b.tier)}</span>{/if}
@@ -157,11 +161,21 @@
         <span class="rar">{rarityLabel(d.tiers[0]?.rarity ?? 'common')}</span>
         <span class="desc">{d.description || 'Hidden until earned'}</span>
         {#if p}<progress max={p.max} value={p.value} aria-label={p.label}></progress><span class="prog">{p.text}</span>{/if}
+        {@render parts(d)}
         {#if share(d, 1)}<span class="share">{share(d, 1)}</span>{/if}
       </li>
     {/each}
   </ul>
 {/if}
+
+{#snippet parts(d: BadgeDef | undefined)}
+  {@const list = partsOf(d)}
+  {#if list.length}
+    <ul class="parts">
+      {#each list as part (part.label)}<li class="part"><progress max={part.max} value={part.value} aria-label={part.label}></progress><span class="prog">{part.text}</span></li>{/each}
+    </ul>
+  {/if}
+{/snippet}
 
 <style>
   .empty { margin: 0 0 10px; color: var(--card-text-2); }
@@ -175,6 +189,9 @@
   .first { font-size: 11px; font-weight: 700; color: var(--first-gold); }
   .desc { font-size: 12px; color: var(--card-text-2); }
   .when, .share, .prog { font-size: 11px; color: var(--card-text-2); }
+  /* Combo's stats (#191): one bar and line each, spaced as the tile's own lines */
+  .parts { list-style: none; margin: 0; padding: 0; width: 100%; display: flex; flex-direction: column; gap: 3px; }
+  .part { display: flex; flex-direction: column; align-items: center; gap: 3px; }
   progress { width: 100%; height: 5px; margin-top: 4px; appearance: none; border: 0; border-radius: 3px; overflow: hidden; background: var(--panel-top); }
   progress::-webkit-progress-bar { background: var(--panel-top); }
   progress::-webkit-progress-value { background: var(--ring-color); }

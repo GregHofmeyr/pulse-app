@@ -112,6 +112,7 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::BadgeUnit::export_all(&cfg)?;
     rest::BadgeTier::export_all(&cfg)?;
     rest::BadgeDef::export_all(&cfg)?;
+    rest::BadgeProgressPart::export_all(&cfg)?;
     rest::BadgeCatalogue::export_all(&cfg)?;
     rest::SetShowcaseRequest::export_all(&cfg)?;
     rest::MarkBadgesSeenRequest::export_all(&cfg)?;

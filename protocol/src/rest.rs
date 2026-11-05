@@ -176,10 +176,27 @@ pub struct BadgeDef {
     #[serde(default)]
     pub tiers: Vec<BadgeTier>,
     /// The viewer's own value in the badge's unit; `None` when masked, hand-given or not one
-    /// number (Combo).
+    /// number (Combo: see `parts`).
     #[serde(default)]
     #[ts(type = "number | null")]
     pub progress: Option<u64>,
+    /// Combo's progress (#191): each of its stats against the next tier the viewer hasn't
+    /// reached, the viewer's own. Empty for other badges, when masked and once all are reached.
+    #[serde(default)]
+    pub parts: Vec<BadgeProgressPart>,
+}
+
+/// One stat of a badge that needs several at once (Combo, #191), toward its next tier.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct BadgeProgressPart {
+    /// What it counts, e.g. "Hours in voice".
+    pub label: String,
+    /// The viewer's value (whole hours for time).
+    #[ts(type = "number")]
+    pub value: u64,
+    /// What the next tier needs, in the same unit.
+    #[ts(type = "number")]
+    pub target: u64,
 }
 
 /// `GET /badges`: every badge in trophy-case order, and how many people there are to have them.

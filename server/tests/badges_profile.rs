@@ -3,7 +3,9 @@ mod common;
 
 use common::*;
 use pulse_protocol::ids::UserId;
-use pulse_protocol::rest::{BadgeCatalogue, BadgeDef, BadgeRarity, BadgeUnit, Profile};
+use pulse_protocol::rest::{
+    BadgeCatalogue, BadgeDef, BadgeProgressPart, BadgeRarity, BadgeUnit, Profile,
+};
 use pulse_server::badges::{catalogue::stat, engine, stats};
 
 /// Everything that would give a hidden badge away, as it could appear in a payload.
@@ -84,7 +86,7 @@ async fn hidden_badges_never_leak_in_the_catalogue() {
     assert!(masked.len() >= 4, "{masked:?}");
     for d in &masked {
         assert!(d.hidden && d.key.starts_with("hidden:"), "{d:?}");
-        assert!(d.description.is_empty() && d.progress.is_none());
+        assert!(d.description.is_empty() && d.progress.is_none() && d.parts.is_empty());
         assert!(!d.tiers.is_empty() && d.tiers.iter().all(|t| t.threshold == 0));
     }
     // Rarity and share stay visible: Friendly Fire is the first hidden badge.
@@ -178,6 +180,23 @@ async fn catalogue_share_and_progress() {
         [100, 500, 1000]
     );
     assert_eq!(combo.progress, None);
+    // ...its progress is per stat, toward the next tier (#191), the viewer's own, hours whole.
+    let part = |label: &str, value: u64, target: u64| BadgeProgressPart {
+        label: label.into(),
+        value,
+        target,
+    };
+    assert_eq!(
+        combo.parts,
+        [
+            part("Messages", 0, 100),
+            part("Hours in voice", 3, 100),
+            part("Clips", 0, 10)
+        ]
+    );
+    let (_, c) = catalogue(&app, &alex).await;
+    assert_eq!(def(&c, "combo").parts[0], part("Messages", 150, 100));
+    assert!(def(&c, "the_yapper").parts.is_empty());
 }
 
 #[tokio::test]
