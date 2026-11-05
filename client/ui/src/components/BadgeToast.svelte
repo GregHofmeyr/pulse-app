@@ -79,7 +79,7 @@
 <style>
   .stack { position: fixed; left: 18px; top: 62px; z-index: 40; display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
   .item { position: relative; isolation: isolate; }
-  .toast { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-left: 3px solid var(--ring-color); border-radius: 12px; box-shadow: var(--shadow-float); font-size: 13px; }
+  .toast { position: relative; display: flex; align-items: center; gap: 8px; padding: 8px 10px 8px 12px; background: var(--surface-menu); border: 1px solid var(--line-menu); border-left: 3px solid var(--ring-color); border-radius: 12px; box-shadow: var(--shadow-2); font-size: 13px; }
   .open { display: flex; align-items: center; gap: 10px; padding: 0; border: 0; background: none; color: var(--text); font: inherit; text-align: left; cursor: pointer; }
   .text { display: flex; flex-direction: column; gap: 1px; }
   small { font-size: 11px; font-weight: 700; letter-spacing: .04em; text-transform: uppercase; color: var(--ring-color); }

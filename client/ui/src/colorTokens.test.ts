@@ -157,6 +157,15 @@ describe('the tokens (values pinned to the look before they existed: no visual c
     expect(token('--tooltip-text')).toBe(token('--text'))
   })
 
+  it('the old shadow names are gone (#118): everything uses --shadow-1/2/3', () => {
+    const OLD = /--shadow-(menu|pop|float|notice|notice-soft|picker|jump)\b/
+    const offenders: string[] = []
+    for (const f of [...svelteFiles, resolve(__dirname, 'app.css')]) {
+      for (const line of readFileSync(f, 'utf8').split('\n')) if (OLD.test(line)) offenders.push(`${rel(f)}: ${line.trim()}`)
+    }
+    expect(offenders).toEqual([])
+  })
+
   it('the unused --on-ok is gone', () => {
     expect(token('--on-ok')).toBe('')
     for (const f of svelteFiles) expect(readFileSync(f, 'utf8'), rel(f)).not.toContain('--on-ok')
