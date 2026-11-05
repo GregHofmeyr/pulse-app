@@ -136,6 +136,9 @@
   const others = $derived((app.state.dmMembers[channelId] ?? []).filter((u) => u !== app.state.me?.id))
   const muted = $derived(channel ? isMuted(app.state, channel, clock.nowIso) : false)
   let menu = $state<null | 'mute' | 'manage'>(null)
+  // the buttons the menu opens by (#162)
+  let muteBtn = $state<HTMLButtonElement>()
+  let moreBtn = $state<HTMLButtonElement>()
   let renaming = $state(false)
   let renameValue = $state('')
   function startRename() {
@@ -466,11 +469,11 @@
     {#if isPrivate}
       <button class="icon-btn" aria-label="Add people" data-tip="Add people" onclick={onAddPeople}><Icon name="userPlus" size={17} /></button>
     {/if}
-    <button class="icon-btn hbtn" class:on={muted} aria-label={muted ? 'Unmute' : 'Mute'} data-tip={muted ? 'Muted — click to unmute' : 'Mute'} data-menu-toggle
+    <button bind:this={muteBtn} class="icon-btn hbtn" class:on={muted} aria-label={muted ? 'Unmute' : 'Mute'} data-tip={muted ? 'Muted — click to unmute' : 'Mute'} data-menu-toggle
       aria-haspopup={muted ? undefined : 'menu'} aria-expanded={menu === 'mute'}
       onclick={() => (muted ? void api.clearMute('channel', channelId) : (menu = menu === 'mute' ? null : 'mute'))}><Icon name={muted ? 'bellOff' : 'bell'} size={17} /></button>
     {#if isPrivate}
-      <button class="icon-btn" aria-label="More" aria-haspopup="menu" aria-expanded={menu === 'manage'} data-tip="More" data-menu-toggle
+      <button bind:this={moreBtn} class="icon-btn" aria-label="More" aria-haspopup="menu" aria-expanded={menu === 'manage'} data-tip="More" data-menu-toggle
         onclick={() => (menu = menu === 'manage' ? null : 'manage')}><Icon name="dots" size={17} /></button>
     {/if}
     <SearchBox {serverId} {channelId} compact={narrowHead} />
@@ -478,7 +481,7 @@
       <Leaderboard {serverId} onOpen={openLeaderboardEntry} onClose={() => (leaderboardOpen = false)} />
     {/if}
     {#if menu && channel}
-      <ConversationMenu {channel} {muted} show={menu} onClose={() => (menu = null)} onRename={startRename} {onLeft} />
+      <ConversationMenu {channel} {muted} show={menu} anchor={menu === 'manage' ? moreBtn : muteBtn} onClose={() => (menu = null)} onRename={startRename} {onLeft} />
     {/if}
   </div>
   <!-- tabindex -1: a place to put the focus back when nothing better is left (not a tab stop) -->
