@@ -708,6 +708,8 @@ button { transition: background-color var(--dur) var(--ease), color var(--dur) v
   padding: 6px 10px; border-radius: 8px; background: var(--tooltip-bg); color: var(--tooltip-text);
   font-size: 12px; font-weight: 600; line-height: 1.3; box-shadow: var(--shadow-2);
   opacity: 0; transition: opacity .12s; left: -9999px; top: -9999px;
+  /* its own layer for good: showing it never makes or drops one (#103, see the entrances below) */
+  will-change: opacity;
 }
 .pulse-tooltip.show { opacity: 1; }
 
@@ -794,11 +796,18 @@ input.switch:checked::after { left: 23px; background: var(--on-accent); }
 textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
 
 /* Entrances (owner pick 7): menus, popovers and dialogs fade and grow in (.pop-in), overlays and
-   toasts fade in (.fade-in). From only: each ends on the element's own opacity and transform. */
+   toasts fade in (.fade-in). From only: each ends on the element's own opacity and transform.
+   Only opacity and transform, which the compositor animates alone. `will-change` gives each its
+   compositing layer from the moment it appears (#103): without it the engine makes one when the
+   animation starts and drops it when it ends, repainting at both, and a busy machine (WebKitGTK
+   under a build) misses frames there, so the menu flashed as if drawn under what's beneath it.
+   Opacity only: declaring transform there would make every dialog the containing
+   block of the fixed overlays opened inside it (the crop dialog in Settings), clipped by its
+   scroll. The scale runs on the same layer. */
 @keyframes pop-in { from { opacity: 0; transform: scale(.96); } }
 @keyframes fade-in { from { opacity: 0; } }
-.pop-in { animation: pop-in var(--dur) var(--ease); }
-.fade-in { animation: fade-in var(--dur) var(--ease); }
+.pop-in { animation: pop-in var(--dur) var(--ease); will-change: opacity; }
+.fade-in { animation: fade-in var(--dur) var(--ease); will-change: opacity; }
 /* Off, not paused: the pause above would hold them on their first, invisible frame (a stream
    toast arrives while you're in a game). */
 .streaming .pop-in, .streaming .fade-in, .unfocused .pop-in, .unfocused .fade-in { animation: none !important; }

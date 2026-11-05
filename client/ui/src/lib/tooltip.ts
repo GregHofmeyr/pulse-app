@@ -43,7 +43,16 @@ export function installTooltips(): () => void {
     tip.style.left = `${p.left}px`
     tip.style.top = `${p.top}px`
   }
+  // A mouse press hides the tip, then focuses what it pressed: that focus must not show it again at
+  // once (#103: clicking ⋯ on a clip popped its tip up with the menu). Keyboard focus still does.
+  let pressing = false
+  const press = () => {
+    pressing = true
+    hide()
+  }
+  const release = () => (pressing = false)
   const enter = (e: Event) => {
+    if (e.type === 'focusin' && pressing) return
     const el = (e.target as Element | null)?.closest?.('[data-tip], button[aria-label]')
     if (!el || el === current) return
     const text = labelFor(el)
@@ -69,14 +78,19 @@ export function installTooltips(): () => void {
   document.addEventListener('focusin', enter)
   document.addEventListener('mouseout', leave)
   document.addEventListener('focusout', hide)
-  document.addEventListener('mousedown', hide)
+  document.addEventListener('mousedown', press)
+  // a release outside the window never arrives here: any key ends the press too
+  document.addEventListener('mouseup', release)
+  document.addEventListener('keydown', release)
   document.addEventListener('click', clicked)
   return () => {
     document.removeEventListener('mouseover', enter)
     document.removeEventListener('focusin', enter)
     document.removeEventListener('mouseout', leave)
     document.removeEventListener('focusout', hide)
-    document.removeEventListener('mousedown', hide)
+    document.removeEventListener('mousedown', press)
+    document.removeEventListener('mouseup', release)
+    document.removeEventListener('keydown', release)
     document.removeEventListener('click', clicked)
     tip.remove()
   }
