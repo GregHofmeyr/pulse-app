@@ -171,6 +171,10 @@ async fn ready_for(
     // is read once and regrouped here.
     let servers = all_servers(db).await?;
     let mut server_channels = all_server_channels(db).await?;
+    // Read straight after the channels, so the revision and the placements they carry come from
+    // as close to the same moment as can be. A save landing in between still heals: its
+    // `LayoutChanged` (same or newer revision) is applied again on the client.
+    let layouts = crate::servers::categories::all_layouts(db).await?;
     let mut server_members = all_server_members(db).await?;
     let mut channels = vec![];
     let mut members = vec![];
@@ -249,7 +253,7 @@ async fn ready_for(
             .unwrap_or_default(),
         appear_offline_to: crate::presence::hidden_list(db, me).await?,
         live_notify: crate::streams::notify::list(db, me).await?,
-        layouts: crate::servers::categories::all_layouts(db).await?,
+        layouts,
     })
 }
 
