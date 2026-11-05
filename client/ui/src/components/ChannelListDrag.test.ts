@@ -12,7 +12,7 @@ vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }))
 import ChannelList from './ChannelList.svelte'
 import { app } from '../lib/store.svelte'
 import { applyEvent, applyReady, emptyState } from '../lib/state'
-import { drafts } from '../lib/layoutDraft.svelte'
+import { drafts, resetSaves } from '../lib/layoutDraft.svelte'
 import { isCollapsed, resetCollapsed, setCollapsed } from '../lib/sidebarSections.svelte'
 import { testReady } from '../lib/testReady'
 import type { Category } from '../lib/protocol/Category'
@@ -110,7 +110,7 @@ function show(over: { top?: boolean; cats?: Category[]; member?: boolean } = {})
 beforeEach(() => {
   localStorage.clear()
   resetCollapsed()
-  drafts.byServer = {}
+  resetSaves()
   invoke.mockReset()
   // a save stays in flight: the draft keeps showing
   invoke.mockImplementation((c: string) => (c === 'save_layout' ? new Promise(() => {}) : Promise.resolve(undefined)))
@@ -128,7 +128,7 @@ afterEach(() => {
   if (cmp) unmount(cmp)
   cmp = undefined
   document.body.innerHTML = ''
-  drafts.byServer = {}
+  resetSaves()
   vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
@@ -265,6 +265,69 @@ describe('dragging a channel', () => {
     expect(onSelect).not.toHaveBeenCalled()
   })
 
+  it('cancelled where it started: nothing has to ease back, so nothing is left lifted or waiting', () => {
+    show()
+    down(rowOf('T1'), 80)
+    move(85)
+    move(80)
+    window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+    flushSync()
+    expect(document.querySelectorAll('.list .shift, .list .lifted, .list .returning').length).toBe(0)
+    up(80)
+  })
+
+  it("someone else's change mid-drag cancels it: everything eases back and nothing is saved", () => {
+    show()
+    down(rowOf('T1'), 80)
+    move(85)
+    move(125)
+    // a friend moved memes to the top meanwhile (revision 4)
+    const layout = {
+      server_id: 'S1', revision: 4, categories: CATS,
+      channels: [
+        { channel_id: 'T0', category_id: null, position: 0 }, { channel_id: 'T2', category_id: null, position: 1 },
+        { channel_id: 'T1', category_id: 'C1', position: 0 }, { channel_id: 'Q1', category_id: 'C2', position: 0 },
+        { channel_id: 'V2', category_id: 'C2', position: 1 }, { channel_id: 'V1', category_id: 'C3', position: 0 },
+      ],
+    }
+    app.state = applyEvent(app.state, { t: 'LayoutChanged', d: { layout } } as never, Date.now())
+    flushSync()
+    expect(transformed()).toEqual([])
+    expect(document.querySelector('.drop-line')).toBeNull()
+    expect(document.querySelector('.list')!.classList.contains('dragging')).toBe(false)
+    expect(rowOf('T1').classList.contains('returning')).toBe(true)
+    move(200)
+    up(200)
+    document.querySelector<HTMLElement>('.list')!.click()
+    expect(savedLayout()).toEqual([])
+    expect(onSelect).not.toHaveBeenCalled()
+  })
+
+  it('your own save landing mid-drag carries on, and the drop goes on the revision it made', async () => {
+    let land: ((l: unknown) => void) | undefined
+    invoke.mockImplementation((c: string) =>
+      c !== 'save_layout' ? Promise.resolve(undefined) : land ? new Promise(() => {}) : new Promise((r) => (land = r)))
+    show()
+    drag(rowOf('T1'), 80, 125)
+    // memes 64–98, general 98–132: memes back below general
+    down(rowOf('T2'), 80)
+    move(85)
+    land!({
+      server_id: 'S1', revision: 4, categories: CATS,
+      channels: [
+        { channel_id: 'T0', category_id: null, position: 0 }, { channel_id: 'T2', category_id: 'C1', position: 0 },
+        { channel_id: 'T1', category_id: 'C1', position: 1 }, { channel_id: 'Q1', category_id: 'C2', position: 0 },
+        { channel_id: 'V2', category_id: 'C2', position: 1 }, { channel_id: 'V1', category_id: 'C3', position: 0 },
+      ],
+    })
+    for (let i = 0; i < 4; i++) await Promise.resolve()
+    flushSync()
+    expect(rowOf('T2').classList.contains('lifted')).toBe(true)
+    move(125)
+    up(125)
+    expect(savedLayout()[1]).toEqual({ revision: 4, uncategorised: ['T0'], categories: [{ id: 'C1', channels: ['T1', 'T2'] }, { id: 'C2', channels: ['Q1', 'V2'] }, { id: 'C3', channels: ['V1'] }] })
+  })
+
   it('a cancelled pointer cancels the drag', () => {
     show()
     down(rowOf('T1'), 80)
@@ -292,6 +355,9 @@ describe('dragging a channel', () => {
     flushSync()
     expect(isCollapsed('cat:C2')).toBe(false)
     expect(headingOf('C2').getAttribute('aria-expanded')).toBe('true')
+    // the rows that just appeared ease like the rest, rather than jumping
+    expect(rowOf('Q1').classList.contains('shift')).toBe(true)
+    expect(rowOf('V2').classList.contains('shift')).toBe(true)
     // opened (re-measured): Q1 162–196, V2 196–230; the pointer is now over Q1's top half
     up(170)
     expect(savedLayout()).toEqual([{ revision: 3, uncategorised: ['T0'], categories: [{ id: 'C1', channels: ['T2'] }, { id: 'C2', channels: ['T1', 'Q1', 'V2'] }, { id: 'C3', channels: ['V1'] }] }])

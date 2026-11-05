@@ -19,7 +19,8 @@ import { startVoiceListening, voice, voiceApi } from '../lib/voice.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 import { HOVER_DELAY_MS } from '../lib/hoverPrefetch'
 import { categoryUi, requestCreateCategory } from '../lib/categoryUi.svelte'
-import { drafts } from '../lib/layoutDraft.svelte'
+import { drafts, resetSaves } from '../lib/layoutDraft.svelte'
+import { isCollapsed, resetCollapsed, setCollapsed } from '../lib/sidebarSections.svelte'
 import { testReady } from '../lib/testReady'
 import type { Category } from '../lib/protocol/Category'
 import type { Channel } from '../lib/protocol/Channel'
@@ -395,14 +396,14 @@ const live: Channel[] = [
 ]
 const layouts = [{ server_id: 'S1', revision: 3, categories: cats, channels: [] }]
 
-function showLive(over: { member?: boolean; onSelect?: (id: string) => void } = {}) {
+function showLive(over: { member?: boolean; onSelect?: (id: string) => void; active?: string } = {}) {
   if (cmp) unmount(cmp)
   document.body.innerHTML = ''
-  drafts.byServer = {}
+  resetSaves()
   app.state = applyReady(emptyState(), testReady(live, { layouts, ...(over.member === false ? { members: [] } : {}) }))
   cmp = mount(ChannelList, {
     target: document.body,
-    props: { serverId: 'S1', activeChannelId: null, voiceChannelId: null, speaking: new Set<string>(), onSelect: over.onSelect ?? (() => {}), onJoinVoice: () => {}, onMessage: () => {}, onVoiceSettings: () => {} },
+    props: { serverId: 'S1', activeChannelId: over.active ?? null, voiceChannelId: null, speaking: new Set<string>(), onSelect: over.onSelect ?? (() => {}), onJoinVoice: () => {}, onMessage: () => {}, onVoiceSettings: () => {} },
   })
   flushSync()
 }
@@ -438,7 +439,7 @@ describe('ChannelList by categories', () => {
     invoke.mockImplementation((c: string) => (c === 'save_layout' ? new Promise(() => {}) : Promise.resolve(undefined)))
   })
   afterEach(() => {
-    drafts.byServer = {}
+    resetSaves()
     categoryUi.create = null
   })
 
@@ -619,6 +620,41 @@ describe('ChannelList by categories', () => {
     expect(document.activeElement).toBe(headingOf('C3'))
   })
 
+  it('Alt+Down on a row in a collapsed category opens it, so the move shows', async () => {
+    localStorage.clear()
+    resetCollapsed()
+    setCollapsed('cat:C1', true)
+    // the channel you're on stays shown in a collapsed category
+    showLive({ active: 'T1' })
+    expect(rowNames(document.querySelector('.cat[data-category="C1"]')!)).toEqual(['general'])
+    rowOf('T1').focus()
+    press(rowOf('T1'), 'ArrowDown', { altKey: true })
+    await flush()
+    expect(isCollapsed('cat:C1')).toBe(false)
+    expect(rowNames(document.querySelector('.cat[data-category="C1"]')!)).toEqual(['memes', 'general'])
+    expect(document.activeElement).toBe(rowOf('T1'))
+    localStorage.clear()
+    resetCollapsed()
+  })
+
+  it('a refused move snaps back with focus still on what moved', async () => {
+    showLive()
+    invoke.mockImplementation((c: string) => (c === 'save_layout' ? Promise.reject('Someone else changed the list first') : Promise.resolve(undefined)))
+    rowOf('T2').focus()
+    press(rowOf('T2'), 'ArrowDown', { altKey: true })
+    await flush()
+    await flush()
+    // back in its own category (a new element again), and still focused
+    expect(rowNames(document.querySelector('.cat[data-category="C1"]')!)).toEqual(['general', 'memes'])
+    expect(document.activeElement).toBe(rowOf('T2'))
+    headingOf('C3').focus()
+    press(headingOf('C3'), 'ArrowUp', { altKey: true })
+    await flush()
+    await flush()
+    expect(headings().map((h) => h.textContent?.trim())).toEqual(['Text Channels', 'Gaming', 'Voice Channels'])
+    expect(document.activeElement).toBe(headingOf('C3'))
+  })
+
   it("Move up / Move down in a channel's menu", async () => {
     showLive()
     rightClick(rowOf('Q1'))
@@ -650,6 +686,8 @@ describe('ChannelList by categories', () => {
     requestCreateCategory('S2') // another server's: not this list's
     flushSync()
     expect(document.querySelector('input[aria-label="New category name"]')).toBeNull()
+    // and dropped, so it can't pop open later when S2's list shows
+    expect(categoryUi.create).toBeNull()
     requestCreateCategory('S1')
     flushSync()
     expect(categoryUi.create).toBeNull()

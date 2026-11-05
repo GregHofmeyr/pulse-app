@@ -1,7 +1,8 @@
 // Which sidebar sections are collapsed, on this device. Keys are a category's `cat:<id>` (#54), or an older server's
 // kind section `serverId:kind` (text, quotes, clips, voice).
+import type { Category } from './protocol/Category'
 import type { ServerLayout } from './protocol/ServerLayout'
-import { onAppReady } from './store.svelte'
+import { app, onAppEvent, onAppReady } from './store.svelte'
 
 const KEY = 'pulse.collapsedSections'
 
@@ -53,7 +54,24 @@ export function carryOverCollapsed(layouts: ServerLayout[]): void {
   store(next)
 }
 
-onAppReady((r) => carryOverCollapsed(r.layouts ?? []))
+/** Forget the collapsed keys of categories that are gone (deleted, maybe on another device): a key is kept while any
+ *  layout held has its category. No layouts at all (an older server) knows of none: everything stays, as do the
+ *  `serverId:kind` keys of servers without categories. Written back only when something went. */
+export function pruneCollapsed(layouts: { categories: Category[] }[]): void {
+  if (!layouts.length) return
+  const live = new Set(layouts.flatMap((l) => l.categories.map((c) => `cat:${c.id}`)))
+  const next = sections.collapsed.filter((k) => !k.startsWith('cat:') || live.has(k))
+  if (next.length !== sections.collapsed.length) store(next)
+}
+
+onAppReady((r) => {
+  carryOverCollapsed(r.layouts ?? [])
+  pruneCollapsed(r.layouts ?? [])
+})
+// a category deleted (or the layout otherwise changed) since: against every layout held, as just applied
+onAppEvent((e) => {
+  if (e.t === 'LayoutChanged') pruneCollapsed(Object.values(app.state.layouts))
+})
 
 /** Read back from storage (tests: as after a restart). */
 export function resetCollapsed(): void {

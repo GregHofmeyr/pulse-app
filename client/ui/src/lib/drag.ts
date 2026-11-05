@@ -5,7 +5,8 @@
 // Smooth under load (#103): every box is measured once when the drag starts (and once more if a hovered section
 // opens); each frame then only writes `transform`s, so nothing re-runs layout while the pointer moves. The drop
 // renders the new order and clears the transforms in the same frame (`settling` turns transitions off for it), so
-// nothing jumps; the dropped item then glides from where it was let go into its place.
+// nothing jumps; the dropped item then glides from where it was let go into its place. A drop that changes nothing,
+// and a cancel (Escape, or the list changing under the drag: `cancelDrag`), ease everything back instead.
 import { flushSync } from 'svelte'
 
 export type Drop =
@@ -43,7 +44,25 @@ type Kind = 'item' | 'head' | 'top' | 'cat' | 'other'
 /** One thing along the list: a channel (its row and occupants), a heading, a whole section, or anything else. */
 type Entry = Rect & { els: HTMLElement[]; kind: Kind; list: string | null; id: string; collapsed: boolean }
 
-type Opts = { enabled: () => boolean; onDrop: (d: Drop) => void; onHoverSection: (key: string) => void }
+type Opts = {
+  enabled: () => boolean
+  /** false: the drop changes nothing (it eases back like a cancel) */
+  onDrop: (d: Drop) => boolean
+  onHoverSection: (key: string) => void
+  /** a drag began (after its threshold) */
+  onStart?: () => void
+  /** it ended: dropped (after `onDrop`) or cancelled */
+  onEnd?: () => void
+}
+
+/** Each list's way to cancel its drag from outside (`cancelDrag`). */
+const cancels = new WeakMap<HTMLElement, () => void>()
+
+/** Cancel `list`'s drag, if one is under way: everything eases back, nothing is dropped (the list it measured has
+ *  changed under it, #54). */
+export function cancelDrag(list: HTMLElement): void {
+  cancels.get(list)?.()
+}
 
 const LINE = 'drop-line'
 const translate = (y: number) => `translate3d(0, ${y}px, 0)`
@@ -123,7 +142,9 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
     d.scroll = list.scrollTop
     d.entries = readEntries(d.kind)
     for (const e of d.entries) Object.assign(e, boxOf(e.els, d.origin, d.scroll))
-    d.from = d.entries.findIndex((e) => (d.kind === 'channel' ? e.kind === 'item' : e.kind === 'cat') && e.id === d.id)
+    // measured again mid-drag (a hovered section opened): the rows that just appeared ease like the rest
+    if (drag === d) for (const e of d.entries) for (const el of e.els) el.classList.add('shift')
+    d.from =d.entries.findIndex((e) => (d.kind === 'channel' ? e.kind === 'item' : e.kind === 'cat') && e.id === d.id)
     const me = d.entries[d.from]
     if (!me) return
     const next = d.entries[d.from + 1]
@@ -256,6 +277,7 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
     // placed before it shows, so it doesn't slide in from the top
     line.style.transform = translate(me.top)
     list.append(line)
+    o.onStart?.()
     return true
   }
 
@@ -272,6 +294,7 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
     } catch {
       // already gone
     }
+    o.onEnd?.()
     return d.entries.flatMap((e) => e.els)
   }
 
@@ -280,12 +303,16 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
     if (!d) return
     const els = release(d)
     const lifted = d.entries[d.from]?.els ?? []
-    for (const el of lifted) el.classList.add('returning')
+    // nothing is out of place (let go where it started): no transition will run, so there is nothing to wait for
+    const away = [...moved.values()].some((y) => y !== 0)
     for (const el of els) el.style.transform = ''
     moved.clear()
-    afterGlide(lifted, () => {
+    const done = () => {
       for (const el of els) el.classList.remove('shift', 'lifted', 'returning')
-    })
+    }
+    if (!away) return done()
+    for (const el of lifted) el.classList.add('returning')
+    afterGlide(lifted, done)
   }
 
   function drop(): void {
@@ -296,9 +323,12 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
     const me = d.entries[d.from]
     const at = pointerY(d) - d.grab
     const dest = d.dest
+    // (nothing renders before the flush below)
+    const changed = o.onDrop(d.kind === 'channel' ? { kind: 'channel', id: d.id, to: { category: dest.list, index: dest.index } } : { kind: 'category', id: d.id, index: dest.index })
+    // a drop that changes nothing has no new order to render into: it eases back
+    if (!changed) return cancel()
     list.classList.add('settling')
     const els = release(d)
-    o.onDrop(d.kind === 'channel' ? { kind: 'channel', id: d.id, to: { category: dest.list, index: dest.index } } : { kind: 'category', id: d.id, index: dest.index })
     // the new order renders now, and in the same frame nothing is moved any more
     flushSync()
     for (const el of els) {
@@ -481,12 +511,19 @@ export function sortableList(list: HTMLElement, opts: Opts): { update(o: Opts): 
   list.addEventListener('pointerdown', onDown)
   list.addEventListener('lostpointercapture', onLost)
   list.addEventListener('scroll', onScroll, { passive: true })
+  cancels.set(list, () => {
+    if (!drag) return
+    cancel()
+    // the button is still down: its release is the end of the drag, not a click
+    released = true
+  })
 
   return {
     update(next: Opts) {
       o = next
     },
     destroy() {
+      cancels.delete(list)
       if (drag) release(drag)
       finishCleanup()
       stopSwallowing()

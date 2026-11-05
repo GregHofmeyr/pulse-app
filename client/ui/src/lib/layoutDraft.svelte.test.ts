@@ -7,7 +7,7 @@ const invoke = vi.hoisted(() => vi.fn())
 vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }))
 
-import { drafts, saveOrder } from './layoutDraft.svelte'
+import { drafts, resetSaves, saveOrder } from './layoutDraft.svelte'
 import { app, ui } from './store.svelte'
 import { emptyState } from './state'
 import { toRequest, type Order } from './layout'
@@ -30,7 +30,7 @@ function deferred<T>() {
 
 beforeEach(() => {
   invoke.mockReset()
-  drafts.byServer = {}
+  resetSaves()
   ui.notice = null
   app.state = { ...emptyState(), channels: { A: ch('A', 0), B: ch('B', 0, 'K1') }, layouts: { S1: { revision: 7, categories: [cat] } } }
 })
@@ -60,7 +60,7 @@ describe('saveOrder', () => {
     expect(ui.notice).toBe('Someone else changed the list first')
   })
 
-  it('a second save replaces the draft, on the same revision, and the first landing leaves it showing', async () => {
+  it('a second save waits for the first, shows at once, and goes on the revision the first returned', async () => {
     const first = deferred<ServerLayout>()
     const second = deferred<ServerLayout>()
     invoke.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
@@ -68,13 +68,65 @@ describe('saveOrder', () => {
     const a = saveOrder('S1', order)
     const b = saveOrder('S1', next)
     expect(drafts.byServer['S1']).toEqual(next)
-    expect(invoke).toHaveBeenLastCalledWith('save_layout', { serverId: 'S1', layout: toRequest(next, 7) })
+    expect(invoke).toHaveBeenCalledTimes(1)
     first.resolve(saved)
     await a
     expect(drafts.byServer['S1']).toEqual(next)
-    second.reject('stale')
+    expect(invoke).toHaveBeenCalledTimes(2)
+    expect(invoke).toHaveBeenLastCalledWith('save_layout', { serverId: 'S1', layout: toRequest(next, 8) })
+    second.resolve({ ...saved, revision: 9, channels: [{ channel_id: 'A', category_id: 'K1', position: 0 }, { channel_id: 'B', category_id: 'K1', position: 1 }] })
     await b
     expect(drafts.byServer['S1']).toBeUndefined()
-    expect(app.state.layouts['S1'].revision).toBe(8)
+    expect(app.state.layouts['S1'].revision).toBe(9)
+    expect(ui.notice).toBeNull()
+  })
+
+  it('while one is in flight only the latest order waits', async () => {
+    const first = deferred<ServerLayout>()
+    invoke.mockReturnValueOnce(first.promise).mockResolvedValueOnce({ ...saved, revision: 9 })
+    const middle: Order = { top: ['A'], cats: [{ id: 'K1', channels: ['B'] }] }
+    const last: Order = { top: [], cats: [{ id: 'K1', channels: ['A', 'B'] }] }
+    const done = Promise.all([saveOrder('S1', order), saveOrder('S1', middle), saveOrder('S1', last)])
+    expect(drafts.byServer['S1']).toEqual(last)
+    first.resolve(saved)
+    await done
+    expect(invoke.mock.calls.map(([, a]) => (a as { layout: unknown }).layout)).toEqual([toRequest(order, 7), toRequest(last, 8)])
+    expect(drafts.byServer['S1']).toBeUndefined()
+  })
+
+  it("a refusal drops the waiting order too: back to the server's order, with the notice", async () => {
+    const first = deferred<ServerLayout>()
+    invoke.mockReturnValueOnce(first.promise)
+    const before = app.state
+    const a = saveOrder('S1', order)
+    const b = saveOrder('S1', { top: [], cats: [{ id: 'K1', channels: ['A', 'B'] }] })
+    first.reject('Someone else changed the list first')
+    await Promise.all([a, b])
+    expect(invoke).toHaveBeenCalledTimes(1)
+    expect(drafts.byServer['S1']).toBeUndefined()
+    expect(app.state).toBe(before)
+    expect(ui.notice).toBe('Someone else changed the list first')
+    // the next save starts afresh
+    invoke.mockResolvedValueOnce(saved)
+    await saveOrder('S1', order)
+    expect(invoke).toHaveBeenLastCalledWith('save_layout', { serverId: 'S1', layout: toRequest(order, 7) })
+  })
+
+  it('an order made from an older revision goes with that revision (and is refused)', async () => {
+    invoke.mockRejectedValueOnce('stale')
+    await saveOrder('S1', order, 6)
+    expect(invoke).toHaveBeenCalledWith('save_layout', { serverId: 'S1', layout: toRequest(order, 6) })
+    expect(drafts.byServer['S1']).toBeUndefined()
+  })
+
+  it('one made from the revision the save in flight was based on follows it, on its new revision', async () => {
+    const first = deferred<ServerLayout>()
+    invoke.mockReturnValueOnce(first.promise).mockResolvedValueOnce({ ...saved, revision: 9 })
+    const next: Order = { top: [], cats: [{ id: 'K1', channels: ['A', 'B'] }] }
+    const a = saveOrder('S1', order)
+    const b = saveOrder('S1', next, 7)
+    first.resolve(saved)
+    await Promise.all([a, b])
+    expect(invoke).toHaveBeenLastCalledWith('save_layout', { serverId: 'S1', layout: toRequest(next, 8) })
   })
 })

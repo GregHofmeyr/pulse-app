@@ -16,7 +16,7 @@
   import { isMuted } from '../lib/conversations'
   import { isCollapsed, setCollapsed, toggleSection } from '../lib/sidebarSections.svelte'
   import { applyOrder, moveCategory as placeCategory, moveChannel as placeChannel, orderOf, sidebarLayout, stepCategory, stepChannel, type Order, type Section } from '../lib/layout'
-  import { sortableList, type Drop } from '../lib/drag'
+  import { cancelDrag, sortableList, type Drop } from '../lib/drag'
   import { drafts, saveOrder } from '../lib/layoutDraft.svelte'
   import { categoryUi } from '../lib/categoryUi.svelte'
   import LiveBadge from './LiveBadge.svelte'
@@ -166,27 +166,31 @@
     listEl?.querySelector<HTMLElement>(selector)?.focus()
   }
   const headingSelector = (categoryId: string) => `.cat[data-category="${categoryId}"] > .label button.section`
+  /** Save a keyboard / menu move and keep focus on what moved: now, and again if a refusal snaps the list back (its
+   *  element may be re-created) while focus hasn't gone anywhere else. */
+  function saveMove(next: Order, selector: string) {
+    void saveOrder(serverId, next).then(() => {
+      if (!document.activeElement || document.activeElement === document.body) void refocus(selector)
+    })
+    void refocus(selector)
+  }
   function moveChannel(id: string, dir: -1 | 1) {
-    const o = order()
-    const next = stepChannel(o, id, dir)
+    const next = stepChannel(order(), id, dir)
     if (!next) return
-    // into a collapsed category: it opens, so the row doesn't vanish from under you
-    const from = o.cats.find((c) => c.channels.includes(id))?.id
+    // in or into a collapsed category: it opens, so the move shows and the row doesn't vanish from under you
     const to = next.cats.find((c) => c.channels.includes(id))?.id
-    if (to && to !== from) setCollapsed(`cat:${to}`, false)
-    void saveOrder(serverId, next)
-    void refocus(`.row[data-channel="${id}"]`)
+    if (to) setCollapsed(`cat:${to}`, false)
+    saveMove(next, `.row[data-channel="${id}"]`)
   }
   function moveCategory(id: string, dir: -1 | 1) {
     const next = stepCategory(order(), id, dir)
     if (!next) return
-    void saveOrder(serverId, next)
-    void refocus(headingSelector(id))
+    saveMove(next, headingSelector(id))
   }
 
   // Dragging (#55): the drop is saved like a keyboard move, as a draft shown at once (the drag action clears its
   // transforms in the same frame this renders).
-  function dropped(d: Drop) {
+  function dropped(d: Drop): boolean {
     const o = order()
     let next: Order
     if (d.kind === 'category') next = placeCategory(o, d.id, d.index)
@@ -204,9 +208,41 @@
       }
       next = placeChannel(o, d.id, { category, index })
     }
-    if (JSON.stringify(next) !== JSON.stringify(o)) void saveOrder(serverId, next)
+    if (JSON.stringify(next) === JSON.stringify(o)) return false
+    // made from the list as it was when the drag began: a save on that revision (refused if it's gone since)
+    void saveOrder(serverId, next, dragFrom?.revision)
+    return true
   }
-  const dragOpts = { enabled: () => arrange, onDrop: dropped, onHoverSection: (key: string) => setCollapsed(key, false) }
+
+  // A drag measured the list as it was when it began. Someone else's change meanwhile (the list on screen is no
+  // longer that one) cancels it: everything eases back, nothing is saved against geometry that's gone. A change of
+  // revision that leaves the list as it was (our own save landing) doesn't: the drop goes on the new revision.
+  let dragging = $state(false)
+  let dragFrom: { revision: number; order: string } | null = null
+  const heldRevision = () => app.state.layouts[serverId]?.revision ?? 0
+  $effect(() => {
+    if (!dragging) return
+    const revision = heldRevision()
+    const shown = JSON.stringify(orderOf(layout))
+    untrack(() => {
+      if (!dragFrom || revision === dragFrom.revision && shown === dragFrom.order) return
+      if (shown === dragFrom.order) dragFrom.revision = revision
+      else if (listEl) cancelDrag(listEl)
+    })
+  })
+  const dragOpts = {
+    enabled: () => arrange,
+    onDrop: dropped,
+    onHoverSection: (key: string) => setCollapsed(key, false),
+    onStart: () => {
+      dragFrom = { revision: heldRevision(), order: JSON.stringify(order()) }
+      dragging = true
+    },
+    onEnd: () => {
+      dragFrom = null
+      dragging = false
+    },
+  }
 
   // a category heading's menu (members, categories only): right-click, or Shift+F10 / the menu key on the heading
   let catMenu = $state<{ category: Category; x: number; y: number; opener: HTMLElement } | null>(null)
@@ -275,7 +311,10 @@
   let newCatError = $state('')
   $effect(() => {
     const asked = categoryUi.create
-    if (!asked || asked.serverId !== serverId) return
+    if (!asked) return
+    // another server's (its list isn't showing): dropped, so it can't pop open later, out of context. The menus that
+    // ask switch to the server first, so its list is showing by now.
+    if (asked.serverId !== serverId) return untrack(() => void (categoryUi.create = null))
     untrack(() => {
       newCat = { serverId }
       catDraft = ''

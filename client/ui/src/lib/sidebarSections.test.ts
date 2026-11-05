@@ -3,9 +3,16 @@
 // the update (`serverId:kind`) stays collapsed: it carries over to the default category made for that kind.
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Ready } from './protocol/Ready'
+import type { Event } from './protocol/Event'
 
 const hooks = vi.hoisted(() => [] as Array<(r: Ready) => void>)
-vi.mock('./store.svelte', () => ({ onAppReady: (h: (r: Ready) => void) => (hooks.push(h), () => {}) }))
+const eventHooks = vi.hoisted(() => [] as Array<(e: Event) => void>)
+const store = vi.hoisted(() => ({ app: { state: { layouts: {} } as { layouts: Record<string, unknown> } } }))
+vi.mock('./store.svelte', () => ({
+  app: store.app,
+  onAppReady: (h: (r: Ready) => void) => (hooks.push(h), () => {}),
+  onAppEvent: (h: (e: Event) => void) => (eventHooks.push(h), () => {}),
+}))
 
 import { carryOverCollapsed, isCollapsed, resetCollapsed, sections, setCollapsed, toggleSection } from './sidebarSections.svelte'
 import type { Category } from './protocol/Category'
@@ -70,5 +77,46 @@ describe('carryOverCollapsed', () => {
     expect(sections.collapsed).toEqual(['cat:KV'])
     hooks[0]({} as unknown as Ready) // an older server sends no layouts
     expect(sections.collapsed).toEqual(['cat:KV'])
+  })
+})
+
+describe('keys of categories that are gone', () => {
+  it('are pruned with each Ready that has layouts; other keys stay', () => {
+    localStorage.setItem(KEY, JSON.stringify(['cat:K1', 'cat:GONE', 'S3:voice']))
+    resetCollapsed()
+    hooks[0]({ layouts: [layout('S1', [cat('K1', 'S1')]), layout('S2', [])] } as unknown as Ready)
+    expect(sections.collapsed).toEqual(['cat:K1', 'S3:voice'])
+    expect(stored()).toEqual(['cat:K1', 'S3:voice'])
+  })
+
+  it('stay when the Ready has no layouts (an older server)', () => {
+    localStorage.setItem(KEY, JSON.stringify(['cat:K1']))
+    resetCollapsed()
+    hooks[0]({} as unknown as Ready)
+    hooks[0]({ layouts: [] } as unknown as Ready)
+    expect(sections.collapsed).toEqual(['cat:K1'])
+  })
+
+  it('are pruned when a layout changes, against every layout held', () => {
+    localStorage.setItem(KEY, JSON.stringify(['cat:K1', 'cat:K2', 'cat:K9']))
+    resetCollapsed()
+    // K2 was deleted from S1; K9 is S2's, held from before
+    store.app.state = { layouts: { S1: { revision: 2, categories: [cat('K1', 'S1')] }, S2: { revision: 1, categories: [cat('K9', 'S2')] } } }
+    expect(eventHooks).toHaveLength(1)
+    eventHooks[0]({ t: 'LayoutChanged', d: { layout: layout('S1', [cat('K1', 'S1')]) } } as unknown as Event)
+    expect(sections.collapsed).toEqual(['cat:K1', 'cat:K9'])
+    expect(stored()).toEqual(['cat:K1', 'cat:K9'])
+  })
+
+  it('nothing is written when nothing is pruned', () => {
+    localStorage.setItem(KEY, JSON.stringify(['cat:K1']))
+    resetCollapsed()
+    const set = vi.spyOn(Storage.prototype, 'setItem')
+    store.app.state = { layouts: { S1: { revision: 2, categories: [cat('K1', 'S1')] } } }
+    eventHooks[0]({ t: 'LayoutChanged', d: { layout: layout('S1', [cat('K1', 'S1')]) } } as unknown as Event)
+    hooks[0]({ layouts: [layout('S1', [cat('K1', 'S1')])] } as unknown as Ready)
+    eventHooks[0]({ t: 'ChannelDeleted', d: {} } as unknown as Event)
+    expect(set).not.toHaveBeenCalled()
+    set.mockRestore()
   })
 })
