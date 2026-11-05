@@ -30,6 +30,15 @@ describe('the Invisible dot looks like the offline dot (#171)', () => {
   })
 })
 
+describe('offline members are dimmed slightly (#170)', () => {
+  it.each(['MemberList.svelte', 'GroupMembers.svelte'])('%s', (file) => {
+    const m = decls(cssOf(file), '.row.off').match(/opacity:\s*([\d.]+)/)
+    expect(m).not.toBeNull()
+    expect(Number(m![1])).toBeGreaterThanOrEqual(0.4)
+    expect(Number(m![1])).toBeLessThan(1)
+  })
+})
+
 describe('member list dots are small and cut out of the avatar (#169)', () => {
   it.each(['MemberList.svelte', 'GroupMembers.svelte'])('%s', (file) => {
     const css = cssOf(file)

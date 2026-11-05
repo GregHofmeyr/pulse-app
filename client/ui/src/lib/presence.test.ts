@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { emptyState, type AppState } from './state'
-import { presenceOf } from './presence'
+import { byPresence, presenceOf } from './presence'
 
 const user = (id: string, name: string) => ({ id, username: name, display_name: name, avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } })
 const alex = user('U1', 'alex')
@@ -47,5 +47,25 @@ describe('presenceOf (#45): what to draw for a person', () => {
     const s = state()
     s.people.U2 = { ...s.people.U2, status: 'invisible' as never }
     expect(presenceOf(s, 'U2', NOW).kind).not.toBe('invisible')
+  })
+})
+
+describe('byPresence (#170): a member list split into Online and Offline', () => {
+  it('online and DND are Online; offline and unknown are Offline; each keeps the list order', () => {
+    const { online, offline } = byPresence(state(), ['U4', 'U3', 'U9', 'U2', 'U1'], (id) => id, NOW)
+    expect(online).toEqual(['U3', 'U2', 'U1'])
+    expect(offline).toEqual(['U4', 'U9'])
+  })
+  it('only what the viewer is told: someone sent as offline (Invisible, or hiding from you) is Offline', () => {
+    const s = state()
+    s.people.U2 = { ...s.people.U2, online: false, status: 'offline' }
+    expect(byPresence(s, ['U2'], (id) => id, NOW).offline).toEqual(['U2'])
+    // even a stray 'invisible' for someone else
+    s.people.U2 = { ...s.people.U2, status: 'invisible' as never }
+    expect(byPresence(s, ['U2'], (id) => id, NOW).offline).toEqual(['U2'])
+  })
+  it('yourself while Invisible: Offline, where everyone else sees you', () => {
+    const s = state({ myStatus: { status: 'invisible', dnd_until: null } })
+    expect(byPresence(s, ['U1'], (id) => id, NOW)).toEqual({ online: [], offline: ['U1'] })
   })
 })
