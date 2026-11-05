@@ -108,7 +108,7 @@
 
 {#snippet tileFor(s: Sound)}
   <div
-    class="tile" role="button" tabindex="0" title={s.name}
+    class="tile" role="button" tabindex="0" data-tip={s.name}
     onclick={() => play(s)} onkeydown={(ev) => tileKey(ev, s)} oncontextmenu={(ev) => openMenu(ev, s)}
   >
     <button class="preview" type="button" aria-label="Preview {s.name}" onclick={(ev) => { ev.stopPropagation(); preview(s) }}><Icon name="volume" size={13} /></button>
@@ -137,7 +137,7 @@
   <div class="body">
     <nav class="rail" aria-label="Soundboard sections">
       {#each sections as s (s.id)}
-        <button class="rail-btn" type="button" title={s.label} aria-label={s.label} data-rail={s.id} onclick={() => jump(s.id)}>
+        <button class="rail-btn" type="button" aria-label={s.label} data-rail={s.id} onclick={() => jump(s.id)}>
           {#if s.id === 'favourites'}
             <Icon name="star" size={18} />
           {:else if s.id === 'frequent'}

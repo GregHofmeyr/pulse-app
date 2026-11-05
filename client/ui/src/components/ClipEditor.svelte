@@ -225,7 +225,7 @@
   <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Share a clip" tabindex="-1" use:modal={close}>
     <header>
       <div class="file">
-        <strong title={source.file_name}>{source.file_name}</strong>
+        <strong data-tip={source.file_name}>{source.file_name}</strong>
         <span>{formatDuration(source.duration_ms)} · {source.width}×{source.height} · {fpsText} · {formatBytes(source.size)}</span>
       </div>
       <button type="button" class="icon-btn round modal-close" aria-label="Close" disabled={sending} onclick={close}><Icon name="x" /></button>

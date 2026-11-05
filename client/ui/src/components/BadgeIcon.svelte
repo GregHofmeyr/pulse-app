@@ -21,7 +21,7 @@
 </script>
 
 <!-- Without a label it's decoration (the text next to it names the badge), so it's hidden from screen readers. -->
-<span class="badge-icon {rarity} {size}" class:first class:hidden style:--ring-color={rarityVar(rarity)} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : 'true'} title={label}>
+<span class="badge-icon {rarity} {size}" class:first class:hidden style:--ring-color={rarityVar(rarity)} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : 'true'} data-tip={label}>
   <span class="glyph" aria-hidden="true">{hidden ? '???' : icon}</span>
   {#if tiers > 1 && !hidden}<span class="tier" aria-hidden="true">{romanTier(tier)}</span>{/if}
   {#if first}<span class="spark" aria-hidden="true">✦</span>{/if}

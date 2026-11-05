@@ -103,7 +103,7 @@
   <div class="tile idle" class:blocked={!!reason} data-stream={streamer} bind:this={tile} tabindex={windows ? -1 : 0} onclick={clicked} oncontextmenu={contextMenu} onkeydown={menuKey}>
     <div class="backdrop" style:background={avatarColor(streamer)}></div>
     <span class="live-tag">LIVE</span>
-    {#if viewers > 0 || ghosts}<span class="viewers">{#if viewers > 0}<Icon name="eye" size={14} label="Viewers" /> {viewers}{/if}{#if ghosts}<span title="Ghost viewers">{ghosts}</span>{/if}</span>{/if}
+    {#if viewers > 0 || ghosts}<span class="viewers">{#if viewers > 0}<Icon name="eye" size={14} label="Viewers" /> {viewers}{/if}{#if ghosts}<span data-tip="Ghost viewers">{ghosts}</span>{/if}</span>{/if}
     <Avatar id={streamer} {name} size={64} />
     <div class="who">{name}</div>
     {#if windows && mode === 'self'}

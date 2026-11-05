@@ -110,7 +110,7 @@ describe('VolumeMixer', () => {
     show()
     move('Badge unlocked', 0)
     expect(button('Test Badge unlocked').disabled).toBe(true)
-    expect(button('Test Badge unlocked').title).toBe('Off')
+    expect(button('Test Badge unlocked').dataset.tip).toBe('Off')
     expect(button('Test Message ding').disabled).toBe(false)
     move('Notifications volume', 0)
     expect(button('Test Message ding').disabled).toBe(true)

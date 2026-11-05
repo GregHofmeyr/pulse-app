@@ -193,7 +193,7 @@
   <div class="body">
     <nav class="rail" aria-label="Emoji sections">
       {#each sections as s (s.id)}
-        <button class="rail-btn" type="button" title={s.label} aria-label={s.label} data-rail={s.id} onclick={() => jump(s.id)}>
+        <button class="rail-btn" type="button" aria-label={s.label} data-rail={s.id} onclick={() => jump(s.id)}>
           {#if s.id === 'frequent'}
             <Icon name="clock" size={18} />
           {:else if s.server}

@@ -49,8 +49,8 @@
       </div>
     {/if}
     <p class="viewers">
-      {#if viewers.length}Watching: {viewers.map((u) => displayName(app.state, serverId, u)).join(', ')}{#if ghosts}<span class="ghosts" title="Ghost viewers: people in the server outside this call"> · {ghosts}</span>{/if}
-      {:else if ghosts}Watching: <span class="ghosts" title="Ghost viewers: people in the server outside this call">{ghosts}</span>
+      {#if viewers.length}Watching: {viewers.map((u) => displayName(app.state, serverId, u)).join(', ')}{#if ghosts}<span class="ghosts" data-tip="Ghost viewers: people in the server outside this call"> · {ghosts}</span>{/if}
+      {:else if ghosts}Watching: <span class="ghosts" data-tip="Ghost viewers: people in the server outside this call">{ghosts}</span>
       {:else}Nobody is watching yet{/if}
     </p>
     {#if live.encoderWarning}<p class="warn" role="status">Your GPU encoder isn't being used, so this will cost game FPS</p>{/if}

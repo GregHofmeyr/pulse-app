@@ -80,7 +80,7 @@
   <div class="vc" bind:this={box}>
     {#if failed}
       <span class="vc-bars warn"><span></span><span></span><span></span></span>
-      <span class="vc-text"><strong class="bad">Couldn't connect</strong><small title={failed.error}>{failed.error}</small></span>
+      <span class="vc-text"><strong class="bad">Couldn't connect</strong><small data-tip={failed.error}>{failed.error}</small></span>
       <button class="btn btn-primary" onclick={() => voiceApi.retry()}>Retry</button>
       <button class="icon-btn icon-btn-sm" aria-label="Dismiss" onclick={() => voiceApi.dismissFailure()}><Icon name="x" size={14} /></button>
     {:else}

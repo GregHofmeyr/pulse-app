@@ -811,12 +811,14 @@ button, .menu-item, [role='option'], .hover-row { transition: background-color v
 .pulse-tooltip {
   position: fixed; z-index: 100; pointer-events: none; max-width: 260px;
   padding: 6px 10px; border-radius: var(--radius-sm); background: var(--tooltip-bg); color: var(--tooltip-text);
-  font-size: 12px; font-weight: 600; line-height: 1.3; box-shadow: var(--shadow-2);
+  font-size: 12px; font-weight: 600; line-height: 1.3; box-shadow: var(--shadow-2); white-space: pre-line;
   opacity: 0; transition: opacity var(--dur-fast) var(--ease); left: -9999px; top: -9999px;
   /* its own layer for good: showing it never makes or drops one (#103, see the entrances below) */
   will-change: opacity;
 }
 .pulse-tooltip.show { opacity: 1; }
+/* Read by a screen reader, not shown (a live tip's text, which .pulse-tooltip shows). */
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 
 /* While you stream, the UI stops animating so it doesn't cost game frames (spec 3.3). */
 .streaming *, .streaming *::before, .streaming *::after,

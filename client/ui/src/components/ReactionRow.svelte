@@ -8,6 +8,7 @@
   import { blockedReason, pickAdds, react, tooltipText } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import { api } from '../lib/tauri'
+  import { tipIsWarm, tipTiming } from '../lib/tooltip'
   import EmojiPopover from './EmojiPopover.svelte'
   import Icon from './Icon.svelte'
 
@@ -50,12 +51,13 @@
 
   // Fetched fresh each time the tip opens: a cache could not tell "one left, one joined" from no
   // change. Only the newest request may fill it; a slow earlier one would show an older list.
-  // `keep` refreshes in place (no flash back to "…") when the chip changes under an open tip.
+  // `keep` refreshes in place when the chip changes under an open tip. Nothing shows until the names arrive (no "…"
+  // that then resizes, #173): the shared tooltip shows the chip's data-tip once it is set.
   async function loadTip(key: string, count: number, keep = false) {
     const req = ++tipReq
     tipFor = key
     tipFailed = false
-    if (!keep) tipText = '…'
+    if (!keep) tipText = ''
     try {
       const ids = await api.listReactors(message.id, key)
       if (req === tipReq) tipText = tooltipText(ids.map((id) => nameOf(id)), count)
@@ -73,14 +75,22 @@
   }
   // The tip stays while the chip is hovered or focused. A click is a hover then a focus, so only the
   // first of them is a "show": a failed tip is retried by the next show, not by its own focus.
+  // A hover waits the shared tooltip delay before asking the server (#173), so sweeping across the chips asks for
+  // nothing; focus, or a tip that is already up, asks at once, as the tooltip itself shows at once then.
+  let hoverTimer: ReturnType<typeof setTimeout> | undefined
+  $effect(() => () => clearTimeout(hoverTimer))
   function enter(key: string, count: number, how: 'hover' | 'focus') {
     const engaged = hoverOn === key || focusOn === key
     if (how === 'hover') hoverOn = key
     else focusOn = key
     if (engaged && tipFor === key) return
-    showTip(key, count)
+    clearTimeout(hoverTimer)
+    const wait = how === 'focus' || engaged || tipIsWarm() ? 0 : tipTiming.delay
+    if (!wait) return showTip(key, count)
+    hoverTimer = setTimeout(() => { if (hoverOn === key && focusOn !== key) showTip(key, count) }, wait)
   }
   function leave(key: string, how: 'hover' | 'focus') {
+    if (how === 'hover') clearTimeout(hoverTimer)
     if (how === 'hover') hoverOn = null
     else focusOn = null
     if (tipFor === key && hoverOn !== key && focusOn !== key) {
@@ -124,7 +134,8 @@
       <span class="wrap">
         <button
           class="chip" class:mine={r.me} class:locked={!!why} type="button" aria-pressed={r.me}
-          aria-disabled={why ? 'true' : undefined}
+          aria-disabled={why ? 'true' : undefined} data-tip-live
+          data-tip={tipFor === r.emoji && tipText ? (why ? `${tipText}\n${why}` : tipText) : undefined}
           aria-describedby={tipFor === r.emoji && tipText ? tipId(r.emoji) : undefined}
           onclick={() => { if (!why) toggle(r.emoji, !r.me) }}
           onpointerenter={() => enter(r.emoji, r.count, 'hover')}
@@ -141,7 +152,8 @@
           {/if}
           <span class="n">{r.count}</span>
         </button>
-        {#if tipFor === r.emoji && tipText}<span class="tip fade-in" id={tipId(r.emoji)} role="tooltip">{tipText}{#if why}<span class="why">{why}</span>{/if}</span>{/if}
+        <!-- the names for a screen reader; the shared tooltip shows them (data-tip above) -->
+        {#if tipFor === r.emoji && tipText}<span class="tip sr-only" id={tipId(r.emoji)}>{tipText}{#if why}<span class="why"> {why}</span>{/if}</span>{/if}
       </span>
     {/each}
     {#each suggest as key (key)}
@@ -178,6 +190,4 @@
   .suggest { opacity: .45; padding: 0 6px; }
   .suggest:hover, .suggest:focus-visible { opacity: .9; }
   .add { padding: 0 6px; }
-  .why { display: block; color: var(--text-3); }
-  .tip { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 20; white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis; padding: 4px 8px; border-radius: 6px; background: var(--bg-1); border: 1px solid var(--bg-4); font-size: 12px; color: var(--text); pointer-events: none; }
 </style>

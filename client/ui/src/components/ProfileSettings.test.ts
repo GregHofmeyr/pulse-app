@@ -282,7 +282,7 @@ describe('ProfileSettings', () => {
       expect(custom.classList.contains('swatch')).toBe(true)
       expect(custom.querySelector('svg')).not.toBeNull()
       expect(custom.textContent!.trim()).toBe('')
-      expect(custom.title).toBe('Custom colour')
+      expect(custom.dataset.tip).toBe('Custom colour')
     })
 
     it('clicking Custom opens the colour picker', async () => {

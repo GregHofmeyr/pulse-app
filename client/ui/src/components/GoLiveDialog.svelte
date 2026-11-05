@@ -89,7 +89,7 @@
     </div>
     <video bind:this={video} muted autoplay playsinline></video>
     <div class="source">
-      <span class="label" title={picked.label}>{picked.label}</span>
+      <span class="label" data-tip={picked.label}>{picked.label}</span>
       <button type="button" class="btn btn-secondary" disabled={busy} onclick={changeSource}>Change source</button>
     </div>
 

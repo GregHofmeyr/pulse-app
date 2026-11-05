@@ -390,7 +390,7 @@
         {/if}
         <div class="picker">
           {#if r.speaker}
-            <button type="button" class="chip" title="Change who said it" onclick={() => clearSpeaker(r)}>— {r.speaker.name}</button>
+            <button type="button" class="chip" data-tip="Change who said it" onclick={() => clearSpeaker(r)}>— {r.speaker.name}</button>
           {:else}
             <input class="who" type="text" role="combobox" aria-expanded={r.open} aria-controls="opts-{r.key}" aria-activedescendant={r.open ? `opt-${r.key}-${r.hi}` : undefined}
               aria-autocomplete="list" aria-label="Who said it?" placeholder="who said it?" autocomplete="off" bind:value={r.query}
@@ -405,7 +405,7 @@
             {/if}
           {/if}
         </div>
-        <button type="button" class="ibtn" title="Add an image" aria-label="Add image" onclick={() => rowEl(r.key)?.querySelector<HTMLInputElement>('input[type=file]')?.click()}><Icon name="image" size={16} /></button>
+        <button type="button" class="ibtn" aria-label="Add image" onclick={() => rowEl(r.key)?.querySelector<HTMLInputElement>('input[type=file]')?.click()}><Icon name="image" size={16} /></button>
         <input type="file" accept="image/png,image/jpeg,image/gif,image/webp" hidden onchange={(e) => onPick(e, r)} />
         {#if rows.length > 1}
           <button type="button" class="ibtn" aria-label="Remove line" onclick={() => removeLine(r.key)}><Icon name="x" size={14} /></button>

@@ -49,7 +49,7 @@
             value={value(s, 'master')} oninput={(e) => setNotch(s.id, 'master', +e.currentTarget.value)} />
           <strong class="pct">{label(value(s, 'master'))}</strong>
         {/if}
-        <button class="btn btn-quiet reset" aria-label="Reset {s.label} to defaults" title="Reset to defaults" onclick={() => resetMixerSection(s.id)}>Reset</button>
+        <button class="btn btn-quiet reset" aria-label="Reset {s.label} to defaults" data-tip="Reset to defaults" onclick={() => resetMixerSection(s.id)}>Reset</button>
       </div>
       <div class="rows" id="mix-{s.id}-rows" hidden={shut}>
       {#each s.notches as n (n.key)}
@@ -59,7 +59,7 @@
             value={value(s, n.key)} oninput={(e) => setNotch(s.id, n.key, +e.currentTarget.value)} />
           <span class="pct">{label(value(s, n.key))}</span>
           {#if n.test}
-            <button class="play" aria-label="Test {n.label}" title={testBlocked(s, n) ?? 'Test'}
+            <button class="play" aria-label="Test {n.label}" data-tip={testBlocked(s, n) ?? 'Test'}
               disabled={testBlocked(s, n) !== null} onclick={() => test(s, n)}><Icon name="play" size={12} /></button>
           {:else}
             <span class="play-gap" aria-hidden="true"></span>

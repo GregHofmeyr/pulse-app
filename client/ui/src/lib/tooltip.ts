@@ -1,5 +1,7 @@
 // App-wide themed tooltips. Any button with an aria-label and no visible text (i.e. icon buttons)
-// gets one automatically; `data-tip="…"` overrides or adds one to anything else.
+// gets one automatically; `data-tip="…"` overrides or adds one to anything else. A target whose text arrives later
+// (the reaction chips' reactor names, #173) carries `data-tip-live`: it takes part in the delay and the handoff like
+// any other, and its tip shows, or changes, the moment its `data-tip` is set.
 type Rect = { left: number; top: number; width: number; height: number }
 type Size = { width: number; height: number }
 
@@ -10,6 +12,12 @@ const DELAY_MS = 350
 const HANDOFF_MS = 100
 /** How long after a tip closes the next one shows without the delay. */
 const WARM_MS = 300
+
+/** The hover delay, shared with a live tip that fetches its text (ReactionRow waits it before asking the server). */
+export const tipTiming = { delay: DELAY_MS }
+let warmNow: () => boolean = () => false
+/** Whether a tip is up or just closed: the next one shows at once, so a live tip fetches at once too. */
+export const tipIsWarm = (): boolean => warmNow()
 
 /** Above the target, centred; below if there's no room; always inside the viewport. */
 export function placeTip(target: Rect, tip: Size, viewport: Size): { left: number; top: number; below: boolean } {
@@ -35,6 +43,8 @@ export function installTooltips(): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined
   let hideTimer: ReturnType<typeof setTimeout> | undefined
   let current: Element | null = null
+  /** The target whose delay has run out: its tip shows as soon as it has text. */
+  let due: Element | null = null
   /** Until when a new tip skips the delay: a tip was just up (#159). */
   let warmUntil = 0
   const shown = () => tip.classList.contains('show')
@@ -44,6 +54,7 @@ export function installTooltips(): () => void {
     clearTimeout(hideTimer)
     if (shown()) warmUntil = Date.now() + WARM_MS
     current = null
+    due = null
     tip.classList.remove('show')
   }
   const show = (el: Element, text: string) => {
@@ -63,23 +74,49 @@ export function installTooltips(): () => void {
   const release = () => (pressing = false)
   const enter = (e: Event) => {
     if (e.type === 'focusin' && pressing) return
-    const el = (e.target as Element | null)?.closest?.('[data-tip], button[aria-label]')
+    const el = (e.target as Element | null)?.closest?.('[data-tip], [data-tip-live], button[aria-label]')
     if (el && el === current) {
       clearTimeout(hideTimer) // back on it within the grace: it stays
       return
     }
     if (!el) return
     const text = labelFor(el)
-    if (!text) return
+    const live = el.hasAttribute('data-tip-live')
+    if (!text && !live) return
     clearTimeout(timer)
     clearTimeout(hideTimer)
     current = el
+    due = null
     // An open tip hands over: new text and place, no fade out and back in (#159: across a message's
     // quick actions every crossing flashed it). One that just closed comes back without the delay.
-    if (shown()) return show(el, text)
-    const delay = e.type === 'focusin' || Date.now() < warmUntil ? 0 : DELAY_MS
-    timer = setTimeout(() => current === el && show(el, text), delay)
+    if (shown()) {
+      due = el
+      if (text) return show(el, text)
+      tip.classList.remove('show') // a live tip with no text yet: it shows when its text arrives
+      warmUntil = Date.now() + WARM_MS
+      return
+    }
+    const delay = e.type === 'focusin' || Date.now() < warmUntil ? 0 : tipTiming.delay
+    timer = setTimeout(() => {
+      if (current !== el) return
+      due = el
+      const now = labelFor(el) // read when it shows: a live tip may have its text by then
+      if (now) show(el, now)
+    }, delay)
   }
+  // A live tip's text arriving or changing: shown in place once its delay has run.
+  const observer = typeof MutationObserver === 'function'
+    ? new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.target !== current || due !== current) continue
+          const text = labelFor(current)
+          if (text) show(current, text)
+          else if (shown()) tip.classList.remove('show')
+        }
+      })
+    : null
+  observer?.observe(document.body, { subtree: true, attributes: true, attributeFilter: ['data-tip'] })
+  warmNow = () => shown() || Date.now() < warmUntil
   // A click from the keyboard (Enter, Space) leaves the tip up: a toggle's label that changes with it
   // ("Show members" → "Hide members") is read again once the click is handled. A mouse press hid it.
   const clicked = () => {
@@ -116,6 +153,8 @@ export function installTooltips(): () => void {
     document.removeEventListener('mouseup', release)
     document.removeEventListener('keydown', release)
     document.removeEventListener('click', clicked)
+    observer?.disconnect()
+    warmNow = () => false
     tip.remove()
   }
 }

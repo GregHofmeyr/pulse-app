@@ -306,7 +306,7 @@
           <span class="settings-label">Card theme</span>
           <div class="swatches" role="radiogroup" aria-label="Card theme" tabindex="-1" onkeydown={radioKeys}>
             {#each THEME_PRESETS as p (p.key)}
-              <button type="button" role="radio" class="swatch" aria-label={p.label} title={p.label} aria-checked={themeKey === p.key} tabindex={themeKey === p.key ? 0 : -1}
+              <button type="button" role="radio" class="swatch" aria-label={p.label} aria-checked={themeKey === p.key} tabindex={themeKey === p.key ? 0 : -1}
                 style:background="linear-gradient({p.top}, {p.bottom})" onclick={() => setTheme(p.top, p.bottom)}></button>
             {/each}
             <button type="button" role="radio" class="chip" aria-checked={themeKey === null} tabindex={themeKey === null ? 0 : -1} onclick={() => (customTheme = true)}>Custom</button>
@@ -334,16 +334,16 @@
           <span class="settings-label">Name colour</span>
           <div class="swatches" role="radiogroup" aria-label="Name colour" tabindex="-1" onkeydown={colourKeys}>
             <!-- no colour: a struck-through swatch, sized like the presets beside it -->
-            <button type="button" role="radio" class="swatch round none" aria-label="Default" title="Default colour" aria-checked={colourKey === 'default'} tabindex={colourKey === 'default' ? 0 : -1} onclick={() => setColours([])}></button>
+            <button type="button" role="radio" class="swatch round none" aria-label="Default" data-tip="Default colour" aria-checked={colourKey === 'default'} tabindex={colourKey === 'default' ? 0 : -1} onclick={() => setColours([])}></button>
             {#each NAME_SOLIDS as p (p.key)}
-              <button type="button" role="radio" class="swatch round" aria-label={p.label} title={p.label} aria-checked={colourKey === `solid:${p.key}`} tabindex={colourKey === `solid:${p.key}` ? 0 : -1}
+              <button type="button" role="radio" class="swatch round" aria-label={p.label} aria-checked={colourKey === `solid:${p.key}`} tabindex={colourKey === `solid:${p.key}` ? 0 : -1}
                 style:background={p.colors[0]} onclick={() => setColours(p.colors)}></button>
             {/each}
             {#each NAME_GRADIENTS as p (p.key)}
-              <button type="button" role="radio" class="swatch round" aria-label="{p.label} gradient" title="{p.label} gradient" aria-checked={colourKey === `gradient:${p.key}`} tabindex={colourKey === `gradient:${p.key}` ? 0 : -1}
+              <button type="button" role="radio" class="swatch round" aria-label="{p.label} gradient" aria-checked={colourKey === `gradient:${p.key}`} tabindex={colourKey === `gradient:${p.key}` ? 0 : -1}
                 style:background="linear-gradient(135deg, {p.colors[0]}, {p.colors[1]})" onclick={() => setColours(p.colors)}></button>
             {/each}
-            <button type="button" role="radio" class="swatch round pick" aria-label="Custom" title="Custom colour" aria-checked={colourKey === 'custom'} tabindex={colourKey === 'custom' ? 0 : -1} onclick={pickCustomColour}><Icon name="eyedropper" size={14} /></button>
+            <button type="button" role="radio" class="swatch round pick" aria-label="Custom" data-tip="Custom colour" aria-checked={colourKey === 'custom'} tabindex={colourKey === 'custom' ? 0 : -1} onclick={pickCustomColour}><Icon name="eyedropper" size={14} /></button>
           </div>
           {#if colourKey === 'custom'}
             <Segmented label="Custom colour" value={draft.colors.length >= 2 ? 'gradient' : 'solid'} onchange={setCustomCount}

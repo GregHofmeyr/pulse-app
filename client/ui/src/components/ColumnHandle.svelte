@@ -68,7 +68,7 @@
 <!-- a focusable separator is a widget (it has a value the keys change): the linter takes every separator as static -->
 <!-- svelte-ignore a11y_no_noninteractive_tabindex, a11y_no_noninteractive_element_interactions -->
 <div class="handle" class:dragging={!!drag} data-side={side} role="separator" tabindex="0" aria-orientation="vertical" aria-label={label}
-  aria-controls={controls} aria-valuenow={width} aria-valuemin={min} aria-valuemax={max} title="Drag to resize · double-click to reset"
+  aria-controls={controls} aria-valuenow={width} aria-valuemin={min} aria-valuemax={max} data-tip="Drag to resize · double-click to reset"
   onpointerdown={start} onkeydown={keydown} ondblclick={onReset}></div>
 
 <style>

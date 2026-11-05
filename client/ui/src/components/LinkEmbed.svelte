@@ -94,11 +94,11 @@
         {/if}
         {#if canPlay}
           {#if pops || origin.origin}
-            <button class="play" aria-label="Play {embed.title ?? label}" title={pops ? `Open in a ${label.split(' ')[0]} window` : 'Play'} onclick={() => void start()}>
+            <button class="play" aria-label="Play {embed.title ?? label}" data-tip={pops ? `Open in a ${label.split(' ')[0]} window` : 'Play'} onclick={() => void start()}>
               <Icon name="play" size={big ? 22 : 14} />
             </button>
           {:else}
-            <a class="play" href={embed.url} target="_blank" rel="noopener noreferrer" aria-label="Play {embed.title ?? label} (opens in your browser)" title="Open in your browser">
+            <a class="play" href={embed.url} target="_blank" rel="noopener noreferrer" aria-label="Play {embed.title ?? label} (opens in your browser)" data-tip="Open in your browser">
               <Icon name="play" size={big ? 22 : 14} />
             </a>
           {/if}
@@ -107,7 +107,7 @@
     {/if}
   </div>
   {#if mine}
-    <button class="hide" aria-label="Remove preview" title="Remove preview" onclick={() => void hide()}><Icon name="x" size={14} /></button>
+    <button class="hide" aria-label="Remove preview" onclick={() => void hide()}><Icon name="x" size={14} /></button>
   {/if}
 </div>
 

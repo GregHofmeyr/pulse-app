@@ -514,7 +514,7 @@
           {#if badge.mentions > 0}<span class="pill">{badge.mentions}</span>{:else if badge.dot}<span class="dot" aria-label="new messages"></span>{/if}
         </button>
       {/each}
-      <button class="add" aria-label="Create a server" title="Create a server" onclick={() => (creating = true)}><Icon name="plus" size={16} /></button>
+      <button class="add" aria-label="Create a server" onclick={() => (creating = true)}><Icon name="plus" size={16} /></button>
     </nav>
     <div class="grow" data-tauri-drag-region></div>
     {#if connDown && connShown}

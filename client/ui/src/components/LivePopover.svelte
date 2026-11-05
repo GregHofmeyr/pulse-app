@@ -59,7 +59,7 @@
     {#if preview}<img src={preview} alt="Stream preview" />{:else}<div class="none">No preview yet</div>{/if}
     <div class="meta">
       <span>{info.settings.height}p{info.settings.fps}</span>
-      <span>{info.viewers.length} watching{#if ghosts} · <span title="Ghost viewers: people in the server outside this call">{ghosts}</span>{/if}</span>
+      <span>{info.viewers.length} watching{#if ghosts} · <span data-tip="Ghost viewers: people in the server outside this call">{ghosts}</span>{/if}</span>
     </div>
     {#if !mine}
       <!-- aria-disabled, not disabled: a disabled button swallows the hover that shows the reason -->

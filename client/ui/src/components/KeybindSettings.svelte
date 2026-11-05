@@ -153,7 +153,7 @@
             onclick={() => record(a.key)}>
             {recording === a.key ? held || 'Press keys…' : bindLabel(binds[a.key])}
           </button>
-          <button class="icon-btn round clear" aria-label="Remove {a.label} bind" title="Remove" disabled={!enabled || !binds[a.key] || !!recording}
+          <button class="icon-btn round clear" aria-label="Remove {a.label} bind" data-tip="Remove" disabled={!enabled || !binds[a.key] || !!recording}
             onclick={() => binds && save({ ...binds, [a.key]: null })}><Icon name="x" size={14} /></button>
         </div>
       {/each}

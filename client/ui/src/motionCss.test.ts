@@ -98,6 +98,23 @@ describe('motion', () => {
   })
 })
 
+describe('one tooltip path', () => {
+  // The themed tooltip (lib/tooltip.ts) shows aria-labels and data-tip; a native title= would add the OS tooltip a
+  // second later, sometimes with other words (#173). Only an iframe keeps its title (its accessible name).
+  it('no element has a title= attribute (data-tip instead)', () => {
+    const offenders: string[] = []
+    for (const f of files) {
+      const markup = readFileSync(f, 'utf8').replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '')
+      for (const m of markup.matchAll(/<([a-z][\w-]*)\b[^>]*?\stitle=/g)) {
+        // the People board's disabled "Call" placeholder, which the DM calls work replaces
+        if (m[1] === 'iframe' || (rel(f) === 'components/PeopleBoard.svelte' && /Calls arrive soon/.test(m[0] + markup.slice(m.index!, m.index! + 200)))) continue
+        offenders.push(`${rel(f)}: <${m[1]} … title=`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
 describe('radii', () => {
   // app.css's shared classes use the radius tokens; components still being moved over are listed (#173 follow-up).
   it('app.css writes no raw 6/8/10/12/16px radius (they are --radius-xs … --radius-xl)', () => {
