@@ -74,6 +74,17 @@ describe('soundboard listener', () => {
     hooks[0](played('U3'))
     expect(play).toHaveBeenCalledWith('hA', 100, 50, 80, null, 'A')
   })
+  it('a DM or group call plays like a server voice channel, and Mute soundboard holds there too (#175)', () => {
+    voiceState.channelId = 'DM1'
+    hooks[0](played('U2', 'V1'))
+    expect(play, 'not the call I am in').not.toHaveBeenCalled()
+    hooks[0](played('U2', 'DM1'))
+    expect(play).toHaveBeenCalledTimes(1)
+    setSoundMute('U2', true)
+    hooks[0](played('U2', 'DM1'))
+    expect(play).toHaveBeenCalledTimes(1)
+    setSoundMute('U2', false)
+  })
 })
 
 describe('who played it', () => {

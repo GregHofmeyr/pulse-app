@@ -58,7 +58,7 @@
 </div>
 
 <!-- #174: what incoming calls ring with, on this device; its loudness is the mixer's Ringing notch, just below -->
-<h3 class="settings-label heading">Ringtone</h3>
+<h3 class="settings-section-title">Ringtone</h3>
 <div class="settings-field">
   <div class="sets" role="radiogroup" aria-label="Ringtone">
     {#each RINGTONES as t, i (t.id)}
@@ -69,7 +69,7 @@
           <strong>{t.label}</strong>
           <small id="ringtone-{t.id}-blurb">{t.blurb}</small>
         </div>
-        <button class="play" aria-label="Preview ringtone {t.label}" title="Preview" onclick={() => previewRingtone(t.id)}><Icon name="play" size={14} /></button>
+        <button class="play btn-primary" aria-label="Preview ringtone {t.label}" data-tip="Preview" onclick={() => previewRingtone(t.id)}><Icon name="play" size={14} /></button>
       </div>
     {/each}
   </div>

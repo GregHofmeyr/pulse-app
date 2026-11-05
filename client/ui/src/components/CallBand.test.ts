@@ -92,6 +92,66 @@ describe('CallBand', () => {
     expect(cmds('leave_voice')).toHaveLength(1)
     expect(button('Join')).toBeUndefined()
   })
+
+  describe('the soundboard (#175)', () => {
+    const inCall = () => {
+      app.state = {
+        ...app.state,
+        calls: { DM1: call('DM1') },
+        voice: { DM1: [{ user_id: 'U1', flags: { muted: false, deafened: false } }, { user_id: 'U2', flags: { muted: false, deafened: false } }] },
+      }
+      voice.channelId = 'DM1'
+    }
+    const popover = () => document.querySelector('.soundboard-popover')
+
+    it("once you are in, a Soundboard button opens the voice panel's soundboard, and toggles it shut", () => {
+      inCall()
+      show(CallBand, { channelId: 'DM1' })
+      const sb = button('Soundboard')!
+      expect(sb.classList.contains('ctl')).toBe(true)
+      expect(sb.getAttribute('aria-haspopup')).toBe('dialog')
+      expect(sb.getAttribute('aria-expanded')).toBe('false')
+      expect(popover()).toBeNull()
+      sb.click()
+      flushSync()
+      expect(popover()).not.toBeNull()
+      expect(popover()!.querySelector('input[placeholder="Find a sound"]')).not.toBeNull()
+      expect(sb.getAttribute('aria-expanded')).toBe('true')
+      sb.click()
+      flushSync()
+      expect(popover()).toBeNull()
+    })
+
+    it('no Soundboard button before you join, and leaving the call closes it', () => {
+      app.state = { ...app.state, calls: { DM1: call('DM1') }, voice: { DM1: [{ user_id: 'U2', flags: { muted: false, deafened: false } }] } }
+      show(CallBand, { channelId: 'DM1' })
+      expect(button('Soundboard')).toBeUndefined()
+      inCall()
+      flushSync()
+      button('Soundboard')!.click()
+      flushSync()
+      expect(popover()).not.toBeNull()
+      voice.channelId = null
+      flushSync()
+      expect(popover()).toBeNull()
+      expect(button('Soundboard')).toBeUndefined()
+    })
+
+    it("right-click someone in the band: Mute soundboard mutes that person's sounds for you", async () => {
+      inCall()
+      show(CallBand, { channelId: 'DM1' })
+      const sam = document.querySelector<HTMLElement>('.who[aria-label="sam"]')!
+      sam.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 10, clientY: 10 }))
+      flushSync()
+      const item = document.querySelector<HTMLButtonElement>('[data-item="sound-mute"]')!
+      expect(item.textContent).toBe('Mute soundboard')
+      item.click()
+      flushSync()
+      const { soundboard, setSoundMute } = await import('../lib/soundboard.svelte')
+      expect(soundboard.mutes.U2).toBe(true)
+      setSoundMute('U2', false)
+    })
+  })
 })
 
 describe('CallRingPopover', () => {
