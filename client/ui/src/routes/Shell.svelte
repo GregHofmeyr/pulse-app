@@ -18,6 +18,9 @@
   import ServerSettings from '../components/ServerSettings.svelte'
   import { clickOutside, narrowerThan } from '../lib/actions'
   import { NARROW_BODY, searchMakesRoom } from '../lib/layout'
+  import { COLUMNS, fitColumns, RIGHT_DEFAULT } from '../lib/columns'
+  import { columns, resetColumn, setColumn } from '../lib/columns.svelte'
+  import ColumnHandle from '../components/ColumnHandle.svelte'
   import ReportBug from '../components/ReportBug.svelte'
   import CrashReportPrompt from '../components/CrashReportPrompt.svelte'
   import ConversationList from '../components/ConversationList.svelte'
@@ -335,6 +338,23 @@
   const activeServer = $derived(servers.find((s) => s.id === activeServerId) ?? null)
   const member = $derived(activeServerId ? isMember(app.state, activeServerId) : false)
   const activeChannel = $derived(activeChannelId ? app.state.channels[activeChannelId] : null)
+  // Resizable side columns (#160). What the right column holds sets its default; a column that isn't showing (full
+  // view, the narrow-window search hand-off, Home with nothing on the right) has no handle and takes no room. Saved
+  // widths are fitted to the body's width, so a shrinking window narrows them (lib/columns.ts).
+  const rightKind = $derived<keyof typeof RIGHT_DEFAULT | null>(
+    search.open ? 'search' : activeServerId ? 'members' : activeChannel?.kind === 'group' ? 'group' : null)
+  const showLeft = $derived(!hideLeft)
+  const showRight = $derived(!hideRight && rightKind !== null)
+  let bodyEl = $state<HTMLElement>()
+  let bodyWidth = $state(0)
+  $effect(() => {
+    if (!bodyEl || typeof ResizeObserver === 'undefined') return
+    const ro = new ResizeObserver((entries) => (bodyWidth = entries[entries.length - 1]?.contentRect.width ?? 0))
+    ro.observe(bodyEl)
+    return () => ro.disconnect()
+  })
+  const fitted = $derived(fitColumns({ saved: columns, body: bodyWidth, left: showLeft, right: showRight, rightDefault: RIGHT_DEFAULT[rightKind ?? 'members'] }))
+  const rightLabel = $derived(rightKind === 'search' ? 'Resize the search results' : 'Resize the members list')
   // The channel views below take their id from activeChannelId (a plain string), never activeChannel.id: for the
   // moment a channel leaves the data before its view goes (a sign-out's reset, a delete), activeChannel is undefined,
   // and reading .id there threw and left the window blank after a sign-in (2026-11-03).
@@ -509,8 +529,8 @@
     <button class="win" aria-label="Close" onclick={() => win.close()}><Icon name="x" size={14} /></button>
   </header>
 
-  <div class="body" use:narrowerThan={{ px: NARROW_BODY, set: (v) => (narrowBody = v) }}>
-    <aside id={PANEL_ID.left} class="panel side" hidden={hideLeft} bind:this={sidePanel}>
+  <div class="body" bind:this={bodyEl} use:narrowerThan={{ px: NARROW_BODY, set: (v) => (narrowBody = v) }}>
+    <aside id={PANEL_ID.left} class="panel side" hidden={hideLeft} bind:this={sidePanel} style:width="{fitted.left}px">
       <div class="panel-head">
         {#if activeServer}
           <button bind:this={serverToggle} class="head-btn" data-menu-toggle aria-haspopup="menu" aria-expanded={serverMenuOpen}
@@ -557,6 +577,10 @@
         {/if}
       </div>
     </aside>
+    {#if showLeft}
+      <ColumnHandle side="left" width={fitted.left} min={COLUMNS.left.min} max={fitted.maxLeft} controls={PANEL_ID.left}
+        label="Resize the channel list" onResize={(w, done) => setColumn('left', w, done)} onReset={() => resetColumn('left')} />
+    {/if}
 
     <main class="panel content">
       {#if activeServerId && member && !fullShown}<QotyBanner serverId={activeServerId} />{/if}
@@ -582,8 +606,13 @@
       {#each mini ? [mini] : [] as m (m.key)}<MiniPreview channelId={m.channelId} streamer={m.streamer} />{/each}
     </main>
 
-    <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap -->
-    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel}>{#if search.open}<SearchResults />{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} />{/if}</div>
+    {#if showRight}
+      <ColumnHandle side="right" width={fitted.right} min={COLUMNS.right.min} max={fitted.maxRight} controls={PANEL_ID.right}
+        label={rightLabel} onResize={(w, done) => setColumn('right', w, done)} onReset={() => resetColumn('right')} />
+    {/if}
+    <!-- one line: nothing but the list inside, so an empty wrapper (Home) matches :empty and takes no gap. A saved
+         width reaches the list as --right-w; unsaved, each list keeps its own default. -->
+    <div id={PANEL_ID.right} class="right-panel" hidden={hideRight} bind:this={rightPanel} style:--right-w={columns.right === null ? null : `${fitted.right}px`}>{#if search.open}<SearchResults />{:else if activeServerId}<MemberList serverId={activeServerId} onMessage={messageUser} />{:else if activeChannel?.kind === 'group' && activeChannelId}<GroupMembers channelId={activeChannelId} />{/if}</div>
   </div>
 </div>
 <StreamToast />

@@ -41,6 +41,7 @@ import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
 import { callView, joinAndWatch, openFull, showToast, watchStream } from '../lib/stream/viewer.svelte'
 import type { Ready } from '../lib/protocol/Ready'
 import Waiting from './Waiting.svelte'
+import { reloadColumns } from '../lib/columns.svelte'
 import { closeCard, editProfile, profileUi } from '../lib/profileCard.svelte'
 
 let cmp: ReturnType<typeof mount> | undefined
@@ -924,5 +925,67 @@ describe('signing out with a channel open', () => {
     } finally {
       window.removeEventListener('error', onError)
     }
+  })
+})
+
+describe('resizable columns (#160)', () => {
+  const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+  const handle = (label: string) => document.querySelector<HTMLElement>(`[role=separator][aria-label="${label}"]`)
+  const key = (el: Element, k: string) => {
+    el.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true, cancelable: true }))
+    flushSync()
+  }
+  const showServer = () => {
+    app.state = { ...emptyState(), me: alex, servers: [{ id: 'S1', name: 'Alpha', icon_hash: null }] }
+    cmp = mount(Shell, { target: document.body, props: { user: alex, onLogout: () => {} } })
+    flushSync()
+    ;[...document.querySelectorAll<HTMLButtonElement>('.tab')].find((t) => t.textContent!.includes('Alpha'))!.click()
+    flushSync()
+  }
+  beforeEach(() => {
+    localStorage.removeItem('pulse.columns')
+    reloadColumns()
+  })
+
+  it('a handle sits on each side of the main area, controlling its column', () => {
+    showServer()
+    const left = handle('Resize the channel list')!
+    const right = handle('Resize the members list')!
+    expect(left.getAttribute('aria-controls')).toBe(document.querySelector('aside.side')!.id)
+    expect(right.getAttribute('aria-controls')).toBe(document.querySelector('.right-panel')!.id)
+    expect(left.getAttribute('aria-valuenow')).toBe('264')
+    expect(right.getAttribute('aria-valuenow')).toBe('240')
+    // the handles sit between the panels, in the body's row
+    const row = [...document.querySelector('.body')!.children]
+    expect(row.indexOf(left)).toBe(row.indexOf(document.querySelector('aside.side')!) + 1)
+    expect(row.indexOf(right)).toBe(row.indexOf(document.querySelector('.right-panel')!) - 1)
+  })
+
+  it('resizing the channel list widens it and is remembered; a double-click puts the default back', () => {
+    showServer()
+    const side = document.querySelector<HTMLElement>('aside.side')!
+    key(handle('Resize the channel list')!, 'ArrowRight')
+    expect(side.style.width).toBe('280px')
+    expect(JSON.parse(localStorage.getItem('pulse.columns')!).left).toBe(280)
+    handle('Resize the channel list')!.dispatchEvent(new MouseEvent('dblclick', { bubbles: true }))
+    flushSync()
+    expect(side.style.width).toBe('264px')
+    expect(JSON.parse(localStorage.getItem('pulse.columns')!).left).toBeNull()
+  })
+
+  it('a resized members list reaches the list; unsaved, the list keeps its own default', () => {
+    showServer()
+    const panel = document.querySelector<HTMLElement>('.right-panel')!
+    expect(panel.style.getPropertyValue('--right-w')).toBe('')
+    key(handle('Resize the members list')!, 'ArrowLeft')
+    expect(panel.style.getPropertyValue('--right-w')).toBe('256px')
+  })
+
+  it('Home has no right column, so no right handle', () => {
+    app.state = { ...emptyState(), me: alex }
+    cmp = mount(Shell, { target: document.body, props: { user: alex, onLogout: () => {} } })
+    flushSync()
+    expect(handle('Resize the channel list')).not.toBeNull()
+    expect(handle('Resize the members list')).toBeNull()
   })
 })
