@@ -1706,6 +1706,30 @@ pub async fn set_private_nickname(
     )
 }
 
+/// Your status (#45); `dnd_until` only with Dnd.
+#[tauri::command]
+pub async fn set_status(
+    app: AppHandle,
+    core: State<'_, Core>,
+    status: pulse_protocol::rest::Status,
+    dnd_until: Option<String>,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_status(&token, status, dnd_until).await)
+}
+
+/// Appear offline (`hidden`) to someone, or stop (#45).
+#[tauri::command]
+pub async fn set_appear_offline(
+    app: AppHandle,
+    core: State<'_, Core>,
+    user_id: UserId,
+    hidden: bool,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_appear_offline(&token, user_id, hidden).await)
+}
+
 #[tauri::command]
 pub async fn name_archive(
     app: AppHandle,

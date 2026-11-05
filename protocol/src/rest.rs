@@ -505,11 +505,73 @@ pub struct ReactionSummary {
     pub me: bool,
 }
 
+/// A person with their presence as the receiving viewer may see it (#45): someone Invisible, or
+/// appearing offline to this viewer, is `Offline` with a frozen `last_seen_at`, exactly as if they
+/// had left.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct Person {
     pub user: User,
+    /// `status != Offline` (kept for older clients).
     pub online: bool,
     pub last_seen_at: Option<String>,
+    /// Absent from older servers: go by `online` then.
+    #[serde(default)]
+    pub status: PresenceStatus,
+}
+
+/// What a viewer sees of someone (#45). Never `Invisible`: that looks exactly like `Offline`.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum PresenceStatus {
+    Online,
+    Dnd,
+    #[default]
+    Offline,
+}
+
+/// The status you set for yourself (#45); saved on your account and applied everywhere.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+#[serde(rename_all = "snake_case")]
+pub enum Status {
+    #[default]
+    Online,
+    Dnd,
+    Invisible,
+}
+
+impl Status {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Online => "online",
+            Self::Dnd => "dnd",
+            Self::Invisible => "invisible",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Self> {
+        match s {
+            "online" => Some(Self::Online),
+            "dnd" => Some(Self::Dnd),
+            "invisible" => Some(Self::Invisible),
+            _ => None,
+        }
+    }
+}
+
+/// Your own status, for your own sessions only. `dnd_until`: when a timed DND ends (RFC 3339 UTC);
+/// `None` with `Dnd` means until you turn it off.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TS)]
+pub struct OwnStatus {
+    pub status: Status,
+    #[serde(default)]
+    pub dnd_until: Option<String>,
+}
+
+/// `PUT /me/status`. `dnd_until` only goes with `Dnd`: a time in the next 7 days.
+#[derive(Clone, Debug, Serialize, Deserialize, TS)]
+pub struct SetStatusRequest {
+    pub status: Status,
+    #[serde(default)]
+    pub dnd_until: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]

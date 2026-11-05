@@ -13,6 +13,7 @@ pub mod hygiene;
 pub mod limits;
 pub mod media;
 pub mod messages;
+pub mod presence;
 pub mod profiles;
 pub mod qoty;
 pub mod quotes;
@@ -58,6 +59,7 @@ pub fn router(state: AppState) -> Router {
         .merge(clips::routes::router())
         .merge(profiles::routes::router())
         .merge(profiles::private::router())
+        .merge(presence::routes::router())
         .merge(badges::routes::router())
         .merge(search::routes::router())
         .merge(embeds::routes::router())
@@ -113,6 +115,7 @@ pub async fn serve(cfg: config::Config) -> anyhow::Result<()> {
     clips::sweep::spawn(state.clone());
     badges::sweep::spawn(state.clone());
     servers::channels::spawn_sweeper(state.clone());
+    presence::sweep::spawn_sweeper(state.clone());
     streams::liveness::spawn(
         state.clone(),
         streams::liveness::CHECK_EVERY,

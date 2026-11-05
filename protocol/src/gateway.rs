@@ -6,8 +6,8 @@ use ts_rs::TS;
 use crate::ids::{ChannelId, LineId, MessageId, ServerId, UserId};
 use crate::rest::{
     Badge, CardProfile, Channel, ClipView, ClipViewPref, CustomEmoji, Game, Member, Message, Mute,
-    Person, PrivateNickname, QotyEvent, ReadState, Server, ServerVoiceMod, Sound, SpeakerLink,
-    StreamEndReason, StreamInfo, User,
+    OwnStatus, Person, PresenceStatus, PrivateNickname, QotyEvent, ReadState, Server,
+    ServerVoiceMod, Sound, SpeakerLink, StreamEndReason, StreamInfo, User,
 };
 
 // `Debug` is written out by hand below: `Hello` carries the session token.
@@ -126,6 +126,12 @@ pub struct Ready {
     /// Every server's server mutes / deafens in force.
     #[serde(default)]
     pub server_voice: Vec<ServerVoiceMod>,
+    /// Your own status and DND end (#45).
+    #[serde(default)]
+    pub status: OwnStatus,
+    /// The people you appear offline to (#45). Yours only; nobody else ever receives it.
+    #[serde(default)]
+    pub appear_offline_to: Vec<UserId>,
 }
 
 /// How far into a quote's thread you have read (`None`: not at all).
@@ -219,10 +225,26 @@ pub enum Event {
     UserCreated {
         user: User,
     },
+    /// `user_id`'s presence as this receiver may see it (#45): each viewer gets their own.
     PresenceChanged {
         user_id: UserId,
         online: bool,
         last_seen_at: Option<String>,
+        /// Absent from older servers: go by `online` then.
+        #[serde(default)]
+        status: PresenceStatus,
+    },
+    /// Only to your own sessions: your status or DND end changed (you set it, or a DND timer ran out).
+    StatusChanged {
+        user_id: UserId,
+        status: OwnStatus,
+    },
+    /// Only to the owner's own sessions: they started (`hidden`) or stopped appearing offline to
+    /// `target_id`. The target is never told.
+    AppearOfflineChanged {
+        user_id: UserId,
+        target_id: UserId,
+        hidden: bool,
     },
     /// Someone saved their profile; goes to everyone, like presence.
     ProfileUpdated {
@@ -486,6 +508,8 @@ impl Event {
             | Self::FrequentSounds { .. }
             | Self::PrivateNicknameChanged { .. }
             | Self::ServerVoiceChanged { .. }
+            | Self::StatusChanged { .. }
+            | Self::AppearOfflineChanged { .. }
             | Self::BadgeEarned { .. } => None,
         }
     }
@@ -502,6 +526,8 @@ impl Event {
             | Self::SoundFavourites { user_id, .. }
             | Self::FrequentSounds { user_id, .. }
             | Self::PrivateNicknameChanged { user_id, .. }
+            | Self::StatusChanged { user_id, .. }
+            | Self::AppearOfflineChanged { user_id, .. }
             | Self::ConversationVisibility { user_id, .. }
             | Self::VoiceDisconnected { user_id, .. }
             | Self::BadgeEarned { user_id, .. } => Some(*user_id),
@@ -615,6 +641,8 @@ mod tests {
             sound_favourites: vec![],
             frequent_sounds: vec![],
             server_voice: vec![],
+            status: Default::default(),
+            appear_offline_to: vec![],
         })
         .unwrap();
         v.as_object_mut().unwrap().remove("streams");
@@ -691,6 +719,8 @@ mod tests {
             sound_favourites: vec![],
             frequent_sounds: vec![],
             server_voice: vec![],
+            status: Default::default(),
+            appear_offline_to: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();
@@ -807,6 +837,8 @@ mod tests {
             sound_favourites: vec![],
             frequent_sounds: vec![],
             server_voice: vec![],
+            status: Default::default(),
+            appear_offline_to: vec![],
         })
         .unwrap();
         let o = v.as_object_mut().unwrap();

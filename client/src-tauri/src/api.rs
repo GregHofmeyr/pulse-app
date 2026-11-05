@@ -15,11 +15,11 @@ use pulse_protocol::rest::{
     NameArchivePage, PostQuoteRequest, Profile, QotyEvent, QotyVoteRequest, RecoveryCodesResponse,
     RegisterRequest, RenameChannelRequest, RenameEmojiRequest, ReopenQotyRequest, SearchRequest,
     SearchResults, SendMessageRequest, Server, ServerVoiceMod, SessionResponse, SetClipViewRequest,
-    SetMuteRequest, SetNicknameRequest, SetServerVoiceRequest, SetShowcaseRequest, Sound,
-    StartQotyRequest, StreamInfo, StreamRole, StreamSettings, StreamTicketRequest,
-    ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse, TwoFactorSetupRequest,
-    TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest, UpdateSoundRequest, User,
-    VoiceTokenResponse, WatchRequest,
+    SetMuteRequest, SetNicknameRequest, SetServerVoiceRequest, SetShowcaseRequest,
+    SetStatusRequest, Sound, StartQotyRequest, Status, StreamInfo, StreamRole, StreamSettings,
+    StreamTicketRequest, ThreadSeenRequest, TwoFactorCodeRequest, TwoFactorEnabledResponse,
+    TwoFactorSetupRequest, TwoFactorSetupResponse, TwoFactorStatus, UpdateProfileRequest,
+    UpdateSoundRequest, User, VoiceTokenResponse, WatchRequest,
 };
 use serde::de::DeserializeOwned;
 
@@ -1322,6 +1322,41 @@ impl Api {
                 .await,
         )
         .await
+    }
+
+    /// Set your status (#45): Online, Dnd (optionally until `dnd_until`) or Invisible.
+    pub async fn set_status(
+        &self,
+        token: &str,
+        status: Status,
+        dnd_until: Option<String>,
+    ) -> Result<(), ApiError> {
+        let url = self.url(&["me", "status"])?;
+        Self::ok_empty(
+            self.http
+                .put(url)
+                .bearer_auth(token)
+                .json(&SetStatusRequest { status, dnd_until })
+                .send()
+                .await,
+        )
+        .await
+    }
+
+    /// Appear offline to `user` (`hidden`), or stop.
+    pub async fn set_appear_offline(
+        &self,
+        token: &str,
+        user: UserId,
+        hidden: bool,
+    ) -> Result<(), ApiError> {
+        let url = self.url(&["me", "appear-offline", &user.to_string()])?;
+        let req = if hidden {
+            self.http.put(url)
+        } else {
+            self.http.delete(url)
+        };
+        Self::ok_empty(req.bearer_auth(token).send().await).await
     }
 
     /// A page of someone's Name Archive in a server (`cursor`: the last page's `next_cursor`).
@@ -3862,6 +3897,32 @@ mod tests {
             api.disconnect_voice(&sam, server.id, sam_id).await.is_err(),
             "not on yourself"
         );
+    }
+
+    #[tokio::test]
+    async fn status_and_appear_offline_round_trip_through_the_core() {
+        let app = testing::spawn().await;
+        let (alex_id, alex) = testing::register(&app, "alex").await;
+        let (sam_id, _) = testing::register(&app, "sam").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        api.set_status(&alex, Status::Dnd, None).await.unwrap();
+        // a past end is refused (the server checks every timer)
+        assert!(
+            api.set_status(&alex, Status::Dnd, Some("2000-01-01T00:00:00Z".into()))
+                .await
+                .is_err()
+        );
+        let err = api
+            .set_status(&alex, Status::Online, Some("2000-01-01T00:00:00Z".into()))
+            .await
+            .unwrap_err();
+        assert!(err.to_string().contains("timer"), "{err}");
+        api.set_status(&alex, Status::Invisible, None)
+            .await
+            .unwrap();
+        api.set_appear_offline(&alex, sam_id, true).await.unwrap();
+        api.set_appear_offline(&alex, sam_id, false).await.unwrap();
+        assert!(api.set_appear_offline(&alex, alex_id, true).await.is_err());
     }
 
     #[tokio::test]

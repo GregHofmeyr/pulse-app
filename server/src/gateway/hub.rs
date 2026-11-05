@@ -7,10 +7,12 @@ use std::sync::{Arc, Mutex};
 
 use pulse_protocol::gateway::{Event, ServerFrame};
 use pulse_protocol::ids::UserId;
+use pulse_protocol::rest::{Person, User};
 use sqlx::SqlitePool;
 use tokio::sync::{mpsc, oneshot};
 
 use super::audience::{Audience, audience_for};
+use crate::presence::{PresenceView, load_all, load_subject, view_for};
 
 pub const QUEUE: usize = 256;
 /// Close code sent to a client the hub dropped for falling behind (it should resync via Ready).
@@ -54,8 +56,13 @@ pub struct Hub {
 struct Inner {
     next: AtomicU64,
     conns: Mutex<HashMap<ConnId, Conn>>,
-    /// What everyone was last told about each user's presence. Locked only while `conns` is held.
-    announced: Mutex<HashMap<UserId, bool>>,
+    /// What each connection was last told about each person's presence, by (person, connection):
+    /// per connection, not per viewer, because a viewer's new device starts from its own Ready
+    /// while their other devices still show what they were told. Locked only while `conns` is held.
+    announced: Mutex<HashMap<(UserId, ConnId), PresenceView>>,
+    /// Held across reading presence from the database and telling viewers, by every announcement
+    /// and by Ready's people, so a status change and a connect can't reorder what anyone is told.
+    presence: tokio::sync::Mutex<()>,
     /// See [`Hub::in_order`].
     ordered: tokio::sync::Mutex<()>,
 }
@@ -97,7 +104,13 @@ impl Hub {
     /// Remove a connection; returns (user, whether it was their last connection). `None` if the
     /// hub already dropped it (logout, too slow, shutdown).
     pub fn unregister(&self, id: ConnId) {
-        self.inner.conns.lock().unwrap().remove(&id);
+        let mut conns = self.inner.conns.lock().unwrap();
+        conns.remove(&id);
+        self.inner
+            .announced
+            .lock()
+            .unwrap()
+            .retain(|(_, conn), _| *conn != id);
     }
 
     pub fn is_online(&self, user: UserId) -> bool {
@@ -191,42 +204,115 @@ impl Hub {
         deliver(&mut self.inner.conns.lock().unwrap(), &allowed, &frame);
     }
 
-    /// Tell everyone whether `user` is online, but only if that changed since the last time.
-    /// The truth is read under the same lock that sends, so racing connects and disconnects
-    /// can neither repeat an announcement nor reorder two of them. `last_seen_at` goes out with
-    /// an "offline". Returns what was announced, if anything.
-    pub async fn sync_presence(
-        &self,
-        db: &SqlitePool,
-        user: UserId,
-        last_seen_at: String,
-    ) -> Option<bool> {
-        let probe = Event::PresenceChanged {
-            user_id: user,
-            online: true,
-            last_seen_at: None,
-        };
-        let audience = match audience_for(db, &probe).await {
-            Ok(a) => a,
+    /// Tell each connected viewer how `user` looks to them now (#45: per viewer, see
+    /// [`view_for`]), but only those whose view changed since they were last told. Connections are
+    /// read under the same lock that sends, so racing connects and disconnects can neither repeat
+    /// an announcement nor reorder two of them. Returns whether `user` is connected, if anyone was
+    /// told anything.
+    pub async fn sync_presence(&self, db: &SqlitePool, user: UserId) -> Option<bool> {
+        let _order = self.inner.presence.lock().await;
+        let subject = match load_subject(db, user).await {
+            Ok(Some(s)) => s,
+            Ok(None) => return None,
             Err(e) => {
-                tracing::error!(error = ?e, "audience_for failed; presence not announced");
+                tracing::error!(error = ?e, "presence not announced");
                 return None;
             }
         };
+        let now = crate::db::now();
         let mut conns = self.inner.conns.lock().unwrap();
-        let online = conns.values().any(|c| c.user == user);
-        let before = self.inner.announced.lock().unwrap().insert(user, online);
-        if before.unwrap_or(false) == online {
+        let connected = conns.values().any(|c| c.user == user);
+        let mut views: HashMap<UserId, ServerFrame> = HashMap::new();
+        let mut to: HashMap<ConnId, ServerFrame> = HashMap::new();
+        {
+            let mut announced = self.inner.announced.lock().unwrap();
+            for (id, c) in conns.iter() {
+                let view = view_for(&subject, c.user, connected, &now);
+                if announced.get(&(user, *id)) == Some(&view) {
+                    continue;
+                }
+                let frame = views
+                    .entry(c.user)
+                    .or_insert_with(|| {
+                        ServerFrame::Event(Event::PresenceChanged {
+                            user_id: user,
+                            online: view.online(),
+                            last_seen_at: view.last_seen_at.clone(),
+                            status: view.status,
+                        })
+                    })
+                    .clone();
+                announced.insert((user, *id), view);
+                to.insert(*id, frame);
+            }
+        }
+        if to.is_empty() {
             return None;
         }
-        let frame = ServerFrame::Event(Event::PresenceChanged {
-            user_id: user,
-            online,
-            last_seen_at: (!online).then_some(last_seen_at),
-        });
-        deliver(&mut conns, &audience, &frame);
-        Some(online)
+        send_each(&mut conns, &to);
+        Some(connected)
     }
+
+    /// Everyone in `users` as `viewer` may see them, for the Ready of `viewer`'s connection
+    /// `conn`; what it says is what later announcements to that connection are measured against.
+    pub async fn people_for(
+        &self,
+        db: &SqlitePool,
+        viewer: UserId,
+        conn: Option<ConnId>,
+        users: Vec<(User, Option<String>)>,
+    ) -> anyhow::Result<Vec<Person>> {
+        let _order = self.inner.presence.lock().await;
+        let all = load_all(db).await?;
+        let now = crate::db::now();
+        let conns = self.inner.conns.lock().unwrap();
+        let mut announced = self.inner.announced.lock().unwrap();
+        Ok(users
+            .into_iter()
+            .map(|(user, last_seen_at)| {
+                let connected = conns.values().any(|c| c.user == user.id);
+                let view = match all.get(&user.id) {
+                    Some(s) => view_for(s, viewer, connected, &now),
+                    // Someone who registered between the two reads: no status yet.
+                    None => PresenceView {
+                        status: if connected {
+                            pulse_protocol::rest::PresenceStatus::Online
+                        } else {
+                            pulse_protocol::rest::PresenceStatus::Offline
+                        },
+                        last_seen_at: (!connected).then_some(last_seen_at).flatten(),
+                    },
+                };
+                if let Some(conn) = conn {
+                    announced.insert((user.id, conn), view.clone());
+                }
+                Person {
+                    user,
+                    online: view.online(),
+                    last_seen_at: view.last_seen_at,
+                    status: view.status,
+                }
+            })
+            .collect())
+    }
+}
+
+/// Queue each connection's own frame; drop connections that can't keep up.
+fn send_each(conns: &mut HashMap<ConnId, Conn>, frames: &HashMap<ConnId, ServerFrame>) {
+    conns.retain(|id, c| {
+        let Some(frame) = frames.get(id) else {
+            return true;
+        };
+        match c.tx.try_send(frame.clone()) {
+            Ok(()) => true,
+            Err(mpsc::error::TrySendError::Full(_)) => {
+                tracing::warn!(conn = id, user = %c.user, "gateway client too slow; dropping");
+                c.kick(CLOSE_TOO_SLOW);
+                false
+            }
+            Err(mpsc::error::TrySendError::Closed(_)) => false,
+        }
+    });
 }
 
 /// Queue `frame` for every connection in `audience`; drop connections that can't keep up.

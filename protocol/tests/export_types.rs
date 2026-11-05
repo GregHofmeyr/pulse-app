@@ -49,6 +49,7 @@ fn owner_only_events_name_their_owner() {
         user_id: u,
         online: true,
         last_seen_at: None,
+        status: Default::default(),
     };
     assert_eq!(p.only_for(), None);
     assert_eq!(p.channel_id(), None);
@@ -69,4 +70,50 @@ fn message_mentions_default_to_empty() {
     }))
     .unwrap();
     assert!(m.mentions.is_empty());
+}
+
+#[test]
+fn old_presence_payloads_default_their_status() {
+    use pulse_protocol::gateway::Event;
+    use pulse_protocol::rest::{Person, PresenceStatus};
+    let p: Person = serde_json::from_value(serde_json::json!({
+        "user": { "id": "01J00000000000000000000000", "username": "sam", "avatar_hash": null },
+        "online": true, "last_seen_at": null
+    }))
+    .unwrap();
+    assert_eq!(p.status, PresenceStatus::Offline);
+    let e: Event = serde_json::from_value(serde_json::json!({
+        "t": "PresenceChanged",
+        "d": { "user_id": "01J00000000000000000000000", "online": false, "last_seen_at": null }
+    }))
+    .unwrap();
+    assert!(matches!(
+        e,
+        Event::PresenceChanged {
+            status: PresenceStatus::Offline,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn status_events_are_owner_only() {
+    use pulse_protocol::gateway::Event;
+    use pulse_protocol::ids::UserId;
+    use pulse_protocol::rest::OwnStatus;
+    let u = UserId::new();
+    for e in [
+        Event::StatusChanged {
+            user_id: u,
+            status: OwnStatus::default(),
+        },
+        Event::AppearOfflineChanged {
+            user_id: u,
+            target_id: UserId::new(),
+            hidden: true,
+        },
+    ] {
+        assert_eq!(e.only_for(), Some(u));
+        assert_eq!(e.channel_id(), None);
+    }
 }

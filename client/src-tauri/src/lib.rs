@@ -313,6 +313,8 @@ pub fn run() {
             commands::report_egg,
             commands::set_nickname,
             commands::set_private_nickname,
+            commands::set_status,
+            commands::set_appear_offline,
             commands::name_archive,
             commands::upload_avatar_media,
             commands::upload_banner_media,
