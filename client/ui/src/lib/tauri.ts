@@ -9,6 +9,9 @@ import type { BadgeCatalogue } from './protocol/BadgeCatalogue'
 import type { CropRect } from './crop'
 import type { Server } from './protocol/Server'
 import type { Channel } from './protocol/Channel'
+import type { Category } from './protocol/Category'
+import type { SaveLayoutRequest } from './protocol/SaveLayoutRequest'
+import type { ServerLayout } from './protocol/ServerLayout'
 import type { DeletedChannel } from './protocol/DeletedChannel'
 import type { Member } from './protocol/Member'
 import type { Status } from './protocol/Status'
@@ -141,8 +144,16 @@ export const api = {
   probe: () => invoke<void>('gateway_probe'),
   listServers: () => invoke<Server[]>('list_servers'),
   createServer: (name: string) => invoke<Server>('create_server', { name }),
-  createChannel: (serverId: string, kind: 'text' | 'quotes' | 'clips' | 'voice', name: string) =>
-    invoke<Channel>('create_channel', { serverId, kind, name }),
+  /** In `categoryId` (#54) at its bottom; without one, at the bottom of the uncategorised area. */
+  createChannel: (serverId: string, kind: 'text' | 'quotes' | 'clips' | 'voice', name: string, categoryId?: string | null) =>
+    invoke<Channel>('create_channel', categoryId ? { serverId, kind, name, categoryId } : { serverId, kind, name }),
+  /** Categories (#54): everyone in the server hears LayoutChanged for each of these. */
+  createCategory: (serverId: string, name: string) => invoke<Category>('create_category', { serverId, name }),
+  renameCategory: (categoryId: string, name: string) => invoke<Category>('rename_category', { categoryId, name }),
+  /** Its channels move to the top of the list, keeping their order. */
+  deleteCategory: (categoryId: string) => invoke<void>('delete_category', { categoryId }),
+  /** The server's whole order; refused when `layout.revision` isn't the server's current one. */
+  saveLayout: (serverId: string, layout: SaveLayoutRequest) => invoke<ServerLayout>('save_layout', { serverId, layout }),
   joinServer: (serverId: string) => invoke<void>('join_server', { serverId }),
   listChannels: (serverId: string) => invoke<Channel[]>('list_channels', { serverId }),
   listMembers: (serverId: string) => invoke<Member[]>('list_members', { serverId }),

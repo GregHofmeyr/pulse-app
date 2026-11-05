@@ -166,12 +166,12 @@
   }
   /** In a collapsed section only these rows stay: the channel you're on, and unread ones. */
   const keep = (c: Channel, kind: string) =>
-    !isCollapsed(serverId, kind) || c.id === activeChannelId || ((app.state.reads[c.id]?.unread ?? 0) > 0 && !isMuted(app.state, c, clock.nowIso))
+    !isCollapsed(`${serverId}:${kind}`) || c.id === activeChannelId || ((app.state.reads[c.id]?.unread ?? 0) > 0 && !isMuted(app.state, c, clock.nowIso))
 </script>
 
 {#snippet heading(kind: string, text: string)}
-  {@const open = !isCollapsed(serverId, kind)}
-  <button type="button" class="section" aria-expanded={open} onclick={() => toggleSection(serverId, kind)}>
+  {@const open = !isCollapsed(`${serverId}:${kind}`)}
+  <button type="button" class="section" aria-expanded={open} onclick={() => toggleSection(`${serverId}:${kind}`)}>
     <span class="caret" class:shut={!open}><Icon name="chevron" size={11} /></span>{text}
   </button>
 {/snippet}
@@ -236,7 +236,7 @@
     {#if addError}<small class="err">{addError}</small>{/if}
   {/if}
   {#each lists.voice as c (c.id)}
-    {#if !isCollapsed(serverId, 'voice') || c.id === voiceChannelId}
+    {#if !isCollapsed(`${serverId}:voice`) || c.id === voiceChannelId}
     {@const people = member ? callRoster(app.state, serverId, c.id, self) : []}
     {#if renaming === c.id}
       {@render renameField(c, 'speaker')}

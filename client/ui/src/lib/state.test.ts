@@ -1,11 +1,13 @@
 import { describe, expect, it } from 'vitest'
-import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, setProfile, type AppState, type Pending } from './state'
+import { applyEvent, applyReady, applyMyVote, emptyState, addPending, pendingMessage, removePending, restoreUnsent, markHistory, applyLayout, addHistory, addReplies, holdThread, openFeed, loadFeedPage, setClipJob, dropClipJob, setProfile, type AppState, type Pending } from './state'
 import { feedKey, clipView, type ClipFilter } from './clips'
 import type { Ready } from './protocol/Ready'
 import type { Message } from './protocol/Message'
 import type { Event } from './protocol/Event'
 import type { QotyEvent } from './protocol/QotyEvent'
 import type { Channel } from './protocol/Channel'
+import type { Category } from './protocol/Category'
+import type { ServerLayout } from './protocol/ServerLayout'
 import type { Quote } from './protocol/Quote'
 import type { StreamInfo } from './protocol/StreamInfo'
 
@@ -1394,5 +1396,72 @@ describe('profiles', () => {
     expect(s.soundFavourites).toEqual(['C'])
     s = applyEvent(s, { t: 'FrequentSounds', d: { user_id: 'U1', frequent: ['C', 'B'] } }, 0)
     expect(s.frequentSounds).toEqual(['C', 'B'])
+  })
+})
+
+// Categories (#54): the server's layout lives in `layouts`; LayoutChanged moves channels, never a rename.
+describe('layouts', () => {
+  const cat = (id: string, position: number, name = id): Category => ({ id, server_id: 'S1', name, position })
+  const placed = (c: Channel, category_id: string | undefined, position: number): Channel => {
+    const { category_id: _x, ...rest } = c
+    return category_id ? { ...rest, category_id, position } : { ...rest, position }
+  }
+  const layout = (revision: number, categories: Category[], channels: ServerLayout['channels']): ServerLayout => ({ server_id: 'S1', revision, categories, channels })
+  const withLayout = () =>
+    applyReady(emptyState(), ready({
+      channels: [placed(ch('C1'), 'K1', 0), placed(ch('V1', 'voice'), 'K2', 0)],
+      layouts: [layout(3, [cat('K1', 0), cat('K2', 1)], [])],
+    }))
+
+  it('a Ready without layouts is a legacy layout', () => {
+    const s = applyReady(emptyState(), ready())
+    expect(s.layouts).toEqual({})
+    expect(withLayout().layouts).toEqual({ S1: { revision: 3, categories: [cat('K1', 0), cat('K2', 1)] } })
+  })
+
+  it('LayoutChanged moves channels and categories', () => {
+    const s0 = withLayout()
+    const s = applyEvent(s0, { t: 'LayoutChanged', d: { layout: layout(4, [cat('K2', 0), cat('K1', 1)], [
+      { channel_id: 'C1', category_id: 'K1', position: 0 },
+      { channel_id: 'V1', category_id: null, position: 0 },
+    ]) } }, 0)
+    expect(s.layouts['S1']).toEqual({ revision: 4, categories: [cat('K2', 0), cat('K1', 1)] })
+    expect('category_id' in s.channels['V1']).toBe(false)
+    expect(s.channels['V1'].position).toBe(0)
+    // An unchanged channel stays the same object.
+    expect(s.channels['C1']).toBe(s0.channels['C1'])
+  })
+
+  it('an older LayoutChanged is ignored', () => {
+    const s0 = withLayout()
+    const s = applyEvent(s0, { t: 'LayoutChanged', d: { layout: layout(2, [], [{ channel_id: 'C1', category_id: null, position: 5 }]) } }, 0)
+    expect(s).toBe(s0)
+  })
+
+  it('a layout for a server held without one starts it; unknown channels are skipped', () => {
+    const s0 = applyReady(emptyState(), ready())
+    const s = applyLayout(s0, layout(1, [cat('K1', 0)], [{ channel_id: 'C1', category_id: 'K1', position: 2 }, { channel_id: 'GONE', category_id: null, position: 0 }]))
+    expect(s.layouts['S1'].revision).toBe(1)
+    expect(s.channels['C1']).toMatchObject({ category_id: 'K1', position: 2 })
+    expect(s.channels['GONE']).toBeUndefined()
+  })
+
+  it('ChannelUpdated keeps the placement the layout gave', () => {
+    let s = withLayout()
+    s = applyEvent(s, { t: 'LayoutChanged', d: { layout: layout(4, [cat('K1', 0), cat('K2', 1)], [
+      { channel_id: 'C1', category_id: 'K2', position: 1 },
+      { channel_id: 'V1', category_id: 'K2', position: 0 },
+    ]) } }, 0)
+    // A rename sent before the move lands after it: the name changes, the place doesn't.
+    s = applyEvent(s, { t: 'ChannelUpdated', d: { channel: { ...placed(ch('C1'), 'K1', 0), name: 'renamed' } } }, 0)
+    expect(s.channels['C1']).toMatchObject({ name: 'renamed', category_id: 'K2', position: 1 })
+    s = applyEvent(s, { t: 'LayoutChanged', d: { layout: layout(5, [cat('K1', 0), cat('K2', 1)], [
+      { channel_id: 'C1', category_id: null, position: 0 },
+      { channel_id: 'V1', category_id: 'K2', position: 0 },
+    ]) } }, 0)
+    s = applyEvent(s, { t: 'ChannelUpdated', d: { channel: { ...placed(ch('C1'), 'K1', 3), name: 'again' } } }, 0)
+    expect(s.channels['C1'].name).toBe('again')
+    expect('category_id' in s.channels['C1']).toBe(false)
+    expect(s.channels['C1'].position).toBe(0)
   })
 })

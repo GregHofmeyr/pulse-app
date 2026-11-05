@@ -1,0 +1,80 @@
+// @vitest-environment jsdom
+// Categories (#54): a reorder shows at once as a draft over the server's layout; the saved layout replaces it, a
+// refused one (someone else moved first) snaps back to the server's order with a notice.
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const invoke = vi.hoisted(() => vi.fn())
+vi.mock('@tauri-apps/api/core', () => ({ invoke }))
+vi.mock('@tauri-apps/api/event', () => ({ listen: async () => () => {} }))
+
+import { drafts, saveOrder } from './layoutDraft.svelte'
+import { app, ui } from './store.svelte'
+import { emptyState } from './state'
+import { toRequest, type Order } from './layout'
+import type { Channel } from './protocol/Channel'
+import type { ServerLayout } from './protocol/ServerLayout'
+
+const ch = (id: string, position: number, category_id?: string): Channel => ({ id, server_id: 'S1', kind: 'text', name: id, position, ...(category_id ? { category_id } : {}) })
+const cat = { id: 'K1', server_id: 'S1', name: 'Gaming', position: 0 }
+const order: Order = { top: ['B'], cats: [{ id: 'K1', channels: ['A'] }] }
+const saved: ServerLayout = {
+  server_id: 'S1', revision: 8, categories: [cat],
+  channels: [{ channel_id: 'B', category_id: null, position: 0 }, { channel_id: 'A', category_id: 'K1', position: 0 }],
+}
+function deferred<T>() {
+  let resolve!: (v: T) => void
+  let reject!: (e: unknown) => void
+  const promise = new Promise<T>((a, b) => ((resolve = a), (reject = b)))
+  return { promise, resolve, reject }
+}
+
+beforeEach(() => {
+  invoke.mockReset()
+  drafts.byServer = {}
+  ui.notice = null
+  app.state = { ...emptyState(), channels: { A: ch('A', 0), B: ch('B', 0, 'K1') }, layouts: { S1: { revision: 7, categories: [cat] } } }
+})
+
+describe('saveOrder', () => {
+  it('the draft shows at once and the saved layout replaces it', async () => {
+    const d = deferred<ServerLayout>()
+    invoke.mockReturnValueOnce(d.promise)
+    const done = saveOrder('S1', order)
+    expect(drafts.byServer['S1']).toEqual(order)
+    expect(invoke).toHaveBeenCalledWith('save_layout', { serverId: 'S1', layout: toRequest(order, 7) })
+    d.resolve(saved)
+    await done
+    expect(drafts.byServer['S1']).toBeUndefined()
+    expect(app.state.layouts['S1'].revision).toBe(8)
+    expect(app.state.channels['A'].category_id).toBe('K1')
+    expect('category_id' in app.state.channels['B']).toBe(false)
+    expect(ui.notice).toBeNull()
+  })
+
+  it('a refused save snaps back', async () => {
+    invoke.mockRejectedValueOnce('Someone else changed the list first')
+    const before = app.state
+    await saveOrder('S1', order)
+    expect(drafts.byServer['S1']).toBeUndefined()
+    expect(app.state).toBe(before)
+    expect(ui.notice).toBe('Someone else changed the list first')
+  })
+
+  it('a second save replaces the draft, on the same revision, and the first landing leaves it showing', async () => {
+    const first = deferred<ServerLayout>()
+    const second = deferred<ServerLayout>()
+    invoke.mockReturnValueOnce(first.promise).mockReturnValueOnce(second.promise)
+    const next: Order = { top: [], cats: [{ id: 'K1', channels: ['A', 'B'] }] }
+    const a = saveOrder('S1', order)
+    const b = saveOrder('S1', next)
+    expect(drafts.byServer['S1']).toEqual(next)
+    expect(invoke).toHaveBeenLastCalledWith('save_layout', { serverId: 'S1', layout: toRequest(next, 7) })
+    first.resolve(saved)
+    await a
+    expect(drafts.byServer['S1']).toEqual(next)
+    second.reject('stale')
+    await b
+    expect(drafts.byServer['S1']).toBeUndefined()
+    expect(app.state.layouts['S1'].revision).toBe(8)
+  })
+})

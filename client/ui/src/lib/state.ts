@@ -1,7 +1,9 @@
 // The app's single source of truth, as pure functions over plain data so they're easy to test.
 // The reactive wrapper lives in store.svelte.ts.
 import type { CallInfo } from './protocol/CallInfo'
+import type { Category } from './protocol/Category'
 import type { Channel } from './protocol/Channel'
+import type { ServerLayout } from './protocol/ServerLayout'
 import type { ClipFacets } from './protocol/ClipFacets'
 import type { ClipView } from './protocol/ClipView'
 import type { CustomEmoji } from './protocol/CustomEmoji'
@@ -113,6 +115,9 @@ export type AppState = {
   clipFeeds: Record<string, ClipFeed>
   clipFacets: Record<string, ClipFacets> // channelId -> filter chips
   clipJobs: Record<string, ClipJob> // job id -> clip being sent (a cancelled one is removed; a posted one stays a moment)
+  /** serverId -> its categories in order and the layout revision they're from (#54). A server missing here is an
+   *  older one without categories: its list shows the four kind sections. Where channels sit is on the channels. */
+  layouts: Record<string, { revision: number; categories: Category[] }>
 }
 
 export type ClipFeed = { channelId: string; filter: ClipFilter; items: Message[] /* newest first */; start: boolean; loading: boolean; /** Clips deleted while a page was being fetched (it may still carry them). */ gone?: string[] }
@@ -129,7 +134,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], liveNotify: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], notifyLevels: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {}, layouts: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -202,7 +207,31 @@ export function applyReady(s: AppState, r: Ready): AppState {
     clipViews: Object.fromEntries(r.clip_views.map((v) => [v.channel_id, v.view])),
     clipFeeds: {},
     clipFacets: {},
+    // absent from older servers: no categories (the list shows the four kind sections)
+    layouts: Object.fromEntries((r.layouts ?? []).map((l) => [l.server_id, { revision: l.revision, categories: l.categories }])),
   }
+}
+
+/** `c` placed in `category` (null: uncategorised, the field absent) at `position`; `c` itself when it's already there. */
+function placed(c: Channel, category: string | null | undefined, position: number): Channel {
+  if ((c.category_id ?? null) === (category ?? null) && c.position === position) return c
+  const { category_id: _old, ...rest } = c
+  return category ? { ...rest, category_id: category, position } : { ...rest, position }
+}
+
+/** A server's whole layout (#54), from a save or `LayoutChanged`: its categories, and where each channel we hold
+ *  sits. One older than the layout held (events can cross a save's answer) is ignored. */
+export function applyLayout(s: AppState, layout: ServerLayout): AppState {
+  const held = s.layouts[layout.server_id]
+  if (held && layout.revision < held.revision) return s
+  const moved: Record<string, Channel> = {}
+  for (const p of layout.channels) {
+    const c = s.channels[p.channel_id]
+    const next = c && placed(c, p.category_id, p.position)
+    if (next && next !== c) moved[c.id] = next
+  }
+  const channels = Object.keys(moved).length ? { ...s.channels, ...moved } : s.channels
+  return { ...s, channels, layouts: { ...s.layouts, [layout.server_id]: { revision: layout.revision, categories: layout.categories } } }
 }
 
 /** One vote per server: the live one, else the most recently started. (A reopened vote can be
@@ -757,9 +786,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
     // Toasts and the [NEW] count live outside the reducer.
     case 'BadgeEarned':
       return s
-    // Categories (#54): the layouts slice that holds this comes with the client side of the feature.
     case 'LayoutChanged':
-      return s
+      return applyLayout(s, e.d.layout)
     case 'ChannelCreated':
     // Back from Recently deleted: its history loads when it's opened; our counts and mutes in it
     // follow as ReadStateUpdated and MutesChanged.
@@ -827,8 +855,12 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return profileUpdated(s, e.d)
     case 'GroupMembersChanged':
       return { ...s, dmMembers: { ...s.dmMembers, [e.d.channel_id]: e.d.user_ids } }
-    case 'ChannelUpdated':
-      return { ...s, channels: { ...s.channels, [e.d.channel.id]: e.d.channel } }
+    case 'ChannelUpdated': {
+      // Where a channel sits is the layout's (#54): a rename that crosses a move must not move it back.
+      const held = s.channels[e.d.channel.id]
+      const c = held ? placed(e.d.channel, held.category_id, held.position) : e.d.channel
+      return { ...s, channels: { ...s.channels, [c.id]: c } }
+    }
     case 'ChannelRemoved':
       return dropChannel(s, e.d.channel_id)
     case 'ChannelDeleted': {
