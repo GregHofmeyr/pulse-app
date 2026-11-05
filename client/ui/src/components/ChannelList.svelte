@@ -3,6 +3,7 @@
   // heading. An older server without categories shows today's four kind sections, each with its own +.
   // Structure (the drag action, #55, relies on it): `.list` > `.cat.top` (rows) and one `.cat[data-category=<id>]`
   // per category (legacy sections: `.cat` without data-category), each `.label` heading then its rows `[data-channel]`.
+  // Members drag rows and category headings to reorder (lib/drag.ts); legacy sections and non-members don't drag.
   import { tick, untrack } from 'svelte'
   import Icon, { type IconName } from './Icon.svelte'
   import type { Channel } from '../lib/protocol/Channel'
@@ -14,7 +15,8 @@
   import { api, errorText } from '../lib/tauri'
   import { isMuted } from '../lib/conversations'
   import { isCollapsed, setCollapsed, toggleSection } from '../lib/sidebarSections.svelte'
-  import { applyOrder, orderOf, sidebarLayout, stepCategory, stepChannel, type Order, type Section } from '../lib/layout'
+  import { applyOrder, moveCategory as placeCategory, moveChannel as placeChannel, orderOf, sidebarLayout, stepCategory, stepChannel, type Order, type Section } from '../lib/layout'
+  import { sortableList, type Drop } from '../lib/drag'
   import { drafts, saveOrder } from '../lib/layoutDraft.svelte'
   import { categoryUi } from '../lib/categoryUi.svelte'
   import LiveBadge from './LiveBadge.svelte'
@@ -181,6 +183,30 @@
     void saveOrder(serverId, next)
     void refocus(headingSelector(id))
   }
+
+  // Dragging (#55): the drop is saved like a keyboard move, as a draft shown at once (the drag action clears its
+  // transforms in the same frame this renders).
+  function dropped(d: Drop) {
+    const o = order()
+    let next: Order
+    if (d.kind === 'category') next = placeCategory(o, d.id, d.index)
+    else {
+      let { category, index } = d.to
+      const key = `cat:${category}`
+      if (category && isCollapsed(key)) {
+        // a collapsed category shows only some of its rows: the drop is after the shown row above it; and it opens,
+        // so the row doesn't vanish from under you
+        const sec = layout.sections.find((x) => x.category?.id === category)
+        const all = (sec?.channels ?? []).filter((c) => c.id !== d.id)
+        const above = all.filter((c) => shown(c, key))[index - 1]
+        index = above ? all.indexOf(above) + 1 : 0
+        setCollapsed(key, false)
+      }
+      next = placeChannel(o, d.id, { category, index })
+    }
+    if (JSON.stringify(next) !== JSON.stringify(o)) void saveOrder(serverId, next)
+  }
+  const dragOpts = { enabled: () => arrange, onDrop: dropped, onHoverSection: (key: string) => setCollapsed(key, false) }
 
   // a category heading's menu (members, categories only): right-click, or Shift+F10 / the menu key on the heading
   let catMenu = $state<{ category: Category; x: number; y: number; opener: HTMLElement } | null>(null)
@@ -459,7 +485,7 @@
   {#if c.kind === 'voice'}{@render voiceRow(c)}{:else}{@render channelRow(c, ICON[c.kind] ?? 'hash')}{/if}
 {/snippet}
 
-<div class="list" bind:this={listEl}>
+<div class="list" bind:this={listEl} use:sortableList={dragOpts}>
   <div class="cat top">
     {#each layout.top as c (c.id)}{@render chan(c)}{/each}
   </div>
@@ -501,7 +527,17 @@
 {/if}
 
 <style>
-  .list { flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+  .list { position: relative; flex: 1; padding: 8px; display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
+  /* dragging (#55, lib/drag.ts): transforms only. What makes room slides; the lifted item follows the pointer (no
+     transition) until it's dropped or sent back (returning); the frame a drop renders in has no transitions at all. */
+  .list:global(.dragging) { user-select: none; touch-action: none; cursor: grabbing; }
+  .list:global(.dragging) :global(*) { cursor: grabbing; }
+  .list :global(.shift) { transition: transform var(--dur) var(--ease); }
+  .list :global(.lifted) { position: relative; z-index: 2; background: var(--bg-2); box-shadow: var(--shadow-1); transition: none; }
+  .list :global(.cat.lifted) { border-radius: var(--radius-sm); }
+  .list :global(.lifted.returning) { transition: transform var(--dur) var(--ease); }
+  .list:global(.settling) :global(*) { transition: none !important; }
+  .list :global(.drop-line) { position: absolute; top: 0; left: 8px; right: 8px; height: 2px; border-radius: var(--radius-xs); background: var(--accent); pointer-events: none; z-index: 1; transition: transform var(--dur-fast) var(--ease); }
   /* a section: its heading, then its rows (the top area has no heading, and nothing to show when empty) */
   .cat { display: flex; flex-direction: column; gap: 2px; }
   .cat.top:empty { display: none; }
