@@ -249,7 +249,7 @@ async fn ready_for(
             .unwrap_or_default(),
         appear_offline_to: crate::presence::hidden_list(db, me).await?,
         live_notify: crate::streams::notify::list(db, me).await?,
-        layouts: vec![],
+        layouts: crate::servers::categories::all_layouts(db).await?,
     })
 }
 

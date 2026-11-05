@@ -44,6 +44,9 @@ pub mod caps {
     /// Custom emoji rows in one server, deleted ones included (they are kept so old messages
     /// keep their `:name:`). The live cap is `emoji::MAX_PER_SERVER`.
     pub const EMOJI_ROWS_PER_SERVER: i64 = 500;
+    /// Categories in one server (#54). Far more than a sidebar needs; it only stops a script
+    /// filling one with headings.
+    pub const CATEGORIES_PER_SERVER: i64 = 50;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -117,6 +120,9 @@ pub struct LimitsConfig {
     pub live_notify_user: Rate,
     /// Calls started per person (#50): stops ring spam, not normal use. Joining a call already going counts too.
     pub call_user: Rate,
+    /// Category and layout changes per person (#54): creating, renaming or deleting a category
+    /// and saving a new order. Generous, like renames: a burst of drags is normal use.
+    pub layout_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -162,6 +168,7 @@ impl Default for LimitsConfig {
             live_notify_user: Rate::per_minute(30),
             // six at once, then one every 20 s
             call_user: Rate::new(6, 0.05),
+            layout_user: Rate::new(30, 1.0),
         }
     }
 }
@@ -200,6 +207,7 @@ impl LimitsConfig {
             status_user: r,
             live_notify_user: r,
             call_user: r,
+            layout_user: r,
         }
     }
 }
@@ -351,6 +359,7 @@ pub struct Limits {
     pub status_user: Limiter,
     pub live_notify_user: Limiter,
     pub call_user: Limiter,
+    pub layout_user: Limiter,
 }
 
 impl Limits {
@@ -385,6 +394,7 @@ impl Limits {
             status_user: Limiter::new(c.status_user),
             live_notify_user: Limiter::new(c.live_notify_user),
             call_user: Limiter::new(c.call_user),
+            layout_user: Limiter::new(c.layout_user),
         }
     }
 }

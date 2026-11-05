@@ -20,7 +20,7 @@ use crate::db::now;
 use crate::error::{AppError, AppResult};
 use crate::limits::caps;
 use crate::profiles::users::{USER_COLS, USER_JOIN, UserRow};
-use crate::servers::categories::insert_category;
+use crate::servers::categories::{bottom_of, bump, insert_category, publish_layout};
 
 const MAX_GROUP_OTHERS: usize = 9;
 
@@ -170,6 +170,8 @@ async fn create_server(
     let name = clean_name(&req.name)?;
     let id = ServerId::new();
     let at = now();
+    // Its layout goes out with it (below): in order with every other layout.
+    let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     let mine: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM servers WHERE created_by = ?")
         .bind(me.to_string())
@@ -231,6 +233,9 @@ async fn create_server(
             },
         )
         .await;
+    // Before its channels, so clients already connected know the categories they sit in (Ready
+    // carries them for everyone who connects later).
+    publish_layout(&s, id).await;
     s.hub
         .publish(&s.db, Event::ChannelCreated { channel: general })
         .await;
@@ -390,6 +395,8 @@ async fn create_channel(
         ));
     }
     let name = clean_name(&req.name)?;
+    // A new channel changes the server's layout: publish it in revision order.
+    let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM channels WHERE server_id = ?")
         .bind(id.to_string())
@@ -401,14 +408,32 @@ async fn create_channel(
             caps::CHANNELS_PER_SERVER
         )));
     }
-    let pos: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(position) + 1, 0) FROM channels WHERE server_id = ? AND kind = ?",
+    // Checked under the write lock, so the category can't be deleted between here and the insert.
+    if let Some(category) = req.category_id {
+        let ours: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM categories WHERE id = ? AND server_id = ?")
+                .bind(category.to_string())
+                .bind(id.to_string())
+                .fetch_optional(&mut *tx)
+                .await?;
+        if ours.is_none() {
+            return Err(AppError::BadRequest(
+                "that category isn't in this server".into(),
+            ));
+        }
+    }
+    // At the bottom of its category (or of the uncategorised area), whatever its kind.
+    let pos = bottom_of(&mut tx, id, req.category_id).await?;
+    let ch = insert_channel(
+        &mut tx,
+        Some(id),
+        req.kind,
+        Some(&name),
+        pos,
+        req.category_id,
     )
-    .bind(id.to_string())
-    .bind(req.kind.as_str())
-    .fetch_one(&mut *tx)
     .await?;
-    let ch = insert_channel(&mut tx, Some(id), req.kind, Some(&name), pos, None).await?;
+    bump(&mut tx, id).await?;
     if req.kind.is_server_chat() {
         // Everyone in the server starts at "all read" (the channel is empty).
         let members: Vec<String> =
@@ -430,6 +455,7 @@ async fn create_channel(
             },
         )
         .await;
+    publish_layout(&s, id).await;
     Ok(Json(ch))
 }
 

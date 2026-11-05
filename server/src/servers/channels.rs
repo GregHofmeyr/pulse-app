@@ -19,6 +19,7 @@ use crate::AppState;
 use crate::access::{CHANNEL_COLS, channel_for, channel_from_row, load_channel};
 use crate::auth::AuthUser;
 use crate::error::{AppError, AppResult};
+use crate::servers::categories::{bottom_of, bump, publish_layout};
 
 /// The server channel `id`, if `me` may change it: 404 when there is none (or it's a
 /// conversation `me` isn't in), 400 for a DM or group, 403 when `me` isn't in its server.
@@ -119,6 +120,8 @@ pub async fn delete(
         .into_iter()
         .filter_map(|(user, joined, left)| Some((user.parse().ok()?, joined, left)))
         .collect();
+    // It leaves the layout: a save based on the order with it in is stale now.
+    bump(&mut tx, server).await?;
     tx.commit().await?;
     s.hub
         .publish(
@@ -129,6 +132,7 @@ pub async fn delete(
             },
         )
         .await;
+    publish_layout(&s, server).await;
     drop(_order);
     // Badge bookkeeping in its own transaction, after the delete: it never fails it.
     crate::badges::voice::closed(&s, id, &closed).await;
@@ -304,8 +308,10 @@ pub async fn list_deleted(
     Ok(Json(out))
 }
 
-/// `POST /channels/{id}/restore`: put a deleted server channel back where it was, with everything
-/// in it, live for everyone. The server owner and whoever deleted it may.
+/// `POST /channels/{id}/restore`: put a deleted server channel back, with everything in it, live
+/// for everyone. The server owner and whoever deleted it may. It goes to the bottom of its
+/// category, or of the uncategorised area when its category was deleted meanwhile (which cleared
+/// its `category_id`): the order has moved on since, so its old position means nothing now.
 pub async fn restore(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -317,16 +323,22 @@ pub async fn restore(
     // The counts that follow are absolutes: in commit order.
     let _order = s.hub.in_order().await;
     let mut tx = crate::db::begin_write(&s.db).await?;
-    let (_, server, deleted_by) = deleted_channel(&mut tx, id).await?;
+    let (old, server, deleted_by) = deleted_channel(&mut tx, id).await?;
     if !member_in(&mut tx, server, me).await?
         || (owner_of(&mut tx, server).await? != me && deleted_by != Some(me))
     {
         return Err(AppError::Forbidden);
     }
-    sqlx::query("UPDATE channels SET deleted_at = NULL, deleted_by = NULL WHERE id = ?")
-        .bind(id.to_string())
-        .execute(&mut *tx)
-        .await?;
+    // Before it is live again, so it isn't counted in its own bottom.
+    let position = bottom_of(&mut tx, server, old.category_id).await?;
+    sqlx::query(
+        "UPDATE channels SET deleted_at = NULL, deleted_by = NULL, position = ? WHERE id = ?",
+    )
+    .bind(position)
+    .bind(id.to_string())
+    .execute(&mut *tx)
+    .await?;
+    bump(&mut tx, server).await?;
     tx.commit().await?;
     let channel = load_channel(&s.db, id).await?.ok_or(AppError::NotFound)?;
     s.hub
@@ -337,6 +349,7 @@ pub async fn restore(
             },
         )
         .await;
+    publish_layout(&s, server).await;
     // Clients dropped its counts and mutes with the channel: each member gets theirs back. The
     // restore has landed, so a failed read is logged and that event skipped.
     if let Err(e) = republish_own_state(&s, id).await {

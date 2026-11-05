@@ -596,16 +596,25 @@ async fn the_deleter_or_the_owner_restores_and_everyone_hears() {
     let mut sam_rx = w.app.hub.register(w.sam.0, String::new()).rx;
     let r = restore(&w, &w.sam.1, old.id).await;
     assert_eq!(r.status(), 200);
-    assert_eq!(r.json::<Channel>().await.unwrap(), old, "back where it was");
+    // Back in its place in the list (#54): the bottom of its area, below the twin made meanwhile.
+    let back = Channel {
+        position: twin.position + 1,
+        ..old.clone()
+    };
+    assert_eq!(r.json::<Channel>().await.unwrap(), back);
 
     match next_event(&mut jo_rx).await {
-        Event::ChannelRestored { channel } => assert_eq!(channel, old),
+        Event::ChannelRestored { channel } => assert_eq!(channel, back),
         other => panic!("unexpected {other:?}"),
     }
     match next_event(&mut sam_rx).await {
-        Event::ChannelRestored { channel } => assert_eq!(channel, old),
+        Event::ChannelRestored { channel } => assert_eq!(channel, back),
         other => panic!("unexpected {other:?}"),
     }
+    assert!(matches!(
+        next_event(&mut sam_rx).await,
+        Event::LayoutChanged { .. }
+    ));
     // sam's own counts and mutes come back with it
     let mut got_counts = false;
     let mut got_mutes = false;
@@ -631,7 +640,7 @@ async fn the_deleter_or_the_owner_restores_and_everyone_hears() {
 
     let listed: Vec<Channel> =
         get_json(&w.app, &kim.1, &format!("/servers/{}/channels", w.server)).await;
-    assert!(listed.contains(&old) && listed.contains(&twin));
+    assert!(listed.contains(&back) && listed.contains(&twin));
     let page: Vec<Message> =
         get_json(&w.app, &kim.1, &format!("/channels/{}/messages", old.id)).await;
     assert_eq!(page.len(), 1);
@@ -817,7 +826,9 @@ async fn a_restore_brings_back_your_clip_view() {
                 );
                 break;
             }
-            Event::ChannelRestored { .. } | Event::ReadStateUpdated { .. } => {}
+            Event::ChannelRestored { .. }
+            | Event::LayoutChanged { .. }
+            | Event::ReadStateUpdated { .. } => {}
             other => panic!("unexpected {other:?}"),
         }
     }
