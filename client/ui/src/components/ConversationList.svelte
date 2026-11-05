@@ -95,6 +95,6 @@
   .mute { color: var(--text-3); display: grid; }
   .in-call { color: var(--ok-text); display: grid; }
   /* the unread pill of the channel list and server tabs (#173) */
-  .pill { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: grid; place-items: center; }
+  .pill { min-width: 16px; height: 16px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-block; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((16px - 1cap) / 2) 4px; }
   .empty { padding: 12px 10px; font-size: 13px; color: var(--text-3); }
 </style>

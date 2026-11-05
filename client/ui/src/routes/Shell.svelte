@@ -731,7 +731,7 @@
   .empty { margin: auto; color: var(--text-3); }
   .join { margin: auto; display: flex; flex-direction: column; align-items: center; gap: 12px; }
   .error { color: var(--danger-text); }
-  .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-grid; place-items: center; }
+  .tab .pill { margin-left: 4px; min-width: 16px; height: 16px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-block; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((16px - 1cap) / 2) 4px; }
   .tab .invc { color: var(--accent-text); display: grid; margin-left: -2px; }
   .tab .dot { margin-left: 4px; width: 7px; height: 7px; border-radius: 50%; background: var(--text); display: inline-block; }
   /* the shared .toast look, under the channel header (it covered the search box there), centred by margins, not a

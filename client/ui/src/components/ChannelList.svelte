@@ -329,5 +329,5 @@
   .row.unread { color: var(--text); font-weight: 600; }
   .row.muted { opacity: .5; }
   .mic { color: var(--text-3); display: grid; }
-  .pill { min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: grid; place-items: center; }
+  .pill { min-width: 16px; height: 16px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: inline-block; box-sizing: border-box; text-align: center; line-height: normal; text-box: trim-both cap alphabetic; padding: calc((16px - 1cap) / 2) 4px; }
 </style>

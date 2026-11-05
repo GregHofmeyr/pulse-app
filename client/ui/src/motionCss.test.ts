@@ -175,3 +175,15 @@ describe('radii', () => {
     expect(offenders).toEqual([])
   })
 })
+
+describe('count pills', () => {
+  // A digit centred by its line box sits off-centre by however the font and engine pad the line (it sat low on
+  // WebKitGTK): every red count pill trims its text to the digit's own height and centres that instead.
+  it('every red count pill centres its digits by their cap height', () => {
+    const pills = files.flatMap((f) =>
+      [...cssOf(f).matchAll(/([^{}]*\.pill)\s*\{([^}]*)\}/g)].filter((m) => /var\(--danger\)/.test(m[2])).map((m) => ({ f: rel(f), body: m[2] })),
+    )
+    expect(pills.length).toBeGreaterThanOrEqual(3)
+    expect(pills.filter((p) => !/text-box:\s*trim-both cap alphabetic/.test(p.body)).map((p) => p.f)).toEqual([])
+  })
+})
