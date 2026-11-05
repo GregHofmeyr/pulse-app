@@ -5,7 +5,7 @@
   import SoundSettings from './SoundSettings.svelte'
   import VolumeMixer from './VolumeMixer.svelte'
   import { voice, voiceApi } from '../lib/voice.svelte'
-  import { loadAudioConfig, saveAudioConfig, type AudioConfig, type NsLevel } from '../lib/voiceui'
+  import { loadAudioConfig, saveAudioConfig, type AudioConfig, type EchoMode, type NsLevel } from '../lib/voiceui'
 
   let cfg = $state<AudioConfig>(loadAudioConfig())
   let inputs = $state<{ name: string; is_default: boolean }[]>([])
@@ -71,9 +71,13 @@
     }
   }
 
-  const toggles: { key: 'echo_cancel' | 'auto_gain'; label: string; help: string }[] = [
-    { key: 'echo_cancel', label: 'Echo cancellation', help: 'Stops your speakers leaking back into your mic.' },
+  const toggles: { key: 'auto_gain'; label: string; help: string }[] = [
     { key: 'auto_gain', label: 'Automatic gain control', help: 'Evens out your volume. Leave off if you use input gain.' },
+  ]
+  const echoModes: { value: EchoMode; label: string }[] = [
+    { value: 'auto', label: 'Auto' },
+    { value: 'on', label: 'On' },
+    { value: 'off', label: 'Off' },
   ]
   const levels: { value: NsLevel; label: string }[] = [
     { value: 'off', label: 'Off' },
@@ -120,6 +124,11 @@
 <div class="settings-field"><span class="settings-label">NOISE SUPPRESSION</span>
   <Segmented label="Noise suppression" options={levels} value={cfg.noise_suppression} onchange={(v) => { cfg.noise_suppression = v; apply() }} />
   {#if voice.ns.note}<p class="warn" role="status">{voice.ns.note}</p>{/if}
+</div>
+
+<div class="settings-field"><span class="settings-label">ECHO CANCELLATION</span>
+  <Segmented label="Echo cancellation" options={echoModes} value={cfg.echo_mode} onchange={(v) => { cfg.echo_mode = v; apply() }} />
+  <small>Stops your speakers leaking back into your mic. Auto turns it off on headphones and headsets.</small>
 </div>
 
 <div class="check">

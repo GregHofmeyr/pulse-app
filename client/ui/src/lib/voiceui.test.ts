@@ -76,6 +76,15 @@ describe('migrateAudioConfig', () => {
   it('keeps an explicit new level', () => {
     expect(migrateAudioConfig({ noise_suppression: 'standard', noise_suppress: false }).noise_suppression).toBe('standard')
   })
+  it('echo cancellation (#76): the old toggle off stays Off, on becomes Auto (the default); a saved mode wins', () => {
+    const off = migrateAudioConfig({ echo_cancel: false })
+    expect(off.echo_mode).toBe('off')
+    expect('echo_cancel' in off).toBe(false)
+    expect(migrateAudioConfig({ echo_cancel: true }).echo_mode).toBe('auto')
+    expect(migrateAudioConfig({}).echo_mode).toBe('auto')
+    expect(defaultAudioConfig.echo_mode).toBe('auto')
+    expect(migrateAudioConfig({ echo_mode: 'on', echo_cancel: false }).echo_mode).toBe('on')
+  })
 })
 
 function stubStorage(initial: Record<string, string> = {}) {

@@ -1505,6 +1505,18 @@ pub async fn rename_channel(
     core.check(&app, api.rename_channel(&token, channel_id, name).await)
 }
 
+/// A group's icon (#56): an avatar-upload hash, or `None` to clear it.
+#[tauri::command]
+pub async fn set_group_icon(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    hash: Option<String>,
+) -> Result<Channel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_group_icon(&token, channel_id, hash).await)
+}
+
 #[tauri::command]
 pub async fn delete_channel(
     app: AppHandle,
@@ -1733,6 +1745,18 @@ pub async fn set_appear_offline(
 ) -> Result<(), ApiError> {
     let (api, token) = core.current()?;
     core.check(&app, api.set_appear_offline(&token, user_id, hidden).await)
+}
+
+/// Get a notification when someone goes live (`on`), or stop (#60).
+#[tauri::command]
+pub async fn set_live_notify(
+    app: AppHandle,
+    core: State<'_, Core>,
+    user_id: UserId,
+    on: bool,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_live_notify(&token, user_id, on).await)
 }
 
 #[tauri::command]

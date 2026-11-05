@@ -658,14 +658,6 @@
   /* Hover and press feedback. */
   --dur: 140ms;
   --ease: cubic-bezier(.2, .8, .2, 1);
-  /* The shadow names before the three elevation levels: kept for work in flight; new code uses --shadow-1/2/3. */
-  --shadow-menu: var(--shadow-3);
-  --shadow-pop: var(--shadow-2);
-  --shadow-float: var(--shadow-2);
-  --shadow-notice: var(--shadow-2);
-  --shadow-notice-soft: var(--shadow-2);
-  --shadow-picker: var(--shadow-2);
-  --shadow-jump: var(--shadow-1);
   font-family: 'Onest', system-ui, sans-serif;
   /* Onest's contextual alternates swap some letters (e.g. t → t2.alt) inside repeated runs, so
      "tttt" renders with an odd, bigger t. Same glyph for the same letter, always. */

@@ -4,7 +4,8 @@
 import type { StreamEndReason } from '../protocol/StreamEndReason'
 import type { StreamInfo } from '../protocol/StreamInfo'
 
-export type Toast = { channelId: string; streamer: string; name: string }
+/** `where`: the channel ("#gaming"), on a toast for someone you follow going live outside your call (#60). */
+export type Toast = { channelId: string; streamer: string; name: string; where?: string }
 
 export const TOAST_MS = 4_000
 export const MAX_TOASTS = 3
@@ -12,6 +13,11 @@ export const MAX_TOASTS = 3
 /** The toast goes to people in that voice channel, never to the streamer. */
 export function toastFor(s: { channelId: string; streamer: string }, voiceChannelId: string | null, meId: string): boolean {
   return voiceChannelId === s.channelId && s.streamer !== meId
+}
+
+/** "Notify me when they go live" (#60): someone on your list started a stream (never you). */
+export function followAlert(streamer: string, meId: string, liveNotify: readonly string[]): boolean {
+  return streamer !== meId && liveNotify.includes(streamer)
 }
 
 /** Why Watch can't be used right now, or null when it can. Linux first: joining voice would not help there.

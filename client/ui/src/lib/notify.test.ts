@@ -29,7 +29,7 @@ function ready(): Ready {
       { user: user('U2', 'jo'), online: true, last_seen_at: null, status: 'online' },
     ],
     read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [],
-    frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [],
+    frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [], live_notify: [],
   }
 }
 const s = applyReady(emptyState(), ready())

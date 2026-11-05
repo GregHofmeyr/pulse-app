@@ -4,6 +4,7 @@
 pub mod ghost_ids;
 pub mod ghosts;
 pub mod liveness;
+pub mod notify;
 pub mod routes;
 pub mod state;
 pub mod webhook;

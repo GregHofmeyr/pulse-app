@@ -423,6 +423,14 @@ pub struct Channel {
     pub name: Option<String>,
     #[ts(type = "number")]
     pub position: i64,
+    /// A group's own icon (#56): a picture from the avatar upload. Absent: the members' faces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub icon_hash: Option<String>,
+    /// That icon's still, when it's animated.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub icon_still: Option<String>,
 }
 
 /// A channel in its server's Recently deleted (`GET /servers/{id}/deleted-channels`), with what
@@ -637,6 +645,12 @@ pub struct AddMembersRequest {
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
 pub struct RenameChannelRequest {
     pub name: Option<String>,
+}
+
+/// A group's icon (#56): the hash of a picture from `POST /media/avatar`, or `None` to clear it.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]
+pub struct SetGroupIconRequest {
+    pub hash: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TS)]

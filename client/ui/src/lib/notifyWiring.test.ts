@@ -24,7 +24,7 @@ const ready = (): Ready => ({
   dm_members: [{ channel_id: 'DM1', user_ids: ['ME', 'U1'] }],
   voice: [],
   people: [{ user: user('ME', 'alex'), online: true, last_seen_at: null, status: 'online' }, { user: user('U1', 'sam'), online: true, last_seen_at: null, status: 'online' }],
-  read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [],
+  read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [], live_notify: [],
 })
 let n = 0
 const created = (channel: string, content: string, extra: Partial<Message> = {}) => ({

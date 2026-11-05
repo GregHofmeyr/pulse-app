@@ -66,6 +66,23 @@ describe('the DM list menu (#137)', () => {
     expect(texts().filter((t) => /nickname/i.test(t ?? ''))).toEqual([])
   })
 
+  it('a DM: Notify me when they go live, and back (#60); never in a group', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    rightClick(rowFor('sam'))
+    item('Notify me when they go live')!.click()
+    flushSync()
+    expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === 'set_live_notify').map(([, a]) => a)).toEqual([{ userId: 'U2', on: true }])
+    expect(document.querySelector('[role=menu]')).toBeNull()
+    app.state = { ...app.state, liveNotify: ['U2'] }
+    flushSync()
+    rightClick(rowFor('sam'))
+    expect(item('Stop notifying me when they go live')).toBeDefined()
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    flushSync()
+    rightClick(rowFor('squad'))
+    expect(texts().filter((t) => /go live/i.test(t ?? ''))).toEqual([])
+  })
+
   it('a DM: Appear offline to them, and back (#45); never in a group', async () => {
     const { invoke } = await import('@tauri-apps/api/core')
     rightClick(rowFor('sam'))

@@ -8,7 +8,7 @@ import type { StreamInfo } from '../protocol/StreamInfo'
 import { displayName } from '../selectors'
 import type { AppState } from '../state'
 import { app } from '../store.svelte'
-import { errorText, streamCmd } from '../tauri'
+import { api, errorText, streamCmd } from '../tauri'
 import { voice } from '../voice.svelte'
 import { clampVolume, loadAudioConfig, playSound } from '../voiceui'
 import { diag, startDiagnostics } from './diag.svelte'
@@ -16,9 +16,12 @@ import type { Fps, Res } from './encodings'
 import { loadAudioMuted, loadGoLive, loadStreamVolumes, saveAudioMuted, saveGoLive, saveStreamVolumes, type GoLive } from './prefs'
 import { StreamRoom } from './room'
 import { motion } from '../animate.svelte'
-import { admit, layerFor, liveEndSound, toastFor, voiceOnlyStreamer, type Quality, type View } from './viewer'
+import { admit, followAlert, layerFor, liveEndSound, toastFor, voiceOnlyStreamer, type Quality, type View } from './viewer'
 import { removeToast, showToast } from './viewer.svelte'
 import { dndActive } from '../status'
+import { liveNotice, liveWhere } from '../notify'
+import { notifyPrefs } from '../notifyPrefs.svelte'
+import { windowFocus } from '../windowFocus.svelte'
 
 type Live = { channelId: string; res: Res; fps: Fps; audio: boolean; allowGhosts: boolean; audioMuted: boolean; label: string; encoderWarning: boolean }
 /** `ghost`: watched from outside that voice channel, under an anonymous identity (counted, never named). */
@@ -720,10 +723,19 @@ export const streamApi = {
       const k = streamKey(channelId, streamer)
       const back = Date.now() - (vanished.get(k) ?? -Infinity) < BACK_WITHIN_MS
       vanished.delete(k)
-      // a stream re-announced after a server restart isn't news; Do Not Disturb (#45) skips the toast and its sound
-      if (!back && toastFor({ channelId, streamer }, voice.channelId, meId()) && !dndActive(app.state, new Date().toISOString())) {
+      // a stream re-announced after a server restart isn't news; Do Not Disturb (#45) skips the toasts, the sound and
+      // the desktop notification
+      const quiet = back || dndActive(app.state, new Date().toISOString())
+      const inCall = toastFor({ channelId, streamer }, voice.channelId, meId())
+      if (!quiet && inCall) {
         showToast({ channelId, streamer, name: nameOf(channelId, streamer) })
         playSound('live')
+      }
+      // someone you follow (#60), anywhere you can see: the live toast (naming the channel when it isn't your call) and,
+      // while Pulse isn't in focus, a desktop notification, like messages
+      if (!quiet && followAlert(streamer, meId(), app.state.liveNotify)) {
+        if (!inCall) showToast({ channelId, streamer, name: nameOf(channelId, streamer), where: liveWhere(app.state, channelId) || undefined })
+        if (notifyPrefs.enabled && !windowFocus.focused) void api.notifyMessage(liveNotice(app.state, channelId, streamer))
       }
       // only a restart re-starts a stream we watch (a real stop ends the watch first): the
       // restarted server lost its viewers, so list us again

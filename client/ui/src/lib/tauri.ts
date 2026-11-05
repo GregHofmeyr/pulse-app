@@ -181,6 +181,10 @@ export const api = {
   setStatus: (status: Status, dndUntil: string | null) => invoke<void>('set_status', { status, dndUntil }),
   /** Appear offline to one person, or stop (#45). An AppearOfflineChanged follows to your sessions. */
   setAppearOffline: (userId: string, hidden: boolean) => invoke<void>('set_appear_offline', { userId, hidden }),
+  /** Get a notification when someone goes live, or stop (#60). A LiveNotifyChanged follows to your sessions. */
+  setLiveNotify: (userId: string, on: boolean) => invoke<void>('set_live_notify', { userId, on }),
+  /** A group's icon (#56): an avatar-pipeline media hash, or null for the members' faces. Any member may. */
+  setGroupIcon: (channelId: string, hash: string | null) => invoke<Channel>('set_group_icon', { channelId, hash }),
   /** A page of someone's Name Archive in a server, newest first. */
   nameArchive: (serverId: string, userId: string, cursor: string | null) => invoke<NameArchivePage>('name_archive', { serverId, userId, cursor }),
   /** The raw file is the body; a crop rides in the `x-pulse-crop` header as `x,y,w,h`. */

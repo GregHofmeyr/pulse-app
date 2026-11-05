@@ -113,6 +113,8 @@ pub struct LimitsConfig {
     pub rename_user: Rate,
     /// Status changes and appear-offline toggles per person (#45): generous, like renames.
     pub status_user: Rate,
+    /// "Notify me when they go live" toggles per person (#60): generous, like renames.
+    pub live_notify_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -155,6 +157,7 @@ impl Default for LimitsConfig {
             link_thumb_user: Rate::per_hour(60),
             rename_user: Rate::per_minute(30),
             status_user: Rate::per_minute(30),
+            live_notify_user: Rate::per_minute(30),
         }
     }
 }
@@ -191,6 +194,7 @@ impl LimitsConfig {
             link_thumb_user: r,
             rename_user: r,
             status_user: r,
+            live_notify_user: r,
         }
     }
 }
@@ -340,6 +344,7 @@ pub struct Limits {
     pub link_thumb_user: Limiter,
     pub rename_user: Limiter,
     pub status_user: Limiter,
+    pub live_notify_user: Limiter,
 }
 
 impl Limits {
@@ -372,6 +377,7 @@ impl Limits {
             link_thumb_user: Limiter::new(c.link_thumb_user),
             rename_user: Limiter::new(c.rename_user),
             status_user: Limiter::new(c.status_user),
+            live_notify_user: Limiter::new(c.live_notify_user),
         }
     }
 }

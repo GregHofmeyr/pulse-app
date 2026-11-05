@@ -51,6 +51,7 @@ pub fn router(state: AppState) -> Router {
         .merge(dms::routes::router())
         .merge(voice::routes::router())
         .merge(streams::routes::router())
+        .merge(streams::notify::router())
         .merge(reports::routes::router())
         .merge(media::routes::router())
         .merge(emoji::routes::router())

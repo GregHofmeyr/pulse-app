@@ -8,6 +8,8 @@
   import { openRename } from '../lib/profileCard.svelte'
   import { onMount } from 'svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
+  import LiveNotifyItem from './LiveNotifyItem.svelte'
+  import { pickGroupIcon, removeGroupIcon } from '../lib/groupIcon.svelte'
 
   let { channel, muted, show, at = null, anchor = null, onClose, onRename, onLeft }: {
     channel: Channel
@@ -89,8 +91,16 @@
       {#if group && onRename}
         <button class="menu-item" role="menuitem" onclick={() => { onClose(); onRename() }}>Rename group</button>
       {/if}
+      {#if group}
+        <!-- any member may (#56): the avatar upload and crop, then every member sees it -->
+        <button class="menu-item" role="menuitem" onclick={() => { pickGroupIcon(channel.id); onClose() }}>Change icon</button>
+        {#if channel.icon_hash}
+          <button class="menu-item" role="menuitem" onclick={() => { void removeGroupIcon(channel.id); onClose() }}>Remove icon</button>
+        {/if}
+      {/if}
       {#if dmWith}
         <button class="menu-item" role="menuitem" onclick={() => { openRename({ kind: 'private', userId: dmWith }); onClose() }}>Change nickname</button>
+        <LiveNotifyItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
         <AppearOfflineItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
       {/if}
       {#if isPrivate}

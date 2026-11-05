@@ -350,6 +350,7 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
            AND hash NOT IN (SELECT media_hash FROM sounds)
            AND hash NOT IN (SELECT avatar_hash FROM users WHERE avatar_hash IS NOT NULL)
            AND hash NOT IN (SELECT banner_hash FROM users WHERE banner_hash IS NOT NULL)
+           AND hash NOT IN (SELECT icon_hash FROM channels WHERE icon_hash IS NOT NULL)
            AND hash NOT IN (SELECT thumb_hash FROM link_embeds WHERE thumb_hash IS NOT NULL)
            AND hash NOT IN (SELECT p.still_hash FROM media p
                             WHERE p.still_hash IS NOT NULL
@@ -362,7 +363,9 @@ pub async fn cleanup(db: &SqlitePool, dir: &Path, grace: Duration) -> AppResult<
                                    OR p.hash IN (SELECT avatar_hash FROM users
                                                   WHERE avatar_hash IS NOT NULL)
                                    OR p.hash IN (SELECT banner_hash FROM users
-                                                  WHERE banner_hash IS NOT NULL)))
+                                                  WHERE banner_hash IS NOT NULL)
+                                   OR p.hash IN (SELECT icon_hash FROM channels
+                                                  WHERE icon_hash IS NOT NULL)))
          RETURNING hash",
     )
     .bind(&cutoff)

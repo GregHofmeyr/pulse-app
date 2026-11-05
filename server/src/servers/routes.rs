@@ -115,6 +115,8 @@ async fn insert_channel(
         kind,
         name: name.map(str::to_string),
         position,
+        icon_hash: None,
+        icon_still: None,
     })
 }
 
@@ -470,8 +472,8 @@ async fn list_members(
 
 pub async fn dms_of(db: &SqlitePool, user: UserId) -> AppResult<Vec<Channel>> {
     let rows = sqlx::query_as(&format!(
-        "SELECT {} FROM channels c JOIN channel_members cm ON cm.channel_id = c.id WHERE cm.user_id = ? ORDER BY c.id",
-        CHANNEL_COLS.split(", ").map(|c| format!("c.{c}")).collect::<Vec<_>>().join(", ")
+        "SELECT {CHANNEL_COLS} FROM channels
+         WHERE id IN (SELECT channel_id FROM channel_members WHERE user_id = ?) ORDER BY id"
     ))
     .bind(user.to_string())
     .fetch_all(db)

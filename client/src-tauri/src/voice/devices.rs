@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use super::controls::Controls;
 use super::denoise::NsLevel;
+use super::echo::{EchoMode, Output, echo_on};
 use super::meter::Meter;
 use super::mixer::{Mixer, MixerInput};
 use super::processor::RawTx;
@@ -34,7 +35,9 @@ pub struct AudioConfig {
     pub input_gain_pct: u16,
     /// Manual mode: RMS threshold below which the mic is gated (0 = always open).
     pub sensitivity: f32,
-    pub echo_cancel: bool,
+    /// Echo cancellation: Auto (off on headphones, #76), On or Off.
+    #[serde(default)]
+    pub echo_mode: EchoMode,
     #[serde(default)]
     pub noise_suppression: NsLevel,
     /// Gate on detected speech above the room's noise floor (else on `sensitivity`).
@@ -44,6 +47,9 @@ pub struct AudioConfig {
     /// Pre-2026-10 on/off noise toggle: only read, to migrate old settings (see `normalized`).
     #[serde(default, skip_serializing)]
     pub noise_suppress: Option<bool>,
+    /// Pre-#76 on/off echo toggle: only read, to migrate old settings (see `normalized`).
+    #[serde(default, skip_serializing)]
+    pub echo_cancel: Option<bool>,
 }
 
 fn default_true() -> bool {
@@ -56,6 +62,10 @@ impl AudioConfig {
         if self.noise_suppress.take() == Some(false) {
             self.noise_suppression = NsLevel::Off;
         }
+        // switched off by hand stays off; the old default (on) becomes Auto
+        if self.echo_cancel.take() == Some(false) && self.echo_mode == EchoMode::Auto {
+            self.echo_mode = EchoMode::Off;
+        }
         self
     }
 }
@@ -67,11 +77,12 @@ impl Default for AudioConfig {
             output: None,
             input_gain_pct: 100,
             sensitivity: 0.02,
-            echo_cancel: true,
+            echo_mode: EchoMode::Auto,
             noise_suppression: NsLevel::default(),
             auto_sensitivity: true,
             auto_gain: false,
             noise_suppress: None,
+            echo_cancel: None,
         }
     }
 }
@@ -340,8 +351,9 @@ pub struct Shared {
     /// Speaker callbacks that found the mixer busy and played silence (diagnostics).
     mix_busy: AtomicU64,
     pub(crate) apm: Mutex<AudioProcessingModule>,
-    /// (echo, agc) the APM was built with — rebuilt only when these change (rebuilding resets AEC).
-    apm_cfg: Mutex<(bool, bool)>,
+    /// What the APM is built from, and the (echo, agc) it was built with: rebuilt only when that
+    /// changes (rebuilding resets AEC).
+    apm_cfg: Mutex<ApmCfg>,
     /// What the mic processor should run (it polls `version`).
     pub proc_cfg: Mutex<ProcCfg>,
     /// What the speakers played, waiting for the processor to feed the echo canceller.
@@ -382,13 +394,21 @@ impl Shared {
             mix_in: Arc::new(mix_in),
             playout_on: std::sync::atomic::AtomicBool::new(playout_on),
             mix_busy: AtomicU64::new(0),
+            // no output is open yet: Auto starts on, and the output's opening decides
             apm: Mutex::new(AudioProcessingModule::new(
-                cfg.echo_cancel,
+                echo_on(cfg.echo_mode, Output::Unknown),
                 cfg.auto_gain,
                 true,
                 false,
             )),
-            apm_cfg: Mutex::new((cfg.echo_cancel, cfg.auto_gain)),
+            apm_cfg: Mutex::new(ApmCfg {
+                mode: cfg.echo_mode,
+                output: Output::Unknown,
+                device: String::new(),
+                agc: cfg.auto_gain,
+                built: (echo_on(cfg.echo_mode, Output::Unknown), cfg.auto_gain),
+                logged: None,
+            }),
             proc_cfg: Mutex::new(ProcCfg {
                 level: cfg.noise_suppression,
                 auto: cfg.auto_sensitivity,
@@ -598,15 +618,53 @@ impl Shared {
                 version: p.version + 1,
             };
         }
-        let wanted = (cfg.echo_cancel, cfg.auto_gain);
-        let mut current = self.apm_cfg.lock().unwrap();
-        if *current != wanted {
+        let mut a = self.apm_cfg.lock().unwrap();
+        a.mode = cfg.echo_mode;
+        a.agc = cfg.auto_gain;
+        self.rebuild_apm(&mut a);
+    }
+
+    /// The output device just opened (`device`, and what the system says it is): Auto follows it.
+    pub fn set_output(&self, device: &str, output: Output) {
+        let mut a = self.apm_cfg.lock().unwrap();
+        a.output = output;
+        a.device = device.to_owned();
+        self.rebuild_apm(&mut a);
+    }
+
+    /// Whether echo cancellation runs now.
+    #[cfg(test)]
+    pub fn echo_running(&self) -> bool {
+        self.apm_cfg.lock().unwrap().built.0
+    }
+
+    fn rebuild_apm(&self, a: &mut ApmCfg) {
+        let echo = echo_on(a.mode, a.output);
+        // the decision, once per change of what it's made from
+        let decision = (a.mode, a.output, a.device.clone());
+        if a.logged.as_ref() != Some(&decision) {
+            tracing::info!(mode = ?a.mode, output = ?a.output, device = %a.device, echo, "voice: echo cancellation");
+            a.logged = Some(decision);
+        }
+        let wanted = (echo, a.agc);
+        if a.built != wanted {
             // WebRTC's own noise suppression stays off: Off means none, and suppressors never stack.
-            *self.apm.lock().unwrap() =
-                AudioProcessingModule::new(cfg.echo_cancel, cfg.auto_gain, true, false);
-            *current = wanted;
+            *self.apm.lock().unwrap() = AudioProcessingModule::new(echo, a.agc, true, false);
+            a.built = wanted;
         }
     }
+}
+
+/// What the echo canceller and AGC are built from (see [`Shared::apm_cfg`]).
+struct ApmCfg {
+    mode: EchoMode,
+    output: Output,
+    device: String,
+    agc: bool,
+    /// (echo, agc) the APM was built with.
+    built: (bool, bool),
+    /// The last decision logged: (mode, output, device).
+    logged: Option<(EchoMode, Output, String)>,
 }
 
 /// Handle to the audio thread. Dropping it stops capture and playback.
@@ -718,6 +776,7 @@ fn open_half(
                 prefer_internal_rate(dev.default_output_config()?, dev.supported_output_configs()?)
             };
             let (rate, ch) = (cfg.sample_rate(), cfg.channels() as usize);
+            let decides = shared.clone();
             let stream = if input {
                 let mut pending: Vec<f32> = Vec::new();
                 build_input(&dev, &cfg, move |d: &[f32], latency| {
@@ -738,6 +797,10 @@ fn open_half(
             stream.play()?;
             let name = device_name(&dev).unwrap_or_default();
             tracing::info!(device = %name, rate, ch, fmt = ?cfg.sample_format(), "audio {side} opened");
+            if !input {
+                // Auto echo cancellation follows the output (#76): every open, so a switch re-decides
+                decides.set_output(&name, super::echo::output_of(&dev));
+            }
             let generation = OPENS.fetch_add(1, Ordering::Relaxed) + 1;
             Ok((stream, HalfInfo { rate, name, generation }))
         },
@@ -1447,6 +1510,53 @@ mod tests {
             .normalized();
         assert_eq!(cfg.noise_suppression, NsLevel::Off);
         assert!(cfg.auto_sensitivity, "new field defaults on");
+    }
+
+    #[test]
+    fn legacy_echo_toggle_off_stays_off_and_on_becomes_auto() {
+        let old = |on: bool| {
+            format!(
+                r#"{{"input":null,"output":null,"input_gain_pct":100,"sensitivity":0.02,
+                    "echo_cancel":{on},"noise_suppression":"strong","auto_gain":false}}"#
+            )
+        };
+        let read = |s: &str| serde_json::from_str::<AudioConfig>(s).unwrap().normalized();
+        assert_eq!(read(&old(false)).echo_mode, EchoMode::Off);
+        assert_eq!(read(&old(true)).echo_mode, EchoMode::Auto);
+        // a saved mode wins; the legacy field is never written back
+        let both = r#"{"input":null,"output":null,"input_gain_pct":100,"sensitivity":0.02,
+                       "echo_mode":"on","echo_cancel":false,"auto_gain":false}"#;
+        let cfg = read(both);
+        assert_eq!(cfg.echo_mode, EchoMode::On);
+        assert!(!serde_json::to_string(&cfg).unwrap().contains("echo_cancel"));
+        assert_eq!(AudioConfig::default().echo_mode, EchoMode::Auto);
+    }
+
+    #[test]
+    fn auto_echo_follows_the_output_device_and_re_decides_on_a_switch() {
+        let s = Shared::new(&AudioConfig::default(), Default::default(), 200);
+        assert!(s.echo_running(), "no output yet: on");
+        s.set_output("Headset", Output::Headphones);
+        assert!(!s.echo_running());
+        s.set_output("Speakers", Output::Other);
+        assert!(s.echo_running());
+        s.set_output("Something", Output::Unknown);
+        assert!(s.echo_running(), "unknown leaves it on");
+        s.set_output("Headset", Output::Headphones);
+        // On and Off override the device; back to Auto follows it again
+        let mut cfg = AudioConfig {
+            echo_mode: EchoMode::On,
+            ..AudioConfig::default()
+        };
+        s.apply_config(&cfg);
+        assert!(s.echo_running());
+        cfg.echo_mode = EchoMode::Off;
+        s.set_output("Speakers", Output::Other);
+        s.apply_config(&cfg);
+        assert!(!s.echo_running());
+        cfg.echo_mode = EchoMode::Auto;
+        s.apply_config(&cfg);
+        assert!(s.echo_running());
     }
 
     #[test]

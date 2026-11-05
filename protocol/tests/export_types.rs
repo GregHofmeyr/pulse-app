@@ -112,6 +112,11 @@ fn status_events_are_owner_only() {
             target_id: UserId::new(),
             hidden: true,
         },
+        Event::LiveNotifyChanged {
+            user_id: u,
+            target_id: UserId::new(),
+            on: true,
+        },
     ] {
         assert_eq!(e.only_for(), Some(u));
         assert_eq!(e.channel_id(), None);

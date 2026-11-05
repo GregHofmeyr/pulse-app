@@ -91,6 +91,9 @@ libc = "0.2"
 # Linux: talk to the sound server (PulseAudio, or PipeWire's pulse server) for real device names;
 # ALSA stays the fallback. A pure-Rust client: no libpulse needed at build or run time.
 cpal = { version = "0.18.2", features = ["pulseaudio"] }
+# The sink's `device.form_factor` (voice/echo.rs: echo cancellation off on headphones). The same
+# pure-Rust client cpal's pulseaudio host uses; no new crate in the tree.
+pulseaudio = "0.3.2"
 webkit2gtk = "2.0"
 # Desktop notifications (notify/linux.rs) over D-Bus: zbus 5 on async-io, the same zbus the
 # single-instance plugin already brings. Pure Rust, no libdbus. Called directly rather than through

@@ -762,6 +762,109 @@ describe('live sounds', () => {
   })
 })
 
+describe('notify me when they go live (#60)', () => {
+  const info = (user: string, channel: string) => ({ channel_id: channel, user_id: user, settings: { height: 720, fps: 60, audio: true, allow_ghosts: true }, status: 'live', viewers: [], ghosts: 0, started_at: 't' })
+  const started = (user: string, channel = 'c2') => ({ t: 'StreamStarted', d: { stream: info(user, channel) } }) as never
+  const sam = { id: 'sam', username: 'sam', display_name: 'sam', avatar_hash: 'ab'.repeat(32), avatar_still: null, style: { font: null, colors: [] } }
+
+  /** In c1's call, following `follows`; sam is a person you can see, c2 is #gaming in Main. */
+  async function following(follows: string[]) {
+    const mod = await load()
+    const { windowFocus } = await import('../windowFocus.svelte')
+    const { setNotificationsEnabled } = await import('../notifyPrefs.svelte')
+    const { toasts } = await import('./viewer.svelte')
+    const { reloadToastPrefs } = await import('../toastPrefs.svelte')
+    reloadToastPrefs()
+    toasts.list = []
+    windowFocus.focused = false
+    setNotificationsEnabled(true)
+    mod.app.state = {
+      ...mod.app.state,
+      servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
+      channels: {
+        c1: { id: 'c1', server_id: 'S1', kind: 'voice', name: 'lounge', position: 0 },
+        c2: { id: 'c2', server_id: 'S1', kind: 'voice', name: 'gaming', position: 1 },
+      } as never,
+      people: { sam: { user: sam, online: true, last_seen_at: null, status: 'online' } } as never,
+      liveNotify: follows,
+      myStatus: { status: 'online', dnd_until: null },
+    }
+    return { ...mod, toasts, windowFocus }
+  }
+  const notices = () => calls('notify_message').map((a) => a?.notice as Record<string, unknown>)
+  const played = (name: string) => calls('play_sound').filter((a) => a?.name === name)
+
+  it('someone you follow going live elsewhere: a desktop notification and the live toast, no live sound', async () => {
+    const { streamApi, toasts } = await following(['sam'])
+    streamApi.onEvent(started('sam'))
+    expect(notices()).toEqual([{ title: 'sam went live in #gaming', body: 'Main', channelId: 'c2', avatar: 'ab'.repeat(32) }])
+    expect(toasts.list).toEqual([{ channelId: 'c2', streamer: 'sam', name: 'sam', where: '#gaming' }])
+    expect(played('live')).toEqual([])
+  })
+
+  it('someone you follow going live in your own call: the usual toast and sound, plus the notification', async () => {
+    const { streamApi, toasts } = await following(['sam'])
+    streamApi.onEvent(started('sam', 'c1'))
+    expect(notices()).toHaveLength(1)
+    expect(notices()[0].title).toBe('sam went live in #lounge')
+    expect(toasts.list).toEqual([{ channelId: 'c1', streamer: 'sam', name: 'sam' }])
+    expect(played('live')).toHaveLength(1)
+  })
+
+  it("someone you don't follow going live elsewhere: nothing", async () => {
+    const { streamApi, toasts } = await following(['kim'])
+    streamApi.onEvent(started('sam'))
+    expect(notices()).toEqual([])
+    expect(toasts.list).toEqual([])
+  })
+
+  it('Do Not Disturb: neither the notification nor the toast', async () => {
+    const { streamApi, toasts, app } = await following(['sam'])
+    app.state = { ...app.state, myStatus: { status: 'dnd', dnd_until: null } }
+    streamApi.onEvent(started('sam'))
+    expect(notices()).toEqual([])
+    expect(toasts.list).toEqual([])
+  })
+
+  it('never for your own stream', async () => {
+    const { streamApi, toasts } = await following(['me'])
+    streamApi.onEvent(started('me'))
+    expect(notices()).toEqual([])
+    expect(toasts.list).toEqual([])
+  })
+
+  it('the live toast switched off: the desktop notification still goes; desktop notifications off: the toast still shows', async () => {
+    const { streamApi, toasts } = await following(['sam'])
+    const { setToastPref } = await import('../toastPrefs.svelte')
+    setToastPref('live', false)
+    streamApi.onEvent(started('sam'))
+    expect(toasts.list).toEqual([])
+    expect(notices()).toHaveLength(1)
+    setToastPref('live', true)
+    const { setNotificationsEnabled } = await import('../notifyPrefs.svelte')
+    setNotificationsEnabled(false)
+    streamApi.onEvent(started('sam', 'c3'))
+    expect(notices()).toHaveLength(1)
+    expect(toasts.list).toHaveLength(1)
+  })
+
+  it('with Pulse in focus only the toast shows (like messages)', async () => {
+    const { streamApi, toasts, windowFocus } = await following(['sam'])
+    windowFocus.focused = true
+    streamApi.onEvent(started('sam'))
+    expect(notices()).toEqual([])
+    expect(toasts.list).toHaveLength(1)
+  })
+
+  it('a stream re-announced after a server restart is not news', async () => {
+    const { streamApi, toasts } = await following(['sam'])
+    await streamApi.onReady({ me: { id: 'me' }, streams: [] } as never, { c2: { sam: info('sam', 'c2') } } as never)
+    streamApi.onEvent(started('sam'))
+    expect(notices()).toEqual([])
+    expect(toasts.list).toEqual([])
+  })
+})
+
 describe('the emoji/animation freeze while live', () => {
   // a failed assertion mustn't leave a follower (on its own module instance) holding the freeze
   const unfollows: (() => void)[] = []
