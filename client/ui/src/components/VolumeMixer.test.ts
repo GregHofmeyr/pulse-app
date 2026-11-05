@@ -105,6 +105,14 @@ describe('VolumeMixer', () => {
     expect(calls('play_sound')).toEqual([{ name: 'join', set: 'classic', volume: mixGain(50, 150), output: null }])
   })
 
+  it('▶ on Ringing plays one ring at Call sounds × Ringing (#50)', () => {
+    show()
+    move('Call sounds volume', 50)
+    move('Ringing', 120)
+    button('Test Ringing').click()
+    expect(calls('play_sound')).toEqual([{ name: 'ringing', set: 'classic', volume: mixGain(50, 120), output: null }])
+  })
+
   it('a test button is disabled while its level is off', () => {
     withSounds([snd('a', 'Airhorn')])
     show()

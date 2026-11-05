@@ -3,13 +3,15 @@
   import LinkStatsPanel from './LinkStatsPanel.svelte'
   import { app } from '../lib/store.svelte'
   import { displayName } from '../lib/selectors'
+  import { conversationName } from '../lib/conversations'
   import { voice, voiceApi } from '../lib/voice.svelte'
   import { stageLabel } from '../lib/voicestage'
   import { isWindows } from '../lib/stream/platform'
 
   // during a switch, the channel being joined
   const channelId = $derived(voice.joining ?? voice.channelId ?? voice.joinFailed?.channelId ?? null)
-  const channelName = $derived((channelId && app.state.channels[channelId]?.name) || '')
+  // a DM or group call (#50) is named like the conversation
+  const channelName = $derived(!channelId ? '' : app.state.channels[channelId]?.server_id === null ? conversationName(app.state, channelId) : (app.state.channels[channelId]?.name ?? ''))
   const visible = $derived(!!(voice.channelId || voice.joining || voice.joinFailed))
   const failed = $derived(voice.joinFailed && !voice.joining && !voice.channelId ? voice.joinFailed : null)
   const clickable = $derived(!failed && (voice.stage.stage === 'connected' || voice.stage.stage === 'starting_audio'))

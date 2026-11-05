@@ -54,7 +54,8 @@
     watching,
     full,
     inCall,
-    canGoLive: inCall && !stream.live,
+    // streaming is for server voice channels only (in DM and group calls: #51)
+    canGoLive: inCall && !stream.live && !!serverId,
     streamingSelf: stream.live?.channelId === channelId,
     serverCall: !!serverId,
   })

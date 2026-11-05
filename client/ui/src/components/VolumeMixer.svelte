@@ -9,7 +9,7 @@
   import { soundSections } from '../lib/soundboard'
   import { app } from '../lib/store.svelte'
   import { soundboardCmd } from '../lib/tauri'
-  import { loadAudioConfig, playSoundAt, type SoundName } from '../lib/voiceui'
+  import { loadAudioConfig, playRingingAt, playSoundAt, type SoundName } from '../lib/voiceui'
 
   const value = (s: MixerSection, key: string): number => (mixer[s.id] as Record<string, number>)[key]
   const label = (pct: number) => (pct === 0 ? 'Off' : `${pct}%`)
@@ -26,6 +26,8 @@
   function test(s: MixerSection, n: Notch) {
     if (n.test === 'sound') {
       playSoundAt(n.key as SoundName, testGain(s, n))
+    } else if (n.test === 'ring') {
+      playRingingAt(testGain(s, n))
     } else if (n.test === 'soundboard' && firstSound) {
       const { master, soundboard } = mixer.calls
       soundboardCmd.play(firstSound.media_hash, master, soundboard, firstSound.volume, loadAudioConfig().output ?? null).catch(() => {})

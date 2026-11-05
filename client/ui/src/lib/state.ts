@@ -1,5 +1,6 @@
 // The app's single source of truth, as pure functions over plain data so they're easy to test.
 // The reactive wrapper lives in store.svelte.ts.
+import type { CallInfo } from './protocol/CallInfo'
 import type { Channel } from './protocol/Channel'
 import type { ClipFacets } from './protocol/ClipFacets'
 import type { ClipView } from './protocol/ClipView'
@@ -65,6 +66,8 @@ export type AppState = {
   myStatus: OwnStatus
   /** The people you appear offline to (#45), yours only. */
   appearOfflineTo: string[]
+  /** channelId -> the call going on in that DM or group (#50), from Ready and CallStarted / CallEnded. */
+  calls: Record<string, CallInfo>
   profiles: Record<string, Profile> // userId -> opened profile (cache)
   roleColors: Record<string, Record<string, string>> // serverId -> userId -> role colour (empty until the roles push)
   /** userId -> the name you gave them that only you see (from Ready and your own events; never anyone else's). */
@@ -121,7 +124,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], calls: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -164,6 +167,8 @@ export function applyReady(s: AppState, r: Ready): AppState {
     // absent from older servers: online, hidden from nobody
     myStatus: r.status ?? { status: 'online', dnd_until: null },
     appearOfflineTo: r.appear_offline_to ?? [],
+    // absent from older servers: no calls
+    calls: Object.fromEntries((r.calls ?? []).map((c) => [c.channel_id, c])),
     // absent from older servers
     privateNicks: Object.fromEntries((r.private_nicknames ?? []).map((p) => [p.user_id, p.nickname])),
     reads: Object.fromEntries(r.read_states.map((x) => [x.channel_id, x])),
@@ -211,6 +216,13 @@ function groupLinks(links: SpeakerLink[]): Record<string, SpeakerLink[]> {
 }
 
 /** Whether `channel` should have a read point for you: your DMs/groups, and text quotes and clips channels of servers you're in. */
+/** Whether `m` counts as unread for `me`: someone else's normal message, or the line of a call someone else started
+ * (#50: a missed call shows up in the conversation list). Never a mention. */
+export function countsAsUnread(m: Message, me: string | undefined): boolean {
+  if (m.kind === 'normal') return m.author_id !== me
+  return !!m.call && m.call.started_by !== me
+}
+
 export function tracksUnread(s: AppState, channel: string): boolean {
   const ch = s.channels[channel]
   if (!ch || !s.me) return false
@@ -631,6 +643,7 @@ function dropChannel(s: AppState, c: string): AppState {
     channels: drop(s.channels),
     messages: drop(s.messages),
     dmMembers: drop(s.dmMembers),
+    calls: drop(s.calls),
     reads: drop(s.reads),
     latest: drop(s.latest),
     hidden: drop(s.hidden),
@@ -653,8 +666,8 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       // Conversations/servers you're in but have no read point for yet (created or joined since
       // Ready) start at zero, so their first messages count right away.
       const read = s.reads[c] ?? (tracksUnread(s, c) ? { channel_id: c, last_read_message_id: null, unread: 0, mentions: 0 } : undefined)
-      // Others' normal messages count as unread (yours and system lines never do).
-      const counts = read && m.kind === 'normal' && m.author_id !== s.me?.id
+      // Others' normal messages count as unread, and others' call lines (yours and other system lines never do).
+      const counts = read && countsAsUnread(m, s.me?.id)
       const { [c]: _h, ...hidden } = s.hidden
       return {
         ...s,
@@ -815,7 +828,7 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       const point = e.d.last_read_message_id
       // Messages newer than the point (they can race the event) stay unread.
       const after = (s.messages[c] ?? []).filter(
-        (m) => (point === null || m.id > point) && m.kind === 'normal' && !m.deleted && m.author_id !== s.me?.id,
+        (m) => (point === null || m.id > point) && !m.deleted && countsAsUnread(m, s.me?.id),
       )
       const me = s.me?.id ?? ''
       return {
@@ -884,6 +897,17 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, serverVoice: withServerVoice(s.serverVoice, e.d.state) }
     case 'VoiceDisconnected':
       return s // the notice is the voice store's (voice.svelte.ts); the VoiceLeft that follows updates the list
+    case 'CallStarted':
+      return { ...s, calls: { ...s.calls, [e.d.call.channel_id]: e.d.call } }
+    case 'CallEnded': {
+      if (s.calls[e.d.channel_id]?.id !== e.d.call_id) return s
+      const { [e.d.channel_id]: _c, ...calls } = s.calls
+      return { ...s, calls }
+    }
+    // rings are the call store's (calls.svelte.ts)
+    case 'CallRinging':
+    case 'CallRingEnded':
+      return s
     case 'EmojiCreated':
     case 'EmojiUpdated':
       return { ...s, customEmoji: { ...s.customEmoji, [e.d.emoji.id]: e.d.emoji } }

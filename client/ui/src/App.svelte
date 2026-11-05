@@ -6,6 +6,8 @@
   import { startVoiceListening } from './lib/voice.svelte'
   import { badgeStore, startBadgeListening } from './lib/badges.svelte'
   import { startSoundboardListening } from './lib/soundboard.svelte'
+  // the ring store follows events and Ready from the start, whatever is on screen (#50)
+  import './lib/calls.svelte'
   import { installTooltips } from './lib/tooltip'
   import { watchWindowFocus, windowFocus } from './lib/windowFocus.svelte'
   import type { User } from './lib/protocol/User'

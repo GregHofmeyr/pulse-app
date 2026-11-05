@@ -55,6 +55,7 @@
           <span class="prev" class:sys={p.system}>{p.text}</span>
         {/if}
       </span>
+      {#if app.state.calls[c.channel.id]}<span class="in-call" role="img" aria-label="In call" data-tip="In call"><Icon name="phone" size={13} /></span>{/if}
       {#if c.muted}<span class="mute"><Icon name="bellOff" size={13} /></span>{/if}
       {#if badge > 0}<span class="pill">{badge > 99 ? '99+' : badge}</span>{/if}
     </button>
@@ -89,6 +90,7 @@
   .stack .s0 { position: absolute; left: 0; top: 0; }
   .stack .s1 { position: absolute; left: 11px; top: 11px; border-radius: 50%; box-shadow: 0 0 0 2px var(--ring); }
   .mute { color: var(--text-3); display: grid; }
+  .in-call { color: var(--ok-text); display: grid; }
   .pill { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--danger); color: var(--on-danger); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
   .empty { padding: 12px 10px; font-size: 13px; color: var(--text-3); }
 </style>

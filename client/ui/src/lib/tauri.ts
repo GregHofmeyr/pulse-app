@@ -12,6 +12,7 @@ import type { Channel } from './protocol/Channel'
 import type { DeletedChannel } from './protocol/DeletedChannel'
 import type { Member } from './protocol/Member'
 import type { Status } from './protocol/Status'
+import type { StartCallResponse } from './protocol/StartCallResponse'
 import type { ServerVoiceMod } from './protocol/ServerVoiceMod'
 import type { Message } from './protocol/Message'
 import type { StreamInfo } from './protocol/StreamInfo'
@@ -179,6 +180,13 @@ export const api = {
   setPrivateNickname: (userId: string, nickname: string | null) => invoke<void>('set_private_nickname', { userId, nickname }),
   /** Your status (#45); `dndUntil` only with 'dnd' (null: until turned off). A StatusChanged follows to every session. */
   setStatus: (status: Status, dndUntil: string | null) => invoke<void>('set_status', { status, dndUntil }),
+  /** Start a call in a DM or group, ringing the others, or join the one going on (#50: `rang` false). Then join its voice room. */
+  startCall: (channelId: string) => invoke<StartCallResponse>('start_call', { channelId }),
+  /** Stop a call ringing you, on all your devices; the caller isn't told (#50). */
+  declineCall: (channelId: string) => invoke<void>('decline_call', { channelId }),
+  /** The incoming-call ringtone on loop (#50), at a linear gain on the chosen output, until `stopRingtone`. */
+  startRingtone: (volume: number, output: string | null) => invoke<void>('start_ringtone', { volume, output }).catch(() => {}),
+  stopRingtone: () => invoke<void>('stop_ringtone').catch(() => {}),
   /** Appear offline to one person, or stop (#45). An AppearOfflineChanged follows to your sessions. */
   setAppearOffline: (userId: string, hidden: boolean) => invoke<void>('set_appear_offline', { userId, hidden }),
   /** A page of someone's Name Archive in a server, newest first. */

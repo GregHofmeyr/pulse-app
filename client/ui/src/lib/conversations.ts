@@ -1,9 +1,10 @@
 // Pure conversation logic: names, ordering, unread badges, mutes, read rule, sound decision.
-import type { AppState } from './state'
+import { countsAsUnread, type AppState } from './state'
 import type { Channel } from './protocol/Channel'
 import type { Message } from './protocol/Message'
 import { displayName } from './selectors'
 import { mentionLookup, showMentions } from './mentionStyles'
+import { callLineText } from './calls'
 
 export function isMuted(s: AppState, ch: Channel, nowIso: string): boolean {
   const active = (kind: 'server' | 'channel', id: string | null) =>
@@ -105,6 +106,7 @@ export function relativeTime(iso: string, nowMs: number): string {
 /** One-line preview for the conversation list; `system` renders it muted/italic. */
 export function previewText(s: AppState, m: Message): { text: string; system: boolean } {
   if (m.deleted) return { text: 'message deleted', system: true }
+  if (m.call) return { text: callLineText(s, m), system: true }
   if (m.kind === 'system') return { text: m.content, system: true }
   // mentions as the names you see (never usernames, #47)
   const line = showMentions(m.content, mentionLookup(s), (id) => displayName(s, null, id)).replace(/\s+/g, ' ').trim()
@@ -116,9 +118,10 @@ export function previewText(s: AppState, m: Message): { text: string; system: bo
   return { text: line, system: false }
 }
 
-/** Where the red NEW line goes: the first normal message after the read point that someone else wrote (-1 = none). */
+/** Where the red NEW line goes: the first message after the read point that counts as unread (someone else's message or
+ * call line, -1 = none). */
 export function firstUnreadIndex(messages: Message[], lastRead: string | null, me: string): number {
-  const i = messages.findIndex((m) => (lastRead === null || m.id > lastRead) && m.kind === 'normal' && m.author_id !== me)
+  const i = messages.findIndex((m) => (lastRead === null || m.id > lastRead) && countsAsUnread(m, me))
   // Replying means you've caught up: no divider once one of your messages sits below it.
   return i >= 0 && messages.slice(i).some((m) => m.author_id === me) ? -1 : i
 }

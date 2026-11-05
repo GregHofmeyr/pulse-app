@@ -7,6 +7,7 @@
   import { relativeTime } from '../lib/conversations'
   import { errorText } from '../lib/tauri'
   import { displayName } from '../lib/selectors'
+  import { callUser } from '../lib/calls.svelte'
 
   let { onOpen, onJoinVoice }: {
     onOpen: (channelId: string) => void
@@ -46,6 +47,16 @@
       if (app.state.channels[id]?.kind === 'dm' && members.includes(userId)) return app.state.reads[id]?.unread ?? 0
     }
     return 0
+  }
+
+  /** Call them (#50): your DM with them opens and its call starts, ringing them. */
+  async function call(userId: string) {
+    error = ''
+    try {
+      await callUser(userId)
+    } catch (e) {
+      error = errorText(e)
+    }
   }
 
   async function message(userId: string) {
@@ -88,7 +99,7 @@
               {#if voice}
                 <button class="btn btn-quiet" onclick={() => onJoinVoice(voice.channelId, voice.serverId)}><Icon name="speaker" size={14} /> Join</button>
               {:else}
-                <button class="btn btn-quiet" disabled title="Calls arrive soon"><Icon name="phone" size={14} /> Call</button>
+                <button class="btn btn-quiet" onclick={() => call(p.user.id)}><Icon name="phone" size={14} /> Call</button>
               {/if}
             </div>
           </div>
