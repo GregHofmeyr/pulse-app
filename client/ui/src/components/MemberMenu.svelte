@@ -1,15 +1,18 @@
 <script lang="ts">
-  // A person's menu in a server (#113, #137): from a member-list row or a message author. The profile, a
-  // message, and Change server nickname. Keyboard and focus work as in the voice participant menu.
+  // A person's menu (#113, #137): from a member-list row, a message author, or a right-click on their profile card
+  // (where the server may be none and View profile is left out: you're on it). The profile, a message, and the
+  // nickname items, Appear offline to them (#45). Keyboard and focus work as in the voice participant menu.
   import { onMount, untrack } from 'svelte'
   import { app } from '../lib/store.svelte'
   import { displayName } from '../lib/selectors'
   import { clickOutside } from '../lib/actions'
   import { openCard } from '../lib/profileCard.svelte'
   import NicknameItems from './NicknameItems.svelte'
+  import AppearOfflineItem from './AppearOfflineItem.svelte'
 
-  let { serverId, userId, x, y, opener, onClose, onMessage }: {
-    serverId: string
+  let { serverId, userId, x, y, opener, onClose, onMessage, fromCard = false }: {
+    /** The server it opens in, or null (a card opened outside servers). */
+    serverId: string | null
     userId: string
     x: number
     y: number
@@ -17,6 +20,8 @@
     opener: HTMLElement
     onClose: () => void
     onMessage?: (userId: string) => void
+    /** Opened on their profile card: no View profile. */
+    fromCard?: boolean
   } = $props()
 
   const self = $derived(userId === app.state.me?.id)
@@ -80,13 +85,18 @@
 <div bind:this={el} class="menu menu-surface pop-in" role="menu" aria-label="Actions for {name}" tabindex="-1" style:left="{left}px" style:top="{top}px"
   onkeydown={keydown} use:clickOutside={(e) => close(e.type === 'keydown')}>
   <!-- the card opens beside the row the menu came from -->
-  <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>
+  {#if !fromCard}
+    <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(() => openCard(userId, serverId, opener))}>View profile</button>
+  {/if}
   {#if onMessage && !self}
     <button type="button" class="menu-item" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>
   {/if}
   <NicknameItems {serverId} {userId} {pick} />
+  <AppearOfflineItem {userId} {pick} />
 </div>
 
 <style>
   .menu { position: fixed; z-index: 60; min-width: 200px; max-width: 280px; gap: 2px; font-size: 13px; outline: none; }
+  /* on a card the nickname items come first: no line above them */
+  .menu > :global(.menu-sep:first-child) { display: none; }
 </style>

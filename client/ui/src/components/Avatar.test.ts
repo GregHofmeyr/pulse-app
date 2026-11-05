@@ -43,9 +43,23 @@ describe('Avatar', () => {
     expect(document.querySelector('.av')!.textContent!.trim()).toBe('S')
   })
   it('initial for unknown users, with the presence dot', () => {
-    mountAv({ online: true }, null)
+    mountAv({ presence: { kind: 'online', label: 'Online', lastSeen: null } }, null)
     expect(document.querySelector('img')).toBeNull()
     expect(document.querySelector('.pres')).not.toBeNull()
+  })
+  it('the dot for each presence (#45): its kind as a class, its label for screen readers; none without one', () => {
+    for (const [kind, label] of [['online', 'Online'], ['dnd', 'Do Not Disturb'], ['offline', 'Offline'], ['invisible', 'Invisible']]) {
+      mountAv({ presence: { kind, label, lastSeen: null } }, null)
+      const dot = document.querySelector('.pres')!
+      expect(dot.classList.contains(kind)).toBe(true)
+      expect(dot.getAttribute('role')).toBe('img')
+      expect(dot.getAttribute('aria-label')).toBe(label)
+      unmount(cmp!)
+      cmp = undefined
+      document.body.innerHTML = ''
+    }
+    mountAv({}, null)
+    expect(document.querySelector('.pres')).toBeNull()
   })
   it('still src in a list, animated src on a card', () => {
     mountAv({}, { avatar_hash: A, avatar_still: S })

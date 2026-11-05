@@ -669,16 +669,14 @@ async fn late_offline_after_a_reconnect_is_not_announced() {
     let hub = Hub::default();
     let mut watcher = hub.register(b_id, "w".into());
     let old = hub.register(a_id, "t".into());
-    assert_eq!(
-        hub.sync_presence(&app.db, a_id, "x".into()).await,
-        Some(true)
-    );
+    assert_eq!(hub.sync_presence(&app.db, a_id).await, Some(true));
     // The old socket drops, the client reconnects, and only then does the old socket's
     // disconnect handler get to announce: it must see the new connection and stay quiet.
     hub.unregister(old.id);
     let _new = hub.register(a_id, "t".into());
-    assert_eq!(hub.sync_presence(&app.db, a_id, "x".into()).await, None);
-    assert_eq!(hub.sync_presence(&app.db, a_id, "x".into()).await, None);
+    // (the new connection had no Ready here, so it alone hears alex's own presence once)
+    hub.sync_presence(&app.db, a_id).await;
+    assert_eq!(hub.sync_presence(&app.db, a_id).await, None);
     let mut got = Vec::new();
     while let Ok(ServerFrame::Event(Event::PresenceChanged {
         user_id, online, ..

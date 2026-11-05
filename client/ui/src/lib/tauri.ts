@@ -11,6 +11,7 @@ import type { Server } from './protocol/Server'
 import type { Channel } from './protocol/Channel'
 import type { DeletedChannel } from './protocol/DeletedChannel'
 import type { Member } from './protocol/Member'
+import type { Status } from './protocol/Status'
 import type { ServerVoiceMod } from './protocol/ServerVoiceMod'
 import type { Message } from './protocol/Message'
 import type { StreamInfo } from './protocol/StreamInfo'
@@ -176,6 +177,10 @@ export const api = {
   disconnectVoice: (serverId: string, userId: string) => invoke<void>('disconnect_voice', { serverId, userId }),
   /** The name only you see for someone (`null` clears it). */
   setPrivateNickname: (userId: string, nickname: string | null) => invoke<void>('set_private_nickname', { userId, nickname }),
+  /** Your status (#45); `dndUntil` only with 'dnd' (null: until turned off). A StatusChanged follows to every session. */
+  setStatus: (status: Status, dndUntil: string | null) => invoke<void>('set_status', { status, dndUntil }),
+  /** Appear offline to one person, or stop (#45). An AppearOfflineChanged follows to your sessions. */
+  setAppearOffline: (userId: string, hidden: boolean) => invoke<void>('set_appear_offline', { userId, hidden }),
   /** A page of someone's Name Archive in a server, newest first. */
   nameArchive: (serverId: string, userId: string, cursor: string | null) => invoke<NameArchivePage>('name_archive', { serverId, userId, cursor }),
   /** The raw file is the body; a crop rides in the `x-pulse-crop` header as `x,y,w,h`. */

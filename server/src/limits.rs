@@ -111,6 +111,8 @@ pub struct LimitsConfig {
     /// Server nickname and private nickname changes per renamer. Renames have no cooldown (typos
     /// happen); this only stops real abuse.
     pub rename_user: Rate,
+    /// Status changes and appear-offline toggles per person (#45): generous, like renames.
+    pub status_user: Rate,
 }
 
 impl Default for LimitsConfig {
@@ -152,6 +154,7 @@ impl Default for LimitsConfig {
             unfurl_user: Rate::per_minute(20),
             link_thumb_user: Rate::per_hour(60),
             rename_user: Rate::per_minute(30),
+            status_user: Rate::per_minute(30),
         }
     }
 }
@@ -187,6 +190,7 @@ impl LimitsConfig {
             unfurl_user: r,
             link_thumb_user: r,
             rename_user: r,
+            status_user: r,
         }
     }
 }
@@ -335,6 +339,7 @@ pub struct Limits {
     pub unfurl_user: Limiter,
     pub link_thumb_user: Limiter,
     pub rename_user: Limiter,
+    pub status_user: Limiter,
 }
 
 impl Limits {
@@ -366,6 +371,7 @@ impl Limits {
             unfurl_user: Limiter::new(c.unfurl_user),
             link_thumb_user: Limiter::new(c.link_thumb_user),
             rename_user: Limiter::new(c.rename_user),
+            status_user: Limiter::new(c.status_user),
         }
     }
 }

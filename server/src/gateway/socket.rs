@@ -120,11 +120,16 @@ async fn disconnected(s: &AppState, conn: ConnId, me: UserId) {
         .bind(me.to_string())
         .execute(&s.db)
         .await;
-    s.hub.sync_presence(&s.db, me, at).await;
+    s.hub.sync_presence(&s.db, me).await;
 }
 
-/// Everyone with an account, online if they have any live connection.
-pub async fn people(db: &SqlitePool, hub: &Hub) -> AppResult<Vec<Person>> {
+/// Everyone with an account, with their presence as `viewer` may see it (#45).
+pub async fn people(
+    db: &SqlitePool,
+    hub: &Hub,
+    viewer: UserId,
+    conn: Option<ConnId>,
+) -> AppResult<Vec<Person>> {
     #[derive(sqlx::FromRow)]
     struct PersonRow {
         #[sqlx(flatten)]
@@ -136,16 +141,11 @@ pub async fn people(db: &SqlitePool, hub: &Hub) -> AppResult<Vec<Person>> {
     ))
     .fetch_all(db)
     .await?;
-    rows.into_iter()
-        .map(|r| {
-            let user = r.user.into_user()?;
-            Ok(Person {
-                online: hub.is_online(user.id),
-                user,
-                last_seen_at: r.last_seen_at,
-            })
-        })
-        .collect()
+    let users = rows
+        .into_iter()
+        .map(|r| Ok((r.user.into_user()?, r.last_seen_at)))
+        .collect::<AppResult<Vec<_>>>()?;
+    Ok(hub.people_for(db, viewer, conn, users).await?)
 }
 
 pub async fn build_ready(
@@ -154,6 +154,18 @@ pub async fn build_ready(
     streams: &StreamState,
     hub: &Hub,
     me: UserId,
+) -> AppResult<Ready> {
+    ready_for(db, voice_state, streams, hub, me, None).await
+}
+
+/// [`build_ready`] for connection `conn`, whose presence announcements continue from it.
+async fn ready_for(
+    db: &SqlitePool,
+    voice_state: &VoiceState,
+    streams: &StreamState,
+    hub: &Hub,
+    me: UserId,
+    conn: Option<ConnId>,
 ) -> AppResult<Ready> {
     // A fixed number of queries however many servers and conversations there are: each table
     // is read once and regrouped here.
@@ -208,7 +220,7 @@ pub async fn build_ready(
         members,
         dm_members,
         voice,
-        people: people(db, hub).await?,
+        people: people(db, hub, me, conn).await?,
         read_states: crate::reads::states_for(db, me).await?,
         mutes: crate::dms::routes::mutes_of(db, me).await?,
         hidden: crate::dms::routes::hidden_of(db, me).await?,
@@ -226,6 +238,11 @@ pub async fn build_ready(
         sound_favourites: crate::sounds::favourites(db, me).await?,
         frequent_sounds: crate::sounds::frequent(db, me, crate::sounds::FREQUENT).await?,
         server_voice: crate::voice::moderation::for_ready(db).await?,
+        status: crate::presence::load_subject(db, me)
+            .await?
+            .map(|x| x.own(&now()))
+            .unwrap_or_default(),
+        appear_offline_to: crate::presence::hidden_list(db, me).await?,
     })
 }
 
@@ -269,7 +286,7 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
             return close(socket, 1011, "internal error").await;
         }
     }
-    let ready = match build_ready(&s.db, &s.voice, &s.streams, &s.hub, me).await {
+    let ready = match ready_for(&s.db, &s.voice, &s.streams, &s.hub, me, Some(conn)).await {
         Ok(r) => r,
         Err(e) => {
             tracing::error!(error = ?e, "build_ready failed");
@@ -281,7 +298,7 @@ async fn run(mut socket: WebSocket, s: AppState, ip_key: String) {
         disconnected(&s, conn, me).await;
         return;
     }
-    s.hub.sync_presence(&s.db, me, now()).await;
+    s.hub.sync_presence(&s.db, me).await;
 
     // Only inbound frames prove the client is alive; outbound traffic must not extend the deadline.
     let mut deadline = tokio::time::Instant::now() + s.cfg.heartbeat_timeout;

@@ -1,6 +1,7 @@
-// The nickname item a person's menu offers (#113, reshaped by #137): the one nickname that applies where the menu
-// opens. In a server that's their server nickname; outside servers (the DM list) your private one for them. Reset
-// and Clear live in the nickname dialog, not in menus; the profile card has no nickname buttons.
+// The nickname items a person's menu offers (#113, reshaped by #137). In a server: their server nickname, then your
+// private nickname for them. Outside servers (the DM list, a group call) only your private one. Reset and Clear live
+// in the nickname dialog, not in menus; the profile card has no nickname buttons (owner: every action between people
+// lives in the right-click menu), its own right-click menu offers these items instead.
 import type { AppState } from './state'
 import { isMember } from './selectors'
 
@@ -11,13 +12,17 @@ export function canServerNick(s: AppState, serverId: string | null, userId: stri
   return !!serverId && isMember(s, serverId) && (s.members[serverId] ?? []).some((m) => m.user.id === userId)
 }
 
-/** `serverId`: the server the menu opens in, or null outside servers. In a server: change their server nickname
- *  (yours too). Outside: change your private nickname for them (never for yourself). */
+/** `serverId`: the server the menu opens in, or null outside servers. Their server nickname where it applies (yours
+ *  too), then your private nickname for them (never for yourself). */
 export function nickItems(s: AppState, serverId: string | null, userId: string): NickItemId[] {
-  if (serverId) return canServerNick(s, serverId, userId) ? ['nick'] : []
-  return userId !== s.me?.id ? ['private-nick'] : []
+  const out: NickItemId[] = canServerNick(s, serverId, userId) ? ['nick'] : []
+  if (userId !== s.me?.id) out.push('private-nick')
+  return out
 }
 
-export function nickLabel(id: NickItemId): string {
-  return id === 'nick' ? 'Change server nickname' : 'Change nickname'
+/** Beside a server nickname the private one says so, and whether you have one; outside servers it's just "nickname". */
+export function nickLabel(s: AppState, serverId: string | null, userId: string, id: NickItemId): string {
+  if (id === 'nick') return 'Change server nickname'
+  if (!serverId) return 'Change nickname'
+  return s.privateNicks[userId] ? 'Change private nickname' : 'Set private nickname'
 }

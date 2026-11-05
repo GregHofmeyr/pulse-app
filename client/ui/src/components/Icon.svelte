@@ -20,6 +20,7 @@
     chevron: 'm6 9 6 6 6-6',
     chevronLeft: 'm15 6-6 6 6 6',
     chevronRight: 'm9 6 6 6-6 6',
+    check: 'm5 12 5 5L20 7',
     // a window with its left / right column marked: show or hide that side panel
     panelLeft: 'M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM9 4v16',
     panelRight: 'M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2zM15 4v16',

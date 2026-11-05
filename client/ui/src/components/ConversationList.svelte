@@ -3,6 +3,7 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import { app, clock } from '../lib/store.svelte'
+  import { presenceOf } from '../lib/presence'
   import { displayName } from '../lib/selectors'
   import ConversationMenu from './ConversationMenu.svelte'
   import { conversations, previewText } from '../lib/conversations'
@@ -38,7 +39,7 @@
       onpointerenter={() => (hovered = c.channel.id)} onpointerleave={() => { if (hovered === c.channel.id) hovered = null }}
       oncontextmenu={(e) => { e.preventDefault(); ctx = { id: c.channel.id, x: e.clientX, y: Math.min(e.clientY, innerHeight - 250) } }}>
       {#if c.channel.kind === 'dm' && people[0]}
-        <Avatar id={people[0]} name={nameOf(people[0])} size={32} online={app.state.people[people[0]]?.online ?? false} hovered={over(c.channel.id)} />
+        <Avatar id={people[0]} name={nameOf(people[0])} size={32} presence={presenceOf(app.state, people[0], clock.nowIso)} hovered={over(c.channel.id)} />
       {:else}
         <span class="stack">
           {#each people.slice(0, 2) as u, i (u)}

@@ -27,7 +27,7 @@ const r: Ready = {
   latest: [],
   streams: [],
   custom_emoji: [],
-  frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [],
+  frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [],
 }
 const s = applyReady(emptyState(), r)
 
@@ -62,7 +62,7 @@ describe('selectors', () => {
     const base = applyReady(emptyState(), {
       ...r,
       members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: named, nickname: 'Big Dog' }] }, { server_id: 'S2', members: [{ user: named, nickname: null }] }],
-      people: [{ user: named, online: true, last_seen_at: null }],
+      people: [{ user: named, online: true, last_seen_at: null, status: 'online' as const }],
       dm_members: [{ channel_id: 'D1', user_ids: ['U1', 'U2'] }],
     })
     const priv = { ...base, privateNicks: { U2: 'Sammy' } }
@@ -86,7 +86,7 @@ describe('selectors', () => {
 
     it('never shows the username once there is a display name; an older server sends none', () => {
       expect(displayName(base, null, 'U2')).not.toBe('sam')
-      const old = applyReady(emptyState(), { ...r, people: [{ user: { ...sam, display_name: '' }, online: true, last_seen_at: null }] })
+      const old = applyReady(emptyState(), { ...r, people: [{ user: { ...sam, display_name: '' }, online: true, last_seen_at: null, status: 'online' as const }] })
       expect(displayName(old, null, 'U2')).toBe('sam')
     })
 
@@ -111,7 +111,7 @@ describe('selectors', () => {
     })
 
     it('mentionables carry the shown name and every name they can be found by', () => {
-      const st = { ...priv, people: { ...priv.people, U1: { user: me, online: true, last_seen_at: null } } }
+      const st = { ...priv, people: { ...priv.people, U1: { user: me, online: true, last_seen_at: null, status: 'online' as const } } }
       expect(mentionablesFor(st, 'C1')).toEqual([{ id: 'U2', name: 'Big Dog', username: 'sam', alts: ['Sam 🎸', 'Big Dog', 'Sammy'] }])
       expect(mentionablesFor(st, 'D1')).toEqual([{ id: 'U2', name: 'Sammy', username: 'sam', alts: ['Sam 🎸', 'Sammy'] }])
     })
@@ -293,7 +293,7 @@ describe('channelsFor clips', () => {
 describe('userOf and roleColorFor', () => {
   it('userOf prefers people', () => {
     const fresher = { ...sam, avatar_hash: 'new' }
-    const s = applyReady(emptyState(), { ...r, people: [{ user: fresher, online: false, last_seen_at: null }] })
+    const s = applyReady(emptyState(), { ...r, people: [{ user: fresher, online: false, last_seen_at: null, status: 'offline' as const }] })
     expect(userOf(s, 'U2')).toEqual(fresher)
     expect(userOf(applyReady(emptyState(), r), 'U2')).toEqual(sam) // members
     expect(userOf(applyReady(emptyState(), { ...r, members: [] }), 'U1')).toEqual(me) // me
@@ -302,7 +302,7 @@ describe('userOf and roleColorFor', () => {
 
   it('userOf order: people beat members, members beat me', () => {
     const tag = (u: typeof me, h: string) => ({ ...u, avatar_hash: h })
-    const base = { ...r, me: tag(me, 'me'), members: [{ server_id: 'S1', members: [{ user: tag(me, 'mem'), nickname: null }] }], people: [{ user: tag(me, 'ppl'), online: false, last_seen_at: null }] }
+    const base = { ...r, me: tag(me, 'me'), members: [{ server_id: 'S1', members: [{ user: tag(me, 'mem'), nickname: null }] }], people: [{ user: tag(me, 'ppl'), online: false, last_seen_at: null, status: 'offline' as const }] }
     expect(userOf(applyReady(emptyState(), base), 'U1')?.avatar_hash).toBe('ppl')
     expect(userOf(applyReady(emptyState(), { ...base, people: [] }), 'U1')?.avatar_hash).toBe('mem')
     expect(userOf(applyReady(emptyState(), { ...base, people: [], members: [] }), 'U1')?.avatar_hash).toBe('me')

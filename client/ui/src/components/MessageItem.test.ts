@@ -469,7 +469,7 @@ describe('MessageItem names and avatars', () => {
     const kim = u('U3', 'kim', { style: { font: null, colors: ['#ffbe7a', '#ff7fae'] } })
     app.state = {
       ...emptyState(), me: alex, messages: { C1: [m] },
-      people: { U1: { user: alex, online: true, last_seen_at: null }, U2: { user: sam, online: true, last_seen_at: null }, U3: { user: kim, online: true, last_seen_at: null } },
+      people: { U1: { user: alex, online: true, last_seen_at: null, status: 'online' }, U2: { user: sam, online: true, last_seen_at: null, status: 'online' }, U3: { user: kim, online: true, last_seen_at: null, status: 'online' } },
     }
     cmp = mount(MessageItem, { target: document.body, props: {
       message: app.state.messages['C1'][0], name: 'alex', nameOf: (id: string | null) => id ?? '', replyTo: null, serverId: 'S1',
@@ -521,7 +521,7 @@ describe('MessageItem names and avatars', () => {
     expect(kim.style.backgroundImage).toContain('linear-gradient')
     expect(jo.getAttribute('style')).toBeNull()
     // a profile change restyles the pills live
-    app.state = { ...app.state, people: { ...app.state.people, U2: { user: u('U2', 'sam', { style: { font: null, colors: ['#a3d8ff'] } }), online: true, last_seen_at: null } } }
+    app.state = { ...app.state, people: { ...app.state.people, U2: { user: u('U2', 'sam', { style: { font: null, colors: ['#a3d8ff'] } }), online: true, last_seen_at: null, status: 'online' } } }
     flushSync()
     expect(document.querySelector<HTMLElement>('.content .mention')!.style.color).toBe('rgb(163, 216, 255)')
     // an unrelated update (someone typing) doesn't restyle the pills
@@ -530,7 +530,7 @@ describe('MessageItem names and avatars', () => {
     app.state = { ...app.state, typing: { C1: { U3: Date.now() + 5000 } } }
     flushSync()
     expect(pill.getAttribute('style')).toBe('color: red')
-    app.state = { ...app.state, people: { ...app.state.people, U2: { user: u('U2', 'sam', { style: { font: null, colors: ['#ffc4a3'] } }), online: true, last_seen_at: null } } }
+    app.state = { ...app.state, people: { ...app.state.people, U2: { user: u('U2', 'sam', { style: { font: null, colors: ['#ffc4a3'] } }), online: true, last_seen_at: null, status: 'online' } } }
     flushSync()
     expect(pill.style.color).toBe('rgb(255, 196, 163)')
     // name styles off: plain pills
@@ -564,7 +564,7 @@ describe('MessageItem names and avatars', () => {
     expect(kim.textContent).toBe('@Kimmy')
     expect(document.querySelector('.content')!.textContent).not.toMatch(/@sam|@KIM/)
     const named = u('U2', 'sam', { display_name: 'Sam 🎸' })
-    app.state = { ...app.state, people: { ...app.state.people, U2: { user: named, online: true, last_seen_at: null } }, members: { S1: [{ user: named, nickname: null }] } }
+    app.state = { ...app.state, people: { ...app.state.people, U2: { user: named, online: true, last_seen_at: null, status: 'online' } }, members: { S1: [{ user: named, nickname: null }] } }
     flushSync()
     ;[sam] = document.querySelectorAll<HTMLElement>('.content .mention')
     expect(sam.textContent).toBe('@Sam 🎸')

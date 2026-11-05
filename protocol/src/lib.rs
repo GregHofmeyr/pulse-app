@@ -37,6 +37,10 @@ pub fn export_all(dir: &Path) -> Result<(), ExportError> {
     rest::VoiceTokenResponse::export_all(&cfg)?;
     rest::ApiError::export_all(&cfg)?;
     rest::Person::export_all(&cfg)?;
+    rest::PresenceStatus::export_all(&cfg)?;
+    rest::Status::export_all(&cfg)?;
+    rest::OwnStatus::export_all(&cfg)?;
+    rest::SetStatusRequest::export_all(&cfg)?;
     rest::ReadState::export_all(&cfg)?;
     rest::Mute::export_all(&cfg)?;
     rest::MuteTarget::export_all(&cfg)?;

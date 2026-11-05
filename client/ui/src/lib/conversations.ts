@@ -69,12 +69,15 @@ export const onScreen = (v: { message: Message; open: boolean; openThread: strin
 
 export type AlertInput = {
   message: Message; me: string; channel: Channel; open: boolean; openThread: string | null; focused: boolean; muted: boolean
+  /** Do Not Disturb is on (#45): nothing alerts, mentions included; unread and mention counts still count. */
+  dnd?: boolean
 }
 
 /** Whether a new message is worth alerting you to (the message sound and the desktop notification):
  *  someone else's message in a DM or group, or one mentioning you anywhere, unless you're reading it
- *  in the focused window. A mute lets only mentions through. */
+ *  in the focused window. A mute lets only mentions through; Do Not Disturb lets nothing through. */
 export function shouldAlert(v: AlertInput): boolean {
+  if (v.dnd) return false
   const m = v.message
   if (m.kind !== 'normal' || m.deleted || m.author_id === v.me) return false
   if (onScreen(v) && v.focused) return false

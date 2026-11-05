@@ -227,29 +227,62 @@ describe('ProfileCard', () => {
       expect(el.querySelector('.msg')!.getAttribute('placeholder')).toBe('Message @Sam 🎸')
     })
 
-    it('offers only your private nickname for someone else (server nicknames live in server menus, #137)', async () => {
-      const { profileUi } = await import('../lib/profileCard.svelte')
-      inServer('Big Dog')
-      for (const serverId of ['S1', null]) {
-        const el = show({ user: named, serverId })
-        const texts = [...el.querySelectorAll('button')].map((b) => b.textContent?.trim() ?? '')
-        expect(texts.filter((t) => /nickname/i.test(t))).toEqual(['Set private nickname'])
+    it('no nickname buttons on the card: they live in the right-click menu (#137, owner)', () => {
+      inServer('Big Dog', 'Sammy')
+      for (const [user, serverId] of [[named, 'S1'], [named, null], [alex, 'S1']] as const) {
+        const el = show({ user, serverId })
+        expect([...el.querySelectorAll('button, a')].some((b) => /nickname/i.test(b.textContent ?? ''))).toBe(false)
+        expect(el.querySelector('.private-nick')).toBeNull()
         unmount(cmp!)
         cmp = undefined
       }
-      // with one set, the label says so; it opens the private-nickname dialog
-      inServer('Big Dog', 'Sammy')
+    })
+
+    it('right-click the card: their server nickname and your private one; no View profile or Message, the card is both (#137)', () => {
+      inServer('Big Dog')
       const el = show({ user: named, serverId: 'S1' })
-      const btn = [...el.querySelectorAll<HTMLButtonElement>('button')].find((b) => /nickname/i.test(b.textContent ?? ''))!
-      expect(btn.textContent?.trim()).toBe('Change private nickname')
-      btn.click()
+      const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 30, clientY: 40 })
+      el.querySelector('.who')!.dispatchEvent(e)
+      flushSync()
+      expect(e.defaultPrevented).toBe(true)
+      const ids = () => [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')].map((i) => i.dataset.item)
+      expect(ids()).toEqual(['nick', 'private-nick', 'appear-offline'])
+      const item = document.querySelector<HTMLElement>('[role=menu] [data-item="private-nick"]')!
+      expect(item.textContent).toBe('Set private nickname')
+      item.click()
       flushSync()
       expect(profileUi.rename).toEqual({ kind: 'private', userId: 'U2' })
-      unmount(cmp!)
-      cmp = undefined
-      // never on your own card
-      const own = show({ user: alex, serverId: 'S1' })
-      expect([...own.querySelectorAll('button')].some((b) => /nickname/i.test(b.textContent ?? ''))).toBe(false)
+      expect(document.querySelector('[role=menu]')).toBeNull()
+    })
+
+    it('right-click the card outside servers: Change nickname (your private one)', () => {
+      inServer(null, 'Sammy')
+      const el = show({ user: named, serverId: null })
+      el.querySelector('.who')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
+      flushSync()
+      const ids = [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')].map((i) => i.dataset.item)
+      expect(ids).toEqual(['private-nick', 'appear-offline'])
+      expect(document.querySelector('[role=menu] [data-item="private-nick"]')!.textContent).toBe('Change nickname')
+    })
+
+    it('appear offline is never a button or a link on the card, only in its right-click menu (#45, owner)', () => {
+      inServer('Big Dog')
+      for (const [user, serverId] of [[named, 'S1'], [named, null], [alex, null]] as const) {
+        const el = show({ user, serverId })
+        expect([...el.querySelectorAll('button, a, [role=button], [role=link]')].some((b) => /offline/i.test(b.textContent ?? '') || /offline/i.test(b.getAttribute('aria-label') ?? ''))).toBe(false)
+        unmount(cmp!)
+        cmp = undefined
+      }
+    })
+
+    it('no right-click menu in the preview', () => {
+      inServer('Big Dog')
+      const el = show({ user: named, serverId: 'S1', preview: true })
+      const e = new MouseEvent('contextmenu', { bubbles: true, cancelable: true })
+      el.querySelector('.who')!.dispatchEvent(e)
+      flushSync()
+      expect(document.querySelector('[role=menu]')).toBeNull()
+      expect(e.defaultPrevented).toBe(false)
     })
   })
 
@@ -351,19 +384,42 @@ describe('ProfileCard', () => {
     expect(bio.classList.contains('panel')).toBe(false)
   })
 
-  it('your quick card groups Edit profile, your status (coming soon) and Badges in one box', () => {
+  it('your quick card groups Edit profile, your status and Badges in one box', () => {
     const el = show({ user: alex })
     const rows = [...el.querySelectorAll<HTMLButtonElement>('.actions button')]
     expect(rows.map((b) => b.textContent?.trim())).toEqual(['Edit profile', 'Online', 'Badges'])
-    // status choices (online, do not disturb, invisible) aren't built yet: the row is there, inert
-    expect(rows[1].getAttribute('aria-disabled')).toBe('true')
+    // the status row opens your status menu (#45), without Your profile: you're on it
     rows[1].click()
+    flushSync()
+    const picker = document.querySelector('[role=menu][aria-label="Your status"]')!
+    expect(picker).not.toBeNull()
+    expect(picker.querySelector('[data-item="profile"]')).toBeNull()
+    picker.querySelector<HTMLButtonElement>('[data-item="dnd"]')!.click()
+    flushSync()
+    document.querySelector<HTMLButtonElement>('[aria-label="Do Not Disturb for"] [role=menuitem]')!.click()
+    flushSync()
+    expect(calls('set_status')).toHaveLength(1)
+    expect(document.querySelector('[role=menu][aria-label="Your status"]')).toBeNull()
     expect(profileUi.full).toBeNull()
     // Badges opens the full profile, where the trophy case is
     rows[2].click()
     expect(profileUi.full).toEqual({ userId: 'U1', serverId: null })
     // your own card needs no separate link: the avatar and Badges open the full profile
     expect([...el.querySelectorAll('button')].some((b) => b.textContent === 'View full profile')).toBe(false)
+  })
+
+  it('your status row shows your status and its dot (#45)', () => {
+    app.state = { ...app.state, myStatus: { status: 'dnd', dnd_until: null } }
+    let row = show({ user: alex }).querySelectorAll<HTMLButtonElement>('.actions button')[1]
+    expect(row.textContent?.trim()).toBe('Do Not Disturb')
+    expect(row.querySelector('.status.dnd')).not.toBeNull()
+    expect(document.querySelector('.ring .pres')!.classList.contains('dnd')).toBe(true)
+    unmount(cmp!)
+    cmp = undefined
+    app.state = { ...app.state, myStatus: { status: 'invisible', dnd_until: null } }
+    row = show({ user: alex }).querySelectorAll<HTMLButtonElement>('.actions button')[1]
+    expect(row.textContent?.trim()).toBe('Invisible')
+    expect(document.querySelector('.ring .pres')!.classList.contains('invisible')).toBe(true)
   })
 
   it('your full card keeps Edit profile and status, without Badges (the trophy case is beside it)', () => {

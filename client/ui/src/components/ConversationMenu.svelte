@@ -7,6 +7,7 @@
   import { MUTE_FOR, muteUntil } from '../lib/muteDurations'
   import { openRename } from '../lib/profileCard.svelte'
   import { onMount } from 'svelte'
+  import AppearOfflineItem from './AppearOfflineItem.svelte'
 
   let { channel, muted, show, at = null, anchor = null, onClose, onRename, onLeft }: {
     channel: Channel
@@ -29,7 +30,8 @@
   const isPrivate = $derived(channel.server_id === null)
   const withMute = $derived(show !== 'manage')
   const withManage = $derived(show !== 'mute')
-  // Right-click a DM (#137): your private nickname for the other person (never a server one here).
+  // Right-click a DM (#137): your private nickname for the other person (never a server one here), and appearing
+  // offline to them (#45).
   const dmWith = $derived(show === 'all' && channel.kind === 'dm' ? ((app.state.dmMembers[channel.id] ?? []).find((u) => u !== app.state.me?.id) ?? null) : null)
 
   async function run(f: () => Promise<unknown>, after?: () => void) {
@@ -89,6 +91,7 @@
       {/if}
       {#if dmWith}
         <button class="menu-item" role="menuitem" onclick={() => { openRename({ kind: 'private', userId: dmWith }); onClose() }}>Change nickname</button>
+        <AppearOfflineItem userId={dmWith} pick={(action) => { void action(); onClose() }} />
       {/if}
       {#if isPrivate}
         <button class="menu-item" role="menuitem" onclick={() => run(() => api.closeConversation(channel.id), onLeft)}>Close conversation</button>

@@ -32,7 +32,7 @@ beforeEach(() => {
     {
       members: [{ server_id: 'S1', members: [{ user: testMe, nickname: null }, { user: user('U2', 'sam'), nickname: null }, { user: user('U3', 'Amber'), nickname: null }] }],
       dm_members: [{ channel_id: 'D1', user_ids: ['U1', 'U2'] }],
-      people: [{ user: user('U2', 'sam'), online: true, last_seen_at: null }],
+      people: [{ user: user('U2', 'sam'), online: true, last_seen_at: null, status: 'online' }],
     },
   ))
 })
@@ -169,7 +169,7 @@ describe('SearchBox', () => {
     const sam = { ...user('U2', 'sam'), display_name: 'Samwise' }
     app.state = {
       ...app.state,
-      people: { U2: { user: sam, online: true, last_seen_at: null } },
+      people: { U2: { user: sam, online: true, last_seen_at: null, status: 'online' } },
       members: { S1: [{ user: testMe, nickname: null }, { user: sam, nickname: 'Gardener' }, { user: user('U3', 'Amber'), nickname: null }] },
       privateNicks: { U3: 'Bestie' },
     }

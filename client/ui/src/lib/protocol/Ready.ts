@@ -7,6 +7,7 @@ import type { DmMembers } from "./DmMembers";
 import type { Game } from "./Game";
 import type { Message } from "./Message";
 import type { Mute } from "./Mute";
+import type { OwnStatus } from "./OwnStatus";
 import type { Person } from "./Person";
 import type { PrivateNickname } from "./PrivateNickname";
 import type { QotyEvent } from "./QotyEvent";
@@ -19,6 +20,7 @@ import type { SpeakerLink } from "./SpeakerLink";
 import type { StreamInfo } from "./StreamInfo";
 import type { ThreadSeenPoint } from "./ThreadSeenPoint";
 import type { User } from "./User";
+import type { UserId } from "./UserId";
 import type { VoiceRoom } from "./VoiceRoom";
 
 export type Ready = { me: User, servers: Array<Server>, channels: Array<Channel>, members: Array<ServerMembers>, dm_members: Array<DmMembers>, 
@@ -94,4 +96,12 @@ frequent_sounds: Array<string>,
 /**
  * Every server's server mutes / deafens in force.
  */
-server_voice: Array<ServerVoiceMod>, };
+server_voice: Array<ServerVoiceMod>, 
+/**
+ * Your own status and DND end (#45).
+ */
+status: OwnStatus, 
+/**
+ * The people you appear offline to (#45). Yours only; nobody else ever receives it.
+ */
+appear_offline_to: Array<UserId>, };

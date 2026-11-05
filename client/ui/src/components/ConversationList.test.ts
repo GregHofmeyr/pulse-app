@@ -65,4 +65,21 @@ describe('the DM list menu (#137)', () => {
     rightClick(rowFor('squad'))
     expect(texts().filter((t) => /nickname/i.test(t ?? ''))).toEqual([])
   })
+
+  it('a DM: Appear offline to them, and back (#45); never in a group', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    rightClick(rowFor('sam'))
+    item('Appear offline to them')!.click()
+    flushSync()
+    expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === 'set_appear_offline').map(([, a]) => a)).toEqual([{ userId: 'U2', hidden: true }])
+    expect(document.querySelector('[role=menu]')).toBeNull()
+    app.state = { ...app.state, appearOfflineTo: ['U2'] }
+    flushSync()
+    rightClick(rowFor('sam'))
+    expect(item('Stop appearing offline to them')).toBeDefined()
+    document.body.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true }))
+    flushSync()
+    rightClick(rowFor('squad'))
+    expect(texts().filter((t) => /offline/i.test(t ?? ''))).toEqual([])
+  })
 })

@@ -1,6 +1,6 @@
 <script lang="ts">
-  // The nickname entry of a person's menu (#113, #137; lib/nicknameMenu): Change server nickname in a server,
-  // Change nickname (your private one) outside servers. It opens the NicknameDialog, which holds Reset / Clear.
+  // The nickname entries of a person's menu (#113, #137; lib/nicknameMenu): in a server Change server nickname and
+  // Set / Change private nickname, outside servers Change nickname (your private one). Each opens the NicknameDialog.
   import { app } from '../lib/store.svelte'
   import { nickItems, nickLabel } from '../lib/nicknameMenu'
   import { openRename } from '../lib/profileCard.svelte'
@@ -21,5 +21,5 @@
   <button type="button" class="menu-item" role="menuitem" data-item={id} onclick={() => {
     if (id === 'nick' && serverId) pick(() => openRename({ kind: 'server', userId, serverId }))
     else if (id === 'private-nick') pick(() => openRename({ kind: 'private', userId }))
-  }}>{nickLabel(id)}</button>
+  }}>{nickLabel(app.state, serverId, userId, id)}</button>
 {/each}

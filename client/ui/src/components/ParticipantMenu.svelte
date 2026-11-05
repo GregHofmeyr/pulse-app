@@ -14,6 +14,7 @@
   import { openCard } from '../lib/profileCard.svelte'
   import { setSoundMute, soundboard } from '../lib/soundboard.svelte'
   import NicknameItems from './NicknameItems.svelte'
+  import AppearOfflineItem from './AppearOfflineItem.svelte'
   import { api, errorText } from '../lib/tauri'
 
   let {
@@ -210,6 +211,7 @@
     {/if}
   {/each}
   <NicknameItems {serverId} {userId} {pick} />
+  <AppearOfflineItem {userId} {pick} />
 </div>
 
 <style>
