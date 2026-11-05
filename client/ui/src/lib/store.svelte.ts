@@ -11,6 +11,7 @@ import { addPending, applyEvent, applyReady, emptyState, restoreUnsent, setPendi
 import { api } from './tauri'
 import { loadUnsent, saveUnsent } from './unsent'
 import { isMuted, messageSound, onScreen, SOUND_GAP_MS } from './conversations'
+import { dndActive } from './status'
 import { notifyMessage, NotifyThrottle } from './notify'
 import { notifyPrefs } from './notifyPrefs.svelte'
 import { getCurrentWindow } from '@tauri-apps/api/window'
@@ -96,6 +97,7 @@ export function maybeAlert(e: Event) {
   const me = app.state.me
   if (!ch || !me) return
   const now = Date.now()
+  const nowIso = new Date(now).toISOString()
   const v = {
     message: m,
     me: me.id,
@@ -103,7 +105,9 @@ export function maybeAlert(e: Event) {
     open: ui.openChannelId === m.channel_id,
     openThread: ui.openThreadId,
     focused: windowFocus.focused,
-    muted: isMuted(app.state, ch, new Date(now).toISOString()),
+    muted: isMuted(app.state, ch, nowIso),
+    // the real time, not the clock: a DND timer ends exactly when it ends
+    dnd: dndActive(app.state, nowIso),
     lastPlayedAt,
     now,
   }
@@ -154,6 +158,16 @@ $effect.root(() => {
   // Back at the window, or notifications switched off: no "and N more" still to come.
   $effect(() => {
     if (windowFocus.focused || !notifyPrefs.enabled) notifications.clear()
+  })
+  // A timed DND ends on time (#45): the clock moves to its end, so your dot flips back to Online then, without
+  // waiting for the 30 s tick or the server (which sweeps it within ~15 s). A new status replaces the timer.
+  $effect(() => {
+    const { status, dnd_until } = app.state.myStatus
+    if (status !== 'dnd' || !dnd_until) return
+    const end = Date.parse(dnd_until)
+    // setTimeout holds at most ~24.8 days (the server caps a DND at 7)
+    const t = setTimeout(() => (clock.nowIso = new Date(Math.max(Date.now(), end)).toISOString()), Math.min(Math.max(0, end - Date.now()), 2 ** 31 - 1))
+    return () => clearTimeout(t)
   })
   $effect(() => {
     const me = app.state.me

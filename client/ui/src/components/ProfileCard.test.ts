@@ -246,7 +246,7 @@ describe('ProfileCard', () => {
       flushSync()
       expect(e.defaultPrevented).toBe(true)
       const ids = () => [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')].map((i) => i.dataset.item)
-      expect(ids()).toEqual(['nick', 'private-nick'])
+      expect(ids()).toEqual(['nick', 'private-nick', 'appear-offline'])
       const item = document.querySelector<HTMLElement>('[role=menu] [data-item="private-nick"]')!
       expect(item.textContent).toBe('Set private nickname')
       item.click()
@@ -261,8 +261,18 @@ describe('ProfileCard', () => {
       el.querySelector('.who')!.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }))
       flushSync()
       const ids = [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')].map((i) => i.dataset.item)
-      expect(ids).toEqual(['private-nick'])
+      expect(ids).toEqual(['private-nick', 'appear-offline'])
       expect(document.querySelector('[role=menu] [data-item="private-nick"]')!.textContent).toBe('Change nickname')
+    })
+
+    it('appear offline is never a button or a link on the card, only in its right-click menu (#45, owner)', () => {
+      inServer('Big Dog')
+      for (const [user, serverId] of [[named, 'S1'], [named, null], [alex, null]] as const) {
+        const el = show({ user, serverId })
+        expect([...el.querySelectorAll('button, a, [role=button], [role=link]')].some((b) => /offline/i.test(b.textContent ?? '') || /offline/i.test(b.getAttribute('aria-label') ?? ''))).toBe(false)
+        unmount(cmp!)
+        cmp = undefined
+      }
     })
 
     it('no right-click menu in the preview', () => {
@@ -374,19 +384,42 @@ describe('ProfileCard', () => {
     expect(bio.classList.contains('panel')).toBe(false)
   })
 
-  it('your quick card groups Edit profile, your status (coming soon) and Badges in one box', () => {
+  it('your quick card groups Edit profile, your status and Badges in one box', () => {
     const el = show({ user: alex })
     const rows = [...el.querySelectorAll<HTMLButtonElement>('.actions button')]
     expect(rows.map((b) => b.textContent?.trim())).toEqual(['Edit profile', 'Online', 'Badges'])
-    // status choices (online, do not disturb, invisible) aren't built yet: the row is there, inert
-    expect(rows[1].getAttribute('aria-disabled')).toBe('true')
+    // the status row opens your status menu (#45), without Your profile: you're on it
     rows[1].click()
+    flushSync()
+    const picker = document.querySelector('[role=menu][aria-label="Your status"]')!
+    expect(picker).not.toBeNull()
+    expect(picker.querySelector('[data-item="profile"]')).toBeNull()
+    picker.querySelector<HTMLButtonElement>('[data-item="dnd"]')!.click()
+    flushSync()
+    document.querySelector<HTMLButtonElement>('[aria-label="Do Not Disturb for"] [role=menuitem]')!.click()
+    flushSync()
+    expect(calls('set_status')).toHaveLength(1)
+    expect(document.querySelector('[role=menu][aria-label="Your status"]')).toBeNull()
     expect(profileUi.full).toBeNull()
     // Badges opens the full profile, where the trophy case is
     rows[2].click()
     expect(profileUi.full).toEqual({ userId: 'U1', serverId: null })
     // your own card needs no separate link: the avatar and Badges open the full profile
     expect([...el.querySelectorAll('button')].some((b) => b.textContent === 'View full profile')).toBe(false)
+  })
+
+  it('your status row shows your status and its dot (#45)', () => {
+    app.state = { ...app.state, myStatus: { status: 'dnd', dnd_until: null } }
+    let row = show({ user: alex }).querySelectorAll<HTMLButtonElement>('.actions button')[1]
+    expect(row.textContent?.trim()).toBe('Do Not Disturb')
+    expect(row.querySelector('.status.dnd')).not.toBeNull()
+    expect(document.querySelector('.ring .pres')!.classList.contains('dnd')).toBe(true)
+    unmount(cmp!)
+    cmp = undefined
+    app.state = { ...app.state, myStatus: { status: 'invisible', dnd_until: null } }
+    row = show({ user: alex }).querySelectorAll<HTMLButtonElement>('.actions button')[1]
+    expect(row.textContent?.trim()).toBe('Invisible')
+    expect(document.querySelector('.ring .pres')!.classList.contains('invisible')).toBe(true)
   })
 
   it('your full card keeps Edit profile and status, without Badges (the trophy case is beside it)', () => {

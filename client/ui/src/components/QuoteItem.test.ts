@@ -46,7 +46,7 @@ function show(m: Message, props: Record<string, unknown> = {}, meId = 'U1') {
   app.state = {
     ...emptyState(), me: alex, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
     members: { S1: [{ user: alex, nickname: null }, { user: sam, nickname: null }, { user: kim, nickname: null }] },
-    people: { U1: { user: alex, online: true, last_seen_at: null }, U2: { user: sam, online: true, last_seen_at: null }, U3: { user: kim, online: true, last_seen_at: null } },
+    people: { U1: { user: alex, online: true, last_seen_at: null, status: 'online' }, U2: { user: sam, online: true, last_seen_at: null, status: 'online' }, U3: { user: kim, online: true, last_seen_at: null, status: 'online' } },
     frequentEmoji: ['👍', '🎉', '❤️', '😂'],
     messages: { C1: [m] },
   }
@@ -380,7 +380,7 @@ describe('QuoteItem names', () => {
     show(quote([line(), line({ id: 'L2', speaker_id: null, speaker_name: 'Grandpa', text: 'back in my day' })]))
     app.state = {
       ...app.state,
-      people: { ...app.state.people, U2: { user: { ...sam, style: { font: 'fredoka', colors: ['#ffc4a3'] } }, online: true, last_seen_at: null } },
+      people: { ...app.state.people, U2: { user: { ...sam, style: { font: 'fredoka', colors: ['#ffc4a3'] } }, online: true, last_seen_at: null, status: 'online' } },
     }
     flushSync()
     const [first, second] = document.querySelectorAll<HTMLElement>('.line .speaker')

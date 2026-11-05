@@ -3,6 +3,7 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import { app, clock, openDm } from '../lib/store.svelte'
+  import { isOn, presenceOf } from '../lib/presence'
   import { relativeTime } from '../lib/conversations'
   import { errorText } from '../lib/tauri'
   import { displayName } from '../lib/selectors'
@@ -16,17 +17,17 @@
   // the card under the pointer: its avatar animates
   let hovered = $state<string | null>(null)
 
-  // by the name you see them by (#47)
+  // by the name you see them by (#47); on (online or DND) first, then the most recently seen (#45: presenceOf)
   const people = $derived(
     Object.values(app.state.people)
       .filter((p) => p.user.id !== app.state.me?.id)
-      .map((p) => ({ ...p, name: displayName(app.state, null, p.user.id) }))
-      .sort((a, b) => Number(b.online) - Number(a.online)
-        || (b.last_seen_at ?? '').localeCompare(a.last_seen_at ?? '')
+      .map((p) => ({ ...p, name: displayName(app.state, null, p.user.id), presence: presenceOf(app.state, p.user.id, clock.nowIso) }))
+      .sort((a, b) => Number(isOn(b.presence)) - Number(isOn(a.presence))
+        || (b.presence.lastSeen ?? '').localeCompare(a.presence.lastSeen ?? '')
         || a.name.localeCompare(b.name)),
   )
-  const online = $derived(people.filter((p) => p.online))
-  const offline = $derived(people.filter((p) => !p.online))
+  const online = $derived(people.filter((p) => isOn(p.presence)))
+  const offline = $derived(people.filter((p) => !isOn(p.presence)))
 
   /** A server voice room this person is in (DM/group calls never show here). */
   function voiceOf(userId: string): { channelId: string; serverId: string; label: string } | null {
@@ -67,17 +68,17 @@
         {#each section.list as p (p.user.id)}
           {@const voice = voiceOf(p.user.id)}
           {@const unread = dmUnread(p.user.id)}
-          <div class="card" class:unread={unread > 0} class:away={!p.online} role="presentation"
+          <div class="card" class:unread={unread > 0} class:away={!isOn(p.presence)} role="presentation"
             onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}>
             <div class="who">
-              <Avatar id={p.user.id} name={p.name} size={36} online={p.online} interactive serverId={null} hovered={() => hovered === p.user.id} />
+              <Avatar id={p.user.id} name={p.name} size={36} presence={p.presence} interactive serverId={null} hovered={() => hovered === p.user.id} />
               <div class="text">
                 <strong><Name userId={p.user.id} serverId={null} text={p.name} /></strong>
                 <span class="status">
                   {#if voice}<Icon name="speaker" size={12} /> {voice.label}
                   {:else if unread > 0}{unread} new message{unread === 1 ? '' : 's'}
-                  {:else if p.online}online
-                  {:else if p.last_seen_at}last seen {relativeTime(p.last_seen_at, Date.parse(clock.nowIso))}
+                  {:else if isOn(p.presence)}{p.presence.label.toLowerCase()}
+                  {:else if p.presence.lastSeen}last seen {relativeTime(p.presence.lastSeen, Date.parse(clock.nowIso))}
                   {:else}offline{/if}
                 </span>
               </div>

@@ -14,6 +14,7 @@
   import SearchBox from './SearchBox.svelte'
   import { narrowerThan } from '../lib/actions'
   import { app, clock, queueMessage, ui } from '../lib/store.svelte'
+  import { presenceOf } from '../lib/presence'
   import { motion } from '../lib/animate.svelte'
   import { windowFocus } from '../lib/windowFocus.svelte'
   import { conversationName, firstUnreadIndex, isMuted, reanchor, shouldMarkRead } from '../lib/conversations'
@@ -440,7 +441,7 @@
 <div class="chan" class:with-replies={!!repliesRoot} bind:this={chan}>
   <div class="head" use:narrowerThan={{ px: NARROW_HEAD, set: (v) => (narrowHead = v) }}>
     {#if isPrivate && channel?.kind === 'dm' && others[0]}
-      <Avatar id={others[0]} name={title} size={26} online={app.state.people[others[0]]?.online ?? false} interactive serverId={null} />
+      <Avatar id={others[0]} name={title} size={26} presence={presenceOf(app.state, others[0], clock.nowIso)} interactive serverId={null} />
       <span class="title"><Name userId={others[0]} serverId={null} text={title} /></span>
     {:else if isPrivate}
       <span class="pile">

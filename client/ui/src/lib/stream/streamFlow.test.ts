@@ -672,6 +672,33 @@ describe('live sounds', () => {
     expect(played('live')).toHaveLength(1)
   })
 
+  it('do_not_disturb_skips_the_live_toast_and_its_sound (#45)', async () => {
+    const { streamApi } = await inVoice()
+    const { app } = await import('../store.svelte')
+    const { toasts } = await import('./viewer.svelte')
+    toasts.list = []
+    app.state = { ...app.state, myStatus: { status: 'dnd', dnd_until: null } }
+    streamApi.onEvent(started('sam'))
+    expect(played('live')).toEqual([])
+    expect(toasts.list).toEqual([])
+    // a run-out timer is Online again
+    app.state = { ...app.state, myStatus: { status: 'dnd', dnd_until: '2000-01-01T00:00:00Z' } }
+    streamApi.onEvent(started('kim'))
+    expect(played('live')).toHaveLength(1)
+    expect(toasts.list).toHaveLength(1)
+  })
+
+  it('do_not_disturb_keeps_the_sounds_of_your_call (#45)', async () => {
+    // live_end belongs to the call you're in: not silenced
+    const { streamApi, stream } = await inVoice()
+    const { app } = await import('../store.svelte')
+    app.state = { ...app.state, myStatus: { status: 'dnd', dnd_until: null } }
+    stream.watching = [{ channelId: 'c2', streamer: 'sam', quality: 'auto', view: 'preview' }]
+    streamApi.onEvent(ended('sam', 'stopped', 'c2'))
+    await settle()
+    expect(played('live_end')).toHaveLength(1)
+  })
+
   it('a_restart_re_announce_is_silent', async () => {
     const { streamApi } = await inVoice()
     await streamApi.onReady({ me: { id: 'me' }, streams: [] } as never, { c1: { sam: info('sam') } } as never)

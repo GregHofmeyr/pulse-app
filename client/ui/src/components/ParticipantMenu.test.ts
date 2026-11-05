@@ -28,7 +28,7 @@ const ready: Ready = {
   channels: [{ id: 'V1', server_id: 'S1', kind: 'voice', name: 'Lounge', position: 0 }],
   members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: null }] }],
   dm_members: [], voice: [{ channel_id: 'V1', members: [{ user_id: 'U1', flags }, { user_id: 'U2', flags }] }],
-  people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [],
+  people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [],
 }
 
 let cmp: ReturnType<typeof mount> | undefined
@@ -138,7 +138,7 @@ describe('ParticipantMenu', () => {
     opener.focus()
     key(opener, 'ContextMenu')
     const list = items()
-    expect(list.map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick'])
+    expect(list.map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick', 'appear-offline'])
     expect(document.activeElement).toBe(list[0])
     for (let i = 1; i < list.length; i++) {
       key(document.activeElement!, 'ArrowDown')
@@ -213,7 +213,7 @@ describe('ParticipantMenu', () => {
     app.state = applyReady(emptyState(), { ...ready, streams: [{ channel_id: 'V1', user_id: 'U2', settings: { height: 720, fps: 60, audio: false, allow_ghosts: true }, status: 'live', viewers: [], ghosts: 0, started_at: '2026-10-26T10:00:00Z' }] })
     mountPanel()
     rightClick(q('[data-stream="U2"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'watch', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'watch', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick', 'appear-offline'])
     document.querySelector<HTMLElement>('[data-item="watch"]')!.click()
     await settle()
     expect(invoke).toHaveBeenCalledWith('stream_watch', { channelId: 'V1', streamer: 'U2' })
@@ -228,7 +228,7 @@ describe('ParticipantMenu', () => {
     const occ = [...document.querySelectorAll<HTMLElement>('.occupant')].find((o) => o.textContent?.includes('sam'))!
     expect(occ.tabIndex).toBe(0)
     rightClick(occ)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick', 'appear-offline'])
     key(menu()!, 'Escape')
     expect(document.activeElement).toBe(occ)
     key(occ, 'F10', { shiftKey: true })
@@ -342,7 +342,7 @@ describe('ParticipantMenu', () => {
   it('the_stream_volume_slider_uses_the_shared_stream_volumes', async () => {
     await watchSam()
     rightClick(q('[data-stream="U2"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'stream-volume', 'stop-watching', 'full-view', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'stream-volume', 'stop-watching', 'full-view', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick', 'appear-offline'])
     const slider = q('[role=menu] input[aria-label="Stream volume"]') as HTMLInputElement
     slider.focus()
     key(slider, 'ArrowRight')
@@ -526,7 +526,7 @@ describe('ParticipantMenu nicknames (#113, #137)', () => {
       privateNicks: { U2: 'Bestie' },
     }
     openFor('U2')
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'server-mute', 'server-deafen', 'disconnect', 'nick', 'private-nick', 'appear-offline'])
     expect(labels()).toMatchObject({ nick: 'Change server nickname', 'private-nick': 'Change private nickname' })
     q('[data-item="private-nick"]')!.click()
     flushSync()
@@ -553,7 +553,7 @@ describe('ParticipantMenu nicknames (#113, #137)', () => {
     cmp = mount(VoicePanel, { target: document.body, props: { channelId: 'V1', serverId: null, onMessage, onVoiceSettings } })
     flushSync()
     rightClick(q('[data-user="U2"]')!)
-    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'private-nick'])
+    expect(items().map((i) => i.dataset.item)).toEqual(['profile', 'volume', 'local-mute', 'sound-mute', 'message', 'private-nick', 'appear-offline'])
     expect(labels()).toMatchObject({ 'private-nick': 'Change nickname' })
     q('[data-item="private-nick"]')!.click()
     flushSync()
@@ -568,9 +568,10 @@ describe('ParticipantMenu nicknames (#113, #137)', () => {
     const list = items()
     key(document.activeElement!, 'End')
     expect(document.activeElement).toBe(list[list.length - 1])
-    expect((document.activeElement as HTMLElement).dataset.item).toBe('private-nick')
+    expect((document.activeElement as HTMLElement).dataset.item).toBe('appear-offline')
     key(document.activeElement!, 'ArrowDown')
     expect(document.activeElement).toBe(list[0])
+    key(document.activeElement!, 'ArrowUp')
     key(document.activeElement!, 'ArrowUp')
     key(document.activeElement!, 'ArrowUp')
     key(document.activeElement!, 'Enter')

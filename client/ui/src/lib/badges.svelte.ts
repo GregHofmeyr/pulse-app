@@ -5,6 +5,7 @@ import { api } from './tauri'
 import { app, loadProfile, onAppEvent } from './store.svelte'
 import { setProfile } from './state'
 import { playSound } from './voiceui'
+import { dndActive } from './status'
 import { openFull } from './profileCard.svelte'
 import type { Event } from './protocol/Event'
 import type { Badge } from './protocol/Badge'
@@ -192,7 +193,8 @@ export function handleBadgeEvent(e: Event) {
   const me = app.state.me
   if (!me || e.d.user_id !== me.id) return
   badgeStore.pushToast({ name: e.d.name, icon: e.d.icon, rarity: e.d.badge.rarity, tier: e.d.badge.tier })
-  playSound('badge')
+  // Do Not Disturb (#45): the toast shows quietly
+  if (!dndActive(app.state, new Date().toISOString())) playSound('badge')
   badgeStore.bump()
   void badgeStore.refresh()
 }

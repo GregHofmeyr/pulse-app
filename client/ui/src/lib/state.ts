@@ -11,6 +11,8 @@ import type { Member } from './protocol/Member'
 import type { Message } from './protocol/Message'
 import type { Mute } from './protocol/Mute'
 import type { Person } from './protocol/Person'
+import type { OwnStatus } from './protocol/OwnStatus'
+import type { PresenceStatus } from './protocol/PresenceStatus'
 import type { Profile } from './protocol/Profile'
 import type { QotyEvent } from './protocol/QotyEvent'
 import type { ReadState } from './protocol/ReadState'
@@ -58,7 +60,11 @@ export type AppState = {
    * `missedMore`: older ones were dropped from `missed`, so one more page is fetched to be sure. */
   history: Record<string, History>
   conn: ConnState
-  people: Record<string, Person> // userId -> person (presence)
+  people: Record<string, Person> // userId -> person (presence, as the server lets you see it; status always set here)
+  /** Your own status and DND end (#45): from Ready and StatusChanged, your sessions only. */
+  myStatus: OwnStatus
+  /** The people you appear offline to (#45), yours only. */
+  appearOfflineTo: string[]
   profiles: Record<string, Profile> // userId -> opened profile (cache)
   roleColors: Record<string, Record<string, string>> // serverId -> userId -> role colour (empty until the roles push)
   /** userId -> the name you gave them that only you see (from Ready and your own events; never anyone else's). */
@@ -115,7 +121,7 @@ export const MISSED_CAP = 200
 export const TYPING_TTL_MS = 6000
 
 export function emptyState(): AppState {
-  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
+  return { me: null, servers: [], channels: {}, members: {}, dmMembers: {}, voice: {}, messages: {}, pending: {}, typing: {}, history: {}, conn: 'connecting', people: {}, myStatus: { status: 'online', dnd_until: null }, appearOfflineTo: [], profiles: {}, roleColors: {}, privateNicks: {}, reads: {}, mutes: [], hidden: {}, latest: {}, streams: {}, customEmoji: {}, frequentEmoji: [], sounds: {}, soundFavourites: [], frequentSounds: [], serverVoice: {}, threads: {}, threadStart: {}, threadSeen: {}, goneReplies: {}, openRoot: null, qoty: {}, speakerLinks: {}, games: {}, clipViews: {}, clipFeeds: {}, clipFacets: {}, clipJobs: {} }
 }
 
 /** `all` with `m` in force, or without that person's entry once neither is (#140). */
@@ -124,6 +130,11 @@ function withServerVoice(all: AppState['serverVoice'], m: ServerVoiceMod): AppSt
   const people = m.muted_by || m.deafened_by ? { ...rest, [m.user_id]: m } : rest
   const { [m.server_id]: _srv, ...others } = all
   return Object.keys(people).length ? { ...others, [m.server_id]: people } : others
+}
+
+/** A person's status as sent; older servers send none, so it goes by `online`. */
+function presenceStatus(status: PresenceStatus | undefined, online: boolean): PresenceStatus {
+  return status ?? (online ? 'online' : 'offline')
 }
 
 export function applyReady(s: AppState, r: Ready): AppState {
@@ -149,7 +160,10 @@ export function applyReady(s: AppState, r: Ready): AppState {
     // Anything may have happened while we were away: refetch the latest page when a channel is viewed.
     history,
     conn: 'connected',
-    people: Object.fromEntries(r.people.map((p) => [p.user.id, p])),
+    people: Object.fromEntries(r.people.map((p) => [p.user.id, { ...p, status: presenceStatus(p.status, p.online) }])),
+    // absent from older servers: online, hidden from nobody
+    myStatus: r.status ?? { status: 'online', dnd_until: null },
+    appearOfflineTo: r.appear_offline_to ?? [],
     // absent from older servers
     privateNicks: Object.fromEntries((r.private_nicknames ?? []).map((p) => [p.user_id, p.nickname])),
     reads: Object.fromEntries(r.read_states.map((x) => [x.channel_id, x])),
@@ -765,11 +779,19 @@ export function applyEvent(s: AppState, e: Event, now: number): AppState {
       return { ...s, voice: { ...s.voice, [c]: list.map((m) => (m.user_id === u ? { ...m, flags } : m)) } }
     }
     case 'UserCreated':
-      return s.people[e.d.user.id] ? s : { ...s, people: { ...s.people, [e.d.user.id]: { user: e.d.user, online: false, last_seen_at: null } } }
+      return s.people[e.d.user.id] ? s : { ...s, people: { ...s.people, [e.d.user.id]: { user: e.d.user, online: false, last_seen_at: null, status: 'offline' } } }
     case 'PresenceChanged': {
       const p = s.people[e.d.user_id]
       if (!p) return s
-      return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, online: e.d.online, last_seen_at: e.d.last_seen_at ?? p.last_seen_at } } }
+      return { ...s, people: { ...s.people, [e.d.user_id]: { ...p, online: e.d.online, last_seen_at: e.d.last_seen_at ?? p.last_seen_at, status: presenceStatus(e.d.status, e.d.online) } } }
+    }
+    // your own status and hidden list reach only your own sessions; anything else isn't ours to keep
+    case 'StatusChanged':
+      return e.d.user_id === s.me?.id ? { ...s, myStatus: e.d.status } : s
+    case 'AppearOfflineChanged': {
+      if (e.d.user_id !== s.me?.id) return s
+      const rest = s.appearOfflineTo.filter((id) => id !== e.d.target_id)
+      return { ...s, appearOfflineTo: e.d.hidden ? [...rest, e.d.target_id] : rest }
     }
     case 'ProfileUpdated':
       return profileUpdated(s, e.d)

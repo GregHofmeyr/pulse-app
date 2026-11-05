@@ -1,5 +1,5 @@
 <script lang="ts" module>
-  export type Section = 'profile' | 'appearance' | 'voice' | 'keybinds' | 'chat' | 'notifications' | 'advanced'
+  export type Section = 'profile' | 'appearance' | 'voice' | 'keybinds' | 'chat' | 'notifications' | 'privacy' | 'advanced'
 </script>
 
 <script lang="ts">
@@ -13,6 +13,7 @@
   import AdvancedSettings from './AdvancedSettings.svelte'
   import AppearanceSettings from './AppearanceSettings.svelte'
   import ProfileSettings from './ProfileSettings.svelte'
+  import PrivacySettings from './PrivacySettings.svelte'
   let { onClose, section = 'voice' }: { onClose: () => void; section?: Section } = $props()
 
   let current = $state<Section>('voice')
@@ -24,6 +25,7 @@
     { key: 'keybinds', label: 'Keybinds' },
     { key: 'chat', label: 'Chat' },
     { key: 'notifications', label: 'Notifications' },
+    { key: 'privacy', label: 'Privacy' },
     { key: 'advanced', label: 'Advanced' },
   ]
 
@@ -97,7 +99,7 @@
     {/if}
     {#if current === 'profile'}<ProfileSettings bind:dirty={profileDirty} bind:settling={profileSettling} />
     {:else if current === 'appearance'}<AppearanceSettings />
-    {:else if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else if current === 'notifications'}<NotificationSettings />{:else}<AdvancedSettings />{/if}
+    {:else if current === 'voice'}<VoiceSettings />{:else if current === 'keybinds'}<KeybindSettings />{:else if current === 'chat'}<ChatSettings />{:else if current === 'notifications'}<NotificationSettings />{:else if current === 'privacy'}<PrivacySettings />{:else}<AdvancedSettings />{/if}
   </div>
 </div>
 </div>

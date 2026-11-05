@@ -8,7 +8,8 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import Icon from './Icon.svelte'
-  import { app, openDm, queueMessage, ui } from '../lib/store.svelte'
+  import { app, clock, openDm, queueMessage, ui } from '../lib/store.svelte'
+  import { presenceOf } from '../lib/presence'
   import { errorText } from '../lib/tauri'
   import { baseName, displayName } from '../lib/selectors'
   import { cardVars, nameStop } from '../lib/cardTheme'
@@ -23,6 +24,7 @@
   import { menuPoint } from '../lib/participantMenu'
   import { nickItems } from '../lib/nicknameMenu'
   import MemberMenu from './MemberMenu.svelte'
+  import StatusPicker from './StatusPicker.svelte'
   import type { User } from '../lib/protocol/User'
   import type { CardProfile } from '../lib/protocol/CardProfile'
   import type { Badge } from '../lib/protocol/Badge'
@@ -61,7 +63,8 @@
   // them, else their display name; the preview draws the display name being edited. The username
   // shows only as the @handle below it.
   const name = $derived(preview ? baseName(user) : displayName(app.state, serverId, user.id))
-  const online = $derived(app.state.people[user.id]?.online ?? null)
+  // no dot for someone we know nothing of; yours shows your own status (hollow grey when Invisible)
+  const presence = $derived(mine || app.state.people[user.id] ? presenceOf(app.state, user.id, clock.nowIso) : null)
   const bioHtml = $derived(card.bio ? renderMarkdown(card.bio, [], app.state.customEmoji) : '')
   // The server voice room they're in, only if it is one of your channels (one you can see); a
   // group call is never named.
@@ -102,6 +105,9 @@
     }
   }
 
+  // Your own card's status row (#45) opens your status menu, above it.
+  let statusMenu = $state<HTMLElement | null>(null)
+
   // Every action between people lives in the right-click menu, never a button on the card (owner, #137): right-click
   // the card (or ContextMenu / Shift+F10 in it) for the person menu, without View profile since you're on it.
   let menu = $state<{ x: number; y: number; opener: HTMLElement } | null>(null)
@@ -130,9 +136,9 @@
   <div class="body">
     {#if !preview && size === 'quick'}
       <!-- the avatar is a way in to the full profile too -->
-      <button type="button" class="ring avatar-link" aria-label="View full profile" onclick={viewFull}><Avatar id={user.id} {name} size={80} place="card" {online} /></button>
+      <button type="button" class="ring avatar-link" aria-label="View full profile" onclick={viewFull}><Avatar id={user.id} {name} size={80} place="card" {presence} /></button>
     {:else}
-      <span class="ring"><Avatar id={user.id} {name} size={80} place="card" {online} user={preview ? user : undefined} /></span>
+      <span class="ring"><Avatar id={user.id} {name} size={80} place="card" {presence} user={preview ? user : undefined} /></span>
     {/if}
     <div class="who">
       <!-- No server for the style: a card shows the person's own colour, never a role colour (spec §2) -->
@@ -167,8 +173,9 @@
       <!-- your own card: one box of actions, like Discord's; the avatar and Badges open the full profile -->
       <div class="actions">
         <button type="button" onclick={editProfile}><Icon name="pencil" size={16} /><span>Edit profile</span></button>
-        <!-- online / do not disturb / invisible (and invisible to chosen people) aren't built yet -->
-        <button type="button" aria-disabled="true" data-tip="Status options are coming soon"><span class="status"></span><span>Online</span><Icon name="chevronRight" size={14} /></button>
+        <!-- your status (#45): the row opens the status menu -->
+        <button type="button" aria-haspopup="menu" aria-expanded={!!statusMenu} data-menu-toggle onclick={(e) => (statusMenu = statusMenu ? null : e.currentTarget)}>
+          <span class="status {presence?.kind ?? 'online'}"></span><span>{presence?.label ?? 'Online'}</span><Icon name="chevronRight" size={14} /></button>
         {#if size === 'quick'}<button type="button" onclick={viewFull}><Icon name="trophy" size={16} /><span>Badges</span></button>{/if}
       </div>
     {:else if !preview && size === 'quick'}
@@ -181,6 +188,9 @@
     {/if}
   </div>
 </div>
+{#if statusMenu}
+  <StatusPicker opener={statusMenu} onClose={() => (statusMenu = null)} />
+{/if}
 {#if menu}
   {#key menu}<MemberMenu {serverId} userId={user.id} x={menu.x} y={menu.y} opener={menu.opener} fromCard onClose={() => (menu = null)} />{/key}
 {/if}
@@ -231,10 +241,13 @@
   /* between rows: a faint straight line, inset from both sides (the card's own line colour) */
   .actions button + button { position: relative; }
   .actions button + button::before { content: ''; position: absolute; top: 0; left: 10px; right: 10px; height: 1px; background: var(--card-line); pointer-events: none; }
-  .actions button:hover:not([aria-disabled='true']) { background: var(--card-hover); }
-  .actions button[aria-disabled='true'] { cursor: default; }
+  .actions button:hover { background: var(--card-hover); }
   .actions span:not(.status) { flex: 1; }
-  .status { width: 10px; height: 10px; margin: 0 3px; border-radius: 50%; background: var(--ok); }
+  /* the dot as Avatar draws it (Avatar.svelte .pres), on the panel */
+  .status { position: relative; width: 10px; height: 10px; margin: 0 3px; border-radius: 50%; background: var(--ok); }
+  .status.dnd { background: var(--danger); }
+  .status.dnd::after { content: ''; position: absolute; left: 18%; right: 18%; top: 50%; height: 26%; transform: translateY(-50%); border-radius: 999px; background: var(--panel-top); }
+  .status.invisible { background: radial-gradient(circle, var(--panel-top) 0 34%, var(--presence-off) 36%); }
   .full-link { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--card-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
   .full-link:hover { text-decoration: underline; }
   .msg { height: 36px; border-radius: 10px; border: 1px solid var(--card-edge); background: var(--panel-bottom); color: var(--card-text); padding: 0 12px; font: inherit; font-size: 13px; }

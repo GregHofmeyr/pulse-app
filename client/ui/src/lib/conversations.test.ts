@@ -22,9 +22,9 @@ function ready(over: Partial<Ready> = {}): Ready {
     dm_members: [{ channel_id: 'DM1', user_ids: ['ME', 'U1'] }, { channel_id: 'G1', user_ids: ['ME', 'U1', 'U2'] }],
     voice: [],
     people: [
-      { user: user('ME', 'alex'), online: true, last_seen_at: null },
-      { user: user('U1', 'sam'), online: true, last_seen_at: null },
-      { user: user('U2', 'jo'), online: false, last_seen_at: '2026-10-08T08:00:00Z' },
+      { user: user('ME', 'alex'), online: true, last_seen_at: null, status: 'online' },
+      { user: user('U1', 'sam'), online: true, last_seen_at: null, status: 'online' },
+      { user: user('U2', 'jo'), online: false, last_seen_at: '2026-10-08T08:00:00Z', status: 'offline' },
     ],
     read_states: [
       { channel_id: 'DM1', last_read_message_id: 'M1', unread: 2, mentions: 0 },
@@ -36,7 +36,7 @@ function ready(over: Partial<Ready> = {}): Ready {
     latest: [msg('M3', 'DM1', 'U1'), msg('M9', 'G1', 'U2')],
     streams: [],
     custom_emoji: [],
-    frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [],
+    frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [],
     ...over,
   }
 }
@@ -53,8 +53,8 @@ describe('conversations', () => {
 
   it('names people by display name, or your private nickname for them, never username (#47, #48)', () => {
     const s = applyReady(emptyState(), ready({ people: [
-      { user: { ...user('U1', 'sam'), display_name: 'Sam 🎸' }, online: true, last_seen_at: null },
-      { user: { ...user('U2', 'jo'), display_name: 'Jo J' }, online: true, last_seen_at: null },
+      { user: { ...user('U1', 'sam'), display_name: 'Sam 🎸' }, online: true, last_seen_at: null, status: 'online' },
+      { user: { ...user('U2', 'jo'), display_name: 'Jo J' }, online: true, last_seen_at: null, status: 'online' },
     ], private_nicknames: [{ user_id: 'U2', nickname: 'Jojo' }] }))
     expect(conversationName(s, 'DM1')).toBe('Sam 🎸')
     expect(conversationName(s, 'G1')).toBe('Sam 🎸, Jojo')
@@ -188,8 +188,8 @@ describe('conversations', () => {
 
   it('presence and new users update the people map; group membership updates', () => {
     let s = applyReady(emptyState(), ready())
-    s = applyEvent(s, { t: 'PresenceChanged', d: { user_id: 'U1', online: false, last_seen_at: NOW } }, 0)
-    expect(s.people['U1']).toMatchObject({ online: false, last_seen_at: NOW })
+    s = applyEvent(s, { t: 'PresenceChanged', d: { user_id: 'U1', online: false, last_seen_at: NOW, status: 'offline' } }, 0)
+    expect(s.people['U1']).toMatchObject({ online: false, last_seen_at: NOW, status: 'offline' })
     s = applyEvent(s, { t: 'UserCreated', d: { user: user('U3', 'riley') } }, 0)
     expect(s.people['U3'].online).toBe(false)
     s = applyEvent(s, { t: 'GroupMembersChanged', d: { channel_id: 'G1', user_ids: ['ME', 'U1', 'U3'] } }, 0)

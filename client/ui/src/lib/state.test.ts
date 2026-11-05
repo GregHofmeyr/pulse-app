@@ -31,7 +31,7 @@ const ready = (over: Partial<Ready> = {}): Ready => ({
   latest: [],
   streams: [],
   custom_emoji: [],
-  frequent_emoji: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [],
+  frequent_emoji: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [],
   ...over,
 })
 
@@ -1325,7 +1325,7 @@ describe('profiles', () => {
 
   it('ProfileUpdated updates people, members, me and a cached profile (its stats unchanged)', () => {
     let s = applyReady(emptyState(), ready({
-      people: [{ user: sam, online: true, last_seen_at: null }],
+      people: [{ user: sam, online: true, last_seen_at: null, status: 'online' }],
       members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: 'S' }] }, { server_id: 'S2', members: [{ user: sam, nickname: null }] }],
     }))
     s = setProfile(s, profileOf(sam))

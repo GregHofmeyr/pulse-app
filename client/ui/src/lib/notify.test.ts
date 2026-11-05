@@ -24,12 +24,12 @@ function ready(): Ready {
     dm_members: [{ channel_id: 'DM1', user_ids: ['ME', 'U1'] }, { channel_id: 'G1', user_ids: ['ME', 'U1', 'U2'] }, { channel_id: 'G2', user_ids: ['ME', 'U1', 'U2'] }],
     voice: [],
     people: [
-      { user: user('ME', 'alex'), online: true, last_seen_at: null },
-      { user: user('U1', 'sam'), online: true, last_seen_at: null },
-      { user: user('U2', 'jo'), online: true, last_seen_at: null },
+      { user: user('ME', 'alex'), online: true, last_seen_at: null, status: 'online' },
+      { user: user('U1', 'sam'), online: true, last_seen_at: null, status: 'online' },
+      { user: user('U2', 'jo'), online: true, last_seen_at: null, status: 'online' },
     ],
     read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [],
-    frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [],
+    frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [],
   }
 }
 const s = applyReady(emptyState(), ready())

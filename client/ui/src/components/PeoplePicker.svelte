@@ -2,7 +2,8 @@
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
-  import { app } from '../lib/store.svelte'
+  import { app, clock } from '../lib/store.svelte'
+  import { presenceOf } from '../lib/presence'
   import { displayName, namesOf } from '../lib/selectors'
 
   let {
@@ -73,7 +74,7 @@
         <!-- the row is the pick button: the name is styled but not a button of its own -->
         <button class="pick" class:sel disabled={isIn || (full && !sel)} onclick={() => toggle(p.user.id)}
           onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}>
-          <Avatar id={p.user.id} name={p.name} size={30} online={p.online} hovered={() => hovered === p.user.id} />
+          <Avatar id={p.user.id} name={p.name} size={30} presence={presenceOf(app.state, p.user.id, clock.nowIso)} hovered={() => hovered === p.user.id} />
           <span class="nm"><Name userId={p.user.id} serverId={null} text={p.name} interactive={false} />{#if isIn}<small> · already here</small>{/if}</span>
           <span class="box" aria-hidden="true"></span>
         </button>

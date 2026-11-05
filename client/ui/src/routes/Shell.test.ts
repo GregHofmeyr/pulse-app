@@ -212,7 +212,7 @@ describe('account menu', () => {
     expect(btn().querySelector('img')?.getAttribute('src')).toContain(next)
   })
 
-  it('your avatar opens your quick card; your name still opens the account menu', () => {
+  it('your avatar opens your status menu, whose Your profile opens your quick card; your name still opens the account menu (#45)', () => {
     const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
     app.state = { ...emptyState(), me }
     cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
@@ -220,13 +220,35 @@ describe('account menu', () => {
     const avatar = document.querySelector<HTMLButtonElement>('.me button.me-avatar')!
     avatar.click()
     flushSync()
+    const picker = document.querySelector('[role=menu][aria-label="Your status"]')!
+    expect(picker).not.toBeNull()
+    expect(profileUi.card).toBeNull()
+    picker.querySelector<HTMLButtonElement>('[data-item="profile"]')!.click()
+    flushSync()
     expect(profileUi.card).toMatchObject({ userId: 'U1', serverId: null, opener: avatar })
+    expect(document.querySelector('[role=menu][aria-label="Your status"]')).toBeNull()
     expect(document.querySelector('.me [role=menu]')).toBeNull()
     closeCard()
     document.querySelector<HTMLButtonElement>('.who-btn')!.click()
     flushSync()
     expect(document.querySelector('.me [role=menu]')).not.toBeNull()
     expect(profileUi.card).toBeNull()
+  })
+
+  it('your avatar shows your status dot, hollow when Invisible; the line under your name says it (#45)', () => {
+    const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    app.state = { ...emptyState(), me, conn: 'connected', myStatus: { status: 'invisible', dnd_until: null } }
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+    flushSync()
+    const dot = document.querySelector('.me .me-avatar .pres')!
+    expect(dot.classList.contains('invisible')).toBe(true)
+    expect(document.querySelector('.me .who small')!.textContent).toBe('Invisible')
+    app.state = { ...app.state, myStatus: { status: 'dnd', dnd_until: null } }
+    flushSync()
+    expect(document.querySelector('.me .me-avatar .pres')!.classList.contains('dnd')).toBe(true)
+    expect(document.querySelector('.me .who small')!.textContent).toBe('Do Not Disturb')
+    // the new-badges dot stays on the avatar
+    expect(document.querySelector('.me .me-avatar')!.getAttribute('aria-label')).toMatch(/^Your status and profile/)
   })
 
   it('Edit profile on your card opens Settings on Profile', () => {
@@ -292,7 +314,7 @@ describe('watching from anywhere', () => {
     ],
     members: [{ server_id: 'S1', members: [{ user: me, nickname: null }, { user: sam, nickname: null }] }],
     dm_members: [], voice: [{ channel_id: 'V1', members: [{ user_id: 'U1', flags }, { user_id: 'U2', flags }] }],
-    people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [samStream], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [],
+    people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [samStream], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [],
   }
   const SAM = { channelId: 'V1', streamer: 'U2' }
   const q = (sel: string) => document.querySelector<HTMLElement>(sel)
@@ -879,7 +901,7 @@ describe('signing out with a channel open', () => {
       { id: 'K1', server_id: 'S1', kind: 'clips', name: 'clips', position: 2 },
     ],
     members: [{ server_id: 'S1', members: [{ user: me, nickname: null }] }],
-    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [],
+    dm_members: [], voice: [], people: [], read_states: [], mutes: [], hidden: [], latest: [], streams: [], custom_emoji: [], frequent_emoji: [], qoty: [], speaker_links: [], thread_seen: [], games: [], clip_views: [], private_nicknames: [], sounds: [], sound_favourites: [], frequent_sounds: [], server_voice: [], status: { status: 'online', dnd_until: null }, appear_offline_to: [],
   }
   const open = (name: string) => {
     ;[...document.querySelectorAll<HTMLElement>('.row')].find((r) => r.textContent?.includes(name))!.dispatchEvent(new MouseEvent(name === 'Lounge' ? 'dblclick' : 'click', { bubbles: true }))

@@ -18,6 +18,7 @@ import { StreamRoom } from './room'
 import { motion } from '../animate.svelte'
 import { admit, layerFor, liveEndSound, toastFor, voiceOnlyStreamer, type Quality, type View } from './viewer'
 import { removeToast, showToast } from './viewer.svelte'
+import { dndActive } from '../status'
 
 type Live = { channelId: string; res: Res; fps: Fps; audio: boolean; allowGhosts: boolean; audioMuted: boolean; label: string; encoderWarning: boolean }
 /** `ghost`: watched from outside that voice channel, under an anonymous identity (counted, never named). */
@@ -719,8 +720,8 @@ export const streamApi = {
       const k = streamKey(channelId, streamer)
       const back = Date.now() - (vanished.get(k) ?? -Infinity) < BACK_WITHIN_MS
       vanished.delete(k)
-      // a stream re-announced after a server restart isn't news
-      if (!back && toastFor({ channelId, streamer }, voice.channelId, meId())) {
+      // a stream re-announced after a server restart isn't news; Do Not Disturb (#45) skips the toast and its sound
+      if (!back && toastFor({ channelId, streamer }, voice.channelId, meId()) && !dndActive(app.state, new Date().toISOString())) {
         showToast({ channelId, streamer, name: nameOf(channelId, streamer) })
         playSound('live')
       }

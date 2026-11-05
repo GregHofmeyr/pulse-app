@@ -8,12 +8,14 @@
   import type { Attachment } from 'svelte/attachments'
 
   import type { User } from '../lib/protocol/User'
+  import type { Presence } from '../lib/presence'
 
-  let { id, name, size = 30, online = null, place = 'list', interactive = false, serverId = null, hovered, user: shown }: {
+  let { id, name, size = 30, presence = null, place = 'list', interactive = false, serverId = null, hovered, user: shown }: {
     id: string
     name: string
     size?: number
-    online?: boolean | null
+    /** The dot to draw (lib/presence.ts presenceOf), or none. */
+    presence?: Presence | null
     place?: 'list' | 'card'
     interactive?: boolean
     serverId?: string | null
@@ -62,7 +64,7 @@
     {:else}
       {initial(name)}
     {/if}
-    {#if online !== null}<span class="pres" class:off={!online} role="img" aria-label={online ? 'online' : 'offline'}></span>{/if}
+    {#if presence}<span class="pres {presence.kind}" role="img" aria-label={presence.label}></span>{/if}
   </span>
 {/snippet}
 
@@ -77,5 +79,10 @@
   .av img { width: 100%; height: 100%; border-radius: 50%; object-fit: cover; display: block; }
   .avbtn { background: none; border: 0; padding: 0; margin: 0; cursor: pointer; display: inline-flex; flex-shrink: 0; }
   .pres { position: absolute; right: -2px; bottom: -2px; width: 34%; height: 34%; min-width: 9px; min-height: 9px; border-radius: 50%; background: var(--ok); border: 2px solid var(--ring); box-sizing: border-box; }
-  .pres.off { background: var(--presence-off); }
+  .pres.offline { background: var(--presence-off); }
+  /* Do Not Disturb (#45): red, with a bar across it in the cut-out colour, as on Discord */
+  .pres.dnd { background: var(--danger); }
+  .pres.dnd::after { content: ''; position: absolute; left: 18%; right: 18%; top: 50%; height: 26%; transform: translateY(-50%); border-radius: 999px; background: var(--ring); }
+  /* Invisible: hollow grey, only ever on your own avatar */
+  .pres.invisible { background: radial-gradient(circle, var(--ring) 0 34%, var(--presence-off) 36%); }
 </style>

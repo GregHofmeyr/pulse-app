@@ -1,13 +1,14 @@
 <script lang="ts">
   // A person's menu (#113, #137): from a member-list row, a message author, or a right-click on their profile card
   // (where the server may be none and View profile is left out: you're on it). The profile, a message, and the
-  // nickname items. Keyboard and focus work as in the voice participant menu.
+  // nickname items, Appear offline to them (#45). Keyboard and focus work as in the voice participant menu.
   import { onMount, untrack } from 'svelte'
   import { app } from '../lib/store.svelte'
   import { displayName } from '../lib/selectors'
   import { clickOutside } from '../lib/actions'
   import { openCard } from '../lib/profileCard.svelte'
   import NicknameItems from './NicknameItems.svelte'
+  import AppearOfflineItem from './AppearOfflineItem.svelte'
 
   let { serverId, userId, x, y, opener, onClose, onMessage, fromCard = false }: {
     /** The server it opens in, or null (a card opened outside servers). */
@@ -91,6 +92,7 @@
     <button type="button" class="menu-item" role="menuitem" data-item="message" onclick={() => pick(() => onMessage(userId))}>Message</button>
   {/if}
   <NicknameItems {serverId} {userId} {pick} />
+  <AppearOfflineItem {userId} {pick} />
 </div>
 
 <style>

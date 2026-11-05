@@ -2,7 +2,8 @@
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
-  import { app } from '../lib/store.svelte'
+  import { app, clock } from '../lib/store.svelte'
+  import { presenceOf } from '../lib/presence'
   import { api, errorText } from '../lib/tauri'
   import { displayName } from '../lib/selectors'
 
@@ -33,7 +34,7 @@
   <div class="label">MEMBERS — {members.length}</div>
   {#each members as p (p.user.id)}
     <div class="row" role="presentation" onpointerenter={() => (hovered = p.user.id)} onpointerleave={() => { if (hovered === p.user.id) hovered = null }}>
-      <Avatar id={p.user.id} name={p.name} size={32} online={p.online} interactive serverId={null} hovered={() => hovered === p.user.id} />
+      <Avatar id={p.user.id} name={p.name} size={32} presence={presenceOf(app.state, p.user.id, clock.nowIso)} interactive serverId={null} hovered={() => hovered === p.user.id} />
       <span class="who"><Name userId={p.user.id} serverId={null} text={p.name} surface="side" />{#if p.user.id === app.state.me?.id}<small> (you)</small>{/if}</span>
       {#if p.user.id !== app.state.me?.id}
         <button class="x" aria-label="Remove {p.name}" data-tip="Remove from group" onclick={() => remove(p.user.id)}><Icon name="x" size={14} /></button>

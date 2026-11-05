@@ -30,6 +30,7 @@
   import { closeSearch, search } from '../lib/search.svelte'
   // Profiles: the quick card and the full profile
   import ProfileCardPopover from '../components/ProfileCardPopover.svelte'
+  import StatusPicker from '../components/StatusPicker.svelte'
   import { closeFull, closeRename, openCard, profileUi } from '../lib/profileCard.svelte'
   import { onMount, tick, untrack } from 'svelte'
   import { myServerTips, voice, voiceApi } from '../lib/voice.svelte'
@@ -41,6 +42,7 @@
   import { closeGoLive, goLiveUi } from '../lib/stream/golive.svelte'
   import { api, errorText, type ClipJob } from '../lib/tauri'
   import { app, clock, loadProfile, openDm, ui } from '../lib/store.svelte'
+  import { presenceOf } from '../lib/presence'
   import BadgeToast from '../components/BadgeToast.svelte'
   import { badgeStore, logoClick } from '../lib/badges.svelte'
   import { applyEvent, dropClipJob, setClipJob, trimHistory } from '../lib/state'
@@ -115,6 +117,8 @@
   }
   let reportOpen = $state(false)
   let menuOpen = $state(false)
+  /** Your status menu (#45), opened from your avatar: the avatar it came from. */
+  let statusMenu = $state<HTMLElement | null>(null)
   let menuToggle = $state<HTMLButtonElement>()
   /** An outside press or Esc closes the account menu; after Esc, focus goes back to its toggle. */
   function closeAccountMenu(e: Event) {
@@ -542,10 +546,15 @@
       {/if}
       <VoiceStatus />
       <div class="me">
-        <!-- your avatar opens your quick card (like anyone's); the rest opens the account menu -->
-        <button type="button" class="me-avatar" aria-label={badgeStore.unseen > 0 ? 'Your profile (new badges)' : 'Your profile'} data-tip="Your profile" onclick={(e) => openCard(me.id, null, e.currentTarget)}><Avatar id={me.id} name={baseName(me)} size={34} />{#if badgeStore.unseen > 0}<span class="new-dot" aria-hidden="true"></span>{/if}</button>
+        <!-- your avatar opens your status menu (#45), whose Your profile opens your quick card; the rest opens the account menu -->
+        <button type="button" class="me-avatar" aria-label={badgeStore.unseen > 0 ? 'Your status and profile (new badges)' : 'Your status and profile'} data-tip="Status and profile"
+          data-menu-toggle aria-haspopup="menu" aria-expanded={!!statusMenu} onclick={(e) => (statusMenu = statusMenu ? null : e.currentTarget)}><Avatar id={me.id} name={baseName(me)} size={34} presence={presenceOf(app.state, me.id, clock.nowIso)} />{#if badgeStore.unseen > 0}<span class="new-dot" aria-hidden="true"></span>{/if}</button>
+        {#if statusMenu}
+          {@const opener = statusMenu}
+          <StatusPicker {opener} onClose={() => (statusMenu = null)} onProfile={() => openCard(me.id, null, opener)} />
+        {/if}
         <button bind:this={menuToggle} class="who-btn" data-tip="Account" data-menu-toggle aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
-          <span class="who"><Name userId={me.id} serverId={null} text={baseName(me)} interactive={false} surface="side" /><small>{app.state.conn === 'connected' ? 'Online' : 'Offline'}</small></span>
+          <span class="who"><Name userId={me.id} serverId={null} text={baseName(me)} interactive={false} surface="side" /><small>{app.state.conn === 'connected' ? presenceOf(app.state, me.id, clock.nowIso).label : 'Offline'}</small></span>
         </button>
         {#if voice.channelId}
           {@const tips = myServerTips()}

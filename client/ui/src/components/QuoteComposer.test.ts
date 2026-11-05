@@ -37,7 +37,7 @@ function show(props: Record<string, unknown> = {}) {
   app.state = {
     ...emptyState(), me: alex, servers: [{ id: 'S1', name: 'Main', icon_hash: null }],
     members: { S1: [{ user: alex, nickname: null }, { user: sam, nickname: null }, { user: kim, nickname: null }] },
-    people: { U1: { user: alex, online: true, last_seen_at: null }, U2: { user: sam, online: true, last_seen_at: null }, U3: { user: kim, online: true, last_seen_at: null } },
+    people: { U1: { user: alex, online: true, last_seen_at: null, status: 'online' }, U2: { user: sam, online: true, last_seen_at: null, status: 'online' }, U3: { user: kim, online: true, last_seen_at: null, status: 'online' } },
   }
   cmp = mount(QuoteComposer, { target: document.body, props: { channelId: 'C1', serverId: 'S1', onDone, ...props } })
   flushSync()

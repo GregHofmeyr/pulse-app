@@ -80,7 +80,7 @@ describe('a message author menu (#137)', () => {
     const e = rightClick(authorName())
     expect(e.defaultPrevented).toBe(true)
     expect(menu()).not.toBeNull()
-    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick'])
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'appear-offline'])
     expect(label('nick')).toBe('Change server nickname')
     expect(label('private-nick')).toBe('Change private nickname')
     expect(document.activeElement).toBe(document.querySelector('[role=menu] [data-item="profile"]'))
@@ -89,7 +89,7 @@ describe('a message author menu (#137)', () => {
   it('right-click the avatar opens it too', () => {
     show('S1')
     rightClick(avatar())
-    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick'])
+    expect(ids()).toEqual(['profile', 'message', 'nick', 'private-nick', 'appear-offline'])
   })
 
   it('Change server nickname opens the dialog for their server nickname', () => {
