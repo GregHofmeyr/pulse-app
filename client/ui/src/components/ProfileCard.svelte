@@ -207,7 +207,7 @@
   /* Surface: the theme mixed into near-black (white on a light app theme, #139); border: the edge colours; glow: each at
      45% alpha (reconciliation 8); on a light theme a soft lift too. */
   .card {
-    width: 300px; border-radius: 16px; overflow: hidden; color: var(--card-text);
+    width: 300px; border-radius: var(--radius-xl); overflow: hidden; color: var(--card-text);
     border: 1.5px solid transparent;
     background: linear-gradient(var(--card-top), var(--card-bottom)) padding-box, linear-gradient(var(--glow-top), var(--glow-bottom)) border-box;
     box-shadow: 0 -4px 22px var(--glow-top-a), 0 4px 22px var(--glow-bottom-a), var(--card-lift);
@@ -231,7 +231,7 @@
   .badges { display: flex; flex-wrap: wrap; gap: 8px; padding: 2px 0; }
   /* a touch smaller than the shared showcase size; zoom keeps the ring, glyph, spark and tier in proportion */
   .badges :global(.badge-icon.show) { zoom: .84; }
-  .panel { border-radius: 10px; padding: 10px 12px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); font-size: 13px; }
+  .panel { border-radius: var(--radius-md); padding: 10px 12px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); font-size: 13px; }
   .bio { font-size: 13px; line-height: 1.4; overflow-wrap: anywhere; }
   .bio :global(p) { margin: 0; }
   .bio :global(p + p) { margin-top: 4px; }
@@ -246,8 +246,8 @@
   dd { margin: 0; }
   .info .room { justify-content: flex-start; align-items: center; gap: 6px; color: var(--card-ok); }
   .avatar-link { border: 0; cursor: pointer; }
-  .actions { display: flex; flex-direction: column; padding: 4px; border-radius: 10px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); }
-  .actions button { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border: 0; border-radius: 8px; background: none; color: var(--card-text); font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
+  .actions { display: flex; flex-direction: column; padding: 4px; border-radius: var(--radius-md); background: linear-gradient(var(--panel-top), var(--panel-bottom)); }
+  .actions button { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: none; color: var(--card-text); font: inherit; font-size: 13px; font-weight: 600; text-align: left; cursor: pointer; }
   /* between rows: a faint straight line, inset from both sides (the card's own line colour) */
   .actions button + button { position: relative; }
   .actions button + button::before { content: ''; position: absolute; top: 0; left: 10px; right: 10px; height: 1px; background: var(--card-line); pointer-events: none; }
@@ -260,7 +260,7 @@
   .status.invisible { background: var(--presence-off); }
   .full-link { align-self: flex-start; background: none; border: 0; padding: 0; color: var(--card-text); font: inherit; font-size: 13px; font-weight: 600; cursor: pointer; }
   .full-link:hover { text-decoration: underline; }
-  .msg { height: 36px; border-radius: 10px; border: 1px solid var(--card-edge); background: var(--panel-bottom); color: var(--card-text); padding: 0 12px; font: inherit; font-size: 13px; }
+  .msg { height: 36px; border-radius: var(--radius-md); border: 1px solid var(--card-edge); background: var(--panel-bottom); color: var(--card-text); padding: 0 12px; font: inherit; font-size: 13px; }
   .msg::placeholder { color: var(--card-text-2); opacity: .75; }
   .err { margin: 0; font-size: 12px; color: var(--card-danger); }
 </style>

@@ -302,8 +302,8 @@
   .time { font-size: 11px; color: var(--text-3); }
   .content { color: var(--text-body); line-height: 1.5; overflow-wrap: anywhere; }
   .content :global(p) { margin: 0; }
-  .content :global(code) { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; background: var(--bg-inset); border: 1px solid var(--line); border-radius: 6px; padding: 1px 6px; }
-  .content :global(pre) { background: var(--bg-inset); border-radius: 8px; padding: 10px; overflow-x: auto; }
+  .content :global(code) { font-family: 'JetBrains Mono', ui-monospace, monospace; font-size: 12.5px; background: var(--bg-inset); border: 1px solid var(--line); border-radius: var(--radius-xs); padding: 1px 6px; }
+  .content :global(pre) { background: var(--bg-inset); border-radius: var(--radius-sm); padding: 10px; overflow-x: auto; }
   .content :global(pre code) { border: 0; padding: 0; }
   .content :global(a) { color: var(--accent-text); }
   .content :global(blockquote) { margin: 4px 0; padding-left: 10px; border-left: 3px solid var(--bg-4); color: var(--text-2); }
@@ -319,7 +319,7 @@
   .actions button { width: 30px; height: 28px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .actions button:hover { background: var(--bg-4); color: var(--text); }
   /* about two lines to start, grows with what's in it (images included) up to 200px, then scrolls */
-  .body :global(.edit) { min-height: 58px; max-height: 200px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; }
+  .body :global(.edit) { min-height: 58px; max-height: 200px; border-radius: var(--radius-sm); border: 1px solid var(--bg-4); background: var(--bg-1); padding: 8px; }
   .body :global(.edit:focus) { border-color: var(--focus-soft); }
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger-text); }
   .hint { font-size: 11px; color: var(--text-3); }

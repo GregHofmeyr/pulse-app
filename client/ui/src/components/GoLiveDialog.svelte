@@ -119,7 +119,7 @@
   .overlay { position: fixed; inset: 0; z-index: 30; }
   .modal { width: min(480px, 100%); }
   .top { display: flex; align-items: center; justify-content: space-between; }
-  video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; object-fit: contain; }
+  video { width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: var(--radius-md); object-fit: contain; }
   .source { display: flex; align-items: center; gap: 10px; }
   .label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); font-size: 13px; }
   fieldset { margin: 0; padding: 0; border: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 16px; }

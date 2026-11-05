@@ -417,7 +417,7 @@
   .upload.disabled { opacity: .5; cursor: default; }
   .file { position: absolute; width: 1px; height: 1px; opacity: 0; pointer-events: none; }
   .swatches, .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  .swatch { width: 40px; height: 28px; border-radius: 8px; border: 2px solid transparent; padding: 0; cursor: pointer; }
+  .swatch { width: 40px; height: 28px; border-radius: var(--radius-sm); border: 2px solid transparent; padding: 0; cursor: pointer; }
   .swatch.round { width: 28px; border-radius: 50%; }
   .swatch[aria-checked='true'] { border-color: var(--text); box-shadow: 0 0 0 2px var(--ring) inset; }
   /* Default (no colour) and Custom: swatch-sized, drawn in the theme's own greys */
@@ -427,15 +427,15 @@
   .swatch.none[aria-checked='true'], .swatch.pick[aria-checked='true'] { border-color: var(--text); }
   /* the shared .toggle-chip (app.css); a font's name keeps the body size, so the sample reads */
   .chip { font-size: 14px; font-weight: 400; }
-  input[type='color'] { width: 44px; height: 30px; padding: 0 2px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; cursor: pointer; }
+  input[type='color'] { width: 44px; height: 30px; padding: 0 2px; border: 1px solid var(--bg-4); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
   /* the shared field ring (EmojiBox turns the box's own outline off) */
   .settings-field :global(.bio:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
-  .settings-field :global(.bio) { min-height: 72px; max-height: 160px; overflow-y: auto; padding: 8px 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--bg-1); white-space: pre-wrap; }
+  .settings-field :global(.bio) { min-height: 72px; max-height: 160px; overflow-y: auto; padding: 8px 12px; border: 1px solid var(--bg-4); border-radius: var(--radius-md); background: var(--bg-1); white-space: pre-wrap; }
   .counter { align-self: flex-end; }
-  .nudge { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: 10px; background: var(--accent-soft); color: var(--text); font-size: 13px; }
+  .nudge { display: flex; align-items: center; gap: 12px; padding: 10px 12px; border-radius: var(--radius-md); background: var(--accent-soft); color: var(--text); font-size: 13px; }
   .nudge span { flex: 1; }
   .counter.over { color: var(--danger-text); font-weight: 600; }
-  .line { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: 12px; background: var(--bg-2); }
+  .line { display: flex; gap: 12px; align-items: flex-start; padding: 12px; border-radius: var(--radius-lg); background: var(--bg-2); }
   .said { min-width: 0; display: flex; flex-direction: column; font-weight: 600; }
   .said p { margin: 2px 0 0; font-weight: 400; color: var(--text); }
   /* flush with the bottom of Settings' scrolling content, whatever its padding */

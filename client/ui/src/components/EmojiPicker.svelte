@@ -259,7 +259,7 @@
   .tone.on { border-color: var(--focus-ring); }
   .body { flex: 1; min-height: 0; display: flex; }
   .rail { display: flex; flex-direction: column; gap: 4px; padding: 6px; background: var(--bg-1); border-right: 1px solid var(--line); overflow-y: auto; }
-  .rail-btn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); cursor: pointer; padding: 0; }
+  .rail-btn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); cursor: pointer; padding: 0; }
   .rail-btn:hover { background: var(--bg-3); color: var(--text); }
   .grp { width: 20px; height: 20px; }
   .srv { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
@@ -270,7 +270,7 @@
   .caret.shut { transform: rotate(-90deg); }
   .cells { display: grid; grid-template-columns: repeat(9, 1fr); gap: 2px; }
   .cells.lazy { content-visibility: auto; }
-  .cell { aspect-ratio: 1; display: grid; place-items: center; border: 0; border-radius: 6px; background: transparent; padding: 0; cursor: pointer; }
+  .cell { aspect-ratio: 1; display: grid; place-items: center; border: 0; border-radius: var(--radius-xs); background: transparent; padding: 0; cursor: pointer; }
   .cell img { width: 24px; height: 24px; object-fit: contain; }
   .cell:hover, .cell.active { background: var(--bg-4); }
   .none { color: var(--text-3); font-size: 13px; text-align: center; margin: 24px 0; }

@@ -209,7 +209,7 @@
   .top { display: flex; gap: 8px; align-items: center; padding: 10px; border-bottom: 1px solid var(--line); }
   /* the shared small field (.input .input-sm) */
   .search { flex: 1; min-width: 0; }
-  .vol-btn { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); padding: 0; cursor: pointer; }
+  .vol-btn { width: 32px; height: 32px; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); padding: 0; cursor: pointer; }
   .vol-btn:hover, .vol-btn.on { background: var(--bg-3); color: var(--text); }
   .vol-row { display: flex; align-items: center; gap: 10px; padding: 8px 12px; background: var(--bg-1); border-bottom: 1px solid var(--line); font-size: 12px; color: var(--text-2); }
   .vol-row input { flex: 1; accent-color: var(--accent); }
@@ -217,7 +217,7 @@
   .error { margin: 0; padding: 6px 12px; color: var(--danger-text); font-size: 12px; border-bottom: 1px solid var(--line); }
   .body { flex: 1; min-height: 0; display: flex; }
   .rail { display: flex; flex-direction: column; gap: 4px; padding: 6px; background: var(--bg-1); border-right: 1px solid var(--line); overflow-y: auto; }
-  .rail-btn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); cursor: pointer; padding: 0; }
+  .rail-btn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); cursor: pointer; padding: 0; }
   .rail-btn:hover { background: var(--bg-3); color: var(--text); }
   .srv { width: 24px; height: 24px; border-radius: 50%; object-fit: cover; }
   .init { display: grid; place-items: center; background: var(--bg-4); color: var(--text); font-size: 12px; font-weight: 700; }
@@ -225,14 +225,14 @@
   .head { position: sticky; top: 0; z-index: 1; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 2px 4px; background: var(--bg-2); color: var(--text-3); font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.04em; }
   .tidy { font-size: 11px; text-transform: none; letter-spacing: 0; font-weight: 600; }
   .tiles { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; }
-  .tile { position: relative; min-width: 0; height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px 4px; border-radius: 10px; background: var(--bg-3); cursor: pointer; }
+  .tile { position: relative; min-width: 0; height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; padding: 6px 4px; border-radius: var(--radius-md); background: var(--bg-3); cursor: pointer; }
   .tile:hover { background: var(--bg-4); }
   .emoji { font-size: 24px; line-height: 1; height: 26px; display: grid; place-items: center; color: var(--text-2); }
   .name { max-width: 100%; font-size: 12px; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .preview { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); cursor: pointer; opacity: 0; }
+  .preview { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-3); cursor: pointer; opacity: 0; }
   .tile:hover .preview, .tile:focus-within .preview { opacity: 1; }
   .preview:hover { background: var(--bg-2); color: var(--text); }
-  .add-tile { height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 1px dashed var(--line); border-radius: 10px; background: transparent; color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; }
+  .add-tile { height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 1px dashed var(--line); border-radius: var(--radius-md); background: transparent; color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; }
   .add-tile:hover { background: var(--bg-3); color: var(--text); }
   .none { color: var(--text-3); font-size: 13px; text-align: center; margin: 24px 0; }
   .ctx { position: absolute; z-index: 5; min-width: 150px; gap: 2px; font-size: 13px; --pop-origin: top left; }

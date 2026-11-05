@@ -46,7 +46,7 @@
   input { flex: 1; min-width: 0; padding-right: 36px; }
   .eye {
     position: absolute; top: 0; right: 2px; bottom: 0; margin: auto 0; width: 28px; height: 28px;
-    display: grid; place-items: center; padding: 0; border: 0; border-radius: 6px;
+    display: grid; place-items: center; padding: 0; border: 0; border-radius: var(--radius-xs);
     background: transparent; color: var(--text-3); cursor: pointer;
   }
   .eye:hover { background: var(--bg-3); color: var(--text); }

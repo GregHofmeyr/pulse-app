@@ -190,7 +190,7 @@
     }
   }
   .close { position: absolute; top: 12px; right: 12px; z-index: 1; }
-  .board { border-radius: 12px; padding: 14px 16px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); color: var(--card-text); }
+  .board { border-radius: var(--radius-lg); padding: 14px 16px; background: linear-gradient(var(--panel-top), var(--panel-bottom)); color: var(--card-text); }
   h2 { margin: 0 0 10px; font-size: 12px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase; color: var(--card-text-2); }
   dl { margin: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 10px; }
   dt { font-size: 12px; color: var(--card-text-2); }
@@ -202,8 +202,8 @@
   .archive .reset { font-style: italic; font-weight: 500; color: var(--card-text-2); }
   .count { margin: -4px 0 10px; font-size: 13px; color: var(--card-text-2); }
   .more { margin: 10px 0 0; }
-  .err { margin: 6px 0 0; padding: 6px 10px; border-radius: 8px; background: var(--bg-3); color: var(--text-2); font-size: 12px; }
-  .retry { margin-left: 6px; padding: 2px 10px; border-radius: 6px; border: 1px solid var(--bg-4); background: var(--bg-2); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
+  .err { margin: 6px 0 0; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--bg-3); color: var(--text-2); font-size: 12px; }
+  .retry { margin-left: 6px; padding: 2px 10px; border-radius: var(--radius-xs); border: 1px solid var(--bg-4); background: var(--bg-2); color: var(--text); font: inherit; font-weight: 600; cursor: pointer; }
   @media (max-width: 760px) {
     .modal { flex-direction: column; overflow-y: auto; }
     .left { flex: none; }

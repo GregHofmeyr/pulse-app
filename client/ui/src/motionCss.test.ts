@@ -162,4 +162,16 @@ describe('radii', () => {
     const offenders = decls(cssOf(resolve(__dirname, 'app.css')), /^border-radius$/).filter((d) => /\b(6|8|10|12|16)px\b/.test(d.value))
     expect(offenders).toEqual([])
   })
+
+  // Being reworked by the DM calls work as this landed: they move over once it merges (issue linked from #173).
+  const LATER = ['components/TextChannel.svelte', 'components/VoicePanel.svelte', 'components/VolumeMixer.svelte', 'components/PeopleBoard.svelte',
+    'components/ConversationList.svelte', 'components/ConversationMenu.svelte', 'routes/Shell.svelte', 'components/VoiceStatus.svelte', 'components/UserTile.svelte']
+  it('components write a single 6/8/10/12/16px radius as its token', () => {
+    const offenders: string[] = []
+    for (const f of files) {
+      if (LATER.includes(rel(f))) continue
+      for (const d of decls(cssOf(f), /^border-radius$/)) if (/^(6|8|10|12|16)px$/.test(d.value)) offenders.push(`${rel(f)}: ${d.value}`)
+    }
+    expect(offenders).toEqual([])
+  })
 })

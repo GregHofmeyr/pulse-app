@@ -209,7 +209,7 @@
   form .q { margin: 0; }
   .hint { margin: 6px 0 0; font-size: 13px; color: var(--text-3); }
   .actions { display: flex; gap: 8px; }
-  .qr { display: block; border-radius: 6px; }
+  .qr { display: block; border-radius: var(--radius-xs); }
   .key { margin: 0; font-size: 13px; }
   .key code, .codes code { font-family: ui-monospace, monospace; letter-spacing: .04em; }
   .codes { list-style: none; margin: 0 0 10px; padding: 0; display: grid; grid-template-columns: repeat(2, max-content); gap: 4px 24px; font-size: 13px; }

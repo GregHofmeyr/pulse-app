@@ -77,7 +77,7 @@
   .dot { width: 10px; height: 10px; border-radius: 50%; background: var(--danger); }
   .meta { color: var(--text-3); font-size: 12px; }
   .preview { position: relative; }
-  video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: 10px; object-fit: contain; }
+  video { display: block; width: 100%; aspect-ratio: 16 / 9; background: #000; border-radius: var(--radius-md); object-fit: contain; }
   .viewers { margin: 0; font-size: 13px; color: var(--text-2); }
   .allow { display: flex; align-items: center; gap: 6px; font-size: 13px; color: var(--text-2); }
   .allow input { accent-color: var(--accent); }

@@ -208,7 +208,7 @@
   /* its own look: the green border and spill, and bg-1 under the bg-2 options */
   .modal { width: min(620px, 100%); padding: 46px 20px 18px; background: var(--bg-1); border-color: var(--quote-green-line); }
   /* 88 cells across ≈ 7 px each at full width, 5 down: the solid run and its thinning both show */
-  .spill { position: absolute; left: 0; right: 0; top: 0; height: 35px; overflow: hidden; border-radius: 16px 16px 0 0; }
+  .spill { position: absolute; left: 0; right: 0; top: 0; height: 35px; overflow: hidden; border-radius: var(--radius-xl) 16px 0 0; }
   .spill :global(.pixel-spill) { width: 100%; height: 100%; }
   .top { position: relative; display: flex; align-items: center; gap: 10px; }
   .mark { font-size: 34px; padding-top: 12px; color: var(--quote-green-text); }
@@ -216,7 +216,7 @@
   .grow { flex: 1; }
   .status { margin: -4px 0 0; color: var(--text-3); font-size: 12px; }
   .options { display: flex; flex-direction: column; gap: 8px; }
-  .opt { position: relative; overflow: hidden; display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: 12px; background: var(--bg-2); border: 1px solid var(--line); }
+  .opt { position: relative; overflow: hidden; display: flex; gap: 12px; align-items: center; padding: 10px 12px; border-radius: var(--radius-lg); background: var(--bg-2); border: 1px solid var(--line); }
   .opt.mine { border-color: var(--quote-green); }
   .fill { position: absolute; inset: 0; background: var(--quote-green-soft); pointer-events: none; transform-origin: left; }
   .said, .tally { position: relative; }
@@ -227,12 +227,12 @@
   .sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   .vote:disabled { opacity: .6; }
   .count { font-size: 20px; font-weight: 700; font-variant-numeric: tabular-nums; }
-  .vote { height: 30px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--quote-green); background: transparent; color: var(--quote-green-text); font-size: 13px; font-weight: 700; white-space: nowrap; }
+  .vote { height: 30px; padding: 0 12px; border-radius: var(--radius-sm); border: 1px solid var(--quote-green); background: transparent; color: var(--quote-green-text); font-size: 13px; font-weight: 700; white-space: nowrap; }
   .vote.on { border-color: transparent; background: var(--quote-green); color: var(--on-quote-green); box-shadow: 0 2px 0 var(--quote-green-deep); }
   .none { margin: 0; color: var(--text-3); font-size: 13px; }
   .add { display: flex; flex-direction: column; gap: 6px; }
   .results { display: flex; flex-direction: column; max-height: 200px; overflow-y: auto; }
-  .results button { display: flex; gap: 8px; align-items: baseline; padding: 7px 10px; border: 0; border-radius: 8px; background: transparent; text-align: left; }
+  .results button { display: flex; gap: 8px; align-items: baseline; padding: 7px 10px; border: 0; border-radius: var(--radius-sm); background: transparent; text-align: left; }
   .results button:hover { background: var(--bg-3); }
   .r-said { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .r-by { color: var(--text-3); font-size: 12px; }

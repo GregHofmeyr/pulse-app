@@ -218,7 +218,7 @@
   .time { font-size: 11px; color: var(--text-3); }
   .deleted { margin: 0; font-style: italic; color: var(--text-3); }
   .lines { display: flex; flex-direction: column; gap: 2px; border-left: 3px solid var(--quote-green-deep); padding-left: 10px; }
-  .line { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 2px 6px; margin-left: -6px; border-radius: 8px; outline: none; }
+  .line { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; padding: 2px 6px; margin-left: -6px; border-radius: var(--radius-sm); outline: none; }
   .line:hover, .line:focus-visible, .line:focus-within { background: var(--hover-tint-strong); }
   .line:focus-visible { box-shadow: 0 0 0 2px var(--focus-ring); }
   .said { min-width: 0; color: var(--text-body); line-height: 1.5; overflow-wrap: anywhere; }
@@ -227,13 +227,13 @@
   .trophy { color: var(--quote-green-text); font-size: 12px; font-weight: 600; }
   .lbtn { opacity: 0; }
   .line:hover .lbtn, .line:focus-within .lbtn { opacity: 1; }
-  .picbtn { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: 8px; }
+  .picbtn { display: block; padding: 0; border: 0; background: none; cursor: zoom-in; border-radius: var(--radius-sm); }
   .caption { margin: 4px 0 0; font-size: 13px; color: var(--text-2); }
-  .win { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: 10px; background: var(--quote-green); color: var(--on-quote-green); font-size: 11px; font-weight: 700; }
+  .win { display: inline-block; margin: 6px 6px 0 0; padding: 1px 8px; border-radius: var(--radius-md); background: var(--quote-green); color: var(--on-quote-green); font-size: 11px; font-weight: 700; }
   .edited { font-size: 11px; color: var(--text-3); }
   .replies { margin-top: 4px; padding: 0; border: 0; background: none; color: var(--accent-text); font-size: 13px; display: inline-flex; align-items: center; gap: 6px; }
   .replies:hover { text-decoration: underline; }
-  .new { padding: 0 6px; border-radius: 8px; background: var(--quote-green); color: var(--on-quote-green); font-size: 10px; font-weight: 700; text-transform: uppercase; }
+  .new { padding: 0 6px; border-radius: var(--radius-sm); background: var(--quote-green); color: var(--on-quote-green); font-size: 10px; font-weight: 700; text-transform: uppercase; }
   .unsent-reply { margin: 4px 0 0 10px; padding: 0; border: 0; background: none; color: var(--danger-text); font-size: 13px; display: inline-flex; align-items: center; gap: 5px; }
   .unsent-reply:hover { text-decoration: underline; }
   .err { margin: 2px 0 0; font-size: 12px; color: var(--danger-text); }

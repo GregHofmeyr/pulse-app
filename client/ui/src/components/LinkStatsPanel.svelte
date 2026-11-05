@@ -85,6 +85,6 @@
   .good { color: var(--ok-text); }
   .warn { color: var(--warn-text); }
   .bad { color: var(--danger-text); }
-  .spark { width: 100%; height: 36px; color: var(--accent-text); background: var(--bg-2); border-radius: 6px; }
+  .spark { width: 100%; height: 36px; color: var(--accent-text); background: var(--bg-2); border-radius: var(--radius-xs); }
   .span { color: var(--text-3); font-size: 11px; margin-top: -4px; }
 </style>

@@ -119,5 +119,5 @@
      isn't a target, so a press there is outside the card */
   .pop { position: fixed; z-index: 55; outline: none; max-height: calc(100vh - 16px + 52px); overflow: auto; padding: 26px; margin: -26px; pointer-events: none; }
   .pop > :global(*) { pointer-events: auto; }
-  .err { margin: 6px 0 0; padding: 6px 10px; border-radius: 8px; background: var(--bg-3); color: var(--text-2); font-size: 12px; max-width: 300px; }
+  .err { margin: 6px 0 0; padding: 6px 10px; border-radius: var(--radius-sm); background: var(--bg-3); color: var(--text-2); font-size: 12px; max-width: 300px; }
 </style>

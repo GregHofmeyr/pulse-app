@@ -127,7 +127,7 @@
 <style>
   .head { min-height: 52px; flex-shrink: 0; padding: 8px 18px; box-sizing: border-box; display: flex; align-items: center; flex-wrap: wrap; gap: 10px; border-bottom: 1px solid var(--bg-3); color: var(--text-3); }
   .ico { display: flex; }
-  .title { display: flex; align-items: center; gap: 4px; max-width: 240px; padding: 2px 6px; margin-left: -6px; border: 0; border-radius: 8px; background: transparent; color: var(--text); font: inherit; font-size: 15px; font-weight: 600; }
+  .title { display: flex; align-items: center; gap: 4px; max-width: 240px; padding: 2px 6px; margin-left: -6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: 15px; font-weight: 600; }
   .title:hover { background: var(--bg-3); }
   .title-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .caret { display: flex; flex-shrink: 0; color: var(--text-3); transition: transform var(--dur) var(--ease); }
@@ -141,8 +141,8 @@
   .count { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }
   .grow { flex: 1; }
   .err { color: var(--danger-text); font-size: 12px; }
-  .toggle { display: flex; padding: 2px; border-radius: 10px; background: var(--bg-2); }
-  .tbtn { width: 30px; height: 28px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .toggle { display: flex; padding: 2px; border-radius: var(--radius-md); background: var(--bg-2); }
+  .tbtn { width: 30px; height: 28px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .tbtn:hover { color: var(--text); }
   .tbtn[aria-pressed='true'] { background: var(--bg-4); color: var(--text); }
   /* the app's accent button (.btn .btn-primary), at the header's 32 px */

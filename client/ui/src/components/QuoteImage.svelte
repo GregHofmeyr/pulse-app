@@ -11,6 +11,6 @@
   width={full ? undefined : media.width} height={full ? undefined : media.height} {@attach animatedEmoji(media)} />
 
 <style>
-  .pic { display: block; max-width: min(360px, 100%); max-height: 360px; width: auto; height: auto; border-radius: 8px; object-fit: contain; }
-  .full { max-width: 92vw; max-height: 92vh; object-fit: contain; border-radius: 8px; }
+  .pic { display: block; max-width: min(360px, 100%); max-height: 360px; width: auto; height: auto; border-radius: var(--radius-sm); object-fit: contain; }
+  .full { max-width: 92vw; max-height: 92vh; object-fit: contain; border-radius: var(--radius-sm); }
 </style>

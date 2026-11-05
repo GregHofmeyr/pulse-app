@@ -147,7 +147,7 @@
 <style>
   .overlay { position: fixed; inset: 0; z-index: 40; }
   .modal { width: min(520px, 100%); }
-  .stage { display: grid; place-items: center; background: #000; border-radius: 10px; overflow: hidden; touch-action: none; cursor: grab; outline-offset: 2px; }
+  .stage { display: grid; place-items: center; background: #000; border-radius: var(--radius-md); overflow: hidden; touch-action: none; cursor: grab; outline-offset: 2px; }
   /* its overflow clips the crop box's shadow */
   .frame { position: relative; display: block; line-height: 0; overflow: hidden; }
   img { display: block; max-width: 100%; max-height: 50vh; user-select: none; }

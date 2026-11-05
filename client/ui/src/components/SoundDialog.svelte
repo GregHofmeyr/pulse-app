@@ -305,7 +305,7 @@
   .err { font-size: 13px; color: var(--danger-text); }
   .file { display: flex; align-items: center; gap: 10px; min-width: 0; }
   .path { font-size: 13px; color: var(--text-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .wave { width: 100%; height: 72px; background: var(--bg-inset); border-radius: 10px; touch-action: none; }
+  .wave { width: 100%; height: 72px; background: var(--bg-inset); border-radius: var(--radius-md); touch-action: none; }
   .bar { fill: var(--text-3); }
   .bar.on { fill: var(--accent); }
   .handle { cursor: ew-resize; outline: none; }

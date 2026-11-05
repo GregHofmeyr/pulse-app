@@ -249,7 +249,7 @@
   .chan.with-replies { padding-right: var(--replies-w); }
   .editor-host { display: contents; }
   .drop-zone { position: absolute; inset: 8px; z-index: 4; display: grid; place-items: center; border: 2px dashed var(--focus-ring); border-radius: 14px; background: var(--veil); pointer-events: none; }
-  .drop-zone span { padding: 8px 16px; border-radius: 10px; background: var(--bg-2); color: var(--text); font-size: 15px; font-weight: 600; }
+  .drop-zone span { padding: 8px 16px; border-radius: var(--radius-md); background: var(--bg-2); color: var(--text); font-size: 15px; font-weight: 600; }
   /* the shared .toast look; centred by margins, not a transform (WebKitGTK blurs transformed text) */
   .notice { position: absolute; left: 0; right: 0; bottom: 72px; z-index: 5; width: max-content; max-width: 80%; margin: 0 auto; }
 </style>

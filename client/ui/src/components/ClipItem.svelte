@@ -82,7 +82,7 @@
   .body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; align-items: flex-start; }
   .meta { align-self: stretch; display: flex; align-items: center; gap: 8px; min-height: 28px; }
   .meta strong { font-size: 14.5px; }
-  .game { padding: 1px 8px; border-radius: 10px; background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; }
+  .game { padding: 1px 8px; border-radius: var(--radius-md); background: var(--bg-3); color: var(--text-2); font-size: 11px; font-weight: 600; }
   /* a narrow card (small window, side panels open; #97) drops the game tag: the feed's chips still say it */
   @container (max-width: 420px) {
     .game { display: none; }

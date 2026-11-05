@@ -121,5 +121,5 @@
   .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .actions { display: flex; justify-content: flex-end; gap: 8px; }
   /* the Quote of the Year green, at the dialog-footer size */
-  .go { height: 36px; padding: 0 16px; border-radius: 10px; font-size: 14px; }
+  .go { height: 36px; padding: 0 16px; border-radius: var(--radius-md); font-size: 14px; }
 </style>

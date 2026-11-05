@@ -40,7 +40,7 @@
   .show.first { box-shadow: 0 0 0 1px var(--first-gold), 0 0 6px 1px var(--first-gold-soft); }
   .spark { position: absolute; top: -6px; right: -4px; font-size: 13px; line-height: 1; color: var(--first-gold); }
   .show .spark { top: -5px; right: -4px; font-size: 9px; }
-  .tier { position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%); min-width: 16px; padding: 1px 4px; border-radius: 6px; background: var(--ring-color); color: var(--on-accent); font: 800 9px/1.2 ui-monospace, monospace; text-align: center; }
+  .tier { position: absolute; bottom: -6px; left: 50%; transform: translateX(-50%); min-width: 16px; padding: 1px 4px; border-radius: var(--radius-xs); background: var(--ring-color); color: var(--on-accent); font: 800 9px/1.2 ui-monospace, monospace; text-align: center; }
   .show .tier { bottom: -5px; padding: 0 2px; font-size: 7px; min-width: 10px; }
   .new { position: absolute; top: -7px; left: -8px; padding: 1px 4px; border-radius: 5px; background: var(--badge-new); color: var(--on-danger); font: 800 8px/1.3 ui-monospace, monospace; letter-spacing: .06em; }
 </style>

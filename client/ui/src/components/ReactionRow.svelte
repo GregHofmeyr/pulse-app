@@ -180,7 +180,7 @@
 <style>
   .reactions { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 4px; }
   .wrap { position: relative; display: inline-flex; }
-  .chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border-radius: 8px; border: 1px solid var(--bg-4); background: var(--bg-3); color: var(--text-2); font-size: 13px; }
+  .chip { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 8px; border-radius: var(--radius-sm); border: 1px solid var(--bg-4); background: var(--bg-3); color: var(--text-2); font-size: 13px; }
   .chip:hover { border-color: var(--text-3); }
   .chip.locked { cursor: default; opacity: .7; }
   .chip.locked:hover { border-color: var(--bg-4); }

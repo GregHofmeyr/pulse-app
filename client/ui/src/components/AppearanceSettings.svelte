@@ -107,11 +107,11 @@
 
   /* Theme cards: a small live slice of each theme (its own data-theme, so its own tokens). */
   .themes { display: grid; grid-template-columns: repeat(auto-fill, minmax(132px, 1fr)); gap: 10px; }
-  .theme { display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 2px solid transparent; border-radius: 12px; background: transparent; color: var(--text-2); text-align: left; }
+  .theme { display: flex; flex-direction: column; gap: 6px; padding: 6px; border: 2px solid transparent; border-radius: var(--radius-lg); background: transparent; color: var(--text-2); text-align: left; }
   .theme:hover { background: var(--bg-3); color: var(--text); }
   .theme[aria-pressed='true'] { border-color: var(--focus-ring); color: var(--text); }
   .t-label { font-size: 13px; font-weight: 600; padding: 0 2px 2px; }
-  .preview { display: grid; grid-template-columns: 34% 1fr; gap: 4px; height: 72px; padding: 4px; border-radius: 8px; background: var(--bg-0); border: 1px solid var(--line); overflow: hidden; }
+  .preview { display: grid; grid-template-columns: 34% 1fr; gap: 4px; height: 72px; padding: 4px; border-radius: var(--radius-sm); background: var(--bg-0); border: 1px solid var(--line); overflow: hidden; }
   .preview i { display: block; height: 5px; border-radius: 3px; }
   .p-side { display: flex; flex-direction: column; gap: 5px; padding: 6px 5px; border-radius: 5px; background: var(--bg-1); }
   .p-side i { background: var(--text-3); opacity: .55; }
@@ -133,12 +133,12 @@
   .chip-btn:hover { border-color: var(--line-strong); }
   .chip-btn[aria-pressed='true'] { border-color: var(--text); }
   .custom { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; font-weight: 600; color: var(--text-2); cursor: pointer; }
-  .custom input { width: 32px; height: 32px; padding: 0; border: 2px solid var(--line); border-radius: 8px; background: transparent; cursor: pointer; }
+  .custom input { width: 32px; height: 32px; padding: 0; border: 2px solid var(--line); border-radius: var(--radius-sm); background: transparent; cursor: pointer; }
 
   .level { display: flex; flex-direction: column; gap: 4px; max-width: 320px; }
   .level input { width: 100%; margin: 0; accent-color: var(--accent); }
   .ticks { display: flex; justify-content: space-between; font-size: 12px; color: var(--text-3); }
   .ticks .on { color: var(--text); font-weight: 600; }
-  .sample { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 12px 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--bg-2); font-weight: 600; font-size: 15px; }
+  .sample { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 18px; padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--bg-2); font-weight: 600; font-size: 15px; }
   .sample .name { display: inline-block; font-size: calc(1em * var(--name-scale, 1)); line-height: calc(1.4em / var(--name-scale, 1)); }
 </style>

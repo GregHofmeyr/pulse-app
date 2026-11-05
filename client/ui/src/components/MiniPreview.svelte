@@ -123,7 +123,7 @@
 
 <style>
   /* above panel content (z 0-2), below every popup, menu and dialog (z 5+) */
-  .mini-preview { position: fixed; z-index: 4; width: 320px; aspect-ratio: 16 / 9; border-radius: 12px; overflow: hidden; background: #000; box-shadow: var(--shadow-2); cursor: pointer; touch-action: none; user-select: none; }
+  .mini-preview { position: fixed; z-index: 4; width: 320px; aspect-ratio: 16 / 9; border-radius: var(--radius-lg); overflow: hidden; background: #000; box-shadow: var(--shadow-2); cursor: pointer; touch-action: none; user-select: none; }
   /* bottom corners sit above a text channel's composer; toasts (z 40) stay on top */
   .tl { top: calc(var(--area-top) + 68px); left: calc(var(--area-left) + 16px); }
   .tr { top: calc(var(--area-top) + 68px); right: calc(var(--area-right) + 16px); }
@@ -134,7 +134,7 @@
   .open { position: absolute; inset: 0; padding: 0; border: 0; background: transparent; cursor: pointer; }
   .open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
-  .name { position: absolute; left: 8px; bottom: 6px; padding: 1px 7px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }
+  .name { position: absolute; left: 8px; bottom: 6px; padding: 1px 7px; border-radius: var(--radius-xs); background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }
   /* the shared overlay icon button (app.css .icon-btn-overlay), shown on hover */
   .x { position: absolute; top: 6px; right: 6px; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
   .mini-preview:hover .x, .mini-preview:focus-within .x { opacity: 1; }

@@ -298,13 +298,13 @@
   .section:hover { color: var(--text-2); }
   .caret { display: flex; transition: transform var(--dur) var(--ease); }
   .caret.shut { transform: rotate(-90deg); }
-  .add { width: 20px; height: 20px; border: 0; border-radius: 6px; background: transparent; color: var(--text-3); display: grid; place-items: center; padding: 0; }
+  .add { width: 20px; height: 20px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-3); display: grid; place-items: center; padding: 0; }
   .add:hover { color: var(--text); background: var(--bg-2); }
   .new { margin: 2px 4px; }
   .row.renaming { padding-right: 4px; }
   .row.renaming:hover { background: transparent; }
   .err { padding: 0 10px; color: var(--danger-text); font-size: 12px; }
-  .row { height: 34px; padding: 0 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-row); display: flex; align-items: center; gap: 8px; text-align: left; font-size: 14px; }
+  .row { height: 34px; padding: 0 10px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-row); display: flex; align-items: center; gap: 8px; text-align: left; font-size: 14px; }
   .row:hover { background: var(--bg-2); color: var(--text); }
   /* background and colour only: a bolder weight would widen the name */
   .row.active { background: var(--bg-3); color: var(--text); }
@@ -312,7 +312,7 @@
   .ico { color: var(--text-3); display: flex; }
   .grow { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { font-size: 11px; color: var(--text-3); }
-  .occupant { cursor: default; border-radius: 8px; height: 30px; padding: 0 8px 0 38px; display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); }
+  .occupant { cursor: default; border-radius: var(--radius-sm); height: 30px; padding: 0 8px 0 38px; display: flex; align-items: center; gap: 9px; font-size: 13px; color: var(--text-2); }
   /* the ring snaps with speaking, as the voice tile's border does (no box-shadow transition: a repaint per frame) */
   .ring { display: flex; flex-shrink: 0; border-radius: 50%; }
   .ring.speaking { box-shadow: 0 0 0 2px var(--ring), 0 0 0 4px var(--ok); }
@@ -329,5 +329,5 @@
   .row.unread { color: var(--text); font-weight: 600; }
   .row.muted { opacity: .5; }
   .mic { color: var(--text-3); display: grid; }
-  .pill { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: grid; place-items: center; }
+  .pill { min-width: 16px; height: 16px; padding: 0 4px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: grid; place-items: center; }
 </style>

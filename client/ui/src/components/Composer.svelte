@@ -192,14 +192,14 @@
 </div>
 
 <style>
-  .wrap { position: relative; margin: 4px 18px 16px; background: var(--bg-3); border-radius: 12px; }
+  .wrap { position: relative; margin: 4px 18px 16px; background: var(--bg-3); border-radius: var(--radius-lg); }
   /* focus: a faint accent edge, inset so the box doesn't move (the EmojiBox itself has no outline) */
   .wrap:focus-within { box-shadow: inset 0 0 0 1px var(--focus-soft); }
   .mentions { position: absolute; left: 0; bottom: calc(100% + 6px); min-width: 200px; z-index: 5; --pop-origin: bottom left; }
   .mentions .menu-item { font-size: 14px; }
   .mentions img { width: 20px; height: 20px; }
   .mentions small { margin-left: auto; padding-left: 12px; color: var(--text-3); font-size: 11px; }
-  .emoji-btn { position: absolute; right: 8px; bottom: 8px; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
+  .emoji-btn { position: absolute; right: 8px; bottom: 8px; width: 32px; height: 32px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-3); display: grid; place-items: center; }
   /* one step up from the box's bg-3, as every icon button's hover */
   .emoji-btn:hover { background: var(--bg-4); color: var(--text); }
   .replying { display: flex; align-items: center; gap: 6px; padding: 8px 14px 0; font-size: 12px; color: var(--text-3); }
