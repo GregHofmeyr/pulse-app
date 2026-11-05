@@ -443,7 +443,7 @@
   .who { width: 100%; flex: none; }
   .chip { max-width: 100%; height: 32px; padding: 0 10px; border: 0; border-radius: 8px; background: var(--quote-green-deep); color: var(--text); font: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .opts { position: absolute; bottom: calc(100% + 4px); left: 0; right: 0; z-index: 20; gap: 2px; --pop-origin: bottom; }
-  .ibtn { width: 30px; height: 30px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); cursor: pointer; }
+  .ibtn { width: 28px; height: 28px; flex-shrink: 0; display: grid; place-items: center; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); cursor: pointer; }
   .ibtn:hover { background: var(--bg-4); color: var(--text); }
   .pic { position: relative; flex-shrink: 0; }
   .thumb { display: block; width: 44px; height: 44px; object-fit: cover; border-radius: 8px; }

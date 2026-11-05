@@ -42,7 +42,7 @@
           <strong>{s.label}</strong>
           <small id="sound-set-{s.id}-blurb">{s.blurb}</small>
         </div>
-        <button class="play" aria-label="Preview {s.label}" data-tip="Preview" onclick={() => previewSet(s.id)}><Icon name="play" size={14} /></button>
+        <button class="play btn-primary" aria-label="Preview {s.label}" data-tip="Preview" onclick={() => previewSet(s.id)}><Icon name="play" size={14} /></button>
       </div>
     {/each}
   </div>

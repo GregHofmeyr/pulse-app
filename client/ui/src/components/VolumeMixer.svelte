@@ -43,11 +43,14 @@
       <div class="head">
         <!-- the heading's button folds the rows away (#164); the master and Reset stay beside it -->
         <h4 id="mix-{s.id}"><button type="button" class="fold" class:shut aria-expanded={!shut} aria-controls="mix-{s.id}-rows"
-          onclick={() => toggleMixerSection(s.id)}><Icon name="chevron" size={14} />{s.label}</button></h4>
+          onclick={() => toggleMixerSection(s.id)}><Icon name="chevron" size={14} /><span class="label">{s.label}</span></button></h4>
         {#if s.master}
           <input class="master" type="range" min="0" max="200" step="1" aria-label="{s.label} volume" aria-valuetext={label(value(s, 'master'))}
             value={value(s, 'master')} oninput={(e) => setNotch(s.id, 'master', +e.currentTarget.value)} />
           <strong class="pct">{label(value(s, 'master'))}</strong>
+        {:else}
+          <!-- one slider only (Media: Clips, which can't go past a video's own 100%): a section slider would repeat it -->
+          <small class="solo">One slider, below</small>
         {/if}
         <button class="btn btn-quiet reset" aria-label="Reset {s.label} to defaults" data-tip="Reset to defaults" onclick={() => resetMixerSection(s.id)}>Reset</button>
       </div>
@@ -59,7 +62,7 @@
             value={value(s, n.key)} oninput={(e) => setNotch(s.id, n.key, +e.currentTarget.value)} />
           <span class="pct">{label(value(s, n.key))}</span>
           {#if n.test}
-            <button class="play" aria-label="Test {n.label}" data-tip={testBlocked(s, n) ?? 'Test'}
+            <button class="play btn-primary" aria-label="Test {n.label}" data-tip={testBlocked(s, n) ?? 'Test'}
               disabled={testBlocked(s, n) !== null} onclick={() => test(s, n)}><Icon name="play" size={12} /></button>
           {:else}
             <span class="play-gap" aria-hidden="true"></span>
@@ -77,11 +80,14 @@
   .mix-section { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; background: var(--bg-2); border-radius: 12px; }
   .head { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5em auto; align-items: center; gap: 10px; padding-bottom: 6px; }
   .head h4 { margin: 0; font-size: 14px; font-weight: 700; color: var(--text); grid-column: 1; min-width: 0; }
-  .fold { display: flex; align-items: center; gap: 6px; max-width: 100%; margin: -4px -6px; padding: 4px 6px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
+  /* one line, whatever the width: "Stream sounds" wrapped and made its row taller than the rest (#173) */
+  .fold { display: flex; align-items: center; gap: 6px; max-width: 100%; white-space: nowrap; margin: -4px -6px; padding: 4px 6px; border: 0; border-radius: 8px; background: transparent; color: inherit; font: inherit; text-align: left; cursor: pointer; }
   .fold:hover { background: var(--bg-3); }
   .fold:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
   .fold :global(svg) { flex-shrink: 0; color: var(--text-3); transition: transform var(--dur) var(--ease); }
   .fold.shut :global(svg) { transform: rotate(-90deg); }
+  .fold .label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+  .solo { grid-column: 2 / 4; font-size: 12px; color: var(--text-3); }
   .rows[hidden] { display: none; }
   .head .reset { grid-column: 4; padding: 4px 10px; font-size: 12px; }
   .row { display: grid; grid-template-columns: minmax(0, 9rem) minmax(0, 1fr) 3.5em 28px; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line-soft); }

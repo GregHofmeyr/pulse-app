@@ -158,7 +158,7 @@
   .full-view { flex: 1; display: flex; flex-direction: column; min-height: 0; min-width: 0; background: #000; }
   .bar { flex-shrink: 0; min-height: 52px; padding: 4px 10px 5px; display: flex; align-items: flex-start; gap: 14px; background: var(--bg-1); border-bottom: 1px solid var(--bg-3); }
   /* the side panel toggles, one in each top corner; pressed while its panel shows */
-  .panel-toggle { width: 32px; height: 32px; margin-top: 5px; flex-shrink: 0; padding: 0; border: 0; border-radius: 10px; background: transparent; color: var(--text-2); display: grid; place-items: center; }
+  .panel-toggle { width: 32px; height: 32px; margin-top: 5px; flex-shrink: 0; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .panel-toggle:hover { background: var(--bg-3); color: var(--text); }
   .panel-toggle[aria-pressed='true'] { background: var(--accent-mid); color: var(--accent-text); }
   .panel-toggle[aria-pressed='true']:hover { background: var(--accent-strong); }

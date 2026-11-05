@@ -116,7 +116,7 @@
   {#if watch}<div class="host" {@attach hostVideo(channelId, streamer)}></div>{/if}
   <button type="button" class="open" aria-label="Back to {name}'s stream" onclick={open}></button>
   <span class="name">{name}</span>
-  <button type="button" class="x" aria-label="Stop watching" onclick={() => void streamApi.unwatch(channelId, streamer)}>
+  <button type="button" class="x icon-btn icon-btn-xs round icon-btn-overlay" aria-label="Stop watching" onclick={() => void streamApi.unwatch(channelId, streamer)}>
     <Icon name="x" size={14} />
   </button>
 </div>
@@ -135,7 +135,8 @@
   .open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
   .host :global(video) { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; }
   .name { position: absolute; left: 8px; bottom: 6px; padding: 1px 7px; border-radius: 6px; background: rgba(0, 0, 0, .55); color: #fff; font-size: 12px; font-weight: 600; pointer-events: none; }
-  .x { position: absolute; top: 6px; right: 6px; width: 26px; height: 26px; border: 0; border-radius: 50%; background: rgba(0, 0, 0, .6); color: #fff; display: grid; place-items: center; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
+  /* the shared overlay icon button (app.css .icon-btn-overlay), shown on hover */
+  .x { position: absolute; top: 6px; right: 6px; opacity: 0; transition: opacity var(--dur-fast) var(--ease); }
   .mini-preview:hover .x, .mini-preview:focus-within .x { opacity: 1; }
   .dragging .open { cursor: grabbing; }
 </style>

@@ -200,7 +200,9 @@
   .big:hover { background: rgba(0, 0, 0, 0.8); }
   .fail { position: absolute; inset: auto 0 8px; margin: 0; text-align: center; color: #fff; font-size: 13px; }
   .bar { display: flex; align-items: center; gap: 8px; padding: 6px 8px; background: rgba(0, 0, 0, 0.85); color: #fff; }
-  .ico { background: none; border: 0; color: inherit; cursor: pointer; padding: 2px; display: grid; place-items: center; }
+  /* over the video bar: brightens on hover (it had no hover at all) */
+  .ico { background: none; border: 0; color: inherit; cursor: pointer; padding: 2px; display: grid; place-items: center; opacity: .85; }
+  .ico:hover { opacity: 1; }
   .seek { flex: 1; min-width: 40px; accent-color: var(--accent); }
   .vol { width: 70px; accent-color: var(--accent); }
   .time { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }

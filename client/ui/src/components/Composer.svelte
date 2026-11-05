@@ -200,7 +200,8 @@
   .mentions img { width: 20px; height: 20px; }
   .mentions small { margin-left: auto; padding-left: 12px; color: var(--text-3); font-size: 11px; }
   .emoji-btn { position: absolute; right: 8px; bottom: 8px; width: 32px; height: 32px; border: 0; border-radius: 8px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
-  .emoji-btn:hover { color: var(--text); }
+  /* one step up from the box's bg-3, as every icon button's hover */
+  .emoji-btn:hover { background: var(--bg-4); color: var(--text); }
   .replying { display: flex; align-items: center; gap: 6px; padding: 8px 14px 0; font-size: 12px; color: var(--text-3); }
   .replying strong { color: var(--text-2); }
   .replying button { margin-left: auto; }
