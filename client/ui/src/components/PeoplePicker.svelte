@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
+  import { modal } from '../lib/actions'
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import { app, clock } from '../lib/store.svelte'
@@ -53,8 +54,8 @@
 </script>
 
 <div class="overlay modal-overlay fade-in">
-  <div class="backdrop modal-backdrop" role="presentation" onclick={onClose}></div>
-  <div class="modal pop-in" role="dialog" aria-label={title}>
+  <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={onClose}></div>
+  <div class="modal pop-in" role="dialog" aria-modal="true" aria-label={title} tabindex="-1" use:modal={onClose}>
     <h2 class="modal-title">{title}</h2>
     {#if hint}<p class="hint">{hint}</p>{/if}
     {#if fixed.length || picked.length}

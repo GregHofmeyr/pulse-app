@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte'
   import Icon from './Icon.svelte'
+  import { modal } from '../lib/actions'
   import { StreamRoom, type Picked } from '../lib/stream/room'
   import { resolutionsFor, type Fps } from '../lib/stream/encodings'
   import { clampGoLive, loadGoLive, saveGoLive } from '../lib/stream/prefs'
@@ -78,14 +79,12 @@
   }
 </script>
 
-<svelte:window onkeydown={(e) => { if (e.key === 'Escape') { e.preventDefault(); cancel() } }} />
-
 <div class="overlay modal-overlay fade-in">
-  <div class="backdrop modal-backdrop" role="presentation" onclick={cancel}></div>
-  <div class="modal pop-in" role="dialog" aria-label="Go Live">
+  <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={cancel}></div>
+  <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Go Live" tabindex="-1" use:modal={cancel}>
     <div class="top">
       <h1 class="modal-title">Go Live</h1>
-      <button type="button" class="icon-btn round modal-close" aria-label="Cancel" disabled={busy} onclick={cancel}><Icon name="x" /></button>
+      <button type="button" class="icon-btn round modal-close" aria-label="Cancel" disabled={busy} onclick={cancel}><Icon name="x" size={16} /></button>
     </div>
     <video bind:this={video} muted autoplay playsinline></video>
     <div class="source">

@@ -1,5 +1,6 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
+  import { modal } from '../lib/actions'
   import { api } from '../lib/tauri'
   import { saveFlow, submitFlow, type ReportState } from '../lib/report'
 
@@ -25,11 +26,11 @@
 </script>
 
 <div class="overlay modal-overlay fade-in">
-  <div class="backdrop modal-backdrop" role="presentation" onclick={onClose}></div>
-  <div class="modal pop-in" role="dialog" aria-label="Report a bug"><form onsubmit={send}>
+  <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={onClose}></div>
+  <div class="modal pop-in" role="dialog" aria-modal="true" aria-label="Report a bug" tabindex="-1" use:modal={onClose}><form onsubmit={send}>
     <div class="top">
       <h1 class="modal-title">Report a bug</h1>
-      <button type="button" class="icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" /></button>
+      <button type="button" class="icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" size={16} /></button>
     </div>
     <textarea class="input" bind:value={text} maxlength="4000" rows="6" required placeholder="What happened? What were you doing?" disabled={busy || done}></textarea>
     <p class="note">Includes your app version, system info and recent app log.</p>

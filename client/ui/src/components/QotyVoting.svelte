@@ -137,7 +137,7 @@
         <h1 class="modal-title">Quote of the Year {e.year}</h1>
         <span class="qoty-live live">LIVE</span>
         <span class="grow"></span>
-        <button type="button" class="icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" /></button>
+        <button type="button" class="icon-btn round modal-close" aria-label="Close" onclick={onClose}><Icon name="x" size={16} /></button>
       </div>
       <!-- only the count is live: the time left ticks every minute -->
       <p class="status">{leftLabel(e.ends_at, Date.parse(clock.nowIso))} · <span aria-live="polite">{e.voters} of {e.members} have voted</span></p>

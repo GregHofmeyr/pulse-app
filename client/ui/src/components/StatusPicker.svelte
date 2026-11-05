@@ -160,7 +160,7 @@
 </div>
 
 <style>
-  .status-menu { position: fixed; z-index: 60; min-width: 220px; max-width: 280px; gap: 2px; font-size: 13px; outline: none; --pop-origin: bottom left; }
+  .status-menu { position: fixed; z-index: 60; width: max-content; min-width: 220px; max-width: 280px; gap: 2px; font-size: 13px; outline: none; --pop-origin: bottom left; }
   .grow { flex: 1; }
   .menu-item { gap: 10px; }
   .has-sub :global(svg:last-child) { color: var(--text-3); }

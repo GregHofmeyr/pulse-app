@@ -228,7 +228,7 @@
         <strong data-tip={source.file_name}>{source.file_name}</strong>
         <span>{formatDuration(source.duration_ms)} · {source.width}×{source.height} · {fpsText} · {formatBytes(source.size)}</span>
       </div>
-      <button type="button" class="icon-btn round modal-close" aria-label="Close" disabled={sending} onclick={close}><Icon name="x" /></button>
+      <button type="button" class="icon-btn round modal-close" aria-label="Close" disabled={sending} onclick={close}><Icon name="x" size={16} /></button>
     </header>
 
     <div class="body">

@@ -898,7 +898,8 @@ input.switch:disabled { cursor: default; }
 /* Menus and popovers (owner pick 3, family A): a raised surface, a hover that lightens to bg-4.
    Each component keeps its own position, width and z-index. */
 .menu-surface { padding: 6px; display: flex; flex-direction: column; background: var(--surface-menu); border: 1px solid var(--line-menu); border-radius: var(--radius-lg); box-shadow: var(--shadow-3); }
-.menu-item { height: 32px; flex-shrink: 0; padding: 0 10px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; }
+/* min-height, not height: a long item wraps inside its row instead of spilling out of it */
+.menu-item { min-height: 32px; flex-shrink: 0; padding: 6px 10px; display: flex; align-items: center; gap: 8px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text); font: inherit; font-size: 13px; text-align: left; }
 .menu-item:hover:not(:disabled), .menu-item:focus-visible, .menu-item.hi { background: var(--bg-4); }
 .menu-item.danger { color: var(--danger-text); }
 .menu-label { padding: 6px 10px 2px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }

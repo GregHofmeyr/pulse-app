@@ -115,6 +115,37 @@ describe('one tooltip path', () => {
   })
 })
 
+describe('dialogs', () => {
+  const markupOf = (f: string) => readFileSync(f, 'utf8').replace(/<script[\s\S]*?<\/script>/g, '').replace(/<style[\s\S]*?<\/style>/g, '')
+  /** Each element that is a modal dialog box (class "modal"), as its opening tag. */
+  const dialogs = () => files.flatMap((f) => [...markupOf(f).matchAll(/<(div|form)\b[^>]*class="(?:[^"]*\s)?modal(?:\s[^"]*)?"[^>]*>/g)].map((m) => ({ file: rel(f), tag: m[0] })))
+
+  it('every dialog is a modal: role, aria-modal and use:modal (Escape, focus trap, the rest inert)', () => {
+    const all = dialogs()
+    expect(all.length).toBeGreaterThan(15)
+    const offenders = all.filter((d) => !/role="dialog"/.test(d.tag) || !/aria-modal="true"/.test(d.tag) || !/use:modal=/.test(d.tag)).map((d) => `${d.file}: ${d.tag.slice(0, 90)}`)
+    expect(offenders).toEqual([])
+  })
+
+  it("a dialog's close X is one size: a 16px glyph in the round .modal-close", () => {
+    const offenders: string[] = []
+    for (const f of files) {
+      for (const m of markupOf(f).matchAll(/<button[^>]*[\s"]modal-close[\s"][^>]*>(.*?)<\/button>/g)) if (!/<Icon name="x" size=\{16\} \/>/.test(m[1])) offenders.push(`${rel(f)}: ${m[1]}`)
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
+describe('context menus', () => {
+  // Measured at the click point, a fixed menu's shrink-to-fit width is capped by the room to its right: it measured
+  // narrow, clamped, then grew past the window edge with its items wrapping (runtime audit). max-content measures its
+  // real width wherever it starts.
+  it.each(['MemberMenu', 'ServerMenu', 'ChannelMenu', 'LineMenu', 'ParticipantMenu', 'StatusPicker'])('%s sizes to its content', (name) => {
+    const css = cssOf(resolve(__dirname, `components/${name}.svelte`))
+    expect(css).toMatch(/\.(menu|status-menu) \{[^}]*position: fixed;[^}]*width: max-content;/)
+  })
+})
+
 describe('radii', () => {
   // app.css's shared classes use the radius tokens; components still being moved over are listed (#173 follow-up).
   it('app.css writes no raw 6/8/10/12/16px radius (they are --radius-xs … --radius-xl)', () => {

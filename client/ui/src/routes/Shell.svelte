@@ -16,7 +16,7 @@
   import NicknameDialog from '../components/NicknameDialog.svelte'
   import ServerMenu from '../components/ServerMenu.svelte'
   import ServerSettings from '../components/ServerSettings.svelte'
-  import { clickOutside, narrowerThan } from '../lib/actions'
+  import { clickOutside, modal, narrowerThan } from '../lib/actions'
   import { NARROW_BODY, searchMakesRoom } from '../lib/layout'
   import { COLUMNS, fitColumns, RIGHT_DEFAULT } from '../lib/columns'
   import { columns, resetColumn, setColumn } from '../lib/columns.svelte'
@@ -629,8 +629,8 @@
 {#if profileUi.rename}<NicknameDialog target={profileUi.rename} onClose={closeRename} />{/if}
 {#if creating}
   <div class="overlay modal-overlay fade-in">
-  <div class="backdrop modal-backdrop" role="presentation" onclick={() => (creating = false)}></div>
-  <form class="modal dialog pop-in" onsubmit={createServer} aria-label="Create a server">
+  <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={() => (creating = false)}></div>
+  <form class="modal dialog pop-in" onsubmit={createServer} role="dialog" aria-modal="true" aria-label="Create a server" tabindex="-1" use:modal={() => (creating = false)}>
     <h2 class="modal-title">Create a server</h2>
     <label>NAME <input class="input" bind:value={newName} maxlength="64" required placeholder="Game Night" /></label>
     {#if createError}<p class="error">{createError}</p>{/if}

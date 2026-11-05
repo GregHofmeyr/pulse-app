@@ -76,7 +76,7 @@
     <div class="top">
       <span class="qoty-mark mark" aria-hidden="true">“</span>
       <h1 class="modal-title">{title}</h1>
-      <button type="button" class="icon-btn round modal-close" aria-label="Cancel" disabled={busy} onclick={cancel}><Icon name="x" /></button>
+      <button type="button" class="icon-btn round modal-close" aria-label="Cancel" disabled={busy} onclick={cancel}><Icon name="x" size={16} /></button>
     </div>
     {#if !reopen}
       <label class="field">
