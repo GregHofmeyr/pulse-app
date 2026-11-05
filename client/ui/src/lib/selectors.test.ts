@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { applyEvent, applyReady, emptyState } from './state'
-import { roleColorFor, userOf, callRoster, channelsFor, displayName, groupedWith, isLive, isMember, liveIn, mentionablesFor, nameOfIn, pillNamesFor, serverPeople, typingNames, voiceOccupants } from './selectors'
+import { roleColorFor, userOf, callRoster, channelsFor, displayName, groupedWith, groupedPending, isLive, isMember, liveIn, mentionablesFor, nameOfIn, pillNamesFor, serverPeople, typingNames, voiceOccupants } from './selectors'
 import type { Message } from './protocol/Message'
 import type { Ready } from './protocol/Ready'
 import type { StreamInfo } from './protocol/StreamInfo'
@@ -243,6 +243,26 @@ describe('groupedWith', () => {
   it('does not group after a system message', () => {
     const l = [msg('1', 'U1', '2026-10-01T10:00:00Z', { kind: 'system' }), msg('2', 'U1', '2026-10-01T10:01:00Z')]
     expect(groupedWith(l, 1)).toBe(false)
+  })
+})
+
+describe('groupedPending (#173: a sent message keeps the shape it will have once confirmed)', () => {
+  const msg = (id: string, author: string, at: string, extra: Partial<Message> = {}) =>
+    ({ id, author_id: author, kind: 'normal', reply_to_id: null, created_at: at, ...extra }) as Message
+  const confirmed = [msg('1', 'U2', '2026-10-01T10:00:00Z'), msg('2', 'U1', '2026-10-01T10:01:00Z')]
+  it('groups the first pending message under my last confirmed one, by the same rule', () => {
+    const pend = [msg('p1', 'U1', '2026-10-01T10:02:00Z')]
+    expect(groupedPending(confirmed, pend, 0)).toBe(true)
+    expect(groupedPending(confirmed.slice(0, 1), pend, 0)).toBe(false)
+  })
+  it('groups a run of pending messages with each other', () => {
+    const pend = [msg('p1', 'U1', '2026-10-01T10:20:00Z'), msg('p2', 'U1', '2026-10-01T10:20:05Z'), msg('p3', 'U1', '2026-10-01T10:20:06Z', { reply_to_id: '1' })]
+    expect(groupedPending(confirmed, pend, 0)).toBe(false)
+    expect(groupedPending(confirmed, pend, 1)).toBe(true)
+    expect(groupedPending(confirmed, pend, 2)).toBe(false)
+  })
+  it('with nothing confirmed, the first pending message starts a group', () => {
+    expect(groupedPending([], [msg('p1', 'U1', '2026-10-01T10:00:00Z')], 0)).toBe(false)
   })
 })
 

@@ -22,7 +22,7 @@
   import { addHistory, addOlder, appendNewer, markHistory, reachLatest, PAGE, pendingMessage, removePending } from '../lib/state'
   import { jumpTo, jumpToPresent } from '../lib/jump'
   import { liveQoty } from '../lib/quotes'
-  import { displayName, groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor, nextTypingExpiry, typingNames } from '../lib/selectors'
+  import { displayName, groupedPending, groupedWith, keepStable, mentionablesFor, nameOfIn, pillNamesFor, nextTypingExpiry, typingNames } from '../lib/selectors'
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
@@ -40,6 +40,7 @@
   const channel = $derived(app.state.channels[channelId])
   const messages = $derived(app.state.messages[channelId] ?? [])
   const pending = $derived((app.state.pending[channelId] ?? []).filter((p) => !p.thread_root_id)) // a reply's pending shows in its thread
+  const pendingMessages = $derived(pending.map((p) => pendingMessage(p, channelId, app.state.me?.id ?? '')))
   const byId = $derived(new Map(messages.map((m) => [m.id, m])))
   let now = $state(Date.now())
   const typers = $derived(typingNames(app.state, serverId, channelId, now))
@@ -201,7 +202,7 @@
     if (atBottom) void maybeLoadNewer()
   }
   function jump() {
-    list.scrollTo({ top: list.scrollHeight, behavior: 'smooth' })
+    list.scrollTo({ top: list.scrollHeight, behavior: motion.reducedMotion ? 'auto' : 'smooth' })
   }
 
   // --- jump to a message (lib/jump.ts sets `ui.jump`): scroll it to the middle and flash it. A
@@ -515,8 +516,9 @@
         onDelete={() => api.deleteMessage(m.id)} onEditClosed={() => composer?.focus()} />
       {/if}
     {/each}
-    {#each pending as p (p.nonce)}
-      <MessageItem message={pendingMessage(p, channelId, app.state.me?.id ?? '')} {serverId} name={nameOf(app.state.me?.id ?? null)} {nameOf} grouped={false}
+    {#each pendingMessages as pm, i (pm.id)}
+      {@const p = pending[i]}
+      <MessageItem message={pm} {serverId} name={nameOf(app.state.me?.id ?? null)} {nameOf} grouped={groupedPending(messages, pendingMessages, i)}
         replyTo={p.reply_to_id ? (byId.get(p.reply_to_id) ?? null) : null} mine
         {mentionNames} meId={app.state.me?.id ?? ''} pending={p} onReply={() => {}} onEdit={async () => {}} onDelete={async () => {}}
         onRetry={() => retry(p.nonce)} onDiscard={() => (app.state = removePending(app.state, channelId, p.nonce))} />
