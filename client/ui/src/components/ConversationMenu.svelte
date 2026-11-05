@@ -9,6 +9,7 @@
   import { onMount } from 'svelte'
   import AppearOfflineItem from './AppearOfflineItem.svelte'
   import LiveNotifyItem from './LiveNotifyItem.svelte'
+  import MuteFlyout from './MuteFlyout.svelte'
   import { pickGroupIcon, removeGroupIcon } from '../lib/groupIcon.svelte'
 
   let { channel, muted, show, at = null, anchor = null, onClose, onRename, onLeft }: {
@@ -47,6 +48,8 @@
     }
   }
   const muteFor = (minutes: number | null) => run(() => api.setMute('channel', channel.id, muteUntil(minutes)))
+  // the right-click menu's mute flyout (#190; the channel menu's, #131)
+  let flyout = $state<ReturnType<typeof MuteFlyout>>()
 
   // By its button: under it, lined up on its right edge, kept 8px inside the window; above it when there's no room
   // below. The layout size (offsetWidth): the .pop-in entrance scales the box while it runs.
@@ -67,8 +70,13 @@
   const place = $derived(at ? { left: at.x, top: at.y } : pos)
 </script>
 
-<div bind:this={el} class="menu menu-surface pop-in" class:ctx={!!at} class:anchored={!at && !!anchor} role="menu" use:clickOutside={onClose}
-  style:left={place ? `${place.left}px` : null} style:top={place ? `${place.top}px` : null}>
+<div bind:this={el} class="menu menu-surface pop-in" class:ctx={!!at} class:anchored={!at && !!anchor} role="menu" tabindex="-1" use:clickOutside={onClose}
+  style:left={place ? `${place.left}px` : null} style:top={place ? `${place.top}px` : null}
+  onpointerover={(e) => {
+    // another of the menu's own items under the pointer closes the flyout (after the hover-intent wait)
+    const t = (e.target as Element).closest?.('.menu-item')
+    if (t && t.parentElement === el && t !== flyout?.trigger()) flyout?.closeSoon()
+  }}>
   {#if confirmLeave}
     <p class="q">Leave {conversationName(app.state, channel.id)}? You'll lose access to its history.</p>
     <div class="row">
@@ -76,7 +84,15 @@
       <button class="menu-item" role="menuitem" onclick={() => (confirmLeave = false)}>Cancel</button>
     </div>
   {:else}
-    {#if withMute}
+    {#if withMute && at}
+      <!-- right-click (#190): one item with the durations in a flyout beside it, as the channel and server menus -->
+      {#if muted}
+        <button class="menu-item" role="menuitem" data-item onclick={() => run(() => api.clearMute('channel', channel.id))}>Unmute conversation</button>
+      {:else}
+        <MuteFlyout bind:this={flyout} label="Mute conversation" flyoutLabel="Mute {conversationName(app.state, channel.id)} for" menuLeft={at.x} menuTop={at.y}
+          onPick={muteFor} />
+      {/if}
+    {:else if withMute}
       {#if muted}
         <button class="menu-item" role="menuitem" onclick={() => run(() => api.clearMute('channel', channel.id))}>Unmute</button>
       {:else}
@@ -116,7 +132,7 @@
 </div>
 
 <style>
-  .menu { position: absolute; top: 46px; right: 12px; z-index: 10; width: 230px; }
+  .menu { position: absolute; top: 46px; right: 12px; z-index: 10; width: 230px; outline: none; }
   .menu.ctx, .menu.anchored { position: fixed; right: auto; z-index: 45; }
   /* the pop-in grows from the button's corner, or from the cursor (#173) */
   .menu.anchored { --pop-origin: top right; }

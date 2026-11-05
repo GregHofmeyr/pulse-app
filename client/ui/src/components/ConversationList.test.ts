@@ -100,3 +100,38 @@ describe('the DM list menu (#137)', () => {
     expect(texts().filter((t) => /offline/i.test(t ?? ''))).toEqual([])
   })
 })
+
+describe('Mute in the DM list menu (#190): a durations flyout, as the channel menu has', () => {
+  const flyout = () => document.querySelector<HTMLElement>('[role=menu][aria-label^="Mute "]')
+  const hover = (el: Element) => { el.dispatchEvent(new Event('pointerover', { bubbles: true })); el.dispatchEvent(new Event('pointerenter')); flushSync() }
+
+  it('one Mute conversation item; the durations only open beside it', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    rightClick(rowFor('sam'))
+    expect(texts()).not.toContain('For 15 minutes')
+    const mute = item('Mute conversation')!
+    expect(mute.getAttribute('aria-haspopup')).toBe('menu')
+    expect(flyout()).toBeNull()
+    hover(mute)
+    expect([...flyout()!.querySelectorAll('[role=menuitem]')].map((b) => b.textContent?.trim()))
+      .toEqual(['For 15 minutes', 'For 1 hour', 'For 8 hours', 'For 24 hours', 'Until I turn it back on'])
+    ;[...flyout()!.querySelectorAll<HTMLButtonElement>('[role=menuitem]')].find((b) => b.textContent?.trim() === 'Until I turn it back on')!.click()
+    flushSync()
+    expect(vi.mocked(invoke).mock.calls.filter(([c]) => c === 'set_mute').map(([, a]) => a)).toEqual([{ targetKind: 'channel', targetId: 'D1', until: null }])
+    await vi.waitFor(() => expect(document.querySelector('[role=menu]')).toBeNull())
+  })
+
+  it('a group has the same flyout', () => {
+    rightClick(rowFor('squad'))
+    hover(item('Mute conversation')!)
+    expect(flyout()).not.toBeNull()
+  })
+
+  it('muted: Unmute conversation instead', () => {
+    app.state = { ...app.state, mutes: [{ target_kind: 'channel', target_id: 'D1', until: null }] } as never
+    flushSync()
+    rightClick(rowFor('sam'))
+    expect(item('Unmute conversation')).toBeDefined()
+    expect(item('Mute conversation')).toBeUndefined()
+  })
+})

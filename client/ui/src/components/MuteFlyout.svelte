@@ -1,5 +1,5 @@
 <script lang="ts">
-  // "Mute …" and its durations flyout (Discord's, #131), inside a right-click menu: the channel menu and the server
+  // "Mute …" and its durations flyout (Discord's, #131), inside a right-click menu: the channel menu, the DM list's (#190) and the server
   // tab's (#161). It renders the item and the flyout as the menu's own children; the menu asks it to close (another
   // item hovered, the arrow keys moving on, Escape) through the exported functions.
   // Beside the menu, to the left unless the menu is too near the left edge. Hover opens it without moving focus;
