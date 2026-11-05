@@ -384,10 +384,10 @@ describe('ProfileCard', () => {
     expect(bio.classList.contains('panel')).toBe(false)
   })
 
-  it('your quick card groups Edit profile, your status and Badges in one box', () => {
+  it('your quick card groups Edit profile, your status, Badges and Settings in one box', () => {
     const el = show({ user: alex })
     const rows = [...el.querySelectorAll<HTMLButtonElement>('.actions button')]
-    expect(rows.map((b) => b.textContent?.trim())).toEqual(['Edit profile', 'Online', 'Badges'])
+    expect(rows.map((b) => b.textContent?.trim())).toEqual(['Edit profile', 'Online', 'Badges', 'Settings'])
     // the status row opens your status menu (#45), without Your profile: you're on it
     rows[1].click()
     flushSync()
@@ -439,7 +439,19 @@ describe('ProfileCard', () => {
 
   it('your full card keeps Edit profile and status, without Badges (the trophy case is beside it)', () => {
     const rows = [...show({ user: alex, size: 'full' }).querySelectorAll('.actions button')].map((b) => b.textContent?.trim())
-    expect(rows).toEqual(['Edit profile', 'Online'])
+    expect(rows).toEqual(['Edit profile', 'Online', 'Settings'])
+  })
+
+  it('Settings on your card opens Settings: the card and the full profile give way (#168)', () => {
+    profileUi.card = { userId: 'U1', serverId: null, anchor: new DOMRect(), opener: document.body }
+    profileUi.full = { userId: 'U1', serverId: null }
+    const settings = [...show({ user: alex }).querySelectorAll<HTMLButtonElement>('.actions button')].find((b) => b.textContent?.trim() === 'Settings')!
+    expect(settings.querySelector('svg')).not.toBeNull()
+    settings.click()
+    expect(profileUi.settings).toBe(true)
+    expect(profileUi.card).toBeNull()
+    expect(profileUi.full).toBeNull()
+    profileUi.settings = false
   })
 
   it("someone else's card has no actions box", () => {

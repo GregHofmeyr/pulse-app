@@ -20,7 +20,7 @@
   import { formatMemberSince, formatVoice } from '../lib/profileFormat'
   import BadgeIcon from './BadgeIcon.svelte'
   import { badgeStore, fallbackName } from '../lib/badges.svelte'
-  import { editProfile, openFull } from '../lib/profileCard.svelte'
+  import { editProfile, openCardSettings, openFull } from '../lib/profileCard.svelte'
   import { menuPoint } from '../lib/participantMenu'
   import { nickItems } from '../lib/nicknameMenu'
   import MemberMenu from './MemberMenu.svelte'
@@ -170,13 +170,16 @@
       </dl>
     {/if}
     {#if !preview && mine}
-      <!-- your own card: one box of actions, like Discord's; the avatar and Badges open the full profile -->
+      <!-- your own card: one box of actions, like Discord's; the avatar and Badges open the full profile. Only on
+           yours: actions between people stay in the right-click menu (owner) -->
       <div class="actions">
         <button type="button" onclick={editProfile}><Icon name="pencil" size={16} /><span>Edit profile</span></button>
         <!-- your status (#45): the row opens the status menu -->
         <button type="button" aria-haspopup="menu" aria-expanded={!!statusMenu} data-menu-toggle onclick={(e) => (statusMenu = statusMenu ? null : e.currentTarget)}>
           <span class="status {presence?.kind ?? 'online'}"></span><span>{presence?.label ?? 'Online'}</span><Icon name="chevronRight" size={14} /></button>
         {#if size === 'quick'}<button type="button" onclick={viewFull}><Icon name="trophy" size={16} /><span>Badges</span></button>{/if}
+        <!-- Settings (#168): the me area opens only this card, so the card is the way there (the cog stays too) -->
+        <button type="button" onclick={openCardSettings}><Icon name="gear" size={16} /><span>Settings</span></button>
       </div>
     {:else if !preview && size === 'quick'}
       <button type="button" class="full-link" onclick={viewFull}>View full profile</button>

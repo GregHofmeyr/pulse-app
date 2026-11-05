@@ -14,7 +14,12 @@
   import AppearanceSettings from './AppearanceSettings.svelte'
   import ProfileSettings from './ProfileSettings.svelte'
   import PrivacySettings from './PrivacySettings.svelte'
-  let { onClose, section = 'voice' }: { onClose: () => void; section?: Section } = $props()
+  let { onClose, onLogout, section = 'voice' }: {
+    onClose: () => void
+    /** Log out (#168): the last item of the navigation, under the sections, as on Discord. */
+    onLogout?: () => void
+    section?: Section
+  } = $props()
 
   let current = $state<Section>('voice')
   onMount(() => (current = section))
@@ -85,6 +90,10 @@
       <button class:on={current === s.key} aria-current={current === s.key ? 'page' : undefined} aria-busy={waiting?.via === s.key || undefined}
         onclick={() => go(s.key)}>{s.label}</button>
     {/each}
+    {#if onLogout}
+      <span class="nav-sep" role="separator"></span>
+      <button type="button" class="danger" onclick={() => void leave({ via: 'close', then: onLogout })}>Log out</button>
+    {/if}
   </nav>
   <div class="content">
     <button class="close icon-btn round modal-close" aria-label="Close settings" aria-busy={waiting?.via === 'close' || undefined} onclick={close}><Icon name="x" size={16} /></button>
@@ -113,6 +122,10 @@
   nav button { text-align: left; padding: 8px 10px; border: 0; border-radius: 8px; background: transparent; color: var(--text-2); font-weight: 600; }
   nav button:hover { background: var(--bg-2); color: var(--text); }
   nav button.on { background: var(--bg-3); color: var(--text); }
+  /* Log out (#168): set apart under the last section, in the danger colour */
+  .nav-sep { height: 1px; margin: 8px 10px; background: var(--line-soft); }
+  nav button.danger { color: var(--danger-text); }
+  nav button.danger:hover { color: var(--danger-text); }
   /* --settings-pad-y: the profile editor's sticky footer sits flush with the bottom through it */
   .content { --settings-pad-y: 28px; position: relative; flex: 1; min-width: 0; overflow-y: auto; padding: var(--settings-pad-y) 32px; }
   .confirm { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; flex-wrap: wrap; gap: 8px; margin: 0 48px 16px 0; padding: 10px 14px; border-radius: 12px; background: var(--bg-3); border: 1px solid var(--warn); font-weight: 600; }
@@ -125,5 +138,6 @@
     .modal { flex-direction: column; }
     nav { width: auto; flex-direction: row; padding: 12px; }
     h1 { display: none; }
+    .nav-sep { width: 1px; height: auto; margin: 4px; }
   }
 </style>

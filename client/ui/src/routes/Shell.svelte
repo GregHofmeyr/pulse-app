@@ -34,7 +34,6 @@
   import { closeSearch, search } from '../lib/search.svelte'
   // Profiles: the quick card and the full profile
   import ProfileCardPopover from '../components/ProfileCardPopover.svelte'
-  import StatusPicker from '../components/StatusPicker.svelte'
   import { closeFull, closeRename, openCard, profileUi } from '../lib/profileCard.svelte'
   import { onMount, tick, untrack } from 'svelte'
   import { myServerTips, voice, voiceApi } from '../lib/voice.svelte'
@@ -119,15 +118,9 @@
     }
   }
   let reportOpen = $state(false)
-  let menuOpen = $state(false)
-  /** Your status menu (#45), opened from your avatar: the avatar it came from. */
-  let statusMenu = $state<HTMLElement | null>(null)
-  let menuToggle = $state<HTMLButtonElement>()
-  /** An outside press or Esc closes the account menu; after Esc, focus goes back to its toggle. */
-  function closeAccountMenu(e: Event) {
-    menuOpen = false
-    if (e instanceof KeyboardEvent) menuToggle?.focus()
-  }
+  /** Your avatar and name (#168): one control, opening your own card (status and Settings are on it). */
+  let meButton = $state<HTMLButtonElement>()
+  const myCardOpen = $derived(!!meButton && profileUi.card?.opener === meButton)
   // Full view takes the whole window: both side panels hide, and a toggle in each top corner of its
   // bar brings one back.
   // Every full view starts with both hidden (nothing is remembered); swapping its stream or coming
@@ -157,10 +150,7 @@
   $effect.pre(() => {
     const [left, right] = [hideLeft, hideRight]
     untrack(() => {
-      if (left) {
-        menuOpen = false
-        serverMenuOpen = false
-      }
+      if (left) serverMenuOpen = false
       const at = document.activeElement
       const to = left && sidePanel?.contains(at) ? 'left' : right && rightPanel?.contains(at) ? 'right' : null
       if (to) void tick().then(() => document.getElementById(PANEL_TOGGLE_ID[to])?.focus())
@@ -394,6 +384,14 @@
       openSettings('profile')
     })
   })
+  // Settings on your own card (#168).
+  $effect(() => {
+    if (!profileUi.settings) return
+    untrack(() => {
+      profileUi.settings = false
+      openSettings()
+    })
+  })
   // Search covers one server, or one conversation: going elsewhere closes its results (a result's
   // click stays in the same scope, so it never does). Signing out closes them too.
   $effect(() => {
@@ -559,14 +557,11 @@
       {/if}
       <VoiceStatus />
       <div class="me">
-        <!-- your avatar opens your status menu (#45), whose Your profile opens your quick card; the rest opens the account menu -->
-        <button type="button" class="me-avatar" aria-label={badgeStore.unseen > 0 ? 'Your status and profile (new badges)' : 'Your status and profile'} data-tip="Status and profile"
-          data-menu-toggle aria-haspopup="menu" aria-expanded={!!statusMenu} onclick={(e) => (statusMenu = statusMenu ? null : e.currentTarget)}><Avatar id={me.id} name={baseName(me)} size={34} presence={presenceOf(app.state, me.id, clock.nowIso)} />{#if badgeStore.unseen > 0}<span class="new-dot" aria-hidden="true"></span>{/if}</button>
-        {#if statusMenu}
-          {@const opener = statusMenu}
-          <StatusPicker {opener} onClose={() => (statusMenu = null)} onProfile={() => openCard(me.id, null, opener)} />
-        {/if}
-        <button bind:this={menuToggle} class="who-btn" data-tip="Account" data-menu-toggle aria-haspopup="menu" aria-expanded={menuOpen} onclick={() => (menuOpen = !menuOpen)}>
+        <!-- your avatar and name: one click opens your own card, where your status and Settings are (#168); the same
+             click again closes it (openCard toggles). Log out is at the bottom of Settings. -->
+        <button bind:this={meButton} type="button" class="who-btn" aria-label={badgeStore.unseen > 0 ? 'Your profile (new badges)' : 'Your profile'} data-tip="Your profile"
+          aria-haspopup="dialog" aria-expanded={myCardOpen} onclick={(e) => openCard(me.id, null, e.currentTarget)}>
+          <span class="me-avatar"><Avatar id={me.id} name={baseName(me)} size={34} presence={presenceOf(app.state, me.id, clock.nowIso)} />{#if badgeStore.unseen > 0}<span class="new-dot" aria-hidden="true"></span>{/if}</span>
           <span class="who"><Name userId={me.id} serverId={null} text={baseName(me)} interactive={false} surface="side" /><small>{app.state.conn === 'connected' ? presenceOf(app.state, me.id, clock.nowIso).label : 'Offline'}</small></span>
         </button>
         {#if voice.channelId}
@@ -579,12 +574,6 @@
           </button>
         {/if}
         <button class="icon-btn me-btn" aria-label="Settings" onclick={() => openSettings()}><Icon name="gear" /></button>
-        {#if menuOpen}
-          <div class="menu menu-surface pop-in" role="menu" use:clickOutside={closeAccountMenu}>
-            <button class="menu-item" role="menuitem" onclick={() => { menuOpen = false; openSettings() }}>Settings</button>
-            <button class="menu-item danger" role="menuitem" onclick={logout}>Log out</button>
-          </div>
-        {/if}
       </div>
     </aside>
     {#if showLeft}
@@ -628,7 +617,7 @@
 <StreamToast />
 <BadgeToast />
 {#if settingsServer}<ServerSettings server={settingsServer} onClose={() => (serverSettingsId = null)} />{/if}
-{#if settingsOpen}<Settings section={settingsSection} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
+{#if settingsOpen}<Settings section={settingsSection} onLogout={logout} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if qotyStart}<QotyStart serverId={qotyStart} onClose={() => (qotyStart = null)} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
@@ -703,7 +692,7 @@
   /* the hover is a rounded pill inside the header, with the text where the padding put it */
   .head-btn { flex: 1; min-width: 0; height: 40px; margin: 0 -8px; padding: 0 8px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
   .head-btn:hover { background: var(--bg-2); }
-  /* two classes: .menu (declared below, for the upward account menu) must not win `bottom` back */
+  /* two classes: .menu (declared below) must not win `bottom` back */
   .menu.head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; }
   .me { padding: 10px 10px 10px 12px; background: var(--bg-inset); display: flex; align-items: center; gap: 10px; }
   .who { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
@@ -711,10 +700,11 @@
   .add { width: 36px; height: 36px; flex-shrink: 0; border: 1px dashed var(--bg-4); border-radius: 10px; background: transparent; color: var(--text-3); display: grid; place-items: center; }
   .add:hover { color: var(--text); border-color: var(--text-3); }
   .me { position: relative; }
-  .me-avatar { position: relative; flex-shrink: 0; display: flex; padding: 0; border: 0; border-radius: 50%; background: none; }
+  .me-avatar { position: relative; flex-shrink: 0; display: flex; border-radius: 50%; }
   /* unseen badges (#49): a small dot until you open your trophy case */
   .new-dot { position: absolute; top: -1px; right: -1px; width: 10px; height: 10px; border-radius: 50%; background: var(--badge-new); box-shadow: 0 0 0 2px var(--ring); }
-  .who-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 4px 6px; border: 0; border-radius: 10px; background: transparent; text-align: left; }
+  /* the avatar sits in the button's hover pill with the name (#168); the negative margin keeps it where it was */
+  .who-btn { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; margin-left: -6px; padding: 4px 6px; border: 0; border-radius: 10px; background: transparent; color: inherit; text-align: left; }
   .who-btn:hover { background: var(--bg-2); }
   .who-btn .who { overflow: hidden; }
   .menu { position: absolute; left: 8px; bottom: calc(100% + 6px); z-index: 10; min-width: 200px; }
