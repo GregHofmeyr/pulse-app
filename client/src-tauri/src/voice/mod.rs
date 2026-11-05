@@ -28,7 +28,6 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use futures::StreamExt;
 use livekit::options::TrackPublishOptions;
 use livekit::prelude::*;
 use livekit::webrtc::audio_source::native::NativeAudioSource;
@@ -1615,10 +1614,10 @@ impl VoiceManager {
                                 "voice: subscribed"
                             );
                             let task = tokio::spawn(async move {
-                                let mut stream =
+                                let stream =
                                     NativeAudioStream::new(t.rtc_track(), INTERNAL_RATE as i32, 1);
                                 let mut heard = false;
-                                while let Some(f) = stream.next().await {
+                                let on_frame = |f: livekit::webrtc::audio_frame::AudioFrame| {
                                     // WebRTC hands over (silent) frames before any packet arrives:
                                     // the first one with sound is when they're really audible
                                     if !heard && f.data.iter().any(|s| *s != 0) {
@@ -1633,17 +1632,70 @@ impl VoiceManager {
                                         );
                                     }
                                     m.push_in(mix_gen, &src, &f.data);
-                                }
+                                };
+                                // #216: a track WebRTC stops (or never starts) handing frames to
+                                let on_flow = |flow| match flow {
+                                    rx::Flow::Stalled { frames } => tracing::warn!(
+                                        %peer,
+                                        track = %src,
+                                        ?kind,
+                                        frames,
+                                        since_subscribed_ms =
+                                            subscribed.elapsed().as_millis() as u64,
+                                        "voice: no audio frames from a subscribed track"
+                                    ),
+                                    rx::Flow::Resumed { after } => tracing::info!(
+                                        %peer,
+                                        track = %src,
+                                        after_ms = after.as_millis() as u64,
+                                        "voice: audio frames resumed"
+                                    ),
+                                };
+                                rx::receive(stream, rx::STALL_AFTER, on_frame, on_flow).await;
                             });
                             rx.lock().unwrap().replace(source, owner, task);
                         }
-                        RoomEvent::TrackUnsubscribed { publication, .. } => {
+                        RoomEvent::TrackUnsubscribed {
+                            publication,
+                            participant,
+                            ..
+                        } => {
                             let source = publication.sid().to_string();
+                            tracing::info!(
+                                peer = %participant.identity(),
+                                track = %source,
+                                "voice: unsubscribed"
+                            );
                             rx.lock().unwrap().drop_track(&source);
                             mix_in.remove_source(mix_gen, &source);
                         }
+                        RoomEvent::TrackSubscriptionFailed {
+                            participant,
+                            error,
+                            track_sid,
+                        } => {
+                            tracing::warn!(
+                                peer = %participant.identity(),
+                                track = %track_sid,
+                                %error,
+                                "voice: subscription failed"
+                            );
+                        }
+                        RoomEvent::TrackMuted {
+                            participant: Participant::Remote(p),
+                            publication,
+                        } => {
+                            tracing::info!(peer = %p.identity(), track = %publication.sid(), "voice: peer track muted");
+                        }
+                        RoomEvent::TrackUnmuted {
+                            participant: Participant::Remote(p),
+                            publication,
+                        } => {
+                            tracing::info!(peer = %p.identity(), track = %publication.sid(), "voice: peer track unmuted");
+                        }
                         RoomEvent::ParticipantDisconnected(p) => {
                             let owner = p.identity().to_string();
+                            tracing::info!(peer = %owner, "voice: peer left");
                             rx.lock().unwrap().drop_owner(&owner);
                             mix_in.remove_owner(mix_gen, &owner);
                         }

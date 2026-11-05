@@ -23,6 +23,7 @@ struct Inbound {
     silent_concealed: u64,
     accelerated: u64,
     decelerated: u64,
+    packets: u64,
 }
 
 impl Inbound {
@@ -38,6 +39,7 @@ impl Inbound {
             silent_concealed: i.silent_concealed_samples,
             accelerated: i.removed_samples_for_acceleration,
             decelerated: i.inserted_samples_for_deceleration,
+            packets: r.received.packets_received,
         }
     }
 
@@ -61,6 +63,7 @@ impl Inbound {
             silent_concealed: self.silent_concealed.saturating_sub(b.silent_concealed),
             accelerated: self.accelerated.saturating_sub(b.accelerated),
             decelerated: self.decelerated.saturating_sub(b.decelerated),
+            packets: self.packets.saturating_sub(b.packets),
         }
     }
 
@@ -74,6 +77,7 @@ impl Inbound {
         self.silent_concealed += d.silent_concealed;
         self.accelerated += d.accelerated;
         self.decelerated += d.decelerated;
+        self.packets += d.packets;
     }
 }
 
@@ -121,6 +125,11 @@ pub struct PathStats {
     pub decel_ms: Option<f64>,
     /// Share of received audio that was silent concealment (DTX / comfort noise).
     pub silent_pct: Option<f64>,
+    /// Audio packets received per second, all peers (#216: is anything arriving?).
+    pub recv_pps: Option<f64>,
+    /// Audio NetEq put out this window, in ms of one stream's time summed over peers: ~5000 per
+    /// peer while WebRTC pulls them; 0 with packets arriving = received but never played (#216).
+    pub neteq_ms: Option<f64>,
 }
 
 pub fn summarize(
@@ -131,6 +140,7 @@ pub fn summarize(
     let mut out = PathStats::default();
     let mut totals = Totals::default();
     let mut window = Inbound::default();
+    let mut any_inbound = false;
     for s in publisher.iter().chain(subscriber) {
         match s {
             RtcStats::CandidatePair(p) => {
@@ -144,6 +154,7 @@ pub fn summarize(
                 }
             }
             RtcStats::InboundRtp(r) if r.stream.kind == "audio" => {
+                any_inbound = true;
                 let jitter = r.received.jitter * 1000.0;
                 out.jitter_ms = Some(out.jitter_ms.map_or(jitter, |j: f64| j.max(jitter)));
                 out.lost += r.received.packets_lost;
@@ -182,6 +193,10 @@ pub fn summarize(
         out.concealed_pct = Some(pct(window.concealed));
         out.silent_pct = Some(pct(window.silent_concealed));
     }
+    if any_inbound {
+        out.recv_pps = Some(window.packets as f64 / WINDOW.as_secs_f64());
+        out.neteq_ms = Some(window.received as f64 / SAMPLES_PER_MS);
+    }
     if totals.packets_sent > prev.packets_sent && prev.packets_sent > 0 {
         let sent = (totals.packets_sent - prev.packets_sent) as f64;
         out.send_pps = Some(sent / WINDOW.as_secs_f64());
@@ -207,7 +222,7 @@ impl fmt::Display for PathStats {
         let pps = self.send_pps.map_or("-".to_string(), |v| format!("{v:.0}"));
         write!(
             f,
-            "rtt {} jitter {} buffer {} target {} min {} concealed {} lost {} send {} pkt/s accel {} decel {} silent {}",
+            "rtt {} jitter {} buffer {} target {} min {} concealed {} lost {} send {} pkt/s accel {} decel {} silent {} in {} pkt/s neteq {}",
             ms(self.rtt_ms),
             ms(self.jitter_ms),
             ms(self.buffer_ms),
@@ -219,6 +234,8 @@ impl fmt::Display for PathStats {
             ms(self.accel_ms),
             ms(self.decel_ms),
             pct(self.silent_pct),
+            self.recv_pps.map_or("-".to_string(), |v| format!("{v:.0}")),
+            ms(self.neteq_ms),
         )
     }
 }
@@ -290,8 +307,29 @@ mod tests {
         let (s, _) = summarize(&[], &[], &Totals::default());
         assert_eq!(
             s.to_string(),
-            "rtt - jitter - buffer - target - min - concealed - lost 0 send - pkt/s accel - decel - silent -"
+            "rtt - jitter - buffer - target - min - concealed - lost 0 send - pkt/s accel - decel - silent - in - pkt/s neteq -"
         );
+    }
+
+    /// #216: the listener's line showed `buffer -` for minutes while a jitter figure was there,
+    /// which can't say whether packets were arriving. Packets in and the audio NetEq produced, per
+    /// window, tell "nothing arrives" from "arrives but nothing pulls it out".
+    #[test]
+    fn packets_in_and_neteq_output_per_window() {
+        let at = |packets, received| {
+            inbound(8, |r| {
+                r.received.packets_received = packets;
+                r.inbound.total_samples_received = received;
+            })
+        };
+        let (_, first) = summarize(&[], &[at(1_000, 480_000)], &Totals::default());
+        // 5 s later: 250 more packets (50/s) and 240 000 samples out of NetEq (5 000 ms)
+        let (s, t) = summarize(&[], &[at(1_250, 720_000)], &first);
+        assert_eq!(s.recv_pps.map(f64::round), Some(50.0));
+        assert_eq!(s.neteq_ms.map(f64::round), Some(5000.0));
+        // packets still arriving, NetEq pulled for nothing: the dead-receive signature
+        let (s, _) = summarize(&[], &[at(1_500, 720_000)], &t);
+        assert!(s.to_string().ends_with("in 50 pkt/s neteq 0ms"), "{s}");
     }
 
     fn audio_in_full(
