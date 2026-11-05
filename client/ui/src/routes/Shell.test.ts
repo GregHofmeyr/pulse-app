@@ -43,6 +43,8 @@ import type { Ready } from '../lib/protocol/Ready'
 import Waiting from './Waiting.svelte'
 import { reloadColumns } from '../lib/columns.svelte'
 import { editProfile, openCardSettings, profileUi } from '../lib/profileCard.svelte'
+import { reloadPatchNotesSeen } from '../lib/patchNotesSeen.svelte'
+import { patchNotes } from '../patchNotes'
 
 let cmp: ReturnType<typeof mount> | undefined
 let offs: (() => void)[] = []
@@ -277,6 +279,55 @@ describe('account menu', () => {
     bug.click()
     flushSync()
     expect(document.querySelector('[role=dialog][aria-label="Report a bug"]')).not.toBeNull()
+  })
+
+  // #207: Patch notes sit just left of Report a bug, with a dot until this release's notes are opened once here.
+  describe('Patch notes', () => {
+    const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    const open = () => {
+      app.state = { ...emptyState(), me }
+      cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
+      flushSync()
+    }
+    const icon = () => [...document.querySelectorAll<HTMLButtonElement>('header > button')].find((b) => b.getAttribute('aria-label') === 'Patch notes')!
+    afterEach(() => {
+      localStorage.clear()
+      reloadPatchNotesSeen()
+    })
+
+    it('is a title bar icon just left of Report a bug, and it opens the notes', () => {
+      open()
+      const bar = [...document.querySelectorAll<HTMLButtonElement>('header > button')]
+      const b = icon()
+      expect(b).toBeDefined()
+      expect(b.textContent?.trim()).toBe('') // icon only: the tooltip comes from its aria-label
+      expect(b.querySelector('svg')).not.toBeNull()
+      expect(bar[bar.indexOf(b) + 1].getAttribute('aria-label')).toBe('Report a bug')
+      b.click()
+      flushSync()
+      expect(document.querySelector('[role=dialog][aria-label="Patch notes"]')).not.toBeNull()
+      expect(document.body.textContent).toContain(patchNotes.date)
+    })
+
+    it('shows a dot until the notes are opened, and opening clears it for good', () => {
+      open()
+      expect(icon().querySelector('.new-dot')).not.toBeNull()
+      icon().click()
+      flushSync()
+      expect(icon().querySelector('.new-dot')).toBeNull()
+      expect(localStorage.getItem('pulse.patchNotesSeen')).toBe(patchNotes.id)
+      unmount(cmp!)
+      reloadPatchNotesSeen()
+      open()
+      expect(icon().querySelector('.new-dot')).toBeNull()
+    })
+
+    it('the dot comes back for a new release (a different id)', () => {
+      localStorage.setItem('pulse.patchNotesSeen', 'an-older-release')
+      reloadPatchNotesSeen()
+      open()
+      expect(icon().querySelector('.new-dot')).not.toBeNull()
+    })
   })
 
   it('your avatar shows your status dot (Invisible as the grey offline dot, #171); the line under your name says it (#45)', () => {

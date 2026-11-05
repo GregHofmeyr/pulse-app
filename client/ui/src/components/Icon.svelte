@@ -32,6 +32,8 @@
     x: 'M6 6l12 12M18 6 6 18',
     // a beetle: round body with a centre seam, head, antennae, three legs a side (Report a bug)
     bug: 'M8 10a4 4 0 0 1 8 0v4a4 4 0 0 1-8 0zM12 10v8M9.5 6.5 8 4M14.5 6.5 16 4M8 11H4M8 15H4.5M16 11h4M16 15h3.5M8.5 18 6 20M15.5 18 18 20',
+    // a scroll with lines of text: what's new in this release (Patch notes, #207)
+    scroll: 'M15 12h-5M15 8h-5M19 17V5a2 2 0 0 0-2-2H4M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3',
     image: 'M3 5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM8.5 10a1.5 1.5 0 1 0 0-3 1.5 1.5 0 0 0 0 3M21 15l-5-5L5 21',
     min: 'M5 12h14',
     square: 'M4 4h16v16H4z',

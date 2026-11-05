@@ -24,6 +24,9 @@
   import { columns, resetColumn, setColumn } from '../lib/columns.svelte'
   import ColumnHandle from '../components/ColumnHandle.svelte'
   import ReportBug from '../components/ReportBug.svelte'
+  import PatchNotes from '../components/PatchNotes.svelte'
+  import { patchNotes } from '../patchNotes'
+  import { markPatchNotesSeen, patchNotesSeen } from '../lib/patchNotesSeen.svelte'
   import CrashReportPrompt from '../components/CrashReportPrompt.svelte'
   import ConversationList from '../components/ConversationList.svelte'
   import GoLiveDialog from '../components/GoLiveDialog.svelte'
@@ -121,6 +124,11 @@
     }
   }
   let reportOpen = $state(false)
+  let notesOpen = $state(false)
+  function openPatchNotes() {
+    notesOpen = true
+    markPatchNotesSeen(patchNotes.id)
+  }
   /** Your avatar and name (#168): one control, opening your own card (status and Settings are on it). */
   let meButton = $state<HTMLButtonElement>()
   const myCardOpen = $derived(!!meButton && profileUi.card?.opener === meButton)
@@ -530,6 +538,8 @@
       <span class="conn auto-report" role="status">Something went wrong in Pulse last time, so we sent Greg a report. <button aria-label="Dismiss" onclick={() => (ui.autoReported = false)}>×</button></span>
     {/if}
     <!-- #155: icon only; the app-wide tooltip reads its aria-label -->
+    <!-- #207: what's new; a dot until this release's notes are opened once on this device -->
+    <button class="win notes" aria-label="Patch notes" onclick={openPatchNotes}><Icon name="scroll" size={16} />{#if patchNotesSeen.id !== patchNotes.id}<span class="new-dot" aria-hidden="true"></span>{/if}</button>
     <button class="win report" aria-label="Report a bug" onclick={() => (reportOpen = true)}><Icon name="bug" size={16} /></button>
     <button class="win" aria-label="Minimise" onclick={() => win.minimize()}><Icon name="min" size={14} /></button>
     <button class="win" aria-label="Maximise" onclick={() => win.toggleMaximize()}><Icon name="square" size={14} /></button>
@@ -626,6 +636,7 @@
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}
 {#if qotyStart}<QotyStart serverId={qotyStart} onClose={() => (qotyStart = null)} />{/if}
 {#if reportOpen}<ReportBug onClose={() => (reportOpen = false)} />{/if}
+{#if notesOpen}<PatchNotes notes={patchNotes} onClose={() => (notesOpen = false)} />{/if}
 <!-- Profiles: the quick card (one at a time), and the full profile's place (Task 12 renders it here) -->
 <ProfileCardPopover />
 {#if profileUi.full}<FullProfile userId={profileUi.full.userId} serverId={profileUi.full.serverId} onClose={closeFull} />{/if}
@@ -687,6 +698,10 @@
   .win:hover { background: var(--bg-2); color: var(--text); }
   /* Report a bug (#155): the warn colour it had in the account menu, on hover */
   .win.report:hover, .win.report:focus-visible { color: var(--warn-text); }
+  /* Patch notes (#207): the unseen dot sits on the icon's corner, cut out of the title bar (or its hover pill) */
+  .win.notes { position: relative; --ring: var(--bg-0); }
+  .win.notes:hover { --ring: var(--bg-2); }
+  .win.notes .new-dot { top: 3px; right: 6px; width: 8px; height: 8px; }
   .body { flex: 1; min-height: 0; display: flex; gap: 8px; padding: 0 8px 8px; }
   .panel { border-radius: var(--radius); overflow: hidden; }
   .side { width: 264px; flex-shrink: 0; background: var(--bg-1); display: flex; flex-direction: column; }
