@@ -150,8 +150,9 @@
     }
   }
 
-  export function focus() {
-    box?.focus()
+  /** Focus the box: the caret where it was, or (`atEnd`) after all of the text. */
+  export function focus(atEnd = false) {
+    box?.focus(atEnd ? text.length : undefined)
   }
 </script>
 

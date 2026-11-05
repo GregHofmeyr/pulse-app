@@ -17,6 +17,7 @@
   import { voice } from '../lib/voice.svelte'
   import SearchBox from './SearchBox.svelte'
   import { narrowerThan } from '../lib/actions'
+  import { lastInput } from '../lib/inputModality'
   import { app, clock, queueMessage, ui } from '../lib/store.svelte'
   import { presenceOf } from '../lib/presence'
   import { motion } from '../lib/animate.svelte'
@@ -102,6 +103,20 @@
   onMount(() => {
     if (!untrack(() => history?.loaded) || ui.jump?.channelId === channelId) return
     void tick().then(() => list?.scrollTo({ top: list.scrollHeight }))
+  })
+
+  // Opened with the pointer (a click on the channel or conversation): you're here to write, so the
+  // message box takes the focus, the caret after any draft. Not from the keyboard (arrows or Enter in
+  // a list keep you in the list), and not under an open dialog or menu.
+  onMount(() => {
+    if (lastInput() !== 'pointer' || document.querySelector('[aria-modal="true"], [role="dialog"], [role="menu"]')) return
+    void tick().then(() => {
+      if (!chan?.isConnected) return
+      if (composer) return composer.focus(true)
+      const q = chan.querySelector<HTMLTextAreaElement>('.new-quote:not([hidden]) textarea.qtext')
+      q?.focus()
+      q?.setSelectionRange(q.value.length, q.value.length)
+    })
   })
 
   // stick to the bottom when new messages arrive and we were already near it
