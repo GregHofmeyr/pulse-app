@@ -96,6 +96,82 @@ describe('MemberList', () => {
   })
 })
 
+describe('MemberList status dots (#169)', () => {
+  const people = (samStatus: string, samOnline: boolean) =>
+    ({ U1: { user: alex, online: true, last_seen_at: null, status: 'online' }, U2: { user: sam, online: samOnline, last_seen_at: null, status: samStatus } }) as never
+  const dot = (n: number) => row(n).querySelector('.av .pres')
+
+  it('each avatar has its person\'s dot, from presenceOf', () => {
+    app.state = { ...app.state, people: people('dnd', true) }
+    flushSync()
+    expect(dot(0)!.classList.contains('online')).toBe(true)
+    expect(dot(1)!.classList.contains('dnd')).toBe(true)
+    expect(dot(1)!.getAttribute('aria-label')).toBe('Do Not Disturb')
+    app.state = { ...app.state, people: people('offline', false) }
+    flushSync()
+    expect(dot(1)!.classList.contains('offline')).toBe(true)
+  })
+
+  it('your own dot follows your status (Invisible is yours alone)', () => {
+    app.state = { ...app.state, people: people('online', true), myStatus: { status: 'invisible', dnd_until: null } }
+    flushSync()
+    // you're under Offline then (#170), where everyone else sees you
+    const mine = [...document.querySelectorAll<HTMLElement>('.members .row')].find((r) => r.querySelector('.name')!.textContent === 'alex')!
+    expect(mine.querySelector('.pres')!.getAttribute('aria-label')).toBe('Invisible')
+  })
+
+  it('never draws someone else as Invisible, whatever the server says (#171)', () => {
+    app.state = { ...app.state, people: people('invisible', false) }
+    flushSync()
+    const samRow = [...document.querySelectorAll<HTMLElement>('.members .row')].find((r) => r.textContent?.includes('Sammy'))!
+    expect(samRow.querySelector('.pres')!.classList.contains('offline')).toBe(true)
+    expect(document.querySelector('.members .pres.invisible')).toBeNull()
+  })
+})
+
+describe('MemberList Online and Offline sections (#170)', () => {
+  const kim = { ...alex, id: 'U3', username: 'kim', display_name: 'kim' }
+  const jo = { ...alex, id: 'U4', username: 'jo', display_name: 'jo' }
+  const p = (user: object, status: string) => ({ user, online: status !== 'offline', last_seen_at: null, status })
+  const labels = () => [...document.querySelectorAll('.members .label')].map((l) => l.textContent?.trim())
+  const section = (name: string) => [...document.querySelectorAll<HTMLElement>('.members .row')].filter((r) => r.dataset.section === name).map((r) => r.querySelector('.name')!.textContent)
+
+  it('Online (DND included) above Offline, each with its count; offline rows dimmed', () => {
+    app.state = {
+      ...app.state,
+      members: { S1: [{ user: jo, nickname: null }, { user: alex, nickname: null }, { user: sam, nickname: 'Sammy' }, { user: kim, nickname: null }] },
+      people: { U1: p(alex, 'online'), U2: p(sam, 'dnd'), U3: p(kim, 'offline'), U4: p(jo, 'offline') },
+    } as never
+    flushSync()
+    expect(labels()).toEqual(['Online — 2', 'Offline — 2'])
+    expect(section('online')).toEqual(['alex', 'Sammy'])
+    expect(section('offline')).toEqual(['jo', 'kim'])
+    // the headings sit above their rows
+    const all = [...document.querySelectorAll('.members .label, .members .row')].map((e) => e.classList.contains('label') ? e.textContent?.trim() : e.querySelector('.name')!.textContent)
+    expect(all).toEqual(['Online — 2', 'alex', 'Sammy', 'Offline — 2', 'jo', 'kim'])
+    for (const r of document.querySelectorAll<HTMLElement>('.members .row')) expect(r.classList.contains('off')).toBe(r.dataset.section === 'offline')
+  })
+
+  it('someone sent as offline (Invisible, or hiding from you) is under Offline; a section with nobody has no heading', () => {
+    app.state = { ...app.state, people: { U1: p(alex, 'online'), U2: p(sam, 'invisible') } } as never
+    flushSync()
+    expect(labels()).toEqual(['Online — 1', 'Offline — 1'])
+    expect(section('offline')).toEqual(['Sammy'])
+    app.state = { ...app.state, people: { U1: p(alex, 'online'), U2: p(sam, 'online') } } as never
+    flushSync()
+    expect(labels()).toEqual(['Online — 2'])
+  })
+
+  it('a status change moves them live', () => {
+    app.state = { ...app.state, people: { U1: p(alex, 'online'), U2: p(sam, 'online') } } as never
+    flushSync()
+    expect(section('online')).toEqual(['alex', 'Sammy'])
+    app.state = { ...app.state, people: { ...app.state.people, U2: p(sam, 'offline') } } as never
+    flushSync()
+    expect(section('offline')).toEqual(['Sammy'])
+  })
+})
+
 describe('MemberList row menu (#113)', () => {
   const menu = () => document.querySelector<HTMLElement>('[role=menu]')
   const items = () => [...document.querySelectorAll<HTMLElement>('[role=menu] [data-item]')]

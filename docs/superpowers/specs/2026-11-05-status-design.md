@@ -64,9 +64,10 @@ One status per account, set by you and applied everywhere:
 
 ## The status picker
 
-- Click your own avatar at the bottom of the sidebar to open a small menu with the three statuses, each with its dot,
-  and the DND timers as a submenu. The current status is ticked, and the avatar shows your status dot.
-- Invisible shows on your own avatar as a hollow grey dot, so you always know you're hidden. Others never see that dot.
+- Click your own avatar or name at the bottom of the sidebar to open your own profile card (#168); its status row opens
+  a small menu with the three statuses, each with its dot, and the DND timers as a submenu. The current status is
+  ticked, and the avatar shows your status dot. The card also has Settings; Log out is at the bottom of Settings.
+- Invisible shows on your own avatar as the plain grey offline dot (#171: the owner found a hollow dot inconsistent); the status picker and the line under your name say Invisible. Others never see an Invisible dot.
 - Settings → Privacy holds the "Appear offline to" list.
 
 ## How it gets made (builder's call where not stated)

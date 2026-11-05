@@ -42,7 +42,7 @@ import { callView, joinAndWatch, openFull, showToast, watchStream } from '../lib
 import type { Ready } from '../lib/protocol/Ready'
 import Waiting from './Waiting.svelte'
 import { reloadColumns } from '../lib/columns.svelte'
-import { closeCard, editProfile, profileUi } from '../lib/profileCard.svelte'
+import { editProfile, openCardSettings, profileUi } from '../lib/profileCard.svelte'
 
 let cmp: ReturnType<typeof mount> | undefined
 let offs: (() => void)[] = []
@@ -213,27 +213,53 @@ describe('account menu', () => {
     expect(btn().querySelector('img')?.getAttribute('src')).toContain(next)
   })
 
-  it('your avatar opens your status menu, whose Your profile opens your quick card; your name still opens the account menu (#45)', () => {
+  it('one click on your avatar or name opens your own profile card, and nothing else (#168)', () => {
     const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
     app.state = { ...emptyState(), me }
     cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
     flushSync()
-    const avatar = document.querySelector<HTMLButtonElement>('.me button.me-avatar')!
-    avatar.click()
+    for (const part of ['.me-avatar', '.who']) {
+      const target = document.querySelector<HTMLElement>(`.me ${part}`)!
+      const button = target.closest<HTMLButtonElement>('button')!
+      button.click()
+      flushSync()
+      expect(profileUi.card, part).toMatchObject({ userId: 'U1', serverId: null, opener: button })
+      expect(button.getAttribute('aria-expanded'), part).toBe('true')
+      // no status menu and no account menu: those live on the card and in Settings now
+      expect(document.querySelector('[role=menu]'), part).toBeNull()
+      // the same click again closes it
+      button.click()
+      flushSync()
+      expect(profileUi.card, part).toBeNull()
+    }
+    // avatar and name are one control
+    expect(document.querySelector('.me .me-avatar')!.closest('button')).toBe(document.querySelector('.me .who')!.closest('button'))
+    // the cog stays beside it
+    expect(document.querySelector('.me button[aria-label="Settings"]')).not.toBeNull()
+    // the new-badges dot stays on the avatar
+    expect(document.querySelector('.me .new-dot')).toBeNull()
+    app.state = { ...app.state, profiles: { U1: { badges: [{ key: 'first_words', seen: false }] } } } as never
     flushSync()
-    const picker = document.querySelector('[role=menu][aria-label="Your status"]')!
-    expect(picker).not.toBeNull()
-    expect(profileUi.card).toBeNull()
-    picker.querySelector<HTMLButtonElement>('[data-item="profile"]')!.click()
+    expect(document.querySelector('.me .me-avatar .new-dot')).not.toBeNull()
+    expect(document.querySelector('.me .me-avatar')!.closest('button')!.getAttribute('aria-label')).toBe('Your profile (new badges)')
+  })
+
+  it('Settings on your card opens Settings; Log out at the bottom of Settings logs out (#168)', async () => {
+    const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
+    app.state = { ...emptyState(), me }
+    const onLogout = vi.fn()
+    cmp = mount(Shell, { target: document.body, props: { user: me, onLogout } })
     flushSync()
-    expect(profileUi.card).toMatchObject({ userId: 'U1', serverId: null, opener: avatar })
-    expect(document.querySelector('[role=menu][aria-label="Your status"]')).toBeNull()
-    expect(document.querySelector('.me [role=menu]')).toBeNull()
-    closeCard()
-    document.querySelector<HTMLButtonElement>('.who-btn')!.click()
+    openCardSettings()
     flushSync()
-    expect(document.querySelector('.me [role=menu]')).not.toBeNull()
-    expect(profileUi.card).toBeNull()
+    expect(profileUi.settings).toBe(false)
+    const dialog = document.querySelector('[role=dialog][aria-label="Settings"]')!
+    expect(dialog).not.toBeNull()
+    const out = [...dialog.querySelectorAll<HTMLButtonElement>('nav button')].at(-1)!
+    expect(out.textContent?.trim()).toBe('Log out')
+    out.click()
+    await vi.waitFor(() => expect(onLogout).toHaveBeenCalledTimes(1))
+    expect(invoke.mock.calls.some(([cmd]) => cmd === 'logout')).toBe(true)
   })
 
   // #155: Report a bug is a bug icon in the title bar, just left of Minimise, not an account menu item.
@@ -248,15 +274,12 @@ describe('account menu', () => {
     expect(bug.textContent?.trim()).toBe('') // icon only: the tooltip comes from its aria-label
     expect(bug.querySelector('svg')).not.toBeNull()
     expect(bar[bar.indexOf(bug) + 1].getAttribute('aria-label')).toBe('Minimise')
-    document.querySelector<HTMLButtonElement>('.who-btn')!.click()
-    flushSync()
-    expect(document.querySelector('.me [role=menu]')!.textContent).not.toContain('Report a bug')
     bug.click()
     flushSync()
     expect(document.querySelector('[role=dialog][aria-label="Report a bug"]')).not.toBeNull()
   })
 
-  it('your avatar shows your status dot, hollow when Invisible; the line under your name says it (#45)', () => {
+  it('your avatar shows your status dot (Invisible as the grey offline dot, #171); the line under your name says it (#45)', () => {
     const me = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
     app.state = { ...emptyState(), me, conn: 'connected', myStatus: { status: 'invisible', dnd_until: null } }
     cmp = mount(Shell, { target: document.body, props: { user: me, onLogout: () => {} } })
@@ -269,7 +292,7 @@ describe('account menu', () => {
     expect(document.querySelector('.me .me-avatar .pres')!.classList.contains('dnd')).toBe(true)
     expect(document.querySelector('.me .who small')!.textContent).toBe('Do Not Disturb')
     // the new-badges dot stays on the avatar
-    expect(document.querySelector('.me .me-avatar')!.getAttribute('aria-label')).toMatch(/^Your status and profile/)
+    expect(document.querySelector('.me .me-avatar')!.closest('button')!.getAttribute('aria-label')).toBe('Your profile')
   })
 
   it('Edit profile on your card opens Settings on Profile', () => {
@@ -281,28 +304,6 @@ describe('account menu', () => {
     flushSync()
     expect(document.querySelector('[aria-current=page]')?.textContent).toContain('Profile')
     expect(profileUi.edit).toBe(false)
-  })
-
-  it('esc_closes_the_account_menu_and_focus_returns_to_its_toggle', async () => {
-    app.state = { ...emptyState() }
-    cmp = mount(Shell, { target: document.body, props: { user: { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }, onLogout: () => {} } })
-    flushSync()
-    const toggle = document.querySelector<HTMLButtonElement>('.who-btn')!
-    toggle.click()
-    flushSync()
-    expect(document.querySelector('.me [role=menu]')).not.toBeNull()
-    await new Promise((r) => setTimeout(r, 0)) // armed after the opening click
-    const esc = new KeyboardEvent('keydown', { key: 'Escape', cancelable: true })
-    window.dispatchEvent(esc)
-    flushSync()
-    expect(document.querySelector('.me [role=menu]')).toBeNull()
-    expect(esc.defaultPrevented).toBe(true)
-    expect(document.activeElement).toBe(toggle)
-    // the toggle still toggles: a press on it isn't an outside press
-    toggle.dispatchEvent(new Event('pointerdown', { bubbles: true }))
-    toggle.click()
-    flushSync()
-    expect(document.querySelector('.me [role=menu]')).not.toBeNull()
   })
 
   it('esc_closes_the_server_mute_menu', async () => {
@@ -489,7 +490,7 @@ describe('watching from anywhere', () => {
     goTo('V1')
     await streamApi.watch('V1', 'U2')
     await settle()
-    q('.who-btn')!.click() // the account menu, open
+    q('.head-btn[data-menu-toggle]')!.click() // the server menu, open
     flushSync()
     expect(q('.menu[role="menu"]')).not.toBeNull()
     openFull(SAM)

@@ -1,7 +1,6 @@
 <script lang="ts">
-  // Your status (#45): opens from your avatar at the bottom of the sidebar, above it. Online, Do Not Disturb (its
-  // timers in a flyout, like a channel's Mute), Invisible, each with its dot and the current one ticked; then Your
-  // profile, which is what the avatar used to open. The server answers with a StatusChanged to every session, which
+  // Your status (#45): opens from the status row on your own profile card (#168), above it. Online, Do Not Disturb (its
+  // timers in a flyout, like a channel's Mute), Invisible, each with its dot and the current one ticked. The server answers with a StatusChanged to every session, which
   // ticks the new one; nothing is set here meanwhile.
   import { flushSync, onMount } from 'svelte'
   import { app, clock, ui } from '../lib/store.svelte'
@@ -11,12 +10,10 @@
   import Icon from './Icon.svelte'
   import type { Status } from '../lib/protocol/Status'
 
-  let { opener, onClose, onProfile }: {
-    /** Your avatar: the menu sits above it, and focus goes back to it when the menu closes from the keyboard. */
+  let { opener, onClose }: {
+    /** Your card's status row: the menu sits above it, and focus goes back to it when the menu closes from the keyboard. */
     opener: HTMLElement
     onClose: () => void
-    /** Your profile (from the sidebar); left out on your own card, where you already are. */
-    onProfile?: () => void
   } = $props()
 
   const STATUSES: { id: Status; label: string }[] = [
@@ -94,7 +91,7 @@
     if (restoreFocus && opener.isConnected) opener.focus()
     onClose()
   }
-  /** Focus goes back to your avatar, it acts, then the menu goes; a failure shows as the shell's notice. */
+  /** Focus goes back to the status row, it acts, then the menu goes; a failure shows as the shell's notice. */
   function pick(action: () => unknown) {
     if (closed) return
     if (opener.isConnected) opener.focus()
@@ -155,10 +152,6 @@
       </button>
     {/if}
   {/each}
-  {#if onProfile}
-    <span class="menu-sep" role="separator"></span>
-    <button type="button" class="menu-item" role="menuitem" data-item="profile" onclick={() => pick(onProfile)}><span class="grow">Your profile</span></button>
-  {/if}
 </div>
 
 <style>
@@ -170,7 +163,7 @@
   .dot { position: relative; flex-shrink: 0; width: 10px; height: 10px; border-radius: 50%; background: var(--ok); }
   .dot.dnd { background: var(--danger); }
   .dot.dnd::after { content: ''; position: absolute; left: 18%; right: 18%; top: 50%; height: 26%; transform: translateY(-50%); border-radius: 999px; background: var(--surface-menu); }
-  .dot.invisible { background: radial-gradient(circle, var(--surface-menu) 0 34%, var(--presence-off) 36%); }
+  .dot.invisible { background: var(--presence-off); }
   /* beside the menu, past its 1px border, with a small gap the pointer crosses without closing it */
   .flyout { position: absolute; z-index: 1; left: calc(100% + 4px + 1px); width: 210px; gap: 2px; outline: none; }
 </style>

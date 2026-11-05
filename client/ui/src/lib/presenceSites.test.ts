@@ -14,6 +14,7 @@ const sources = (readdirSync(src, { recursive: true }) as string[])
 const DRAWS = [
   'components/ConversationList.svelte', // a 1:1 DM's avatar
   'components/GroupMembers.svelte', // a group's member list
+  'components/MemberList.svelte', // a server's member list (#169)
   'components/PeopleBoard.svelte', // "Your people": dots, the online/offline split, last seen
   'components/PeoplePicker.svelte', // picking people for a group
   'components/ProfileCard.svelte', // the card's avatar

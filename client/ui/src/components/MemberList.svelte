@@ -1,5 +1,6 @@
 <script lang="ts">
-  import { app } from '../lib/store.svelte'
+  import { app, clock } from '../lib/store.svelte'
+  import { byPresence, presenceOf } from '../lib/presence'
   import Avatar from './Avatar.svelte'
   import Icon from './Icon.svelte'
   import Name from './Name.svelte'
@@ -9,6 +10,12 @@
 
   let { serverId, onMessage }: { serverId: string; onMessage?: (userId: string) => void } = $props()
   const members = $derived(app.state.members[serverId] ?? [])
+  // Online (DND included) above Offline, as Discord does (#170): only by what you're told, so someone Invisible or
+  // hiding from you is Offline. A section with nobody in it has no heading.
+  const sections = $derived.by(() => {
+    const { online, offline } = byPresence(app.state, members, (m) => m.user.id, clock.nowIso)
+    return [{ key: 'online', label: 'Online', list: online }, { key: 'offline', label: 'Offline', list: offline }].filter((g) => g.list.length)
+  })
   // the row under the pointer: its avatar animates
   let hovered = $state<string | null>(null)
 
@@ -29,19 +36,21 @@
 </script>
 
 <aside class="members" aria-label="Members">
-  <div class="label">MEMBERS — {members.length}</div>
-  {#each members as m (m.user.id)}
+  {#each sections as g (g.key)}
+  <div class="label">{g.label} — {g.list.length}</div>
+  {#each g.list as m (m.user.id)}
     {@const name = displayName(app.state, serverId, m.user.id)}
     {@const base = baseName(m.user)}
     <!-- the context menu is a pointer shortcut; the keyboard route is ContextMenu / Shift+F10 on the row's buttons -->
-    <div class="row" role="presentation" onpointerenter={() => (hovered = m.user.id)} onpointerleave={() => { if (hovered === m.user.id) hovered = null }}
+    <div class="row" class:off={g.key === 'offline'} data-section={g.key} role="presentation" onpointerenter={() => (hovered = m.user.id)} onpointerleave={() => { if (hovered === m.user.id) hovered = null }}
       oncontextmenu={(e) => { e.preventDefault(); openMenu(m.user.id, e, e.currentTarget) }} onkeydown={(e) => rowKey(m.user.id, e)}>
-      <Avatar id={m.user.id} {name} size={32} interactive {serverId} hovered={() => hovered === m.user.id} />
+      <Avatar id={m.user.id} {name} size={32} presence={presenceOf(app.state, m.user.id, clock.nowIso)} interactive {serverId} hovered={() => hovered === m.user.id} />
       <span class="who"><Name userId={m.user.id} {serverId} text={name} surface="side" />{#if name !== base}<small>{base}</small>{/if}</span>
       {#if onMessage && m.user.id !== app.state.me?.id}
         <button class="msg" aria-label="Message {name}" data-tip="Message" onclick={() => onMessage(m.user.id)}><Icon name="message" size={15} /></button>
       {/if}
     </div>
+  {/each}
   {/each}
 </aside>
 {#if menu}
@@ -50,7 +59,7 @@
 
 <style>
   .members { width: var(--right-w, 240px); flex-shrink: 0; background: var(--bg-1); border-radius: var(--radius); padding: 8px; overflow-y: auto; }
-  .label { padding: 14px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--text-3); }
+  .label { padding: 14px 10px 6px; font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text-3); }
   .row { height: 44px; padding: 0 10px; border-radius: 10px; display: flex; align-items: center; gap: 10px; }
   /* 15 px: a styled name font (script, pixel) blurs at smaller sizes */
   .who { display: flex; flex-direction: column; font-size: 15px; font-weight: 500; min-width: 0; }
@@ -58,5 +67,10 @@
   .msg { margin-left: auto; width: 28px; height: 28px; border: 0; border-radius: 8px; background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; opacity: 0; }
   .msg:hover { background: var(--bg-4); color: var(--text); }
   .row:hover .msg, .msg:focus-visible { opacity: 1; }
-  .row:hover { background: var(--bg-2); }
+  .row:hover { background: var(--bg-2); --ring: var(--bg-2); }
+  /* offline (#170): dimmed slightly, as on Discord; back to full while hovered */
+  .row.off { opacity: .55; }
+  .row.off:hover { opacity: 1; }
+  /* the status dot (#169): small, cut out of the avatar in the row's own colour (--ring), as on Discord */
+  .row :global(.pres) { width: 12px; height: 12px; min-width: 0; min-height: 0; right: -1px; bottom: -1px; }
 </style>

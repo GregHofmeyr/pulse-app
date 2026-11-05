@@ -24,3 +24,13 @@ export function presenceOf(s: AppState, userId: string, nowIso: string): Presenc
 
 /** On: online or DND (they're here, just maybe not to be disturbed). */
 export const isOn = (p: Presence) => p.kind === 'online' || p.kind === 'dnd'
+
+/** A member list split as Discord does (#170): Online (DND included) above Offline, each in the list's order. Goes
+ *  only by what you're told: the server sends someone Invisible or hiding from you as offline, so they're Offline;
+ *  so are you while Invisible, as everyone else sees you. */
+export function byPresence<T>(s: AppState, items: readonly T[], idOf: (item: T) => string, nowIso: string): { online: T[]; offline: T[] } {
+  const online: T[] = []
+  const offline: T[] = []
+  for (const it of items) (isOn(presenceOf(s, idOf(it), nowIso)) ? online : offline).push(it)
+  return { online, offline }
+}

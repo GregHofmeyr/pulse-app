@@ -134,6 +134,24 @@ describe('Settings sections', () => {
   })
 })
 
+describe('Settings: Log out (#168)', () => {
+  it('is the last item of the navigation, under the sections, as a danger item, and logs out', () => {
+    const onLogout = vi.fn()
+    cmp = mount(Settings, { target: document.body, props: { onClose: () => {}, onLogout } })
+    flushSync()
+    const nav = [...document.querySelectorAll<HTMLButtonElement>('nav button')]
+    const out = nav.at(-1)!
+    expect(out.textContent?.trim()).toBe('Log out')
+    expect(nav.at(-2)!.textContent).toBe('Advanced')
+    expect(out.classList.contains('danger')).toBe(true)
+    // set apart from the sections, not one of them
+    expect(out.getAttribute('aria-current')).toBeNull()
+    out.click()
+    flushSync()
+    expect(onLogout).toHaveBeenCalledTimes(1)
+  })
+})
+
 describe('Settings: leaving the profile editor', () => {
   const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: null, avatar_still: null, style: { font: null, colors: [] } }
   const confirmText = 'Discard your profile changes?'

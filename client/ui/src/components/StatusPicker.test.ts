@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-// Your status menu (#45): click your avatar at the bottom of the sidebar. Online, Do Not Disturb (with its timers),
-// Invisible, each with its dot and the current one ticked; then Your profile.
+// Your status menu (#45), from the status row on your own profile card (#168). Online, Do Not Disturb (with its
+// timers), Invisible, each with its dot and the current one ticked.
 import { flushSync, mount, unmount } from 'svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
@@ -18,13 +18,12 @@ const alex = { id: 'U1', username: 'alex', display_name: 'alex', avatar_hash: nu
 let cmp: ReturnType<typeof mount> | undefined
 let opener: HTMLButtonElement
 const onClose = vi.fn()
-const onProfile = vi.fn()
 
 function show(myStatus: OwnStatus = { status: 'online', dnd_until: null }) {
   app.state = { ...emptyState(), me: alex, myStatus }
   opener = document.createElement('button')
   document.body.append(opener)
-  cmp = mount(StatusPicker, { target: document.body, props: { opener, onClose, onProfile } })
+  cmp = mount(StatusPicker, { target: document.body, props: { opener, onClose } })
   flushSync()
 }
 const q = <T extends HTMLElement = HTMLElement>(sel: string) => document.querySelector<T>(sel)
@@ -44,7 +43,6 @@ beforeEach(() => {
   invoke.mockReset()
   invoke.mockResolvedValue(undefined)
   onClose.mockReset()
-  onProfile.mockReset()
   ui.notice = null
 })
 afterEach(() => {
@@ -55,13 +53,12 @@ afterEach(() => {
 })
 
 describe('StatusPicker', () => {
-  it('the three statuses with their dots, then Your profile; the current one ticked; focus on the first', () => {
+  it('the three statuses with their dots and nothing else (it lives on your card, #168); the current one ticked; focus on the first', () => {
     show()
-    expect(ids()).toEqual(['online', 'dnd', 'invisible', 'profile'])
+    expect(ids()).toEqual(['online', 'dnd', 'invisible'])
     expect(item('online').textContent).toContain('Online')
     expect(item('dnd').textContent).toContain('Do Not Disturb')
     expect(item('invisible').textContent).toContain('Invisible')
-    expect(item('profile').textContent).toContain('Your profile')
     for (const k of ['online', 'dnd', 'invisible']) expect(item(k).querySelector(`.dot.${k}`)).not.toBeNull()
     expect(item('online').getAttribute('aria-checked')).toBe('true')
     expect(item('dnd').getAttribute('aria-checked')).toBe('false')
@@ -133,15 +130,6 @@ describe('StatusPicker', () => {
     key(document.activeElement!, 'Escape')
     expect(onClose).toHaveBeenCalled()
     expect(document.activeElement).toBe(opener)
-  })
-
-  it('Your profile does what the avatar did', () => {
-    show()
-    item('profile').click()
-    flushSync()
-    expect(onProfile).toHaveBeenCalled()
-    expect(onClose).toHaveBeenCalled()
-    expect(statusCalls()).toEqual([])
   })
 
   it('a failure says why', async () => {
