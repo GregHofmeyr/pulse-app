@@ -6,9 +6,19 @@ use sqlx::SqlitePool;
 
 use crate::error::{AppError, AppResult};
 
-type ChannelRow = (String, Option<String>, String, Option<String>, i64);
+pub type ChannelRow = (
+    String,
+    Option<String>,
+    String,
+    Option<String>,
+    i64,
+    Option<String>,
+    Option<String>,
+);
 
-pub fn channel_from_row((id, server_id, kind, name, position): ChannelRow) -> AppResult<Channel> {
+pub fn channel_from_row(
+    (id, server_id, kind, name, position, icon_hash, icon_still): ChannelRow,
+) -> AppResult<Channel> {
     Ok(Channel {
         id: id.parse().map_err(anyhow::Error::from)?,
         server_id: server_id
@@ -19,10 +29,15 @@ pub fn channel_from_row((id, server_id, kind, name, position): ChannelRow) -> Ap
             .ok_or_else(|| anyhow::anyhow!("bad channel kind {kind}"))?,
         name,
         position,
+        icon_hash,
+        icon_still,
     })
 }
 
-pub const CHANNEL_COLS: &str = "id, server_id, kind, name, position";
+/// The columns [`channel_from_row`] reads, from `channels` (unaliased): a group's icon (#56) comes
+/// with its still, for an animated one.
+pub const CHANNEL_COLS: &str = "id, server_id, kind, name, position, icon_hash, \
+     (SELECT m.still_hash FROM media m WHERE m.hash = icon_hash) AS icon_still";
 
 /// The channel, unless there is none or it is in Recently deleted: a deleted channel is gone for
 /// everything but its own Recently deleted routes (`servers::channels`).

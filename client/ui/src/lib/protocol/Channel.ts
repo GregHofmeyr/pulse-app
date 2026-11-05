@@ -3,4 +3,12 @@ import type { ChannelId } from "./ChannelId";
 import type { ChannelKind } from "./ChannelKind";
 import type { ServerId } from "./ServerId";
 
-export type Channel = { id: ChannelId, server_id: ServerId | null, kind: ChannelKind, name: string | null, position: number, };
+export type Channel = { id: ChannelId, server_id: ServerId | null, kind: ChannelKind, name: string | null, position: number, 
+/**
+ * A group's own icon (#56): a picture from the avatar upload. Absent: the members' faces.
+ */
+icon_hash?: string, 
+/**
+ * That icon's still, when it's animated.
+ */
+icon_still?: string, };

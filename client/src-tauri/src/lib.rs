@@ -295,6 +295,7 @@ pub fn run() {
             commands::add_members,
             commands::remove_member,
             commands::rename_channel,
+            commands::set_group_icon,
             commands::delete_channel,
             commands::list_deleted_channels,
             commands::restore_channel,

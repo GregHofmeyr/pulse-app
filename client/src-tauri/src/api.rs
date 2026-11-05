@@ -464,6 +464,24 @@ impl Api {
         .await
     }
 
+    /// Set (an avatar-upload hash) or clear a group's icon (#56).
+    pub async fn set_group_icon(
+        &self,
+        token: &str,
+        ch: ChannelId,
+        hash: Option<String>,
+    ) -> Result<Channel, ApiError> {
+        Self::parse(
+            self.http
+                .put(format!("{}/channels/{ch}/icon", self.base))
+                .bearer_auth(token)
+                .json(&pulse_protocol::rest::SetGroupIconRequest { hash })
+                .send()
+                .await,
+        )
+        .await
+    }
+
     /// Moves a server channel to its server's Recently deleted.
     pub async fn delete_channel(&self, token: &str, ch: ChannelId) -> Result<(), ApiError> {
         Self::ok_empty(
@@ -3957,6 +3975,24 @@ mod tests {
         api.set_appear_offline(&alex, sam_id, true).await.unwrap();
         api.set_appear_offline(&alex, sam_id, false).await.unwrap();
         assert!(api.set_appear_offline(&alex, alex_id, true).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn group_icon_round_trips_through_the_core() {
+        let app = testing::spawn().await;
+        let (_, alex) = testing::register(&app, "alex").await;
+        let (sam_id, _) = testing::register(&app, "sam").await;
+        let (kim_id, _) = testing::register(&app, "kim").await;
+        let api = Api::new(&format!("http://{}", app.addr));
+        let g = api.create_dm(&alex, vec![sam_id, kim_id]).await.unwrap();
+        // a hash that was never uploaded is refused
+        assert!(
+            api.set_group_icon(&alex, g.id, Some("ab".repeat(32)))
+                .await
+                .is_err()
+        );
+        let ch = api.set_group_icon(&alex, g.id, None).await.unwrap();
+        assert_eq!(ch.icon_hash, None);
     }
 
     #[tokio::test]

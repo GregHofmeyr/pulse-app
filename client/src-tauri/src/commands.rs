@@ -1505,6 +1505,18 @@ pub async fn rename_channel(
     core.check(&app, api.rename_channel(&token, channel_id, name).await)
 }
 
+/// A group's icon (#56): an avatar-upload hash, or `None` to clear it.
+#[tauri::command]
+pub async fn set_group_icon(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+    hash: Option<String>,
+) -> Result<Channel, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.set_group_icon(&token, channel_id, hash).await)
+}
+
 #[tauri::command]
 pub async fn delete_channel(
     app: AppHandle,

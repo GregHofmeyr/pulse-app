@@ -48,6 +48,7 @@
   import { app, clock, loadProfile, openDm, ui } from '../lib/store.svelte'
   import { presenceOf } from '../lib/presence'
   import BadgeToast from '../components/BadgeToast.svelte'
+  import GroupIconCrop from '../components/GroupIconCrop.svelte'
   import { badgeStore, logoClick } from '../lib/badges.svelte'
   import { applyEvent, dropClipJob, setClipJob, trimHistory } from '../lib/state'
   import { conversationName, homeBadge, inVoice, serverBadge, watchOpen, type OpenWatch } from '../lib/conversations'
@@ -627,6 +628,7 @@
 </div>
 <StreamToast />
 <BadgeToast />
+<GroupIconCrop />
 {#if settingsServer}<ServerSettings server={settingsServer} onClose={() => (serverSettingsId = null)} />{/if}
 {#if settingsOpen}<Settings section={settingsSection} onClose={() => { settingsOpen = false; void checkKeybinds() }} />{/if}
 {#if goLiveUi.picked && goLiveUi.channelId}<GoLiveDialog channelId={goLiveUi.channelId} bind:picked={goLiveUi.picked} onClose={closeGoLive} />{/if}

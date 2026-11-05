@@ -11,6 +11,7 @@
   import Avatar from './Avatar.svelte'
   import Name from './Name.svelte'
   import ConversationMenu from './ConversationMenu.svelte'
+  import GroupIcon from './GroupIcon.svelte'
   import SearchBox from './SearchBox.svelte'
   import { narrowerThan } from '../lib/actions'
   import { app, clock, queueMessage, ui } from '../lib/store.svelte'
@@ -447,9 +448,13 @@
       <Avatar id={others[0]} name={title} size={26} presence={presenceOf(app.state, others[0], clock.nowIso)} interactive serverId={null} />
       <span class="title"><Name userId={others[0]} serverId={null} text={title} /></span>
     {:else if isPrivate}
-      <span class="pile">
-        {#each others.slice(0, 3) as u (u)}<Avatar id={u} name={app.state.people[u] ? displayName(app.state, null, u) : '?'} size={22} />{/each}
-      </span>
+      {#if channel?.icon_hash}
+        <GroupIcon hash={channel.icon_hash} still={channel.icon_still} size={26} />
+      {:else}
+        <span class="pile">
+          {#each others.slice(0, 3) as u (u)}<Avatar id={u} name={app.state.people[u] ? displayName(app.state, null, u) : '?'} size={22} />{/each}
+        </span>
+      {/if}
       {#if renaming}
         <!-- svelte-ignore a11y_autofocus -->
         <input class="input input-sm rename" maxlength="64" placeholder={conversationName({ ...app.state, channels: { ...app.state.channels, [channelId]: { ...channel!, name: null } } }, channelId)}

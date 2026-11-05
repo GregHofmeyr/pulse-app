@@ -1,6 +1,7 @@
 <script lang="ts">
   import Icon from './Icon.svelte'
   import Avatar from './Avatar.svelte'
+  import GroupIcon from './GroupIcon.svelte'
   import Name from './Name.svelte'
   import { app, clock } from '../lib/store.svelte'
   import { presenceOf } from '../lib/presence'
@@ -40,6 +41,8 @@
       oncontextmenu={(e) => { e.preventDefault(); ctx = { id: c.channel.id, x: e.clientX, y: Math.min(e.clientY, innerHeight - 250) } }}>
       {#if c.channel.kind === 'dm' && people[0]}
         <Avatar id={people[0]} name={nameOf(people[0])} size={32} presence={presenceOf(app.state, people[0], clock.nowIso)} hovered={over(c.channel.id)} />
+      {:else if c.channel.icon_hash}
+        <GroupIcon hash={c.channel.icon_hash} still={c.channel.icon_still} size={32} hovered={over(c.channel.id)} />
       {:else}
         <span class="stack">
           {#each people.slice(0, 2) as u, i (u)}

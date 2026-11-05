@@ -10,7 +10,7 @@ use pulse_protocol::gateway::Event;
 use pulse_protocol::ids::{ChannelId, UserId};
 use pulse_protocol::rest::{
     AddMembersRequest, Channel, ChannelKind, MarkReadRequest, Mute, MuteTarget,
-    RenameChannelRequest, SetMuteRequest,
+    RenameChannelRequest, SetGroupIconRequest, SetMuteRequest,
 };
 use sqlx::SqlitePool;
 
@@ -34,6 +34,7 @@ pub fn router() -> Router<AppState> {
         .route("/mutes", put(set_mute))
         .route("/mutes/{kind}/{id}", delete(clear_mute))
         .route("/channels/{id}/close", post(close))
+        .route("/channels/{id}/icon", put(set_icon))
 }
 
 async fn mark_read(
@@ -415,6 +416,65 @@ async fn rename(
         id,
         content,
         serde_json::json!({"type": "group_renamed", "by": me, "name": name}),
+    )
+    .await?;
+    Ok(Json(channel))
+}
+
+/// Set or clear a group's icon (#56). Any member may (groups have flat permissions); every member
+/// gets a `ChannelUpdated` and a system line. The picture must be an uploaded avatar picture.
+async fn set_icon(
+    State(s): State<AppState>,
+    AuthUser(me): AuthUser,
+    Path(id): Path<ChannelId>,
+    Json(req): Json<SetGroupIconRequest>,
+) -> AppResult<Json<Channel>> {
+    if !s.limits.mutate_user.hit(&me.to_string()) {
+        return Err(AppError::TooManyRequests(None));
+    }
+    crate::media::writes_ok(&s.cfg)?;
+    let current = group_for(&s, me, id).await?;
+    if current.icon_hash == req.hash {
+        return Ok(Json(current));
+    }
+    let mut tx = crate::db::begin_write(&s.db).await?;
+    if let Some(hash) = &req.hash {
+        let found: Option<i64> =
+            sqlx::query_scalar("SELECT 1 FROM media WHERE hash = ? AND kind = 'avatar'")
+                .bind(hash)
+                .fetch_optional(&mut *tx)
+                .await?;
+        if found.is_none() {
+            return Err(AppError::BadRequest(
+                "That picture has expired. Upload it again.".into(),
+            ));
+        }
+    }
+    sqlx::query("UPDATE channels SET icon_hash = ? WHERE id = ?")
+        .bind(&req.hash)
+        .bind(id.to_string())
+        .execute(&mut *tx)
+        .await?;
+    tx.commit().await?;
+    let channel = load_channel(&s.db, id).await?.ok_or(AppError::NotFound)?;
+    s.hub
+        .publish(
+            &s.db,
+            Event::ChannelUpdated {
+                channel: channel.clone(),
+            },
+        )
+        .await;
+    let who = shown_name(&s.db, me).await?;
+    let content = match &req.hash {
+        Some(_) => format!("{who} changed the group icon"),
+        None => format!("{who} removed the group icon"),
+    };
+    crate::messages::system::post(
+        &s,
+        id,
+        content,
+        serde_json::json!({"type": "group_icon_changed", "by": me, "icon": req.hash}),
     )
     .await?;
     Ok(Json(channel))
