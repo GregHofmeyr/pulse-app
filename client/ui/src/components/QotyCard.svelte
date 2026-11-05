@@ -1,3 +1,8 @@
+<script module lang="ts">
+  /** The cards that have poured in already, this session. */
+  const revealed = new Set<string>()
+</script>
+
 <script lang="ts">
   // A Quote of the Year result (a system message carrying `qoty_card`, spec §5.3): the winner card
   // (big green quote mark, the quote, who said it, the year, the votes and who cast them, how it
@@ -66,8 +71,10 @@
   const speakers = $derived(
     card.speakers.length ? snapshotSpeakers(app.state, serverId, card.speakers) : shown && lines ? speakersOf(app.state, serverId, shown) : '',
   )
-  // A card that just arrived animates in once (not every time the channel is opened).
-  const reveal = untrack(() => Date.now() - Date.parse(message.created_at) < 60_000 && !motion.reducedMotion)
+  // A card that just arrived animates in once: not every time the channel is opened, and not again when the channel
+  // is switched away from and back within the minute (Shell remounts it, #173).
+  const reveal = untrack(() => !revealed.has(message.id) && Date.now() - Date.parse(message.created_at) < 60_000 && !motion.reducedMotion)
+  untrack(() => revealed.add(message.id))
   let reopening = $state(false)
 </script>
 

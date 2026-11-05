@@ -130,7 +130,8 @@
 <!-- the context menu is a pointer shortcut; the keyboard route is ContextMenu / Shift+F10 inside the card -->
 <div class="card" class:full={size === 'full'} {style} role="presentation" oncontextmenu={openMenu}
   onkeydown={(e) => { if (e.key === 'ContextMenu' || (e.key === 'F10' && e.shiftKey)) openMenu(e) }}>
-  <div class="banner" class:none={!banner}>
+  <!-- loading: the full banner height, so the card does not grow when the profile arrives (#173) -->
+  <div class="banner" class:none={!banner && !loading}>
     {#if banner}<img src={mediaUrl(bannerStill ?? banner)} alt="" draggable="false" {@attach wireBanner} />{/if}
   </div>
   <div class="body">
@@ -159,6 +160,10 @@
     {:else if bioHtml}
       <!-- renderMarkdown output is DOMPurify-sanitised (the message renderer's allow-list) -->
       <div class="bio" {@attach animateEmojiIn(bioHtml)}>{@html bioHtml}</div>
+    {/if}
+    {#if loading && !stats}
+      <!-- where Member since and Voice will be -->
+      <div class="panel skeleton stats-skeleton" aria-hidden="true"><span></span><span></span></div>
     {/if}
     {#if stats || voiceRoom}
       <dl class="panel info">
@@ -233,6 +238,8 @@
   .skeleton { display: flex; flex-direction: column; gap: 8px; }
   .skeleton span { height: 10px; border-radius: 5px; background: var(--card-skeleton); }
   .skeleton span:last-child { width: 60%; }
+  /* the stats panel's two 13px rows */
+  .stats-skeleton { gap: 10px; padding: 14px 12px; }
   .info { margin: 0; display: flex; flex-direction: column; gap: 6px; }
   .info div { display: flex; justify-content: space-between; gap: 8px; }
   dt { color: var(--card-text-2); }

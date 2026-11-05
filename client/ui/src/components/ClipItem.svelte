@@ -8,7 +8,7 @@
   import Icon from './Icon.svelte'
   import Name from './Name.svelte'
   import ReactionRow from './ReactionRow.svelte'
-  import { gameName } from '../lib/clips'
+  import { clipRowEstimate, gameName } from '../lib/clips'
   import { suggestedReactions } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import { InlineError } from '../lib/inlineError.svelte'
@@ -36,6 +36,9 @@
   } = $props()
 
   const clip = $derived(message.clip)
+  // its height before it is drawn, from the clip's own shape (#173): the 640px player (compact: about a third of a
+  // wide window) capped at 70% of the window as ClipPlayer caps it, plus the row's name, caption and reactions
+  const estimate = $derived(clipRowEstimate(clip, compact ? 360 : 640, window.innerHeight * 0.7, compact ? 90 : 140))
   const mine = $derived(!!meId && message.author_id === meId)
   const game = $derived(gameName(app.state, serverId, message))
   // Any number of reactions per person: offer your usual picks it has no chip for yet.
@@ -49,7 +52,7 @@
 </script>
 
 {#if clip}
-  <article class="clip-item" class:compact data-clip-id={message.id} data-message-id={message.id}
+  <article class="clip-item" class:compact data-clip-id={message.id} data-message-id={message.id} style:contain-intrinsic-size="auto {estimate}px"
     onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}>
     <Avatar id={message.author_id ?? ''} name={nameOf(message.author_id)} size={compact ? 32 : 40} interactive={!!message.author_id} serverId={serverId || null} hovered={() => over} />
     <div class="body">
@@ -72,7 +75,7 @@
 {/if}
 
 <style>
-  /* drawn only near the screen; the size is a typical 16:9 item until it is */
+  /* drawn only near the screen; until it is, its size is the estimate set inline (the 480/260 here are fallbacks) */
   .clip-item { display: flex; gap: 14px; padding: 8px 18px; content-visibility: auto; contain-intrinsic-size: auto 480px; container-type: inline-size; }
   .clip-item:hover { background: var(--hover-tint); }
   .clip-item.compact { padding: 4px 18px; contain-intrinsic-size: auto 260px; }

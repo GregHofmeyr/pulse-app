@@ -201,7 +201,7 @@
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="lightbox" role="dialog" aria-modal="true" aria-label={open.caption ?? 'Quoted image'} tabindex="-1" use:modal={() => (open = null)} onclick={() => (open = null)}>
       <QuoteImage media={open.media} caption={open.caption} full />
-      <button type="button" class="close" aria-label="Close" onclick={() => (open = null)}><Icon name="x" size={18} /></button>
+      <button type="button" class="close icon-btn round modal-close" aria-label="Close" onclick={() => (open = null)}><Icon name="x" size={16} /></button>
     </div>
   {/if}
 {/if}
@@ -243,6 +243,6 @@
   .actions button { width: 30px; height: 28px; border: 0; border-radius: var(--radius-xs); background: transparent; color: var(--text-2); display: grid; place-items: center; }
   .actions button:hover { background: var(--bg-4); color: var(--text); }
   .lightbox { position: fixed; inset: 0; z-index: 70; background: var(--scrim-strong); display: grid; place-items: center; cursor: zoom-out; outline: none; }
-  .close { position: absolute; top: 16px; right: 16px; width: 36px; height: 36px; border: 0; border-radius: 10px; background: var(--bg-3); color: var(--text); display: grid; place-items: center; }
-  .close:hover { background: var(--bg-4); color: var(--text); }
+  /* the dialogs' round close X, in the corner of the lightbox */
+  .close { position: absolute; top: 16px; right: 16px; }
 </style>
