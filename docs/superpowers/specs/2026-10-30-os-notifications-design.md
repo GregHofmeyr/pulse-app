@@ -65,7 +65,11 @@ notification adds focus and its per-conversation window. **(builder check: settl
   - A message with no text reads by what it carries: "sent a clip" (clip), "shared a quote" (quote;
     with text, the text), "posted the Quote of the Year card" (qoty_card).
 - With "Show message text" off, the body is "New message" (or "Mentioned you").
-- No avatar image in the first version (Windows needs a local file; can come later).
+- The author's avatar (an animated one's still), added in #73. The page sends the media hash; the core
+  turns the cached WebP into a PNG of at most 128 px in the account's media cache (gone on sign-out)
+  and shows it as the toast's circled app logo (Windows) or the `image-path` hint (Linux). No avatar,
+  signed out, a fetch slower than 1.5 s or a bad image: the notification goes without one, and one
+  the system refuses with its image is sent again without it.
 
 **Click.** Brings the window up (unminimise, show, focus) and opens that conversation. A reply opens
 its quote's replies panel. Clicking after signing out, or for a conversation that no longer exists,

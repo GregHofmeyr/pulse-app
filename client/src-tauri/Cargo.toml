@@ -61,6 +61,9 @@ tauri-plugin-dialog = "2"
 base64 = "0.22"
 # The 2FA setup QR code, drawn by the UI from a module matrix (the otpauth URI itself never leaves Rust).
 qrcode = { version = "0.14", default-features = false }
+# Avatars in desktop notifications (notify/avatar.rs): the cached WebP avatar as a small PNG, which
+# Windows toasts and every Linux notification service can show. Pure Rust (image-webp, png).
+image = { version = "0.25", default-features = false, features = ["png", "webp"] }
 
 [features]
 # Strong uses DeepFilterNet3's low-latency model (36 MB) instead of the normal one (8 MB).

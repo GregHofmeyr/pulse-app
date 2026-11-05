@@ -4,12 +4,13 @@ import type { AppState } from './state'
 import type { Channel } from './protocol/Channel'
 import type { Message } from './protocol/Message'
 import { conversationName, shouldAlert, type AlertInput } from './conversations'
-import { displayName } from './selectors'
+import { displayName, userOf } from './selectors'
 import { mentionLookup, showMentions } from './mentionStyles'
 import { TOKEN_RE } from './emoji'
 
-/** What the core shows; a click comes back with `channelId` and `threadId`. */
-export type Notice = { title: string; body: string; channelId: string; threadId?: string }
+/** What the core shows; a click comes back with `channelId` and `threadId`. `avatar`: the author's
+ *  avatar (media hash; an animated one's still), which the core shows beside the text (#73). */
+export type Notice = { title: string; body: string; channelId: string; threadId?: string; avatar?: string }
 export type NotifyPrefs = { enabled: boolean; showText: boolean }
 
 export const BODY_MAX = 140
@@ -31,6 +32,9 @@ export function notifyMessage(s: AppState, v: AlertInput, prefs: NotifyPrefs, mo
   const shown = { ...m, content: showMentions(m.content, mentionLookup(s), (id) => displayName(s, v.channel.server_id, id)) }
   const n: Notice = { title: notificationTitle(s, m, v.channel, more), body: notificationBody(shown, v.me, prefs.showText), channelId: m.channel_id }
   if (m.thread_root_id) n.threadId = m.thread_root_id
+  const author = m.author_id ? userOf(s, m.author_id) : null
+  const avatar = author?.avatar_still ?? author?.avatar_hash
+  if (avatar) n.avatar = avatar
   return n
 }
 

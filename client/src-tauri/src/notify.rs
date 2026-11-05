@@ -3,10 +3,12 @@
 //! talks to the system, so a slow notification service never holds up a command or the UI.
 
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
 
+pub mod avatar;
 #[cfg(target_os = "linux")]
 mod linux;
 #[cfg(target_os = "linux")]
@@ -50,6 +52,12 @@ pub struct Notice {
     pub channel_id: String,
     #[serde(default)]
     pub thread_id: Option<String>,
+    /// The author's avatar (a media hash; an animated one's still), shown beside the text.
+    #[serde(default)]
+    pub avatar: Option<String>,
+    /// That avatar as a local PNG, filled in by the core (never from the page).
+    #[serde(skip)]
+    pub image: Option<PathBuf>,
 }
 
 /// Where a clicked notification leads: the page opens that conversation (and the quote's replies).
@@ -94,7 +102,30 @@ fn clean(n: Notice) -> Option<Notice> {
         body: flat(&n.body, BODY_MAX),
         thread_id: n.thread_id.filter(|t| id_ok(t)),
         channel_id: n.channel_id,
+        avatar: n.avatar.filter(|h| crate::media::is_hash(h)),
+        image: n.image,
     })
+}
+
+/// Show `n`; one the system won't take with its avatar goes again without it, so an image can
+/// only ever cost the image, never the notification.
+fn show_with_fallback(
+    n: &Notice,
+    mut show: impl FnMut(&Notice) -> Result<(), Failure>,
+) -> Result<(), Failure> {
+    match show(n) {
+        Err(_) if n.image.is_some() => show(&Notice {
+            image: None,
+            ..n.clone()
+        }),
+        r => r,
+    }
+}
+
+/// A file path as the `file:///` URI notification services and toasts take.
+#[cfg_attr(not(any(windows, target_os = "linux", test)), allow(dead_code))]
+fn file_uri(path: &std::path::Path) -> Option<String> {
+    url::Url::from_file_path(path).ok().map(String::from)
 }
 
 /// Why a notification didn't show.
@@ -160,7 +191,7 @@ impl Notifier {
             .spawn(move || {
                 let mut backend = Backend::new(app_id, on_click);
                 for n in rx {
-                    if let Err(f) = backend.show(&n) {
+                    if let Err(f) = show_with_fallback(&n, |n| backend.show(n)) {
                         log_failure(&f);
                     }
                 }
@@ -178,12 +209,21 @@ impl Notifier {
     }
 }
 
-/// Show a message notification (the page has decided it should go out).
+/// Show a message notification (the page has decided it should go out), with its author's avatar
+/// when that can be had quickly (see [avatar]).
 #[tauri::command]
 pub async fn notify_message(
     notifier: tauri::State<'_, Notifier>,
+    core: tauri::State<'_, crate::commands::Core>,
     notice: Notice,
 ) -> Result<(), String> {
+    let mut notice = Notice {
+        image: None,
+        ..notice
+    };
+    if let Some(hash) = notice.avatar.as_deref() {
+        notice.image = avatar::local_png(core.media_session(), hash).await;
+    }
     notifier.send(notice);
     Ok(())
 }
@@ -205,11 +245,73 @@ mod tests {
                 body: "hello".into(),
                 channel_id: "C1".into(),
                 thread_id: Some("Q1".into()),
+                avatar: None,
+                image: None,
             }
         );
         let n: Notice =
             serde_json::from_str(r#"{"title":"sam","body":"hello","channelId":"C1"}"#).unwrap();
         assert_eq!(n.thread_id, None);
+        assert_eq!(n.avatar, None);
+    }
+
+    #[test]
+    fn the_avatar_is_a_hash_and_the_image_path_never_comes_from_the_page() {
+        let hash = "ab".repeat(32);
+        let n: Notice = serde_json::from_str(&format!(
+            r#"{{"title":"sam","body":"hi","channelId":"C1","avatar":"{hash}","image":"/etc/passwd"}}"#
+        ))
+        .unwrap();
+        assert_eq!(n.avatar.as_deref(), Some(hash.as_str()));
+        assert_eq!(n.image, None);
+        let n = clean(Notice {
+            avatar: Some("../../x".into()),
+            ..n
+        })
+        .unwrap();
+        assert_eq!(n.avatar, None, "not a hash: dropped, the notice stays");
+    }
+
+    #[test]
+    fn a_notice_refused_with_its_avatar_goes_again_without_it() {
+        let n = Notice {
+            title: "sam".into(),
+            body: "hi".into(),
+            channel_id: "C1".into(),
+            thread_id: None,
+            avatar: None,
+            image: Some(PathBuf::from("/x/a.png")),
+        };
+        let mut tried = Vec::new();
+        let r = show_with_fallback(&n, |n| {
+            tried.push(n.image.clone());
+            if n.image.is_some() {
+                Err(Failure::BadNotice("no image".into()))
+            } else {
+                Ok(())
+            }
+        });
+        assert!(r.is_ok());
+        assert_eq!(tried, [Some(PathBuf::from("/x/a.png")), None]);
+
+        // without an image there is nothing to drop: one try, its error kept
+        let mut tries = 0;
+        let r = show_with_fallback(&Notice { image: None, ..n }, |_| {
+            tries += 1;
+            Err(Failure::Refused("off".into()))
+        });
+        assert!(matches!(r, Err(Failure::Refused(_))));
+        assert_eq!(tries, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_path_becomes_a_file_uri() {
+        assert_eq!(
+            file_uri(std::path::Path::new("/home/a b/x.png")).as_deref(),
+            Some("file:///home/a%20b/x.png")
+        );
+        assert_eq!(file_uri(std::path::Path::new("relative.png")), None);
     }
 
     #[test]
@@ -232,6 +334,8 @@ mod tests {
             body: "b".repeat(1000),
             channel_id: "C1".into(),
             thread_id: Some("Q1".into()),
+            avatar: None,
+            image: None,
         })
         .unwrap();
         assert!(!n.title.contains('\u{202E}'));
@@ -249,6 +353,8 @@ mod tests {
             body: body.clone(),
             channel_id: "C1".into(),
             thread_id: None,
+            avatar: None,
+            image: None,
         })
         .unwrap();
         assert_eq!(n.body, body);
@@ -262,6 +368,8 @@ mod tests {
             body: "😀".repeat(BODY_MAX + 50),
             channel_id: "C1".into(),
             thread_id: None,
+            avatar: None,
+            image: None,
         })
         .unwrap();
         assert_eq!(n.body.chars().count(), BODY_MAX);
@@ -277,6 +385,8 @@ mod tests {
             body: "hi".into(),
             channel_id: String::new(),
             thread_id: None,
+            avatar: None,
+            image: None,
         };
         assert!(clean(base.clone()).is_none());
         assert!(

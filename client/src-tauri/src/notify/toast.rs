@@ -78,10 +78,17 @@ fn escape(s: &str) -> String {
     out
 }
 
-/// Silent: Pulse already plays its own message sound, so one alert makes one sound.
-pub fn toast_xml(title: &str, body: &str) -> String {
+/// Silent: Pulse already plays its own message sound, so one alert makes one sound. `image` (a
+/// `file:///` URI) is the author's avatar, in a circle where the app logo would be.
+pub fn toast_xml(title: &str, body: &str, image: Option<&str>) -> String {
+    let image = image.map_or(String::new(), |src| {
+        format!(
+            r#"<image placement="appLogoOverride" hint-crop="circle" src="{}"/>"#,
+            escape(src)
+        )
+    });
     format!(
-        r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text></binding></visual><audio silent="true"/></toast>"#,
+        r#"<toast><visual><binding template="ToastGeneric"><text>{}</text><text>{}</text>{image}</binding></visual><audio silent="true"/></toast>"#,
         escape(title),
         escape(body)
     )
@@ -94,9 +101,19 @@ mod tests {
     #[test]
     fn two_text_lines_in_the_generic_template() {
         assert_eq!(
-            toast_xml("sam", "hello"),
+            toast_xml("sam", "hello", None),
             r#"<toast><visual><binding template="ToastGeneric"><text>sam</text><text>hello</text></binding></visual><audio silent="true"/></toast>"#
         );
+    }
+
+    #[test]
+    fn the_avatar_is_the_circled_app_logo() {
+        assert_eq!(
+            toast_xml("sam", "hi", Some("file:///C:/Users/x/a%20b.png")),
+            r#"<toast><visual><binding template="ToastGeneric"><text>sam</text><text>hi</text><image placement="appLogoOverride" hint-crop="circle" src="file:///C:/Users/x/a%20b.png"/></binding></visual><audio silent="true"/></toast>"#
+        );
+        // a quote in the path can't end the attribute
+        assert!(toast_xml("s", "b", Some("file:///a\"b")).contains(r#"src="file:///a&quot;b""#));
     }
 
     #[test]
@@ -141,19 +158,19 @@ mod tests {
     #[test]
     fn characters_xml_cannot_hold_are_left_out() {
         // (lone surrogates can't be in a Rust string, so these are all that's left to drop)
-        let x = toast_xml("sam\u{FFFE}", "a\u{FFFF}b\u{0}c\u{1}d\u{B}e\u{1F}f");
+        let x = toast_xml("sam\u{FFFE}", "a\u{FFFF}b\u{0}c\u{1}d\u{B}e\u{1F}f", None);
         assert!(x.contains("<text>sam</text>"));
         assert!(x.contains("<text>abcdef</text>"));
         // tab, newline, emoji and the rest of Unicode stay
         assert!(
-            toast_xml("t", "a\tb\nc😀\u{FFFD}\u{E000}")
+            toast_xml("t", "a\tb\nc😀\u{FFFD}\u{E000}", None)
                 .contains("<text>a\tb\nc😀\u{FFFD}\u{E000}</text>")
         );
     }
 
     #[test]
     fn message_text_stays_text() {
-        let x = toast_xml("sam & \"jo\"", "<b>hi</b> it's 1 > 0");
+        let x = toast_xml("sam & \"jo\"", "<b>hi</b> it's 1 > 0", None);
         assert!(x.contains("<text>sam &amp; &quot;jo&quot;</text>"));
         assert!(x.contains("<text>&lt;b&gt;hi&lt;/b&gt; it&apos;s 1 &gt; 0</text>"));
     }

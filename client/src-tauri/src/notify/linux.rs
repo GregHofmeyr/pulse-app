@@ -6,7 +6,7 @@
 //! (KDE's does), so a replacement sent from a new connection, as notify-rust's `show` does,
 //! would lose its click; and one thread per notification would pile up behind a busy chat.
 
-use super::{Click, Failure, KEEP, Notice, OnClick};
+use super::{Click, Failure, KEEP, Notice, OnClick, file_uri};
 use std::collections::{HashMap, VecDeque};
 use std::sync::{Arc, Mutex};
 use zbus::blocking::{Connection, MessageIterator};
@@ -107,6 +107,11 @@ impl Backend {
         hints.insert("category", Value::from("im.received"));
         // Pulse plays its own message sound
         hints.insert("suppress-sound", Value::from(true));
+        // the author's avatar (the spec's image-path: a file:// URI); services without image
+        // support ignore it
+        if let Some(uri) = n.image.as_deref().and_then(file_uri) {
+            hints.insert("image-path", Value::from(uri));
+        }
         // "default" is a click on the notification itself
         let actions = ["default", "Open"];
         let reply = conn
@@ -282,6 +287,8 @@ mod tests {
             body: "Sent by a test; nothing to do.".into(),
             channel_id: "TEST".into(),
             thread_id: None,
+            avatar: None,
+            image: None,
         })
         .expect("the notification daemon took it");
     }

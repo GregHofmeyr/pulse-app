@@ -5,7 +5,7 @@
 //! group, and replacing needs both. It is the same handful of WinRT calls.
 
 use super::toast::{KeepNewest, refusal, toast_xml};
-use super::{Click, Failure, Notice, OnClick};
+use super::{Click, Failure, Notice, OnClick, file_uri};
 use windows::Data::Xml::Dom::XmlDocument;
 use windows::Foundation::TypedEventHandler;
 use windows::UI::Notifications::{ToastNotification, ToastNotificationManager};
@@ -57,7 +57,12 @@ impl Backend {
 
     fn build(&self, n: &Notice) -> windows::core::Result<ToastNotification> {
         let doc = XmlDocument::new()?;
-        doc.LoadXml(&HSTRING::from(toast_xml(&n.title, &n.body)))?;
+        let image = n.image.as_deref().and_then(file_uri);
+        doc.LoadXml(&HSTRING::from(toast_xml(
+            &n.title,
+            &n.body,
+            image.as_deref(),
+        )))?;
         let toast = ToastNotification::CreateToastNotification(&doc)?;
         toast.SetTag(&HSTRING::from(n.channel_id.as_str()))?;
         toast.SetGroup(&HSTRING::from(GROUP))?;

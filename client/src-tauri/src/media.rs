@@ -280,7 +280,7 @@ pub fn read_quote_image(path: &Path) -> Result<Vec<u8>, ApiError> {
     Ok(bytes)
 }
 
-async fn store(file: &Path, bytes: &[u8]) -> std::io::Result<()> {
+pub(crate) async fn store(file: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let dir = file.parent().expect("sharded path");
     tokio::fs::create_dir_all(dir).await?;
     let tmp = dir.join(format!(".{}.tmp", rand::random::<u64>()));

@@ -65,6 +65,16 @@ describe('notifyMessage: the decision', () => {
     expect(notifyMessage(s, v(reply), on)).toMatchObject({ channelId: 'Q1', threadId: 'R1' })
     expect(notifyMessage(s, v(msg('DM1', 'U1')), on)).not.toHaveProperty('threadId')
   })
+  // #73: the author's avatar goes along (an animated one's still); none without one.
+  it("carries the author's avatar, an animated one as its still, and none without", () => {
+    const withAvatar = (avatar_hash: string | null, avatar_still: string | null) => ({
+      ...s,
+      people: { ...s.people, U1: { ...s.people['U1'], user: { ...user('U1', 'sam'), avatar_hash, avatar_still } } },
+    })
+    expect(notifyMessage(withAvatar('a1', null), v(msg('DM1', 'U1')), on)).toMatchObject({ avatar: 'a1' })
+    expect(notifyMessage(withAvatar('anim', 'still'), v(msg('DM1', 'U1')), on)).toMatchObject({ avatar: 'still' })
+    expect(notifyMessage(s, v(msg('DM1', 'U1')), on)).not.toHaveProperty('avatar')
+  })
   // #47/#48: the names a notification shows are the ones that apply to you, never usernames.
   it('names people as you see them: private nicknames in DMs, server nicknames in servers', () => {
     const named = { ...s, privateNicks: { U1: 'Sammy', U2: 'Jojo' }, members: { S1: [{ user: user('U1', 'sam'), nickname: 'Captain' }, { user: user('U2', 'jo'), nickname: null }] } }
