@@ -631,7 +631,7 @@
 {#if creating}
   <div class="overlay modal-overlay fade-in">
   <div class="backdrop modal-backdrop" role="presentation" data-backdrop onclick={() => (creating = false)}></div>
-  <form class="modal dialog pop-in" onsubmit={createServer} role="dialog" aria-modal="true" aria-label="Create a server" tabindex="-1" use:modal={() => (creating = false)}>
+  <div class="modal dialog pop-in" role="dialog" aria-modal="true" aria-label="Create a server" tabindex="-1" use:modal={() => (creating = false)}><form class="dialog-form" onsubmit={createServer}>
     <h2 class="modal-title">Create a server</h2>
     <label>NAME <input class="input" bind:value={newName} maxlength="64" required placeholder="Game Night" /></label>
     {#if createError}<p class="error">{createError}</p>{/if}
@@ -639,7 +639,7 @@
       <button type="button" class="btn btn-lg btn-secondary" onclick={() => (creating = false)}>Cancel</button>
       <button class="btn btn-lg btn-primary" disabled={!newName.trim()}>Create</button>
     </div>
-  </form>
+  </form></div>
   </div>
 {/if}
 
@@ -667,6 +667,8 @@
 {/if}
 
 <style>
+  /* the dialog box is the div (role=dialog); the form inside lays out as its children */
+  .dialog-form { display: contents; }
   .app { height: 100%; display: flex; flex-direction: column; background: var(--bg-0); }
   header { height: 52px; flex-shrink: 0; display: flex; align-items: center; gap: 6px; padding: 0 10px 0 12px; }
   .logo { width: 30px; height: 30px; border-radius: 8px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; margin-right: 8px; }

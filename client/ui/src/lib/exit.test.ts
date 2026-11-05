@@ -36,6 +36,6 @@ describe('exitFade (#173)', () => {
     windowFocus.focused = false
     expect(exitFade(withAnimate()).duration).toBe(0)
     windowFocus.focused = true
-    expect(exitFade(document.createElement('div')).duration).toBe(document.createElement('div').animate ? DUR_EXIT : 0)
+    expect(exitFade(Object.assign(document.createElement('div'), { animate: undefined })).duration).toBe(0)
   })
 })
