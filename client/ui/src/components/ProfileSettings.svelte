@@ -309,7 +309,7 @@
               <button type="button" role="radio" class="swatch" aria-label={p.label} aria-checked={themeKey === p.key} tabindex={themeKey === p.key ? 0 : -1}
                 style:background="linear-gradient({p.top}, {p.bottom})" onclick={() => setTheme(p.top, p.bottom)}></button>
             {/each}
-            <button type="button" role="radio" class="chip" aria-checked={themeKey === null} tabindex={themeKey === null ? 0 : -1} onclick={() => (customTheme = true)}>Custom</button>
+            <button type="button" role="radio" class="chip toggle-chip" aria-checked={themeKey === null} tabindex={themeKey === null ? 0 : -1} onclick={() => (customTheme = true)}>Custom</button>
           </div>
           {#if themeKey === null}
             <div class="row">
@@ -322,9 +322,9 @@
         <div class="settings-field">
           <span class="settings-label">Name font</span>
           <div class="chips" role="radiogroup" aria-label="Name font" tabindex="-1" onkeydown={radioKeys}>
-            <button type="button" role="radio" class="chip" aria-checked={draft.font === null} tabindex={fontKnown ? (draft.font === null ? 0 : -1) : 0} onclick={() => (draft!.font = null)}>Default</button>
+            <button type="button" role="radio" class="chip toggle-chip" aria-checked={draft.font === null} tabindex={fontKnown ? (draft.font === null ? 0 : -1) : 0} onclick={() => (draft!.font = null)}>Default</button>
             {#each NAME_FONTS as f (f.key)}
-              <button type="button" role="radio" class="chip" aria-checked={draft.font === f.key} tabindex={draft.font === f.key ? 0 : -1}
+              <button type="button" role="radio" class="chip toggle-chip" aria-checked={draft.font === f.key} tabindex={draft.font === f.key ? 0 : -1}
                 style="font-family: {f.family}; font-weight: {f.weight}; font-size: calc(13px * {f.scale})" onclick={() => (draft!.font = f.key)}>{f.label}</button>
             {/each}
           </div>
@@ -425,8 +425,8 @@
   .swatch.pick { border-color: var(--bg-4); background: var(--bg-3); color: var(--text-2); display: grid; place-items: center; }
   .swatch.pick:hover { color: var(--text); }
   .swatch.none[aria-checked='true'], .swatch.pick[aria-checked='true'] { border-color: var(--text); }
-  .chip { height: 30px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 15px; background: transparent; color: var(--text-2); cursor: pointer; }
-  .chip[aria-checked='true'] { background: var(--bg-3); border-color: var(--focus-ring); color: var(--text); }
+  /* the shared .toggle-chip (app.css); a font's name keeps the body size, so the sample reads */
+  .chip { font-size: 14px; font-weight: 400; }
   input[type='color'] { width: 44px; height: 30px; padding: 0 2px; border: 1px solid var(--bg-4); border-radius: 8px; background: transparent; cursor: pointer; }
   /* the shared field ring (EmojiBox turns the box's own outline off) */
   .settings-field :global(.bio:focus-visible) { outline: 2px solid var(--focus-ring); outline-offset: 2px; }

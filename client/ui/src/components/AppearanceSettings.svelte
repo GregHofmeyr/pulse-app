@@ -51,7 +51,7 @@
       <span class="settings-label">TINT</span>
       <div class="swatches" role="group" aria-label="Tint">
         {#each TINTS as n (n.key)}
-          <button type="button" class="tint" aria-pressed={theme.tint === n.key} onclick={() => setTint(n.key)}>
+          <button type="button" class="tint toggle-chip" aria-pressed={theme.tint === n.key} onclick={() => setTint(n.key)}>
             <span class="dot" data-theme="light" data-tint={n.key} aria-hidden="true"></span>{n.label}
           </button>
         {/each}
@@ -63,7 +63,7 @@
   <div class="settings-field">
     <span class="settings-label">ACCENT</span>
     <div class="swatches" role="group" aria-label="Accent">
-      <button type="button" class="default" aria-pressed={theme.accent === null} onclick={() => setAccent(null)}>
+      <button type="button" class="default toggle-chip" aria-pressed={theme.accent === null} onclick={() => setAccent(null)}>
         <span class="chip" style:background={current.accent} aria-hidden="true"></span>Theme default
       </button>
       {#each ACCENT_PRESETS as p (p.color)}
@@ -123,9 +123,8 @@
   .p-btn { position: absolute; right: 6px; bottom: 6px; width: 26px; height: 10px; border-radius: 4px; background: var(--accent); }
 
   .swatches { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-  .tint, .default { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 12px 0 8px; border: 2px solid var(--line); border-radius: 16px; background: transparent; color: var(--text-2); font-size: 13px; font-weight: 600; }
-  .tint:hover, .default:hover { color: var(--text); }
-  .tint[aria-pressed='true'], .default[aria-pressed='true'] { border-color: var(--focus-ring); color: var(--text); }
+  /* the tints and Theme default are the shared .toggle-chip (app.css), with a swatch inside */
+  .tint, .default { padding-left: 6px; }
   /* the tint's own ground (a preview of Light with that tint) */
   .tint .dot { width: 16px; height: 16px; border-radius: 50%; background: var(--bg-0); border: 1px solid var(--line-strong); }
   .chip { display: block; width: 18px; height: 18px; border-radius: 50%; }

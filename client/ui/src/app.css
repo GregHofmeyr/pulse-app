@@ -957,7 +957,7 @@ textarea.input { height: auto; padding: 8px 10px; line-height: 1.4; }
 .toast.notice { padding: 8px 14px; }
 
 /* Settings: a heading inside a pane (above a group of fields), and a list of items (emoji, sounds, people, links). */
-.settings-section-title { margin: 0; font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: 0; }
+.settings-section-title { margin: 0 0 8px; font-size: 15px; font-weight: 600; color: var(--text); letter-spacing: 0; }
 .settings-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 6px; }
 .settings-list-item { display: flex; align-items: center; gap: 10px; min-height: 40px; padding: 6px 10px; border-radius: var(--radius-md); background: var(--bg-2); }
 

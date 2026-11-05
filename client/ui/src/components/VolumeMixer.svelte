@@ -33,7 +33,7 @@
   }
 </script>
 
-<h3 class="settings-label heading">Volume mixer</h3>
+<h3 class="settings-section-title">Volume mixer</h3>
 <p class="lede">Each section's top slider turns everything under it up or down together. 0% is off.</p>
 
 <div class="sections">
@@ -72,7 +72,6 @@
 </div>
 
 <style>
-  .heading { margin: 0; text-transform: uppercase; }
   .lede { margin: -8px 0 0; font-size: 12px; color: var(--text-3); }
   .sections { display: flex; flex-direction: column; gap: 12px; }
   .mix-section { display: flex; flex-direction: column; gap: 2px; padding: 12px 14px; background: var(--bg-2); border-radius: 12px; }

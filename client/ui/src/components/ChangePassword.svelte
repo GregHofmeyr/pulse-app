@@ -61,7 +61,7 @@
   }
 </script>
 
-<h3>Password</h3>
+<h3 class="settings-section-title">Password</h3>
 {#if open}
   <form onsubmit={submit}>
     <label>Current password <PasswordInput aria-label="Current password" class="input input-sm" bind:value={current} required autocomplete="current-password" /></label>
@@ -86,7 +86,6 @@
 {/if}
 
 <style>
-  h3 { margin: 8px 0 10px; font-size: 15px; }
   form { display: flex; flex-direction: column; gap: 10px; align-items: flex-start; }
   label { display: flex; flex-direction: column; gap: 6px; font-size: 12px; font-weight: 600; color: var(--text-2); }
   /* :global: the password fields' inputs live inside PasswordInput */

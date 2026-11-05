@@ -105,6 +105,7 @@
   .overlay { position: fixed; inset: 0; z-index: 30; }
   .modal { width: min(420px, 100%); }
   textarea { resize: vertical; min-height: 64px; }
-  .err { margin: 0; font-size: 12px; color: var(--danger-text); }
+  /* a dialog's error line, as in every other dialog */
+  .err { margin: 0; font-size: 13px; color: var(--danger-text); }
   .foot { display: flex; justify-content: flex-end; gap: 8px; }
 </style>

@@ -85,12 +85,12 @@
     <span class="title-text">{channel?.name ?? ''}</span><span class="caret" class:up={shown}><Icon name="chevron" size={14} /></span>
   </button>
   <div class="chips" role="group" aria-label="Filter clips">
-    {#if shown}<button type="button" class="chip" aria-pressed={!filter.game && !filter.author} onclick={() => onFilter({})}>All</button>{/if}
+    {#if shown}<button type="button" class="chip toggle-chip" aria-pressed={!filter.game && !filter.author} onclick={() => onFilter({})}>All</button>{/if}
     {#each shown ? rowGames : gameChips as g (g.id)}
-      {#if shown || filter.game === g.id}<button type="button" class="chip" aria-pressed={filter.game === g.id} onclick={() => pickGame(g.id)}>{g.name}</button>{/if}
+      {#if shown || filter.game === g.id}<button type="button" class="chip toggle-chip" aria-pressed={filter.game === g.id} onclick={() => pickGame(g.id)}>{g.name}</button>{/if}
     {/each}
     {#if shown && moreGames.length}<div class="more">
-      <button type="button" class="chip" aria-haspopup="menu" aria-expanded={more} data-menu-toggle onclick={() => (more = !more)}>+{moreGames.length} more</button>
+      <button type="button" class="chip toggle-chip" aria-haspopup="menu" aria-expanded={more} data-menu-toggle onclick={() => (more = !more)}>+{moreGames.length} more</button>
       {#if more}
         <div class="menu menu-surface pop-in" role="menu" aria-label="More games" use:clickOutside={() => (more = false)}>
           {#each moreGames as g (g.id)}
@@ -100,7 +100,7 @@
       {/if}
     </div>{/if}
     {#if shown || filter.author}<div class="person">
-      <button type="button" class="chip" aria-pressed={!!filter.author} aria-haspopup="menu" aria-expanded={people} data-menu-toggle
+      <button type="button" class="chip toggle-chip" aria-pressed={!!filter.author} aria-haspopup="menu" aria-expanded={people} data-menu-toggle
         onclick={() => (people = !people)}>{personLabel}</button>
       {#if people}
         <div class="menu menu-surface pop-in" role="menu" aria-label="By person" use:clickOutside={() => (people = false)}>
@@ -133,9 +133,7 @@
   .caret { display: flex; flex-shrink: 0; color: var(--text-3); transition: transform var(--dur) var(--ease); }
   .caret.up { transform: rotate(180deg); }
   .chips { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-left: 6px; }
-  .chip { height: 28px; padding: 0 11px; border-radius: 14px; border: 1px solid var(--bg-4); background: transparent; color: var(--text-2); font-size: 12px; font-weight: 600; white-space: nowrap; }
-  .chip:hover { background: var(--bg-3); color: var(--text); }
-  .chip[aria-pressed='true'] { background: var(--accent); border-color: var(--focus-ring); color: var(--on-accent); }
+  /* the filters are the shared .toggle-chip (app.css) */
   .person, .more { position: relative; }
   .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; --pop-origin: top left; }
   .menu-item[aria-checked='true'] { color: var(--accent-text); }

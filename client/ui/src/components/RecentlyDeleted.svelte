@@ -69,9 +69,9 @@
   {:else if items.length === 0}
     <p class="empty">No deleted channels.</p>
   {:else}
-    <ul>
+    <ul class="settings-list">
       {#each items as d (d.channel.id)}
-        <li>
+        <li class="settings-list-item">
           <div class="info">
             <span class="name">{label(d.channel)}</span>
             <small>{KIND[d.channel.kind] ?? d.channel.kind} · Deleted by {d.deleted_by ? displayName(app.state, server.id, d.deleted_by) : 'someone'} · {when(d.deleted_at)}</small>
@@ -99,8 +99,7 @@
   .hint { margin: -12px 0 0; color: var(--text-3); font-size: 12px; }
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .empty { margin: 0; color: var(--text-3); }
-  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 8px; }
-  li { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-radius: 10px; background: var(--bg-2); }
+  /* the list is the shared .settings-list (app.css) */
   .info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .name { font-weight: 600; overflow-wrap: anywhere; }
   small { color: var(--text-3); font-size: 12px; }

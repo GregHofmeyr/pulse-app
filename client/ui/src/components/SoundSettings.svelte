@@ -31,7 +31,7 @@
   }
 </script>
 
-<h3 class="settings-label heading">Sounds</h3>
+<h3 class="settings-section-title">Sounds</h3>
 <div class="settings-field">
   <div class="sets" role="radiogroup" aria-label="Sound set">
     {#each SOUND_SETS as s, i (s.id)}
@@ -51,7 +51,6 @@
 <small class="hint">How loud each sound plays is in the Volume mixer below.</small>
 
 <style>
-  .heading { margin: 0; text-transform: uppercase; }
   .sets { display: flex; flex-direction: column; gap: 8px; }
   .set { display: flex; align-items: center; gap: 8px; padding-right: 12px; background: var(--bg-2); border: 1px solid transparent; border-radius: 12px; }
   .set.selected { border-color: var(--focus-ring); }

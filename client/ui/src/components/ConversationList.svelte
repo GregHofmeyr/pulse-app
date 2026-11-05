@@ -92,6 +92,7 @@
   .stack .s0 { position: absolute; left: 0; top: 0; }
   .stack .s1 { position: absolute; left: 11px; top: 11px; border-radius: 50%; box-shadow: 0 0 0 2px var(--ring); }
   .mute { color: var(--text-3); display: grid; }
-  .pill { min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px; background: var(--danger); color: var(--on-danger); font-size: 11px; font-weight: 700; display: grid; place-items: center; }
+  /* the unread pill of the channel list and server tabs (#173) */
+  .pill { min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; display: grid; place-items: center; }
   .empty { padding: 12px 10px; font-size: 13px; color: var(--text-3); }
 </style>

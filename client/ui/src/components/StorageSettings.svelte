@@ -28,7 +28,7 @@
 <section class="settings-pane">
   <h2>Storage</h2>
   <div class="settings-field">
-    <h3>Clips</h3>
+    <h3 class="settings-section-title">Clips</h3>
     {#if error}
       <p class="error" role="alert">{error}</p>
     {:else if !usage}
@@ -40,7 +40,6 @@
 </section>
 
 <style>
-  h3 { margin: 0; font-size: 15px; }
   p { margin: 0; color: var(--text-2); }
   .error { color: var(--danger-text); font-size: 13px; }
 </style>

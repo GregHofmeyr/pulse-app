@@ -150,9 +150,9 @@
   {#if emoji.length === 0}
     <p class="empty">No custom emoji yet.</p>
   {:else}
-    <ul>
+    <ul class="settings-list">
       {#each emoji as e (e.id)}
-        <li>
+        <li class="settings-list-item">
           <img src={mediaUrl(e.still_hash ?? e.hash!)} alt={e.name} width="32" height="32" />
           <div class="meta">
             {#if renaming?.id === e.id}
@@ -201,8 +201,7 @@
   /* empty but kept (a live region must exist before its text): take back the flex gap */
   .add .name-hint:empty { margin-top: -12px; }
   .full { margin: -12px 0 0; color: var(--text-3); font-size: 13px; }
-  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-  li { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; background: var(--bg-0); }
+  /* the list is the shared .settings-list (app.css) */
   li img { object-fit: contain; }
   .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .name { font-weight: 600; }

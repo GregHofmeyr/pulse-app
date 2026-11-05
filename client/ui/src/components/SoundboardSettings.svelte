@@ -65,9 +65,9 @@
   {#if sounds.length === 0}
     <p class="empty">No sounds yet.</p>
   {:else}
-    <ul>
+    <ul class="settings-list">
       {#each sounds as s (s.id)}
-        <li>
+        <li class="settings-list-item">
           <span class="glyph"><SoundEmoji emoji={s.emoji} emojiId={s.emoji_id} size={24} /></span>
           <div class="meta">
             <span class="name">{s.name}</span>
@@ -100,8 +100,7 @@
   .error { margin: 0; color: var(--danger-text); font-size: 13px; }
   .empty { margin: 0; color: var(--text-3); }
   .add { align-self: flex-start; }
-  ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
-  li { display: flex; align-items: center; gap: 12px; padding: 8px 10px; border-radius: 10px; background: var(--bg-0); }
+  /* the list is the shared .settings-list (app.css) */
   .glyph { width: 32px; height: 32px; display: grid; place-items: center; color: var(--text-2); flex-shrink: 0; }
   .meta { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
   .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
