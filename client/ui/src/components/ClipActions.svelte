@@ -63,7 +63,7 @@
 
 <div class="clip-actions">
   <button bind:this={opener} type="button" class="icon-btn icon-btn-sm" aria-label="Clip actions" aria-haspopup="menu" aria-expanded={menu} data-menu-toggle
-    onclick={() => (menu = !menu)}><Icon name="dots" size={15} /></button>
+    onclick={() => (menu = !menu)}><Icon name="dots" size={16} /></button>
   {#if menu}
     <div class="menu menu-surface pop-in" role="menu" use:clickOutside={closeMenu}>
       <button type="button" class="menu-item" role="menuitem" onclick={startEdit}><Icon name="pencil" size={14} />Edit</button>

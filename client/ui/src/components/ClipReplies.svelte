@@ -22,7 +22,7 @@
 {/if}
 {#if unsentReplies > 0}
   <button type="button" class="unsent-reply" onclick={onOpenReplies}>
-    <Icon name="reply" size={13} />{unsentReplies === 1 ? 'Unsent reply' : `${unsentReplies} unsent replies`}
+    <Icon name="reply" size={14} />{unsentReplies === 1 ? 'Unsent reply' : `${unsentReplies} unsent replies`}
   </button>
 {/if}
 

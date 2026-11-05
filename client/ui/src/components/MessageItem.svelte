@@ -248,11 +248,11 @@
       </div>
       {#if !pending && !message.deleted && !editing}
         <div class="actions" class:open={picking || focusIn}>
-          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={15} /></button>
-          <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>
+          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={16} /></button>
+          <button aria-label="Reply" onclick={onReply}><Icon name="reply" size={16} /></button>
           {#if mine}
-            <button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={15} /></button>
-            {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={15} /></button>{/if}
+            <button aria-label="Edit" onclick={startEdit}><Icon name="pencil" size={16} /></button>
+            {#if embeds.length}<button aria-label="Remove previews" onclick={() => void hideEmbeds()}><Icon name="unlink" size={16} /></button>{/if}
             <DeleteButton what={message.thread_root_id ? 'reply' : 'message'} onConfirm={() => void del()} />
           {/if}
         </div>

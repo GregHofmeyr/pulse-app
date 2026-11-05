@@ -62,7 +62,7 @@
         <span class="time">{when}</span>
         {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         <span class="grow"></span>
-        {#if onOpenReplies && !compact}<button type="button" class="icon-btn icon-btn-sm" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={15} /></button>{/if}
+        {#if onOpenReplies && !compact}<button type="button" class="icon-btn icon-btn-sm" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={16} /></button>{/if}
         {#if mine}<ClipActions {message} {serverId} />{/if}
       </div>
       <ClipCaption {message} />

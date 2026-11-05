@@ -111,7 +111,7 @@
     class="tile" role="button" tabindex="0" data-tip={s.name}
     onclick={() => play(s)} onkeydown={(ev) => tileKey(ev, s)} oncontextmenu={(ev) => openMenu(ev, s)}
   >
-    <button class="preview" type="button" aria-label="Preview {s.name}" onclick={(ev) => { ev.stopPropagation(); preview(s) }}><Icon name="volume" size={13} /></button>
+    <button class="preview" type="button" aria-label="Preview {s.name}" onclick={(ev) => { ev.stopPropagation(); preview(s) }}><Icon name="volume" size={14} /></button>
     <span class="emoji"><SoundEmoji emoji={s.emoji} emojiId={s.emoji_id} size={24} /></span>
     <span class="name">{s.name}</span>
   </div>

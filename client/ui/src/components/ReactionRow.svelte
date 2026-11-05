@@ -169,7 +169,7 @@
       {/if}
     {/each}
     <button class="chip add" type="button" aria-label="Add reaction" data-menu-toggle onclick={(ev) => { anchor = ev.currentTarget; picking = !picking }}>
-      <Icon name="smile" size={15} />
+      <Icon name="smile" size={16} />
     </button>
   </div>
 {/if}

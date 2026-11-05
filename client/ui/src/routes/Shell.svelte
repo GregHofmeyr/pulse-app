@@ -511,7 +511,7 @@
         <button class="tab" class:active={activeServerId === s.id} onclick={() => selectServer(s.id)}
           oncontextmenu={(e) => { e.preventDefault(); serverMenu = { id: s.id, x: e.clientX, y: e.clientY, opener: e.currentTarget } }}>
           <span class="chip" style:background={avatarColor(s.id)}>{initial(s.name)}</span>{s.name}
-          {#if talking > 0}<span class="invc" aria-label="{talking} in voice" data-tip="{talking} in voice"><Icon name="speaker" size={13} /></span>{/if}
+          {#if talking > 0}<span class="invc" aria-label="{talking} in voice" data-tip="{talking} in voice"><Icon name="speaker" size={14} /></span>{/if}
           {#if badge.mentions > 0}<span class="pill">{badge.mentions}</span>{:else if badge.dot}<span class="dot" aria-label="new messages"></span>{/if}
         </button>
       {/each}
@@ -529,9 +529,9 @@
       <span class="conn auto-report" role="status">Something went wrong in Pulse last time, so we sent Greg a report. <button aria-label="Dismiss" onclick={() => (ui.autoReported = false)}>×</button></span>
     {/if}
     <!-- #155: icon only; the app-wide tooltip reads its aria-label -->
-    <button class="win report" aria-label="Report a bug" onclick={() => (reportOpen = true)}><Icon name="bug" size={15} /></button>
+    <button class="win report" aria-label="Report a bug" onclick={() => (reportOpen = true)}><Icon name="bug" size={16} /></button>
     <button class="win" aria-label="Minimise" onclick={() => win.minimize()}><Icon name="min" size={14} /></button>
-    <button class="win" aria-label="Maximise" onclick={() => win.toggleMaximize()}><Icon name="square" size={13} /></button>
+    <button class="win" aria-label="Maximise" onclick={() => win.toggleMaximize()}><Icon name="square" size={14} /></button>
     <button class="win" aria-label="Close" onclick={() => win.close()}><Icon name="x" size={14} /></button>
   </header>
 

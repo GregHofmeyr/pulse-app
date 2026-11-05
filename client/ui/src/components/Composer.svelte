@@ -180,7 +180,7 @@
   {/if}
   {#if replyingTo}
     <div class="replying">Replying to <strong>{replyingTo}</strong>
-      <button class="icon-btn icon-btn-xs" aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={13} /></button></div>
+      <button class="icon-btn icon-btn-xs" aria-label="Cancel reply" onclick={onCancelReply}><Icon name="x" size={14} /></button></div>
   {/if}
   <EmojiBox bind:this={box} bind:text class="composer-input" label={placeholder} {placeholder} mention={mentionName}
     onkeydown={key} oninput={input} onclick={syncCaret} oncaret={(at) => (caret = at)}

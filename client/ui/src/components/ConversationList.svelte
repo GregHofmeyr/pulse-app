@@ -29,7 +29,7 @@
   const over = (id: string) => () => hovered === id
 </script>
 
-<button class="btn btn-lg btn-quiet new" onclick={onNew}><Icon name="plus" size={15} /> New message</button>
+<button class="btn btn-lg btn-quiet new" onclick={onNew}><Icon name="plus" size={16} /> New message</button>
 
 <div class="list">
   {#each list as c (c.channel.id)}
@@ -58,7 +58,7 @@
           <span class="prev" class:sys={p.system}>{p.text}</span>
         {/if}
       </span>
-      {#if c.muted}<span class="mute"><Icon name="bellOff" size={13} /></span>{/if}
+      {#if c.muted}<span class="mute"><Icon name="bellOff" size={14} /></span>{/if}
       {#if badge > 0}<span class="pill">{badge > 99 ? '99+' : badge}</span>{/if}
     </button>
   {:else}

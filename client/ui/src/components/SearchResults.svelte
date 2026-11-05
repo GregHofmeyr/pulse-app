@@ -49,7 +49,7 @@
 <section class="search-results" aria-label="Search results" onkeydown={keydown}>
   <header>
     <span class="count" aria-live="polite">{search.status === 'loading' ? 'Searching…' : count}</span>
-    <button type="button" class="icon-btn icon-btn-sm" aria-label="Close search" data-tip="Close (Esc)" onclick={closeSearch}><Icon name="x" size={15} /></button>
+    <button type="button" class="icon-btn icon-btn-sm" aria-label="Close search" data-tip="Close (Esc)" onclick={closeSearch}><Icon name="x" size={16} /></button>
   </header>
   <div class="body">
     {#if search.status === 'error'}

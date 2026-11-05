@@ -74,7 +74,7 @@
           <span class="play" aria-hidden="true"><Icon name="play" size={22} /></span>
         </button>
         <span class="duration">{formatDuration(clip.duration_ms)}</span>
-        <button type="button" class="fs" aria-label="Play full screen" onclick={() => void playFullscreen()}><Icon name="fullscreen" size={15} /></button>
+        <button type="button" class="fs" aria-label="Play full screen" onclick={() => void playFullscreen()}><Icon name="fullscreen" size={16} /></button>
         {#if isNew}<span class="badge-new">new</span>{/if}
       {/if}
     </div>
@@ -85,7 +85,7 @@
         <span class="who">{#if message.author_id}<Name userId={message.author_id} serverId={serverId || null} text={nameOf(message.author_id)} />{:else}{nameOf(null)}{/if}</span>
         {#if game}<span class="game">{game}</span>{/if}
         <span class="grow"></span>
-        {#if onOpenReplies}<button type="button" class="icon-btn icon-btn-sm" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={15} /></button>{/if}
+        {#if onOpenReplies}<button type="button" class="icon-btn icon-btn-sm" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={16} /></button>{/if}
         {#if mine}<ClipActions {message} {serverId} />{/if}
       </div>
       <span class="time">{when}{#if message.edited_at} · edited{/if}</span>

@@ -151,7 +151,7 @@
                     <VoterStack userIds={line.awarders} {nameOf} />
                   {/if}
                   <button type="button" class="icon-btn icon-btn-xs lbtn" aria-label="Line actions" aria-haspopup="menu" aria-expanded={menu?.line.id === line.id} data-menu-toggle
-                    onclick={(e) => openMenu(line, e, e.currentTarget)}><Icon name="dots" size={15} /></button>
+                    onclick={(e) => openMenu(line, e, e.currentTarget)}><Icon name="dots" size={16} /></button>
                 </div>
               </div>
             {/each}
@@ -170,16 +170,16 @@
         {/if}
         {#if unsentReplies > 0 && onOpenReplies && !compact}
           <button type="button" class="unsent-reply" onclick={onOpenReplies}>
-            <Icon name="reply" size={13} />{unsentReplies === 1 ? 'Unsent reply' : `${unsentReplies} unsent replies`}
+            <Icon name="reply" size={14} />{unsentReplies === 1 ? 'Unsent reply' : `${unsentReplies} unsent replies`}
           </button>
         {/if}
         {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}
       </div>
       {#if !message.deleted && !compact}
         <div class="actions" class:open={picking || focusIn}>
-          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={15} /></button>
-          {#if onReply}<button aria-label="Reply" onclick={onReply}><Icon name="reply" size={15} /></button>{/if}
-          {#if mine && onEdit}<button aria-label="Edit" onclick={onEdit}><Icon name="pencil" size={15} /></button>{/if}
+          <button bind:this={smileBtn} aria-label="Add reaction" data-menu-toggle onclick={() => (picking = !picking)}><Icon name="smile" size={16} /></button>
+          {#if onReply}<button aria-label="Reply" onclick={onReply}><Icon name="reply" size={16} /></button>{/if}
+          {#if mine && onEdit}<button aria-label="Edit" onclick={onEdit}><Icon name="pencil" size={16} /></button>{/if}
           {#if mine && onDelete}<DeleteButton what="quote" note="Its replies go too." onConfirm={() => void attempt(onDelete)} />{/if}
         </div>
         {#if picking && smileBtn}

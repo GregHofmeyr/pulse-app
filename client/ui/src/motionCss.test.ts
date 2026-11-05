@@ -146,6 +146,16 @@ describe('context menus', () => {
   })
 })
 
+describe('icon sizes by role', () => {
+  // Icon.svelte ICON_SIZE: 14 inline and in menus, 16 on buttons, 18 in navigation. 13 and 15 were the drift
+  // (a reply arrow at 13, 15 and 16; a close X at 11 to 18).
+  it('no icon is 13 or 15px', () => {
+    const offenders: string[] = []
+    for (const f of files) for (const m of readFileSync(f, 'utf8').matchAll(/<Icon [^>]*size=\{([^}]*)\}/g)) if (/\b1[35]\b/.test(m[1])) offenders.push(`${rel(f)}: ${m[0]}`)
+    expect(offenders).toEqual([])
+  })
+})
+
 describe('radii', () => {
   // app.css's shared classes use the radius tokens; components still being moved over are listed (#173 follow-up).
   it('app.css writes no raw 6/8/10/12/16px radius (they are --radius-xs … --radius-xl)', () => {

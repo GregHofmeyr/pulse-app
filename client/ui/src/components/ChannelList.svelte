@@ -195,7 +195,7 @@
     onclick={() => onSelect(c.id)}
     oncontextmenu={(e) => { e.preventDefault(); openChanMenu(c, e, e.currentTarget) }} onkeydown={(e) => rowKey(e, c)}>
     <span class="ico"><Icon name={icon} size={17} /></span><span class="grow">{c.name}</span>
-    {#if muted}<span class="mic"><Icon name="bellOff" size={13} /></span>{/if}
+    {#if muted}<span class="mic"><Icon name="bellOff" size={14} /></span>{/if}
     {#if read?.mentions}<span class="pill">{read.mentions}</span>{/if}
   </button>
   {/if}

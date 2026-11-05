@@ -51,7 +51,7 @@
 </script>
 
 <span class="del">
-  <button bind:this={opener} class="trigger" aria-label="Delete" aria-haspopup="dialog" aria-expanded={asking} data-menu-toggle onclick={press}><Icon name="trash" size={15} /></button>
+  <button bind:this={opener} class="trigger" aria-label="Delete" aria-haspopup="dialog" aria-expanded={asking} data-menu-toggle onclick={press}><Icon name="trash" size={16} /></button>
   {#if asking}
     <div class="ask menu-surface pop-in" role="alertdialog" aria-label="Delete {what}" style={place} use:clickOutside={close}>
       <p>Delete this {what}?{note ? ` ${note}` : ''}</p>

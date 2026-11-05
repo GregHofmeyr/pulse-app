@@ -220,7 +220,7 @@
   {#if collapsed}
     <button type="button" class="mag" aria-label="Search" onclick={() => input.focus()}><Icon name="search" size={16} /></button>
   {:else}
-    <Icon name="search" size={15} />
+    <Icon name="search" size={16} />
   {/if}
   {#each chips as c, i (chipText(c))}
     <span class="chip">{chipText(c)}<button type="button" tabindex="-1" aria-label="Remove {chipText(c)}" onclick={() => removeChip(i)}><Icon name="x" size={11} /></button></span>
