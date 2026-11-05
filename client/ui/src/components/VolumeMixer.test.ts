@@ -9,6 +9,7 @@ vi.mock('@tauri-apps/api/core', () => ({ invoke }))
 import VolumeMixer from './VolumeMixer.svelte'
 import { defaultMixer, mixGain } from '../lib/mixer'
 import { mixer, reloadMixer } from '../lib/mixer.svelte'
+import { reloadMixerCollapsed } from '../lib/mixerCollapsed.svelte'
 import { setSoundboardVolume } from '../lib/soundboard.svelte'
 import { app } from '../lib/store.svelte'
 import { emptyState, type AppState } from '../lib/state'
@@ -47,6 +48,7 @@ const section = (title: string) => [...document.querySelectorAll<HTMLElement>('.
 beforeEach(() => {
   localStorage.clear()
   reloadMixer()
+  reloadMixerCollapsed()
   invoke.mockClear()
   withSounds([])
 })
@@ -166,5 +168,55 @@ describe('VolumeMixer', () => {
     expect(slider('Soundboard').value).toBe('45')
     move('Soundboard', 170)
     expect(mixer.calls.soundboard).toBe(170)
+  })
+})
+
+describe('VolumeMixer collapsible sections (#164)', () => {
+  const toggle = (title: string) => section(title).querySelector<HTMLButtonElement>('h4 button')!
+  const body = (title: string) => document.getElementById(toggle(title).getAttribute('aria-controls')!)!
+
+  it('every section starts open, with a chevron toggle in its heading', () => {
+    show()
+    for (const t of ['Calls', 'Call sounds', 'Stream sounds', 'Notifications', 'Media']) {
+      expect(toggle(t).getAttribute('aria-expanded'), t).toBe('true')
+      expect(toggle(t).querySelector('svg'), t).not.toBeNull()
+      expect(body(t).hidden, t).toBe(false)
+    }
+  })
+
+  it('collapsing hides only its rows; the master slider and Reset stay in the header', () => {
+    show()
+    toggle('Calls').click()
+    flushSync()
+    expect(toggle('Calls').getAttribute('aria-expanded')).toBe('false')
+    expect(body('Calls').hidden).toBe(true)
+    expect(body('Calls').contains(slider('Voices'))).toBe(true)
+    expect(slider('Calls volume').closest('[hidden]')).toBeNull()
+    expect(button('Reset Calls to defaults').closest('[hidden]')).toBeNull()
+    expect(body('Call sounds').hidden).toBe(false)
+    toggle('Calls').click()
+    flushSync()
+    expect(body('Calls').hidden).toBe(false)
+  })
+
+  it('remembers which sections are closed on this device', () => {
+    show()
+    toggle('Media').click()
+    toggle('Stream sounds').click()
+    flushSync()
+    unmount(cmp!)
+    cmp = undefined
+    reloadMixerCollapsed()
+    show()
+    expect(body('Media').hidden).toBe(true)
+    expect(body('Stream sounds').hidden).toBe(true)
+    expect(body('Calls').hidden).toBe(false)
+  })
+
+  it('a garbled saved value opens everything', () => {
+    localStorage.setItem('pulse.mixerCollapsed', '{nope')
+    reloadMixerCollapsed()
+    show()
+    expect(body('Calls').hidden).toBe(false)
   })
 })
