@@ -1462,6 +1462,43 @@ pub async fn play_sound(
     crate::sounds::play(set, &name, crate::sounds::gain(volume), output);
 }
 
+/// The incoming-call ringtone, on loop until [`stop_ringtone`] (#50). The UI decides when (DND,
+/// muted conversations); a second start replaces the first.
+#[tauri::command]
+pub async fn start_ringtone(volume: Option<f32>, output: Option<String>) {
+    tracing::info!("ringtone: start");
+    crate::sounds::ring::start(crate::sounds::gain(volume), output);
+}
+
+#[tauri::command]
+pub async fn stop_ringtone() {
+    if crate::sounds::ring::stop() {
+        tracing::info!("ringtone: stop");
+    }
+}
+
+/// Start a call in a DM or group (ringing the others), or join the one going on (#50).
+#[tauri::command]
+pub async fn start_call(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+) -> Result<pulse_protocol::rest::StartCallResponse, ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.start_call(&token, channel_id).await)
+}
+
+/// Stop a call ringing you, on all your devices; the caller isn't told (#50).
+#[tauri::command]
+pub async fn decline_call(
+    app: AppHandle,
+    core: State<'_, Core>,
+    channel_id: ChannelId,
+) -> Result<(), ApiError> {
+    let (api, token) = core.current()?;
+    core.check(&app, api.decline_call(&token, channel_id).await)
+}
+
 #[tauri::command]
 pub async fn create_dm(
     app: AppHandle,

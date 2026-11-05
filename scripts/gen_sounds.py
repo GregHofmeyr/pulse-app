@@ -164,10 +164,23 @@ for _v in TWOSTEP:
 for _v in ("soft", "wood", "glass"):
     SETS[f"minimal-{_v}"] = _scaled(lambda e, v=_v: minimal(v, e), minus_db=6.0)
 
+RING_OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "client/src-tauri/ringtone/ring.wav")
+
+def ringtone():
+    """The incoming-call ring (#50): one cycle, which the client loops. Classic's soft sines: two quick trills of a
+    rising pair (E5-A5), a short breath between them, then a pause before the next cycle. Normalised to Classic's
+    join, so it sits with the set; the volume mixer's Ringing notch takes it from there. One ringtone for every set."""
+    trill = []
+    for _ in range(4):
+        trill += tone([(659, 659)], 0.09) + tone([(880, 880)], 0.09)
+    cycle = trill + [0.0] * int(RATE * 0.2) + trill + [0.0] * int(RATE * 1.2)
+    return normalise(cycle, active_rms(CLASSIC["join"]))
+
 def main():
     for set_id, sounds in SETS.items():
         for name, samples in sounds.items():
             write_wav(f"{OUT}/{set_id}/{name}.wav", samples)
+    write_wav(RING_OUT, ringtone())
     print("ok")
 
 if __name__ == "__main__":
