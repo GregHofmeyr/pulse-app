@@ -168,13 +168,15 @@ pub async fn joined(s: &AppState, ch: &Channel, user: UserId) {
 async fn try_joined(s: &AppState, ch: &Channel, user: UserId) -> AppResult<()> {
     let mut open = s.voice.calls.open.lock().await;
     let mut created = None;
-    if !open.contains_key(&ch.id) {
-        let (call, line) = create(s, ch.id, user).await?;
-        tracing::info!(call = %call.info.id, channel = %ch.id, "call started by a join");
-        created = Some((call.info.clone(), line));
-        open.insert(ch.id, call);
-    }
-    let call = open.get_mut(&ch.id).expect("inserted above");
+    let call = match open.entry(ch.id) {
+        std::collections::hash_map::Entry::Occupied(o) => o.into_mut(),
+        std::collections::hash_map::Entry::Vacant(v) => {
+            let (call, line) = create(s, ch.id, user).await?;
+            tracing::info!(call = %call.info.id, channel = %ch.id, "call started by a join");
+            created = Some((call.info.clone(), line));
+            v.insert(call)
+        }
+    };
     if call.empty_since.take().is_some() {
         call.epoch += 1; // the empty timer is off
     }
@@ -247,10 +249,13 @@ pub async fn member_removed(s: &AppState, channel: ChannelId, user: UserId) {
     }
 }
 
+/// A stored open call: id, channel, started by, started at, line.
+type OpenRow = (String, String, Option<String>, String, Option<String>);
+
 /// After a restart: the calls the database still has open, back in memory (no rings: a restart
 /// drops them). Run before the voice restore, whose participants then join them.
 pub async fn load_open(s: &AppState) -> anyhow::Result<usize> {
-    let rows: Vec<(String, String, Option<String>, String, Option<String>)> = sqlx::query_as(
+    let rows: Vec<OpenRow> = sqlx::query_as(
         "SELECT id, channel_id, started_by, started_at, line_id FROM calls WHERE ended_at IS NULL",
     )
     .fetch_all(&s.db)
