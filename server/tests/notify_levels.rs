@@ -234,6 +234,21 @@ async fn only_servers_and_their_channels_take_a_level() {
         400,
         "a DM always alerts"
     );
+    let s = create_server(&app, &a, "Main").await;
+    let r = post_json(
+        &app,
+        &a,
+        &format!("/servers/{}/channels", s.id),
+        serde_json::json!({"name": "Lounge", "kind": "voice"}),
+    )
+    .await;
+    assert_eq!(r.status(), 200);
+    let v: pulse_protocol::rest::Channel = r.json().await.unwrap();
+    assert_eq!(
+        set_level(&app, &a, "channel", &v.id.to_string(), Some("all")).await,
+        400,
+        "a voice channel has no messages to alert"
+    );
     // a conversation you're not in is as unknown as one that doesn't exist
     let (_, k) = register(&app, "kim").await;
     assert_eq!(

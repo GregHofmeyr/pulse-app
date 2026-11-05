@@ -630,7 +630,7 @@ async fn drop_empty_pref(
 }
 
 /// `PUT /notify-levels`: your level for a server or one of its channels (#195); `level: None` puts it back to the
-/// default. A DM or group has none (it always alerts, subject to its mute): 400.
+/// default. A DM or group has none (it always alerts, subject to its mute), nor a voice channel: 400.
 async fn set_level(
     State(s): State<AppState>,
     AuthUser(me): AuthUser,
@@ -647,10 +647,10 @@ async fn set_level(
             let ch: ChannelId = req.target_id.parse().map_err(|_| AppError::NotFound)?;
             if load_channel(&s.db, ch)
                 .await?
-                .is_none_or(|c| c.server_id.is_none())
+                .is_none_or(|c| c.server_id.is_none() || c.kind == ChannelKind::Voice)
             {
                 return Err(AppError::BadRequest(
-                    "only servers and their channels have a notification level".into(),
+                    "only servers and their message channels have a notification level".into(),
                 ));
             }
             req.level

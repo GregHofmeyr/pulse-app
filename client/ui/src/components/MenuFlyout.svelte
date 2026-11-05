@@ -33,7 +33,7 @@
   const radio = $derived(choices.some((c) => c.checked !== undefined))
   const uid = $props.id()
   const flyoutId = `${uid}-sub`
-  let muteEl = $state<HTMLButtonElement>()
+  let itemEl = $state<HTMLButtonElement>()
   let sub = $state<HTMLElement>()
   let subOpen = $state(false)
   const subSide = $derived<'left' | 'right'>(menuLeft - GAP - FLYOUT_W < 8 ? 'right' : 'left')
@@ -44,10 +44,10 @@
     if (list.length) list[(i + list.length) % list.length].focus()
   }
   function openSub(focusFirst: boolean) {
-    if (!muteEl) return
-    // level with the item (its first duration beside it: the flyout's 6px padding and 1px border), kept inside
+    if (!itemEl) return
+    // level with the item (its first choice beside it: the flyout's 6px padding and 1px border), kept inside
     // the window
-    const want = menuTop + muteEl.offsetTop - 7
+    const want = menuTop + itemEl.offsetTop - 7
     subTop = Math.max(8, Math.min(want, window.innerHeight - SUB_H - 8)) - menuTop
     subOpen = true
     if (focusFirst) {
@@ -66,7 +66,7 @@
     if (!subOpen) return
     const back = refocus === 'if-inside' ? !!sub?.contains(document.activeElement) : refocus
     subOpen = false
-    if (back) muteEl?.focus()
+    if (back) itemEl?.focus()
   }
   /** The pointer is over another of the menu's items: close after the hover-intent wait, unless it comes back. */
   export function closeSoon() {
@@ -77,7 +77,7 @@
   }
   /** The item itself (the menu tells it apart from its other items). */
   export function trigger(): HTMLButtonElement | undefined {
-    return muteEl
+    return itemEl
   }
 
   function triggerKeydown(e: KeyboardEvent) {
@@ -105,7 +105,7 @@
   }
 </script>
 
-<button bind:this={muteEl} type="button" class="menu-item has-sub" class:hi={subOpen} role="menuitem" data-item={item} aria-haspopup="menu" aria-expanded={subOpen}
+<button bind:this={itemEl} type="button" class="menu-item has-sub" class:hi={subOpen} role="menuitem" data-item={item} aria-haspopup="menu" aria-expanded={subOpen}
   aria-controls={subOpen ? flyoutId : undefined} onpointerenter={() => { later.cancel(); openSub(false) }} onclick={() => openSub(true)} onkeydown={triggerKeydown}>
   <span class="grow">{label}</span><Icon name={subSide === 'right' ? 'chevronRight' : 'chevronLeft'} size={14} />
 </button>

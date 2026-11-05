@@ -165,6 +165,17 @@ describe('ServerMenu notifications (#195)', () => {
     expect(document.activeElement).toBe(item('Notifications'))
   })
 
+  it('Escape with a hover-opened flyout closes only that flyout, then the menu', () => {
+    render()
+    hover(item('Notifications'))
+    expect(levels()).not.toBeNull()
+    key(item('Server settings'), 'Escape')
+    expect(levels()).toBeNull()
+    expect(onClose).not.toHaveBeenCalled()
+    key(item('Server settings'), 'Escape')
+    expect(onClose).toHaveBeenCalled()
+  })
+
   it('a failed pick is handed back once the menu has gone', async () => {
     render()
     invoke.mockRejectedValueOnce('no network')
