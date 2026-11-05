@@ -1,5 +1,6 @@
-//! Clips: finding ffmpeg, probing and previewing a local file, the export encode, and the streamed upload of a finished clip.
+//! Clips: finding ffmpeg, probing and previewing a local file, the export encode, the streamed upload of a finished clip, and saving one to disk.
 
+pub mod download;
 pub mod editor;
 pub mod encode;
 pub mod ffmpeg;

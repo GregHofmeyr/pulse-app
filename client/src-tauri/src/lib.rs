@@ -373,6 +373,7 @@ pub fn run() {
             commands::add_game,
             commands::edit_clip,
             commands::clip_url,
+            commands::save_clip,
             commands::set_fullscreen,
             commands::list_clips,
             commands::clip_facets,

@@ -257,6 +257,8 @@ export const api = {
   editClip: (messageId: string, body: EditClipRequest) => invoke<Message>('edit_clip', { messageId, body }),
   /** A link that works for an hour; ask again on every play. */
   clipUrl: (messageId: string) => invoke<ClipUrl>('clip_url', { messageId }),
+  /** The system Save dialog, named from the caption; the original file is written by the Rust core. False when cancelled. */
+  saveClip: (messageId: string, caption: string) => invoke<boolean>('save_clip', { messageId, caption }),
   /** Puts the (frameless) main window in or out of full screen, with a clip's element fullscreen. Resolves to whether it was fullscreen before. */
   setFullscreen: (on: boolean) => invoke<boolean>('set_fullscreen', { on }),
   /** Newest first, 30 a page; `before` pages back. */

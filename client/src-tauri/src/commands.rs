@@ -2116,6 +2116,53 @@ pub async fn clip_url(
     core.check(&app, api.clip_url(&token, message_id).await)
 }
 
+/// Download a clip (#204): the system Save dialog, suggesting the caption as the file name, then the
+/// original file streamed to the chosen path. `false` when the dialog is cancelled.
+#[tauri::command]
+pub async fn save_clip(
+    app: AppHandle,
+    core: State<'_, Core>,
+    message_id: MessageId,
+    caption: String,
+) -> Result<bool, String> {
+    use crate::clips::download;
+    use tauri_plugin_dialog::DialogExt;
+    let (api, token) = core.current().map_err(|e| e.to_string())?;
+    let link = async || {
+        core.check(&app, api.clip_url(&token, message_id).await)
+            .map_err(|e| e.to_string())
+    };
+    // asked first: its file's extension, and a clip that is gone says so before any dialog
+    let first = link().await?;
+    let ext = download::extension_of(&first.url);
+    let (tx, rx) = tokio::sync::oneshot::channel();
+    let mut dialog = app
+        .dialog()
+        .file()
+        .set_file_name(format!("{}.{ext}", download::suggested_stem(&caption)))
+        .add_filter("Video", &[ext.as_str()]);
+    if let Some(win) = app.get_webview_window("main") {
+        dialog = dialog.set_parent(&win);
+    }
+    dialog.save_file(move |f| {
+        let _ = tx.send(f);
+    });
+    let Some(dest) = rx.await.ok().flatten().and_then(|f| f.into_path().ok()) else {
+        return Ok(false);
+    };
+    let http = crate::clips::upload::client();
+    match download::save_url(&http, &first.url, &dest).await {
+        // the link lasts an hour; a dialog left open longer gets a fresh one
+        Err(download::DownloadError::Rejected(403)) => {
+            let fresh = link().await?;
+            download::save_url(&http, &fresh.url, &dest).await
+        }
+        other => other,
+    }
+    .map_err(|e| e.to_string())?;
+    Ok(true)
+}
+
 /// The clip player's full screen: the window is frameless, so the page's element fullscreen alone
 /// only fills the window. The UI calls this on every `fullscreenchange`. Returns whether the window
 /// was fullscreen before, so the UI can put it back as it found it.

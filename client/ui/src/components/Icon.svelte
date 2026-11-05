@@ -29,6 +29,7 @@
     eyedropper: 'M4 20l1-3 9.5-9.5 3 3L8 19zM14.5 6.5l3 3M15.5 5.5l1.8-1.8a2.1 2.1 0 0 1 3 3L18.5 8.5',
     pencil: 'M12 20h9M16.5 3.5a2.1 2.1 0 0 1 3 3L7 19l-4 1 1-4z',
     trash: 'M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3',
+    download: 'M12 4v11M7 10l5 5 5-5M5 20h14',
     x: 'M6 6l12 12M18 6 6 18',
     // a beetle: round body with a centre seam, head, antennae, three legs a side (Report a bug)
     bug: 'M8 10a4 4 0 0 1 8 0v4a4 4 0 0 1-8 0zM12 10v8M9.5 6.5 8 4M14.5 6.5 16 4M8 11H4M8 15H4.5M16 11h4M16 15h3.5M8.5 18 6 20M15.5 18 18 20',

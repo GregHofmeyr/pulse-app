@@ -293,12 +293,20 @@ describe('ClipFeed', () => {
   it('edit and delete only for the poster', async () => {
     pages = [[clip('M004', { author_id: 'U1' }), clip('M003')]]
     await show({ layout: 'list' })
-    expect(card('M003').querySelector('button[aria-label="Clip actions"]')).toBeNull()
-    const open = () => {
-      card('M004').querySelector<HTMLButtonElement>('button[aria-label="Clip actions"]')!.click()
+    const open = (cid = 'M004') => {
+      card(cid).querySelector<HTMLButtonElement>('button[aria-label="Clip actions"]')!.click()
       flushSync()
     }
     const item = (label: string) => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === label)!
+    const labels = () => [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].map((b) => b.textContent?.trim())
+    // everyone's clip has the menu, with Download first (#204); Edit and Delete are the poster's
+    open('M003')
+    expect(labels()).toEqual(['Download'])
+    open('M003')
+    expect(labels()).toEqual([])
+    open()
+    expect(labels()).toEqual(['Download', 'Edit', 'Delete'])
+    open()
     // Edit: caption and game, through a dialog
     open()
     item('Edit').click()
@@ -336,6 +344,85 @@ describe('ClipFeed', () => {
     app.state = applyEvent(app.state, { t: 'MessageDeleted', d: { channel_id: 'C1', message_id: 'M004', author_id: 'U1', mentions: [], thread_root_id: null } }, Date.now())
     flushSync()
     expect(order()).toEqual(['M003'])
+  })
+
+  describe('download (#204)', () => {
+    const saves = () => calls('save_clip').map((c) => c[1])
+    const menuDownload = (cid: string) => {
+      card(cid).querySelector<HTMLButtonElement>('button[aria-label="Clip actions"]')!.click()
+      flushSync()
+      ;[...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find((b) => b.textContent?.trim() === 'Download')!.click()
+      flushSync()
+    }
+    const overlay = (cid: string) => card(cid).querySelector<HTMLButtonElement>('button[aria-label="Download clip"]')
+
+    it("Download in anyone's clip menu opens the Save dialog for that clip", async () => {
+      pages = [[clip('M003', { content: 'clutch 1v3' })]]
+      await show({ layout: 'list' })
+      menuDownload('M003')
+      await settle()
+      expect(saves()).toEqual([{ messageId: 'M003', caption: 'clutch 1v3' }])
+      expect(document.querySelector('[role="menu"]')).toBeNull()
+    })
+
+    it('a download icon sits on the video in the list and on the wall, with a tooltip', async () => {
+      pages = [[clip('M003')]]
+      await show({ layout: 'list' })
+      expect(overlay('M003')?.dataset.tip).toBe('Download')
+      overlay('M003')!.click()
+      await settle()
+      expect(saves()).toEqual([{ messageId: 'M003', caption: 'caption M003' }])
+      unmount(cmp!)
+      cmp = undefined
+      document.body.innerHTML = ''
+      pages = [[clip('M003')]]
+      await show({ layout: 'wall' })
+      expect(overlay('M003')?.dataset.tip).toBe('Download')
+      overlay('M003')!.click()
+      await settle()
+      expect(saves()).toHaveLength(2)
+      // still one once the wall's card is playing
+      card('M003').querySelector<HTMLButtonElement>('button.thumb')!.click()
+      flushSync()
+      await settle()
+      flushSync()
+      expect(card('M003').querySelectorAll('button[aria-label="Download clip"]')).toHaveLength(1)
+    })
+
+    it('cancelling the dialog does nothing; a failure shows on the clip', async () => {
+      pages = [[clip('M003')]]
+      let answer: () => Promise<unknown> = async () => false
+      const base = invoke.getMockImplementation()!
+      invoke.mockImplementation(async (cmd: string, args?: unknown) => (cmd === 'save_clip' ? answer() : base(cmd, args)))
+      await show({ layout: 'list' })
+      overlay('M003')!.click()
+      await settle()
+      flushSync()
+      expect(card('M003').querySelector('[role="alert"]')).toBeNull()
+      answer = async () => Promise.reject('the download was refused (403)')
+      menuDownload('M003')
+      await settle()
+      flushSync()
+      expect(card('M003').querySelector('[role="alert"]')?.textContent).toBe('the download was refused (403)')
+    })
+
+    it('a second click while one is saving is ignored', async () => {
+      pages = [[clip('M003')]]
+      let finish: (v: boolean) => void = () => {}
+      const base = invoke.getMockImplementation()!
+      invoke.mockImplementation(async (cmd: string, args?: unknown) =>
+        cmd === 'save_clip' ? new Promise((r) => (finish = r)) : base(cmd, args))
+      await show({ layout: 'list' })
+      overlay('M003')!.click()
+      overlay('M003')!.click()
+      await settle()
+      expect(saves()).toHaveLength(1)
+      finish(true)
+      await settle()
+      overlay('M003')!.click()
+      await settle()
+      expect(saves()).toHaveLength(2)
+    })
   })
 
   describe.each(['list', 'wall'] as const)('starting on a clip (%s)', (layout) => {

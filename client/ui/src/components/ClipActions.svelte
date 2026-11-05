@@ -1,6 +1,6 @@
 <script lang="ts">
-  // The poster's menu on a clip: Edit (caption and game, in a small dialog) and Delete (asked first).
-  // Shown only on your own clips; the server refuses anyone else anyway.
+  // A clip's menu: Download for everyone (#204); for the poster also Edit (caption and game, in a small dialog)
+  // and Delete (asked first). The server refuses anyone else's edit or delete anyway.
   import { tick } from 'svelte'
   import GamePicker from './GamePicker.svelte'
   import Icon from './Icon.svelte'
@@ -8,7 +8,7 @@
   import { api, errorText } from '../lib/tauri'
   import type { Message } from '../lib/protocol/Message'
 
-  let { message, serverId }: { message: Message; serverId: string } = $props()
+  let { message, serverId, mine, onDownload }: { message: Message; serverId: string; mine: boolean; onDownload: () => void } = $props()
 
   const MAX_CAPTION = 300
 
@@ -25,6 +25,10 @@
   function closeMenu(e?: Event) {
     menu = false
     if (e instanceof KeyboardEvent) opener?.focus()
+  }
+  function download() {
+    menu = false
+    onDownload()
   }
   function startEdit() {
     menu = false
@@ -66,8 +70,11 @@
     onclick={() => (menu = !menu)}><Icon name="dots" size={16} /></button>
   {#if menu}
     <div class="menu menu-surface pop-in" role="menu" use:clickOutside={closeMenu}>
-      <button type="button" class="menu-item" role="menuitem" onclick={startEdit}><Icon name="pencil" size={14} />Edit</button>
-      <button type="button" class="menu-item danger" role="menuitem" onclick={() => void askDelete()}><Icon name="trash" size={14} />Delete</button>
+      <button type="button" class="menu-item" role="menuitem" onclick={download}><Icon name="download" size={14} />Download</button>
+      {#if mine}
+        <button type="button" class="menu-item" role="menuitem" onclick={startEdit}><Icon name="pencil" size={14} />Edit</button>
+        <button type="button" class="menu-item danger" role="menuitem" onclick={() => void askDelete()}><Icon name="trash" size={14} />Delete</button>
+      {/if}
     </div>
   {/if}
   {#if asking}

@@ -9,6 +9,7 @@
   import Name from './Name.svelte'
   import ReactionRow from './ReactionRow.svelte'
   import { clipRowEstimate, gameName } from '../lib/clips'
+  import { downloadClip } from '../lib/clipDownload'
   import { suggestedReactions } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
   import { InlineError } from '../lib/inlineError.svelte'
@@ -47,6 +48,7 @@
 
   const inlineError = new InlineError()
   $effect(() => inlineError.stop)
+  const download = () => void downloadClip(message, inlineError.show)
   // the poster's avatar animates while the pointer is over the clip
   let over = $state(false)
 </script>
@@ -63,10 +65,10 @@
         {#if message.edited_at}<span class="edited">(edited)</span>{/if}
         <span class="grow"></span>
         {#if onOpenReplies && !compact}<button type="button" class="icon-btn icon-btn-sm" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={16} /></button>{/if}
-        {#if mine}<ClipActions {message} {serverId} />{/if}
+        <ClipActions {message} {serverId} {mine} onDownload={download} />
       </div>
       <ClipCaption {message} />
-      <div class="player"><ClipPlayer {message} {compact} /></div>
+      <div class="player"><ClipPlayer {message} {compact} onDownload={download} /></div>
       <ReactionRow {message} {meId} {nameOf} onError={inlineError.show} {suggest} alwaysAdd />
       {#if onOpenReplies && !compact}<ClipReplies {message} {onOpenReplies} {unsentReplies} />{/if}
       {#if inlineError.text}<p class="err" role="alert">{inlineError.text}</p>{/if}

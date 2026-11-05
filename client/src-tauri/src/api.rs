@@ -4371,6 +4371,17 @@ mod tests {
             got.as_ref() == r.bytes.as_slice(),
             "the played bytes are the uploaded ones"
         );
+        // Download (#204): the same link, streamed to the file the Save dialog picked
+        assert_eq!(crate::clips::download::extension_of(&url.url), "mp4");
+        let dir = tempfile::tempdir().unwrap();
+        let dest = dir.path().join("ace.mp4");
+        crate::clips::download::save_url(&reqwest::Client::new(), &url.url, &dest)
+            .await
+            .unwrap();
+        assert!(
+            std::fs::read(&dest).unwrap() == r.bytes,
+            "the saved file is the uploaded one"
+        );
 
         let edited = r
             .api

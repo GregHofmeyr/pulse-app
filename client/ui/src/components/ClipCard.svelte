@@ -5,11 +5,13 @@
   import Name from './Name.svelte'
   import ClipActions from './ClipActions.svelte'
   import ClipCaption from './ClipCaption.svelte'
+  import ClipDownload from './ClipDownload.svelte'
   import ClipPlayer from './ClipPlayer.svelte'
   import ClipReplies from './ClipReplies.svelte'
   import Icon from './Icon.svelte'
   import ReactionRow from './ReactionRow.svelte'
   import { formatDuration, gameName } from '../lib/clips'
+  import { downloadClip } from '../lib/clipDownload'
   import { mediaUrl } from '../lib/emoji'
   import { suggestedReactions } from '../lib/reactions'
   import { app } from '../lib/store.svelte'
@@ -51,6 +53,7 @@
 
   const inlineError = new InlineError()
   $effect(() => inlineError.stop)
+  const download = () => void downloadClip(message, inlineError.show)
 
   // Full screen straight from the thumbnail: the player swaps in, then goes full screen (still within the click's activation).
   async function playFullscreen() {
@@ -67,7 +70,7 @@
     onpointerenter={() => (over = true)} onpointerleave={() => (over = false)}>
     <div class="media" class:still={!playing}>
       {#if playing}
-        <ClipPlayer {message} autoplay compact />
+        <ClipPlayer {message} autoplay compact onDownload={download} />
       {:else}
         <button type="button" class="thumb" aria-label="Play clip" onclick={onPlay}>
           <img src={mediaUrl(clip.thumb_hash)} alt="" loading="lazy" decoding="async" />
@@ -75,6 +78,7 @@
         </button>
         <span class="duration">{formatDuration(clip.duration_ms)}</span>
         <button type="button" class="fs" aria-label="Play full screen" onclick={() => void playFullscreen()}><Icon name="fullscreen" size={16} /></button>
+        <ClipDownload onclick={download} beside />
         {#if isNew}<span class="badge-new">new</span>{/if}
       {/if}
     </div>
@@ -86,7 +90,7 @@
         {#if game}<span class="game">{game}</span>{/if}
         <span class="grow"></span>
         {#if onOpenReplies}<button type="button" class="icon-btn icon-btn-sm" aria-label="Reply" onclick={onOpenReplies}><Icon name="reply" size={16} /></button>{/if}
-        {#if mine}<ClipActions {message} {serverId} />{/if}
+        <ClipActions {message} {serverId} {mine} onDownload={download} />
       </div>
       <span class="time">{when}{#if message.edited_at} · edited{/if}</span>
       <ReactionRow {message} {meId} {nameOf} onError={inlineError.show} {suggest} alwaysAdd />
@@ -108,7 +112,7 @@
   .thumb:hover .play, .thumb:focus-visible .play { opacity: 1; background: rgba(0, 0, 0, .75); }
   .duration { position: absolute; right: 8px; bottom: 8px; padding: 1px 6px; border-radius: var(--radius-xs); background: rgba(0, 0, 0, .75); color: #fff; font-size: 11px; font-variant-numeric: tabular-nums; pointer-events: none; }
   .fs { position: absolute; right: 8px; top: 8px; width: 28px; height: 28px; border: 0; border-radius: var(--radius-sm); background: rgba(0, 0, 0, .6); color: #fff; display: grid; place-items: center; opacity: 0; }
-  .card:hover .fs, .fs:focus-visible { opacity: 1; }
+  .card:hover .fs, .fs:focus-visible, .card:hover :global(.clip-dl) { opacity: 1; }
   .badge-new { position: absolute; left: 8px; top: 8px; padding: 1px 7px; border-radius: var(--radius-sm); background: var(--danger); color: var(--on-danger); font-size: 10px; font-weight: 700; text-transform: uppercase; pointer-events: none; }
   .info { padding: 8px 10px 10px; display: flex; flex-direction: column; gap: 5px; min-width: 0; }
   .meta { display: flex; align-items: center; gap: 6px; min-height: 28px; }

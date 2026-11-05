@@ -7,9 +7,16 @@
   import { mediaUrl } from '../lib/emoji'
   import { formatDuration } from '../lib/clips'
   import { claim, elementVolume, playback, release, setMuted, setVolume } from '../lib/clipPlayback.svelte'
+  import ClipDownload from './ClipDownload.svelte'
   import Icon from './Icon.svelte'
 
-  let { message, autoplay = false, compact = false }: { message: Message; autoplay?: boolean; compact?: boolean } = $props()
+  let { message, autoplay = false, compact = false, onDownload }: {
+    message: Message
+    autoplay?: boolean
+    compact?: boolean
+    /** Shows the download icon at the top right of the video (#204). */
+    onDownload?: () => void
+  } = $props()
 
   const SKIP_S = 5
 
@@ -175,6 +182,7 @@
     {#if !playing && !loading && !failed}
       <button class="big" aria-label="Play clip" onclick={play}><Icon name="play" size={28} /></button>
     {/if}
+    {#if onDownload}<ClipDownload onclick={onDownload} />{/if}
   </div>
   <div class="bar">
     <button class="ico" aria-label={playing || loading ? 'Pause' : 'Play'} onclick={toggle}><Icon name={playing || loading ? 'pause' : 'play'} /></button>
@@ -206,5 +214,8 @@
   .seek { flex: 1; min-width: 40px; accent-color: var(--accent); }
   .vol { width: 70px; accent-color: var(--accent); }
   .time { font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  /* the download icon shows while the pointer is over the player; full screen is for watching */
+  .clip:hover :global(.clip-dl) { opacity: 1; }
+  .clip:fullscreen :global(.clip-dl) { display: none; }
   .compact .bar { padding: 4px 6px; gap: 4px; }
 </style>
