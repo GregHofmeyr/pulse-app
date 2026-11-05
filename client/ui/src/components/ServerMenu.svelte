@@ -92,5 +92,5 @@
 </div>
 
 <style>
-  .menu { position: fixed; z-index: 60; min-width: 210px; max-width: 280px; gap: 2px; outline: none; }
+  .menu { position: fixed; z-index: 60; min-width: 220px; max-width: 280px; gap: 2px; outline: none; --pop-origin: top left; }
 </style>

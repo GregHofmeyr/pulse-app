@@ -232,7 +232,7 @@
   .add-tile { height: 72px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px; border: 1px dashed var(--line); border-radius: 10px; background: transparent; color: var(--text-2); font: inherit; font-size: 12px; cursor: pointer; }
   .add-tile:hover { background: var(--bg-3); color: var(--text); }
   .none { color: var(--text-3); text-align: center; margin: 24px 0; }
-  .ctx { position: absolute; z-index: 5; min-width: 150px; gap: 2px; font-size: 13px; }
+  .ctx { position: absolute; z-index: 5; min-width: 150px; gap: 2px; font-size: 13px; --pop-origin: top left; }
   .scrim { position: absolute; inset: 0; z-index: 6; display: grid; place-items: center; background: var(--scrim); }
   .ask { width: 240px; padding: 12px; gap: 10px; }
   .ask p { margin: 0; font-size: 13px; color: var(--text); }

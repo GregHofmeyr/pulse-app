@@ -98,7 +98,7 @@
 
 <style>
   .clip-actions { position: relative; }
-  .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 140px; }
+  .menu { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); min-width: 140px; --pop-origin: top right; }
   .ask { position: absolute; z-index: 6; right: 0; top: calc(100% + 4px); width: 240px; padding: 10px; flex-direction: row; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
   .ask p { flex-basis: 100%; margin: 0 0 4px; font-size: 13px; color: var(--text); }
   .ask .err { margin: 4px 0 0; color: var(--danger-text); }

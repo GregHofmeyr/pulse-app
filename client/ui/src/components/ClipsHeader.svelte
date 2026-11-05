@@ -137,7 +137,7 @@
   .chip:hover { background: var(--bg-3); color: var(--text); }
   .chip[aria-pressed='true'] { background: var(--accent); border-color: var(--focus-ring); color: var(--on-accent); }
   .person, .more { position: relative; }
-  .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; }
+  .menu { position: absolute; z-index: 6; left: 0; top: calc(100% + 4px); min-width: 180px; max-height: 300px; overflow-y: auto; --pop-origin: top left; }
   .menu-item[aria-checked='true'] { color: var(--accent-text); }
   .name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .count { color: var(--text-3); font-size: 12px; font-variant-numeric: tabular-nums; }

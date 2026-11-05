@@ -695,7 +695,7 @@
   .head-btn { flex: 1; min-width: 0; height: 40px; margin: 0 -8px; padding: 0 8px; border-radius: 10px; display: flex; align-items: center; justify-content: space-between; gap: 8px; border: 0; background: transparent; color: inherit; font: inherit; text-align: left; }
   .head-btn:hover { background: var(--bg-2); }
   /* two classes: .menu (declared below) must not win `bottom` back */
-  .menu.head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; }
+  .menu.head-menu { left: 8px; right: 8px; top: calc(100% + 4px); bottom: auto; --pop-origin: top; }
   .me { padding: 10px 10px 10px 12px; background: var(--bg-inset); display: flex; align-items: center; gap: 10px; }
   .who { flex: 1; display: flex; flex-direction: column; font-size: 13px; font-weight: 600; }
   .who small { font-size: 12px; font-weight: 400; color: var(--text-3); }

@@ -275,7 +275,7 @@
   .chip { flex-shrink: 0; display: inline-flex; align-items: center; gap: 2px; height: 22px; padding: 0 2px 0 7px; border-radius: 6px; background: var(--accent-soft); color: var(--text); font-size: 12px; white-space: nowrap; }
   .chip button { display: grid; place-items: center; width: 18px; height: 18px; padding: 0; border: 0; border-radius: 4px; background: none; color: var(--text-2); }
   .chip button:hover { background: var(--bg-4); color: var(--text); }
-  .list { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: 320px; max-height: 320px; overflow-y: auto; }
+  .list { position: absolute; top: calc(100% + 6px); right: 0; z-index: 20; width: 320px; max-height: 320px; overflow-y: auto; --pop-origin: top right; }
   .list .menu-item { cursor: pointer; }
   .hint { position: absolute; top: calc(100% + 4px); left: 0; z-index: 19; margin: 0; font-size: 12px; color: var(--text-3); white-space: nowrap; pointer-events: none; }
   .hint:empty { display: none; }

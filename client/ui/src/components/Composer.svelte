@@ -195,7 +195,7 @@
   .wrap { position: relative; margin: 4px 18px 16px; background: var(--bg-3); border-radius: 12px; }
   /* focus: a faint accent edge, inset so the box doesn't move (the EmojiBox itself has no outline) */
   .wrap:focus-within { box-shadow: inset 0 0 0 1px var(--focus-soft); }
-  .mentions { position: absolute; left: 0; bottom: calc(100% + 6px); min-width: 200px; z-index: 5; }
+  .mentions { position: absolute; left: 0; bottom: calc(100% + 6px); min-width: 200px; z-index: 5; --pop-origin: bottom left; }
   .mentions .menu-item { font-size: 14px; }
   .mentions img { width: 20px; height: 20px; }
   .mentions small { margin-left: auto; padding-left: 12px; color: var(--text-3); font-size: 11px; }

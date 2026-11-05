@@ -217,7 +217,7 @@
 </div>
 
 <style>
-  .menu { position: fixed; z-index: 60; min-width: 220px; max-width: 280px; gap: 2px; font-size: 13px; outline: none; }
+  .menu { position: fixed; z-index: 60; min-width: 220px; max-width: 280px; gap: 2px; font-size: 13px; outline: none; --pop-origin: top left; }
   .menu-item { justify-content: space-between; }
   .menu-item.off { color: var(--text-3); cursor: not-allowed; height: auto; min-height: 32px; flex-direction: column; align-items: flex-start; justify-content: center; padding: 6px 10px; gap: 2px; }
   .menu-item.off small { font-size: 11px; }

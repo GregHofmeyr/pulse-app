@@ -52,7 +52,7 @@
   .trigger { width: 100%; height: 42px; padding: 0 12px; border: 1px solid var(--bg-4); border-radius: 10px; background: var(--line-soft); color: var(--text); display: flex; align-items: center; justify-content: space-between; font-size: 14px; font-weight: 400; letter-spacing: 0; text-align: left; }
   .trigger:hover { border-color: var(--line-strong); }
   /* its options keep the trigger's 14px */
-  .list { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; max-height: 240px; overflow-y: auto; }
+  .list { position: absolute; z-index: 5; top: calc(100% + 4px); left: 0; right: 0; margin: 0; padding: 4px; list-style: none; max-height: 240px; overflow-y: auto; --pop-origin: top; }
   .select[data-drop='up'] .list { top: auto; bottom: calc(100% + 4px); }
   li { padding: 9px 10px; border-radius: 8px; font-size: 14px; font-weight: 400; letter-spacing: 0; color: var(--text-2); cursor: pointer; }
   li.active { background: var(--bg-4); color: var(--text); }
